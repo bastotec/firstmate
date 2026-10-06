@@ -56,7 +56,7 @@ sub secret {
         || $p =~ /\.(?:pem|key|p12|pfx|keychain(?:-db)?)\z/i;
 }
 my %config = map { $_ => 1 } qw(crew-harness crew-dispatch.json secondmate-harness
-    backlog-backend backend herdr-presentation-spaces startup-memory-budget trace-context
+    backlog-backend backend startup-memory-budget trace-context
     launch-env-allowlist stow-pass-horizon turnend-churn-absorb wedge-alarm watched-tools.json);
 sub allowed {
     my ($p, $who) = @_;

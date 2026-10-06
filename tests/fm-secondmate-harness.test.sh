@@ -14,15 +14,11 @@
 #      explicit per-spawn harness arg still wins.
 #   B) Inheritance. The primary pushes a declared, extensible set of LOCAL
 #      (gitignored) config items - config/crew-dispatch.json, config/crew-harness,
-#      config/backlog-backend, config/backend, config/herdr-presentation-spaces,
-#      config/startup-memory-budget, and config/trace-context -
-#      down into each secondmate home's config/, so the secondmate's OWN crewmates,
-#      dispatch profiles, backlog backend, runtime-backend default, Herdr
-#      presentation choice, startup-memory budget, and trace context inherit the
-#      primary's settings. For config/herdr-presentation-spaces, an absent
-#      primary file and an absent destination file both mean the same
-#      unconfigured default, so the generic absence mirror converges that item
-#      without deciding its release-dependent floor.
+#      config/backlog-backend, config/backend, config/startup-memory-budget, and
+#      config/trace-context - down into each secondmate home's config/, so the
+#      secondmate's OWN crewmates, dispatch profiles, backlog backend,
+#      runtime-backend default, startup-memory budget, and trace context inherit
+#      the primary's settings.
 #      It is primary-authoritative
 #      (re-pushed at secondmate spawn, on the bootstrap secondmate sweep, and by
 #      config push).
@@ -53,7 +49,9 @@ set -u
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 fm_git_identity fmtest fmtest@example.com
 TMP_ROOT=$(fm_test_tmproot fm-secondmate-harness)
-export FM_BACKEND=tmux
+# Every launch and send lands on the suite's fake stream hub (tests/fixtures.sh);
+# the agent stub records each text an endpoint receives in FM_FAKE_LAUNCH_LOG.
+fm_test_fake_stream_ensure || fail "the fake stream hub did not start"
 
 # Every spawn below pins a throwaway HOME so nothing a launch writes under the
 # user's home can reach the developer's real one.
@@ -202,8 +200,7 @@ test_propagate_lib() {
   printf '{"default":{"harness":"deck"}}\n' > "$src/crew-dispatch.json"
   printf 'deck\n' > "$src/crew-harness"
   printf 'manual\n' > "$src/backlog-backend"
-  printf 'tmux\n' > "$src/backend"
-  : > "$src/herdr-presentation-spaces"
+  printf 'zellij\n' > "$src/backend"
   : > "$src/trace-context"
   stdout="$d/clean-copy.out"
   stderr="$d/clean-copy.err"
@@ -213,11 +210,10 @@ test_propagate_lib() {
   [ "$(cat "$dest/crew-dispatch.json")" = '{"default":{"harness":"deck"}}' ] || fail "crew-dispatch.json not propagated"
   [ "$(cat "$dest/crew-harness")" = deck ] || fail "crew-harness not propagated"
   [ "$(cat "$dest/backlog-backend")" = manual ] || fail "backlog-backend not propagated"
-  [ "$(cat "$dest/backend")" = tmux ] || fail "backend not propagated"
-  [ -f "$dest/herdr-presentation-spaces" ] || fail "herdr-presentation-spaces not propagated"
-  printf 'herdr\n' > "$dest/backend"
+  [ "$(cat "$dest/backend")" = zellij ] || fail "backend not propagated"
+  printf 'divergent\n' > "$dest/backend"
   propagate_inheritable_config "$src" "$dest"
-  [ "$(cat "$dest/backend")" = tmux ] || fail "primary backend did not overwrite a divergent destination"
+  [ "$(cat "$dest/backend")" = zellij ] || fail "primary backend did not overwrite a divergent destination"
   [ -f "$dest/trace-context" ] || fail "trace-context not propagated by the default inheritable set"
 
   # 2. idempotent: an unchanged re-run does not churn the mtime
@@ -253,15 +249,14 @@ test_propagate_lib() {
   [ "$(cat "$outside")" = outside ] || fail "destination symlink target was overwritten"
 
   # 4. removing the source mirrors absence downstream (primary-authoritative)
-  printf 'herdr\n' > "$dest/backend"
+  printf 'divergent\n' > "$dest/backend"
   rm -f "$src/crew-dispatch.json" "$src/crew-harness" "$src/backlog-backend" \
-    "$src/backend" "$src/herdr-presentation-spaces" "$src/trace-context"
+    "$src/backend" "$src/trace-context"
   propagate_inheritable_config "$src" "$dest"
   [ -e "$dest/crew-dispatch.json" ] && fail "dispatch profile absence not mirrored downstream"
   [ -e "$dest/crew-harness" ] && fail "absence not mirrored downstream"
   [ -e "$dest/backlog-backend" ] && fail "backlog-backend absence not mirrored downstream"
   [ -e "$dest/backend" ] && fail "backend absence not mirrored downstream"
-  [ -e "$dest/herdr-presentation-spaces" ] && fail "herdr-presentation-spaces absence not mirrored downstream"
   [ -e "$dest/trace-context" ] && fail "trace-context absence not mirrored downstream"
 
   rm -f "$dest/crew-harness"
@@ -284,7 +279,7 @@ test_propagate_lib() {
   printf '{"default":{"harness":"deck"}}\n' > "$src/crew-dispatch.json"
   printf 'deck\n' > "$src/crew-harness"
   printf 'manual\n' > "$src/backlog-backend"
-  printf 'herdr\n' > "$src/backend"
+  printf 'zellij\n' > "$src/backend"
   rm -rf "$d/home2"
   mkdir -p "$d/home2/config" "$d/home2/state"
   propagate_inheritable_config "$src" "$d/home2/config"
@@ -292,7 +287,7 @@ test_propagate_lib() {
   [ "$(cat "$d/home2/config/crew-dispatch.json")" = '{"default":{"harness":"deck"}}' ] || fail "crew-dispatch.json not propagated alongside"
   [ "$(cat "$d/home2/config/crew-harness")" = deck ] || fail "crew-harness not propagated alongside"
   [ "$(cat "$d/home2/config/backlog-backend")" = manual ] || fail "backlog-backend not propagated alongside"
-  [ "$(cat "$d/home2/config/backend")" = herdr ] || fail "backend not propagated alongside"
+  [ "$(cat "$d/home2/config/backend")" = zellij ] || fail "backend not propagated alongside"
 
   # 6. nothing to propagate -> destination dir is never created (a true no-op)
   rm -rf "$d/src3" "$d/dest3"
@@ -328,18 +323,12 @@ test_propagate_lib() {
 # propagates the crew harness into the home's config.
 # ===========================================================================
 
-# A tmux stub that accepts every subcommand and prints nothing, so no window
-# pre-exists and the spawn proceeds to write its meta. Echoes the fakebin dir.
-make_noop_tmux() {
+# The verified secondmate harness must resolve on PATH for the launch to be
+# built; a stub is enough because the fake endpoint never runs it.
+# Echoes the fakebin dir.
+make_harness_fakebin() {
   local dir=$1 fakebin="$1/fakebin"
   mkdir -p "$fakebin"
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-  chmod +x "$fakebin/tmux"
-  # The verified secondmate harness must resolve on PATH for the launch to be
-  # built; a stub is enough because tmux never runs it.
   fm_test_fake_deck "$fakebin"
   printf '%s\n' "$fakebin"
 }
@@ -355,6 +344,19 @@ make_seeded_home() {
   printf 'charter\n' > "$home/data/charter.md"
 }
 
+# free_endpoint_label <id>: close every open fake endpoint labelled fm-<id>, as
+# if its agent exited. Each world spawns its own secondmate under the same id on
+# the suite's one hub, and a still-open earlier fm-<id> endpoint would refuse the
+# new registration as a duplicate label.
+free_endpoint_label() {
+  local eid
+  fm_test_fake_stream_endpoints \
+    | jq -r --arg l "fm-$1" '.endpoints[] | select(.label == $l and .closed_by == null) | .endpoint_id' \
+    | while IFS= read -r eid; do
+        [ -n "$eid" ] && fm_test_fake_stream_set "$eid" '{"closed_by": "agent"}'
+      done
+}
+
 # spawn_secondmate <world> <id> <home> [explicit-harness]
 # Runs fm-spawn.sh in secondmate mode. FM_ROOT is the real repo (so fm-harness.sh
 # resolves) and the primary config dir is <world>/home/config. stderr is
@@ -362,13 +364,14 @@ make_seeded_home() {
 spawn_secondmate() {
   local world=$1 id=$2 home=$3 harness=${4:-} fakebin
   mkdir -p "$world/home/state" "$world/home/data"
-  fakebin=$(make_noop_tmux "$world/tmux-$id")
+  fakebin=$(make_harness_fakebin "$world/bin-$id")
+  free_endpoint_label "$id"
   # An empty harness must contribute zero args, not an empty positional; build the
   # arg list explicitly so the optional harness is omitted cleanly.
   local spawn_args=("$id" "$home")
   [ -n "$harness" ] && spawn_args+=("$harness")
   spawn_args+=(--secondmate)
-  PATH="$fakebin:$BLIND_BIN:$BASE_PATH" TMUX='' \
+  PATH="$fakebin:$BLIND_BIN:$BASE_PATH" \
     FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$world/home" HOME="$world/home/user-home" \
     FM_STATE_OVERRIDE="$world/home/state" FM_DATA_OVERRIDE="$world/home/data" \
     FM_PROJECTS_OVERRIDE="$world/home/projects" FM_CONFIG_OVERRIDE="$world/home/config" \
@@ -390,7 +393,7 @@ test_spawn_split_and_inherit() {
   printf 'deck\n' > "$w/home/config/crew-harness"
   printf 'deck\n' > "$w/home/config/secondmate-harness"
   printf 'manual\n' > "$w/home/config/backlog-backend"
-  printf 'tmux\n' > "$w/home/config/backend"
+  printf 'stream\n' > "$w/home/config/backend"
   make_seeded_home "$sm" sm
 
   spawn_secondmate "$w" sm "$sm"
@@ -405,8 +408,8 @@ test_spawn_split_and_inherit() {
     || fail "split: home crew-dispatch.json not inherited"
   [ "$(cat "$sm/config/backlog-backend" 2>/dev/null)" = manual ] \
     || fail "split: home backlog-backend not inherited as manual"
-  [ "$(cat "$sm/config/backend" 2>/dev/null)" = tmux ] \
-    || fail "split: home backend not inherited as tmux"
+  [ "$(cat "$sm/config/backend" 2>/dev/null)" = stream ] \
+    || fail "split: home backend not inherited as stream"
   [ -e "$sm/config/secondmate-harness" ] \
     && fail "split: secondmate-harness leaked into the secondmate home"
   pass "B2 spawn: secondmate runs the secondmate harness; its home inherits declared config"
@@ -480,11 +483,11 @@ test_spawn_unverified_secondmate_harness_refused() {
     mkdir -p "$w/home/config" "$w/home/state"
     printf '%s\n' "$harness" > "$w/home/config/secondmate-harness"
     make_seeded_home "$sm" sm
-    fakebin=$(make_noop_tmux "$w/tmux")
+    fakebin=$(make_harness_fakebin "$w/harness-bin")
     fm_fake_exit0 "$fakebin" "$harness"
     err="$w/spawn.err"
     rc=0
-    PATH="$fakebin:$BASE_PATH" TMUX='' \
+    PATH="$fakebin:$BASE_PATH" \
       FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$w/home" HOME="$w/home/user-home" \
       FM_STATE_OVERRIDE="$w/home/state" FM_DATA_OVERRIDE="$w/home/data" \
       FM_PROJECTS_OVERRIDE="$w/home/projects" FM_CONFIG_OVERRIDE="$w/home/config" \
@@ -508,43 +511,12 @@ test_spawn_unverified_secondmate_harness_refused() {
 
 meta_field() { grep "^$2=" "$1" 2>/dev/null | tail -1 | cut -d= -f2-; }
 
-# A tmux stub that behaves like make_noop_tmux but also captures the literal
-# `send-keys -l <cmd>` launch command into FM_FAKE_LAUNCH_LOG, mirroring the
-# capture technique in fm-spawn-dispatch-profile.test.sh so the constructed
-# launch command (not just meta) can be asserted on. Also answers the
-# `#{pane_current_path}` probe from FM_FAKE_PANE_PATH so this same stub works
-# for a crew/scout (non-secondmate) spawn's treehouse-worktree wait loop.
-make_launch_capturing_tmux() {
-  local dir=$1 fakebin="$1/fakebin"
-  mkdir -p "$fakebin"
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-set -u
-case "$*" in
-  *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
-esac
-case "${1:-}" in
-  display-message) printf 'firstmate\n'; exit 0 ;;
-  list-windows) exit 0 ;;
-  has-session|new-session|new-window|kill-window) exit 0 ;;
-  send-keys)
-    if [ -n "${FM_FAKE_LAUNCH_LOG:-}" ]; then
-      prev=
-      for a in "$@"; do
-        if [ "$prev" = "-l" ]; then
-          printf '%s\n' "$a" >> "$FM_FAKE_LAUNCH_LOG"
-        fi
-        prev=$a
-      done
-    fi
-    exit 0
-    ;;
-esac
-exit 0
-SH
-  chmod +x "$fakebin/tmux"
-  fm_test_fake_deck "$fakebin"
-  printf '%s\n' "$fakebin"
+# The fake endpoint a launch lands on records every typed text in
+# FM_FAKE_LAUNCH_LOG, so the constructed launch command (not just meta) can be
+# asserted on, and moves to FM_FAKE_PANE_PATH on `treehouse get`, so the same
+# fakebin works for a crew/scout (non-secondmate) spawn's worktree discovery.
+make_launch_capturing_fakebin() {
+  make_harness_fakebin "$@"
 }
 
 # spawn_secondmate_capture <world> <id> <home> <launchlog> [extra fm-spawn.sh args...]
@@ -554,9 +526,10 @@ spawn_secondmate_capture() {
   local world=$1 id=$2 home=$3 launchlog=$4 fakebin
   shift 4
   mkdir -p "$world/home/state" "$world/home/data"
-  fakebin=$(make_launch_capturing_tmux "$world/tmux-$id")
+  fakebin=$(make_launch_capturing_fakebin "$world/bin-$id")
+  free_endpoint_label "$id"
   : > "$launchlog"
-  PATH="$fakebin:$BLIND_BIN:$BASE_PATH" TMUX='' \
+  PATH="$fakebin:$BLIND_BIN:$BASE_PATH" \
     FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$world/home" HOME="$world/home/user-home" \
     FM_STATE_OVERRIDE="$world/home/state" FM_DATA_OVERRIDE="$world/home/data" \
     FM_PROJECTS_OVERRIDE="$world/home/projects" FM_CONFIG_OVERRIDE="$world/home/config" \
@@ -564,25 +537,28 @@ spawn_secondmate_capture() {
     "$ROOT/bin/fm-spawn.sh" "$id" "$home" "$@" --secondmate
 }
 
+# A config/backend left naming a retired backend is refused on its own, so the
+# precedence above it is observable: FM_BACKEND wins over it, and an explicit
+# --backend wins over both.
 test_spawn_backend_precedence_over_inherited_config() {
   local w sm meta launchlog out status
   w="$TMP_ROOT/spawn-backend-env-precedence"
   sm="$w/sm"
   launchlog="$w/launch.log"
   mkdir -p "$w/home/config"
-  printf 'herdr\n' > "$w/home/config/backend"
+  printf 'tmux\n' > "$w/home/config/backend"
   make_seeded_home "$sm" sm
 
-  out=$(FM_BACKEND=tmux spawn_secondmate_capture \
+  out=$(FM_BACKEND=stream spawn_secondmate_capture \
     "$w" sm "$sm" "$launchlog" 2>&1); status=$?
   expect_code 0 "$status" \
-    "FM_BACKEND=tmux should beat inherited config/backend=herdr"$'\n'"$out"
+    "FM_BACKEND=stream should beat an inherited retired config/backend=tmux"$'\n'"$out"
 
   meta="$w/home/state/sm.meta"
-  [ "$(cat "$sm/config/backend")" = herdr ] \
-    || fail "backend precedence fixture did not inherit config/backend=herdr"
-  grep -qx 'backend=tmux' "$meta" \
-    || fail "FM_BACKEND=tmux did not beat inherited config/backend=herdr"
+  [ "$(cat "$sm/config/backend")" = tmux ] \
+    || fail "backend precedence fixture did not inherit config/backend=tmux"
+  grep -qx 'backend=stream' "$meta" \
+    || fail "FM_BACKEND=stream did not beat inherited config/backend=tmux"
   pass "B5b spawn: FM_BACKEND wins over inherited config/backend"
 }
 
@@ -595,16 +571,16 @@ test_spawn_explicit_backend_precedence_over_env_and_inherited_config() {
   printf 'herdr\n' > "$w/home/config/backend"
   make_seeded_home "$sm" sm
 
-  out=$(FM_BACKEND=stream spawn_secondmate_capture \
-    "$w" sm "$sm" "$launchlog" --backend tmux 2>&1); status=$?
+  out=$(FM_BACKEND=tmux spawn_secondmate_capture \
+    "$w" sm "$sm" "$launchlog" --backend stream 2>&1); status=$?
   expect_code 0 "$status" \
-    "explicit --backend tmux should beat FM_BACKEND=stream and inherited config/backend=herdr"$'\n'"$out"
+    "explicit --backend stream should beat FM_BACKEND=tmux and inherited config/backend=herdr"$'\n'"$out"
 
   meta="$w/home/state/sm.meta"
   [ "$(cat "$sm/config/backend")" = herdr ] \
     || fail "explicit backend precedence fixture did not inherit config/backend=herdr"
-  grep -qx 'backend=tmux' "$meta" \
-    || fail "explicit --backend tmux did not beat FM_BACKEND=stream and inherited config/backend=herdr"
+  grep -qx 'backend=stream' "$meta" \
+    || fail "explicit --backend stream did not beat FM_BACKEND=tmux and inherited config/backend=herdr"
   pass "B5c spawn: explicit --backend wins over FM_BACKEND and inherited config/backend"
 }
 
@@ -829,7 +805,7 @@ test_spawn_fallback_chain_and_crew_scout_unaffected() {
   home="$w/home"
   proj="$w/crew-project"
   wt="$w/crew-wt"
-  fakebin=$(make_launch_capturing_tmux "$w/tmux-crew")
+  fakebin=$(make_launch_capturing_fakebin "$w/bin-crew")
   fm_git_worktree "$proj" "$wt" "wt-crew"
   mkdir -p "$home/data/$id" "$home/projects" "$home/state"
   cat > "$home/data/$id/brief.md" <<'EOF'
@@ -841,7 +817,7 @@ Exercise an ordinary crew launch.
 Verify secondmate harness settings do not affect it.
 EOF
   : > "$launchlog"
-  PATH="$fakebin:$BASE_PATH" TMUX="fake,1,0" \
+  PATH="$fakebin:$BASE_PATH" \
     FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
@@ -878,7 +854,7 @@ new_world() {
     printf 'projects/\nstate/\ndata/\n.no-mistakes/\n'
     [ "$dispatch_ignore" = no ] || printf 'config/crew-dispatch.json\n'
     printf 'config/crew-harness\nconfig/secondmate-harness\nconfig/backlog-backend\n'
-    printf 'config/backend\nconfig/herdr-presentation-spaces\nconfig/startup-memory-budget\n'
+    printf 'config/backend\nconfig/startup-memory-budget\n'
   } > "$w/main/.gitignore"
   printf 'v1\n' > "$w/main/AGENTS.md"
   printf 'r1\n' > "$w/main/README.md"
@@ -902,16 +878,37 @@ record_live_watcher_fixture() {
 }
 
 # A live secondmate home as a DETACHED worktree of the primary at <commit>, with
-# its seed marker and a live kind=secondmate meta.
+# its seed marker and a live kind=secondmate meta on a fake stream endpoint
+# running deck.
 add_sm_worktree() {
   local w=$1 id=$2 commit=$3
   git -C "$w/main" worktree add -q --detach "$w/$id" "$commit"
   printf '%s\n' "$id" > "$w/$id/.fm-secondmate-home"
+  sm_record "$w" "$id"
+}
+
+# sm_record <w> <id>: the live kind=secondmate record for <w>/<id>.
+sm_record() {
+  local w=$1 id=$2
   {
-    printf 'window=firstmate:fm-%s\n' "$id"
+    fm_test_stream_task "$w/home/state" "$id"
     printf 'kind=secondmate\n'
     printf 'home=%s/%s\n' "$w" "$id"
   } > "$w/home/state/$id.meta"
+  fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$w/home/state" "$id")" deck
+}
+
+# log_endpoints <w> <log>: every live secondmate endpoint in <w> records each
+# text it receives in <log> (the reread pointer's doorbell lands there).
+log_endpoints() {
+  local w=$1 log=$2 meta id
+  for meta in "$w/home/state"/*.meta; do
+    [ -f "$meta" ] || continue
+    grep -qx 'backend=stream' "$meta" || continue
+    id=$(basename "$meta" .meta)
+    fm_test_stream_task "$w/home/state" "$id" "$log" >/dev/null
+    fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$w/home/state" "$id")" deck
+  done
 }
 
 make_fake_toolchain() {
@@ -929,34 +926,6 @@ fi
 exit 0
 SH
   chmod +x "$fakebin/gh-axi"
-  # tmux fake supports fm-send's composer-verified submit path and optional
-  # FM_FAKE_TMUX_LOG / FM_FAKE_TMUX_FAIL_LITERAL for reread-nudge assertions.
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-if [ -n "${FM_FAKE_TMUX_LOG:-}" ]; then
-  printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
-fi
-case "$*" in
-  list-windows*)
-    sed -n 's/^window=[^:]*://p' "${FM_HOME:?}"/state/*.meta
-    exit 0
-    ;;
-  *display-message*'#{pane_current_command}'*) printf '%s\n' deck; exit 0 ;;
-  *display-message*'#{pane_id}'*) printf '%s\n' '%1'; exit 0 ;;
-  *display-message*'#{cursor_y}'*) printf '%s\n' 0; exit 0 ;;
-  *capture-pane*) printf '❯\n'; exit 0 ;;
-  *'send-keys'*' -l '*)
-    [ "${FM_FAKE_TMUX_FAIL_LITERAL:-0}" = 1 ] && exit 1
-    exit 0
-    ;;
-  *send-keys*)
-    [ "${FM_FAKE_TMUX_FAIL_LITERAL:-0}" = 1 ] && exit 1
-    exit 0
-    ;;
-esac
-exit 0
-SH
-  chmod +x "$fakebin/tmux"
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -1005,8 +974,9 @@ run_bootstrap() {
   local w=$1 fakebin log=${2:-}
   fakebin=$(make_fake_toolchain "$w")
   if [ -n "$log" ]; then
+    log_endpoints "$w" "$log"
     PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
-      FM_SEND_SETTLE=0 FM_FAKE_TMUX_LOG="$log" \
+      FM_SEND_SETTLE=0 \
       "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null
   else
     PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
@@ -1018,8 +988,9 @@ run_config_push() {
   local w=$1 fakebin log=${2:-}
   fakebin=$(make_fake_toolchain "$w")
   if [ -n "$log" ]; then
+    log_endpoints "$w" "$log"
     PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
-      FM_SEND_SETTLE=0 FM_FAKE_TMUX_LOG="$log" \
+      FM_SEND_SETTLE=0 \
       "$ROOT/bin/fm-config-push.sh"
   else
     PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
@@ -1133,7 +1104,7 @@ test_bootstrap_sweep_propagates_and_reconverges() {
   printf '{"default":{"harness":"deck"}}\n' > "$w/home/config/crew-dispatch.json"
   printf 'deck\n' > "$w/home/config/crew-harness"
   printf 'manual\n' > "$w/home/config/backlog-backend"
-  printf 'tmux\n' > "$w/home/config/backend"
+  printf 'stream\n' > "$w/home/config/backend"
   printf '{"version":1,"slots":{"primary-only":{}}}\n' > "$w/home/config/account-slots.json"
   mkdir -p "$w/sm/config"
   printf '{"version":1,"slots":{"secondmate-local":{}}}\n' > "$w/sm/config/account-slots.json"
@@ -1147,7 +1118,7 @@ test_bootstrap_sweep_propagates_and_reconverges() {
     || fail "sweep: crew-dispatch.json not pushed into the live home"
   [ "$(cat "$w/sm/config/backlog-backend" 2>/dev/null)" = manual ] \
     || fail "sweep: backlog-backend not pushed into the live home"
-  [ "$(cat "$w/sm/config/backend" 2>/dev/null)" = tmux ] \
+  [ "$(cat "$w/sm/config/backend" 2>/dev/null)" = stream ] \
     || fail "sweep: backend not pushed into the live home"
   [ ! -e "$w/sm/config/trace-context" ] \
     || fail "sweep: trace-context changed a legacy live home before relaunch"
@@ -1197,7 +1168,7 @@ test_bootstrap_sweep_propagates_when_tracked_current() {
   printf '{"default":{"harness":"deck"}}\n' > "$w/home/config/crew-dispatch.json"
   printf 'deck\n' > "$w/home/config/crew-harness"
   printf 'manual\n' > "$w/home/config/backlog-backend"
-  printf 'tmux\n' > "$w/home/config/backend"
+  printf 'stream\n' > "$w/home/config/backend"
   run_bootstrap "$w" >/dev/null
   [ "$(cat "$w/sm/config/crew-dispatch.json" 2>/dev/null)" = '{"default":{"harness":"deck"}}' ] \
     || fail "crew-dispatch.json did not propagate to a tracked-current home"
@@ -1205,7 +1176,7 @@ test_bootstrap_sweep_propagates_when_tracked_current() {
     || fail "config did not propagate to a tracked-current home"
   [ "$(cat "$w/sm/config/backlog-backend" 2>/dev/null)" = manual ] \
     || fail "backlog-backend did not propagate to a tracked-current home"
-  [ "$(cat "$w/sm/config/backend" 2>/dev/null)" = tmux ] \
+  [ "$(cat "$w/sm/config/backend" 2>/dev/null)" = stream ] \
     || fail "backend did not propagate to a tracked-current home"
   pass "B8 bootstrap sweep propagates config even when the home's tracked files are already current"
 }
@@ -1275,17 +1246,17 @@ test_backend_inheritance_present_and_absent() {
   head=$(git -C "$w/main" rev-parse HEAD)
   add_sm_worktree "$w" sm "$head"
 
-  printf 'tmux\n' > "$w/home/config/backend"
+  printf 'stream\n' > "$w/home/config/backend"
   err="$w/backend-inherit.err"
   out=$(run_config_push "$w" 2>"$err"); status=$?
   expect_code 0 "$status" "backend present push should succeed"
   assert_contains "$out" "backend: pushed" "backend present value should report pushed"
-  [ "$(cat "$w/sm/config/backend")" = tmux ] || fail "backend present value not pushed"
+  [ "$(cat "$w/sm/config/backend")" = stream ] || fail "backend present value not pushed"
   instruction=$(reread_instruction_path "$w/sm") || fail "backend present reread instruction missing"
-  assert_contains "$(cat "$instruction")" $'-----BEGIN config/backend-----\ntmux\n-----END config/backend-----' \
+  assert_contains "$(cat "$instruction")" $'-----BEGIN config/backend-----\nstream\n-----END config/backend-----' \
     "backend present reread must include exact bytes"
 
-  printf 'herdr\n' > "$w/sm/config/backend"
+  printf 'zellij\n' > "$w/sm/config/backend"
   printf 'stream\n' > "$w/home/config/backend"
   out=$(run_config_push "$w" 2>"$err"); status=$?
   expect_code 0 "$status" "backend changed push should succeed"
@@ -1302,61 +1273,6 @@ test_backend_inheritance_present_and_absent() {
   assert_contains "$(cat "$instruction")" $'-----BEGIN config/backend-----\nABSENT\n-----END config/backend-----' \
     "backend absence reread must use ABSENT token"
   pass "B12b backend inheritance: present values and primary absence converge exactly"
-}
-
-# config/herdr-presentation-spaces has an unconfigured default, so this item's
-# convergence is asserted through the preference the spawn gate actually reads
-# in the destination home, not through file presence alone: mirroring the primary's
-# absence must converge a secondmate to the same unconfigured default rather
-# than turning its projection off. The Herdr version floor that decides what
-# that default resolves to is a property of the running release, not of
-# inheritance, so it is pinned in tests/fm-backend-herdr.test.sh instead.
-sm_presentation_verdict() {  # <config-dir> -> on|off
-  bash -c '
-    . "$0/bin/backends/herdr.sh"
-    case "$(fm_backend_herdr_presentation_preference "$1")" in
-      off) printf "off\n" ;;
-      *) printf "on\n" ;;
-    esac
-  ' "$ROOT" "$1" 2>/dev/null
-}
-
-test_presentation_inheritance_default_on_and_opt_out() {
-  local w head out err status verdict
-  w=$(new_world presentation-inherit)
-  head=$(git -C "$w/main" rev-parse HEAD)
-  add_sm_worktree "$w" sm "$head"
-  err="$w/presentation-inherit.err"
-
-  out=$(run_config_push "$w" 2>"$err"); status=$?
-  expect_code 0 "$status" "presentation default push should succeed"
-  [ -e "$w/sm/config/herdr-presentation-spaces" ] \
-    && fail "primary default must not write an opt-out downstream"
-  verdict=$(sm_presentation_verdict "$w/sm/config")
-  [ "$verdict" = on ] || fail "primary default left the secondmate projection $verdict"
-
-  mkdir -p "$w/sm/config"
-  printf 'off\n' > "$w/sm/config/herdr-presentation-spaces"
-  out=$(run_config_push "$w" 2>"$err"); status=$?
-  expect_code 0 "$status" "presentation reconverge push should succeed"
-  assert_contains "$out" "herdr-presentation-spaces: pushed - mirrored primary absence" \
-    "a local secondmate opt-out should reconverge on the primary default"
-  verdict=$(sm_presentation_verdict "$w/sm/config")
-  [ "$verdict" = on ] || fail "primary default did not reconverge a locally opted-out secondmate ($verdict)"
-
-  printf 'off\n' > "$w/home/config/herdr-presentation-spaces"
-  out=$(run_config_push "$w" 2>"$err"); status=$?
-  expect_code 0 "$status" "presentation opt-out push should succeed"
-  assert_contains "$out" "herdr-presentation-spaces: pushed" "explicit opt-out should report pushed"
-  verdict=$(sm_presentation_verdict "$w/sm/config")
-  [ "$verdict" = off ] || fail "explicit primary opt-out left the secondmate projection $verdict"
-
-  : > "$w/home/config/herdr-presentation-spaces"
-  out=$(run_config_push "$w" 2>"$err"); status=$?
-  expect_code 0 "$status" "presentation legacy opt-in push should succeed"
-  verdict=$(sm_presentation_verdict "$w/sm/config")
-  [ "$verdict" = on ] || fail "a legacy primary opt-in file left the secondmate projection $verdict"
-  pass "B12c presentation inheritance: the primary default converges on, and only an explicit opt-out propagates off"
 }
 
 test_bootstrap_sweep_surfaces_config_propagation_failure() {
@@ -1381,7 +1297,7 @@ test_bootstrap_rereads_after_partial_propagation() {
   add_sm_worktree "$w" sm "$head"
   printf '{"default":{"harness":"deck"}}\n' > "$w/home/config/crew-dispatch.json"
   printf 'invalid shared header\n' > "$w/home/data/captain-shared.md"
-  log="$w/boot-prop-partial.tmux.log"
+  log="$w/boot-prop-partial.endpoint.log"
 
   out=$(run_bootstrap "$w" "$log")
   assert_contains "$out" "SECONDMATE_SYNC: secondmate sm: skipped: inheritance failed" \
@@ -1415,7 +1331,7 @@ test_config_push_propagates_reports_without_ff_or_nudge() {
   printf '{"default":{"harness":"deck"}}\n' > "$w/home/config/crew-dispatch.json"
   printf 'deck\n' > "$w/home/config/crew-harness"
   printf 'manual\n' > "$w/home/config/backlog-backend"
-  printf 'tmux\n' > "$w/home/config/backend"
+  printf 'stream\n' > "$w/home/config/backend"
   printf '{"version":1,"slots":{"primary-only":{}}}\n' > "$w/home/config/account-slots.json"
   mkdir -p "$w/sm/config"
   printf '{"version":1,"slots":{"secondmate-local":{}}}\n' > "$w/sm/config/account-slots.json"
@@ -1423,7 +1339,7 @@ test_config_push_propagates_reports_without_ff_or_nudge() {
   record_live_watcher_fixture "$w/home"
   : > "$w/home/config/trace-context"
   err="$w/config-push-basic.err"
-  log="$w/config-push-basic.tmux.log"
+  log="$w/config-push-basic.endpoint.log"
   out=$(run_config_push "$w" "$log" 2>"$err"); status=$?
 
   expect_code 0 "$status" "config push should succeed"
@@ -1449,13 +1365,13 @@ test_config_push_propagates_reports_without_ff_or_nudge() {
     "config push must not use the AGENTS.md instruction-surface nudge channel"
   [ "$(git -C "$w/sm" rev-parse HEAD)" = "$old_head" ] \
     || fail "config push fast-forwarded tracked files"
-  [ "$(cat "$w/sm/config/backend")" = tmux ] || fail "config push did not write backend"
+  [ "$(cat "$w/sm/config/backend")" = stream ] || fail "config push did not write backend"
   cmp -s "$w/account-slots.before" "$w/sm/config/account-slots.json" \
     || fail "config push copied or removed the secondmate home's local account registry"
   assert_not_contains "$out" "account-slots.json" \
     "config push exposed the home-local account registry as inherited material"
   instruction=$(reread_instruction_path "$w/sm") || fail "config-push reread instruction missing"
-  assert_contains "$(cat "$instruction")" $'-----BEGIN config/backend-----\ntmux\n-----END config/backend-----' \
+  assert_contains "$(cat "$instruction")" $'-----BEGIN config/backend-----\nstream\n-----END config/backend-----' \
     "config-push reread must include exact backend bytes"
   [ ! -s "$err" ] || fail "clean config push wrote unexpected stderr: $(cat "$err")"
   assert_contains "$(inbox_stream "$w/home/state" sm)" "[fm-from-firstmate]" \
@@ -1476,7 +1392,7 @@ test_config_push_propagates_reports_without_ff_or_nudge() {
     "idempotent config push did not preserve session-scoped trace context"
   assert_not_contains "$out2" "config-reread: sent" \
     "unchanged config must not send a reread message"
-  [ ! -s "$log" ] || fail "unchanged config push still invoked tmux send: $(cat "$log")"
+  [ ! -s "$log" ] || fail "unchanged config push still sent text to the endpoint: $(cat "$log")"
   pass "B12 config-push propagates shared config, leaves account slots home-local, rereads on change only, and does not fast-forward"
 }
 
@@ -1555,7 +1471,7 @@ test_config_push_rereads_after_partial_propagation() {
   add_sm_worktree "$w" sm "$head"
   printf '{"default":{"harness":"deck"}}\n' > "$w/home/config/crew-dispatch.json"
   printf 'invalid shared header\n' > "$w/home/data/captain-shared.md"
-  log="$w/config-push-partial.tmux.log"
+  log="$w/config-push-partial.endpoint.log"
   err="$w/config-push-partial.err"
 
   out=$(run_config_push "$w" "$log" 2>"$err"); status=$?
@@ -1610,14 +1526,14 @@ test_config_reread_per_home_changed_sets_and_exact_bytes() {
   printf '%s' "$multiline_json" > "$w/home/config/crew-dispatch.json"
   printf 'deck\n' > "$w/home/config/crew-harness"
   printf 'manual\n' > "$w/home/config/backlog-backend"
-  printf 'tmux\n' > "$w/home/config/backend"
+  printf 'stream\n' > "$w/home/config/backend"
   {
     shared_captain_header_for_tests
     printf '%s\n' "shared secret preference body that must never appear in a config reread"
   } > "$w/home/data/captain-shared.md"
 
   record_live_watcher_fixture "$w/home"
-  log="$w/config-reread-per-home.tmux.log"
+  log="$w/config-reread-per-home.endpoint.log"
   err="$w/config-reread-per-home.err"
   out=$(run_config_push "$w" "$log" 2>"$err"); status=$?
   expect_code 0 "$status" "per-home reread config push should succeed"
@@ -1630,7 +1546,7 @@ test_config_reread_per_home_changed_sets_and_exact_bytes() {
     || fail "beta did not receive multiline dispatch"
   [ "$(cat "$w/alpha/config/crew-harness")" = deck ] || fail "alpha harness not updated"
   [ "$(cat "$w/alpha/config/backlog-backend")" = manual ] || fail "alpha backlog-backend not updated"
-  [ "$(cat "$w/alpha/config/backend")" = tmux ] || fail "alpha backend not updated"
+  [ "$(cat "$w/alpha/config/backend")" = stream ] || fail "alpha backend not updated"
 
   instr_a=$(reread_instruction_path "$w/alpha") || fail "alpha instruction missing after config push"
   instr_b=$(reread_instruction_path "$w/beta") || fail "beta instruction missing after config push"
@@ -1665,7 +1581,7 @@ test_config_reread_per_home_changed_sets_and_exact_bytes() {
     "alpha instruction must include exact harness scalar bytes"
   assert_contains "$(cat "$instr_a")" $'-----BEGIN config/backlog-backend-----\nmanual\n-----END config/backlog-backend-----' \
     "alpha instruction must include exact backlog-backend scalar bytes"
-  assert_contains "$(cat "$instr_a")" $'-----BEGIN config/backend-----\ntmux\n-----END config/backend-----' \
+  assert_contains "$(cat "$instr_a")" $'-----BEGIN config/backend-----\nstream\n-----END config/backend-----' \
     "alpha instruction must include exact backend scalar bytes"
 
   # No parsed/effective summary, no SHA, no captain-shared dump.
@@ -1719,7 +1635,7 @@ test_config_reread_isolation_and_absent_and_send_failure() {
   printf 'deck\n' > "$w/home/config/crew-harness"
   rm -f "$w/home/config/crew-dispatch.json" "$w/home/config/backlog-backend"
 
-  log="$w/config-reread-absent.tmux.log"
+  log="$w/config-reread-absent.endpoint.log"
   err="$w/config-reread-absent.err"
   out=$(run_config_push "$w" "$log" 2>"$err"); status=$?
   expect_code 0 "$status" "absent-mirror reread push should succeed"
@@ -1811,7 +1727,7 @@ test_config_reread_isolation_and_absent_and_send_failure() {
   # A normal later push retries the durable pointers even though propagation is
   # unchanged, then clears every marker after delivery succeeds.
   rm -f "$w/home/state/alpha.inbox" "$w/home/state/beta.inbox"
-  retry_log="$w/config-reread-send-retry.tmux.log"
+  retry_log="$w/config-reread-send-retry.endpoint.log"
   retry_out=$(run_config_push "$w" "$retry_log" 2>"$err"); retry_status=$?
   expect_code 0 "$retry_status" "send failure should be retryable"
   assert_contains "$retry_out" "config-reread: sent" \
@@ -1864,7 +1780,7 @@ SH
   assert_no_reread_instructions "$w/alpha"
 
   rm -f "$fakebin/mv"
-  log="$w/config-reread-publication-retry.tmux.log"
+  log="$w/config-reread-publication-retry.endpoint.log"
   retry_out=$(run_config_push "$w" "$log" 2>/dev/null); retry_status=$?
   expect_code 0 "$retry_status" "publication failure should retry on an unchanged push"
   assert_contains "$retry_out" "config-reread: sent" \
@@ -1917,7 +1833,7 @@ SH
     "instruction-write failure did not retain the original exact bytes"
   printf 'changed-before-retry\n' > "$w/home/config/crew-harness"
   rm -f "$fakebin/mv"
-  log="$w/config-reread-write-retry.tmux.log"
+  log="$w/config-reread-write-retry.endpoint.log"
   retry_out=$(run_config_push "$w" "$log" 2>/dev/null); retry_status=$?
   expect_code 0 "$retry_status" "a later changed push should retry an instruction-write failure"
   assert_contains "$retry_out" "config-reread: sent" \
@@ -1988,7 +1904,7 @@ SH
     "exact temporary fallback did not preserve the original bytes"
   printf 'changed-before-retry\n' > "$w/home/config/crew-harness"
   rm -f "$fakebin/mv" "$fakebin/cp"
-  log="$w/config-reread-exact-temp-fallback.tmux.log"
+  log="$w/config-reread-exact-temp-fallback.endpoint.log"
   retry_out=$(run_config_push "$w" "$log" 2>/dev/null); retry_status=$?
   expect_code 0 "$retry_status" "later push should deliver retained exact temporary bytes"
   old_instr=$(inbox_stream "$w/home/state" sm | grep 'CONFIG_REREAD:' | head -n 1 | sed 's/.*CONFIG_REREAD: //')
@@ -2015,42 +1931,42 @@ test_config_reread_serializes_concurrent_pushes() {
   printf 'one\n' > "$w/home/config/crew-harness"
 
   fakebin=$(make_fake_toolchain "$w")
-  mv "$fakebin/tmux" "$fakebin/tmux.real"
   marker="$w/first-send.marker"
   entered="$w/first-send.entered"
-  log="$w/config-reread-serialized.tmux.log"
-  cat > "$fakebin/tmux" <<SH
+  log="$w/config-reread-serialized.endpoint.log"
+  log_endpoints "$w" "$log"
+  # The first text the endpoint receives is held for a second.
+  cat > "$w/first-send.hook" <<SH
 #!/usr/bin/env bash
-case "\$*" in
-  *send-keys*)
-    if (set -o noclobber; : > "$marker") 2>/dev/null; then
-      : > "$entered"
-      sleep 1
-    fi
-    ;;
-esac
-exec "$fakebin/tmux.real" "\$@"
+if (set -o noclobber; : > "$marker") 2>/dev/null; then
+  : > "$entered"
+  /bin/sleep 1
+fi
 SH
-  chmod +x "$fakebin/tmux"
+  chmod +x "$w/first-send.hook"
+  fm_test_fake_stream_set "$(fm_test_stream_target_of "$w/home/state" sm)" \
+    "$(jq -nc --arg h "$w/first-send.hook" '{on_text: $h}')"
 
   first_out="$w/first-push.out"
   (
     PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
-      FM_SEND_SETTLE=0 FM_FAKE_TMUX_LOG="$log" \
+      FM_SEND_SETTLE=0 \
       "$ROOT/bin/fm-config-push.sh" > "$first_out" 2>&1
   ) &
   first_pid=$!
-  for _ in $(seq 1 100); do
+  # Wait for the first push to ring the endpoint (bounded, and only while it runs).
+  for _ in $(seq 1 600); do
     [ -e "$entered" ] && break
-    sleep 0.02
+    kill -0 "$first_pid" 2>/dev/null || break
+    sleep 0.05
   done
-  [ -e "$entered" ] || fail "first config push did not reach pointer delivery"
+  [ -e "$entered" ] || fail "first config push did not reach pointer delivery: $(cat "$first_out" 2>/dev/null)"
   first_instr=$(reread_instruction_path "$w/sm") \
     || fail "first concurrent push did not publish its generation"
   printf 'two\n' > "$w/home/config/crew-harness"
   second_out="$w/second-push.out"
   PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
-    FM_SEND_SETTLE=0 FM_FAKE_TMUX_LOG="$log" \
+    FM_SEND_SETTLE=0 \
     "$ROOT/bin/fm-config-push.sh" > "$second_out" 2>&1
   second_status=$?
   wait "$first_pid"; first_status=$?
@@ -2086,9 +2002,10 @@ test_config_reread_full_retry_queue_drains_before_new_push() {
     chmod 0600 "$path"
   done
   fakebin=$(make_fake_toolchain "$w")
-  log="$w/config-reread-full-queue.tmux.log"
+  log="$w/config-reread-full-queue.endpoint.log"
+  log_endpoints "$w" "$log"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
-    FM_SEND_SETTLE=0 FM_FAKE_TMUX_LOG="$log" \
+    FM_SEND_SETTLE=0 \
     "$ROOT/bin/fm-config-push.sh" 2>&1); status=$?
   expect_code 0 "$status" "a full retry queue should drain before a new push"
   assert_contains "$out" "config-reread: sent" \
@@ -2171,20 +2088,13 @@ test_config_reread_stops_after_failed_generation() {
   fm_config_reread_mark_pending "$new" "$new.pending" \
     || fail "could not mark newer generation pending"
   fakebin=$(make_fake_toolchain "$w")
-  mv "$fakebin/tmux" "$fakebin/tmux.real"
-  cat > "$fakebin/tmux" <<SH
-#!/usr/bin/env bash
-case "\$*" in
-  *send-keys*'.0000-fail'*) exit 1 ;;
-esac
-exec "$fakebin/tmux.real" "\$@"
-SH
-  chmod +x "$fakebin/tmux"
+  # The mate has no live record here, so delivering the oldest generation's
+  # pointer fails.
   report="$w/empty-reread.report"
   : > "$report"
-  log="$w/config-reread-order.tmux.log"
+  log="$w/config-reread-order.endpoint.log"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$ROOT" \
-    FM_SEND_SETTLE=0 FM_FAKE_TMUX_LOG="$log" \
+    FM_SEND_SETTLE=0 \
     fm_config_send_reread_nudge sm "$w/sm" "$report" 2>&1); status=$?
   expect_code 1 "$status" "an older failed generation should remain diagnostic"
   assert_contains "$out" "CONFIG_REREAD: secondmate sm: send failed" \
@@ -2218,7 +2128,7 @@ test_config_reread_skips_when_unchanged_and_reads_after_push() {
 
   printf 'deck\n' > "$w/home/config/crew-harness"
   printf 'deck\n' > "$w/sm/config/crew-harness"
-  log="$w/config-reread-unchanged.tmux.log"
+  log="$w/config-reread-unchanged.endpoint.log"
   out=$(run_config_push "$w" "$log" 2>/dev/null); status=$?
   expect_code 0 "$status" "unchanged push should succeed"
   assert_not_contains "$out" "config-reread: sent" "no reread when nothing changed"
@@ -2283,9 +2193,10 @@ test_config_reread_bootstrap_path_and_spawn_flexibility() {
   printf 'deck\n' > "$w/home/config/crew-harness"
 
   fakebin=$(make_fake_toolchain "$w")
-  log="$w/bootstrap-reread.tmux.log"
+  log="$w/bootstrap-reread.endpoint.log"
+  log_endpoints "$w" "$log"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
-    FM_SEND_SETTLE=0 FM_FAKE_TMUX_LOG="$log" \
+    FM_SEND_SETTLE=0 \
     "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
   [ "$(cat "$w/sm/config/crew-harness")" = deck ] || fail "bootstrap did not push harness"
   instr=$(reread_instruction_path "$w/sm") || fail "bootstrap reread instruction missing"
@@ -2348,25 +2259,18 @@ printf '%s\n' 7500 > '$w/sm/config/startup-memory-budget'
 SH
   chmod +x "$w/main/bin/fm-spawn.sh"
   fakebin=$(make_fake_toolchain "$w")
-  cat > "$fakebin/tmux" <<SH
-#!/usr/bin/env bash
-case "\$*" in
-  *display-message*'#{pane_current_command}'*) printf '%s' zsh ;;
-  *display-message*'#{pane_id}'*) printf '%s' '%1' ;;
-  *display-message*'#{cursor_y}'*) printf '%s' 0 ;;
-  *capture-pane*) printf '❯\n'
-    ;;
-  *send-keys*) printf '%s' send-keys >> '$log' ;;
-esac
-SH
-  chmod +x "$fakebin/tmux"
+  # The mate's endpoint stands at its shell: a dead agent the sweep respawns.
+  log_endpoints "$w" "$log"
+  fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$w/home/state" sm)" zsh
   PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
-    FM_SEND_SETTLE=0 FM_FAKE_TMUX_LOG="$log" \
+    FM_SEND_SETTLE=0 \
     "$ROOT/bin/fm-bootstrap.sh" >/dev/null 2>&1
   assert_contains "$(cat "$log")" "spawn" \
     "bootstrap did not respawn the dead secondmate"
-  assert_not_contains "$(cat "$log")" "send-keys" \
+  assert_not_contains "$(cat "$log")" "Firstmate instruction waiting" \
     "bootstrap nudged a secondmate before its respawn completed"
+  [ -z "$(inbox_stream "$w/home/state" sm)" ] \
+    || fail "bootstrap enqueued a reread for a secondmate before its respawn completed"
   assert_present "$stale" "bootstrap removed the stale generation before relaunch handling"
   assert_present "$stale.pending" "bootstrap removed the stale marker before relaunch handling"
   fm_config_reread_discard_pending "$w/sm" || fail "could not clean respawn test generation"
@@ -2399,7 +2303,7 @@ test_spawn_quarantines_pending_rereads_on_cleanup_failure() {
     printf 'old-quarantine-%s\n' "$n" > "$dir/snapshot"
     printf 'hidden-quarantine-%s\n' "$n" > "$dir/.hidden-snapshot"
   done
-  fakebin=$(make_launch_capturing_tmux "$w/tmux-spawn-quarantine")
+  fakebin=$(make_launch_capturing_fakebin "$w/bin-spawn-quarantine")
   real_rm=$(command -v rm)
   cat > "$fakebin/rm" <<SH
 #!/usr/bin/env bash
@@ -2410,7 +2314,7 @@ exec "$real_rm" "\$@"
 SH
   chmod +x "$fakebin/rm"
   launchlog="$w/spawn-quarantine.launch.log"
-  out=$(PATH="$fakebin:$BASE_PATH" TMUX='' \
+  out=$(PATH="$fakebin:$BASE_PATH" \
     FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$w/home" HOME="$w/home/user-home" \
     FM_STATE_OVERRIDE="$w/home/state" FM_DATA_OVERRIDE="$w/home/data" \
     FM_PROJECTS_OVERRIDE="$w/home/projects" FM_CONFIG_OVERRIDE="$w/home/config" \
@@ -2471,7 +2375,6 @@ test_bootstrap_sweep_propagates_when_tracked_current
 test_bootstrap_sweep_defers_dispatch_on_stale_unignored_home
 test_bootstrap_sweep_materializes_and_inherits_memory_default
 test_backend_inheritance_present_and_absent
-test_presentation_inheritance_default_on_and_opt_out
 test_bootstrap_sweep_surfaces_config_propagation_failure
 test_bootstrap_rereads_after_partial_propagation
 test_config_push_propagates_reports_without_ff_or_nudge

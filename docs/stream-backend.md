@@ -1,7 +1,7 @@
 # Stream backend
 
 The stream backend puts every task's live terminal output on one central hub, so a single place can watch workers on any machine and talk to them.
-It is experimental and explicit-only for task spawning; [`Away-mode supervisor backend`](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target) owns the separate primary-supervisor discovery.
+It is firstmate's only runtime backend; [`Away-mode supervisor backend`](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target) owns the separate primary-supervisor discovery.
 
 [`docs/configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns backend selection, task-selector resolution, and the metadata contract that every backend shares.
 This document owns setup, security, and the limits specific to stream.
@@ -44,13 +44,13 @@ Secondmate spawns use the existing isolated-home launch path, including Deck's p
 
 ## Secondmate lifecycle
 
-The same owners serve stream, tmux, and Herdr secondmate launches: `bin/fm-spawn.sh` selects the home and harness, and `bin/fm-task-inbox-lib.sh` with `bin/fm-send.sh` owns durable steering and the doorbell.
+The same owners serve every secondmate launch: `bin/fm-spawn.sh` selects the home and harness, and `bin/fm-task-inbox-lib.sh` with `bin/fm-send.sh` owns durable steering and the doorbell.
 Deck's backend-independent host invariants are documented in `bin/fm-deck-worker.sh`: a watcher wake is never lost between turns, turns never overlap, and failures are reported rather than swallowed.
 `tests/fm-deck-harness.test.sh` exercises those invariants with serialized watcher and stdin turns.
 `tests/fm-backend-stream.test.sh` exercises a Deck home through the real stream transport, including launch, unacknowledged steering, liveness, interrupt, exit, same-endpoint relaunch, and recovery.
 
 Recovery classification remains `fm_backend_agent_state` in `bin/fm-backend.sh`, with one stream-only secondmate rule reading on top of it in `bin/fm-bootstrap.sh`: for a stream mate, `missing` is the hub's in-memory registry not knowing that endpoint, which an agent still pacing its rejoin after a hub restart also produces, so it licenses no respawn and the sweep skips with an `absence from the hub registry` diagnostic.
-The consequence is a deliberate asymmetry with tmux and Herdr, whose `missing` is process-authoritative and does respawn: a stream mate whose own agent is gone reads `unreadable` while the hub still holds its record, then `missing` once the hub reaps that record after an hour of agent silence, so it is never respawned automatically and that skip line is the only signal.
+The consequence: a stream mate whose own agent is gone reads `unreadable` while the hub still holds its record, then `missing` once the hub reaps that record after an hour of agent silence, so it is never respawned automatically and that skip line is the only signal.
 A stream mate whose worker exited while its agent lived still reads `dead` from the agent's own closing report, and the sweep respawns it exactly as it does on any other backend.
 `bin/fm-bootstrap.sh` owns secondmate recovery respawn, preserving the recorded backend rather than selecting a different backend from ambient configuration.
 `bin/fm-control.sh` owns interrupt, exit, same-endpoint relaunch, and `recover-missing`.
@@ -59,7 +59,7 @@ Because a stream `missing` alone does not prove the worker gone, recovery checks
 A matching agent blocks recovery even when the hub has forgotten it; wait for its re-registration or stop that exact agent before retrying.
 [Agent control](agent-control.md#failure-and-rollback) owns failed-rebind cleanup, retained new-endpoint bindings, and retry handling.
 
-[Agent control](agent-control.md#verbs) owns backend migration through `relaunch --backend`; [remote placement](remote-secondmates.md#stream-on-the-remote-host) owns stream-hosted remote mates and their supported lifecycle routes.
+[Remote placement](remote-secondmates.md#stream-on-the-remote-host) owns stream-hosted remote mates and their supported lifecycle routes.
 
 A locally seeded stream-hosted second mate launches, is steered, and reports its own lifecycle, but it cannot itself spawn or supervise on stream until the hub has restarted since its seeding wrote the home a credential.
 Both PTY agents hand the hosted process the hub address and deliberately withhold the token, and `FM_INHERITABLE_CONFIG` in `bin/fm-config-inherit-lib.sh` mirrors `backend` into that home without `stream-hub` or `stream-token`, so the launch path still carries no credential.
@@ -311,7 +311,7 @@ This executable is a host-side routing surface, not an HTTP endpoint or an authe
 Its header and `--help` own the operator-maintained 0600 binding registry, exact target resolution, and supported verbs.
 The host resolves `(machine, label)` to an explicit `FM_HOME` and exact task or captain-call binding; neither the registry's home paths nor control-class credentials are supplied by or returned to the browser.
 Invalid registry bindings refuse before dispatch; stale captain calls and deeper task eligibility are checked by the existing owners.
-Task lifecycle requests delegate to `bin/fm-control.sh` under the resolved home without bypassing its lease, backlog eligibility, endpoint identity, or [remote lifecycle routing boundaries](remote-secondmates.md#lifecycle-control-and-backend-migration).
+Task lifecycle requests delegate to `bin/fm-control.sh` under the resolved home without bypassing its lease, backlog eligibility, endpoint identity, or [remote lifecycle routing boundaries](remote-secondmates.md#lifecycle-control).
 The host adapter must keep backend credentials in host-only 0600 files and must never send them in page content, browser environment, or browser storage.
 
 Decision actions carry the captain's authenticated exact answer to the existing send or captain-hold owner; the [host executable's header and help](../bin/fm-ui-host-control.py) own payload fields, delegation, acknowledgement framing, host-only diagnostics, and retry limits.
@@ -476,7 +476,7 @@ Nothing in firstmate invokes it, and it names each id exactly - wildcards and al
 
 By naming a record you assert, from your own inspection of the machine that ran it, that no worker is still running behind it.
 That is the hub-unanswerable condition: the backend that owned the worker can no longer say anything about it, so no read will ever settle the question.
-Your username and the time are recorded with the assertion: every run appends one line to `state/endpoint-retirements.log` recording that a named person asserted, at a named time, that a named record should be retired, and whether the runtime-refusal override was used.
+Your username and the time are recorded with the assertion: every run appends one line to `state/endpoint-retirements.log` recording that a named person asserted, at a named time, that a named record should be retired.
 That line is written before anything is removed, and a run whose line cannot be appended retires nothing - a record is never removed without a durable author.
 Because it is written first, cleanup can still refuse afterwards and retire nothing: each line records the assertion that was made, not an outcome, and no outcome is written back to it.
 
@@ -494,8 +494,7 @@ What it touches, and what it does not:
 - Every other cleanup refusal stands and nothing is retired - an outcome that has not reached the parent channel, a backlog transition that cannot be replayed.
   The one exception is a cleanup that fails only after it has already removed the durable task record: the run reports that partial state, naming the record that is gone and the pending close left behind, instead of claiming nothing was retired.
 
-`--override-runtime-refusal` additionally proceeds past a RUNTIME's own refusal to answer for the endpoint - a herdr server that cannot be reached at all, for instance.
-Without the flag that refusal stands and nothing is retired; with it, the override is recorded alongside the retirement with your name and the time.
+A record left on the retired tmux or herdr backends reaches cleanup as an unconfirmed kill, so this command retires it the same way.
 
 The command is not stream-specific, but the stream hub's restart behavior above is the condition it exists for.
 

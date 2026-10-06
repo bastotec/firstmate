@@ -24,26 +24,20 @@
 # twice.
 set -u
 
-# shellcheck source=tests/lib.sh disable=SC1091
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# A live secondmate's endpoint is a fake stream endpoint (tests/fixtures.sh).
+# shellcheck source=tests/fixtures.sh disable=SC1091
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 TMP_ROOT=$(fm_test_tmproot fm-bootstrap-tests)
-
-# Hermetic runtime-backend detection. These cases pin the backend per-home via
-# config/backend; the dev shell's ambient runtime markers ($TMUX inside tmux,
-# HERDR_ENV inside herdr) must not leak into
-# fm_backend_name and flip a default-backend case onto a non-tmux backend. Unset
-# them once so the suite resolves the tmux reference backend unless a case says
-# otherwise - the same hermeticity discipline as pinning PATH via BASE_PATH.
-unset TMUX TMUX_PANE HERDR_ENV HERDR_PANE_ID HERDR_SESSION HERDR_SOCKET_PATH 2>/dev/null || true
+fm_test_fake_stream_ensure || fail "the fake stream hub did not start"
 
 # A fake toolchain where every required tool is present and gh is authenticated.
 # treehouse's `get --help` advertises --lease only when FM_FAKE_TREEHOUSE_LEASE_HELP=1.
 make_fake_toolchain() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
-  fm_fake_exit0 "$fakebin" tmux node chrome-devtools-axi
+  fm_fake_exit0 "$fakebin" node chrome-devtools-axi
   fm_fake_version_tool "$fakebin" lavish-axi FM_FAKE_LAVISH_AXI_VERSION 0.1.46
   cat > "$fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
@@ -578,82 +572,41 @@ SH
 }
 
 
-# Build a fake toolchain with tmux REMOVED and the named backend session CLI(s)
-# plus jq added, so a backend that must NOT require tmux can be proven silent
-# with tmux absent. Echoes the fakebin dir. The removed tmux is what makes these
-# cases catch a "every backend demands tmux" bug: with such a TOOLS list a
-# herdr home would report MISSING: tmux here.
-make_fake_toolchain_no_tmux() {  # <case-dir> <extra-cli...>
-  local dir=$1 fakebin
-  shift
-  fakebin=$(make_fake_toolchain "$dir")
-  rm -f "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" jq "$@"
-  printf '%s\n' "$fakebin"
+# The stream backend's own dependency set (python3, curl, jq, treehouse) is the
+# whole backend requirement: with every one present the run is silent.
+test_stream_backend_requires_only_its_own_deps() {
+  local case_dir fakebin out
+  case_dir="$TMP_ROOT/stream-deps"
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf '%s\n' stream > "$case_dir/home/config/backend"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  fm_fake_exit0 "$fakebin" jq
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  [ -z "$out" ] || fail "backend=stream with its own deps present should be silent, got: $out"
+  pass "bootstrap: the stream backend requires its own deps and is silent when they are present"
 }
 
-test_session_provider_backends_do_not_require_tmux() {
-  local backend cli case_dir fakebin out
-  # herdr is a session provider only: it requires its own CLI, jq,
-  # and treehouse, never tmux. With all genuine deps present and tmux absent,
-  # bootstrap must be silent.
-  while IFS='^' read -r backend cli; do
-    [ -n "$backend" ] || continue
-    case_dir="$TMP_ROOT/$backend-no-tmux"
+# A config/backend left naming a retired backend (tmux, herdr) has no verified
+# dependency set: it is reported as invalid, and none of the retired backend's
+# own tools is demanded in its place.
+test_retired_backend_config_reports_invalid_configuration() {
+  local backend case_dir fakebin out
+  for backend in tmux herdr; do
+    case_dir="$TMP_ROOT/retired-$backend"
     mkdir -p "$case_dir/home/config"
     printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     printf '%s\n' "$backend" > "$case_dir/home/config/backend"
-    fakebin=$(make_fake_toolchain_no_tmux "$case_dir" "$cli")
+    fakebin=$(make_fake_toolchain "$case_dir")
     out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
       FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-    [ -z "$out" ] || fail "backend=$backend with tmux absent but its own deps present should be silent, got: $out"
-  done <<'ROWS'
-herdr^herdr
-ROWS
-  pass "bootstrap: session-provider backends require their own CLI + jq + treehouse, never tmux"
+    assert_contains "$out" "BACKEND_INVALID: $backend (known: stream)" \
+      "a retired backend=$backend config should be reported as invalid: $out"
+    assert_not_contains "$out" "MISSING: $backend" "a retired backend=$backend config demanded its retired CLI"
+  done
+  pass "bootstrap: a config naming a retired backend fails closed without demanding its tools"
 }
-
-test_session_provider_backends_gate_own_cli_not_tmux() {
-  local backend cli case_dir fakebin out missing
-  # With the backend's OWN session CLI absent (and tmux also absent), bootstrap
-  # must fail closed on the genuine dep and never substitute a false tmux demand.
-  while IFS='^' read -r backend cli; do
-    [ -n "$backend" ] || continue
-    case_dir="$TMP_ROOT/$backend-missing-cli"
-    mkdir -p "$case_dir/home/config"
-    printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-    printf '%s\n' "$backend" > "$case_dir/home/config/backend"
-    # Toolchain has jq + treehouse but NOT the session CLI and NOT tmux.
-    fakebin=$(make_fake_toolchain_no_tmux "$case_dir")
-    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-      FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-    if [ "$backend" = herdr ]; then
-      missing="MISSING_MANUAL: herdr (instructions: https://herdr.dev)"
-    else
-      missing="MISSING: $cli"
-    fi
-    assert_contains "$out" "$missing" "backend=$backend must fail closed on its own missing session CLI"
-    if [ "$backend" = herdr ]; then
-      assert_not_contains "$out" "MISSING: herdr (install:" \
-        "backend=herdr must not advertise manual guidance as an executable install command"
-    fi
-    assert_not_contains "$out" "MISSING: tmux" "backend=$backend must not demand tmux when its own CLI is missing"
-  done <<'ROWS'
-herdr^herdr
-ROWS
-  pass "bootstrap: a session-provider backend gates its own CLI, never a false tmux requirement"
-}
-
-test_herdr_install_requires_manual_action() {
-  local out status
-  out=$("$ROOT/bin/fm-bootstrap.sh" install herdr 2>&1)
-  status=$?
-  [ "$status" -ne 0 ] || fail "install herdr should fail instead of evaluating its manual-install hint"
-  [ "$out" = "error: herdr requires manual installation (instructions: https://herdr.dev)" ] \
-    || fail "install herdr should return actionable manual-install guidance, got: $out"
-  pass "bootstrap: Herdr manual-install guidance is never executed as a shell command"
-}
-
 
 test_unknown_backend_reports_invalid_configuration() {
   local case_dir fakebin out
@@ -664,15 +617,15 @@ test_unknown_backend_reports_invalid_configuration() {
   fakebin=$(make_fake_toolchain "$case_dir")
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "BACKEND_INVALID: bogus (known: tmux herdr stream)" \
+  assert_contains "$out" "BACKEND_INVALID: bogus (known: stream)" \
     "bootstrap should report an unknown resolved backend"
-  assert_not_contains "$out" "MISSING: tmux" "an unknown backend should not silently fall back to tmux dependencies"
+  assert_not_contains "$out" "MISSING: jq" "an unknown backend should not silently fall back to stream dependencies"
   pass "bootstrap: unknown resolved backends fail closed with an actionable diagnostic"
 }
 
-test_json_backends_require_jq_not_tmux() {
+test_json_backends_require_jq() {
   local backend case_dir fakebin bash_env out
-  # herdr/stream parse JSON output, so jq is a genuine dep.
+  # stream parses JSON output, so jq is a genuine dep.
   # jq lives in a system BASE_PATH dir on many hosts, so force it missing with a
   # command()/jq() override (the same technique the git-required case uses) to keep
   # the assertion host-independent.
@@ -682,10 +635,8 @@ test_json_backends_require_jq_not_tmux() {
     mkdir -p "$case_dir/home/config"
     printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
     printf '%s\n' "$backend" > "$case_dir/home/config/backend"
-    # Session CLI present, tmux absent, jq deliberately NOT stubbed and masked below.
+    # jq deliberately NOT stubbed and masked below.
     fakebin=$(make_fake_toolchain "$case_dir")
-    rm -f "$fakebin/tmux"
-    fm_fake_exit0 "$fakebin" "$backend"
     bash_env="$case_dir/no-jq.bash"
     cat > "$bash_env" <<'SH'
 command() {
@@ -701,28 +652,26 @@ SH
     out=$(PATH="$fakebin:$BASE_PATH" BASH_ENV="$bash_env" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
       FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
     assert_contains "$out" "MISSING: jq" "backend=$backend must fail closed on missing jq"
-    assert_not_contains "$out" "MISSING: tmux" "backend=$backend must not demand tmux when jq is missing"
   done <<'ROWS'
-herdr
 stream
 ROWS
-  pass "bootstrap: JSON-emitting backends require jq (their genuine dep), never tmux"
+  pass "bootstrap: the JSON-emitting stream backend requires jq (its genuine dep)"
 }
 
 test_treehouse_lease_check_follows_resolved_backend() {
   local case_dir fakebin out
-  # A treehouse that lacks durable --lease support is a problem for every
-  # session-provider backend, since each relies on treehouse for worktrees.
+  # A treehouse that lacks durable --lease support is a problem for the stream
+  # backend, which relies on treehouse for worktrees.
   # FM_FAKE_TREEHOUSE_LEASE_HELP unset: the fake treehouse advertises NO --lease.
-  case_dir="$TMP_ROOT/herdr-old-treehouse"
+  case_dir="$TMP_ROOT/stream-old-treehouse"
   mkdir -p "$case_dir/home/config"
   printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf '%s\n' herdr > "$case_dir/home/config/backend"
-  fakebin=$(make_fake_toolchain_no_tmux "$case_dir" herdr)
+  printf '%s\n' stream > "$case_dir/home/config/backend"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  fm_fake_exit0 "$fakebin" jq
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
     "$ROOT/bin/fm-bootstrap.sh")
-  assert_contains "$out" "MISSING: treehouse" "backend=herdr must still require treehouse with durable lease support"
-  assert_not_contains "$out" "MISSING: tmux" "backend=herdr must not demand tmux even when treehouse is too old"
+  assert_contains "$out" "MISSING: treehouse" "backend=stream must require treehouse with durable lease support"
   pass "bootstrap: the treehouse lease check follows the resolved backend's worktree provider"
 }
 
@@ -841,28 +790,14 @@ make_routine_bootstrap_fixture() {
   git -C "$root" worktree add -q --detach "$sm" "$c1"
   printf '%s\n' sm > "$sm/.fm-secondmate-home"
   {
-    printf 'window=firstmate:fm-sm\n'
+    fm_test_stream_task "$home/state" sm
     printf 'kind=secondmate\n'
     printf 'harness=deck\n'
     printf 'home=%s\n' "$sm"
   } > "$home/state/sm.meta"
+  fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$home/state" sm)" pi
   fakebin=$(make_fake_toolchain "$case_dir")
   add_real_jq "$fakebin"
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-case "${1:-}" in
-  display-message)
-    case "$*" in
-      *'#{cursor_y}'*) printf '%s\n' 0 ;;
-      *) printf '%s\n' fm-deck-worker ;;
-    esac
-    ;;
-  capture-pane) printf '❯\n' ;;
-  list-windows) printf '%s\n' fm-sm ;;
-esac
-exit 0
-SH
-  chmod +x "$fakebin/tmux"
   printf '%s|%s|%s\n' "$root" "$home" "$fakebin"
 }
 
@@ -873,7 +808,7 @@ run_routine_bootstrap_fixture() {
   fixture=${fixture#*|}
   home=${fixture%%|*}
   fakebin=${fixture#*|}
-  PATH="$fakebin:$BASE_PATH" FM_BACKEND=tmux FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \
+  PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
     "$shell" "$ROOT/bin/fm-bootstrap.sh"
 }
@@ -913,7 +848,7 @@ run_home_route_bootstrap() {
   fixture=${fixture#*|}
   home=${fixture%%|*}
   fakebin=${fixture#*|}
-  PATH="$fakebin:$BASE_PATH" FM_BACKEND=tmux FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \
+  PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \
     FM_FAKE_TREEHOUSE_LEASE_HELP=1 FM_BOOTSTRAP_DETECT_ONLY=1 \
     "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null
 }
@@ -1290,11 +1225,10 @@ test_tasks_axi_min_version
 test_quota_axi_min_version
 test_tasks_axi_unreadable_transition_gate
 test_git_is_required_with_supported_install_instruction
-test_session_provider_backends_do_not_require_tmux
-test_session_provider_backends_gate_own_cli_not_tmux
-test_herdr_install_requires_manual_action
+test_stream_backend_requires_only_its_own_deps
+test_retired_backend_config_reports_invalid_configuration
 test_unknown_backend_reports_invalid_configuration
-test_json_backends_require_jq_not_tmux
+test_json_backends_require_jq
 test_treehouse_lease_check_follows_resolved_backend
 test_fleet_sync_timeout_scales_with_origin_backed_project_count
 test_fleet_sync_timeout_floor_preserves_small_fleets

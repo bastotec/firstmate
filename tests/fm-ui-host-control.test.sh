@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Public executable tests of host owner routing, intent-only notes and refusal.
 set -euo pipefail
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 TMP_ROOT=$(fm_test_tmproot fm-ui-host-control)
 mkdir -p "$TMP_ROOT"
 trap 'fm_test_cleanup' EXIT
+# Task endpoints are fake stream endpoints on this suite's hub; the Python
+# below registers them through the hub's own endpoint route.
+fm_test_fake_stream_ensure
 python3 - "$ROOT" "$TMP_ROOT" <<'PY'
 import json
 import os
@@ -43,6 +46,26 @@ def evidence(surface, result, request=None):
             entry['request'] = request
         with open(destination, 'a', encoding='utf-8') as output:
             output.write(json.dumps(entry) + '\n')
+
+
+# Register task <task_id>'s fake stream endpoint (tests/fixtures.sh's hub) and
+# return its record identity lines; every text it is typed lands in typed_log.
+def stream_identity(task_id):
+    import hashlib
+    import urllib.request
+    url, tag = os.environ['FM_TEST_STREAM_URL'], os.environ['FM_TEST_STREAM_TAG']
+    endpoint_id = hashlib.sha256((str(home) + '/' + task_id).encode()).hexdigest()[:32]
+    body = json.dumps(dict(endpoint_id=endpoint_id, machine='fake-box', label='fm-' + task_id,
+                           cwd=str(home), status_path=str(home / 'state' / (task_id + '.status')),
+                           replace_label=True, foreground=[], launch_log=str(typed_log)))
+    request = urllib.request.Request(url + '/v1/agent/endpoints', data=body.encode(), method='POST',
+                                     headers={'Content-Type': 'application/json'})
+    urllib.request.urlopen(request, timeout=10).read()
+    return ('window=%s:%s\nbackend=stream\nstream_hub=%s\nstream_endpoint_id=%s\nendpoint_task_id=%s\n'
+            % (tag, endpoint_id, url, endpoint_id, task_id))
+
+
+typed_log = temp / 'typed-events'
 
 
 def write(rows):
@@ -173,23 +196,12 @@ result, records = stream_command('fm-sample', dict(kind='resolve-key', key='fixt
 assert not records and 'unconfirmed' in result.stderr, result
 fakebin = temp / 'fakebin'
 fakebin.mkdir()
-tmux = fakebin / 'tmux'
-tmux.write_text('''#!/usr/bin/env bash
-case "$1" in
-  send-keys) [ -z "${FM_TEST_TMUX_LOG:-}" ] || printf '%s\\n' "$@" >> "$FM_TEST_TMUX_LOG" ;;
-  display-message) printf '1\n' ;;
-  capture-pane) printf '╭────╮\n│    │\n╰────╯\n' ;;
-  list-windows) printf 'fm-sample\n' ;;
-esac
-exit 0
-''')
-tmux.chmod(0o755)
 env['PATH'] = str(fakebin) + os.pathsep + env['PATH']
 words = '$5/month is approved\nKeep the answer unchanged.'
 # A leading `$` is plain text, so the answer rides the inbox byte-exact
 # whether or not the record names its harness.
 for harness, answer in (('deck', words), ('', words)):
-    (home / 'state/sample.meta').write_text('window=fixture:fm-sample\nkind=ship\nharness=' + harness + '\n')
+    (home / 'state/sample.meta').write_text(stream_identity('sample') + 'kind=ship\nharness=' + harness + '\n')
     (home / 'state/sample.status').write_text('needs-decision [key=fixture-key]: approve the price\n')
     before = set((home / 'state/sample.inbox').glob('*.msg'))
     result, records = stream_command('fm-sample', dict(kind='resolve-key', key='fixture-key', text=answer))
@@ -243,8 +255,7 @@ while [ ! -e "$FM_TEST_SEND_GO" ]; do /bin/sleep 0.01; done
 exec "$FM_TEST_REAL_SEND" "$@"
 ''')
 race_sender.chmod(0o755)
-typed_log = temp / 'typed-events'
-race_env = dict(env, FM_TEST_REAL_SEND=str(root / 'bin/fm-send.sh'), FM_TEST_TMUX_LOG=str(typed_log))
+race_env = dict(env, FM_TEST_REAL_SEND=str(root / 'bin/fm-send.sh'))
 
 
 def await_file(path, process):
@@ -263,7 +274,7 @@ def race_request(task_id, command_id, text):
 
 def seed_race(task_id, harness='deck'):
     meta = home / ('state/' + task_id + '.meta')
-    meta.write_text('window=fixture:fm-' + task_id + '\nkind=ship\nharness=' + harness + '\nspawn_gen=old\n')
+    meta.write_text(stream_identity(task_id) + 'kind=ship\nharness=' + harness + '\nspawn_gen=old\n')
     status = home / ('state/' + task_id + '.status')
     status.write_text('needs-decision [key=race-key]: approve the price\n')
     typed_log.write_text('')
@@ -330,7 +341,7 @@ assert 'resolved [key=race-key]:' in status.read_text()
 assert sibling_status.read_bytes() == sibling_bytes
 assert set((home / 'state/sample.inbox').glob('*.msg')) == sibling_inbox
 for args in (['sample', '--resolve-key', 'race-key', '/quit'], ['sample', '--key', 'Enter'],
-             ['fixture:fm-sample', '--resolve-key', 'race-key', 'Approved']):
+             [stream_identity('sample').split('\n')[0].split('=', 1)[1], '--resolve-key', 'race-key', 'Approved']):
     typed_log.write_text('')
     refused_send = subprocess.run([str(root / 'bin/fm-send.sh'), '--decision-answer', *args],
                                   env=send_env, cwd=home, capture_output=True, text=True, timeout=15)

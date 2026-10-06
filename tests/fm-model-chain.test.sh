@@ -317,9 +317,11 @@ test_chained_model_falls_through_after_recorded_refusal() {
   FM_STATE_OVERRIDE="$HOME_DIR/state" "$ROOT/bin/fm-record-model-refusal.sh" \
     "$id" codex/gpt-6-luna > /dev/null 2>&1
   [ -f "$HOME_DIR/state/model-chain/crew-$id.state" ] || fail "the recorder created no lane state"
+  # The refused head's worker exited, closing its endpoint.
+  fm_test_close_task_endpoint "$HOME_DIR/state/$id.meta"
   out=$(run_chain_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
     --model 'codex/gpt-6-luna,zai/glm-5.3,vercel/xiaomi/mimo-v2.6-flash')
-  expect_code 0 "$?" "a spawn past a cooled-down head succeeds"
+  expect_code 0 "$?" "a spawn past a cooled-down head succeeds: $out"
   assert_contains "$out" "chain skip: codex/gpt-6-luna" "the cooled-down head is disclosed as skipped"
   assert_contains "$out" "selected zai/glm-5.3" "the next ready label is selected"
   meta="$HOME_DIR/state/$id.meta"

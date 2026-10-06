@@ -22,17 +22,19 @@
 # This drives the REAL remote route (fm-remote-home-seed.sh -> fm-on.sh ->
 # fm-remote-entrypoint.sh -> the host-local fm-remote-secondmate-control.sh ->
 # the real bin/fm-spawn.sh --secondmate) across the repo's own deterministic SSH
-# boundary and Herdr fixture, then runs the real bin/fm-teardown.sh for a
-# finished child worker inside the produced remote home - never source-text
-# matching.
+# boundary onto a real stream hub and agent (the shape
+# tests/fm-remote-secondmate-stream.test.sh uses), then runs the real
+# bin/fm-teardown.sh for a finished child worker inside the produced remote home
+# - never source-text matching. The child's own endpoint lives on the suite's
+# fake stream hub (tests/fixtures.sh).
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-# shellcheck source=tests/remote-herdr-fixture.sh
-. "$(dirname "${BASH_SOURCE[0]}")/remote-herdr-fixture.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
-command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
+for tool in jq python3 curl perl; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "skip: $tool not found"; exit 0; }
+done
 
 TMP_ROOT=$(fm_test_tmproot fm-remote-parent-binding)
 mkdir -p "$TMP_ROOT"
@@ -43,14 +45,20 @@ REMOTE_HOME="$TMP_ROOT/remote-home"
 FAKEBIN=$(fm_fakebin "$TMP_ROOT/fake")
 SSH_COUNT="$TMP_ROOT/ssh.count"
 DOCTOR_LOG="$TMP_ROOT/doctor.log"
-HERDR_STATE="$TMP_ROOT/remote-herdr.state"
-HERDR_LOG="$TMP_ROOT/remote-herdr.log"
+TURNS="$TMP_ROOT/remote-turns"
 CLAIMS="$TMP_ROOT/claims"
+HUB_TOKEN="remote-binding-token-$$"
+HUB_PID=
 PUBLISH_PID=
 mkdir -p "$PARENT/data" "$PARENT/state" "$PARENT/config" "$PARENT/projects" "$REMOTE_ROOT" "$CLAIMS"
 
+stream_agent_pids() {
+  ps -eo pid,args 2>/dev/null \
+    | awk -v r="$REMOTE_ROOT" 'index($0, "fm-stream-agent.py") && index($0, r) && !index($0, "awk") {print $1}'
+}
+
 cleanup() {
-  local worker_pid=''
+  local worker_pid='' pid
   if [ -n "$PUBLISH_PID" ]; then
     touch "$PUBLISH_RELEASE" 2>/dev/null || true
     kill "$PUBLISH_PID" 2>/dev/null || true
@@ -58,11 +66,14 @@ cleanup() {
   fi
   FM_HOME="$PARENT" FM_PROCEVENT_CLAIM_ROOT="$CLAIMS" \
     "$ROOT/bin/fm-procevent.sh" sweep-home >/dev/null 2>&1 || true
+  for pid in $(stream_agent_pids); do kill "$pid" 2>/dev/null || true; done
+  [ -z "$HUB_PID" ] || kill "$HUB_PID" 2>/dev/null || true
   if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then
     worker_pid=$(cat "$TMP_ROOT/remote-jobs/worker.pid")
     kill "$worker_pid" 2>/dev/null || true
   fi
   rm -rf -- "$TMP_ROOT"
+  fm_test_cleanup || true
 }
 trap cleanup EXIT
 
@@ -117,12 +128,31 @@ pass "remote provisioning publishes durable parent state before its completion m
   cd "$ROOT" || exit
   tar --exclude=.git --exclude=.no-mistakes --exclude=data --exclude=state --exclude=config -cf - .
 ) | (cd "$REMOTE_ROOT" && tar -xf -)
-# The remote secondmate runs on deck, whose launch resolves the executable on the
-# host's PATH; the pane runs bin/fm-deck-worker.sh, so an exit-0 stub suffices.
-printf '#!/usr/bin/env bash\nexit 0\n' > "$REMOTE_ROOT/bin/deck"
-chmod +x "$REMOTE_ROOT/bin/deck"
-install_remote_herdr_fixture "$REMOTE_ROOT" "$HERDR_STATE" "$HERDR_LOG" \
-  "$TMP_ROOT/herdr-send-fail" "$TMP_ROOT/herdr.sock"
+# The remote secondmate runs on deck through the real Deck host driver; its
+# startup diagnostics and watcher are shimmed as tests/fm-backend-stream.test.sh
+# shims them, and the `deck` binary records the primary-home binding its
+# process environment actually received.
+cat > "$REMOTE_ROOT/bin/fm-session-start.sh" <<'SH'
+#!/usr/bin/env bash
+"$(dirname "$0")/fm-lock.sh" || exit
+cat "$FM_HOME/state/.lock" > "$FM_HOME/state/.session-start-complete"
+printf 'fixture startup\n'
+SH
+cat > "$REMOTE_ROOT/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" != --handling-delivered ] || exit 0
+printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
+while :; do sleep 1; done
+SH
+cat > "$REMOTE_ROOT/bin/deck" <<PY
+#!/usr/bin/env python3
+import json, os, sys
+with open('$TURNS', 'a') as log:
+    log.write(json.dumps({'primary_home': os.environ.get('FM_PUBLIC_FOLLOWUP_PRIMARY_HOME', '')}) + '\n')
+print(json.dumps({'type': 'run_started', 'session': 'fixture-session'}), flush=True)
+print(json.dumps({'type': 'run_finished', 'output': 'ready', 'turns': 1}), flush=True)
+PY
+chmod +x "$REMOTE_ROOT/bin/fm-session-start.sh" "$REMOTE_ROOT/bin/fm-watch-arm.sh" "$REMOTE_ROOT/bin/deck"
 git -C "$REMOTE_ROOT" init -q -b main
 git -C "$REMOTE_ROOT" config user.email test@example.com
 git -C "$REMOTE_ROOT" config user.name Test
@@ -149,7 +179,20 @@ git -C "$PARENT/projects/alpha" push -q -u origin main
 git --git-dir="$TMP_ROOT/alpha.git" symbolic-ref HEAD refs/heads/main
 printf -- '- alpha [direct-PR] - alpha project (added 2026-08-04)\n' > "$PARENT/data/projects.md"
 printf 'deck\n' > "$PARENT/config/secondmate-harness"
-printf 'tmux\n' > "$PARENT/config/backend"
+printf 'manual\n' > "$PARENT/config/backlog-backend"
+
+# --- the fleet hub the remote home publishes to: real, loopback, ephemeral ---
+printf 'publish,subscribe,control:%s\n' "$HUB_TOKEN" > "$TMP_ROOT/hub-tokens"
+chmod 600 "$TMP_ROOT/hub-tokens"
+python3 "$ROOT/bin/fm-stream-hub.py" serve --bind 127.0.0.1 --port 0 \
+  --token-file "$TMP_ROOT/hub-tokens" --ready-file "$TMP_ROOT/hub-ready" \
+  > "$TMP_ROOT/hub.log" 2>&1 &
+HUB_PID=$!
+waited=0
+while [ ! -s "$TMP_ROOT/hub-ready" ] && [ "$waited" -lt 100 ]; do sleep 0.1; waited=$((waited + 1)); done
+[ -s "$TMP_ROOT/hub-ready" ] || fail "hub did not start: $(cat "$TMP_ROOT/hub.log")"
+read -r HUB_HOST HUB_PORT < "$TMP_ROOT/hub-ready"
+HUB_URL="http://$HUB_HOST:$HUB_PORT"
 
 # The primary home is the X-mode / relay home: the captain's real activation.
 printf 'FMX_PAIRING_TOKEN=repro-token\n' > "$PARENT/.env"
@@ -178,7 +221,6 @@ IFS=$'\t' read -r command_name _command_action command_rel <<EOF
 $command_fields
 EOF
 if [ "$command_name" = fm-remote-doctor.sh ]; then
-  printf 'check herdr=ok: /usr/bin/herdr\n'
   printf 'ok: remote second-mate readiness confirmed on this host\n'
   exit 0
 fi
@@ -196,7 +238,10 @@ exec "$FM_FAKE_REMOTE_ENTRYPOINT" "$@"
 SH
 chmod +x "$FAKEBIN/fake-ssh"
 
+# The parent reaches the mate only through the SSH boundary; the suite's fake
+# hub (the child worker's) stays out of that path.
 remote_env() {
+  env -u FM_STREAM_HUB -u FM_STREAM_TOKEN -u FM_STREAM_MACHINE -u FM_STREAM_AGENT_BIN \
   FM_HOME="$PARENT" \
   FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
   FM_PROCEVENT_CLAIM_ROOT="$CLAIMS" \
@@ -215,6 +260,12 @@ FM_SECONDMATE_CHARTER='Own iOS delivery on the build Mac.' \
   FM_SECONDMATE_SCOPE='iOS implementation and Xcode validation' \
   remote_env "$ROOT/bin/fm-remote-home-seed.sh" ios remote-mac "$REMOTE_ROOT" "$REMOTE_HOME" alpha \
   >/dev/null || fail "real remote secondmate seeding failed"
+# The fleet-seeded credential and the Python stream agent (the copied code root
+# has no native build of its own), as tests/fm-remote-secondmate-stream.test.sh
+# seeds them.
+printf '%s\n' "$HUB_URL" > "$REMOTE_HOME/config/stream-hub"
+(umask 077; printf '%s\n' "$HUB_TOKEN" > "$REMOTE_HOME/config/stream-token")
+printf 'python\n' > "$REMOTE_HOME/config/stream-impl"
 
 # --- the durable record itself: the fundamental part of the fix -------------
 assert_present "$REMOTE_HOME/.fm-secondmate-parent" \
@@ -223,12 +274,12 @@ cmp -s "$REMOTE_HOME/.fm-secondmate-parent" <(
   printf 'schema=fm-secondmate-parent.v1\nroute=remote\nparent_host=remote-mac\n'
 ) || fail "real remote provisioning must write the exact durable remote parent record"
 
-remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmate >/dev/null \
-  || fail "real remote secondmate launch failed"
+out=$(remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmate 2>&1) \
+  || fail "real remote secondmate launch failed: $out"
 
-DELIVERED_LINE=$(grep -F 'FM_PUBLIC_FOLLOWUP_PRIMARY_HOME' "$HERDR_LOG" | tail -1 || true)
-DELIVERED=$(printf '%s\n' "$DELIVERED_LINE" | tr ' ' '\n' \
-  | sed -n "s/^FM_PUBLIC_FOLLOWUP_PRIMARY_HOME='\{0,1\}\([^']*\)'\{0,1\}\$/\1/p" | tail -1)
+waited=0
+while ! grep -q primary_home "$TURNS" 2>/dev/null && [ "$waited" -lt 300 ]; do sleep 0.1; waited=$((waited + 1)); done
+DELIVERED=$(jq -r '.primary_home' "$TURNS" 2>/dev/null | tail -1)
 [ -n "$DELIVERED" ] || fail "the remote launch did not deliver a primary-home binding to assert against"
 case "$DELIVERED" in
   "$REMOTE_ROOT") : ;;
@@ -243,13 +294,16 @@ mkdir -p "$REMOTE_HOME/state"
 # fused automatic close is correctly exempt without requiring a tasks-axi mock.
 printf '%s\n' manual > "$REMOTE_HOME/config/backlog-backend"
 write_child_meta() {
+  # shellcheck disable=SC2046 # one meta line per word
   fm_write_meta "$REMOTE_HOME/state/work-child.meta" \
-    "window=firstmate:fm-work-child" "endpoint_task_id=work-child" \
+    $(fm_test_stream_task "$REMOTE_HOME/state" work-child) \
     "worktree=$CHILD_WT" "project=$CHILD_WT" "harness=deck" "kind=ship" \
     "mode=local-only" "yolo=off"
+  # A finished worker: its endpoint stands at its shell.
+  fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$REMOTE_HOME/state" work-child)" bash
 }
 mkdir -p "$TMP_ROOT/childfake"
-for t in tmux treehouse no-mistakes gh gh-axi tasks-axi; do
+for t in treehouse no-mistakes gh gh-axi tasks-axi; do
   printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP_ROOT/childfake/$t"
   chmod +x "$TMP_ROOT/childfake/$t"
 done

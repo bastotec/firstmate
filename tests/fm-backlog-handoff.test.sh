@@ -8,35 +8,63 @@ set -u
 
 # shellcheck source=tests/secondmate-helpers.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/secondmate-helpers.sh"
+# The receiver's endpoint is a fake stream endpoint (tests/fixtures.sh) whose
+# launch log records every text it receives.
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 # The move is delegated to `tasks-axi mv`, so this suite exercises the real
 # binary. Skip cleanly when it is absent (matching the backend smoke suites).
 command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found (required by the delegated handoff path)"; exit 0; }
 
 TMP_ROOT=$(fm_test_tmproot fm-backlog-handoff)
+fm_test_fake_stream_ensure || fail "the fake stream hub did not start"
 HANDOFF_FAKEBIN=$(make_fake_tmux "$TMP_ROOT/default-fake")
 export PATH="$HANDOFF_FAKEBIN:$PATH"
-export FM_FAKE_TMUX_WINDOW='firstmate:fm-design'
-export FM_FAKE_TMUX_LOG="$TMP_ROOT/default-tmux.log"
-export FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/default-fake/pane.txt"
+# The helper's fake treehouse logs here; endpoint logs are separate files.
+export FM_FAKE_TMUX_LOG="$TMP_ROOT/default-tools.log"
 export FM_SEND_SETTLE=0 FM_SEND_SLEEP=0 FM_SEND_RETRIES=1
 
+# write_receiver_meta <home> <id> <receiver-home> [endpoint-log]: the parent's
+# record of a live local receiver whose endpoint runs pi and logs every text it
+# receives to <endpoint-log>.
+write_receiver_meta() {
+  local home=$1 id=$2 sub=$3 log=${4:-$TMP_ROOT/default-endpoint.log}
+  {
+    fm_test_stream_task "$home/state" "$id" "$log"
+    cat <<EOF
+kind=secondmate
+harness=pi
+home=$sub
+worktree=$sub
+EOF
+  } > "$home/state/$id.meta"
+  fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$home/state" "$id")" pi
+}
+
+# receiver_set <home> <id> <json>: steer the receiver endpoint (stub knobs).
+receiver_set() {
+  fm_test_fake_stream_set "$(fm_test_stream_target_of "$1/state" "$2")" "$3"
+}
+
+# receiver_hook <home> <id> <script-body>: run <script-body> (bash, text in $1)
+# inside the endpoint each time it receives text - a delivery that blocks.
+receiver_hook() {
+  local hook="$1/$2-on-text.sh"
+  printf '#!/usr/bin/env bash\nset -u\n%s\n' "$3" > "$hook"
+  chmod +x "$hook"
+  receiver_set "$1" "$2" "$(jq -nc --arg h "$hook" '{on_text: $h}')"
+}
+
 setup_homes() {
-  local home=$1 subhome=$2 id=${3:-design}
+  local home=$1 subhome=$2 id=${3:-design} log=${4:-}
   mkdir -p "$home/data" "$home/state"
   seed_secondmate_home_marker "$subhome" "$id"
   local sub_abs
   sub_abs=$(cd "$subhome" && pwd -P)
   printf -- '- %s - feature work (home: %s; scope: feature work; projects: alpha; added 2026-07-09)\n' \
     "$id" "$sub_abs" > "$home/data/secondmates.md"
-  cat > "$home/state/$id.meta" <<EOF
-window=firstmate:fm-$id
-kind=secondmate
-harness=deck
-backend=tmux
-home=$sub_abs
-worktree=$sub_abs
-EOF
+  write_receiver_meta "$home" "$id" "$sub_abs" ${log:+"$log"}
 }
 
 inbox_body_stream() { # <state-dir> <task-id>
@@ -62,14 +90,7 @@ test_handoff_wakes_live_local_receiver() {
   local home="$TMP_ROOT/live-wake-main" sub="$TMP_ROOT/live-wake-sub" fakebin out wake_count
   setup_homes "$home" "$sub"
   mkdir -p "$sub/state" "$sub/data"
-  cat > "$home/state/design.meta" <<EOF
-window=firstmate:fm-design
-kind=secondmate
-harness=deck
-backend=tmux
-home=$sub
-worktree=$sub
-EOF
+  write_receiver_meta "$home" design "$sub" "$TMP_ROOT/live-wake-endpoint.log"
   cat > "$home/data/backlog.md" <<'EOF'
 ## Queued
 - [ ] wake-item - routed to a live receiver (repo: alpha)
@@ -80,32 +101,26 @@ EOF
   fakebin=$(make_fake_tmux "$TMP_ROOT/live-wake-fake")
   out="$TMP_ROOT/live-wake.out"
   FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" PATH="$fakebin:$PATH" \
-    FM_FAKE_TMUX_WINDOW='firstmate:fm-design' \
-    FM_FAKE_TMUX_LOG="$TMP_ROOT/live-wake-tmux.log" \
-    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/live-wake-fake/pane.txt" \
     FM_SEND_SETTLE=0 FM_SEND_SLEEP=0 FM_SEND_RETRIES=1 \
     "$ROOT/bin/fm-backlog-handoff.sh" design wake-item > "$out" 2>&1 \
     || fail "handoff to a live receiver failed: $(cat "$out")"
   grep -F 'wake-item' "$sub/data/backlog.md" >/dev/null \
     || fail "live receiver did not receive the routed backlog item"
-  grep -F 'send-keys' "$TMP_ROOT/live-wake-tmux.log" >/dev/null \
+  [ -s "$TMP_ROOT/live-wake-endpoint.log" ] \
     || fail "handoff did not ring the live receiver endpoint"
   assert_contains "$(inbox_body_stream "$home/state" design)" \
     'New routed work is in your backlog.' \
     "receiver inbox did not carry the routed-work instruction"
   wake_count=$(inbox_record_count "$home/state" design)
-  [ "$(doorbell_count "$TMP_ROOT/live-wake-tmux.log")" -eq 1 ] \
+  [ "$(doorbell_count "$TMP_ROOT/live-wake-endpoint.log")" -eq 1 ] \
     || fail "handoff did not ring exactly one constant receiver doorbell"
   FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" PATH="$fakebin:$PATH" \
-    FM_FAKE_TMUX_WINDOW='firstmate:fm-design' \
-    FM_FAKE_TMUX_LOG="$TMP_ROOT/live-wake-tmux.log" \
-    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/live-wake-fake/pane.txt" \
     FM_SEND_SETTLE=0 FM_SEND_SLEEP=0 FM_SEND_RETRIES=1 \
     "$ROOT/bin/fm-backlog-handoff.sh" design wake-item > "$TMP_ROOT/live-wake-rerun.out" 2>&1 \
     || fail "idempotent successful handoff rerun failed: $(cat "$TMP_ROOT/live-wake-rerun.out")"
   [ "$(inbox_record_count "$home/state" design)" -eq "$wake_count" ] \
     || fail "idempotent successful handoff rerun duplicated the receiver inbox record"
-  [ "$(doorbell_count "$TMP_ROOT/live-wake-tmux.log")" -eq 1 ] \
+  [ "$(doorbell_count "$TMP_ROOT/live-wake-endpoint.log")" -eq 1 ] \
     || fail "idempotent successful handoff rerun duplicated the receiver doorbell"
   pass "a routed handoff wakes once and a successful rerun stays idempotent"
 }
@@ -131,30 +146,23 @@ EOF
   assert_absent "$home/state/pending-replies/.delivery-confirmed-$corr" \
     "missing endpoint was recorded as an attempted delivery"
 
-  cat > "$home/state/design.meta" <<EOF
-window=firstmate:fm-design
-kind=secondmate
-harness=deck
-backend=tmux
-home=$sub
-worktree=$sub
-EOF
-  : > "$TMP_ROOT/default-tmux.log"
+  write_receiver_meta "$home" design "$sub"
+  : > "$TMP_ROOT/default-endpoint.log"
   FM_HOME="$home" "$ROOT/bin/fm-backlog-handoff.sh" design retry-item > "$TMP_ROOT/retry-wake.out" 2>&1 \
     || fail "an already-present handoff did not retry its receiver wake: $(cat "$TMP_ROOT/retry-wake.out")"
   assert_contains "$(inbox_body_stream "$home/state" design)" \
     'New routed work is in your backlog.' \
     "the recovery handoff did not enqueue the receiver instruction"
-  [ "$(doorbell_count "$TMP_ROOT/default-tmux.log")" -eq 1 ] \
+  [ "$(doorbell_count "$TMP_ROOT/default-endpoint.log")" -eq 1 ] \
     || fail "the recovery handoff did not ring the receiver doorbell"
   pass "a failed receiver wake is loud and retries from an already-present handoff"
 }
 
 test_known_receiver_failure_remains_retryable_after_grace() {
   local home="$TMP_ROOT/known-fail-main" sub="$TMP_ROOT/known-fail-sub"
-  local basebin rejectbin="$TMP_ROOT/known-fail-reject" out corr rec_count rc=0
-  setup_homes "$home" "$sub"
-  mkdir -p "$sub/data" "$rejectbin"
+  local out corr rec_count rc=0
+  setup_homes "$home" "$sub" design "$TMP_ROOT/known-fail-endpoint.log"
+  mkdir -p "$sub/data"
   cat > "$home/data/backlog.md" <<'EOF'
 ## Queued
 - [ ] known-fail - retain delivery across a failed doorbell (repo: alpha)
@@ -162,19 +170,10 @@ test_known_receiver_failure_remains_retryable_after_grace() {
 ## Done
 EOF
   printf '## Queued\n\n## Done\n' > "$sub/data/backlog.md"
-  basebin=$(make_fake_tmux "$TMP_ROOT/known-fail-fake")
-  cat > "$rejectbin/tmux" <<'SH'
-#!/usr/bin/env bash
-[ "${1:-}" != send-keys ] || exit 1
-exec "$FM_BASE_TMUX" "$@"
-SH
-  chmod +x "$rejectbin/tmux"
+  # The endpoint refuses every input: the advisory doorbell cannot land.
+  receiver_set "$home" design '{"fail_input": true}'
 
-  out=$(PATH="$rejectbin:$basebin:$PATH" FM_BASE_TMUX="$basebin/tmux" \
-    FM_HOME="$home" FM_FAKE_TMUX_WINDOW='firstmate:fm-design' \
-    FM_FAKE_TMUX_LOG="$TMP_ROOT/known-fail-tmux.log" \
-    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/known-fail-fake/pane.txt" \
-    "$ROOT/bin/fm-backlog-handoff.sh" design known-fail 2>&1) || rc=$?
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-backlog-handoff.sh" design known-fail 2>&1) || rc=$?
   [ "$rc" -eq 0 ] || fail "failed advisory doorbell negated durable handoff: $out"
   assert_contains "$out" 'doorbell did not reach' \
     "failed advisory doorbell was not reported"
@@ -188,6 +187,7 @@ SH
   [ -n "$(grep '^delivered_epoch=' "$corr" | cut -d= -f2-)" ] \
     || fail "durable enqueue was not recorded as delivered"
 
+  receiver_set "$home" design '{"fail_input": false}'
   FM_HOME="$home" "$ROOT/bin/fm-backlog-handoff.sh" design known-fail \
     > "$TMP_ROOT/known-fail-retry.out" 2>&1 \
     || fail "idempotent handoff after failed doorbell failed: $(cat "$TMP_ROOT/known-fail-retry.out")"
@@ -198,9 +198,9 @@ SH
 
 test_known_failure_restores_retry_after_reconciliation_race() {
   local home="$TMP_ROOT/reconcile-race-main" sub="$TMP_ROOT/reconcile-race-sub"
-  local basebin blockbin="$TMP_ROOT/reconcile-race-block" handoff i corr phase
-  setup_homes "$home" "$sub"
-  mkdir -p "$sub/data" "$blockbin"
+  local handoff i corr phase
+  setup_homes "$home" "$sub" design "$TMP_ROOT/reconcile-race-endpoint.log"
+  mkdir -p "$sub/data"
   cat > "$home/data/backlog.md" <<'EOF'
 ## Queued
 - [ ] reconcile-race - retry after concurrent reconciliation (repo: alpha)
@@ -208,24 +208,13 @@ test_known_failure_restores_retry_after_reconciliation_race() {
 ## Done
 EOF
   printf '## Queued\n\n## Done\n' > "$sub/data/backlog.md"
-  basebin=$(make_fake_tmux "$TMP_ROOT/reconcile-race-fake")
-  cat > "$blockbin/tmux" <<'SH'
-#!/usr/bin/env bash
-if [ "${1:-}" = send-keys ]; then
-  touch "$FM_RECONCILE_RACE_ENTERED"
-  while [ ! -f "$FM_RECONCILE_RACE_RELEASE" ]; do sleep 0.02; done
-  exit 1
-fi
-exec "$FM_BASE_TMUX" "$@"
-SH
-  chmod +x "$blockbin/tmux"
+  # The doorbell text blocks inside the endpoint until released, and its Enter
+  # then fails: a ring that is slow and ends in failure.
+  receiver_hook "$home" design "touch '$TMP_ROOT/reconcile-race.entered'
+while [ ! -f '$TMP_ROOT/reconcile-race.release' ]; do /bin/sleep 0.02; done"
+  receiver_set "$home" design '{"fail_keys": ["Enter"]}'
 
-  PATH="$blockbin:$basebin:$PATH" FM_BASE_TMUX="$basebin/tmux" FM_HOME="$home" \
-    FM_RECONCILE_RACE_ENTERED="$TMP_ROOT/reconcile-race.entered" \
-    FM_RECONCILE_RACE_RELEASE="$TMP_ROOT/reconcile-race.release" \
-    FM_FAKE_TMUX_WINDOW='firstmate:fm-design' \
-    FM_FAKE_TMUX_LOG="$TMP_ROOT/reconcile-race-tmux.log" \
-    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/reconcile-race-fake/pane.txt" \
+  FM_HOME="$home" \
     "$ROOT/bin/fm-backlog-handoff.sh" design reconcile-race \
     > "$TMP_ROOT/reconcile-race.out" 2>&1 &
   handoff=$!
@@ -251,6 +240,7 @@ SH
     "delivered enqueue retained a recovery marker"
   [ "$(inbox_record_count "$home/state" design)" -eq 1 ] \
     || fail "advisory ring race did not retain exactly one inbox record"
+  receiver_set "$home" design '{"fail_keys": [], "on_text": ""}'
 
   FM_HOME="$home" "$ROOT/bin/fm-backlog-handoff.sh" design reconcile-race \
     > "$TMP_ROOT/reconcile-race-retry.out" 2>&1 \
@@ -322,14 +312,14 @@ EOF
   assert_no_grep 'unrelated-move' "$sub/data/backlog.md" \
     "unrelated moving handoff moved work despite the unresolved older wake"
 
-  : > "$TMP_ROOT/default-tmux.log"
+  : > "$TMP_ROOT/default-endpoint.log"
   FM_HOME="$home" "$ROOT/bin/fm-backlog-handoff.sh" design crash-item \
     > "$TMP_ROOT/move-crash-retry.out" 2>&1 \
     || fail "post-move crash recovery failed: $(cat "$TMP_ROOT/move-crash-retry.out")"
   assert_contains "$(inbox_body_stream "$home/state" design)" \
     'New routed work is in your backlog.' \
     "post-move crash recovery did not enqueue the receiver instruction"
-  [ "$(doorbell_count "$TMP_ROOT/default-tmux.log")" -eq 1 ] \
+  [ "$(doorbell_count "$TMP_ROOT/default-endpoint.log")" -eq 1 ] \
     || fail "post-move crash recovery did not ring the receiver doorbell"
   assert_absent "$home/state/.backlog-handoff-design.wake-pending" \
     "confirmed crash recovery left receiver wake pending"
@@ -367,7 +357,7 @@ esac
 exec "$FM_REAL_TASKS_AXI" "$@"
 SH
   chmod +x "$fakebin/tasks-axi"
-  : > "$TMP_ROOT/default-tmux.log"
+  : > "$TMP_ROOT/default-endpoint.log"
 
   set +e
   FM_REAL_TASKS_AXI="$real_tasks" PATH="$fakebin:$PATH" FM_HOME="$home" \
@@ -393,7 +383,7 @@ EOF
   assert_contains "$(cat "$TMP_ROOT/pre-move-unrelated.out")" \
     'belongs to a different routed batch' \
     "unrelated handoff did not report the prepared batch conflict"
-  [ ! -s "$TMP_ROOT/default-tmux.log" ] \
+  [ ! -s "$TMP_ROOT/default-endpoint.log" ] \
     || fail "unrelated already-present work promoted another batch's prepared wake"
   assert_grep 'pre-move-crash' "$home/data/backlog.md" \
     "unrelated handoff changed the prepared batch's source item"
@@ -406,7 +396,7 @@ EOF
   assert_grep 'pre-move-crash' "$sub/data/backlog.md" "pre-move crash recovery did not move the item"
   wake_count=$(inbox_record_count "$home/state" design)
   [ "$wake_count" -eq 1 ] || fail "pre-move crash recovery emitted $wake_count receiver records"
-  [ "$(doorbell_count "$TMP_ROOT/default-tmux.log")" -eq 1 ] \
+  [ "$(doorbell_count "$TMP_ROOT/default-endpoint.log")" -eq 1 ] \
     || fail "pre-move crash recovery did not ring exactly one receiver doorbell"
   pass "a pre-move crash wakes only after retry makes the item durable"
 }
@@ -439,7 +429,7 @@ done
 exec "$FM_REAL_RM" "$@"
 SH
   chmod +x "$fakebin/rm"
-  : > "$TMP_ROOT/default-tmux.log"
+  : > "$TMP_ROOT/default-endpoint.log"
 
   set +e
   PATH="$fakebin:$PATH" FM_REAL_RM="$real_rm" \
@@ -452,7 +442,7 @@ SH
   [ "$rc" -ne 0 ] || fail "post-confirmation crash fixture unexpectedly reported success"
   wake_count=$(inbox_record_count "$home/state" design)
   [ "$wake_count" -eq 1 ] || fail "post-confirmation crash did not deliver exactly one receiver record"
-  [ "$(doorbell_count "$TMP_ROOT/default-tmux.log")" -eq 1 ] \
+  [ "$(doorbell_count "$TMP_ROOT/default-endpoint.log")" -eq 1 ] \
     || fail "post-confirmation crash did not ring exactly one receiver doorbell"
   case "$(cat "$home/state/.backlog-handoff-design.wake-pending")" in
     pending:*) ;;
@@ -473,7 +463,7 @@ EOF
     || fail "new handoff after a confirmation crash failed: $(cat "$TMP_ROOT/after-confirm-crash.out")"
   [ "$(inbox_record_count "$home/state" design)" -eq "$((wake_count + 1))" ] \
     || fail "completed stale correlation suppressed or duplicated the new receiver record"
-  [ "$(doorbell_count "$TMP_ROOT/default-tmux.log")" -eq 2 ] \
+  [ "$(doorbell_count "$TMP_ROOT/default-endpoint.log")" -eq 2 ] \
     || fail "completed stale correlation suppressed or duplicated the new doorbell"
   assert_grep 'after-crash' "$sub/data/backlog.md" \
     "new item after a confirmation crash was not durably handed off"
@@ -483,7 +473,7 @@ EOF
     || fail "post-confirmation crash recovery failed: $(cat "$TMP_ROOT/confirm-crash-retry.out")"
   [ "$(inbox_record_count "$home/state" design)" -eq "$((wake_count + 1))" ] \
     || fail "post-confirmation crash recovery duplicated the receiver record"
-  [ "$(doorbell_count "$TMP_ROOT/default-tmux.log")" -eq 2 ] \
+  [ "$(doorbell_count "$TMP_ROOT/default-endpoint.log")" -eq 2 ] \
     || fail "post-confirmation crash recovery duplicated the doorbell"
   assert_absent "$home/state/.backlog-handoff-design.wake-pending" \
     "post-confirmation crash recovery left wake state pending"
@@ -517,7 +507,7 @@ done
 exec "$FM_REAL_MV" "$@"
 SH
   chmod +x "$fakebin/mv"
-  : > "$TMP_ROOT/default-tmux.log"
+  : > "$TMP_ROOT/default-endpoint.log"
 
   set +e
   PATH="$fakebin:$PATH" FM_REAL_MV="$real_mv" FM_HOME="$home" \
@@ -528,7 +518,7 @@ SH
   [ "$rc" -ne 0 ] || fail "unresolved-attempt crash fixture unexpectedly reported success"
   wake_count=$(inbox_record_count "$home/state" design)
   [ "$wake_count" -eq 1 ] || fail "unresolved-attempt crash did not deliver exactly one receiver record"
-  [ "$(doorbell_count "$TMP_ROOT/default-tmux.log")" -eq 0 ] \
+  [ "$(doorbell_count "$TMP_ROOT/default-endpoint.log")" -eq 0 ] \
     || fail "delivery bookkeeping crash unexpectedly reached the later doorbell step"
 
   rc=0
@@ -538,16 +528,16 @@ SH
     "immediate retry did not report the unresolved delivery boundary"
   [ "$(inbox_record_count "$home/state" design)" -eq "$wake_count" ] \
     || fail "immediate retry duplicated the unresolved receiver record"
-  [ "$(doorbell_count "$TMP_ROOT/default-tmux.log")" -eq 0 ] \
+  [ "$(doorbell_count "$TMP_ROOT/default-endpoint.log")" -eq 0 ] \
     || fail "immediate retry rang for an unresolved delivery correlation"
   pass "an unresolved delivery attempt refuses an immediate duplicate wake"
 }
 
 test_concurrent_local_handoffs_serialize_move_and_wake() {
   local home="$TMP_ROOT/concurrent-main" sub="$TMP_ROOT/concurrent-sub"
-  local basebin blockbin="$TMP_ROOT/concurrent-blockbin" first second i wake_count
-  setup_homes "$home" "$sub"
-  mkdir -p "$sub/data" "$blockbin"
+  local first second i wake_count
+  setup_homes "$home" "$sub" design "$TMP_ROOT/concurrent-endpoint.log"
+  mkdir -p "$sub/data"
   printf '## Queued\n\n## Done\n' > "$sub/data/backlog.md"
   cat > "$home/data/backlog.md" <<'EOF'
 ## Queued
@@ -555,28 +545,17 @@ test_concurrent_local_handoffs_serialize_move_and_wake() {
 
 ## Done
 EOF
-  basebin=$(make_fake_tmux "$TMP_ROOT/concurrent-fake")
-  cat > "$blockbin/tmux" <<'SH'
-#!/usr/bin/env bash
-case "$*" in
-  *"Firstmate instruction waiting:"*)
-    if mkdir "$FM_BLOCK_WAKE_ONCE" 2>/dev/null; then
-      touch "$FM_BLOCK_WAKE_ENTERED"
-      while [ ! -f "$FM_BLOCK_WAKE_RELEASE" ]; do sleep 0.02; done
+  # The first doorbell blocks inside the endpoint until released.
+  receiver_hook "$home" design "case \"\$1\" in
+  *'Firstmate instruction waiting:'*)
+    if mkdir '$TMP_ROOT/concurrent.once' 2>/dev/null; then
+      touch '$TMP_ROOT/concurrent.entered'
+      while [ ! -f '$TMP_ROOT/concurrent.release' ]; do /bin/sleep 0.02; done
     fi
     ;;
-esac
-exec "$FM_BASE_TMUX" "$@"
-SH
-  chmod +x "$blockbin/tmux"
+esac"
 
-  PATH="$blockbin:$basebin:$PATH" FM_HOME="$home" FM_BASE_TMUX="$basebin/tmux" \
-    FM_BLOCK_WAKE_ONCE="$TMP_ROOT/concurrent.once" \
-    FM_BLOCK_WAKE_ENTERED="$TMP_ROOT/concurrent.entered" \
-    FM_BLOCK_WAKE_RELEASE="$TMP_ROOT/concurrent.release" \
-    FM_FAKE_TMUX_WINDOW='firstmate:fm-design' \
-    FM_FAKE_TMUX_LOG="$TMP_ROOT/concurrent-tmux.log" \
-    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/concurrent-fake/pane.txt" \
+  FM_HOME="$home" \
     "$ROOT/bin/fm-backlog-handoff.sh" design concurrent-a > "$TMP_ROOT/concurrent-a.out" 2>&1 &
   first=$!
   i=0
@@ -592,13 +571,7 @@ SH
 
 ## Done
 EOF
-  PATH="$blockbin:$basebin:$PATH" FM_HOME="$home" FM_BASE_TMUX="$basebin/tmux" \
-    FM_BLOCK_WAKE_ONCE="$TMP_ROOT/concurrent.once" \
-    FM_BLOCK_WAKE_ENTERED="$TMP_ROOT/concurrent.entered" \
-    FM_BLOCK_WAKE_RELEASE="$TMP_ROOT/concurrent.release" \
-    FM_FAKE_TMUX_WINDOW='firstmate:fm-design' \
-    FM_FAKE_TMUX_LOG="$TMP_ROOT/concurrent-tmux.log" \
-    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/concurrent-fake/pane.txt" \
+  FM_HOME="$home" \
     "$ROOT/bin/fm-backlog-handoff.sh" design concurrent-b > "$TMP_ROOT/concurrent-b.out" 2>&1 &
   second=$!
   sleep 0.2
@@ -611,17 +584,17 @@ EOF
   assert_grep 'concurrent-b' "$sub/data/backlog.md" "second serialized item was lost"
   wake_count=$(inbox_record_count "$home/state" design)
   [ "$wake_count" -eq 2 ] || fail "serialized local handoffs produced $wake_count receiver records"
-  [ "$(doorbell_count "$TMP_ROOT/concurrent-tmux.log")" -eq 2 ] \
+  [ "$(doorbell_count "$TMP_ROOT/concurrent-endpoint.log")" -eq 2 ] \
     || fail "serialized local handoffs did not produce two receiver doorbells"
   pass "concurrent local handoffs serialize each durable move with its wake"
 }
 
 test_local_teardown_waits_for_handoff_wake() {
   local home="$TMP_ROOT/teardown-race-main" sub="$TMP_ROOT/teardown-race-sub"
-  local basebin blockbin="$TMP_ROOT/teardown-race-blockbin" handoff teardown i
-  setup_homes "$home" "$sub"
+  local handoff teardown i
+  setup_homes "$home" "$sub" design "$TMP_ROOT/teardown-race-endpoint.log"
   printf 'project=%s\n' "$ROOT" >> "$home/state/design.meta"
-  mkdir -p "$sub/data" "$blockbin"
+  mkdir -p "$sub/data"
   printf '## Queued\n\n## Done\n' > "$sub/data/backlog.md"
   cat > "$home/data/backlog.md" <<'EOF'
 ## Queued
@@ -629,24 +602,14 @@ test_local_teardown_waits_for_handoff_wake() {
 
 ## Done
 EOF
-  basebin=$(make_fake_tmux "$TMP_ROOT/teardown-race-fake")
-  cat > "$blockbin/tmux" <<'SH'
-#!/usr/bin/env bash
-case "$*" in
-  *"Firstmate instruction waiting:"*)
-    touch "$FM_BLOCK_WAKE_ENTERED"
-    while [ ! -f "$FM_BLOCK_WAKE_RELEASE" ]; do sleep 0.02; done
+  # The doorbell blocks inside the endpoint until released.
+  receiver_hook "$home" design "case \"\$1\" in
+  *'Firstmate instruction waiting:'*)
+    touch '$TMP_ROOT/teardown-race.entered'
+    while [ ! -f '$TMP_ROOT/teardown-race.release' ]; do /bin/sleep 0.02; done
     ;;
-esac
-exec "$FM_BASE_TMUX" "$@"
-SH
-  chmod +x "$blockbin/tmux"
-  PATH="$blockbin:$basebin:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
-    FM_BASE_TMUX="$basebin/tmux" FM_BLOCK_WAKE_ENTERED="$TMP_ROOT/teardown-race.entered" \
-    FM_BLOCK_WAKE_RELEASE="$TMP_ROOT/teardown-race.release" \
-    FM_FAKE_TMUX_WINDOW='firstmate:fm-design' \
-    FM_FAKE_TMUX_LOG="$TMP_ROOT/teardown-race-tmux.log" \
-    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/teardown-race-fake/pane.txt" \
+esac"
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
     "$ROOT/bin/fm-backlog-handoff.sh" design teardown-race > "$TMP_ROOT/teardown-race-handoff.out" 2>&1 &
   handoff=$!
   i=0
@@ -656,10 +619,7 @@ SH
     [ "$i" -le 250 ] || fail "teardown-race handoff never reached its receiver wake"
     sleep 0.02
   done
-  PATH="$basebin:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
-    FM_FAKE_TMUX_WINDOW='firstmate:fm-design' \
-    FM_FAKE_TMUX_LOG="$TMP_ROOT/teardown-race-tmux.log" \
-    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/teardown-race-fake/pane.txt" \
+  FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
     "$ROOT/bin/fm-teardown.sh" design --force > "$TMP_ROOT/teardown-race-teardown.out" 2>&1 &
   teardown=$!
   sleep 0.3
@@ -708,9 +668,6 @@ SH
   set +e
   PATH="$rm_bin:$fakebin:$PATH" FM_REAL_RM="$real_rm" FM_FAIL_HOME="$fail_home" \
     FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
-    FM_FAKE_TMUX_WINDOW='firstmate:fm-design' \
-    FM_FAKE_TMUX_LOG="$TMP_ROOT/teardown-home-fail-tmux.log" \
-    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/teardown-home-fail-fake/pane.txt" \
     "$ROOT/bin/fm-teardown.sh" design --force > "$TMP_ROOT/teardown-home-fail.out" 2>&1
   rc=$?
   set -e
@@ -725,9 +682,6 @@ SH
   assert_grep '- design ' "$home/data/secondmates.md" "failed teardown removed the registry route"
 
   PATH="$fakebin:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
-    FM_FAKE_TMUX_WINDOW='firstmate:fm-design' \
-    FM_FAKE_TMUX_LOG="$TMP_ROOT/teardown-home-fail-tmux.log" \
-    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/teardown-home-fail-fake/pane.txt" \
     "$ROOT/bin/fm-teardown.sh" design --force > "$TMP_ROOT/teardown-home-retry.out" 2>&1 \
     || fail "teardown retry did not retire the preserved wake: $(cat "$TMP_ROOT/teardown-home-retry.out")"
   assert_absent "$sub" "teardown retry left the receiver home"

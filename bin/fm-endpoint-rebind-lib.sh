@@ -11,9 +11,9 @@
 #   harness, kind, spawn_gen, endpoint_task_id, ...) is kept in order, so the
 #   task keeps its worktree, session, and identity and only its endpoint moves.
 #
-#   Callers: bin/fm-control.sh recover-missing on stream, which has to record
-#   the NEW agent-generated endpoint for a task whose old one is gone, and any
-#   verb that moves a task between backends.
+#   Caller: bin/fm-control.sh recover-missing, which has to record the NEW
+#   agent-generated endpoint for a task whose old one is gone. Identity keys of
+#   retired backends are still dropped so no stale binding survives.
 #
 #   Runs under the record's own meta lock (bin/fm-wake-lib.sh's
 #   fm_meta_lock_path, the lock fm-spawn.sh publishes under), so it must not be

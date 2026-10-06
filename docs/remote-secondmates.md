@@ -4,12 +4,9 @@ Remote second mates place a whole persistent Firstmate home on another SSH-reach
 The primary still owns routing and supervision, while the remote home owns its own projects, backlog, and workers.
 Firstmate does not support placing an individual worker remotely or failing a remote route over to a local replacement.
 
-The remote second-mate agent itself runs on the [Herdr backend](herdr-backend.md) in the shared `fm-remote` session, or on the [stream backend](stream-backend.md) against the hub that home's `config/stream-hub` names, and the primary gates provisioning, launch, and relaunch on the remote doctor's readiness verdict.
-`fm-remote` is reserved for remote fleet work and must not be used for personal work.
-The user's interactive Herdr session remains `default` and is not a remote-secondmate prerequisite.
-Herdr's remote-session server belongs to the host's own GUI login session rather than to the SSH connection, so the agent's endpoint survives every disconnection the primary's supervision depends on.
+The remote second-mate agent itself runs on the [stream backend](stream-backend.md) against the hub that home's `config/stream-hub` names, and the primary gates provisioning, launch, and relaunch on the remote doctor's readiness verdict.
 A stream agent is started in its own session on the host and publishes to the hub, so it survives the SSH connection too, provided the host's login manager does not kill a user's processes at logout (the doctor's Linux check refuses a reported `KillUserProcesses=yes`, but skips when `busctl` is unavailable or logind does not answer).
-Local second mates are unaffected and keep their ordinary backend and session selection, as do the workers a remote second mate supervises inside its own home.
+The workers a remote second mate supervises inside its own home run on that home's own stream configuration.
 
 ## Prerequisites
 
@@ -32,7 +29,7 @@ The readiness-owning doctor runs over this plain SSH bootstrap so read-only mode
 The entrypoint authorizes that bootstrap with normal git tracking when git resolves and with its pinned doctor digest when doctor must report that git itself is missing.
 After setup, every other command verifies Firstmate's account-owned remote job worker, stages the encoded argv and stdin bytes, waits for its result, and relays stdout, stderr, and the exit status separately.
 On macOS the worker is `dev.firstmate.remote-job`, an Aqua-scoped LaunchAgent at `~/Library/LaunchAgents/dev.firstmate.remote-job.plist` with logs under `~/Library/Logs/`.
-After that bootstrap every non-doctor `fm-on.sh` target runs through that worker in the remote account's GUI session, never in the SSH process or a Herdr pane.
+After that bootstrap every non-doctor `fm-on.sh` target runs through that worker in the remote account's GUI session, never in the SSH process.
 The worker serves one lane per staged home: jobs for the same home follow the staging-order contract owned by [`bin/fm-remote-job-lib.sh`](../bin/fm-remote-job-lib.sh), while different homes' lanes run concurrently so one home's long job never delays another home's commands.
 Within a home's lane the worker preempts a running reply long-poll as soon as any command other than another reply long-poll is queued for that home, so interactive commands and startup checks are never serialized behind a poll window.
 `bin/fm-remote-job-lib.sh` owns that preemption contract and distinguishes preemption from a wait window that closes with no data, so only a genuinely quiet window proves channel freshness while either outcome can re-arm without losing data.
@@ -53,7 +50,6 @@ The Nix and package-manager order after version-manager discovery is `~/.nix-pro
 Exact repeated entries are omitted.
 For the three Nix locations, a final `bin` symlink is resolved to its physical directory, while a path reached through symlinked ancestors remains in its documented position.
 Other final-component symlink directories, including `~/.local/bin`, are excluded.
-Because `~/.local/bin` precedes the package-manager directories, a stale self-updated `herdr` there shadows the one the account's login shell may resolve; the Herdr adapter steps around a client the running server refuses and `fm-remote-doctor.sh` names which client it selected ([`herdr-backend.md`](herdr-backend.md#client-selection)).
 The entrypoint resolves `git` only from the operator portion before prepending `<remote-root>/bin` for the authorized child.
 A checkout-local `bin/git` therefore cannot authorize an untracked command, and a host with no operator `git` receives an install-or-wrapper diagnostic before command execution.
 
@@ -86,9 +82,9 @@ Check any host against it directly:
 bin/fm-on.sh <secondmate-id|ssh-alias> fm-remote-doctor.sh
 ```
 
-That run is read-only and defaults to Herdr readiness, as do route seeding and existing-home migration.
-For a stream launch, check the registered secondmate's home with `bin/fm-on.sh <id> fm-remote-doctor.sh --backend stream`.
-This selects stream tools, credential, hub protocol, and Linux logout-survival checks instead of the Herdr server and its launch-agent checks; the common required-tool probe still requires the Herdr executable, and the remote job worker remains required on both backends, including its Aqua scope on macOS.
+That run is read-only; route seeding and existing-home migration run the same check.
+It covers stream tools, the stream credential, the hub protocol, Linux logout survival, the GUI login session on macOS, and the remote job worker (including its Aqua scope on macOS).
+`--backend stream` is still accepted, so a parent that names it explicitly works against any checkout.
 Stream gaps require operator action: `--fix` does not start a hub or mint a credential.
 It prints the exact `PATH` its own entrypoint launch produced, executes its required-tool probe through the installed worker when one is available, reports where each required and optional tool resolved, then reports one line per readiness check.
 Each gap is tagged `fixable:` when `--fix` can close it or `human:` when only a person at that machine can, and every gap is followed by an `action:` line naming the exact step.
@@ -101,15 +97,9 @@ The script's own header owns the full line protocol.
 bin/fm-on.sh <secondmate-id|ssh-alias> fm-remote-doctor.sh --fix
 ```
 
-For Herdr readiness, over the plain SSH doctor bootstrap it writes and reloads the Firstmate-owned `dev.firstmate.remote-job` and `dev.firstmate.herdr.fm-remote` launch agents on macOS, both scoped with `LimitLoadToSessionType=Aqua` and bootstrapped in `gui/<uid>`.
-The Herdr agent runs [`bin/fm-remote-herdr-guard.sh`](../bin/fm-remote-herdr-guard.sh) through a shell in login mode with separate `-l` and `-c` arguments, resolving the remote account's executable labeled Directory Services `UserShell`, then an executable `$SHELL`, and finally `/bin/sh`, so the server inherits the account's own environment.
-The `gui/<uid>` domain, not the login shell, is what gives that server and every pane it spawns the Aqua audit session and login-keychain access; a server born in any other session cannot read the login keychain.
-[Runtime backend verification](verification/runtime-backends.md#fm-remote-server-birth-and-login-keychain-access) owns the measured authentication consequences.
-Herdr's own SSH remote attach starts such a server when it finds none, and at boot it wins the `fm-remote` socket because sshd accepts connections before the login session exists, so the guard is what makes the launch agent converge: it execs the server in the foreground under launchd when nothing owns the socket, exits 0 when an Aqua-born server already does, and otherwise stops the foreign server and takes the session over, closing its panes so the parent firstmate relaunches its mates into the Aqua-born server.
-`KeepAlive={SuccessfulExit=false}` lets that exit 0 rest instead of respawning against a held socket; the guard's header owns the decision table and [`bin/fm-remote-herdr-owner-lib.sh`](../bin/fm-remote-herdr-owner-lib.sh) owns the birth markers it reads.
+Over the plain SSH doctor bootstrap it writes and reloads the Firstmate-owned `dev.firstmate.remote-job` launch agent on macOS, scoped with `LimitLoadToSessionType=Aqua` and bootstrapped in `gui/<uid>`.
 It starts the same workers directly on Linux, recreates the `~/.local/bin/fm-remote-entrypoint.sh` symlink when it is absent, and creates only Firstmate-owned required-tool wrappers that it can prove resolve to a version-manager target, stopping after one harness satisfies the at-least-one requirement.
 It never installs packages or overwrites a non-Firstmate file at a reserved wrapper path.
-The dedicated Herdr launch agent owns only the remote-secondmate `fm-remote` server and does not inspect, rewrite, start, stop, or require the user's interactive `default` session or its `dev.firstmate.herdr` launch agent.
 It re-derives every check from the host afterwards, so what it prints is the state after the repair rather than the intent of one.
 
 These steps are never automated and are always reported rather than silently attempted, because SSH cannot create a GUI session from nothing:
@@ -117,7 +107,7 @@ These steps are never automated and are always reported rather than silently att
 - The first console login on that Mac, and automatic login in System Settings > Users & Groups when the machine runs headless and must come back on its own after a reboot.
 - FileVault, which holds a reboot at pre-boot authentication before any login session exists.
 - Installing any missing required tool that no safe wrapper can resolve.
-- The required remote tool set is `git`, `jq`, `herdr`, compatible `tasks-axi`, `treehouse`, and `deck`; Deck additionally requires `python3`, and macOS additionally requires `lsof` so the doctor and guard can prove which process owns the session socket.
+- The required remote tool set is `git`, `jq`, compatible `tasks-axi`, `treehouse`, and `deck`; Deck additionally requires `python3`.
 - Each worker runtime's own `/login`, and any keychain password prompt that login needs.
 
 Firstmate never writes an auto-login password, never changes FileVault, and never stores an account password.
@@ -172,7 +162,7 @@ It names exactly one registered local route, never a wildcard or a batch, and `<
 
 The second mate must have persisted its work and exited through the ordinary [control plane](agent-control.md) first.
 The command refuses while the home still holds any child work record, a registered state check, in-flight backlog work, a nested secondmate route, an armed process-event source or condition watch, an away or quiet posture, or a live session.
-Only the tmux and Herdr runtimes can prove a stopped agent, so a home on another runtime is refused rather than assumed idle.
+Its stream endpoint must read positively dead (a missing hub registry entry is not proof), so a home whose agent cannot be proved stopped is refused rather than assumed idle.
 The host is gated on the same read-only [`bin/fm-remote-doctor.sh`](../bin/fm-remote-doctor.sh) readiness the seed uses, and migration never runs `--fix`: an account-level gap is reported with the doctor's own text and no route is switched.
 A file under `config/` that is not in the classified non-secret set is named and refused during the preconditions, before anything is frozen; widening that set is a separate decision because the cost of guessing wrong is a credential on another machine.
 Any refusal that lands before the host has staged anything - an unready host, an unmigratable project, a record the snapshot cannot carry - unwinds the freeze marker and the journal that run created, so a home the command declined to move stays startable.
@@ -214,11 +204,9 @@ Launch or recover the remote second mate with the same command used for a local 
 bin/fm-spawn.sh <id> --secondmate
 ```
 
-The primary resolves the verified secondmate harness and optional model and effort, runs the same readiness gate the seed runs (`--backend stream` for a stream launch), transfers the inherited-material allowlist, and asks the remote host to launch on the selected backend.
-The backend is an explicit `--backend herdr|stream`, else the `remote_backend=` the parent's record already names (so recovery keeps it), else Herdr; the remote home's own `config/backend` never selects it, because that file is the mate's choice for its own crew.
-Herdr-hosted remote secondmates on one host share `fm-remote` and retain separate `2ndmate-<id>` workspaces inside it.
-An explicit request for any other backend is refused rather than honored, and the remote host refuses one too.
-An existing remote endpoint recorded in another Herdr session, including `default`, is classified as unverified and left untouched; launch, liveness recovery, control, and retirement refuse it until an operator explicitly migrates it instead of attempting a live cutover.
+The primary resolves the verified secondmate harness and optional model and effort, runs the same readiness gate the seed runs, transfers the inherited-material allowlist, and asks the remote host to launch on stream.
+An explicit request for any other backend is refused, and the remote host refuses one too.
+A parent record that still names the retired herdr backend is refused; stop any agent left on that endpoint by hand, then retire the record with `bin/fm-retire-endpoint.sh`.
 A launch after a host has drifted out of readiness fails with the doctor's own gap text instead of leaving a half-created endpoint.
 Raw launch commands are not accepted for remote secondmates.
 
@@ -228,15 +216,14 @@ A stream launch runs the host-local `bin/fm-spawn.sh` with the mate home's `conf
 Remote route seeding does not mint a stream credential or configure the hub URL: provision that home's `config/stream-hub` and a home-specific `config/stream-token` accepted by the hub before selecting stream; [stream Security](stream-backend.md#security) owns credential isolation and hub restart requirements.
 The token never travels on a command line or in the launch environment.
 The parent's endpoint binding is read back from the host's route; the [`bin/fm-remote-control-lib.sh` header](../bin/fm-remote-control-lib.sh) owns its exact `remote_*` fields.
-Steering, peek, crew-state, the parent channel, and liveness use the same host verbs as Herdr.
+Steering, peek, crew-state, the parent channel, and liveness run through host verbs on the configured host.
 A stream `missing` read is the hub registry not knowing the endpoint, so the liveness sweep skips it with a diagnostic instead of relaunching, as it does for a local stream mate.
 The mate's own crew follows that home's `config/backend`.
 
-### Lifecycle control and backend migration
+### Lifecycle control
 
 `bin/fm-control.sh <id> interrupt|exit|relaunch` on the primary runs the same control plane on the host (`fm-remote-secondmate-control.sh control|relaunch`), so every postcondition is checked where the agent runs.
-Remote migration accepts only Herdr or stream; [agent control](agent-control.md#verbs) owns the migration transaction and its idle-or-positively-dead precondition.
-Before relaunch reaches host lifecycle control, the primary checks readiness for the requested backend, otherwise the recorded remote backend, otherwise Herdr, using the same check/repair/recheck sequence as launch; a remaining gap or SSH exit 255 refuses without stopping the mate.
+Before relaunch reaches host lifecycle control, the primary checks readiness with the same check/repair/recheck sequence as launch; a remaining gap or SSH exit 255 refuses without stopping the mate.
 An ordinary primary `fm-control.sh` relaunch keeps the recorded profile unless flags replace it, resets unnamed model and effort axes when the harness changes, and rewrites the parent's binding and resolved harness, model, and effort from the host's route after success.
 If that route read or parent publication fails after host success, the primary reports failure with the old parent binding retained; reconcile on the same host rather than assuming no replacement launched.
 `recover-missing` remains unavailable through the primary for remote mates.
@@ -245,7 +232,7 @@ A remote route's endpoint records live in `state/parent-route`, which the launch
 The launch and the relaunch each reconcile a root an earlier launch left group-writable to the mode Deck accepts, so no home needs a hand chmod before a Deck mate can start.
 The reconcile touches only a real directory this host provably owns; a symlink, a non-directory, or a directory owned by another uid is refused loudly rather than chmod-ed, and the data root beside it is never tightened.
 
-Startup liveness recovery relaunches a positively dead remote second mate, or a missing Herdr endpoint, through the normal spawn command, so recovery passes the same readiness gate rather than a weaker one; a missing stream endpoint follows the skip rule above.
+Startup liveness recovery relaunches a positively dead remote second mate through the normal spawn command, so recovery passes the same readiness gate rather than a weaker one; a missing stream endpoint follows the skip rule above.
 A dead remote endpoint is removed before that relaunch, and a removal the backend cannot confirm refuses the launch instead of risking a duplicate mate beside a worker that may still be running.
 A launch that starts an agent reports success only after the host proves, by process identity, that it replaced the previous one: the new endpoint hosts an agent process that did not exist before, and every previous agent process is gone.
 A previous agent still running after its endpoint was removed refuses the launch rather than gaining a twin, and a proof that cannot be made within the bound is reported as a failed launch; [`bin/fm-remote-secondmate-control.sh`](../bin/fm-remote-secondmate-control.sh) owns that contract.
@@ -314,7 +301,7 @@ Changed live routes receive a marked instruction to re-read the transferred file
 The primary records that remote nudge before delivery and retries it during locked startup convergence after a failed send.
 Local secondmates retain their generation-specific local pointer contract; remote transfers do not copy those primary-local instruction paths.
 
-During updates, [`bin/fm-secondmate-restart.sh`](../bin/fm-secondmate-restart.sh) restarts live remote mates through the host-local `relaunch` route described under [Lifecycle control](#lifecycle-control-and-backend-migration).
+During updates, [`bin/fm-secondmate-restart.sh`](../bin/fm-secondmate-restart.sh) restarts live remote mates through the host-local `relaunch` route described under [Lifecycle control](#lifecycle-control).
 The host then applies the same replacement proof as a launch before it reports the restart: the old agent process, identified before anything touched it, must be gone and the endpoint must host an agent process that did not exist before.
 The primary passes `<harness> <model|default|-> <effort|default|->` explicitly, using `default` when an axis has no parent pin, because `config/secondmate-harness` is not inherited into a second mate's home and the file on that host belongs to a different home; letting the far side re-resolve it would silently move the mate onto another runtime.
 SSH exit 255 leaves completion unknown and the route preserved, exactly as every other verb here.
@@ -331,14 +318,14 @@ bin/fm-teardown.sh <id>
 ```
 
 Retirement is executed on the configured host and refuses while the remote home has child work, while the primary has an unfinished backlog outbox, or while a routed reply remains unresolved.
-It closes only the retiring secondmate's stream endpoint or Herdr panes or `2ndmate-<id>` workspace in `fm-remote`; it never stops the shared session or removes a sibling secondmate's endpoints.
+It closes only the retiring secondmate's stream endpoint and never a sibling secondmate's.
 SSH exit 255 preserves both the route and local records because completion is unknown.
 `--force` remains the explicit discard path and requires the same captain authority as local secondmate discard.
 No generic remote delete or write surface exists: remote writes are confined to inherited allowlist files and backlog handoff scratch files, and remote home removal is reachable only through guarded secondmate retirement.
 
 ## Verification
 
-The portable tests use the real entrypoint protocol, real git repositories, a deterministic SSH boundary, a stateful host-local Herdr CLI fixture, and a controlled account fixture for the readiness gate.
+The portable tests use the real entrypoint protocol, real git repositories, a deterministic SSH boundary, real or stub stream hubs, and a controlled account fixture for the readiness gate.
 The lifecycle test covers seeding a registered project that this machine has never cloned, asserts that the local project tree is unchanged afterwards, and carries Bitbucket, self-hosted, and scp-like origins through to the remote clone:
 
 ```sh
@@ -350,7 +337,6 @@ bin/fm-test-run.sh tests/fm-crew-state.test.sh
 bin/fm-test-run.sh tests/fm-remote-job.test.sh
 bin/fm-test-run.sh tests/fm-remote-transport-lanes.test.sh
 bin/fm-test-run.sh tests/fm-remote-doctor.test.sh
-bin/fm-test-run.sh tests/fm-remote-herdr-guard.test.sh
 bin/fm-test-run.sh tests/fm-project-origin.test.sh
 bin/fm-test-run.sh tests/fm-secondmate-sync.test.sh
 bin/fm-test-run.sh tests/fm-remote-reply.test.sh
@@ -363,14 +349,12 @@ bin/fm-test-run.sh tests/fm-remote-secondmate-stream.test.sh
 ```
 
 The stream route suite uses a real hub, stream agent, pseudoterminal, and Deck host driver with a fake Deck binary and deterministic SSH/readiness boundaries; it covers launch, steering, reads, lifecycle routing, readiness refusal before lifecycle control, profile-axis reset, resolved-model rebinding, and primary route publication.
-[Agent-control verification](agent-control.md#verification) points to the stream/tmux backend migration regression.
 These fixtures are regression coverage, not real-host readiness or real-model verification.
 
 The migration case reuses that same lifecycle fixture and covers the refusal with a live child record, the refusal on an unready host with no `--fix` repair, exact durable-byte and steering-correlation transfer, a rerun that finds a steer queued after the first snapshot and watcher bookkeeping beside it, credential exclusion, the frozen-archive guards, a known launch failure restoring the original route while both copies survive, and an unknown completion converging on rerun without a duplicate endpoint or any effect on an unselected sibling home.
 It also covers a refusal that lands before the host has staged anything unwinding the freeze and its journal so the home still starts a session, a snapshot whose durable records exceed the ordinary remote-job ceiling crossing on both sides of the transport, a rerun whose snapshot drops a record the published home holds being refused by name with that home's bytes unchanged while one that only rewrites a record's bytes converges, and a rerun after a rolled-back launch retrying the launch without re-landing the frozen source's older records.
 
-The account-level checks the doctor performs - a real Aqua login session, a real `launchctl` domain, and a real herdr server - are only ever exercised against fixtures here, so the readiness gate's behavior on a genuine Mac remains an operator-run smoke test.
-The audit-session facts the guard relies on are recorded with their commands in [runtime backend verification](verification/runtime-backends.md#fm-remote-server-birth-and-login-keychain-access).
+The account-level checks the doctor performs - a real Aqua login session and a real `launchctl` domain - are only ever exercised against fixtures here, so the readiness gate's behavior on a genuine Mac remains an operator-run smoke test.
 
 For a real-host smoke test, provision a disposable remote account and project, run the doctor and its repair against that account, launch the second mate, send one marked request, verify its correlated reply and structured fleet projection, simulate an unreachable host to confirm unknown-without-failover behavior, then retire only after the remote queue is empty.
 Full real-host lifecycle validation remains an operator-run smoke test.

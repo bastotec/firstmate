@@ -111,8 +111,10 @@ _FM_PENDING_REPLY_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/n
 . "$_FM_PENDING_REPLY_LIB_DIR/fm-marker-lib.sh"
 # shellcheck source=bin/fm-backend.sh
 . "$_FM_PENDING_REPLY_LIB_DIR/fm-backend.sh"
-# shellcheck source=bin/fm-tmux-lib.sh
-. "$_FM_PENDING_REPLY_LIB_DIR/fm-tmux-lib.sh"
+# shellcheck source=bin/fm-composer-lib.sh
+. "$_FM_PENDING_REPLY_LIB_DIR/fm-composer-lib.sh"
+# shellcheck source=bin/fm-busy-lib.sh
+. "$_FM_PENDING_REPLY_LIB_DIR/fm-busy-lib.sh"
 # shellcheck source=bin/fm-classify-lib.sh
 . "$_FM_PENDING_REPLY_LIB_DIR/fm-classify-lib.sh"
 
@@ -1501,7 +1503,7 @@ fm_pending_reply_tick() {  # <state-dir>
       awaiting_report|recovery_sent) ;;
       *) continue ;;
     esac
-    backend=tmux
+    backend=stream
     target=
     busy=unknown
     sm_home=

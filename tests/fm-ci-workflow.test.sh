@@ -142,7 +142,6 @@ test_measured_lanes_keep_their_authorized_bounds() {
   done <<'CAPS'
 tests-portable-parallel 15
 tests-portable-serial 15
-tests-herdr 75
 macos-stock-bash 10
 CAPS
   pass "the measured lane bounds match their authorized caps"

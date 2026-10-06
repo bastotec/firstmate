@@ -26,8 +26,6 @@
   "readmeSetupTargets": [
     "docs/configuration.md",
     "docs/wedge-alarm.md",
-    "docs/tmux-backend.md",
-    "docs/herdr-backend.md",
     "docs/stream-backend.md",
     "docs/remote-secondmates.md"
   ],
@@ -59,14 +57,6 @@
     {
       "source": "docs/wedge-alarm.md",
       "target": "docs/verification/supervision.md"
-    },
-    {
-      "source": "docs/tmux-backend.md",
-      "target": "docs/verification/runtime-backends.md"
-    },
-    {
-      "source": "docs/herdr-backend.md",
-      "target": "docs/verification/runtime-backends.md"
     },
     {
       "source": "docs/stream-backend.md",
@@ -259,10 +249,6 @@
       "audience": "maintainer-verification"
     },
     {
-      "path": "docs/herdr-backend.md",
-      "audience": "operator-current"
-    },
-    {
       "path": "docs/remote-secondmates.md",
       "audience": "operator-current"
     },
@@ -281,10 +267,6 @@
     {
       "path": "docs/supervision-protocols/unknown.md",
       "audience": "agent-runtime"
-    },
-    {
-      "path": "docs/tmux-backend.md",
-      "audience": "operator-current"
     },
     {
       "path": "docs/trace-context.md",

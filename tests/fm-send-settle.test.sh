@@ -6,45 +6,28 @@
 # turn before its busy footer appears, so an immediate peek after fm-send returns
 # would see the stale idle pane. fm-send therefore pauses FM_SEND_SETTLE seconds
 # (default 1, 0 disables) after a successful typed submit, so the receiving turn
-# has time to visibly start. These tests use an explicit backend target to stay on
-# that plane and pin the behavior hermetically (stubbed tmux + sleep, no real
-# agent):
+# has time to visibly start. These tests use an explicit stream target to stay on
+# that plane and pin the behavior hermetically (the fake stream hub plus a
+# recording sleep, no real agent):
 #   1. A successful typed text send pauses for the FM_SEND_SETTLE value (default 1).
 #   2. FM_SEND_SETTLE=0 produces no pause at all (sleep is never invoked for it).
 #   3. The pause is tunable (FM_SEND_SETTLE=7 pauses 7).
 #   4. The --key path never pauses (it bypasses the submit/settle path entirely).
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 SEND="$ROOT/bin/fm-send.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-send-settle)
 
-# A fake tmux that lets fm-send's submit path reach a clean "empty" verdict, plus a
-# fake sleep that records every requested duration (one per line) instead of
-# sleeping. send-keys always succeeds; display-message yields a numeric cursor_y;
-# capture-pane returns an empty bordered composer so fm_tmux_composer_state reads
-# "empty" (submit landed) on the first Enter. The sleep log path comes from
-# FM_SLEEP_LOG.
+# A fake sleep that records every requested duration (one per line) instead of
+# sleeping; the log path comes from FM_SLEEP_LOG. The fake stream endpoint's
+# composer reads empty after each Enter, so the submit lands on the first try.
 make_stubs() {  # <dir> -> echoes fakebin dir
   local dir=$1 fb="$1/fakebin"
   mkdir -p "$fb"
-  cat > "$fb/tmux" <<'SH'
-#!/usr/bin/env bash
-set -u
-case "${1:-}" in
-  send-keys) exit 0 ;;
-  display-message)
-    for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac; done
-    printf 'fakepane\n'; exit 0 ;;
-  capture-pane) printf '╭────╮\n│    │\n╰────╯\n'; exit 0 ;;
-  list-windows) exit 0 ;;
-esac
-exit 0
-SH
-  chmod +x "$fb/tmux"
   cat > "$fb/sleep" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "${1:-}" >> "$FM_SLEEP_LOG"
@@ -53,6 +36,10 @@ SH
   chmod +x "$fb/sleep"
   printf '%s\n' "$fb"
 }
+
+# An endpoint no record in the sending home names: an explicit target.
+TARGET=$(fm_test_stream_task "$TMP_ROOT/endpoints" settle | sed -n 's/^window=//p')
+[ -n "$TARGET" ] || fail "could not register the fake stream endpoint"
 
 # run_send <fakebin> <sleep-log> [env-assignments...] -- <fm-send args...>
 # Runs fm-send.sh with the stubs on PATH. FM_ROOT_OVERRIDE points at a non-repo
@@ -65,7 +52,7 @@ run_send() {
   : > "$log"
   env "$@" PATH="$fb:$PATH" \
     FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SLEEP_LOG="$log" \
-    "$SEND" "sess:win" "hello captain" 2>/dev/null
+    "$SEND" "$TARGET" "hello captain" 2>/dev/null
 }
 
 test_default_send_pauses_one_second() {
@@ -111,7 +98,7 @@ test_key_path_never_pauses() {
   home="$dir/home"; mkdir -p "$home/state"
   : > "$log"
   env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SLEEP_LOG="$log" \
-    "$SEND" "sess:win" --key Escape 2>/dev/null; rc=$?
+    "$SEND" "$TARGET" --key Escape 2>/dev/null; rc=$?
   expect_code 0 "$rc" "--key send should succeed"
   [ ! -s "$log" ] || fail "--key path paused but must not"$'\n'"--- sleeps ---"$'\n'"$(cat "$log")"
   pass "fm-send: the --key path never pauses (settle scoped to text submit)"
@@ -125,9 +112,10 @@ test_escape_key_leaves_busy_state_alone() {
   dir="$TMP_ROOT/escape-busy"; mkdir -p "$dir"
   fb=$(make_stubs "$dir"); log="$dir/sleep.log"
   home="$dir/home"; mkdir -p "$home/state"
-  fm_write_meta "$home/state/task.meta" \
-    "window=sess:win" "worktree=$home/wt" "project=$home/project" \
-    "harness=deck" "kind=ship" "mode=no-mistakes" "yolo=off"
+  { fm_test_stream_task "$home/state" task
+    printf '%s\n' "worktree=$home/wt" "project=$home/project" \
+      "harness=deck" "kind=ship" "mode=no-mistakes" "yolo=off"; } > "$home/state/task.meta" \
+    || fail "could not register the task endpoint"
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" task)
   printf 'busy_gen=%s\n' "$gen" >> "$home/state/task.meta"
   before=$(cat "$home/state/task.busy-state")

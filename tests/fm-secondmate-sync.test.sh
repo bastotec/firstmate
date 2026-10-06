@@ -28,10 +28,11 @@
 #     is unchanged, and a launch never re-targets that copy.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-# shellcheck source=tests/remote-herdr-fixture.sh
-. "$(dirname "${BASH_SOURCE[0]}")/remote-herdr-fixture.sh"
+# Every live secondmate endpoint here is a fake endpoint on the suite's stub
+# stream hub (tests/fixtures.sh), so the nudge doorbell and liveness reads run
+# through the real stream adapter.
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 # shellcheck source=bin/fm-ff-lib.sh
 . "$ROOT/bin/fm-ff-lib.sh"
@@ -42,7 +43,16 @@ BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 fm_git_identity fmtest fmtest@example.com
 
 TMP_ROOT=$(fm_test_tmproot fm-secondmate-sync)
-export FM_BACKEND=tmux
+trap 'fm_test_cleanup || true' EXIT
+
+# live_endpoint <state-dir> <id>: register <id>'s endpoint with a running deck in
+# its foreground and print the stream identity lines its meta carries.
+live_endpoint() {  # <state-dir> <id>
+  local lines
+  lines=$(fm_test_stream_task "$1" "$2") || return 1
+  fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$1" "$2")" deck || return 1
+  printf '%s\n' "$lines"
+}
 
 # --- world builders --------------------------------------------------------
 
@@ -72,13 +82,13 @@ new_world() {
 
 # add_sm_worktree <w> <id> <commit>: a secondmate home as a DETACHED worktree of
 # the primary at <commit>, plus its seed marker and a LIVE kind=secondmate meta
-# (a window= makes it a running direct report).
+# (a live endpoint makes it a running direct report).
 add_sm_worktree() {
   local w=$1 id=$2 commit=$3
   git -C "$w/main" worktree add -q --detach "$w/$id" "$commit"
   printf '%s\n' "$id" > "$w/$id/.fm-secondmate-home"
   {
-    printf 'window=firstmate:fm-%s\n' "$id"
+    live_endpoint "$w/home/state" "$id"
     printf 'kind=secondmate\n'
     printf 'harness=deck\n'
     printf 'home=%s/%s\n' "$w" "$id"
@@ -332,28 +342,6 @@ fi
 exit 0
 SH
   chmod +x "$fakebin/gh-axi"
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-if [ -n "${FM_FAKE_TMUX_LOG:-}" ]; then
-  printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
-fi
-case "$*" in
-  list-windows*)
-    sed -n 's/^window=[^:]*://p' "${FM_HOME:?}"/state/*.meta
-    exit 0
-    ;;
-  *display-message*'#{pane_current_command}'*) printf '%s\n' fm-deck-worker; exit 0 ;;
-  *display-message*'#{pane_id}'*) printf '%s\n' '%1'; exit 0 ;;
-  *display-message*'#{cursor_y}'*) printf '%s\n' 0; exit 0 ;;
-  *capture-pane*) printf '❯\n'; exit 0 ;;
-  *'send-keys'*' -l '*)
-    [ "${FM_FAKE_TMUX_FAIL_LITERAL:-0}" = 1 ] && exit 1
-    exit 0
-    ;;
-esac
-exit 0
-SH
-  chmod +x "$fakebin/tmux"
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -408,7 +396,7 @@ SH
 }
 
 test_bootstrap_sweep_nudges_only_instruction_change() {
-  local w c1 c2 c3 fakebin out info_line log marker_dir
+  local w c1 c2 c3 fakebin out info_line marker_dir
   w=$(new_world boot-sweep)
   c1=$(head_of "$w/main")
   add_sm_worktree "$w" sm-instr "$c1"        # behind by an instruction change
@@ -423,9 +411,8 @@ test_bootstrap_sweep_nudges_only_instruction_change() {
   printf 'sm-nonlive\n' > "$w/sm-nonlive/.fm-secondmate-home"
 
   fakebin=$(make_fake_toolchain "$w")
-  log="$w/tmux.log"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
-    FM_SEND_SETTLE=0 FM_FAKE_TMUX_LOG="$log" \
+    FM_SEND_SETTLE=0 \
     "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
 
   info_line=$(printf '%s\n' "$out" | grep '^BOOTSTRAP_INFO: nudged fm-sm-instr ' || true)
@@ -441,8 +428,8 @@ test_bootstrap_sweep_nudges_only_instruction_change() {
     "nudge send should use the marked fm-send secondmate path"
   assert_contains "$(cat "$w/home/state/sm-instr.inbox/001.msg")" "firstmate was updated to the latest - please re-read your AGENTS.md" \
     "nudge send should enqueue the exact re-read message"
-  assert_contains "$(cat "$log")" "Firstmate instruction waiting" \
-    "nudge send should ring the doorbell at the secondmate pane"
+  assert_contains "$(fm_test_fake_stream_submitted "$(fm_test_stream_target_of "$w/home/state" sm-instr)")" \
+    "Firstmate instruction waiting" "nudge send should ring the doorbell at the secondmate endpoint"
   marker_dir="$w/home/state/.secondmate-nudge-pending"
   [ ! -e "$marker_dir/sm-instr.pending" ] || fail "successful nudge should clear its retry marker"
 
@@ -456,7 +443,7 @@ test_bootstrap_sweep_nudges_only_instruction_change() {
 }
 
 test_bootstrap_nudge_send_uses_state_override() {
-  local w c1 fakebin out log override_state marker
+  local w c1 fakebin out override_state marker
   w=$(new_world nudge-state-override)
   c1=$(head_of "$w/main")
   add_sm_worktree "$w" sm-instr "$c1"
@@ -466,10 +453,9 @@ test_bootstrap_nudge_send_uses_state_override() {
   mv "$w/home/state/sm-instr.meta" "$override_state/sm-instr.meta"
   touch "$override_state/.last-watcher-beat"
   fakebin=$(make_fake_toolchain "$w")
-  log="$w/tmux.log"
 
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
-    FM_STATE_OVERRIDE="$override_state" FM_SEND_SETTLE=0 FM_FAKE_TMUX_LOG="$log" \
+    FM_STATE_OVERRIDE="$override_state" FM_SEND_SETTLE=0 \
     "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
 
   assert_contains "$out" "BOOTSTRAP_INFO: nudged fm-sm-instr with" \
@@ -484,7 +470,7 @@ test_bootstrap_nudge_send_uses_state_override() {
 }
 
 test_bootstrap_nudge_retry_rejects_malformed_marker_id() {
-  local w c1 fakebin out marker log evil
+  local w c1 fakebin out marker evil
   w=$(new_world nudge-malformed-id)
   c1=$(head_of "$w/main")
   evil="$w/evil"
@@ -501,15 +487,14 @@ test_bootstrap_nudge_retry_rejects_malformed_marker_id() {
     printf 'message=firstmate was updated to the latest - please re-read your AGENTS.md to pick up the new instructions.\n'
   } > "$marker"
   {
-    printf 'window=firstmate:fm-evil\n'
+    live_endpoint "$w/home" escape
     printf 'kind=secondmate\n'
     printf 'home=%s\n' "$evil"
   } > "$w/home/escape.meta"
   fakebin=$(make_fake_toolchain "$w")
-  log="$w/tmux.log"
 
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
-    FM_SEND_SETTLE=0 FM_FAKE_TMUX_LOG="$log" \
+    FM_SEND_SETTLE=0 \
     "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
 
   assert_contains "$out" "NUDGE_SECONDMATES: secondmate ../escape: send failed: retry marker has unsafe id" \
@@ -517,7 +502,9 @@ test_bootstrap_nudge_retry_rejects_malformed_marker_id() {
   assert_not_contains "$out" "BOOTSTRAP_INFO: nudged fm-../escape" \
     "malformed retry marker id must never send through a path-traversed selector"
   assert_present "$marker" "malformed retry marker should remain for operator inspection"
-  assert_absent "$log" "malformed retry marker should not invoke fm-send"
+  [ -z "$(fm_test_fake_stream_submitted "$(fm_test_stream_target_of "$w/home" escape)")" ] \
+    || fail "malformed retry marker should not invoke fm-send"
+  assert_absent "$w/home/escape.inbox" "malformed retry marker should not enqueue a steer outside state/"
   pass "T8f bootstrap nudge retry rejects malformed marker ids"
 }
 
@@ -608,97 +595,26 @@ test_bootstrap_nudge_retry_refuses_changed_home() {
   pass "T8e bootstrap nudge retry refuses a changed home instead of guessing"
 }
 
-# --- T8b: stale herdr nudge failures retry through current fm-<id> metadata ---
+# --- T8b: a stale endpoint cannot lose a nudge; fm-<id> follows the respawn ---
 # Reproduces the 2026-07-07 session-start bug: secondmate_sync used to print raw
-# backend targets (default:w9:pY) that liveness respawn immediately replaced
-# (default:wA:p2), so fm-send with the printed target fell back to tmux and failed
-# while fm-<id> resolved through current meta.
-make_nudge_herdr_fake() {
-  local dir=$1 stale=$2 fresh=$3 fakebin closed
-  fakebin=$(fm_fakebin "$dir")
-  # A real `pane close` removes the pane, and the recovery sweep only relaunches
-  # onto an endpoint a structured read proves gone, so the fake records each
-  # close and answers pane_not_found for the panes it closed.
-  closed="$dir/closed-panes"
-  rm -f "$closed"
-  cat > "$fakebin/herdr" <<SH
-#!/usr/bin/env bash
-set -u
-cmd=\${1:-}; sub=\${2:-}; arg=\${3:-}
-closed='$closed'
-if [ -n "\$arg" ] && [ -s "\$closed" ] && grep -Fqx "\$arg" "\$closed"; then
-  case "\$cmd \$sub" in
-    "pane get") printf '{"error":{"code":"pane_not_found","message":"closed"}}\n' >&2; exit 0 ;;
-    "agent get") printf '{"error":{"code":"agent_not_found","message":"closed"}}\n' >&2; exit 0 ;;
-  esac
-fi
-case "\$cmd \$sub" in
-  "pane close")
-    printf '%s\n' "\$arg" >> "\$closed"
-    exit 0
-    ;;
-  "status --json")
-    printf '{"client":{"version":"0.7.1","protocol":14},"server":{"running":true}}\n'
-    ;;
-  "session list")
-    printf '{"sessions":[{"name":"%s","running":true,"socket_path":"%s"}]}\n' \
-      '${stale%%:*}' '$dir/herdr.sock'
-    ;;
-  "pane get")
-    if [ "\$arg" = "${stale#*:}" ]; then
-      printf '{"result":{"pane":{"pane_id":"${stale#*:}"}}}\n'
-    elif [ "\$arg" = "${fresh#*:}" ]; then
-      printf '{"result":{"pane":{"pane_id":"${fresh#*:}"}}}\n'
-    else
-      printf '{"error":{"code":"pane_not_found","message":"missing"}}\n' >&2
-      exit 0
-    fi
-    ;;
-  "agent get")
-    if [ "\$arg" = "${stale#*:}" ]; then
-      printf '{"error":{"code":"agent_not_found","message":"gone"}}\n' >&2
-    elif [ "\$arg" = "${fresh#*:}" ]; then
-      printf '{"result":{"agent":{"agent_status":"idle"}}}\n'
-    else
-      printf '{"error":{"code":"agent_not_found","message":"gone"}}\n' >&2
-    fi
-    ;;
-  "pane process-info")
-    # A deck record is proven agent-free only by the pane's process view: a
-    # real, childless process stands in for the pane shell.
-    shell_pid=\${FM_FAKE_HERDR_SHELL_PID:?}
-    printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"%s","shell_pid":%s,"foreground_process_group_id":%s,"foreground_processes":[{"pid":%s,"name":"zsh","argv0":"zsh","argv":["-zsh"]}]}}}\\n' "\${4:-}" "\$shell_pid" "\$shell_pid" "\$shell_pid"
-    ;;
-  "pane send-text"|"pane run"|"pane send-keys")
-    if [ "\$arg" = "${stale#*:}" ]; then
-      exit 1
-    fi
-    exit 0
-    ;;
-esac
-exit 0
-SH
-  chmod +x "$fakebin/herdr"
-  printf '%s\n' "$fakebin"
-}
-
-test_nudge_retry_uses_fresh_herdr_endpoint_after_respawn() {
-  local w c1 stale fresh fakebin herdrfb toolchain out meta window resolved stale_send fresh_send spawn_stub marker shell_pid
-  stale=default:w9:pY
-  fresh=default:wA:p2
-  w=$(new_world nudge-herdr-rotate)
+# backend targets that liveness respawn immediately replaced, so a send to the
+# printed target failed while fm-<id> resolved through current meta.
+test_nudge_retry_uses_fresh_endpoint_after_respawn() {
+  local w c1 stale fresh fakebin out meta window resolved stale_send fresh_send spawn_stub marker
+  w=$(new_world nudge-stream-rotate)
   c1=$(head_of "$w/main")
   add_sm_worktree "$w" sm-instr "$c1"
   bump_primary "$w" instr
 
   meta="$w/home/state/sm-instr.meta"
-  {
-    printf 'window=%s\n' "$stale"
-    printf 'backend=herdr\n'
-    printf 'kind=secondmate\n'
-    printf 'harness=deck\n'
-    printf 'home=%s/sm-instr\n' "$w"
-  } > "$meta"
+  stale=$(fm_test_stream_target_of "$w/home/state" sm-instr)
+  # The respawned endpoint: a live deck on another fake endpoint.
+  mkdir -p "$w/fresh-state"
+  live_endpoint "$w/fresh-state" sm-instr > "$w/fresh.lines"
+  fresh=$(fm_test_stream_target_of "$w/fresh-state" sm-instr)
+  # The recorded endpoint's agent is gone, leaving only its shell: the dead
+  # endpoint the liveness sweep respawns.
+  fm_test_fake_stream_foreground "$stale" bash
 
   spawn_stub="$w/spawn-stub.sh"
   cat > "$spawn_stub" <<SH
@@ -707,34 +623,29 @@ set -u
 id=\${1:-}
 meta="\$FM_HOME/state/\$id.meta"
 [ -f "\$meta" ] || exit 1
-sed -i.bak "s/^window=.*/window=$fresh/" "\$meta" 2>/dev/null || \
-  sed -i "s/^window=.*/window=$fresh/" "\$meta"
-rm -f "\$meta.bak"
+grep -v -E '^(window|stream_endpoint_id)=' "\$meta" > "\$meta.new"
+grep -E '^(window|stream_endpoint_id)=' '$w/fresh.lines' >> "\$meta.new"
+mv -f "\$meta.new" "\$meta"
+# A respawn closes the endpoint it replaces.
+curl -sS -m 5 -X POST -H 'Content-Type: application/json' --data-binary '{"closed_by": "agent"}' \
+  '$FM_TEST_STREAM_URL/v1/test/endpoints/${stale##*:}' >/dev/null
 exit 0
 SH
   chmod +x "$spawn_stub"
   cp "$spawn_stub" "$w/main/bin/fm-spawn.sh"
 
-  herdrfb=$(make_nudge_herdr_fake "$w/herdr" "$stale" "$fresh")
-  toolchain=$(make_fake_toolchain "$w")
-  if ! add_real_jq "$toolchain"; then
-    pass "T8b nudge selector herdr respawn skipped without jq"
-    return
-  fi
-  sleep 300 &
-  shell_pid=$!
-  out=$(PATH="$herdrfb:$toolchain:$BASE_PATH" HERDR_ENV=1 FM_BACKEND=herdr \
-    FM_SEND_SETTLE=0 FM_FAKE_HERDR_SHELL_PID="$shell_pid" \
+  fakebin=$(make_fake_toolchain "$w")
+  add_real_jq "$fakebin" || fail "jq is required for the stream adapter"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_SEND_SETTLE=0 \
     FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
     "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
-  kill "$shell_pid" 2>/dev/null || true
 
-  # The nudge now rides the durable inbox: a stale endpoint can only swallow
-  # the best-effort doorbell, never the steer itself, so the nudge is SENT
+  # The nudge rides the durable inbox: a stale endpoint can only swallow the
+  # best-effort doorbell, never the steer itself, so the nudge is SENT
   # (recorded) rather than failed, no retry marker is owed, and the watcher's
   # re-ring ladder owns delivery against the respawned fresh endpoint.
   assert_contains "$out" "BOOTSTRAP_INFO: nudged fm-sm-instr" \
-    "a stale herdr endpoint must not fail a durably enqueued nudge"
+    "a stale endpoint must not fail a durably enqueued nudge"
   assert_contains "$(cat "$w/home/state/sm-instr.inbox/001.msg")" \
     "please re-read your AGENTS.md" \
     "the nudge should be durably recorded despite the stale endpoint"
@@ -749,16 +660,16 @@ SH
   [ "$resolved" = "$fresh" ] || fail "fm-<id> should resolve through post-respawn meta, got '$resolved'"
 
   # shellcheck disable=SC2016  # $0/$1 belong to the inner bash -c process.
-  stale_send=$(PATH="$herdrfb:$toolchain:$BASE_PATH" bash -c \
-    '. "$0/bin/fm-backend.sh"; fm_backend_source herdr; fm_backend_herdr_send_literal "$1" "nudge"' "$ROOT" "$stale" 2>/dev/null; printf '%s' "$?")
-  [ "$stale_send" != 0 ] || fail "explicit stale herdr endpoint send should fail"
+  stale_send=$(bash -c \
+    '. "$0/bin/fm-backend.sh"; fm_backend_source stream; fm_backend_stream_send_literal "$1" "nudge"' "$ROOT" "$stale" 2>/dev/null; printf '%s' "$?")
+  [ "$stale_send" != 0 ] || fail "explicit stale endpoint send should fail"
 
   # shellcheck disable=SC2016  # $0/$1 belong to the inner bash -c process.
-  fresh_send=$(PATH="$herdrfb:$toolchain:$BASE_PATH" bash -c \
-    '. "$0/bin/fm-backend.sh"; fm_backend_source herdr; fm_backend_herdr_send_literal "$1" "nudge"' "$ROOT" "$fresh" 2>/dev/null; printf '%s' "$?")
+  fresh_send=$(bash -c \
+    '. "$0/bin/fm-backend.sh"; fm_backend_source stream; fm_backend_stream_send_literal "$1" "nudge"' "$ROOT" "$fresh" 2>/dev/null; printf '%s' "$?")
   [ "$fresh_send" = 0 ] || fail "send through fm-<id>-resolved fresh endpoint should succeed"
 
-  pass "T8b a stale herdr endpoint cannot lose a durably enqueued nudge, and fm-<id> resolves through post-respawn metadata"
+  pass "T8b a stale endpoint cannot lose a durably enqueued nudge, and fm-<id> resolves through post-respawn metadata"
 }
 
 # --- T9: bootstrap surfaces a skipped dirty live secondmate home --------------
@@ -798,17 +709,12 @@ test_spawn_fast_forwards_before_launch() {
   c2=$(head_of "$w/main")
   [ "$(head_of "$w/sm")" = "$c1" ] || fail "precondition: home should start behind the primary"
 
-  # tmux stub: accept every subcommand, print nothing (so no window pre-exists).
+  # The launch lands on a fake stream endpoint; only the pre-launch sync matters.
   fakebin="$w/fakebin"
   mkdir -p "$fakebin"
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-  chmod +x "$fakebin/tmux"
   fm_fake_exit0 "$fakebin" deck
 
-  PATH="$fakebin:$BASE_PATH" TMUX='' \
+  PATH="$fakebin:$BASE_PATH" \
     FM_ROOT_OVERRIDE="$w/main" FM_HOME="$w/home" \
     FM_STATE_OVERRIDE="$w/home/state" FM_DATA_OVERRIDE="$w/home/data" \
     FM_PROJECTS_OVERRIDE="$w/home/projects" FM_CONFIG_OVERRIDE="$w/home/config" \
@@ -836,14 +742,9 @@ test_spawn_warns_when_sync_skipped_before_launch() {
   fakebin="$w/fakebin"
   err="$w/spawn.err"
   mkdir -p "$fakebin"
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-  chmod +x "$fakebin/tmux"
   fm_fake_exit0 "$fakebin" deck
 
-  PATH="$fakebin:$BASE_PATH" TMUX='' \
+  PATH="$fakebin:$BASE_PATH" \
     FM_ROOT_OVERRIDE="$w/main" FM_HOME="$w/home" \
     FM_STATE_OVERRIDE="$w/home/state" FM_DATA_OVERRIDE="$w/home/data" \
     FM_PROJECTS_OVERRIDE="$w/home/projects" FM_CONFIG_OVERRIDE="$w/home/config" \
@@ -1266,13 +1167,12 @@ test_bootstrap_syncs_remote_home_to_primary_commit() {
   fm_write_secondmate_meta "$home/state/sm.meta" "$w/sm"
   printf 'remote_host=host-sm\n' >> "$home/state/sm.meta"
   mkdir -p "$w/sm/state/parent-route"
+  # shellcheck disable=SC2046 # one meta line per word
   fm_write_meta "$w/sm/state/parent-route/sm.meta" \
-    'window=fm-remote:p1' 'endpoint_task_id=sm' 'worktree=-' 'project=-' \
-    'backend=herdr' 'harness=deck' 'herdr_session=fm-remote' \
-    'herdr_workspace_id=w1' 'herdr_tab_id=t1' 'herdr_pane_id=p1'
+    $(live_endpoint "$w/sm/state/parent-route" sm) 'worktree=-' 'project=-' 'harness=deck'
 
   fakebin=$(make_remote_leg_ssh_stub "$w")
-  fm_fake_exit0 "$fakebin" gh treehouse tmux node
+  fm_fake_exit0 "$fakebin" gh treehouse node
   out=$(PATH="$fakebin:$BASE_PATH" \
     FM_HOME="$home" FM_ROOT_OVERRIDE="$w/main" \
     FM_BOOTSTRAP_NETWORK=only \
@@ -1310,7 +1210,7 @@ test_bootstrap_reports_outdated_host_actionably() {
   printf 'remote_host=host-sm\n' >> "$home/state/sm.meta"
 
   fakebin=$(make_remote_leg_ssh_stub "$w")
-  fm_fake_exit0 "$fakebin" gh treehouse tmux node
+  fm_fake_exit0 "$fakebin" gh treehouse node
   out=$(PATH="$fakebin:$BASE_PATH" \
     FM_HOME="$home" FM_ROOT_OVERRIDE="$w/main" \
     FM_BOOTSTRAP_NETWORK=only \
@@ -1333,7 +1233,7 @@ test_bootstrap_reports_outdated_host_actionably() {
 # the ordinary secondmate spawn contract does move an identical home onto the
 # host's copy.
 test_remote_launch_does_not_retarget_host_copy() {
-  local w c1 c2 herdrbin fakebin launch_out control_out
+  local w c1 c2 fakebin launch_out control_out
   w=$(new_remote_world remote-launch)
   c1=$(head_of "$w/main")           # the parent primary stays here
   git -C "$w/coderoot" fetch -q --no-tags "$w/main" "$c1"
@@ -1346,17 +1246,12 @@ test_remote_launch_does_not_retarget_host_copy() {
   add_remote_home "$w" control "$w/forge.git" "$c1"
 
   fakebin=$(fm_fakebin "$w/launchfake")
-  herdrbin="$w/herdrhost"
-  mkdir -p "$herdrbin/bin"
-  install_remote_herdr_fixture "$herdrbin" "$w/herdr.state" "$w/herdr.log" \
-    "$w/herdr.sendfail" "$w/herdr.sock"
-  cp "$herdrbin/bin/herdr" "$fakebin/herdr"
-  fm_fake_exit0 "$fakebin" gh treehouse tmux node deck
+  fm_fake_exit0 "$fakebin" gh treehouse node deck
 
   # The real launch leg, exactly as the parent invokes it after its own sync.
   launch_out=$(PATH="$fakebin:$BASE_PATH" \
     FM_HOME="$w/launched" FM_ROOT_OVERRIDE="$w/coderoot" FM_SPAWN_NO_GUARD=1 \
-    "$ROOT/bin/fm-remote-secondmate-control.sh" launch launched deck - - herdr 2>&1) || true
+    "$ROOT/bin/fm-remote-secondmate-control.sh" launch launched deck - - stream 2>&1) || true
   [ "$(head_of "$w/launched")" = "$c1" ] \
     || fail "a remote launch moved the home onto the host's own Firstmate copy (out: $launch_out)"
 
@@ -1366,7 +1261,7 @@ test_remote_launch_does_not_retarget_host_copy() {
     FM_HOME="$w/coderoot" FM_ROOT_OVERRIDE="$w/coderoot" \
     FM_STATE_OVERRIDE="$w/control/state" FM_DATA_OVERRIDE="$w/control/data" \
     FM_CONFIG_OVERRIDE="$w/control/config" FM_SPAWN_NO_GUARD=1 \
-    "$ROOT/bin/fm-spawn.sh" control "$w/control" --secondmate --harness deck --backend herdr 2>&1) || true
+    "$ROOT/bin/fm-spawn.sh" control "$w/control" --secondmate --harness deck --backend stream 2>&1) || true
   [ "$(head_of "$w/control")" = "$c2" ] \
     || fail "the ordinary secondmate spawn did not follow its own checkout, so the launch case is vacuous (out: $control_out)"
 
@@ -1387,7 +1282,7 @@ test_bootstrap_nudge_retry_rejects_malformed_marker_id
 test_bootstrap_nudge_failure_records_retry_marker
 test_bootstrap_nudge_retry_is_idempotent
 test_bootstrap_nudge_retry_refuses_changed_home
-test_nudge_retry_uses_fresh_herdr_endpoint_after_respawn
+test_nudge_retry_uses_fresh_endpoint_after_respawn
 test_bootstrap_sweep_surfaces_skipped_home
 test_spawn_fast_forwards_before_launch
 test_spawn_warns_when_sync_skipped_before_launch

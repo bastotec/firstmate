@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Security and regression tests for canonical PR parsing, static merge polls,
 # private atomic artifacts, authenticated custom checks, and teardown cleanup.
+# fm_test_stream_task prints a task record identity one field per word,
+# so its unquoted expansion in fm_write_meta argument lists is deliberate.
+# shellcheck disable=SC2046
 set -u
 
-# shellcheck source=tests/lib.sh disable=SC1091
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh disable=SC1091
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-pr-lib.sh"
 # shellcheck source=/dev/null
@@ -198,8 +201,7 @@ SH
 write_task_meta() {
   local dir=$1 id=${2:-task-a}
   fm_write_meta "$dir/home/state/$id.meta" \
-    "window=firstmate:fm-$id" \
-    "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
     "worktree=$dir/wt" \
     "project=$dir/project" \
     "kind=ship" \
@@ -591,8 +593,7 @@ SH
   for id in _noncanonical aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; do
     dir=$(make_case "legacy-teardown-${id:0:12}")
     fm_write_meta "$dir/home/state/$id.meta" \
-      "window=firstmate:fm-$id" \
-      "endpoint_task_id=$id" \
+      $(fm_test_stream_task "$dir/home/state" "$id") \
       "worktree=$dir/missing-worktree" \
       "project=$dir/project" \
       'kind=ship' \
@@ -1201,8 +1202,7 @@ test_teardown_removes_poll_artifacts() {
   dir=$(make_case teardown-cleanup)
   fakebin="$dir/fakebin"
   fm_write_meta "$dir/home/state/task-a.meta" \
-    'window=firstmate:fm-task-a' \
-    'endpoint_task_id=task-a' \
+    $(fm_test_stream_task "$dir/home/state" "task-a") \
     "worktree=$dir/missing-worktree" \
     "project=$dir/project" \
     'kind=ship' \
@@ -1229,8 +1229,7 @@ SH
   dir=$(make_case teardown-retirement-receipt)
   fakebin="$dir/fakebin"
   fm_write_meta "$dir/home/state/task-a.meta" \
-    'window=firstmate:fm-task-a' \
-    'endpoint_task_id=task-a' \
+    $(fm_test_stream_task "$dir/home/state" "task-a") \
     "worktree=$dir/missing-worktree" \
     "project=$dir/project" \
     'kind=ship' \
@@ -1258,8 +1257,7 @@ SH
     dir=$(make_case "teardown-final-directory-${artifact//./-}")
     fakebin="$dir/fakebin"
     fm_write_meta "$dir/home/state/task-a.meta" \
-      'window=firstmate:fm-task-a' \
-      'endpoint_task_id=task-a' \
+      $(fm_test_stream_task "$dir/home/state" "task-a") \
       "worktree=$dir/missing-worktree" \
       "project=$dir/project" \
       'kind=ship' \
@@ -2311,8 +2309,7 @@ test_teardown_cannot_race_authority_consumption() {
   dir=$(make_case merge-authority-teardown-race)
   state="$dir/home/state"
   fm_write_meta "$state/task-a.meta" \
-    'window=firstmate:fm-task-a' \
-    'endpoint_task_id=task-a' \
+    $(fm_test_stream_task "$state" "task-a") \
     "worktree=$dir/wt" \
     "project=$dir/project" \
     'kind=ship' \

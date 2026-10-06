@@ -18,7 +18,7 @@
 #     and the parent project clone is never mutated (no write through a project)
 #   - spawn meta records kind=secondmate, home=, and the project list; launch runs
 #     in the subhome with the persistent charter and cleared operational overrides
-#   - a bare `fm-<id>` send targets the window recorded in THIS home's meta
+#   - a bare `fm-<id>` send targets the endpoint recorded in THIS home's meta
 #   - backlog items move verbatim into the subhome and leave the main backlog
 #   - recovery respawns from the durable registry + persistent home
 #   - teardown removes meta and the registry route only after removing the home
@@ -26,16 +26,19 @@ set -u
 
 # shellcheck source=tests/secondmate-helpers.sh disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/secondmate-helpers.sh"
+# Every endpoint lands on the suite's fake stream hub; the agent stub appends
+# each text an endpoint receives to the launch log (FM_FAKE_LAUNCH_LOG).
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-secondmate-lifecycle)
-export FM_BACKEND=tmux
+fm_test_fake_stream_ensure || fail "the fake stream hub did not start"
 
 HOME_DIR="$TMP_ROOT/main home"
 SUB="$TMP_ROOT/design-home"
 SUB_ABS=
 FAKEBIN=
-LOG="$TMP_ROOT/tmux.log"
-PANE="$TMP_ROOT/pane.txt"
+LOG="$TMP_ROOT/endpoint.log"
 ALPHA_ORIGIN=
 BETA_ORIGIN=
 
@@ -56,8 +59,8 @@ EOF
   ALPHA_ORIGIN=$(git -C "$HOME_DIR/projects/alpha" remote get-url origin)
   BETA_ORIGIN=$(git -C "$HOME_DIR/projects/beta" remote get-url origin)
 
-  # One combined fakebin: tmux + treehouse (spawn/send/teardown) and no-mistakes
-  # (gamma initialization during seed).
+  # One combined fakebin: treehouse plus pi/deck (spawn/send/teardown) and
+  # no-mistakes (gamma initialization during seed).
   FAKEBIN=$(make_fake_tmux "$TMP_ROOT/fake")
   make_fake_no_mistakes "$TMP_ROOT/fake" >/dev/null
 
@@ -113,7 +116,7 @@ phase_seed() {
 phase_spawn() {
   : > "$LOG"
   PATH="$FAKEBIN:$PATH" FM_HOME="$HOME_DIR" FM_CONFIG_OVERRIDE="$HOME_DIR/parent-config" \
-    FM_FAKE_TMUX_LOG="$LOG" FM_FAKE_TMUX_CAPTURE="$PANE" \
+    FM_FAKE_TMUX_LOG="$LOG" FM_FAKE_LAUNCH_LOG="$LOG" \
     "$ROOT/bin/fm-spawn.sh" design "$SUB" deck --secondmate >/dev/null \
     || fail "secondmate spawn failed"
 
@@ -130,20 +133,25 @@ phase_spawn() {
   assert_no_grep 'notify=' "$LOG" "secondmate Pi launch included the parent turn-end notify hook"
   assert_no_grep 'turn-ended' "$LOG" "secondmate Pi launch referenced a parent turn-ended signal"
   assert_no_grep 'treehouse get' "$LOG" "secondmate spawn ran a project treehouse get"
+  # The fake deck exits at once and the stub does not read a quoted harness path
+  # as a launch, so model the launched agent running on its endpoint.
+  fm_test_fake_stream_foreground "$(sed -n 's/^window=//p' "$meta" | tail -1)" deck
   pass "spawn: launches in the subhome with persistent charter, records routing meta"
 }
 
 phase_send() {
+  local decoy
   : > "$LOG"
-  printf '❯\n' > "$PANE"
-  # The meta window (firstmate:fm-design) must win over a foreign same-named
-  # window returned by list-windows. Include the recorded endpoint in the fake
-  # inventory so the recovery-grade liveness check can verify it exists.
-  PATH="$FAKEBIN:$PATH" FM_HOME="$HOME_DIR" FM_FAKE_TMUX_WINDOW="firstmate:fm-design
-other-session:fm-design" \
-    FM_FAKE_TMUX_LOG="$LOG" FM_FAKE_TMUX_CAPTURE="$PANE" \
+  # The endpoint recorded in this home's meta must win over a foreign endpoint
+  # carrying the same label on another machine of the fleet.
+  decoy=$(printf '%s' "$TMP_ROOT/decoy" | cksum | awk '{ printf "%08x%08x%08x%08x", $1, $1, $1, $1 }')
+  curl -fsS -m 10 -X POST -H 'Content-Type: application/json' \
+    --data-binary "$(jq -nc --arg e "$decoy" '{endpoint_id: $e, machine: "other-box", label: "fm-design", cwd: "/"}')" \
+    "$FM_TEST_STREAM_URL/v1/agent/endpoints" >/dev/null || fail "could not register the decoy endpoint"
+  fm_test_fake_stream_foreground "$decoy" pi
+  PATH="$FAKEBIN:$PATH" FM_HOME="$HOME_DIR" FM_FAKE_TMUX_LOG="$LOG" \
     "$ROOT/bin/fm-send.sh" fm-design 'route this work' >/dev/null 2>&1 \
-    || fail "fm-send failed for a bare firstmate window with home metadata"
+    || fail "fm-send failed for a bare fm-<id> secondmate with home metadata"
   # design is a kind=secondmate target, so the durable inbox record carries the
   # from-firstmate marker and original payload. The terminal receives only the
   # constant doorbell, routed through this home's authoritative meta window.
@@ -152,10 +160,10 @@ other-session:fm-design" \
   body=$(bash -c '. "$1"; fm_task_inbox_body "$2"' _ "$ROOT/bin/fm-task-inbox-lib.sh" "$record")
   assert_contains "$body" '[fm-from-firstmate]' "the inbox request was not marked as from-firstmate"
   assert_contains "$body" 'route this work' "the original request text did not survive the marker"
-  assert_grep 'send-keys -t firstmate:fm-design -l : Firstmate instruction waiting:' "$LOG" "send did not ring the window recorded in this home's meta"
+  grep -q '^: Firstmate instruction waiting:' "$LOG" || fail "send did not ring the endpoint recorded in this home's meta"
   assert_no_grep 'route this work' "$LOG" "send typed the payload instead of only the doorbell"
-  assert_no_grep 'send-keys -t other-session:fm-design' "$LOG" "send targeted a foreign same-named window"
-  pass "send: a bare fm-<id> secondmate enqueues a marked request and rings the meta window"
+  [ -z "$(fm_test_fake_stream_submitted "$decoy")" ] || fail "send rang a foreign same-labelled endpoint"
+  pass "send: a bare fm-<id> secondmate enqueues a marked request and rings the meta endpoint"
 }
 
 phase_handoff() {
@@ -179,7 +187,6 @@ phase_handoff() {
 EOF
   local out before
   out=$(PATH="$FAKEBIN:$PATH" FM_HOME="$HOME_DIR" FM_FAKE_TMUX_LOG="$LOG" \
-    FM_FAKE_TMUX_CAPTURE="$PANE" \
     "$ROOT/bin/fm-backlog-handoff.sh" design feat-x feat-y) \
     || fail "handoff failed for in-scope items"
   assert_contains "$out" "handed off 2 item(s) to design" "handoff did not report the moved items"
@@ -197,7 +204,6 @@ EOF
   # Idempotent: a second handoff neither errors nor duplicates, and leaves main alone.
   before=$(cat "$HOME_DIR/data/backlog.md")
   PATH="$FAKEBIN:$PATH" FM_HOME="$HOME_DIR" FM_FAKE_TMUX_LOG="$LOG" \
-    FM_FAKE_TMUX_CAPTURE="$PANE" \
     "$ROOT/bin/fm-backlog-handoff.sh" design feat-x feat-y >/dev/null 2>&1 \
     || fail "idempotent re-run failed"
   [ "$(grep -cF -- '- [ ] feat-x - add feature x (repo: alpha)' "$SUB/data/backlog.md")" -eq 1 ] \
@@ -207,16 +213,22 @@ EOF
 }
 
 phase_recovery() {
-  # Simulate a restart: drop the live meta, then respawn from the registry +
-  # persistent home (no explicit home argument).
-  rm -f "$HOME_DIR/state/design.meta"
-  PATH="$FAKEBIN:$PATH" FM_HOME="$HOME_DIR" FM_FAKE_TMUX_LOG="$LOG" FM_FAKE_TMUX_CAPTURE="$PANE" \
+  # Simulate a restart: the session's endpoint is gone and the live meta with
+  # it, then respawn from the registry + persistent home (no explicit home
+  # argument).
+  local meta="$HOME_DIR/state/design.meta" old
+  old=$(sed -n 's/^window=//p' "$meta")
+  fm_test_fake_stream_set "$old" '{"closed_by": "agent"}'
+  rm -f "$meta"
+  PATH="$FAKEBIN:$PATH" FM_HOME="$HOME_DIR" FM_FAKE_TMUX_LOG="$LOG" FM_FAKE_LAUNCH_LOG="$LOG" \
     "$ROOT/bin/fm-spawn.sh" design "echo relaunch" --secondmate >/dev/null 2>&1 \
     || fail "recovery respawn failed"
-  local meta="$HOME_DIR/state/design.meta"
   assert_grep "home=$SUB_ABS" "$meta" "respawn did not preserve the persistent home from the registry"
   assert_grep 'projects=alpha, beta, gamma' "$meta" "respawn did not preserve the project list from the registry"
-  assert_grep 'window=firstmate:fm-design' "$meta" "respawn did not reconstruct the direct-report window"
+  assert_grep 'backend=stream' "$meta" "respawn did not record its stream endpoint"
+  [ "$(fm_test_fake_stream_endpoints | jq -r --arg e "$(sed -n 's/^stream_endpoint_id=//p' "$meta")" \
+    '.endpoints[] | select(.endpoint_id == $e) | .label')" = fm-design ] \
+    || fail "respawn did not reconstruct the direct-report endpoint"
   pass "recovery: respawns from the durable registry and persistent home"
 }
 
@@ -236,7 +248,7 @@ phase_teardown() {
     || fail "could not settle receiver wake retirement state"
   printf 'confirmed:%s\n' "$corr" > "$HOME_DIR/state/.backlog-handoff-design.wake-pending"
   : > "$LOG"
-  teardown_out=$(PATH="$FAKEBIN:$PATH" FM_HOME="$HOME_DIR" FM_FAKE_TMUX_LOG="$LOG" FM_FAKE_TMUX_CAPTURE="$PANE" \
+  teardown_out=$(PATH="$FAKEBIN:$PATH" FM_HOME="$HOME_DIR" FM_FAKE_TMUX_LOG="$LOG" \
     "$ROOT/bin/fm-teardown.sh" design 2>&1) \
     || fail "teardown failed for the empty secondmate home"
   printf '%s\n' "$teardown_out" | grep -F 'Backlog:' >/dev/null \

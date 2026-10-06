@@ -150,13 +150,6 @@ SH
   for helper in lib fixtures secondmate-helpers wake-helpers; do
     assert_helper_isolates "$helper" global
   done
-  bash -eus -- "$ROOT/tests/herdr-test-safety.sh" "$dir/global-herdr" <<'SH' || exit 1
-. "$1"
-git init -q "$2"
-git -C "$2" -c user.name=test -c user.email=test@example.invalid \
-  commit -q --allow-empty -m initial
-[ "$(git -C "$2" log -1 --format=%s)" = initial ]
-SH
   for jobs in 1 2; do
     for timeout in 0 30; do
       GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=fixture.input GIT_CONFIG_VALUE_0=preserved \
@@ -253,47 +246,51 @@ test_fake_gh_and_gh_axi() {
   pass "fake gh authenticates and fake gh-axi reports the shared version"
 }
 
-test_spawn_tmux_and_fakebin() {
-  local fakebin out log
+test_spawn_fakebin_and_stream_task() {
+  local fakebin log state lines target
   fakebin=$(make_spawn_fakebin "$TMP_ROOT/spawn" gh-axi)
-  log="$TMP_ROOT/spawn/launch.log"
-  : > "$log"
-  out=$(FM_FAKE_PANE_PATH=/tmp/wt "$fakebin/tmux" display-message -p '#{pane_current_path}')
-  [ "$out" = /tmp/wt ] || fail "spawn tmux pane path should be FM_FAKE_PANE_PATH, got '$out'"
-  out=$(unset FM_FAKE_PANE_PATH; "$fakebin/tmux" display-message -p '#{pane_current_path}')
-  [ -z "$out" ] || fail "spawn tmux pane path should default to empty, got '$out'"
-  out=$("$fakebin/tmux" display-message -p '#S')
-  [ "$out" = firstmate ] || fail "spawn tmux session name should be firstmate, got '$out'"
-  FM_FAKE_LAUNCH_LOG="$log" "$fakebin/tmux" send-keys -t @w -l 'codex --yolo'
-  assert_grep 'codex --yolo' "$log" "send-keys -l payload was not logged"
   [ -x "$fakebin/treehouse" ] || fail "spawn fakebin should include treehouse"
   [ -x "$fakebin/gh-axi" ] || fail "extra exit-0 tools should land in the spawn fakebin"
+  [ ! -e "$fakebin/tmux" ] || fail "spawn fakebin should no longer carry a tmux stub"
   "$fakebin/treehouse" get
   expect_code 0 $? "fake treehouse should exit 0"
-  pass "spawn fakebin answers pane path, logs -l payloads, and installs extra tools"
+  if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+    pass "spawn fakebin installs extra tools (stream task: skipped, jq/curl unavailable)"
+    return 0
+  fi
+  state="$TMP_ROOT/spawn/state"
+  log="$TMP_ROOT/spawn/launch.log"
+  mkdir -p "$state"
+  : > "$log"
+  lines=$(fm_test_stream_task "$state" t1 "$log") || fail "fm_test_stream_task could not register"
+  target=$(printf '%s\n' "$lines" | sed -n 's/^window=//p')
+  assert_equals "$(fm_test_stream_target_of "$state" t1)" "$target" "the predicted target should match the registered one"
+  assert_contains "$lines" 'backend=stream' "the identity lines should name the stream backend"
+  assert_contains "$lines" 'endpoint_task_id=t1' "the identity lines should bind the task id"
+  (
+    # shellcheck disable=SC2030 # deliberately scoped to this subshell
+    export FM_HOME="$TMP_ROOT/spawn" FM_ROOT="$ROOT"
+    # shellcheck source=bin/fm-backend.sh
+    . "$ROOT/bin/fm-backend.sh"
+    fm_backend_source stream || exit 90
+    fm_backend_stream_send_text_line "$target" 'deck run --yolo' fm-t1
+  ) || fail "send line to the registered task endpoint failed"
+  assert_grep 'deck run --yolo' "$log" "the endpoint's launch log did not record the typed text"
+  pass "spawn fakebin installs extra tools and fm_test_stream_task registers a logging stream endpoint"
 }
 
 test_send_stubs_and_ssh() {
-  local fakebin log ssh_log out
+  local fakebin ssh_log
   fakebin=$(make_stubs "$TMP_ROOT/send")
-  log="$TMP_ROOT/send/send.log"
   ssh_log="$TMP_ROOT/send/ssh.log"
-  : > "$log"
   fm_test_fake_ssh "$fakebin"
-  FM_SEND_LOG="$log" "$fakebin/tmux" send-keys -t sess:w -l 'hello steer'
-  assert_grep 'hello steer' "$log" "send stubs did not log the -l payload"
-  out=$("$fakebin/tmux" display-message -p '#{cursor_y}')
-  [ "$out" = 1 ] || fail "send tmux cursor_y should be 1, got '$out'"
-  out=$("$fakebin/tmux" capture-pane -p)
-  case "$out" in
-    *'╭────╮'*) ;;
-    *) fail "send tmux capture-pane should render an empty composer, got '$out'" ;;
-  esac
+  "$fakebin/sleep" 5
+  expect_code 0 $? "send stubs should carry a no-op sleep"
   printf 'ignored\n' | FM_SSH_LOG="$ssh_log" "$fakebin/fake-ssh" host -- cmd
   assert_grep 'host -- cmd' "$ssh_log" "fake ssh did not record argv"
   FM_FAKE_SSH_RC=7 "$fakebin/fake-ssh" x < /dev/null
   expect_code 7 $? "fake ssh should honor FM_FAKE_SSH_RC"
-  pass "send stubs log typed text and fake ssh records argv with a controllable exit"
+  pass "send stubs carry a no-op sleep and fake ssh records argv with a controllable exit"
 }
 
 test_spawn_home_layout() {
@@ -316,6 +313,7 @@ test_fake_stream_round_trip() {
   fm_test_fake_stream "$dir" || fail "the fake stream hub did not start"
   mkdir -p "$dir/home/state" "$dir/cwd"
   stream() (
+    # shellcheck disable=SC2031 # each subshell sets its own home
     export FM_HOME="$dir/home" FM_ROOT="$ROOT"
     # shellcheck source=bin/fm-backend.sh
     . "$ROOT/bin/fm-backend.sh"
@@ -356,7 +354,7 @@ test_touch_epoch_preserves_repeated_dst_hour
 test_no_mistakes_version_constant
 test_no_mistakes_init_doctor_markers
 test_fake_gh_and_gh_axi
-test_spawn_tmux_and_fakebin
+test_spawn_fakebin_and_stream_task
 test_send_stubs_and_ssh
 test_spawn_home_layout
 test_fake_stream_round_trip

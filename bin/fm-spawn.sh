@@ -28,31 +28,26 @@
 #   first in the private launch-brief overlay, including the exact task-owned
 #   steering inbox. This never rewrites a project's instruction files or a
 #   secondmate's charter.
-#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>] [--backend <tmux|herdr|stream>]
+#        fm-spawn.sh <task-id> --relaunch [--harness <name>] [--model <name>] [--effort <level>]
 #   --relaunch launches a replacement agent for an EXISTING task in its recorded
-#   worktree or home, adopting its endpoint unless --backend requests migration.
+#   worktree or home, adopting its endpoint.
 #   It is the launch half of the control plane (bin/fm-control.sh relaunch), which
 #   owns the checkpoint, the progress note, stopping the previous agent, and the
 #   transaction; call fm-control rather than this flag directly unless you are
 #   deliberately re-launching an already-stopped task. Every identity axis -
 #   backend, kind, project or home, worktree, endpoint - comes from the task's
-#   validated state/<id>.meta, so --scout, --secondmate, a project
+#   validated state/<id>.meta, so --scout, --secondmate, --backend, a project
 #   positional, and batch pairs are all refused alongside it; harness, model,
-#   and effort may change, making a harness switch one ordinary relaunch.
-#   The one exception is --backend <tmux|herdr|stream>
-#   naming a backend other than the recorded one: that is a backend migration
-#   (bin/fm-control.sh <id> relaunch --backend), which creates a FRESH endpoint
-#   on the new backend in the recorded worktree or home, records it, and leaves
-#   the old agent-free endpoint for the control plane to close once the
-#   replacement is proven up. The old endpoint must read dead; during migration
-#   only, missing also qualifies on tmux or herdr, where absence proves the old
-#   agent gone. A missing stream registry entry never authorizes a replacement.
+#   and effort may change, making a harness switch one ordinary relaunch. A
+#   task recorded on a retired backend (tmux or herdr) cannot be relaunched:
+#   nothing can prove its old agent stopped. A missing stream registry entry
+#   never authorizes a replacement either.
 #   It clears the previous harness's per-task wiring before arming the new
 #   incarnation. A relaunch whose recorded prior harness is Deck also
 #   proves every task-bound residual Deck driver stopped before that new
 #   incarnation is armed. The replacement still never starts outside the copy
-#   holding the work: a Herdr shell that has drifted out of the recorded
-#   worktree is told once to return, and only a shell that will not go refuses.
+#   holding the work: an endpoint whose shell is not in the recorded worktree
+#   refuses.
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
 #   --model <name> and --effort <low|medium|high|xhigh|max> are concrete profile
@@ -62,59 +57,18 @@
 #   model axis but has no effort control, so a non-default effort is refused
 #   before launch rather than silently omitted.
 #   --backend <name> is the explicit runtime session-provider backend for this
-#   exact task only (docs/configuration.md "Runtime backend" owns when that flag
-#   is authorized). For a new local spawn without it, the script resolves
-#   FM_BACKEND, then config/backend, then runtime auto-detection from the
-#   runtime firstmate's environment: $TMUX or HERDR_ENV=1 (via bin/fm-backend.sh's
-#   fm_backend_detect), then tmux.
-#   Spawn-capable backends are the reference tmux adapter and experimental
-#   herdr and stream, all session providers only, so every ship/scout spawn
-#   runs treehouse get. An auto-detected herdr spawn prints a loud stderr
-#   notice; auto-detected tmux stays silent; stream is never auto-detected.
-#   Every local spawn writes backend=<name> to meta, tmux included; an absent
-#   backend= (older local records) still means tmux, and bin/fm-meta-backfill.sh
-#   makes those explicit. docs/remote-secondmates.md "Normal operation" owns
-#   remote secondmate backend selection; bin/fm-remote-control-lib.sh owns the
-#   parent record's remote endpoint binding. Stream supports --secondmate
-#   through the same home-host driver as tmux/herdr.
-#   A backend spawn refusal (missing dependency, version gate, unauthenticated
-#   socket, or unsupported secondmate mode) is terminal for that selected backend;
-#   callers must surface it instead of silently retrying another backend.
-#   A herdr crewmate or scout is placed in the exact workspace of the firstmate
-#   or secondmate process launching it, resolved from that process's own herdr
-#   pane rather than from a workspace label (herdr enforces no label uniqueness,
-#   so a label cannot tell two "firstmate" workspaces apart). A claimed parent
-#   identity that is unreadable, contradictory, stale, or from another herdr
-#   session stops the spawn before any worker endpoint exists. A launcher
-#   outside herdr has no workspace to inherit and uses this home's own labeled
-#   workspace, which must then match exactly one. --secondmate is the deliberate
-#   exception: it stands up that secondmate home's own workspace.
-#   Herdr additionally uses a presentation-only layout by default when the
-#   selected client and running server meet the Herdr 0.8.0 floor. The local
-#   config/herdr-presentation-spaces file can say off to disable it or on to
-#   opt in below that floor; an empty file remains the historical opt-in form.
-#   A clean fresh task first writes state/<id>.herdr-presentation atomically,
-#   then creates a disposable
-#   workspace containing only the ordinary task pane. A successful clean create
-#   upgrades its attempt journal with exact home, session, workspace, tab, pane,
-#   parent, and label bindings. On a same-identity restart, that complete binding
-#   plus authoritative metadata may replace one exact agent-free husk in place.
-#   The journal, visible token, and labels alone are never endpoint or ownership
-#   authority, and every ambiguous recovery stays on the flat fallback after
-#   duplicate-agent risk is independently absent. Treehouse allocation and task
-#   metadata are unchanged.
-#   A clean projected create or exact resume makes one bounded attempt to hold
-#   the one session-scoped presentation-order lock (keyed by named session plus
-#   canonical socket, outside any home's state/) through launch handoff. Lock
-#   contention warns and falls back to the ordinary flat layout before any
-#   projection mutation. The exact response-derived new workspace is inserted
-#   immediately after its owning parent (firstmate or 2ndmate-<id>) contiguous
-#   child block. Ordering never authorizes lifecycle cleanup, and any
-#   unavailable, ambiguous, or failed move warns while the spawn continues.
-#   Every projected create, prune, and move captures and verifies the named
-#   session's exact active workspace and tab. A detected focus change restores
-#   only that exact tab id; an ambiguous pre-operation snapshot refuses the
-#   focus-sensitive presentation mutation.
+#   exact task only; stream is the only one. For a new local spawn without it,
+#   the script resolves FM_BACKEND, then config/backend, then stream
+#   (bin/fm-backend.sh's fm_backend_name); a leftover tmux or herdr setting is
+#   refused. Stream is a session provider only, so every ship/scout spawn runs
+#   treehouse get. Every spawn writes backend=stream to meta; an absent
+#   backend= (older local records) still means the retired tmux.
+#   docs/remote-secondmates.md
+#   "Normal operation" owns remote secondmate backend selection;
+#   bin/fm-remote-control-lib.sh owns the parent record's remote endpoint
+#   binding. Stream supports --secondmate through the home-host driver.
+#   A backend spawn refusal (missing dependency, version gate, or unreachable
+#   hub) is terminal; callers must surface it.
 #   Every single-task invocation holds one task-id-scoped lock across backend
 #   creation through metadata publication, so concurrent same-id spawns serialize
 #   even when they select different backends. A fresh spawn first takes the
@@ -221,11 +175,8 @@
 #   not copied from the invoking process or written into the launch text.
 #   Unset names stay unset and empty values stay empty.
 #   The fixed operational floor is HOME PATH USER LOGNAME SHELL TERM COLORTERM
-#   LANG LC_ALL LC_CTYPE TMPDIR TMP TEMP GOTMPDIR, plus backend identity/routing:
-#   TMUX TMUX_PANE HERDR_ENV HERDR_SESSION HERDR_SOCKET_PATH HERDR_PANE_ID
-#   CMUX_WORKSPACE_ID CMUX_SURFACE_ID CMUX_TAB_ID CMUX_PANEL_ID CMUX_SOCKET_PATH
-#   ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID FM_ZELLIJ_SESSION, plus the task
-#   marker FM_TASK_ID that ship and scout panes receive above.
+#   LANG LC_ALL LC_CTYPE TMPDIR TMP TEMP GOTMPDIR, plus the task marker
+#   FM_TASK_ID that ship and scout panes receive above.
 #   An enabled task trace also retains TRACEPARENT. Explicit Firstmate launch
 #   assignments still apply inside the filtered environment. Raw commands must
 #   be POSIX sh compatible under this opt-in; the absent-file path is unchanged.
@@ -499,14 +450,7 @@ esac
 # task's own durable record below. Contradicting it on the command line is a
 # refusal rather than a silently-ignored flag.
 if [ "$RELAUNCH" -eq 1 ]; then
-  # --backend on a relaunch is the backend migration verb's launch half
-  # (bin/fm-control.sh <id> relaunch --backend): the same task, worktree, and
-  # home move into a fresh endpoint on a different backend. Only the backends
-  # with a recovery-grade classifier are accepted.
-  case "${BACKEND_ARG:-}" in
-    ''|tmux|herdr|stream) ;;
-    *) echo "error: --relaunch --backend accepts tmux, herdr, or stream, not '$BACKEND_ARG'" >&2; exit 1 ;;
-  esac
+  [ "$BACKEND_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded endpoint; --backend cannot override it" >&2; exit 1; }
   [ "$KIND_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded kind; --scout/--secondmate cannot override it" >&2; exit 1; }
   [ "$MODE_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded delivery mode; --mode cannot override it" >&2; exit 1; }
   [ "$YOLO_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded yolo posture; --yolo cannot override it" >&2; exit 1; }
@@ -632,22 +576,20 @@ spawn_remote_secondmate() {
       MODEL_CHAIN_LANE=$RESOLVE_LANE
       ;;
   esac
-  # A remote second mate runs on Herdr or stream, both of which outlive every
-  # SSH connection that supervises it. An explicit --backend wins; otherwise a
-  # respawn keeps the backend its record already names, and a first launch uses
-  # Herdr. The remote home's config/backend never selects it: that file is the
-  # mate's choice for its own crew. bin/fm-remote-doctor.sh --backend gates the
-  # host for the selected one.
+  # A remote second mate runs on stream, whose endpoint outlives every SSH
+  # connection that supervises it. A record still naming a retired backend is
+  # refused: nothing can prove its old endpoint stopped. bin/fm-remote-doctor.sh
+  # gates the host.
   backend=${BACKEND_ARG:-}
   if [ -z "$backend" ] && [ -f "$STATE/$id.meta" ]; then
     backend=$(fm_meta_get "$STATE/$id.meta" remote_backend)
   fi
-  case "${backend:-herdr}" in
-    herdr|stream) backend=${backend:-herdr} ;;
+  case "${backend:-stream}" in
+    stream) backend=stream ;;
     *)
       fm_lock_release "$registry_lock" || true
       fm_lock_release "$SPAWN_TASK_LOCK" || true
-      echo "error: a remote secondmate runs only on the herdr or stream backend, not '$backend'" >&2
+      echo "error: a remote secondmate runs only on the stream backend, not '$backend'; stop any agent left on the old endpoint by hand, then retire the record with bin/fm-retire-endpoint.sh $id" >&2
       return 1
       ;;
   esac
@@ -674,11 +616,11 @@ spawn_remote_secondmate() {
     fi
   fi
   # Gate the host before anything is published or transferred, so a host that
-  # cannot hold a durable Herdr endpoint refuses here rather than half-way
+  # cannot hold a durable stream endpoint refuses here rather than half-way
   # through a launch. This is also the readiness gate every liveness relaunch
   # passes through, because recovery respawns through this same route.
   rc=0
-  fm_remote_readiness_ensure "$SCRIPT_DIR" "$id" "$backend" || rc=$?
+  fm_remote_readiness_ensure "$SCRIPT_DIR" "$id" || rc=$?
   if [ "$rc" -ne 0 ]; then
     fm_lock_release "$registry_lock" || true
     fm_lock_release "$SPAWN_TASK_LOCK" || true
@@ -842,12 +784,6 @@ spawn_remote_secondmate() {
 }
 
 BACKEND=
-HERDR_PROJECTION_ABORT_CLEANUP=0
-HERDR_PROJECTION_ABORT_SESSION=
-HERDR_PROJECTION_ABORT_TASK_PANE=
-HERDR_PROJECTION_ABORT_SEEDED_PANE=
-HERDR_PRESENTATION_ORDER_LOCK=
-HERDR_PRESENTATION_ORDER_LOCK_HELD=0
 SPAWN_TASK_LOCK=
 SPAWN_TASK_LOCK_HELD=0
 SPAWN_CONTROL_LOCK=
@@ -864,7 +800,6 @@ SPAWN_TREEHOUSE_PROJECT_LOCK=
 SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
 SPAWN_SLOT_CLAIMED=0
 RELAUNCH_REPLACEMENT_PENDING=0
-MIGRATE_ENDPOINT_CLEANUP=0
 RELAUNCH_REPLACEMENT_BUSY_GEN=
 RELAUNCH_REPLACEMENT_HARNESS=
 RELAUNCH_REPLACEMENT_STATE=
@@ -882,24 +817,8 @@ spawn_fresh_commit_rollback() {
   return 1
 }
 
-# report_unclosed_launch_endpoint: say plainly that an endpoint this spawn
-# launched could not be closed. Both cleanup paths below close an endpoint
-# whose launch failed, at the one moment when neither the abort trap nor a
-# later cleanup owns it yet - so a close that nothing proved landed leaves an
-# autonomous agent running outside task control, and the shared kill contract
-# (bin/fm-backend.sh's fm_backend_kill) is what makes that observable instead
-# of discarded. The adapter has already written its own reason to stderr.
-report_unclosed_launch_endpoint() {  # <backend> <target>
-  echo "error: the $1 endpoint $2 launched for $ID could not be confirmed closed; a worker may still be running there and needs to be stopped by hand" >&2
-}
-
 spawn_abort_cleanup() {
   local status=$?
-  if [ "$MIGRATE_ENDPOINT_CLEANUP" = 1 ]; then
-    MIGRATE_ENDPOINT_CLEANUP=0
-    fm_backend_kill "$BACKEND" "$T" "" "fm-$ID" \
-      || report_unclosed_launch_endpoint "$BACKEND" "$T"
-  fi
   if [ "$RELAUNCH_REPLACEMENT_PENDING" = 1 ] \
      && [ "$SPAWN_META_PUBLISH_STARTED" = 1 ] \
      && [ -n "$SPAWN_META_TMP" ] \
@@ -923,24 +842,6 @@ spawn_abort_cleanup() {
         echo "warning: could not retire replacement busy generation after aborted relaunch of $ID" >&2
       fi
     fi
-  fi
-  if [ "$HERDR_PROJECTION_ABORT_CLEANUP" = 1 ] \
-     && [ "$HERDR_PRESENTATION_ORDER_LOCK_HELD" != 1 ]; then
-    if ! spawn_herdr_presentation_order_lock_acquire "${HERDR_PROJECTION_ABORT_SESSION:-}"; then
-      echo "warning: herdr presentation focus lock unavailable; retaining the projection journal and refusing concurrent abort cleanup" >&2
-      HERDR_PROJECTION_ABORT_CLEANUP=0
-    fi
-  fi
-  if [ "$HERDR_PROJECTION_ABORT_CLEANUP" = 1 ]; then
-    HERDR_PROJECTION_ABORT_CLEANUP=0
-    fm_backend_herdr_projection_cleanup_exact \
-      "$HERDR_PROJECTION_ABORT_SESSION" \
-      "$HERDR_PROJECTION_ABORT_TASK_PANE" \
-      "$HERDR_PROJECTION_ABORT_SEEDED_PANE" || true
-  fi
-  if [ "$HERDR_PRESENTATION_ORDER_LOCK_HELD" = 1 ]; then
-    HERDR_PRESENTATION_ORDER_LOCK_HELD=0
-    fm_lock_release "$HERDR_PRESENTATION_ORDER_LOCK" || true
   fi
   if [ "$SPAWN_TASK_LOCK_HELD" = 1 ]; then
     SPAWN_TASK_LOCK_HELD=0
@@ -993,26 +894,6 @@ spawn_abort_cleanup() {
 }
 trap spawn_abort_cleanup EXIT
 
-# One bounded lock per live Herdr session/socket, shared across all homes.
-# <session> is required so secondmate and primary spawns serialize against the
-# same session without writing any other home's state directory.
-spawn_herdr_presentation_order_lock_acquire() {
-  local session=${1:-} attempt lock_path
-  [ -n "$session" ] || session=$(fm_backend_herdr_session)
-  lock_path=$(fm_backend_herdr_presentation_session_lock_path "$session") || return 1
-  HERDR_PRESENTATION_ORDER_LOCK="$lock_path"
-  attempt=0
-  while [ "$attempt" -lt 50 ]; do
-    if fm_lock_try_acquire "$HERDR_PRESENTATION_ORDER_LOCK"; then
-      HERDR_PRESENTATION_ORDER_LOCK_HELD=1
-      return 0
-    fi
-    sleep 0.1
-    attempt=$((attempt + 1))
-  done
-  return 1
-}
-
 clear_relaunch_harness_wiring() {
   local harness=$1 wt=$2 state=$3 id=$4 path
   # The retirement table is keyed by the exact adapter, so the recorded value
@@ -1025,12 +906,6 @@ clear_relaunch_harness_wiring() {
   done <<EOF
 $(fm_control_harness_wiring_paths "$harness" "$wt" "$state" "$id")
 EOF
-}
-
-spawn_herdr_presentation_order_lock_release() {
-  [ "$HERDR_PRESENTATION_ORDER_LOCK_HELD" = 1 ] || return 0
-  HERDR_PRESENTATION_ORDER_LOCK_HELD=0
-  fm_lock_release "$HERDR_PRESENTATION_ORDER_LOCK" || true
 }
 
 # Batch dispatch (see header): when the first positional is an `id=repo` pair, treat every
@@ -1143,13 +1018,11 @@ if [ "$KIND" = secondmate ]; then
   fi
   [ "$remote_spawn_rc" -eq 3 ] || exit "$remote_spawn_rc"
 fi
-# Backend selection (data/fm-backend-design-d7): explicit --backend, else
-# FM_BACKEND env, else config/backend, else runtime auto-detection, else
-# default tmux (fm_backend_name). fm_backend_validate_spawn refuses unknown or
-# non-spawn-capable backends. The resolved value is always recorded in meta as
-# backend=<name>; readers (fm_backend_of_meta) still treat an absent line as
-# tmux for records written before that, and bin/fm-meta-backfill.sh makes those
-# explicit.
+# Backend selection: explicit --backend, else FM_BACKEND env, else
+# config/backend, else stream (fm_backend_name). fm_backend_validate_spawn
+# refuses anything but stream. The value is always recorded in meta as
+# backend=<name>; readers (fm_backend_of_meta) treat an absent line as the
+# retired tmux for records written before that.
 if [ "$RELAUNCH" -eq 0 ]; then
   if [ "$BACKEND_SET" -eq 1 ]; then
     BACKEND=$BACKEND_ARG
@@ -1175,7 +1048,6 @@ FIRSTMATE_HOME=
 # validation teardown uses, so a malformed, ambiguous, or foreign record
 # refuses here exactly as it refuses there.
 RELAUNCH_PRIOR_HARNESS=
-RELAUNCH_MIGRATE=0
 if [ "$RELAUNCH" -eq 1 ]; then
   [ "${#POS[@]}" -eq 1 ] || {
     echo "error: --relaunch takes the task id only; its project or home comes from the task's own record" >&2
@@ -1200,8 +1072,9 @@ if [ "$RELAUNCH" -eq 1 ]; then
   fm_backend_validate_task_endpoint "$RELAUNCH_META" "$ID" || exit 1
   BACKEND=$FM_BACKEND_VALIDATED_BACKEND
   RELAUNCH_TARGET=$FM_BACKEND_VALIDATED_TARGET
-  if [ "$BACKEND_SET" -eq 1 ] && [ "$BACKEND_ARG" != "$BACKEND" ]; then
-    RELAUNCH_MIGRATE=1
+  if fm_backend_is_retired "$BACKEND"; then
+    echo "error: task $ID is recorded on the retired '$BACKEND' backend, so no relaunch can prove its previous agent stopped; stop that agent by hand if it still runs, then retire the record with bin/fm-retire-endpoint.sh $ID" >&2
+    exit 1
   fi
   fm_backend_validate_spawn "$BACKEND" || exit 1
   fm_backend_source "$BACKEND" || exit 1
@@ -1213,24 +1086,14 @@ if [ "$RELAUNCH" -eq 1 ]; then
     exit 1
   }
   RELAUNCH_STATE=$(fm_backend_agent_state "$BACKEND" "$RELAUNCH_TARGET")
-  # Only tmux and Herdr missing endpoints prove the old agent gone during
-  # migration; a missing stream registry entry does not prove the worker stopped.
-  case "$RELAUNCH_STATE:$RELAUNCH_MIGRATE:$BACKEND" in
-    dead:*|missing:1:tmux|missing:1:herdr) ;;
+  # A missing stream registry entry does not prove the worker stopped.
+  case "$RELAUNCH_STATE" in
+    dead) ;;
     *)
       echo "error: task $ID's endpoint reads '$RELAUNCH_STATE'; a relaunch requires a positively agent-free endpoint (stop the agent first with bin/fm-control.sh $ID exit)" >&2
       exit 1
       ;;
   esac
-  if [ "$RELAUNCH_MIGRATE" = 1 ]; then
-    BACKEND=$BACKEND_ARG
-    fm_backend_validate_spawn "$BACKEND" || exit 1
-    fm_backend_source "$BACKEND" || exit 1
-    fm_control_backend_state_verified "$BACKEND" || {
-      echo "error: backend '$BACKEND' has no recovery-grade agent-state classifier; refusing to migrate $ID onto it" >&2
-      exit 1
-    }
-  fi
   RELAUNCH_PRIOR_HARNESS=$(fm_meta_get "$RELAUNCH_META" harness)
   KIND=$(fm_meta_get "$RELAUNCH_META" kind)
   [ -n "$KIND" ] || KIND=ship
@@ -1251,16 +1114,8 @@ if [ "$RELAUNCH" -eq 1 ]; then
       exit 1
     }
   fi
-  if [ "$BACKEND" = herdr ] && [ "$RELAUNCH_MIGRATE" = 0 ]; then
-    HERDR_SES=$(fm_meta_get "$RELAUNCH_META" herdr_session)
-    HERDR_WORKSPACE_ID=$(fm_meta_get "$RELAUNCH_META" herdr_workspace_id)
-    HERDR_TAB_ID=$(fm_meta_get "$RELAUNCH_META" herdr_tab_id)
-    HERDR_PANE_ID=$(fm_meta_get "$RELAUNCH_META" herdr_pane_id)
-  fi
-  if [ "$BACKEND" = stream ] && [ "$RELAUNCH_MIGRATE" = 0 ]; then
-    STREAM_HUB_URL=$(fm_meta_get "$RELAUNCH_META" stream_hub)
-    STREAM_ENDPOINT_ID=$(fm_meta_get "$RELAUNCH_META" stream_endpoint_id)
-  fi
+  STREAM_HUB_URL=$(fm_meta_get "$RELAUNCH_META" stream_hub)
+  STREAM_ENDPOINT_ID=$(fm_meta_get "$RELAUNCH_META" stream_endpoint_id)
   # With no explicit harness, a relaunch reuses the harness already recorded
   # for this task. It must NOT fall through to the fresh-spawn config
   # resolution, which would silently move an existing task onto whatever the
@@ -1764,14 +1619,12 @@ fi
 
 # PROJ_ABS can still carry a symlinked path component (e.g. macOS's /tmp ->
 # /private/tmp) when it came from the ship/scout branch's logical `pwd` above.
-# Every backend's own current-path read (tmux's pane_current_path, herdr's
-# foreground_cwd, stream's current-path probe) can
-# report the OS-level, physically-resolved cwd, so comparing it against a
+# The stream current-path probe reports the OS-level, physically-resolved cwd,
+# so comparing it against a
 # still-symlinked PROJ_ABS can misfire both ways: false-negative (the poll
 # below never notices the pane left the project) or false-positive (the
 # isolation guard refuses a spawn that never actually tangled). Canonicalize
-# once here so every downstream comparison uses the same physical form
-# (docs/herdr-backend.md "Known gaps").
+# once here so every downstream comparison uses the same physical form.
 PROJ_ABS_REAL=$(cd "$PROJ_ABS" 2>/dev/null && pwd -P) || PROJ_ABS_REAL="$PROJ_ABS"
 
 real_path_or_raw() {  # <path>
@@ -1782,15 +1635,6 @@ real_path_or_raw() {  # <path>
     printf '%s\n' "$path"
   fi
 }
-
-# Session-provider container-ensure + task creation. tmux stays exactly as P1
-# left it (same session-name / new-window sequence, see bin/backends/tmux.sh);
-# a herdr spawn goes through the version-gated, workspace-per-HOME,
-# tab-per-task sequence in bin/backends/herdr.sh instead (D4/D5 as refined by
-# docs/herdr-backend.md's "workspace-per-home" pass, AGENTS.md task
-# herdr-sm-spaces-k4). Both branches converge on the same $T ("target") string
-# that every downstream operation (send/capture/kill) already treats as opaque
-# per-backend routing (fm_backend_resolve_selector).
 
 # True when <path> is an isolated worktree of the spawning project: a real
 # directory that is its own worktree root, is not the spawning project itself,
@@ -1971,87 +1815,6 @@ freshen_spawn_worktree_base() {  # <worktree>
   fi
 }
 
-herdr_projection_meta_field_exact() {  # <meta> <key>
-  local meta=$1 key=$2 count
-  [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
-  count=$(grep -c "^${key}=" "$meta" 2>/dev/null || true)
-  [ "$count" = 1 ] || return 1
-  grep "^${key}=" "$meta" 2>/dev/null | cut -d= -f2-
-}
-
-# A stale presentation journal never grants launch authority.
-# Under the session lock, authoritative metadata must identify one positively
-# dead or agent-free endpoint before token inspection may allow flat fallback.
-# Exact Herdr fields are retained for the narrower version 2 reclaim path.
-herdr_projection_existing_meta_allows_flat() {  # <meta>
-  local meta=$1 old_backend old_target old_session old_pane old_state target_session target_pane
-  HERDR_RECOVERY_BACKEND=""
-  HERDR_RECOVERY_WORKSPACE_ID=""
-  HERDR_RECOVERY_TAB_ID=""
-  HERDR_RECOVERY_PANE_ID=""
-  old_backend=$(fm_backend_of_meta "$meta")
-  old_target=$(fm_backend_target_of_meta "$meta")
-  [ -n "$old_target" ] || {
-    echo "error: existing metadata for $ID has no endpoint; refusing duplicate launch while its herdr presentation journal is quarantined" >&2
-    return 1
-  }
-  HERDR_RECOVERY_BACKEND=$old_backend
-  if [ "$old_backend" = herdr ]; then
-    fm_backend_herdr_parse_target "$old_target" || {
-      echo "error: existing herdr endpoint for $ID is malformed; refusing duplicate launch" >&2
-      return 1
-    }
-    target_session=$FM_BACKEND_HERDR_SESSION
-    target_pane=$FM_BACKEND_HERDR_PANE
-    old_session=$(herdr_projection_meta_field_exact "$meta" herdr_session) || {
-      echo "error: existing herdr metadata for $ID has an ambiguous session; refusing duplicate launch" >&2
-      return 1
-    }
-    HERDR_RECOVERY_WORKSPACE_ID=$(herdr_projection_meta_field_exact "$meta" herdr_workspace_id) || {
-      echo "error: existing herdr metadata for $ID has an ambiguous workspace; refusing duplicate launch" >&2
-      return 1
-    }
-    HERDR_RECOVERY_TAB_ID=$(herdr_projection_meta_field_exact "$meta" herdr_tab_id) || {
-      echo "error: existing herdr metadata for $ID has an ambiguous tab; refusing duplicate launch" >&2
-      return 1
-    }
-    old_pane=$(herdr_projection_meta_field_exact "$meta" herdr_pane_id) || {
-      echo "error: existing herdr metadata for $ID has an ambiguous pane; refusing duplicate launch" >&2
-      return 1
-    }
-    [ "$target_session" = "$old_session" ] && [ "$target_pane" = "$old_pane" ] || {
-      echo "error: existing herdr metadata for $ID has inconsistent endpoint identities; refusing duplicate launch" >&2
-      return 1
-    }
-    HERDR_RECOVERY_PANE_ID=$old_pane
-    fm_backend_herdr_server_ensure "$old_session" || {
-      echo "error: existing herdr endpoint for $ID could not be inspected; refusing duplicate launch" >&2
-      return 1
-    }
-    old_state=$(fm_backend_herdr_pane_agent_state "$old_session" "$old_pane")
-    case "$old_state" in
-      # A stale registration over a shell-only pane is agent-free for RECOVERY
-      # (--relaunch reuses the pane, issue #4115), but the duplicate-launch
-      # corridor keeps refusing it like every other non-husk state, so a fresh
-      # spawn is refused here consistently with the reclaim and presentation
-      # gates downstream.
-      dead|no-agent) return 0 ;;
-      live|stale-agent|unknown)
-        echo "error: existing herdr endpoint for $ID is $old_state; refusing duplicate launch" >&2
-        return 1
-        ;;
-    esac
-  fi
-  old_state=$(fm_backend_agent_alive "$old_backend" "$old_target")
-  case "$old_state" in
-    dead) return 0 ;;
-    alive|unknown)
-      echo "error: existing $old_backend endpoint for $ID is $old_state; refusing duplicate launch" >&2
-      return 1
-      ;;
-  esac
-}
-
 # Backlog preflight (bin/fm-backlog-transition-lib.sh). A fresh spawn is about
 # to become the sole owner of the row's In-flight transition, while a relaunch
 # is recovery for an existing task and may preserve an In-flight dependency
@@ -2099,16 +1862,7 @@ if [ -e "$STATE/$ID.backlog-close" ] || [ -L "$STATE/$ID.backlog-close" ]; then
 fi
 
 W="fm-$ID"
-# Where a fresh endpoint's shell starts. A fresh spawn starts in the project
-# and lets Treehouse move it into the worktree; a backend migration creates its
-# endpoint directly in the recorded worktree or home, because no Treehouse step
-# runs for a relaunch.
-ENDPOINT_CWD=$PROJ_ABS
-if [ "$RELAUNCH_MIGRATE" = 1 ]; then
-  [ "$KIND" = secondmate ] || WT=$RELAUNCH_WT
-  ENDPOINT_CWD=$WT
-fi
-if [ "$RELAUNCH" -eq 1 ] && [ "$RELAUNCH_MIGRATE" = 0 ]; then
+if [ "$RELAUNCH" -eq 1 ]; then
   # Adopt the recorded endpoint instead of creating one. This is what keeps a
   # relaunch a REPLACEMENT rather than a second copy of the task: no new
   # terminal, no second worktree, and every uncommitted change left exactly
@@ -2117,256 +1871,46 @@ if [ "$RELAUNCH" -eq 1 ] && [ "$RELAUNCH_MIGRATE" = 0 ]; then
   # A secondmate's home already resolved WT above through the same validation a
   # fresh secondmate spawn uses; every other kind takes the recorded worktree.
   [ "$KIND" = secondmate ] || WT=$RELAUNCH_WT
-  WT_TARGET=$T
-  SES=${T%%:*}
 else
-case "$BACKEND" in
-  tmux)
-    SES=$(fm_backend_tmux_container_ensure)
-    T="$SES:$W"
-    # #134 robustness (tmux): fm_backend_tmux_create_task captures a stable window
-    # id and pins the window name (automatic-rename/allow-rename off) so a captain's
-    # non-default tmux config cannot rename the window away from fm-<id> once
-    # treehouse cd's into the worktree. WT_TARGET carries that stable id for the
-    # rename-critical worktree-detection steps below; the persisted window= handle
-    # stays $T (the name form), which is safe now that rename is disabled.
-    WID=$(fm_backend_tmux_create_task "$SES" "$W" "$ENDPOINT_CWD") || exit 1
-    WT_TARGET="$WID"
-    ;;
-  herdr)
-    # fm_backend_herdr_workspace_label resolves the target workspace from
-    # FM_HOME. For every KIND except secondmate, this process's own FM_HOME is
-    # already the right home (the primary spawning its own crewmate/scout, or
-    # a secondmate spawning ITS OWN crewmate/scout from its own process's
-    # FM_HOME - the latter needs no glue at all). A --secondmate spawn is the
-    # one case that does: it is the PRIMARY's own fm-spawn.sh process
-    # launching a DIFFERENT home (PROJ_ABS, already validated above as the
-    # secondmate's home), so FM_HOME here still names the primary. Shadow it
-    # to PROJ_ABS for just these two calls (bash restores it automatically
-    # after each prefixed simple-command call) so the secondmate's tab lands
-    # in the secondmate's own workspace, not the primary's "firstmate" one.
-    #
-    # Placement, separately from labeling: a crewmate/scout belongs in the
-    # EXACT herdr workspace this launching process is itself running in, which
-    # only its own herdr pane identity can name (a same-labeled sibling
-    # workspace must never be adopted). A --secondmate launch is the exception -
-    # it stands up a DIFFERENT home's own workspace by design - so it asks for
-    # the per-home container instead of inheriting this launcher's.
-    HERDR_LABEL_HOME=$FM_HOME
-    HERDR_LAUNCHER_RELATIONSHIP=launcher-home
-    if [ "$KIND" = secondmate ]; then
-      HERDR_LABEL_HOME=$PROJ_ABS
-      HERDR_LAUNCHER_RELATIONSHIP=other-home
-    fi
-    HERDR_PRESENTATION_JOURNAL=$(fm_backend_herdr_projection_journal_path "$STATE" "$ID")
-    HERDR_PROJECTED=0
-    if [ "$KIND" != secondmate ] && [ "$RELAUNCH_MIGRATE" = 0 ] && fm_backend_herdr_presentation_enabled "$CONFIG" "$STATE"; then
-      HERDR_SES=$(fm_backend_herdr_session)
-      HERDR_PARENT_LABEL=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_workspace_label)
-      if [ -e "$HERDR_PRESENTATION_JOURNAL" ] || [ -L "$HERDR_PRESENTATION_JOURNAL" ]; then
-        fm_backend_herdr_server_ensure "$HERDR_SES" || {
-          echo "error: herdr presentation recovery could not ensure its exact named session" >&2
-          exit 1
-        }
-        spawn_herdr_presentation_order_lock_acquire "$HERDR_SES" || {
-          echo "error: herdr presentation recovery could not acquire its session lock; refusing a concurrent resume" >&2
-          exit 1
-        }
-        if [ -e "$STATE/$ID.meta" ] || [ -L "$STATE/$ID.meta" ]; then
-          herdr_projection_existing_meta_allows_flat "$STATE/$ID.meta" || exit 1
-        fi
-        fm_backend_herdr_projection_recovery_allows_flat \
-          "$HERDR_SES" "$HERDR_PRESENTATION_JOURNAL" "$ID" || exit 1
-        if [ "${HERDR_RECOVERY_BACKEND:-}" = herdr ]; then
-          set +e
-          FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_projection_reclaim_task \
-            "$HERDR_SES" "$HERDR_PRESENTATION_JOURNAL" "$ID" "$HERDR_LABEL_HOME" \
-            "$HERDR_RECOVERY_WORKSPACE_ID" "$HERDR_RECOVERY_TAB_ID" "$HERDR_RECOVERY_PANE_ID" \
-            "$HERDR_PARENT_LABEL" "$W" "$PROJ_ABS"
-          HERDR_RECLAIM_STATUS=$?
-          set -e
-          case "$HERDR_RECLAIM_STATUS" in
-            0)
-              HERDR_PROJECTED=1
-              HERDR_WORKSPACE_ID=$HERDR_RECOVERY_WORKSPACE_ID
-              HERDR_SEEDED_DEFAULT_TAB_ID=""
-              HERDR_TAB_ID=$FM_BACKEND_HERDR_PROJECTION_TAB_ID
-              HERDR_PANE_ID=$FM_BACKEND_HERDR_PROJECTION_PANE_ID
-              HERDR_PROJECTION_ABORT_CLEANUP=1
-              HERDR_PROJECTION_ABORT_SESSION=$HERDR_SES
-              HERDR_PROJECTION_ABORT_TASK_PANE=$HERDR_PANE_ID
-              HERDR_PROJECTION_ABORT_SEEDED_PANE=""
-              ;;
-            2)
-              spawn_herdr_presentation_order_lock_release
-              ;;
-            *) exit 1 ;;
-          esac
-        else
-          spawn_herdr_presentation_order_lock_release
-        fi
-      elif [ ! -e "$STATE/$ID.meta" ] && [ ! -L "$STATE/$ID.meta" ]; then
-        # Session lock path resolution and exact parent binding both need a
-        # live named-session socket before journal publication.
-        if ! fm_backend_herdr_server_ensure "$HERDR_SES"; then
-          echo "warning: herdr presentation could not ensure its session server; using the ordinary flat layout without projection" >&2
-        elif [ "${FM_BACKEND_HERDR_PRESENTATION_PREFERENCE:-default}" = default ] \
-          && ! fm_backend_herdr_presentation_default_supported "$STATE" "$HERDR_SES"; then
-          :
-        elif spawn_herdr_presentation_order_lock_acquire "$HERDR_SES"; then
-          # The projected child is placed and bound UNDER this launcher's exact
-          # parent workspace. Its own herdr pane identity names that workspace
-          # directly; the label lookup is only the fallback for a launcher with
-          # no herdr ancestry at all. A claimed-but-broken identity refuses here
-          # rather than projecting under a guessed parent.
-          set +e
-          fm_backend_herdr_launcher_identity "$HERDR_SES"
-          HERDR_LAUNCHER_STATUS=$?
-          set -e
-          case "$HERDR_LAUNCHER_STATUS" in
-            0) HERDR_PARENT_WORKSPACE_ID=$FM_BACKEND_HERDR_LAUNCHER_WORKSPACE_ID ;;
-            2) HERDR_PARENT_WORKSPACE_ID=$(fm_backend_herdr_projection_parent_workspace_exact \
-                 "$HERDR_SES" "$HERDR_PARENT_LABEL" 2>/dev/null || true) ;;
-            *) spawn_herdr_presentation_order_lock_release; exit 1 ;;
-          esac
-          if [ -z "$HERDR_PARENT_WORKSPACE_ID" ]; then
-            echo "warning: herdr presentation parent is absent or ambiguous; using the ordinary flat layout without projection" >&2
-            spawn_herdr_presentation_order_lock_release
-          else
-            HERDR_PROJECTION_ID=$(fm_backend_herdr_projection_journal_create "$STATE" "$ID") || exit 1
-            HERDR_PROJECTION_LABEL=$(fm_backend_herdr_projection_workspace_label "$ID" "$HERDR_PROJECTION_ID")
-            if ! FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_projection_create_task \
-              "$PROJ_ABS" "$HERDR_PROJECTION_LABEL" "$W"; then
-              if [ "${FM_BACKEND_HERDR_PROJECTION_CLEANUP_SAFE:-0}" = 1 ]; then
-                HERDR_PROJECTION_ABORT_CLEANUP=1
-                HERDR_PROJECTION_ABORT_SESSION=$FM_BACKEND_HERDR_PROJECTION_SESSION
-                HERDR_PROJECTION_ABORT_TASK_PANE=$FM_BACKEND_HERDR_PROJECTION_PANE_ID
-                HERDR_PROJECTION_ABORT_SEEDED_PANE=$FM_BACKEND_HERDR_PROJECTION_SEEDED_PANE_ID
-              fi
-              exit 1
-            fi
-            HERDR_PROJECTED=1
-            HERDR_SES=$FM_BACKEND_HERDR_PROJECTION_SESSION
-            HERDR_WORKSPACE_ID=$FM_BACKEND_HERDR_PROJECTION_WORKSPACE_ID
-            HERDR_SEEDED_DEFAULT_TAB_ID=$FM_BACKEND_HERDR_PROJECTION_SEEDED_TAB_ID
-            HERDR_TAB_ID=$FM_BACKEND_HERDR_PROJECTION_TAB_ID
-            HERDR_PANE_ID=$FM_BACKEND_HERDR_PROJECTION_PANE_ID
-            HERDR_PROJECTION_ABORT_CLEANUP=1
-            HERDR_PROJECTION_ABORT_SESSION=$HERDR_SES
-            HERDR_PROJECTION_ABORT_TASK_PANE=$HERDR_PANE_ID
-            HERDR_PROJECTION_ABORT_SEEDED_PANE=$FM_BACKEND_HERDR_PROJECTION_SEEDED_PANE_ID
-            fm_backend_herdr_projection_order_best_effort \
-              "$HERDR_SES" "$HERDR_WORKSPACE_ID" "$HERDR_PARENT_LABEL" "$HERDR_PARENT_WORKSPACE_ID"
-            HERDR_HOME_ID=$(fm_backend_herdr_projection_home_identity "$HERDR_LABEL_HOME" 2>/dev/null || true)
-            if [ -n "$HERDR_HOME_ID" ] \
-               && fm_backend_herdr_projection_live_binding_matches \
-                 "$HERDR_SES" "$HERDR_PROJECTION_ID" "$HERDR_WORKSPACE_ID" \
-                 "$HERDR_TAB_ID" "$HERDR_PANE_ID" "$HERDR_PARENT_WORKSPACE_ID" \
-                 "$HERDR_PARENT_LABEL" "$HERDR_PROJECTION_LABEL" "$W" \
-               && fm_backend_herdr_projection_journal_bind \
-                 "$HERDR_PRESENTATION_JOURNAL" "$ID" "$HERDR_HOME_ID" "$HERDR_SES" \
-                 "$HERDR_WORKSPACE_ID" "$HERDR_TAB_ID" "$HERDR_PANE_ID" \
-                 "$HERDR_PARENT_WORKSPACE_ID" "$HERDR_PARENT_LABEL" "$HERDR_PROJECTION_LABEL" "$W"; then
-              :
-            else
-              echo "warning: herdr presentation could not publish an exact restart binding; this task will use flat fallback after a restart" >&2
-            fi
-          fi
-        else
-          echo "warning: herdr presentation focus lock unavailable; using the ordinary flat layout without projection" >&2
-        fi
-      fi
-    fi
-    if [ "$HERDR_PROJECTED" -ne 1 ]; then
-      HERDR_CONTAINER_RAW=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_container_ensure "$PROJ_ABS" "$HERDR_LAUNCHER_RELATIONSHIP") || exit 1
-      # fm_backend_herdr_container_ensure echoes "<session>:<workspace_id>\t<seeded_default_tab_id>"
-      # (the second field empty when this call ADOPTED a pre-existing workspace
-      # rather than creating a fresh one). Split on the guaranteed single tab
-      # character; the seeded tab id is threaded through to create_task
-      # untouched, which is the only function permitted to prune it (never
-      # re-derived from labels - see docs/herdr-backend.md "Default-tab prune").
-      CONTAINER=${HERDR_CONTAINER_RAW%%$'\t'*}
-      HERDR_SEEDED_DEFAULT_TAB_ID=${HERDR_CONTAINER_RAW#*$'\t'}
-      HERDR_SES=${CONTAINER%%:*}
-      HERDR_WORKSPACE_ID=${CONTAINER#*:}
-      HERDR_TASK_IDS=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_create_task "$CONTAINER" "$W" "$ENDPOINT_CWD" "$HERDR_SEEDED_DEFAULT_TAB_ID") || exit 1
-      read -r HERDR_TAB_ID HERDR_PANE_ID <<EOF
-$HERDR_TASK_IDS
-EOF
-    fi
-    if [ -z "$HERDR_TAB_ID" ] || [ -z "$HERDR_PANE_ID" ]; then
-      echo "error: herdr did not return a tab/pane id for $W" >&2
-      exit 1
-    fi
-    T="$HERDR_SES:$HERDR_PANE_ID"
-    ;;
-  stream)
-    # The fleet's hub is the container; container_ensure proves it is
-    # reachable, authenticated, and speaking this adapter's protocol before
-    # anything is created. create_task then starts the LOCAL agent that owns
-    # this task's pseudoterminal, because a pty has to live on the machine that
-    # runs the process. The status record is handed to that local agent with
-    # the endpoint, so the return channel exists from the endpoint's first
-    # moment, is written on this machine, and never travels to the hub.
-    STREAM_HUB_URL=$(fm_backend_stream_hub_url) || exit 1
-    fm_backend_stream_container_ensure >/dev/null || exit 1
-    STREAM_TASK_IDS=$(fm_backend_stream_create_task "$W" "$ENDPOINT_CWD" "$STATE/$ID.status") || exit 1
-    read -r STREAM_TAG STREAM_ENDPOINT_ID <<EOF
+  # The fleet's hub is the container; container_ensure proves it is
+  # reachable, authenticated, and speaking this adapter's protocol before
+  # anything is created. create_task then starts the LOCAL agent that owns
+  # this task's pseudoterminal, because a pty has to live on the machine that
+  # runs the process. The status record is handed to that local agent with
+  # the endpoint, so the return channel exists from the endpoint's first
+  # moment, is written on this machine, and never travels to the hub. A fresh
+  # endpoint starts in the project and Treehouse moves it into the worktree.
+  STREAM_HUB_URL=$(fm_backend_stream_hub_url) || exit 1
+  fm_backend_stream_container_ensure >/dev/null || exit 1
+  STREAM_TASK_IDS=$(fm_backend_stream_create_task "$W" "$PROJ_ABS" "$STATE/$ID.status") || exit 1
+  read -r STREAM_TAG STREAM_ENDPOINT_ID <<EOF
 $STREAM_TASK_IDS
 EOF
-    if [ -z "$STREAM_TAG" ] || [ -z "$STREAM_ENDPOINT_ID" ]; then
-      echo "error: the stream agent did not return an endpoint id for $W" >&2
-      exit 1
-    fi
-    T="$STREAM_TAG:$STREAM_ENDPOINT_ID"
-    ;;
-esac
-# A migration's fresh endpoint belongs to this spawn until its record is
-# published; an abort before then closes it so no stray terminal is left.
-[ "$RELAUNCH_MIGRATE" = 0 ] || MIGRATE_ENDPOINT_CLEANUP=1
+  if [ -z "$STREAM_TAG" ] || [ -z "$STREAM_ENDPOINT_ID" ]; then
+    echo "error: the stream agent did not return an endpoint id for $W" >&2
+    exit 1
+  fi
+  T="$STREAM_TAG:$STREAM_ENDPOINT_ID"
 fi
 if [ "$KIND" = secondmate ]; then
   FM_INHERITABLE_CONFIG=trace-context \
     propagate_inheritable_config "$CONFIG" "$PROJ_ABS/config" \
     || echo "warning: secondmate $ID trace-context inheritance failed for $PROJ_ABS" >&2
 fi
-# #134 robustness: only tmux needs a worktree-detection target distinct from $T -
-# its rename-safe stable window id, set as WT_TARGET=$WID in the tmux branch above.
-# Every other backend addresses its pane/surface by the id already in $T, so default
-# WT_TARGET to $T for them (and for any future backend) - the shared treehouse-get +
-# worktree-detection steps below must never reference an unbound WT_TARGET under set -u.
-: "${WT_TARGET:=$T}"
+WT_TARGET=$T
 spawn_send_text_line() {  # <target> <text>
-  case "$BACKEND" in
-    tmux) fm_backend_tmux_send_text_line "$1" "$2" ;;
-    herdr) fm_backend_herdr_send_text_line "$1" "$2" ;;
-    stream) fm_backend_stream_send_text_line "$1" "$2" "$W" ;;
-  esac
+  fm_backend_stream_send_text_line "$1" "$2" "$W"
 }
 spawn_current_path() {  # <target>
-  case "$BACKEND" in
-    tmux) fm_backend_tmux_current_path "$1" ;;
-    herdr) fm_backend_herdr_current_path "$1" ;;
-    stream) fm_backend_stream_current_path "$1" "$W" ;;
-  esac
+  fm_backend_stream_current_path "$1" "$W"
 }
 spawn_send_literal() {  # <target> <text>
-  case "$BACKEND" in
-    tmux) fm_backend_tmux_send_literal "$1" "$2" ;;
-    herdr) fm_backend_herdr_send_literal "$1" "$2" ;;
-    stream) fm_backend_stream_send_literal "$1" "$2" "$W" ;;
-  esac
+  fm_backend_stream_send_literal "$1" "$2" "$W"
 }
 spawn_send_key() {  # <target> <key>
-  case "$BACKEND" in
-    tmux) fm_backend_tmux_send_key "$1" "$2" ;;
-    herdr) fm_backend_herdr_send_key "$1" "$2" ;;
-    stream) fm_backend_stream_send_key "$1" "$2" "$W" ;;
-  esac
+  fm_backend_stream_send_key "$1" "$2" "$W"
 }
 
-# A migration's fresh endpoint takes the same proof: its shell must answer in
-# the recorded worktree or home before the launch is typed into it.
 if [ "$RELAUNCH" -eq 1 ]; then
   # No worktree is acquired: the recorded one is reused as-is. What must be
   # proven instead is that the adopted endpoint's shell is actually sitting in
@@ -2380,42 +1924,22 @@ if [ "$RELAUNCH" -eq 1 ]; then
     sleep 0.5
   done
   if [ -z "$relaunch_seen" ] || [ "$(real_path_or_raw "$relaunch_seen")" != "$relaunch_wt_real" ]; then
-    if [ "$BACKEND" != herdr ]; then
-      echo "error: task $ID's endpoint is in '${relaunch_seen:-unknown}', not its recorded worktree '$WT'; refusing to relaunch an agent outside the copy holding its work" >&2
-      exit 1
-    fi
-    relaunch_cd_path=${WT//\'/\'\\\'\'}
-    spawn_send_text_line "$WT_TARGET" "cd -- '$relaunch_cd_path'" || {
-      echo "error: task $ID's endpoint is in '${relaunch_seen:-unknown}' and could not be told to return to its recorded worktree '$WT'; refusing to relaunch an agent outside the copy holding its work" >&2
-      exit 1
-    }
-    for _ in $(seq 1 10); do
-      relaunch_seen=$(spawn_current_path "$WT_TARGET" || true)
-      [ -z "$relaunch_seen" ] || [ "$(real_path_or_raw "$relaunch_seen")" != "$relaunch_wt_real" ] || break
-      sleep 0.5
-    done
-    if [ -z "$relaunch_seen" ] || [ "$(real_path_or_raw "$relaunch_seen")" != "$relaunch_wt_real" ]; then
-      echo "error: task $ID's endpoint is in '${relaunch_seen:-unknown}' and did not return to its recorded worktree '$WT' when told to; refusing to relaunch an agent outside the copy holding its work" >&2
-      exit 1
-    fi
+    echo "error: task $ID's endpoint is in '${relaunch_seen:-unknown}', not its recorded worktree '$WT'; refusing to relaunch an agent outside the copy holding its work" >&2
+    exit 1
   fi
   [ "$KIND" = secondmate ] || validate_spawn_worktree "relaunch" "$T"
 elif [ "$KIND" != secondmate ]; then
   spawn_send_text_line "$WT_TARGET" 'treehouse get'
 
   # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
-  # Target the stable window id, not the name: if the name is ever lost (e.g. an
-  # automatic-rename slips through), display-message -t <bad-name> falls back to the
-  # active client's window, which would misread firstmate's OWN pane path as the
-  # worktree and tangle a hook into the primary checkout. The window id never lies.
   # The project comparison is physical: spawn_worktree_isolated screens each
   # read against PROJ_ABS_REAL, not PROJ_ABS, because a symlinked project prefix
   # would otherwise make the pane's OS-level cwd read differ from PROJ_ABS on
   # the very first poll, before the pane has actually moved.
   #
   # A single read that already looks isolated is not proof the pane settled
-  # there: on some tmux/WSL setups a brand-new window's pane_current_path
-  # transiently reports an unrelated stale path (seen live as another real git
+  # there: a brand-new terminal's current-path read can transiently report an
+  # unrelated stale path (seen live as another real git
   # checkout entirely) before the shell catches up with treehouse get's cd. That
   # stale path passes spawn_worktree_isolated too (it resolves to a real,
   # distinct worktree top-level), so accepting it on one read alone silently
@@ -2603,7 +2127,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort account_slot busy_gen spawn_gen model_chain_lane traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id stream_hub stream_endpoint_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort account_slot busy_gen spawn_gen model_chain_lane traceparent backend stream_hub stream_endpoint_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -2624,20 +2148,12 @@ preserve_relaunch_meta() {
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.
-  # backend= is always written, tmux included, so every record names the
-  # backend it lives on. Readers still treat an absent line as tmux for records
-  # written before this (bin/fm-meta-backfill.sh makes those explicit).
+  # backend= is always written, so every record names the backend it lives
+  # on. Readers treat an absent line as the retired tmux for records written
+  # before this.
   echo "backend=$BACKEND"
-  if [ "$BACKEND" = herdr ]; then
-    echo "herdr_session=$HERDR_SES"
-    echo "herdr_workspace_id=$HERDR_WORKSPACE_ID"
-    echo "herdr_tab_id=$HERDR_TAB_ID"
-    echo "herdr_pane_id=$HERDR_PANE_ID"
-  fi
-  if [ "$BACKEND" = stream ]; then
-    echo "stream_hub=$STREAM_HUB_URL"
-    echo "stream_endpoint_id=$STREAM_ENDPOINT_ID"
-  fi
+  echo "stream_hub=$STREAM_HUB_URL"
+  echo "stream_endpoint_id=$STREAM_ENDPOINT_ID"
   if [ "$KIND" = secondmate ]; then
     echo "home=$PROJ_ABS"
     echo "projects=$SECONDMATE_PROJECTS"
@@ -2734,7 +2250,6 @@ if [ "$RELAUNCH" -eq 1 ]; then
   RELAUNCH_REPLACEMENT_PENDING=0
   SPAWN_META_PUBLISH_STARTED=0
   SPAWN_META_TMP=
-  MIGRATE_ENDPOINT_CLEANUP=0
 fi
 # A dispatch or relaunch keeps the per-task meta lock through launch delivery.
 # The backlog mutation is deliberately the final fallible commit below, so
@@ -2857,10 +2372,7 @@ fi
 if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
   LAUNCH_ENV_PREFIX='/usr/bin/env -i'
   for env_name in HOME PATH USER LOGNAME SHELL TERM COLORTERM LANG LC_ALL LC_CTYPE \
-    TMPDIR TMP TEMP GOTMPDIR TMUX TMUX_PANE HERDR_ENV HERDR_SESSION HERDR_SOCKET_PATH \
-    HERDR_PANE_ID CMUX_WORKSPACE_ID CMUX_SURFACE_ID CMUX_TAB_ID CMUX_PANEL_ID \
-    CMUX_SOCKET_PATH ZELLIJ ZELLIJ_SESSION_NAME ZELLIJ_PANE_ID FM_ZELLIJ_SESSION \
-    FM_TASK_ID \
+    TMPDIR TMP TEMP GOTMPDIR FM_TASK_ID \
     $LAUNCH_ENV_NAMES; do
     # Only validated names enter shell syntax. Values expand once, quoted, in
     # the pane shell and never become source text or spawn-process snapshots.
@@ -2886,10 +2398,6 @@ if ! spawn_send_literal "$T" "$LAUNCH"; then
   exit 1
 fi
 sleep 0.3
-if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
-  HERDR_PROJECTION_ABORT_CLEANUP=0
-  spawn_herdr_presentation_order_lock_release
-fi
 spawn_send_key "$T" Enter
 if [ "$KIND" = secondmate ] && [ "${FM_SKIP_SECONDMATE_INHERIT:-0}" != 1 ]; then
   if ! fm_config_reread_discard_pending "$PROJ_ABS" "$ID" "$FM_HOME"; then

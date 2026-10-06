@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # bin/fm-composer-lib.sh - the ONE fleet-wide owner of composer classification:
 # every shape a verified harness draws, every glyph, every container proof, and
-# the empty|pending|pending-unproven|unknown verdict, shared by every
-# session-provider adapter (tmux via bin/fm-tmux-lib.sh, and
-# bin/backends/{herdr,stream}.sh).
+# the empty|pending|pending-unproven|unknown verdict, used by the stream
+# adapter (bin/backends/stream.sh) and by every caller that reads a screen.
+# The tmux and herdr adapters that once shared it were removed.
 #
 # WHY THIS EXISTS (tasks fm-composer-shellglyph-safety and
 # fm-composer-thin-adapter-refactor-r1): the adapters each carried their own
@@ -21,25 +21,24 @@
 # adapter code. Capability differences change how CONFIDENTLY a shape can be
 # judged; they never change what the shapes ARE:
 #   styled=1    the capture preserves ANSI styling, so ghost/placeholder text
-#               is detectable and can be stripped (tmux -e, herdr --format
-#               ansi, or the stream hub's styled capture). With styled=0,
+#               is detectable and can be stripped (the stream hub's styled
+#               capture). With styled=0,
 #               ghost text is unreadable, so a bare glyph row or left-bar row
 #               carrying trailing non-idle text degrades to `unknown` rather
 #               than `pending`: the text may be the harness's own idle
 #               suggestion, and a false `pending` blocks every safe caller.
-#   cursor=1    a cursor row is supplied (tmux #{cursor_y} or the stream hub's
-#               cursor row). It anchors shape selection: the shape containing the cursor is the
+#   cursor=1    a cursor row is supplied (the stream hub's cursor row). It anchors shape selection: the shape containing the cursor is the
 #               composer. Without it, the bottom-most shape wins.
-#   identity=1  a native agent identity/state probe exists (herdr `agent get`;
-#               the tmux pi foreground-process probe). Identity is what makes
+#   identity=1  a native agent identity/state probe exists (the endpoint's
+#               foreground-process probe). Identity is what makes
 #               Pi's blank separated composer provable; with identity=0 that
 #               shape stays `unknown`.
 #   rows=<n>    the capture's bounded row count (informational).
 #
 # THE STRICT BLANK-ROW RULE (captain decision blank-row-injection-posture,
 # 2026-08-09): a blank or otherwise unidentified input row with no positive
-# container proof is `unknown` and callers defer. This replaced tmux's
-# permissive "blank cursor row = empty = safe to inject" rule fleet-wide: a
+# container proof is `unknown` and callers defer. This replaced the old tmux
+# adapter's permissive "blank cursor row = empty = safe to inject" rule fleet-wide: a
 # blank row under the cursor can be a modal dialog, a dead shell between
 # transcript rules, or a mid-redraw pane, and the away-mode injector types
 # escalations into whatever it calls empty. Positive container proof means one
@@ -68,8 +67,8 @@
 #                mode/model footer line.
 #   separated  - pi: content rows between two solid horizontal `─` rules, no
 #                glyph and no side border. Provable only with a live agent
-#                identity reporting an idle/done pi (herdr `agent
-#                get`; the tmux foreground-process probe), because a blank
+#                identity reporting an idle/done pi (the foreground-process
+#                probe), because a blank
 #                region between two transcript rules is otherwise exactly the
 #                strict rule's unidentifiable blank row.
 #
@@ -118,7 +117,7 @@
 # one CHARACTER under UTF-8, which used to leave partial multibyte residue.
 #
 # Re-sourcing is a cheap idempotent redefinition, so this file needs no
-# include guard (matching bin/fm-tmux-lib.sh).
+# include guard.
 
 # fm_composer_strip_ansi: drop every CSI escape sequence, leaving plain text.
 # Used for STRUCTURAL row/shape detection, where ghost text must be KEPT so the
@@ -187,8 +186,7 @@ fm_composer_normalize_trim_var() {  # <varname>
 
 # fm_composer_strip_ghost: the ONE fleet-wide ANSI-aware extractor of "real typed
 # content" from a captured, styled composer row. Reads the styled line on stdin
-# (from `tmux capture-pane -e`, `herdr pane read --format ansi`, or the stream
-# hub's styled capture) and prints the plain, non-ghost text on stdout, dropping:
+# (from the stream hub's styled capture) and prints the plain, non-ghost text on stdout, dropping:
 #   - dim/faint runs (SGR 2): how claude and codex render ghost/suggestion text.
 #     A reset (SGR 0) or normal-intensity (SGR 22) ends a dim run.
 #   - dark/muted TRUECOLOR foreground runs (SGR 38;2;r;g;b or the colon form
@@ -292,9 +290,8 @@ fm_composer_strip_ghost() {
 #
 # These live here, in the ONE shared composer/delivery owner, rather than in any
 # single backend adapter, because every backend needs them for the SAME job:
-# proving a submitted Enter actually landed. Keeping them in bin/fm-tmux-lib.sh
-# made cursor's signature reachable only from tmux, even though herdr and stream
-# run the same harnesses and face the same acknowledgement problem.
+# proving a submitted Enter actually landed. They once lived in the tmux
+# adapter, which made cursor's signature reachable from one backend only.
 #
 # This is a DELIVERY guard, deliberately NOT a worker-state source. The semantic
 # busy contract - what firstmate records and supervises on - is owned by
@@ -1353,7 +1350,7 @@ EOF
   plain=$(printf '%s\n' "$screen" | fm_composer_strip_ansi)
   _fm_composer_scan_screen "$plain" "$cy"
   if [ -n "$cy" ]; then
-    # Cursor mode (tmux): the shape CONTAINING the cursor is the composer.
+    # Cursor mode: the shape CONTAINING the cursor is the composer.
     if [ "$FM_COMPOSER_SCAN_UNSAFE" = 1 ]; then
       printf 'unknown'; return 0
     fi
@@ -1450,8 +1447,8 @@ EOF
 # retyping would duplicate it. Proven pending (and pending-unproven) retries
 # consume the budget; any other verdict returns immediately, so `unknown`
 # stays a loud refusal rather than a blind retry into an unreadable pane.
-# tmux and herdr keep richer cores that consume this same shared verdict plus
-# fm_composer_queued_enter_verdict; no shape knowledge lives in any loop.
+# No shape knowledge lives in any loop; callers consume this shared verdict
+# plus fm_composer_queued_enter_verdict.
 fm_composer_submit_retry_core() {  # <send-key-fn> <state-fn> <target> <retries> <enter-sleep> [expected-label]
   local send_key_fn=$1 state_fn=$2 target=$3 retries=$4 sleep_s=$5 expected_label=${6:-} i=0 state
   while :; do
@@ -1475,9 +1472,8 @@ fm_composer_submit_retry_core() {  # <send-key-fn> <state-fn> <target> <retries>
 #   pending + unknown -> pending (unreadable busy is not proof of a queue)
 # Every other composer verdict is returned unchanged, so pending-unproven,
 # empty, and unknown never receive this conversion.
-# Adapters supply their own busy primitive (tmux: fm_pane_is_busy; herdr:
-# native agent_status=working, or a rendered busy footer on an idle native
-# baseline). This function does not read a pane.
+# The adapter supplies its own busy primitive (the stream adapter reads a
+# rendered busy footer). This function does not read a pane.
 fm_composer_queued_enter_verdict() {  # <composer-state> <busy|idle|unknown>
   local state=$1 busy=${2:-}
   [ "$state" = pending ] || { printf '%s' "$state"; return 0; }
@@ -1526,8 +1522,7 @@ _fm_composer_classify_bare_pi_overlap() {  # <screen> <styled> <has-identity> <i
   fi
 }
 
-# The pi separated-shape verdict: identity + structure conjunction (herdr's
-# rule, now fleet-wide). A missing identity capability keeps the shape
+# The pi separated-shape verdict: identity + structure conjunction. A missing identity capability keeps the shape
 # unknown; an unfetched identity on an identity-capable backend asks the
 # adapter to probe (lazily) and re-call. Proven input remains pending for every
 # live pi state, while only an idle/done pi proves an empty composer. A blocked

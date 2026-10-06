@@ -124,14 +124,6 @@
 # These refusals are not relaxed by --force: --force authorizes discarding THIS
 # task's unlanded work, never another task's live work. Nothing of this task's
 # own is removed by a refusal; reconcile whichever record is wrong and re-run.
-# A Herdr presentation journal never authorizes cleanup. Teardown still closes
-# only the exact task pane from ordinary endpoint metadata and never calls
-# `workspace close`. It retires the non-authoritative journal only when a
-# read-only token correlation agrees with that endpoint and pane closure is
-# confirmed. Otherwise the journal stays quarantined for manual inspection.
-# Projected closes share the presentation-order lock, refuse to close the
-# captain's active tab, and restore the exact response-derived pre-close tab
-# if Herdr's last-pane cleanup focuses an unrelated neighboring workspace.
 # Secondmates (kind=secondmate in meta) are retired explicitly. Normal
 # teardown refuses while their home has in-flight crewmate meta files; --force
 # is the approved discard path that prevalidates child removal targets, locks each
@@ -314,8 +306,6 @@ TREEHOUSE_SLOT_LOCK_REQUIRED=0
 if [ -f "$META" ] && [ ! -L "$META" ]; then
   TEARDOWN_LOCK_KIND=$(fm_meta_get "$META" kind)
   [ -n "$TEARDOWN_LOCK_KIND" ] || TEARDOWN_LOCK_KIND=ship
-  TEARDOWN_LOCK_BACKEND=$(fm_meta_get "$META" backend)
-  [ -n "$TEARDOWN_LOCK_BACKEND" ] || TEARDOWN_LOCK_BACKEND=tmux
   TEARDOWN_LOCK_WT=$(fm_meta_get "$META" worktree)
   TEARDOWN_LOCK_PROJECT=$(fm_meta_get "$META" project)
   if [ "$TEARDOWN_LOCK_KIND" != secondmate ] \
@@ -344,9 +334,6 @@ DESCENDANT_TASK_HOMES=()
 DESCENDANT_TREEHOUSE_LOCK_PATHS=()
 teardown_release_locks() {
   local status=$? i
-  if declare -F teardown_release_herdr_locks >/dev/null 2>&1; then
-    teardown_release_herdr_locks || true
-  fi
   for ((i=${#DESCENDANT_LOCK_PATHS[@]} - 1; i >= 0; i--)); do
     fm_lock_release "${DESCENDANT_LOCK_PATHS[$i]}" || true
   done
@@ -1879,62 +1866,18 @@ $dir_pids"
   TASK_PIDS=$(printf '%s\n' "$pids" | grep -E '^[0-9]+$' | sort -un || true)
 }
 
-reap_task_backend_process_group() {  # <label>
-  local label=$1 leader leader_start pgid current_pgid own_pgid
-  if [ "$BACKEND" != tmux ]; then
-    echo "warning: lsof is unavailable; cannot resolve a process-group fallback for $BACKEND task $ID" >&2
-    return 0
-  fi
-  leader=$(tmux display-message -p -t "$T" '#{pane_pid}' 2>/dev/null) || leader=""
-  case "$leader" in ''|*[!0-9]*)
-    echo "warning: lsof is unavailable; cannot resolve the tmux pane process group for $ID" >&2
-    return 0
-    ;;
-  esac
-  leader_start=$(task_process_identity "$leader") || {
-    echo "warning: lsof is unavailable; cannot identify the tmux pane process group for $ID" >&2
-    return 0
-  }
-  pgid=$(ps -o pgid= -p "$leader" 2>/dev/null) || pgid=""
-  pgid=$(printf '%s' "$pgid" | tr -d '[:space:]')
-  case "$pgid" in ''|*[!0-9]*|0|1)
-    echo "warning: lsof is unavailable; cannot resolve the tmux pane process group for $ID" >&2
-    return 0
-    ;;
-  esac
-  own_pgid=$(ps -o pgid= -p "$$" 2>/dev/null) || own_pgid=""
-  own_pgid=$(printf '%s' "$own_pgid" | tr -d '[:space:]')
-  if [ "$pgid" = "$own_pgid" ]; then
-    echo "warning: lsof is unavailable; refusing to signal teardown's own process group for $ID" >&2
-    return 0
-  fi
-  task_process_identity_matches "$leader" "$leader_start" || return 0
-  current_pgid=$(ps -o pgid= -p "$leader" 2>/dev/null) || current_pgid=""
-  current_pgid=$(printf '%s' "$current_pgid" | tr -d '[:space:]')
-  [ "$current_pgid" = "$pgid" ] || return 0
-  echo "teardown: reaping leaked $label process group for $ID: $pgid" >&2
-  kill -TERM -- "-$pgid" 2>/dev/null || true
-  sleep 1
-  if task_process_identity_matches "$leader" "$leader_start" \
-     && [ "$(ps -o pgid= -p "$leader" 2>/dev/null | tr -d '[:space:]')" = "$pgid" ] \
-     && kill -0 -- "-$pgid" 2>/dev/null; then
-    echo "teardown: force-killing leaked $label process group for $ID: $pgid" >&2
-    kill -KILL -- "-$pgid" 2>/dev/null || true
-  fi
-}
-
 # Reap every process rooted (by cwd) under this task's own worktree or tasktmp
 # - both unique per task and never shared - before either is removed. TERM
 # first, then KILL after a short grace period for anything still alive; a
 # process that exits on its own between the two passes is simply absent from
-# the recheck. A missing lsof uses the backend process-group fallback; an lsof
-# scan error refuses before destructive teardown.
+# the recheck. A missing lsof skips the reap with a warning (the endpoint kill
+# below still runs); an lsof scan error refuses before destructive teardown.
 reap_task_worktree_processes() {  # <label> <dir>...
   local label=$1 pids pid identity current_pids i pass=1 max_passes=3
   local -a tracked_pids tracked_identities remaining_pids remaining_identities
   shift
   if ! command -v lsof >/dev/null 2>&1; then
-    reap_task_backend_process_group "$label"
+    echo "warning: lsof is unavailable; cannot find leaked $label processes for $ID" >&2
     return 0
   fi
   while [ "$pass" -le "$max_passes" ]; do
@@ -2730,160 +2673,6 @@ validate_firstmate_home_children_removal() {
   done
 }
 
-TEARDOWN_HERDR_LOCK_RECORDS=
-teardown_release_herdr_locks() {
-  local lock_session lock_path
-  [ -n "$TEARDOWN_HERDR_LOCK_RECORDS" ] || return 0
-  while IFS=$'\t' read -r lock_session lock_path; do
-    [ -n "$lock_path" ] || continue
-    fm_lock_release "$lock_path" || true
-  done <<FMEOF
-$TEARDOWN_HERDR_LOCK_RECORDS
-FMEOF
-  TEARDOWN_HERDR_LOCK_RECORDS=
-}
-
-teardown_herdr_session_lock_held() {  # <session>
-  local session=$1 lock_session lock_path
-  [ -n "$TEARDOWN_HERDR_LOCK_RECORDS" ] || return 1
-  while IFS=$'\t' read -r lock_session lock_path; do
-    [ "$lock_session" != "$session" ] || return 0
-  done <<FMEOF
-$TEARDOWN_HERDR_LOCK_RECORDS
-FMEOF
-  return 1
-}
-
-teardown_herdr_require_prerequisites() {  # <task-id>
-  local task_id=$1 prerequisite adapter="$FM_BACKEND_LIB_DIR/backends/herdr.sh"
-  if [ ! -f "$adapter" ] || [ -L "$adapter" ] || ! fm_backend_source herdr; then
-    echo "error: herdr teardown prerequisites are unavailable for $task_id; nothing was changed - restore the adapter and rerun teardown" >&2
-    return 1
-  fi
-  for prerequisite in \
-    fm_backend_herdr_parse_target \
-    fm_backend_herdr_pane_presence_state \
-    fm_backend_herdr_workspace_presence_state \
-    fm_backend_herdr_endpoint_confirmed_gone \
-    fm_backend_herdr_explicit_close_pane_confirmed \
-    fm_backend_herdr_presentation_session_lock_path; do
-    if ! declare -F "$prerequisite" >/dev/null 2>&1; then
-      echo "error: herdr teardown prerequisites are unavailable for $task_id; nothing was changed - restore the adapter and rerun teardown" >&2
-      return 1
-    fi
-  done
-  if ! declare -F fm_lock_try_acquire >/dev/null 2>&1; then
-    # shellcheck source=bin/fm-wake-lib.sh
-    . "$SCRIPT_DIR/fm-wake-lib.sh"
-  fi
-  if ! declare -F fm_lock_try_acquire >/dev/null 2>&1 \
-    || ! declare -F fm_lock_release >/dev/null 2>&1; then
-    echo "error: herdr teardown lock machinery is unavailable for $task_id; nothing was changed - restore the lock support and rerun teardown" >&2
-    return 1
-  fi
-}
-
-teardown_herdr_preflight_target() {  # <target> <task-id>
-  local target=$1 task_id=$2 session pane presence lock_path verified_lock_path lock_session held_path attempt
-  teardown_herdr_require_prerequisites "$task_id" || return 1
-  if ! fm_backend_herdr_parse_target "$target"; then
-    echo "error: herdr endpoint $target for $task_id could not be parsed exactly; nothing was changed - repair the endpoint metadata and rerun teardown" >&2
-    return 1
-  fi
-  session=$FM_BACKEND_HERDR_SESSION
-  pane=$FM_BACKEND_HERDR_PANE
-  presence=$(fm_backend_herdr_pane_presence_state "$session" "$pane")
-  case "$presence" in
-    dead|present) ;;
-    *)
-      echo "error: herdr endpoint $target for $task_id has ambiguous structured presence; nothing was changed - restore reliable endpoint inspection and rerun teardown" >&2
-      return 1
-      ;;
-  esac
-  if ! lock_path=$(fm_backend_herdr_presentation_session_lock_path "$session"); then
-    echo "error: herdr session presentation lock could not be resolved for $task_id; nothing was changed - rerun teardown once the session is reachable and unambiguous" >&2
-    return 1
-  fi
-  if [ -n "$TEARDOWN_HERDR_LOCK_RECORDS" ]; then
-    while IFS=$'\t' read -r lock_session held_path; do
-      if [ "$lock_session" = "$session" ]; then
-        if [ "$held_path" != "$lock_path" ]; then
-          echo "error: herdr session presentation lock changed during preflight for $task_id; nothing was changed - rerun teardown once session identity is stable" >&2
-          return 1
-        fi
-        return 0
-      fi
-    done <<FMEOF
-$TEARDOWN_HERDR_LOCK_RECORDS
-FMEOF
-  fi
-  attempt=0
-  while [ "$attempt" -lt 50 ]; do
-    if fm_lock_try_acquire "$lock_path"; then
-      if ! verified_lock_path=$(fm_backend_herdr_presentation_session_lock_path "$session") \
-        || [ "$verified_lock_path" != "$lock_path" ]; then
-        fm_lock_release "$lock_path" || true
-        echo "error: herdr session presentation lock changed during preflight for $task_id; nothing was changed - rerun teardown once session identity is stable" >&2
-        return 1
-      fi
-      if [ -n "$TEARDOWN_HERDR_LOCK_RECORDS" ]; then
-        TEARDOWN_HERDR_LOCK_RECORDS="$TEARDOWN_HERDR_LOCK_RECORDS
-$session	$lock_path"
-      else
-        TEARDOWN_HERDR_LOCK_RECORDS="$session	$lock_path"
-      fi
-      return 0
-    fi
-    sleep 0.1
-    attempt=$((attempt + 1))
-  done
-  echo "error: herdr session presentation lock is contended for $task_id; nothing was changed - rerun teardown once the contention clears" >&2
-  return 1
-}
-
-preflight_firstmate_home_wake_gate_state() {
-  local home=$1 sub_state child_meta child_id child_kind child_home child_wt
-  sub_state="$home/state"
-  [ -d "$sub_state" ] || return 0
-  for child_meta in "$sub_state"/*.meta; do
-    [ -e "$child_meta" ] || continue
-    child_id=$(basename "$child_meta" .meta)
-    preflight_wake_gate_task_state "$sub_state" "$child_id" || return 1
-    child_kind=$(meta_value "$child_meta" kind)
-    [ -n "$child_kind" ] || child_kind=ship
-    if [ "$child_kind" = secondmate ]; then
-      child_wt=$(meta_value "$child_meta" worktree)
-      child_home=$(meta_value "$child_meta" home)
-      [ -n "$child_home" ] || child_home=$child_wt
-      preflight_firstmate_home_wake_gate_state "$child_home" || return 1
-    fi
-  done
-}
-
-preflight_firstmate_home_herdr_children() {  # <home>
-  local home=$1 sub_state child_meta child_id child_backend child_target child_kind child_home child_wt
-  sub_state="$home/state"
-  [ -d "$sub_state" ] || return 0
-  for child_meta in "$sub_state"/*.meta; do
-    [ -e "$child_meta" ] || continue
-    child_id=$(basename "$child_meta" .meta)
-    fm_backend_validate_task_endpoint "$child_meta" "$child_id" || return 1
-    child_backend=$FM_BACKEND_VALIDATED_BACKEND
-    child_target=$FM_BACKEND_VALIDATED_TARGET
-    if [ "$child_backend" = herdr ]; then
-      teardown_herdr_preflight_target "$child_target" "$child_id" || return 1
-    fi
-    child_kind=$(meta_value "$child_meta" kind)
-    [ -n "$child_kind" ] || child_kind=ship
-    if [ "$child_kind" = secondmate ]; then
-      child_wt=$(meta_value "$child_meta" worktree)
-      child_home=$(meta_value "$child_meta" home)
-      [ -n "$child_home" ] || child_home=$child_wt
-      preflight_firstmate_home_herdr_children "$child_home" || return 1
-    fi
-  done
-}
-
 # require_task_endpoint_gone: apply the shared kill contract
 # (bin/fm-backend.sh's fm_backend_kill) to this task's own endpoint. Teardown
 # removes durable records that assert a worker is gone, so only a
@@ -2893,8 +2682,7 @@ preflight_firstmate_home_herdr_children() {  # <home>
 #
 # Deliberately not bypassed by --force. Discard authority is authority over
 # this task's unlanded WORK, never a reason to record a worker as stopped that
-# nothing has stopped - the same boundary the Herdr structured-presence gate
-# (fm_backend_herdr_endpoint_confirmed_gone) has always held here.
+# nothing has stopped.
 # The adapter has already written its one explanatory line to stderr by the
 # time this runs; this adds what the refusal means for the records, and does
 # not restate it.
@@ -2933,27 +2721,16 @@ require_task_endpoint_gone() {  # <kill-status>
 # automatic run.
 #
 # A retirement asserts what no backend could: that no worker is still running
-# behind this record. Overriding a RUNTIME's own refusal - a herdr server that
-# cannot be reached at all, a child endpoint whose kill nothing answered - is
-# the separate, louder assertion the operator makes with
-# --override-runtime-refusal, so those gates require the override field while
-# the unconfirmed-kill gate does not.
-# A runtime refusal an operator retirement did not override exits with this
-# status, so bin/fm-retire-endpoint.sh can tell that one refusal apart from
-# every other and name the flag that answers it rather than guessing.
+# behind this record.
 #
-# Both retirement statuses sit outside the small numbers teardown and its
+# The retirement status sits outside the small numbers teardown and its
 # libraries already spend, because a status that names two conditions names
 # neither: the retirement would read someone else's failure as the one refusal
-# it may proceed past.
+# it may proceed past. Nothing enforces that uniqueness mechanically: a new
+# refusal added anywhere in this script with this value silently widens what a
+# retirement overrides, so a status added here has to be checked against it by
+# hand.
 #
-# Nothing enforces that uniqueness mechanically: a new refusal added anywhere in
-# this script with either value silently widens what a retirement overrides, so
-# a status added here has to be checked against these two by hand. A real guard
-# would mean every teardown exit drawing its status from one shared registry,
-# which is follow-up work rather than part of this contract.
-FM_TEARDOWN_RUNTIME_REFUSAL_EXIT=71
-
 # The work-protection refusal, raised before anything on disk has been touched,
 # gets its own status - but only when this run is an operator retirement, which
 # is the only caller that can tell the statuses apart. Every ordinary teardown
@@ -2973,14 +2750,12 @@ work_gate_refusal_exit() {
   exit 1
 }
 
-# Read once and consumed on first use, because the herdr preflight and the
-# endpoint gate can both reach it and a retirement authorizes exactly one
-# cleanup.
+# Read once and consumed on first use, because a retirement authorizes exactly
+# one cleanup.
 OPERATOR_RETIREMENT_STATE=unread
 OPERATOR_RETIREMENT_BY=
 OPERATOR_RETIREMENT_AT=
-OPERATOR_RETIREMENT_OVERRIDE=0
-task_operator_retirement() {  # [runtime-refusal]
+task_operator_retirement() {
   local note="$STATE/$ID.endpoint-retired" noted_id noted_gen
   if [ "$OPERATOR_RETIREMENT_STATE" = unread ]; then
     OPERATOR_RETIREMENT_STATE=absent
@@ -2989,7 +2764,6 @@ task_operator_retirement() {  # [runtime-refusal]
       noted_gen=$(fm_meta_get "$note" spawn_gen)
       OPERATOR_RETIREMENT_BY=$(fm_meta_get "$note" retired_by)
       OPERATOR_RETIREMENT_AT=$(fm_meta_get "$note" retired_at)
-      OPERATOR_RETIREMENT_OVERRIDE=$(fm_meta_get "$note" runtime_refusal_override)
       if [ "$noted_id" = "$ID" ] \
         && [ "$noted_gen" = "$(fm_meta_get "$META" spawn_gen)" ] \
         && [ -n "$OPERATOR_RETIREMENT_BY" ] && [ -n "$OPERATOR_RETIREMENT_AT" ] \
@@ -2998,8 +2772,7 @@ task_operator_retirement() {  # [runtime-refusal]
       fi
     fi
   fi
-  [ "$OPERATOR_RETIREMENT_STATE" = present ] || return 1
-  [ "${1:-}" != runtime-refusal ] || [ "$OPERATOR_RETIREMENT_OVERRIDE" = 1 ] || return 1
+  [ "$OPERATOR_RETIREMENT_STATE" = present ]
 }
 
 # mark_pending_close_endpoint_confirmed: the other half of the publish-time
@@ -3033,8 +2806,7 @@ mark_pending_close_endpoint_confirmed() {
 # (bin/fm-backend.sh's fm_backend_kill) to one child endpoint during forced
 # firstmate-home cleanup. Only a confirmed-gone endpoint lets this sweep go on
 # to erase that child's durable identity records; a kill nothing proved landed
-# stops the sweep with the adapter's own reason, exactly as this sweep's own
-# Herdr branch already does with fm_backend_herdr_endpoint_confirmed_gone.
+# stops the sweep with the adapter's own reason.
 require_child_endpoint_gone() {  # <child-id> <child-target> <kill-status>
   case "$(fm_backend_kill_verdict "$3")" in
     gone) return 0 ;;
@@ -3062,22 +2834,9 @@ cleanup_firstmate_home_children() {
     child_backend=$(fm_backend_of_meta "$child_meta")
     child_t=$(fm_backend_target_of_meta "$child_meta")
     if [ -n "$child_t" ]; then
-      if [ "$child_backend" = herdr ]; then
-        fm_backend_herdr_parse_target "$child_t" || return 1
-        if ! teardown_herdr_session_lock_held "$FM_BACKEND_HERDR_SESSION"; then
-          echo "error: herdr session presentation lock is not held for child $child_id; retaining that child's durable identity records and stopping forced cleanup" >&2
-          return 1
-        fi
-        fm_backend_herdr_kill_serialized "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE" 2>/dev/null || true
-        if ! fm_backend_herdr_endpoint_confirmed_gone "$child_t"; then
-          echo "error: herdr pane $child_t for child $child_id is not confirmed gone; retaining that child's durable identity records and stopping forced cleanup" >&2
-          return 1
-        fi
-      else
-        fm_backend_kill "$child_backend" "$child_t" "" "fm-$child_id" \
-          && child_kill_rc=0 || child_kill_rc=$?
-        require_child_endpoint_gone "$child_id" "$child_t" "$child_kill_rc" || return 1
-      fi
+      fm_backend_kill "$child_backend" "$child_t" "" "fm-$child_id" \
+        && child_kill_rc=0 || child_kill_rc=$?
+      require_child_endpoint_gone "$child_id" "$child_t" "$child_kill_rc" || return 1
     fi
     if [ "$child_kind" = secondmate ]; then
       child_home=$(meta_value "$child_meta" home)
@@ -3151,6 +2910,47 @@ require_owned_task_worktree_slot || exit 1
 
 validate_pr_poll_cleanup "$STATE" "$ID" || exit 1
 
+preflight_firstmate_home_wake_gate_state() {
+  local home=$1 sub_state child_meta child_id child_kind child_home child_wt
+  sub_state="$home/state"
+  [ -d "$sub_state" ] || return 0
+  for child_meta in "$sub_state"/*.meta; do
+    [ -e "$child_meta" ] || continue
+    child_id=$(basename "$child_meta" .meta)
+    preflight_wake_gate_task_state "$sub_state" "$child_id" || return 1
+    child_kind=$(meta_value "$child_meta" kind)
+    [ -n "$child_kind" ] || child_kind=ship
+    if [ "$child_kind" = secondmate ]; then
+      child_wt=$(meta_value "$child_meta" worktree)
+      child_home=$(meta_value "$child_meta" home)
+      [ -n "$child_home" ] || child_home=$child_wt
+      preflight_firstmate_home_wake_gate_state "$child_home" || return 1
+    fi
+  done
+}
+
+# Every descendant's endpoint record must validate before a forced secondmate
+# teardown changes anything, so a malformed or foreign child record refuses the
+# whole cleanup up front rather than halfway through.
+preflight_firstmate_home_children_endpoints() {  # <home>
+  local home=$1 sub_state child_meta child_id child_kind child_home child_wt
+  sub_state="$home/state"
+  [ -d "$sub_state" ] || return 0
+  for child_meta in "$sub_state"/*.meta; do
+    [ -e "$child_meta" ] || continue
+    child_id=$(basename "$child_meta" .meta)
+    fm_backend_validate_task_endpoint "$child_meta" "$child_id" || return 1
+    child_kind=$(meta_value "$child_meta" kind)
+    [ -n "$child_kind" ] || child_kind=ship
+    if [ "$child_kind" = secondmate ]; then
+      child_wt=$(meta_value "$child_meta" worktree)
+      child_home=$(meta_value "$child_meta" home)
+      [ -n "$child_home" ] || child_home=$child_wt
+      preflight_firstmate_home_children_endpoints "$child_home" || return 1
+    fi
+  done
+}
+
 if [ "$KIND" = secondmate ]; then
   LOCAL_REGISTRY_LOCK=$(secondmate_registry_lock_path "$STATE")
   fm_lock_acquire_wait "$LOCAL_REGISTRY_LOCK" || exit 1
@@ -3166,10 +2966,7 @@ if [ "$KIND" = secondmate ]; then
     validate_firstmate_home_children_removal "$HOME_PATH" || exit 1
     preflight_descendant_treehouse_slots || exit 1
     preflight_firstmate_home_wake_gate_state "$HOME_PATH" || exit 1
-    if [ "$BACKEND" = herdr ]; then
-      teardown_herdr_preflight_target "$T" "$ID" || exit 1
-    fi
-    preflight_firstmate_home_herdr_children "$HOME_PATH" || exit 1
+    preflight_firstmate_home_children_endpoints "$HOME_PATH" || exit 1
   fi
 fi
 
@@ -3258,31 +3055,6 @@ if teardown_owns_worktree && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
       work_gate_refusal_exit
     fi
   fi
-fi
-
-# A Herdr close may reposition shared workspace order, so the whole
-# destructive sequence below (worktree return, pane close, record removal)
-# runs under the named-session presentation lock, acquired BEFORE anything is
-# returned or erased: a contended lock refuses here while the isolated copy,
-# every durable record, and the endpoint are all still intact for a plain
-# rerun. An unresolvable lock path (for example an unreachable server) also
-# refuses before any destructive step.
-TEARDOWN_HERDR_SESSION=
-TEARDOWN_HERDR_PANE=
-if [ "$BACKEND" = herdr ]; then
-  if ! teardown_herdr_preflight_target "$T" "$ID"; then
-    if task_operator_retirement runtime-refusal; then
-      echo "warning: herdr could not answer for $T; continuing on the retirement $OPERATOR_RETIREMENT_BY recorded at $OPERATOR_RETIREMENT_AT, which overrode the runtime's refusal" >&2
-    elif task_operator_retirement; then
-      echo "error: herdr could not answer for $T for $ID, and the retirement recorded for $OPERATOR_RETIREMENT_BY did not override a runtime refusal; rerun bin/fm-retire-endpoint.sh --override-runtime-refusal to retire this record" >&2
-      exit "$FM_TEARDOWN_RUNTIME_REFUSAL_EXIT"
-    else
-      exit 1
-    fi
-  fi
-  fm_backend_herdr_parse_target "$T" || exit 1
-  TEARDOWN_HERDR_SESSION=$FM_BACKEND_HERDR_SESSION
-  TEARDOWN_HERDR_PANE=$FM_BACKEND_HERDR_PANE
 fi
 
 BACKLOG_CLOSED=0
@@ -3406,89 +3178,9 @@ elif [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
   fm_treehouse_slot_owner_release "$WT" "$ID"
 fi
 
-HERDR_PRESENTATION_JOURNAL="$STATE/$ID.herdr-presentation"
-HERDR_PRESENTATION_RETIRE_CANDIDATE=0
-HERDR_PRESENTATION_SESSION=
-HERDR_PRESENTATION_PANE=
-if [ "$BACKEND" = herdr ] \
-   && { [ -e "$HERDR_PRESENTATION_JOURNAL" ] || [ -L "$HERDR_PRESENTATION_JOURNAL" ]; }; then
-  fm_backend_source herdr || true
-  HERDR_PRESENTATION_SESSION=$(meta_value "$META" herdr_session)
-  HERDR_PRESENTATION_WORKSPACE=$(meta_value "$META" herdr_workspace_id)
-  HERDR_PRESENTATION_PANE=$(meta_value "$META" herdr_pane_id)
-  if [ -n "$HERDR_PRESENTATION_SESSION" ] \
-     && [ -n "$HERDR_PRESENTATION_WORKSPACE" ] \
-     && [ -n "$HERDR_PRESENTATION_PANE" ] \
-     && [ "$T" = "$HERDR_PRESENTATION_SESSION:$HERDR_PRESENTATION_PANE" ] \
-     && fm_backend_herdr_projection_endpoint_matches_journal \
-       "$HERDR_PRESENTATION_SESSION" "$HERDR_PRESENTATION_WORKSPACE" \
-       "$HERDR_PRESENTATION_JOURNAL" "$ID"; then
-    HERDR_PRESENTATION_RETIRE_CANDIDATE=1
-  fi
-fi
-
-if [ "$HERDR_PRESENTATION_RETIRE_CANDIDATE" = 1 ]; then
-  # The presentation lock was acquired before the worktree return above; a
-  # contended lock already refused this teardown while everything was intact.
-  if teardown_herdr_session_lock_held "$HERDR_PRESENTATION_SESSION"; then
-    # stderr is deliberately NOT discarded here. This is the highest-frequency
-    # projected-close call site, and the helper's only stderr output is a real
-    # warning - unverifiable workspace.move support, a refused focus-unsafe
-    # close, an unconfirmed repositioned-workspace removal, or a failed exact
-    # restore.
-    # Swallowing them left a wrong active workspace with no operator-visible
-    # signal at all. The close stays non-fatal exactly as before: the presence
-    # gate below is what decides whether any durable record may be removed.
-    fm_backend_herdr_projection_close_pane_focus_preserving \
-      "$HERDR_PRESENTATION_SESSION" "$HERDR_PRESENTATION_PANE" || true
-  else
-    echo "warning: herdr presentation focus lock unavailable; refusing a concurrent focus-unsafe pane close" >&2
-  fi
-elif [ "$BACKEND" = herdr ]; then
-  if teardown_herdr_session_lock_held "$TEARDOWN_HERDR_SESSION"; then
-    fm_backend_herdr_kill_serialized "$TEARDOWN_HERDR_SESSION" "$TEARDOWN_HERDR_PANE" 2>/dev/null || true
-  else
-    echo "warning: herdr session presentation lock path is unavailable; skipping the pane close rather than closing unlocked" >&2
-  fi
-else
-  fm_backend_kill "$BACKEND" "$T" "" "fm-$ID" \
-    && TASK_KILL_RC=0 || TASK_KILL_RC=$?
-  require_task_endpoint_gone "$TASK_KILL_RC" || exit 1
-fi
-if [ "$HERDR_PRESENTATION_RETIRE_CANDIDATE" = 1 ]; then
-  if [ "$(fm_backend_herdr_pane_agent_state "$HERDR_PRESENTATION_SESSION" "$HERDR_PRESENTATION_PANE")" = dead ]; then
-    rm -f "$HERDR_PRESENTATION_JOURNAL"
-  else
-    echo "warning: exact herdr task-pane close could not be confirmed for $ID; retaining the presentation journal and attempting no workspace cleanup" >&2
-  fi
-elif [ "$BACKEND" = herdr ] \
-     && { [ -e "$HERDR_PRESENTATION_JOURNAL" ] || [ -L "$HERDR_PRESENTATION_JOURNAL" ]; }; then
-  echo "warning: herdr presentation journal for $ID remains quarantined; no workspace cleanup was attempted" >&2
-fi
-# A refused, skipped, or failed Herdr close must never erase a live task's
-# durable endpoint identity: unless the exact pane is confirmed gone, retain
-# every record and stop before any removal below so a later rerun can retry
-# the locked close. The pending close record is published carrying
-# endpoint=unconfirmed and is only cleared below, once an endpoint gate has
-# passed, so the next session start replays neither the record removal nor the
-# backlog close this refusal just withheld. Only a structured not-found proves the pane gone; unknown
-# presence, missing or malformed endpoint identity, and missing confirmation
-# machinery all refuse.
-if [ "$BACKEND" = herdr ]; then
-  fm_backend_source herdr || true
-  if ! declare -F fm_backend_herdr_endpoint_confirmed_gone >/dev/null 2>&1 \
-    || ! fm_backend_herdr_endpoint_confirmed_gone "$T"; then
-    if task_operator_retirement runtime-refusal; then
-      echo "warning: herdr pane $T for $ID is not confirmed gone; retiring its records on the retirement $OPERATOR_RETIREMENT_BY recorded at $OPERATOR_RETIREMENT_AT, which overrode the runtime's refusal" >&2
-    else
-      echo "error: herdr pane $T for $ID is not confirmed gone after its close was refused, skipped, or failed; retaining every durable task record - rerun teardown once the close can run under the session lock, or retire the record with bin/fm-retire-endpoint.sh --override-runtime-refusal if herdr can never answer for it" >&2
-      if task_operator_retirement; then
-        exit "$FM_TEARDOWN_RUNTIME_REFUSAL_EXIT"
-      fi
-      exit 1
-    fi
-  fi
-fi
+fm_backend_kill "$BACKEND" "$T" "" "fm-$ID" \
+  && TASK_KILL_RC=0 || TASK_KILL_RC=$?
+require_task_endpoint_gone "$TASK_KILL_RC" || exit 1
 mark_pending_close_endpoint_confirmed || exit 1
 if [ "$KIND" != secondmate ]; then
   if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
@@ -3513,7 +3205,6 @@ if [ "$KIND" = secondmate ]; then
     || { echo "error: receiver wake cleanup failed; preserving the secondmate route for retry" >&2; exit 1; }
   remove_secondmate_registry_entry "$ID"
 fi
-fm_backend_clear_transition "$BACKEND" "$STATE" "$T" || true
 # Remove the per-task temp root (/tmp/fm-<id>/, incl. its gotmp/) recorded by spawn.
 # Read before the state-file rm below; empty (pre-fix tasks without tasktmp=) is a no-op.
 [ -n "$TASK_TMP" ] && rm -rf "$TASK_TMP"

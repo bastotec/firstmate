@@ -63,7 +63,7 @@ DOCTOR_HOME="$TMP_ROOT/doctor-home"
 mkdir -p "$NO_GIT_BIN" "$DOCTOR_HOME"
 printf 'fixture\n' > "$TMP_ROOT/real-root/AGENTS.md"
 cp "$ROOT/bin/fm-remote-doctor.sh" "$ROOT/bin/fm-tasks-axi-lib.sh" \
-  "$ROOT/bin/fm-remote-herdr-owner-lib.sh" "$ROOT/bin/fm-tool-version-lib.sh" "$REAL_BIN/"
+  "$ROOT/bin/fm-tool-version-lib.sh" "$REAL_BIN/"
 for tool in bash dirname mktemp python3 base64 wc tr ps shasum realpath id uname sed cat readlink cmp rm sleep grep awk stat find head cut sort tail ls date; do
   resolved=$(command -v "$tool" 2>/dev/null) || continue
   ln -s "$resolved" "$NO_GIT_BIN/$tool"

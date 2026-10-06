@@ -101,12 +101,12 @@ Deck-chat steering has no composer; [`Away-mode supervisor backend`](../../../do
 The daemon never injects into an in-use pane.
 Two checks run before every typed injection, dispatched through `bin/fm-backend.sh` for the supervisor's own backend:
 
-- **Primary-pane busy guard** - `pane_is_busy` trusts Herdr native `busy` when available, otherwise matches rendered output against only the detected primary harness's signature.
+- **Primary-pane busy guard** - `pane_is_busy` matches rendered output against only the detected primary harness's signature.
   This narrow delivery guard never classifies a recorded worker task and never uses a global union of vendor patterns.
 - **Composer-state guard** - `inject_msg` reads the full `empty`/`pending`/`pending-unproven`/`unknown` verdict from `fm_backend_composer_state` and injects only when it is affirmatively `empty`.
   Every other or future verdict defers, including an unreadable pane, ambiguous geometry, a blank unidentified row, and a bare shell prompt left after the agent exits.
   Each adapter contributes only capture and capability facts to the fleet-wide screen classifier in `bin/fm-composer-lib.sh`, which owns every shape and verdict.
-  It preserves proven idle composers as empty but requires a genuine container around shell glyphs; see `docs/herdr-backend.md` "Composer and injection safety" for the operator contract.
+  It preserves proven idle composers as empty but requires a genuine container around shell glyphs.
   `pane_input_pending` is the tested fail-closed predicate for callers that need to know whether the composer is unsafe: it treats every result except exact `empty` as pending.
 
 A busy primary pane, or any composer verdict other than `empty`, defers the injection; the buffered escalation survives in `state/.subsuper-escalations` and is retried on the next housekeeping tick.
@@ -118,25 +118,17 @@ attempts one normal flush under the selected transport's delivery guards.
 The alarm is defense in depth rather than a substitute for keeping every genuinely idle supported composer injectable.
 If that submit cannot be confirmed, it raises a loud, rate-limited wedge alarm:
 an ERROR in the daemon log, a durable
-`state/.subsuper-inject-wedged` marker (the return brief's health line carries it), a tmux status-line flash when applicable, and a configurable backend-independent active alert.
+`state/.subsuper-inject-wedged` marker (the return brief's health line carries it), and a configurable active alert.
 `docs/wedge-alarm.md` owns the alert channel setup, and `docs/verification/supervision.md` "Wedge-alarm channels" owns active evidence.
 So a guard false-positive becomes a visible stall, never an unbounded silent no-op.
 
 ### Submit model
 
-For typed-pane delivery, the digest is typed **once** (`send-keys -l` on tmux, `pane send-text` on
-herdr - both literal, non-submitting sends), then submitted with Enter and
-**verified** through the selected backend's submit primitive.
-Enter is retried (Enter only, never a retype) until the backend confirms the
-submit landed.
-For tmux that confirmation is normally a proven cleared composer from the shared classifier; an idle baseline transitioning to busy across this submit's own Enter also confirms that the turn started when a working harness hides its composer.
-Without that baseline, busy state never converts an `unknown` composer into confirmation.
-For herdr, idle-baseline submits first seek native agent-state showing a real turn started, then use the shared classifier when native state remains idle: a cleared composer confirms delivery, while pending text retries Enter and reaches the shared busy-queue verdict only after the retry budget.
-A bordered-empty or ghost-only composer is recognized as empty where that backend uses composer confirmation, rather than mistaken for a swallowed Enter.
+For typed-pane delivery (a stream endpoint with no registered deck-chat primary), the digest is typed **once** as a literal, non-submitting send, then submitted with Enter and **verified** through the stream adapter's submit primitive.
+Enter is retried (Enter only, never a retype) until a proven cleared composer from the shared classifier confirms the submit landed.
+A bordered-empty or ghost-only composer is recognized as empty rather than mistaken for a swallowed Enter.
 `fm-send.sh` uses the same primitive only on its typed plane and exits non-zero when that plane's Enter is positively swallowed; ordinary local text steers use the durable inbox and do not treat doorbell submission as delivery proof.
-
-**Busy-queued Enter exception (opencode 1.18.4).** OpenCode keeps queued text visible while it is mid-turn, so tmux and herdr delegate the final delivery decision to `fm_composer_queued_enter_verdict` in `bin/fm-composer-lib.sh` rather than treating visible text alone as a swallowed Enter.
-For typed-pane delivery, the daemon clears its buffer only on the backend's `empty` success verdict; [`docs/tmux-backend.md`](../../../docs/tmux-backend.md) and [`docs/herdr-backend.md`](../../../docs/herdr-backend.md) own the backend-specific confirmation signals.
+The daemon clears its buffer only on the `empty` success verdict.
 
 ### Classification policy
 
@@ -201,7 +193,7 @@ Treat `state/.subsuper-escalations`, its `.since` sidecar, `state/.subsuper-inje
 The retained overflow evidence is separate; see [`Away-mode supervisor backend`](../../../docs/configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target).
 Always enter through `bin/fm-afk-launch.sh`, which clears prior-session artifacts only for a fresh entry and preserves the current session's buffer on refresh.
 Always exit through `bin/fm-afk-launch.sh stop`, which keeps `state/.afk` present through the daemon's shutdown flush, clears it, and archives the posture record last.
-[`bin/fm-afk-launch.sh`](../../../bin/fm-afk-launch.sh) owns the lifecycle mechanics, and [`Away-mode transport`](../../../docs/verification/runtime-backends.md#away-mode-transport) owns active evidence.
+[`bin/fm-afk-launch.sh`](../../../bin/fm-afk-launch.sh) owns the lifecycle mechanics; `tests/fm-afk-launch.test.sh` and `tests/fm-daemon.test.sh` pin the stream transport.
 
 ### Reliability properties
 

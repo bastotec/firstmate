@@ -24,7 +24,7 @@
 # IN-BAND OPERATIONAL INPUT. bin/fm-operational-input.sh constructs every
 # current daemon injection as the typed away-supervisor kind after the stable
 # FM_OPERATIONAL_PREFIX. A human cannot type its leading U+2063 from a normal
-# keyboard at the start of a message, and Herdr transports it as text.
+# keyboard at the start of a message, and the steer path carries it as text.
 # Firstmate's contract: a message that starts with the current prefix, or a
 # legacy bare-marker daemon escalation, is internal (stay afk); an unmarked
 # message means the captain is back (exit afk, flush catch-up, resume per-wake
@@ -70,12 +70,11 @@
 # Usage: fm-supervise-daemon.sh
 #          Long-lived background loop. Normally started by the /afk skill, which
 #          sets state/.afk first. Env knobs:
-#          FM_SUPERVISOR_TARGET     supervisor target override: tmux target,
-#                                   herdr "<session>:<pane-id>", or stream
+#          FM_SUPERVISOR_TARGET     supervisor target override: a stream
 #                                   "<hub-tag>:<endpoint-id>". Discovery is owned
 #                                   by bin/fm-supervisor-target-lib.sh; stream
 #                                   may resolve to "-" for steer-only delivery.
-#          FM_SUPERVISOR_BACKEND    supervisor transport (tmux|herdr|stream);
+#          FM_SUPERVISOR_BACKEND    supervisor transport (stream, the only one);
 #                                   override, otherwise discovered by
 #                                   bin/fm-supervisor-target-lib.sh. Other values
 #                                   refuse at startup. inject_msg_stream below
@@ -111,7 +110,7 @@
 #                                   alarm fires (default 300; 0 disables)
 #          FM_WEDGE_ALARM_CHANNEL   override config/wedge-alarm with a single
 #                                   active-alert directive for that wedge alarm
-#                                   (off|auto|osascript|herdr|command:<cmd>). An
+#                                   (off|auto|osascript|command:<cmd>). An
 #                                   absent file/var means auto: on macOS that is
 #                                   an OS-level notification, so the alarm is
 #                                   never silent. See wedge_alarm_notify below
@@ -148,12 +147,13 @@ FM_DAEMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$FM_DAEMON_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 
-# Shared tmux pane primitives for supervisor injection (busy/composer detection
-# + verify-retry submit). Sourced at top level so BOTH the executed daemon and
-# the unit tests (which source this file for its pure functions) get the
-# corrected composer detection. Stale task rechecks use fm-backend.sh below.
-# shellcheck source=bin/fm-tmux-lib.sh
-. "$FM_DAEMON_DIR/fm-tmux-lib.sh"
+# Shared composer and busy classifiers for supervisor injection. Sourced at top
+# level so BOTH the executed daemon and the unit tests (which source this file
+# for its pure functions) get them. Endpoint reads go through fm-backend.sh.
+# shellcheck source=bin/fm-composer-lib.sh
+. "$FM_DAEMON_DIR/fm-composer-lib.sh"
+# shellcheck source=bin/fm-busy-lib.sh
+. "$FM_DAEMON_DIR/fm-busy-lib.sh"
 
 # shellcheck source=bin/fm-backend.sh
 . "$FM_DAEMON_DIR/fm-backend.sh"
@@ -173,8 +173,7 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 # shellcheck source=bin/fm-afk-contract.sh
 . "$FM_DAEMON_DIR/fm-afk-contract.sh"
 
-# Supervisor-pane discovery (FM_SUPERVISOR_TARGET_DEFAULT,
-# FM_SUPERVISOR_BACKEND_DEFAULT, discover_supervisor_target,
+# Supervisor discovery (discover_supervisor_target,
 # discover_supervisor_backend). Shared with the script-owned away launcher
 # (bin/fm-afk-launch.sh) so the captain-pane resolution has exactly one owner.
 # shellcheck source=bin/fm-supervisor-target-lib.sh
@@ -187,10 +186,8 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 
 # --- tunables ---------------------------------------------------------------
 # Supervisor backends this daemon knows how to deliver to. Anything else
-# refuses loudly at startup instead of silently running tmux primitives against
-# a pane that is not a tmux pane (AGENTS.md section 4's harness-verification
-# discipline).
-FM_SUPERVISOR_SUPPORTED_BACKENDS="tmux herdr stream"
+# refuses loudly at startup.
+FM_SUPERVISOR_SUPPORTED_BACKENDS="stream"
 INJECT_SKIP_DEFAULT="heartbeat"
 STALE_ESCALATE_SECS_DEFAULT=240
 ESCALATE_BATCH_SECS_DEFAULT=90
@@ -206,8 +203,6 @@ WEDGE_ALARM_NOTIFIER_PID=
 # The captain-relevant verb set and the status classifiers (last_status_line,
 # status_is_captain_relevant, window_to_task, and the status-span reader) now
 # live in bin/fm-classify-lib.sh, shared with the always-on watcher.
-# Composer-empty detection, submit acknowledgement, and the harness-scoped
-# supervisor-pane busy guard live in bin/fm-tmux-lib.sh.
 INJECT_FAIL_SLEEP_DEFAULT=30
 INJECT_CONFIRM_RETRIES_DEFAULT=3
 INJECT_CONFIRM_SLEEP_DEFAULT=0.5
@@ -607,10 +602,8 @@ mark_escalated_seen() {  # <state> <captured-endpoint-file>
 # dim/faint ghost text and strips the harness's composer box borders, so an
 # aligned ghost-only or idle bordered claude composer ("│ > … │") is correctly
 # proven empty while a modal dialog or dead shell never is.
-# pane_is_busy / pane_input_pending: BACKEND-AWARE (dispatch goes through
-# bin/fm-backend.sh's generic per-backend primitives rather than a hand-rolled
-# case statement here). <backend> defaults to tmux when omitted, so every
-# existing caller/test that passes only <target> is unaffected.
+# pane_is_busy / pane_input_pending dispatch through bin/fm-backend.sh's
+# generic primitives. <backend> defaults to stream when omitted.
 #
 # This rendered reader applies only to the supervisor pane during away-mode
 # injection. It never classifies a recorded worker task. The detected primary
@@ -629,7 +622,7 @@ fm_daemon_primary_harness() {
 }
 
 pane_is_busy() {  # <target> [backend]
-  local target=$1 backend=${2:-tmux} native tail40 harness
+  local target=$1 backend=${2:-stream} native tail40 harness
   harness=$(fm_daemon_primary_harness)
   native=$(fm_backend_busy_state "$backend" "$target" 2>/dev/null)
   case "$native" in
@@ -644,7 +637,7 @@ pane_is_busy() {  # <target> [backend]
 # every verdict except exact empty as unsafe. inject_msg reads the full verdict
 # directly and applies the same positive-proof boundary.
 pane_input_pending() {  # <target> [backend]
-  local target=$1 backend=${2:-tmux}
+  local target=$1 backend=${2:-stream}
   [ "$(fm_backend_composer_state "$backend" "$target" 2>/dev/null)" != empty ]
 }
 
@@ -714,26 +707,21 @@ escalate_flush() {  # <state>
 }
 
 # --- backend-independent active wedge alert ---------------------------------
-# The tmux status-line flash in inject_wedge_alarm below is a cosmetic,
-# client-side OSD with no cross-backend equivalent, so a wedged non-tmux primary
-# (the 2026-07-10 overnight incident: a claude-on-herdr primary) got NO active
-# signal - only the passive state/.subsuper-inject-wedged marker, which nothing
-# surfaces until the next fleet action (that night, 20 escalations sat buffered
-# for 8.5h). These helpers add a configurable active alert that does not depend
-# on any pane or its backend status-line: an OS-level macOS notification, a
-# herdr notification, or a captain-supplied command (push to a phone, etc.).
-# Every channel is best-effort - a missing or failing channel logs and is
-# skipped, never crashing the daemon loop - and the durable marker plus the tmux
-# flash stay exactly as before.
+# The passive state/.subsuper-inject-wedged marker alone is surfaced by nothing
+# until the next fleet action (the 2026-07-10 overnight incident: 20
+# escalations sat buffered for 8.5h). These helpers add a configurable active
+# alert that does not depend on the primary's endpoint: an OS-level macOS
+# notification or a captain-supplied command (push to a phone, etc.). Every
+# channel is best-effort - a missing or failing channel logs and is skipped,
+# never crashing the daemon loop - and the durable marker stays as before.
 #
 # Config: config/wedge-alarm (local, gitignored), one channel directive per
 # non-empty, non-comment line. FM_WEDGE_ALARM_CHANNEL overrides the file with a
 # single directive. Directives:
 #   off              disable the active alert entirely, regardless of position
-#                    (marker + flash remain)
+#                    (the marker remains)
 #   auto | default   platform default: macOS -> osascript; otherwise none
 #   osascript        macOS Notification Center banner (backend-independent)
-#   herdr            herdr UI notification (herdr notification show)
 #   command:<cmd>    run <cmd> via `sh -c`, summary on $1 and on stdin
 # An absent config means auto, i.e. default-ON on macOS: the alarm's whole
 # purpose is to never be silent, so the reachable OS channel fires unless the
@@ -820,7 +808,7 @@ wedge_alarm_stop_active_notifier() {
 # The single execution seam for every configured notifier channel.
 # FM_WEDGE_ALARM_EXEC, when set, REPLACES the real notifier: the resolved channel
 # name and summary are handed to that command instead of ever invoking osascript
-# or herdr or a captain-supplied command. This is the one injection point the test harness forces to a recorder
+# or a captain-supplied command. This is the one injection point the test harness forces to a recorder
 # so no test can post a real desktop notification - the library-mode guard at the
 # foot of this file defaults it to "discard" whenever the daemon is SOURCED
 # rather than executed, which is the only way a test reaches these functions. The
@@ -861,24 +849,6 @@ wedge_alarm_via_osascript() {  # <summary>
   return 1
 }
 
-# Post a herdr UI notification - herdr's own surface, separate from the pane and
-# its status-line. Best-effort: logs and returns 1 on failure.
-wedge_alarm_via_herdr() {  # <summary>
-  local summary=$1 rc
-  wedge_alarm_os_notifier_override herdr "$summary"
-  rc=$?
-  case "$rc" in
-    0) return 0 ;;
-    1) return 1 ;;
-  esac
-  command -v herdr >/dev/null 2>&1 || {
-    log "wedge alarm: herdr not found; cannot post a herdr notification"; return 1; }
-  wedge_alarm_run_bounded herdr herdr notification show "firstmate: away-mode escalations WEDGED" \
-    --body "$summary" --sound request >/dev/null 2>&1 && return 0
-  log "wedge alarm: herdr notification failed"
-  return 1
-}
-
 # Run a captain-supplied command with the summary on $1 and on stdin, so an
 # alert can reach a phone/pager (ntfy, Slack, SMS) even when the captain is away
 # from the machine entirely. Best-effort: logs and returns 1 on failure.
@@ -911,7 +881,6 @@ wedge_alarm_emit() {  # <channel> <summary>
   esac
   case "$channel" in
     osascript) wedge_alarm_via_osascript "$summary" ;;
-    herdr) wedge_alarm_via_herdr "$summary" ;;
     command) wedge_alarm_via_command "$cmd" "$summary" ;;
   esac
 }
@@ -935,7 +904,7 @@ wedge_alarm_notify() {  # <summary> <marker>
     case "$ch" in auto|default) ch=$(wedge_alarm_platform_default) ;; esac
     case "$ch" in
       '') log "wedge alarm: no OS-level alert channel on $(uname); durable marker $marker is the only signal - set config/wedge-alarm (e.g. a command: directive)" ;;
-      osascript|herdr) wedge_alarm_emit "$ch" "$summary" || true ;;
+      osascript) wedge_alarm_emit "$ch" "$summary" || true ;;
       command:*) wedge_alarm_emit command "$summary" "${ch#command:}" || true ;;
       *) log "wedge alarm: unrecognized active-alert channel directive (redacted); marker still written" ;;
     esac
@@ -946,13 +915,12 @@ wedge_alarm_notify() {  # <summary> <marker>
 # Raise a loud, rate-limited alarm when escalations cannot be delivered after
 # max-defer (the supervisor pane is genuinely busy/wedged, or the submit's Enter
 # is swallowed). The daemon must NEVER silently wedge: this logs
-# an ERROR, drops a durable marker firstmate/recovery can surface, flashes
-# the tmux supervisor client's status line when applicable, and attempts a
-# configurable backend-independent active alert (wedge_alarm_notify). Nothing
+# an ERROR, drops a durable marker firstmate/recovery can surface, and attempts
+# a configurable active alert (wedge_alarm_notify). Nothing
 # is lost - the buffer and the
 # wake-queue both survive - but the stall stops being invisible.
 inject_wedge_alarm() {  # <state> <age-seconds>
-  local state=$1 age=$2 marker target backend max_defer now notify=1
+  local state=$1 age=$2 marker max_defer now notify=1
   marker="$state/.subsuper-inject-wedged"
   max_defer="${FM_MAX_DEFER_SECS:-$MAX_DEFER_SECS_DEFAULT}"
   # Re-alarm at most once per max-defer window so a long wedge does not spam.
@@ -971,20 +939,10 @@ inject_wedge_alarm() {  # <state> <age-seconds>
     printf 'The supervisor pane could not accept an escalation. Buffered items:\n'
     cat "$state/.subsuper-escalations" 2>/dev/null
   } 2>/dev/null > "$marker" || true
-  target="${FM_SUPERVISOR_TARGET:-$FM_SUPERVISOR_TARGET_DEFAULT}"
-  backend="${FM_SUPERVISOR_BACKEND:-$FM_SUPERVISOR_BACKEND_DEFAULT}"
-  # Best-effort status-line flash. tmux's display-message is a client-side OSD
-  # with no herdr equivalent; the log line + durable marker above are already
-  # the primary, backend-independent signal, so a non-tmux backend just skips
-  # this cosmetic extra rather than attempting an unsupported call.
-  if [ "$backend" = tmux ]; then
-    tmux display-message -t "$target" "fm: away-mode escalations WEDGED ${age}s — see $marker" 2>/dev/null || true
-  fi
-  # Backend-independent active alert. Unlike the tmux flash above (skipped on
-  # every non-tmux backend), this can reach the captain even when every pane and
-  # its backend status-line is unreadable - the gap the 2026-07-10 overnight
-  # incident fell through. Configurable and best-effort; the marker above stays
-  # the durable record whether or not any channel fires.
+  # Active alert: it can reach the captain even when the primary's endpoint is
+  # unreadable - the gap the 2026-07-10 overnight incident fell through.
+  # Configurable and best-effort; the marker above stays the durable record
+  # whether or not any channel fires.
   if [ "$notify" -eq 1 ]; then
     wedge_alarm_notify "away-mode escalations WEDGED ${age}s undelivered - see $marker" "$marker"
   fi
@@ -1055,8 +1013,7 @@ housekeeping() {  # <state>
   for marker in "$state"/.subsuper-stale-*; do
     [ -e "$marker" ] || continue
     key="${marker##*.subsuper-stale-}"
-    # Reconstruct the backend target from metadata, with the live tmux list as the
-    # legacy fallback for old markers that predate meta lookup.
+    # Reconstruct the backend target from metadata.
     win=$(window_for_task "$key" "$state" 2>/dev/null || true)
     if [ -z "$win" ]; then
       # Window gone (task torn down): drop the marker, nothing to escalate.
@@ -1180,7 +1137,7 @@ housekeeping() {  # <state>
   done
 
   # (3) heartbeat scan (catch-all for a captain-relevant status the per-wake
-  #     classifier may have missed). Cheap: status files only, no tmux. It walks
+  #     classifier may have missed). Cheap: status files only. It walks
   #     every log rather than only those whose LAST line looks captain-relevant,
   #     because the event this backstop most needs to catch is precisely one a
   #     later routine append has already moved past; fm-classify-lib.sh's span
@@ -1218,19 +1175,15 @@ housekeeping() {  # <state>
   fi
 }
 
-# Find a recorded or live window target whose task id matches the marker key.
+# Find the recorded target whose task id matches the marker key.
 window_for_task() {  # <task-key> [state]
-  local key=$1 state=${2:-$(_state_root)} meta task w t
+  local key=$1 state=${2:-$(_state_root)} meta task w
   for meta in "$state"/*.meta; do
     [ -e "$meta" ] || continue
     task=$(basename "$meta"); task=${task%.meta}
     [ "$(_stale_key "$task")" = "$key" ] || continue
     w=$(fm_backend_target_of_meta "$meta")
     [ -n "$w" ] && { printf '%s' "$w"; return 0; }
-  done
-  for w in $(tmux list-windows -a -F '#{session_name}:#{window_name}' 2>/dev/null | grep ':fm-' || true); do
-    t=$(window_to_task "$w" "$state")
-    [ "$(_stale_key "$t")" = "$key" ] && { printf '%s' "$w"; return 0; }
   done
   return 1
 }
@@ -1246,10 +1199,8 @@ window_for_task() {  # <task-key> [state]
 #   - TYPE ONCE, then submit with Enter. Never retype the digest: a swallowed
 #     Enter leaves our text in the composer, and retyping would concatenate two
 #     sentinel-prefixed digests into one corrupted turn.
-#   - SUBMIT ACK = the backend submit primitive reports `empty` after Enter.
-#     For tmux that means a cleared composer; for herdr's normal idle-baseline
-#     path it means native agent-state observed a real turn start.
-#     Pending means Enter was swallowed; unknown is treated as undelivered by
+#   - SUBMIT ACK = the backend submit primitive reports `empty` after Enter,
+#     a cleared composer. Pending means Enter was swallowed; unknown is treated as undelivered by
 #     this strict daemon path.
 #   - COMPOSER GUARD before typing: if the cursor line already has real content
 #     after dim/faint ghost text and borders are ignored (a human's half-typed
@@ -1269,23 +1220,12 @@ inject_msg() {  # <message> [state]
   msg=$(_collapse_newlines "$msg")
   fm_operational_input_encode away-supervisor "$msg" encoded || return 1
   msg=$encoded
-  target="${FM_SUPERVISOR_TARGET:-$FM_SUPERVISOR_TARGET_DEFAULT}"
-  # BACKEND-AWARE (previously a raw `tmux display-message` pane-exists probe):
-  # dispatches through bin/fm-backend.sh so a herdr supervisor pane is checked
-  # via the herdr adapter instead of always assuming tmux. Falls back to tmux
-  # when unset (sourced/test contexts that never ran fm_super_main's startup
-  # discovery), matching this function's pre-existing default assumption.
-  backend="${FM_SUPERVISOR_BACKEND:-tmux}"
-  if [ "$backend" = stream ]; then
-    inject_msg_stream "$msg" "$state" "$target"
-    return
-  fi
-  inject_msg_pane "$msg" "$backend" "$target"
+  target="${FM_SUPERVISOR_TARGET:--}"
+  inject_msg_stream "$msg" "$state" "$target"
 }
 
-# inject_msg_pane: the typed-input delivery into a supervisor pane (tmux, herdr,
-# or a stream endpoint with no deck-chat primary). <message> is already
-# encoded. Busy guard, composer guard, then a verified type-once submit.
+# inject_msg_pane: the typed-input delivery into the primary's stream endpoint
+# when no deck-chat primary is registered. <message> is already encoded. Busy guard, composer guard, then a verified type-once submit.
 inject_msg_pane() {  # <encoded-message> <backend> <target>
   local msg=$1 backend=$2 target=$3 harness retries sleep_s verdict composer
   harness=$(fm_daemon_primary_harness)
@@ -1313,8 +1253,7 @@ inject_msg_pane() {  # <encoded-message> <backend> <target>
   # retype) via the shared submit primitive. Success = the backend confirms
   # submit. An unconfirmed/unknown pane does NOT count as delivered, so the
   # buffer is preserved (strict) rather than cleared.
-  # Dispatches through fm_backend_send_text_submit (bin/fm-backend.sh), which
-  # supplies the primary harness to tmux and Herdr's scoped busy checks.
+  # Dispatches through fm_backend_send_text_submit (bin/fm-backend.sh).
   retries=${FM_INJECT_CONFIRM_RETRIES:-$INJECT_CONFIRM_RETRIES_DEFAULT}
   sleep_s=${FM_INJECT_CONFIRM_SLEEP:-$INJECT_CONFIRM_SLEEP_DEFAULT}
   verdict=$(fm_backend_send_text_submit "$backend" "$target" "$msg" "$retries" "$sleep_s" "$sleep_s" '' "$harness")
@@ -1378,14 +1317,13 @@ fm_daemon_steer_wait_delivered() {
   done
 }
 
-# supervisor_reachable: the startup and pane-gone check. On stream either a
+# supervisor_reachable: the startup and pane-gone check. Either a
 # live deck-chat primary (steer status present) or the recorded endpoint counts.
 supervisor_reachable() {  # <backend> <target>
   local backend=$1 target=$2
-  if [ "$backend" = stream ]; then
-    fm_daemon_steer status >/dev/null
-    [ "$?" -eq 3 ] || return 0
-  fi
+  fm_daemon_steer status >/dev/null
+  [ "$?" -eq 3 ] || return 0
+  [ "$target" != - ] || return 1
   fm_backend_target_exists "$backend" "$target"
 }
 
@@ -1802,25 +1740,21 @@ fm_super_main() {
     log "warn: could not record this daemon's process identity; the turn-end guard cannot recognize away-mode supervision"
   fi
 
-  # Resolve the backend before the target: an explicit stream backend must
-  # never borrow an inherited tmux/herdr pane id. Discovery precedence belongs
-  # to fm-supervisor-target-lib.sh. Persist the result for delivery dispatch.
+  # Resolve the backend before the target. Discovery precedence belongs to
+  # fm-supervisor-target-lib.sh. Persist the result for delivery dispatch.
   local discovered_backend backend_source
   backend_source="FM_SUPERVISOR_BACKEND"
   if [ -z "${FM_SUPERVISOR_BACKEND:-}" ]; then
     backend_source=$(discover_supervisor_source)
-    [ "$backend_source" != FALLBACK ] || backend_source="FALLBACK($FM_SUPERVISOR_BACKEND_DEFAULT)"
   fi
   discovered_backend=$(discover_supervisor_backend) || true
   FM_SUPERVISOR_BACKEND="$discovered_backend"
   local BACKEND="$FM_SUPERVISOR_BACKEND"
 
   # --- refuse an unsupported supervisor backend loudly, before ever trying a
-  # backend-specific call against it (AGENTS.md section 4 harness-verification
-  # discipline). This is the clear refusal the task calls
-  # for, instead of a confusing "does not resolve to a tmux pane" error.
+  # backend-specific call against it.
   if ! fm_backend_list_contains "$FM_SUPERVISOR_SUPPORTED_BACKENDS" "$BACKEND"; then
-    echo "error: away-mode daemon does not support supervisor backend '$BACKEND' yet (supported: $FM_SUPERVISOR_SUPPORTED_BACKENDS); set FM_SUPERVISOR_BACKEND=tmux|herdr|stream and FM_SUPERVISOR_TARGET to run firstmate's own pane under a supported backend" >&2
+    echo "error: away-mode daemon does not support supervisor backend '$BACKEND' (supported: $FM_SUPERVISOR_SUPPORTED_BACKENDS); unset FM_SUPERVISOR_BACKEND or set it to stream" >&2
     log "startup failed: unsupported supervisor backend '$BACKEND' (source=$backend_source)"
     fm_lock_release "$LOCK" 2>/dev/null || true
     rm -f "$PIDFILE" 2>/dev/null || true
@@ -1833,28 +1767,16 @@ fm_super_main() {
   target_source="FM_SUPERVISOR_TARGET"
   if [ -z "${FM_SUPERVISOR_TARGET:-}" ]; then
     target_source=$(discover_supervisor_source)
-    case "$target_source" in
-      HERDR_ENV) target_source="HERDR_ENV(HERDR_PANE_ID)" ;;
-      FALLBACK) target_source="FALLBACK(firstmate:0)" ;;
-    esac
   fi
-  if discovered=$(discover_supervisor_target); then
-    : # resolved cleanly
-  elif [ "$BACKEND" = stream ]; then
+  if ! discovered=$(discover_supervisor_target); then
     echo "warn: no stream endpoint found for the primary (no FM_SUPERVISOR_TARGET, FM_STREAM_ENDPOINT_ID, or primary-chat.json endpoint); only the steer path can deliver" >&2
-  else
-    echo "warn: could not auto-discover supervisor pane (no FM_SUPERVISOR_TARGET, TMUX_PANE, or HERDR_ENV/HERDR_PANE_ID); falling back to '$discovered' — verify this is firstmate's pane" >&2
   fi
   FM_SUPERVISOR_TARGET="$discovered"
   local TARGET="$FM_SUPERVISOR_TARGET"
 
   # --- validate supervisor target at startup (a missing target is a typo) ---
-  # Dispatches through bin/fm-backend.sh instead of a raw `tmux display-message`
-  # probe, so a herdr supervisor pane is checked via the herdr adapter; for
-  # backend=tmux this runs the exact same `tmux display-message -p -t "$TARGET"
-  # '#{pane_id}'` call as before.
   if ! supervisor_reachable "$BACKEND" "$TARGET"; then
-    echo "error: supervisor target '$TARGET' does not resolve to a $BACKEND pane (or, on stream, a registered deck-chat primary); set FM_SUPERVISOR_TARGET" >&2
+    echo "error: supervisor target '$TARGET' is neither a registered deck-chat primary nor a live stream endpoint; set FM_SUPERVISOR_TARGET" >&2
     log "startup failed: target '$TARGET' not found (backend=$BACKEND)"
     fm_lock_release "$LOCK" 2>/dev/null || true
     rm -f "$PIDFILE" 2>/dev/null || true
