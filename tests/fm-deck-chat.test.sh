@@ -130,8 +130,8 @@ test_steer_contract_without_a_host() {
   python3 "$BIN/fm_primary_chat.py" prepare --home "$home" --session s1 >/dev/null
   python3 "$BIN/fm_primary_chat.py" record write --home "$home" --session s1 --host-pid "$pid"
   local steer="$home/state/primary-chat/s1/steer" events="$home/state/primary-chat/s1/events.ndjson"
-  [ "$(stat -f %Lp "$home/state/primary-chat.json" 2>/dev/null || stat -c %a "$home/state/primary-chat.json")" = 600 ] \
-    || fail "the record is 0600"
+  assert_equals '0o600' "$(python3 -c 'import os,stat,sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' \
+    "$home/state/primary-chat.json")" "the record is 0600"
 
   rc=0; "$STEER" publish --home "$home" --text '   ' 2>/dev/null || rc=$?
   expect_code 2 "$rc" "blank text is refused"
