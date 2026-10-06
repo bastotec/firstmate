@@ -187,7 +187,8 @@ if [ "$MODE" = install-service ]; then
   service_prereqs
   BASH_BIN=$(command -v bash) || die 'bash not found on PATH' 2
   mkdir -p "$AGENTS_DIR" || die "cannot create $AGENTS_DIR" 2
-  mkdir -p -m 700 "$STATE/primary-chat" || die "cannot create $STATE/primary-chat" 2
+  mkdir -p "$STATE" || die "cannot create $STATE" 2
+  [ -d "$STATE/primary-chat" ] || mkdir -m 700 "$STATE/primary-chat" || die "cannot create $STATE/primary-chat" 2
   python3 - "$PLIST" "$LABEL" "$FM_HOME" "$BASH_BIN" "$SCRIPT_DIR/fm-deck-chat.sh" "$MODEL" <<'PY' \
     || die "could not write $PLIST" 2
 import os, plistlib, sys, tempfile
@@ -312,7 +313,8 @@ fi
 
 if [ "$MODE" = stop ]; then
   # The marker comes first, so a keeper never restarts what this stops.
-  if ! { mkdir -p -m 700 "$STATE/primary-chat" \
+  if ! { mkdir -p "$STATE" \
+      && { [ -d "$STATE/primary-chat" ] || mkdir -m 700 "$STATE/primary-chat"; } \
       && printf '{"stopped_at": %s, "by": "fm-deck-chat.sh stop"}\n' "$(date +%s)" > "$STOPPED"; }; then
     die "could not write $STOPPED"
   fi

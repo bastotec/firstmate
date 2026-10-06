@@ -739,6 +739,7 @@ SH
     --deck-chat "$LAB/tools/failed-start" > "$LAB/keeper-inherited.out" 2>&1 &
   keeper=$!
   fm_test_track_helper_pid "$keeper"
+  # shellcheck disable=SC2016 # Expanded by the inner bash.
   wait_for 10 "repeated starts during an inherited outage" bash -c '[ "$(wc -l < "$1")" -ge 3 ]' _ "$home/start.attempts"
   kill -TERM "$keeper"
   wait_for 10 "the inherited-outage keeper exits" dead "$keeper"
