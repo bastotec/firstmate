@@ -76,6 +76,7 @@ The binaries are built from `crates/`, not tracked in git:
   The source key hashes existing tracked and non-ignored untracked files under `crates/`, plus `Cargo.toml` and `Cargo.lock`, using their working-tree content; deleted paths are skipped and hashing failures refuse resolution rather than selecting a partial key.
   A primary and its local secondmate worktrees on the same sources share one build, and a checkout whose crate inputs changed resolves a new, unbuilt directory instead of running stale binaries.
   Relative `CARGO_TARGET_DIR` values resolve against the build checkout, not the caller's working directory, for both Cargo output and installation.
+  The build unsets `CARGO_BUILD_TARGET` and explicitly selects the host triple, overriding Cargo's `build.target` configuration.
 - `native ensure` reuses a complete stamped install for the current key and builds otherwise.
   `bin/fm-update.sh` runs it for a rust primary left updated or already current, and for each settled local secondmate with a recorded window whose own selection is rust; skipped homes, registry-only homes without a window, and remote homes are not prepared by this path.
   Native preparation is best-effort and never fails the update; the script's header owns summary labels and build-log locations.
@@ -95,6 +96,7 @@ The managed primary and Bridge order path have their own limits:
 ### Running the hub as a systemd user service
 
 `bin/fm-stream.sh hub unit [--bind ADDR] [--port N]` prints a unit that runs `fm-stream.sh hub start --foreground` in this home; it installs nothing.
+Generation refuses home or executable-directory paths and bind or port arguments containing whitespace, quotes, backslashes, `%`, or `$`, rather than emitting an unsafe unit.
 The unit does not pin the implementation, so it follows `config/stream-impl`, and a rollback is a config edit plus a restart.
 Install it with `bin/fm-stream.sh hub unit --bind 127.0.0.1 > ~/.config/systemd/user/fm-stream-hub.service`, remove any drop-in under `fm-stream-hub.service.d/` that overrides `ExecStart` with a hand-built binary, then `systemctl --user daemon-reload`.
 Restarting the hub is a quiet-window operation: [Rust hub](#rust-hub) lists what to drain first.
