@@ -82,7 +82,10 @@ bin/fm-deck-chat.sh
 
 The host owns the home's session lock, runs session start once, keeps the watcher armed, and hands every wake to the Deck session; its header owns the details.
 On macOS, `bin/fm-deck-chat.sh install-service` adds a launchd agent that restarts the host in a stream endpoint after any exit except `bin/fm-deck-chat.sh stop`; the [host header](bin/fm-deck-chat.sh) owns service setup and restart-following attach.
-With deck's project launcher ([`.agents/deck.chat.json`](.agents/deck.chat.json)), a bare `deck chat` anywhere in the home opens that live primary, starting it first when it is down; Ctrl-] detaches and leaves it running, and `deck chat --local` starts a separate local chat.
+With Deck's project launcher ([`.agents/deck.chat.json`](.agents/deck.chat.json)), a bare `deck chat` in the home or its subdirectories opens the stream-hosted primary, starting it first when it is down; the [host header](bin/fm-deck-chat.sh) owns startup and recovery details.
+Ctrl-] detaches and leaves it running, and `deck chat --local` starts a separate local chat.
+Outside the home, or in a checkout without a `state/` directory (such as a worktree or a never-run clone), `deck chat` stays local and does not create a primary.
+The plain launch above keeps the primary in its own terminal, so bare `deck chat` refuses to attach to it; for launcher-based access, configure the [stream backend](docs/stream-backend.md) and start with `bin/fm-deck-chat.sh --stream` or the service described above.
 
 ### Talk to it
 
