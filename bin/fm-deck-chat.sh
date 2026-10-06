@@ -37,10 +37,10 @@
 #   fm-deck-chat.sh --stream [--home H] [--model ROUTE] [--session ID]
 #       Start a stream endpoint (label primary-chat) through the stream
 #       backend's own agent launcher, run the host inside it, print the
-#       endpoint target and return. Attach from any terminal with
-#       `bin/fm-stream.sh attach <target>` (read-only); send input through
-#       `bin/fm-send.sh primary <text>`. For typing into the TUI, see
-#       docs/stream-backend.md "Interactive attach".
+#       endpoint target and return. Use the TUI from any terminal with
+#       `bin/fm-stream.sh attach --interactive <target>` (Ctrl-] detaches and
+#       leaves the host running; docs/stream-backend.md "Interactive attach"
+#       owns prerequisites). `bin/fm-send.sh primary <text>` also steers it.
 #   fm-deck-chat.sh stop [--home H]
 #       SIGTERM the registered host: deck quits and the host exits cleanly.
 # --home defaults to FM_HOME, else this checkout. --session defaults to the id

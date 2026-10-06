@@ -141,15 +141,15 @@ Run it in a local terminal:
 bin/fm-deck-chat.sh --home /absolute/path/to/firstmate-home --model <route>
 ```
 
-Or start it inside a stream endpoint (label `primary-chat`) created by the stream backend's own agent launcher, and observe it from any terminal:
+Or start it inside a stream endpoint (label `primary-chat`) created by the stream backend's own agent launcher, and use the TUI from any terminal:
 
 ```sh
 bin/fm-deck-chat.sh --stream --home /absolute/path/to/firstmate-home --model <route>
-bin/fm-stream.sh attach <target printed above>
+bin/fm-stream.sh attach --interactive <target printed above>
 ```
 
-The plain `attach` command above is read-only; send input through `FM_HOME=<home> bin/fm-send.sh primary <text>`.
-To type into the TUI, use [Interactive attach](stream-backend.md#interactive-attach), which owns the native-client prerequisites and compatibility limits.
+Ctrl-] detaches and leaves the host running; [Interactive attach](stream-backend.md#interactive-attach) owns the prerequisites and limits.
+Plain `bin/fm-stream.sh attach <target>` is read-only, and `FM_HOME=<home> bin/fm-send.sh primary <text>` steers the primary without attaching.
 
 Stop it with `/quit` in the chat, or `bin/fm-deck-chat.sh stop --home <home>`.
 After a clean exit, another primary can start in the same home.
