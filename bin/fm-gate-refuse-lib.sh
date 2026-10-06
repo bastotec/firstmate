@@ -12,9 +12,9 @@
 # no-mistakes owns the authority-removal half (it neutralizes the project
 # instructions and stamps NO_MISTAKES_GATE into the gate agent's environment).
 # THIS is the firstmate capability-removal half: an enforceable script refusal,
-# not a prose rule the neutralized agent would never read. It is sourced at the
-# top of the three fleet-lifecycle entrypoints and called before any fleet
-# mutation, so a gate agent that still reaches for the fleet is stopped cold.
+# not a prose rule the neutralized agent would never read. Mutating entrypoints
+# source it and call before any fleet mutation, so a gate agent that still
+# reaches for the fleet is stopped cold.
 #
 # Two independent signals, either of which refuses (fail closed):
 #
@@ -53,8 +53,8 @@
 # neutral-execution-context and the HEAD-continuity guard. The dedicated
 # tests/fm-gate-refuse.test.sh strips the bypass so it still verifies real refusal.
 #
-# Sourced by bin/fm-spawn.sh, bin/fm-send.sh, bin/fm-teardown.sh,
-# bin/fm-sessionstart-nudge.sh, and the tests.
+# docs/architecture.md "No-mistakes gate authority boundary" routes entrypoint
+# coverage; docs/sessionstart-nudge.md owns silent session-open wrapper use.
 # No side effects on source. set -u / set -e safe. The refusal is a hard exit,
 # not a return, because there is no safe way to continue a fleet mutation from a
 # gate context.

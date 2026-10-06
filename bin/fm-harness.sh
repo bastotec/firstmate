@@ -171,6 +171,9 @@ harness_process_verdict() {  # <pid>
   local pid=$1 comm args argv0
   comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 0
   argv0=$(fm_cursor_argv0_for_pid "$pid" "$comm" 2>/dev/null || true)
+  case "$argv0" in
+    fm-deck-chat) echo "comm deck"; return ;;
+  esac
   if fm_cursor_process_matches "$comm" '' "$argv0"; then
     echo "comm cursor"
     return
@@ -229,10 +232,11 @@ harness_process_verdict() {  # <pid>
     # detected by ancestry alone.
     agy) echo "comm agy"; return ;;
     # Deck is a Rust binary whose process name is exactly `deck`; a Deck worker
-    # runs it under bin/fm-deck-worker.sh, whose argv[0] is `fm-deck-worker`.
-    # Both are anchored so unrelated commands containing either word never
+    # runs it under bin/fm-deck-worker.sh, whose argv[0] is `fm-deck-worker`, and
+    # a `deck chat` primary under bin/fm-deck-chat.sh (argv[0] `fm-deck-chat`).
+    # All are anchored so unrelated commands containing these words never
     # read as this harness, and Deck sets no identity variable of its own.
-    deck|fm-deck-worker) echo "comm deck"; return ;;
+    deck|fm-deck-worker|fm-deck-chat) echo "comm deck"; return ;;
     node*|python*)
       # Bare interpreter: match the harness name in its script path.
       args=$(ps -o args= -p "$pid" 2>/dev/null)

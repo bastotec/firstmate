@@ -221,7 +221,8 @@ test_pi_snippet_uses_effective_extension_path() {
 test_deck_protocol() {
   local out
   out=$("$RENDER" --harness deck)
-  assert_contains "$out" "Mode: Deck home-driver-owned wake turns." "Deck protocol missing"
+  # Assert the renderer's emitted agent-input contract, not the Markdown source.
+  assert_contains "$out" "Mode: Deck home-host-owned wake input." "Deck protocol missing"
   assert_contains "$out" "managed-primary entry point" "Deck managed primary entry point missing"
   assert_contains "$out" "do not run session start again" "Deck startup ownership missing"
   assert_contains "$out" "WAKE_ACK_REQUIRED" "Deck protocol lost durable acknowledgement"

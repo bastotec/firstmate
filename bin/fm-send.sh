@@ -16,6 +16,10 @@
 #   shape: two or more colons is herdr, "<hub-tag>:<32-hex id>" on this home's
 #   configured stream hub is stream, any other "a:b" is tmux; the guessed
 #   endpoint must then verify live.
+# The reserved `primary` selector, only when state/primary.meta is absent,
+# publishes plain text to a live Deck chat host instead of either task plane
+# below: fm-send.sh primary <text...> (no options or native-key handling).
+# bin/fm-primary-steer.sh owns its publication and delivery-check contract.
 # Special keys instead of text: fm-send.sh <target> --key Enter
 # Key support is backend-specific: tmux, herdr and stream support Escape,
 # Enter, C-c and C-u.
@@ -475,6 +479,17 @@ fm_send_release_locks() {
   fm_lease_guard_release
 }
 RAW_TARGET=${1:-}
+# A `deck chat` primary (bin/fm-deck-chat.sh) is not a task: the target
+# `primary`, when no task has that id, publishes the text into its steering
+# inbox. Exit 3 from bin/fm-primary-steer.sh means no such primary is running.
+if [ "$DECISION_ANSWER" != 1 ] && [ "$RAW_TARGET" = primary ] && [ ! -e "$STATE/primary.meta" ]; then
+  shift
+  case "${1:-}" in
+    '') echo "error: fm-send primary needs message text" >&2; exit 1 ;;
+    --*) echo "error: fm-send primary takes message text only, no options" >&2; exit 1 ;;
+  esac
+  exec "${FM_PRIMARY_STEER_BIN:-$SCRIPT_DIR/fm-primary-steer.sh}" publish --home "$FM_HOME" --kind other --text "$*"
+fi
 if [ "$DECISION_ANSWER" = 1 ]; then
   case "$RAW_TARGET" in
     ''|[!A-Za-z0-9]*|*[!A-Za-z0-9._-]*)

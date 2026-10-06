@@ -72,6 +72,8 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-stream-bridge.py`    | Adapt stream hub listings and composer orders to the Bridge UI's live wire format   |
 | [`fm-ui-host-control.py`](../bin/fm-ui-host-control.py) | Route private UI actions and expose browser-safe `targets` discovery ([stream-backend.md](stream-backend.md#private-host-control-routing)) |
 | [`fm-primary.py`](../bin/fm-primary.py) | Opt-in primary lifecycle owner ([managed-primary.md](managed-primary.md)) |
+| [`fm-deck-chat.sh`](../bin/fm-deck-chat.sh) | Host a `deck chat` primary: session lock, startup digest, watcher wakes as steers, busy-state ([managed-primary.md](managed-primary.md#deck-chat-primary)) |
+| [`fm-primary-steer.sh`](../bin/fm-primary-steer.sh) | Publish to and read the steering inbox of a `deck chat` primary (`fm_primary_chat.py` owns the layout) |
 | `fm-stream-claude-tail.py` | Tail a Claude Code project's rotating transcripts onto the hub as an observability-only endpoint |
 | `fm-stream-opencode-tail.py` | Tail one opencode session's own storage onto the hub as a real endpoint               |
 | `fm_stream_tail_lib.py`  | The shared registration, state-publish, and hub-rejoin contract behind tail adapters |
@@ -123,7 +125,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-wake-grant.sh`       | Serialize Pi supervision-branch wake-row claim activation, publication, release, and deactivation |
 | `fm-wake-lib.sh`         | Shared durable wake queue, recovery generations, portable locks, and watcher identity/health helpers |
 | `fm-classify-lib.sh`     | Shared wake classification, durable keyed-decision folds and scans, unread status selection, and bounded latest-event snapshots |
-| `fm-send.sh`             | Steer a task via a durable inbox record plus doorbell, or send a supported key or typed harness invocation through the recorded backend |
+| `fm-send.sh`             | Send task text, keys, or typed harness invocations, or publish primary chat input (routing contract: [script header](../bin/fm-send.sh)) |
 | `fm-branch-prompt.sh`    | Emit the Pi supervision branch's byte-stable system prompt ([pi-supervision-branch.md](pi-supervision-branch.md)) |
 | `fm-branch-outcome.sh`   | Own the supervision branch's append-only outcome store, cursors, bounded status-coverage indexes, and session-start replay |
 | `fm-lease.sh`            | Claim, release, inspect, and sweep per-task supervision leases                       |

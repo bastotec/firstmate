@@ -1,12 +1,12 @@
 # Deck
 
-Deck (`bastotec/deck`) is a headless Rust coding agent: `deck run "<prompt>"` streams NDJSON events on stdout and exits when the model finishes.
-Firstmate runs it through its own pane driver, `../../../../../bin/fm-deck-worker.sh`, whose header owns the driver's behavior.
-Deck supports crewmates, scouts, persistent secondmates, and explicitly managed primaries launched through [`bin/fm-primary.py`](../../../../../bin/fm-primary.py).
-The stable driver uses `--secondmate` for secondmates and `--primary` for that managed primary entry point.
+Deck (`bastotec/deck`) is a Rust coding agent with headless `run` and interactive `chat` surfaces.
+Firstmate runs workers through its own pane driver, `../../../../../bin/fm-deck-worker.sh`, whose header owns the driver's behavior.
+Deck supports crewmates, scouts, persistent secondmates, and the opt-in primary launch choices in [`managed primary setup`](../../../../../docs/managed-primary.md).
+The stable `run` driver uses `--secondmate` for secondmates and `--primary` for the `fm-primary.py` managed entry point; [`bin/fm-deck-chat.sh`](../../../../../bin/fm-deck-chat.sh) owns the separate chat host.
 `../../../../../docs/verification/deck.md` owns the worker and secondmate live evidence; [runtime verification](../../../../../docs/verification/runtime-backends.md#managed-primary-ownership-and-execution-bound-steering) owns managed-primary fixture evidence.
 
-## Operating facts
+## Pane-driver operating facts
 
 | Fact | Value |
 |---|---|
@@ -27,13 +27,13 @@ The stable driver uses `--secondmate` for secondmates and `--primary` for that m
 | Exit | `/quit`, one Enter; the driver records session-end and exits, leaving the pane's shell. Control-plane exit and either relaunch path also prove task-bound residual drivers stopped by matching the physical state path, signaling the driver and Deck itself, waiting boundedly for the isolated process group to exit, and escalating survivors to KILL before replacement. Deck 0.1.0 exits immediately on TERM, so this cleanup can interrupt an active in-process tool. |
 | Skill | No slash-skill form; use natural language. Deck reads the worktree's `AGENTS.md` chain and `.agents/skills` itself. |
 | Autonomy | Deck runs tools without approval prompts; guards are `pre_tool_use` hooks, none of which Firstmate adds. |
-| Marker | None; detection is by ancestry (`deck`, or the driver's argv[0] `fm-deck-worker`). |
+| Marker | None; see Detection and liveness below. |
 | Resume | Deterministic relaunch; the driver starts a new Deck session from the brief on disk. |
 
 ## Detection and liveness
 
-`../../../../../bin/fm-harness.sh` names `deck` from the anchored process names `deck` and `fm-deck-worker`.
-Pane liveness (`../../../../../bin/fm-agent-process-lib.sh`) reads both as an agent: the driver is a bash script, so it is launched with argv[0] `fm-deck-worker`, which is also its macOS process name, and would otherwise read as an idle shell.
+`../../../../../bin/fm-harness.sh` owns anchored ancestry detection for the Deck binary, pane driver and chat host, including the chat host's exact `fm-deck-chat` argv[0] before Deck starts.
+Pane liveness (`../../../../../bin/fm-agent-process-lib.sh`) reads the Deck binary and pane driver as agents: the driver is a bash script, so it is launched with argv[0] `fm-deck-worker`, which is also its macOS process name, and would otherwise read as an idle shell.
 
 ## Credential precondition
 
@@ -42,8 +42,9 @@ A missing key fails the first turn with Deck's own error in the pane; a quota re
 
 ## Primary integration
 
-Persistent secondmates and opt-in managed Deck primaries use `../../../../../docs/supervision-protocols/deck.md`.
-[`docs/managed-primary.md`](../../../../../docs/managed-primary.md) owns the managed-primary setup and supported boundary; directly launched, unregistered primary processes cannot be adopted.
+Persistent secondmates, opt-in managed Deck primaries and Deck chat primaries use `../../../../../docs/supervision-protocols/deck.md`.
+[`docs/managed-primary.md`](../../../../../docs/managed-primary.md) owns both primary launch choices and their supported boundaries; the managed owner cannot adopt an unregistered process.
 A Deck secondmate uses the same persistent driver and durable inbox wake path on every backend that hosts secondmates: tmux, Herdr, or stream locally, and Herdr remotely.
 The driver header owns startup, lock lifetime, watcher wake turns, and the supervisor-specific completion postcondition.
-Daemon-owned away/quiet mode (`state/.afk`) is refused rather than competing with a daemon; clear that posture through the owning supervisor before relaunch.
+The `run` driver refuses daemon-owned away/quiet mode (`state/.afk`) rather than competing with a daemon; clear that posture through the owning supervisor before relaunch.
+The chat host has a different handoff, owned by [its header](../../../../../bin/fm-deck-chat.sh).

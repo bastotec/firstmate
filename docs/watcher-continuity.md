@@ -21,8 +21,9 @@ A cycle-end failure is benign when that live-watcher predicate is true, and the 
 Only an exhausted failure with no verified watcher commits one last-resort notice for the continuous failure episode; a refused notice commit stays silent for a later retry, and after a successful notice later Stop cycles exit 2 without repeating it until the turn-end guard consumes the attended fail-open.
 The Claude turn-end guard owns that notice commit contract, the monotonic failure progression, one-time attended fail-open, post-alarm continuation suppression, and positive recovery reset described in [`turnend-guard.md`](turnend-guard.md#harness-integrations).
 While supervision is still needed and away mode remains inactive, an actionable close wakes the idle session through exit 2.
-Deck home hosts use no harness hook: the persistent `fm-deck-worker.sh` driver owns one tracked arm child, replaces it whenever it exits during a Deck turn, and retains its result for a serialized durable-inbox turn.
-The driver header owns the exact child and hand-off mechanics, while [`supervision-protocols/deck.md`](supervision-protocols/deck.md) owns the model's handling duty.
+The Deck `run` home driver uses no harness hook: persistent `fm-deck-worker.sh` owns one tracked arm child, replaces it whenever it exits during a Deck turn, and retains its result for a serialized durable-inbox turn.
+The driver header owns the exact child and hand-off mechanics; [the separate chat host header](../bin/fm-deck-chat.sh) owns steering-based continuity for `deck chat` primaries.
+[`supervision-protocols/deck.md`](supervision-protocols/deck.md) owns the model's handling duty for both hosts.
 
 ## Actionable wake ordering
 
@@ -35,7 +36,7 @@ When that retained arm later closes, its actual close is classified as a new sup
 After the configured retry bound is exhausted, it delivers the original wake with a typed continuity-restoration failure even if every successor arm hung without reporting readiness.
 This is deliberate Option B ordering: the fleet is protected before the model handles the wake whenever restoration succeeds, but the model is never left blind when it does not.
 
-The Deck home driver follows the same successor-before-handling order through the arm layer's handling-successor handshake.
+The Deck `run` home driver follows the same successor-before-handling order through the arm layer's handling-successor handshake.
 It accumulates watcher results that arrive while a Deck turn runs and delivers them through the next serialized inbox turn rather than injecting into the active turn.
 
 Claude's Stop hook starts the successor arm at the next Stop after the handling turn, rather than before notification as Pi, omp, and OpenCode do.
@@ -52,7 +53,7 @@ No hook adapter starts an untracked replacement with shell `&`.
 The Deck driver uses `&` only for an owned child whose PID it monitors and waits during cleanup.
 
 For hook-driven adapters, the turn-end guard remains the final backstop rather than the normal continuity mechanism and cooperates with the auto-arm in its `--claude` mode.
-Deck home hosts instead use the driver-owned postcondition referenced from [`turnend-guard.md`](turnend-guard.md).
+Deck `run` home hosts instead use the driver-owned postcondition referenced from [`turnend-guard.md`](turnend-guard.md); the chat host's header owns its separate supervision boundary.
 
 ## Recovery episode acknowledgement
 

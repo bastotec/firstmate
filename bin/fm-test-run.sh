@@ -708,6 +708,7 @@ tests/fm-cursor-harness.test.sh 30084
 tests/fm-cursor-primary-live-e2e.test.sh 51
 tests/fm-cursor-primary.test.sh 53339
 tests/fm-daemon.test.sh 29571
+tests/fm-deck-chat.test.sh 60000
 tests/fm-deck-harness.test.sh 64987
 tests/fm-deck-host-live-e2e.test.sh 105
 tests/fm-documentation-audiences.test.sh 996

@@ -125,6 +125,36 @@ Investigate a retained unknown-owner record before any explicit operator cleanup
 Sending SIGTERM or SIGINT to the launcher itself requests a clean shutdown of its own child and retires only its own registration.
 The normal primary `exit` action deliberately does not stop the manager.
 
+## Deck chat primary
+
+[`bin/fm-deck-chat.sh`](../bin/fm-deck-chat.sh) hosts the primary as an interactive `deck chat` session instead of one `deck run` per turn.
+It is separate from `fm-primary.py`: no owner socket, no capability and no UI control routing.
+Stop any existing primary for this home normally before launching; a second primary of any harness is refused.
+The host supplies startup input and continuous supervision, so do not rerun session start or arm a watcher from the chat.
+Restarting resumes the saved Deck session by default.
+[The host header](../bin/fm-deck-chat.sh) owns launch options, prerequisites, startup ordering, watcher recovery, away-mode handoff and lock lifetime; [`fm_primary_chat.py`](../bin/fm_primary_chat.py) owns the private state layout.
+[`bin/fm-primary-steer.sh`](../bin/fm-primary-steer.sh) owns publication, status, delivery-check commands and the informational `--kind` contract.
+
+Run it in a local terminal:
+
+```sh
+bin/fm-deck-chat.sh --home /absolute/path/to/firstmate-home --model <route>
+```
+
+Or start it inside a stream endpoint (label `primary-chat`) created by the stream backend's own agent launcher, and observe it from any terminal:
+
+```sh
+bin/fm-deck-chat.sh --stream --home /absolute/path/to/firstmate-home --model <route>
+bin/fm-stream.sh attach <target printed above>
+```
+
+The shipped attach command is read-only; send input through `FM_HOME=<home> bin/fm-send.sh primary <text>`.
+Typing into the TUI needs the interactive attach (`bin/fm-stream.sh attach --interactive`, built separately).
+
+Stop it with `/quit` in the chat, or `bin/fm-deck-chat.sh stop --home <home>`.
+After a clean exit, another primary can start in the same home.
+Verification: [`tests/fm-deck-chat.test.sh`](../tests/fm-deck-chat.test.sh) drives the host with a fake `deck chat`, including a run inside a disposable stream hub endpoint.
+
 ## Verification and scope
 
 [`tests/fm-primary.test.sh`](../tests/fm-primary.test.sh) exercises the runnable launcher against a real isolated stream hub, PTY and standby harness executables.
