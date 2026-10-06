@@ -62,7 +62,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-stream-agent.py`     | Python reference agent for the stream backend rollback path |
 | `fm-stream-bridge.py`    | Adapt stream hub listings and composer orders to the Bridge UI's live wire format   |
 | [`fm-ui-host-control.py`](../bin/fm-ui-host-control.py) | Route private UI actions and expose browser-safe `targets` discovery ([stream-backend.md](stream-backend.md#private-host-control-routing)) |
-| [`fm-deck-chat.sh`](../bin/fm-deck-chat.sh) | Host a `deck chat` primary: session lock, startup digest, watcher wakes as steers, busy-state |
+| [`fm-deck-chat.sh`](../bin/fm-deck-chat.sh) | Host a `deck chat` primary: session lock, startup digest, watcher wakes as steers, busy-state, and the launchd service that restarts it |
 | [`fm-primary-steer.sh`](../bin/fm-primary-steer.sh) | Publish to and read the steering inbox of a `deck chat` primary (`fm_primary_chat.py` owns the layout) |
 | `fm-config-push.sh`      | Push declared inherited local material to live local or remote secondmates and send the placement-specific config reread when changed |
 | `fm-project-mode.sh`     | Resolve a project's registered delivery posture from `data/projects.md` for fleet sync and home seeding |

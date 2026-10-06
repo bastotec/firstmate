@@ -421,7 +421,8 @@ test_stream_endpoint_host() {
     || fail "--stream failed: $out"
   target=$(printf '%s\n' "$out" | sed -n 's/^primary-chat: running in stream endpoint //p')
   [ -n "$target" ] || fail "--stream prints the endpoint target: $out"
-  assert_contains "$out" "attach: bin/fm-stream.sh attach --interactive $target (Ctrl-] detaches)" "--stream prints the interactive attach command and detach key"
+  assert_contains "$out" "bin/fm-stream.sh attach --interactive $target (Ctrl-] detaches)" "--stream prints the interactive attach command and detach key"
+  assert_contains "$out" 'attach: bin/fm-deck-chat.sh attach (follows restarts)' "--stream names the attach that follows restarts"
   assert_contains "$out" 'input: bin/fm-send.sh primary <text>' "--stream names the input path"
   assert_contains "$("$STEER" status --home "$home")" "\"endpoint\": \"$target\"" "the record carries the endpoint"
   wait_for 10 "the digest turn inside the endpoint" turns_with "$LAB/deck-stream.log" 'fixture session digest'
@@ -481,7 +482,257 @@ test_startup_handoff() {
   pass "fm-deck-chat.sh: startup publication precedes registration, pending inputs survive and early events reach busy-state"
 }
 
+# A disposable Python hub for the stream-endpoint cases; sets HUB_URL and
+# HUB_TOKEN. Returns 1 (the caller skips) without curl and jq.
+start_test_hub() {  # <dir>
+  local dir=$1 pid host port waited=0
+  command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 || return 1
+  mkdir -p "$dir"
+  HUB_TOKEN="hub-token-$$-$(basename "$dir")"
+  printf 'publish,subscribe,control:%s\n' "$HUB_TOKEN" > "$dir/tokens"
+  chmod 600 "$dir/tokens"
+  python3 "$BIN/fm-stream-hub.py" serve --bind 127.0.0.1 --port 0 --token-file "$dir/tokens" \
+    --ready-file "$dir/ready" > "$dir/hub.log" 2>&1 &
+  pid=$!
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  while [ ! -s "$dir/ready" ] && [ "$waited" -lt 100 ]; do sleep 0.1; waited=$((waited + 1)); done
+  read -r host port < "$dir/ready" || fail "the disposable hub never became ready"
+  HUB_URL="http://$host:$port"
+}
+record_field() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2]) or "")' "$1" "$2" 2>/dev/null; }
+service_state_is() { [ "$(record_field "$1/state/primary-chat/service.json" state)" = "$2" ]; }
+host_is_not() {  # <home> <pid>: a live host other than <pid> is registered
+  local now
+  now=$(python3 "$BIN/fm_primary_chat.py" record pid --home "$1" 2>/dev/null) && [ "$now" != "$2" ]
+}
+runs_are() { [ "$(wc -l < "$1/session-start.runs" | tr -d ' ')" = "$2" ]; }
+alarm_recorder() {  # <path>
+  # shellcheck disable=SC2016 # Expanded by the recorder.
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "%s|%s\n" "$1" "$2" >> "$ALARM_LOG"' > "$1"
+  chmod +x "$1"
+}
+
+test_stop_marker() {
+  local home host rc=0 out
+  home=$(new_home stop-marker)
+  mkdir -p "$home/state/primary-chat"
+  echo '{}' > "$home/state/primary-chat/stopped"
+  FAKE_DECK_LOG="$LAB/deck-marker.log" "$BIN/fm-deck-chat.sh" --home "$home" < /dev/null > "$LAB/host-marker.out" 2>&1 &
+  host=$!
+  fm_test_track_helper_pid "$host"
+  wait_for 10 "the marker host registers" "$STEER" status --home "$home"
+  assert_absent "$home/state/primary-chat/stopped" "a captain-started host withdraws an earlier stop"
+  rc=0; out=$(FM_DECK_CHAT_SERVICE=1 "$BIN/fm-deck-chat.sh" --stream --home "$home" 2>&1) || rc=$?
+  expect_code 1 "$rc" "--stream refuses while a primary is live"
+  assert_contains "$out" 'a primary is already running for this home' "the refusal names the live primary"
+  "$BIN/fm-deck-chat.sh" stop --home "$home" >/dev/null
+  wait_for 10 "the marker host exits" dead "$host"
+  assert_grep '"by": "fm-deck-chat.sh stop"' "$home/state/primary-chat/stopped" "stop leaves the stopped-on-purpose marker"
+  rm -f "$home/state/primary-chat/stopped"
+  rc=0; "$BIN/fm-deck-chat.sh" stop --home "$home" 2>/dev/null || rc=$?
+  expect_code 1 "$rc" "stop with no live host still refuses"
+  assert_present "$home/state/primary-chat/stopped" "stop with no live host still records the intent"
+  pass "fm-deck-chat.sh: stop leaves a durable marker, a captain start clears it, --stream refuses a second primary"
+}
+
+test_service_install() {
+  local home canonical out rc=0 plist label uid
+  home=$(new_home 'service install')
+  canonical=$(cd "$home" && pwd -P)
+  uid=$(id -u)
+  cat > "$LAB/tools/launchctl" <<'LAUNCHCTL'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_LAUNCHCTL_LOG"
+case "$1" in
+  bootstrap) touch "$FAKE_LAUNCHCTL_LOG.loaded" ;;
+  bootout) [ -e "$FAKE_LAUNCHCTL_LOG.loaded" ] || exit 3; rm -f "$FAKE_LAUNCHCTL_LOG.loaded" ;;
+  print) [ -e "$FAKE_LAUNCHCTL_LOG.loaded" ] ;;
+esac
+LAUNCHCTL
+  chmod +x "$LAB/tools/launchctl"
+  export FM_LAUNCHCTL="$LAB/tools/launchctl" FM_LAUNCH_AGENTS_DIR="$LAB/LaunchAgents" FAKE_LAUNCHCTL_LOG="$LAB/launchctl.log"
+  out=$("$BIN/fm-deck-chat.sh" install-service --home "$home" --model fake/route) || fail "install-service failed: $out"
+  label=dev.firstmate.primary.$(printf '%s' "$canonical" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:12])')
+  plist="$LAB/LaunchAgents/$label.plist"
+  assert_present "$plist" "install-service generates the per-home plist"
+  assert_contains "$out" "gui/$uid/$label installed" "install-service names the loaded agent"
+  assert_contains "$out" 'primary: not running; the keeper starts it now' "install-service says what the keeper will do"
+  assert_equals "$(printf 'bootout gui/%s/%s\nbootstrap gui/%s %s\nprint gui/%s/%s' "$uid" "$label" "$uid" "$plist" "$uid" "$label")" \
+    "$(cat "$LAB/launchctl.log")" "install-service replaces, bootstraps and verifies the agent"
+  python3 - "$plist" "$BIN/fm-deck-chat.sh" "$canonical" "$label" <<'PY' || fail "the generated plist is not the expected service"
+import plistlib, sys
+plist, script, home, label = sys.argv[1:5]
+data = plistlib.load(open(plist, 'rb'))
+assert data['Label'] == label, data['Label']
+assert data['ProgramArguments'][1:] == [script, 'service-run', '--home', home, '--model', 'fake/route'], data['ProgramArguments']
+assert data['RunAtLoad'] is True and data['KeepAlive'] is True and data['AbandonProcessGroup'] is True, data
+assert data['WorkingDirectory'] == home and data['EnvironmentVariables']['PATH'], data
+PY
+  # A second install replaces the first definition in place.
+  "$BIN/fm-deck-chat.sh" install-service --home "$home" >/dev/null || fail "reinstall failed"
+  python3 -c 'import plistlib,sys; sys.exit("--model" in plistlib.load(open(sys.argv[1],"rb"))["ProgramArguments"])' "$plist" \
+    || fail "a reinstall without --model drops the old model"
+  "$BIN/fm-deck-chat.sh" uninstall-service --home "$home" >/dev/null || fail "uninstall-service failed"
+  assert_absent "$plist" "uninstall-service deletes the plist"
+  assert_absent "$LAB/launchctl.log.loaded" "uninstall-service boots the agent out"
+  unset FM_LAUNCHCTL
+  if [ "$(uname)" != Darwin ]; then
+    rc=0; "$BIN/fm-deck-chat.sh" install-service --home "$home" 2>/dev/null || rc=$?
+    expect_code 2 "$rc" "install-service refuses off macOS"
+  fi
+  unset FM_LAUNCH_AGENTS_DIR FAKE_LAUNCHCTL_LOG
+  pass "fm-deck-chat.sh install-service/uninstall-service: generated per-home launchd agent"
+}
+
+test_service_alert() {
+  local home
+  home=$(new_home alert)
+  mkdir -p "$home/state/primary-chat"
+  alarm_recorder "$LAB/tools/alarm"
+  ALARM_LOG="$LAB/alarm-off.log" FM_WEDGE_ALARM_EXEC="$LAB/tools/alarm" FM_WEDGE_ALARM_CHANNEL=off \
+    "$BIN/fm-deck-chat.sh" service-alert --home "$home" --summary 'primary down' || fail "service-alert with off failed"
+  assert_absent "$LAB/alarm-off.log" "an off channel raises nothing"
+  ALARM_LOG="$LAB/alarm.log" FM_WEDGE_ALARM_EXEC="$LAB/tools/alarm" FM_WEDGE_ALARM_CHANNEL=osascript \
+    "$BIN/fm-deck-chat.sh" service-alert --home "$home" --summary 'primary down' || fail "service-alert failed"
+  assert_equals 'osascript|primary down' "$(cat "$LAB/alarm.log")" "service-alert goes through the wedge alarm channels"
+  pass "fm-deck-chat.sh service-alert: reuses the wedge alarm channels and seam"
+}
+
+test_attach_follows_restarts() {
+  local home BIN="$LAB/attach-bin" first second attach rc=0
+  cp -R "$LAB/bundle/bin" "$BIN"
+  cp "$BIN/fm-deck-chat.sh" "$BIN/fm-deck-chat-attach.sh"
+  # A stand-in host that takes its sleeper with it when it is killed.
+  # shellcheck disable=SC2016 # Written for the stand-in host.
+  printf '%s\n' '#!/usr/bin/env bash' 'sleep 300 & trap '"'"'kill $!; exit 0'"'"' TERM; wait' > "$BIN/fm-deck-chat.sh"
+  cat > "$BIN/fm-stream.sh" <<'STREAM'
+#!/usr/bin/env bash
+printf '%s\n' "$3" >> "$ATTACH_LOG"
+case "$3" in
+  t:aa) kill "$(cat "$ATTACH_LOG.first")"; exit 0 ;;
+  *) exit 7 ;;
+esac
+STREAM
+  chmod +x "$BIN/fm-stream.sh"
+  home=$(new_home attach)
+  # shellcheck disable=SC2016 # Expanded by the inner bash.
+  bash -c 'exec -a fm-deck-chat bash "$1" --home "$2"' _ "$BIN/fm-deck-chat.sh" "$home" &
+  first=$!
+  fm_test_track_helper_pid "$first"
+  echo "$first" > "$LAB/attach.log.first"
+  python3 "$BIN/fm_primary_chat.py" prepare --home "$home" --session s1 >/dev/null
+  python3 "$BIN/fm_primary_chat.py" record write --home "$home" --session s1 --host-pid "$first" --endpoint t:aa
+  ATTACH_LOG="$LAB/attach.log" "$BIN/fm-deck-chat-attach.sh" attach --home "$home" > /dev/null 2> "$LAB/attach.err" &
+  attach=$!
+  fm_test_track_helper_pid "$attach"
+  wait_for 10 "the first endpoint closes" dead "$first"
+  wait_for 10 "attach waits for the next primary" grep -q 'closed; attaching to the next one' "$LAB/attach.err"
+  # shellcheck disable=SC2016 # Expanded by the inner bash.
+  bash -c 'exec -a fm-deck-chat bash "$1" --home "$2"' _ "$BIN/fm-deck-chat.sh" "$home" &
+  second=$!
+  fm_test_track_helper_pid "$second"
+  python3 "$BIN/fm_primary_chat.py" record write --home "$home" --session s1 --host-pid "$second" --endpoint t:bb
+  wait "$attach" || rc=$?
+  expect_code 7 "$rc" "attach returns the client's exit while its endpoint is still live"
+  assert_equals "$(printf 't:aa\nt:bb')" "$(cat "$LAB/attach.log")" "attach follows the primary to its new endpoint"
+  kill "$second" 2>/dev/null || true
+  pass "fm-deck-chat.sh attach: reattaches when the primary's endpoint is replaced"
+}
+
+test_service_keeper() {
+  local home keeper first second deck_pid session out
+  if ! start_test_hub "$LAB/keeper-hub"; then
+    pass "fm-deck-chat.sh service keeper skipped without curl and jq"
+    return
+  fi
+  home=$(new_home keeper)
+  local saved_shell=${SHELL-}
+  export SHELL=/bin/bash FM_STREAM_HUB="$HUB_URL" FM_STREAM_TOKEN="$HUB_TOKEN" FM_STREAM_MACHINE=box-test
+  export FAKE_DECK_LOG="$LAB/deck-keeper.log"
+  out=$("$BIN/fm-deck-chat.sh" --stream --home "$home" --model fake/route 2>&1) || fail "--stream failed: $out"
+  first=$(python3 "$BIN/fm_primary_chat.py" record pid --home "$home")
+  session=$(cat "$home/state/primary-chat/session")
+  FM_DECK_CHAT_SERVICE_POLL=0.2 FM_DECK_CHAT_SERVICE_BACKOFF=0.5 FM_DECK_CHAT_SERVICE_STABLE_SECS=2 \
+    "$BIN/fm-deck-chat.sh" service-run --home "$home" --model fake/route > "$LAB/keeper.out" 2>&1 &
+  keeper=$!
+  fm_test_track_helper_pid "$keeper"
+  wait_for 10 "the keeper adopts the live host" service_state_is "$home" running
+  sleep 1
+  runs_are "$home" 1 || fail "the keeper started a second primary next to a live one"
+  assert_equals "$first" "$(python3 "$BIN/fm_primary_chat.py" record pid --home "$home")" "the adopted host is untouched"
+
+  # Anything but stop is a crash: deck exiting on its own is restarted.
+  deck_pid=$(record_field "$FAKE_DECK_LOG" pid)
+  kill -TERM "$deck_pid"
+  wait_for 10 "the crashed host exits" dead "$first"
+  wait_for 30 "the keeper restarts the host" host_is_not "$home" "$first"
+  second=$(python3 "$BIN/fm_primary_chat.py" record pid --home "$home")
+  runs_are "$home" 2 || fail "one restart runs session start once"
+  assert_contains "$(cat "$FAKE_DECK_LOG")" "\"--session\", \"$session\"" "the restart resumes the same deck session"
+  assert_contains "$(cat "$FAKE_DECK_LOG")" '"--model", "fake/route"' "the restart keeps the model"
+  assert_grep 'primary is down; restarting now' "$home/state/primary-chat/service.log" "the keeper logs the restart"
+
+  # stop is honoured: the marker keeps the keeper from restarting.
+  "$BIN/fm-deck-chat.sh" stop --home "$home" >/dev/null
+  wait_for 10 "the stopped host exits" dead "$second"
+  wait_for 10 "the keeper reports stopped" service_state_is "$home" stopped
+  sleep 1.5
+  runs_are "$home" 2 || fail "the keeper restarted a primary stopped on purpose"
+
+  # A captain start withdraws the stop and the keeper adopts it.
+  out=$("$BIN/fm-deck-chat.sh" --stream --home "$home" --model fake/route 2>&1) || fail "restart --stream failed: $out"
+  assert_absent "$home/state/primary-chat/stopped" "a captain --stream clears the marker"
+  wait_for 10 "the keeper adopts the captain's host" service_state_is "$home" running
+  sleep 1
+  runs_are "$home" 3 || fail "the keeper duplicated the captain's start"
+  kill -TERM "$keeper"
+  wait_for 10 "the keeper exits on SIGTERM" dead "$keeper"
+  "$BIN/fm-deck-chat.sh" stop --home "$home" >/dev/null
+  unset FM_STREAM_HUB FM_STREAM_TOKEN FM_STREAM_MACHINE FAKE_DECK_LOG
+  export SHELL="$saved_shell"
+  pass "fm-deck-chat.sh service-run: adopts a live host, restarts a crash on the same session, honours stop"
+}
+
+test_service_keeper_alerts() {
+  local home keeper
+  if ! start_test_hub "$LAB/alert-hub"; then
+    pass "fm-deck-chat.sh service alert skipped without curl and jq"
+    return
+  fi
+  home=$(new_home keeper-alert)
+  # A task named primary makes every start fail, as a crash loop would.
+  printf 'id=primary\n' > "$home/state/primary.meta"
+  alarm_recorder "$LAB/tools/keeper-alarm"
+  local saved_shell=${SHELL-}
+  export SHELL=/bin/bash FM_STREAM_HUB="$HUB_URL" FM_STREAM_TOKEN="$HUB_TOKEN" FM_STREAM_MACHINE=box-test
+  FAKE_DECK_LOG="$LAB/deck-alert.log" ALARM_LOG="$LAB/keeper-alarm.log" \
+    FM_WEDGE_ALARM_EXEC="$LAB/tools/keeper-alarm" FM_WEDGE_ALARM_CHANNEL=osascript \
+    FM_DECK_CHAT_SERVICE_POLL=0.2 FM_DECK_CHAT_SERVICE_BACKOFF=0.5 FM_DECK_CHAT_SERVICE_STABLE_SECS=2 \
+    FM_DECK_CHAT_SERVICE_ALERT_SECS=1 \
+    "$BIN/fm-deck-chat.sh" service-run --home "$home" > "$LAB/keeper-alert.out" 2>&1 &
+  keeper=$!
+  fm_test_track_helper_pid "$keeper"
+  wait_for 60 "the down alert" grep -q "osascript|firstmate primary for $home has been down" "$LAB/keeper-alarm.log"
+  assert_present "$home/state/primary-chat/service-down" "a down alert leaves a durable marker"
+  assert_grep 'the host exited before registering' "$home/state/primary-chat/service.log" "a failed start is reported fast"
+  rm -f "$home/state/primary.meta"
+  wait_for 90 "the keeper recovers the primary" service_state_is "$home" running
+  assert_equals 1 "$(wc -l < "$LAB/keeper-alarm.log" | tr -d ' ')" "one alert per outage"
+  wait_for 10 "the alert marker clears after a stable run" test ! -e "$home/state/primary-chat/service-down"
+  kill -TERM "$keeper"
+  wait_for 10 "the alert keeper exits" dead "$keeper"
+  "$BIN/fm-deck-chat.sh" stop --home "$home" >/dev/null
+  unset FM_STREAM_HUB FM_STREAM_TOKEN FM_STREAM_MACHINE
+  export SHELL="$saved_shell"
+  pass "fm-deck-chat.sh service-run: a primary that stays down raises one alert and clears it on recovery"
+}
+
 test_steer_contract_without_a_host
+test_stop_marker
+test_service_install
+test_service_alert
+test_attach_follows_restarts
 test_startup_completion_required
 test_startup_handoff
 test_host_lifecycle
@@ -489,3 +740,5 @@ test_oversized_watcher_output
 test_stream_endpoint_host
 test_task_named_primary_blocks_the_host
 test_away_mode_pauses_the_watcher
+test_service_keeper
+test_service_keeper_alerts

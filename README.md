@@ -81,6 +81,7 @@ bin/fm-deck-chat.sh
 ```
 
 The host owns the home's session lock, runs session start once, keeps the watcher armed, and hands every wake to the Deck session; its header owns the details.
+On macOS, `bin/fm-deck-chat.sh install-service` adds a launchd agent that restarts the host after any exit except `bin/fm-deck-chat.sh stop`.
 
 ### Talk to it
 

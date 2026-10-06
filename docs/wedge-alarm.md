@@ -28,6 +28,12 @@ On timeout or daemon shutdown, the notifier process group is terminated and the 
 AppleScript receives the summary as an argv item rather than interpolated source, so summary text cannot alter the script.
 See [`examples/wedge-alarm`](examples/wedge-alarm) for a copyable config.
 
+## Primary down alert
+
+The `deck chat` primary's service keeper raises its own alert through the same channels, seam and bounds when the primary stays down past its alert window despite restarts.
+It fires once per outage, titles the macOS banner "firstmate: primary DOWN", and leaves `state/primary-chat/service-down` as its durable marker until the primary has run stably again.
+The [chat host header](../bin/fm-deck-chat.sh) owns `install-service` and `service-alert`, and `bin/fm_primary_chat.py`'s `service` entry owns the restart and alert rules.
+
 ## Test safety
 
 Every notifier routes through `FM_WEDGE_ALARM_EXEC` in `wedge_alarm_emit`.
@@ -36,4 +42,5 @@ When the daemon is sourced as a library, that seam defaults to `discard`, so a t
 Production leaves the seam unset and uses the configured real channels.
 
 `tests/fm-daemon.test.sh` covers directive parsing, rate limiting, timeout and process-group cleanup, argv-safe dispatch, channel fallback, and safe `command:` summary delivery.
+`tests/fm-deck-chat.test.sh` covers the primary down alert's channel use, its once-per-outage rule, and its marker.
 [`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) records the bounded manual macOS and Herdr channel proof.
