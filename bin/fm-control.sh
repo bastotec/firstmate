@@ -66,9 +66,9 @@
 #              state; it never leaves a half-transitioned task claiming to be
 #              running.
 #
-#   recover-missing Recreate the exact recorded terminal for a task whose
-#              endpoint is authoritatively missing, then hand the launch to the
-#              existing owner (bin/fm-spawn.sh --relaunch). Proves the missing
+#   recover-missing Restore a terminal for a task whose endpoint reads missing,
+#              then hand the launch to the existing owner
+#              (bin/fm-spawn.sh --relaunch). Proves the missing
 #              state and refuses an unavailable or conflicting local-copy
 #              ownership rather than resetting or reallocating anything.
 #              Uncommitted work in that copy is the NORMAL state of a task
@@ -88,8 +88,8 @@
 #              the task's worktree and everything else. Because a stream
 #              `missing` is the hub's registry not knowing the endpoint - which a
 #              restarted hub also says until each agent re-registers - stream
-#              recovery additionally refuses while a stream agent process for
-#              fm-<id> is still running on this machine.
+#              recovery additionally refuses while a local stream agent matches
+#              both fm-<id> and this home's task status path.
 #              Both tmux losses are recovered: the task's window gone from a
 #              session that is still alive, and the whole session (or the whole
 #              server) gone, which is recreated under its exact recorded name
@@ -842,8 +842,8 @@ relaunch_rollback() {
       # locked write - see docs/agent-control.md's rollback account, and the
       # concurrent-record-write case in tests/fm-control-recover-missing.test.sh.
       # A stream recovery that got as far as rebinding the record leaves it
-      # naming the new endpoint, because that endpoint exists and holds the
-      # bare shell the next `relaunch` adopts; the old one is gone.
+      # naming the new endpoint, whose state must be reconciled before the next
+      # `relaunch` adopts it; restoring the old binding would strand it.
       if [ -n "$RELAUNCH_BRIEF" ] && [ -f "$BRIEF_PRIOR" ]; then
         cp -p "$BRIEF_PRIOR" "$RELAUNCH_BRIEF" 2>/dev/null || true
       fi
@@ -1225,10 +1225,10 @@ do_relaunch() {
 # configured hub and rebind the durable record to it. The hub assigns endpoint
 # ids at registration, so the missing one cannot come back under its old id.
 # On success $T names the new endpoint, so every postcondition below reads it.
-# A record that cannot be rebound closes the endpoint it just made (best
-# effort) and refuses, so no unrecorded endpoint is left holding the task.
-# After a successful rebind the record names the new endpoint even if a later
-# step fails: that endpoint is the live bare shell the next `relaunch` adopts.
+# If the record cannot be rebound, closing the new endpoint is best effort:
+# failure reports the unconfirmed close and exact target for reconciliation.
+# After a successful rebind the record keeps the new endpoint even if a later
+# step fails; relaunch can adopt it once it is positively agent-free.
 recover_stream_endpoint() {  # <label> <cwd>
   local label=$1 cwd=$2 pair new_target hub_url
   hub_url=$(fm_backend_stream_hub_url) || die "this home's stream hub URL is not configured; refusing to recover"

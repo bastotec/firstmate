@@ -581,8 +581,9 @@ fm_backend_stream_send_text_submit() {  # <target> <text> <retries> <enter-sleep
 # fm_backend_stream_agent_state: the recovery-grade classifier. See
 # bin/fm-backend.sh's fm_backend_agent_state for the shared vocabulary.
 #
-#   missing    the hub answered and has no such endpoint (404), and went on
-#              saying so for long enough that no agent is still coming back.
+#   missing    the hub keeps answering no such endpoint (404) through the
+#              bounded rejoin grace period; this is registry absence, not
+#              proof that a local agent or its worker has stopped.
 #   dead       the owning agent POSITIVELY reported the process gone, or a
 #              foreground group that is nothing but shells.
 #   alive      a verified harness is in that reported foreground group.
@@ -821,11 +822,13 @@ fm_backend_stream_kill() {  # <target> [unused] [expected-label]
 }
 
 # fm_backend_stream_local_agent_pid: the pid of a stream agent process on THIS
-# machine that serves <label> (`--label <label>` on its command line), printed
-# and returning 0 when one runs; 1 when none does. An agent that still runs
-# still owns its pseudoterminal and worker, whatever the hub's registry says -
-# which is the fact a `missing` verdict cannot carry on its own, because a
-# restarted hub forgets endpoints until their agents re-register.
+# machine whose command line matches both `--label <label>` and
+# `--status-path <status-path>`, printed with return 0 when found; 1 when none
+# is found. Both tokens bind the process to this home's task rather than an
+# unrelated home using the same label. An agent that still runs owns its
+# pseudoterminal and worker, whatever the hub's registry says - the fact a
+# `missing` verdict cannot carry on its own, because a restarted hub forgets
+# endpoints until their agents re-register.
 fm_backend_stream_local_agent_pid() {  # <label> <status-path>
   local label=$1 status_path=$2 bin
   bin=${FM_BACKEND_STREAM_AGENT_BIN##*/}

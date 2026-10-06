@@ -15,12 +15,9 @@
 # Zellij, cmux and Orca adapters (P3-P5) were removed; tmux, herdr and stream
 # remain.
 #
-# Compatibility contract: a task's meta may omit `backend=`; every reader here
-# treats that as `tmux` (fm_backend_of_meta), and fm-spawn.sh does not write
-# `backend=tmux` for a default-backend task, so existing and newly spawned
-# default-path metas stay byte-identical. Only a task spawned on a non-tmux
-# spawn-capable backend, currently experimental herdr or
-# stream, carries an explicit `backend=` line.
+# Compatibility: fm_backend_of_meta below owns the legacy missing-field
+# default; docs/configuration.md owns the operator-facing metadata contract,
+# and fm-spawn.sh's header owns publication of explicit backend fields.
 #
 # Event-source framing (herdr-addendum "Events as the core abstraction"): a
 # backend's supervision surface is conceptually an EVENT SOURCE - it produces
@@ -699,14 +696,15 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
 # pane-presence read and prints exactly one of:
 #   alive      - a verified harness agent is running.
 #   dead       - the endpoint exists but confidently has no agent.
-#   missing    - the recorded endpoint is authoritatively absent.
+#   missing    - the recorded endpoint is absent from the backend inventory.
 #   ambiguous  - the endpoint exists but its process cannot be attributed.
 #   unreadable - a target or inventory read failed or contradicted itself.
 #   unverified - this backend has no recovery classifier.
-# Only `dead` and `missing` license recovery; the secondmate liveness sweep
-# alone narrows a stream `missing` to a no-respawn skip, because the hub's
-# registry not knowing an endpoint never proves its agent gone
-# (bin/fm-bootstrap.sh owns that narrowing). Every `alive` is proven at
+# Only `dead` and `missing` can license recovery, subject to the caller's
+# ownership guards. Stream `missing` proves only absence from the hub registry,
+# never that its agent is gone: bin/fm-bootstrap.sh skips automatic respawn,
+# and bin/fm-control.sh adds a local owning-agent guard for manual recovery.
+# Every `alive` is proven at
 # process level through the shared classifier in bin/fm-agent-process-lib.sh,
 # never from a registration or a rendered title alone. The tmux adapter
 # requires a successful session inventory and returns `missing` only when it

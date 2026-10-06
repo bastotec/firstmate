@@ -1650,6 +1650,15 @@ The daemon injection transport into a live composer keeps its coverage in `tests
 
 ## stream
 
+### Portable stream-parity regressions
+
+[`tests/fixtures.sh`](../../tests/fixtures.sh)'s `fm_test_fake_stream` supplies fake fleet endpoints to the real adapter; its header owns setup and helper usage, and [`stream-hub-stub.py`](../../tests/assets/stream-hub-stub.py)'s docstring owns fake-shell behavior.
+`tests/fm-test-fixtures.test.sh`, `tests/fm-backend.test.sh`, `tests/fm-send-strict.test.sh`, and `tests/fm-crew-state.test.sh` exercise fixture round trips, spawn metadata, unrecorded explicit-target routing, and busy/idle/missing/unreachable crew reads.
+`tests/fm-control-recover-missing.test.sh` covers new-endpoint rebinding, refusal for a local agent with the task's label and owning status path, preservation of unrelated agents, and confirmed versus unconfirmed cleanup after a failed rebind.
+`tests/fm-endpoint-rebind-lib.test.sh` pins endpoint-only record replacement and identity refusals; `tests/fm-meta-backfill.test.sh` pins legacy backend backfill, dry-run, idempotency, and classification refusals.
+These fake-fleet cases prove integration routing, not real PTY behavior or installed-harness identity.
+The local-PID regression in `tests/fm-backend-stream.test.sh` instead runs the real Python hub and agent with a harness-named stand-in process, checks that its reported PID exists locally, and refuses other-machine and unknown-endpoint PID reads; [Live harness identity](#live-harness-identity) remains the separate installed-harness evidence.
+
 ### Managed primary ownership and execution-bound steering
 
 Verified 2026-10-04 on macOS with Python 3.9.6, the Python stream hub 2.0.0 and agent 2.1.0 speaking protocol 3.

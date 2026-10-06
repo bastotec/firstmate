@@ -51,8 +51,10 @@ The consequence is a deliberate asymmetry with tmux and Herdr, whose `missing` i
 A stream mate whose worker exited while its agent lived still reads `dead` from the agent's own closing report, and the sweep respawns it exactly as it does on any other backend.
 `bin/fm-bootstrap.sh` owns secondmate recovery respawn, preserving the recorded backend rather than selecting a different backend from ambient configuration.
 `bin/fm-control.sh` owns interrupt, exit, same-endpoint relaunch, and `recover-missing`.
-A hub-assigned endpoint id cannot be recreated, so `recover-missing` on stream starts a new endpoint (same `fm-<id>` label, the recorded worktree as its cwd) and rebinds the record's `window=`, `stream_hub=`, and `stream_endpoint_id=` to it through `bin/fm-endpoint-rebind-lib.sh`, keeping the task's worktree and everything else.
-Because a stream `missing` alone does not prove the worker gone, it also refuses while a stream agent process for `fm-<id>` still runs on this machine.
+A hub-assigned endpoint id cannot be recreated, so `recover-missing` on stream starts a new endpoint on this home's configured hub (same `fm-<id>` label, the recorded worktree as its cwd) and rebinds the task's endpoint identity through [`bin/fm-endpoint-rebind-lib.sh`](../bin/fm-endpoint-rebind-lib.sh), keeping its worktree and non-endpoint fields.
+Because a stream `missing` alone does not prove the worker gone, recovery checks for a local stream agent matching both the task label and this home's task status path, rather than refusing on another home's matching label.
+A matching agent blocks recovery even when the hub has forgotten it; wait for its re-registration or stop that exact agent before retrying.
+[Agent control](agent-control.md#failure-and-rollback) owns failed-rebind cleanup, retained new-endpoint bindings, and retry handling.
 
 A stream-hosted second mate launches, is steered, and reports its own lifecycle, but it cannot itself spawn or supervise on stream until the hub has restarted since its seeding wrote the home a credential.
 `bin/fm-stream-agent.py` hands the hosted process the hub address and deliberately withholds the token, and `FM_INHERITABLE_CONFIG` in `bin/fm-config-inherit-lib.sh` mirrors `backend` into that home without `stream-hub` or `stream-token`, so the launch path still carries no credential.
@@ -76,11 +78,9 @@ The page's own event stream is the one request that does carry the token in a UR
 Ordinary supervision does not need any of that.
 `fm-peek.sh`, `fm-send.sh`, `fm-crew-state.sh`, and `fm-control.sh` all work against a stream-backed task through the shared dispatcher, exactly as they do for any other backend.
 
-A task records `stream_hub=` and `stream_endpoint_id=` beside the shared `endpoint_task_id=` binding.
-An explicit `<hub-tag>:<endpoint-id>` target that no record in the home names (for example a child home's crewmate) routes to stream in `fm-send.sh` when its tag is this home's configured hub.
-`fm_backend_agent_pids` reads harness pids from the owning agent's report only for an endpoint whose agent runs on this machine (`fm_backend_stream_machine`); for any other machine it answers "cannot be read".
-
-Tests run the real adapter against a fake hub with `fm_test_fake_stream` in `tests/fixtures.sh`, which serves fake endpoints from `tests/assets/stream-hub-stub.py --fleet` and starts `tests/assets/stream-agent-stub.py` in place of the agent (`FM_STREAM_AGENT_BIN`).
+[Configuration](configuration.md#runtime-backend-configbackend--fm_backend) owns task metadata and selector routing; [`fm-send.sh`'s header](../bin/fm-send.sh) owns unrecorded explicit-target inference, including stream targets on this home's configured hub.
+[`fm_backend_agent_pids`](../bin/fm-backend.sh) owns the process-identity read contract, including stream's local-machine restriction.
+[Portable stream-parity regressions](verification/runtime-backends.md#portable-stream-parity-regressions) distinguish fake-fleet integration coverage from real agent process reporting.
 
 ## Bridge feed
 
