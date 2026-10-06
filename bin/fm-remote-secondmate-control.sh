@@ -468,8 +468,8 @@ EOF
   old="$old"$'\n'"$recorded"
   control_args=("$id" relaunch --harness "$harness" --model "$model" --effort "$effort")
   [ -z "$new_backend" ] || control_args+=(--backend "$new_backend")
-  # The same launch-boundary facts cmd_launch establishes: the endpoint lives in
-  # the dedicated fm-remote session, and the parent already owns both convergence
+  # The same launch-boundary facts cmd_launch establishes: Herdr endpoints live
+  # in the dedicated fm-remote session, and the parent already owns both convergence
   # legs, so the host-local spawn must not re-sync or re-inherit against this
   # host's own Firstmate copy.
   rc=0

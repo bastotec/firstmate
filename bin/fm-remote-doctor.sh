@@ -9,10 +9,10 @@
 # PATH used by worker jobs while retaining authority to inspect and repair the
 # worker itself.
 #
-# A remote second mate always runs on the Herdr backend in the dedicated
-# fm-remote session. Its account therefore needs the Firstmate-owned Aqua Herdr
-# agent plus the sibling dev.firstmate.remote-job worker that runs normal fm-on
-# commands through the Aqua or Linux job-worker path. On darwin, that Herdr
+# With the default --backend herdr, a remote second mate runs in the dedicated
+# fm-remote session. On darwin, its account needs the Firstmate-owned Aqua Herdr
+# agent. Both backends require the sibling dev.firstmate.remote-job worker that
+# runs normal fm-on commands through the Aqua or Linux job-worker path. That Herdr
 # agent runs bin/fm-remote-herdr-guard.sh through the remote account's login
 # shell (`-l -c`) so the server inherits the account's own environment; the
 # gui/<uid> launchd domain it is bootstrapped into, not the shell, is what
@@ -59,8 +59,9 @@
 # exits non-zero.
 #
 # --fix is idempotent and closes only automatable gaps: it writes and reloads
-# both Firstmate-owned Aqua agents, starts the Linux workers where no Aqua agent
-# applies, recreates the entrypoint symlink, and may add an owned ~/.local/bin
+# the remote-job Aqua agent (and the Herdr agent when --backend herdr is selected),
+# starts the Linux workers where no Aqua agent applies, recreates the entrypoint
+# symlink, and may add an owned ~/.local/bin
 # wrapper for a required tool it can discover under nvm, asdf, or mise. It never
 # installs packages, creates a login session, writes an auto-login password,
 # changes FileVault, stores an account password, or replaces a non-Firstmate
@@ -650,7 +651,7 @@ check_herdr() {
     return 0
   fi
   record herdr "human: the herdr CLI does not resolve on the remote runtime PATH" \
-    "install herdr from https://herdr.dev on that account, or add a ~/.local/bin wrapper for it; a remote second mate always runs on the Herdr backend"
+    "install herdr from https://herdr.dev on that account, or add a ~/.local/bin wrapper for it; --backend herdr selects the dedicated fm-remote Herdr session"
 }
 
 check_gui_session() {
