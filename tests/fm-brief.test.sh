@@ -7,7 +7,7 @@
 # the command substitution textually and tracks quote state through the heredoc
 # body, so a single apostrophe, unbalanced quote, or unbalanced paren anywhere
 # in that body breaks parsing of the *entire rest of the script* - `bash -n`
-# fails, not just the generated brief. The DOD and Herdr-section builders now
+# fails, not just the generated brief. The DOD builder now
 # use `IFS= read -r -d '' VAR <<EOF || true` instead, which removes the `$(...)`
 # wrapper and eliminates the whole defect class regardless of future prose.
 # test_no_heredoc_in_command_substitution guards that structure directly.
@@ -508,86 +508,15 @@ test_ship_project_memory_wording() {
   pass "fm-brief.sh: ship project-memory wording carries the AGENTS.md authoring bar"
 }
 
-test_herdr_lab_contract_is_explicit_and_complete() {
-  local home id brief
-  home="$TMP_ROOT/herdr-lab-home"
-  mkdir -p "$home/data"
-  id="brief-herdr-lab-d1"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes --herdr-lab >/dev/null 2>&1
-  brief="$home/data/$id/brief.md"
-  assert_present "$brief" "Herdr lab brief was not scaffolded"
-  assert_grep "# Herdr isolation - HARD SAFETY CONTRACT" "$brief" \
-    "Herdr lab brief missing its hard safety contract"
-  assert_grep "HERDR_LAB_HELPER='$ROOT/bin/fm-herdr-lab.sh'" "$brief" \
-    "Herdr lab brief must bind the absolute Firstmate helper path"
-  assert_grep "HERDR_LAB_SESSION=\$(\"\$HERDR_LAB_HELPER\" name $id)" "$brief" \
-    "Herdr lab brief missing helper-owned session naming"
-  assert_grep "\"\$HERDR_LAB_HELPER\" provision \"\$HERDR_LAB_SESSION\"" "$brief" \
-    "Herdr lab brief missing helper-owned provisioning"
-  assert_grep "\"\$HERDR_LAB_HELPER\" teardown \"\$HERDR_LAB_SESSION\"" "$brief" \
-    "Herdr lab brief missing helper-owned teardown"
-  assert_grep "required trailing \`--session \"\$HERDR_LAB_SESSION\"\`" "$brief" \
-    "Herdr lab brief missing the per-call trailing session contract"
-  assert_grep "direct \`herdr server stop\`" "$brief" \
-    "Herdr lab brief missing the forbidden server-global command list"
-  assert_grep "records the live default session before provisioning" "$brief" \
-    "Herdr lab brief missing the before tripwire"
-  assert_grep "verifies the identical fleet state after teardown" "$brief" \
-    "Herdr lab brief missing the after tripwire"
-  assert_no_grep "Herdr lifecycle declaration - NOT ENABLED" "$brief" \
-    "Herdr lab brief retained the unguarded declaration"
-  pass "fm-brief.sh: --herdr-lab emits the complete hard safety contract"
-}
-
-test_herdr_lab_contract_quotes_foreign_firstmate_path() {
-  local home id brief foreign_root helper
-  home="$TMP_ROOT/herdr-lab-foreign-home"
-  foreign_root="$TMP_ROOT/firstmate helper's root"
-  mkdir -p "$home/data"
-  id="brief-herdr-lab-foreign-d2"
-  helper=$(printf '%s' "$foreign_root/bin/fm-herdr-lab.sh" | sed "s/'/'\\\\''/g")
-  helper="'$helper'"
-  FM_HOME="$home" FM_ROOT_OVERRIDE="$foreign_root" "$ROOT/bin/fm-brief.sh" "$id" foreign --scout --herdr-lab >/dev/null 2>&1
-  brief="$home/data/$id/brief.md"
-  assert_grep "HERDR_LAB_HELPER=$helper" "$brief" \
-    "Herdr lab brief must shell-quote an absolute Firstmate helper path"
-  assert_no_grep "bin/fm-herdr-lab.sh name $id" "$brief" \
-    "Herdr lab brief must not invoke a worktree-relative helper"
-  pass "fm-brief.sh: --herdr-lab uses its quoted Firstmate-owned helper path"
-}
-
-test_herdr_lab_omission_is_loud_for_ship_and_scout() {
-  local home id brief
-  home="$TMP_ROOT/herdr-gate-home"
-  mkdir -p "$home/data"
-  for kind in ship scout; do
-    id="brief-herdr-gate-$kind"
-    if [ "$kind" = scout ]; then
-      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --scout >/dev/null 2>&1
-    else
-      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes >/dev/null 2>&1
-    fi
-    brief="$home/data/$id/brief.md"
-    assert_grep "# Herdr lifecycle declaration - NOT ENABLED" "$brief" \
-      "$kind brief silently omitted the Herdr declaration"
-    assert_grep "regenerate the brief with \`--herdr-lab\` before dispatch" "$brief" \
-      "$kind brief missing the fail-visible regeneration instruction"
-  done
-  pass "fm-brief.sh: ship and scout scaffolds make omitted Herdr intent fail-visible"
-}
-
 # Regression (issue #2575): AGENTS.md section 11 and this script's own help tell
-# firstmate to fill `{TASK}` and `{FIRSTMATE_SPEC}`. The unguarded Herdr gate used
-# to quote `{TASK}` in its own prose, so that documented global replace spliced
-# the whole task body into the middle of the gate's sentence - silently
-# destroying the one contract that exists precisely because the scaffold cannot
-# see the task text. Each placeholder must exist only at its genuine fill site,
-# so the documented fill leaves the gate intact and each body appears once.
-test_documented_global_replace_leaves_the_herdr_gate_intact() {
+# firstmate to fill `{TASK}` and `{FIRSTMATE_SPEC}` with a global replace. Each
+# placeholder must exist only at its genuine fill site, so the documented fill
+# puts each body in the brief exactly once.
+test_documented_global_replace_fills_each_site_once() {
   local home id brief kind count content filled body spec
   home="$TMP_ROOT/task-fill-site-home"
   mkdir -p "$home/data"
-  body='Restart the herdr session, then profile it'
+  body='Restart the deck session, then profile it'
   spec='Use the isolated lab helper for every lifecycle call'
   for kind in ship scout; do
     id="brief-fill-site-$kind"
@@ -613,10 +542,8 @@ test_documented_global_replace_leaves_the_herdr_gate_intact() {
     count=$(printf '%s\n' "$filled" | grep -c -F "$spec")
     [ "$count" = 1 ] \
       || fail "$kind brief: the {FIRSTMATE_SPEC} replace duplicated the spec body $count times"
-    printf '%s\n' "$filled" | grep -qF 'this scaffold cannot inspect the task text' \
-      || fail "$kind brief: the Herdr safety gate did not survive the documented fill"
   done
-  pass "fm-brief.sh: the documented {TASK} and {FIRSTMATE_SPEC} fills cannot corrupt the Herdr safety gate"
+  pass "fm-brief.sh: the documented {TASK} and {FIRSTMATE_SPEC} fills place each body exactly once"
 }
 
 test_secondmate_no_projects_charter() {
@@ -815,22 +742,6 @@ test_secondmate_directory_paths_are_absolute_and_output_is_stable() {
     "unresolved relative FM_DATA_OVERRIDE did not fail loudly"
 
   pass "fm-brief.sh: relative directory inputs ignore CDPATH, render stable absolute charter paths, or fail loudly"
-}
-
-test_herdr_lab_contract_applies_to_scouts_but_not_secondmates() {
-  local home brief status=0
-  home="$TMP_ROOT/herdr-kind-home"
-  mkdir -p "$home/data"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" herdr-scout firstmate --scout --herdr-lab >/dev/null 2>&1
-  brief="$home/data/herdr-scout/brief.md"
-  assert_grep "# Herdr isolation - HARD SAFETY CONTRACT" "$brief" \
-    "scout --herdr-lab brief missing the contract"
-
-  FM_HOME="$home" FM_SECONDMATE_CHARTER=ops "$ROOT/bin/fm-brief.sh" herdr-secondmate --secondmate firstmate --herdr-lab >/dev/null 2>&1 || status=$?
-  expect_code 1 "$status" "secondmate --herdr-lab must be rejected"
-  assert_absent "$home/data/herdr-secondmate/brief.md" \
-    "rejected secondmate --herdr-lab still wrote a brief"
-  pass "fm-brief.sh: Herdr lab contract covers scouts and rejects secondmate misuse"
 }
 
 test_pause_verb_override_renders_all_brief_scaffolds() {
@@ -1042,11 +953,7 @@ test_no_mistakes_dod_wording
 test_no_mistakes_done_is_green_pr_and_worker_starts_pipeline
 test_ask_user_escalation_format
 test_ship_project_memory_wording
-test_herdr_lab_contract_is_explicit_and_complete
-test_herdr_lab_contract_quotes_foreign_firstmate_path
-test_herdr_lab_omission_is_loud_for_ship_and_scout
-test_documented_global_replace_leaves_the_herdr_gate_intact
-test_herdr_lab_contract_applies_to_scouts_but_not_secondmates
+test_documented_global_replace_fills_each_site_once
 test_secondmate_no_projects_charter
 test_secondmate_marked_request_reporting_contract
 test_secondmate_directory_paths_are_absolute_and_output_is_stable

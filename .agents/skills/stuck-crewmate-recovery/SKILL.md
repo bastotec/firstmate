@@ -15,7 +15,7 @@ metadata:
 Use this playbook when the session-start digest reports an ordinary direct report's endpoint dead or its metadata has no window, or when a direct report is stale, looping, repeatedly confused, asking a question its brief already answers, unresponsive, or when a steer failed to land.
 
 Interrupt, stop, relaunch, and recover a worker through `bin/fm-control.sh <task-id> interrupt|exit|relaunch|recover-missing`, which resolves the recorded runtime itself, verifies each action, and never tears down or discards anything ([`docs/agent-control.md`](../../../docs/agent-control.md)).
-For any secondmate recovery, load `secondmate-provisioning`; [remote lifecycle routing](../../../docs/remote-secondmates.md#lifecycle-control-and-backend-migration) owns the primary control plane's supported remote verbs.
+For any secondmate recovery, load `secondmate-provisioning`; [remote lifecycle routing](../../../docs/remote-secondmates.md#lifecycle-control) owns the primary control plane's supported remote verbs.
 Load `harness-adapters` before a resume command or a harness-specific skill invocation, and whenever the adapter's own quirks matter.
 The target window's harness is recorded as `harness=` in `state/<id>.meta`.
 

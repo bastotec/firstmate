@@ -1,20 +1,17 @@
 #!/usr/bin/env bash
-# Shared owner of the watcher's native push-transition escalation.
+# Shared owner of the watcher's actionable-wake exit: the triage log, the
+# delivery log every reported wake is published to, the one `wake` exit path,
+# and the heartbeat backstop's classified-through markers.
 #
-# The watcher and event-wait smoke tests source this library instead of loading
-# the whole watcher to obtain handle_push_transition. Its source list is limited
-# to the four production boundaries the transition handler actually calls.
+# Tests source this library instead of loading the whole watcher. Its source
+# list is limited to the production boundaries these functions call.
 
-FM_PUSH_TRANSITION_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FM_WATCH_WAKE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=bin/fm-wake-lib.sh
-. "$FM_PUSH_TRANSITION_LIB_DIR/fm-wake-lib.sh"
+. "$FM_WATCH_WAKE_LIB_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-classify-lib.sh
-. "$FM_PUSH_TRANSITION_LIB_DIR/fm-classify-lib.sh"
-# shellcheck source=bin/fm-backend.sh
-. "$FM_PUSH_TRANSITION_LIB_DIR/fm-backend.sh"
-# shellcheck source=bin/fm-transition-lib.sh
-. "$FM_PUSH_TRANSITION_LIB_DIR/fm-transition-lib.sh"
+. "$FM_WATCH_WAKE_LIB_DIR/fm-classify-lib.sh"
 
 TRIAGE_LOG="$STATE/.watch-triage.log"
 TRIAGE_LOG_MAX_BYTES=${FM_WATCH_TRIAGE_LOG_MAX_BYTES:-262144}
@@ -136,33 +133,4 @@ mark_surface_reported() {  # <status-file> <reported-signature>
   local f=$1 task
   task=$(basename "$f"); task="${task%.status}"
   status_presentation_marker_report "$(_hb_surfaced_path "$task")" "$2"
-}
-
-# Act on a fresh actionable transition from a push-capable backend.
-handle_push_transition() {  # <backend> <session> <record>
-  local backend=$1 session=$2 record=$3 pane_id to window task reason span_record rest surface_end='' surface_ident=''
-  pane_id=$(fm_transition_pane_id "$record")
-  to=$(fm_transition_to_status "$record")
-  [ -n "$pane_id" ] || { sleep 1; return; }
-  window="$session:$pane_id"
-  task=$(window_to_task "$window" "$STATE")
-  # A declared wait already names the human this transition would report: an
-  # external dependency, or the captain a verified hold transferred the work to.
-  # Either way the wait is durably recorded, so absorb the immediate escalation
-  # and leave the bounded re-surface to the watcher's own pause cadence.
-  if status_is_paused_or_captain_held "$(last_status_line "$STATE/$task.status")"; then
-    triage_log "absorbed push $to (declared wait, awaiting external or captain): $window"
-    fm_backend_commit_transition "$backend" "$STATE" "$session" "$record" || exit 1
-    return
-  fi
-  span_record=$(status_span_first_actionable_record "$STATE/$task.status" \
-    "$(hb_surfaced_offset "$task")")
-  case $? in
-    0|1) surface_end=${span_record%%$'\t'*}; rest=${span_record#*$'\t'}; surface_ident=${rest%%$'\t'*} ;;
-  esac
-  reason="stale: $window (herdr: agent $to - waiting on human, escalated immediately, not via wedge timer)"
-  fm_wake_append stale "$window" "$reason" || exit 1
-  fm_backend_commit_transition "$backend" "$STATE" "$session" "$record" || exit 1
-  mark_surfaced "$STATE/$task.status" "$surface_end" "$surface_ident"
-  wake "$reason"
 }

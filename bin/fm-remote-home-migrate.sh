@@ -9,7 +9,8 @@
 # No wildcard, batch, automatic local failover, secret grant, or cleanup verb.
 #
 # Before invocation the secondmate must persist its work and exit through
-# fm-control.sh. Only tmux/herdr can prove this postcondition. Any child meta,
+# fm-control.sh; only a stream endpoint that reads dead proves it (a missing
+# hub registry entry does not). Any child meta,
 # nested mate, active process source, away daemon, or live session refuses.
 # The local home is frozen before snapshotting and remains a non-running archive
 # even on rollback. Its treehouse lease, projects, and all unlanded work remain.
@@ -24,7 +25,7 @@
 # A private route is used to provision/verify before the primary route changes.
 # Registry replacement is atomic under its ordinary lock. Normal fm-spawn owns
 # launch, metadata and reply monitoring. A known failed launch rolls the route
-# back ONLY after the remote endpoint is proved dead/missing. All copies remain
+# back ONLY after the remote endpoint is proved dead. All copies remain
 # for reconciliation and the local archive stays stopped; rerunning then retries
 # the launch against the published home rather than re-sending records to it.
 # SSH255 or unreadable
@@ -145,9 +146,8 @@ else
   fm_backend_validate_task_endpoint "$META" "$ID" || die 'local endpoint metadata is not verifiable'
   [ "$(fm_meta_get "$META" kind)" = secondmate ] && [ "$(fm_meta_get "$META" home)" = "$SOURCE" ] \
     && [ -z "$(fm_meta_get "$META" remote_host)" ] || die 'local metadata binding differs'
-  case "$FM_BACKEND_VALIDATED_BACKEND" in tmux|herdr) ;; *) die 'source runtime cannot prove a stopped agent; migration refused' ;; esac
   CURRENT=$(fm_backend_agent_state "$FM_BACKEND_VALIDATED_BACKEND" "$FM_BACKEND_VALIDATED_TARGET")
-  case "$CURRENT" in dead|missing) ;; *) die "source agent is $CURRENT; persist records and use fm-control exit first" ;; esac
+  [ "$CURRENT" = dead ] || die "source agent is $CURRENT; persist records and use fm-control exit first"
   [ ! -e "$SOURCE/.fm-home-migration" ] && [ ! -L "$SOURCE/.fm-home-migration" ] || die 'source already frozen by another migration'
   umask 077
   mkdir "$JOURNAL"
@@ -242,7 +242,7 @@ LOCKS=()
 HARNESS=$(fm_meta_get "$JOURNAL/meta.before" harness)
 MODEL=$(fm_meta_get "$JOURNAL/meta.before" model)
 EFFORT=$(fm_meta_get "$JOURNAL/meta.before" effort)
-ARGS=("$ID" --secondmate --harness "$HARNESS" --backend herdr)
+ARGS=("$ID" --secondmate --harness "$HARNESS" --backend stream)
 [ -z "$MODEL" ] || ARGS+=(--model "$MODEL")
 [ -z "$EFFORT" ] || ARGS+=(--effort "$EFFORT")
 rc=0
@@ -260,7 +260,7 @@ if [ "$probe_rc" -eq 0 ] && [ "$CURRENT" = alive ] && [ "$rc" -eq 0 ]; then
 fi
 if [ "$probe_rc" -eq 0 ]; then
   case "$CURRENT" in
-    dead|missing)
+    dead)
       secondmate_registry_line_for_id "$REG" "$ID" && [ "$SECONDMATE_REGISTRY_LINE" = "$AFTER" ] || die 'route changed; rollback refused'
       publish_route "$BEFORE"
       [ ! -f "$META" ] || cp -p "$META" "$JOURNAL/meta.remote"

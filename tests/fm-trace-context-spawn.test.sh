@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # tests/fm-trace-context-spawn.test.sh - spawn-path integration regressions for
-# native W3C trace context using fake tmux panes and real isolated git worktrees.
+# native W3C trace context using fake stream endpoints and real isolated git worktrees.
 # See docs/verification/trace-context.md for the maintained coverage inventory.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-trace-context-lib.sh"
 
@@ -23,74 +23,40 @@ Verify the spawned process receives the expected trace context.
 EOF
 }
 
-# Fake tmux: answers the pane-path query and logs every literal `send-keys -l`
-# argument (the GOTMPDIR export, the TRACEPARENT export, and the launch command)
-# one per line, in send order, so ordering is observable.
+# The spawn lands on the suite's fake stream hub (tests/fixtures.sh), whose
+# endpoint logs every text it is typed (the GOTMPDIR export, the TRACEPARENT
+# export, and the launch command) one per line, in send order, so ordering is
+# observable. FM_FAKE_TRACEPARENT_SEND_FAIL makes the TRACEPARENT export fail to
+# deliver, and FM_FAKE_TRACE_METADATA_APPEND_FAIL makes the task's metadata
+# read-only the moment that export arrives.
 make_spawn_fakebin() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-set -u
-case "$*" in
-  *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
-esac
-case "${1:-}" in
-  display-message) printf 'firstmate\n'; exit 0 ;;
-  list-windows)
-    [ -z "${FM_FAKE_DUPLICATE_WINDOW:-}" ] || printf '%s\n' "$FM_FAKE_DUPLICATE_WINDOW"
-    exit 0
-    ;;
-  has-session|new-session|new-window|kill-window) exit 0 ;;
-  send-keys)
-    if [ "${FM_FAKE_TRACEPARENT_SEND_FAIL:-0}" = 1 ]; then
-      for a in "$@"; do
-        case "$a" in
-          "export TRACEPARENT="*) exit 1 ;;
-        esac
-      done
-    fi
-    if [ "${FM_FAKE_TRACEPARENT_SEND_UNSAFE:-0}" = 1 ]; then
-      for a in "$@"; do
-        case "$a" in
-          "export TRACEPARENT="*) exit 2 ;;
-        esac
-      done
-    fi
-    if [ "${FM_FAKE_TRACE_METADATA_APPEND_FAIL:-0}" = 1 ]; then
-      for a in "$@"; do
-        case "$a" in
-          "export TRACEPARENT="*)
-            chmod a-w "$FM_FAKE_META_PATH"
-            ;;
-        esac
-      done
-    fi
-    # Capture the text payload of both send forms: the literal launch
-    # (`send-keys -t <target> -l <text>`) and a text line
-    # (`send-keys -t <target> <text> Enter`). Skip the flags, the target, and
-    # the trailing key so only the payload is logged, one per line, in order.
-    if [ -n "${FM_FAKE_LAUNCH_LOG:-}" ]; then
-      shift
-      skip_next=
-      for a in "$@"; do
-        if [ -n "$skip_next" ]; then skip_next=; continue; fi
-        case "$a" in
-          -t) skip_next=1; continue ;;
-          -l) continue ;;
-          Enter|C-m) continue ;;
-          *) printf '%s\n' "$a" >> "$FM_FAKE_LAUNCH_LOG" ;;
-        esac
-      done
-    fi
-    exit 0
-    ;;
-esac
+  fm_fake_exit0 "$fakebin" treehouse deck
+  cat > "$fakebin/meta-lock-hook" <<'SH'
+#!/bin/sh
+case "$1" in "export TRACEPARENT="*) chmod a-w "$FM_FAKE_META_PATH" ;; esac
 exit 0
 SH
-  chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" treehouse deck
+  chmod +x "$fakebin/meta-lock-hook"
+  fm_test_fake_stream_ensure >/dev/null || return 1
   printf '%s\n' "$fakebin"
+}
+
+# Endpoint knobs for the next spawn, from the FM_FAKE_* switches above. The
+# hook reads FM_FAKE_META_PATH from the stub's environment, so it is baked in.
+apply_fake_defaults() {  # <fakebin> <meta-path>
+  local hook
+  if [ "${FM_FAKE_TRACEPARENT_SEND_FAIL:-0}" = 1 ]; then
+    fm_test_fake_stream_defaults '{"fail_text": "export TRACEPARENT="}'
+  elif [ "${FM_FAKE_TRACE_METADATA_APPEND_FAIL:-0}" = 1 ]; then
+    hook="$1/meta-lock-hook.$$"
+    printf '#!/bin/sh\nFM_FAKE_META_PATH=%s exec %s "$@"\n' "'$2'" "'$1/meta-lock-hook'" > "$hook"
+    chmod +x "$hook"
+    fm_test_fake_stream_defaults "$(jq -nc --arg h "$hook" '{on_text: $h}')"
+  else
+    fm_test_fake_stream_defaults '{}'
+  fi
 }
 
 make_spawn_case() {
@@ -123,15 +89,12 @@ run_spawn() {
   # Every spawn runs against a throwaway HOME so nothing a launch writes under
   # the user's home can reach the developer's real one.
   mkdir -p "$home/user-home"
+  apply_fake_defaults "$fakebin" "$home/state/$1.meta"
   env -u FM_TRACE_CONTEXT \
     FM_ROOT_OVERRIDE='' FM_HOME="$home" HOME="$home/user-home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
-    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
-    FM_FAKE_TRACEPARENT_SEND_FAIL="${FM_FAKE_TRACEPARENT_SEND_FAIL:-0}" \
-    FM_FAKE_TRACEPARENT_SEND_UNSAFE="${FM_FAKE_TRACEPARENT_SEND_UNSAFE:-0}" \
-    FM_FAKE_TRACE_METADATA_APPEND_FAIL="${FM_FAKE_TRACE_METADATA_APPEND_FAIL:-0}" \
-    FM_FAKE_META_PATH="$home/state/$1.meta" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" \
     FM_FAKE_LAUNCH_LOG="$launchlog" PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" --mode no-mistakes --yolo off 2>&1
 }
@@ -144,11 +107,12 @@ run_spawn_tc() {
   # Every spawn runs against a throwaway HOME so nothing a launch writes under
   # the user's home can reach the developer's real one.
   mkdir -p "$home/user-home"
+  fm_test_fake_stream_defaults '{}'
   env FM_TRACE_CONTEXT="$tc" \
     FM_ROOT_OVERRIDE='' FM_HOME="$home" HOME="$home/user-home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
-    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" TMUX="fake,1,0" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" \
     FM_FAKE_LAUNCH_LOG="$launchlog" PATH="$fakebin:$PATH" \
     "$SPAWN" "$@" --mode no-mistakes --yolo off 2>&1
 }
@@ -219,7 +183,7 @@ run_two_level() {
     FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$prim" HOME="$base/user-home" \
     FM_STATE_OVERRIDE="$prim/state" FM_DATA_OVERRIDE="$prim/data" \
     FM_PROJECTS_OVERRIDE="$prim/projects" FM_CONFIG_OVERRIDE="$prim/config" \
-    FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" \
+    FM_SPAWN_NO_GUARD=1 \
     FM_FAKE_LAUNCH_LOG="$smlog" PATH="$smfake:$PATH" \
     "$SPAWN" "$sm_id" "$sm" --secondmate >/dev/null 2>&1 || true
 
@@ -246,7 +210,7 @@ run_two_level() {
     FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$sm" HOME="$sm/user-home" \
     FM_STATE_OVERRIDE="$sm/state" FM_DATA_OVERRIDE="$sm/data" \
     FM_PROJECTS_OVERRIDE="$sm/projects" FM_CONFIG_OVERRIDE="$sm/config" \
-    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wwt" TMUX="fake,1,0" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wwt" \
     FM_FAKE_LAUNCH_LOG="$wlog" PATH="$wfake:$PATH" \
     "$SPAWN" "$worker_id" "$wproj" --mode no-mistakes --yolo off >/dev/null 2>&1 || true
 
@@ -336,24 +300,6 @@ test_failed_delivery_omits_metadata_and_still_launches() {
   pass "failed TRACEPARENT delivery omits metadata while the source task still launches"
 }
 
-test_unsafe_delivery_refuses_to_append_launch() {
-  local rec out status
-  rec=$(make_spawn_case tc-send-unsafe)
-  read_case_record "$rec"
-  : > "$HOME_DIR/config/trace-context"
-  start_trace_session "$HOME_DIR"
-
-  out=$(FM_FAKE_TRACEPARENT_SEND_UNSAFE=1 \
-    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
-  status=$?
-  [ "$status" -ne 0 ] || fail "uncleared traceparent input must stop spawn"
-  assert_contains "$out" "refusing to append the launch command" \
-    "unsafe traceparent delivery should report why spawn stopped"
-  ! grep -q 'exec -a fm-deck-worker' "$LAUNCH_LOG" \
-    || fail "unsafe traceparent delivery must not append the launch command"
-  pass "uncleared TRACEPARENT input stops before the launch command is appended"
-}
-
 test_failed_metadata_append_unsets_carrier_and_still_launches() {
   local rec out status meta
   rec=$(make_spawn_case tc-metadata-failure)
@@ -394,6 +340,8 @@ test_duplicate_secondmate_spawn_does_not_converge_trace_context() {
   printf '%s\n' "$id" > "$sm/.fm-secondmate-home"
   printf 'charter\n' > "$sm/data/charter.md"
   fake=$(make_spawn_fakebin "$base/fake")
+  # A live endpoint already carries the secondmate's label.
+  fm_test_stream_task "$base/other-home" "$id" >/dev/null || fail "could not register the existing endpoint"
 
   # Every spawn runs against a throwaway HOME so nothing a launch writes under
   # the user's home can reach the developer's real one.
@@ -402,13 +350,13 @@ test_duplicate_secondmate_spawn_does_not_converge_trace_context() {
     FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$prim" HOME="$base/user-home" \
     FM_STATE_OVERRIDE="$prim/state" FM_DATA_OVERRIDE="$prim/data" \
     FM_PROJECTS_OVERRIDE="$prim/projects" FM_CONFIG_OVERRIDE="$prim/config" \
-    FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" \
-    FM_FAKE_DUPLICATE_WINDOW="fm-$id" FM_FAKE_LAUNCH_LOG="$log" \
+    FM_SPAWN_NO_GUARD=1 \
+    FM_FAKE_LAUNCH_LOG="$log" \
     PATH="$fake:$PATH" "$SPAWN" "$id" "$sm" --secondmate 2>&1)
   status=$?
 
   [ "$status" -ne 0 ] || fail "duplicate secondmate spawn should be refused"
-  assert_contains "$out" "already exists" "duplicate secondmate spawn should report the existing endpoint"
+  assert_contains "$out" "fm-$id" "duplicate secondmate spawn should name the existing endpoint's label"
   [ ! -e "$sm/config/trace-context" ] \
     || fail "duplicate preflight must not converge trace-context into the secondmate home"
   pass "duplicate secondmate preflight leaves trace-context unchanged"
@@ -431,10 +379,12 @@ test_relaunch_reuses_recorded_carrier() {
 
   # Relaunch the same task: the recorded carrier must be reused verbatim for both
   # the meta and the injected export, so an observer keeps one identity across
-  # restarts.
+  # restarts. The first endpoint has closed (its agent exited), which frees its
+  # label for the new one.
+  fm_test_close_task_endpoint "$meta"
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "relaunch spawn should succeed"
+  expect_code 0 "$status" "relaunch spawn should succeed: $out"
   assert_contains "$out" "spawned $CASE_ID" "relaunch spawn should report success"
   second=$(meta_traceparent "$meta")
   injected=$(injected_traceparent "$LAUNCH_LOG")
@@ -566,6 +516,8 @@ test_two_routed_tasks_through_one_secondmate_root_distinct_traces() {
 
   # Same environment, same task: a relaunch must reuse task A's recorded
   # carrier verbatim, so the per-task boundary never costs recovery identity.
+  # Task A's first endpoint has closed, freeing its label.
+  fm_test_close_task_endpoint "$sm/state/$id_a.meta"
   out=$(TRACEPARENT="$sm_tp" run_spawn "$sm" "$wt_a" "$fakebin" "$log_a" "$id_a" "$proj_a")
   status=$?
   expect_code 0 "$status" "routed task A relaunch should succeed"
@@ -600,7 +552,6 @@ test_secondmate_carrier_and_snapshot_share_one_decision() {
 test_enabled_records_and_injects_identical_carrier_before_launch
 test_disabled_writes_and_injects_neither
 test_failed_delivery_omits_metadata_and_still_launches
-test_unsafe_delivery_refuses_to_append_launch
 test_failed_metadata_append_unsets_carrier_and_still_launches
 test_duplicate_secondmate_spawn_does_not_converge_trace_context
 test_relaunch_reuses_recorded_carrier

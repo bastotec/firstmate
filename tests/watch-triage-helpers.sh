@@ -161,9 +161,14 @@ size_of() { LC_ALL=C wc -c < "$1" | tr -d '[:space:]'; }
 # only writer of a hold and tasks-axi the only reader, so a hand-written row
 # would pin this test's idea of a hold instead of the one the watcher consults.
 
+# The stream target of a hold fixture's held-merge task.
+hold_target() {  # <state>
+  fm_test_stream_target_of "$1" held-merge
+}
+
 # The window key every hold fixture uses, derived the way fm-watch.sh derives it.
-hold_key() {
-  printf '%s' test:fm-held-merge | tr ':/.' '___'
+hold_key() {  # <state>
+  hold_target "$1" | tr ':/.' '___'
 }
 
 # bin/fm-captain-hold.sh against a hold fixture's own home.
@@ -185,8 +190,8 @@ make_hold_home() {  # <name> <status-line> <hold|nohold>
   if [ "$hold" = hold ]; then
     run_hold "$dir" hold held-merge --reason 'awaiting the captain on the merge' || return 1
   fi
-  printf 'window=test:fm-held-merge\nkind=ship\nharness=grok\nbackend=tmux\n' \
-    > "$state/held-merge.meta"
+  printf 'window=%s\nkind=ship\nharness=grok\nbackend=stream\n' \
+    "$(stream_window "$state" held-merge)" > "$state/held-merge.meta"
   printf '%s\n' "$line" > "$state/held-merge.status"
   printf '%s' "$(seen_sig "$state/held-merge.status")" > "$state/.seen-held-merge_status"
   printf '%s\n' "$dir"
@@ -200,9 +205,11 @@ make_hold_home() {  # <name> <status-line> <hold|nohold>
 # leaving the caller unable to wait on or reap its own watcher.
 HOLD_WATCH_PID=
 hold_watch_launch() {  # <dir> <out> <capture>
-  local dir=$1 out=$2 capture=$3
-  PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW=test:fm-held-merge \
-    FM_FAKE_TMUX_CAPTURE="$capture" FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
+  local dir=$1 out=$2 capture=$3 target
+  target=$(hold_target "$dir/state")
+  stream_capture "$target" "$capture"
+  stream_foreground "$target" zsh
+  PATH="$dir/fakebin:$PATH" \
     FM_FAKE_CREW_STATE='state: stopped · source: pane · bare shell' \
     FM_WATCH_HANDLING_SUCCESSOR=1 \
     FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" FM_CONFIG_OVERRIDE="$dir/config" \
@@ -235,6 +242,6 @@ hold_watch_churn() {  # <dir> <out> <capture> <label> <count>
 }
 
 hold_stale_wakes() {  # <state>
-  awk -F '\t' '$3 == "stale" && $4 == "test:fm-held-merge" { n++ } END { print n + 0 }' \
+  awk -F '\t' -v t="$(hold_target "$1")" '$3 == "stale" && $4 == t { n++ } END { print n + 0 }' \
     "$1/.wake-queue" 2>/dev/null || echo 0
 }

@@ -1,16 +1,12 @@
 #!/usr/bin/env bash
 # Backend-neutral harness-process identity.
-# Sourced by bin/backends/tmux.sh and bin/backends/herdr.sh. This file is
-# sourced by scripts and has no side effects on source.
+# Sourced by bin/backends/stream.sh. This file is sourced by scripts and has no
+# side effects on source.
 #
-# Why one owner: every runtime backend that proves an agent is alive does it by
-# attributing operating-system processes - the pane's foreground process group
-# on tmux, Herdr's `pane process-info` view plus the pane shell's descendants
-# on Herdr - and the two must agree on what a given process name means, or a
-# harness one backend recognizes silently reads as a dead pane on the other.
-# The classifier moved here verbatim from the tmux adapter, where it was born;
-# docs/tmux-backend.md "Agent liveness probe" owns the empirical basis for the
-# names below, and tests/fm-tmux-agent-liveness.test.sh keeps them honest.
+# Why one owner: a backend proves an agent is alive by attributing
+# operating-system processes (the stream agent reports the pseudoterminal's
+# foreground process group), and every reader must agree on what a given
+# process name means.
 
 # shellcheck source=bin/fm-session-lock-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-session-lock-lib.sh"
@@ -42,11 +38,11 @@ fm_agent_process_classify_name() {  # <path> [argv0] -> agent|shell|other
     *)
       if fm_harness_path_name "$path" >/dev/null || fm_harness_path_name "$argv0" >/dev/null; then
         printf 'agent'
-      # cursor-agent runs as a bundled node script, so tmux reports the pane
-      # command as a bare `node` that no name pattern above can own, and its
+      # cursor-agent runs as a bundled node script, so its foreground process
+      # name is a bare `node` that no name pattern above can own, and its
       # other installed name is the far-too-generic `agent` (verified live on
-      # cursor-agent 2026.08.11-e8db854: #{pane_current_command} is `node` while
-      # `ps -o comm=` carries the cursor-agent install path). Identity therefore
+      # cursor-agent 2026.08.11-e8db854: the terminal's current command is
+      # `node` while `ps -o comm=` carries the cursor-agent install path). Identity therefore
       # comes from the narrowed structural rule in bin/fm-cursor-lib.sh, which
       # demands Cursor's own name or install tree in the path or argv[0]. An
       # unrelated `node` or `agent` matches nothing here and stays `other`,
@@ -67,7 +63,7 @@ fm_agent_process_classify_name() {  # <path> [argv0] -> agent|shell|other
 # that launches a duplicate agent onto a live worktree; `shell` needs every
 # readable surface to agree the process is a shell; anything else is `other`.
 #
-#   <name>   the kernel process name (ps comm, or Herdr's process-info .name):
+#   <name>   the kernel process name (ps comm):
 #            on Linux the exec name, on macOS argv[0] truncated to 16 bytes.
 #   <argv0>  argv[0] as the process reports it - a bare name or an install
 #            path, whichever the launcher used (empty when unknown).
@@ -116,9 +112,7 @@ fm_agent_process_topmost() {  # pids on stdin -> pids on stdout
 # brief quoting a flag - can never satisfy the match; elsewhere ps's flattened
 # line is split on whitespace, which keeps every flag whole but cannot
 # reassemble an argument that itself holds a space, such as a path under a
-# spaced home. A backend that reads the boundaries itself matches those
-# arguments from its own report instead (bin/backends/herdr.sh's
-# fm_backend_herdr_deck_pid_is_driver).
+# spaced home.
 fm_agent_process_has_args() {  # <pid> <arg>...
   local pid=$1 proc_root flat
   shift

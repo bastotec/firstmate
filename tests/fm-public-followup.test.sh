@@ -10,11 +10,14 @@
 # Everything here is hermetic: the relay is a fakebin `curl`, so no port, no
 # server, and no public post. tasks-axi and jq are the real tools, because
 # tasks-axi owns the obligation state machine and stubbing it would test nothing.
+# fm_test_stream_task prints a task record identity one field per word,
+# so its unquoted expansion in fm_write_meta argument lists is deliberate.
+# shellcheck disable=SC2046
 set -u
 
-# shellcheck source=tests/lib.sh
+# shellcheck source=tests/fixtures.sh
 # shellcheck disable=SC1091
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$ROOT/bin/fm-timeout-lib.sh"
 
@@ -70,8 +73,14 @@ command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; exit
 make_fake_curl() {  # <home>
   local fakebin
   fakebin=$(fm_fakebin "$1")
+  # The fake stream hub on loopback is the session host, not a relay: those
+  # calls go to the real curl, named here before this fakebin shadows it.
+  printf '%s\n' "$(command -v curl)" > "$fakebin/.real-curl"
   cat > "$fakebin/curl" <<'SH'
 #!/usr/bin/env bash
+case " $* " in
+  *"${FM_TEST_STREAM_URL:-unset}/"*) exec "$(cat "$(dirname "$0")/.real-curl")" "$@" ;;
+esac
 ofile="" url="" data=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -720,7 +729,7 @@ test_secondmate_teardown_requires_parent_binding() {
   seed_commitment "$parent" pf-teardown req-teardown x secondmate:mate work-child
   fm_write_meta "$parent/state/mate.meta" "kind=secondmate" "home=$child"
   fm_write_meta "$child/state/work-child.meta" \
-    "window=firstmate:fm-work-child" "endpoint_task_id=work-child" \
+    $(fm_test_stream_task "$child/state" "work-child") \
     "worktree=$child" "project=$child" "kind=ship" "mode=local-only" "spawn_gen=public-followup-fixture"
 
   PATH="$child/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$child" \
@@ -744,7 +753,7 @@ test_secondmate_teardown_requires_parent_binding() {
   seed_commitment "$parent" pf-teardown-valid req-teardown-valid x secondmate:mate work-child
   fm_write_meta "$parent/state/mate.meta" "kind=secondmate" "home=$child"
   fm_write_meta "$child/state/work-child.meta" \
-    "window=firstmate:fm-work-child" "endpoint_task_id=work-child" \
+    $(fm_test_stream_task "$child/state" "work-child") \
     "worktree=$child" "project=$child" "kind=ship" "mode=local-only" "spawn_gen=public-followup-fixture"
   assert_absent "$child/.fm-secondmate-parent" \
     "the legacy env-only binding case must not gain a durable parent record"
@@ -853,7 +862,7 @@ test_secondmate_teardown_resolves_parent_from_durable_record_when_env_lost() {
   seed_commitment "$parent" pf-durable req-durable x secondmate:mate work-child
   fm_write_meta "$parent/state/mate.meta" "kind=secondmate" "home=$child"
   fm_write_meta "$child/state/work-child.meta" \
-    "window=firstmate:fm-work-child" "endpoint_task_id=work-child" \
+    $(fm_test_stream_task "$child/state" "work-child") \
     "worktree=$child" "project=$child" "kind=ship" "mode=local-only" "spawn_gen=public-followup-fixture"
 
   # No FM_PUBLIC_FOLLOWUP_PRIMARY_HOME at all here: a restart of the secondmate
@@ -886,7 +895,7 @@ test_secondmate_teardown_durable_record_missing_parent_registration_still_refuse
   fm_fake_exit0 "$child/fakebin" tmux treehouse no-mistakes gh gh-axi
   assert_local_secondmate_parent_record "$child" "$parent_resolved"
   fm_write_meta "$child/state/work-child.meta" \
-    "window=firstmate:fm-work-child" "endpoint_task_id=work-child" \
+    $(fm_test_stream_task "$child/state" "work-child") \
     "worktree=$child" "project=$child" "kind=ship" "mode=local-only" "spawn_gen=public-followup-fixture"
   # No parent/state/mate.meta at all: the parent never recorded this secondmate's
   # own agent, so its side of the binding is genuinely missing. A durable LOCAL
@@ -923,7 +932,7 @@ test_secondmate_teardown_durable_record_with_unknown_field_succeeds() {
   fm_git_init_commit "$child/projects/worktree"
   printf 'manual\n' > "$child/config/backlog-backend"
   fm_write_meta "$child/state/work-clean.meta" \
-    "window=firstmate:fm-work-clean" "endpoint_task_id=work-clean" \
+    $(fm_test_stream_task "$child/state" "work-clean") \
     "worktree=$child/projects/worktree" "project=$child/projects/worktree" \
     "kind=ship" "mode=local-only" "spawn_gen=public-followup-fixture"
 
@@ -955,7 +964,7 @@ test_secondmate_teardown_rejects_conflicting_live_and_durable_parent_bindings() 
   fm_git_init_commit "$child/projects/worktree"
   printf 'manual\n' > "$child/config/backlog-backend"
   fm_write_meta "$child/state/work-conflict.meta" \
-    "window=firstmate:fm-work-conflict" "endpoint_task_id=work-conflict" \
+    $(fm_test_stream_task "$child/state" "work-conflict") \
     "worktree=$child/projects/worktree" "project=$child/projects/worktree" \
     "kind=ship" "mode=local-only" "spawn_gen=public-followup-fixture"
 
@@ -983,7 +992,7 @@ test_secondmate_teardown_rejects_unsafe_durable_parent_records() {
     make_fake_curl "$child" >/dev/null
     fm_fake_exit0 "$child/fakebin" tmux treehouse no-mistakes gh gh-axi
     fm_write_meta "$child/state/work-child.meta" \
-      "window=firstmate:fm-work-child" "endpoint_task_id=work-child" \
+      $(fm_test_stream_task "$child/state" "work-child") \
       "worktree=$child" "project=$child" "kind=ship" "mode=local-only" "spawn_gen=public-followup-fixture"
     parent_record="$child/.fm-secondmate-parent"
     case "$case_name" in
@@ -1049,7 +1058,7 @@ test_secondmate_teardown_rejects_nul_bearing_durable_parent_record() {
   fm_git_init_commit "$child/projects/worktree"
   printf 'manual\n' > "$child/config/backlog-backend"
   fm_write_meta "$child/state/work-child.meta" \
-    "window=firstmate:fm-work-child" "endpoint_task_id=work-child" \
+    $(fm_test_stream_task "$child/state" "work-child") \
     "worktree=$child/projects/worktree" "project=$child/projects/worktree" \
     "kind=ship" "mode=local-only" "spawn_gen=public-followup-fixture"
   pre=${parent_resolved%??????}
@@ -1087,7 +1096,7 @@ exit 99
 SH
   chmod +x "$home/fakebin/tasks-axi"
   fm_write_meta "$home/state/work-disabled.meta" \
-    "window=firstmate:fm-work-disabled" "endpoint_task_id=work-disabled" \
+    $(fm_test_stream_task "$home/state" "work-disabled") \
     "worktree=$home/projects/worktree" "project=$home/projects/worktree" \
     "kind=ship" "mode=local-only" "spawn_gen=public-followup-fixture"
 
@@ -1123,7 +1132,7 @@ exit 99
 SH
   chmod +x "$child/fakebin/tasks-axi"
   fm_write_meta "$child/state/work-disabled.meta" \
-    "window=firstmate:fm-work-disabled" "endpoint_task_id=work-disabled" \
+    $(fm_test_stream_task "$child/state" "work-disabled") \
     "worktree=$child/projects/worktree" "project=$child/projects/worktree" \
     "kind=ship" "mode=local-only" "spawn_gen=public-followup-fixture"
 
@@ -1152,7 +1161,7 @@ test_secondmate_parent_binding_matches_literal_id() {
   seed_commitment "$parent" pf-teardown-literal req-teardown-literal x secondmate:mate.id work-literal
   fm_write_meta "$parent/state/mate.id.meta" "kind=secondmate" "home=$child"
   fm_write_meta "$child/state/work-literal.meta" \
-    "window=firstmate:fm-work-literal" "endpoint_task_id=work-literal" \
+    $(fm_test_stream_task "$child/state" "work-literal") \
     "worktree=$child" "project=$child" "kind=ship" "mode=local-only" "spawn_gen=public-followup-fixture"
 
   PATH="$child/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$child" \
@@ -1243,7 +1252,7 @@ test_cleanup_refuses_while_a_public_reply_is_owed() {
   tasks_in "$home" start ship-task >/dev/null \
     || fail "could not mark the guarded ship In flight"
   fm_write_meta "$home/state/ship-task.meta" \
-    "window=firstmate:fm-ship-task" \
+    $(fm_test_stream_task "$home/state" "ship-task") \
     "worktree=$home/projects/gone" \
     "project=$home/projects/sample" \
     "harness=codex" \
@@ -1493,7 +1502,7 @@ test_dropped_baton_now_surfaces_open_loop() {
     "delivery must retain the registration"
 
   fm_write_meta "$child/state/pi-rearm-loop-fix-r1.meta" \
-    "window=firstmate:fm-pi-rearm-loop-fix-r1" "endpoint_task_id=pi-rearm-loop-fix-r1" \
+    $(fm_test_stream_task "$child/state" "pi-rearm-loop-fix-r1") \
     "worktree=$child" "project=$child" "kind=ship" "mode=local-only" "spawn_gen=public-followup-fixture"
 
   PATH="$parent/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$parent" \
@@ -1529,7 +1538,7 @@ test_control_registered_followon_is_guarded() {
     secondmate:mate pi-rearm-loop-fix-r1
   fm_write_meta "$parent/state/mate.meta" "kind=secondmate" "home=$child"
   fm_write_meta "$child/state/pi-rearm-loop-fix-r1.meta" \
-    "window=firstmate:fm-pi-rearm-loop-fix-r1" "endpoint_task_id=pi-rearm-loop-fix-r1" \
+    $(fm_test_stream_task "$child/state" "pi-rearm-loop-fix-r1") \
     "worktree=$child" "project=$child" "kind=ship" "mode=local-only" "spawn_gen=public-followup-fixture"
   PATH="$child/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$child" \
     FM_STATE_OVERRIDE="$child/state" FM_DATA_OVERRIDE="$child/data" \
@@ -2115,7 +2124,7 @@ test_retention_creates_no_false_teardown_refusal() {
   tasks_in "$home" start ship-retain >/dev/null \
     || fail "could not mark the retained-registration ship In flight"
   fm_write_meta "$home/state/ship-retain.meta" \
-    "window=firstmate:fm-ship-retain" \
+    $(fm_test_stream_task "$home/state" "ship-retain") \
     "worktree=$home/projects/gone" \
     "project=$home/projects/sample" \
     "harness=codex" \
@@ -2275,7 +2284,7 @@ test_x_request_teardown_warns_when_final_unposted() {
   tasks_in "$home" start linked-task >/dev/null \
     || fail "could not mark the legacy-link ship In flight"
   fm_write_meta "$home/state/linked-task.meta" \
-    "window=firstmate:fm-linked-task" \
+    $(fm_test_stream_task "$home/state" "linked-task") \
     "worktree=$home/projects/gone" \
     "project=$home/projects/sample" \
     "kind=ship" \
@@ -2315,7 +2324,7 @@ test_secondmate_promotion_uses_teardown_parent_resolution() {
     "$stale/state/public-followup/registry/pf-stale"
 
   fm_write_meta "$child/state/promote-conflict.meta" \
-    "window=firstmate:fm-promote-conflict" "kind=scout"
+    $(fm_test_stream_task "$child/state" "promote-conflict") "kind=scout"
   write_promotion_brief "$child" promote-conflict
   out=$(PATH="$child/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$child" \
     FM_STATE_OVERRIDE="$child/state" FM_PUBLIC_FOLLOWUP_PRIMARY_HOME="$parent" \
@@ -2330,7 +2339,7 @@ test_secondmate_promotion_uses_teardown_parent_resolution() {
 
   rm -f "$child/.fm-secondmate-parent"
   fm_write_meta "$child/state/promote-legacy.meta" \
-    "window=firstmate:fm-promote-legacy" "kind=scout"
+    $(fm_test_stream_task "$child/state" "promote-legacy") "kind=scout"
   write_promotion_brief "$child" promote-legacy
   out=$(PATH="$child/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$child" \
     FM_STATE_OVERRIDE="$child/state" FM_PUBLIC_FOLLOWUP_PRIMARY_HOME="$parent" \
@@ -2347,7 +2356,7 @@ test_secondmate_promotion_uses_teardown_parent_resolution() {
     > "$remote_child/.fm-secondmate-parent"
   printf 'FMX_PAIRING_TOKEN=child-local-token\n' > "$remote_child/.env"
   fm_write_meta "$remote_child/state/promote-remote.meta" \
-    "window=firstmate:fm-promote-remote" "kind=scout"
+    $(fm_test_stream_task "$remote_child/state" "promote-remote") "kind=scout"
   write_promotion_brief "$remote_child" promote-remote
   out=$(PATH="$remote_child/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$remote_child" \
     FM_STATE_OVERRIDE="$remote_child/state" \

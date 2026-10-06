@@ -27,8 +27,8 @@
 #     re-processed as one of its own secondmates.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 UPDATE="$ROOT/bin/fm-update.sh"
 
@@ -44,28 +44,6 @@ new_world() {
   local name=$1 w
   w="$TMP_ROOT/$name"
   mkdir -p "$w/home/state" "$w/home/data" "$w/fakebin" "$w/fake"
-  : > "$w/fake/windows"
-  cat > "$w/fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-set -u
-case "${1:-}" in
-  list-windows) cat "$FM_FAKE_DIR/windows" ;;
-  display-message)
-    target=
-    for arg in "$@"; do
-      case "$arg" in main:fm-*) target=$arg ;; esac
-    done
-    case "${*: -1}" in
-      *pane_current_command*)
-        id=${target##*fm-}
-        if [ -e "$FM_FAKE_DIR/dead-$id" ]; then printf 'zsh\n'; else printf 'fm-deck-worker\n'; fi
-        ;;
-      *) printf '\n' ;;
-    esac
-    ;;
-esac
-SH
-  chmod +x "$w/fakebin/tmux"
   # Fresh watcher beacon keeps fm-guard quiet.
   touch "$w/home/state/.last-watcher-beat"
 
@@ -93,23 +71,27 @@ SH
 # Add a secondmate home as a DETACHED worktree of the firstmate repo (matching
 # how treehouse leases a secondmate home), plus its state meta. Args: world id.
 # The recorded runtime matters to the action split, so it is part of the fixture:
-# harness defaults to a control-verified adapter on the default (tmux) backend,
-# which is what makes a restart provable. Pass a backend to model one that cannot
-# prove an agent stopped.
+# by default the mate is a live harness on a fake stream endpoint
+# (tests/fixtures.sh), which is what makes a restart provable. Pass a backend to
+# model a record that cannot prove an agent stopped (a retired backend).
 add_sm() {
   local w=$1 id=$2 harness=${3:-deck} backend=${4:-}
   git -C "$w/main" worktree add -q --detach "$w/$id" main
   {
-    printf 'window=main:fm-%s\n' "$id"
-    printf 'endpoint_task_id=%s\n' "$id"
+    if [ -z "$backend" ]; then
+      fm_test_stream_task "$w/home/state" "$id"
+    else
+      printf 'window=main:fm-%s\n' "$id"
+      printf 'endpoint_task_id=%s\n' "$id"
+      printf 'backend=%s\n' "$backend"
+    fi
     printf 'worktree=%s/%s\n' "$w" "$id"
     printf 'project=%s/%s\n' "$w" "$id"
     printf 'kind=secondmate\n'
     printf 'harness=%s\n' "$harness"
-    [ -z "$backend" ] || printf 'backend=%s\n' "$backend"
     printf 'home=%s/%s\n' "$w" "$id"
   } > "$w/home/state/$id.meta"
-  printf 'fm-%s\n' "$id" >> "$w/fake/windows"
+  [ -n "$backend" ] || fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$w/home/state" "$id")" "$harness"
   printf '%s\n' "$id" > "$w/$id/.fm-secondmate-home"
 }
 
@@ -135,7 +117,7 @@ bump_origin() {
 
 run_update() {
   local w=$1
-  PATH="$w/fakebin:$PATH" FM_FAKE_DIR="$w/fake" \
+  PATH="$w/fakebin:$PATH" \
     FM_SSH_BIN="${FM_TEST_SSH_BIN:-ssh}" \
     FM_ROOT_OVERRIDE="$w/main" FM_HOME="$w/home" "$UPDATE" 2>/dev/null
 }
@@ -217,9 +199,9 @@ test_bin_only_advance_restarts() {
 test_unprovable_runtime_gets_fallback_nudge() {
   local w out
   w=$(new_world t3c)
-  # A backend with no adapter (zellij was removed) has no recovery-grade
-  # agent-state classifier, so no restart there can ever prove the old agent stopped and the replacement came up.
-  add_sm "$w" sm1 deck zellij
+  # A record on a retired backend has no recovery-grade agent-state
+  # classifier, so no restart there can ever prove the old agent stopped and the replacement came up.
+  add_sm "$w" sm1 deck tmux
   bump_origin "$w" instr
 
   out=$(run_update "$w")
@@ -234,7 +216,7 @@ test_dead_secondmate_gets_no_action() {
   local w out
   w=$(new_world t3d)
   add_sm "$w" sm1
-  : > "$w/fake/dead-sm1"
+  fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$w/home/state" sm1)" bash
   bump_origin "$w" instr
 
   out=$(run_update "$w")
@@ -280,7 +262,7 @@ harness=deck
 kind=secondmate
 home=/srv/sm1
 remote_host=remote-mac
-remote_backend=herdr
+remote_backend=stream
 EOF
   printf -- '- sm1 - remote domain (host: remote-mac; root: /srv/fm; home: /srv/sm1; scope: things; projects: p; added 2026-09-03)\n' \
     > "$w/home/data/secondmates.md"
@@ -409,7 +391,7 @@ test_already_current_secondmate_still_restarts() {
 test_already_current_unprovable_mate_is_nudged() {
   local w out restart_line nudge_line
   w=$(new_world t6b)
-  add_sm "$w" sm1 deck zellij
+  add_sm "$w" sm1 deck tmux
   bump_origin "$w" instr
   run_update "$w" >/dev/null   # first run advances both
 

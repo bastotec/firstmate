@@ -2,8 +2,8 @@
 # Host-local lifecycle control for the remote secondmate home selected by fm-on.
 #
 # Usage:
-#   fm-remote-secondmate-control.sh launch <id> <harness> <model|-> <effort|-> <herdr|stream> [traceparent]
-#   fm-remote-secondmate-control.sh relaunch <id> <harness> <model|default|-> <effort|default|-> [--backend <herdr|stream>]
+#   fm-remote-secondmate-control.sh launch <id> <harness> <model|-> <effort|-> stream [traceparent]
+#   fm-remote-secondmate-control.sh relaunch <id> <harness> <model|default|-> <effort|default|->
 #   fm-remote-secondmate-control.sh control <id> <interrupt|exit>
 #   fm-remote-secondmate-control.sh state <id>
 #   fm-remote-secondmate-control.sh route <id>
@@ -15,23 +15,17 @@
 #   fm-remote-secondmate-control.sh update <id>
 #   fm-remote-secondmate-control.sh retire <id> [--force]
 #
-# Remote placement ends here. The second-mate agent runs on the backend the
-# parent selects - Herdr in the dedicated fm-remote session, or stream, whose
-# agent is started on this host and publishes to the hub this home's
-# config/stream-hub names, with the
-# credential provisioned in this home's config/stream-token and never passed on a
-# command line (docs/stream-backend.md "Security"). Launch refuses any other
-# selection rather than reading this home's config/backend, which stays this
-# home's choice for its own crew. The interactive default session remains for
-# the user's work.
+# Remote placement ends here. The second-mate agent runs on stream: its agent
+# is started on this host and publishes to the hub this home's
+# config/stream-hub names, with the credential provisioned in this home's
+# config/stream-token and never passed on a command line
+# (docs/stream-backend.md "Security"). Launch refuses any other backend; a
+# record left on a retired one is refused until it is retired.
 #
-# relaunch --backend migrates the mate to the other backend through the
-# ordinary control plane's backend migration (bin/fm-control.sh relaunch
-# --backend), which refuses a busy mate. control runs that plane's interrupt or
+# relaunch and control run the ordinary control plane's relaunch, interrupt or
 # exit here. Both print what the plane printed; the parent re-reads route.
 # fm-spawn/fm-send/fm-teardown keep owning the local endpoint mechanics.
-# The home's own workers keep their ordinary backend selection.
-# bin/fm-remote-doctor.sh owns that host's readiness for Herdr and stream.
+# bin/fm-remote-doctor.sh owns that host's readiness for stream.
 # docs/remote-secondmates.md owns why.
 #
 # With <parent-commit>, sync follows the PARENT PRIMARY's default-branch commit,
@@ -46,8 +40,7 @@
 # A private parent-route state directory stores only the remote secondmate
 # agent's endpoint record; the home's own
 # state/*.meta remains reserved for workers the secondmate supervises.
-# Retirement closes only this secondmate's panes or workspace and never
-# stops fm-remote or removes a sibling secondmate's workspace or panes.
+# Retirement closes only this secondmate's own endpoint, never a sibling's.
 #
 # Relaunch is not a second lifecycle implementation: it runs the ORDINARY local
 # control plane here, because from this host the mate is a plain local
@@ -78,7 +71,6 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 TARGET_HOME=${FM_HOME:?FM_HOME is required}
 CONTROL_STATE="$TARGET_HOME/state/parent-route"
 CONTROL_DATA="$TARGET_HOME/data/.parent-route"
-REMOTE_HERDR_SESSION=fm-remote
 
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
@@ -132,7 +124,7 @@ reconcile_route_state_mode() { # <dir>
 }
 
 remote_endpoint_load() {
-  local id=$1 herdr_session
+  local id=$1
   REMOTE_ENDPOINT_ERROR=
   REMOTE_ENDPOINT_META=$(meta_path "$id")
   if ! fm_backend_validate_task_endpoint "$REMOTE_ENDPOINT_META" "$id" 2>/dev/null; then
@@ -141,26 +133,10 @@ remote_endpoint_load() {
   fi
   REMOTE_ENDPOINT_BACKEND=$FM_BACKEND_VALIDATED_BACKEND
   REMOTE_ENDPOINT_TARGET=$FM_BACKEND_VALIDATED_TARGET
-  case "$REMOTE_ENDPOINT_BACKEND" in
-    herdr) ;;
-    stream) return 0 ;;
-    *)
-      REMOTE_ENDPOINT_ERROR="remote secondmate $id endpoint is recorded on backend '$REMOTE_ENDPOINT_BACKEND', expected 'herdr' or 'stream'; refusing access until it is explicitly migrated"
-      return 1
-      ;;
-  esac
-  herdr_session=$(fm_backend_meta_exact_value "$REMOTE_ENDPOINT_META" herdr_session 2>/dev/null || true)
-  if [ "$herdr_session" != "$REMOTE_HERDR_SESSION" ]; then
-    REMOTE_ENDPOINT_ERROR="remote secondmate $id endpoint is recorded in Herdr session '${herdr_session:-missing}', expected '$REMOTE_HERDR_SESSION'; refusing access until it is explicitly migrated"
+  [ "$REMOTE_ENDPOINT_BACKEND" = stream ] || {
+    REMOTE_ENDPOINT_ERROR="remote secondmate $id endpoint is recorded on the retired '$REMOTE_ENDPOINT_BACKEND' backend; stop any agent left on it by hand, then retire the record with bin/fm-retire-endpoint.sh $id"
     return 1
-  fi
-  case "$REMOTE_ENDPOINT_TARGET" in
-    "$REMOTE_HERDR_SESSION":?*) ;;
-    *)
-      REMOTE_ENDPOINT_ERROR="remote secondmate $id endpoint target '$REMOTE_ENDPOINT_TARGET' is outside Herdr session '$REMOTE_HERDR_SESSION'; refusing access until it is explicitly migrated"
-      return 1
-      ;;
-  esac
+  }
 }
 
 remote_endpoint_require() {
@@ -187,12 +163,8 @@ print_route() { # <id>
   printf 'schema=fm-remote-secondmate-control.v1\n'
   printf 'backend=%s\n' "$REMOTE_ENDPOINT_BACKEND"
   printf 'target=%s\n' "$REMOTE_ENDPOINT_TARGET"
-  if [ "$REMOTE_ENDPOINT_BACKEND" = stream ]; then
-    printf 'stream_hub=%s\n' "$(fm_meta_get "$REMOTE_ENDPOINT_META" stream_hub)"
-    printf 'stream_endpoint_id=%s\n' "$(fm_meta_get "$REMOTE_ENDPOINT_META" stream_endpoint_id)"
-  else
-    printf 'herdr_session=%s\n' "$REMOTE_HERDR_SESSION"
-  fi
+  printf 'stream_hub=%s\n' "$(fm_meta_get "$REMOTE_ENDPOINT_META" stream_hub)"
+  printf 'stream_endpoint_id=%s\n' "$(fm_meta_get "$REMOTE_ENDPOINT_META" stream_endpoint_id)"
   printf 'harness=%s\n' "$harness"
   printf 'model=%s\n' "$(fm_meta_get "$REMOTE_ENDPOINT_META" model)"
   printf 'effort=%s\n' "$(fm_meta_get "$REMOTE_ENDPOINT_META" effort)"
@@ -328,7 +300,7 @@ cmd_route() {
 
 cmd_launch() {
   local id=$1 harness=$2 model=$3 effort=$4 selected_backend=$5 traceparent=${6:-}
-  local current meta out herdr_session kill_out old old_backend='' old_target=''
+  local current meta out kill_out old old_backend='' old_target=''
 
   validate_id "$id"
   validate_home "$id"
@@ -337,12 +309,11 @@ cmd_launch() {
     *) die "unverified remote secondmate harness: $harness" ;;
   esac
   case "$effort" in -|low|medium|high|xhigh|max) ;; *) die "invalid remote secondmate effort: $effort" ;; esac
-  # Both backends outlive the SSH connection that launches them: Herdr's server
-  # belongs to the GUI login session, and a stream agent is started in its own
-  # session (setsid) and publishes to the hub, which needs a host whose login
-  # manager does not kill a user's processes at logout.
-  # bin/fm-remote-doctor.sh --backend is the readiness owner for each.
-  case "$selected_backend" in herdr|stream) ;; *) die "a remote secondmate runs only on the herdr or stream backend, not '$selected_backend'" ;; esac
+  # A stream agent outlives the SSH connection that launches it: it is started
+  # in its own session (setsid) and publishes to the hub, which needs a host
+  # whose login manager does not kill a user's processes at logout.
+  # bin/fm-remote-doctor.sh is the readiness owner.
+  [ "$selected_backend" = stream ] || die "a remote secondmate runs only on the stream backend, not '$selected_backend'"
   # Deck's descriptor-bound status I/O rejects a group/world-writable state
   # root, so constrain creation even when the remote login has a permissive
   # umask, and first reconcile the state root an earlier launch left unsafe.
@@ -382,7 +353,7 @@ cmd_launch() {
   [ "$model" = - ] || ARGS+=(--model "$model")
   [ "$effort" = - ] || ARGS+=(--effort "$effort")
   [ -z "$traceparent" ] || ARGS+=(--traceparent "$traceparent")
-  if ! out=$(HERDR_SESSION="$REMOTE_HERDR_SESSION" FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
+  if ! out=$(FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
     FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
     FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_SKIP_SECONDMATE_INHERIT=1 \
     FM_SKIP_SECONDMATE_SYNC=1 \
@@ -391,11 +362,6 @@ cmd_launch() {
     die "remote host-local secondmate launch failed"
   fi
   [ -f "$meta" ] || die "remote launch returned without endpoint metadata"
-  if [ "$selected_backend" = herdr ]; then
-    herdr_session=$(fm_meta_get "$meta" herdr_session)
-    [ "$herdr_session" = "$REMOTE_HERDR_SESSION" ] \
-      || die "remote launch recorded Herdr session '${herdr_session:-missing}', expected '$REMOTE_HERDR_SESSION'"
-  fi
   verify_replacement "$id" "$harness" "$old" "$old_backend" "$old_target"
   print_route "$id"
 }
@@ -414,13 +380,9 @@ cmd_launch() {
 # re-resolve it here would silently drift the mate onto another runtime. `default`
 # explicitly clears an absent parent pin; `-` remains its compatibility spelling.
 cmd_relaunch() {
-  local id=$1 harness=$2 model=$3 effort=$4 old old_backend old_target current recorded outside pid token out rc new_backend=
+  local id=$1 harness=$2 model=$3 effort=$4 old old_backend old_target current recorded outside pid token out rc
   local -a control_args
-  if [ "$#" -gt 4 ]; then
-    [ "$#" -eq 6 ] && [ "$5" = --backend ] || usage
-    new_backend=$6
-    case "$new_backend" in herdr|stream) ;; *) die "a remote secondmate runs only on the herdr or stream backend, not '$new_backend'" ;; esac
-  fi
+  [ "$#" -eq 4 ] || usage
 
   validate_id "$id"
   validate_home "$id"
@@ -461,13 +423,11 @@ EOF
   require_identities_gone "$id" "$outside"
   old="$old"$'\n'"$recorded"
   control_args=("$id" relaunch --harness "$harness" --model "$model" --effort "$effort")
-  [ -z "$new_backend" ] || control_args+=(--backend "$new_backend")
-  # The same launch-boundary facts cmd_launch establishes: Herdr endpoints live
-  # in the dedicated fm-remote session, and the parent already owns both convergence
-  # legs, so the host-local spawn must not re-sync or re-inherit against this
-  # host's own Firstmate copy.
+  # The same launch-boundary facts cmd_launch establishes: the parent already
+  # owns both convergence legs, so the host-local spawn must not re-sync or
+  # re-inherit against this host's own Firstmate copy.
   rc=0
-  out=$(HERDR_SESSION="$REMOTE_HERDR_SESSION" FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
+  out=$(FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
     FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
     FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_SKIP_SECONDMATE_INHERIT=1 \
     FM_SKIP_SECONDMATE_SYNC=1 \
@@ -489,7 +449,7 @@ cmd_control() {
   validate_home "$id"
   case "$verb" in interrupt|exit) ;; *) die "remote control verb must be interrupt or exit, not '$verb'" ;; esac
   remote_endpoint_require "$id"
-  HERDR_SESSION="$REMOTE_HERDR_SESSION" FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
+  FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
     FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
     FM_CONFIG_OVERRIDE="$TARGET_HOME/config" \
     "$SCRIPT_DIR/fm-control.sh" "$id" "$verb"
@@ -665,7 +625,7 @@ cmd_retire() {
 
 case "${1:-}" in
   launch) shift; [ "$#" -ge 5 ] && [ "$#" -le 6 ] || usage; cmd_launch "$@" ;;
-  relaunch) shift; [ "$#" -eq 4 ] || [ "$#" -eq 6 ] || usage; cmd_relaunch "$@" ;;
+  relaunch) shift; [ "$#" -eq 4 ] || usage; cmd_relaunch "$@" ;;
   control) shift; [ "$#" -eq 2 ] || usage; cmd_control "$@" ;;
   state) shift; [ "$#" -eq 1 ] || usage; validate_id "$1"; validate_home "$1"; state_value "$1" ;;
   route) shift; [ "$#" -eq 1 ] || usage; cmd_route "$1" ;;

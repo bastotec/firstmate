@@ -11,9 +11,9 @@
 # pseudoterminal that runs the real Deck host driver against a fake `deck`
 # binary. The remote home reads the hub and its credential from its own
 # config/stream-hub and config/stream-token, as a seeded fleet home does.
-# Moving a task between backends is exercised end to end, against a real tmux
-# server, by tests/fm-backend-stream.test.sh; here the remote relaunch proves the
-# host-side control plane runs and the parent's binding is rewritten.
+# Stream is the only backend, so a relaunch never moves the mate; here the
+# remote relaunch proves the host-side control plane runs and the parent's
+# binding is rewritten from the host's route.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -273,13 +273,17 @@ assert_readiness_refusal() {
   wait_hub_state "$STREAM_TARGET" alive
 }
 
-assert_readiness_refusal 1 '- -' 3 --backend herdr
 assert_readiness_refusal 1 '--backend stream' 3
-assert_readiness_refusal 255 '--backend stream' 1 --backend stream
+assert_readiness_refusal 255 '--backend stream' 1
+# A record that names no backend still checks the host's stream readiness.
 cp "$PARENT_META" "$TMP_ROOT/recorded-backend.meta"
 awk -F= '$1 != "remote_backend"' "$TMP_ROOT/recorded-backend.meta" > "$PARENT_META"
-assert_readiness_refusal 1 '- -' 3
+assert_readiness_refusal 1 '--backend stream' 3
 mv "$TMP_ROOT/recorded-backend.meta" "$PARENT_META"
+out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" relaunch --backend herdr 2>&1) \
+  && fail "a relaunch onto a retired backend was accepted: $out"
+assert_contains "$out" "unexpected argument '--backend'" "a backend move was not refused by name: $out"
+wait_hub_state "$STREAM_TARGET" alive
 pass "remote: readiness gaps and unknown outcomes preserve the mate before relaunch"
 
 if [ "${FM_REMOTE_SECONDMATE_PROFILE_ONLY:-0}" != 1 ]; then
@@ -312,7 +316,7 @@ stale="$PARENT_META.stale"
 grep -v -E '^remote_(backend|target|herdr_session|stream_)' "$PARENT_META" > "$stale"
 printf 'remote_backend=herdr\nremote_herdr_session=fm-remote\nremote_target=fm-remote:w9:p9\n' >> "$stale"
 mv -f "$stale" "$PARENT_META"
-out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" relaunch --backend stream 2>&1) \
+out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" relaunch 2>&1) \
   || fail "remote relaunch failed: $out"
 assert_contains "$out" "rebound $ID remote=remote-mac backend=stream target=$STREAM_TARGET" "the parent was not rebound: $out"
 assert_equals stream "$(meta_value "$PARENT_META" remote_backend)" "the parent record was not rebound to stream"

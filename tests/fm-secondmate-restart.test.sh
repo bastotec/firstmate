@@ -23,8 +23,8 @@
 #      on a removed backend is reported unreached with its agent left running.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 RESTART="$ROOT/bin/fm-secondmate-restart.sh"
 
@@ -32,88 +32,54 @@ fm_git_identity fmtest fmtest@example.com
 TMP_ROOT=$(fm_test_tmproot fm-secondmate-restart)
 mkdir -p "$TMP_ROOT"
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd -P)
-trap 'rm -rf -- "$TMP_ROOT"' EXIT
+trap 'rm -rf -- "$TMP_ROOT"; fm_test_cleanup || true' EXIT
 
-# A session-provider stub that models the two things this pass depends on: the
-# harness exit command stops the agent, a launch brief starts the replacement,
-# and - when armed - the live mate ANSWERS a doorbell by doing what the persist
-# request asks and reporting it on the parent channel with the correlation token
-# the request carried. That answer is a real status append read by the real
-# pending-reply machinery, not a stubbed verdict.
+# Each local mate is a fake stream endpoint (tests/fixtures.sh's fake-dir model:
+# command, becomes, literal under $dir/fake) that models the two things this
+# pass depends on: the harness exit command stops the agent and a launch brief
+# starts the replacement. The endpoint's on_text hook models the live mate:
+# when armed it ANSWERS a doorbell by doing what the persist request asks and
+# reporting it on the parent channel with the correlation token the request
+# carried. That answer is a real status append read by the real pending-reply
+# machinery, not a stubbed verdict.
 make_stub() {  # <case-dir>
-  local fb="$1/fakebin"
+  local fb="$1/fakebin" D="$1/fake"
   mkdir -p "$fb"
-  cat > "$fb/tmux" <<'SH'
+  cat > "$D/on-text" <<SH
 #!/usr/bin/env bash
 set -u
-D=$FM_FAKE_DIR
-case "${1:-}" in
-  send-keys)
-    shift
-    literal=0
-    target=
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -t) target=$2; shift 2 ;;
-        -l) literal=1; shift ;;
-        *) break ;;
-      esac
-    done
-    payload=${1:-}
-    if [ "$literal" = 1 ]; then
-      printf '%s\n' "$payload" >> "$D/literal"
-      case "$payload" in
-        /exit|/quit)
-          if [ -e "$D/remote-relaunch-start" ] && [ ! -e "$D/remote-relaunch-end" ]; then
-            : > "$D/local-relaunch-during-remote"
-          fi
-          printf 'zsh' > "$D/command.$target"
-          ;;
-        *'encode launch-brief'*) cat "$D/becomes" > "$D/command.$target" ;;
-        ': Firstmate instruction waiting: list '*)
-          printf 'doorbell\n' >> "$D/rings"
-          if [ -x "$D/on-doorbell" ]; then
-            "$D/on-doorbell" "$payload"
-          fi
-          if [ -f "$D/answer-inbox" ]; then
-            # Model the mate: read the newest instruction it was handed and
-            # report back on the parent channel, carrying the correlation token
-            # the request itself embedded.
-            inbox=$(cat "$D/answer-inbox")
-            corr=$(cat "$inbox"/*.msg 2>/dev/null \
-              | grep -oE 'corr=[0-9a-f]{16}' | head -1)
-            if [ -n "$corr" ]; then
-              printf 'done [%s]: open records written down\n' "$corr" \
-                >> "$(cat "$D/answer-status")"
-            fi
-          fi
-          ;;
-      esac
-    else
-      printf '%s\n' "$payload" >> "$D/keys"
+D='$D'
+SH
+  cat >> "$D/on-text" <<'SH'
+payload=${1:-}
+case "$payload" in
+  /exit|/quit)
+    if [ -e "$D/remote-relaunch-start" ] && [ ! -e "$D/remote-relaunch-end" ]; then
+      : > "$D/local-relaunch-during-remote"
     fi
-    exit 0 ;;
-  display-message)
-    target=
-    prev=
-    for a in "$@"; do
-      if [ "$prev" = -t ]; then target=$a; fi
-      case "$a" in
-        *cursor_y*) printf '1\n'; exit 0 ;;
-        *pane_current_command*)
-          if [ -f "$D/command.$target" ]; then cat "$D/command.$target"; else cat "$D/command"; fi
-          printf '\n'; exit 0 ;;
-        *pane_current_path*) cat "$D/cwd"; printf '\n'; exit 0 ;;
-      esac
-      prev=$a
-    done
-    printf 'fakepane\n'; exit 0 ;;
-  capture-pane) printf '╭────╮\n│    │\n╰────╯\n'; exit 0 ;;
-  list-windows) [ -f "$D/windows" ] && cat "$D/windows"; exit 0 ;;
+    ;;
+  ': Firstmate instruction waiting: list '*)
+    printf 'doorbell\n' >> "$D/rings"
+    if [ -x "$D/on-doorbell" ]; then
+      "$D/on-doorbell" "$payload"
+    fi
+    if [ -f "$D/answer-inbox" ]; then
+      # Model the mate: read the newest instruction it was handed and report
+      # back on the parent channel, carrying the correlation token the request
+      # itself embedded.
+      inbox=$(cat "$D/answer-inbox")
+      corr=$(cat "$inbox"/*.msg 2>/dev/null \
+        | grep -oE 'corr=[0-9a-f]{16}' | head -1)
+      if [ -n "$corr" ]; then
+        printf 'done [%s]: open records written down\n' "$corr" \
+          >> "$(cat "$D/answer-status")"
+      fi
+    fi
+    ;;
 esac
 exit 0
 SH
-  chmod +x "$fb/tmux"
+  chmod +x "$D/on-text"
   cat > "$fb/sleep" <<'SH'
 #!/usr/bin/env bash
 case "${1:-}" in
@@ -123,6 +89,35 @@ esac
 exit 0
 SH
   chmod +x "$fb/sleep"
+}
+
+# mate_endpoint <case-dir> <id>: register <id>'s endpoint and print its record
+# identity lines. The first mate of a case is the fake-dir endpoint; a second
+# one shares its typed-text log, so one transcript orders both mates' input.
+mate_endpoint() {  # <case-dir> <id>
+  local dir=$1 id=$2 lines target
+  if [ ! -s "$dir/fake/target" ]; then
+    lines=$(fm_test_fake_dir_task "$dir/fake" "$dir/home/state" "$id") || return 1
+    target=$(cat "$dir/fake/target")
+  else
+    lines=$(fm_test_stream_task "$dir/home/state" "$id" "$dir/fake/log") || return 1
+    target=$(fm_test_stream_target_of "$dir/home/state" "$id")
+    fm_test_fake_stream_set "$target" "$(jq -nc --arg b "$(cat "$dir/fake/becomes")" '{becomes: $b}')"
+    fm_test_fake_stream_foreground "$target" "$(cat "$dir/fake/command")"
+  fi
+  fm_test_fake_stream_set "$target" "$(jq -nc --arg h "$dir/fake/on-text" '{on_text: $h}')"
+  printf '%s\n' "$lines"
+}
+
+# mate_record_lines <case-dir> <id> [backend]: the endpoint lines of a record,
+# or a record on a backend with no adapter when one is named.
+mate_record_lines() {  # <case-dir> <id> [backend]
+  local dir=$1 id=$2 backend=${3:-}
+  if [ -n "$backend" ]; then
+    printf 'window=fmses:fm-%s\nendpoint_task_id=%s\nbackend=%s\n' "$id" "$id" "$backend"
+  else
+    mate_endpoint "$dir" "$id"
+  fi
 }
 
 # new_case <name> -> a parent home with a stub session provider.
@@ -135,6 +130,7 @@ new_case() {
   : > "$dir/fake/rings"
   printf 'fm-deck-worker' > "$dir/fake/command"
   printf 'fm-deck-worker' > "$dir/fake/becomes"
+  : > "$dir/fake/log"
   make_stub "$dir"
   # The relaunch resolves the deck executable on PATH.
   fm_fake_exit0 "$dir/fakebin" deck
@@ -153,8 +149,7 @@ add_local_mate() {
   printf '# agents\n' > "$smhome/AGENTS.md"
   printf '# charter\n' > "$home/data/$id/brief.md"
   {
-    echo "window=fmses:fm-$id"
-    echo "endpoint_task_id=$id"
+    mate_record_lines "$dir" "$id" "$backend"
     echo "worktree=$smhome"
     echo "project=$smhome"
     echo "harness=$harness"
@@ -164,9 +159,7 @@ add_local_mate() {
     echo "model=default"
     echo "effort=default"
     echo "home=$smhome"
-    [ -z "$backend" ] || echo "backend=$backend"
   } > "$home/state/$id.meta"
-  printf '%s\n' "fm-$id" >> "$dir/fake/windows"
   printf '%s' "$smhome" > "$dir/fake/cwd"
 }
 
@@ -202,8 +195,7 @@ add_repo_backed_mate() {  # <case-dir> <id> [harness] [backend]
   printf '%s\n' "$id" > "$smhome/.fm-secondmate-home"
   printf '# charter\n' > "$home/data/$id/brief.md"
   {
-    echo "window=fmses:fm-$id"
-    echo "endpoint_task_id=$id"
+    mate_record_lines "$dir" "$id" "$backend"
     echo "worktree=$smhome"
     echo "project=$smhome"
     echo "harness=$harness"
@@ -213,19 +205,21 @@ add_repo_backed_mate() {  # <case-dir> <id> [harness] [backend]
     echo "model=default"
     echo "effort=default"
     echo "home=$smhome"
-    [ -z "$backend" ] || echo "backend=$backend"
   } > "$home/state/$id.meta"
-  printf '%s\n' "fm-$id" >> "$dir/fake/windows"
   printf '%s' "$smhome" > "$dir/fake/cwd"
 }
 
 # run_update_in_case <case-dir>: the real /updatefirstmate mechanics over that world.
 run_update_in_case() {
-  local dir=$1
+  local dir=$1 rc
+  fm_test_fake_dir_push "$dir/fake"
   env PATH="$dir/fakebin:$PATH" FM_FAKE_DIR="$dir/fake" \
     FM_ROOT_OVERRIDE="$dir/fmrepo" FM_HOME="$dir/home" \
     FM_SSH_BIN="${FM_TEST_SSH_BIN:-ssh}" \
     "$ROOT/bin/fm-update.sh" 2>/dev/null
+  rc=$?
+  fm_test_fake_dir_pull "$dir/fake"
+  return "$rc"
 }
 
 # arm_answer <case-dir> <id>: make the modelled mate answer the persist request.
@@ -236,13 +230,17 @@ arm_answer() {
 }
 
 run_restart() {  # <case-dir> <args...>
-  local dir=$1; shift
+  local dir=$1 rc; shift
+  fm_test_fake_dir_push "$dir/fake"
   env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
     FM_SPAWN_NO_GUARD=1 FM_SECONDMATE_PERSIST_POLL=1 \
     FM_SECONDMATE_PERSIST_WAIT="${FM_TEST_PERSIST_WAIT:-30}" \
     FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.05 FM_CONTROL_LAUNCH_WAIT=0.05 \
     FM_SSH_BIN="${FM_TEST_SSH_BIN:-ssh}" \
     "$RESTART" "$@" 2>&1
+  rc=$?
+  fm_test_fake_dir_pull "$dir/fake"
+  return "$rc"
 }
 
 # --- T1: the persist request is the task subset of /stow, and it gates --------
@@ -443,8 +441,10 @@ setup_remote_case() {  # <case-dir> <id> <ssh-mode>
     echo "effort=default"
     echo "home=$dir/$id-home"
     echo "remote_host=remote-mac"
-    echo "remote_backend=herdr"
-    echo "remote_target=fm-remote:2ndmate-$id"
+    echo "remote_backend=stream"
+    echo "remote_stream_hub=http://127.0.0.1:9"
+    echo "remote_stream_endpoint_id=0123456789abcdef0123456789abcdef"
+    echo "remote_target=127.0.0.1-9:0123456789abcdef0123456789abcdef"
   } > "$dir/home/state/$id.meta"
   printf -- '- %s - remote domain (host: remote-mac; root: /srv/fm; home: /srv/%s; scope: things; projects: p; added 2026-09-03)\n' \
     "$id" "$id" > "$dir/home/data/secondmates.md"

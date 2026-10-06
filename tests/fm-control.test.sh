@@ -23,8 +23,8 @@
 #      than refused on a composer state (a respawn question, not a composer one).
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-control-lib.sh"
 # shellcheck source=/dev/null
@@ -54,92 +54,12 @@ verified_adapter_contract() {  # <harness> -> exit command, interrupt key, repea
 
 # --- fake session provider --------------------------------------------------
 #
-# A tmux stub whose whole model is four files under $FM_FAKE_DIR:
-#   command  the pane's foreground process name, which IS the agent-state
-#            classifier's input (bin/backends/tmux.sh).
-#   cwd      the pane's current path.
-#   literal  every `send-keys -l` payload, one per line - exactly what was
-#            typed into the composer.
-#   keys     every named key send, one per line.
-#   pane     optional capture-pane override, for an adapter whose busy verdict
-#            is read from the rendered tail.
-# Two transitions make it a lifecycle model rather than a recorder: a literal
-# that is the harness's exit command flips `command` to a shell (the agent
-# stopped), and a literal carrying a launch brief flips it to the value in
-# `becomes` (a new agent came up). FM_FAKE_NEVER_DIES suppresses the first, so
-# a stubborn agent can be tested too.
-make_tmux_stub() {  # <dir> -> echoes fakebin dir
-  local dir=$1 fb="$1/fakebin"
-  mkdir -p "$fb"
-  cat > "$fb/tmux" <<'SH'
-#!/usr/bin/env bash
-set -u
-D=$FM_FAKE_DIR
-case "${1:-}" in
-  send-keys)
-    shift
-    literal=0
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -t) shift 2 ;;
-        -l) literal=1; shift ;;
-        *) break ;;
-      esac
-    done
-    payload=${1:-}
-    if [ "$literal" = 1 ]; then
-      printf '%s\n' "$payload" >> "$D/literal"
-      if [ -z "${FM_FAKE_NEVER_DIES:-}" ] \
-         && { [ "$payload" = /exit ] || [ "$payload" = /quit ]; }; then
-        printf 'zsh' > "$D/command"
-      fi
-      case "$payload" in
-        *'encode launch-brief'*) cat "$D/becomes" > "$D/command" ;;
-      esac
-    else
-      printf '%s\n' "$payload" >> "$D/keys"
-      if [ -n "${FM_FAKE_INTERRUPT_STOPS_AGENT:-}" ] \
-         && { [ "$payload" = Escape ] || [ "$payload" = C-c ]; }; then
-        printf 'zsh' > "$D/command"
-      fi
-      # The composer-clear key's two observable effects, modelled as knobs:
-      # a real clear repaints the pane's prompt row (FM_FAKE_CLEAR_REPAINTS),
-      # and an agent can die between the clear delivery and the gate's re-read
-      # (FM_FAKE_DEAD_ON_CLEAR).
-      if [ "$payload" = C-u ]; then
-        [ -z "${FM_FAKE_CLEAR_REPAINTS:-}" ] || {
-          printf '❯ \n' > "$D/pane"
-          printf '0\n' > "$D/cursor"
-        }
-        [ -z "${FM_FAKE_DEAD_ON_CLEAR:-}" ] || printf 'zsh' > "$D/command"
-      fi
-    fi
-    exit 0 ;;
-  display-message)
-    for a in "$@"; do
-      case "$a" in
-        *cursor_y*)
-          # A case may park the cursor anywhere on the pane; default row 1
-          # (inside the default composer box) for the ordinary cases.
-          if [ -f "$D/cursor" ]; then cat "$D/cursor"; else printf '1\n'; fi
-          exit 0 ;;
-        *pane_current_command*) cat "$D/command"; printf '\n'; exit 0 ;;
-        *pane_current_path*) cat "$D/cwd"; printf '\n'; exit 0 ;;
-      esac
-    done
-    printf 'fakepane\n'; exit 0 ;;
-  capture-pane)
-    if [ -f "$D/pane" ]; then cat "$D/pane"; else printf '╭────╮\n│    │\n╰────╯\n'; fi
-    exit 0 ;;
-  list-windows)
-    if [ -f "$D/windows" ]; then cat "$D/windows"; fi
-    exit 0 ;;
-esac
-exit 0
-SH
-  chmod +x "$fb/tmux"
-  printf '%s\n' "$fb"
-}
+# Each task is a fake stream endpoint driven by the fake-dir model in
+# tests/fixtures.sh (fm_test_fake_dir_*): command, becomes, cwd, pane, cursor
+# and windows under $dir/fake steer the endpoint, and literal and keys record
+# what it received. The endpoint models the lifecycle: a submitted exit command
+# stops the agent (FM_FAKE_NEVER_DIES suppresses that), and a typed launch brief
+# starts the harness named in `becomes`.
 
 # new_case <name> -> echoes a case dir holding home/, fake/, and fakebin.
 new_case() {
@@ -149,7 +69,7 @@ new_case() {
   : > "$dir/fake/keys"
   printf 'zsh' > "$dir/fake/command"
   printf 'fm-deck-worker' > "$dir/fake/becomes"
-  make_tmux_stub "$dir" >/dev/null
+  mkdir -p "$dir/fakebin"
   printf '%s\n' "$dir"
 }
 
@@ -157,15 +77,20 @@ new_case() {
 # Builds the task's worktree (a real git worktree so the relaunch checkpoint
 # has something to account for), its brief, and its state/<id>.meta.
 add_task() {
-  local dir=$1 id=$2 harness=$3 kind=${4:-ship} backend=${5:-tmux}
-  local window=${6:-fmses:fm-$id}
+  local dir=$1 id=$2 harness=$3 kind=${4:-ship} backend=${5:-stream}
+  local window=${6:-}
   local home="$dir/home" proj="$dir/proj-$id" wt="$dir/wt-$id"
   fm_git_worktree "$proj" "$wt" "task-$id"
   mkdir -p "$home/data/$id"
   printf '# brief for %s\n' "$id" > "$home/data/$id/brief.md"
   {
-    echo "window=$window"
-    echo "endpoint_task_id=$id"
+    if [ "$backend" = stream ] && [ -z "$window" ]; then
+      fm_test_fake_dir_task "$dir/fake" "$home/state" "$id"
+    else
+      echo "window=${window:-fmses:fm-$id}"
+      echo "endpoint_task_id=$id"
+      echo "backend=$backend"
+    fi
     echo "worktree=$wt"
     echo "project=$proj"
     echo "harness=$harness"
@@ -174,21 +99,22 @@ add_task() {
     echo "yolo=off"
     echo "model=default"
     echo "effort=default"
-    [ "$backend" = tmux ] || echo "backend=$backend"
   } > "$home/state/$id.meta"
-  printf '%s\n' "fm-$id" > "$dir/fake/windows"
   printf '%s' "$wt" > "$dir/fake/cwd"
 }
 
 # run_control <case-dir> <args...>: run fm-control against the case's home with
 # the stubbed provider on PATH. Echoes combined output; returns its exit code.
 run_control() {
-  local dir=$1; shift
-  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
+  local dir=$1 rc; shift
+  fm_test_fake_dir_push "$dir/fake"
+  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" \
     FM_CONTROL_POLL=0.01 \
     FM_CONTROL_EXIT_WAIT=0.05 FM_CONTROL_LAUNCH_WAIT=0.05 \
-    FM_FAKE_INTERRUPT_STOPS_AGENT="${FM_FAKE_INTERRUPT_STOPS_AGENT:-}" \
     "$CONTROL" "$@" 2>&1
+  rc=$?
+  fm_test_fake_dir_pull "$dir/fake"
+  return "$rc"
 }
 
 alive_as() {  # <case-dir> <command-name>
@@ -287,16 +213,15 @@ test_unverified_harness_is_refused() {
 
 test_backend_key_capability_matrix() {
   local backend key
-  for backend in tmux herdr stream; do
-    # C-u starts deck's verified composer clear; every session provider
-    # normalizes it (bin/backends/*.sh).
-    for key in Escape Enter C-c C-u; do
-      fm_control_backend_supports_key "$backend" "$key" \
-        || fail "$backend should be able to deliver $key"
-    done
+  # C-u starts deck's verified composer clear; the stream adapter normalizes it.
+  for key in Escape Enter C-c C-u; do
+    fm_control_backend_supports_key stream "$key" \
+      || fail "stream should be able to deliver $key"
   done
-  fm_control_backend_supports_key bogus Enter \
-    && fail "an unknown backend must not claim any key"
+  for backend in tmux herdr bogus; do
+    fm_control_backend_supports_key "$backend" Enter \
+      && fail "the $backend backend must not claim any key"
+  done
   pass "fm-control-lib: the backend key matrix matches each adapter's real send-key surface"
 }
 
@@ -322,12 +247,10 @@ test_harness_kind_capability() {
 
 
 
-test_state_verified_backends_are_exactly_tmux_and_herdr() {
-  fm_control_backend_state_verified tmux || fail "tmux has a recovery-grade classifier"
-  fm_control_backend_state_verified herdr || fail "herdr has a recovery-grade classifier"
+test_state_verified_backends_are_exactly_stream() {
   local backend
   fm_control_backend_state_verified stream || fail "stream has a recovery-grade classifier"
-  for backend in zellij orca cmux bogus; do
+  for backend in tmux herdr zellij orca cmux bogus; do
     fm_control_backend_state_verified "$backend" \
       && fail "$backend is not a known backend and must not claim a classifier"
   done
@@ -353,7 +276,7 @@ test_explicit_endpoint_is_refused() {
   dir=$(new_case endpoint)
   add_task "$dir" t1 deck
   alive_as "$dir" fm-deck-worker
-  out=$(run_control "$dir" "fmses:fm-t1" exit); rc=$?
+  out=$(run_control "$dir" "$(cat "$dir/fake/target")" exit); rc=$?
   expect_code 1 "$rc" "an explicit endpoint should refuse"
   assert_contains "$out" "exact task id only" "the refusal should name the exact-id rule"
   [ -z "$(literals "$dir")" ] || fail "a refused target must receive no bytes"
@@ -404,8 +327,8 @@ test_remote_secondmate_is_refused_by_placement() {
       echo "home=$dir/wt-t1"
       echo "remote_host=example.invalid"
       echo "remote_root=/srv/fm"
-      echo "remote_backend=herdr"
-      echo "remote_target=fm:pane-1"
+      echo "remote_backend=stream"
+      echo "remote_target=127.0.0.1-9:0123456789abcdef0123456789abcdef"
     } > "$dir/home/state/t1.meta.tmp"
     mv "$dir/home/state/t1.meta.tmp" "$dir/home/state/t1.meta"
     if [ "$verb" = relaunch ]; then
@@ -640,9 +563,11 @@ test_agent_that_does_not_stop_fails_closed() {
   alive_as "$dir" fm-deck-worker
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" t1)
   printf 'busy_gen=%s\n' "$gen" >> "$dir/home/state/t1.meta"
-  out=$(env FM_FAKE_NEVER_DIES=1 PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" \
-    FM_FAKE_DIR="$dir/fake" FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.05 \
+  FM_FAKE_NEVER_DIES=1 fm_test_fake_dir_push "$dir/fake"
+  out=$(env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" \
+    FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT=0.05 \
     "$CONTROL" t1 exit 2>&1); rc=$?
+  fm_test_fake_dir_pull "$dir/fake"
   expect_code 1 "$rc" "an agent that ignores its exit command should fail closed"
   assert_contains "$out" "did not stop" "the failure should say the agent did not stop"
   assert_contains "$out" "exit-delivered t1 interrupt=delivered verified=agent-alive cancel=unconfirmed exit-command=delivered agent-state=alive exit=unconfirmed" \
@@ -703,9 +628,11 @@ test_fm_send_still_marks_the_same_secondmate_task() {
   add_task "$dir" domain deck secondmate
   log="$dir/fake/sendlog"
   : > "$log"
-  out=$(env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
+  fm_test_fake_dir_push "$dir/fake"
+  out=$(env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" \
     FM_SEND_SETTLE=0 FM_ROOT_OVERRIDE="$dir/home" \
     "$SEND" domain "audit the build" 2>&1); rc=$?
+  fm_test_fake_dir_pull "$dir/fake"
   expect_code 0 "$rc" "fm-send to a secondmate should still succeed"$'\n'"$out"
   # The marked steer rides fm-send's durable inbox plane; only the doorbell is
   # typed, so the marker is asserted on the recorded body.
@@ -841,9 +768,11 @@ for command_id, payload in (
         payload=payload)) + '\n')
 PY
   printf 'needs-decision [key=fixture-choice]: Fixture choice\n' > "$dir/home/state/sample.status"
-  out=$(PATH="$dir/fakebin:$PATH" FM_FAKE_DIR="$dir/fake" FM_STREAM_MACHINE=fixture-host \
+  fm_test_fake_dir_push "$dir/fake"
+  out=$(PATH="$dir/fakebin:$PATH" FM_STREAM_MACHINE=fixture-host \
     "$ROOT/bin/fm-ui-host-control.py" --registry "$dir/registry" command \
     < "$dir/fixture-answer" 2> "$dir/answer-diagnostics"); rc=$?
+  fm_test_fake_dir_pull "$dir/fake"
   expect_code 0 "$rc" "host decision should reach fm-send's durable owner"$'\n'"$out"
   if ! python3 - "$out" <<'PY'
 import json
@@ -870,9 +799,11 @@ PY
     fail "the worker inbox must carry the exact answer bytes"
   fi
   : > "$dir/fake/keys"
-  out=$(PATH="$dir/fakebin:$PATH" FM_FAKE_DIR="$dir/fake" FM_STREAM_MACHINE=fixture-host \
+  fm_test_fake_dir_push "$dir/fake"
+  out=$(PATH="$dir/fakebin:$PATH" FM_STREAM_MACHINE=fixture-host \
     "$ROOT/bin/fm-ui-host-control.py" --registry "$dir/registry" command \
     < "$dir/fixture-interrupt" 2> "$dir/interrupt-diagnostics"); rc=$?
+  fm_test_fake_dir_pull "$dir/fake"
   expect_code 0 "$rc" "host lifecycle should reach fm-control"$'\n'"$out"
   if ! python3 - "$out" <<'PY'
 import json
@@ -898,7 +829,7 @@ test_unverified_harness_is_refused
 test_harness_family_resolution
 test_backend_key_capability_matrix
 test_harness_kind_capability
-test_state_verified_backends_are_exactly_tmux_and_herdr
+test_state_verified_backends_are_exactly_stream
 test_window_label_is_refused_with_the_exact_id
 test_explicit_endpoint_is_refused
 test_unknown_task_is_refused

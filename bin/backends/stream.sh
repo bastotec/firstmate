@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# bin/backends/stream.sh - the stream session-provider adapter (EXPERIMENTAL).
+# bin/backends/stream.sh - the stream session-provider adapter, firstmate's
+# only runtime backend.
 #
 # The fleet keeps ONE hub. Each task's pseudoterminal is owned by a thin agent
 # on the machine that runs it, publishing to that hub. Both are the native
@@ -9,7 +10,7 @@
 # talks to a worker machine directly.
 # docs/stream-backend.md owns setup, security, and limits.
 #
-# Session provider ONLY, exactly like herdr/zellij/cmux: Treehouse still owns
+# Session provider ONLY: Treehouse still owns
 # the task worktree.
 #
 # Target string shape: "<hub-tag>:<endpoint-id>".
@@ -33,8 +34,7 @@
 # every backend so the decision cannot drift.
 # shellcheck source=bin/fm-composer-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../fm-composer-lib.sh"
-# Backend-neutral harness-process identity, shared with the tmux and herdr
-# adapters so all three mean the same thing by agent, shell, and other.
+# Backend-neutral harness-process identity (agent, shell, and other).
 # shellcheck source=bin/fm-agent-process-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/../fm-agent-process-lib.sh"
 # Which implementation runs (rust by default, python as the explicit rollback)
@@ -324,8 +324,8 @@ fm_backend_stream_version_check() {
   }
 }
 
-# fm_backend_stream_container_ensure: the hub plays the container role the tmux
-# session and zellij session play. It is never started implicitly - an endpoint
+# fm_backend_stream_container_ensure: the hub plays the container role for every
+# endpoint. It is never started implicitly - an endpoint
 # outlives the command that made it, and the fleet's hub is a service somebody
 # chose to run, not a side effect of a spawn.
 fm_backend_stream_container_ensure() {
@@ -492,10 +492,8 @@ fm_backend_stream_capture() {  # <target> <lines> [expected-label]
 }
 
 # fm_backend_stream_current_path: the endpoint's live foreground working
-# directory, the same question tmux answers with #{pane_current_path}. The
-# owning agent reads it from a running process, so spawn-time worktree
-# discovery needs no marker probe of the kind zellij and cmux require for their
-# creation-time-frozen values.
+# directory. The owning agent reads it from a running process, so spawn-time
+# worktree discovery needs no marker probe.
 fm_backend_stream_current_path() {  # <target> [expected-label]
   local target=$1 expected=${2:-} out path stale
   fm_backend_stream_target_ready "$target" "$expected" || return 1
@@ -566,8 +564,7 @@ fm_backend_stream_composer_capture() {  # <target> [expected-label] -> "<cursor-
       # No cursor row was reported. Anchoring the read at row 0 (the top of the
       # screen) could never prove the composer, which is bottom-anchored: pass
       # the missing cursor through as EMPTY so the shared classifier uses its
-      # cursorless bottom-most-shape selection, the same rule herdr, zellij,
-      # cmux, and orca use for every read.
+      # cursorless bottom-most-shape selection.
       cursor=
       ;;
   esac
@@ -584,8 +581,7 @@ fm_backend_stream_composer_capture() {  # <target> [expected-label] -> "<cursor-
 # capability model in bin/fm-composer-lib.sh).
 #   styled=1  the hub renders SGR runs back into the screen it returns.
 #   cursor=1  the hub reports the real cursor row of that same screen, so the
-#             shape CONTAINING the cursor selects the composer, exactly as it
-#             does on tmux.
+#             shape CONTAINING the cursor selects the composer.
 #   identity=0 there is no native agent-state probe; the agent reports the
 #             processes on the pseudoterminal, which is liveness, not the
 #             idle/working verdict Pi's blank separated composer would need.
