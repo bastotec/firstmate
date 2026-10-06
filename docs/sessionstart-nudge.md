@@ -7,7 +7,7 @@ Firstmate ships two session-open tiers, and the tier is a property of the harnes
 
 | Tier | What the adapter does | Used by |
 | --- | --- | --- |
-| Run | Executes `bin/fm-session-start.sh` through the native session-open adapter and gates its ordered digest into model context before the first turn. | Claude, `codex exec`, Pi / pi-signed, omp, Cursor, Deck home driver |
+| Run | Executes `bin/fm-session-start.sh` through the native session-open adapter and gates its ordered digest into model context before the first turn. | Claude, `codex exec`, Pi / pi-signed, omp, Cursor, Deck home hosts |
 | Nudge | Asks the agent to run the digest through the native adapter or the tracked session-start instruction. | Grok, OpenCode, and run-tier sources routed to the nudge |
 
 Codex's interactive TUI has no tracked session-open, compaction, or re-emit channel and is not covered by either tier.
@@ -16,9 +16,10 @@ An agent can defer an instruction, including when a first-command skill has its 
 Running the digest through the native adapter removes that discretion, so even a session whose first command is a skill has already taken the helm.
 The nudge tier remains the floor for harnesses that cannot carry hook stdout into model context, and it is never a second contract: both tiers end in the same `bin/fm-session-start.sh`.
 
-Deck home hosts have a single fresh-session entry point owned by `bin/fm-deck-worker.sh --secondmate` or the explicit managed-primary `--primary` entry point; the driver runs the digest once and carries it into the first turn.
-[Managed primary setup](managed-primary.md) owns that opt-in boundary, not adoption of an existing session.
+Deck's `run` home driver owns the fresh-session entry point through `bin/fm-deck-worker.sh --secondmate` or the explicit managed-primary `--primary` entry point; it runs the digest once and carries it into the first turn.
 That one digest run stays the entry point when the first turn dies before Deck opens a session: the driver then carries the same retained digest into the next turn once, and stops for its lifecycle owner's guarded relaunch if that turn opens no session either.
+The separate [`deck chat` host header](../bin/fm-deck-chat.sh) owns completion-gated startup and steering delivery for that primary path.
+[Managed primary setup](managed-primary.md) owns both opt-in launch choices, not adoption of an existing session.
 
 ## Source routing
 

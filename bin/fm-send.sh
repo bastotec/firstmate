@@ -16,6 +16,10 @@
 #   shape: two or more colons is herdr, "<hub-tag>:<32-hex id>" on this home's
 #   configured stream hub is stream, any other "a:b" is tmux; the guessed
 #   endpoint must then verify live.
+# The reserved `primary` selector, only when state/primary.meta is absent,
+# publishes plain text to a live Deck chat host instead of either task plane
+# below: fm-send.sh primary <text...> (no options or native-key handling).
+# bin/fm-primary-steer.sh owns its publication and delivery-check contract.
 # Special keys instead of text: fm-send.sh <target> --key Enter
 # Key support is backend-specific: tmux, herdr and stream support Escape,
 # Enter, C-c and C-u.
