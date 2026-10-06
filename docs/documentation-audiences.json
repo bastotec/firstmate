@@ -249,6 +249,14 @@
       "audience": "maintainer-verification"
     },
     {
+      "path": "docs/process-event-sources.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "docs/relay.md",
+      "audience": "operator-current"
+    },
+    {
       "path": "docs/remote-secondmates.md",
       "audience": "operator-current"
     },

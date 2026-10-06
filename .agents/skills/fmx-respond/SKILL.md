@@ -159,7 +159,7 @@ Treat `state/x-inbox/` as the source of truth and process **every** file you fin
       Inspect every key the payload actually carries - at the top level, inside `in_reply_to`, and inside each `in_reply_to_chain` entry - because the relay gains fields over time and anything you never look at is invisible to you.
       `request_id`, `text`, `in_reply_to`, and `in_reply_to_chain` are what you always work from; never assume they are all that is there.
       `in_reply_to` is `{author_handle, text}` when this mention is a reply within an ongoing conversation, or `null` for a fresh, standalone mention.
-      `in_reply_to_chain` is the optional surrounding-conversation transcript; [the Relay configuration reference](../../../docs/configuration.md#relay-env) owns its exact wire shape and compatibility semantics.
+      `in_reply_to_chain` is the optional surrounding-conversation transcript; [the Relay configuration reference](../../../docs/relay.md) owns its exact wire shape and compatibility semantics.
       Read every entry in its documented oldest-first order, including `history` entries and unavailable gaps, but treat the chain as optional context because it is often absent today: use it when present and proceed normally without it.
       Ignore `tweet_id` entirely - you never name a platform message id; the relay binds the reply for you.
       **Then look at whatever is attached before you answer.**

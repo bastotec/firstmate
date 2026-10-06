@@ -70,7 +70,7 @@ For a "do X as soon as Y is true" request whose condition AND action are both ge
 bin/fm-procevent-when.sh arm <name> --condition <argv>... --action <argv>...
 ```
 
-[`docs/configuration.md`](../../../docs/configuration.md#process-to-event-sources-stateprocevent) owns the watch's operating contract, while the adapter's header and `--help` own the flags, cadence, trust binding, and outcome document.
+[`docs/process-event-sources.md`](../../../docs/process-event-sources.md) owns the watch's operating contract, while the adapter's header and `--help` own the flags, cadence, trust binding, and outcome document.
 Eligibility is a firstmate judgment made BEFORE arming, because the scripts cannot classify an argv: the action must be safe, reversible, and exact (for example `no-mistakes update --beta`, whose own guard refuses while a validation run is active).
 Never bind an action that is destructive, irreversible, or security-sensitive, an action needing captain approval or any gate decision, or an action whose right form depends on what the condition finds - those keep the existing check-fires-then-firstmate-decides flow, for which a plain custom check or another adapter stays correct.
 When in doubt, arm only the condition half as an ordinary check and keep the action as a wake-time decision.
@@ -78,7 +78,7 @@ When in doubt, arm only the condition half as an ordinary check and keep the act
 `bin/fm-procevent.sh --help`, `bin/fm-procevent-lavish.sh --help`, `bin/fm-procevent-when.sh --help`, `bin/fm-procevent-quota.sh --help`, and `bin/fm-procevent-remote-reply.sh --help` own the exact commands and flags.
 
 An explicitly enabled external adapter registers through `bin/fm-procevent.sh register-extension`, never through a package-discovered script or package-supplied argv.
-[`docs/configuration.md`](../../../docs/configuration.md#trusted-external-process-event-adapters-configextensionsd) owns setup and [`docs/extension-bindings.md`](../../../docs/extension-bindings.md) owns the narrow trusted-code and untrusted-evidence boundary.
+[`docs/process-event-sources.md`](../../../docs/process-event-sources.md#trusted-external-process-event-adapters-configextensionsd) owns setup and [`docs/extension-bindings.md`](../../../docs/extension-bindings.md) owns the narrow trusted-code and untrusted-evidence boundary.
 Use the owner-matched retirement command registration prints, so an older package generation cannot retire its replacement.
 
 Two rules the commands cannot enforce for you:
@@ -98,7 +98,7 @@ Two rules the commands cannot enforce for you:
   The runner normally applies the result on capture, but this call is the required idempotent confirmation when the wake remains unacknowledged.
   Never acknowledge a `remote-reply` wake through the generic command, because only the adapter ingests the delta, acknowledges it, and re-arms its source.
   Use the generic path below only after fully handling a result whose adapter has no applying command.
-  [`docs/configuration.md`](../../../docs/configuration.md#process-to-event-sources-stateprocevent) owns the automatic-application contract and its failure boundary.
+  [`docs/process-event-sources.md`](../../../docs/process-event-sources.md) owns the automatic-application contract and its failure boundary.
 : A captured result with no durable handled acknowledgement stays eligible for bounded re-announcement on the existing wake queue - across any number of drains and firstmate restarts, not only the crash window right after capture - until it is explicitly acknowledged. Once you have fully handled a result, durably record it:
   ```sh
   bin/fm-procevent.sh handled <source-id> <sequence>
@@ -132,15 +132,15 @@ Supported by tests:
 - the handled acknowledgement is generation-keyed to the exact source and sequence, private, path-safe, durable, and idempotent, and is the only thing that stops re-announcement;
 - one identity-matched owner per canonical source, across homes that share one underlying source store;
 - registration and ownership transitions share one per-source boundary, release is generation-bound, and uncertain process identity preserves the source for retry;
-- leaderless PID/PGID-reuse ambiguity preserves the claim without signalling or replacement, as owned by the operating contract in [`docs/configuration.md`](../../../docs/configuration.md#process-to-event-sources-stateprocevent);
-- runner lifetime, owner-lease, and launch-pacing guarantees follow the operating contract in [`docs/configuration.md`](../../../docs/configuration.md#process-to-event-sources-stateprocevent);
+- leaderless PID/PGID-reuse ambiguity preserves the claim without signalling or replacement, as owned by the operating contract in [`docs/process-event-sources.md`](../../../docs/process-event-sources.md);
+- runner lifetime, owner-lease, and launch-pacing guarantees follow the operating contract in [`docs/process-event-sources.md`](../../../docs/process-event-sources.md);
 - stored argv is executed directly, so an argument containing spaces or shell metacharacters is never re-split or interpreted;
 - oversized output is bounded rather than published whole or silently dropped.
 
-The `when` adapter's guarantees are part of the operating contract in [`docs/configuration.md`](../../../docs/configuration.md#process-to-event-sources-stateprocevent).
+The `when` adapter's guarantees are part of the operating contract in [`docs/process-event-sources.md`](../../../docs/process-event-sources.md).
 
 **Not true, and never to be claimed:** at-least-once, no-loss, or lossless delivery, and no generic exactly-once effect either - the handled acknowledgement only stops re-announcement, it says nothing about whether a paired external effect performed before the acknowledgement call actually completed, so a crash between that effect and the call can still repeat the effect on the next replay.
-Also never claim that a source cannot refresh its owning home's lease: that rule is confused-agent-grade and a deliberately marker-stripping source is out of scope, per the operating contract in [`docs/configuration.md`](../../../docs/configuration.md#process-to-event-sources-stateprocevent).
+Also never claim that a source cannot refresh its owning home's lease: that rule is confused-agent-grade and a deliberately marker-stripping source is out of scope, per the operating contract in [`docs/process-event-sources.md`](../../../docs/process-event-sources.md).
 
 The currently published `lavish-axi poll` destructively clears feedback before returning it.
 A result lost after that clearing and before the runner reads the process output is unrecoverable, and no firstmate wrapper can close that source-side window.
