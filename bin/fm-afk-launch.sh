@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # fm-afk-launch.sh - the single owner of away-mode ENTRY and EXIT: the
 # read-back-and-confirm entry that writes the away-posture record through
-# bin/fm-afk-contract.sh, and the away-mode daemon TERMINAL lifecycle where a
-# daemon still runs: launch it in a NON-VISIBLE tracked terminal per backend,
-# record its exact id, tear it down by that exact id, and reconcile a leaked one
-# after a crash.
+# bin/fm-afk-contract.sh, and the away-mode daemon endpoint lifecycle where a
+# daemon still runs: launch it in a NON-VISIBLE tracked terminal or a detached
+# process, record its exact identity, tear it down by that identity, and
+# reconcile a leaked endpoint after a crash.
 #
 # ENTRY (the posture record). `/afk [words]` is two steps so the captain hears
 # the mandate back before it binds: `propose` compiles the words and clauses
@@ -20,15 +20,15 @@
 # `stop` (the return, driven by bin/fm-afk-return.sh) shuts the daemon down,
 # clears state/.afk last, and archives the record under state/afk-contracts/.
 #
-# Why the terminal lifecycle exists (docs/herdr-backend.md "Away-mode daemon terminal launch"):
-# bin/fm-afk-start.sh execs the supervise daemon in the FOREGROUND of whatever
-# terminal it is already in. Harnesses with a native in-pane tracked-background
-# tool (claude, grok) run it there directly and it is fine. A harness with NO
-# native background mechanism (pi) has to manufacture a terminal, and doing that
-# by SPLITTING the captain's active pane visibly shrinks it - the regression this
-# script fixes. Instead this creates a non-visible tracked terminal (a herdr tab/
-# workspace with --no-focus, or a detached tmux session) that never touches the
-# captain's active tab, and NEVER uses shell `&` (which herdr/codex can reap).
+# Why the terminal lifecycle exists (docs/herdr-backend.md "Away-mode supervisor support"):
+# bin/fm-afk-start.sh execs the supervise daemon in the FOREGROUND of its host.
+# Harnesses with a native in-pane tracked-background tool (claude, grok) run
+# it there directly. Other daemon-using harnesses need an isolated endpoint:
+# splitting the captain's active pane would visibly shrink it. Instead this
+# creates a non-visible tracked terminal (a herdr tab/workspace with --no-focus,
+# or a detached tmux session) that never touches the captain's active tab.
+# The stream path below uses a detached session leader rather than a terminal;
+# a plain fire-and-forget shell child is not sufficient on herdr/codex.
 #
 # Correct supervisor targeting: the daemon finds the captain pane to inject into
 # from its OWN inherited env (discover_supervisor_target). Running it in a
@@ -52,8 +52,8 @@
 #                              announcement. On Pi this is the whole entry.
 #   fm-afk-launch.sh start     Capture the captain pane, then (unless the daemon
 #                              is already running) launch the daemon in a fresh
-#                              non-visible terminal for the detected backend and
-#                              record it. Idempotent: an already-running daemon
+#                              non-visible terminal or detached process for the
+#                              detected backend and record it. Idempotent: an already-running daemon
 #                              just refreshes state/.afk; a recorded-but-dead
 #                              terminal is reconciled (closed by id) first.
 #   fm-afk-launch.sh start-native
@@ -72,7 +72,14 @@
 # Stream: a primary on a stream endpoint has no local pane to put a hidden
 # terminal next to, so the daemon runs as a detached process in its own session
 # (setsid, the same detach the stream adapter uses for its agents), with output
-# in state/.afk-daemon.out.
+# in state/.afk-daemon.out. state/.afk-daemon-terminal is a single three-field
+# TAB record: herdr<TAB><session>:<pane-id><TAB><workspace-id>,
+# tmux<TAB><session-name><TAB><empty>, none<TAB>-<TAB>native, or
+# process<TAB><pid><TAB><fm_pid_identity>. The process record is refreshed with
+# the post-readiness identity after the entry execs the daemon. Process
+# liveness, close, and absence require that identity to match and the pid to
+# lead its own process group; a mismatch reads as gone and is never signalled.
+# tests/fm-afk-launch.test.sh covers detached launch, shutdown, and mismatches.
 #
 # Test seam: FM_AFK_LAUNCH_ENTRY overrides the command run in the created
 # terminal (default bin/fm-afk-start.sh), so a topology test can run a harmless

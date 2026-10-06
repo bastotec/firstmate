@@ -1,7 +1,7 @@
 # Stream backend
 
 The stream backend puts every task's live terminal output on one central hub, so a single place can watch workers on any machine and talk to them.
-It is experimental, explicit-only, and never auto-detected.
+It is experimental and explicit-only for task spawning; [`Away-mode supervisor backend`](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target) owns the separate primary-supervisor discovery.
 
 [`docs/configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns backend selection, task-selector resolution, and the metadata contract that every backend shares.
 This document owns setup, security, and the limits specific to stream.
@@ -39,7 +39,7 @@ The locally started hub ranks below both configured sources, so a home pointed a
 The hub groups endpoints by the machine that owns them, and this home's name in that view comes from `FM_STREAM_MACHINE`, then `config/stream-machine`, then the hostname; it is a readable identity rather than an opaque id, so set it on any home whose hostname says nothing useful.
 
 Select the backend the way any explicit backend is selected: `config/backend`, `FM_BACKEND=stream`, or an explicit per-task request.
-It is never auto-detected.
+Task-spawn selection is never auto-detected.
 Secondmate spawns use the existing isolated-home launch path, including Deck's persistent home-host driver (`bin/fm-deck-worker.sh`); no home migration is performed.
 
 ## Secondmate lifecycle
@@ -114,10 +114,7 @@ Run `bin/fm-stream.sh --help` for the operator commands; that help and each scri
 
 ## Away mode on a stream primary
 
-The away daemon (`bin/fm-supervise-daemon.sh`) supervises a primary hosted on a stream endpoint with backend `stream`.
-A deck-chat primary gets digests through its steer dir (`bin/fm-primary-steer.sh`); with none registered, the digest is typed into the primary's endpoint through this adapter.
-`bin/fm-afk-launch.sh start` runs the daemon as a detached process recorded by pid, since there is no local pane to sit beside.
-Detection, the delivery proof, and the launch record are in [`docs/configuration.md`](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target).
+[`Away-mode supervisor backend`](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target) owns primary discovery, stream digest delivery, and detached daemon launch.
 
 ## Watching and steering
 

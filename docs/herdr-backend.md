@@ -328,8 +328,7 @@ There is still one watcher process; the event reader is a bounded child of that 
 
 ## Away-mode supervisor support
 
-The away daemon supports tmux and Herdr supervisor panes only.
-It refuses any other supervisor backend rather than applying the wrong transport.
+[`Away-mode supervisor backend`](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target) owns supported transports and discovery.
 For Herdr, target existence, native state, capture, composer state, and verified submit all route through the shared backend dispatcher and the explicit named-session CLI owner.
 The pane-independent max-defer alert is configured in [`wedge-alarm.md`](wedge-alarm.md).
 
@@ -339,8 +338,7 @@ For another harness without native tracked background execution, `bin/fm-afk-lau
 It never splits the captain's active tab and never uses shell `&`.
 Recovery reconciles only the recorded exact id.
 
-On stop, the daemon receives termination while `state/.afk` still exists so its final flush can run, the recorded terminal is closed, and the AFK flag is removed last.
-A fresh entry clears stale transient escalation caches, while durable queue and task records remain authoritative.
+[`bin/fm-afk-launch.sh`](../bin/fm-afk-launch.sh) owns ordered stop and stale-artifact cleanup; the [`afk` skill](../.agents/skills/afk/SKILL.md#stale-artifact-lifecycle) owns the agent lifecycle obligations.
 
 ## Destructive lab safety
 
@@ -362,7 +360,7 @@ Tests use thin compatibility wrappers in `tests/herdr-test-safety.sh` and never 
 - A Firstmate outside Herdr cannot resolve a launcher workspace, so a colliding home label refuses new spawns until the collision is cleared.
 - Ghost and placeholder recognition uses ANSI de-emphasis when available; an unstyled glyph row carrying trailing non-idle text fails safely to `unknown`.
 - Mid-session secondmate agent-process liveness is not implemented.
-- Only tmux and Herdr can host the away-mode supervisor terminal.
+- Supervisor launch limits are owned by [`Away-mode supervisor backend`](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target).
 
 ## Regression entry points
 

@@ -70,29 +70,16 @@
 # Usage: fm-supervise-daemon.sh
 #          Long-lived background loop. Normally started by the /afk skill, which
 #          sets state/.afk first. Env knobs:
-#          FM_SUPERVISOR_TARGET     supervisor pane target (override; otherwise
-#                                   auto-discovered per backend - $TMUX_PANE
-#                                   under tmux, "<session>:<pane-id>" from
-#                                   $HERDR_PANE_ID under herdr - then
-#                                   firstmate:0 fallback). Accepts either a
-#                                   tmux target or a herdr "<session>:<pane-id>"
-#                                   target; which one it's read as is decided by
-#                                   FM_SUPERVISOR_BACKEND (below), independently.
-#          FM_SUPERVISOR_BACKEND    supervisor pane BACKEND (tmux|herdr|stream;
-#                                   override; otherwise auto-discovered by
-#                                   bin/fm-supervisor-target-lib.sh - a stream
-#                                   endpoint's FM_STREAM_ENDPOINT_ID or a live
-#                                   state/primary-chat.json record selects
-#                                   stream, $TMUX_PANE selects tmux,
-#                                   $HERDR_ENV=1 selects herdr - falling back to
-#                                   tmux). Any other value refuses loudly at
-#                                   startup rather than trying tmux primitives
-#                                   against a non-tmux pane.
-#                                   On stream, a digest is published to the
-#                                   deck-chat primary's steer dir through
-#                                   bin/fm-primary-steer.sh (see inject_msg_stream);
-#                                   with no deck-chat primary it is typed into the
-#                                   recorded endpoint through the stream adapter.
+#          FM_SUPERVISOR_TARGET     supervisor target override: tmux target,
+#                                   herdr "<session>:<pane-id>", or stream
+#                                   "<hub-tag>:<endpoint-id>". Discovery is owned
+#                                   by bin/fm-supervisor-target-lib.sh; stream
+#                                   may resolve to "-" for steer-only delivery.
+#          FM_SUPERVISOR_BACKEND    supervisor transport (tmux|herdr|stream);
+#                                   override, otherwise discovered by
+#                                   bin/fm-supervisor-target-lib.sh. Other values
+#                                   refuse at startup. inject_msg_stream below
+#                                   owns deck-chat steering and endpoint fallback.
 #          FM_PRIMARY_STEER_BIN     steer client override (default
 #                                   bin/fm-primary-steer.sh); tests use a fake
 #          FM_INJECT_SKIP           |-prefixes force-self-handle bypassing
@@ -141,14 +128,11 @@
 #                                   its watchdog terminates it and continues to the
 #                                   next channel (default 10; invalid/zero uses the
 #                                   default).
-#          FM_INJECT_CONFIRM_RETRIES Enter-retry attempts on a swallowed Enter
-#                                   (default 3); the digest is typed once, only
-#                                   Enter is retried. Composer-empty detection is
-#                                   structural and style-aware (bin/fm-tmux-lib.sh):
-#                                   it drops dim/faint ghost text and strips the
-#                                   harness's box borders before deciding, so a
-#                                   ghost-only or bordered-but-empty composer is
-#                                   not misread as pending input.
+#          FM_INJECT_CONFIRM_RETRIES Enter retries or additional steer-delivery
+#                                   polls (default 3); typed delivery sends the
+#                                   digest once and retries only Enter. Shared
+#                                   composer confirmation is owned by
+#                                   bin/fm-composer-lib.sh.
 #          FM_INJECT_CONFIRM_SLEEP  seconds between daemon submit checks
 #                                   (default 0.5)
 #          FM_LOG_MAX_BYTES / FM_LOG_KEEP_LINES / FM_CRASH_*  log + crash guards
@@ -1344,19 +1328,20 @@ inject_msg_pane() {  # <encoded-message> <backend> <target>
 # --- stream primary: delivery through the deck-chat steer dir ---------------
 # A deck-chat primary takes input through its steer dir, not a composer, so
 # bin/fm-primary-steer.sh (FM_PRIMARY_STEER_BIN overrides it) owns publishing,
-# the busy read, and the delivery proof. Its exit 3 means no live deck-chat
-# primary is registered; the digest then goes through the stream adapter's own
-# typed input to the recorded endpoint (inject_msg_pane), exactly as fm-send
-# would, with that path's own composer and submit proof.
+# the busy read, and the delivery proof. Exit 3 means no registered deck-chat
+# primary; delivery then uses inject_msg_pane with the recorded stream endpoint.
+# docs/configuration.md "Away-mode supervisor backend" owns operator behavior.
 #
-# Delivery proof is `delivered <seq>`: the primary acknowledged the steer. The
-# published seq and the digest's hash are kept in state/.subsuper-steer-pending
-# until that proof arrives, so a slow acknowledgement never republishes the
-# same digest: the next flush re-checks the pending seq instead. A digest that
-# grew since (new escalations buffered) is published again only once the
-# earlier one is acknowledged or rejected; the repeat of older items is the
-# chosen cost, never their loss. A never-acknowledged seq keeps the buffer, so
-# max-defer and the wedge alarm in housekeeping fire exactly as for a pane.
+# Pending format: state/.subsuper-steer-pending holds one TAB-separated
+# seq<TAB>digest-hash<TAB>deck-session record. The hash covers the full encoded
+# digest, before truncation. Delivery proof is `delivered <seq>`, checked only
+# while state/primary-chat.json names the publishing session, both before and
+# after the call. A changed or unreadable session discards the binding, not
+# the escalation buffer. A slow acknowledgement re-checks rather than publishes
+# again; an expanded digest waits for the prior sequence to settle, then may
+# repeat older events. Unconfirmed delivery retains the buffer for max-defer
+# and the wedge alarm. tests/fm-daemon.test.sh covers session replacement,
+# bounded UTF-8 publication, archive failure, and late acknowledgement.
 FM_SUPERVISOR_STEER_PENDING=".subsuper-steer-pending"
 
 fm_daemon_steer() {  # <subcommand> [args...]
@@ -1368,14 +1353,15 @@ fm_daemon_steer() {  # <subcommand> [args...]
   "$bin" "$sub" --home "$FM_HOME" "$@" </dev/null 2>/dev/null
 }
 
-# fm_daemon_steer_wait_delivered: poll `delivered <seq>` within the inject
-# confirmation budget. Returns the last delivered exit code (0 acked, 1 still
-# pending, 2 rejected, 3 not present).
+# fm_daemon_steer_session: read the publishing session, failing closed on an
+# absent, unreadable, or invalid identifier.
 fm_daemon_steer_session() {
   jq -er '.session | select(type == "string" and length > 0) | select(test("^[A-Za-z0-9_.-]+$"))' \
     "$FM_HOME/state/primary-chat.json" 2>/dev/null
 }
 
+# Poll delivery within the confirmation budget: 0 acked, 1 pending,
+# 2 rejected, 3 no registered primary or session binding changed.
 fm_daemon_steer_wait_delivered() {
   local seq=$1 session=$2 retries sleep_s attempt=0 rc
   retries=${FM_INJECT_CONFIRM_RETRIES:-$INJECT_CONFIRM_RETRIES_DEFAULT}
@@ -1816,14 +1802,9 @@ fm_super_main() {
     log "warn: could not record this daemon's process identity; the turn-end guard cannot recognize away-mode supervision"
   fi
 
-  # --- auto-discover the supervisor BACKEND (tmux vs herdr) first -----------
-  # Priority: FM_SUPERVISOR_BACKEND override > $TMUX_PANE (tmux) > $HERDR_ENV=1
-  # (herdr) > tmux fallback. Resolved before the target below, since target
-  # discovery composes a herdr "<session>:<pane-id>" string using the same
-  # $HERDR_PANE_ID/$HERDR_SESSION markers this checks. Exporting the result
-  # into FM_SUPERVISOR_BACKEND makes inject_msg/pane_is_busy/pane_input_pending
-  # (which read that env var) dispatch through the right backend without an
-  # extra global thread-through.
+  # Resolve the backend before the target: an explicit stream backend must
+  # never borrow an inherited tmux/herdr pane id. Discovery precedence belongs
+  # to fm-supervisor-target-lib.sh. Persist the result for delivery dispatch.
   local discovered_backend backend_source
   backend_source="FM_SUPERVISOR_BACKEND"
   if [ -z "${FM_SUPERVISOR_BACKEND:-}" ]; then
@@ -1846,12 +1827,8 @@ fm_super_main() {
     exit 1
   fi
 
-  # --- auto-discover the supervisor target (the pane running firstmate) -----
-  # Priority: FM_SUPERVISOR_TARGET override > $TMUX_PANE (tmux; inherited from
-  # the pane that launched the daemon, normally firstmate's own) >
-  # $HERDR_PANE_ID (herdr, composed into "<session>:<pane-id>") > firstmate:0
-  # fallback. Exporting the result into FM_SUPERVISOR_TARGET makes inject_msg
-  # (which reads that env var) use the discovered pane without an extra global.
+  # Resolve the supervisor target through the shared discovery owner above;
+  # persist it so inject_msg uses the captured primary, not the daemon's pane.
   local discovered target_source
   target_source="FM_SUPERVISOR_TARGET"
   if [ -z "${FM_SUPERVISOR_TARGET:-}" ]; then

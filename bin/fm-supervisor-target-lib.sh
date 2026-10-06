@@ -10,9 +10,9 @@
 # auto-discover its OWN pane and inject there instead of into the captain's).
 #
 # Because both callers need the identical resolution, it lives here once. The
-# function names and precedence are unchanged from when this logic lived inline
-# in bin/fm-supervise-daemon.sh, so its unit tests (tests/fm-daemon.test.sh)
-# keep exercising the same names after the daemon sources this file.
+# function names are preserved from when this logic lived inline in
+# bin/fm-supervise-daemon.sh, so tests/fm-daemon.test.sh keeps exercising the
+# same discovery interface after the daemon sources this file.
 #
 # Stream primaries. A primary hosted on a stream endpoint is addressed as
 # "<hub-tag>:<endpoint-id>" with backend `stream`. Two signals select it:
@@ -65,10 +65,9 @@ fm_supervisor_primary_chat_endpoint() {
 }
 
 # discover_supervisor_source: name which signal selects the supervisor, in the
-# precedence both discover_* functions below share. One of FM_SUPERVISOR_BACKEND
-# (an explicit backend override), FM_STREAM_ENDPOINT_ID, PRIMARY_CHAT_RECORD,
-# TMUX_PANE, HERDR_ENV, or FALLBACK. The explicit FM_SUPERVISOR_TARGET override
-# is reported by the target resolver itself.
+# precedence both discover_* functions below share. One of
+# FM_STREAM_ENDPOINT_ID, PRIMARY_CHAT_RECORD, TMUX_PANE, HERDR_ENV, or FALLBACK.
+# Explicit overrides are handled and reported by the callers, not this helper.
 discover_supervisor_source() {
   if fm_supervisor_stream_env_target >/dev/null 2>&1; then
     printf 'FM_STREAM_ENDPOINT_ID'
