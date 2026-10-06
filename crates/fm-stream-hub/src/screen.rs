@@ -97,6 +97,7 @@ pub struct Screen {
     buf: String,
     buf_len: usize,
     utf8: Vec<u8>,
+    pending_bytes: usize,
 }
 impl Screen {
     #[cfg(test)]
@@ -138,6 +139,7 @@ impl Screen {
             buf: String::new(),
             buf_len: 0,
             utf8: Vec::new(),
+            pending_bytes: 0,
         })
     }
     pub fn feed(&mut self, data: &[u8]) {
@@ -149,7 +151,7 @@ impl Screen {
                     let s = s.to_owned();
                     offset = self.utf8.len();
                     for c in s.chars() {
-                        self.character(c);
+                        self.consume(c, c.len_utf8());
                     }
                     break;
                 }
@@ -159,11 +161,11 @@ impl Screen {
                     let bad = e.error_len();
                     offset = end;
                     for c in s.chars() {
-                        self.character(c);
+                        self.consume(c, c.len_utf8());
                     }
                     if let Some(len) = bad {
                         offset += len;
-                        self.character('\u{fffd}');
+                        self.consume('\u{fffd}', len);
                     } else {
                         break;
                     }
@@ -171,6 +173,16 @@ impl Screen {
             }
         }
         self.utf8.drain(..offset);
+    }
+    pub fn pending_len(&self) -> usize {
+        self.pending_bytes + self.utf8.len()
+    }
+    fn consume(&mut self, c: char, bytes: usize) {
+        self.pending_bytes += bytes;
+        self.character(c);
+        if self.state == "text" {
+            self.pending_bytes = 0;
+        }
     }
     fn clear_buf(&mut self) {
         self.buf.clear();
@@ -494,6 +506,55 @@ impl Screen {
         }
         out
     }
+    pub fn cursor_col(&self) -> usize {
+        self.cx.min(self.cols - 1)
+    }
+    /// Follow the endpoint's pseudoterminal to a new geometry. Rows leaving
+    /// the top go to history, the way a terminal keeps the bottom of the
+    /// screen; the scroll region resets to the full screen.
+    pub fn resize(&mut self, rows: usize, cols: usize) {
+        if rows == 0 || cols == 0 || (rows == self.rows && cols == self.cols) {
+            return;
+        }
+        for row in self.cells.iter_mut() {
+            row.resize(cols, (" ".into(), String::new()));
+        }
+        for row in self.history.iter_mut() {
+            row.resize(cols, (" ".into(), String::new()));
+        }
+        if rows < self.cells.len() {
+            let excess = self.cells.len() - rows;
+            // Drop blank rows below the cursor first, then scroll the rest off.
+            let mut trimmed = 0;
+            while trimmed < excess
+                && self.cells.len() - 1 > self.cy
+                && self
+                    .cells
+                    .last()
+                    .is_some_and(|r| r.iter().all(|(g, a)| g == " " && a.is_empty()))
+            {
+                self.cells.pop();
+                trimmed += 1;
+            }
+            for _ in trimmed..excess {
+                let row = self.cells.remove(0);
+                self.history.push_back(row);
+                if self.history.len() > 2000 {
+                    self.history.pop_front();
+                }
+                self.cy = self.cy.saturating_sub(1);
+            }
+        }
+        while self.cells.len() < rows {
+            self.cells.push(blank(cols));
+        }
+        self.rows = rows;
+        self.cols = cols;
+        self.cy = self.cy.min(rows - 1);
+        self.cx = self.cx.min(cols);
+        self.top = 0;
+        self.bot = rows - 1;
+    }
     pub fn lines(&self, ansi: bool) -> Vec<String> {
         self.cells.iter().map(|r| Self::render(r, ansi)).collect()
     }
@@ -515,6 +576,32 @@ impl Screen {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn identical_resize_preserves_the_scroll_region() {
+        let mut screen = Screen::new(4, 8);
+        screen.feed(b"top\r\nfirst\r\nsecond\r\nbottom\x1b[2;3r\x1b[3;1H");
+        screen.resize(4, 8);
+        screen.feed(b"\nnew");
+        assert_eq!(screen.lines(false), vec!["top", "second", "new", "bottom"]);
+    }
+
+    #[test]
+    fn pending_length_counts_original_bytes_until_parsing_completes() {
+        let mut screen = Screen::new(2, 80);
+        for (prefix, suffix) in [
+            (&b"\x1b[3"[..], &b"1mred"[..]),
+            (&b"\xe4\xb8"[..], &b"\xad"[..]),
+            (&b"\x1b]title\xc3"[..], &b"\xa9\x07"[..]),
+            (&b"\x1b( "[..2], &b"B"[..]),
+            (&b"\x1bP\xff\x1b"[..], &b"\\"[..]),
+        ] {
+            screen.feed(prefix);
+            assert_eq!(screen.pending_len(), prefix.len());
+            screen.feed(suffix);
+            assert_eq!(screen.pending_len(), 0);
+        }
+    }
 
     #[test]
     fn allocation_layout_failures_are_fallible() {

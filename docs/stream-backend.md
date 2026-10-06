@@ -123,6 +123,36 @@ Ordinary supervision does not need any of that.
 [`fm_backend_agent_pids`](../bin/fm-backend.sh) owns the process-identity read contract, including stream's local-machine restriction.
 [Portable stream-parity regressions](verification/runtime-backends.md#portable-stream-parity-regressions) distinguish fake-fleet integration coverage from real agent process reporting.
 
+### Interactive attach
+
+`bin/fm-stream.sh attach --interactive <endpoint-or-target> [--detach-key C-]]` takes over the local terminal, which is how a TUI hosted on an endpoint (a `deck chat` primary, for one) is used by hand:
+
+- It first sends the local terminal size when resize is supported, then puts the terminal in raw mode, paints the endpoint's current screen and cursor, and streams output from the snapshot's parser-safe offset (`GET /v1/tasks/<id>/snapshot` and `stream?from=<offset>`).
+  The offset excludes incomplete escape sequences and UTF-8 characters, so the stream replays their buffered prefixes.
+  Paint restores cells and cursor only, not the scroll region or pending autowrap; a full-screen TUI should repaint on its own, as most do on `SIGWINCH` or their next frame.
+  An exact offset outside the retained ring range returns HTTP 409 with a continuity error; if output overruns the ring during the subscription, the stream emits a continuity error and closes, and the client reports it and exits non-zero rather than rendering discontinuous bytes.
+  Read-only `--replay` remains best-effort from the oldest retained byte.
+- Every byte typed or pasted, escape sequences included, goes to the endpoint's pseudoterminal through `POST /v1/tasks/<id>/input`: as `text` when it is UTF-8, as `b64` raw bytes when it is not.
+  Keys typed while a send is in flight go out together in the next one.
+  Any non-2xx response or transport error ends the session with an explicit failed or uncertain delivery message, without retrying input.
+- A local resize goes to `POST /v1/tasks/<id>/resize` (`rows`, `cols`, 1-1000 each).
+  Resize monitoring starts before the initial size is sampled, so a resize during startup requests is preserved for forwarding once the session starts.
+  Before changing the pseudoterminal and triggering `SIGWINCH`, the native agent posts a geometry frame that resizes the native hub's screen at ingestion; re-registration after a hub restart reports the new size.
+  Identical geometry leaves the screen and scroll region unchanged.
+  HTTP 404 or a 502 `agent_refused` response reporting `unknown command kind` disables further resizes while keeping the session open, supporting older hubs and Python-backed endpoints.
+  Any other non-2xx response or transport error ends the session with a failed or uncertain resize delivery message, without retrying.
+- Ctrl-] (or `--detach-key`, written `C-<key>`) detaches and leaves the endpoint running after draining preceding input, including partial-byte payloads, for at most two seconds.
+  External `SIGINT`, `SIGTERM`, and `SIGHUP` follow the same bounded detach drain; typed Ctrl-C remains ordinary input forwarded to the endpoint.
+  A failed or timed-out drain reports unsuccessful or uncertain delivery instead of a clean detach.
+  Endpoint exit status is propagated; a negative signal status becomes `128 + signal`, and an unknown status becomes 1.
+- Every session exit restores terminal attributes and locally leaves the alternate screen, shows the cursor, disables bracketed paste and mouse reporting, and resets SGR before printing the final message.
+
+The wrapper passes the token to the native `fm-stream-agent attach` client through the environment, never argv.
+Interactive attach needs both `subscribe` and `control` grants; [Security](#security) owns token classes and configuration.
+The client requires [native binaries](#implementation-and-native-binaries) whatever `config/stream-impl` says, including in a Python home.
+Against the Python rollback hub it starts from the screen without exact offset continuity and cannot resize or send non-UTF-8 bytes; a Python-backed endpoint on the native hub supports exact-offset output but refuses resize and raw-byte input.
+`tests/fm-stream-attach-rust.test.sh` drives it from a real PTY against a disposable native hub and agent.
+
 ## Bridge feed
 
 `bin/fm-stream-bridge.py` translates the hub into the Bridge UI's live wire format: one JSON record per line on stdout, one heartbeat per worker per tick, taken from the execution the hub marks current using the same decision as its order path.
@@ -297,7 +327,7 @@ The [host executable's header and help](../bin/fm-ui-host-control.py) own its ro
 
 The Bridge command plane remains `steer` only.
 The hub's leaf-plus-execution order journal binds steer text and routes the native receiver contract; it does not journal arbitrary command kinds.
-The hub's endpoint-addressed non-order command path already carries `input`, `kill`, and `status` through `submit_command` and the agent's take/result acknowledgement path, independent of the Bridge journal.
+The hub's endpoint-addressed non-order command path carries `input`, `kill`, and `status`, plus the native hub's `resize`, through command submission and the agent's take/result acknowledgement path, independent of the Bridge journal.
 Those are different planes, not interchangeable Bridge orders: raw input bypasses native steering, kill closes an endpoint rather than executing guarded lifecycle control, and status appends worker events rather than carrying captain intent.
 That path's acknowledgement does not supply the Bridge journal's leaf binding, command-id replay, or late-result lookup, so a preflight lookup followed by a plain command cannot honestly inherit the journal contract.
 Consequently this host route does not expose those routes as composer kinds or fabricate equivalent acknowledgement and retry guarantees.
@@ -311,8 +341,8 @@ The hub binds `127.0.0.1` by default and every data route requires a bearer toke
 Tokens are class-scoped, and there are three classes:
 
 - `publish` registers endpoints and publishes frames. Agents hold it; nobody else needs it.
-- `subscribe` reads only: list, stream, capture, screen, state, and the order journal.
-- `control` steers: sending input to a worker, appending a status line, closing an endpoint, and placing a leaf-addressed order.
+- `subscribe` reads only: list, stream, capture, screen, the native hub's snapshot, state, and the order journal.
+- `control` steers: sending input to a worker, resizing its terminal on the native hub, appending a status line, closing an endpoint, and placing a leaf-addressed order.
 
 A line of `<classes>:<token>` in `config/stream-hub-tokens` grants exactly the named classes, so an operator credential is written `subscribe,control:<token>` and a home's own client credential, which both publishes and steers, is `publish,subscribe,control:<token>`.
 A bare token line grants `subscribe` alone, so the unqualified line is the read-only one.
@@ -321,7 +351,7 @@ Seeding a secondmate home mints that home its own token rather than copying the 
 A seeded token is INACTIVE until the hub restarts: the hub reads its token file once at serve start, so the credential the mate presents is refused until then.
 That restart is a planned quiet-boundary operation, not part of seeding - a restart clears terminal scrollback and empties Bridge-order reconciliation, the same cost [When the hub restarts](#when-the-hub-restarts) names, so it must not happen while an order is pending or may need a resend.
 The first real seeding gets one such planned restart; a supported token reload is separate queued work, because seeding recurs and every restart spends that fleet-wide cost again.
-A viewing token cannot register an endpoint, publish, or steer a worker: input, status, and close are all refused with 403.
+A viewing token cannot register an endpoint, publish, or steer a worker: input, native resize, status, and close are all refused with 403.
 Command retrieval and result submission additionally require the endpoint's private `command_capability`, established by registration and carried in the `X-Endpoint-Capability` request header.
 A poll must name that endpoint; machine-wide command retrieval is refused.
 A recovering agent presents its current capability when registering an endpoint, and the hub adopts or retains that same value so retrying after a lost registration response is idempotent; closing the endpoint revokes it.

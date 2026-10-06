@@ -1,4 +1,5 @@
 //! Native PTY agent. Deployment selection and limits: docs/stream-backend.md.
+mod attach;
 mod command_value;
 mod commands;
 mod hub_json;
@@ -301,10 +302,14 @@ struct Agent {
     wake: Wake,
     registration: Mutex<Registration>,
     result_deadline: Mutex<Option<Instant>>,
+    /// The PTY's current rows and cols; a resize changes it, and every
+    /// re-registration reports it so a restarted hub renders the same size.
+    geometry: Mutex<(u16, u16)>,
 }
 impl Agent {
     fn registration(&self) -> Value {
-        json!({"endpoint_id":self.id,"machine":self.options.machine,"label":self.options.label,"cwd":self.options.cwd,"rows":self.options.rows,"cols":self.options.cols,"capabilities":[CAPABILITY,"native_steering_receiver"],"protocol":HUB_PROTOCOL})
+        let (rows, cols) = *self.geometry.lock().unwrap();
+        json!({"endpoint_id":self.id,"machine":self.options.machine,"label":self.options.label,"cwd":self.options.cwd,"rows":rows,"cols":cols,"capabilities":[CAPABILITY,"native_steering_receiver"],"protocol":HUB_PROTOCOL})
     }
     fn state(&self) -> Value {
         let deadline = *self.hub.deadline.lock().unwrap();
@@ -438,6 +443,13 @@ impl Agent {
                             .as_bytes(),
                     );
                 }
+                if let Some(b64) = payload["b64"].as_str() {
+                    bytes.extend(
+                        base64::engine::general_purpose::STANDARD
+                            .decode(b64)
+                            .map_err(|_| Error::Other("the input's b64 is not base64".into()))?,
+                    );
+                }
                 if payload["submit"].as_bool().unwrap_or(false) {
                     bytes.push(b'\r');
                 }
@@ -459,6 +471,28 @@ impl Agent {
                     return Err(Error::Other("the endpoint process has exited".into()));
                 }
                 self.pty.write(&bytes)?;
+                Ok(())
+            }
+            "resize" => {
+                let side = |name: &str| {
+                    payload[name]
+                        .as_u64()
+                        .and_then(|v| u16::try_from(v).ok())
+                        .filter(|v| *v > 0)
+                        .ok_or_else(|| Error::Other(format!("resize {name} must be 1-65535")))
+                };
+                let (rows, cols) = (side("rows")?, side("cols")?);
+                if !self.pty.alive() {
+                    return Err(Error::Other("the endpoint process has exited".into()));
+                }
+                self.hub.call(
+                    "POST",
+                    "/v1/agent/frames",
+                    Some(&json!({"machine":self.options.machine,"frames":[{"endpoint_id":self.id,"geometry":{"rows":rows,"cols":cols}}]})),
+                    Duration::from_secs(15),
+                )?;
+                self.pty.resize(rows, cols)?;
+                *self.geometry.lock().unwrap() = (rows, cols);
                 Ok(())
             }
             "kill" => {
@@ -620,6 +654,7 @@ fn serve(args: &[String]) -> Result<(), Error> {
     fs::File::open("/dev/urandom")?.read_exact(&mut random)?;
     let id: String = random.iter().map(|b| format!("{b:02x}")).collect();
     let pty = Pty::spawn(&options.cwd, options.rows, options.cols, &id, &options.hub)?;
+    let (options_rows, options_cols) = (options.rows, options.cols);
     if pty.wait(Duration::from_millis(400)) {
         let mut output = [0u8; 65536];
         let size = pty.read(&mut output)?.unwrap_or(0);
@@ -644,6 +679,7 @@ fn serve(args: &[String]) -> Result<(), Error> {
             backoff: 2.0,
         }),
         result_deadline: Mutex::new(None),
+        geometry: Mutex::new((options_rows, options_cols)),
     });
     let startup = (|| {
         agent.hub.call(
@@ -686,12 +722,18 @@ fn serve(args: &[String]) -> Result<(), Error> {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        println!("fm-stream-agent serve --hub URL --token-file PATH --machine NAME --label NAME --cwd DIR\n  [--status-path PATH] [--ready-file PATH] [--rows N] [--cols N]\n  [--state-interval SECS] [--poll-secs SECS]\nfm-stream-agent --protocol | --version");
+        println!("fm-stream-agent serve --hub URL --token-file PATH --machine NAME --label NAME --cwd DIR\n  [--status-path PATH] [--ready-file PATH] [--rows N] [--cols N]\n  [--state-interval SECS] [--poll-secs SECS]\nfm-stream-agent attach --hub URL --endpoint ID [--token-file PATH] [--detach-key KEY]\nfm-stream-agent --protocol | --version");
         return;
     }
     match args.first().map(String::as_str) {
         Some("--protocol") => println!("{HUB_PROTOCOL}"),
         Some("--version") => println!("{}", env!("CARGO_PKG_VERSION")),
+        Some("attach") => {
+            if let Err(error) = attach::run(&args[1..]) {
+                eprintln!("fm-stream-agent attach: {error}");
+                std::process::exit(1);
+            }
+        }
         Some("serve") => {
             if let Err(error) = serve(&args[1..]) {
                 eprintln!("fm-stream-agent: {error}");
@@ -699,7 +741,7 @@ fn main() {
             }
         }
         _ => {
-            println!("fm-stream-agent serve --hub URL --token-file PATH --machine NAME --label NAME --cwd DIR\n  [--status-path PATH] [--ready-file PATH] [--rows N] [--cols N]\n  [--state-interval SECS] [--poll-secs SECS]\nfm-stream-agent --protocol | --version");
+            println!("fm-stream-agent serve --hub URL --token-file PATH --machine NAME --label NAME --cwd DIR\n  [--status-path PATH] [--ready-file PATH] [--rows N] [--cols N]\n  [--state-interval SECS] [--poll-secs SECS]\nfm-stream-agent attach --hub URL --endpoint ID [--token-file PATH] [--detach-key KEY]\nfm-stream-agent --protocol | --version");
             if args.first().is_none_or(|a| a != "--help" && a != "-h") {
                 std::process::exit(2);
             }

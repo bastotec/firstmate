@@ -186,6 +186,19 @@ impl Pty {
             other => other.map(Some),
         }
     }
+    pub fn resize(&self, rows: u16, cols: u16) -> io::Result<()> {
+        let size = libc::winsize {
+            ws_row: rows,
+            ws_col: cols,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        // SAFETY: the master fd is owned by self; the ioctl reads this stack record.
+        if unsafe { libc::ioctl(self.master.as_raw_fd(), libc::TIOCSWINSZ, &size) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
     pub fn write(&self, bytes: &[u8]) -> io::Result<()> {
         (&self.master).write_all(bytes)
     }
