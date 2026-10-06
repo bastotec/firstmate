@@ -86,7 +86,8 @@ git clone https://github.com/kunchenguid/firstmate
 cd firstmate
 ```
 
-Then launch one of the co-primary harnesses; AGENTS.md takes over from there:
+Then launch one of the co-primary harnesses; AGENTS.md takes over from there.
+Before dispatching from a primary-only harness, select a supported worker runtime as described in [Harness support](docs/configuration.md#harness-support).
 
 **Claude Code**
 

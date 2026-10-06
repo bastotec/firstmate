@@ -186,7 +186,7 @@ Text for a worker to read and commands that drive a worker's process are separat
 Every classification returns a verdict of busy, idle, unknown, or dead together with the source that produced it, so a consumer or a diagnostic can never confuse semantic state with a fallback.
 
 Each worker adapter reports its own turn lifecycle through a machine-readable semantic contract rather than through rendered footer text: Pi and pi-signed through the Firstmate-owned extension's `agent_start` and `agent_settled` confirmed by `ctx.isIdle()`, and Deck through its Firstmate-owned worker wrapper.
-Any other recorded harness has no trusted source and classifies unknown.
+Any other recorded harness has no trusted record source; the classification precedence, including Herdr's native-busy fallback when no record exists, is owned by `bin/fm-busy-lib.sh`.
 
 Missing, malformed, stale, untrusted, or unverified semantic state is unknown, never idle, and unknown is never promoted to busy either.
 Ordinary task-state consumers act only on an exact busy verdict, so an unreadable worker surfaces for a closer look instead of being absorbed as still-working or written off as finished.

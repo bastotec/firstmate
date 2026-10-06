@@ -23,8 +23,8 @@ The failure repeated across harnesses and homes, and the workaround (remember to
   `bin/fm-send.sh`'s `--key` path reads the composer-clear table from this owner too, rather than keeping a second copy of it.
 - **Per-backend capability**: which named keys a runtime backend can deliver, and whether it has a recovery-grade agent-state classifier able to prove an agent stopped or its endpoint gone.
 
-A recorded `harness=` is not always an exact adapter name: a task launched from a raw command records that command's basename instead.
-`fm_control_harness_family` is the one place that prefix rule is stated, and an unrecognized value resolves to no adapter rather than being guessed into one.
+A raw-command spawn records the command's basename as `harness=`.
+`fm_control_harness_family` accepts only exact supported adapter names; [Fail-closed boundaries](#fail-closed-boundaries) owns the refusal for every other recorded value.
 
 ## Primary owner prerequisites
 
@@ -42,7 +42,7 @@ The remaining sections describe task control through `fm-control.sh`; managed-pr
 
 | Verb | Effect | Postcondition |
 | --- | --- | --- |
-| `interrupt` | Deliver the harness's verified interrupt sequence while leaving the agent running. | Delivery succeeds while the endpoint still exists and the agent is still alive where the backend can classify that; cancellation is confirmed only from an adapter-owned acknowledgement and otherwise reports `cancel=unconfirmed`. |
+| `interrupt` | Deliver the harness's verified interrupt sequence while leaving the agent running. | Delivery succeeds while the endpoint still exists and the agent is still alive where the backend can classify that; no supported adapter supplies a cancellation acknowledgement, so the result reports `cancel=unconfirmed`. |
 | `exit` | Stop the agent, preserving the endpoint, the worktree, and every uncommitted change. | The backend's recovery-grade classifier reports the agent gone. Deck additionally requires the task-bound residual-driver proof owned by its [adapter reference](../.agents/skills/harness-adapters/references/harness/deck.md). Already-stopped is idempotent success. |
 | `relaunch` | Replace the running agent with a new one in the same endpoint and worktree, on the exact recorded adapter or an explicitly chosen harness, model, and effort. | The new agent is alive on the recorded endpoint, and the durable record names the harness that is actually running. |
 | `recover-missing` | Restore a terminal for a task whose endpoint reads `missing` using the backend-specific recovery below, then hand the launch to `fm-spawn.sh --relaunch` on the recorded profile or an explicitly named replacement with the same precedence and axis-reset semantics as `relaunch`. | The endpoint reads `missing`, the backend-specific ownership guard passes, the recorded local copy remains available and task-owned, and the new agent is alive on the endpoint now named by the record. |
@@ -75,7 +75,6 @@ Only the instructions are ever rolled back from those copies; the record copy is
    An explicit `--harness`, `--model`, or `--effort` wins, and `recover-missing` accepts exactly the same three flags with exactly this precedence - a rescue that names a replacement runtime is one transaction, not a failed recovery followed by a relaunch.
    Otherwise a `kind=secondmate` task re-resolves its durable `config/secondmate-harness` pin, including that file's optional model and effort tokens, exactly as every other respawn does - so setting the pin and relaunching is the ordinary way to move a secondmate's runtime.
    A ship or scout keeps the harness already recorded for it, because that harness comes from firstmate's dispatch-profile judgment at intake and must not be silently re-read from configuration.
-   A recorded raw-command basename that differs from its resolved adapter cannot reproduce the command actually running, so relaunch refuses before the checkpoint unless the caller passes an explicit `--harness` to choose the replacement runtime deliberately.
    A harness change resets model and effort unless they are named too, because a model chosen for one adapter does not transfer to another.
    A harness that has no effort control refuses a named effort: `deck` rejects `--effort` with "deck has no effort control", while an effort recorded for the previous harness is reset to `default` by the harness change and so never makes the rescue refuse itself.
 2. **Prove backlog recovery eligibility.**
@@ -102,7 +101,7 @@ It differs from the steps above in exactly three places.
 - No implicit profile. An unqualified `--harness`-less recovery continues the same run on the recorded harness, model, and effort, and nothing is re-resolved from configuration: every identity axis comes from the task's own durable record, so a secondmate whose `config/secondmate-harness` pin has since changed is recovered on the harness, model, and effort it actually recorded.
   Picking the changed pin up is a `relaunch`, which is the verb that deliberately re-resolves it.
   An explicit `--harness`, `--model`, or `--effort` names a replacement profile instead, resolved with the same precedence, axis-reset, and refusal semantics step 1 owns - including the deck effort refusal and the reset of an effort recorded for the previous harness.
-  This is the supported single-transaction route off a runtime whose endpoint is gone, which matters under the 2026-09-22 Deck-only coding-worker ruling: `relaunch` refuses a missing endpoint, so a stranded non-Deck task with no surviving terminal has no other way back through this plane.
+  This replacement route applies only when the recorded harness already has verified control mechanics; it cannot rescue a record naming a removed adapter.
   A named replacement is a deliberate choice, never a config re-read, so the same flag never silently picks up a changed secondmate pin.
   Only `--note`/`--note-file` besides, and a ship or scout still requires one for the same reason a relaunch does.
   A held backlog row, a missing local copy, or an ownership conflict refuses exactly as it does for an ordinary recovery, replacement profile or not.
@@ -138,9 +137,8 @@ It differs from the steps above in exactly three places.
   Its agent runs on another host, so none of the postconditions this plane verifies could be read for it here; local endpoint validation would refuse the record regardless, because `window=remote:<id>` can never match a local backend's required shape.
   Drive that lifecycle on its own host and reconcile it through the secondmate recovery path.
   For `relaunch` that host-side drive is `bin/fm-on.sh <id> fm-remote-secondmate-control.sh relaunch ...`, whose host-local leg runs this same plane against a record that is ordinary and local there, so every checkpoint, journal, rollback, and postcondition below applies unchanged ([`docs/remote-secondmates.md`](remote-secondmates.md)); `interrupt`, `exit`, and `recover-missing` have no such route.
-- An unverified harness is refused rather than guessed at.
-- An implicit relaunch from a prefixed raw-command basename is refused before the agent or durable state is touched because its original launch command cannot be reconstructed.
-  Both verbs point at an explicit `--harness` for that record, and `recover-missing` accepts it: the basename cannot name the runtime to continue, so a rescue must name the replacement deliberately rather than substitute the canonical adapter for the command that was actually running.
+- A recorded harness other than exact `pi`, `pi-signed`, or `deck` is refused before any lifecycle action, including `relaunch` or `recover-missing` with an explicit replacement `--harness`.
+  Removed adapters and noncanonical raw-command basenames have no verified control mechanics; an override does not bypass that check, and their records and work remain untouched.
 - An adapter that is not verified for this task's kind is refused **before** the running agent is stopped, not after.
   The same table refuses a `recover-missing` before the terminal is recreated, where there is no running agent to stop and nothing has been touched at all.
 - A backend that cannot deliver the harness's interrupt key, or the composer clear that key needs, is refused rather than sent a different key.
@@ -171,13 +169,13 @@ Backend capability comes from each adapter's real surface, not from a policy cho
 | herdr | yes | yes | yes | yes | yes |
 | stream | yes | yes | yes | yes | yes |
 
-Per-harness interrupt keys, repeat counts, composer clears, exit commands, and supported task kinds live in `bin/fm-control-lib.sh` and are exercised for every verified harness by `tests/fm-control.test.sh`, with adapters outside its lane pinning their control mechanics in their own harness suites.
+Per-harness interrupt keys, repeat counts, composer clears, exit commands, and supported task kinds live in `bin/fm-control-lib.sh` and are exercised for every verified worker harness by `tests/fm-control.test.sh`.
 The empirical basis for each adapter's value is the `harness-adapters` skill's verification record for that adapter.
 
 ## Verification
 
-- `tests/fm-control.test.sh` - the adapter contract for its verified-harness lane (adapters outside the lane pin their control mechanics in their own harness suites), the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, the exit composer gate's verify-then-clear shapes, and marker non-regression, all against a stubbed session provider.
+- `tests/fm-control.test.sh` - the supported-worker adapter contract, the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, the exit composer gate's verify-then-clear shapes, and marker non-regression, all against a stubbed session provider.
 - `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, backlog recovery that preserves a dependency-blocked In-flight row while refusing blocked Queued and held In-flight rows before stopping the existing worker, rollback after a failed launch, and an already-armed merge poll still authenticating after the record rewrite.
-- `tests/fm-control-recover-missing.test.sh` - the missing-terminal recovery: the success path under the recorded handle for both losses (a missing window in a live session, and a whole gone session recreated before it), the live, ambiguous, absent-copy, and pool-slot-ownership refusals leaving the record and instructions byte-identical, a rescue succeeding on a copy full of uncommitted work and leaving every one of those changes byte-identical, the refusal when the session cannot be recreated, the recorded profile surviving a differing configured secondmate pin, the explicit replacement-profile recoveries and their refusals (axis resets, deck from a recorded effort, an explicit deck effort, an unverified harness, a wrong-kind adapter, a held backlog row, and the failed-handoff rollback that keeps the recorded runtime), the basename-harness refusal now naming `--harness` and the named replacement recovering it, a still-starting shell being waited out rather than handed over and the refusal when it never settles, a failed recreation rolling the progress note back while leaving a concurrent write to the durable record in place, and the message after a failed launch handoff.
+- `tests/fm-control-recover-missing.test.sh` - the missing-terminal recovery: the success path under the recorded handle for both losses (a missing window in a live session, and a whole gone session recreated before it), the live, ambiguous, absent-copy, and pool-slot-ownership refusals leaving the record and instructions byte-identical, a rescue succeeding on a copy full of uncommitted work and leaving every one of those changes byte-identical, the refusal when the session cannot be recreated, the recorded profile surviving a differing configured secondmate pin, the explicit replacement-profile recoveries and their refusals (axis resets, deck from a recorded effort, an explicit deck effort, an unverified harness, a held backlog row, and the failed-handoff rollback that keeps the recorded runtime), removed-adapter records refusing without mutation, a still-starting shell being waited out rather than handed over and the refusal when it never settles, a failed recreation rolling the progress note back while leaving a concurrent write to the durable record in place, and the message after a failed launch handoff.
 - [Portable stream-parity regressions](verification/runtime-backends.md#portable-stream-parity-regressions) - stream endpoint rebinding, owning-home agent refusal, and confirmed versus unconfirmed cleanup after a failed rebind.
 - `tests/fm-control-herdr-smoke.test.sh` - the second state-verified backend against the real herdr binary, on an isolated throwaway lab session.

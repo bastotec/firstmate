@@ -148,7 +148,7 @@ While supervision is needed it PARKS: it runs `bin/fm-watch-arm.sh` as its own t
 This is the same between-turns shape as Claude's Stop auto-arm, so `fm_supervision_model` classifies Cursor as `autoarm` and the mid-turn pull guard accepts a fresh beacon without a live watcher.
 The park stands down without arming when `PI_CODING_AGENT=true` and neither `CURSOR_AGENT` nor `CURSOR_INVOKED_AS` is set.
 Pi-with-Cursor-provider sessions (pi-cursor-sdk) load project `.cursor/hooks.json` into the Pi process, and a Cursor park there would race Pi's extension-owned `fm_watch_arm_pi` continuity, resurface rearm wakes, and abort in-flight asks.
-`fm-spawn`'s cursor launch clears `PI_CODING_AGENT`; a hand-started cursor-agent may still inherit it.
+Cursor primaries are launched outside `fm-spawn`; a hand-started cursor-agent may inherit `PI_CODING_AGENT`.
 When either Cursor identity marker is present, the park still runs despite a leaked `PI_CODING_AGENT`.
 When the park cannot establish a cycle it asks this shared guard with `--cursor` and renders a returned exit 2 as one bounded `turn-end-guard` follow-up, capped by `FM_CURSOR_TURNEND_BLOCK_BUDGET` (default 3) consecutive unproductive nags per session; a delivered wake resets that budget because it is productive work.
 The follow-up loop is bounded TWICE, because either bound alone is insufficient.
@@ -191,5 +191,5 @@ It also covers true-reason banner wording and reason-keyed episode dedup survivi
 `FM_CURSOR_PRIMARY_LIVE_E2E=1 tests/fm-cursor-primary-live-e2e.test.sh` is the opt-in guard that proves the same behavior against the installed cursor-agent and fails naming the harness and version.
 `tests/fm-supervision-instructions.test.sh` covers recovery-line ownership and pi-signed's identity-preserving reuse of Pi's protocol.
 `FM_PI_LIVE_E2E=1 tests/fm-pi-primary-live-e2e.test.sh` is the opt-in isolated Pi path.
-`tests/fm-omp-harness.test.sh` covers the omp extension pair over a fake omp API (forced continuation on exit 2, the `stop_hook_active` bound, the seatbelt block, the ownership proof), and `FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh` is the opt-in isolated omp path.
+`FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh` is the opt-in isolated omp path.
 [`verification/supervision.md`](verification/supervision.md#turn-end-guard) records the active cross-harness empirical evidence, including the 2026-07-24 Claude `asyncRewake` revalidation.

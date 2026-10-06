@@ -7,11 +7,7 @@ Load this with the selected tool reference for dispatch, start, or adapter verif
 Use the router's detection and safety sections for static crew and secondmate harness resolution and all explicit overrides.
 `config/crew-dispatch.json` can override that static default for one crewmate or scout with concrete harness, model, and effort axes.
 
-`../secondmate-provisioning/SKILL.md` owns inherited local material.
-Its harness consequence is that a secondmate's workers receive literal `config/crew-harness` and `config/crew-dispatch.json`, while the primary-only `config/secondmate-harness` is never inherited because secondmates do not spawn secondmates.
-A concrete crew value such as `deck` carries that runtime into the secondmate home.
-Unset or `default` carries no concrete value, so its workers use that home's own or detected harness rather than the primary's effective crew harness.
-The inherited dispatch file applies the same best-fit profiles there.
+[`secondmate-provisioning`](../../../secondmate-provisioning/SKILL.md) owns inherited local material and its consequences for a secondmate home's worker dispatch.
 
 ## Owners
 

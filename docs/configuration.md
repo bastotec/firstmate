@@ -175,7 +175,7 @@ Ordinary task selectors for `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh` u
 A selector containing `:` is passed through as an explicit backend endpoint escape hatch.
 Otherwise an exact task id matching `state/<id>.meta` wins before the legacy `fm-<id>` label fallback, so task ids that themselves start with `fm-` route to their own metadata instead of being stripped.
 A metadata-routed selector returns the recorded backend target (`window=`), and matching explicit targets can still recover the recorded backend when metadata contains the same endpoint.
-Only metadata-routed task selectors carry secondmate-marker and harness context; explicit endpoint escape hatches do not.
+Only metadata-routed task selectors carry secondmate-marker and recorded-harness context; explicit endpoint escape hatches do not.
 This paragraph is the single owner of the ordinary task-selector vocabulary; backend guides and other documents point here instead of restating the resolution order.
 For explicit targets no metadata names, [`fm-send.sh`'s header](../bin/fm-send.sh) owns backend inference and live-endpoint verification, including stream-shaped targets on this home's configured hub.
 Host decision answers instead use the constrained mode owned by [`bin/fm-send.sh`'s header](../bin/fm-send.sh).
@@ -355,6 +355,7 @@ For the herdr backend, `FM_HOME` also determines the workspace label used by the
 
 pi, pi-signed, and deck are the only worker harnesses: they support crewmate, scout, and secondmate launches, and [README requirements](../README.md#requirements) own the set supported for the primary session.
 Any other adapter name, including a primary-only harness such as claude or codex, has no launch template, so `fm-spawn.sh` refuses it unless a raw launch command is passed.
+The raw-command escape hatch supplies no verified adapter contract; [task control's fail-closed boundaries](agent-control.md#fail-closed-boundaries) apply to its recorded harness.
 A cursor primary runs the tracked project-scope `.cursor/hooks.json` in its own home and must be launched with `--trust`, or no project hook loads; [`docs/supervision-protocols/cursor.md`](supervision-protocols/cursor.md) owns its supervision protocol.
 Cursor typed-submit confirmation is verified on tmux and Herdr only.
 For stream's typed-plane Cursor confirmation limit and its distinction from durable inbox steering, see [runtime backend verification](verification/runtime-backends.md#cursor-agent-cli).
@@ -1209,7 +1210,7 @@ FM_BUSY_REGEX=          # optional override for rendered delivery guards; conver
 FM_COMPOSER_IDLE_RE=    # optional fleet-wide idle-placeholder regex override (bin/fm-composer-lib.sh); a match alone does not prove emptiness because shape-specific position and ANSI de-emphasis safety gates still apply
 FM_COMPOSER_CAPTURE_LINES=20   # fleet-wide bound for tail-capture composer reads; tmux instead supplies its bounded visible pane, while the other adapters use this small window so stale scrollback banners stay out of the candidate set
 FM_COMPOSER_PI_MAX_LINES=8     # fleet-wide: maximum rows admitted between Pi's identity-corroborated separator pair; taller or ambiguous candidates stay unknown
-FM_COMPOSER_GHOST_LUMA_MAX=128   # fleet-wide: max perceived luminance (0.299R+0.587G+0.114B, 0-255) for a TRUECOLOR foreground to count as de-emphasised ghost/placeholder text and be stripped; dim/faint (SGR 2) is stripped regardless. Assumes a dark terminal theme (bin/fm-composer-lib.sh's fm_composer_strip_ghost, used by styled tmux, herdr, and Zellij reads)
+FM_COMPOSER_GHOST_LUMA_MAX=128   # fleet-wide: max perceived luminance (0.299R+0.587G+0.114B, 0-255) for a TRUECOLOR foreground to count as de-emphasised ghost/placeholder text and be stripped; dim/faint (SGR 2) is stripped regardless. Assumes a dark terminal theme (bin/fm-composer-lib.sh's fm_composer_strip_ghost)
 GROK_HOME=              # optional Grok config home for the Grok primary turn-end guard; defaults to ~/.grok
 FM_SEND_RETRIES=3       # fm-send typed-plane Enter-retry attempts after typing the line once
 FM_SEND_SLEEP=0.4       # seconds between fm-send typed-plane submit checks

@@ -225,7 +225,8 @@ Running the guard with no variable set on macOS 26.5.2 arm64 checked 8 installed
 The first default-on run failed on Cursor with `LIVENESS DRIFT: cursor unknown is running but classifies 'missing'`, observed title `zsh`.
 The classifier was not at fault: the guard resolved the harness through a generic `command -v cursor`, which on a machine that also has the Cursor editor finds `~/.local/bin/cursor` - the editor launcher, not the agent.
 That binary exits immediately, leaving a bare shell in the pane.
-The guard now asks `fm_cursor_resolve_binary` first for `cursor`, which is the same verified owner `bin/fm-spawn.sh` uses, so the probe launches `cursor-agent` and the editor CLI can no longer masquerade as the harness.
+The guard then used `fm_cursor_resolve_binary` first for `cursor`, so the probe launched `cursor-agent` rather than the editor CLI.
+Cursor now remains in this guard for primary-session identity only; `bin/fm-spawn.sh` no longer launches Cursor workers.
 
 Bounded output from the 2026-08-03 run that produced the first table above:
 
@@ -285,7 +286,7 @@ Tmux needs the exact `pi-launcher`, `pi-signed`, `pi`, and `Pi` process identiti
 Herdr uses native registered-agent state and needs no process-name branch.
 Stream classifies through the same shared process owner.
 
-The current classifier matrix and its refresh guard are recorded in [Composer classification matrix](#composer-classification-matrix), with portable shape coverage in `tests/fm-composer-lib.test.sh` and `tests/fm-composer-ghost.test.sh`.
+The [Composer classification matrix](#composer-classification-matrix) retains the dated live evidence; `tests/fm-composer-lib.test.sh` and `tests/fm-composer-ghost.test.sh` provide current portable shape coverage.
 OpenCode 1.18.4 busy-queue behavior remains pinned by `tests/fm-tmux-submit-busy.test.sh` and `tests/fm-composer-lib.test.sh`.
 Herdr's Claude idle-native submit confirmation is pinned by `tests/fm-backend-herdr.test.sh` and refreshed by `FM_HERDR_SUBMIT_CONFIRM_LIVE=1 tests/fm-herdr-submit-confirm-live-e2e.test.sh`.
 
@@ -420,14 +421,14 @@ ok - live composer-matrix guard verified 8 live surface(s)
 
 All six installed harnesses' real idle composers reached a proven `empty` (Claude auto-updated to 2.1.227 between the audit and this rerun, so the shipped classifier is proven against the newer release as well), including Pi through the tmux foreground-process identity probe, Grok through the titled-bottom-border tolerance, and OpenCode through the left-bar shape; Codex and OpenCode first parked on vendor update-available modals that the strict classifier correctly refused until the guard's single non-submitting Escape dismissed them.
 The strict blank-row posture held live (a blank shell row deferred injection), and a zellij pane changing for reasons unrelated to submission never confirmed a delivery, replacing the retired content-diff heuristic's false positive.
-Kimi was not installed on the verification machine; its bordered shape is pinned by the portable byte-capture regressions in `tests/fm-composer-lib.test.sh`, which retain styled and plain capability profiles for every harness under both a UTF-8 locale and `LC_ALL=C`.
-That live guard was removed with the non-Pi worker adapters, so this table is a dated record; `tests/fm-composer-lib.test.sh` still pins every shape portably.
+Kimi was not installed on the verification machine; its bordered shape was covered by the then-current portable byte-capture regressions, which were removed with the Kimi worker adapter.
+The live matrix guard was also removed, so this table and its command are dated evidence, not refresh instructions; `tests/fm-composer-lib.test.sh` still pins the retained shapes portably.
 The 2026-08-23 steering-inbox doorbell run observed grok 1.0.5's idle composer classifying `unknown` (and sometimes pending-family), never `empty`.
 Issue #3436's recorded idle capture reproduced the cause on 2026-09-14: Grok 1.0.5 renders the titled bottom border three columns wider than its aligned top and content rows, so the cursorless Herdr profile rejected the otherwise complete box as ambiguous.
 The classifier now accepts only that exact three-column overhang (`FM_COMPOSER_GROK_TITLE_OVERHANG` in `bin/fm-composer-lib.sh`) carrying a typed `Grok <model> (<effort>)` title; the portable regressions feed the real capture through both the shared Herdr capability profile and `fm_backend_herdr_composer_state`, and prove idle is `empty`, typed content is `pending`, and an unrecognized oversized title remains `unknown`.
-Grok was not installed on the verification machine for this 2026-09-14 change, so the live guard still owes a refresh against the current release rather than treating the portable capture as current live evidence; the three-column width is not live-verified and may need adjustment if Grok's title rendering changes or scales with title length.
+The 2026-09-14 change was not live-verified against Grok; the retired matrix command cannot refresh it, so the retained capture establishes only the measured rendering, not later releases.
 This closes only #3436's idle-composer-misclassification symptom (Grok/Herdr composer read `unknown` instead of `empty`, blocking away-mode injection). The issue's second symptom - a leftover watcher never yielding and never being taken over or refused at AFK start - is unrelated to composer classification and is tracked separately in #2270, where #3436's reproduction serves as corroborating evidence.
-Cursor is deliberately outside this cursor-anchored empty-composer matrix because its terminal cursor is parked outside the composer; tmux's Cursor-specific, process-identity-gated cursorless fallback is covered by the [Cursor Agent CLI](#cursor-agent-cli) section's separate live evidence and drift guard.
+Cursor is deliberately outside this cursor-anchored empty-composer matrix because its terminal cursor is parked outside the composer; tmux's Cursor-specific, process-identity-gated cursorless fallback is covered by the [Cursor Agent CLI](#cursor-agent-cli) section's separate live evidence.
 
 `zellij action dump-screen --pane-id <id> --ansi` was verified at zellij 0.44.0 to preserve ANSI styling (real Claude Code rendered inside a zellij pane dumped `ESC[m` `❯` U+00A0 for its idle composer row), which was the capability the former zellij composer classifier read.
 
@@ -483,9 +484,10 @@ ok - muse (Muse Code 0.2.1 (0.2.1-R1215.1)): the doorbell reached a real worker,
 ```
 
 All six installed harnesses honored the doorbell contract with real model turns: each listed the inbox named by the doorbell, read its record, executed the instruction inside it, and acknowledged with the atomic `mv`.
-Two findings from the run shaped the shipped behavior: an OpenCode vendor update modal swallowed the first doorbell and the single re-ring recovered it, which is exactly the watcher ladder's job; and grok 1.0.5's idle composer never classifies `empty` (a classifier drift owned by the [Composer classification matrix](#composer-classification-matrix) guard, whose refresh for grok 1.0.5 is still owed), which is why the ring's advisory pre-check skips only on an exact proven `pending` verdict - a doorbell into an ambiguous composer is a recoverable constant line, while skipping on ambiguity would starve steering for any harness the classifier cannot positively identify.
-Kimi was not installed on the verification machine; its receive path is the same one-line-plus-shell contract, and the portable ladder and enqueue regressions in `tests/fm-task-inbox.test.sh` and `tests/fm-send-inbox.test.sh` cover every harness-independent half.
-This guard is the refresh command after any harness upgrade; it spends a small number of real tokens per installed harness, reports an absent harness explicitly, and refuses a run that verified nothing.
+Two findings from the run shaped the shipped behavior: an OpenCode vendor update modal swallowed the first doorbell and the single re-ring recovered it, which is exactly the watcher ladder's job; and grok 1.0.5's idle composer never classifies `empty` (a classifier drift recorded in [Composer classification matrix](#composer-classification-matrix), not verified against later Grok releases), which is why the ring's advisory pre-check skips only on an exact proven `pending` verdict - a doorbell into an ambiguous composer is a recoverable constant line, while skipping on ambiguity would starve steering for any harness the classifier cannot positively identify.
+Kimi was not installed on the verification machine, and its worker receive path has since been removed; the portable ladder and enqueue regressions in `tests/fm-task-inbox.test.sh` and `tests/fm-send-inbox.test.sh` still cover the harness-independent contract.
+The live doorbell guard now covers Pi and pi-signed only; it is their refresh command after an upgrade, reports an absent harness explicitly, and refuses a run that verified nothing.
+[Deck verification](deck.md) owns the Deck worker evidence.
 
 ## Herdr
 
@@ -999,7 +1001,7 @@ Real captures verified these active distinctions:
 - Dim or faint suggestion text is ghost content, while normally styled text is pending input.
 - Grok dark truecolor placeholders are ghost content, while bright truecolor typed input remains pending.
 - A bare shell prompt has no safe agent-composer container and is unknown.
-- Codex 0.154's idle braille starfield rows are composer furniture, with the dated Herdr evidence and refresh command in [Composer classification matrix](#composer-classification-matrix).
+- Codex 0.154's idle braille starfield rows are composer furniture, with the dated Herdr capture in [Composer classification matrix](#composer-classification-matrix).
 
 `tests/fm-composer-ghost.test.sh`, `tests/fm-composer-lib.test.sh`, and the Herdr composer cases pin the exact captured ANSI bytes.
 The U+2063 operational and routed-request separators were exercised through a real Pi-on-Herdr path; the byte-exact active regression is:
@@ -1212,7 +1214,7 @@ INFO herdr::pane: agent changed pane=2 previous_agent=None agent=Some(Claude) pr
 
 Each resumed Claude agent ran as `claude --resume <session-id>`, a child of `/bin/sh` under the Herdr server, with no permission flag or other Firstmate launch argument.
 The only per-server override the 0.9.0 client documents is the environment: `herdr --help` prints `Env:    HERDR_CONFIG_PATH overrides config file path`, and neither `herdr server --help` nor `herdr config --help` offers a flag for the setting.
-`tests/fm-remote-secondmate-replacement.test.sh` and `tests/fm-secondmate-liveness.test.sh` pin how Firstmate reports such an agent, over real stand-in processes with no Herdr server.
+The Claude permission-posture check was removed with its worker adapter; `tests/fm-remote-secondmate-replacement.test.sh` and `tests/fm-secondmate-liveness.test.sh` now pin the retained worker replacement and liveness boundaries.
 
 ### Away-mode transport
 
@@ -1462,7 +1464,7 @@ Other harnesses on Herdr are unaffected by the edge-detector change.
 All seven live panes of the running default session - one Pi, four Claude, two plain shells - classified identically under the pre-fix and current classifiers.
 
 The composer captures are pinned in `tests/fm-composer-lib.test.sh`, and the Herdr footer behavior is pinned in `tests/fm-backend-herdr.test.sh`.
-Refresh this harness-dependent proof before accepting a cursor upgrade:
+The liveness drift guard refreshes Cursor's process identity only, not these composer or delivery observations:
 
 ```sh
 FM_HARNESS_LIVENESS_DRIFT=1 bin/fm-test-run.sh tests/fm-harness-liveness-drift-live-e2e.test.sh
@@ -1691,7 +1693,8 @@ The evidence below was produced on 2026-09-05 against omp 18.1.11 (`~/.local/bin
 
 `ps -o comm=` reports the bare name `omp` for the agent process, from both its `!` bash path and the model's bash tool, so identity is the anchored name; `ompd` and `comp` never match.
 omp publishes no harness marker: `PI_CODING_AGENT` is absent from the binary, and the default profile sets neither `PI_CODING_AGENT_DIR` nor `OMP_PROFILE` in the process environment.
-`FM_OMP_HARNESS=omp` is Firstmate's own launch marker and wins over an inherited `CLAUDECODE` only under a real omp ancestor; `tests/fm-omp-harness.test.sh` pins both directions with real processes.
+`FM_OMP_HARNESS=omp` is Firstmate's own primary launch marker and wins over an inherited `CLAUDECODE` only under a real omp ancestor.
+The former regression `tests/fm-omp-harness.test.sh` was removed with the omp worker adapter; primary live evidence is refreshed by the command below.
 
 ### Composer
 

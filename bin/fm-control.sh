@@ -27,8 +27,8 @@
 #   interrupt  Deliver the harness's verified interrupt sequence. The agent
 #              keeps running. Postcondition: delivery succeeded, the endpoint
 #              still exists, and the agent is still alive where the backend can
-#              classify that. Cancellation is confirmed only from an adapter-
-#              owned acknowledgement and otherwise reported unconfirmed. Busy
+#              classify that. No supported adapter supplies a cancellation
+#              acknowledgement, so cancellation is reported unconfirmed. Busy
 #              state is never rewritten as proof of the action.
 #   exit       Stop the agent, preserving its terminal endpoint, worktree, and
 #              every uncommitted change. Interrupts first when the task reads
@@ -48,8 +48,6 @@
 #              plus its optional model and effort tokens) exactly as any other
 #              respawn does, while a ship or scout keeps the exact adapter
 #              already recorded for it.
-#              A prefixed raw-command basename cannot reconstruct its launch
-#              command, so relaunch requires an explicit --harness for it.
 #              --note is required for a ship or scout, whose replacement
 #              inherits the local copy but none of the conversation; a
 #              secondmate reconciles its own home's records at startup, so its
@@ -100,13 +98,11 @@
 #              The one deliberate exception is an explicit replacement profile:
 #              --harness/--model/--effort are accepted here too,
 #              with the identical precedence, axis-reset, and refusal semantics
-#              they carry on `relaunch`. This is the supported single-transaction
-#              route off a runtime whose endpoint is gone - under the 2026-09-22
-#              Deck-only coding-worker ruling, a stranded non-Deck task with no
-#              surviving terminal has no other: `relaunch` refuses a missing
-#              endpoint, so without this flag that task is unrecoverable through
-#              this plane. A replacement profile is a rescue onto a chosen
-#              runtime, never a config re-resolve: every axis still comes from
+#              they carry on `relaunch`. This replacement route applies only
+#              when the recorded harness already has verified control mechanics;
+#              it cannot rescue a removed-adapter record. A replacement profile
+#              is a rescue onto a chosen runtime, never a config re-resolve:
+#              every axis still comes from
 #              the task's own durable record unless the caller names it.
 #              A recorded effort does not carry onto a replacement harness that
 #              has no effort control (deck), exactly as on `relaunch`: a harness
@@ -135,8 +131,10 @@
 # host, so no postcondition this plane verifies could be read for it here.
 #
 # Fail-closed boundaries:
-#   - An unverified harness, or a harness whose control mechanics are unknown,
-#     is refused rather than guessed at.
+#   - A recorded harness outside the exact supported set is refused before any
+#     lifecycle action, even with an explicit replacement --harness; no
+#     interrupt or exit mechanics are guessed for a removed adapter or a
+#     noncanonical raw-command basename.
 #   - A backend that cannot deliver the harness's interrupt key is refused.
 #   - `exit`, `relaunch`, and `recover-missing` require a backend with a
 #     recovery-grade agent-state classifier (tmux, herdr, stream), because

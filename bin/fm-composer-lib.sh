@@ -341,8 +341,8 @@ FM_DELIVERY_GROK_BUSY_REGEX_DEFAULT='Ctrl\+c:cancel'
 # in two consecutive turns, while `ctrl+c to stop` was present for the whole
 # turn and absent the instant it ended (verified live, 2026.08.11-e8db854).
 # This is a DELIVERY guard only - it acknowledges a submit and gates away-mode
-# injection. Cursor's recorded worker state comes from its transcript fold in
-# bin/fm-busy-lib.sh, never from this row.
+# injection. This remains for Cursor primaries, not a recorded worker-state
+# source; Cursor no longer has a worker adapter.
 FM_DELIVERY_CURSOR_BUSY_REGEX_DEFAULT='ctrl\+c to stop'
 
 fm_busy_lines_match() {  # [harness]
