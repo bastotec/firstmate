@@ -1214,6 +1214,86 @@ test_portable_serial_shard_lane_refusals() {
   pass "portable serial shard lanes refuse mismatched, out-of-range, and countless names"
 }
 
+# "<pid> <ppid>" of the weight sort feeding the portable serial shard
+# assignment writer, when it is running anywhere under <root>.
+shard_weight_sort_under() {
+  ps -A -o pid=,ppid=,args= | awk -v root="$1" '
+    { parent[$1] = $2; if ($0 ~ /sort .*-k1,1nr/) sorts[$1] = 1 }
+    END {
+      for (p in sorts) {
+        q = p
+        while (q in parent && q != root && q > 1) q = parent[q]
+        if (q == root) { print p, parent[p]; exit }
+      }
+    }'
+}
+
+# emit_via_file in bin/fm-test-run.sh owns the Bash 3.2 pipe-write safety rationale.
+# Stop the runner's main shell (the assignment consumer) and the producer
+# subshell owning the weight sort, then let the sort finish before resuming
+# the producer. Without buffering, the assignment writer blocks on the pipe
+# to main when its producer exits; with buffering, builtin writes stay off
+# that pipe. Long names push the assignments past one 64 KiB pipe buffer
+# while the weight list still fits in two.
+test_portable_serial_shard_survives_a_stalled_consumer() {
+  local tmp repo pad i pid found sort_pid producer waited listed shell count lane fixture_size expected
+  tmp=$(fm_test_tmproot fm-test-run-shard-eintr)
+  repo="$tmp/repo"
+  mkdir -p "$repo/bin" "$repo/tests"
+  cp "$RUNNER" "$repo/bin/fm-test-run.sh"
+  shell=bash
+  [ -x /bin/bash ] && shell=/bin/bash
+  count=$("$shell" "$repo/bin/fm-test-run.sh" --list-lanes | grep -c '^portable-serial-[0-9]*of[0-9]*$')
+  [ "$count" -gt 0 ] || fail "copied runner must expose portable serial shard lanes"
+  lane="portable-serial-1of${count}"
+  fixture_size=$(((360 + count - 1) / count * count))
+  expected=$((fixture_size / count))
+  pad=$(printf '%0230d' 0)
+  i=100
+  while [ "$i" -lt "$((100 + fixture_size))" ]; do
+    printf '#!/usr/bin/env bash\nexit 0\n' >"$repo/tests/fm-eintr-$pad-$i.test.sh"
+    i=$((i + 1))
+  done
+
+  "$shell" "$repo/bin/fm-test-run.sh" --list --lane "$lane" \
+    >"$tmp/out" 2>"$tmp/err" &
+  pid=$!
+  fm_test_track_helper_pid "$pid"
+  found=""
+  waited=0
+  while [ -z "$found" ] && [ "$waited" -lt 1200 ]; do
+    found=$(shard_weight_sort_under "$pid")
+    [ -n "$found" ] || sleep 0.05
+    waited=$((waited + 1))
+  done
+  [ -n "$found" ] || { kill "$pid" 2>/dev/null; fail "never saw the shard assignment weight sort"; }
+  sort_pid=${found% *}
+  producer=${found#* }
+  fm_test_track_helper_pid "$producer"
+  kill -STOP "$pid" "$producer"
+  # The stopped producer cannot reap its sort, so a finished sort is a zombie.
+  waited=0
+  while [ "$waited" -lt 1200 ]; do
+    case "$(ps -o stat= -p "$sort_pid" 2>/dev/null)" in
+      '' | Z*) break ;;
+    esac
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  sleep 0.5
+  kill -CONT "$producer"
+  sleep 0.5
+  kill -CONT "$pid"
+  wait "$pid" || fail "shard listing under a stalled consumer failed: $(cat "$tmp/err")"
+
+  ! grep -q 'write error' "$tmp/err" \
+    || fail "shard assignment writes must survive a child exiting mid-write: $(cat "$tmp/err")"
+  listed=$(wc -l <"$tmp/out" | tr -d ' ')
+  [ "$listed" -eq "$expected" ] \
+    || fail "$lane under a stalled consumer listed $listed of $expected scripts"
+  pass "portable serial shard assignment survives a stalled consumer and a child exit"
+}
+
 test_jobs_requires_proven_isolated() {
   local tmp rc shard_lane lane
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-jobs.XXXXXX")
@@ -1773,6 +1853,7 @@ test_portable_parallel_lanes_stay_duration_balanced
 test_portable_serial_shards_partition_the_serial_lane
 test_portable_serial_hint_coverage_is_reported_and_bounded
 test_portable_serial_shard_lane_refusals
+test_portable_serial_shard_survives_a_stalled_consumer
 test_jobs_requires_proven_isolated
 test_jobs_admits_a_concurrent_safe_family
 test_unmapped_new_test_never_inherits_family_concurrency

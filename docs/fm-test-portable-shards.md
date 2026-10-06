@@ -96,6 +96,9 @@ It also verifies that the parallel lanes, portable serial lane, and real-Herdr f
 It separately verifies that the portable serial CI shards are non-empty, disjoint, and together equal the portable serial lane.
 It reports the unmeasured serial share as `serial_unhinted=` and refuses when that share exceeds `PORTABLE_SERIAL_MAX_UNHINTED_PERCENT`, so the shards stay balanced on evidence rather than on the default weight.
 
+[`tests/fm-test-run.test.sh`](../tests/fm-test-run.test.sh)'s `test_portable_serial_shard_survives_a_stalled_consumer` checks listing completeness under pipe backpressure and a producer exit, using `/bin/bash` when available; `emit_via_file` in [`bin/fm-test-run.sh`](../bin/fm-test-run.sh) owns the pipe-write safety rationale.
+A pass on Bash 5 alone does not establish the Bash 3.2 regression, because Bash 5 restarts the interrupted pipe write.
+
 ## Timing artifacts
 
 Portable shards, each portable serial shard, and the Herdr lane upload runner-generated timing JSON.
