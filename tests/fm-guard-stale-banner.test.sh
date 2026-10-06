@@ -63,8 +63,9 @@ run_guard_case_read_only() {
     "$ROOT/bin/fm-guard.sh" 2>&1
 }
 
-# The Claude Stop auto-arm model: the watcher runs only between turns, so a fresh
-# beacon with no live watcher process is the healthy mid-turn state.
+# The auto-arm model, a Deck secondmate's launch-scoped override: its persistent
+# driver replaces exited watchers, so a fresh beacon with no live watcher process
+# is the healthy hand-off state.
 run_guard_case_autoarm() {
   local dir=$1
   FM_ROOT_OVERRIDE="$(case_root "$dir")" \
@@ -72,18 +73,6 @@ run_guard_case_autoarm() {
     FM_GUARD_GRACE=999 \
     FM_SUPERVISION_MODEL=autoarm \
     "$ROOT/bin/fm-guard.sh" 2>&1
-}
-
-# Age the rewake ledger into the past so a passing long-turn case cannot rest on
-# epoch freshness: a handling turn that has already outrun grace still has this
-# shape, which is the false alarm this suite now pins.
-record_aged_rewake_epoch() {
-  local home=$1 session_pid=$2 recovery=${3:-guard-test-generation}
-  printf 'epoch=7 owner_pid=1 outcome=rewake updated_at=1 session_pid=%s recovery_generation=%s\n' \
-    "$session_pid" "$recovery" > "$home/state/.claude-autoarm-epoch"
-  printf 'acked:handling:%s\n' "$recovery" > "$home/state/.watcher-down"
-  touch -t 201901010000 "$home/state/.last-watcher-beat"
-  touch -t 202001010000 "$home/state/.claude-autoarm-epoch"
 }
 
 record_session_lock_pid() {
@@ -425,8 +414,8 @@ test_read_only_never_mutates_stale_banner_state_files() {
 test_autoarm_fresh_beacon_without_watcher_is_healthy() {
   local dir out
   dir=$(make_guard_case autoarm-fresh)
-  # A fresh beacon and NO live watcher: the healthy mid-turn state under the
-  # Claude Stop auto-arm model, where the watcher only runs between turns.
+  # A fresh beacon and NO live watcher: the healthy hand-off state under the
+  # auto-arm model, where the Deck driver replaces the exited watcher.
   touch "$(case_home "$dir")/state/.last-watcher-beat"
   out=$(run_guard_case_autoarm "$dir")
   [ -z "$out" ] \
@@ -460,131 +449,24 @@ test_autoarm_stale_episode_is_stable() {
   pass "fm-guard stale banner: auto-arm stale episode stays one episode across calls"
 }
 
-# The send-time false alarm on a long Claude handling turn: the between-turns
-# watcher has already exited, the beacon is older than grace, and the auto-arm
-# ledger still shows a healthy rewake with no failure markers while the session
-# lock names a live pid. Turn-end will re-arm, so the pull guard must stay silent.
-test_autoarm_long_handling_turn_stays_silent() {
+# A stale beacon is a genuine lapse under the auto-arm model even while the
+# session lock names a live pid: only beacon freshness covers the hand-off.
+test_autoarm_stale_beacon_alarms_with_live_session_lock() {
   local dir home out pid
-  dir=$(make_guard_case autoarm-long-turn)
+  dir=$(make_guard_case autoarm-live-lock-stale)
   home=$(case_home "$dir")
   sleep 60 &
   pid=$!
-  record_aged_rewake_epoch "$home" "$pid"
   record_session_lock_pid "$home" "$pid"
-  out=$(run_guard_case_autoarm "$dir")
-  kill "$pid" 2>/dev/null || true
-  wait "$pid" 2>/dev/null || true
-  [ -z "$out" ] \
-    || fail "a long auto-arm handling turn past grace must stay silent, got: $out"
-  assert_absent "$home/state/.guard-watcher-stale-banner" \
-    "a healthy long handling turn must not open a down-episode"
-  pass "fm-guard stale banner: auto-arm long handling turn with a healthy rewake stays silent"
-}
-
-# Drive the long-turn signals apart on the same stale beacon. Losing any one
-# healthy-generation signal must restore the banner; the stale beacon alone
-# is not enough to stay quiet, and adding a failure marker is not either.
-test_autoarm_long_turn_requires_every_healthy_signal() {
-  local dir home out pid replacement_pid='' case_name
-  for case_name in no-epoch failed-outcome failure-notified failure-alarmed dead-lock missing-lock changed-lock moved-recovery later-beacon; do
-    dir=$(make_guard_case "autoarm-long-turn-$case_name")
-    home=$(case_home "$dir")
-    sleep 60 &
-    pid=$!
-    record_aged_rewake_epoch "$home" "$pid"
-    record_session_lock_pid "$home" "$pid"
-    case "$case_name" in
-      no-epoch)
-        rm -f "$home/state/.claude-autoarm-epoch"
-        ;;
-      failed-outcome)
-        printf 'epoch=7 owner_pid=1 outcome=failed updated_at=1\n' > "$home/state/.claude-autoarm-epoch"
-        touch -t 202001010000 "$home/state/.claude-autoarm-epoch"
-        ;;
-      failure-notified)
-        : > "$home/state/.claude-autoarm-failure-notified"
-        ;;
-      failure-alarmed)
-        : > "$home/state/.claude-autoarm-failure-alarmed"
-        ;;
-      dead-lock)
-        kill "$pid" 2>/dev/null || true
-        wait "$pid" 2>/dev/null || true
-        pid=
-        ;;
-      missing-lock)
-        rm -f "$home/state/.lock"
-        ;;
-      changed-lock)
-        sleep 60 &
-        replacement_pid=$!
-        record_session_lock_pid "$home" "$replacement_pid"
-        ;;
-      moved-recovery)
-        printf 'pending:handling:later-turn-generation\n' > "$home/state/.watcher-down"
-        ;;
-      later-beacon)
-        touch -t 202101010000 "$home/state/.last-watcher-beat"
-        ;;
-    esac
-    out=$(run_guard_case_autoarm "$dir")
-    [ -z "$pid" ] || kill "$pid" 2>/dev/null || true
-    [ -z "$pid" ] || wait "$pid" 2>/dev/null || true
-    [ -z "$replacement_pid" ] || kill "$replacement_pid" 2>/dev/null || true
-    [ -z "$replacement_pid" ] || wait "$replacement_pid" 2>/dev/null || true
-    replacement_pid=
-    [ "$(count_text "$out" "WATCHER DOWN - SUPERVISION IS OFF")" -eq 1 ] \
-      || fail "auto-arm long-turn health must not survive $case_name; guard output: $out"
-    assert_contains "$out" "no watcher has a fresh beacon" \
-      "a genuine auto-arm lapse with $case_name must still name the stale beacon"
-  done
-  pass "fm-guard stale banner: every auto-arm long-turn healthy signal is load-bearing"
-}
-
-# An open arming claim is between-turn startup, not evidence that the current
-# handling turn came from a healthy rewake.
-test_autoarm_open_claim_does_not_explain_stale_beacon() {
-  local dir home out pid identity
-  dir=$(make_guard_case autoarm-open-claim)
-  home=$(case_home "$dir")
-  sleep 60 &
-  pid=$!
-  identity=$(fm_test_pid_identity "$pid") \
-    || fail "could not compute the open-claim owner identity"
-  [ -n "$identity" ] || fail "open-claim owner identity was empty"
-  printf 'epoch=3 owner_pid=%s outcome=arming updated_at=%s\n%s\n' \
-    "$pid" "$(date +%s)" "$identity" > "$home/state/.claude-autoarm-epoch"
+  touch -t 201901010000 "$home/state/.last-watcher-beat"
   out=$(run_guard_case_autoarm "$dir")
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
   [ "$(count_text "$out" "WATCHER DOWN - SUPERVISION IS OFF")" -eq 1 ] \
-    || fail "an open auto-arm claim must not suppress a stale-beacon alarm: $out"
-  pass "fm-guard stale banner: an open auto-arm claim does not explain a stale beacon"
-}
-
-# The long-turn tolerance is a Claude auto-arm carve-out. The same leftover
-# rewake ledger must not silence Pi/extension or persistent primaries.
-test_autoarm_long_turn_does_not_silence_other_models() {
-  local dir home out pid model
-  for model in persistent extension; do
-    dir=$(make_guard_case "autoarm-carveout-$model")
-    home=$(case_home "$dir")
-    sleep 60 &
-    pid=$!
-    record_aged_rewake_epoch "$home" "$pid"
-    record_session_lock_pid "$home" "$pid"
-    if [ "$model" = extension ]; then
-      out=$(run_guard_case_extension "$dir")
-    else
-      out=$(run_guard_case "$dir")
-    fi
-    kill "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
-    [ "$(count_text "$out" "WATCHER DOWN - SUPERVISION IS OFF")" -eq 1 ] \
-      || fail "a $model primary must still alarm on a stale beacon despite a leftover rewake epoch: $out"
-  done
-  pass "fm-guard stale banner: auto-arm long-turn health does not leak to other models"
+    || fail "auto-arm model with a stale beacon must alarm despite a live session lock: $out"
+  assert_contains "$out" "no watcher has a fresh beacon" \
+    "auto-arm stale-beacon banner must name the stale-beacon reason"
+  pass "fm-guard stale banner: auto-arm stale beacon alarms even with a live session lock"
 }
 
 test_persistent_no_watcher_banner_names_missing_process() {
@@ -815,7 +697,7 @@ test_extension_handoff_keeps_queued_wake_warning() {
 }
 
 # The tolerance is scoped to the extension model alone. Every persistent-watcher
-# primary (codex, opencode, grok, kimi, tmux, unknown) must keep alarming on the
+# primary (deck, tmux, unknown) must keep alarming on the
 # same state, even when Pi extension markers happen to be present on disk.
 # The supervision branch runs guarded commands (fm-peek, fm-crew-state) while
 # handling the very rows that are queued. For that actor the drain warning is
@@ -939,10 +821,7 @@ test_extension_live_watcher_is_healthy_without_ownership_evidence
 test_autoarm_fresh_beacon_without_watcher_is_healthy
 test_autoarm_stale_beacon_alarms_with_correct_reason
 test_autoarm_stale_episode_is_stable
-test_autoarm_long_handling_turn_stays_silent
-test_autoarm_long_turn_requires_every_healthy_signal
-test_autoarm_open_claim_does_not_explain_stale_beacon
-test_autoarm_long_turn_does_not_silence_other_models
+test_autoarm_stale_beacon_alarms_with_live_session_lock
 test_persistent_no_watcher_banner_names_missing_process
 test_persistent_no_watcher_episode_survives_beacon_touch
 test_fresh_beacon_without_live_watcher_stays_alarm

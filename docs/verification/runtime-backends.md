@@ -1369,7 +1369,7 @@ Re-run the guard after any harness upgrade before trusting this evidence.
 
 ## Cursor Agent CLI
 
-Cursor runs only as a primary since the Cursor worker adapter was removed; [`supervision.md`](supervision.md#cursor-primary-park-2026-08-13) owns the primary evidence.
+Cursor is no longer supported as a primary or a worker; both adapters were removed.
 The evidence below was produced on 2026-08-11 against the installed signed CLI on macOS 26.5.2 arm64 with tmux 3.6a, running as `kunchenguid`, and extended on 2026-08-13 with the tmux composer verdict below.
 
 - Binary: `~/.local/bin/cursor-agent`, canonicalizing into `~/.local/share/cursor-agent/versions/2026.08.11-e8db854/cursor-agent`.
@@ -1689,7 +1689,7 @@ Its native App Server peer and watcher-close process are deterministic fixtures;
 
 ## Oh My Pi (omp)
 
-omp runs only as a primary since the omp worker adapter was removed; [`supervision.md`](supervision.md#omp-oh-my-pi-native-delivery-2026-09-05) owns the primary evidence.
+omp is no longer supported as a primary or a worker; both adapters were removed.
 The evidence below was produced on 2026-09-05 against omp 18.1.11 (`~/.local/bin/omp`, a Bun-compiled single binary) on macOS 26 arm64 through the Herdr backend with the `openai-codex/gpt-6-astra` model, building on the 2026-09-02 adapter investigation against 18.1.2.
 
 ### Process identity and markers
@@ -1712,4 +1712,3 @@ Before the status-row rule the shared classifier folded that row into the bare c
 After the rule, the same live Herdr capture read `empty`, a steer's doorbell landed, and the worker opened a turn on it.
 `tests/fm-composer-lib.test.sh` pins the unicode idle row, the nerd-preset idle row, the busy spinner row, and typed text over the same fixture in both locales.
 
-`FM_OMP_LIVE_E2E=1 tests/fm-omp-primary-live-e2e.test.sh` refreshes the primary evidence.

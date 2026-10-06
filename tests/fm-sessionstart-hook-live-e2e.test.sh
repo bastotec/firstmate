@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Opt-in live guard for the Claude, Codex exec, and Pi RUN-tier session-open adapters.
-# Cursor's source-free RUN-tier transport is covered with its stop-hook park by
-# tests/fm-cursor-primary-live-e2e.test.sh.
+# Opt-in live guard for the Pi RUN-tier session-open adapter.
 #
 # Three facts in this area come from the vendor, not from Firstmate, so a stub
 # can only confirm the assumption already written into the stub:
@@ -108,8 +106,7 @@ make_lab() {  # <harness> -> echoes lab dir
   git -C "$lab" add -A >/dev/null 2>&1 || true
   git -C "$lab" commit -q -m init >/dev/null 2>&1 || true
 
-  for stub in fm-turnend-guard.sh fm-claude-stop-autoarm.sh fm-arm-pretool-check.sh \
-    fm-cd-pretool-check.sh fm-subagent-pretool-check.sh; do
+  for stub in fm-turnend-guard.sh fm-arm-pretool-check.sh fm-cd-pretool-check.sh; do
     printf '#!/usr/bin/env bash\nexit 0\n' > "$lab/bin/$stub"
     chmod +x "$lab/bin/$stub"
   done
@@ -168,8 +165,6 @@ SH
   chmod +x "$lab/bin/fm-sessionstart-run.sh"
 
   case "$harness" in
-    claude) mkdir -p "$lab/.claude"; cp "$ROOT/.claude/settings.json" "$lab/.claude/settings.json" ;;
-    codex) mkdir -p "$lab/.codex"; cp "$ROOT/.codex/hooks.json" "$lab/.codex/hooks.json" ;;
     pi)
       mkdir -p "$lab/.pi/extensions/lib"
       cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$lab/.pi/extensions/"
@@ -586,43 +581,23 @@ fi
 
 # --- per-harness drivers ------------------------------------------------------
 
-for harness in claude codex pi; do
-  if ! command -v "$harness" >/dev/null 2>&1; then
-    ABSENT="$ABSENT $harness"
-    note "$harness: not installed on this host, so its run-tier evidence was NOT refreshed"
-    continue
-  fi
-  version=$("$harness" --version 2>/dev/null | head -n 1)
+if ! command -v pi >/dev/null 2>&1; then
+  ABSENT="$ABSENT pi"
+  note "pi: not installed on this host, so its run-tier evidence was NOT refreshed"
+else
+  version=$(pi --version 2>/dev/null | head -n 1)
   [ -n "$version" ] || version=unknown
-  lab=$(make_lab "$harness")
-
-  case "$harness" in
-    claude)
-      probe_process_opens claude "$version" "$lab" resume \
-        claude -p --permission-mode bypassPermissions \
-        -- claude --continue -p --permission-mode bypassPermissions
-      probe_context_reset claude "$version" "$lab" /clear \
-        claude --permission-mode bypassPermissions
-      ;;
-    codex)
-      probe_process_opens codex "$version" "$lab" resume \
-        codex exec --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
-        -- codex exec resume --last --dangerously-bypass-hook-trust --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check
-      note "codex $version: codex exec run-tier evidence refreshed; the interactive TUI remains uncovered because tracked project hooks provide no session-open or re-emit channel there"
-      ;;
-    pi)
-      probe_process_opens pi "$version" "$lab" resume \
-        pi -p -e "$lab/.pi/extensions/fm-primary-turnend-guard.ts" --no-context-files --no-tools \
-        -- pi -p -c -e "$lab/.pi/extensions/fm-primary-turnend-guard.ts" --no-context-files --no-tools
-      probe_context_reset pi "$version" "$lab" /new \
-        pi -e "$lab/.pi/extensions/fm-primary-turnend-guard.ts" --no-context-files
-      ;;
-  esac
+  lab=$(make_lab pi)
+  probe_process_opens pi "$version" "$lab" resume \
+    pi -p -e "$lab/.pi/extensions/fm-primary-turnend-guard.ts" --no-context-files --no-tools \
+    -- pi -p -c -e "$lab/.pi/extensions/fm-primary-turnend-guard.ts" --no-context-files --no-tools
+  probe_context_reset pi "$version" "$lab" /new \
+    pi -e "$lab/.pi/extensions/fm-primary-turnend-guard.ts" --no-context-files
   CHECKED=$((CHECKED + 1))
-done
+fi
 
 [ "$CHECKED" -gt 0 ] \
-  || fail "no run-tier harness was installed, so this guard verified nothing; install claude, codex, or pi before trusting its evidence"
+  || fail "no run-tier harness was installed, so this guard verified nothing; install pi before trusting its evidence"
 [ -z "$ABSENT" ] \
   || note "run-tier evidence was refreshed for $CHECKED harness(es); still missing:$ABSENT"
 echo "# fm-sessionstart-hook-live-e2e.test.sh: all live assertions passed"

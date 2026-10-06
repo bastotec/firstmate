@@ -356,9 +356,6 @@ For the herdr backend, `FM_HOME` also determines the workspace label used by the
 pi, pi-signed, and deck are the only worker harnesses: they support crewmate, scout, and secondmate launches, and [README requirements](../README.md#requirements) own the set supported for the primary session.
 Any other adapter name, including a primary-only harness such as claude or codex, has no launch template, so `fm-spawn.sh` refuses it unless a raw launch command is passed.
 The raw-command escape hatch supplies no verified adapter contract; [task control's fail-closed boundaries](agent-control.md#fail-closed-boundaries) apply to its recorded harness.
-A cursor primary runs the tracked project-scope `.cursor/hooks.json` in its own home and must be launched with `--trust`, or no project hook loads; [`docs/supervision-protocols/cursor.md`](supervision-protocols/cursor.md) owns its supervision protocol.
-Cursor typed-submit confirmation is verified on tmux and Herdr only.
-For stream's typed-plane Cursor confirmation limit and its distinction from durable inbox steering, see [runtime backend verification](verification/runtime-backends.md#cursor-agent-cli).
 [Managed primary setup](managed-primary.md) owns Deck's opt-in primary launch choices; [the Deck supervision protocol](supervision-protocols/deck.md) owns handling duties for Deck home hosts.
 Select Deck workers and secondmates through the ordinary static harness or dispatch-profile configuration; Deck has no effort control, so dispatch profiles with effort and relaunches with non-default effort are refused before a worker is created or stopped.
 A Deck spawn requires `deck`, `jq`, and Python 3 on the worker's `PATH`, plus a worker-readable credential for Deck's proxai endpoint.
@@ -374,7 +371,7 @@ Launch mechanics, including the verified command templates, live in [`bin/fm-spa
 Pi-family launches adapt the regular-TUI safeguard to the installed CLI's capabilities; [`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns the exact version-safe launch mechanics.
 Enabled primary-session turn-end guard integrations are tracked as repo-level hook files and documented in [`docs/turnend-guard.md`](turnend-guard.md).
 Primary-session watcher wake protocols are rendered at session start by [`bin/fm-supervision-instructions.sh`](../bin/fm-supervision-instructions.sh) from [`docs/supervision-protocols/`](supervision-protocols/).
-Claude's Stop `asyncRewake` hook owns tokenless re-arm cycles, Cursor's stop hook parks on the watcher, Grok uses background-notify cycles, Codex uses bounded foreground checkpoints, Pi and pi-signed use the same two tracked primary extensions, omp uses its own two tracked `.omp/extensions/` files with a blocking `session_stop` turn-end hook, and OpenCode uses its TUI plugin.
+Pi and pi-signed use the same two tracked primary extensions, Deck home hosts use the driver-owned protocol, and any other primary harness gets the unknown-harness fallback.
 `config/crew-harness` is a local, gitignored file containing one adapter name for crewmate and scout launches.
 When pi-signed is selected, Firstmate preserves `FM_PI_HARNESS=pi-signed` and refuses the launch if the selected executable is unavailable rather than falling back to pi; [`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns executable resolution and launch mechanics.
 Plain Pi launches set `FM_PI_HARNESS=pi`, so a signed primary's environment cannot relabel a plain Pi worker.
@@ -1145,7 +1142,6 @@ FM_PROCEVENT_OWNER_CHECK_SECONDS=15     # a runner guard's detection interval, r
 FM_PROCEVENT_LAUNCH_FLOOR_SECONDS=1     # minimum interval between launches of one registration generation's source command; 1..3600
 FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS=3   # how long reconcile waits for the runners it started to prove they are running; 1..600, keep well below FM_POLL
 FM_WHEN_OUTPUT_TAIL_BYTES=8192          # bound on the command-output tail inside one condition->action outcome document
-FM_CODEX_WATCH_CHECKPOINT=180   # seconds per foreground watcher checkpoint in Codex primary supervision
 FM_CREW_STATE_NM_TIMEOUT=10   # seconds allowed per no-mistakes query inside fm-crew-state.sh
 FM_TEARDOWN_NM_TIMEOUT=10    # seconds allowed per no-mistakes query or abort inside fm-teardown.sh
 FM_CREW_STATE_RUNS_LIMIT=200  # recent no-mistakes run rows scanned when the runs ledger is consulted: axi status cannot be attributed directly, or its answer is terminal and may have a live sibling run
@@ -1169,13 +1165,8 @@ FMX_FOLLOWUP_MAX_COUNT=3   # local cap on Relay completion follow-ups per linked
 FM_PF_RETRY_BACKOFF_SECS=900   # seconds before the next attempt after a retryable promised-public-reply delivery error
 FM_LOCK_STALE_AFTER=2   # grace seconds for missing or nonnumeric lock-owner PIDs (minimum 2s); dead numeric PIDs have no age grace
 FM_GUARD_GRACE=300      # beacon freshness threshold for guard verdicts, arm health checks, and the primary turn-end guard; see docs/turnend-guard.md for model-aware exceptions
-FM_CLAUDE_AUTOARM_ATTEMPTS=2   # bounded Stop-owned arm attempts per Claude auto-arm cycle; accepted values are 1, 2, or 3
-FM_CLAUDE_AUTOARM_SYNC_WAIT_MS=800   # milliseconds the --claude turn-end guard waits for watcher health, an open Stop auto-arm generation claim, or a fresh epoch before deciding recovery ownership or failure progression
-FM_CLAUDE_AUTOARM_EPOCH_FRESH=15   # seconds a recorded auto-arm outcome remains eligible for the current event epoch's recovery or failure decision
-FM_CLAUDE_TURNEND_BLOCK_BUDGET=3   # consecutive --claude guard re-blocks before the verified one-time attended fail-open; safely below Claude Code's 8-block override
 FM_ARM_CONFIRM_TIMEOUT=10   # seconds fm-watch-arm waits to confirm a fresh watcher before reporting FAILED; default 30 on Git Bash/MSYS
 FM_ARM_ATTACH_POLL=0.5  # seconds between checks while fm-watch-arm is attached to an existing healthy watcher cycle
-FM_OPENCODE_ARM_READY_TIMEOUT_MS=12000   # milliseconds the OpenCode primary watcher plugin waits for an arm attempt to report started, healthy, wake, or failure; default 35000 on Windows to stay above the MSYS confirm budget
 FM_PI_ARM_READY_TIMEOUT_MS=12000   # milliseconds the Pi watcher extension waits for a successor arm to report started or attached; default 35000 on Windows to stay above the MSYS confirm budget
 FM_WATCH_ARM_RETIRE_TIMEOUT_MS=1000   # milliseconds Pi/OpenCode wait for an unready successor arm to exit before abandoning retries
 FM_WATCH_REARM_RETRY_BASE_MS=250   # Pi/OpenCode adapter base delay for continuity restoration retries

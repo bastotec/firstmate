@@ -310,7 +310,6 @@ family_for_basename() {
     fm-operational-input.test.sh|fm-pi-primary-types.test.sh|\
     fm-harness-adapter-references.test.sh|\
     fm-send-settle.test.sh|\
-    fm-subagent-pretool-check.test.sh|\
     fm-supervision-instructions.test.sh|fm-task-delivery.test.sh|\
     fm-tmux-submit-busy.test.sh|fm-trace-context-lib.test.sh|\
     fm-transition-lib.test.sh|\
@@ -318,12 +317,12 @@ family_for_basename() {
       printf '%s\n' pure-contract-unit
       ;;
     fm-daemon.test.sh|fm-guard-stale-banner.test.sh|fm-pi-watch-extension.test.sh|\
-    fm-session-lock-ancestry.test.sh|fm-cursor-primary.test.sh|\
+    fm-session-lock-ancestry.test.sh|\
     fm-supervision-events.test.sh|fm-turnend-guard.test.sh|fm-wake-daemon-lifecycle-e2e.test.sh|\
     fm-wake-drain-unread-status.test.sh|\
     fm-tool-update-check.test.sh|\
     fm-mail.test.sh|fm-mail-check.test.sh|fm-autoland.test.sh|\
-    fm-wake-queue.test.sh|fm-watch-arm.test.sh|fm-watch-checkpoint.test.sh|fm-watch-recovery-loop.test.sh|\
+    fm-wake-queue.test.sh|fm-watch-arm.test.sh|fm-watch-recovery-loop.test.sh|\
     fm-watch-triage.test.sh|fm-watch-triage-stale.test.sh|fm-watch-triage-declared-wait.test.sh|\
     fm-watch-triage-resurface.test.sh|fm-watch-triage-events.test.sh|\
     fm-external-wait.test.sh|fm-task-inbox.test.sh|\
@@ -363,15 +362,13 @@ family_for_basename() {
       ;;
     fm-afk-pi-herdr-return-e2e.test.sh|\
     fm-bearings-board-lavish-live-e2e.test.sh|\
-    fm-claude-stop-autoarm-live-e2e.test.sh|\
-    fm-cursor-primary-live-e2e.test.sh|\
     fm-deck-host-live-e2e.test.sh|fm-stream-deck-live-e2e.test.sh|\
     fm-harness-liveness-drift-live-e2e.test.sh|\
     fm-herdr-version-floor-live-e2e.test.sh|\
     fm-herdr-pi-stale-registration-live-e2e.test.sh|\
-    fm-opencode-primary-live-e2e.test.sh|fm-pi-branch-live-e2e.test.sh|\
+    fm-pi-branch-live-e2e.test.sh|\
     fm-pi-branch-responsiveness-live-e2e.test.sh|\
-    fm-pi-primary-live-e2e.test.sh|fm-pi-codex-native.test.sh|fm-omp-primary-live-e2e.test.sh|\
+    fm-pi-primary-live-e2e.test.sh|fm-pi-codex-native.test.sh|\
     fm-sessionstart-hook-live-e2e.test.sh|fm-sessionstart-instruction-refresh-live-e2e.test.sh|\
     fm-send-secondmate-marker-herdr-e2e.test.sh|\
     fm-send-inbox-doorbell-live-e2e.test.sh|\
@@ -402,7 +399,6 @@ family_for_basename() {
       ;;
     fm-branch-supervision.test.sh|fm-busy-adapter-wiring.test.sh|\
     fm-busy-state.test.sh|fm-classify-corr-token.test.sh|\
-    fm-claude-stop-autoarm.test.sh|\
     fm-extension-binding.test.sh|fm-gitignore-config.test.sh|\
     fm-no-mistakes-required.test.sh|fm-peek-remote.test.sh|\
     fm-pending-reply.test.sh|fm-pi-branch-extension.test.sh|\
@@ -716,13 +712,9 @@ tests/fm-check-unregister.test.sh 467
 tests/fm-ci-workflow.test.sh 3891
 tests/fm-classify-corr-token.test.sh 65224
 tests/fm-classify-decision-key.test.sh 1562
-tests/fm-claude-stop-autoarm-live-e2e.test.sh 115
-tests/fm-claude-stop-autoarm.test.sh 60892
 tests/fm-control-recover-missing.test.sh 37080
 tests/fm-control-relaunch.test.sh 103083
 tests/fm-control.test.sh 45346
-tests/fm-cursor-primary-live-e2e.test.sh 71
-tests/fm-cursor-primary.test.sh 58472
 tests/fm-daemon.test.sh 34194
 tests/fm-deck-chat.test.sh 60000
 tests/fm-deck-harness.test.sh 125936
@@ -754,9 +746,7 @@ tests/fm-meta-backfill.test.sh 2500
 tests/fm-model-chain.test.sh 28150
 tests/fm-nm-test-contract.test.sh 1135
 tests/fm-no-mistakes-required.test.sh 5084
-tests/fm-omp-primary-live-e2e.test.sh 79
 tests/fm-on.test.sh 12825
-tests/fm-opencode-primary-live-e2e.test.sh 132
 tests/fm-operational-input.test.sh 244
 tests/fm-peek-remote.test.sh 1331
 tests/fm-pending-reply.test.sh 45272
@@ -823,7 +813,6 @@ tests/fm-stream-deck.test.sh 5093
 tests/fm-stream-hub-retention.test.sh 138388
 tests/fm-stream-hub-rust.test.sh 44707
 tests/fm-stream-hub.test.sh 323940
-tests/fm-subagent-pretool-check.test.sh 1362
 tests/fm-supervision-events.test.sh 1898
 tests/fm-tangle-guard.test.sh 17025
 tests/fm-task-delivery.test.sh 27703
@@ -851,7 +840,6 @@ tests/fm-wake-drain-unread-status.test.sh 22307
 tests/fm-wake-gate.test.sh 17081
 tests/fm-wake-queue.test.sh 206368
 tests/fm-watch-arm.test.sh 107952
-tests/fm-watch-checkpoint.test.sh 6471
 tests/fm-watch-recovery-loop.test.sh 64315
 tests/fm-watch-triage-declared-wait.test.sh 160479
 tests/fm-watch-triage-events.test.sh 123963
@@ -1576,8 +1564,7 @@ families_for_changed_path() {
       printf '%s\n' __script__:fm-pi-primary-types.test.sh
       printf '%s\n' live-harness-optin
       ;;
-    bin/fm-sessionstart-run.sh|.claude/settings.json|.codex/hooks.json|\
-    .pi/extensions/fm-primary-turnend-guard.ts)
+    bin/fm-sessionstart-run.sh|.pi/extensions/fm-primary-turnend-guard.ts)
       # The run tier's two harness-supplied facts (source vocabulary and
       # context-reset stdout injection) only show up against a real harness.
       printf '%s\n' __script__:fm-pi-windows-shell-invocation.test.sh

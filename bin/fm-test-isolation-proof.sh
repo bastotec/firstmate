@@ -124,7 +124,7 @@ exclusion_reason() {
       ;;
     fm-daemon.test.sh|fm-guard-stale-banner.test.sh|fm-pi-watch-extension.test.sh|\
     fm-supervision-events.test.sh|fm-turnend-guard.test.sh|fm-wake-daemon-lifecycle-e2e.test.sh|\
-    fm-wake-queue.test.sh|fm-watch-checkpoint.test.sh|fm-watch-triage.test.sh|\
+    fm-wake-queue.test.sh|fm-watch-triage.test.sh|\
     fm-watch-triage-stale.test.sh|fm-watch-triage-declared-wait.test.sh|\
     fm-watch-triage-resurface.test.sh|fm-watch-triage-events.test.sh|\
     fm-watcher-lock.test.sh)
@@ -135,7 +135,7 @@ exclusion_reason() {
       printf '%s\n' 'AFK lifecycle / inject path; exclusive daemon and pane control'
       ;;
     fm-afk-pi-herdr-return-e2e.test.sh|\
-    fm-opencode-primary-live-e2e.test.sh|fm-pi-primary-live-e2e.test.sh|\
+    fm-pi-primary-live-e2e.test.sh|\
     fm-send-secondmate-marker-herdr-e2e.test.sh|\
     fm-sessionstart-instruction-refresh-live-e2e.test.sh)
       printf '%s\n' 'live harness opt-in; never default parallel CI'

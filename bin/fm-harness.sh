@@ -107,7 +107,7 @@ harness_marker() {
   # environment of a wedged grok 1.0.0 Stop hook, 2026-08-07). Treat this marker as
   # a fast path only; the ancestry walk below is what actually guarantees grok is
   # identified, and any rule that must be RELIABLE under grok has to test the hook
-  # markers too (see .claude/settings.json Stop entries, docs/turnend-guard.md).
+  # markers too.
   [ "${GROK_AGENT:-}" = "1" ] && { echo grok; return; }
   # codex and opencode publish no harness-identity marker at all, so they are
   # never named here and are identified by ancestry alone. That is the

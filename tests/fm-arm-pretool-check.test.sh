@@ -3,8 +3,9 @@
 # Behavior tests for the watcher-arm PreToolUse seatbelt (docs/arm-pretool-check.md).
 #
 # bin/fm-arm-command-policy.mjs is the single owner of command classification.
-# This suite drives the stable shell transport through all five harness entry
-# forms and asserts the per-harness wiring contract without spawning a harness.
+# This suite drives the stable shell transport through its three entry forms
+# (snake-case and camel-case stdin payloads, and the CLI form Pi uses) without
+# spawning a harness.
 # Empirical harness evidence lives in docs/arm-pretool-check.md.
 set -u
 
@@ -14,7 +15,7 @@ set -u
 CHECK="$ROOT/bin/fm-arm-pretool-check.sh"
 POLICY="$ROOT/bin/fm-arm-command-policy.mjs"
 
-# --- full cross-harness acceptance matrix ----------------------------------
+# --- full acceptance matrix ----------------------------------
 
 MATRIX_IDS=()
 MATRIX_EXPECTED=()
@@ -29,29 +30,29 @@ matrix_case() {
 matrix_case A01 allow 'bin/fm-watch-arm.sh'
 matrix_case A02 allow './bin/fm-watch-arm.sh --restart'
 matrix_case A03 allow 'exec bin/fm-watch-arm.sh'
-matrix_case A04 allow 'bin/fm-watch-checkpoint.sh --seconds 180'
-matrix_case A05 allow 'exec bin/fm-watch-checkpoint.sh --seconds 180'
-matrix_case A06 allow "$ROOT/bin/fm-watch-checkpoint.sh --seconds 180"
+matrix_case A04 allow 'bin/fm-watch-arm.sh --restart'
+matrix_case A05 allow 'exec bin/fm-watch-arm.sh --restart'
+matrix_case A06 allow "$ROOT/bin/fm-watch-arm.sh --restart"
 matrix_case A07 allow "cd '$ROOT'; exec bin/fm-watch-arm.sh"
-matrix_case A08 allow "cd '../firstmate'; bin/fm-watch-checkpoint.sh --seconds 180"
-matrix_case A09 allow "export FM_HOME='$ROOT'; bin/fm-watch-checkpoint.sh --seconds 180"
-matrix_case A10 allow 'source config/x-mode.env; bin/fm-watch-checkpoint.sh --seconds 180'
-matrix_case A11 allow "source 'config/x-mode.env'; bin/fm-watch-checkpoint.sh --seconds 180"
-matrix_case A12 allow "source './config/x-mode.env'; bin/fm-watch-checkpoint.sh --seconds 180"
-matrix_case A13 allow "source '$ROOT/config/x-mode.env'; bin/fm-watch-checkpoint.sh --seconds 180"
+matrix_case A08 allow "cd '../firstmate'; bin/fm-watch-arm.sh --restart"
+matrix_case A09 allow "export FM_HOME='$ROOT'; bin/fm-watch-arm.sh --restart"
+matrix_case A10 allow 'source config/x-mode.env; bin/fm-watch-arm.sh --restart'
+matrix_case A11 allow "source 'config/x-mode.env'; bin/fm-watch-arm.sh --restart"
+matrix_case A12 allow "source './config/x-mode.env'; bin/fm-watch-arm.sh --restart"
+matrix_case A13 allow "source '$ROOT/config/x-mode.env'; bin/fm-watch-arm.sh --restart"
 matrix_case A14 allow "[ -f 'config/x-mode.env' ] && source 'config/x-mode.env'; exec bin/fm-watch-arm.sh"
 matrix_case A15 allow "cd $ROOT && exec bin/fm-watch-arm.sh"
-matrix_case A16 allow "export FM_HOME=$ROOT && bin/fm-watch-checkpoint.sh --seconds 180"
-matrix_case A17 allow $'source "config/x-mode.env"\nbin/fm-watch-checkpoint.sh --seconds 180'
+matrix_case A16 allow "export FM_HOME=$ROOT && bin/fm-watch-arm.sh --restart"
+matrix_case A17 allow $'source "config/x-mode.env"\nbin/fm-watch-arm.sh --restart'
 
 matrix_case R01 allow "pgrep -fl '/bin/fm-watch.sh' || true"
 matrix_case R02 allow "ps aux | rg '/bin/fm-watch.sh'"
 matrix_case R03 allow "rg -n 'fm-watch-arm.sh &' docs tests"
 matrix_case R04 allow "rg -n 'bin/fm-watch-arm.sh; echo bad' docs"
-matrix_case R05 allow "git grep 'fm-watch-checkpoint.sh && echo bad'"
-matrix_case R06 allow "sed -n '/fm-watch-checkpoint.sh/p' docs/arm-pretool-check.md"
+matrix_case R05 allow "git grep 'fm-watch-arm.sh && echo bad'"
+matrix_case R06 allow "sed -n '/fm-watch-arm.sh/p' docs/arm-pretool-check.md"
 matrix_case R07 allow 'assert_contains "$content" '\''fm-watch-arm.sh &'\'''
-matrix_case R08 allow "printf '%s\\n' 'bin/fm-watch-checkpoint.sh --seconds 180 >/tmp/out'"
+matrix_case R08 allow "printf '%s\\n' 'bin/fm-watch-arm.sh --restart >/tmp/out'"
 matrix_case R09 allow "tmux send-keys -t isolated-pi-lab 'bin/fm-watch-arm.sh &' Enter"
 matrix_case R10 allow "tmux send-keys -t isolated-pi-lab \"printf '%s\\n' 'bin/fm-watch-arm.sh &'\"; tmux send-keys -t isolated-pi-lab Enter"
 matrix_case R11 allow "python3 -c 'print(\"bin/fm-watch-arm.sh; echo data\")'"
@@ -70,18 +71,18 @@ matrix_case D03 deny 'bin/fm-watch-arm.sh & disown'
 matrix_case D04 deny '(bin/fm-watch-arm.sh) &'
 matrix_case D05 deny "bash -lc 'bin/fm-watch-arm.sh &'"
 matrix_case D06 deny '$(bin/fm-watch-arm.sh)'
-matrix_case D07 deny 'echo "$(bin/fm-watch-checkpoint.sh --seconds 180)"'
+matrix_case D07 deny 'echo "$(bin/fm-watch-arm.sh --restart)"'
 matrix_case D08 deny 'cat <(bin/fm-watch-arm.sh)'
 matrix_case D09 deny 'bin/fm-watch-arm.sh >/tmp/out'
-matrix_case D10 deny 'bin/fm-watch-checkpoint.sh --seconds 180 </dev/null'
+matrix_case D10 deny 'bin/fm-watch-arm.sh --restart </dev/null'
 matrix_case D11 deny 'bin/fm-watch-arm.sh 2>&1 | head -2'
 matrix_case D12 deny 'bin/fm-watch-arm.sh | cat'
-matrix_case D13 deny 'bin/fm-watch-checkpoint.sh --seconds 180 | timeout 1 cat'
+matrix_case D13 deny 'bin/fm-watch-arm.sh --restart | timeout 1 cat'
 matrix_case D14 deny 'echo before; bin/fm-watch-arm.sh'
-matrix_case D15 deny 'bin/fm-watch-checkpoint.sh --seconds 180; echo after'
+matrix_case D15 deny 'bin/fm-watch-arm.sh --restart; echo after'
 matrix_case D16 deny 'true && bin/fm-watch-arm.sh'
-matrix_case D17 deny 'bin/fm-watch-checkpoint.sh --seconds 180 || true'
-matrix_case D18 deny $'bin/fm-watch-arm.sh\nbin/fm-watch-checkpoint.sh --seconds 180'
+matrix_case D17 deny 'bin/fm-watch-arm.sh --restart || true'
+matrix_case D18 deny $'bin/fm-watch-arm.sh\nbin/fm-watch-arm.sh --restart'
 matrix_case D19 deny "pkill -f '/bin/fm-watch.sh'"
 matrix_case D20 deny "command pkill -f '/bin/fm-watch.sh'"
 matrix_case D21 deny "/usr/bin/pkill -f '/bin/fm-watch.sh'"
@@ -105,7 +106,7 @@ matrix_case D38 deny "bash <<< 'bin/fm-watch-arm.sh &'"
 matrix_case D39 deny "eval 'true;' 'bin/fm-watch-arm.sh &'"
 matrix_case D40 deny 'timeout 30 bin/fm-watch-arm.sh &'
 matrix_case D41 deny 'gtimeout 30 bin/fm-watch-arm.sh &'
-matrix_case D42 deny 'bin/fm-watch-{arm,checkpoint}.sh &'
+matrix_case D42 deny 'bin/fm-watch-{arm,}.sh &'
 matrix_case D43 deny 'bin/fm-watch-arm.sh* &'
 matrix_case D44 deny "pattern='fm-watch'; pkill -f \"\$pattern\""
 matrix_case D45 deny "p=\$(pgrep -f '/bin/fm-watch.sh'); q=\$p; kill \$q"
@@ -123,22 +124,22 @@ matrix_case D56 deny 'for x in 1; do pkill -f fm-watch; done'
 matrix_case D57 deny 'case x in x) pkill -f fm-watch ;; esac'
 matrix_case D58 deny 'until false; do kill $(pgrep -f fm-watch); done'
 
-matrix_case E01 allow "bin/fm-watch-checkpoint.sh --seconds '180;still-one-arg'"
-matrix_case E02 allow "bin/fm-watch-checkpoint.sh --label 'fm-watch-arm.sh; literal argument'"
+matrix_case E01 allow "bin/fm-watch-arm.sh --restart '180;still-one-arg'"
+matrix_case E02 allow "bin/fm-watch-arm.sh --label 'fm-watch.sh; literal argument'"
 matrix_case E03 allow 'bin/fm-watch-arm.sh # output > file &'
-matrix_case E04 allow $'# setup comment with fm-watch.sh; && >\nsource "config/x-mode.env"\nbin/fm-watch-checkpoint.sh --seconds 180'
-matrix_case E05 deny "FM_HOME=$ROOT bin/fm-watch-checkpoint.sh --seconds 180"
+matrix_case E04 allow $'# setup comment with fm-watch.sh; && >\nsource "config/x-mode.env"\nbin/fm-watch-arm.sh --restart'
+matrix_case E05 deny "FM_HOME=$ROOT bin/fm-watch-arm.sh --restart"
 matrix_case E06 deny "env FM_HOME=$ROOT bin/fm-watch-arm.sh"
-matrix_case E07 deny "source '/tmp/not-firstmate/config/x-mode.env'; bin/fm-watch-checkpoint.sh --seconds 180"
-matrix_case E08 deny "bash -lc 'bin/fm-watch-checkpoint.sh --seconds 180'"
-matrix_case E09 deny '(bin/fm-watch-checkpoint.sh --seconds 180)'
+matrix_case E07 deny "source '/tmp/not-firstmate/config/x-mode.env'; bin/fm-watch-arm.sh --restart"
+matrix_case E08 deny "bash -lc 'bin/fm-watch-arm.sh --restart'"
+matrix_case E09 deny '(bin/fm-watch-arm.sh --restart)'
 matrix_case E10 deny "eval 'bin/fm-watch-arm.sh &'"
 matrix_case E11 deny "exec bash -lc 'bin/fm-watch-arm.sh &'"
 matrix_case E12 allow 'bash -lc "$WATCHER_COMMAND" # fm-watch-arm.sh'
 matrix_case E13 allow "printf '%s\\n' 'argument has ; and fm-watch-arm.sh and &&'"
 matrix_case E14 allow '$FM_HOME/bin/fm-teardown.sh &'
 matrix_case E15 allow '$FM_HOME/bin/fm-watch-arm.sh'
-matrix_case E16 allow '~/firstmate/bin/fm-watch-checkpoint.sh --seconds 180'
+matrix_case E16 allow '~/firstmate/bin/fm-watch-arm.sh --restart'
 matrix_case E17 allow 'for f in 1; do echo fm-watch; done'
 
 MATRIX_TMP=$(mktemp -d "${TMPDIR:-/tmp}/fm-arm-policy-matrix.XXXXXX")
@@ -151,22 +152,17 @@ run_matrix_entry() {
   err_file="$MATRIX_TMP/$id-$entry.err"
 
   case "$entry" in
-    codex)
+    stdin)
       payload=$(jq -cn --arg command "$cmd" '{tool_name:"Bash",tool_input:{command:$command}}')
       printf '%s' "$payload" | "$CHECK" >"$out_file" 2>"$err_file"
       rc=$?
       ;;
-    claude)
-      payload=$(jq -cn --arg command "$cmd" '{tool_name:"Bash",tool_input:{command:$command}}')
-      printf '%s' "$payload" | "$CHECK" --claude >"$out_file" 2>"$err_file"
-      rc=$?
-      ;;
-    grok)
+    stdin-camel)
       payload=$(jq -cn --arg command "$cmd" '{toolName:"run_terminal_command",toolInput:{command:$command}}')
       printf '%s' "$payload" | "$CHECK" >"$out_file" 2>"$err_file"
       rc=$?
       ;;
-    opencode|pi)
+    cli)
       "$CHECK" --command "$cmd" >"$out_file" 2>"$err_file"
       rc=$?
       ;;
@@ -185,21 +181,16 @@ run_matrix_entry() {
   [ "$rc" -eq 2 ] || fail "$id via $entry must deny, got exit $rc"
   jq -e '.hookSpecificOutput.permissionDecision == "deny" and (.systemMessage | test("\\[(watcher-(background|pipeline|redirection|bundled|nested|direct)|broad-watcher-kill|unclassifiable-protected-command)\\]"))' "$err_file" >/dev/null 2>&1 \
     || fail "$id via $entry deny must carry a stable reason code on stderr: $(cat "$err_file")"
-  if [ "$entry" = claude ]; then
-    [ ! -s "$out_file" ] || fail "$id via claude deny must leave stdout empty: $(cat "$out_file")"
-  elif [ "$entry" = grok ]; then
-    jq -e '.decision == "deny"' "$out_file" >/dev/null 2>&1 \
-      || fail "$id via grok deny must carry decision=deny on stdout: $(cat "$out_file")"
-  fi
+  [ ! -s "$out_file" ] || fail "$id via $entry deny must leave stdout empty: $(cat "$out_file")"
 }
 
 test_full_acceptance_matrix() {
   local i entry
   for ((i = 0; i < ${#MATRIX_IDS[@]}; i++)); do
-    for entry in codex claude grok opencode pi; do
+    for entry in stdin stdin-camel cli; do
       run_matrix_entry "${MATRIX_IDS[$i]}" "${MATRIX_EXPECTED[$i]}" "$entry" "${MATRIX_COMMANDS[$i]}"
     done
-    pass "matrix ${MATRIX_IDS[$i]}: ${MATRIX_EXPECTED[$i]} through all five entry forms"
+    pass "matrix ${MATRIX_IDS[$i]}: ${MATRIX_EXPECTED[$i]} through all three entry forms"
   done
 }
 
@@ -226,7 +217,7 @@ test_direct_policy_contract() {
   assert_policy direct-unclassifiable $'deny\tunclassifiable-protected-command' "bin/fm-watch-arm.sh 'unterminated"
   assert_policy direct-unsupported $'deny\tunclassifiable-protected-command' 'if true; then bin/fm-watch-arm.sh; fi'
   assert_policy direct-constructed-payload $'deny\twatcher-nested' "WATCHER='bin/fm-watch-arm.sh &'; bash -lc \"\$WATCHER\""
-  assert_policy direct-parameter-export allow 'export FM_HOME=${HOME}; bin/fm-watch-checkpoint.sh --seconds 180'
+  assert_policy direct-parameter-export allow 'export FM_HOME=${HOME}; bin/fm-watch-arm.sh --restart'
   assert_policy direct-expanded-arm-blessed allow '$FM_HOME/bin/fm-watch-arm.sh'
   assert_policy direct-expanded-arm-background $'deny\twatcher-background' '$FM_HOME/bin/fm-watch-arm.sh &'
   assert_policy direct-expanded-arm-pipeline $'deny\twatcher-pipeline' '$HOME/firstmate/bin/fm-watch-arm.sh | cat'
@@ -266,29 +257,29 @@ test_unknown_flag_errors() {
 
 # --- stdin JSON mode ----------------------------------------------------------
 
-test_stdin_grok_schema_deny() {
+test_stdin_camel_schema_deny() {
   local out rc
   out=$(printf '%s' '{"toolInput":{"command":"bin/fm-watch-arm.sh &","background":false},"toolName":"run_terminal_command"}' | "$CHECK" 2>/dev/null)
   rc=$?
-  [ "$rc" -eq 2 ] || fail "grok toolInput.command schema must be read and denied, got exit $rc"
-  printf '%s' "$out" | jq -e '.decision == "deny"' >/dev/null 2>&1 || fail "stdout must carry Grok's {\"decision\":\"deny\",...} shape: $out"
-  pass "stdin grok schema (toolInput.command): denied with Grok-shaped stdout JSON"
+  [ "$rc" -eq 2 ] || fail "toolInput.command schema must be read and denied, got exit $rc"
+  [ -z "$out" ] || fail "deny must leave stdout empty: $out"
+  pass "stdin camel-case schema (toolInput.command): denied with empty stdout"
 }
 
-test_stdin_claude_codex_schema_allow() {
+test_stdin_snake_schema_allow() {
   local rc
   printf '%s' '{"tool_input":{"command":"exec bin/fm-watch-arm.sh"},"tool_name":"Bash"}' | "$CHECK" >/dev/null 2>&1
   rc=$?
-  [ "$rc" -eq 0 ] || fail "claude/codex tool_input.command schema must be read and allowed for the blessed shape, got exit $rc"
-  pass "stdin claude/codex schema (tool_input.command): blessed shape allowed"
+  [ "$rc" -eq 0 ] || fail "tool_input.command schema must be read and allowed for the blessed shape, got exit $rc"
+  pass "stdin snake-case schema (tool_input.command): blessed shape allowed"
 }
 
-test_stdin_claude_codex_schema_deny() {
+test_stdin_snake_schema_deny() {
   local rc
   printf '%s' '{"tool_input":{"command":"bin/fm-watch-arm.sh &"},"tool_name":"Bash"}' | "$CHECK" >/dev/null 2>&1
   rc=$?
-  [ "$rc" -eq 2 ] || fail "claude/codex tool_input.command schema must be denied for the backgrounded shape, got exit $rc"
-  pass "stdin claude/codex schema (tool_input.command): backgrounded shape denied"
+  [ "$rc" -eq 2 ] || fail "tool_input.command schema must be denied for the backgrounded shape, got exit $rc"
+  pass "stdin snake-case schema (tool_input.command): backgrounded shape denied"
 }
 
 test_stdin_unrelated_command_allowed() {
@@ -400,41 +391,38 @@ test_failopen_missing_node() {
   pass "fail-open: missing classifier runtime"
 }
 
-# --- --claude output shaping ---------------------------------------------------
+# --- output shaping -------------------------------------------------------------
 
-test_claude_mode_stdout_empty_on_deny() {
+test_deny_stdout_empty_stderr_carries_json() {
   local out err rc stderr_file
   # Keep stderr capture under TMPDIR so concurrent isolation-proof workers do
   # not share a fixed global /tmp path.
-  stderr_file=$(mktemp "${TMPDIR:-/tmp}/fm-arm-pretool-check-claude-stderr.XXXXXX")
-  out=$("$CHECK" --claude --command 'bin/fm-watch-arm.sh &' 2>"$stderr_file")
+  stderr_file=$(mktemp "${TMPDIR:-/tmp}/fm-arm-pretool-check-stderr.XXXXXX")
+  out=$("$CHECK" --command 'bin/fm-watch-arm.sh &' 2>"$stderr_file")
   rc=$?
   err=$(cat "$stderr_file" 2>/dev/null)
   rm -f "$stderr_file"
-  [ "$rc" -eq 2 ] || fail "--claude deny must still exit 2, got $rc"
-  [ -z "$out" ] || fail "--claude deny must leave stdout EMPTY (Claude Code only honors a stderr-only deny), got: $out"
+  [ "$rc" -eq 2 ] || fail "deny must exit 2, got $rc"
+  [ -z "$out" ] || fail "deny must leave stdout empty, got: $out"
   printf '%s' "$err" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null 2>&1 \
-    || fail "--claude deny must put hookSpecificOutput.permissionDecision=deny on stderr: $err"
-  pass "--claude: stdout empty, stderr carries hookSpecificOutput deny JSON"
+    || fail "deny must put hookSpecificOutput.permissionDecision=deny on stderr: $err"
+  pass "deny: stdout empty, stderr carries hookSpecificOutput deny JSON"
 }
 
-test_default_mode_stdout_has_grok_json_on_deny() {
-  local out rc
-  out=$("$CHECK" --command 'bin/fm-watch-arm.sh &' 2>/dev/null)
-  rc=$?
-  [ "$rc" -eq 2 ] || fail "default deny must exit 2, got $rc"
-  printf '%s' "$out" | jq -e '.decision == "deny"' >/dev/null 2>&1 \
-    || fail "default (non-claude) deny must put Grok's decision JSON on stdout: $out"
-  pass "default mode: stdout carries Grok-shaped decision JSON on deny"
+test_removed_harness_flags_rejected() {
+  local flag
+  for flag in --claude --cursor; do
+    "$CHECK" "$flag" --command 'bin/fm-watch-arm.sh &' >/dev/null 2>&1
+    [ "$?" -eq 2 ] || fail "$flag is no longer a rendering mode and must be rejected"
+  done
+  pass "the removed --claude and --cursor rendering flags are rejected"
 }
 
-test_allow_is_silent_both_modes() {
-  local out1 out2
-  out1=$("$CHECK" --command 'exec bin/fm-watch-arm.sh' 2>&1)
-  out2=$("$CHECK" --claude --command 'exec bin/fm-watch-arm.sh' 2>&1)
-  [ -z "$out1" ] || fail "default allow must be silent, got: $out1"
-  [ -z "$out2" ] || fail "--claude allow must be silent, got: $out2"
-  pass "allow is silent on both stdout and stderr in default and --claude mode"
+test_allow_is_silent() {
+  local out
+  out=$("$CHECK" --command 'exec bin/fm-watch-arm.sh' 2>&1)
+  [ -z "$out" ] || fail "allow must be silent, got: $out"
+  pass "allow is silent on both stdout and stderr"
 }
 
 # --- harness wiring: each adapter invokes the shared checker -----------------
@@ -459,16 +447,16 @@ test_direct_policy_contract
 test_command_equals_form
 test_background_flag_accepted_and_non_gating
 test_unknown_flag_errors
-test_stdin_grok_schema_deny
-test_stdin_claude_codex_schema_allow
-test_stdin_claude_codex_schema_deny
+test_stdin_camel_schema_deny
+test_stdin_snake_schema_allow
+test_stdin_snake_schema_deny
 test_stdin_unrelated_command_allowed
 test_prefilter_is_strict_superset
 test_failopen_empty_stdin
 test_failopen_garbage_stdin
 test_failopen_missing_jq
 test_failopen_missing_node
-test_claude_mode_stdout_empty_on_deny
-test_default_mode_stdout_has_grok_json_on_deny
-test_allow_is_silent_both_modes
+test_deny_stdout_empty_stderr_carries_json
+test_removed_harness_flags_rejected
+test_allow_is_silent
 test_shellcheck_clean

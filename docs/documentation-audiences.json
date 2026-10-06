@@ -208,10 +208,6 @@
       "audience": "maintainer-architecture"
     },
     {
-      "path": "GROK_BOT.md",
-      "audience": "public-product"
-    },
-    {
       "path": "README.md",
       "audience": "public-product"
     },
@@ -324,35 +320,7 @@
       "audience": "operator-current"
     },
     {
-      "path": "docs/subagent-guard.md",
-      "audience": "maintainer-architecture"
-    },
-    {
-      "path": "docs/supervision-protocols/claude.md",
-      "audience": "agent-runtime"
-    },
-    {
-      "path": "docs/supervision-protocols/codex.md",
-      "audience": "agent-runtime"
-    },
-    {
       "path": "docs/supervision-protocols/deck.md",
-      "audience": "agent-runtime"
-    },
-    {
-      "path": "docs/supervision-protocols/cursor.md",
-      "audience": "agent-runtime"
-    },
-    {
-      "path": "docs/supervision-protocols/grok.md",
-      "audience": "agent-runtime"
-    },
-    {
-      "path": "docs/supervision-protocols/omp.md",
-      "audience": "agent-runtime"
-    },
-    {
-      "path": "docs/supervision-protocols/opencode.md",
       "audience": "agent-runtime"
     },
     {
