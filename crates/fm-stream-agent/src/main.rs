@@ -1109,14 +1109,17 @@ mod tests {
                 ".resize-marker-{}-{hub_command}",
                 std::process::id()
             ));
+            // Interactive line editors can emit a newline even with echo off,
+            // scrolling the bottom-row fixture. Use a plain command loop so
+            // only the test's printf output reaches the screen after setup.
             let setup = format!(
-                "PS1=; PS2=; stty -echo; printf ready > '{}'\r",
+                "exec /bin/sh -c 'stty -echo; printf ready > \"{}\"; while IFS= read -r command; do eval \"$command\"; done'\r",
                 marker.display()
             );
             agent.pty.write(setup.as_bytes()).unwrap();
             let until = Instant::now() + Duration::from_secs(10);
             while !marker.is_file() && Instant::now() < until {
-                std::thread::sleep(Duration::from_millis(5));
+                agent.pty.read_within(&mut discard, 5).unwrap();
             }
             assert!(marker.is_file());
             fs::remove_file(&marker).unwrap();
