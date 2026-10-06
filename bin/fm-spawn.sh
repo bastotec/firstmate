@@ -1250,10 +1250,10 @@ if [ "$RELAUNCH" -eq 1 ]; then
     exit 1
   }
   RELAUNCH_STATE=$(fm_backend_agent_state "$BACKEND" "$RELAUNCH_TARGET")
-  # A migration never reuses the old endpoint, so an old endpoint that is
-  # already gone is as agent-free as one holding a bare shell.
-  case "$RELAUNCH_STATE:$RELAUNCH_MIGRATE" in
-    dead:*|missing:1) ;;
+  # Only tmux and Herdr missing endpoints prove the old agent gone during
+  # migration; a missing stream registry entry does not prove the worker stopped.
+  case "$RELAUNCH_STATE:$RELAUNCH_MIGRATE:$BACKEND" in
+    dead:*|missing:1:tmux|missing:1:herdr) ;;
     *)
       echo "error: task $ID's endpoint reads '$RELAUNCH_STATE'; a relaunch requires a positively agent-free endpoint (stop the agent first with bin/fm-control.sh $ID exit)" >&2
       exit 1
