@@ -601,14 +601,14 @@ SH
   mkdir -p "$w/home/config" "$w/sm-python/config"
   printf 'python\n' > "$w/home/config/stream-impl"
   printf 'python\n' > "$w/sm-python/config/stream-impl"
-  out=$(FM_STREAM_IMPL= FM_STREAM_NATIVE_CACHE="$w/mate-cache" FM_CONFIG_OVERRIDE="$w/home/config" run_update "$w")
+  out=$(FM_STREAM_IMPL='' FM_STREAM_NATIVE_CACHE="$w/mate-cache" FM_CONFIG_OVERRIDE="$w/home/config" run_update "$w")
   assert_contains "$out" "stream-native secondmate sm-rust: built $w/mate-cache/" "a rust mate must prepare binaries even with a python primary"
   assert_not_contains "$out" "stream-native:" "the python primary must not build"
   assert_not_contains "$out" "stream-native secondmate sm-python:" "a python mate must not build"
   assert_present "$w/sm-rust/state/.stream-native-build.log" "native output must belong to the mate's own home"
   assert_equals 2 "$(wc -l < "$w/cargo.calls" | tr -d ' ')" "only the rust mate should build in the fresh cache"
 
-  out=$(FM_STREAM_IMPL= FM_STREAM_NATIVE_CACHE="$w/mate-cache" run_update "$w")
+  out=$(FM_STREAM_IMPL='' FM_STREAM_NATIVE_CACHE="$w/mate-cache" run_update "$w")
   assert_contains "$out" "stream-native secondmate sm-rust: current $w/mate-cache/" "a settled current mate must resolve its native binaries"
   assert_equals 2 "$(wc -l < "$w/cargo.calls" | tr -d ' ')" "a current mate must reuse its cache"
 
@@ -616,7 +616,7 @@ SH
   git -C "$w/seed" add -A
   git -C "$w/seed" commit -qm update-crate
   git -C "$w/seed" push -q origin main
-  out=$(FM_STREAM_IMPL= FM_STREAM_NATIVE_CACHE="$w/mate-cache" run_update "$w")
+  out=$(FM_STREAM_IMPL='' FM_STREAM_NATIVE_CACHE="$w/mate-cache" run_update "$w")
   assert_contains "$out" "stream-native secondmate sm-rust: built $w/mate-cache/" "an advanced rust mate must prepare its changed sources"
   assert_equals 3 "$(wc -l < "$w/cargo.calls" | tr -d ' ')" "the changed mate sources should rebuild once"
 
@@ -625,7 +625,7 @@ SH
   git -C "$w/seed" add -A
   git -C "$w/seed" commit -qm failing-crate
   git -C "$w/seed" push -q origin main
-  out=$(FM_STREAM_IMPL= FM_STREAM_NATIVE_CACHE="$w/mate-cache" run_update "$w") || fail "a native preparation failure must not fail the update"
+  out=$(FM_STREAM_IMPL='' FM_STREAM_NATIVE_CACHE="$w/mate-cache" run_update "$w") || fail "a native preparation failure must not fail the update"
   assert_contains "$out" "stream-native secondmate sm-rust: failed:" "a mate build failure must be reported"
   assert_contains "$out" "restart-secondmates:" "native failure must leave the update action summary intact"
   assert_equals 1 "$(printf '%s\n' "$out" | grep -c 'stream-native secondmate sm-rust:')" "native failure should emit only one result line"

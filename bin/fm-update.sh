@@ -117,9 +117,9 @@ fi
 # Homes that selected the python rollback, or whose checkout has no
 # fm-stream.sh, are left alone. Cargo's own output goes to
 # state/.stream-native-build.log.
-prepare_stream_native() (
-  root=$1 home=$2 state=$3 label=$4
-  export FM_HOME="$home" FM_ROOT_OVERRIDE="$root" FM_CONFIG_OVERRIDE="${5:-$home/config}" FM_STATE_OVERRIDE="$state"
+prepare_stream_native() {
+  local root=$1 home=$2 state=$3 label=$4 impl native_out
+  local -x FM_HOME="$home" FM_ROOT_OVERRIDE="$root" FM_CONFIG_OVERRIDE="${5:-$home/config}" FM_STATE_OVERRIDE="$state"
   if [ -x "$root/bin/fm-stream.sh" ] \
     && impl=$(bash -c '. "$1/bin/fm-stream-native-lib.sh" && fm_stream_impl' _ "$root" 2>/dev/null) \
     && [ "$impl" = rust ]; then
@@ -135,7 +135,7 @@ prepare_stream_native() (
     fi
   fi
   return 0
-)
+}
 
 if [ "$FF_STATUS" = "updated" ] || [ "$FF_STATUS" = "current" ]; then
   prepare_stream_native "$FM_ROOT" "$FM_HOME" "$STATE" stream-native "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
