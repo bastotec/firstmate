@@ -309,7 +309,7 @@ test_list_exclusions_documents_reasons() {
 }
 
 test_family_map_labels_this_contract() {
-  local fam safe safe_max scheduled_first
+  local fam safe safe_max scheduled_first longest
   fam=$("$RUNNER" --list --family pure-contract-unit)
   printf '%s\n' "$fam" | grep -Fq 'tests/fm-test-isolation-proof.test.sh' \
     || fail "fm-test-isolation-proof.test.sh must map to pure-contract-unit"
@@ -322,9 +322,19 @@ test_family_map_labels_this_contract() {
   [ "$safe_max" -eq 4 ] || fail "runner exposed the wrong watcher family worker cap: $safe_max"
   safe_max=$("$RUNNER" --concurrent-safe-family-jobs-max pure-contract-unit)
   [ "$safe_max" -eq 4 ] || fail "runner exposed the wrong contract-unit family worker cap: $safe_max"
+  # The longest measured watcher script must start first (the proof doc records
+  # what an alphabetical start cost). Read the longest member from the runner's
+  # own hint table rather than naming it, so a refreshed hint cannot strand this.
+  longest=$(
+    awk 'NR == FNR { member[$1] = 1; next } NF == 2 && ($1 in member) { print $2 "\t" $1 }' \
+      <("$RUNNER" --list --family watcher-wake-lock) \
+      <(sed -n '/^portable_serial_weight_hints() {$/,/^EOF$/p' "$RUNNER") \
+      | LC_ALL=C sort -t"$(printf '\t')" -k1,1nr -k2,2 | head -n 1 | cut -f2
+  )
+  [ -n "$longest" ] || fail "could not read the watcher family's longest hint"
   scheduled_first=$("$RUNNER" --list-scheduled --family watcher-wake-lock | head -n 1)
-  [ "$scheduled_first" = tests/fm-watch-triage.test.sh ] \
-    || fail "runner scheduled the watcher family out of longest-hint order: $scheduled_first"
+  [ "$scheduled_first" = "$longest" ] \
+    || fail "runner scheduled the watcher family out of longest-hint order: $scheduled_first, longest is $longest"
   pass "isolation-proof contract test is family-mapped"
 }
 

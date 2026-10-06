@@ -37,9 +37,11 @@
 #   --list          print selected script paths (one per line) and exit 0
 #   --list-scheduled
 #                   print selected paths longest-hint-first and exit 0.
-#                   Only --lane portable-parallel-1 or portable-parallel-2 uses
-#                   parallel hints, falling back to serial weights if missing.
-#                   Every other selection uses serial weights alone.
+#                   Only --lane portable-parallel-1 or portable-parallel-2 and
+#                   --proven-isolated use parallel hints, falling back to
+#                   serial weights if missing. Every other selection uses
+#                   serial weights alone. A concurrent run starts its scripts
+#                   in this same order.
 #                   Equal weights are ordered by path under LC_ALL=C.
 #   --base <ref>    with --changed, compare against this ref (default: origin/main)
 #   --exclude-family <name>
@@ -55,7 +57,11 @@
 #                   Plain --changed and a plain list of script paths use
 #                   min(4, cpus) workers when multiple selected scripts are
 #                   admissible; --lane, --family, and --all stay serial unless
-#                   asked for concurrency explicitly.
+#                   asked for concurrency explicitly. The one exception is a
+#                   CI serial shard (portable-serial-<k>of<n>), which runs its
+#                   admitted families in phases of PORTABLE_SERIAL_PHASE_JOBS
+#                   workers and its unproven scripts serially after them;
+#                   --jobs 1 keeps such a shard fully serial.
 #                   N>1 is allowed only when every selected script is proven
 #                   safe to run concurrently: individually in the proven-isolated
 #                   set (bin/fm-test-isolation-proof.sh --list), or in a family
@@ -130,10 +136,14 @@
 # These sums exclude unhinted members and are estimates, not measured job wall
 # times. Missing parallel hints are reported without failing this guard.
 #
-# portable-serial stays strictly serial. Its CI shards (portable-serial-<k>of<n>)
-# split it across separate runners, so two of its stateful scripts still never
-# share a machine. This script owns <n>: a lane whose <n> disagrees with the
-# configured shard count is refused, so a CI matrix cannot silently drop a shard.
+# portable-serial itself stays strictly serial. Its CI shards
+# (portable-serial-<k>of<n>) split it across separate runners, and inside one
+# shard only members of a family with a recorded concurrent proof share the
+# machine, with each other, in that family's own phase; every unproven script
+# runs alone after the phases. The shards are packed on that phase model
+# (portable_serial_assignments). This script owns <n> and the phase worker
+# count: a lane whose <n> disagrees with the configured shard count is refused,
+# so a CI matrix cannot silently drop a shard.
 # --changed is conservative: it over-selects related families rather than
 # under-selecting, and never expands to the complete suite unless --all. The one
 # place it is deliberately narrow is a bin/ path with no curated family: a test
@@ -189,7 +199,17 @@ CHANGED_DEFAULT_TIMEOUT_SECS=900
 
 # How many separate-runner shards the portable serial remainder splits into.
 # One owner: CI lane names carry this count and are refused when they disagree.
-PORTABLE_SERIAL_SHARDS=12
+PORTABLE_SERIAL_SHARDS=9
+
+# Workers each concurrent-safe family phase gets inside one CI serial shard.
+# A shard runs every family with a recorded concurrent proof as its own phase
+# (members of one family only ever share the machine with each other) and the
+# unproven remainder strictly serially after them. Three stays below every
+# family's proven bound of four and leaves headroom on a four-vCPU hosted
+# runner: the watcher family fails on elapsed-time assertions when the machine
+# is starved (docs/fm-test-isolation-proof.md). The shard packing assumes the
+# same number, so it is owned here rather than passed in by CI.
+PORTABLE_SERIAL_PHASE_JOBS=3
 
 # Balance hint for a portable-serial script with no measured duration, close to
 # the measured per-script mean so a newly added test neither starves nor
@@ -297,7 +317,9 @@ family_for_basename() {
     fm-tool-update-check.test.sh|\
     fm-mail.test.sh|fm-mail-check.test.sh|fm-autoland.test.sh|\
     fm-wake-queue.test.sh|fm-watch-arm.test.sh|fm-watch-checkpoint.test.sh|fm-watch-recovery-loop.test.sh|\
-    fm-watch-triage.test.sh|fm-external-wait.test.sh|fm-task-inbox.test.sh|\
+    fm-watch-triage.test.sh|fm-watch-triage-stale.test.sh|fm-watch-triage-declared-wait.test.sh|\
+    fm-watch-triage-resurface.test.sh|fm-watch-triage-events.test.sh|\
+    fm-external-wait.test.sh|fm-task-inbox.test.sh|\
     fm-watcher-lock.test.sh|fm-inactive-reconcile.test.sh)
       printf '%s\n' watcher-wake-lock
       ;;
@@ -556,8 +578,9 @@ EOF
 # Families whose scripts are proven safe to run concurrently WITH EACH OTHER
 # under the bounded local scheduler. Deliberately separate from the
 # proven-isolated set, which must stay exactly equal to the portable CI shard
-# union (see the coverage guard); these families keep their serial CI lane and
-# only gain concurrency for a local run.
+# union (see the coverage guard). These families stay in the portable serial
+# lane; they gain concurrency in a local run and in their own phase inside each
+# CI serial shard (PORTABLE_SERIAL_PHASE_JOBS).
 #
 # Membership is empirical, never assumed:
 # `bin/fm-test-isolation-proof.sh --pool <family> --jobs 4` is the owner of the
@@ -662,23 +685,28 @@ list_portable_serial_unbuffered() {
 portable_serial_weight_hints() {
   cat <<'EOF'
 # Slowest completed duration from the serial-shard timing artifacts of green
-# CI runs 37272453924, 37251695405, 37253443319, and 37247916281 (2026-10-04/05).
+# CI runs 37272453924, 37251695405, 37253443319, 37247916281, 37397713888, and
+# 37401433503 (2026-10-04/06).
 # tests/fm-pi-windows-shell-invocation.test.sh keeps its 5121 ms native-Windows
 # focused-runner measurement because the portable shards skip it.
+# The five tests/fm-watch-triage*.test.sh suites were one 694233 ms script in
+# those runs; each carries its cases' share of that, from the per-case output
+# timestamps of run 37401433503's serial shard 1.
 tests/fm-account-slot-live-e2e.test.sh 102
 tests/fm-account-slot.test.sh 13347
 tests/fm-afk-contract.test.sh 15666
 tests/fm-afk-inject-e2e.test.sh 34590
-tests/fm-afk-pi-herdr-return-e2e.test.sh 46
+tests/fm-afk-pi-herdr-return-e2e.test.sh 80
 tests/fm-afk-return.test.sh 22602
 tests/fm-agy-harness.test.sh 48173
 tests/fm-agy-signals-live-e2e.test.sh 105
 tests/fm-ask-triage.test.sh 14351
-tests/fm-ask-user-authority.test.sh 171
-tests/fm-backend-stream.test.sh 295585
-tests/fm-backend-tmux-smoke.test.sh 399
+tests/fm-ask-user-authority.test.sh 386
+tests/fm-autoland.test.sh 117136
+tests/fm-backend-stream.test.sh 297230
+tests/fm-backend-tmux-smoke.test.sh 413
 tests/fm-backend.test.sh 22395
-tests/fm-backlog-atomicity.test.sh 288280
+tests/fm-backlog-atomicity.test.sh 289995
 tests/fm-backlog-handoff.test.sh 54892
 tests/fm-backlog-read-bound.test.sh 24438
 tests/fm-bearings-board-lavish-live-e2e.test.sh 53
@@ -692,24 +720,24 @@ tests/fm-busy-adapter-wiring.test.sh 50547
 tests/fm-busy-state.test.sh 3106
 tests/fm-calm-pi-extension.test.sh 51079
 tests/fm-check-unregister.test.sh 467
-tests/fm-ci-workflow.test.sh 2448
+tests/fm-ci-workflow.test.sh 3891
 tests/fm-classify-corr-token.test.sh 65224
 tests/fm-classify-decision-key.test.sh 1190
-tests/fm-claude-stop-autoarm-live-e2e.test.sh 58
+tests/fm-claude-stop-autoarm-live-e2e.test.sh 115
 tests/fm-claude-stop-autoarm.test.sh 60892
 tests/fm-claude-trust.test.sh 23751
 tests/fm-codex-continuity-live-e2e.test.sh 98
 tests/fm-composer-codex-idle-live-e2e.test.sh 79
 tests/fm-composer-matrix-live-e2e.test.sh 109
-tests/fm-control-recover-missing.test.sh 32773
+tests/fm-control-recover-missing.test.sh 37080
 tests/fm-control-relaunch.test.sh 103083
 tests/fm-control.test.sh 45346
-tests/fm-cursor-harness.test.sh 30084
-tests/fm-cursor-primary-live-e2e.test.sh 51
+tests/fm-cursor-harness.test.sh 30103
+tests/fm-cursor-primary-live-e2e.test.sh 71
 tests/fm-cursor-primary.test.sh 53339
 tests/fm-daemon.test.sh 29571
 tests/fm-deck-chat.test.sh 60000
-tests/fm-deck-harness.test.sh 64987
+tests/fm-deck-harness.test.sh 116975
 tests/fm-deck-host-live-e2e.test.sh 105
 tests/fm-documentation-audiences.test.sh 996
 tests/fm-endpoint-rebind-lib.test.sh 1200
@@ -718,19 +746,19 @@ tests/fm-external-wait.test.sh 7628
 tests/fm-fleet-snapshot-view.test.sh 9146
 tests/fm-fleet-sync.test.sh 59502
 tests/fm-gate-refuse.test.sh 5773
-tests/fm-gemini-harness.test.sh 923
+tests/fm-gemini-harness.test.sh 945
 tests/fm-gitignore-config.test.sh 62
 tests/fm-gotmp.test.sh 1501
 tests/fm-grok-continuity-live-e2e.test.sh 52
-tests/fm-grok-stop-live-e2e.test.sh 69
-tests/fm-guard-stale-banner.test.sh 16735
+tests/fm-grok-stop-live-e2e.test.sh 82
+tests/fm-guard-stale-banner.test.sh 40921
 tests/fm-harness-adapter-instructions-live-e2e.test.sh 70
 tests/fm-harness-adapter-references.test.sh 62
 tests/fm-harness-liveness-drift-live-e2e.test.sh 967
 tests/fm-harness-precedence.test.sh 4183
-tests/fm-herdr-pi-stale-registration-live-e2e.test.sh 55
+tests/fm-herdr-pi-stale-registration-live-e2e.test.sh 118
 tests/fm-herdr-session-cleanup.test.sh 8136
-tests/fm-herdr-submit-confirm-live-e2e.test.sh 62
+tests/fm-herdr-submit-confirm-live-e2e.test.sh 72
 tests/fm-herdr-version-floor-live-e2e.test.sh 99
 tests/fm-home-summary-refresh.test.sh 37203
 tests/fm-inactive-reconcile.test.sh 49894
@@ -744,25 +772,25 @@ tests/fm-model-chain.test.sh 28024
 tests/fm-muse-harness.test.sh 43480
 tests/fm-muse-signals-live-e2e.test.sh 52
 tests/fm-nm-test-contract.test.sh 1135
-tests/fm-no-mistakes-required.test.sh 264
+tests/fm-no-mistakes-required.test.sh 5084
 tests/fm-omp-harness.test.sh 47699
-tests/fm-omp-primary-live-e2e.test.sh 51
+tests/fm-omp-primary-live-e2e.test.sh 60
 tests/fm-on.test.sh 12086
-tests/fm-opencode-primary-live-e2e.test.sh 104
+tests/fm-opencode-primary-live-e2e.test.sh 132
 tests/fm-operational-input.test.sh 244
 tests/fm-peek-remote.test.sh 950
 tests/fm-pending-reply.test.sh 30614
-tests/fm-pi-branch-extension.test.sh 93449
+tests/fm-pi-branch-extension.test.sh 95662
 tests/fm-pi-branch-live-e2e.test.sh 58
 tests/fm-pi-branch-responsiveness-live-e2e.test.sh 13645
-tests/fm-pi-codex-native.test.sh 56
-tests/fm-pi-primary-live-e2e.test.sh 60
-tests/fm-pi-watch-extension.test.sh 53178
+tests/fm-pi-codex-native.test.sh 77
+tests/fm-pi-primary-live-e2e.test.sh 62
+tests/fm-pi-watch-extension.test.sh 53940
 tests/fm-pi-windows-shell-invocation.test.sh 5121
 tests/fm-pr-check-security.test.sh 211161
 tests/fm-primary.test.sh 38567
 tests/fm-procevent-quota.test.sh 2337
-tests/fm-procevent-when.test.sh 25205
+tests/fm-procevent-when.test.sh 52742
 tests/fm-procevent.test.sh 243335
 tests/fm-project-origin.test.sh 141
 tests/fm-public-followup.test.sh 191204
@@ -784,64 +812,64 @@ tests/fm-remote-transport-lanes.test.sh 65980
 tests/fm-rovo-harness.test.sh 15156
 tests/fm-rovo-signals-live-e2e.test.sh 76
 tests/fm-secondmate-harness.test.sh 177921
-tests/fm-secondmate-lifecycle-e2e.test.sh 8302
+tests/fm-secondmate-lifecycle-e2e.test.sh 19562
 tests/fm-secondmate-liveness.test.sh 27524
 tests/fm-secondmate-reconcile.test.sh 101281
 tests/fm-secondmate-restart.test.sh 48934
 tests/fm-secondmate-safety.test.sh 78861
 tests/fm-secondmate-sync.test.sh 54300
 tests/fm-send-agy-confirm.test.sh 3515
-tests/fm-send-inbox-doorbell-live-e2e.test.sh 72
+tests/fm-send-inbox-doorbell-live-e2e.test.sh 99
 tests/fm-send-inbox.test.sh 60067
 tests/fm-send-remote-delivery.test.sh 73181
 tests/fm-send-resolve-key.test.sh 31155
-tests/fm-send-secondmate-marker-herdr-e2e.test.sh 78
+tests/fm-send-secondmate-marker-herdr-e2e.test.sh 82
 tests/fm-send-secondmate-marker.test.sh 6061
 tests/fm-session-lock-ancestry.test.sh 3441
 tests/fm-session-start.test.sh 194266
 tests/fm-sessionstart-hook-live-e2e.test.sh 105
 tests/fm-sessionstart-instruction-refresh-live-e2e.test.sh 59
-tests/fm-sessionstart-nudge.test.sh 65485
+tests/fm-sessionstart-nudge.test.sh 68076
 tests/fm-shared-captain-inheritance.test.sh 5758
 tests/fm-spawn-dispatch-profile.test.sh 167032
 tests/fm-spawn-pool-base-freshen.test.sh 65605
 tests/fm-spawn-worktree-settle.test.sh 9132
-tests/fm-startup-memory-budget.test.sh 7251
+tests/fm-startup-memory-budget.test.sh 17405
 tests/fm-startup-network.test.sh 63127
-tests/fm-stat-shadowing.test.sh 53
+tests/fm-stat-shadowing.test.sh 64
 tests/fm-stow-cascade.test.sh 3073
-tests/fm-stream-agent-kill-safety.test.sh 8757
+tests/fm-stream-agent-kill-safety.test.sh 8904
 tests/fm-stream-agent-live-e2e.test.sh 25441
-tests/fm-stream-agent-rust.test.sh 250040
-tests/fm-stream-bridge-rust.test.sh 31724
+tests/fm-stream-agent-rust.test.sh 258178
+tests/fm-stream-bridge-rust.test.sh 56439
 tests/fm-stream-bridge.test.sh 49679
 tests/fm-stream-claude-tail.test.sh 14878
 tests/fm-stream-deck-live-e2e.test.sh 97
-tests/fm-stream-deck.test.sh 4195
-tests/fm-stream-hub-retention.test.sh 135033
-tests/fm-stream-hub-rust.test.sh 30249
+tests/fm-stream-deck.test.sh 4587
+tests/fm-stream-hub-retention.test.sh 135683
+tests/fm-stream-hub-rust.test.sh 44707
 tests/fm-stream-hub.test.sh 323940
 tests/fm-stream-opencode-tail.test.sh 17963
 tests/fm-subagent-pretool-check.test.sh 1039
-tests/fm-supervision-events.test.sh 829
-tests/fm-tangle-guard.test.sh 7558
+tests/fm-supervision-events.test.sh 1898
+tests/fm-tangle-guard.test.sh 7575
 tests/fm-task-delivery.test.sh 22000
 tests/fm-task-inbox.test.sh 32369
-tests/fm-tasks-axi.test.sh 2420
+tests/fm-tasks-axi.test.sh 5798
 tests/fm-teardown-endpoint-safety.test.sh 32067
 tests/fm-teardown.test.sh 152814
 tests/fm-test-fixture-cleanup.test.sh 1002
-tests/fm-test-fixtures.test.sh 2350
-tests/fm-test-isolation-proof.test.sh 3365
-tests/fm-tmux-agent-liveness.test.sh 2177
+tests/fm-test-fixtures.test.sh 4850
+tests/fm-test-isolation-proof.test.sh 3477
+tests/fm-tmux-agent-liveness.test.sh 3648
 tests/fm-tmux-long-launch.test.sh 6592
 tests/fm-tool-update-check.test.sh 14267
 tests/fm-trace-context-lib.test.sh 227
-tests/fm-trace-context-spawn.test.sh 51712
+tests/fm-trace-context-spawn.test.sh 87800
 tests/fm-turnend-guard.test.sh 37098
 tests/fm-ui-host-control.test.sh 34964
 tests/fm-update.test.sh 12585
-tests/fm-vendor-auth-probe.test.sh 43303
+tests/fm-vendor-auth-probe.test.sh 45871
 tests/fm-wake-daemon-lifecycle-e2e.test.sh 8205
 tests/fm-wake-drain-open-decisions-cursor.test.sh 24304
 tests/fm-wake-drain-open-decisions.test.sh 7516
@@ -849,11 +877,15 @@ tests/fm-wake-drain-outcome-backstop.test.sh 45116
 tests/fm-wake-drain-unread-status.test.sh 18873
 tests/fm-wake-gate.test.sh 17081
 tests/fm-wake-queue.test.sh 206368
-tests/fm-watch-arm.test.sh 98236
+tests/fm-watch-arm.test.sh 107952
 tests/fm-watch-checkpoint.test.sh 6384
 tests/fm-watch-recovery-loop.test.sh 64315
-tests/fm-watch-triage.test.sh 694233
-tests/fm-watcher-lock.test.sh 65184
+tests/fm-watch-triage-declared-wait.test.sh 160479
+tests/fm-watch-triage-events.test.sh 123963
+tests/fm-watch-triage-resurface.test.sh 161440
+tests/fm-watch-triage-stale.test.sh 122468
+tests/fm-watch-triage.test.sh 125884
+tests/fm-watcher-lock.test.sh 65613
 EOF
 }
 
@@ -879,6 +911,20 @@ portable_parallel_weight_for() {
   portable_serial_weight_for "$want"
 }
 
+# The longest-first weight for one selected script. The portable parallel lanes
+# and the whole proven-isolated set are scheduled on their own measured hints;
+# every other selection uses the serial hints alone.
+schedule_weight_for() {
+  case "$MODE:$LANE" in
+    lane:portable-parallel-1|lane:portable-parallel-2|proven-isolated:)
+      portable_parallel_weight_for "$1"
+      ;;
+    *)
+      portable_serial_weight_for "$1"
+      ;;
+  esac
+}
+
 portable_serial_weight_for() {
   local want=$1 path ms
   while read -r path ms; do
@@ -890,50 +936,113 @@ portable_serial_weight_for() {
   printf '%s\n' "$PORTABLE_SERIAL_DEFAULT_WEIGHT_MS"
 }
 
-# Longest-processing-time assignment of the serial remainder to
+# Phase-aware longest-processing-time assignment of the serial remainder to
 # PORTABLE_SERIAL_SHARDS bins, printing "<shard>\t<script>" for every script.
-# Deterministic: candidates are ordered by hint descending then path, and ties
-# between equally loaded bins always take the lowest bin index.
+# A shard runs each concurrent-safe family as its own phase on up to
+# PORTABLE_SERIAL_PHASE_JOBS workers and every other script serially after
+# them, so a shard's estimated duration is the sum of its unproven hints plus,
+# for each family phase, the longest worker's load. Each script goes to the
+# shard whose estimate would be lowest after adding it, and within that shard
+# to its family phase's least-loaded worker, which is how the runner itself
+# hands longest-first work to free workers. Deterministic: candidates are ordered by hint descending then
+# path, and ties between equal estimates always take the lowest bin index.
 portable_serial_assignments() {
   emit_via_file portable_serial_assignments_unbuffered
 }
 
-# Invoked indirectly by emit_via_file.
+# "<shard>\t<estimated_ms>" for every shard, from the same packing.
+portable_serial_shard_estimates() {
+  emit_via_file portable_serial_estimates_unbuffered
+}
+
+# "<hint_ms>\t<phase>\t<script>" for every portable serial script, where
+# <phase> is the script's family when that family carries a recorded concurrent
+# proof (the runner gives it its own concurrent phase) and "-" when the script
+# must run in the serial tail. Unhinted scripts take the default weight.
+# Invoked indirectly by emit_via_file. The loop forks nothing, so no child exits
+# while it reads its process substitution (emit_via_file owns why that matters
+# on Bash 3.2), and it writes to a regular file rather than a pipe.
 # shellcheck disable=SC2329
 portable_serial_weights_unbuffered() {
-  local script
+  local tmp script
+  tmp=$(mktemp "${TMPDIR:-/tmp}/fm-test-weights.XXXXXX") || return 1
   while IFS= read -r script; do
     [ -n "$script" ] || continue
-    printf '%s\t%s\n' "$(portable_serial_weight_for "$script")" "$script"
-  done < <(list_portable_serial)
+    printf '%s\t' "$script"
+    family_for_basename "${script##*/}"
+  done < <(list_portable_serial) >"$tmp"
+  awk -F '\t' -v default_ms="$PORTABLE_SERIAL_DEFAULT_WEIGHT_MS" '
+    FILENAME == ARGV[1] {
+      if ($0 !~ /^#/ && NF) { split($0, field, " "); hint[field[1]] = field[2] }
+      next
+    }
+    FILENAME == ARGV[2] { if (NF) safe[$1] = 1; next }
+    NF >= 2 {
+      printf "%s\t%s\t%s\n", (($1 in hint) ? hint[$1] : default_ms), (($2 in safe) ? $2 : "-"), $1
+    }
+  ' <(portable_serial_weight_hints) <(list_concurrent_safe_families) "$tmp"
+  rm -f "$tmp"
+}
+
+# Reads "<hint_ms>\t<phase>\t<script>" longest-first on stdin and prints either
+# the assignments or, with "estimates", each shard's packed duration estimate.
+# Invoked indirectly through emit_via_file.
+# shellcheck disable=SC2329
+portable_serial_pack() {  # assign|estimates
+  awk -F '\t' -v mode="$1" -v shards="$PORTABLE_SERIAL_SHARDS" -v jobs="$PORTABLE_SERIAL_PHASE_JOBS" '
+    function least_worker(shard, phase,    w, load, best) {
+      best = 1
+      least_load = workload[shard, phase, 1] + 0
+      for (w = 2; w <= jobs; w++) {
+        load = workload[shard, phase, w] + 0
+        if (load < least_load) { least_load = load; best = w }
+      }
+      return best
+    }
+    NF >= 3 {
+      ms = $1 + 0; phase = $2; script = $3
+      best = 0
+      for (i = 1; i <= shards; i++) {
+        if (phase == "-") {
+          grown = estimate[i] + ms
+        } else {
+          least_worker(i, phase)
+          span = phase_span[i, phase] + 0
+          after = least_load + ms
+          if (after < span) after = span
+          grown = estimate[i] - span + after
+        }
+        if (best == 0 || grown < best_estimate) { best = i; best_estimate = grown }
+      }
+      if (phase != "-") {
+        w = least_worker(best, phase)
+        workload[best, phase, w] = least_load + ms
+        if (least_load + ms > phase_span[best, phase] + 0) phase_span[best, phase] = least_load + ms
+      }
+      estimate[best] = best_estimate
+      if (mode == "assign") printf "%d\t%s\n", best, script
+    }
+    END {
+      if (mode == "estimates") {
+        for (i = 1; i <= shards; i++) printf "%d\t%d\n", i, estimate[i]
+      }
+    }
+  '
 }
 
 # Invoked indirectly by emit_via_file.
 # shellcheck disable=SC2329
 portable_serial_assignments_unbuffered() {
-  local ms script i best best_load
-  local -a loads=()
-  i=1
-  while [ "$i" -le "$PORTABLE_SERIAL_SHARDS" ]; do
-    loads[i]=0
-    i=$((i + 1))
-  done
-  while IFS=$'\t' read -r ms script; do
-    [ -n "$script" ] || continue
-    best=1
-    best_load=${loads[1]}
-    i=2
-    while [ "$i" -le "$PORTABLE_SERIAL_SHARDS" ]; do
-      if [ "${loads[i]}" -lt "$best_load" ]; then
-        best_load=${loads[i]}
-        best=$i
-      fi
-      i=$((i + 1))
-    done
-    loads[best]=$((best_load + ms))
-    printf '%s\t%s\n' "$best" "$script"
-  done < <(
-    emit_via_file portable_serial_weights_unbuffered | LC_ALL=C sort -t$'\t' -k1,1nr -k2,2
+  portable_serial_pack assign < <(
+    emit_via_file portable_serial_weights_unbuffered | LC_ALL=C sort -t"$(printf '\t')" -k1,1nr -k3,3
+  )
+}
+
+# Invoked indirectly by emit_via_file.
+# shellcheck disable=SC2329
+portable_serial_estimates_unbuffered() {
+  portable_serial_pack estimates < <(
+    emit_via_file portable_serial_weights_unbuffered | LC_ALL=C sort -t"$(printf '\t')" -k1,1nr -k3,3
   )
 }
 
@@ -1020,7 +1129,7 @@ select_lane() {
 
 run_coverage_guard() {
   local tmp missing extra a b shard unhinted serial_total
-  local p1_ms p1_unhinted p2_ms p2_unhinted parallel_max_ms parallel_imbalance_ms
+  local p1_ms p1_unhinted p2_ms p2_unhinted parallel_max_ms parallel_imbalance_ms serial_max_ms
   local -a saved_scripts=()
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-coverage.XXXXXX")
 
@@ -1159,7 +1268,9 @@ run_coverage_guard() {
   parallel_imbalance_ms=$((p1_ms - p2_ms))
   [ "$parallel_imbalance_ms" -ge 0 ] || parallel_imbalance_ms=$((-parallel_imbalance_ms))
 
-  printf 'FM_TEST_COVERAGE ok total=%s parallel=%s parallel_max_ms=%s parallel_imbalance_ms=%s parallel_unhinted=%s serial=%s serial_shards=%s serial_unhinted=%s herdr=%s\n' \
+  serial_max_ms=$(portable_serial_shard_estimates | awk -F '\t' '$2 > max { max = $2 } END { print max + 0 }')
+
+  printf 'FM_TEST_COVERAGE ok total=%s parallel=%s parallel_max_ms=%s parallel_imbalance_ms=%s parallel_unhinted=%s serial=%s serial_shards=%s serial_phase_jobs=%s serial_max_ms=%s serial_unhinted=%s herdr=%s\n' \
     "$(wc -l <"$tmp/all" | tr -d ' ')" \
     "$(wc -l <"$tmp/shards_union" | tr -d ' ')" \
     "$parallel_max_ms" \
@@ -1167,6 +1278,8 @@ run_coverage_guard() {
     "$((p1_unhinted + p2_unhinted))" \
     "$(wc -l <"$tmp/serial" | tr -d ' ')" \
     "$PORTABLE_SERIAL_SHARDS" \
+    "$PORTABLE_SERIAL_PHASE_JOBS" \
+    "$serial_max_ms" \
     "$unhinted" \
     "$(wc -l <"$tmp/herdr" | tr -d ' ')"
   rm -rf "$tmp"
@@ -2121,14 +2234,7 @@ fi
 if [ "$LIST_ONLY" -eq 1 ] || [ "$LIST_SCHEDULED" -eq 1 ]; then
   if [ "$LIST_SCHEDULED" -eq 1 ]; then
     for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
-      case "$MODE:$LANE" in
-        lane:portable-parallel-1|lane:portable-parallel-2)
-          printf '%s\t%s\n' "$(portable_parallel_weight_for "$s")" "$s"
-          ;;
-        *)
-          printf '%s\t%s\n' "$(portable_serial_weight_for "$s")" "$s"
-          ;;
-      esac
+      printf '%s\t%s\n' "$(schedule_weight_for "$s")" "$s"
     done | LC_ALL=C sort -t"$(printf '\t')" -k1,1nr -k2,2 | cut -f2-
   else
     for s in "${SCRIPTS[@]+"${SCRIPTS[@]}"}"; do
@@ -2186,9 +2292,9 @@ done
 # admission rule below. Naming scripts is how a local verification round asks
 # for exactly those subjects, so it gets bounded concurrency rather than a
 # serial chain of separate runs.
-# The curated selections stay untouched: --lane composes CI shards whose serial
-# lane must stay strictly serial, --family is what the required Herdr lane runs,
-# and --all is a deliberate complete regression.
+# The curated selections stay untouched here: a CI serial shard gets its own
+# phase schedule below, --family is what the required Herdr lane runs, and
+# --all is a deliberate complete regression.
 AUTO_CONCURRENCY=0
 if { [ "$MODE" = changed ] || [ "$MODE" = scripts ]; } && [ "$JOBS_EXPLICIT" -eq 0 ]; then
   if [ "$MODE" = changed ] && [ "${#SCRIPTS[@]}" -gt 0 ] && [ "$PER_SCRIPT_TIMEOUT_SECS" -eq 0 ]; then
@@ -2204,6 +2310,29 @@ if { [ "$MODE" = changed ] || [ "$MODE" = scripts ]; } && [ "$JOBS_EXPLICIT" -eq
     [ "$JOBS" -ge 1 ] || JOBS=1
     [ "$JOBS" -eq 1 ] || AUTO_CONCURRENCY=1
   fi
+fi
+# A CI serial shard (portable-serial-<k>of<n>) runs each concurrent-safe family
+# in its own bounded phase and its unproven scripts strictly serially after
+# them, at the PORTABLE_SERIAL_PHASE_JOBS its packing assumed. That is the same
+# phase split the automatic scheduler uses, so no unproven script ever shares
+# the machine with another test. An explicit --jobs keeps its strict meaning:
+# --jobs 1 runs the shard fully serially, and a larger value is refused below
+# because the shard holds unproven work.
+if [ "$MODE" = lane ] && [ "$JOBS_EXPLICIT" -eq 0 ]; then
+  case "$LANE" in
+    portable-serial-*of*)
+      JOBS=$PORTABLE_SERIAL_PHASE_JOBS
+      AUTO_CONCURRENCY=1
+      for s in "${SCRIPTS[@]}"; do
+        script_allows_concurrency "$s" || continue
+        is_proven_isolated_script "$s" && continue
+        family=$(family_for_basename "$(basename "$s")")
+        family_jobs_max=$(concurrent_safe_family_jobs_max "$family")
+        [ "$JOBS" -le "$family_jobs_max" ] \
+          || die "PORTABLE_SERIAL_PHASE_JOBS=$JOBS exceeds family $family's proven bound of $family_jobs_max concurrent workers"
+      done
+      ;;
+  esac
 fi
 if [ "$JOBS" -gt 1 ] || [ "$MODE" = changed ] || [ "$MODE" = scripts ]; then
   SELECTION_DESC="${SELECTION_DESC};jobs=$JOBS"
@@ -2250,7 +2379,7 @@ if [ "$JOBS" -gt 1 ]; then
       fi
       # Longest first within each isolation phase: workers are handed scripts
       # in order, so starting the longest last strands it at the tail.
-      printf '%s\t%s\t%s\n' "$phase" "$(portable_serial_weight_for "$s")" "$s" >>"$SCHEDULE_TMP"
+      printf '%s\t%s\t%s\n' "$phase" "$(schedule_weight_for "$s")" "$s" >>"$SCHEDULE_TMP"
     else
       SERIAL_TAIL_SCRIPTS+=("$s")
     fi

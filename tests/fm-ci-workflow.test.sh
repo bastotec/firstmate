@@ -124,7 +124,6 @@ test_previously_unbounded_jobs_keep_their_caps() {
       || fail "$job timeout must stay $expected minutes, got $actual"
   done <<'CAPS'
 lint 15
-test-coverage 5
 tests-timing-aggregate 5
 invariants 5
 CAPS
@@ -141,13 +140,41 @@ test_measured_lanes_keep_their_authorized_bounds() {
     [ "$actual" = "$expected" ] \
       || fail "$job timeout must stay $expected minutes, got $actual"
   done <<'CAPS'
-tests-portable-parallel-1 15
-tests-portable-parallel-2 15
-tests-portable-serial 20
+tests-portable-parallel 15
+tests-portable-serial 15
 tests-herdr 75
 macos-stock-bash 10
 CAPS
   pass "the measured lane bounds match their authorized caps"
+}
+
+# The account runs at most 20 jobs at once, and the "Require no-mistakes" check
+# takes one more slot per PR. Holding CI to 18 runner jobs keeps one PR's run
+# from queueing behind itself; wall time comes from running proven-concurrent
+# work inside a runner (bin/fm-test-run.sh), not from adding runners.
+test_ci_stays_within_its_runner_budget() {
+  local total
+  total=$(ruby -ryaml -e '
+total = YAML.load_file(ARGV[0]).fetch("jobs").sum do |_name, job|
+  matrix = job.dig("strategy", "matrix") || {}
+  matrix.values.select { |v| v.is_a?(Array) }.map(&:length).reduce(1, :*)
+end
+puts total
+' "$CI_WORKFLOW") || fail "could not count ci.yml jobs"
+  [ "$total" -le 18 ] || fail "ci.yml expands to $total jobs, over its 18-job runner budget"
+  pass "ci.yml expands to $total jobs, within its 18-job runner budget"
+}
+
+test_coverage_guard_and_proven_set_have_owner_jobs() {
+  ruby -ryaml -e '
+jobs = YAML.load_file(ARGV[0]).fetch("jobs")
+runs = ->(name) { jobs.fetch(name).fetch("steps").map { |s| s["run"].to_s }.join("\n") }
+abort "the coverage guard must run in the invariants job" \
+  unless runs.("invariants").include?("bin/fm-test-run.sh --check-coverage")
+abort "the proven-isolated set must run concurrently in one job" \
+  unless runs.("tests-portable-parallel") =~ /bin\/fm-test-run\.sh --proven-isolated --jobs [2-8]\b/
+' "$CI_WORKFLOW" || fail "coverage guard or proven-isolated job is missing from ci.yml"
+  pass "the coverage guard and the proven-isolated set each have an owner job"
 }
 
 test_lint_event_modes_execute_the_owner() {
@@ -168,7 +195,7 @@ shards = strategy.fetch("matrix").fetch("shard")
 abort "lint needs three shards" unless shards == (1..3).to_a
 abort "lint must report every shard" unless strategy.fetch("fail-fast") == false
 serial = jobs.fetch("tests-portable-serial").fetch("strategy")
-abort "serial needs twelve shards" unless serial.fetch("matrix").fetch("shard") == (1..12).to_a
+abort "serial needs nine shards" unless serial.fetch("matrix").fetch("shard") == (1..9).to_a
 abort "serial must report every shard" unless serial.fetch("fail-fast") == false
 steps = job.fetch("steps")
 checkout = steps.find { |s| s.fetch("uses", "").start_with?("actions/checkout@") }
@@ -206,6 +233,8 @@ end
 }
 
 test_lint_event_modes_execute_the_owner
+test_ci_stays_within_its_runner_budget
+test_coverage_guard_and_proven_set_have_owner_jobs
 test_pr_pushes_supersede_within_one_pr
 test_separate_prs_do_not_cancel_each_other
 test_main_pushes_are_never_cancelled

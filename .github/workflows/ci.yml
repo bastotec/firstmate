@@ -27,6 +27,12 @@ concurrency:
 # guard proves the portable and Herdr lanes partition tests/*.test.sh exactly
 # once. The Rust parity and stock macOS Bash jobs add focused cross-environment
 # coverage, not another full-suite run.
+#
+# Job count is a budget, not just a cost: the account runs at most 20 jobs at
+# once, so two PRs in CI together queue as soon as their jobs add up past that.
+# The behavior lanes therefore run proven-concurrent work concurrently inside
+# each runner (bin/fm-test-run.sh owns which scripts may share a machine) and
+# keep the shard count low, rather than buying wall time with more runners.
 jobs:
   rust-stream:
     name: Rust stream parity
@@ -92,29 +98,17 @@ jobs:
             bin/fm-lint.sh --full --shard "$LINT_SHARD" --telemetry "$RUNNER_TEMP/lint.tsv"
           fi
 
-  # Deterministic proof that portable parallel shards + portable serial + Herdr
-  # equal the complete tests/*.test.sh inventory with no missing or duplicates,
-  # and that the portable serial CI shards partition that serial lane exactly.
-  test-coverage:
-    name: Test coverage guard
+  # The whole Phase 2 proven-isolated set on one runner, four workers at once:
+  # bin/fm-test-isolation-proof.sh proved these scripts safe to share a machine
+  # at that concurrency. bin/fm-test-run.sh owns the set and its longest-first
+  # schedule (docs/fm-test-portable-shards.md).
+  tests-portable-parallel:
+    name: Behavior portable parallel
     runs-on: ubuntu-latest
-    # Hang tripwire: the coverage guard is a seconds-long local computation.
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v6
-      - name: Prove complete regression partition
-        run: bin/fm-test-run.sh --check-coverage
-
-  # Two duration-balanced portable parallel shards of the Phase 2 proven-isolated
-  # set only. Composition owner: bin/fm-test-run.sh (docs/fm-test-portable-shards.md).
-  tests-portable-parallel-1:
-    name: Behavior portable parallel 1
-    runs-on: ubuntu-latest
-    # Lane 1 reached the old 10-minute cap after 583 seconds of script time.
-    # Refreshed hints and LPT packing estimate about 469 seconds per lane.
+    # The longest member (tests/fm-captain-hold-lifecycle.test.sh, about 5-6
+    # minutes) is the floor for this job; the rest of the set packs beside it.
     # This 15-minute cap is a hang tripwire with setup and runner-speed margin,
-    # not the expected healthy duration or proof of measured job headroom.
-    # Evidence and refresh procedure: docs/fm-test-portable-shards.md.
+    # not the expected healthy duration.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
@@ -140,78 +134,42 @@ jobs:
           set -eu
           npm install -g @earendil-works/pi-coding-agent@1.0.0
           npm ls -g --depth 0 @earendil-works/pi-coding-agent
-      - name: Run portable parallel shard 1
+      - name: Run the proven-isolated set
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-test"
-          bin/fm-test-run.sh --lane portable-parallel-1 \
+          bin/fm-test-run.sh --proven-isolated --jobs 4 \
             --fail-on-gate-skip 'Pi extension typecheck prerequisite not found' \
-            --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-parallel-1.json"
-      - name: Upload shard 1 timing artifact
+            --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-parallel.json"
+      - name: Upload portable parallel timing artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fm-test-timing-portable-parallel-1
-          path: ${{ runner.temp }}/fm-test/fm-test-timing-portable-parallel-1.json
-          if-no-files-found: warn
-
-  tests-portable-parallel-2:
-    name: Behavior portable parallel 2
-    runs-on: ubuntu-latest
-    # Same timeout rationale as portable parallel shard 1 above.
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - name: Install pinned ShellCheck
-        run: |
-          set -eu
-          bin/fm-install-shellcheck.sh "$RUNNER_TEMP/bin"
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - name: Install pinned actionlint
-        run: |
-          set -eu
-          bin/fm-install-actionlint.sh "$RUNNER_TEMP/bin"
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - name: Install tasks-axi
-        run: |
-          set -eu
-          npm install -g tasks-axi
-          tasks-axi --version
-      - name: Run portable parallel shard 2
-        run: |
-          set -eu
-          mkdir -p "$RUNNER_TEMP/fm-test"
-          bin/fm-test-run.sh --lane portable-parallel-2 \
-            --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-parallel-2.json"
-      - name: Upload shard 2 timing artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: fm-test-timing-portable-parallel-2
-          path: ${{ runner.temp }}/fm-test/fm-test-timing-portable-parallel-2.json
+          name: fm-test-timing-portable-parallel
+          path: ${{ runner.temp }}/fm-test/fm-test-timing-portable-parallel.json
           if-no-files-found: warn
 
   # Required portable serial remainder: watcher, lock, AFK, tmux, daemon,
   # ambiguous, and other stateful tests. Real Herdr stays in tests-herdr.
-  # Split across separate runners so no two of these stateful scripts ever share
-  # a machine: each shard is still strictly serial in itself. Shard membership
-  # and the shard count both belong to bin/fm-test-run.sh, which refuses a lane
-  # whose "ofN" disagrees with it (docs/fm-test-portable-shards.md).
+  # Split across separate runners. Inside a shard, each family with a recorded
+  # concurrent proof runs as its own bounded phase and every unproven script
+  # runs strictly serially after them, so no unproven script ever shares a
+  # machine with another test. Shard membership, the shard count, and the phase
+  # concurrency all belong to bin/fm-test-run.sh, which refuses a lane whose
+  # "ofN" disagrees with it (docs/fm-test-portable-shards.md).
   tests-portable-serial:
     name: Behavior portable serial ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    # Twelve shards pack to about 11 minutes each; the longest single script
-    # (tests/fm-watch-triage.test.sh, ~11.6 min) is the floor for any count.
-    # This 20-minute cap is a hang tripwire with runner-speed and setup margin,
+    # Nine shards pack to about 9 minutes each of slowest-run hints
+    # (bin/fm-test-run.sh --check-coverage reports serial_max_ms).
+    # This 15-minute cap is a hang tripwire with runner-speed and setup margin,
     # not the expected healthy end of the lane.
-    timeout-minutes: 20
+    timeout-minutes: 15
     strategy:
       # Every shard reports so one failure never hides another shard's result.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -400,8 +358,7 @@ jobs:
     # Hang tripwire: aggregation is seconds of work over lane artifacts.
     timeout-minutes: 5
     needs:
-      - tests-portable-parallel-1
-      - tests-portable-parallel-2
+      - tests-portable-parallel
       - tests-portable-serial
       - tests-herdr
     if: always()
@@ -497,10 +454,17 @@ jobs:
   invariants:
     name: Repo invariants
     runs-on: ubuntu-latest
-    # Hang tripwire: the invariant checks are seconds-long file comparisons.
+    # Hang tripwire: the invariant checks are seconds-long file comparisons and
+    # local computations.
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
+      # Deterministic proof that the portable parallel set + portable serial +
+      # Herdr equal the complete tests/*.test.sh inventory with no missing or
+      # duplicates, and that the portable serial CI shards partition that serial
+      # lane exactly.
+      - name: Prove complete regression partition
+        run: bin/fm-test-run.sh --check-coverage
       - name: Compatibility pointers must stay intact
         run: |
           set -eu
