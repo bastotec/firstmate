@@ -132,7 +132,7 @@ It is separate from `fm-primary.py`: no owner socket, no capability and no UI co
 Its header owns the mechanism; the short version:
 
 - The host runs as `fm-deck-chat`, which the session lock accepts as a harness, and takes the lock before anything else. A second primary of any harness is refused.
-- It runs `bin/fm-session-start.sh` once and publishes the digest as the first steering message.
+- It runs `bin/fm-session-start.sh` once and publishes the complete digest as the first new steering message before registering the host, retaining older pending input.
 - `deck chat` gets a persisted session id, a steering inbox and an events file under `state/primary-chat/`, plus `--hook pre_complete=<lock check>` and the home's `config/deck-mcp.json` when present.
 - A supervisor child owns the watcher. Each wake becomes a steering message through [`bin/fm-primary-steer.sh`](../bin/fm-primary-steer.sh). A failed watcher is restarted with backoff and never stops the host. While `state/.afk` exists the away daemon owns the watcher and the host pauses its own.
 - Deck's events drive `state/primary.busy-state` (source `deck-wrapper`).
@@ -144,14 +144,15 @@ Run it in a local terminal:
 bin/fm-deck-chat.sh --home /absolute/path/to/firstmate-home --model <route>
 ```
 
-Or start it inside a stream endpoint (label `primary-chat`) created by the stream backend's own agent launcher, and attach from any terminal:
+Or start it inside a stream endpoint (label `primary-chat`) created by the stream backend's own agent launcher, and observe it from any terminal:
 
 ```sh
 bin/fm-deck-chat.sh --stream --home /absolute/path/to/firstmate-home --model <route>
-bin/fm-stream.sh attach --interactive <target printed above>
+bin/fm-stream.sh attach <target printed above>
 ```
 
-Typing into the TUI needs the interactive attach. Without it, `bin/fm-stream.sh attach <target>` only shows output, and the captain reaches the primary through `bin/fm-send.sh primary <text>`.
+The shipped attach command is read-only; send input through `FM_HOME=<home> bin/fm-send.sh primary <text>`.
+Typing into the TUI needs the interactive attach (`bin/fm-stream.sh attach --interactive`, built separately).
 
 Stop it with `/quit` in the chat, or `bin/fm-deck-chat.sh stop --home <home>`. A clean exit releases the lock and marks the record stopped. A Pi primary can then start in the same home.
 Verification: [`tests/fm-deck-chat.test.sh`](../tests/fm-deck-chat.test.sh) drives the host with a fake `deck chat`, including a run inside a disposable stream hub endpoint.

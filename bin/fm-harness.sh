@@ -171,6 +171,9 @@ harness_process_verdict() {  # <pid>
   local pid=$1 comm args argv0
   comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 0
   argv0=$(fm_cursor_argv0_for_pid "$pid" "$comm" 2>/dev/null || true)
+  case "$argv0" in
+    fm-deck-chat) echo "comm deck"; return ;;
+  esac
   if fm_cursor_process_matches "$comm" '' "$argv0"; then
     echo "comm cursor"
     return

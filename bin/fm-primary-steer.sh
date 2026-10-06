@@ -6,7 +6,7 @@
 # Usage (every subcommand takes --home H; default FM_HOME, else this checkout):
 #   fm-primary-steer.sh publish (--text TEXT | --file F) [--kind wake|away|captain|other]
 #       Atomically publish the next <seq>.msg (tmp name + rename, strictly
-#       increasing per session under a lock). Prints seq=<n>.
+#       increasing per session under a lock). Prints seq=<n>; kind is informational.
 #       Exit 0 published; 2 refused (blank, over 65536 bytes, unreadable file);
 #       3 no live deck-chat primary registered - the caller falls back.
 #   fm-primary-steer.sh status

@@ -8,7 +8,7 @@ CLI. Both call this file, which owns the on-disk layout:
   state/primary-chat/session              the persisted deck session id
   state/primary-chat/<session>/steer/     deck's --steer-dir (one per session,
                                           because deck's seq space is per session)
-      .seq  .publish.lock  .published.log publisher bookkeeping (deck ignores
+      .seq  .publish.lock                publisher bookkeeping (deck ignores
                                           every name that is not <digits>.msg)
   state/primary-chat/<session>/events.ndjson  deck's --events file
   state/primary-chat/host.log             supervisor log (watcher, busy, steer)
@@ -21,15 +21,17 @@ stopped_at and host_pid is a live fm-deck-chat process.
 
 Subcommands:
   steer publish (--text T | --file F) [--kind wake|away|captain|other] [--home H]
-      prints seq=<n>; exit 2 refused (blank/oversized/unreadable), 3 no live host
+      kind is informational; prints seq=<n>; exit 2 refused
+      (blank/oversized/unreadable), 3 no live host
   steer status [--home H]       one JSON line; exit 3 when no live host
   steer delivered SEQ [--home H]
       exit 0 delivered (steer_acked >= SEQ or handled/SEQ.msg), 1 pending,
       2 rejected (rejected/SEQ.msg or steer_rejected), 3 no live host
   prepare --home H [--session ID]   create dirs, persist and print the session
-  record write --home H --session ID --host-pid N [--endpoint T]
+  record write --home H --session ID --host-pid N [--endpoint T] [--startup-file F]
+      publishes startup before making the host visible, retaining pending messages
   record stop --home H --host-pid N
-  supervise --home H --host-pid N --gen G
+  supervise --home H --host-pid N --gen G --events-offset N
       events -> busy-state (state/primary.busy-state, source deck-wrapper) and
       the watcher child (bin/fm-watch-arm.sh) whose wakes become steer
       publishes; a failed watcher is restarted with backoff, never fatal.
@@ -173,8 +175,7 @@ def published_seq(steer):
 
 # ---------------------------------------------------------------- steer CLI
 
-def steer_publish(args):
-    home = args.home
+def read_body(args):
     if args.text is not None:
         body = args.text
     else:
@@ -182,18 +183,17 @@ def steer_publish(args):
             body = Path(args.file).read_bytes().decode('utf-8')
         except (OSError, UnicodeDecodeError) as exc:
             print('error: cannot read steer body: %s' % exc, file=sys.stderr)
-            return 2
+            return None
     if not body.strip():
         print('error: refusing a blank steer message', file=sys.stderr)
-        return 2
+        return None
     if len(body.encode('utf-8')) > MAX_BODY:
         print('error: steer message exceeds %d bytes' % MAX_BODY, file=sys.stderr)
-        return 2
-    record = live_record(home)
-    if record is None:
-        print('error: no live deck-chat primary is registered for this home', file=sys.stderr)
-        return 3
-    steer = Path(record['steer_dir'])
+        return None
+    return body
+
+
+def publish_body(steer, body):
     steer.mkdir(parents=True, exist_ok=True)
     with open(steer / '.publish.lock', 'a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -205,8 +205,18 @@ def steer_publish(args):
         atomic_write(steer / '.seq', '%d\n' % seq)
         atomic_write(steer / ('.%d.msg.tmp' % seq), body, mode=0o600)
         os.replace(steer / ('.%d.msg.tmp' % seq), steer / ('%d.msg' % seq))
-        with open(steer / '.published.log', 'a') as log:
-            log.write('%d\t%s\t%d\n' % (seq, args.kind, int(time.time())))
+    return seq
+
+
+def steer_publish(args):
+    body = read_body(args)
+    if body is None:
+        return 2
+    record = live_record(args.home)
+    if record is None:
+        print('error: no live deck-chat primary is registered for this home', file=sys.stderr)
+        return 3
+    seq = publish_body(Path(record['steer_dir']), body)
     print('seq=%d' % seq)
     return 0
 
@@ -282,12 +292,18 @@ def prepare(args):
     print('session=%s' % session)
     print('steer_dir=%s' % (base / 'steer'))
     print('events_file=%s' % events)
+    print('events_offset=%d' % events.stat().st_size)
     return 0
 
 
 def record_write(args):
     home, _, record, root = paths(args.home)
     base = root / args.session
+    if args.startup_file:
+        body = read_body(argparse.Namespace(text=None, file=args.startup_file))
+        if body is None:
+            return 2
+        publish_body(base / 'steer', body)
     atomic_write(record, json.dumps({
         'version': 1, 'home': str(home), 'session': args.session,
         'steer_dir': str(base / 'steer'), 'events_file': str(base / 'events.ndjson'),
@@ -315,6 +331,7 @@ class Supervisor:
         self.gen = args.gen
         record = read_record(self.home)
         self.events_file = record['events_file']
+        self.events_offset = args.events_offset
         self.stop = threading.Event()
         self.watch = None
         self.log_lock = threading.Lock()
@@ -352,7 +369,7 @@ class Supervisor:
                  'run_failed': ('idle', 'turn-failed'), 'idle': ('idle', 'idle')}
         current = 'idle'
         handle = open(self.events_file, 'rb')
-        handle.seek(0, os.SEEK_END)
+        handle.seek(self.events_offset)
         partial = b''
         while not self.stop.is_set():
             chunk = handle.read()
@@ -373,7 +390,10 @@ class Supervisor:
     # -- watcher
     def start_watch(self, predecessor=None):
         env = dict(os.environ, FM_HOME=str(self.home))
-        argv = [str(BIN / 'fm-watch-arm.sh')]
+        argv = ['bash', '-c',
+                'if [ -f "$FM_HOME/config/x-mode.env" ]; then '
+                '. "$FM_HOME/config/x-mode.env" || exit 1; fi; exec "$@"',
+                'fm-deck-chat-watch', str(BIN / 'fm-watch-arm.sh')]
         if predecessor:
             env['FM_WATCH_PREDECESSOR_ARM_PID'] = str(predecessor)
             argv.append('--restart')
@@ -513,7 +533,7 @@ def main(argv):
     body = publish.add_mutually_exclusive_group(required=True)
     body.add_argument('--text')
     body.add_argument('--file')
-    publish.add_argument('--kind', choices=KINDS, default='other')
+    publish.add_argument('--kind', choices=KINDS, default='other', help='informational only')
     status = steer.add_parser('status')
     delivered = steer.add_parser('delivered')
     delivered.add_argument('seq', type=int)
@@ -526,6 +546,7 @@ def main(argv):
     write = record.add_parser('write')
     write.add_argument('--session', required=True)
     write.add_argument('--endpoint', default='')
+    write.add_argument('--startup-file')
     stop = record.add_parser('stop')
     for command in (write, stop):
         command.add_argument('--home', required=True)
@@ -534,6 +555,7 @@ def main(argv):
     supervise.add_argument('--home', required=True)
     supervise.add_argument('--host-pid', type=int, required=True)
     supervise.add_argument('--gen', required=True)
+    supervise.add_argument('--events-offset', type=int, required=True)
     args = parser.parse_args(argv)
     if args.cmd == 'steer':
         if not Path(args.home).is_dir():

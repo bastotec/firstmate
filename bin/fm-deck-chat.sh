@@ -8,7 +8,7 @@
 #     bin/fm-lock.sh before anything else (so a second primary of ANY harness
 #     is refused), and releases it on a clean exit;
 #   - it runs bin/fm-session-start.sh exactly once and publishes the digest as
-#     the first steering message, which starts the first turn;
+#     the first new steering message, which starts the first turn;
 #   - it starts `deck chat --session <persisted id> --steer-dir <dir>
 #     --events <file> --hook pre_complete=<lock check> [--mcp-config]
 #     [--model]` in the foreground of this terminal (or of the stream endpoint
@@ -35,8 +35,9 @@
 #       Start a stream endpoint (label primary-chat) through the stream
 #       backend's own agent launcher, run the host inside it, print the
 #       endpoint target and return. Attach from any terminal with
-#       `bin/fm-stream.sh attach --interactive <target>` once that command exists;
-#       until then this mode is only observable read-only (fm-stream.sh attach).
+#       `bin/fm-stream.sh attach <target>` (read-only); send input through
+#       `bin/fm-send.sh primary <text>`. Typing into the TUI needs the separately
+#       built interactive attach (`bin/fm-stream.sh attach --interactive`).
 #   fm-deck-chat.sh stop [--home H]
 #       SIGTERM the registered host: deck quits and the host exits cleanly.
 # --home defaults to FM_HOME, else this checkout. --session defaults to the id
@@ -130,7 +131,9 @@ if [ "$STREAM" = 1 ]; then
     if status=$("$SCRIPT_DIR/fm-primary-steer.sh" status --home "$FM_HOME" 2>/dev/null) \
         && [ "$(printf '%s' "$status" | jq -r '.endpoint // empty')" = "$target" ]; then
       printf 'primary-chat: running in stream endpoint %s\n' "$target"
-      printf 'attach: bin/fm-stream.sh attach --interactive %s\n' "$target"
+      printf 'attach: bin/fm-stream.sh attach %s\n' "$target"
+      printf 'input: bin/fm-send.sh primary <text>\n'
+      printf 'note: typing into the TUI needs bin/fm-stream.sh attach --interactive (built separately).\n'
       exit 0
     fi
     sleep 0.1
@@ -196,6 +199,7 @@ prepared=$(python3 "$PRIMARY_CHAT" prepare --home "$FM_HOME" --session "$SESSION
 SESSION=$(printf '%s\n' "$prepared" | sed -n 's/^session=//p')
 STEER_DIR=$(printf '%s\n' "$prepared" | sed -n 's/^steer_dir=//p')
 EVENTS=$(printf '%s\n' "$prepared" | sed -n 's/^events_file=//p')
+EVENTS_OFFSET=$(printf '%s\n' "$prepared" | sed -n 's/^events_offset=//p')
 LOG="$STATE/primary-chat/host.log"
 if ! "$SCRIPT_DIR/fm-session-start.sh" > "$WORK/startup" 2>&1; then
   cat "$WORK/startup" >&2
@@ -204,14 +208,15 @@ fi
 # shellcheck source=bin/fm-session-lock-lib.sh
 . "$SCRIPT_DIR/fm-session-lock-lib.sh"
 fm_session_lock_owned_by_self "$STATE" || die 'session start did not leave this host holding the session lock'
+if [ "$(cat "$STATE/.session-start-complete" 2>/dev/null)" != "$$" ]; then
+  cat "$WORK/startup" >&2
+  die 'session start did not publish a complete digest'
+fi
 GEN=$("$BUSY_EVENT" arm "$STATE" primary --state idle --source deck-wrapper --event host-start) \
   || die 'could not arm the primary busy-state record'
-python3 "$PRIMARY_CHAT" record write --home "$FM_HOME" --session "$SESSION" --host-pid $$ \
-  --endpoint "$ENDPOINT" || die 'could not write state/primary-chat.json'
-RECORDED=1
 
-# The digest is the first steer, so the first turn starts the same way every
-# later one does. deck's per-message limit is 64 KiB; a larger digest stays in
+# The digest is the first new steer; older pending input is retained for the
+# initial turn. deck's per-message limit is 64 KiB; a larger digest stays in
 # a file the first message points at.
 {
   printf 'You are the primary firstmate, hosted by bin/fm-deck-chat.sh as a deck chat session.\n'
@@ -225,10 +230,12 @@ else
   printf 'The session start digest is too large for one message. Read all of %s before anything else.\n' \
     "$STATE/primary-chat/startup-digest.txt" >> "$WORK/first"
 fi
-python3 "$PRIMARY_CHAT" steer publish --home "$FM_HOME" --kind other --file "$WORK/first" >/dev/null \
-  || die 'could not publish the startup digest'
+python3 "$PRIMARY_CHAT" record write --home "$FM_HOME" --session "$SESSION" --host-pid $$ \
+  --endpoint "$ENDPOINT" --startup-file "$WORK/first" || die 'could not publish startup and write state/primary-chat.json'
+RECORDED=1
 
-python3 "$PRIMARY_CHAT" supervise --home "$FM_HOME" --host-pid $$ --gen "$GEN" </dev/null >>"$LOG" 2>&1 &
+python3 "$PRIMARY_CHAT" supervise --home "$FM_HOME" --host-pid $$ --gen "$GEN" \
+  --events-offset "$EVENTS_OFFSET" </dev/null >>"$LOG" 2>&1 &
 SUP_PID=$!
 
 LOCK_HOOK="bash -c $(q ". $(q "$SCRIPT_DIR/fm-session-lock-lib.sh"); fm_session_lock_owned_by_self $(q "$STATE") || { echo 'Home session lock lost; report the failure and stop.' >&2; exit 2; }")"

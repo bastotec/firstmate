@@ -18,14 +18,21 @@ export FM_DECK_CHAT_WATCH_BACKOFF=0.2
 cat > "$BIN/fm-session-start.sh" <<'EOF'
 #!/usr/bin/env bash
 "$(dirname "$0")/fm-lock.sh" >/dev/null || exit 1
-cat "$FM_HOME/state/.lock" > "$FM_HOME/state/.session-start-complete"
+"$(dirname "$0")/fm-harness.sh" > "$FM_HOME/startup.harness"
+case "${FM_TEST_STARTUP_COMPLETION:-complete}" in
+  complete) cat "$FM_HOME/state/.lock" > "$FM_HOME/state/.session-start-complete" ;;
+  wrong) echo 1 > "$FM_HOME/state/.session-start-complete" ;;
+  missing) : ;;
+esac
 echo "fixture session digest"
+[ "${FM_TEST_STARTUP_SLOW:-0}" != 1 ] || echo SLOW
 echo started >> "$FM_HOME/session-start.runs"
 EOF
 cat > "$BIN/fm-watch-arm.sh" <<'EOF'
 #!/usr/bin/env bash
 case "${1:-}" in --handling-delivered) exit 0 ;; esac
 echo $$ >> "$FM_HOME/watch.pids"
+echo "${FM_CHECK_INTERVAL:-300}" >> "$FM_HOME/watch.cadence"
 echo "watcher: started pid=$$ (beacon fresh)"
 while [ ! -e "$FM_HOME/wake.trigger" ]; do sleep 0.05; done
 cat "$FM_HOME/wake.trigger"; rm -f "$FM_HOME/wake.trigger"
@@ -56,8 +63,11 @@ while not stop:
         text = source.read_text()
         emit(type='run_started', session=opt('--session'), model='fake')
         emit(type='steer_received', seq=seq, safe_point='run_start')
-        if 'SLOW' in text:
-            time.sleep(1.5)
+        if 'fixture session digest' in text and os.environ.get('FM_TEST_STARTUP_SLOW') == '1':
+            while not (pathlib.Path(os.environ['FM_HOME']) / 'startup.release').exists() and not stop:
+                time.sleep(0.05)
+        elif 'SLOW' in text:
+            time.sleep(3)
         hook_rc = subprocess.run(['sh', '-c', hook]).returncode
         (steer / 'handled').mkdir(exist_ok=True)
         source.rename(steer / 'handled' / source.name)
@@ -70,6 +80,16 @@ while not stop:
 EOF
 chmod +x "$BIN/fm-session-start.sh" "$BIN/fm-watch-arm.sh" "$LAB/tools/deck"
 export FM_DECK_BIN="$LAB/tools/deck"
+REAL_PYTHON=$(command -v python3)
+export REAL_PYTHON
+cat > "$LAB/tools/python3" <<'EOF'
+#!/usr/bin/env bash
+if [ "${2:-}" = supervise ] && [ "${FM_TEST_SUPERVISOR_DELAY:-0}" = 1 ]; then
+  while [ ! -e "$FM_HOME/supervisor.release" ]; do sleep 0.05; done
+fi
+exec "$REAL_PYTHON" "$@"
+EOF
+chmod +x "$LAB/tools/python3"
 
 wait_for() {  # <seconds> <description> <command...>
   local limit=$1 what=$2 i=0
@@ -119,7 +139,8 @@ test_steer_contract_without_a_host() {
   rc=0; "$STEER" publish --home "$home" --file "$LAB/big" 2>/dev/null || rc=$?
   expect_code 2 "$rc" "oversized text is refused"
 
-  assert_equals 'seq=1' "$("$STEER" publish --home "$home" --text 'first')" "first publish"
+  mkdir "$steer/.published.log"
+  assert_equals 'seq=1' "$("$STEER" publish --home "$home" --text 'first')" "publish ignores the obsolete journal"
   printf 'second\nline\n' > "$LAB/body"
   assert_equals 'seq=2' "$("$STEER" publish --home "$home" --file "$LAB/body" --kind captain)" "second publish"
   assert_equals 'first' "$(cat "$steer/1.msg")" "message body is verbatim"
@@ -173,6 +194,7 @@ test_steer_contract_without_a_host() {
 test_host_lifecycle() {
   local home host second rc=0 out first_watch session
   home=$(new_home host)
+  echo 'export FM_CHECK_INTERVAL=30' > "$home/config/x-mode.env"
   FAKE_DECK_LOG="$LAB/deck.log" "$BIN/fm-deck-chat.sh" --home "$home" --model fake/route \
     < /dev/null > "$LAB/host.out" 2>&1 &
   host=$!
@@ -182,6 +204,7 @@ test_host_lifecycle() {
   assert_equals "fm-deck-chat" "$(ps -o args= -p "$host" | awk '{print $1}')" "the host runs as fm-deck-chat"
   wait_for 10 "the startup digest turn" turns_with "$LAB/deck.log" 'fixture session digest'
   assert_equals 1 "$(wc -l < "$home/session-start.runs" | tr -d ' ')" "session start ran once"
+  assert_equals deck "$(cat "$home/startup.harness")" "startup identifies the host before deck launches"
   out=$(cat "$LAB/deck.log")
   session=$(cat "$home/state/primary-chat/session")
   assert_contains "$out" "\"--session\", \"$session\"" "deck chat resumes the persisted session"
@@ -207,6 +230,7 @@ test_host_lifecycle() {
 
   # A watcher wake is published into the inbox and handled as a turn.
   wait_for 10 "a watcher" watch_count "$home" 1
+  assert_equals 30 "$(head -n 1 "$home/watch.cadence")" "initial watcher uses home Relay cadence"
   echo 'wake: fixture reason' > "$home/wake.trigger"
   wait_for 10 "the wake turn" turns_with "$LAB/deck.log" 'wake: fixture reason'
   assert_contains "$(turns_with "$LAB/deck.log" 'wake: fixture reason')" 'Drain bin/fm-wake-drain.sh first' \
@@ -214,11 +238,14 @@ test_host_lifecycle() {
   wait_for 10 "the watcher re-arms after a wake" watch_count "$home" 2
 
   # A dead watcher is restarted; the host keeps running.
+  assert_equals 30 "$(tail -n 1 "$home/watch.cadence")" "re-arm uses home Relay cadence"
+  echo 'export FM_CHECK_INTERVAL=45' > "$home/config/x-mode.env"
   first_watch=$(last_watch_pid "$home")
   kill -9 "$first_watch"
   wait_for 10 "a replacement watcher" watch_count "$home" 3
   alive "$host" || fail "the host survives a dead watcher"
   assert_not_equals "$first_watch" "$(last_watch_pid "$home")" "the watcher was replaced"
+  assert_equals 45 "$(tail -n 1 "$home/watch.cadence")" "replacement reloads home Relay cadence"
   assert_grep 'watcher failed' "$home/state/primary-chat/host.log" "the watcher failure is logged"
 
   # A second host is refused and leaves the first untouched.
@@ -297,7 +324,8 @@ test_stream_endpoint_host() {
     || fail "--stream failed: $out"
   target=$(printf '%s\n' "$out" | sed -n 's/^primary-chat: running in stream endpoint //p')
   [ -n "$target" ] || fail "--stream prints the endpoint target: $out"
-  assert_contains "$out" "attach: bin/fm-stream.sh attach --interactive $target" "--stream prints the attach command"
+  assert_contains "$out" "attach: bin/fm-stream.sh attach $target" "--stream prints the read-only attach command"
+  assert_contains "$out" 'input: bin/fm-send.sh primary <text>' "--stream names the input path"
   assert_contains "$("$STEER" status --home "$home")" "\"endpoint\": \"$target\"" "the record carries the endpoint"
   wait_for 10 "the digest turn inside the endpoint" turns_with "$LAB/deck-stream.log" 'fixture session digest'
   host=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["host_pid"])' "$home/state/primary-chat.json")
@@ -307,7 +335,58 @@ test_stream_endpoint_host() {
   pass "fm-deck-chat.sh --stream: the host runs inside a stream endpoint and registers it"
 }
 
+test_startup_completion_required() {
+  local mode home rc
+  for mode in missing wrong; do
+    home=$(new_home "startup-$mode")
+    rc=0
+    FM_TEST_STARTUP_COMPLETION=$mode FAKE_DECK_LOG="$LAB/deck-$mode.log" \
+      "$BIN/fm-deck-chat.sh" --home "$home" </dev/null > "$LAB/host-$mode.out" 2>&1 || rc=$?
+    expect_code 1 "$rc" "startup with $mode completion is refused"
+    assert_grep 'session start did not publish a complete digest' "$LAB/host-$mode.out" "refusal names incomplete startup"
+    assert_absent "$home/state/primary-chat.json" "incomplete startup never registers"
+    assert_absent "$LAB/deck-$mode.log" "incomplete startup never launches deck"
+    assert_absent "$home/state/.lock" "incomplete startup releases its lock"
+  done
+  pass "fm-deck-chat.sh: startup completion must name this host"
+}
+
+test_startup_handoff() {
+  local home host steer events out
+  home=$(new_home startup-handoff)
+  python3 "$BIN/fm_primary_chat.py" prepare --home "$home" --session handoff >/dev/null
+  steer="$home/state/primary-chat/handoff/steer"
+  events="$home/state/primary-chat/handoff/events.ndjson"
+  echo 5 > "$steer/.seq"
+  echo 'retained captain input' > "$steer/5.msg"
+  printf '%s\n' '{"type":"run_started"}' > "$events"
+  PATH="$LAB/tools:$PATH" FM_TEST_SUPERVISOR_DELAY=1 FM_TEST_STARTUP_SLOW=1 \
+    FAKE_DECK_LOG="$LAB/deck-handoff.log" "$BIN/fm-deck-chat.sh" --home "$home" \
+    </dev/null > "$LAB/host-handoff.out" 2>&1 &
+  host=$!
+  fm_test_track_helper_pid "$host"
+  wait_for 10 "handoff registration" "$STEER" status --home "$home"
+  out=$(FM_HOME="$home" "$BIN/fm-send.sh" primary 'immediate captain input')
+  assert_contains "$out" 'seq=7' "startup reserves the first new sequence before registration"
+  wait_for 10 "events emitted before delayed supervisor starts" grep -q 'steer_received' "$events"
+  [ ! -s "$home/state/primary-chat/host.log" ] || fail "deck events must precede supervisor readiness"
+  touch "$home/supervisor.release"
+  wait_for 10 "startup turn busy despite delayed event follower" busy_is "$home" busy
+  touch "$home/startup.release"
+  wait_for 10 "startup digest delivered" turns_with "$LAB/deck-handoff.log" 'fixture session digest'
+  assert_contains "$(turns_with "$LAB/deck-handoff.log" 'fixture session digest')" '"seq": 6' "startup uses the shared sequence counter"
+  wait_for 10 "old pending input delivered" turns_with "$LAB/deck-handoff.log" 'retained captain input'
+  wait_for 10 "new captain input delivered" turns_with "$LAB/deck-handoff.log" 'immediate captain input'
+  wait_for 10 "handoff returns idle" busy_is "$home" idle
+  kill -TERM "$host"
+  wait_for 10 "handoff host exits" dead "$host"
+  wait "$host" 2>/dev/null || true
+  pass "fm-deck-chat.sh: startup publication precedes registration, pending inputs survive and early events reach busy-state"
+}
+
 test_steer_contract_without_a_host
+test_startup_completion_required
+test_startup_handoff
 test_host_lifecycle
 test_stream_endpoint_host
 test_away_mode_pauses_the_watcher
