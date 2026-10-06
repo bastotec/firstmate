@@ -294,6 +294,51 @@ test_host_lifecycle() {
   pass "fm-deck-chat.sh: lock, digest turn, steer turns, busy-state, fm-send, watcher wake/restart, refusal, stop and resume"
 }
 
+test_oversized_watcher_output() {
+  local home host encoding count=1
+  home=$(new_home oversized-wake)
+  FAKE_DECK_LOG="$LAB/deck-oversized.log" "$BIN/fm-deck-chat.sh" --home "$home" \
+    < /dev/null > "$LAB/host-oversized.out" 2>&1 &
+  host=$!
+  fm_test_track_helper_pid "$host"
+  wait_for 10 "oversized-wake startup" turns_with "$LAB/deck-oversized.log" 'fixture session digest'
+  for encoding in ascii multibyte; do
+    wait_for 10 "watcher ready for $encoding wake" watch_count "$home" "$count"
+    python3 - "$home" "$encoding" <<'PY'
+import os, pathlib, sys
+home, encoding = pathlib.Path(sys.argv[1]), sys.argv[2]
+body = ('x' if encoding == 'ascii' else '界') * 70000 + '\nwake: oversized ' + encoding + ' reason\n'
+(home / 'wake.expected').write_text(body, encoding='utf-8')
+(home / 'wake.tmp').write_text(body, encoding='utf-8')
+os.replace(home / 'wake.tmp', home / 'wake.trigger')
+PY
+    wait_for 10 "oversized $encoding wake delivered" turns_with "$LAB/deck-oversized.log" "wake: oversized $encoding reason"
+    python3 - "$LAB/deck-oversized.log.turns" "$home/wake.expected" "$encoding" <<'PY'
+import json, pathlib, sys
+preamble = ('The home watcher has an actionable wake. Drain bin/fm-wake-drain.sh first, '
+            'handle every emitted wake and open decision, and acknowledge only after '
+            'handling. Watcher output:\n')
+marker = 'wake: oversized ' + sys.argv[3] + ' reason'
+turns = [json.loads(line) for line in pathlib.Path(sys.argv[1]).read_text().splitlines()]
+matches = [turn['text'] for turn in turns if marker in turn['text']]
+assert len(matches) == 1, matches
+body = matches[0]
+output = pathlib.Path(sys.argv[2]).read_bytes()
+budget = 65536 - len(preamble.encode('utf-8'))
+assert body.startswith(preamble), 'wake handling instructions were truncated'
+assert body.endswith(marker + '\n'), 'wake reason was truncated'
+assert body == preamble + output[-budget:].decode('utf-8', 'ignore'), 'unexpected bounded watcher output'
+assert 65533 <= len(body.encode('utf-8')) <= 65536, 'incorrect UTF-8 byte budget'
+PY
+    count=$((count + 1))
+  done
+  wait_for 10 "watcher re-arms after oversized wakes" watch_count "$home" "$count"
+  kill -TERM "$host"
+  wait_for 10 "oversized-wake host exits" dead "$host"
+  wait "$host" 2>/dev/null || true
+  pass "fm-deck-chat.sh: oversized ASCII and multibyte wakes retain instructions within the byte limit"
+}
+
 test_away_mode_pauses_the_watcher() {
   local home host watch
   home=$(new_home away)
@@ -399,5 +444,6 @@ test_steer_contract_without_a_host
 test_startup_completion_required
 test_startup_handoff
 test_host_lifecycle
+test_oversized_watcher_output
 test_stream_endpoint_host
 test_away_mode_pauses_the_watcher

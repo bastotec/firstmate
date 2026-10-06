@@ -420,12 +420,13 @@ class Supervisor:
                     pass
                 proc.wait()
 
-    def publish(self, body):
-        data = body.encode('utf-8')
-        if len(data) > MAX_BODY:
-            # Keep the end: the reason line is last. The wake stays durable in
-            # the home queue, which the steer tells the primary to drain.
-            data = data[-(MAX_BODY - 1024):]
+    def publish(self, output):
+        preamble = WAKE_PREAMBLE.encode('utf-8')
+        data = output.encode('utf-8')
+        budget = MAX_BODY - len(preamble)
+        if len(data) > budget:
+            data = data[-budget:].decode('utf-8', 'ignore').encode('utf-8')
+        data = preamble + data
         with tempfile.NamedTemporaryFile('wb', delete=False, dir=str(self.root), prefix='.wake.') as tmp:
             tmp.write(data.decode('utf-8', 'ignore').encode('utf-8'))
         try:
@@ -501,7 +502,7 @@ class Supervisor:
                 delay = min(delay * 2, self.backoff_max)
                 continue
             delay = self.backoff
-            if self.publish(WAKE_PREAMBLE + text + '\n'):
+            if self.publish(text + '\n'):
                 predecessor = proc.pid
 
     def run(self):
