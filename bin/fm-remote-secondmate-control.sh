@@ -407,7 +407,7 @@ cmd_launch() {
 # control plane here. From this host's point of view the mate is a plain local
 # secondmate: its endpoint record under the private parent-route state directory
 # was written by a host-local fm-spawn and carries no remote_host= field, so
-# bin/fm-control.sh's remote refusal never fires, and every checkpoint, journal,
+# bin/fm-control.sh's remote routing arm never fires, and every checkpoint, journal,
 # rollback, and postcondition that plane owns applies unchanged. This verb is the
 # transport hop, not a second implementation.
 #

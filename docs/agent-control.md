@@ -95,7 +95,8 @@ Switching harness is therefore one ordinary relaunch rather than a separate mech
 
 ### Recovering a missing terminal
 
-`recover-missing` runs the same transaction for a task whose terminal is gone rather than agent-free, which is the one state `relaunch` cannot act on: it refuses a missing endpoint, and `fm-spawn.sh --relaunch` adopts only a surviving endpoint.
+`recover-missing` runs the same transaction for a task whose terminal is gone rather than agent-free, which is the one state the control plane's `relaunch` cannot act on: it refuses a missing endpoint.
+The [`fm-spawn.sh` header](../bin/fm-spawn.sh) owns the already-stopped launch boundary, including its separate backend-migration path rather than endpoint adoption.
 It differs from the steps above in exactly three places.
 
 - No implicit profile. An unqualified `--harness`-less recovery continues the same run on the recorded harness, model, and effort, and nothing is re-resolved from configuration: every identity axis comes from the task's own durable record, so a secondmate whose `config/secondmate-harness` pin has since changed is recovered on the harness, model, and effort it actually recorded.

@@ -277,7 +277,7 @@ This executable is a host-side routing surface, not an HTTP endpoint or an authe
 Its header and `--help` own the operator-maintained 0600 binding registry, exact target resolution, and supported verbs.
 The host resolves `(machine, label)` to an explicit `FM_HOME` and exact task or captain-call binding; neither the registry's home paths nor control-class credentials are supplied by or returned to the browser.
 Invalid registry bindings refuse before dispatch; stale captain calls and deeper task eligibility are checked by the existing owners.
-Task lifecycle requests delegate to `bin/fm-control.sh` under the resolved home without bypassing its lease, backlog eligibility, endpoint identity, or remote-secondmate refusal checks.
+Task lifecycle requests delegate to `bin/fm-control.sh` under the resolved home without bypassing its lease, backlog eligibility, endpoint identity, or [remote lifecycle routing boundaries](remote-secondmates.md#lifecycle-control-and-backend-migration).
 The host adapter must keep backend credentials in host-only 0600 files and must never send them in page content, browser environment, or browser storage.
 
 Decision actions carry the captain's authenticated exact answer to the existing send or captain-hold owner; the [host executable's header and help](../bin/fm-ui-host-control.py) own payload fields, delegation, acknowledgement framing, host-only diagnostics, and retry limits.
