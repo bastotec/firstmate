@@ -166,7 +166,7 @@ jobs:
   tests-portable-serial:
     name: Behavior portable serial ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    # Nine shards pack to about 9 minutes each of slowest-run hints
+    # Nine shards pack to about 9-10 minutes each of slowest-run hints
     # (bin/fm-test-run.sh --check-coverage reports serial_max_ms).
     # This 15-minute cap is a hang tripwire with runner-speed and setup margin,
     # not the expected healthy end of the lane.

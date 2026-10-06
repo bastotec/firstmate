@@ -5,7 +5,7 @@
 
 ## Verification inputs
 
-The current balance hint baselines come from fully serial runs of the real lanes on `ubuntu-latest`; future refreshes use the concurrent execution conditions described below.
+The balance hints come from CI measurements on `ubuntu-latest`; [Parallel lanes](#parallel-lanes) and [Portable serial CI shards](#portable-serial-ci-shards) own each set's provenance and measured concurrency.
 The concurrent isolation proof in [fm-test-isolation-proof.md](fm-test-isolation-proof.md) establishes concurrency safety, not CI duration.
 Local timings are not interchangeable with CI timings: platform and machine load can affect each script differently and change their relative weights.
 
@@ -67,7 +67,7 @@ The runner's `PORTABLE_SERIAL_PHASE_JOBS` rationale preserves CPU headroom becau
 `.github/workflows/ci.yml` derives the same `n` from `strategy.job-total` rather than a literal, so changing the shard count in either file without the other fails the lane loudly instead of leaving part of the required suite unrun.
 
 `portable_serial_assignments` in [`bin/fm-test-run.sh`](../bin/fm-test-run.sh) owns the phase-aware longest-processing-time packing algorithm; its comments define how family worker loads and unproven hints contribute to the estimate.
-The embedded hints are the slowest completed `duration_ms` per script from the `fm-test-timing-portable-serial-*` artifacts of six green CI runs from 2026-10-04 to 2026-10-06, [37272453924](https://github.com/bastotec/firstmate/actions/runs/37272453924), [37251695405](https://github.com/bastotec/firstmate/actions/runs/37251695405), [37253443319](https://github.com/bastotec/firstmate/actions/runs/37253443319), [37247916281](https://github.com/bastotec/firstmate/actions/runs/37247916281), [37397713888](https://github.com/bastotec/firstmate/actions/runs/37397713888), and [37401433503](https://github.com/bastotec/firstmate/actions/runs/37401433503), plus the 5121 ms native-Windows focused runner measurement for `tests/fm-pi-windows-shell-invocation.test.sh` from 2026-09-06T21:02Z.
+The embedded hints are the slowest completed `duration_ms` per script from the `fm-test-timing-portable-serial-*` artifacts of seven green CI runs from 2026-10-04 to 2026-10-06, [37272453924](https://github.com/bastotec/firstmate/actions/runs/37272453924), [37251695405](https://github.com/bastotec/firstmate/actions/runs/37251695405), [37253443319](https://github.com/bastotec/firstmate/actions/runs/37253443319), [37247916281](https://github.com/bastotec/firstmate/actions/runs/37247916281), [37397713888](https://github.com/bastotec/firstmate/actions/runs/37397713888), [37401433503](https://github.com/bastotec/firstmate/actions/runs/37401433503), and [37413095868](https://github.com/bastotec/firstmate/actions/runs/37413095868), plus the 5121 ms native-Windows focused runner measurement for `tests/fm-pi-windows-shell-invocation.test.sh` from 2026-09-06T21:02Z.
 Taking the slowest of several CI runs rather than a single run keeps the balance honest on a slow runner.
 A script with no hint gets the conservative `PORTABLE_SERIAL_DEFAULT_WEIGHT_MS` default.
 Hints only affect balance: the coverage guard keeps the partition complete and disjoint whatever they say, so a stale hint costs a slower shard rather than lost coverage.
@@ -80,6 +80,8 @@ Refresh the hints whenever the serial lane gains scripts, rather than waiting fo
 Before the phase model, twelve fully serial shards ran 8-14 minutes on runs 37397713888 and 37401433503, and the single-script `tests/fm-watch-triage.test.sh` (about 11 minutes) was the floor for any shard count.
 That script is now five topic suites, `tests/fm-watch-triage*.test.sh`, sharing `tests/watch-triage-helpers.sh`; each case lives in exactly one of them, and each carries its cases' share of the old script's hint, from the per-case output timestamps of run 37401433503.
 The phase-model packing estimate is not a measured concurrent job duration; use `serial_max_ms=` for its current critical-path estimate.
+The first phase-model run, [37413095868](https://github.com/bastotec/firstmate/actions/runs/37413095868), finished in 11m23s with its two slowest shards at 647 seconds of script time against a 518-second mean: three-way phases slowed the heaviest family scripts by up to half (`tests/fm-backlog-atomicity.test.sh` went from 289 to 376 seconds), which hints measured before the phase model did not carry.
+That run's durations are now in the hints.
 
 Refresh the CI-derived hints by downloading the per-shard timing artifacts from several green CI runs and replacing the `portable_serial_weight_hints` table in `bin/fm-test-run.sh` with the slowest measured `duration_ms` per `path`:
 
@@ -94,7 +96,8 @@ bin/fm-test-run.sh --check-coverage
 ```
 
 A timed-out shard uploads no artifact, so pick runs where every serial shard is green or the lane's slowest scripts go unmeasured in exactly the shard that needs them most.
-New family-phase artifacts measure scripts beside their phase siblings, so refreshed hints include that contention; the current historical hints and split-suite shares above were measured without it.
+Family-phase artifacts measure scripts beside their phase siblings, so refreshed hints include that contention.
+The pre-phase measurements and split-suite shares remain serial baselines, not measured concurrent durations.
 Measure native-Windows-only scripts through the focused Git Bash runner and retain that `duration_ms` separately, because the portable CI shards skip them.
 Opt-in live-harness timing hints can measure credential-free CI skips, not native harness execution; `tests/lib.sh`'s `fm_live_gate` owns that skip policy.
 
