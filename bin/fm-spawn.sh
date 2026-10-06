@@ -36,10 +36,15 @@
 #   transaction; call fm-control rather than this flag directly unless you are
 #   deliberately re-launching an already-stopped task. Every identity axis -
 #   backend, kind, project or home, worktree, endpoint - comes from the task's
-#   validated state/<id>.meta, so --backend, --scout, --secondmate, a project
+#   validated state/<id>.meta, so --scout, --secondmate, a project
 #   positional, and batch pairs are all refused alongside it; only harness,
 #   model, and effort may change, which is what makes a harness switch one
-#   ordinary relaunch. It refuses unless the recorded endpoint is positively
+#   ordinary relaunch. The one exception is --backend <tmux|herdr|stream>
+#   naming a backend other than the recorded one: that is a backend migration
+#   (bin/fm-control.sh <id> relaunch --backend), which creates a FRESH endpoint
+#   on the new backend in the recorded worktree or home, records it, and leaves
+#   the old agent-free endpoint for the control plane to close once the
+#   replacement is proven up. It refuses unless the recorded endpoint is positively
 #   agent-free on a backend with a recovery-grade agent-state classifier (tmux,
 #   herdr, or stream), and clears the previous harness's per-task wiring before arming
 #   the new incarnation. A relaunch whose recorded prior harness is Deck also
@@ -395,6 +400,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
+# shellcheck source=bin/fm-remote-control-lib.sh
+. "$SCRIPT_DIR/fm-remote-control-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 # Spawn-side model fallback chain (parsing, cooldowns, selection); used only
@@ -508,7 +515,14 @@ esac
 # task's own durable record below. Contradicting it on the command line is a
 # refusal rather than a silently-ignored flag.
 if [ "$RELAUNCH" -eq 1 ]; then
-  [ "$BACKEND_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded backend; --backend cannot override it" >&2; exit 1; }
+  # --backend on a relaunch is the backend migration verb's launch half
+  # (bin/fm-control.sh <id> relaunch --backend): the same task, worktree, and
+  # home move into a fresh endpoint on a different backend. Only the backends
+  # with a recovery-grade classifier are accepted.
+  case "${BACKEND_ARG:-}" in
+    ''|tmux|herdr|stream) ;;
+    *) echo "error: --relaunch --backend accepts tmux, herdr, or stream, not '$BACKEND_ARG'" >&2; exit 1 ;;
+  esac
   [ "$KIND_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded kind; --scout/--secondmate cannot override it" >&2; exit 1; }
   [ "$MODE_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded delivery mode; --mode cannot override it" >&2; exit 1; }
   [ "$YOLO_SET" -eq 0 ] || { echo "error: --relaunch reuses the task's recorded yolo posture; --yolo cannot override it" >&2; exit 1; }
@@ -551,7 +565,7 @@ fi
 
 spawn_remote_secondmate() {
   local id=$1 remote host root home harness positional model effort backend out rc meta tmp
-  local remote_backend remote_target remote_harness remote_herdr_session registry_lock remote_lock remote_generation
+  local remote_backend remote_harness registry_lock remote_lock remote_generation
   local remote_traceparent remote_recorded_traceparent sm_primary_head sync_out sync_rc
   local -a launch_args
   id=${POS[0]:-}
@@ -634,16 +648,22 @@ spawn_remote_secondmate() {
       MODEL_CHAIN_LANE=$RESOLVE_LANE
       ;;
   esac
-  # A remote second mate always runs on Herdr: its server belongs to the host's
-  # own GUI login session, so the endpoint outlives every SSH connection that
-  # supervises it. bin/fm-remote-doctor.sh gates that host on the same
-  # requirement, and the remote home's config/backend never overrides it.
-  case "${BACKEND_ARG:--}" in
-    -|herdr) backend=herdr ;;
+  # A remote second mate runs on Herdr or stream, both of which outlive every
+  # SSH connection that supervises it. An explicit --backend wins; otherwise a
+  # respawn keeps the backend its record already names, and a first launch uses
+  # Herdr. The remote home's config/backend never selects it: that file is the
+  # mate's choice for its own crew. bin/fm-remote-doctor.sh --backend gates the
+  # host for the selected one.
+  backend=${BACKEND_ARG:-}
+  if [ -z "$backend" ] && [ -f "$STATE/$id.meta" ]; then
+    backend=$(fm_meta_get "$STATE/$id.meta" remote_backend)
+  fi
+  case "${backend:-herdr}" in
+    herdr|stream) backend=${backend:-herdr} ;;
     *)
       fm_lock_release "$registry_lock" || true
       fm_lock_release "$SPAWN_TASK_LOCK" || true
-      echo "error: a remote secondmate runs only on the herdr backend, not '$BACKEND_ARG'" >&2
+      echo "error: a remote secondmate runs only on the herdr or stream backend, not '$backend'" >&2
       return 1
       ;;
   esac
@@ -679,7 +699,7 @@ spawn_remote_secondmate() {
   # through a launch. This is also the readiness gate every liveness relaunch
   # passes through, because recovery respawns through this same route.
   rc=0
-  fm_remote_readiness_ensure "$SCRIPT_DIR" "$id" || rc=$?
+  fm_remote_readiness_ensure "$SCRIPT_DIR" "$id" "$backend" || rc=$?
   if [ "$rc" -ne 0 ]; then
     fm_lock_release "$registry_lock" || true
     fm_lock_release "$SPAWN_TASK_LOCK" || true
@@ -768,31 +788,25 @@ spawn_remote_secondmate() {
     fi
     return "$rc"
   fi
-  remote_backend=$(printf '%s\n' "$out" | sed -n 's/^backend=//p' | tail -1)
-  remote_target=$(printf '%s\n' "$out" | sed -n 's/^target=//p' | tail -1)
-  remote_harness=$(printf '%s\n' "$out" | sed -n 's/^harness=//p' | tail -1)
-  remote_herdr_session=$(printf '%s\n' "$out" | sed -n 's/^herdr_session=//p' | tail -1)
-  if [ "$remote_backend" != herdr ]; then
+  # bin/fm-remote-control-lib.sh owns what a valid route is for each backend.
+  if ! fm_remote_route_parse "$out" \
+    || { [ "$FM_REMOTE_ROUTE_BACKEND" != "$backend" ] \
+         && FM_REMOTE_ROUTE_ERROR="remote launch returned backend '$FM_REMOTE_ROUTE_BACKEND', expected $backend"; }; then
     fm_lock_release "$remote_lock" || true
     fm_lock_release "$registry_lock" || true
     fm_lock_release "$SPAWN_TASK_LOCK" || true
-    echo "error: remote launch returned backend '${remote_backend:-missing}', expected herdr; preserving the remote route for reconciliation" >&2
+    echo "error: $FM_REMOTE_ROUTE_ERROR; preserving the remote route for reconciliation" >&2
     return 1
   fi
-  [ -n "$remote_target" ] && [ "$remote_harness" = "$harness" ] || {
+  remote_backend=$FM_REMOTE_ROUTE_BACKEND
+  remote_harness=$FM_REMOTE_ROUTE_HARNESS
+  [ "$remote_harness" = "$harness" ] || {
     fm_lock_release "$remote_lock" || true
     fm_lock_release "$registry_lock" || true
     fm_lock_release "$SPAWN_TASK_LOCK" || true
     echo "error: remote launch returned malformed route metadata; preserving the remote route for reconciliation" >&2
     return 1
   }
-  if [ "$remote_herdr_session" != fm-remote ] || [ "${remote_target%%:*}" != "$remote_herdr_session" ]; then
-    fm_lock_release "$remote_lock" || true
-    fm_lock_release "$registry_lock" || true
-    fm_lock_release "$SPAWN_TASK_LOCK" || true
-    echo "error: remote launch returned Herdr session '${remote_herdr_session:-missing}', expected 'fm-remote'; preserving the remote route for reconciliation" >&2
-    return 1
-  fi
   # Record what the remote endpoint ACTUALLY carries, read back from its own
   # launch, rather than what this side hoped to deliver. That keeps the #995
   # guarantee that the recorded carrier is the identity the child received even
@@ -818,9 +832,7 @@ spawn_remote_secondmate() {
     echo "projects=$(secondmate_registry_field "$DATA/secondmates.md" "$id" projects)"
     echo "remote_host=$host"
     echo "remote_root=$root"
-    echo "remote_backend=$remote_backend"
-    echo "remote_herdr_session=$remote_herdr_session"
-    echo "remote_target=$remote_target"
+    fm_remote_route_binding_lines
     [ -z "$remote_recorded_traceparent" ] || echo "traceparent=$remote_recorded_traceparent"
   } > "$tmp"
   if ! fm_backlog_atomic_transition publish "$tmp" "$meta" "task record" "$STATE"; then
@@ -873,6 +885,7 @@ SPAWN_TREEHOUSE_PROJECT_LOCK=
 SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
 SPAWN_SLOT_CLAIMED=0
 RELAUNCH_REPLACEMENT_PENDING=0
+MIGRATE_ENDPOINT_CLEANUP=0
 RELAUNCH_REPLACEMENT_BUSY_GEN=
 RELAUNCH_REPLACEMENT_HARNESS=
 RELAUNCH_REPLACEMENT_STATE=
@@ -903,6 +916,11 @@ report_unclosed_launch_endpoint() {  # <backend> <target>
 
 spawn_abort_cleanup() {
   local status=$?
+  if [ "$MIGRATE_ENDPOINT_CLEANUP" = 1 ]; then
+    MIGRATE_ENDPOINT_CLEANUP=0
+    fm_backend_kill "$BACKEND" "$T" "" "fm-$ID" \
+      || report_unclosed_launch_endpoint "$BACKEND" "$T"
+  fi
   if [ "$RELAUNCH_REPLACEMENT_PENDING" = 1 ] \
      && [ "$SPAWN_META_PUBLISH_STARTED" = 1 ] \
      && [ -n "$SPAWN_META_TMP" ] \
@@ -1194,6 +1212,7 @@ RAW_LAUNCH=0
 # validation teardown uses, so a malformed, ambiguous, or foreign record
 # refuses here exactly as it refuses there.
 RELAUNCH_PRIOR_HARNESS=
+RELAUNCH_MIGRATE=0
 if [ "$RELAUNCH" -eq 1 ]; then
   [ "${#POS[@]}" -eq 1 ] || {
     echo "error: --relaunch takes the task id only; its project or home comes from the task's own record" >&2
@@ -1218,6 +1237,9 @@ if [ "$RELAUNCH" -eq 1 ]; then
   fm_backend_validate_task_endpoint "$RELAUNCH_META" "$ID" || exit 1
   BACKEND=$FM_BACKEND_VALIDATED_BACKEND
   RELAUNCH_TARGET=$FM_BACKEND_VALIDATED_TARGET
+  if [ "$BACKEND_SET" -eq 1 ] && [ "$BACKEND_ARG" != "$BACKEND" ]; then
+    RELAUNCH_MIGRATE=1
+  fi
   fm_backend_validate_spawn "$BACKEND" || exit 1
   fm_backend_source "$BACKEND" || exit 1
   # A relaunch must PROVE the previous agent is gone before it launches another
@@ -1228,10 +1250,24 @@ if [ "$RELAUNCH" -eq 1 ]; then
     exit 1
   }
   RELAUNCH_STATE=$(fm_backend_agent_state "$BACKEND" "$RELAUNCH_TARGET")
-  [ "$RELAUNCH_STATE" = dead ] || {
-    echo "error: task $ID's endpoint reads '$RELAUNCH_STATE'; a relaunch requires a positively agent-free endpoint (stop the agent first with bin/fm-control.sh $ID exit)" >&2
-    exit 1
-  }
+  # A migration never reuses the old endpoint, so an old endpoint that is
+  # already gone is as agent-free as one holding a bare shell.
+  case "$RELAUNCH_STATE:$RELAUNCH_MIGRATE" in
+    dead:*|missing:1) ;;
+    *)
+      echo "error: task $ID's endpoint reads '$RELAUNCH_STATE'; a relaunch requires a positively agent-free endpoint (stop the agent first with bin/fm-control.sh $ID exit)" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$RELAUNCH_MIGRATE" = 1 ]; then
+    BACKEND=$BACKEND_ARG
+    fm_backend_validate_spawn "$BACKEND" || exit 1
+    fm_backend_source "$BACKEND" || exit 1
+    fm_control_backend_state_verified "$BACKEND" || {
+      echo "error: backend '$BACKEND' has no recovery-grade agent-state classifier; refusing to migrate $ID onto it" >&2
+      exit 1
+    }
+  fi
   RELAUNCH_PRIOR_HARNESS=$(fm_meta_get "$RELAUNCH_META" harness)
   KIND=$(fm_meta_get "$RELAUNCH_META" kind)
   [ -n "$KIND" ] || KIND=ship
@@ -1252,13 +1288,13 @@ if [ "$RELAUNCH" -eq 1 ]; then
       exit 1
     }
   fi
-  if [ "$BACKEND" = herdr ]; then
+  if [ "$BACKEND" = herdr ] && [ "$RELAUNCH_MIGRATE" = 0 ]; then
     HERDR_SES=$(fm_meta_get "$RELAUNCH_META" herdr_session)
     HERDR_WORKSPACE_ID=$(fm_meta_get "$RELAUNCH_META" herdr_workspace_id)
     HERDR_TAB_ID=$(fm_meta_get "$RELAUNCH_META" herdr_tab_id)
     HERDR_PANE_ID=$(fm_meta_get "$RELAUNCH_META" herdr_pane_id)
   fi
-  if [ "$BACKEND" = stream ]; then
+  if [ "$BACKEND" = stream ] && [ "$RELAUNCH_MIGRATE" = 0 ]; then
     STREAM_HUB_URL=$(fm_meta_get "$RELAUNCH_META" stream_hub)
     STREAM_ENDPOINT_ID=$(fm_meta_get "$RELAUNCH_META" stream_endpoint_id)
   fi
@@ -2158,7 +2194,16 @@ if [ -e "$STATE/$ID.backlog-close" ] || [ -L "$STATE/$ID.backlog-close" ]; then
 fi
 
 W="fm-$ID"
-if [ "$RELAUNCH" -eq 1 ]; then
+# Where a fresh endpoint's shell starts. A fresh spawn starts in the project
+# and lets Treehouse move it into the worktree; a backend migration creates its
+# endpoint directly in the recorded worktree or home, because no Treehouse step
+# runs for a relaunch.
+ENDPOINT_CWD=$PROJ_ABS
+if [ "$RELAUNCH_MIGRATE" = 1 ]; then
+  [ "$KIND" = secondmate ] || WT=$RELAUNCH_WT
+  ENDPOINT_CWD=$WT
+fi
+if [ "$RELAUNCH" -eq 1 ] && [ "$RELAUNCH_MIGRATE" = 0 ]; then
   # Adopt the recorded endpoint instead of creating one. This is what keeps a
   # relaunch a REPLACEMENT rather than a second copy of the task: no new
   # terminal, no second worktree, and every uncommitted change left exactly
@@ -2180,7 +2225,7 @@ case "$BACKEND" in
     # treehouse cd's into the worktree. WT_TARGET carries that stable id for the
     # rename-critical worktree-detection steps below; the persisted window= handle
     # stays $T (the name form), which is safe now that rename is disabled.
-    WID=$(fm_backend_tmux_create_task "$SES" "$W" "$PROJ_ABS") || exit 1
+    WID=$(fm_backend_tmux_create_task "$SES" "$W" "$ENDPOINT_CWD") || exit 1
     WT_TARGET="$WID"
     ;;
   herdr)
@@ -2210,7 +2255,7 @@ case "$BACKEND" in
     fi
     HERDR_PRESENTATION_JOURNAL=$(fm_backend_herdr_projection_journal_path "$STATE" "$ID")
     HERDR_PROJECTED=0
-    if [ "$KIND" != secondmate ] && fm_backend_herdr_presentation_enabled "$CONFIG" "$STATE"; then
+    if [ "$KIND" != secondmate ] && [ "$RELAUNCH_MIGRATE" = 0 ] && fm_backend_herdr_presentation_enabled "$CONFIG" "$STATE"; then
       HERDR_SES=$(fm_backend_herdr_session)
       HERDR_PARENT_LABEL=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_workspace_label)
       if [ -e "$HERDR_PRESENTATION_JOURNAL" ] || [ -L "$HERDR_PRESENTATION_JOURNAL" ]; then
@@ -2339,7 +2384,7 @@ case "$BACKEND" in
       HERDR_SEEDED_DEFAULT_TAB_ID=${HERDR_CONTAINER_RAW#*$'\t'}
       HERDR_SES=${CONTAINER%%:*}
       HERDR_WORKSPACE_ID=${CONTAINER#*:}
-      HERDR_TASK_IDS=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_create_task "$CONTAINER" "$W" "$PROJ_ABS" "$HERDR_SEEDED_DEFAULT_TAB_ID") || exit 1
+      HERDR_TASK_IDS=$(FM_HOME="$HERDR_LABEL_HOME" fm_backend_herdr_create_task "$CONTAINER" "$W" "$ENDPOINT_CWD" "$HERDR_SEEDED_DEFAULT_TAB_ID") || exit 1
       read -r HERDR_TAB_ID HERDR_PANE_ID <<EOF
 $HERDR_TASK_IDS
 EOF
@@ -2360,7 +2405,7 @@ EOF
     # moment, is written on this machine, and never travels to the hub.
     STREAM_HUB_URL=$(fm_backend_stream_hub_url) || exit 1
     fm_backend_stream_container_ensure >/dev/null || exit 1
-    STREAM_TASK_IDS=$(fm_backend_stream_create_task "$W" "$PROJ_ABS" "$STATE/$ID.status") || exit 1
+    STREAM_TASK_IDS=$(fm_backend_stream_create_task "$W" "$ENDPOINT_CWD" "$STATE/$ID.status") || exit 1
     read -r STREAM_TAG STREAM_ENDPOINT_ID <<EOF
 $STREAM_TASK_IDS
 EOF
@@ -2371,6 +2416,9 @@ EOF
     T="$STREAM_TAG:$STREAM_ENDPOINT_ID"
     ;;
 esac
+# A migration's fresh endpoint belongs to this spawn until its record is
+# published; an abort before then closes it so no stray terminal is left.
+[ "$RELAUNCH_MIGRATE" = 0 ] || MIGRATE_ENDPOINT_CLEANUP=1
 fi
 if [ "$KIND" = secondmate ]; then
   FM_INHERITABLE_CONFIG=trace-context \
@@ -2412,7 +2460,10 @@ spawn_send_key() {  # <target> <key>
   esac
 }
 
-if [ "$RELAUNCH" -eq 1 ]; then
+# A secondmate migrated to a fresh endpoint is created directly in its home,
+# exactly as a fresh secondmate spawn is, so it takes the same path (no
+# current-path proof) rather than the adopted-endpoint proof below.
+if [ "$RELAUNCH" -eq 1 ] && { [ "$RELAUNCH_MIGRATE" = 0 ] || [ "$KIND" != secondmate ]; }; then
   # No worktree is acquired: the recorded one is reused as-is. What must be
   # proven instead is that the adopted endpoint's shell is actually sitting in
   # that worktree, so the replacement agent starts where the work is rather
@@ -2697,7 +2748,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort account_slot busy_gen spawn_gen model_chain_lane traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id stream_hub stream_endpoint_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort busy_gen spawn_gen model_chain_lane traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id stream_hub stream_endpoint_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -2828,6 +2879,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   RELAUNCH_REPLACEMENT_PENDING=0
   SPAWN_META_PUBLISH_STARTED=0
   SPAWN_META_TMP=
+  MIGRATE_ENDPOINT_CLEANUP=0
 fi
 # A dispatch or relaunch keeps the per-task meta lock through launch delivery.
 # The backlog mutation is deliberately the final fallible commit below, so

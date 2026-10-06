@@ -2,7 +2,10 @@
 # fm-remote-readiness-lib.sh - the remote second-mate readiness gate sequence.
 #
 # Source this file and call:
-#   fm_remote_readiness_ensure <bin-dir> <secondmate-id>
+#   fm_remote_readiness_ensure <bin-dir> <secondmate-id> [herdr|stream]
+#
+# The optional backend selects which endpoint backend the doctor checks
+# (bin/fm-remote-doctor.sh --backend); omitted means herdr.
 #
 # It runs bin/fm-remote-doctor.sh on that route's configured host, and when the
 # read-only run reports any gap it runs the doctor again with --fix and then a
@@ -21,21 +24,23 @@
 # shellcheck disable=SC2034
 FM_REMOTE_READINESS_OUT=
 
-fm_remote_readiness_ensure() { # <bin-dir> <secondmate-id>
-  local bin_dir=$1 id=$2 out rc
+fm_remote_readiness_ensure() { # <bin-dir> <secondmate-id> [herdr|stream]
+  local bin_dir=$1 id=$2 backend=${3:-herdr} out rc
+  local -a doctor=(fm-remote-doctor.sh)
+  [ "$backend" = herdr ] || doctor+=(--backend "$backend")
 
-  out=$("$bin_dir/fm-on.sh" "$id" fm-remote-doctor.sh < /dev/null 2>&1)
+  out=$("$bin_dir/fm-on.sh" "$id" "${doctor[@]}" < /dev/null 2>&1)
   rc=$?
   FM_REMOTE_READINESS_OUT=$out
   [ "$rc" -ne 0 ] || return 0
   [ "$rc" -ne 255 ] || return 255
 
-  out=$("$bin_dir/fm-on.sh" "$id" fm-remote-doctor.sh --fix < /dev/null 2>&1)
+  out=$("$bin_dir/fm-on.sh" "$id" "${doctor[@]}" --fix < /dev/null 2>&1)
   rc=$?
   FM_REMOTE_READINESS_OUT=$out
   [ "$rc" -ne 255 ] || return 255
 
-  out=$("$bin_dir/fm-on.sh" "$id" fm-remote-doctor.sh < /dev/null 2>&1)
+  out=$("$bin_dir/fm-on.sh" "$id" "${doctor[@]}" < /dev/null 2>&1)
   rc=$?
   FM_REMOTE_READINESS_OUT=$out
   [ "$rc" -ne 255 ] || return 255

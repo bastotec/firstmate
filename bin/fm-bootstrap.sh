@@ -742,14 +742,16 @@ secondmate_liveness_one_timed() {  # <meta> <id> <label>
 # secondmate_note_respawned so a concurrent sweep can collect them after wait.
 secondmate_liveness_one() {  # <meta> <id>
   local meta=$1 id=$2
-  local window harness backend target agent_state out cause remote_host remote_rc readiness_reason route_out remote_backend kill_out flag
+  local window harness backend target agent_state out cause remote_host remote_rc readiness_reason route_out remote_backend route_backend kill_out flag
   window=$(fm_meta_get "$meta" window)
   [ -n "$window" ] || return 0
   harness=$(fm_meta_get "$meta" harness)
   remote_host=$(fm_meta_get "$meta" remote_host)
   if [ -n "$remote_host" ]; then
+    remote_backend=$(fm_meta_get "$meta" remote_backend)
+    [ -n "$remote_backend" ] || remote_backend=herdr
     remote_rc=0
-    fm_remote_readiness_ensure "$SCRIPT_DIR" "$id" || remote_rc=$?
+    fm_remote_readiness_ensure "$SCRIPT_DIR" "$id" "$remote_backend" || remote_rc=$?
     if [ "$remote_rc" -eq 255 ]; then
       echo "SECONDMATE_LIVENESS: secondmate $id: skipped: remote host unavailable or endpoint state unknown; route preserved on $remote_host"
       return 0
@@ -791,14 +793,32 @@ secondmate_liveness_one() {  # <meta> <id>
           echo "SECONDMATE_LIVENESS: secondmate $id: skipped: alive remote endpoint route is unreadable on $remote_host; inspect and migrate or retire it explicitly"
           return 0
         fi
-        remote_backend=$(printf '%s\n' "$route_out" | sed -n 's/^backend=//p' | tail -1)
-        if [ "$remote_backend" != herdr ]; then
-          echo "SECONDMATE_LIVENESS: secondmate $id: skipped: alive remote endpoint is recorded on backend '${remote_backend:-missing}'; migrate or retire it explicitly"
-          return 0
-        fi
+        route_backend=$(printf '%s\n' "$route_out" | sed -n 's/^backend=//p' | tail -1)
+        case "$route_backend" in
+          herdr|stream) ;;
+          *)
+            echo "SECONDMATE_LIVENESS: secondmate $id: skipped: alive remote endpoint is recorded on backend '${route_backend:-missing}'; migrate or retire it explicitly"
+            return 0
+            ;;
+        esac
         [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" != 1 ] || echo "BOOTSTRAP_INFO: remote secondmate $id already live (host=$remote_host)"
         ;;
-      dead|missing)
+      missing)
+        # The same stream-only rule as a local mate below: the hub's registry
+        # not knowing an endpoint is not process-authoritative absence.
+        if [ "$remote_backend" = stream ]; then
+          echo "SECONDMATE_LIVENESS: secondmate $id: skipped: remote stream endpoint reads missing (absence from the hub registry is not proof the agent is gone); inspect it on $remote_host and relaunch explicitly"
+          return 0
+        fi
+        cause="remote endpoint $agent_state on its configured host"
+        if out=$(FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate 2>&1); then
+          secondmate_note_respawned "$id"
+          report_relaunch "$id" "$cause" "host=$remote_host"
+        else
+          echo "SECONDMATE_LIVENESS: secondmate $id: respawn failed after $cause: $(first_line "$out")"
+        fi
+        ;;
+      dead)
         cause="remote endpoint $agent_state on its configured host"
         if out=$(FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate 2>&1); then
           secondmate_note_respawned "$id"

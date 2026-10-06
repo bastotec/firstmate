@@ -4,10 +4,11 @@ Remote second mates place a whole persistent Firstmate home on another SSH-reach
 The primary still owns routing and supervision, while the remote home owns its own projects, backlog, and workers.
 Firstmate does not support placing an individual worker remotely or failing a remote route over to a local replacement.
 
-The remote second-mate agent itself always runs on the [Herdr backend](herdr-backend.md) in the shared `fm-remote` session, and every path that provisions or launches one refuses a host that is not ready for it.
+The remote second-mate agent itself runs on the [Herdr backend](herdr-backend.md) in the shared `fm-remote` session, or on the [stream backend](stream-backend.md) against the hub that home's `config/stream-hub` names, and every path that provisions or launches one refuses a host that is not ready for the selected backend.
 `fm-remote` is reserved for remote fleet work and must not be used for personal work.
 The user's interactive Herdr session remains `default` and is not a remote-secondmate prerequisite.
 Herdr's remote-session server belongs to the host's own GUI login session rather than to the SSH connection, so the agent's endpoint survives every disconnection the primary's supervision depends on.
+A stream agent is started in its own session on the host and publishes to the hub, so it survives the SSH connection too, provided the host's login manager does not kill a user's processes at logout (`fm-remote-doctor.sh --backend stream` checks this on Linux).
 Local second mates are unaffected and keep their ordinary backend and session selection, as do the workers a remote second mate supervises inside its own home.
 
 ## Prerequisites
@@ -210,13 +211,27 @@ Launch or recover the remote second mate with the same command used for a local 
 bin/fm-spawn.sh <id> --secondmate
 ```
 
-The primary resolves the verified secondmate harness and optional model and effort, runs the same readiness gate the seed runs, transfers the inherited-material allowlist, and asks the remote host to launch on Herdr in `fm-remote`.
+The primary resolves the verified secondmate harness and optional model and effort, runs the same readiness gate the seed runs (`--backend stream` for a stream launch), transfers the inherited-material allowlist, and asks the remote host to launch on the selected backend.
+The backend is an explicit `--backend herdr|stream`, else the `remote_backend=` the parent's record already names (so recovery keeps it), else Herdr; the remote home's own `config/backend` never selects it, because that file is the mate's choice for its own crew.
 All remote secondmates on one host share `fm-remote` and retain separate `2ndmate-<id>` workspaces inside it.
 An explicit request for any other backend is refused rather than honored, and the remote host refuses one too.
 An existing remote endpoint recorded in another Herdr session, including `default`, is classified as unverified and left untouched; launch, liveness recovery, control, and retirement refuse it until an operator explicitly migrates it instead of attempting a live cutover.
 A launch after a host has drifted out of readiness fails with the doctor's own gap text instead of leaving a half-created endpoint.
 Raw launch commands are not accepted for remote secondmates.
-Stream remains unsupported on the remote host: the Herdr-only launch contract above refuses every other backend remotely, so a stream second mate launchable locally has no remote launch path.
+### Stream on the remote host
+
+A stream launch runs the host-local `bin/fm-spawn.sh` with the mate home's `config/`, so the agent publishes to the hub in that home's `config/stream-hub` with the token in its `config/stream-token`; on the fleet that is the host's own loopback hub, which the primary reaches through its SSH tunnel.
+The token comes from seeding ([stream Security](stream-backend.md#security)) and never travels on a command line or in the launch environment.
+The parent's record carries `remote_backend=stream`, `remote_target=<hub-tag>:<endpoint-id>`, `remote_stream_hub=`, and `remote_stream_endpoint_id=`, all read back from the host's route; `bin/fm-remote-control-lib.sh` owns that binding.
+Steering, peek, crew-state, the parent channel, and liveness use the same host verbs as Herdr.
+A stream `missing` read is the hub registry not knowing the endpoint, so the liveness sweep skips it with a diagnostic instead of relaunching, as it does for a local stream mate.
+The mate's own crew follows that home's `config/backend`.
+
+### Lifecycle control and backend migration
+
+`bin/fm-control.sh <id> interrupt|exit|relaunch` on the primary runs the same control plane on the host (`fm-remote-secondmate-control.sh control|relaunch`), so every postcondition is checked where the agent runs.
+`relaunch --backend herdr|stream` moves an idle mate to the other backend in the same home, refuses a busy one before touching it, and then rewrites the parent's `remote_*` binding from the host's route.
+Rollback is the same command with the previous backend while that backend still runs on the host.
 
 A remote route's endpoint records live in `state/parent-route`, which the launch creates private (`0700`) even under a permissive remote umask, because Deck's descriptor-bound status I/O refuses a group- or world-writable state root.
 The launch and the relaunch each reconcile a root an earlier launch left group-writable to the mode Deck accepts, so no home needs a hand chmod before a Deck mate can start.

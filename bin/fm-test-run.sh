@@ -347,6 +347,7 @@ family_for_basename() {
     fm-remote-transport-lanes.test.sh|\
     fm-remote-reply.test.sh|fm-remote-secondmate-lifecycle-e2e.test.sh|\
     fm-remote-secondmate-trace-context.test.sh|fm-remote-secondmate-replacement.test.sh|\
+    fm-remote-secondmate-stream.test.sh|\
     fm-secondmate-harness.test.sh|fm-secondmate-lifecycle-e2e.test.sh|\
     fm-secondmate-liveness.test.sh|fm-secondmate-reconcile.test.sh|\
     fm-secondmate-restart.test.sh|\
@@ -696,7 +697,7 @@ tests/fm-afk-return.test.sh 38827
 tests/fm-ask-triage.test.sh 14351
 tests/fm-ask-user-authority.test.sh 386
 tests/fm-autoland.test.sh 123495
-tests/fm-backend-stream.test.sh 298436
+tests/fm-backend-stream.test.sh 518436
 tests/fm-backend-tmux-smoke.test.sh 414
 tests/fm-backend.test.sh 22976
 tests/fm-backlog-atomicity.test.sh 376867
@@ -785,6 +786,7 @@ tests/fm-remote-reply.test.sh 82927
 tests/fm-remote-secondmate-lifecycle-e2e.test.sh 389689
 tests/fm-remote-secondmate-parent-binding.test.sh 50427
 tests/fm-remote-secondmate-replacement.test.sh 96637
+tests/fm-remote-secondmate-stream.test.sh 240000
 tests/fm-remote-secondmate-trace-context.test.sh 100809
 tests/fm-remote-transport-lanes.test.sh 65980
 tests/fm-secondmate-harness.test.sh 177921

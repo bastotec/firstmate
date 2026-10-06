@@ -171,6 +171,8 @@ An absent `backend=` still reads as `tmux` for older records.
 Every new task records `endpoint_task_id=` as the cleanup binding between the metadata filename and its opaque runtime endpoint.
 A herdr task additionally records `herdr_session=`, `herdr_workspace_id=`, `herdr_tab_id=`, and `herdr_pane_id=`.
 A stream task additionally records `stream_hub=` and `stream_endpoint_id=`.
+A remote second mate's parent record carries its binding as `remote_backend=` (`herdr` or `stream`) and `remote_target=`, plus `remote_herdr_session=` or `remote_stream_hub=` and `remote_stream_endpoint_id=` ([`remote-secondmates.md`](remote-secondmates.md#stream-on-the-remote-host)).
+An existing task moves to another backend only through `bin/fm-control.sh <id> relaunch --backend tmux|herdr|stream` ([`agent-control.md`](agent-control.md)); changing `config/backend` affects new spawns only.
 Ordinary task selectors for `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh` use the shared backend selector vocabulary.
 A selector containing `:` is passed through as an explicit backend endpoint escape hatch.
 Otherwise an exact task id matching `state/<id>.meta` wins before the legacy `fm-<id>` label fallback, so task ids that themselves start with `fm-` route to their own metadata instead of being stripped.

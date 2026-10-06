@@ -6,6 +6,7 @@
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
 #                                         [--effort <level>]
+#                                         [--backend <tmux|herdr|stream>]
 #                                         (--note <text> | --note-file <path>)
 #        fm-control.sh <task-id> recover-missing
 #                                         [--harness <name>] [--model <name>]
@@ -61,6 +62,19 @@
 #              the prior durable record in place and reports the concrete
 #              state; it never leaves a half-transitioned task claiming to be
 #              running.
+#
+#   relaunch --backend <tmux|herdr|stream>
+#              Backend migration: the same relaunch transaction, but the
+#              replacement starts in a FRESH endpoint on the named backend, in
+#              the same worktree (or secondmate home), with the same task
+#              record. It refuses unless the task reads idle (or its agent is
+#              already gone) on the shared busy classifier, before anything is
+#              touched. The new endpoint is recorded atomically by the launch
+#              owner; only after the replacement reads alive is the old,
+#              agent-free endpoint closed. A close that cannot be confirmed is a
+#              warning, not a failure, because the task already runs on the new
+#              backend. Naming the recorded backend is an ordinary relaunch.
+#              Rollback is the same verb with the previous backend.
 #
 #   recover-missing Restore a terminal for a task whose endpoint reads missing,
 #              then hand the launch to the existing owner
@@ -127,8 +141,14 @@
 # are all refused - a lifecycle command delivered to the wrong endpoint is far
 # worse than a loud refusal.
 #
-# A remotely placed secondmate is refused by name: its agent runs on another
-# host, so no postcondition this plane verifies could be read for it here.
+# A remotely placed secondmate (remote_host= in its record) is not driven from
+# here: interrupt, exit, and relaunch run THIS same plane on its host over
+# bin/fm-on.sh through bin/fm-remote-secondmate-control.sh, which verifies every
+# postcondition where the agent runs. A relaunch then re-reads the host's route
+# and rewrites this record's remote_* binding, so a backend migration of a
+# remote mate leaves the parent pointing at its new endpoint. recover-missing
+# stays refused for a remote mate; its recovery is the secondmate liveness
+# sweep (bin/fm-bootstrap.sh). bin/fm-remote-control-lib.sh owns that route.
 #
 # Fail-closed boundaries:
 #   - A recorded harness outside the exact supported set is refused before any
@@ -283,6 +303,8 @@ fi
 NEW_HARNESS=
 NEW_MODEL=
 NEW_EFFORT=
+NEW_BACKEND=
+NEW_BACKEND_SET=0
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
@@ -298,6 +320,7 @@ for control_arg in "$@"; do
       harness) NEW_HARNESS=$control_arg; HARNESS_SET=1 ;;
       model) NEW_MODEL=$control_arg; MODEL_SET=1 ;;
       effort) NEW_EFFORT=$control_arg; EFFORT_SET=1 ;;
+      backend) NEW_BACKEND=$control_arg; NEW_BACKEND_SET=1 ;;
       note) NOTE=$control_arg; NOTE_SET=1 ;;
       note_file)
         [ -f "$control_arg" ] || die "--note-file '$control_arg' is not a readable file"
@@ -315,6 +338,8 @@ for control_arg in "$@"; do
     --model=*) NEW_MODEL=${control_arg#--model=}; MODEL_SET=1 ;;
     --effort) control_want_value=effort ;;
     --effort=*) NEW_EFFORT=${control_arg#--effort=}; EFFORT_SET=1 ;;
+    --backend) control_want_value=backend ;;
+    --backend=*) NEW_BACKEND=${control_arg#--backend=}; NEW_BACKEND_SET=1 ;;
     --note) control_want_value=note ;;
     --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
     --note-file) control_want_value=note_file ;;
@@ -338,6 +363,13 @@ case "$VERB" in
       || die "--harness, --model, and --effort apply to 'relaunch' and 'recover-missing' only, and --note to 'relaunch' or 'recover-missing' only"
     ;;
 esac
+if [ "$NEW_BACKEND_SET" = 1 ]; then
+  [ "$VERB" = relaunch ] || die "--backend applies to 'relaunch' only"
+  case "$NEW_BACKEND" in
+    tmux|herdr|stream) ;;
+    *) die "--backend must be one of tmux, herdr, stream" ;;
+  esac
+fi
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
 [ "$EFFORT_SET" = 0 ] || [ -n "$NEW_EFFORT" ] || die "--effort requires a non-empty value"
@@ -388,7 +420,10 @@ fi
 # operator about a correctly configured remote route. Name the placement
 # instead, using the same `remote_host` signal bin/fm-send.sh routes on.
 if [ -n "$(fm_meta_get "$META" remote_host)" ]; then
-  die "task $ID is a remotely placed secondmate on $(fm_meta_get "$META" remote_host); its agent runs outside this home, so no lifecycle action here could verify that it interrupted, stopped, or came back. Drive its lifecycle on that host, and reconcile it through the secondmate recovery path rather than this plane"
+  # shellcheck source=bin/fm-remote-control-lib.sh
+  . "$SCRIPT_DIR/fm-remote-control-lib.sh"
+  fm_remote_control_run
+  exit $?
 fi
 
 fm_backend_validate_task_endpoint "$META" "$ID" || exit 1
@@ -1075,6 +1110,13 @@ do_relaunch() {
 
   require_state_verified_backend relaunch "the agent actually stopped"
   resolve_relaunch_profile
+  MIGRATE_FROM_BACKEND=
+  MIGRATE_FROM_TARGET=
+  if [ "$NEW_BACKEND_SET" = 1 ] && [ "$NEW_BACKEND" != "$BACKEND" ]; then
+    migrate_preflight
+    MIGRATE_FROM_BACKEND=$BACKEND
+    MIGRATE_FROM_TARGET=$T
+  fi
 
   case "$KIND" in
     ship|scout)
@@ -1117,6 +1159,7 @@ do_relaunch() {
   RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
   journal_write launching "${CHECKPOINT_LINES[@]}" "$note_line" "relaunch_tx=$RELAUNCH_TX"
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
+  [ -z "$MIGRATE_FROM_BACKEND" ] || spawn_args+=(--backend "$NEW_BACKEND")
   # A chained surface was only pre-flighted above: the ORIGINAL chain is what
   # the launch owner resolves and records the lane for, so its cooldown
   # decision is made at launch time, not at pre-flight time. A single label
@@ -1135,6 +1178,14 @@ do_relaunch() {
       || RELAUNCH_META_PUBLISHED=1
     die "the replacement agent for $ID could not be launched on $TARGET_HARNESS"
   fi
+  if [ -n "$MIGRATE_FROM_BACKEND" ]; then
+    # The launch owner published the new endpoint; every postcondition from
+    # here reads it, not the endpoint the task left.
+    fm_backend_validate_task_endpoint "$META" "$ID" \
+      || die "the replacement record for $ID does not validate after migrating to $NEW_BACKEND"
+    BACKEND=$FM_BACKEND_VALIDATED_BACKEND
+    T=$FM_BACKEND_VALIDATED_TARGET
+  fi
 
   state=$(wait_agent_state "$LAUNCH_WAIT" alive) || {
     die "the replacement agent for $ID did not come up within ${LAUNCH_WAIT}s (endpoint reads '$state')"
@@ -1143,7 +1194,33 @@ do_relaunch() {
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
-  echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT"
+  [ -z "$MIGRATE_FROM_BACKEND" ] || migrate_close_old_endpoint
+  echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT${MIGRATE_FROM_BACKEND:+ from_backend=$MIGRATE_FROM_BACKEND from_endpoint=$MIGRATE_FROM_TARGET}"
+}
+
+# A backend migration moves only a task that is provably not mid-turn, and
+# only onto a backend that can be spawned and classified. Both refusals happen
+# before the checkpoint, so nothing has been touched.
+migrate_preflight() {
+  local verdict
+  fm_backend_validate_spawn "$NEW_BACKEND" \
+    || die "task $ID cannot be migrated: backend '$NEW_BACKEND' cannot spawn here"
+  fm_control_backend_state_verified "$NEW_BACKEND" \
+    || die "task $ID cannot be migrated: backend '$NEW_BACKEND' has no recovery-grade agent-state classifier"
+  verdict=$(busy_verdict 2>/dev/null || printf 'unknown unreadable')
+  case "${verdict%% *}" in
+    idle|dead) ;;
+    *) die "task $ID reads '$verdict'; a backend migration moves only an idle endpoint, so wait for it to finish its turn (bin/fm-crew-state.sh $ID) and retry" ;;
+  esac
+}
+
+# Close the endpoint the task migrated away from. Its agent was already proved
+# gone by the exit step, so this removes only the terminal left behind.
+migrate_close_old_endpoint() {
+  local rc=0 out
+  out=$(fm_backend_kill "$MIGRATE_FROM_BACKEND" "$MIGRATE_FROM_TARGET" "" "$LABEL" 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  echo "warning: $ID now runs on $BACKEND, but its previous $MIGRATE_FROM_BACKEND endpoint $MIGRATE_FROM_TARGET was not confirmed closed ($(fm_backend_kill_verdict "$rc")): $(printf '%s' "$out" | head -n 1)" >&2
 }
 
 # recover_stream_endpoint: start a NEW stream endpoint for this task on the

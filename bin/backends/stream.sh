@@ -103,11 +103,19 @@ FM_BACKEND_STREAM_MISSING_GRACE_SECS=6
 # setsid with the same exec semantics. The session detachment is the only reason
 # this call exists: the agent must survive the spawn subshell and never inherit
 # the caller's process group.
+#
+# It EXECs, so call it only as a background job (`( fm_backend_stream_detached
+# ... & )`, as every caller does): that background fork is replaced by the
+# detached process instead of lingering as a bash parent that waits on it. A
+# lingering parent stays in the caller's process group for the life of the
+# agent, so anything that waits for that group to drain - a remote job on a
+# second-mate host (bin/fm-remote-job-worker.sh) - would never see the launch
+# finish.
 fm_backend_stream_detached() {
   if command -v setsid >/dev/null 2>&1; then
-    setsid "$@"
+    exec setsid "$@"
   else
-    perl -MPOSIX -e 'my $r = POSIX::setsid(); (defined $r && $r != -1) or die "setsid: $!\n"; exec @ARGV or die "exec: $!\n"' "$@"
+    exec perl -MPOSIX -e 'my $r = POSIX::setsid(); (defined $r && $r != -1) or die "setsid: $!\n"; exec @ARGV or die "exec: $!\n"' "$@"
   fi
 }
 

@@ -1390,6 +1390,153 @@ PY
   pass "stream: Deck interrupt preserves a usable idle composer for exit"
 }
 
+# relaunch --backend: an idle Deck secondmate moves from stream to a real tmux
+# server (private socket) and back, keeping its home, record, and unhandled
+# steers; a mid-turn mate refuses before anything is touched.
+test_relaunch_backend_moves_an_idle_deck_secondmate_between_stream_and_tmux() {
+  local id="mig-$$" home code fakebin target out pid waited tmux_target real_tmux socket meta
+  if ! real_tmux=$(command -v tmux); then
+    echo "skip: tmux not found (backend migration needs a second real backend)"
+    return 0
+  fi
+  start_case_hub migrate
+  home="$CASE_DIR/isolated-home"
+  code="$CASE_DIR/code"
+  fakebin="$CASE_DIR/fakebin"
+  socket="fm-migrate-$$"
+  mkdir -p "$code" "$fakebin" "$home/data" "$home/state" "$home/config" "$home/projects"
+  cp -R "$ROOT/bin" "$code/bin"
+  fm_git_init_commit "$home"
+  mkdir -p "$home/bin"
+  printf '%s\n' "$id" > "$home/.fm-secondmate-home"
+  printf '# Fixture home\n' > "$home/AGENTS.md"
+  printf 'fixture charter\n' > "$home/data/charter.md"
+  mkdir -p "$CASE_DIR/home/data"
+  printf 'deck\n' > "$CASE_DIR/home/config/secondmate-harness"
+  printf 'manual\n' > "$CASE_DIR/home/config/backlog-backend"
+  cat > "$code/bin/fm-session-start.sh" <<'SH'
+#!/usr/bin/env bash
+"$(dirname "$0")/fm-lock.sh" || exit
+cat "$FM_HOME/state/.lock" > "$FM_HOME/state/.session-start-complete"
+printf 'fixture startup\n'
+SH
+  cat > "$code/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" != --handling-delivered ] || exit 0
+printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
+while :; do sleep 1; done
+SH
+  # A real turn (not the worker's --help probe) holds while <home>/hold exists,
+  # so the case can catch the mate mid-turn.
+  cat > "$fakebin/deck" <<'PY'
+#!/usr/bin/env python3
+import json, os, pathlib, sys, time
+home = pathlib.Path(os.environ['FM_HOME'])
+with (home / 'turns').open('a') as log:
+    log.write(json.dumps(sys.argv[2]) + '\n')
+print(json.dumps({'type': 'run_started', 'session': 'fixture-session'}), flush=True)
+while '--help' not in sys.argv and (home / 'hold').exists():
+    time.sleep(0.1)
+print(json.dumps({'type': 'text_delta', 'text': 'FIXTURE-TURN-DELIVERED'}), flush=True)
+print(json.dumps({'type': 'run_finished', 'output': 'ready', 'turns': 1}), flush=True)
+PY
+  chmod +x "$fakebin/deck"
+  # A private server with no user configuration: a session-restore plugin in
+  # the operator's tmux.conf would otherwise repopulate it from their saved
+  # sessions, and save its own state over theirs.
+  cat > "$fakebin/tmux" <<SH
+#!/usr/bin/env bash
+exec "$real_tmux" -L "$socket" -f /dev/null "\$@"
+SH
+  chmod +x "$fakebin/tmux"
+  fm_fake_exit0 "$fakebin" gh gh-axi
+  migrate_cleanup() { "$real_tmux" -L "$socket" kill-server >/dev/null 2>&1 || true; }
+  migrate_busy_word() {  # <meta> <id> <state-dir>
+    # shellcheck source=bin/fm-busy-lib.sh
+    . "$ROOT/bin/fm-busy-lib.sh"
+    fm_busy_classify_meta "$1" "$2" "$3" | cut -d' ' -f1
+  }
+  host_command() (
+    # shellcheck disable=SC2030,SC2031 # other cases deliberately isolate PATH changes
+    with_stream_env env -u TMUX PATH="$fakebin:$PATH" SHELL=/bin/bash \
+      FM_ROOT_OVERRIDE="$code" FM_SPAWN_NO_GUARD=1 \
+      FM_SKIP_SECONDMATE_SYNC=1 FM_SKIP_SECONDMATE_INHERIT=1 \
+      "$code/bin/$1" "${@:2}"
+  )
+  meta="$CASE_DIR/home/state/$id.meta"
+  out=$(host_command fm-spawn.sh "$id" "$home" --secondmate --harness deck --backend stream 2>&1) \
+    || { migrate_cleanup; fail "stream secondmate spawn failed: $out"; }
+  pid=$(agent_pid_for "fm-$id")
+  fm_test_track_helper_pid "$pid"
+  target=$(sed -n 's/^window=//p' "$meta")
+  wait_for_capture "$target" FIXTURE-TURN-DELIVERED || { migrate_cleanup; fail "spawn never ran the Deck charter turn"; }
+  wait_for_agent_state "$target" alive
+
+  # Mid-turn: the migration refuses and leaves the mate where it is.
+  touch "$home/hold"
+  out=$(host_command fm-send.sh "$id" 'fixture steer before the move' 2>&1) \
+    || { migrate_cleanup; fail "secondmate send failed: $out"; }
+  waited=0
+  while [ "$(with_stream_env migrate_busy_word "$meta" "$id" "$CASE_DIR/home/state")" != busy ] \
+    && [ "$waited" -lt 200 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_equals "$(with_stream_env migrate_busy_word "$meta" "$id" "$CASE_DIR/home/state")" busy \
+    "the held turn never read busy"
+  out=$(host_command fm-control.sh "$id" relaunch --backend tmux 2>&1) \
+    && { migrate_cleanup; fail "a mid-turn mate was migrated: $out"; }
+  assert_contains "$out" 'a backend migration moves only an idle endpoint' "busy refusal was not named: $out"
+  assert_grep 'backend=stream' "$meta" "a refused migration changed the record"
+  assert_equals "$(with_stream_env fm_backend_agent_state stream "$target")" alive "a refused migration stopped the mate"
+  rm -f "$home/hold"
+  waited=0
+  while [ "$(with_stream_env migrate_busy_word "$meta" "$id" "$CASE_DIR/home/state")" != idle ] \
+    && [ "$waited" -lt 200 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  pass "stream: relaunch --backend refuses a mid-turn mate without touching it"
+
+  # Idle: stream -> tmux. Same home and record, fresh endpoint, old one closed.
+  printf 'unhandled steer\n' > "$CASE_DIR/home/state/$id.inbox/900.msg"
+  out=$(host_command fm-control.sh "$id" relaunch --backend tmux 2>&1) \
+    || { migrate_cleanup; fail "migration to tmux failed: $out"; }
+  assert_contains "$out" "from_backend=stream from_endpoint=$target" "migration did not report where it came from: $out"
+  assert_grep 'backend=tmux' "$meta" "the record did not move to tmux"
+  assert_no_grep 'stream_endpoint_id=' "$meta" "the stream binding outlived the migration"
+  assert_grep "home=$home" "$meta" "migration lost the secondmate home"
+  tmux_target=$(sed -n 's/^window=//p' "$meta")
+  case "$tmux_target" in firstmate:fm-"$id") ;; *) migrate_cleanup; fail "unexpected tmux endpoint: $tmux_target" ;; esac
+  # shellcheck disable=SC2031 # deliberate: the private tmux shim is scoped to this call
+  assert_equals "$(PATH="$fakebin:$PATH" with_stream_env fm_backend_agent_state tmux "$tmux_target")" alive \
+    "the migrated mate is not running on tmux"
+  waited=0
+  while [ -n "$(agent_pid_for "fm-$id")" ] && [ "$waited" -lt 100 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -z "$(agent_pid_for "fm-$id")" ] || { migrate_cleanup; fail "the old stream endpoint's agent is still running"; }
+  assert_present "$CASE_DIR/home/state/$id.inbox/900.msg" "migration discarded an unhandled steer"
+  pass "stream: relaunch --backend tmux moves an idle mate and closes its stream endpoint"
+
+  # Rollback: tmux -> stream through the same verb.
+  out=$(host_command fm-control.sh "$id" relaunch --backend stream 2>&1) \
+    || { migrate_cleanup; fail "migration back to stream failed: $out"; }
+  assert_grep 'backend=stream' "$meta" "the record did not move back to stream"
+  target=$(sed -n 's/^window=//p' "$meta")
+  pid=$(agent_pid_for "fm-$id")
+  fm_test_track_helper_pid "$pid"
+  wait_for_agent_state "$target" alive
+  # shellcheck disable=SC2031 # deliberate: the private tmux shim is scoped to this call
+  out=$(PATH="$fakebin:$PATH" tmux list-windows -a -F '#{session_name}:#{window_name}' 2>/dev/null || true)
+  assert_not_contains "$out" "fm-$id" "the tmux window outlived the move back to stream"
+  host_command fm-control.sh "$id" exit >/dev/null 2>&1 || true
+  with_stream_env fm_backend_kill stream "$target" >/dev/null 2>&1 || true
+  migrate_cleanup
+  pass "stream: relaunch --backend stream moves the mate back (rollback path)"
+}
+
 test_cleanup_validation_binds_a_record_to_the_hub_that_made_it() {
   local state meta target endpoint
   start_case_hub teardown
@@ -1456,6 +1603,7 @@ test_the_key_vocabulary_is_only_what_the_control_plane_permits() {
 }
 
 test_spawn_hosts_a_deck_secondmate
+test_relaunch_backend_moves_an_idle_deck_secondmate_between_stream_and_tmux
 test_create_yields_a_hub_bound_target_the_dispatcher_can_read
 test_send_reaches_the_endpoint_and_capture_reads_it_back
 test_capture_is_bounded_by_the_requested_line_count
