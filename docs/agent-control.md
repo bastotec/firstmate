@@ -20,7 +20,6 @@ The failure repeated across harnesses and homes, and the workaround (remember to
   A caller either names an allowlisted verb or is refused.
 - **Per-harness mechanics**: the key that cancels a running turn, how many times it must be delivered, whether the composer needs clearing afterwards, the command that exits the agent, and which task kinds the adapter is verified to run.
   These were previously carried only in the [`harness-adapters`](../.agents/skills/harness-adapters/SKILL.md) skill's tool references, which now point here.
-  `bin/fm-send.sh`'s `--key` path reads the composer-clear table from this owner too, rather than keeping a second copy of it.
 - **Per-backend capability**: which named keys a runtime backend can deliver, and whether it has a recovery-grade agent-state classifier able to prove an agent stopped or its endpoint gone.
 
 A raw-command spawn records the command's basename as `harness=`.
@@ -50,8 +49,7 @@ The remaining sections describe task control through `fm-control.sh`; managed-pr
 An exit that delivers lifecycle input but cannot prove the agent stopped fails with `exit=unconfirmed`, reports the observed agent state and any interrupt cancellation claim, and never claims that nothing changed.
 Interrupt never rewrites busy state as proof of its own success.
 
-An interrupt is not complete until the composer is empty.
-No supported adapter puts the cancelled prompt back into its composer, so no clear follows the interrupt key.
+No supported adapter puts the cancelled prompt back into its composer, so no clear follows the interrupt key; the interrupt postcondition is endpoint survival, not a proven composer reading.
 
 `exit` runs a verify-then-clear composer gate before typing the exit command.
 A proven `empty` verdict passes immediately and a proven `pending` verdict refuses by naming the pending text, so real typed input is preserved instead of being concatenated.

@@ -83,13 +83,12 @@ harness_marker() {
   # omp 18.1.11 that PI_CODING_AGENT is absent from the binary and that the
   # default profile sets neither PI_CODING_AGENT_DIR nor OMP_PROFILE in the
   # process environment. FM_OMP_HARNESS=omp is therefore a Firstmate-OWNED
-  # launch marker, established by bin/fm-spawn.sh at the omp launch boundary
-  # (which also clears every foreign marker) and by the README's primary launch
-  # command. It is a PRECEDENCE override, never evidence on its own: it wins
-  # over an inherited CLAUDECODE only when an omp process is genuinely in the
-  # ancestry, so `FM_OMP_HARNESS=omp omp` started from a Claude pane identifies
-  # as omp, while the same variable leaking from an omp secondmate into that
-  # home's claude worker (whose ancestry holds no omp) changes nothing. The
+  # launch marker, established by the README's primary launch command.
+  # It is a PRECEDENCE override, never evidence on its own: it wins over an
+  # inherited CLAUDECODE only when an omp process is genuinely in the ancestry,
+  # so `FM_OMP_HARNESS=omp omp` started from a Claude pane identifies as omp,
+  # while the same variable leaking into a separate Claude session whose
+  # ancestry holds no omp changes nothing. The
   # anchored ancestry arm below covers a plain hand-started `omp` by itself.
   if [ "${FM_OMP_HARNESS:-}" = omp ] && ancestry_names_omp; then
     echo omp
@@ -333,7 +332,7 @@ harness_family() {
 #   - Different harness, structural ancestor: ancestry wins. This is what stops
 #     an inherited or multiplexer-retained CLAUDECODE from renaming a markerless
 #     codex or opencode session, and symmetrically stops a retained
-#     CURSOR_AGENT from renaming a claude worker nested under cursor.
+#     CURSOR_AGENT from renaming a Claude session nested under Cursor.
 #   - Different harness, interpreter-args ancestor only: the marker wins, because
 #     a harness-shaped path in some node process's arguments is weaker evidence
 #     than a harness publishing its own identity.

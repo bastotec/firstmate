@@ -12,7 +12,7 @@ metadata:
 # harness-adapters
 
 This is the one skill, trigger, and routing owner for harness-specific Firstmate operations.
-Load this router first, then exactly the common reference and one harness reference selected below.
+Load this router first, then the references selected by the Operation-to-reference matrix below.
 When an action spans rows, load the union once rather than every reference.
 Files under `references/` are resources of this skill, not additional catalogued skills.
 
@@ -25,8 +25,9 @@ Operational paths keep the context named by their owner: `config/` and active-ho
 ## Non-negotiable safety
 
 Never dispatch a crewmate or secondmate on an unverified adapter.
-If `config/crew-harness` or `config/secondmate-harness` names one, tell the captain under `../../../AGENTS.md` section 9 that the requested worker runtime is not verified, use firstmate's own verified runtime for current work, and ask only whether to verify the requested runtime for future work.
-Do not pause current work for that choice.
+If `config/crew-harness` or `config/secondmate-harness` names one, tell the captain under `../../../AGENTS.md` section 9 that the requested worker runtime is not verified, use firstmate's own runtime only if it is a verified worker runtime, and ask only whether to verify the requested runtime for future work.
+If no verified worker runtime is resolved, ask for one under the supported-worker boundary in `../../../docs/configuration.md` rather than treating a supported primary as a supported worker.
+When a verified fallback exists, do not pause current work for that future-verification choice.
 
 On `unknown`, ask the captain instead of guessing.
 A current captain override beats detection, while a per-task override governs only that dispatch.
@@ -50,8 +51,9 @@ A new adapter's verified marker and command name must land in `../../../bin/fm-h
 
 ## Operation-to-reference matrix
 
-Every emitted plan appends the selected or recorded harness reference after the named common references.
-The `harness-adapter-routing-v1` object is the machine-readable and human-visible selection contract: choose the operation, choose the scenario within it, then append the selected harness reference.
+For worker operations, every emitted plan appends the selected or recorded harness reference after the named common references.
+The `harness-adapter-routing-v1` object is the machine-readable and human-visible worker selection contract: choose the operation, choose the scenario within it, then append the selected harness reference.
+The `primary` operation also applies to primary-only harnesses without a `harnesses` entry; load its common reference alone in that case.
 `default` is the normal scenario when no narrower scenario applies.
 A new tool remains undispatchable until the `verify` plan, its harness entry, every named owner, and the live checks land.
 

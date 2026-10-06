@@ -254,7 +254,7 @@ pi-signed
 
 ### Harness-adapter instruction routing
 
-Two checks keep the evidence boundaries separate.
+The retained reference check provides structural evidence, not native-loader proof.
 `tests/fm-harness-adapter-references.test.sh` parses the router's declared JSON contract as normalized data and proves every selected reference is readable, which is structural evidence only.
 The isolated process and endpoint checks used:
 
@@ -1463,6 +1463,9 @@ Measured as an A/B on the same live pane, the pre-fix classifier returned `pendi
 Other harnesses on Herdr are unaffected by the edge-detector change.
 All seven live panes of the running default session - one Pi, four Claude, two plain shells - classified identically under the pre-fix and current classifiers.
 
+**Typed-submit confirmation is verified on tmux and Herdr only.**
+Stream's submit core does not consult Cursor's busy footer, so typed-plane input to a Cursor primary there can land while `fm-send` reports delivery unconfirmed and exits non-zero.
+This limit is distinct from ordinary task steering, whose durable-inbox success is an enqueue acknowledgement, not a typed-submit proof.
 The composer captures are pinned in `tests/fm-composer-lib.test.sh`, and the Herdr footer behavior is pinned in `tests/fm-backend-herdr.test.sh`.
 The liveness drift guard refreshes Cursor's process identity only, not these composer or delivery observations:
 

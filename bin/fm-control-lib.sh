@@ -24,9 +24,7 @@
 #      that key, which command exits the agent, and which task kinds the adapter is
 #      verified to run. These are the empirically verified facts previously
 #      carried only in the harness-adapters skill's per-adapter tables; that
-#      skill now points here so one executable owner holds them, and
-#      bin/fm-send.sh's --key path reads the same table rather than a second
-#      copy of it.
+#      skill now points here so one executable owner holds them.
 #   3. Per-backend capability: which named keys a runtime backend can deliver,
 #      and whether the backend has a recovery-grade agent-state classifier
 #      (bin/fm-backend.sh's fm_backend_agent_state) able to PROVE that an agent

@@ -475,7 +475,7 @@ Profile `model` and `effort` fields and rule `why` are optional.
 An omitted model or effort means the selected harness uses its own default for that axis.
 Every profile array is a quota-aware choice firstmate makes at intake under `AGENTS.md` section 4; no script makes it.
 If no dispatch rule fits, firstmate resolves `default` through the same object-or-array path before falling back to `config/crew-harness`.
-Except for `ultra`, which refuses unsupported profiles under the native-effort contract above, an effort value the chosen harness does not accept is recorded as `effort=` in task meta for traceability but omitted from the launch flags.
+Except for `ultra` under the native-effort contract above and Deck's refusal under [Harness support](#harness-support), an effort value the chosen harness does not accept is recorded as `effort=` in task meta for traceability but omitted from the launch flags.
 Bootstrap reports unsupported harness/model/effort combinations as a `CREW_DISPATCH` diagnostic when they are visible in the file.
 A profile's `model` may also be a fallback chain: either one `<provider>/<model-id>` label, which is an exact pin exactly as before, or a comma-separated list of labels such as `codex/gpt-6-luna,zai/glm-5.3,vercel/xiaomi/mimo-v2.6-flash`, resolved in preference order at spawn time; "Model fallback chains" above owns the chain syntax, cooldowns, and refusal contract.
 The dispatch profile consultation resolves a concrete profile and passes it to `fm-spawn.sh` unchanged, so a chain rides in the `--model` value and no dispatch-side judgment substitutes a model outside the captain-approved order.
