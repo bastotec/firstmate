@@ -54,7 +54,8 @@
 #                          is used when no key is set, as for deck workers
 #
 # Exit: deck chat's own exit code once it ran; 1 refused (lock held by another
-# session, session start failed); 2 usage or missing prerequisite.
+# session, session start failed); 2 usage or missing prerequisite; 3 gate-context
+# refusal (bin/fm-gate-refuse-lib.sh).
 set -u
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
