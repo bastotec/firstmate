@@ -53,20 +53,22 @@ Subcommands:
       Paused while state/.afk exists (the away daemon owns the watcher then).
   service --home H --deck-chat PATH [--model ROUTE]
       the keeper a launchd agent runs (bin/fm-deck-chat.sh install-service):
-      adopts a live host, waits while any live harness holds the session lock,
-      and otherwise starts one with `fm-deck-chat.sh --stream` (resuming the
-      persisted session), backing off while it keeps dying soon after start.
+      adopts a live host and waits while any live harness holds the session lock.
+      Otherwise, while captain-start is younger than FM_DECK_CHAT_SERVICE_START_GRACE,
+      publishes waiting with detail "captain start in progress", even if it never
+      observed the stopped marker. Once grace and any backoff expire, starts one
+      with `fm-deck-chat.sh --stream` (resuming the persisted session), backing off
+      while it keeps dying soon after start.
       Honours state/primary-chat/stopped, including hosts that register late.
       Waits for an in-flight --stream launcher even past its expected window;
       logs that delay once and leaves it to finish independently on shutdown.
-      After a start attempt returns, or while backing off, down past the alert
-      window (default 120s) writes service-down and raises
+      After a start attempt returns, or while backing off or waiting for a captain
+      start, down past the alert window (default 120s) writes service-down and raises
       `fm-deck-chat.sh service-alert` once per outage, across keeper replacement;
       a stable run or explicit stop clears the marker. Env: FM_DECK_CHAT_SERVICE_POLL (2),
       _BACKOFF (5), _BACKOFF_MAX (300), _STABLE_SECS (120), _ALERT_SECS (120),
       _START_TIMEOUT (200, expected launcher window, not a termination deadline),
-      _START_GRACE (60: after each captain start, the keeper leaves it that
-      long to register before starting one itself).
+      _START_GRACE (60, captain-start grace seconds).
 """
 import argparse
 import fcntl
