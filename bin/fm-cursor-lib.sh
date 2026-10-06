@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Cursor executable resolution and Cursor process identity.
-# Sourced by bin/fm-session-lock-lib.sh, bin/fm-harness.sh, and
-# bin/fm-tmux-lib.sh for primary-session identity. This file is sourced by
-# scripts and has no side effects on source.
+# Sourced by bin/fm-agent-process-lib.sh and bin/fm-tmux-lib.sh for pane
+# liveness and composer reads only; Cursor is not a supported harness. This
+# file is sourced by scripts and has no side effects on source.
 #
 # Why one owner: cursor ships TWO executable names - `cursor-agent`, plus the
 # legacy alias `agent` it installs on every platform. `agent` is far too

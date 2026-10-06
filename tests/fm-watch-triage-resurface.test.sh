@@ -588,7 +588,7 @@ test_secondmate_home_supervision_churn_is_not_write_evidence() {
   mkdir -p "$home/state"
   printf 'sm-mate\n' > "$home/.fm-secondmate-home"
   printf 'Working... (12.3s)' > "$capture_file"
-  printf 'window=%s\nkind=ship\nharness=pi\nworktree=%s\n' "$window" "$home" > "$state/mate.meta"
+  printf 'window=%s\nkind=ship\nharness=deck\nworktree=%s\n' "$window" "$home" > "$state/mate.meta"
   record_pi_busy "$state" mate
   # An ordinary crew recording a provisioned mate home is the route that actually
   # reaches the probe: a kind=secondmate window of its own is triaged only under a

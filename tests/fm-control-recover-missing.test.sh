@@ -56,7 +56,7 @@ make_tmux_stub() {  # <dir>
   mkdir -p "$fb"
   # Exit-0 stand-ins for every launchable worker harness, so a launch resolves
   # its executable here rather than whatever the developer has installed.
-  fm_fake_exit0 "$fb" pi pi-signed deck
+  fm_fake_exit0 "$fb" deck
   cat > "$fb/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -199,7 +199,7 @@ SH
 }
 
 # new_case <name> [id] -> echoes a case dir whose endpoint currently holds a
-# live pi agent. A test that wants the MISSING precondition calls
+# live deck agent. A test that wants the MISSING precondition calls
 # make_endpoint_missing.
 new_case() {
   local id=${2:-t1} dir="$TMP_ROOT/$1-$RANDOM"
@@ -207,8 +207,8 @@ new_case() {
   : > "$dir/fake/literal"
   : > "$dir/fake/keys"
   : > "$dir/fake/created-windows"
-  printf 'pi' > "$dir/fake/command"
-  printf 'pi' > "$dir/fake/becomes"
+  printf 'fm-deck-worker' > "$dir/fake/command"
+  printf 'fm-deck-worker' > "$dir/fake/becomes"
   printf '%s\n' "fm-$id" > "$dir/fake/windows"
   printf 'fmses\n' > "$dir/fake/sessions"
   : > "$dir/fake/created-sessions"
@@ -216,7 +216,7 @@ new_case() {
   printf '%s\n' "$dir"
 }
 
-# add_ship_task <case-dir> <id> [worktree]: a pi ship task recorded on the
+# add_ship_task <case-dir> <id> [worktree]: a deck ship task recorded on the
 # tmux endpoint fmses:fm-<id>. The worktree defaults to <case-dir>/wt; a pool
 # case passes its slot checkout instead.
 add_ship_task() {
@@ -237,7 +237,7 @@ EOF
     echo "endpoint_task_id=$id"
     echo "worktree=$wt"
     echo "project=$proj"
-    echo "harness=pi"
+    echo "harness=deck"
     echo "kind=ship"
     echo "mode=no-mistakes"
     echo "yolo=off"
@@ -315,7 +315,7 @@ test_recover_missing_recreates_the_terminal_and_launches_the_replacement() {
 
   out=$(run_control "$dir" rm1 recover-missing --note "the terminal was closed out from under it"); rc=$?
   expect_code 0 "$rc" "recovering a missing endpoint should succeed"$'\n'"$out"
-  assert_contains "$out" "recovered rm1 harness=pi from=pi" "the outcome should name the recovered task and its runtime"
+  assert_contains "$out" "recovered rm1 harness=deck from=deck" "the outcome should name the recovered task and its runtime"
   assert_contains "$out" "endpoint=fmses:fm-rm1" "the outcome should name the recreated endpoint"
 
   assert_grep "fm-rm1" "$dir/fake/created-windows" "the missing terminal should have been recreated under its recorded name"
@@ -325,7 +325,7 @@ test_recover_missing_recreates_the_terminal_and_launches_the_replacement() {
     || fail "the recreated endpoint must keep the recorded handle"
   [ "$(meta_field "$dir" rm1 worktree)" = "$dir/wt" ] \
     || fail "the local copy must be reused, never reallocated"
-  [ "$(meta_field "$dir" rm1 harness)" = pi ] || fail "the recorded harness must survive recovery"
+  [ "$(meta_field "$dir" rm1 harness)" = deck ] || fail "the recorded harness must survive recovery"
   [ "$(meta_field "$dir" rm1 kind)" = ship ] || fail "kind must survive recovery"
   [ "$(journal_field "$dir" rm1 phase)" = complete ] \
     || fail "the transaction journal should end complete"
@@ -351,7 +351,7 @@ test_recover_missing_waits_for_the_recreated_shell_to_settle() {
   out=$(FM_FAKE_SHELL_BUSY_READS=4 FM_CONTROL_EXIT_WAIT=5 \
     run_control "$dir" rm21 recover-missing --note "the terminal was closed out from under it"); rc=$?
   expect_code 0 "$rc" "a still-starting shell must not fail the rescue"$'\n'"$out"
-  assert_contains "$out" "recovered rm21 harness=pi" "the rescue should complete in one command"
+  assert_contains "$out" "recovered rm21 harness=deck" "the rescue should complete in one command"
   assert_grep "encode launch-brief" "$dir/fake/literal" \
     "the launch should have been handed over only once the terminal read agent-free"
   [ "$(journal_field "$dir" rm21 phase)" = complete ] \
@@ -860,68 +860,25 @@ test_recover_missing_accepts_an_explicit_replacement_harness() {
   local dir out rc
   dir=$(new_case switch rm-switch-1)
   add_ship_task "$dir" rm-switch-1
-  printf 'pi-signed' > "$dir/fake/becomes"
   make_endpoint_missing "$dir"
 
-  out=$(run_control "$dir" rm-switch-1 recover-missing --harness pi-signed --note "move to a supported runtime"); rc=$?
+  out=$(run_control "$dir" rm-switch-1 recover-missing --harness deck --note "move to a supported runtime"); rc=$?
   expect_code 0 "$rc" "a recovery onto a named replacement runtime should succeed"$'\n'"$out"
-  assert_contains "$out" "recovered rm-switch-1 harness=pi-signed from=pi" \
-    "the outcome should name the recorded runtime it came from and the replacement it launched"
-  [ "$(meta_field "$dir" rm-switch-1 harness)" = pi-signed ] \
+  assert_contains "$out" "recovered rm-switch-1 harness=deck from=deck" \
+    "the outcome should name the recorded runtime and the one it launched"
+  [ "$(meta_field "$dir" rm-switch-1 harness)" = deck ] \
     || fail "the durable record must name the replacement harness that actually launched"
-  [ "$(cat "$dir/fake/command")" = pi-signed ] \
-    || fail "the replacement agent should be the named harness, not the recorded one"
+  [ "$(cat "$dir/fake/command")" = fm-deck-worker ] \
+    || fail "the replacement agent should be the named harness"
   assert_grep "fm-rm-switch-1" "$dir/fake/created-windows" \
     "the missing terminal should still be recreated under its recorded name"
-  [ "$(journal_field "$dir" rm-switch-1 from_harness)" = pi ] \
+  [ "$(journal_field "$dir" rm-switch-1 from_harness)" = deck ] \
     || fail "the journal should record the runtime the task ran on"
-  [ "$(journal_field "$dir" rm-switch-1 to_harness)" = pi-signed ] \
+  [ "$(journal_field "$dir" rm-switch-1 to_harness)" = deck ] \
     || fail "the journal should record the replacement runtime"
   assert_grep "move to a supported runtime" "$dir/home/data/rm-switch-1/brief.md" \
     "the progress note must still land in the instructions the replacement reads"
-  pass "fm-control recover-missing: an explicit replacement harness recovers a missing terminal in one transaction"
-}
-
-test_recover_missing_replacement_resets_unnamed_profile_axes() {
-  local dir out rc
-  dir=$(new_case switch-axes rm-switch-2)
-  add_ship_task "$dir" rm-switch-2
-  sed -i.bak 's/^model=default$/model=opus/; s/^effort=default$/effort=xhigh/' "$dir/home/state/rm-switch-2.meta"
-  rm -f "$dir/home/state/rm-switch-2.meta.bak"
-  printf 'pi-signed' > "$dir/fake/becomes"
-  make_endpoint_missing "$dir"
-
-  out=$(run_control "$dir" rm-switch-2 recover-missing --harness pi-signed --note "move to a supported runtime"); rc=$?
-  expect_code 0 "$rc" "a replacement-profile recovery should succeed"$'\n'"$out"
-  [ "$(meta_field "$dir" rm-switch-2 model)" = default ] \
-    || fail "a model chosen for the recorded harness must not carry onto a replacement harness"
-  [ "$(meta_field "$dir" rm-switch-2 effort)" = default ] \
-    || fail "an effort chosen for the recorded harness must not carry onto a replacement harness"
-  pass "fm-control recover-missing: a replacement harness resets unnamed profile axes exactly as a relaunch does"
-}
-
-test_recover_missing_onto_deck_from_a_recorded_effort() {
-  local dir out rc
-  dir=$(new_case switch-deck rm-switch-3)
-  add_ship_task "$dir" rm-switch-3
-  sed -i.bak 's/^effort=default$/effort=xhigh/' "$dir/home/state/rm-switch-3.meta"
-  rm -f "$dir/home/state/rm-switch-3.meta.bak"
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/fakebin/deck"
-  chmod +x "$dir/fakebin/deck"
-  printf deck > "$dir/fake/becomes"
-  make_endpoint_missing "$dir"
-
-  # A recorded effort must not make a deck replacement refuse itself: the
-  # harness change resets the effort axis to default unless it is named too,
-  # so the rescue onto the one runtime with no effort control still goes
-  # through. Naming an effort for deck still refuses, below.
-  out=$(run_control "$dir" rm-switch-3 recover-missing --harness deck --note "move onto Deck"); rc=$?
-  expect_code 0 "$rc" "a recorded effort must not block a deck replacement recovery"$'\n'"$out"
-  [ "$(meta_field "$dir" rm-switch-3 harness)" = deck ] || fail "the record should name the deck replacement"
-  [ "$(meta_field "$dir" rm-switch-3 effort)" = default ] \
-    || fail "a recorded effort must be reset to default on a harness with no effort control"
-  [ "$(cat "$dir/fake/command")" = deck ] || fail "the deck replacement should have launched"
-  pass "fm-control recover-missing: a recorded effort resets to default on a deck replacement instead of refusing the rescue"
+  pass "fm-control recover-missing: an explicitly named harness recovers a missing terminal in one transaction"
 }
 
 test_recover_missing_onto_deck_with_an_explicit_effort_refuses() {
@@ -947,15 +904,14 @@ test_recover_missing_replacement_accepts_a_named_model_and_effort() {
   local dir out rc
   dir=$(new_case switch-named rm-switch-5)
   add_ship_task "$dir" rm-switch-5
-  printf 'pi-signed' > "$dir/fake/becomes"
   make_endpoint_missing "$dir"
 
-  out=$(run_control "$dir" rm-switch-5 recover-missing --harness pi-signed --model gpt-5.6-luna --note "move with a named model"); rc=$?
+  out=$(run_control "$dir" rm-switch-5 recover-missing --harness deck --model gpt-5.6-luna --note "move with a named model"); rc=$?
   expect_code 0 "$rc" "a named replacement model should be honoured"$'\n'"$out"
   [ "$(meta_field "$dir" rm-switch-5 model)" = gpt-5.6-luna ] \
     || fail "the named replacement model should be recorded"
   [ "$(meta_field "$dir" rm-switch-5 effort)" = default ] \
-    || fail "an unnamed effort should still reset across the harness change"
+    || fail "an unnamed effort should stay default"
   pass "fm-control recover-missing: a replacement profile honours the axes the caller names"
 }
 
@@ -985,7 +941,6 @@ test_recover_missing_held_backlog_row_still_refuses_a_replacement() {
   }
   dir=$(new_case switch-held rm-switch-9)
   add_ship_task "$dir" rm-switch-9
-  printf 'pi-signed' > "$dir/fake/becomes"
   make_endpoint_missing "$dir"
   {
     printf '%s\n' '# Backlog' '' '## In flight' '' '## Queued' '' '## Done'
@@ -997,7 +952,7 @@ test_recover_missing_held_backlog_row_still_refuses_a_replacement() {
   meta_before=$(cat "$dir/home/state/rm-switch-9.meta")
   brief_before=$(cat "$dir/home/data/rm-switch-9/brief.md")
 
-  out=$(run_control "$dir" rm-switch-9 recover-missing --harness pi-signed --note "move"); rc=$?
+  out=$(run_control "$dir" rm-switch-9 recover-missing --harness deck --note "move"); rc=$?
   expect_code 1 "$rc" "a held backlog row must refuse a replacement recovery too"$'\n'"$out"
   assert_contains "$out" "not eligible for relaunch" \
     "the backlog eligibility predicate must gate a replacement recovery exactly as it gates an ordinary one"
@@ -1074,7 +1029,7 @@ test_recover_missing_recreates_a_gone_session_before_the_window() {
 
   out=$(run_control "$dir" rm16 recover-missing --note "the whole session went away"); rc=$?
   expect_code 0 "$rc" "a task whose whole session is gone should recover"$'\n'"$out"
-  assert_contains "$out" "recovered rm16 harness=pi from=pi" \
+  assert_contains "$out" "recovered rm16 harness=deck from=deck" \
     "the outcome should name the recovered task and its runtime"
   assert_contains "$out" "endpoint=fmses:fm-rm16" \
     "the recreated endpoint must keep the recorded handle, session included"
@@ -1141,10 +1096,10 @@ test_recover_missing_freezes_the_recorded_profile_for_a_secondmate() {
   dir=$(new_case smfreeze sm9)
   home="$dir/home"
   mkdir -p "$home/config" "$home/data/sm9"
-  # The durable pin names a DIFFERENT runtime than the record. A relaunch
+  # The durable pin names a DIFFERENT model than the record. A relaunch
   # re-resolves this pin on purpose; a recovery must not, because it continues
   # the same run in the same terminal.
-  printf 'pi-signed some-model high\n' > "$home/config/secondmate-harness"
+  printf 'deck some-model\n' > "$home/config/secondmate-harness"
   printf '# secondmate brief\n' > "$home/data/sm9/brief.md"
   fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
   mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
@@ -1165,12 +1120,12 @@ test_recover_missing_freezes_the_recorded_profile_for_a_secondmate() {
     echo "endpoint_task_id=sm9"
     echo "worktree=$dir/smhome"
     echo "project=$dir/smhome"
-    echo "harness=pi"
+    echo "harness=deck"
     echo "kind=secondmate"
     echo "mode=secondmate"
     echo "yolo=off"
     echo "model=opus"
-    echo "effort=xhigh"
+    echo "effort=default"
     echo "home=$dir/smhome"
   } > "$home/state/sm9.meta"
   printf '%s' "$dir/smhome" > "$dir/fake/cwd"
@@ -1178,15 +1133,15 @@ test_recover_missing_freezes_the_recorded_profile_for_a_secondmate() {
 
   out=$(run_control "$dir" sm9 recover-missing); rc=$?
   expect_code 0 "$rc" "a secondmate with a missing endpoint should recover"$'\n'"$out"
-  assert_contains "$out" "harness=pi from=pi" \
+  assert_contains "$out" "harness=deck from=deck" \
     "recovery must continue the RECORDED harness, not the configured pin"
-  assert_contains "$out" "model=opus effort=xhigh" \
+  assert_contains "$out" "model=opus effort=default" \
     "recovery must continue the recorded model and effort, not reset them to the pin's"
-  [ "$(journal_field "$dir" sm9 to_harness)" = pi ] \
+  [ "$(journal_field "$dir" sm9 to_harness)" = deck ] \
     || fail "the journal should record the recorded harness, got '$(journal_field "$dir" sm9 to_harness)'"
   [ "$(journal_field "$dir" sm9 to_model)" = opus ] \
     || fail "the journal should record the recorded model, got '$(journal_field "$dir" sm9 to_model)'"
-  [ "$(journal_field "$dir" sm9 to_effort)" = xhigh ] \
+  [ "$(journal_field "$dir" sm9 to_effort)" = default ] \
     || fail "the journal should record the recorded effort, got '$(journal_field "$dir" sm9 to_effort)'"
   pass "fm-control recover-missing: a secondmate's recorded harness, model and effort survive a differing configured pin"
 }
@@ -1216,7 +1171,7 @@ test_recover_missing_preserves_uncommitted_work() {
 
   out=$(run_control "$dir" rm19 recover-missing --note "the terminal died mid-task"); rc=$?
   expect_code 0 "$rc" "a mid-work local copy is exactly what this verb rescues"$'\n'"$out"
-  assert_contains "$out" "recovered rm19 harness=pi" "the rescue should complete"
+  assert_contains "$out" "recovered rm19 harness=deck" "the rescue should complete"
   assert_grep "fm-rm19" "$dir/fake/created-windows" "the terminal should have been recreated"
   assert_grep "encode launch-brief" "$dir/fake/literal" \
     "the launch should have been handed to the existing owner"
@@ -1267,8 +1222,6 @@ test_stream_agent_probe_finds_an_agent_under_a_spaced_home
 test_recover_missing_on_stream_ignores_unowned_agents
 test_recover_missing_on_stream_reports_rebind_cleanup
 test_recover_missing_accepts_an_explicit_replacement_harness
-test_recover_missing_replacement_resets_unnamed_profile_axes
-test_recover_missing_onto_deck_from_a_recorded_effort
 test_recover_missing_onto_deck_with_an_explicit_effort_refuses
 test_recover_missing_replacement_accepts_a_named_model_and_effort
 test_recover_missing_replacement_refuses_an_unverified_harness

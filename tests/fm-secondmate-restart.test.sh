@@ -129,17 +129,15 @@ SH
 new_case() {
   local dir="$TMP_ROOT/$1-$RANDOM"
   mkdir -p "$dir/home/state" "$dir/home/data" "$dir/home/config" "$dir/fake"
-  printf 'pi\n' > "$dir/home/config/secondmate-harness"
+  printf 'deck\n' > "$dir/home/config/secondmate-harness"
   : > "$dir/fake/literal"
   : > "$dir/fake/keys"
   : > "$dir/fake/rings"
-  printf 'pi' > "$dir/fake/command"
-  printf 'pi' > "$dir/fake/becomes"
+  printf 'fm-deck-worker' > "$dir/fake/command"
+  printf 'fm-deck-worker' > "$dir/fake/becomes"
   make_stub "$dir"
-  # The relaunch resolves the Pi executable on PATH; the stub advertises the
-  # regular TUI mode a current Pi build supports.
-  printf '#!/usr/bin/env bash\nprintf "Options: --tui-mode\\n"\n' > "$dir/fakebin/pi"
-  chmod +x "$dir/fakebin/pi"
+  # The relaunch resolves the deck executable on PATH.
+  fm_fake_exit0 "$dir/fakebin" deck
   printf '%s\n' "$dir"
 }
 
@@ -147,7 +145,7 @@ new_case() {
 # A live LOCAL second mate: a real git worktree for its home, plus the durable
 # record this home keeps for it.
 add_local_mate() {
-  local dir=$1 id=$2 harness=${3:-pi} backend=${4:-}
+  local dir=$1 id=$2 harness=${3:-deck} backend=${4:-}
   local home="$dir/home" smhome="$dir/$id-home"
   fm_git_worktree "$dir/$id-repo" "$smhome" "sm-$id"
   mkdir -p "$smhome/state" "$smhome/data" "$smhome/bin" "$home/data/$id"
@@ -178,7 +176,7 @@ add_local_mate() {
 # mate's home as a DETACHED worktree of that repo already sitting on origin's tip.
 # That "already current" home is the shape the old classifier skipped entirely.
 add_repo_backed_mate() {  # <case-dir> <id> [harness] [backend]
-  local dir=$1 id=$2 harness=${3:-pi} backend=${4:-}
+  local dir=$1 id=$2 harness=${3:-deck} backend=${4:-}
   local home="$dir/home" repo="$dir/fmrepo" smhome="$dir/$id-home"
   if [ ! -d "$repo" ]; then
     git init -q --bare "$dir/origin.git"
@@ -289,7 +287,7 @@ test_persist_precedes_restart() {
   out=$(run_restart "$dir" sm1); rc=$?
 
   expect_code 0 "$rc" "a confirmed persist should restart the mate"$'\n'"$out"
-  assert_contains "$out" "restarted: sm1 (pi)" "the mate should be restarted on its pinned runtime"
+  assert_contains "$out" "restarted: sm1 (deck)" "the mate should be restarted on its pinned runtime"
   assert_contains "$out" "summary: 1 of 1 restarted, 0 nudged, 0 unreached" "the summary should report the reload"
   # The pane transcript orders the two phases: the instruction doorbell first,
   # the harness exit command only after it.
@@ -360,7 +358,7 @@ SH
 test_removed_backend_is_unreached() {
   local dir out rc before
   dir=$(new_case removed-backend)
-  add_local_mate "$dir" sm1 pi zellij
+  add_local_mate "$dir" sm1 deck zellij
   before=$(cat "$dir/home/state/sm1.meta")
 
   out=$(run_restart "$dir" sm1); rc=$?
@@ -413,6 +411,9 @@ test_refused_restart_falls_back_without_claiming_a_reload() {
   assert_contains "$out" "unreached: sm1:" "a failed restart must be reported as unknown"
   assert_contains "$out" "restart outcome is unknown" "the report must not attribute an ambiguous failure"
   assert_not_contains "$out" "nudged: sm1" "a failed restart must not claim the old agent was nudged"
+  assert_contains "$out" "$dir/home/config/secondmate-harness names harness 'claude'" \
+    "the restart report must retain the resolver's diagnostic"
+  assert_absent "$dir/home/state/sm1.control-relaunch" "invalid configuration opened a relaunch transaction"
   assert_not_contains "$out" "restarted: sm1" "a refused restart must not be reported as restarted"
   [ "$(cat "$dir/fake/command")" = "$before" ] \
     || fail "a refusal before the stop should leave the running agent exactly as it was"
@@ -434,7 +435,7 @@ setup_remote_case() {  # <case-dir> <id> <ssh-mode>
     echo "endpoint_task_id=$id"
     echo "worktree=$dir/$id-home"
     echo "project=$dir/$id-home"
-    echo "harness=pi"
+    echo "harness=deck"
     echo "kind=secondmate"
     echo "mode=secondmate"
     echo "yolo=off"
@@ -493,6 +494,26 @@ SH
   export FM_TEST_SSH_BIN="$fb/fake-ssh"
 }
 
+test_remote_restart_refuses_invalid_parent_harness() {
+  local dir out rc config before
+  dir=$(new_case remote-invalid-pin)
+  setup_remote_case "$dir" sm2 ok
+  before=$(cat "$dir/home/state/sm2.meta")
+  for config in secondmate-harness crew-harness; do
+    printf 'default\n' > "$dir/home/config/secondmate-harness"
+    printf 'claude\n' > "$dir/home/config/$config"
+    out=$(run_restart "$dir" sm2); rc=$?
+    expect_code 1 "$rc" "an invalid parent harness must refuse the remote restart"$'\n'"$out"
+    assert_contains "$out" "$dir/home/config/$config names harness 'claude'" \
+      "the remote restart must print the resolver's diagnostic"
+    [ ! -s "$dir/ssh.log" ] || fail "an invalid parent harness reached the remote lifecycle transport"
+    [ "$(cat "$dir/home/state/sm2.meta")" = "$before" ] || fail "an invalid parent harness changed the mate's record"
+    assert_absent "$dir/home/state/pending-replies" "invalid configuration requested persistence"
+    assert_not_contains "$out" "restarted: sm2" "invalid configuration was reported as restarted"
+  done
+  pass "remote restart refuses an invalid parent harness before reaching the mate"
+}
+
 test_remote_mate_restarts_over_the_transport_hop() {
   local dir out rc relaunch_line
   dir=$(new_case remote)
@@ -500,17 +521,17 @@ test_remote_mate_restarts_over_the_transport_hop() {
   export FM_FAKE_ANSWER_STATUS="$dir/home/state/sm2.status"
   # The parent's own pin is what the replacement must run on; the remote home's
   # copy of config/secondmate-harness is a different home's file.
-  printf 'pi big-model high\n' > "$dir/home/config/secondmate-harness"
+  printf 'deck big-model\n' > "$dir/home/config/secondmate-harness"
 
   out=$(run_restart "$dir" fm-sm2); rc=$?
   unset FM_FAKE_ANSWER_STATUS
 
   expect_code 0 "$rc" "a remote mate should restart over its transport hop"$'\n'"$out"
-  assert_contains "$out" "restarted: sm2 on remote-mac (pi)" \
+  assert_contains "$out" "restarted: sm2 on remote-mac (deck)" \
     "a remote restart should be reported with its host and the parent's pinned runtime"
   relaunch_line=$(grep '^fm-remote-secondmate-control.sh relaunch' "$dir/ssh.log" | head -1)
   [ -n "$relaunch_line" ] || fail "no relaunch crossed the transport hop"$'\n'"$(cat "$dir/ssh.log")"
-  [ "$relaunch_line" = "fm-remote-secondmate-control.sh relaunch sm2 pi big-model high" ] \
+  [ "$relaunch_line" = "fm-remote-secondmate-control.sh relaunch sm2 deck big-model default" ] \
     || fail "the host-local relaunch did not carry the parent's resolved profile: $relaunch_line"
   # The persist request crossed the SAME hop before the restart did.
   [ "$(grep -n '^fm-remote-secondmate-control.sh send' "$dir/ssh.log" | head -1 | cut -d: -f1)" \
@@ -552,32 +573,6 @@ test_local_restart_uses_the_home_pin_and_reports_what_ran() {
   [ "$(grep '^harness=' "$dir/home/state/sm1.meta" | tail -1)" = "harness=deck" ] \
     || fail "the durable record did not follow the replacement onto the pinned runtime"
   pass "T8 a local restart re-resolves this home's pin and reports the runtime that came up"
-}
-
-test_native_ultra_restart_keeps_local_and_remote_profiles() {
-  local dir out rc relaunch_line
-  dir=$(new_case native-local)
-  add_local_mate "$dir" sm1
-  arm_answer "$dir" sm1
-  printf 'pi codex-native/gpt-6-astra ultra\n' > "$dir/home/config/secondmate-harness"
-  printf 'pi' > "$dir/fake/becomes"
-  out=$(run_restart "$dir" sm1); rc=$?
-  expect_code 0 "$rc" "native local restart failed: $out"
-  assert_contains "$out" "restarted: sm1 (pi)" "native local restart did not complete"
-  assert_contains "$(cat "$dir/home/state/sm1.meta")" "effort=ultra" "local restart dropped native effort"
-  assert_contains "$(cat "$dir/fake/literal")" "--codex-effort 'ultra'" "local restart dropped native launch flag"
-
-  dir=$(new_case native-remote)
-  setup_remote_case "$dir" sm2 ok
-  export FM_FAKE_ANSWER_STATUS="$dir/home/state/sm2.status"
-  printf 'pi-signed codex-native/gpt-6-astra ultra\n' > "$dir/home/config/secondmate-harness"
-  out=$(run_restart "$dir" sm2); rc=$?
-  unset FM_FAKE_ANSWER_STATUS
-  expect_code 0 "$rc" "native remote restart failed: $out"
-  relaunch_line=$(grep '^fm-remote-secondmate-control.sh relaunch' "$dir/ssh.log" | head -1)
-  [ "$relaunch_line" = "fm-remote-secondmate-control.sh relaunch sm2 pi-signed codex-native/gpt-6-astra ultra" ] \
-    || fail "remote restart dropped native profile: $relaunch_line"
-  pass "native Ultra survives local restart and the remote restart transport"
 }
 
 # --- T9: an unrelated concurrent reply cannot release the persist gate -------
@@ -670,7 +665,7 @@ test_relaunches_do_not_block_persist_polling() {
     "the slow first relaunch blocked lifecycle progress for the second mate"
   assert_contains "$out" "summary: 2 of 2 restarted, 0 nudged, 0 unreached" \
     "parallel relaunches were not both accounted for"
-  assert_grep 'fm-remote-secondmate-control.sh relaunch sm1 pi default default' "$dir/ssh.log" \
+  assert_grep 'fm-remote-secondmate-control.sh relaunch sm1 deck default default' "$dir/ssh.log" \
     "an absent remote model and effort pin were not expressed as explicit defaults"
   pass "T12 relaunch waits do not block fleet persistence polling"
 }
@@ -730,7 +725,7 @@ if [ -e "$FM_FAKE_DIR/remote-relaunch-start" ] && [ ! -e "$FM_FAKE_DIR/result-ra
   if [ -z "$result" ]; then
     result_dir=$(find "$FM_HOME/state" -maxdepth 1 -type d -name '.secondmate-restart.*' -print -quit)
     if [ -n "$result_dir" ]; then
-      printf 'restarted: sm1 on remote-mac (pi)\n' > "$result_dir/0.result"
+      printf 'restarted: sm1 on remote-mac (deck)\n' > "$result_dir/0.result"
       : > "$FM_FAKE_DIR/result-race-injected"
       printf 'Z\n'
       exit 0
@@ -745,7 +740,7 @@ SH
   unset FM_FAKE_ANSWER_STATUS
 
   expect_code 0 "$rc" "a result published while the worker is reaped must remain authoritative"$'\n'"$out"
-  assert_contains "$out" "restarted: sm1 on remote-mac (pi)" \
+  assert_contains "$out" "restarted: sm1 on remote-mac (deck)" \
     "the result published during the reap window was replaced with a worker failure"
   assert_not_contains "$out" "exited before publishing" \
     "the parent failed to recheck the worker result after wait"
@@ -807,7 +802,7 @@ test_already_current_removed_backend_is_unreached() {
   dir=$(new_case already-current-unprovable)
   # A backend with no adapter (zellij was removed) can never establish "the old
   # agent stopped and the replacement came up".
-  add_repo_backed_mate "$dir" sm1 pi zellij
+  add_repo_backed_mate "$dir" sm1 deck zellij
   arm_answer "$dir" sm1
   before=$(cat "$dir/fake/command")
 
@@ -844,8 +839,8 @@ test_removed_backend_is_unreached
 test_unknown_mate_is_accounted_for
 test_refused_restart_falls_back_without_claiming_a_reload
 test_local_restart_uses_the_home_pin_and_reports_what_ran
-test_native_ultra_restart_keeps_local_and_remote_profiles
 test_remote_mate_restarts_over_the_transport_hop
+test_remote_restart_refuses_invalid_parent_harness
 test_unreachable_host_is_reported_unknown
 test_concurrent_reply_cannot_release_persist_gate
 test_persist_waits_are_polled_together

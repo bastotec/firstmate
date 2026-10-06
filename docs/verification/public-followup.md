@@ -163,9 +163,9 @@ Roughly 0.02 ms per session start, from a single `[ -f "$FM_HOME/.env" ]` test t
 
 ## Compatibility axes reviewed
 
-Primary harnesses (`claude`, `codex`, `opencode`, `pi`, `pi-signed`, `grok`): not applicable after inspection.
+Primary harness integration: not applicable after inspection; [Harness support](../configuration.md#harness-support) owns the supported set.
 Nothing here reads or renders harness-specific state.
-The only supervision surfaces touched are the session-start digest, which `bin/fm-supervision-instructions.sh` already renders per harness without knowing this section exists, and the wake payload produced by the existing relay poll, which every harness protocol consumes identically.
+The only supervision surfaces touched are the session-start digest, whose protocol `bin/fm-supervision-instructions.sh` renders, and the wake payload produced by the existing relay poll.
 
 Runtime backends (tmux, herdr, stream): not applicable after inspection.
 No command here reads `state/<id>.meta`'s backend fields, resolves an endpoint, or captures a pane.

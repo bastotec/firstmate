@@ -48,7 +48,7 @@ Launching a supported harness inside it for your primary session instantiates yo
 - **Explicit project modes** - each project ships via `no-mistakes`, `direct-PR`, or `local-only`, with an optional `+yolo` merge-autonomy flag.
 - **Optional auto-land** - authorized green PRs land and run private post-merge deployment hooks without waiting for their worker; [Auto-land setup](docs/configuration.md#auto-land-configautolandjson-configpost-merge) owns the opt-in and safety policy.
 - **Optional secondmates** - opt in to persistent second mates that run from isolated firstmate homes with their own `FM_HOME`, state, projects, and session lock, either locally or as a whole home on an SSH-reachable host, with guarded updates and recovery that never turns an unavailable remote route into a local replacement.
-- **Event-driven, zero-token supervision** - a bash watcher sleeps on the fleet and wakes the first mate only when something needs you; Pi's primary integration also gets a [turn-end backstop](docs/turnend-guard.md) that forces one bounded follow-up on a blind stop when work is under way and supervision is not live.
+- **Event-driven, zero-token supervision** - a bash watcher sleeps on the fleet and wakes the first mate only when something needs you.
 - **Optional Relay** - opt in with one local `.env` pairing token so firstmate can answer your public mentions on X and Discord alike, act on normal reversible mention requests through the same lifecycle as chat requests, acknowledge spawned work, and post up to three public-safe completion follow-ups within seven days for genuine milestones and the final outcome without changing non-Relay behavior; a final reply promised in a thread becomes durable state that is reconciled from disk, so a restart or a compacted conversation cannot lose it; dry-run preview records would-be replies and dismissals locally before go-live.
 - **Strict project boundary** - the first mate is read-only over your projects except for the narrow guarded and captain-approved operations authorized by [hard rule 1](AGENTS.md#1-identity-and-prime-directives), including fleet sync's guarded safe branch pruning; crewmates make every other project change behind the configured merge authority.
 - **Restart-proof** - all state lives on disk and in the active session backend (tmux by hard default, with the accepted alternatives and how each is selected owned by [docs/configuration.md](docs/configuration.md) "Runtime backend"); kill the session anytime and the next one reconciles, including confirmed-dead secondmate agents, and carries on.
@@ -59,17 +59,12 @@ Full detail on every feature lives in [docs/architecture.md](docs/architecture.m
 
 ### Requirements
 
-- A verified primary agent harness: Pi or `pi-signed`; Deck is available through the opt-in [managed primary setup](docs/managed-primary.md).
+- [Deck](https://github.com/bastotec/deck), the only supported agent harness, with a key its gateway accepts.
 - Git and the GitHub CLI, authenticated through `gh auth login`.
 - The CLI and dependencies for your selected runtime backend; tmux is the reference default.
 
 The first mate detects and offers to install supported missing tools after you approve.
 Backend-specific setup is linked in [Documentation](#documentation).
-
-### Recommended harnesses
-
-Pi runs the primary firstmate session, with `pi-signed` supported as Pi's distinct signed-wrapper identity.
-Pi uses its tracked primary watcher extension and turn-end guard extension when launched with its documented setup.
 
 ### Install and launch
 
@@ -79,23 +74,13 @@ git clone https://github.com/kunchenguid/firstmate
 cd firstmate
 ```
 
-Then launch Pi; AGENTS.md takes over from there:
+Then launch the Deck chat host; AGENTS.md takes over from there:
 
 ```sh
-pi
-# or, when the signed wrapper is installed
-FM_PI_HARNESS=pi-signed pi-signed
+bin/fm-deck-chat.sh
 ```
 
-For Pi, approve the project trust prompt once per clone on first launch so the tracked `.pi/extensions/*.ts` files auto-load.
-Pi's `/calm` toggle hides supported transcript chrome, including canonically classified Firstmate operational user rows, and uses a Calm-only animated working boat during active runs while preserving all model context and session data.
-Those Calm-hidden operational inputs remain ordinary user-role messages with unchanged delivery, ordering, authority, persistence, and exports.
-The preference persists for the effective Firstmate home, and toggling it off restores ordinary rendering.
-[Calm's current behavior and supported limits](docs/calm.md) are separate from its [version-scoped maintainer evidence](docs/calm-mode-feasibility.md).
-Pi's `/supervision-model` command pins a cheaper model and a shallower reasoning effort for the supervision branch alone, from the eligible models and thinking levels Pi itself reports; its model file may also be hand-edited into an ordered fallback chain across subscriptions, while no pin normally follows your own conversation's model and effort.
-See the [configuration schema](docs/configuration.md#pi-supervision-branch-model-and-effort-configsupervision-branch-model-configsupervision-branch-effort).
-
-For opt-in host-controlled primary sessions, follow [managed primary setup](docs/managed-primary.md) instead of the direct launch commands above.
+The host owns the home's session lock, runs session start once, keeps the watcher armed, and hands every wake to the Deck session; its header owns the details.
 
 ### Talk to it
 
@@ -186,17 +171,14 @@ Firstmate's skills live in two separate places with different audiences:
 - [docs/configuration.md](docs/configuration.md) - environment variables, `FM_HOME`, runtime backend selection, optional Relay and its X and Discord setup steps, trusted external process-event adapter setup, the files you set, and harness support.
 - [docs/extension-bindings.md](docs/extension-bindings.md) - maintainer architecture for the narrow trusted external `process-event-adapter/1` package, binding, handshake, and evidence boundary.
 - [docs/remote-secondmates.md](docs/remote-secondmates.md) - current setup, routing, transfer, recovery, and safety behavior for whole-home remote second mates.
-- [docs/calm.md](docs/calm.md) - current Pi `/calm` behavior and supported presentation limits.
 - [docs/wedge-alarm.md](docs/wedge-alarm.md) - configure the active alert for an away-mode escalation delivery that gets stuck.
 - [docs/tmux-backend.md](docs/tmux-backend.md) - current setup and limits for the tmux reference backend.
 - [docs/herdr-backend.md](docs/herdr-backend.md) - current setup, CI coverage, safety boundaries, and limits for the Herdr backend.
 - [docs/stream-backend.md](docs/stream-backend.md) - setup, security model, and limits for the experimental central stream backend, which puts every task's live output on one hub.
-- [docs/managed-primary.md](docs/managed-primary.md) - opt-in primary lifecycle ownership, native steering, and supported limits.
 - [docs/verification/runtime-backends.md](docs/verification/runtime-backends.md) - active maintainer verification for runtime backend guarantees.
 - [docs/gitlab-merge-watch.md](docs/gitlab-merge-watch.md) - maintainer verification for watching and merging GitLab merge requests on arbitrary instances.
-- [docs/turnend-guard.md](docs/turnend-guard.md) - the primary session's current "no turn ends blind" backstop, scope, loop safety, and compatibility limits.
 - [docs/verification/supervision.md](docs/verification/supervision.md) - active maintainer verification for session-start, guard, continuity, and wedge integrations.
-- [docs/supervision-protocols/](docs/supervision-protocols/) - rendered primary-harness watcher protocols for Pi and `pi-signed`, Deck home hosts, and unknown harness fallback.
+- [docs/supervision-protocols/](docs/supervision-protocols/) - rendered watcher protocols for Deck home hosts and the unknown harness fallback.
 - [docs/scripts.md](docs/scripts.md) - the `bin/` toolbelt reference.
 - [docs/documentation-audiences.md](docs/documentation-audiences.md) - documentation audiences and the machine-checked placement boundary.
 - [`AGENTS.md`](AGENTS.md) - the supervisor contract, role boundary, and routing index for conditional procedures.

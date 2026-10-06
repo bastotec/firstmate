@@ -23,7 +23,7 @@ When enabled, for each spawn Firstmate resolves one W3C `traceparent` carrier fo
 This feature parents no SDK span by itself.
 
 Because the injected carrier and the recorded carrier are the same string, an observer that reads the metadata reconstructs exactly the identity the child received.
-The injection sits at the unconditional pre-launch export site, so it covers ship, scout, and secondmate spawns across `pi`, `pi-signed`, and `deck`.
+The injection sits at the unconditional pre-launch export site, so it covers ship, scout, and secondmate spawns on `deck`.
 This is the same coverage `GOTMPDIR` already has and requires no trace-specific `launch_template()` behavior.
 Ship and scout spawns reach that site on every accepted spawn backend, and a Secondmate reaches it on every backend that accepts a Secondmate spawn at all; [`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns both sets.
 

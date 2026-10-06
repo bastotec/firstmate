@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Render the primary-harness supervision operating block for session start and
-# the short repair line used by guards and turn-end hooks.
+# the short repair line used by guards.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -92,14 +92,11 @@ if [ -z "$HARNESS" ]; then
 fi
 
 case "$HARNESS" in
-  pi|deck) SNIPPET="$DOC_DIR/$HARNESS.md" ;;
-  pi-signed) SNIPPET="$DOC_DIR/pi.md" ;;
+  deck) SNIPPET="$DOC_DIR/deck.md" ;;
   *) HARNESS=unknown; SNIPPET="$DOC_DIR/unknown.md" ;;
 esac
 [ -f "$SNIPPET" ] || SNIPPET="$DOC_DIR/unknown.md"
 
-pi_ext="$FM_ROOT/.pi/extensions/fm-primary-pi-watch.ts"
-pi_turnend_ext="$FM_ROOT/.pi/extensions/fm-primary-turnend-guard.ts"
 x_mode_env="$CONFIG/x-mode.env"
 
 shell_quote() {
@@ -115,12 +112,7 @@ if [ "$X_MODE" -eq 0 ] && [ -f "$x_mode_env" ]; then
 fi
 
 render_snippet() {
-  local line
-  while IFS= read -r line || [ -n "$line" ]; do
-    line=${line//__FM_PI_EXT__/$pi_ext}
-    line=${line//__FM_PI_TURNEND_EXT__/$pi_turnend_ext}
-    printf '%s\n' "$line"
-  done < "$SNIPPET"
+  cat "$SNIPPET"
 }
 
 repair_line() {
@@ -147,10 +139,7 @@ repair_line() {
 
   case "$HARNESS" in
     deck)
-      printf '%s\n' 'Deck driver owns watcher continuity; do not arm manually. Report a driver failure to its lifecycle owner: parent for secondmates, managed launcher for primaries.'
-      ;;
-    pi|pi-signed)
-      printf '%s%s%s%s%s%s\n' "$prefix" 'repair a missing or failed watcher cycle with the Pi tool fm_watch_arm_pi, or restart Pi with -e ' "$pi_turnend_ext" ' -e ' "$pi_ext" ' if the extensions are not loaded.'
+      printf '%s\n' 'Deck driver owns watcher continuity; do not arm manually. Report a driver failure to its lifecycle owner: parent for secondmates, the deck chat host (bin/fm-deck-chat.sh) for primaries.'
       ;;
     *)
       printf '%s%s\n' "$prefix" 'repair missing watcher supervision according to the session-start block for this harness; do not use shell &.'
@@ -161,10 +150,7 @@ repair_line() {
 ordinary_wake_line() {
   case "$HARNESS" in
     deck)
-      printf '%s\n' 'Deck driver owns watcher continuity; do not arm manually. Report a driver failure to its lifecycle owner: parent for secondmates, managed launcher for primaries.'
-      ;;
-    pi|pi-signed)
-      printf '%s\n' '- Ordinary wake: the Pi extension already owns watcher continuity; do not arm another cycle.'
+      printf '%s\n' 'Deck driver owns watcher continuity; do not arm manually. Report a driver failure to its lifecycle owner: parent for secondmates, the deck chat host (bin/fm-deck-chat.sh) for primaries.'
       ;;
     *)
       printf '%s\n' '- Ordinary wake: follow the continuation in the harness protocol below; do not use shell &.'

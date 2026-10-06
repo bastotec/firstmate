@@ -1589,7 +1589,7 @@ test_no_run_herdr_idle_agent_status_outranked_by_record() {
   make_repo_on_branch "$d/wt" fm/feat-herdr-idle
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-herdr-idle.meta" "window=default:w1:p3" "worktree=$d/wt" "kind=ship" \
-    "backend=herdr" "harness=pi"
+    "backend=herdr" "harness=deck"
   # No run attributable (mirrors a no-mistakes run-step lookup that found no
   # matching row within the configured runs-list window): the crew's semantic
   # busy state is the only remaining signal.
@@ -1600,10 +1600,10 @@ test_no_run_herdr_idle_agent_status_outranked_by_record() {
   FM_FAKE_HERDR_BUSY=0
   local gen; gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" feat-herdr-idle)
   "$ROOT/bin/fm-busy-event.sh" apply "$d/state" feat-herdr-idle busy --gen "$gen" \
-    --source pi-ext --event agent-start
+    --source deck-wrapper --event agent-start
   local out; out=$(run_crew_state "$d" feat-herdr-idle)
   assert_contains "$out" "state: working" "a busy record with herdr idle agent_status -> working"
-  assert_contains "$out" "pi-ext" "the record's source outranks herdr's narrower native verdict"
+  assert_contains "$out" "deck-wrapper" "the record's source outranks herdr's narrower native verdict"
   pass "a mid-tool-call crew stays working because its record outranks herdr's generation state"
 }
 
@@ -1616,7 +1616,7 @@ test_no_run_herdr_idle_agent_status_and_idle_record_stays_idle() {
   make_repo_on_branch "$d/wt" fm/feat-herdr-stopped
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-herdr-stopped.meta" "window=default:w1:p4" "worktree=$d/wt" "kind=ship" \
-    "backend=herdr" "harness=pi"
+    "backend=herdr" "harness=deck"
   printf 'working: implementing\n' > "$d/state/feat-herdr-stopped.status"
   FM_FAKE_AXI_STATUS=""
   FM_FAKE_RUNS_LIST=""
@@ -1625,7 +1625,7 @@ test_no_run_herdr_idle_agent_status_and_idle_record_stays_idle() {
   FM_FAKE_HERDR_BUSY=0
   local gen; gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" feat-herdr-stopped)
   "$ROOT/bin/fm-busy-event.sh" apply "$d/state" feat-herdr-stopped idle --gen "$gen" \
-    --source pi-ext --event agent-settled
+    --source deck-wrapper --event agent-settled
   local out; out=$(run_crew_state "$d" feat-herdr-stopped)
   assert_not_contains "$out" "source: pane" "an idle record must not read as busy"
   assert_contains "$out" "source: status-log" "an idle record falls to the status log"

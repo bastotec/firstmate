@@ -12,14 +12,13 @@
 #
 # THE RETURN BRIEF (stdout, on begin and on every check) is rendered from durable
 # records, never from conversation memory: the archived away-posture record
-# (bin/fm-afk-contract.sh), the supervision outcome store
-# (bin/fm-branch-outcome.sh), the held set in the backlog (tasks-axi), and the
+# (bin/fm-afk-contract.sh), the held set in the backlog (tasks-axi), and the
 # status logs. Its order is fixed: supervisor health across the away window
 # first, then every mandate clause the captain recorded, including superseded
 # in-session read-backs (this release records clauses and does not execute them,
 # and the brief says so), then what is
 # waiting on the captain, then what was tried and failed or could not be fixed,
-# then what the away session handled, then cost. The health snapshot is taken
+# then cost. The health snapshot is taken
 # BEFORE the daemon shutdown so the shutdown itself cannot read as a gap.
 #
 # THE GATE. `blocked:` is the crewmate protocol's firstmate-actionable verb. A
@@ -146,21 +145,6 @@ window_start_epoch() {
     case "$flag" in ''|*[!0-9]*) ;; *) epoch=$flag ;; esac
   fi
   case "$epoch" in ''|*[!0-9]*) printf '' ;; *) printf '%s' "$epoch" ;; esac
-}
-
-# Reads the store through its owner so a malformed store refuses rather than
-# misleads.
-STORE_ROWS=
-store_rows_load() {  # <since-epoch>
-  local since=$1 raw
-  STORE_ROWS=
-  [ -s "$STATE/branch-outcomes.jsonl" ] || return 0
-  case "$since" in ''|*[!0-9]*) since=0 ;; esac
-  raw=$("$SCRIPT_DIR/fm-branch-outcome.sh" list --recent 1000000 2>/dev/null) \
-    || return 1
-  STORE_ROWS=$(printf '%s\n' "$raw" | jq -r --argjson since "$since" \
-    'select(.epoch >= $since) | [.seq, .task, .verdict, (.statusEndpoint // 0), (.summary // "")] | @tsv' 2>/dev/null) \
-    || { STORE_ROWS=; return 1; }
 }
 
 STATUS_SCAN_ERROR=
@@ -412,7 +396,7 @@ EOF
 
 render_return_brief() {  # <evidence-file> <blockers-file> <since-epoch>
   local evidence=$1 blockers=$2 since=$3 now record superseded superseded_at archive_dir stamp
-  local tag task key summary count routine captain live held_err last verb rows status
+  local tag task key summary count live held_err last verb rows status
   now=$(date +%s)
   printf '=== Return brief'
   if [ -n "$since" ]; then
@@ -478,12 +462,6 @@ render_return_brief() {  # <evidence-file> <blockers-file> <since-epoch>
 $(status_open_decisions "$status")
 EOF
   done
-  rows=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "captain" { printf "  - %s: %s\n", $2, $5 }')
-  if [ -n "$rows" ]; then
-    count=$((count + 1))
-    printf '  escalated by the away session:\n'
-    printf '%s\n' "$rows" | sed 's/^/  /'
-  fi
   [ "$count" -gt 0 ] || printf '  (nothing)\n'
 
   # 4. tried and failed, or could not be fixed.
@@ -506,22 +484,10 @@ EOF
   done
   [ "$count" -gt 0 ] || printf '  (nothing)\n'
 
-  # 5. handled while away.
-  printf 'Handled while away:\n'
-  routine=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "routine" { n++ } END { print n + 0 }')
-  captain=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "captain" { n++ } END { print n + 0 }')
-  if [ "$routine" -gt 0 ]; then
-    printf '  %s routine outcome(s) recorded; the latest:\n' "$routine"
-    printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "routine" { printf "    - %s: %s\n", $2, $5 }' | tail -5
-  else
-    printf '  (no routine outcomes recorded in the store for this window)\n'
-  fi
-
-  # 6. cost.
+  # 5. cost.
   live=0
   for meta in "$STATE"/*.meta; do [ -f "$meta" ] && live=$((live + 1)); done
-  printf 'Cost: %s supervision outcome(s) recorded (%s routine, %s captain); %s task(s) live at return.\n' \
-    "$((routine + captain))" "$routine" "$captain" "$live"
+  printf 'Cost: %s task(s) live at return.\n' "$live"
 }
 
 return_reconcile() {
@@ -657,12 +623,9 @@ EOF
     append_evidence escalation "$escalations" "$evidence"
   fi
 
-  if store_rows_load "$since"; then
-    remove_evidence lifecycle 'outcome store unreadable, catch-up stays gated' "$evidence" || lifecycle_ok=0
-  else
-    append_evidence lifecycle 'outcome store unreadable, catch-up stays gated' "$evidence"
-    lifecycle_ok=0
-  fi
+  # An older release gated on an unreadable supervision outcome store; that
+  # store is gone, so a retained gate must not keep its stale evidence.
+  remove_evidence lifecycle 'outcome store unreadable, catch-up stays gated' "$evidence" || lifecycle_ok=0
   if scan_open_blockers > "$blockers"; then
     remove_evidence_prefix lifecycle 'status file unreadable:' "$evidence" || lifecycle_ok=0
   else

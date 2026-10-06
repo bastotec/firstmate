@@ -8,35 +8,25 @@
 # lock-owning session.
 # This file is sourced by scripts and has no side effects on source.
 
-# Cursor is no longer a primary harness, so it never owns a session lock. Its
-# process identity stays available here only for worker liveness
-# (bin/fm-agent-process-lib.sh sources this file); bin/fm-cursor-lib.sh owns it.
-# shellcheck source=bin/fm-cursor-lib.sh
-. "$(dirname -- "${BASH_SOURCE[0]}")/fm-cursor-lib.sh"
-
-# Primary harness command names that may own a home session lock. pi is
-# anchored: a substring match would claim unrelated commands.
-# Deck binds its persistent Firstmate host, never the Deck child: the
-# fm-deck-worker driver owns the lock across transient `deck run` turns,
-# while a `deck chat` primary binds bin/fm-deck-chat.sh (argv[0] fm-deck-chat)
-# for the host's complete startup, supervision and cleanup lifetime.
-FM_HARNESS_RE='^pi$|^pi-signed$|^fm-deck-worker$|^fm-deck-chat$'
+# Primary host command names that may own a home session lock. Deck binds its
+# persistent Firstmate host, never the Deck child: the fm-deck-worker driver
+# owns the lock across transient `deck run` turns, while a `deck chat` primary
+# binds bin/fm-deck-chat.sh (argv[0] fm-deck-chat) for the host's complete
+# startup, supervision and cleanup lifetime. Both are anchored: a substring
+# match would claim unrelated commands.
+FM_HARNESS_RE='^fm-deck-worker$|^fm-deck-chat$'
 
 # Harness executable names for the stricter path evidence below, where a loose
-# regex would also match ordinary firstmate paths. Worker liveness
-# (bin/fm-agent-process-lib.sh) reads this list too, so it is wider than
-# FM_HARNESS_RE; a session-lock match still has to pass FM_HARNESS_RE.
+# regex would also match ordinary firstmate paths. Pane liveness
+# (bin/fm-agent-process-lib.sh) reads this list too, so it still names the
+# removed harnesses: a leftover session of one reads as a live agent rather
+# than an idle shell that could be relaunched over. A session-lock match still
+# has to pass FM_HARNESS_RE, so only the deck hosts ever own a lock.
 FM_HARNESS_NAMES=(claude codex opencode grok kimi pi-signed pi omp fm-deck-worker fm-deck-chat)
 
-# Print the exact harness name carried by executable path $1 - its own basename
-# or any directory component - or return 1.
-#
-# This exists because some installers name the executable by its version
-# (~/.local/share/claude/versions/2.1.220), so the basename identifies nothing
-# while the install path still names the harness. Matching whole path
-# components only is what keeps that widening safe: an ordinary path such as
-# ~/.claude/hooks/notify.sh has no "claude" component and is correctly not a
-# harness process.
+# Print the exact host name carried by executable path $1 - its own basename or
+# any directory component - or return 1. Matching whole path components only
+# keeps an ordinary path that merely contains the name from matching.
 fm_harness_path_name() {  # <path>
   local path=$1 name
   [ -n "$path" ] || return 1
@@ -73,10 +63,7 @@ fm_harness_process_matches() {  # <comm> <args>
 # until that first match, because the caller is normally an ordinary shell
 # several levels below its session, and stops there, so it can never cross into
 # an unrelated harness further up the real process tree - for example the live
-# session that launched a test as its own subprocess. The innermost match is
-# also where e.g. Pi's shared signed-wrapper ancestry actually holds the lock: a
-# "pi-signed" launcher can be the direct parent of the inner "pi" engine pid that
-# owns the lock, and the wrapper pid above it is not that owner.
+# session that launched a test as its own subprocess.
 fm_harness_ancestry_pids() {
   local pid=$$ comm args
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do

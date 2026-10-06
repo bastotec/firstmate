@@ -11,19 +11,16 @@
 # into a proposal and prints the read-back (bin/fm-afk-contract.sh owns the
 # clause fields, the never-set, the refusal wording, and the record schema); `confirm` promotes it
 # into state/.afk-contract and prints the entry announcement (hold-for-return
-# only: no phone channel exists). The record is the posture in every harness.
-# On Pi and pi-signed the entry ENDS there: the away daemon is no longer launched
-# on Pi, the ordinary supervision session keeps running in both postures, and
-# `start` refuses on those harnesses. Every other harness still runs the daemon
-# for now, so `start` and `start-native` require the confirmed record before they
-# launch the daemon.
+# only: no phone channel exists). `start` and `start-native` require the
+# confirmed record before they launch the daemon.
 # `stop` (the return, driven by bin/fm-afk-return.sh) shuts the daemon down,
 # clears state/.afk last, and archives the record under state/afk-contracts/.
 #
 # Why the terminal lifecycle exists (docs/herdr-backend.md "Away-mode supervisor support"):
 # bin/fm-afk-start.sh execs the supervise daemon in the FOREGROUND of its host.
-# Harnesses with a native in-pane tracked-background tool (claude, grok) run
-# it there directly. Other daemon-using harnesses need an isolated endpoint:
+# A harness with a native in-pane tracked-background tool would run it there
+# directly through the retained `start-native` path. Every supported harness
+# needs an isolated endpoint:
 # splitting the captain's active pane would visibly shrink it. Instead this
 # creates a non-visible tracked terminal (a herdr tab/workspace with --no-focus,
 # or a detached tmux session) that never touches the captain's active tab.
@@ -49,7 +46,7 @@
 #                              Repeatable --grant records captain-named task
 #                              ids that may merge-when-green while away.
 #   fm-afk-launch.sh confirm   Promote the required proposal and print the entry
-#                              announcement. On Pi this is the whole entry.
+#                              announcement.
 #   fm-afk-launch.sh start     Capture the captain pane, then (unless the daemon
 #                              is already running) launch the daemon in a fresh
 #                              non-visible terminal or detached process for the
@@ -197,23 +194,6 @@ fm_afk_launch_lock_release() {
 
 fm_afk_launch_usage() {
   sed -n '/^# Usage:/,/^# Supported backends:/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
-}
-
-fm_afk_launch_primary_harness() {
-  "$FM_AFK_LAUNCH_DIR/fm-harness.sh" 2>/dev/null || printf unknown
-}
-
-# The away daemon is no longer launched on Pi: the posture record is the whole
-# entry there and the ordinary supervision session runs in both postures.
-fm_afk_launch_daemon_allowed() {
-  local harness
-  harness=$(fm_afk_launch_primary_harness)
-  case "$harness" in
-    pi|pi-signed)
-      fm_afk_launch_log "the away daemon is no longer launched on $harness; the away-posture record is the posture there (run bin/fm-afk-launch.sh confirm and stop)"
-      return 1 ;;
-  esac
-  return 0
 }
 
 fm_afk_launch_catchup_pending() {
@@ -656,7 +636,6 @@ fm_afk_launch_create_stream() {  # <captain-target> <captain-backend>
 fm_afk_launch_start() {
   local captain_target captain_backend backup artifact had_afk=0 result
   fm_afk_launch_catchup_pending && return 1
-  fm_afk_launch_daemon_allowed || return 1
   fm_afk_launch_record_require || return 1
   # Capture the captain pane FIRST, before creating anything.
   # A stream primary may have no endpoint ("-"): the steer path needs none, and
@@ -731,7 +710,6 @@ fm_afk_launch_start_native() {
   local backup artifact had_afk=0 result=0
   mkdir -p "$FM_AFK_LAUNCH_STATE" || return 1
   fm_afk_launch_catchup_pending && return 1
-  fm_afk_launch_daemon_allowed || return 1
   fm_afk_launch_record_require || return 1
   if daemon_lock_held_by_live_daemon; then
     fm_afk_launch_record_validate_if_present || return 1

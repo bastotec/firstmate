@@ -55,15 +55,12 @@
 #   worktree is told once to return, and only a shell that will not go refuses.
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
-#   --model <name> and --effort <low|medium|high|xhigh|max|ultra> are concrete profile
+#   --model <name> and --effort <low|medium|high|xhigh|max> are concrete profile
 #   axes chosen by firstmate at intake. --model may be a fallback chain
 #   (comma-separated <provider>/<model-id> labels; docs/configuration.md "Model
-#   fallback chains"); a single label stays an exact pin. They are only threaded
-#   into harnesses whose
-#   installed CLIs were verified to support that axis; unsupported axes are omitted
-#   from that harness's launch rather than guessed. Ultra is the explicit
-#   exception: bin/fm-harness.sh validate-native-effort owns its model scope;
-#   supported Pi launches receive --codex-effort ultra, never --thinking ultra.
+#   fallback chains"); a single label stays an exact pin. Deck accepts the
+#   model axis but has no effort control, so a non-default effort is refused
+#   before launch rather than silently omitted.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
 #   is authorized). For a new local spawn without it, the script resolves
@@ -143,18 +140,11 @@
 #   config/crew-dispatch.json is absent. When that file exists, crewmate/scout
 #   spawns require an explicit harness so firstmate cannot silently skip dispatch
 #   profile consultation. A --secondmate spawn is exempt and resolves the SECONDMATE
-#   harness (config/secondmate-harness -> config/crew-harness -> own), so the
+#   harness (config/secondmate-harness -> config/crew-harness -> deck), so the
 #   secondmate-vs-crewmate split is DURABLE across every respawn (recovery,
-#   /updatefirstmate, restart). A bare adapter name (pi|pi-signed|deck)
-#   overrides it for this spawn (either kind). A non-flag string containing
-#   whitespace is treated as a RAW launch command - the escape hatch for verifying
-#   new adapters. For pi and pi-signed,
-#   fm-spawn resolves the selected executable
-#   name from PATH once, probes that concrete path with --help, and launches the
-#   same path. It adds --tui-mode regular only when that help advertises the flag;
-#   a failed or inconclusive probe omits it so older Pi versions remain launchable.
-#   A missing selected executable refuses before endpoint creation, and pi-signed
-#   never falls back to pi.
+#   /updatefirstmate, restart). The bare adapter name deck overrides it for
+#   this spawn (either kind). A non-flag string containing whitespace is treated
+#   as a RAW launch command - the escape hatch for verifying new adapters.
 #   config/secondmate-harness may also carry an optional model and effort as extra
 #   whitespace-separated tokens ("<harness> [<model>] [<effort>]"). For a
 #   --secondmate spawn, those tokens apply only when this spawn also resolves its
@@ -244,19 +234,10 @@
 #   See docs/configuration.md for provider/Git setup and supported limits.
 #   Launch templates live in launch_template() below; placeholders replaced before launch:
 #     __BRIEF__    absolute path to data/<task-id>/brief.md
-#     __PIBIN__    quoted concrete Pi-family executable path resolved from PATH
-#     __PITUIMODE__ optional --tui-mode regular when that executable advertises it
-#     __PIEXT__    absolute path to state/<task-id>.pi-ext.ts (pi turn-end extension,
-#                  written by this script; outside the worktree to avoid pi's trust gate)
-#     __PITURNEND__ absolute path to .pi/extensions/fm-primary-turnend-guard.ts in a pi secondmate home
-#     __PIWATCH__   absolute path to .pi/extensions/fm-primary-pi-watch.ts in a pi secondmate home
 #     __OPINPUT__   absolute path to the canonical operational-input encoder
 #     __DECKWORKER__ bin/fm-deck-worker.sh; __DECKBIN__ the resolved deck executable;
 #     __DECKID__ / __DECKSTATE__ / __DECKGEN__ the task id, state dir, and busy gen it reports under
-# Verified per-harness turn-end hooks are installed automatically: pi loads a
-# per-task extension written to state/ (outside the worktree, so pi's project
-# trust gate never fires). deck also hosts secondmates with --secondmate and
-# installs no hook file: bin/fm-deck-worker.sh passes Deck its per-run hooks
+# deck also hosts secondmates with --secondmate and installs no hook file: bin/fm-deck-worker.sh passes Deck its per-run hooks
 # (--hook), writes every busy event itself, and publishes turn-end only for
 # ordinary workers.
 # Publishing the record and moving this home's backlog item to In flight are one
@@ -509,8 +490,8 @@ if [ "$TRACEPARENT_SET" -eq 1 ]; then
   }
 fi
 case "$EFFORT" in
-  ''|low|medium|high|xhigh|max|ultra) ;;
-  *) echo "error: --effort must be one of low, medium, high, xhigh, max, ultra" >&2; exit 1 ;;
+  ''|low|medium|high|xhigh|max) ;;
+  *) echo "error: --effort must be one of low, medium, high, xhigh, max" >&2; exit 1 ;;
 esac
 
 # --relaunch reuses an existing task's endpoint, worktree, project, and kind,
@@ -609,7 +590,7 @@ spawn_remote_secondmate() {
     harness=$("$FM_ROOT/bin/fm-harness.sh" secondmate)
   fi
   case "$harness" in
-    pi|pi-signed|deck) ;;
+    deck) ;;
     *)
       fm_lock_release "$registry_lock" || true
       fm_lock_release "$SPAWN_TASK_LOCK" || true
@@ -671,7 +652,7 @@ spawn_remote_secondmate() {
       ;;
   esac
   case "$effort" in
-    -|low|medium|high|xhigh|max|ultra) ;;
+    -|low|medium|high|xhigh|max) ;;
     *)
     fm_lock_release "$registry_lock" || true
     fm_lock_release "$SPAWN_TASK_LOCK" || true
@@ -679,11 +660,6 @@ spawn_remote_secondmate() {
       return 1
       ;;
   esac
-  if [ "$effort" = ultra ] && ! "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$harness" "$model" "$effort"; then
-    fm_lock_release "$registry_lock" || true
-    fm_lock_release "$SPAWN_TASK_LOCK" || true
-    return 1
-  fi
   meta="$STATE/$id.meta"
   if [ -e "$meta" ] || [ -L "$meta" ]; then
     if ! fm_backlog_record_present "$meta" "task record" "$STATE" \
@@ -1113,26 +1089,11 @@ elif [ "$RELAUNCH" -eq 1 ]; then
   echo "error: spawn refused: state directory does not exist at $STATE" >&2
   exit 1
 fi
-# Role partition: spawning NEW work is MAIN-owned. A relaunch of an existing
-# task is legitimate branch recovery (fm-control drives it through this same
-# entrypoint), so only a fresh spawn refuses the branch actor (contract:
-# bin/fm-lease-lib.sh; no-op in homes without a branch actor).
-# shellcheck source=bin/fm-lease-lib.sh
-. "$SCRIPT_DIR/fm-lease-lib.sh"
-if [ "$RELAUNCH" -ne 1 ]; then
-  fm_lease_forbid_branch "new-task spawn (fm-spawn)"
-fi
 if [ "$RELAUNCH" -eq 1 ]; then
   SPAWN_CONTROL_LOCK="$STATE/.control-$ID.lock"
   control_owner=$(cat "$SPAWN_CONTROL_LOCK/pid" 2>/dev/null || true)
   if [ "$control_owner" = "$PPID" ] && fm_pid_alive "$control_owner"; then
     SPAWN_CONTROL_PARENT=1
-  elif [ "$(fm_lease_actor)" = branch ]; then
-    # Role partition refinement: branch recovery relaunches only through the
-    # fm-control transaction that owns the control lock, never by invoking
-    # this entrypoint directly (contract: bin/fm-lease-lib.sh).
-    echo "error: relaunch (fm-spawn) refused - the supervision branch must relaunch through fm-control" >&2
-    exit "$FM_LEASE_REFUSE_EXIT"
   elif fm_lock_try_acquire "$SPAWN_CONTROL_LOCK"; then
     SPAWN_CONTROL_LOCK_HELD=1
   else
@@ -1207,7 +1168,6 @@ SPAWN_TASK_LOCK_HELD=1
 PROJ=
 ARG3=
 FIRSTMATE_HOME=
-RAW_LAUNCH=0
 
 # --relaunch adoption: every identity axis comes from the task's own validated
 # durable record, never from the command line, so a relaunch can only ever
@@ -1314,7 +1274,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   }
 elif [ "$KIND" = secondmate ]; then
   case "${POS[1]:-}" in
-    ''|pi|pi-signed|deck)
+    ''|deck)
       ARG3=${POS[1]:-}
       ;;
     *' '*)
@@ -1342,7 +1302,8 @@ shell_quote() {
   printf "'"
 }
 
-resolve_pi_executable() {
+# Resolve a harness executable name from PATH to its absolute path.
+resolve_harness_executable() {
   local candidate dir
   candidate=$(type -P -- "$1" 2>/dev/null) || return 1
   [ -x "$candidate" ] || return 1
@@ -1355,29 +1316,12 @@ resolve_pi_executable() {
   esac
 }
 
-# Pi's CLI surface is version-dependent, so probe the resolved executable's help
-# before composing the optional regular-TUI flag. An absent or inconclusive probe
-# omits the flag so older Pi versions can still spawn.
-pi_supports_tui_mode() {
-  local executable=$1 help
-  help=$("$executable" --help 2>&1) || return 1
-  printf '%s\n' "$help" | grep -Eq -- '(^|[[:space:]])--tui-mode([[:space:]=]|$)'
-}
-
 # The canonical launch command per adapter. The knowledge half of each adapter
 # (busy-state source, exit command, dialogs, quirks) lives in the harness-adapters skill.
 launch_template() {
   local harness=$1 kind=${2:-ship}
   # shellcheck disable=SC2016  # single quotes are deliberate: $(cat ...) expands in the crewmate pane, not here
   case "$harness" in
-    pi|pi-signed)
-      printf '%s' '__PIBIN____PITUIMODE__'
-      if [ "$kind" = secondmate ]; then
-        printf '%s' ' __MODELFLAG____EFFORTFLAG__-e __PITURNEND__ -e __PIWATCH__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
-      else
-        printf '%s' ' __MODELFLAG____EFFORTFLAG__-e __PIEXT__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
-      fi
-      ;;
     # deck (bastotec/deck) is a headless agent: one `deck run` per turn, NDJSON on
     # stdout. bin/fm-deck-worker.sh is the pane's foreground process and drives
     # it: the brief is the first turn, each line typed at its prompt is the next
@@ -1386,14 +1330,13 @@ launch_template() {
     # argv[0] `fm-deck-worker`, so pane liveness reads it as an agent rather
     # than an idle shell (bin/fm-agent-process-lib.sh). Deck has no effort
     # control, so a non-default effort is refused during spawn validation.
-    deck) printf '%s' 'env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u FM_PI_HARNESS bash -c '\''exec -a fm-deck-worker bash "$@"'\'' fm-deck-worker __DECKWORKER__ --id __DECKID__ --state __DECKSTATE__ --gen __DECKGEN__ --deck __DECKBIN__ __MODELFLAG__-- "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+    deck) printf '%s' 'bash -c '\''exec -a fm-deck-worker bash "$@"'\'' fm-deck-worker __DECKWORKER__ --id __DECKID__ --state __DECKSTATE__ --gen __DECKGEN__ --deck __DECKBIN__ __MODELFLAG__-- "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     *) return 1 ;;
   esac
 }
 
 case "$ARG3" in
   *' '*)  # raw launch command (unverified-adapter escape hatch)
-    RAW_LAUNCH=1
     LAUNCH=$ARG3
     HARNESS=""
     for word in $LAUNCH; do
@@ -1402,7 +1345,7 @@ case "$ARG3" in
     ;;
   '')
     # No explicit harness: resolve from config. A secondmate AGENT launches on the
-    # secondmate harness (config/secondmate-harness -> config/crew-harness -> own);
+    # secondmate harness (config/secondmate-harness -> config/crew-harness -> deck);
     # every other kind uses the crew harness only when no dispatch profile file is
     # active. Resolving here on every spawn is what makes the split DURABLE - a
     # respawn (recovery, /updatefirstmate, restart) re-resolves, so
@@ -1410,14 +1353,14 @@ case "$ARG3" in
     # The launch_template lookup below is the unverified-adapter guard for both
     # kinds: a harness with no template aborts the spawn.
     if [ "$KIND" = secondmate ]; then
-      HARNESS=$("$FM_ROOT/bin/fm-harness.sh" secondmate)
+      HARNESS=$("$FM_ROOT/bin/fm-harness.sh" secondmate) || exit 1
       harness_src='config/secondmate-harness (falling back to config/crew-harness)'
     else
       if [ -f "$CONFIG/crew-dispatch.json" ]; then
         echo "error: config/crew-dispatch.json is active - pass an explicit harness resolved from the dispatch rules (the consultation backstop, so the rules are never silently skipped)." >&2
         exit 1
       fi
-      HARNESS=$("$FM_ROOT/bin/fm-harness.sh" crew)
+      HARNESS=$("$FM_ROOT/bin/fm-harness.sh" crew) || exit 1
       harness_src='config/crew-harness'
     fi
     LAUNCH=$(launch_template "$HARNESS" "$KIND") || { echo "error: no launch template for harness '$HARNESS' (from $harness_src or detection); pass a raw launch command to use an unverified adapter" >&2; exit 1; }
@@ -1434,20 +1377,8 @@ if [ "$HARNESS" = deck ] && [ -n "$EFFORT" ]; then
 fi
 
 case "$HARNESS" in
-  pi|pi-signed)
-    PI_BIN=$(resolve_pi_executable "$HARNESS") || {
-      echo "error: $HARNESS executable not found on PATH; install it or select a different verified harness" >&2
-      exit 1
-    }
-    PI_TUI_MODE=
-    if pi_supports_tui_mode "$PI_BIN"; then
-      PI_TUI_MODE=' --tui-mode regular'
-    fi
-    LAUNCH=${LAUNCH//__PITUIMODE__/$PI_TUI_MODE}
-    LAUNCH="FM_PI_HARNESS=$HARNESS $LAUNCH"
-    ;;
   deck)
-    DECK_BIN=$(resolve_pi_executable deck) || {
+    DECK_BIN=$(resolve_harness_executable deck) || {
       echo "error: deck executable not found on PATH; build bastotec/deck (cargo build --release --locked) and put target/release/deck on PATH" >&2
       exit 1
     }
@@ -1491,8 +1422,8 @@ if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
     SM_EFFORT=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort)
     if [ -n "$SM_EFFORT" ]; then
       case "$SM_EFFORT" in
-        low|medium|high|xhigh|max|ultra) EFFORT=$SM_EFFORT ;;
-        *) echo "warning: config/secondmate-harness effort token '$SM_EFFORT' is not one of low, medium, high, xhigh, max, ultra; ignoring" >&2 ;;
+        low|medium|high|xhigh|max) EFFORT=$SM_EFFORT ;;
+        *) echo "warning: config/secondmate-harness effort token '$SM_EFFORT' is not one of low, medium, high, xhigh, max; ignoring" >&2 ;;
       esac
     fi
   fi
@@ -1530,15 +1461,6 @@ fi
 # An exact single-label pin never touches a lane, so it records no lane either;
 # only a chain that actually resolved names its lane for the refusal recorder.
 [ -n "${MODEL_CHAIN_LANE:-}" ] || MODEL_CHAIN_LANE=
-# Ultra is an explicit native capability, never a Pi thinking-level alias.
-# Validate the fully resolved profile before worktree or endpoint provisioning.
-if [ "$EFFORT" = ultra ]; then
-  "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$HARNESS" "$MODEL" "$EFFORT" || exit 1
-  [ "$RAW_LAUNCH" = 0 ] || {
-    echo "error: --effort ultra requires the canonical --harness pi or pi-signed launch so its native flag cannot be omitted" >&2
-    exit 1
-  }
-fi
 
 secondmate_registry_value() {
   secondmate_registry_field "$DATA/secondmates.md" "$1" "$2"
@@ -1548,29 +1470,9 @@ model_flag_for_harness() {
   local harness=$1 model=$2
   [ -n "$model" ] && [ "$model" != default ] || return 0
   case "$harness" in
-    pi|pi-signed|deck)
+    deck)
       printf -- '--model %s ' "$(shell_quote "$model")"
       ;;
-  esac
-}
-
-effort_flag_for_harness() {
-  local harness=$1 effort=$2 model=${3:-}
-  [ -n "$effort" ] && [ "$effort" != default ] || return 0
-  case "$harness" in
-    pi|pi-signed)
-      # Pi 0.80.6 accepts the full shared effort vocabulary, including max, through
-      # its --thinking flag.
-      case "$effort" in
-        ultra)
-          "$SCRIPT_DIR/fm-harness.sh" validate-native-effort "$harness" "$model" "$effort" || return 1
-          printf -- '--codex-effort %s ' "$(shell_quote ultra)"
-          ;;
-        low|medium|high|xhigh|max) printf -- '--thinking %s ' "$(shell_quote "$effort")" ;;
-      esac
-      ;;
-    # deck has no effort control; spawn validation refuses a non-default
-    # effort before this point.
   esac
 }
 
@@ -2599,11 +2501,8 @@ fi
 TASK_TMP="/tmp/fm-$ID"
 mkdir -p "$TASK_TMP/gotmp"
 
-# Per-harness turn-end hook where enabled: a file that touches
-# state/<id>.turn-ended when the agent finishes a turn.
 mkdir -p "$STATE"
 STATE_REAL=$(cd "$STATE" && pwd -P)
-TURNEND="$STATE_REAL/$ID.turn-ended"
 if [ "$RELAUNCH" -eq 1 ] && [ "$RELAUNCH_PRIOR_HARNESS" = deck ]; then
   python3 "$FM_ROOT/bin/fm-deck-stop.py" "$STATE_REAL" "$ID" "${FM_CONTROL_EXIT_WAIT:-30}" \
     || {
@@ -2632,58 +2531,12 @@ if [ "$KIND" != secondmate ] || [ "$HARNESS" = deck ]; then
   # incarnation is rejected as stale.
   BUSY_GEN=
   case "$HARNESS" in
-    pi|pi-signed|deck)
+    deck)
       BUSY_GEN=$("$FM_ROOT/bin/fm-busy-event.sh" arm "$STATE_REAL" "$ID") || {
         echo "error: failed to arm the busy-state contract for $ID" >&2
         exit 1
       }
       [ "$RELAUNCH" -ne 1 ] || RELAUNCH_REPLACEMENT_BUSY_GEN=$BUSY_GEN
-      ;;
-  esac
-  case "$HARNESS" in
-    pi|pi-signed)
-      # Written OUTSIDE the worktree: pi's project-trust gate fires on any extension
-      # loaded from inside the project (verified live), but an explicit -e path
-      # elsewhere loads without a dialog. Lives in state/, cleaned by teardown.
-      cat > "$STATE/$ID.pi-ext.ts" <<EOF
-// Firstmate semantic busy-state events + turn-end notification; written by
-// fm-spawn under the contract owned by bin/fm-busy-lib.sh.
-// Semantic state: "agent_start" -> busy when a low-level agent run begins;
-// "agent_settled" -> idle only when ctx.isIdle() confirms Pi will not
-// continue automatically - auto-retries, auto-compaction retries, tool
-// loops, and queued continuations all keep the run un-settled, and a settle
-// that raced another extension's fresh run keeps state busy via isIdle().
-// "turn_end" fires at every inner turn boundary (one LLM response plus its
-// tool calls) and stays a wake NOTIFICATION touch for the watcher, never
-// current-state truth.
-import { execFile } from "node:child_process";
-const busyEvent = (state: string, event: string) =>
-  new Promise<void>((resolve) => {
-    execFile("$FM_ROOT/bin/fm-busy-event.sh", [
-      "apply", "$STATE_REAL", "$ID", state,
-      "--gen", "$BUSY_GEN", "--source", "pi-ext", "--event", event,
-    ], () => resolve());
-  });
-export default function (pi: any) {
-  pi.on("agent_start", () => busyEvent("busy", "agent-start"));
-  pi.on("agent_settled", (_event: any, ctx: any) => {
-    if (ctx && typeof ctx.isIdle === "function" && !ctx.isIdle()) return;
-    return busyEvent("idle", "agent-settled");
-  });
-  pi.on("turn_end", () => execFile("touch", ["$TURNEND"]));
-  // A native harness can make progress inside one Pi turn. This separate
-  // marker prevents false wedge alarms without fabricating a completed turn.
-  let lastProgress = 0;
-  pi.events?.on?.("codex-native:progress", () => {
-    const now = Date.now();
-    if (now - lastProgress < 1000) return;
-    lastProgress = now;
-    execFile("$FM_ROOT/bin/fm-busy-event.sh", [
-      "progress", "$STATE_REAL", "$ID", "--gen", "$BUSY_GEN",
-    ]);
-  });
-}
-EOF
       ;;
   esac
 fi
@@ -2903,21 +2756,12 @@ fi
 "$SCRIPT_DIR/fm-home-summary-refresh.sh" --best-effort || true
 
 sq_brief=$(shell_quote "$BRIEF")
-sq_piext=$(shell_quote "$STATE/$ID.pi-ext.ts")
-sq_piturnend=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-turnend-guard.ts")
-sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
 sq_opinput=$(shell_quote "$FM_ROOT/bin/fm-operational-input.sh")
 MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
-EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT" "$MODEL") || exit 1
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
-LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
 LAUNCH=${LAUNCH//__BRIEF__/$sq_brief}
-LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
-LAUNCH=${LAUNCH//__PITURNEND__/$sq_piturnend}
-LAUNCH=${LAUNCH//__PIWATCH__/$sq_piwatch}
 LAUNCH=${LAUNCH//__OPINPUT__/$sq_opinput}
 case "$HARNESS" in
-  pi|pi-signed) LAUNCH=${LAUNCH//__PIBIN__/"$(shell_quote "$PI_BIN")"} ;;
   deck)
     LAUNCH=${LAUNCH//__DECKWORKER__/"$(shell_quote "$FM_ROOT/bin/fm-deck-worker.sh")"}
     LAUNCH=${LAUNCH//__DECKBIN__/"$(shell_quote "$DECK_BIN")"}
@@ -2929,11 +2773,6 @@ case "$HARNESS" in
     fi
     ;;
 esac
-case "$HARNESS" in
-  pi|pi-signed|deck)
-    LAUNCH="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS $LAUNCH"
-    ;;
-esac
 if [ "$KIND" = secondmate ]; then
   sq_home=$(shell_quote "$PROJ_ABS")
   sq_primary_home=$(shell_quote "$FM_HOME")
@@ -2942,11 +2781,9 @@ if [ "$KIND" = secondmate ]; then
   # mid-turn state. Deck gets that verdict only through this scoped secondmate
   # override: its persistent driver continuously replaces the watcher, while
   # fresh-beacon tolerance covers the bounded child hand-off without changing
-  # Deck-primary detection. Pi and pi-signed receive extension so their pull
-  # guard tolerates the extension hand-off exactly as the matching primary does.
+  # Deck-primary detection.
   case "$HARNESS" in
     deck) supervision_model=autoarm ;;
-    pi|pi-signed) supervision_model=extension ;;
     *) supervision_model=persistent ;;
   esac
   # Deliver the primary's EFFECTIVE trace-context decision as a normalized on/off

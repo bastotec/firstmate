@@ -12,23 +12,7 @@ set -u
 
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-spawn-dispatch-profile)
-
-make_spawn_pi_probe() {
-  local fakebin=$1 tool=$2
-  cat > "$fakebin/$tool" <<'SH'
-#!/usr/bin/env bash
-set -u
-if [ "${1:-}" = --help ]; then
-  if [ "${FM_FAKE_PI_VERSION:-0.84.0}" = 0.82.0 ]; then
-    printf '%s\n' 'Pi 0.82.0' 'Options: --help'
-  else
-    printf '%s\n' "Pi ${FM_FAKE_PI_VERSION:-0.84.0}" 'Options: --help --tui-mode <mode>'
-  fi
-fi
-exit 0
-SH
-  chmod +x "$fakebin/$tool"
-}
+REAL_BASH=$(command -v bash)
 
 make_spawn_fakebin() {
   local dir=$1 fakebin
@@ -40,8 +24,6 @@ shift
 exec "$@"
 SH
   chmod +x "$fakebin/timeout"
-  make_spawn_pi_probe "$fakebin" pi
-  make_spawn_pi_probe "$fakebin" pi-signed
   fm_test_fake_deck "$fakebin"
   printf '%s\n' "$fakebin"
 }
@@ -65,7 +47,7 @@ make_spawn_case() {
 
 enable_dispatch_profile() {
   local home=$1
-  printf '%s\n' '{"rules":[{"when":"current events","use":{"harness":"deck","model":"example/route"}}],"default":{"harness":"pi","model":"openai-codex/gpt-5","effort":"medium"}}' \
+  printf '%s\n' '{"rules":[{"when":"current events","use":{"harness":"deck","model":"example/route"}}],"default":{"harness":"deck","model":"openai-codex/gpt-5"}}' \
     > "$home/config/crew-dispatch.json"
 }
 
@@ -81,7 +63,7 @@ run_spawn() {
   local home=$1 wt=$2 fakebin=$3 launchlog=$4
   shift 4
   : > "$launchlog"
-  FM_FAKE_LAUNCH_LOG="$launchlog" FM_FAKE_PI_VERSION="${FM_TEST_PI_VERSION:-0.84.0}" \
+  FM_FAKE_LAUNCH_LOG="$launchlog" \
     fm_test_run_spawn "$home" "$wt" "$fakebin" "$@"
 }
 
@@ -104,46 +86,33 @@ assert_meta_profile() {
   assert_grep "effort=$effort" "$meta" "meta missing effort=$effort"
 }
 
-test_no_profile_keeps_pi_profile_defaults() {
-  local rec id out status expected launch
+test_no_profile_keeps_deck_profile_defaults() {
+  local rec id out status launch gen
   id=profile-off-z1
-  rec=$(make_spawn_case profile-off pi "$id")
+  rec=$(make_spawn_case profile-off deck "$id")
   read_case_record "$rec"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "pi spawn without profile flags should succeed"
-  assert_contains "$out" "spawned $id harness=pi" "spawn did not report pi"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" pi default default
+  expect_code 0 "$status" "deck spawn without profile flags should succeed: $out"
+  assert_contains "$out" "spawned $id harness=deck" "spawn did not report deck"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" deck default default
 
   launch=$(cat "$LAUNCH_LOG")
-  expected="env -u CURSOR_AGENT -u CURSOR_INVOKED_AS FM_PI_HARNESS=pi '$FAKEBIN_DIR/pi' --tui-mode regular -e '$HOME_DIR/state/$id.pi-ext.ts' \"\$('${ROOT}/bin/fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/launch-brief.md')\""
-  [ "$launch" = "$expected" ] || fail "no-profile pi launch did not use the canonical launch kind"$'\n'"expected: $expected"$'\n'"actual:   $launch"
-  assert_not_contains "$launch" "--model" "no-profile pi launch invented a model flag"
-  assert_not_contains "$launch" "--thinking" "no-profile pi launch invented a thinking flag"
-  pass "no --model/--effort records defaults and types the canonical pi launch"
-}
-
-test_non_cursor_launch_clears_inherited_cursor_markers() {
-  local rec id out status launch
-  id=profile-deck-cursor-markers-z1b
-  rec=$(make_spawn_case profile-deck-cursor-markers deck "$id")
-  read_case_record "$rec"
-
-  out=$(CURSOR_AGENT=1 CURSOR_INVOKED_AS=cursor-agent \
-    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
-  status=$?
-  expect_code 0 "$status" "deck spawn under Cursor markers should succeed: $out"
-  launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "env -u CURSOR_AGENT -u CURSOR_INVOKED_AS env -u CLAUDECODE" \
-    "non-cursor launch must clear both inherited Cursor identity markers"
-  pass "non-cursor launches clear inherited Cursor identity markers"
+  gen=$(cat "$HOME_DIR/state/$id.busy-gen")
+  assert_contains "$launch" "bash -c 'exec -a fm-deck-worker bash \"\$@\"' fm-deck-worker '$ROOT/bin/fm-deck-worker.sh' --id '$id' --state '$(cd "$HOME_DIR/state" && pwd -P)' --gen '$gen' --deck '$FAKEBIN_DIR/deck' -- " \
+    "no-profile deck launch did not use the canonical worker driver"
+  assert_contains "$launch" "fm-operational-input.sh' encode launch-brief < '$HOME_DIR/data/$id/launch-brief.md'" \
+    "no-profile deck launch lost the canonical typed launch-brief envelope"
+  assert_not_contains "$launch" "--model" "no-profile deck launch invented a model flag"
+  assert_not_contains "$launch" "CLAUDECODE" "deck launch still clears a removed harness marker"
+  pass "no --model/--effort records defaults and types the canonical deck launch"
 }
 
 test_relative_home_overrides_launch_with_absolute_cross_process_paths() {
   local rec id out status launch home_real
   id=profile-relative-paths-z1b
-  rec=$(make_spawn_case profile-relative-paths pi "$id")
+  rec=$(make_spawn_case profile-relative-paths deck "$id")
   read_case_record "$rec"
   home_real=$(cd "$HOME_DIR" && pwd -P)
   mkdir -p "$CASE_DIR/cdpath/home/state" "$CASE_DIR/cdpath/home/data"
@@ -161,8 +130,8 @@ test_relative_home_overrides_launch_with_absolute_cross_process_paths() {
   status=$?
   expect_code 0 "$status" "spawn with relative home overrides should succeed"
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "-e '$home_real/state/$id.pi-ext.ts'" \
-    "relative FM_STATE_OVERRIDE leaked into Pi's cross-process extension path"
+  assert_contains "$launch" "--state '$home_real/state'" \
+    "relative FM_STATE_OVERRIDE leaked into the deck worker's cross-process state path"
   assert_contains "$launch" "< '$home_real/data/$id/launch-brief.md'" \
     "relative FM_DATA_OVERRIDE leaked into the cross-process brief path"
   pass "relative home overrides ignore CDPATH and become absolute before spawn launch construction"
@@ -172,7 +141,7 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
   local rec relative_id absolute_id out status launch home_real linked_home
   relative_id=profile-relative-home-defaults-z1c
   absolute_id=profile-absolute-home-defaults-z1d
-  rec=$(make_spawn_case profile-home-defaults pi "$relative_id" "$absolute_id")
+  rec=$(make_spawn_case profile-home-defaults deck "$relative_id" "$absolute_id")
   read_case_record "$rec"
   home_real=$(cd "$HOME_DIR" && pwd -P)
 
@@ -189,8 +158,8 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
   status=$?
   expect_code 0 "$status" "spawn with relative FM_HOME defaults should succeed"
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "-e '$home_real/state/$relative_id.pi-ext.ts'" \
-    "relative FM_HOME leaked into Pi's default cross-process extension path"
+  assert_contains "$launch" "--state '$home_real/state'" \
+    "relative FM_HOME leaked into the deck worker's default cross-process state path"
   assert_contains "$launch" "< '$home_real/data/$relative_id/launch-brief.md'" \
     "relative FM_HOME leaked into the default cross-process brief path"
 
@@ -208,8 +177,6 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
   status=$?
   expect_code 0 "$status" "spawn with absolute symlink-spelled FM_HOME defaults should succeed"
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "-e '$linked_home/state/$absolute_id.pi-ext.ts'" \
-    "absolute FM_HOME spelling changed in Pi's default cross-process extension path"
   assert_contains "$launch" "< '$linked_home/data/$absolute_id/launch-brief.md'" \
     "absolute FM_HOME spelling changed in the default cross-process brief path"
   pass "FM_HOME defaults resolve relative paths and preserve absolute spellings"
@@ -218,7 +185,7 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
 test_absolute_override_spelling_is_preserved_in_launch_paths() {
   local rec id out status launch linked_home
   id=profile-absolute-paths-z1c
-  rec=$(make_spawn_case profile-absolute-paths pi "$id")
+  rec=$(make_spawn_case profile-absolute-paths deck "$id")
   read_case_record "$rec"
   linked_home="$CASE_DIR/home-link"
   ln -s "$HOME_DIR" "$linked_home"
@@ -235,8 +202,6 @@ test_absolute_override_spelling_is_preserved_in_launch_paths() {
   status=$?
   expect_code 0 "$status" "spawn with absolute symlink-spelled overrides should succeed"
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "-e '$linked_home/state/$id.pi-ext.ts'" \
-    "absolute FM_STATE_OVERRIDE spelling changed in Pi's cross-process extension path"
   assert_contains "$launch" "< '$linked_home/data/$id/launch-brief.md'" \
     "absolute FM_DATA_OVERRIDE spelling changed in the cross-process brief path"
   pass "absolute override spellings are preserved in spawn launch paths"
@@ -245,7 +210,7 @@ test_absolute_override_spelling_is_preserved_in_launch_paths() {
 test_unresolvable_relative_overrides_fail_loudly() {
   local rec id out status
   id=profile-unresolvable-paths-z1d
-  rec=$(make_spawn_case profile-unresolvable-paths pi "$id")
+  rec=$(make_spawn_case profile-unresolvable-paths deck "$id")
   read_case_record "$rec"
 
   out=$(
@@ -286,7 +251,7 @@ test_unresolvable_relative_overrides_fail_loudly() {
 test_active_dispatch_profile_requires_explicit_harness_for_ship() {
   local rec id out status
   id=profile-required-ship-z11
-  rec=$(make_spawn_case profile-required-ship pi "$id")
+  rec=$(make_spawn_case profile-required-ship deck "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
 
@@ -302,7 +267,7 @@ test_active_dispatch_profile_requires_explicit_harness_for_ship() {
 test_active_dispatch_profile_requires_explicit_harness_for_scout() {
   local rec id out status
   id=profile-required-scout-z12
-  rec=$(make_spawn_case profile-required-scout pi "$id")
+  rec=$(make_spawn_case profile-required-scout deck "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
 
@@ -318,26 +283,26 @@ test_active_dispatch_profile_requires_explicit_harness_for_scout() {
 test_active_dispatch_profile_allows_explicit_harness() {
   local rec id out status launch
   id=profile-explicit-z13
-  rec=$(make_spawn_case profile-explicit pi "$id")
+  rec=$(make_spawn_case profile-explicit deck "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id" "$PROJ_DIR" --harness pi-signed --model openai-codex/gpt-5 --effort high)
+    "$id" "$PROJ_DIR" --harness deck --model openai-codex/gpt-5)
   status=$?
   expect_code 0 "$status" "explicit harness should satisfy active dispatch-profile requirement"
-  assert_contains "$out" "spawned $id harness=pi-signed" "spawn did not report explicit pi-signed harness"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" pi-signed openai-codex/gpt-5 high
+  assert_contains "$out" "spawned $id harness=deck" "spawn did not report explicit deck harness"
+  assert_meta_profile "$HOME_DIR/state/$id.meta" deck openai-codex/gpt-5 default
   launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "FM_PI_HARNESS=pi-signed '$FAKEBIN_DIR/pi-signed' --tui-mode regular --model 'openai-codex/gpt-5' --thinking 'high' -e" \
-    "explicit harness launch did not thread model and effort"
+  assert_contains "$launch" "--deck '$FAKEBIN_DIR/deck' --model 'openai-codex/gpt-5' -- " \
+    "explicit harness launch did not thread the model"
   pass "active crew-dispatch profile allows an explicit resolved harness"
 }
 
 test_active_dispatch_profile_allows_positional_harness() {
   local rec id out status
   id=profile-positional-z14
-  rec=$(make_spawn_case profile-positional pi "$id")
+  rec=$(make_spawn_case profile-positional deck "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
 
@@ -353,7 +318,7 @@ test_active_dispatch_profile_allows_positional_harness() {
 test_active_dispatch_profile_allows_raw_launch_command() {
   local rec id out status launch
   id=profile-raw-z15
-  rec=$(make_spawn_case profile-raw pi "$id")
+  rec=$(make_spawn_case profile-raw deck "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
 
@@ -368,164 +333,12 @@ test_active_dispatch_profile_allows_raw_launch_command() {
   pass "active crew-dispatch profile allows the raw launch-command escape hatch"
 }
 
-test_native_effort_validator_keeps_axes_separate() {
-  local harness
-  for harness in pi pi-signed; do
-    "$ROOT/bin/fm-harness.sh" validate-native-effort "$harness" codex-native/gpt-6-astra ultra \
-      || fail "native validator refused supported harness $harness"
-  done
-  if "$ROOT/bin/fm-harness.sh" validate-native-effort 'pi:codex-native/forged' '' ultra 2>/dev/null; then
-    fail "native validator accepted a model prefix embedded in the harness axis"
-  fi
-  pass "native effort validator checks harness and model as separate axes"
-}
-
-test_native_pi_ultra_is_explicit_and_model_scoped() {
-  local rec id out launch harness mode native_profile model
-  for harness in pi pi-signed; do
-    for mode in no-mistakes direct-PR; do
-      id="ultra-$harness-$mode"
-      rec=$(make_spawn_case "$id" "$harness" "$id")
-      read_case_record "$rec"
-      out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
-        --harness "$harness" --model codex-native/gpt-6-astra --effort ultra --mode "$mode" --yolo off)
-      expect_code 0 "$?" "native Ultra spawn failed: $out"
-      assert_meta_profile "$HOME_DIR/state/$id.meta" "$harness" codex-native/gpt-6-astra ultra
-      launch=$(cat "$LAUNCH_LOG")
-      assert_contains "$launch" "--model 'codex-native/gpt-6-astra' --codex-effort 'ultra'" "native Ultra flag missing"
-      assert_not_contains "$launch" "--thinking" "native Ultra was converted into Pi thinking"
-      assert_not_contains "$launch" "'max'" "native Ultra was aliased to max"
-    done
-  done
-  for native_profile in 'pi:openai-codex/gpt-6-astra' 'pi-signed:openai-codex/gpt-6-astra' 'pi:default' 'pi:codex-native/'; do
-    harness=${native_profile%%:*}; model=${native_profile#*:}; id="ultra-refused-$RANDOM"
-    rec=$(make_spawn_case "$id" "$harness" "$id")
-    read_case_record "$rec"
-    out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
-      --harness "$harness" --model "$model" --effort ultra 2>&1)
-    expect_code 1 "$?" "unsupported Ultra profile should refuse: $native_profile"
-    assert_contains "$out" "ultra effort requires pi or pi-signed" "native-only refusal missing"
-    [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "unsupported Ultra published metadata"
-    [ ! -e "$HOME_DIR/state/$id.busy-gen" ] || fail "unsupported Ultra provisioned lifecycle wiring"
-    [ ! -s "$LAUNCH_LOG" ] || fail "unsupported Ultra launched an agent"
-  done
-  id=ultra-raw-refused
-  rec=$(make_spawn_case "$id" pi "$id")
-  read_case_record "$rec"
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
-    'pi --offline' --model codex-native/gpt-6-astra --effort ultra 2>&1)
-  expect_code 1 "$?" "raw launch silently omitted the native Ultra flag"
-  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "raw Ultra launch published metadata"
-  assert_contains "$out" "canonical --harness pi or pi-signed" "raw launch refusal was not actionable"
-  pass "Ultra is explicit for native Pi and Pi-signed, including direct-PR, and refuses unsupported profiles before provisioning"
-}
-
-test_batch_preserves_native_ultra() {
-  local rec id1=ultra-batch-a id2=ultra-batch-b out launch
-  rec=$(make_spawn_case ultra-batch pi "$id1" "$id2")
-  read_case_record "$rec"
-  enable_dispatch_profile "$HOME_DIR"
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness pi --model codex-native/gpt-6-astra --effort ultra)
-  expect_code 0 "$?" "native Ultra batch failed: $out"
-  assert_meta_profile "$HOME_DIR/state/$id1.meta" pi codex-native/gpt-6-astra ultra
-  assert_meta_profile "$HOME_DIR/state/$id2.meta" pi codex-native/gpt-6-astra ultra
-  launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "--codex-effort 'ultra'" "batch dropped native effort"
-  assert_not_contains "$launch" "--thinking 'ultra'" "batch passed an invalid Pi level"
-  pass "batch dispatch preserves native Ultra in metadata and launch flags"
-}
-
-test_pi_threads_model_and_max_effort() {
-  local rec id out status launch
-  id=profile-pi-z8
-  rec=$(make_spawn_case profile-pi pi "$id")
-  read_case_record "$rec"
-
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
-    --model openai-codex/gpt-5.6-sol --effort max)
-  status=$?
-  expect_code 0 "$status" "pi spawn with max effort should succeed"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" pi openai-codex/gpt-5.6-sol max
-  launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "FM_PI_HARNESS=pi '$FAKEBIN_DIR/pi' --tui-mode regular --model 'openai-codex/gpt-5.6-sol' --thinking 'max' -e" \
-    "pi launch did not force the regular TUI while threading the requested model and max thinking level"
-  assert_not_contains "$launch" "FM_FIRSTMATE_PI_LAUNCH_BRIEF=" \
-    "pi launch still exports the removed Calm input-reroute binding"
-  assert_contains "$launch" "fm-operational-input.sh' encode launch-brief" \
-    "pi launch lost the canonical typed launch-brief envelope"
-  pass "pi receives --model and --thinking max profile flags"
-}
-
-test_pi_signed_threads_shared_pi_profile_and_preserves_identity() {
-  local rec id out status launch
-  id=profile-pi-signed-z8b
-  rec=$(make_spawn_case profile-pi-signed pi-signed "$id")
-  read_case_record "$rec"
-
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
-    --model openai-codex/gpt-5.6-sol --effort max)
-  status=$?
-  expect_code 0 "$status" "pi-signed spawn with max effort should succeed"
-  assert_contains "$out" "spawned $id harness=pi-signed" "pi-signed spawn did not preserve its visible identity"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" pi-signed openai-codex/gpt-5.6-sol max
-  launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "FM_PI_HARNESS=pi-signed '$FAKEBIN_DIR/pi-signed' --tui-mode regular --model 'openai-codex/gpt-5.6-sol' --thinking 'max' -e" \
-    "pi-signed launch did not force the regular TUI with Pi's model, thinking, and extension semantics"
-  assert_contains "$launch" "fm-operational-input.sh' encode launch-brief" \
-    "pi-signed launch lost the canonical typed launch-brief envelope"
-  assert_present "$HOME_DIR/state/$id.pi-ext.ts" "pi-signed launch did not install Pi's turn-end extension"
-  assert_present "$HOME_DIR/state/$id.busy-gen" "pi-signed spawn did not arm the busy-state contract"
-  assert_contains "$(cat "$HOME_DIR/state/$id.busy-state")" "state=busy source=fm-spawn" \
-    "pi-signed spawn did not seed the busy-state record from the launch brief"
-  local ext gen
-  ext=$(cat "$HOME_DIR/state/$id.pi-ext.ts")
-  gen=$(cat "$HOME_DIR/state/$id.busy-gen")
-  assert_contains "$ext" 'pi.on("agent_start"' "pi extension lost the semantic agent_start busy edge"
-  assert_contains "$ext" 'pi.on("agent_settled"' "pi extension lost the semantic agent_settled idle edge"
-  assert_contains "$ext" 'ctx.isIdle()' "pi extension no longer confirms idle with ctx.isIdle()"
-  assert_contains "$ext" "\"--gen\", \"$gen\"" "pi extension does not carry the armed incarnation gen"
-  assert_contains "$ext" '"--source", "pi-ext"' "pi extension does not attribute its semantic source"
-  assert_contains "$ext" 'pi.on("turn_end"' "pi extension lost the turn-end notification touch"
-  pass "pi-signed shares Pi launch semantics while preserving its configured and recorded identity"
-}
-
-test_pi_tui_mode_probe_is_safe_for_old_and_new_pi() {
-  local harness version rec id out status launch
-  for harness in pi pi-signed; do
-    for version in 0.82.0 0.84.0; do
-      id="profile-${harness}-tui-${version//./}-z8d"
-      rec=$(make_spawn_case "profile-__MODELFLAG__-${harness}-tui-${version//./}" "$harness" "$id")
-      read_case_record "$rec"
-
-      out=$(FM_TEST_PI_VERSION="$version" \
-        run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-        "$id" "$PROJ_DIR")
-      status=$?
-      expect_code 0 "$status" "$harness $version spawn should succeed"
-      launch=$(cat "$LAUNCH_LOG")
-      assert_contains "$launch" "'$FAKEBIN_DIR/$harness'" \
-        "$harness $version launch must use the executable selected for probing"
-      assert_not_contains "$launch" "FM_PI_HARNESS=$harness $harness" \
-        "$harness $version launch must not re-resolve a bare executable in the worker"
-      if [ "$version" = 0.82.0 ]; then
-        assert_not_contains "$launch" "--tui-mode" \
-          "$harness $version launch must omit unsupported --tui-mode"
-      else
-        assert_contains "$launch" "'$FAKEBIN_DIR/$harness' --tui-mode regular" \
-          "$harness $version launch must preserve the regular TUI"
-      fi
-    done
-  done
-  pass "Pi launch probing omits --tui-mode on older Pi and preserves it on supporting Pi"
-}
-
-test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata() {
+test_deck_missing_binary_refuses_before_endpoint_or_metadata() {
   local rec id out status
-  id=profile-pi-signed-missing-z8c
-  rec=$(make_spawn_case profile-pi-signed-missing pi-signed "$id")
+  id=profile-deck-missing-z8c
+  rec=$(make_spawn_case profile-deck-missing deck "$id")
   read_case_record "$rec"
-  rm -f "$FAKEBIN_DIR/pi-signed"
+  rm -f "$FAKEBIN_DIR/deck"
   : > "$LAUNCH_LOG"
 
   out=$(FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
@@ -535,12 +348,12 @@ test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata() {
     FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" PATH="$FAKEBIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin" \
     "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1)
   status=$?
-  expect_code 1 "$status" "a missing pi-signed executable should refuse the spawn"
-  assert_contains "$out" "pi-signed executable not found on PATH" \
-    "missing pi-signed refusal did not name the actionable requirement"
-  assert_absent "$HOME_DIR/state/$id.meta" "missing pi-signed refusal wrote task metadata"
-  [ ! -s "$LAUNCH_LOG" ] || fail "missing pi-signed refusal typed a launch command"
-  pass "pi-signed refuses safely and actionably when the selected executable is unavailable"
+  expect_code 1 "$status" "a missing deck executable should refuse the spawn"
+  assert_contains "$out" "deck executable not found on PATH" \
+    "missing deck refusal did not name the actionable requirement"
+  assert_absent "$HOME_DIR/state/$id.meta" "missing deck refusal wrote task metadata"
+  [ ! -s "$LAUNCH_LOG" ] || fail "missing deck refusal typed a launch command"
+  pass "deck refuses safely and actionably when its executable is unavailable"
 }
 
 test_deck_threads_model_and_refuses_effort() {
@@ -558,8 +371,6 @@ test_deck_threads_model_and_refuses_effort() {
     "deck launch did not run the deck worker driver for this task"
   assert_contains "$launch" "--deck '$FAKEBIN_DIR/deck' --model 'example/route' -- " \
     "deck launch did not thread the model before the brief"
-  assert_not_contains "$launch" "--thinking" "deck launch must not pass Pi's thinking flag"
-  assert_not_contains "$launch" "--tui-mode" "deck launch must not receive Pi's TUI mode override"
 
   id=profile-deck-effort-z7b
   fm_test_spawn_brief "$HOME_DIR" "$id"
@@ -573,24 +384,26 @@ test_deck_threads_model_and_refuses_effort() {
 }
 
 test_removed_harness_is_refused_as_unknown() {
-  local rec id out status
-  id=profile-removed-harness-z7c
-  rec=$(make_spawn_case profile-removed-harness pi "$id")
-  read_case_record "$rec"
+  local rec id out status harness
+  for harness in claude pi pi-signed; do
+    id="profile-removed-harness-$harness-z7c"
+    rec=$(make_spawn_case "profile-removed-harness-$harness" deck "$id")
+    read_case_record "$rec"
 
-  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness claude --model sonnet)
-  status=$?
-  expect_code 1 "$status" "a removed worker harness should refuse"
-  assert_contains "$out" "unknown harness 'claude'" "removed harness refusal did not name the harness"
-  assert_absent "$HOME_DIR/state/$id.meta" "removed harness refusal wrote task metadata"
-  [ ! -s "$LAUNCH_LOG" ] || fail "removed harness refusal typed a launch command"
-  pass "a removed worker harness is refused as unknown before provisioning"
+    out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --harness "$harness" --model sonnet)
+    status=$?
+    expect_code 1 "$status" "a removed harness ($harness) should refuse"
+    assert_contains "$out" "unknown harness '$harness'" "removed harness refusal did not name the harness"
+    assert_absent "$HOME_DIR/state/$id.meta" "removed harness refusal wrote task metadata"
+    [ ! -s "$LAUNCH_LOG" ] || fail "removed harness refusal typed a launch command"
+  done
+  pass "a removed harness is refused as unknown before provisioning"
 }
 
 test_deck_secondmate_uses_home_driver_and_configured_pin() {
   local rec id sm out status launch
   id=profile-deck-host
-  rec=$(make_spawn_case profile-deck-host pi "$id")
+  rec=$(make_spawn_case profile-deck-host deck "$id")
   read_case_record "$rec"
   printf '%s\n' 'deck example/route' > "$HOME_DIR/config/secondmate-harness"
   sm="$CASE_DIR/secondmate-home"
@@ -611,40 +424,6 @@ test_deck_secondmate_uses_home_driver_and_configured_pin() {
   pass "Deck secondmate spawn resolves the configured pin and launches its home host"
 }
 
-test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity() {
-  local rec id sm out status launch
-  id=profile-pi-signed-secondmate-z8d
-  rec=$(make_spawn_case profile-pi-signed-secondmate pi "$id")
-  read_case_record "$rec"
-  printf '%s\n' pi-signed > "$HOME_DIR/config/secondmate-harness"
-  sm="$CASE_DIR/secondmate-home"
-  make_seeded_secondmate_home "$sm" "$id"
-  sm=$(cd "$sm" && pwd -P)
-  cp "$ROOT/AGENTS.md" "$sm/AGENTS.md"
-  cp "$sm/data/charter.md" "$CASE_DIR/charter-before"
-
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate)
-  status=$?
-  expect_code 0 "$status" "pi-signed persistent secondmate spawn should succeed"
-  assert_contains "$out" "spawned $id harness=pi-signed kind=secondmate" \
-    "pi-signed secondmate spawn did not preserve its runtime identity"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" pi-signed default default
-  cmp -s "$ROOT/AGENTS.md" "$sm/AGENTS.md" || fail "secondmate launch rewrote the supervisor contract"
-  cmp -s "$CASE_DIR/charter-before" "$sm/data/charter.md" || fail "secondmate launch rewrote the charter"
-  assert_absent "$HOME_DIR/data/$id/launch-brief.md" "secondmate launch received a worker overlay"
-  launch=$(cat "$LAUNCH_LOG")
-  assert_contains "$launch" "< '$sm/data/charter.md'" "secondmate launch lost its original charter"
-  assert_contains "$launch" "FM_PI_HARNESS=pi-signed '$FAKEBIN_DIR/pi-signed' --tui-mode regular -e '$sm/.pi/extensions/fm-primary-turnend-guard.ts' -e '$sm/.pi/extensions/fm-primary-pi-watch.ts'" \
-    "pi-signed secondmate did not force the regular TUI with Pi's primary extension launch shape"
-  if [ "${FM_TEST_EVIDENCE:-0}" = 1 ]; then
-    printf '# evidence begin: persistent secondmate\n%s\n' "$out"
-    printf 'launch command:\n%s\noriginal charter:\n' "$launch"
-    cat "$sm/data/charter.md"
-    printf 'supervisor AGENTS.md and charter remain byte-identical; no worker overlay created\n# evidence end\n'
-  fi
-  pass "pi-signed is a distinct persistent secondmate runtime with shared Pi supervision semantics"
-}
-
 test_batch_forwards_shared_profile_flags() {
   local rec id1 id2 out status
   id1=profile-batch-a-z9
@@ -654,20 +433,20 @@ test_batch_forwards_shared_profile_flags() {
   enable_dispatch_profile "$HOME_DIR"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-    "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness pi --model openai-codex/gpt-5 --effort high)
+    "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness deck --model openai-codex/gpt-5)
   status=$?
   expect_code 0 "$status" "batch spawn with shared profile flags should succeed: $out"
-  assert_contains "$out" "spawned $id1 harness=pi" "first batch task did not use shared harness"
-  assert_contains "$out" "spawned $id2 harness=pi" "second batch task did not use shared harness"
-  assert_meta_profile "$HOME_DIR/state/$id1.meta" pi openai-codex/gpt-5 high
-  assert_meta_profile "$HOME_DIR/state/$id2.meta" pi openai-codex/gpt-5 high
-  pass "batch dispatch shares --harness, --model, and --effort"
+  assert_contains "$out" "spawned $id1 harness=deck" "first batch task did not use shared harness"
+  assert_contains "$out" "spawned $id2 harness=deck" "second batch task did not use shared harness"
+  assert_meta_profile "$HOME_DIR/state/$id1.meta" deck openai-codex/gpt-5 default
+  assert_meta_profile "$HOME_DIR/state/$id2.meta" deck openai-codex/gpt-5 default
+  pass "batch dispatch shares --harness and --model"
 }
 
 test_active_dispatch_profile_does_not_block_secondmate_launch() {
   local rec id sm out status
   id=profile-secondmate-z16
-  rec=$(make_spawn_case profile-secondmate pi "$id")
+  rec=$(make_spawn_case profile-secondmate deck "$id")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
   sm="$CASE_DIR/secondmate-home"
@@ -676,9 +455,9 @@ test_active_dispatch_profile_does_not_block_secondmate_launch() {
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate)
   status=$?
   expect_code 0 "$status" "secondmate spawn should be exempt from the dispatch-profile explicit harness requirement"
-  assert_contains "$out" "spawned $id harness=pi kind=secondmate" "secondmate launch did not use secondmate harness resolution"
+  assert_contains "$out" "spawned $id harness=deck kind=secondmate" "secondmate launch did not use secondmate harness resolution"
   assert_grep "kind=secondmate" "$HOME_DIR/state/$id.meta" "secondmate meta missing kind=secondmate"
-  assert_meta_profile "$HOME_DIR/state/$id.meta" pi default default
+  assert_meta_profile "$HOME_DIR/state/$id.meta" deck default default
   pass "active crew-dispatch profile does not block secondmate launches"
 }
 
@@ -691,7 +470,7 @@ test_launch_environment_allowlist() {
   value='synthetic value; $(touch SHOULD_NOT_EXIST) `false` "quoted"'
   for setting in absent missing-config enabled empty; do
     id="env-$setting"
-    rec=$(make_spawn_case "$id" pi "$id")
+    rec=$(make_spawn_case "$id" deck "$id")
     read_case_record "$rec"
     case "$setting" in
       missing-config) rm "$HOME_DIR/config/crew-harness"; rmdir "$HOME_DIR/config" ;;
@@ -735,7 +514,7 @@ SH
 test_launch_environment_invalid_config_refuses() {
   local rec id bad out status
   id=env-invalid
-  rec=$(make_spawn_case "$id" pi "$id")
+  rec=$(make_spawn_case "$id" deck "$id")
   read_case_record "$rec"
   for bad in 'FM_TEST_ALLOWED=value' 'NAME;false' '1INVALID' '*'; do
     printf '%s\n' "$bad" > "$HOME_DIR/config/launch-env-allowlist"
@@ -758,7 +537,7 @@ test_launch_environment_inaccessible_config_refuses() {
   for setting in config ancestor; do
     for presence in present absent; do
       id="env-inaccessible-$setting-$presence"
-      rec=$(make_spawn_case "$id" pi "$id")
+      rec=$(make_spawn_case "$id" deck "$id")
       read_case_record "$rec"
       if [ "$presence" = present ]; then
         printf 'FM_TEST_ALLOWED\n' > "$HOME_DIR/config/launch-env-allowlist"
@@ -772,7 +551,7 @@ test_launch_environment_inaccessible_config_refuses() {
       fi
       chmod 600 "$blocked" || fail "could not remove configuration search permission"
       out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
-        "$id" "$PROJ_DIR" --harness pi --backend tmux)
+        "$id" "$PROJ_DIR" --harness deck --backend tmux)
       status=$?
       chmod 700 "$blocked" || fail "could not restore configuration search permission"
       expect_code 1 "$status" "inaccessible $setting with $presence allowlist must refuse spawn: $out"
@@ -787,21 +566,22 @@ test_launch_environment_inaccessible_config_refuses() {
 test_launch_environment_inherited_by_secondmate() {
   local rec id sm out status result
   id=env-secondmate
-  rec=$(make_spawn_case "$id" pi "$id")
+  rec=$(make_spawn_case "$id" deck "$id")
   read_case_record "$rec"
   printf 'FM_TEST_ALLOWED\n' > "$HOME_DIR/config/launch-env-allowlist"
   sm="$CASE_DIR/secondmate-home"
   make_seeded_secondmate_home "$sm" "$id"
-  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate)
+  cat > "$CASE_DIR/probe.sh" <<'SH'
+#!/bin/sh
+printf '%s\n' "${FM_TEST_AMBIENT_SENTINEL-unset}" "$FM_TEST_ALLOWED" "$FM_HOME" "${FM_STATE_OVERRIDE-unset}"
+SH
+  chmod +x "$CASE_DIR/probe.sh"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" \
+    "/bin/sh '$CASE_DIR/probe.sh'" --secondmate)
   status=$?
   expect_code 0 "$status" "secondmate with an allowlist should spawn: $out"
   cmp -s "$HOME_DIR/config/launch-env-allowlist" "$sm/config/launch-env-allowlist" \
     || fail "secondmate did not inherit the launch environment contract"
-  cat > "$FAKEBIN_DIR/pi" <<'SH'
-#!/bin/sh
-printf '%s\n' "${FM_TEST_AMBIENT_SENTINEL-unset}" "$FM_TEST_ALLOWED" "$FM_HOME" "${FM_STATE_OVERRIDE-unset}"
-SH
-  chmod +x "$FAKEBIN_DIR/pi"
   result=$(env -i HOME="$HOME_DIR/user-home" PATH="$FAKEBIN_DIR:$PATH" \
     FM_TEST_AMBIENT_SENTINEL=synthetic-unrelated FM_TEST_ALLOWED=synthetic-provider \
     /bin/sh -c "$(cat "$LAUNCH_LOG")") || fail "secondmate's emitted command failed"
@@ -844,7 +624,7 @@ test_launch_environment_inheritance_preserves_on_source_errors() {
   fi
   for route in local remote; do
     id="env-inherit-$route"
-    rec=$(make_spawn_case "$id" pi "$id")
+    rec=$(make_spawn_case "$id" deck "$id")
     read_case_record "$rec"
     dest="$CASE_DIR/inherited-home"
     mkdir -p "$dest/config"
@@ -912,7 +692,7 @@ test_worker_launch_delivers_role_scope() {
   for kind in no-mistakes direct-PR local-only scout; do
     [ "$brief_kind" = heading ] && [ "$kind" != no-mistakes ] && continue
     id="role-launch-$brief_kind-$kind"
-    rec=$(make_spawn_case "$id" pi)
+    rec=$(make_spawn_case "$id" deck)
     read_case_record "$rec"
     if [ "$brief_kind" != scaffold ]; then
       fm_test_spawn_brief "$HOME_DIR" "$id"
@@ -932,16 +712,16 @@ test_worker_launch_delivers_role_scope() {
       printf '%s\n' "$content" > "$brief"
     fi
     cp "$HOME_DIR/data/$id/brief.md" "$CASE_DIR/brief-before"
-    # Answer the spawn-time --help probe like Pi, then capture the launch argv.
-    cat > "$FAKEBIN_DIR/pi" <<'SH'
-#!/usr/bin/env bash
-if [ "${1:-}" = --help ]; then
-  printf '%s\n' 'Pi 0.84.0' 'Options: --help --tui-mode <mode>'
-  exit 0
-fi
-printf '%s\n' "$@" > "$FM_ROLE_PROMPT"
+    # The deck launch re-execs `bash` from PATH as fm-deck-worker. A shim keeps
+    # every other bash real and captures the driver argv instead of running it.
+    cat > "$CASE_DIR/bash-shim" <<SH
+#!$REAL_BASH
+case "\${1:-}" in
+  */fm-deck-worker.sh) printf '%s\n' "\$@" > "\$FM_ROLE_PROMPT" ;;
+  *) exec "$REAL_BASH" "\$@" ;;
+esac
 SH
-    chmod +x "$FAKEBIN_DIR/pi"
+    chmod +x "$CASE_DIR/bash-shim"
     if [ "$kind" = scout ]; then
       out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout)
     else
@@ -952,7 +732,10 @@ SH
     envelope="$CASE_DIR/prompt-envelope"
     encoded="$CASE_DIR/encoded-prompt"
     prompt="$CASE_DIR/prompt"
-    FM_ROLE_PROMPT="$envelope" PATH="$FAKEBIN_DIR:$PATH" bash -c "$launch" || fail "could not consume $kind launch command"
+    mkdir -p "$CASE_DIR/shim"
+    cp "$CASE_DIR/bash-shim" "$CASE_DIR/shim/bash"
+    FM_ROLE_PROMPT="$envelope" PATH="$CASE_DIR/shim:$FAKEBIN_DIR:$PATH" "$REAL_BASH" -c "$launch" \
+      || fail "could not consume $kind launch command"
     sed -n '/FIRSTMATE_OP: v1 launch-brief:/,$p' "$envelope" > "$encoded"
     "$ROOT/bin/fm-operational-input.sh" body < "$encoded" > "$prompt" ||
       fail "could not decode $kind launch-brief envelope"
@@ -990,8 +773,7 @@ SH
 }
 
 test_worker_launch_delivers_role_scope
-test_no_profile_keeps_pi_profile_defaults
-test_non_cursor_launch_clears_inherited_cursor_markers
+test_no_profile_keeps_deck_profile_defaults
 test_relative_home_overrides_launch_with_absolute_cross_process_paths
 test_home_defaults_preserve_absolute_or_resolve_relative_paths
 test_absolute_override_spelling_is_preserved_in_launch_paths
@@ -1001,16 +783,9 @@ test_active_dispatch_profile_requires_explicit_harness_for_scout
 test_active_dispatch_profile_allows_explicit_harness
 test_active_dispatch_profile_allows_positional_harness
 test_active_dispatch_profile_allows_raw_launch_command
-test_native_effort_validator_keeps_axes_separate
-test_native_pi_ultra_is_explicit_and_model_scoped
-test_batch_preserves_native_ultra
-test_pi_threads_model_and_max_effort
-test_pi_tui_mode_probe_is_safe_for_old_and_new_pi
-test_pi_signed_threads_shared_pi_profile_and_preserves_identity
-test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
+test_deck_missing_binary_refuses_before_endpoint_or_metadata
 test_deck_threads_model_and_refuses_effort
 test_removed_harness_is_refused_as_unknown
-test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity
 test_batch_forwards_shared_profile_flags
 test_active_dispatch_profile_does_not_block_secondmate_launch
 

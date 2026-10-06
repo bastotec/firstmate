@@ -62,7 +62,7 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" treehouse pi
+  fm_fake_exit0 "$fakebin" treehouse deck
   printf '%s\n' "$fakebin"
 }
 
@@ -81,7 +81,7 @@ make_settle_case() {
   countfile="$case_dir/pane-call-count"
   fakebin=$(make_settle_fakebin "$case_dir/fake")
   mkdir -p "$home/data" "$home/projects" "$home/state" "$home/config"
-  printf 'pi\n' > "$home/config/crew-harness"
+  printf 'deck\n' > "$home/config/crew-harness"
   fm_git_worktree "$proj" "$wt" "wt-$name"
   fm_git_init_commit "$stale"
   mkdir -p "$home/data/$id"
@@ -173,7 +173,7 @@ make_primary_case() {
   wt="$case_dir/slot"
   countfile="$case_dir/pane-call-count"
   fakebin=$(make_settle_fakebin "$case_dir/fake")
-  fm_test_spawn_home "$home" pi
+  fm_test_spawn_home "$home" deck
   fm_git_worktree "$primary" "$proj" "mate-$name"
   git -C "$primary" worktree add --quiet -b "slot-$name" "$wt"
   fm_test_spawn_brief "$home" "$id" "Exercise primary-checkout transient detection for $id."

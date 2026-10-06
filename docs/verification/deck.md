@@ -18,7 +18,7 @@ The skill tree rooted at [`.agents/skills/harness-adapters/SKILL.md`](../../.age
 ## What Firstmate owns here
 
 The `deck run` surface has no interactive screen, so nearly every supervised worker behavior is Firstmate's own driver, `bin/fm-deck-worker.sh`, not a vendor surface.
-The separate [`deck chat` primary](../managed-primary.md#deck-chat-primary) is outside the live evidence recorded here.
+The separate `deck chat` primary host (`bin/fm-deck-chat.sh`) is outside the live evidence recorded here.
 The vendor facts it depends on are Deck's own CLI contract: `run` streams NDJSON (`run_started` carries the session id, `run_finished` / `run_failed` end a run), `--session` resumes a session, and `--hook EVENT=COMMAND` attaches `pre_complete` (exit 2 refuses completion and the stderr is sent back to the model) and `post_tool_use`.
 Deck's own tests pin that contract (`cargo test --locked`, 85 tests at `7308f21`).
 

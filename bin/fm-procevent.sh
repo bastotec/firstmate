@@ -184,8 +184,8 @@
 # remains attached, and the watcher's reconcile cycle keeps it fresh in a live
 # home. A runner exports the inherited FM_PROCEVENT_IN_RUNNER marker and every
 # refresh is skipped under it, so a runner and its ordinary children do not
-# certify their own owner. That rule is CONFUSED-AGENT-GRADE, the grade
-# bin/fm-lease-lib.sh documents: a source that DELIBERATELY strips the marker
+# certify their own owner. That rule is CONFUSED-AGENT-GRADE: it stops an
+# honest mistake, not an adversary. A source that DELIBERATELY strips the marker
 # can still refresh, and adversarial-grade unforgeability is out of scope (see
 # docs/configuration.md). Scope is the owning state root and one runner
 # generation, never a script or process name, so a live source in

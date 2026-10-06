@@ -130,7 +130,7 @@ chmod +x "$FAKEBIN/fake-ssh"
 
 printf 'deck\n' > "$PARENT/config/secondmate-harness"
 printf 'tmux\n' > "$PARENT/config/backend"
-printf 'pi\n' > "$PARENT/config/crew-harness"
+printf 'deck\n' > "$PARENT/config/crew-harness"
 printf '## In flight\n\n## Queued\n\n## Done\n' > "$PARENT/data/backlog.md"
 
 remote_env() {

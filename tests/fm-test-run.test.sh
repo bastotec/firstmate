@@ -101,21 +101,20 @@ init_changed_fixture_repo() {
     fm-test-isolation-proof.test.sh \
     fm-test-run.test.sh \
     fm-test-fixtures.test.sh \
-    fm-cd-pretool-check.test.sh \
+    fm-supervision-instructions.test.sh \
     fm-daemon.test.sh \
     fm-harness-adapter-references.test.sh \
     fm-backend-herdr-smoke.test.sh \
     fm-secondmate-safety.test.sh \
     fm-session-start.test.sh \
-    fm-afk-pi-herdr-return-e2e.test.sh \
+    fm-deck-host-live-e2e.test.sh \
     fm-backend.test.sh \
     fm-pr-merge.test.sh \
     fm-procevent-quota.test.sh \
-    fm-pi-watch-extension.test.sh \
-    fm-pi-windows-shell-invocation.test.sh \
+    fm-guard-stale-banner.test.sh \
     fm-afk-return.test.sh \
     fm-bearings-snapshot.test.sh \
-    fm-control-herdr-smoke.test.sh; do
+    fm-herdr-session-cleanup-e2e.test.sh; do
     printf '#!/usr/bin/env bash\n# tests/lib.sh\n' >"$repo/tests/$script"
     chmod +x "$repo/tests/$script"
   done
@@ -147,20 +146,13 @@ init_changed_fixture_repo() {
   # shellcheck disable=SC2016  # literal fixture text: the reference must reach
   # the file verbatim so the changed-file scan can find it, not expand here.
   printf '. "$ROOT/bin/shared-probe-lib.sh"\n' >"$repo/bin/fm-watch-probe.sh"
-  printf '# .pi/extensions/fm-primary-turnend-guard.ts\n' \
-    >>"$repo/tests/fm-cd-pretool-check.test.sh"
-  printf '# .pi/extensions/fm-primary-pi-watch.ts\n' >>"$repo/tests/fm-pi-watch-extension.test.sh"
   mkdir -p \
     "$repo/.agents/skills/example" \
     "$repo/.agents/skills/harness-adapters/references/common" \
-    "$repo/.pi/extensions" "$repo/docs" "$repo/src"
+    "$repo/docs" "$repo/src"
   : >"$repo/.agents/skills/example/SKILL.md"
   : >"$repo/.agents/skills/harness-adapters/SKILL.md"
   : >"$repo/.agents/skills/harness-adapters/references/common/dispatch.md"
-  : >"$repo/.pi/extensions/fm-primary-pi-watch.ts"
-  : >"$repo/.pi/extensions/fm-primary-turnend-guard.ts"
-  mkdir -p "$repo/.pi/extensions/lib"
-  : >"$repo/.pi/extensions/lib/fm-operational-input.ts"
   : >"$repo/docs/fm-test-isolation-proof.md"
   : >"$repo/CONTRIBUTING.md"
   : >"$repo/src/unmapped.ts"
@@ -335,35 +327,22 @@ test_changed_dependency_selection_and_unmapped_failure() {
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm supervisor-change
 
   printf '\n' >>"$repo/.agents/skills/example/SKILL.md"
-  printf '\n' >>"$repo/.pi/extensions/fm-primary-pi-watch.ts"
-  printf '\n' >>"$repo/.pi/extensions/fm-primary-turnend-guard.ts"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
   assert_contains "$listed" "tests/fm-ask-user-authority.test.sh" "skill source selects pure contract coverage"
-  assert_contains "$listed" "tests/fm-cd-pretool-check.test.sh" "Pi source selects hook coverage"
-  assert_contains "$listed" "tests/fm-pi-watch-extension.test.sh" "Pi source selects watcher coverage"
-  assert_contains "$listed" "tests/fm-pi-windows-shell-invocation.test.sh" \
-    "turn-end extension selects native-Windows shell coverage"
-  git -C "$repo" add .agents .pi
+  git -C "$repo" add .agents
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm non-bin-source-change
-
-  printf '\n' >>"$repo/.pi/extensions/lib/fm-operational-input.ts"
-  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
-  assert_contains "$listed" "tests/fm-pi-windows-shell-invocation.test.sh" \
-    "operational-input extension selects native-Windows shell coverage"
-  git -C "$repo" add .pi/extensions/lib/fm-operational-input.ts
-  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm operational-input-source-change
 
   printf '\n' >>"$repo/.agents/skills/harness-adapters/references/common/dispatch.md"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
   assert_contains "$listed" "tests/fm-harness-adapter-references.test.sh" "harness adapter reference selects portable structural coverage"
-  assert_contains "$listed" "tests/fm-afk-pi-herdr-return-e2e.test.sh" "harness adapter reference selects opt-in live harness coverage"
+  assert_contains "$listed" "tests/fm-deck-host-live-e2e.test.sh" "harness adapter reference selects opt-in live harness coverage"
   git -C "$repo" add .agents/skills/harness-adapters
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm harness-adapter-reference-change
 
   printf '\n' >>"$repo/.agents/skills/harness-adapters/SKILL.md"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
   assert_contains "$listed" "tests/fm-harness-adapter-references.test.sh" "harness adapter router selects portable structural coverage"
-  assert_contains "$listed" "tests/fm-afk-pi-herdr-return-e2e.test.sh" "harness adapter router selects opt-in live harness coverage"
+  assert_contains "$listed" "tests/fm-deck-host-live-e2e.test.sh" "harness adapter router selects opt-in live harness coverage"
   git -C "$repo" add .agents/skills/harness-adapters/SKILL.md
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm harness-adapter-router-change
 
@@ -430,14 +409,14 @@ test_changed_bin_reference_selects_per_script_not_per_family() {
   assert_contains "$listed" "tests/fm-backend-herdr-smoke.test.sh" \
     "the one gated script that names the helper must still be selected"
   case "$listed" in
-    *tests/fm-control-herdr-smoke.test.sh*)
+    *tests/fm-herdr-session-cleanup-e2e.test.sh*)
       fail "a single gated script's reference dragged in its whole family: $listed"
       ;;
   esac
   # The curated consumer keeps its family-level coupling.
   assert_contains "$listed" "tests/fm-daemon.test.sh" \
     "a curated consumer of the helper must still select its whole family"
-  assert_contains "$listed" "tests/fm-pi-watch-extension.test.sh" \
+  assert_contains "$listed" "tests/fm-guard-stale-banner.test.sh" \
     "a curated consumer of the helper must still select its whole family"
 
   rm -rf "$tmp"
@@ -452,7 +431,7 @@ test_changed_uses_bounded_automatic_concurrency() {
   repo="$tmp/repo"
   init_changed_fixture_repo "$repo"
   cp "$ROOT/bin/fm-timeout-lib.sh" "$repo/bin/fm-timeout-lib.sh"
-  for script in fm-backend-herdr-smoke.test.sh fm-daemon.test.sh fm-pi-watch-extension.test.sh; do
+  for script in fm-backend-herdr-smoke.test.sh fm-daemon.test.sh fm-guard-stale-banner.test.sh; do
     cat >"$repo/tests/$script" <<'SH'
 #!/usr/bin/env bash
 sleep 1
@@ -494,7 +473,7 @@ assert serial["selection"].split(";")[-1] == "jobs=1"
 PY
 
   timeout_repo="$tmp/timeout-repo"
-  timeout_script=tests/fm-calm-pi-extension.test.sh
+  timeout_script=tests/fm-operational-input.test.sh
   mkdir -p "$timeout_repo/bin" "$timeout_repo/tests"
   cp "$RUNNER" "$timeout_repo/bin/fm-test-run.sh"
   cp "$ROOT/tests/git-config-helpers.sh" "$timeout_repo/tests/"
@@ -520,7 +499,7 @@ SH
   rc=$?
   set -e
   [ "$rc" -eq 1 ] || fail "single-script automatic timeout must fail the run, got $rc"
-  grep -Eq '^FM_TEST_END .+ tests/fm-calm-pi-extension\.test\.sh exit=124 ' "$tmp/timeout.out" \
+  grep -Eq '^FM_TEST_END .+ tests/fm-operational-input\.test\.sh exit=124 ' "$tmp/timeout.out" \
     || fail "single unproven changed script did not receive the automatic timeout: $(cat "$tmp/timeout.out")"
   [ ! -e "$timeout_repo/should-not-run" ] || fail "automatic timeout helper did not own the single changed script"
 
@@ -552,7 +531,7 @@ SH
   set +e
   out=$(cd "$repo" && PATH="$fakebin:$PATH" REAL_STAT="$real_stat" \
     bin/fm-test-run.sh --jobs 2 \
-      tests/fm-cd-pretool-check.test.sh tests/fm-ask-user-authority.test.sh 2>&1)
+      tests/fm-supervision-instructions.test.sh tests/fm-ask-user-authority.test.sh 2>&1)
   rc=$?
   set -e
   expect_code 0 "$rc" "native-Windows POSIX-mode emulation"
@@ -562,7 +541,7 @@ SH
   set +e
   out=$(cd "$repo" && PATH="$fakebin:$PATH" REAL_STAT="$real_stat" FAKE_UNAME=CYGWIN_NT-10.0 \
     bin/fm-test-run.sh --jobs 2 \
-      tests/fm-cd-pretool-check.test.sh tests/fm-ask-user-authority.test.sh 2>&1)
+      tests/fm-supervision-instructions.test.sh tests/fm-ask-user-authority.test.sh 2>&1)
   rc=$?
   set -e
   expect_code 1 "$rc" "Cygwin POSIX-mode enforcement"
@@ -583,9 +562,9 @@ test_script_list_uses_bounded_automatic_concurrency() {
   repo="$tmp/repo"
   init_changed_fixture_repo "$repo"
   rm -f "$repo/bin/fm-timeout-lib.sh"
-  # fm-cd-pretool-check and fm-pr-merge are individually proven isolated;
+  # fm-supervision-instructions and fm-pr-merge are individually proven isolated;
   # fm-backend is not, so it must still land in the serial tail.
-  for script in fm-cd-pretool-check.test.sh fm-pr-merge.test.sh fm-backend.test.sh; do
+  for script in fm-supervision-instructions.test.sh fm-pr-merge.test.sh fm-backend.test.sh; do
     cat >"$repo/tests/$script" <<'SH'
 #!/usr/bin/env bash
 sleep 1
@@ -594,14 +573,14 @@ SH
     chmod +x "$repo/tests/$script"
   done
 
-  (cd "$repo" && bin/fm-test-run.sh tests/fm-cd-pretool-check.test.sh tests/fm-pr-merge.test.sh \
+  (cd "$repo" && bin/fm-test-run.sh tests/fm-supervision-instructions.test.sh tests/fm-pr-merge.test.sh \
       --json "$tmp/parallel.json") >"$tmp/parallel.out" 2>"$tmp/parallel.err" \
     || fail "default script-list run failed: $(cat "$tmp/parallel.err")"
   parallel_shape=$(grep -E '^FM_TEST_(BEGIN|END)' "$tmp/parallel.out" | head -n 2 | awk '{print $1}' | paste -sd, -)
   [ "$parallel_shape" = FM_TEST_BEGIN,FM_TEST_BEGIN ] \
     || fail "a plain script list did not use bounded concurrent scheduling: $parallel_shape"
 
-  (cd "$repo" && bin/fm-test-run.sh tests/fm-cd-pretool-check.test.sh tests/fm-pr-merge.test.sh \
+  (cd "$repo" && bin/fm-test-run.sh tests/fm-supervision-instructions.test.sh tests/fm-pr-merge.test.sh \
       --jobs 1 --json "$tmp/serial.json") >"$tmp/serial.out" 2>"$tmp/serial.err" \
     || fail "explicit serial script-list run failed: $(cat "$tmp/serial.err")"
   serial_shape=$(grep -E '^FM_TEST_(BEGIN|END)' "$tmp/serial.out" | head -n 2 | awk '{print $1}' | paste -sd, -)
@@ -610,7 +589,7 @@ SH
 
   # An unproven script in the list is scheduled around, never refused and never
   # run beside another script.
-  (cd "$repo" && bin/fm-test-run.sh tests/fm-cd-pretool-check.test.sh tests/fm-pr-merge.test.sh \
+  (cd "$repo" && bin/fm-test-run.sh tests/fm-supervision-instructions.test.sh tests/fm-pr-merge.test.sh \
       tests/fm-backend.test.sh) >"$tmp/mixed.out" 2>"$tmp/mixed.err" \
     || fail "mixed proven/unproven script list failed: $(cat "$tmp/mixed.err")"
   mixed_shape=$(grep -E '^FM_TEST_(BEGIN|END)' "$tmp/mixed.out" | awk '{print $1}' | paste -sd, -)
@@ -653,7 +632,7 @@ test_family_proofs_run_in_separate_concurrent_phases() {
   cp "$ROOT/bin/fm-timeout-lib.sh" "$repo/bin/fm-timeout-lib.sh"
   chmod +x "$repo/bin/fm-test-run.sh"
   for script in \
-    fm-calm-pi-extension.test.sh fm-classify-decision-key.test.sh \
+    fm-operational-input.test.sh fm-classify-decision-key.test.sh \
     fm-pr-check-security.test.sh fm-teardown.test.sh; do
     cat >"$repo/tests/$script" <<'SH'
 #!/usr/bin/env bash
@@ -664,7 +643,7 @@ SH
   done
 
   (cd "$repo" && bin/fm-test-run.sh \
-      tests/fm-pr-check-security.test.sh tests/fm-calm-pi-extension.test.sh \
+      tests/fm-pr-check-security.test.sh tests/fm-operational-input.test.sh \
       tests/fm-teardown.test.sh tests/fm-classify-decision-key.test.sh --jobs 4) \
     >"$tmp/out" 2>"$tmp/err" \
     || fail "cross-family phase fixture failed: $(cat "$tmp/err")"
@@ -993,7 +972,7 @@ test_live_guards_expect_a_capability_skip_class() {
   # FM_LIVE=0 makes every live guard refuse without touching a harness, so this
   # exercises the real family through the real runner in bounded time.
   FM_LIVE=0 "$RUNNER" --json "$tmp/timing.json" \
-    tests/fm-pi-primary-live-e2e.test.sh >"$out" 2>"$tmp/err.txt" \
+    tests/fm-deck-host-live-e2e.test.sh >"$out" 2>"$tmp/err.txt" \
     || fail "a disabled live guard must not fail the runner: $(cat "$tmp/err.txt")"
   grep -q 'expected_gate_skip=live-capability' "$out" \
     || fail "the live-harness family must expect a capability skip: $(grep FM_TEST_BEGIN "$out")"

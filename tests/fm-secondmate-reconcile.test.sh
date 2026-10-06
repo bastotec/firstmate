@@ -31,7 +31,7 @@ make_main_home() {  # <name> <mate-id>
   cat > "$home/state/$id.meta" <<META
 window=firstmate:fm-$id
 kind=secondmate
-harness=pi
+harness=deck
 backend=tmux
 spawn_gen=spawn-$id
 home=$abs
@@ -111,7 +111,7 @@ worktree=-
 project=-
 backend=herdr
 endpoint_task_id=$1
-harness=pi
+harness=deck
 herdr_session=fm-remote
 herdr_workspace_id=w1
 herdr_tab_id=t1
@@ -132,7 +132,7 @@ make_remote_parent_home() {  # <name> <mate-id> <remote-home> <host> -> echoes h
   cat > "$home/state/$id.meta" <<META
 window=remote:$id
 endpoint_task_id=$id
-harness=pi
+harness=deck
 kind=secondmate
 mode=secondmate
 yolo=off
@@ -554,7 +554,7 @@ SH
     cat > "$home/state/mate.meta" <<META
 window=firstmate:fm-mate
 kind=secondmate
-harness=pi
+harness=deck
 backend=tmux
 spawn_gen=spawn-replacement
 home=$mate
@@ -768,7 +768,7 @@ test_reconcile_requests_coalesce_per_target_until_delivery() {
   cat > "$home/state/coalesce-b.meta" <<META
 window=firstmate:fm-coalesce-b
 kind=secondmate
-harness=pi
+harness=deck
 backend=tmux
 spawn_gen=spawn-coalesce-b
 home=$second_abs
@@ -927,7 +927,7 @@ test_bearings_request_returns_before_remote_delivery_and_supervision_sends_later
     [ ! -e "$lock" ] || fail "the request path left a mate lifecycle lock held: $lock"
   done
 
-  FM_TEST_RECONCILE_REMOTE_DELAY=4 \
+  FM_TEST_RECONCILE_REMOTE_DELAY=8 \
     FM_SSH_BIN="$fakebin/fake-ssh" FM_REMOTE_CODE_ROOT="$ROOT" \
     PATH="$fakebin:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$home/state" FM_POLL=1 FM_HOME_SUMMARY_INTERVAL=999999 \
@@ -945,7 +945,9 @@ test_bearings_request_returns_before_remote_delivery_and_supervision_sends_later
   [ -n "$processing" ] || fail "supervision did not claim the durable reconcile request"
   beat_before=$(stat -c %Y "$home/state/.last-watcher-beat" 2>/dev/null || stat -f %m "$home/state/.last-watcher-beat")
   i=0
-  while [ -e "$processing" ] && [ "$i" -lt 70 ]; do
+  # The beacon has one-second mtime resolution and a loaded runner can run a
+  # cycle late, so watch across most of the delayed delivery, not one beat.
+  while [ -e "$processing" ] && [ "$i" -lt 150 ]; do
     sleep 0.05
     beat_after=$(stat -c %Y "$home/state/.last-watcher-beat" 2>/dev/null || stat -f %m "$home/state/.last-watcher-beat")
     if [ "$beat_after" -gt "$beat_before" ]; then

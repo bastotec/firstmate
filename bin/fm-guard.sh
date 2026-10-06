@@ -13,11 +13,7 @@
 # bin/fm-wake-lib.sh): under the auto-arm model a fresh beacon with no live
 # watcher is healthy. Deck secondmates receive it only as a launch-scoped
 # override for the persistent driver's bounded watcher hand-off; a stale beacon
-# is a genuine lapse. Under the
-# Pi extension model the extension tears the watcher down and respawns it on
-# every actionable wake, so a fresh beacon with a genuinely unheld lock is
-# healthy while that live Pi session provably owns continuity; any held but
-# unhealthy lock is down. Under the persistent model a live identity-matched
+# is a genuine lapse. Under the persistent model a live identity-matched
 # watcher with a fresh beacon is required. The banner names the true failing condition (a missing live
 # watcher process vs a genuinely stale beacon). The full banner is emitted once
 # per distinct down-episode in this FM_HOME (keyed to the failing condition, not
@@ -27,16 +23,9 @@
 # bounded). Independent alarms (queued wakes, worktree tangle, captain inbox
 # notes unread past FM_INBOX_OVERDUE_SECS) are never suppressed by that dedup. Normal wake handling (watcher briefly down between a
 # wake and the next supervision resume) stays inside the grace window and stays
-# silent. The queued-wakes warning counts only the rows the calling actor can
-# itself present or retire (fm_wake_actor_pending_count), so it is never an
-# instruction to run a drain with nothing to present. A row reserved by a live
-# supervision-branch grant is never a drain instruction for main; instead of
-# going silent about a visibly non-empty queue, main gets a distinct advisory
-# naming the branch as the holder and saying not to drain those rows.
-# The ordinary warning also stays silent for the supervision branch
-# actor (FM_SUPERVISION_ACTOR=branch), because that actor runs guarded commands
-# while handling exactly the queued rows its grant covers and can drain nothing
-# else. Always exits 0: the guard warns, it never blocks.
+# silent. The queued-wakes warning counts only the rows a drain can present or
+# retire (fm_wake_pending_count), so it is never an instruction to run a drain
+# with nothing to present. Always exits 0: the guard warns, it never blocks.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,7 +36,6 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 WATCH="$SCRIPT_DIR/fm-watch.sh"
 GRACE=${FM_GUARD_GRACE:-300}
 queue_pending=false
-queue_branch_held=false
 READ_ONLY=${FM_GUARD_READ_ONLY:-0}
 case "$READ_ONLY" in 1|true|TRUE|yes|YES) READ_ONLY=1 ;; *) READ_ONLY=0 ;; esac
 CONTINUE_LINE=${FM_GUARD_CONTINUE_LINE:-This is a supervision warning only; the guarded operation WILL still run.}
@@ -62,12 +50,6 @@ STALE_BANNER_MARKER="$STATE/.guard-watcher-stale-banner"
 . "$SCRIPT_DIR/fm-tangle-lib.sh"
 # shellcheck source=bin/fm-supervision-lib.sh
 . "$SCRIPT_DIR/fm-supervision-lib.sh"
-# shellcheck source=bin/fm-lease-lib.sh
-. "$SCRIPT_DIR/fm-lease-lib.sh"
-
-# The current actor (fm_lease_actor is the one owner of that identity); a
-# malformed value is a wiring bug elsewhere, so the guard just warns as main.
-GUARD_ACTOR=$(fm_lease_actor 2>/dev/null) || GUARD_ACTOR=main
 
 # Deterministic episode key from the qualitative down-state (the failing
 # condition), NOT the beacon mtime: under the auto-arm model a healthy
@@ -166,27 +148,24 @@ fi
 
 # An overdue captain inbox note is a delivery failure independent of watcher
 # health or supervision need. The note record itself drives this alarm, which is
-# never deduplicated. The supervision branch cannot answer the captain, so it
-# stays silent there.
-if [ "$GUARD_ACTOR" != branch ]; then
-  overdue_notes=$(fm_inbox_overdue_notes "$STATE" "${FM_INBOX_OVERDUE_SECS:-$FM_INBOX_OVERDUE_DEFAULT}")
-  if [ -n "$overdue_notes" ]; then
-    overdue_count=$(printf '%s\n' "$overdue_notes" | awk 'END { print NR }')
-    IFS=$'\t' read -r overdue_oldest overdue_age <<< "$(printf '%s\n' "$overdue_notes" | head -1)"
-    rule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-    {
-      printf '●%s\n' "$rule"
-      printf '●  CAPTAIN INBOX NOT READ - %s note(s) unread, oldest %s for %s min.\n' \
-        "$overdue_count" "$overdue_oldest" "$((overdue_age / 60))"
-      if [ "$READ_ONLY" -eq 1 ]; then
-        printf '●  This read-only session should report the unread notes, not handle them.\n'
-      else
-        printf '●  Read them with bin/fm-inbox.sh list, answer each, then bin/fm-inbox.sh drain --ack <id>.\n'
-      fi
-      printf '●  %s\n' "$CONTINUE_LINE"
-      printf '●%s\n' "$rule"
-    } >&2
-  fi
+# never deduplicated.
+overdue_notes=$(fm_inbox_overdue_notes "$STATE" "${FM_INBOX_OVERDUE_SECS:-$FM_INBOX_OVERDUE_DEFAULT}")
+if [ -n "$overdue_notes" ]; then
+  overdue_count=$(printf '%s\n' "$overdue_notes" | awk 'END { print NR }')
+  IFS=$'\t' read -r overdue_oldest overdue_age <<< "$(printf '%s\n' "$overdue_notes" | head -1)"
+  rule='━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+  {
+    printf '●%s\n' "$rule"
+    printf '●  CAPTAIN INBOX NOT READ - %s note(s) unread, oldest %s for %s min.\n' \
+      "$overdue_count" "$overdue_oldest" "$((overdue_age / 60))"
+    if [ "$READ_ONLY" -eq 1 ]; then
+      printf '●  This read-only session should report the unread notes, not handle them.\n'
+    else
+      printf '●  Read them with bin/fm-inbox.sh list, answer each, then bin/fm-inbox.sh drain --ack <id>.\n'
+    fi
+    printf '●  %s\n' "$CONTINUE_LINE"
+    printf '●%s\n' "$rule"
+  } >&2
 fi
 
 # Compute supervision need and watcher-beacon freshness via the shared
@@ -198,7 +177,7 @@ sources=$FM_SUP_SOURCES
 checks=$FM_SUP_CHECKS
 needed=$FM_SUP_NEEDED
 beacon_desc=$FM_SUP_BEACON_DESC
-fm_watcher_supervision_verdict "$STATE" "$WATCH" "$GRACE" "$FM_HOME" "$FM_ROOT"
+fm_watcher_supervision_verdict "$STATE" "$WATCH" "$GRACE" "$FM_HOME"
 watcher_healthy=$FM_WATCHER_VERDICT_OK
 watcher_down_reason=$FM_WATCHER_VERDICT_REASON
 if [ "$needed" = false ]; then
@@ -209,17 +188,10 @@ if [ "$needed" = false ]; then
   exit 0
 fi
 
-# Count only the rows this actor could actually present or retire, so the
-# warning never sends an actor to a drain that provably has nothing for it.
-# fm-wake-lib.sh owns that per-actor classification. A non-empty queue with
-# nothing for main is the branch-held case: keep the raw pending signal visible
-# there as its own advisory rather than dropping it.
-if [ -s "$FM_WAKE_QUEUE" ]; then
-  if [ "$(fm_wake_actor_pending_count "$GUARD_ACTOR")" -gt 0 ]; then
-    queue_pending=true
-  elif [ "$GUARD_ACTOR" != branch ] && [ "$(fm_wake_actor_pending_count branch)" -gt 0 ]; then
-    queue_branch_held=true
-  fi
+# Count only the rows a drain could actually present or retire, so the warning
+# never sends the session to a drain that provably has nothing for it.
+if [ -s "$FM_WAKE_QUEUE" ] && [ "$(fm_wake_pending_count)" -gt 0 ]; then
+  queue_pending=true
 fi
 
 # No fresh watcher with tasks in flight is the dangerous state: emit a prominent,
@@ -288,19 +260,11 @@ fi
 # Queued wakes are an independent hazard; warn whenever they are pending, even if
 # a watcher is alive. Kept after the banner so the no-watcher alarm reads first.
 # Dedup of the watcher-down banner never suppresses this warning.
-# The supervision branch is the exception: it runs guarded commands (fm-peek,
-# fm-crew-state) in the middle of handling the very rows that are queued, and
-# "drain them before anything else" mid-handling reads as "an earlier wake is
-# still pending", which is what made it re-run a previous acknowledgement in a
-# loop. The branch can act on nothing outside its grant anyway, so for that
-# actor the guard stays silent about queued rows.
 if "$queue_pending"; then
   if [ "$READ_ONLY" -eq 1 ]; then
     echo "WARNING: queued wakes pending - left untouched because this session lacks verified fleet-lock ownership." >&2
-  elif [ "$GUARD_ACTOR" != branch ]; then
+  else
     echo "WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else." >&2
   fi
-elif "$queue_branch_held"; then
-  echo "NOTICE: wake rows held by the live supervision branch - it presents and acknowledges them; do not drain them from here." >&2
 fi
 exit 0

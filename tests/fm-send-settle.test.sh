@@ -119,7 +119,7 @@ test_key_path_never_pauses() {
 
 # fm-send's --key path is a raw keystroke and owns no busy state: an Escape to
 # a task never fabricates an idle edge for it. The harness's own busy source
-# (the pi extension here) reports the turn's real end.
+# (the deck wrapper here) reports the turn's real end.
 test_escape_key_leaves_busy_state_alone() {
   local dir fb log rc home gen before
   dir="$TMP_ROOT/escape-busy"; mkdir -p "$dir"
@@ -127,7 +127,7 @@ test_escape_key_leaves_busy_state_alone() {
   home="$dir/home"; mkdir -p "$home/state"
   fm_write_meta "$home/state/task.meta" \
     "window=sess:win" "worktree=$home/wt" "project=$home/project" \
-    "harness=pi" "kind=ship" "mode=no-mistakes" "yolo=off"
+    "harness=deck" "kind=ship" "mode=no-mistakes" "yolo=off"
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" task)
   printf 'busy_gen=%s\n' "$gen" >> "$home/state/task.meta"
   before=$(cat "$home/state/task.busy-state")

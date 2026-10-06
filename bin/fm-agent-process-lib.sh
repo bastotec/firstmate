@@ -10,11 +10,12 @@
 # harness one backend recognizes silently reads as a dead pane on the other.
 # The classifier moved here verbatim from the tmux adapter, where it was born;
 # docs/tmux-backend.md "Agent liveness probe" owns the empirical basis for the
-# names below, and tests/fm-tmux-agent-liveness.test.sh plus
-# tests/fm-harness-liveness-drift-live-e2e.test.sh keep them honest.
+# names below, and tests/fm-tmux-agent-liveness.test.sh keeps them honest.
 
 # shellcheck source=bin/fm-session-lock-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-session-lock-lib.sh"
+# shellcheck source=bin/fm-cursor-lib.sh
+. "$(dirname -- "${BASH_SOURCE[0]}")/fm-cursor-lib.sh"
 
 # fm_agent_process_classify_name: the single owner of the process-name
 # vocabulary shared by every liveness signal - `agent` for a verified harness,

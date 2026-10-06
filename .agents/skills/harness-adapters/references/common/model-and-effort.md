@@ -17,15 +17,12 @@ Choose intermediate levels as complexity, uncertainty, blast radius, or open-end
 If an adapter lacks `xhigh`, cap at its highest supported non-`max` level rather than silently omitting the intent.
 Never select `max` through this fallback; only an explicit per-task or standing captain preference permits it.
 
-The explicit native `ultra` value follows the model-scoped refusal contract in `../../../bin/fm-harness.sh validate-native-effort`; it is never silently omitted or mapped to a Pi level.
-For other values, if requested effort is outside the adapter's accepted set, the spawn records `effort=` in task metadata but emits no effort flag.
-This preserves launch success instead of passing a known-bad value.
-Deck's no-effort refusal is the exception, owned by `../../../bin/fm-spawn.sh` and `references/harness/deck.md`; do not apply this record-and-omit rule to Deck.
+Deck's no-effort refusal is owned by `../../../bin/fm-spawn.sh` and `references/harness/deck.md`; never silently omit a requested effort.
 
 ## Harness and provider identity
 
 Harness identity is independent of model provider.
-`harness=pi` with `model=xai/grok-*` is Pi using xAI, not standalone Grok Build, and does not require Grok CLI login.
+`harness=deck` with `model=xai/grok-*` is Deck using xAI, not standalone Grok Build, and does not require Grok CLI login.
 
 No script resolves credential provenance for you.
 Establish it from the tool's discovery surface and `quota-axi auth --json` per-provider sources, and show the reasoning rather than inferring it from a name.

@@ -29,7 +29,7 @@
 #     status when Deck exits without one;
 #   - Ctrl+C cancels the running turn and returns to the prompt; `/quit` at the
 #     prompt ends the worker;
-#   - an ordinary ship worker (not a --secondmate or --primary home host) whose
+#   - an ordinary ship worker (not a --secondmate home host) whose
 #     turn ends while its no-mistakes run is still working
 #     (bin/fm-crew-state.sh reads `state: working · source: run-step`) is not
 #     left idle until a steer: the driver polls that same reader at the idle
@@ -45,9 +45,7 @@
 #
 # USAGE (bin/fm-spawn.sh builds this; the brief arrives already encoded)
 #   fm-deck-worker.sh --id <task-id> --state <state-dir> --gen <busy-gen>
-#       --deck <deck-binary> [--model <route>] [--secondmate | --primary] -- <first-prompt>
-# --primary is used only by the managed primary launcher; it shares the stable
-# home-host driver with --secondmate, without selecting a secondmate role.
+#       --deck <deck-binary> [--model <route>] [--secondmate] -- <first-prompt>
 # --secondmate requires FM_HOME and hosts that home, leaving --state pointed
 # at the parent task state for busy/progress and failure publication.
 # Startup runs once before the first turn. A tracked watcher stays armed through
@@ -56,7 +54,7 @@
 # The driver postcondition does not park without an owned watcher or a pending
 # result. A failed watcher exits loudly rather than leaving an idle host blind.
 #
-# HOME HOST INVARIANTS (--secondmate or --primary)
+# HOME HOST INVARIANTS (--secondmate)
 # The driver, not a turn-scoped Deck process, owns the home session lock.
 # Watcher results pass through the durable execution steering inbox and its ordinary
 # doorbell, retained until acknowledged after a serialized next turn;
@@ -109,7 +107,6 @@ BUSY_EVENT="$SCRIPT_DIR/fm-busy-event.sh"
 STATE_IO="$SCRIPT_DIR/fm-state-io.py"
 
 ID='' STATE='' GEN='' DECK='' MODEL=''
-PRIMARY=0
 SECONDMATE=0 WATCH_PID='' WATCH_PREDECESSOR_ARM_PID='' INPUT_PID='' TURN_PID='' TURN_RENDER_PID=''
 WATCH_HANDLING_GENERATION='' WATCH_HANDLING_WATCHER_PID=''
 # shellcheck source=bin/fm-session-lock-lib.sh
@@ -119,7 +116,6 @@ WATCH_HANDLING_GENERATION='' WATCH_HANDLING_WATCHER_PID=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --secondmate) SECONDMATE=1; shift ;;
-    --primary) PRIMARY=1; SECONDMATE=1; shift ;;
     --id) ID=${2-}; shift 2 ;;
     --state) STATE=${2-}; shift 2 ;;
     --gen) GEN=${2-}; shift 2 ;;
@@ -139,7 +135,6 @@ command -v python3 >/dev/null 2>&1 || { echo "fm-deck-worker: python3 is require
 [ -f "$STATE_IO" ] && [ ! -L "$STATE_IO" ] || { echo "fm-deck-worker: safe status I/O helper is unavailable" >&2; exit 2; }
 
 HOST_ROLE=secondmate
-[ "$PRIMARY" != 1 ] || HOST_ROLE='managed primary'
 STATUS_FILE="$STATE/$ID.status"
 TURNEND_FILE="$STATE/$ID.turn-ended"
 MAX_TURNS=${FM_DECK_MAX_TURNS:-200}

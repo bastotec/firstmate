@@ -23,21 +23,13 @@ fm_git_identity fmtest fmtest@example.invalid
 
 LIB="$ROOT/bin/fm-session-lock-lib.sh"
 
-# An installer that names the per-session executable by its version leaves a
-# basename that says nothing, so the harness identity has to survive on the
-# install path alone.
-PI_VERSION_DIR="$TMP_ROOT/pi-install/share/pi/versions"
-mkdir -p "$PI_VERSION_DIR"
-ln -s /bin/bash "$PI_VERSION_DIR/0.80.5"
-VERSIONED_PI="$PI_VERSION_DIR/0.80.5"
-
 FAKEBIN=$(fm_fakebin "$TMP_ROOT/harness-bin")
-ln -s /bin/bash "$FAKEBIN/pi"
-NAMED_PI="$FAKEBIN/pi"
 ln -s /bin/bash "$FAKEBIN/fm-deck-worker"
 NAMED_DECK="$FAKEBIN/fm-deck-worker"
-ln -s /bin/bash "$FAKEBIN/claude"
-NAMED_CLAUDE="$FAKEBIN/claude"
+ln -s /bin/bash "$FAKEBIN/fm-deck-chat"
+NAMED_CHAT="$FAKEBIN/fm-deck-chat"
+ln -s /bin/bash "$FAKEBIN/pi"
+NAMED_PI="$FAKEBIN/pi"
 
 # --- unit layer: identity behind a deterministic process table ---------------
 
@@ -52,9 +44,9 @@ lib_eval() {  # <fakebin> <expression>
   " "$LIB"
 }
 
-test_version_named_session_is_identified_on_both_platforms() {
+test_argv0_named_host_is_identified_on_both_platforms() {
   local dir fakebin shape got
-  dir="$TMP_ROOT/version-named"
+  dir="$TMP_ROOT/argv0-named"
   fakebin=$(fm_fakebin "$dir")
   mkdir -p "$dir/state"
   cat > "$fakebin/ps" <<'SH'
@@ -68,11 +60,11 @@ while [ "$#" -gt 0 ]; do
     *) shift ;;
   esac
 done
-case "$pid:$field:${FM_TEST_PI_SHAPE:-linux}" in
-  700:comm=:linux) printf '%s\n' '0.80.5' ;;
-  700:args=:linux) printf '%s\n' '/opt/pi/versions/0.80.5 --continue' ;;
-  700:comm=:macos) printf '%s\n' '/Users/u/.local/share/pi/versions/0.80.5' ;;
-  700:args=:macos) printf '%s\n' '/Users/u/.local/share/pi/versions/0.80.5 --continue' ;;
+case "$pid:$field:${FM_TEST_HOST_SHAPE:-linux}" in
+  700:comm=:linux) printf '%s\n' 'bash' ;;
+  700:args=:linux) printf '%s\n' 'fm-deck-chat /repo/bin/fm-deck-chat.sh' ;;
+  700:comm=:macos) printf '%s\n' 'fm-deck-chat' ;;
+  700:args=:macos) printf '%s\n' 'fm-deck-chat /repo/bin/fm-deck-chat.sh' ;;
   700:ppid=:*) printf '%s\n' 1 ;;
   *:comm=:*) printf '%s\n' bash ;;
   *:args=:*) printf '%s\n' 'bash /repo/bin/fm-lock.sh' ;;
@@ -83,15 +75,15 @@ SH
   printf '700\n' > "$dir/state/.lock"
 
   for shape in linux macos; do
-    got=$(FM_TEST_PI_SHAPE="$shape" lib_eval "$fakebin" 'fm_harness_ancestry_pid') \
-      || fail "$shape: the version-named session was not found in the ancestry at all"
-    [ "$got" = 700 ] || fail "$shape: ancestry resolved '$got', expected the version-named session pid 700"
-    FM_TEST_PI_SHAPE="$shape" lib_eval "$fakebin" 'fm_harness_pid_alive 700' \
-      || fail "$shape: a live version-named session was not recognized as a harness"
-    FM_TEST_PI_SHAPE="$shape" lib_eval "$fakebin" "fm_session_lock_owned_by_self '$dir/state'" \
+    got=$(FM_TEST_HOST_SHAPE="$shape" lib_eval "$fakebin" 'fm_harness_ancestry_pid') \
+      || fail "$shape: the deck chat host was not found in the ancestry at all"
+    [ "$got" = 700 ] || fail "$shape: ancestry resolved '$got', expected the deck chat host pid 700"
+    FM_TEST_HOST_SHAPE="$shape" lib_eval "$fakebin" 'fm_harness_pid_alive 700' \
+      || fail "$shape: a live deck chat host was not recognized as a harness"
+    FM_TEST_HOST_SHAPE="$shape" lib_eval "$fakebin" "fm_session_lock_owned_by_self '$dir/state'" \
       || fail "$shape: the session holding the lock did not recognize itself as the owner"
   done
-  pass "session-lock: a version-named Pi session is identified from its install path and argv[0]"
+  pass "session-lock: a deck chat host is identified from argv[0] whether ps reports it or the exec name"
 }
 
 # A harness that is pid 1 of its own PID namespace - a container or a sandbox -
@@ -115,8 +107,8 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$pid:$field" in
-  1:comm=) printf '%s\n' "${FM_TEST_PID1_COMM:-pi}" ;;
-  1:args=) printf '%s\n' "${FM_TEST_PID1_COMM:-pi}" ;;
+  1:comm=) printf '%s\n' "${FM_TEST_PID1_COMM:-fm-deck-chat}" ;;
+  1:args=) printf '%s\n' "${FM_TEST_PID1_COMM:-fm-deck-chat}" ;;
   1:ppid=) printf '%s\n' 0 ;;
   *:comm=) printf '%s\n' bash ;;
   *:args=) printf '%s\n' 'bash /repo/bin/fm-watch.sh' ;;
@@ -159,8 +151,8 @@ done
 case "$pid:$field:${FM_TEST_PATH_SHAPE:-hookdir}" in
   810:comm=:hookdir) printf '%s\n' '/home/u/.claude/hooks/notify.sh' ;;
   810:args=:hookdir) printf '%s\n' '/home/u/.claude/hooks/notify.sh --quiet' ;;
-  810:comm=:piprefix) printf '%s\n' '/opt/pipeline/bin/runner' ;;
-  810:args=:piprefix) printf '%s\n' '/opt/pipeline/bin/runner --once' ;;
+  810:comm=:prefix) printf '%s\n' '/opt/fm-deck-chat-tools/bin/runner' ;;
+  810:args=:prefix) printf '%s\n' '/opt/fm-deck-chat-tools/bin/runner --once' ;;
   810:ppid=:*) printf '%s\n' 1 ;;
   *:comm=:*) printf '%s\n' bash ;;
   *:args=:*) printf '%s\n' 'bash /repo/bin/fm-watch-arm.sh' ;;
@@ -173,7 +165,7 @@ SH
   # Identity may be read from an executable path, but only from whole path
   # components: anything merely living under ~/.claude, and any component that
   # merely starts with a harness name, must stay outside the harness identity.
-  for shape in hookdir piprefix; do
+  for shape in hookdir prefix; do
     if FM_TEST_PATH_SHAPE="$shape" lib_eval "$fakebin" 'fm_harness_ancestry_pid'; then
       fail "$shape: an ordinary script path was treated as a harness process"
     fi
@@ -204,14 +196,14 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$pid:$field" in
-  900:comm=) printf '%s\n' pi ;;
-  900:args=) printf '%s\n' 'pi' ;;
+  900:comm=) printf '%s\n' fm-deck-worker ;;
+  900:args=) printf '%s\n' 'fm-deck-worker' ;;
   900:ppid=) printf '%s\n' 910 ;;
   910:comm=) printf '%s\n' bash ;;
   910:args=) printf '%s\n' 'bash tests/run.sh' ;;
   910:ppid=) printf '%s\n' 920 ;;
-  920:comm=) printf '%s\n' pi ;;
-  920:args=) printf '%s\n' 'pi' ;;
+  920:comm=) printf '%s\n' fm-deck-worker ;;
+  920:args=) printf '%s\n' 'fm-deck-worker' ;;
   920:ppid=) printf '%s\n' 1 ;;
   *:comm=) printf '%s\n' bash ;;
   *:args=) printf '%s\n' bash ;;
@@ -232,7 +224,7 @@ SH
   pass "session-lock: ownership stops at the innermost harness and never crosses a non-harness gap"
 }
 
-test_competing_version_named_session_is_seen_as_live() {
+test_competing_host_session_is_seen_as_live() {
   local dir fakebin
   dir="$TMP_ROOT/competing"
   fakebin=$(fm_fakebin "$dir")
@@ -249,11 +241,11 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$pid:$field" in
-  600:comm=) printf '%s\n' '0.80.5' ;;
-  600:args=) printf '%s\n' '/opt/pi/versions/0.80.5' ;;
+  600:comm=) printf '%s\n' bash ;;
+  600:args=) printf '%s\n' 'fm-deck-chat /repo/bin/fm-deck-chat.sh' ;;
   600:ppid=) printf '%s\n' 1 ;;
-  650:comm=) printf '%s\n' pi ;;
-  650:args=) printf '%s\n' pi ;;
+  650:comm=) printf '%s\n' fm-deck-worker ;;
+  650:args=) printf '%s\n' fm-deck-worker ;;
   650:ppid=) printf '%s\n' 1 ;;
   *:comm=) printf '%s\n' bash ;;
   *:args=) printf '%s\n' bash ;;
@@ -269,13 +261,13 @@ SH
     fail "a lock held outside this ancestry was claimed as this session's own"
   fi
   lib_eval "$fakebin" 'fm_harness_pid_alive 600' \
-    || fail "a live competing version-named session was classified as a dead lock owner"
-  pass "session-lock: a live version-named session holding the lock is not mistaken for a stale owner"
+    || fail "a live competing deck chat host was classified as a dead lock owner"
+  pass "session-lock: a live deck chat host holding the lock is not mistaken for a stale owner"
 }
 
-# Only the kept primaries (pi, pi-signed, the persistent fm-deck-worker driver)
-# may own a home session lock. Worker-only harness names - including a Claude
-# Code install path, which worker liveness still recognizes - never do.
+# Only the deck hosts (the persistent fm-deck-worker driver and the
+# fm-deck-chat primary host) may own a home session lock. Removed harness
+# names - Pi included - never do.
 test_removed_primaries_never_own_the_lock() {
   local dir fakebin name
   dir="$TMP_ROOT/removed-primaries"
@@ -303,7 +295,7 @@ esac
 SH
   chmod +x "$fakebin/ps"
   printf '500\n' > "$dir/state/.lock"
-  for name in claude codex opencode grok kimi omp cursor-agent /Users/u/.local/share/cursor-agent/versions/2026.01.01-abc/cursor-agent /Users/u/.local/share/claude/versions/2.1.220; do
+  for name in pi pi-signed deck claude codex opencode grok kimi omp cursor-agent /Users/u/.local/share/cursor-agent/versions/2026.01.01-abc/cursor-agent /Users/u/.local/share/claude/versions/2.1.220; do
     if FM_TEST_COMM="$name" lib_eval "$fakebin" 'fm_harness_ancestry_pid' >/dev/null; then
       fail "$name was resolved as a primary harness"
     fi
@@ -311,11 +303,11 @@ SH
       fail "$name claimed the home's session lock"
     fi
   done
-  for name in pi pi-signed fm-deck-worker fm-deck-chat; do
+  for name in fm-deck-worker fm-deck-chat; do
     FM_TEST_COMM="$name" lib_eval "$fakebin" "fm_session_lock_owned_by_self '$dir/state'" \
       || fail "$name did not recognize its own session lock"
   done
-  pass "session-lock: only pi, pi-signed, fm-deck-worker, and fm-deck-chat may own a home session lock"
+  pass "session-lock: only fm-deck-worker and fm-deck-chat may own a home session lock"
 }
 
 # --- end-to-end layer: real lock acquisition in real process trees ----------
@@ -401,13 +393,13 @@ assert_session_owns_home() {  # <dir> <label>
   [ "$lock_after" = "$session_pid" ] || fail "$label: the session lock names $lock_after, expected the session pid $session_pid"
 }
 
-test_e2e_version_named_session_claims_the_home() {
+test_e2e_deck_chat_host_claims_the_home() {
   local dir
-  dir="$TMP_ROOT/e2e-version-named"
+  dir="$TMP_ROOT/e2e-deck-chat"
   make_primary_home "$dir"
-  run_fixture_tree "$dir" "$VERSIONED_PI"
-  assert_session_owns_home "$dir" "version-named session"
-  pass "session-lock e2e: a version-named Pi session acquires its home and owns it"
+  run_fixture_tree "$dir" "$NAMED_CHAT"
+  assert_session_owns_home "$dir" "deck chat host"
+  pass "session-lock e2e: the fm-deck-chat primary host acquires its home and owns it"
 }
 
 test_e2e_deck_driver_claims_the_home() {
@@ -423,7 +415,7 @@ test_e2e_daemon_parented_session_claims_the_home() {
   local dir session_pid daemon_pid
   dir="$TMP_ROOT/e2e-daemon-parented"
   make_primary_home "$dir"
-  run_fixture_tree "$dir" "$NAMED_PI" "$NAMED_PI"
+  run_fixture_tree "$dir" "$NAMED_CHAT" "$NAMED_DECK"
   session_pid=$(tr -d '[:space:]' < "$dir/state/session-pid")
   daemon_pid=$(tr -d '[:space:]' < "$dir/state/daemon-pid")
   [ -n "$session_pid" ] && [ "$session_pid" != "$daemon_pid" ] \
@@ -432,41 +424,27 @@ test_e2e_daemon_parented_session_claims_the_home() {
   pass "session-lock e2e: a session parented by a harness-named daemon locks to itself, not the daemon"
 }
 
-test_e2e_daemon_parented_version_named_session_keeps_its_lock() {
-  local dir daemon_pid lock_after
-  dir="$TMP_ROOT/e2e-daemon-version-named"
-  make_primary_home "$dir"
-  run_fixture_tree "$dir" "$VERSIONED_PI" "$NAMED_PI"
-  daemon_pid=$(tr -d '[:space:]' < "$dir/state/daemon-pid")
-  lock_after=$(tr -d '[:space:]' < "$dir/state/.lock" 2>/dev/null || true)
-  [ "$lock_after" != "$daemon_pid" ] \
-    || fail "the session lock was written to the shared daemon pid $daemon_pid"
-  assert_session_owns_home "$dir" "version-named session under a daemon"
-  pass "session-lock e2e: a version-named session under a harness-named daemon keeps its own lock"
-}
-
 test_e2e_removed_primary_cannot_claim_the_home() {
   local dir
   dir="$TMP_ROOT/e2e-removed-primary"
   make_primary_home "$dir"
-  run_fixture_tree "$dir" "$NAMED_CLAUDE"
+  run_fixture_tree "$dir" "$NAMED_PI"
   case "$(cat "$dir/state/session.rc")" in
-    "0 "*) fail "a claude-named session acquired the home lock: $(cat "$dir/state/lock.out")" ;;
+    "0 "*) fail "a pi-named session acquired the home lock: $(cat "$dir/state/lock.out")" ;;
   esac
-  [ ! -e "$dir/state/.lock" ] || fail "a claude-named session left a session lock behind"
+  [ ! -e "$dir/state/.lock" ] || fail "a pi-named session left a session lock behind"
   assert_contains "$(cat "$dir/state/lock.out")" "cannot locate harness process in ancestry" \
-    "a claude-named session must be refused for lack of a primary harness"
-  pass "session-lock e2e: a claude-named session is not a primary and cannot claim the home"
+    "a pi-named session must be refused for lack of a primary harness"
+  pass "session-lock e2e: a pi-named session is not a primary and cannot claim the home"
 }
 
-test_version_named_session_is_identified_on_both_platforms
+test_argv0_named_host_is_identified_on_both_platforms
 test_harness_at_namespace_pid1_is_examined
 test_ordinary_paths_are_never_harness_processes
 test_harness_beyond_a_gap_never_owns_the_lock
-test_competing_version_named_session_is_seen_as_live
+test_competing_host_session_is_seen_as_live
 test_removed_primaries_never_own_the_lock
-test_e2e_version_named_session_claims_the_home
+test_e2e_deck_chat_host_claims_the_home
 test_e2e_deck_driver_claims_the_home
 test_e2e_daemon_parented_session_claims_the_home
-test_e2e_daemon_parented_version_named_session_keeps_its_lock
 test_e2e_removed_primary_cannot_claim_the_home

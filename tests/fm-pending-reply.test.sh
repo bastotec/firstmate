@@ -950,8 +950,11 @@ test_unknown_backend_state_uses_capture_fallback() {
       export FM_PENDING_REPLY_NOW=10000
       corr=$(fm_pending_reply_create "$home" "$state" "hibit" "$backend fallback")
       fm_pending_reply_mark_delivered "$state" "$corr"
-      fm_write_secondmate_meta "$state/hibit.meta" "$sm_home" "session:fm-hibit" alpha pi
+      fm_write_secondmate_meta "$state/hibit.meta" "$sm_home" "session:fm-hibit" alpha deck
       [ "$backend" = tmux ] || printf 'backend=%s\n' "$backend" >> "$state/hibit.meta"
+      # Deck renders no busy footer of its own, so this case supplies the
+      # delivery busy signature the capture fallback matches.
+      export FM_BUSY_REGEX='Working\.\.\.'
       fm_backend_busy_state() { printf 'unknown'; }
       fm_backend_capture() { printf '%s' "$FM_PENDING_TEST_CAPTURE"; }
       # Invoked indirectly through FM_PENDING_REPLY_SEND_HOOK.
@@ -985,7 +988,7 @@ test_unknown_backend_state_uses_capture_fallback() {
 }
 
 test_capture_fallback_uses_recorded_harness() (
-  local home state corr rec sm_home
+  local home state corr sm_home
   home=$(setup_parent harness-fallback)
   state="$home/state"
   sm_home="$home/sm"
@@ -993,25 +996,19 @@ test_capture_fallback_uses_recorded_harness() (
   # This fixture clock is intentionally scoped to the isolated subshell.
   # shellcheck disable=SC2030,SC2031
   export FM_PENDING_REPLY_NOW=10020
-  corr=$(fm_pending_reply_create "$home" "$state" hibit "pi fallback")
+  corr=$(fm_pending_reply_create "$home" "$state" hibit "deck fallback")
   fm_pending_reply_mark_delivered "$state" "$corr"
-  fm_write_secondmate_meta "$state/hibit.meta" "$sm_home" "session:fm-hibit" alpha pi
+  fm_write_secondmate_meta "$state/hibit.meta" "$sm_home" "session:fm-hibit" alpha deck
   fm_backend_busy_state() { printf 'unknown'; }
   fm_backend_capture() { printf '%s' "$FM_PENDING_HARNESS_CAPTURE"; }
-  export FM_PENDING_HARNESS_CAPTURE='Working...'
+  export FM_PENDING_HARNESS_CAPTURE='esc to interrupt'
 
   [ "$(fm_pending_reply_backend_observation tmux session:fm-hibit fm-hibit deck)" = fallback-idle ] \
-    || fail "Pi's busy footer leaked into a deck observation"
-  export FM_PENDING_HARNESS_CAPTURE='Ctrl+c:cancel'
+    || fail "another harness's busy token leaked into a deck observation"
   [ "$(fm_pending_reply_backend_observation tmux session:fm-hibit fm-hibit pi)" = fallback-idle ] \
-    || fail "another harness's busy token leaked into a pi pending-reply observation"
-  export FM_PENDING_HARNESS_CAPTURE='Working...'
-  fm_pending_reply_tick "$state"
-  rec=$(fm_pending_reply_path "$state" "$corr")
-  [ "$(fm_pending_reply_get "$rec" turn_seen_busy)" = 1 ] \
-    || fail "recorded pi busy footer was not observed as busy"
-  [ "$(phase_of "$state" "$corr")" = awaiting_report ] \
-    || fail "working pi secondmate entered recovery"
+    || fail "a removed harness borrowed the unrecorded-harness busy union"
+  [ "$(fm_pending_reply_backend_observation tmux session:fm-hibit fm-hibit '')" = busy ] \
+    || fail "an unrecorded harness lost the busy union fallback"
   pass "pending replies scope capture fallback by recorded harness"
 )
 
@@ -1183,7 +1180,7 @@ test_remote_repost_waits_for_the_reply_channel() {
   export FM_PENDING_REPLY_SEND_HOOK=remote_repost_hook
 
   fm_write_meta "$state/ios.meta" \
-    "window=fm-remote:w1:p1" "harness=pi" "kind=secondmate" "mode=secondmate" \
+    "window=fm-remote:w1:p1" "harness=deck" "kind=secondmate" "mode=secondmate" \
     "remote_host=remote-mac" "remote_root=/remote/root" "remote_backend=herdr"
   corr=$(fm_pending_reply_create "$home" "$state" "ios" "status of the iOS build")
   fm_pending_reply_mark_delivered "$state" "$corr"
@@ -1241,7 +1238,7 @@ test_mirrored_remote_reply_never_triggers_a_repost() {
   export FM_PENDING_REPLY_SEND_HOOK=mirrored_reply_hook
 
   fm_write_meta "$state/ios.meta" \
-    "window=fm-remote:w1:p1" "harness=pi" "kind=secondmate" "mode=secondmate" \
+    "window=fm-remote:w1:p1" "harness=deck" "kind=secondmate" "mode=secondmate" \
     "remote_host=remote-mac" "remote_root=/remote/root" "remote_backend=herdr"
   corr=$(fm_pending_reply_create "$home" "$state" "ios" "did the build go green")
   fm_pending_reply_mark_delivered "$state" "$corr"

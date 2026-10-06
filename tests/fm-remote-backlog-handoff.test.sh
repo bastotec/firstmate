@@ -70,7 +70,7 @@ EOF
 cat > "$PARENT/state/ios.meta" <<EOF
 window=fm-remote:w1:p1
 endpoint_task_id=ios
-harness=pi
+harness=deck
 kind=secondmate
 mode=secondmate
 remote_host=remote-mac

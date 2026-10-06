@@ -29,7 +29,6 @@
     "docs/tmux-backend.md",
     "docs/herdr-backend.md",
     "docs/stream-backend.md",
-    "docs/managed-primary.md",
     "docs/remote-secondmates.md"
   ],
   "requiredOwnerPointers": [
@@ -52,22 +51,6 @@
     {
       "source": "docs/documentation-audiences.md",
       "target": "docs/documentation-audiences.json"
-    },
-    {
-      "source": "docs/calm.md",
-      "target": "docs/calm-mode-feasibility.md"
-    },
-    {
-      "source": "docs/calm-mode-feasibility.md",
-      "target": "docs/calm.md"
-    },
-    {
-      "source": "docs/sessionstart-nudge.md",
-      "target": "docs/verification/supervision.md"
-    },
-    {
-      "source": "docs/turnend-guard.md",
-      "target": "docs/verification/supervision.md"
     },
     {
       "source": "docs/watcher-continuity.md",
@@ -160,10 +143,6 @@
       "audience": "agent-runtime"
     },
     {
-      "path": ".agents/skills/harness-adapters/references/harness/pi.md",
-      "audience": "agent-runtime"
-    },
-    {
       "path": ".agents/skills/process-event-sources/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -221,22 +200,6 @@
     },
     {
       "path": "docs/architecture.md",
-      "audience": "maintainer-architecture"
-    },
-    {
-      "path": "docs/arm-pretool-check.md",
-      "audience": "maintainer-architecture"
-    },
-    {
-      "path": "docs/calm-mode-feasibility.md",
-      "audience": "maintainer-verification"
-    },
-    {
-      "path": "docs/calm.md",
-      "audience": "operator-current"
-    },
-    {
-      "path": "docs/cd-guard.md",
       "audience": "maintainer-architecture"
     },
     {
@@ -300,10 +263,6 @@
       "audience": "operator-current"
     },
     {
-      "path": "docs/pi-supervision-branch.md",
-      "audience": "maintainer-architecture"
-    },
-    {
       "path": "docs/remote-secondmates.md",
       "audience": "operator-current"
     },
@@ -316,15 +275,7 @@
       "audience": "operator-current"
     },
     {
-      "path": "docs/sessionstart-nudge.md",
-      "audience": "operator-current"
-    },
-    {
       "path": "docs/supervision-protocols/deck.md",
-      "audience": "agent-runtime"
-    },
-    {
-      "path": "docs/supervision-protocols/pi.md",
       "audience": "agent-runtime"
     },
     {
@@ -338,10 +289,6 @@
     {
       "path": "docs/trace-context.md",
       "audience": "maintainer-architecture"
-    },
-    {
-      "path": "docs/turnend-guard.md",
-      "audience": "operator-current"
     },
     {
       "path": "docs/verification/deck.md",
@@ -389,10 +336,6 @@
     },
     {
       "path": "docs/wedge-alarm.md",
-      "audience": "operator-current"
-    },
-    {
-      "path": "docs/managed-primary.md",
       "audience": "operator-current"
     },
     {

@@ -245,7 +245,7 @@ printf '%s\n' manual > "$REMOTE_HOME/config/backlog-backend"
 write_child_meta() {
   fm_write_meta "$REMOTE_HOME/state/work-child.meta" \
     "window=firstmate:fm-work-child" "endpoint_task_id=work-child" \
-    "worktree=$CHILD_WT" "project=$CHILD_WT" "harness=pi" "kind=ship" \
+    "worktree=$CHILD_WT" "project=$CHILD_WT" "harness=deck" "kind=ship" \
     "mode=local-only" "yolo=off"
 }
 mkdir -p "$TMP_ROOT/childfake"

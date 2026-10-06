@@ -42,8 +42,6 @@
 # discovery snapshot's PR count, without adding a persistent cursor.
 # Each complete merge operation is also bounded to
 # the time remaining before FM_CHECK_TIMEOUT minus three seconds.
-# A Pi supervision branch's watcher
-# (FM_SUPERVISION_ACTOR=branch) skips the tick, because merging is main-owned.
 #
 # Deploying. For a hooked entry whose default-branch head differs from the
 # commit recorded in state/autoland/<hook>.deployed, the tick starts a detached
@@ -642,9 +640,6 @@ action_check() {
   local entries resp check_timeout
   check_timeout=$(num_or "${FM_CHECK_TIMEOUT:-}" 30)
   MERGE_DEADLINE=$((SECONDS + check_timeout - 3))
-  # Merging is main-owned (bin/fm-lease-lib.sh); a Pi supervision branch's
-  # watcher leaves auto-land to main's.
-  [ "${FM_SUPERVISION_ACTOR:-main}" = branch ] && return 0
   mkdir -p "$AL" || return 1
   entries=$(mktemp "$AL/.entries.XXXXXX") || return 1
   resp=$(mktemp "$AL/.response.XXXXXX") || { rm -f -- "$entries"; return 1; }

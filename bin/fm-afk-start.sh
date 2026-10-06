@@ -25,8 +25,6 @@
 #   - Daemon-using harnesses without native background execution run this
 #     THROUGH bin/fm-afk-launch.sh, which owns backend-specific launch and
 #     captures FM_SUPERVISOR_TARGET before creating the daemon endpoint.
-#     Pi and pi-signed do not launch this daemon; their supervision session
-#     continues under the away-posture record.
 # Do not wrap this in `nohup ... &`: Codex/herdr can reap fire-and-forget shell
 # children after the tool call returns, while a tracked background terminal stays
 # attached and has a real lifecycle.

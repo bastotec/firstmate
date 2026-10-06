@@ -819,7 +819,7 @@ test_secondmate_turn_ended_churning_pane_surfaced() {
   out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
   window="test:fm-mate-churning"
   : > "$state/mate.turn-ended"
-  printf 'window=%s\nkind=secondmate\nharness=pi\n' "$window" > "$state/mate.meta"
+  printf 'window=%s\nkind=secondmate\nharness=deck\n' "$window" > "$state/mate.meta"
   printf 'working on the next routed item' > "$capture_file"
   key=$(printf '%s' "$window" | tr ':/.' '___')
   printf '%s' "$(hash_text 'waiting for work')" > "$state/.hash-$key"
@@ -908,7 +908,7 @@ test_turn_ended_mixed_positive_evidence_batch_absorbed() {
   first_window="test:fm-first"; second_window="test:fm-second"
   : > "$state/first.turn-ended"
   : > "$state/second.turn-ended"
-  printf 'window=%s\nkind=ship\nharness=pi\n' "$first_window" > "$state/first.meta"
+  printf 'window=%s\nkind=ship\nharness=deck\n' "$first_window" > "$state/first.meta"
   printf 'window=%s\nkind=ship\nharness=deck\n' "$second_window" > "$state/second.meta"
   printf 'second task rendered after the prior poll' > "$capture_file"
   first_key=$(printf '%s' "$first_window" | tr ':/.' '___')
@@ -945,7 +945,7 @@ test_turn_ended_mixed_positive_evidence_batch_default_off() {
   first_window="test:fm-firstoff"; second_window="test:fm-secondoff"
   : > "$state/firstoff.turn-ended"
   : > "$state/secondoff.turn-ended"
-  printf 'window=%s\nkind=ship\nharness=pi\n' "$first_window" > "$state/firstoff.meta"
+  printf 'window=%s\nkind=ship\nharness=deck\n' "$first_window" > "$state/firstoff.meta"
   printf 'window=%s\nkind=ship\nharness=deck\n' "$second_window" > "$state/secondoff.meta"
   printf 'second task rendered after the prior poll' > "$capture_file"
   first_key=$(printf '%s' "$first_window" | tr ':/.' '___')
@@ -985,7 +985,7 @@ test_status_and_turn_end_batch_never_uses_churn_evidence() {
   first_window="test:fm-firststatus"; second_window="test:fm-secondturn"
   printf 'working: authoritative task still running\n' > "$state/firststatus.status"
   : > "$state/secondturn.turn-ended"
-  printf 'window=%s\nkind=ship\nharness=pi\n' "$first_window" > "$state/firststatus.meta"
+  printf 'window=%s\nkind=ship\nharness=deck\n' "$first_window" > "$state/firststatus.meta"
   printf 'window=%s\nkind=ship\nharness=deck\n' "$second_window" > "$state/secondturn.meta"
   printf 'second task rendered after the prior poll' > "$capture_file"
   second_key=$(printf '%s' "$second_window" | tr ':/.' '___')
@@ -1351,11 +1351,9 @@ test_actionable_signal_surfaced() {
 }
 
 # A needs-decision status append surfaced through this actionable signal path
-# must skip the Pi supervision branch and reach main directly
-# (docs/pi-supervision-branch.md "Autonomy"). The row still
-# queues as an ordinary signal-kind wake - fm-branch-dispatch.ts's
-# scopeForUnreadWake tells it apart from a routine signal by this payload
-# marker, not by kind.
+# is marked decision-owned in its row payload. The row still queues as an
+# ordinary signal-kind wake; the away daemon tells it apart from a routine
+# signal by this payload marker, not by kind.
 test_needs_decision_signal_payload_marked_for_branch_exclusion() {
   local dir state fakebin out status_file pid
   dir=$(make_case needs-decision-payload); state="$dir/state"; fakebin="$dir/fakebin"
@@ -1436,11 +1434,11 @@ test_ordinary_blocked_signal_payload_remains_branch_eligible() {
   pid=$!
   wait_for_exit "$pid" 100 || fail "watcher did not exit for an ordinary blocked event"
   grep -F "$(printf 'signal\ttask.status\tsignal:')" "$state/.wake-queue" >/dev/null \
-    || fail "an ordinary blocked event lost branch-eligible routing: $(cat "$state/.wake-queue")"
+    || fail "an ordinary blocked event lost its ordinary signal payload: $(cat "$state/.wake-queue")"
   if grep -F "$(printf 'signal\ttask.status\tneeds-decision:')" "$state/.wake-queue" >/dev/null; then
     fail "an ordinary blocked event was marked as a second-mate escalation"
   fi
-  pass "an ordinary blocked event remains branch-eligible"
+  pass "an ordinary blocked event keeps the ordinary signal payload"
 }
 
 # A routine (non-needs-decision) captain-relevant event must keep its ordinary

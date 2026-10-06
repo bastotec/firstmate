@@ -21,95 +21,17 @@ Wake, watcher, away-mode, and Relay-specific state mechanics remain with their n
 
 `bin/fm-session-start.sh`'s header is the single owner of session-start ordering, composed commands, digest contents, and the digest's startup mechanism.
 `bin/fm-startup-network.sh`'s header owns the deferred startup stage that keeps every external-network call and the potentially slow inactive-outcome scan off that digest's blocking path, including its state files and the safety argument for running them later.
-`docs/sessionstart-nudge.md` owns the native session-open adapter tiers that run or nudge the digest command, and the source routing between them.
 `AGENTS.md` retains the run-once and read-once operator rules, lock-refusal safety, installation consent, and direct-report recovery boundaries because those facts apply at every session start.
 Ordinary dead-direct-report recovery is owned by `stuck-crewmate-recovery`, while persistent-secondmate recovery is owned by `secondmate-provisioning`.
-
-## Pi Calm preference (config/calm)
-
-The Pi Calm extension stores the captain's home-local presentation choice in gitignored `config/calm` under the effective Firstmate home, resolved from `FM_HOME`, then `FM_ROOT_OVERRIDE`, then the tracked code root derived from the extension path, or under `FM_CONFIG_OVERRIDE` when that test and specialized-setup override is present.
-The values it writes are `on` and `off`, each followed by one newline; an absent, unreadable, or unrecognized value defaults to off.
-`max` is the legacy value written by a removed third presentation level whose behavior is now ordinary Calm, and it is still read as `on`, so a home upgraded from it keeps Calm on rather than dropping to off.
-The `/calm` command replaces the file atomically before changing live presentation, so a failed write leaves the current choice unchanged rather than claiming persistence.
-The extension reloads this preference on every Pi `session_start`, including startup, new, resume, fork, and reload reasons.
-This preference is local to each Firstmate home and is not part of secondmate inherited configuration.
-
-## Pi supervision branch
-
-On a Pi primary, an in-process supervision branch handles eligible task-local wake rows and selected heartbeat reviews while keeping main-only rows on the captain-facing path; [docs/pi-supervision-branch.md](pi-supervision-branch.md) owns its conversation lifecycle, row eligibility, mixed-queue dispatch, heartbeat routing, and pre-drain recheck.
-Supervision is default-on: once a Pi primary session owns this home's fleet lock, the branch is eligible for every task with no captain grant file required.
-A genuinely no-op heartbeat is absorbed in bash and never reaches Pi, and every watcher-failure alarm stays on the captain-facing main path.
-A legacy `state/.afk` daemon flag still declines every wake offer, the away-posture record alone does not, and a broken branch still falls back to today's wake-to-main path.
-The branch's role stays bounded exactly as the captain-approved architecture set it: it cannot merge a PR, land local work, or freshly spawn, and every existing captain gate remains unchanged.
-Homes on any other primary harness never load this feature and are entirely unaffected.
-`AGENTS.md`'s `state/` inventory routes the branch's runtime files to their format and lifecycle owners.
-A captain-facing (verdict `captain`) branch outcome persists as one exact, sequence-keyed visible transcript entry and then opens one sequence-keyed processing turn on main, which stays open until main acknowledges that sequence through its `fm_branch_processed` tool.
-The branch prompt's "Verdict: routine or captain" section owns the distinction between captain-facing, unsolicited routine, and unchanged-review outcomes.
-The generated [Pi supervision protocol](supervision-protocols/pi.md) owns main's event ownership, acknowledgement duty, and conversational treatment for merged outcomes, while the persisted entry itself owns captain visibility.
-A no-change heartbeat outcome explicitly reported with `task=fleet` and `silent=true` is delivered silently with no rendered note, while every other routine outcome still appends a rendered, sailboat-prefixed note.
-
-## Pi supervision branch model and effort (config/supervision-branch-model, config/supervision-branch-effort)
-
-Supervision is an easier job than the captain's own conversation, so the branch can run on a cheaper model than main.
-It is also an easier job than the captain's own conversation needs reasoning for, so the branch can run at a shallower effort than main as well.
-The Pi `/supervision-model` command settles both in one flow: it opens a selector over the models that Pi reports with configured credentials and that this home's stored credentials let the isolated supervision branch resolve, plus a first "Follow main" entry, and then a second picker for the branch's reasoning effort.
-In Pi's terminal TUI, the model step uses Pi's bounded scrolling list with its input and fuzzy filtering primitives, the same list primitive Pi's `/model` picker scrolls: typing filters the entries, "Follow main" stays the first entry whenever it still matches, and a long catalog scrolls inside the dialog instead of running off the terminal.
-The non-TUI RPC, JSON, and print modes have no custom-component surface and keep Pi's generic selector without search, where terminal overflow does not apply.
-The effort list is a handful of levels and stays on Pi's plain selector dialog.
-Both picks change the supervision branch alone and never the captain's own conversation model or effort.
-It persists the model pick in gitignored `config/supervision-branch-model` and the effort pick in gitignored `config/supervision-branch-effort`, both under the effective Firstmate home, resolved from `FM_HOME`, then `FM_ROOT_OVERRIDE`, then the tracked code root derived from the extension path, or under `FM_CONFIG_OVERRIDE` when that test and specialized-setup override is present.
-Firstmate keeps no model catalog of its own; the list is the intersection of what Pi reports when the picker opens and what a fresh isolated branch runtime can run.
-A provider that exists only because an extension registered it inside the captain's session, such as pi-devin-auth's `devin`, is offered and can be pinned or followed like any other; [pi-supervision-branch.md](pi-supervision-branch.md#cost-model-and-the-byte-stable-prefix) owns how that registration reaches the isolated branch runtime.
-Stored OAuth and API-key credentials retain their native credential type because Firstmate never copies, converts, installs, or overwrites credentials for the branch runtime.
-Each configured model is one `<provider>/<model-id>` line, split at the first `/` so a provider-qualified model id such as `openrouter/anthropic/claude-sonnet-4-5` survives intact.
-A model reference contains no whitespace or control characters.
-Several such lines make a fallback chain in preference order, for a captain whose subscriptions run out at different times; blank lines and `#` comments are skipped, and each model label may appear only once.
-Any malformed, duplicate, non-comment line refuses the branch build and makes `/supervision-model` label the current selection as invalid config with that line named instead of silently selecting around it; only an empty or comment-only file means no pin.
-The chain is edited by hand, and the picker still writes a single line, so picking a model replaces a chain with that one pin.
-When a branch turn ends in a provider error, the model it ran on sits out for five minutes, doubling to an hour on repeated failures, and the next wake is served by the next ready model in the chain.
-A wake not yet durably reported for every granted row returns to main exactly as it does for a single pin; a fully reported grant stays handled instead of being delivered again, while the provider still enters cooldown.
-One note in the captain's conversation names the model that failed and the one that takes over.
-A model the isolated branch runtime cannot resolve sits out on the same backoff instead of refusing the build.
-Once an earlier model's cooldown has passed, the next wake rebuilds the branch on it, which is the way back to the preferred model; a turn that settles with all granted rows durably reported and no provider error clears that model's backoff.
-The cooldowns live in memory only, so a new Pi session simply tries the preferred model first.
-Only when every model in the chain is sitting out does the single-pin behavior below take over: the branch pauses, main handles wakes, and one recovery probe runs after each cooldown on the model that becomes ready soonest.
-An absent or unreadable file, or an empty or comment-only file, means no pin, and the branch then follows main's own current model, applied explicitly and live whenever main changes models mid-session.
-When main uses `codex-native`, following main explicitly selects the same model through ordinary Pi's `openai-codex` provider, so the background branch owns an independent Pi conversation.
-If that ordinary Pi model is unavailable, the branch refuses to build and returns the notification to main; it never inherits the main native thread or silently selects a different model.
-Picking "Follow main" under a `codex-native` main reports that same `openai-codex` model, or that same refusal, because the command and the branch build share one follow rule.
-A `codex-native` branch pin is refused and excluded from the picker.
-A valid pin wins over main and remains unaffected by main's model changes.
-Picking "Follow main" removes the file, and the command writes a pin at mode `0600` and replaces it atomically so a failed write leaves the current choice unchanged rather than claiming persistence.
-The file's current state decides the branch model on every branch build - the new conversation each main session start opens and the reopen after a model or effort change inside one session - and it overrides Pi's restore of whatever model a reopened branch session recorded, so the choice survives all of them.
-That override is what keeps "Follow main" honest: a branch conversation that ran under an earlier pin still records that model, so clearing the file explicitly applies main's model rather than letting the reopened session restore the old one.
-For ordinary Pi providers, only when main's own model is unknown, or this home's stored credentials cannot run it in the isolated branch runtime, does an unpinned build fall back to passing no override at all, which is the behavior from before this file existed; the wake is never lost over model choice, and the command says plainly when main's model could not be applied instead of reporting a change that did not take effect.
-A pin naming a model Pi cannot hand back, because the model is unknown or has no configured credentials, is never silently downgraded onto main's model: the branch refuses to build and rejects the accepted wake to the watcher's captain-facing main path, exactly as any other unreachable branch does.
-Picking also releases the live branch so the next wake reopens this session's own branch conversation under the new model without waiting for a session replacement.
-
-The effort file holds one Pi thinking level followed by one newline, and the two pins are independent: a captain may pin a model, an effort, both, or neither.
-The effort step runs after the model step because the effective branch model decides which levels exist: its menu is Pi's own supported-level list, so a model that maps no extended levels simply does not offer them and a non-reasoning model offers only `off`.
-The picker keeps no effort catalog of its own; when main's model cannot be resolved, it first resolves the model recorded by the most recent branch conversation and uses Pi's supported levels for that effective model.
-If neither model can be resolved, the picker invents no levels and the command says that the branch's effective effort cannot be determined.
-An absent, unreadable, or unrecognized file means no effort pin, and the branch then follows main's own current effort, applied explicitly and live whenever main changes effort mid-session.
-A valid pin wins over main and remains unaffected by main's effort changes.
-Picking "Follow main" removes the file, and the command writes an effort pin at mode `0600` and replaces it atomically, exactly as it writes a model pin.
-The effort file's current state decides the branch effort on every branch build, on the same create-and-reopen contract as the model pin and for the same reason: a reopened branch conversation records the effort it last ran under, so only an explicit override keeps "Follow main" honest.
-Only when main's own effort cannot be read either does an unpinned build fall back to passing no effort override at all, which is the behavior from before this file existed.
-Pi owns the clamp, so a pinned level the branch's model cannot run becomes that model's nearest supported level rather than a refusal; the branch is never refused over effort, the captain's raw pick is kept so it applies again on a model that supports it, and the command reports the level the branch will really run at rather than the raw pin.
-An effort token Pi would not recognize at all is treated as no pin rather than passed to that clamp, which would otherwise collapse a typo into the model's lowest level.
-
-Cancelling the model picker cancels the whole command and changes neither choice.
-Cancelling only the effort picker keeps the standing effort choice and still applies the model pick made in the same run, and the command's one closing message reports both choices as they will actually take effect.
-Both choices are local to each Firstmate home and are not part of secondmate inherited configuration, the same as the Pi Calm preference; a secondmate home pins its own supervision model and effort with its own `/supervision-model`.
 
 ## Model fallback chains (spawn-side)
 
 Spawn-side model pins accept a fallback chain in every model surface: the `model` field of a `config/crew-dispatch.json` profile, the model pin in `config/secondmate-harness`, and `fm-spawn.sh --model` itself.
 A surface holding one `<provider>/<model-id>` label is an exact pin, byte-identical to the behavior before chains existed: it never consults cooldown state, never falls through, and never resolves through a lane, so an explicit captain pin always launches exactly that model or refuses.
-A surface holding a comma-separated list of labels, such as `codex/gpt-6-luna,zai/glm-5.3,vercel/xiaomi/mimo-v2.6-flash`, is a fallback chain resolved in preference order at spawn or relaunch time, with the same parsing and cooldown semantics as the supervision branch's model chain (`config/supervision-branch-model`): one label per preference, split at the first `/`, blank and comment lines impossible in this surface, and any malformed or duplicate label a loud refusal that names the label instead of a silent selection around it.
+A surface holding a comma-separated list of labels, such as `codex/gpt-6-luna,zai/glm-5.3,vercel/xiaomi/mimo-v2.6-flash`, is a fallback chain resolved in preference order at spawn or relaunch time: one label per preference, split at the first `/`, blank and comment lines impossible in this surface, and any malformed or duplicate label a loud refusal that names the label instead of a silent selection around it.
 The three captain-approved orders (2026-09-25) are the canonical chains to pin into those surfaces: workers default `codex/gpt-6-luna,zai/glm-5.3,vercel/xiaomi/mimo-v2.6-flash`, second mates `codex/gpt-6-luna,zai/glm-5.3-flash,vercel/xiaomi/mimo-v2.6-flash`, and hard tasks `codex/gpt-5.6-sol,vercel/xiaomi/mimo-v2.6-pro,zai/glm-5.3`.
 When a worker's launch could not run a model - a quota refusal, a cooldown, or a repeated provider error - the refused model's label is recorded in that lane's cooldown state at `state/model-chain/<lane>.state` under the Firstmate home and sits out for five minutes, doubling to an hour on repeated failures.
-`bin/fm-record-model-refusal.sh <task-id> <provider/model>` records a refusal from the supervisor side after reading the refusal out of a worker's status or transcript, and clears the lane when the launch ultimately succeeded, so cooldown expiry restores the head of the chain on a later launch exactly as the branch restores its preferred model.
+`bin/fm-record-model-refusal.sh <task-id> <provider/model>` records a refusal from the supervisor side after reading the refusal out of a worker's status or transcript, and clears the lane when the launch ultimately succeeded, so cooldown expiry restores the head of the chain on a later launch.
 Secondmate defaults share the `secondmate` lane, so a refusal by one secondmate launch cools that model for the next default-resolved secondmate launch; every crew-side chain resolves on its own task lane - an explicit chained `--model`, a dispatch-profile chain (which the consultation passes through `--model` unchanged), and any relaunch - so one task's refusals never cool down another task's chain head, and an exact single-label pin never resolves through a lane at all.
 Each spawn or relaunch discloses which label was selected and which chain entries were skipped and why, and a chain whose every label is in cooldown refuses the launch with that reason rather than substituting an out-of-chain model: exhausting the chain is a reported failure, never a guess.
 
@@ -371,33 +293,29 @@ For the herdr backend, `FM_HOME` also determines the workspace label used by the
 
 ## Harness support
 
-pi, pi-signed, and deck are the only worker harnesses: they support crewmate, scout, and secondmate launches, and [README requirements](../README.md#requirements) own the set supported for the primary session.
+deck is the only harness: it supports the primary session through the chat host [`bin/fm-deck-chat.sh`](../bin/fm-deck-chat.sh), and crewmate, scout, and secondmate launches through the worker driver [`bin/fm-deck-worker.sh`](../bin/fm-deck-worker.sh).
 Any other adapter name has no launch template, so `fm-spawn.sh` refuses it unless a raw launch command is passed.
 The raw-command escape hatch supplies no verified adapter contract; [task control's fail-closed boundaries](agent-control.md#fail-closed-boundaries) apply to its recorded harness.
-[Managed primary setup](managed-primary.md) owns Deck's opt-in primary launch choices; [the Deck supervision protocol](supervision-protocols/deck.md) owns handling duties for Deck home hosts.
-Select Deck workers and secondmates through the ordinary static harness or dispatch-profile configuration; Deck has no effort control, so dispatch profiles with effort and relaunches with non-default effort are refused before a worker is created or stopped.
+A task record that names a removed harness (for example `pi` or `claude`) is reported as unsupported by task control and never relaunched on that harness.
+[The Deck supervision protocol](supervision-protocols/deck.md) owns handling duties for Deck home hosts.
+Deck has no effort control, so dispatch profiles with effort and relaunches with non-default effort are refused before a worker is created or stopped.
 A Deck spawn requires `deck`, `jq`, and Python 3 on the worker's `PATH`, plus a worker-readable credential for Deck's proxai endpoint.
-The worker driver's effective config directory supplies gitignored `deck-mcp.json` to every `deck run` turn of workers, scouts, secondmates and managed primaries; the chat host loads `<home>/config/deck-mcp.json` for `deck chat`.
+The worker driver's effective config directory supplies gitignored `deck-mcp.json` to every `deck run` turn of workers, scouts and secondmates; the chat host loads `<home>/config/deck-mcp.json` for `deck chat`.
 `FM_DECK_MCP_CONFIG` overrides the path as-is even if missing, and an empty value disables MCP; the [worker driver header](../bin/fm-deck-worker.sh) and [chat host header](../bin/fm-deck-chat.sh) own each launch path's resolution and startup timing.
 Each home owns its own file rather than inheriting OAuth-backed server configuration, and [Deck's MCP docs](https://github.com/bastotec/deck/blob/main/docs/mcp.md) own the format and OAuth login.
 Deck runs tools without approval prompts and Firstmate adds no `pre_tool_use` guard, so use it only where that autonomy is acceptable.
 [The Deck adapter reference](../.agents/skills/harness-adapters/references/harness/deck.md) routes operating mechanics and verification evidence for each launch path.
 New harnesses get verified through a supervised trial task before joining the set.
-The verified adapter evidence - each harness's busy-state source, interrupt and exit behavior, skill-invocation syntax, and per-harness quirks - lives in the skill tree rooted at [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
+The verified adapter evidence - busy-state source, interrupt and exit behavior, skill-invocation syntax, and quirks - lives in the skill tree rooted at [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
 The executable interrupt and exit mechanics live in [`bin/fm-control-lib.sh`](../bin/fm-control-lib.sh), and [`docs/agent-control.md`](agent-control.md) owns their lifecycle-control architecture.
-Launch mechanics, including the verified command templates, live in [`bin/fm-spawn.sh`](../bin/fm-spawn.sh).
-Pi-family launches adapt the regular-TUI safeguard to the installed CLI's capabilities; [`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns the exact version-safe launch mechanics.
-Enabled primary-session turn-end guard integrations are tracked as repo-level hook files and documented in [`docs/turnend-guard.md`](turnend-guard.md).
-Primary-session watcher wake protocols are rendered at session start by [`bin/fm-supervision-instructions.sh`](../bin/fm-supervision-instructions.sh) from [`docs/supervision-protocols/`](supervision-protocols/).
-Pi and pi-signed use the same two tracked primary extensions, Deck home hosts use the driver-owned protocol, and any other primary harness gets the unknown-harness fallback.
+Launch mechanics, including the verified command template, live in [`bin/fm-spawn.sh`](../bin/fm-spawn.sh).
+Primary-session watcher wake protocols are rendered at session start by [`bin/fm-supervision-instructions.sh`](../bin/fm-supervision-instructions.sh) from [`docs/supervision-protocols/`](supervision-protocols/): Deck home hosts use the driver-owned protocol, and any other primary gets the unknown-harness fallback.
 `config/crew-harness` is a local, gitignored file containing one adapter name for crewmate and scout launches.
-When pi-signed is selected, Firstmate preserves `FM_PI_HARNESS=pi-signed` and refuses the launch if the selected executable is unavailable rather than falling back to pi; [`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns executable resolution and launch mechanics.
-Plain Pi launches set `FM_PI_HARNESS=pi`, so a signed primary's environment cannot relabel a plain Pi worker.
-When it is absent or contains `default`, crewmates mirror the firstmate's own harness, so a primary on a harness that is not a worker harness needs this file or a dispatch profile naming pi, pi-signed, or deck.
+When it is absent or contains `default`, crewmates run on deck; any other name is refused rather than launched.
 `config/secondmate-harness` is a separate local, gitignored file containing the adapter the primary uses to launch secondmate agents, optionally followed by model and effort tokens on the same line.
 The first non-empty, non-comment line is parsed as `<harness> [<model>] [<effort>]`.
 A bare `<harness>` preserves the previous behavior: harness only, with no model or effort launch flag.
-When the harness token is absent or `default`, secondmate launch falls back through `config/crew-harness` and then the primary's own harness, and no model or effort is read from that file.
+When the harness token is absent or `default`, secondmate launch falls back through `config/crew-harness` and then deck, and no model or effort is read from that file.
 The model token may also be a fallback chain, one exact pin or a comma-separated label list, resolved per "Model fallback chains" above.
 `fm-harness.sh secondmate-model` and `fm-harness.sh secondmate-effort` expose only the optional tokens from `config/secondmate-harness`; `config/crew-harness` remains a bare adapter-name file.
 Changing this pin affects the next secondmate spawn or control-plane relaunch; the relaunch profile rules are owned by [`docs/agent-control.md`](agent-control.md#transactional-relaunch).
@@ -408,7 +326,6 @@ When `config/crew-dispatch.json` exists, crewmate and scout spawns require an ex
 The inherited-local-material contract is owned by [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md); its harness-relevant consequence is that a secondmate's own crewmates use the primary's dispatch profiles and static harness value.
 Those inherited values are defaults and rules only; `fm-spawn` still permits a consciously chosen explicit runtime outside the config.
 `config/secondmate-harness` is not inherited because secondmates do not launch secondmates.
-For Pi and pi-signed secondmate launches, `fm-spawn.sh` starts the selected executable with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree.
 
 ## Worker launch environment (config/launch-env-allowlist)
 
@@ -471,7 +388,7 @@ This section is the single owner of the canonical schema and its per-field seman
     {
       "when": "<natural-language condition describing a kind of task>",
       "use": [
-        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max|ultra, optional>" }
+        { "harness": "<adapter>", "model": "<optional model>", "effort": "<low|medium|high|xhigh|max, optional>" }
       ],
       "why": "<optional rationale that helps firstmate choose>"
     }
@@ -486,18 +403,17 @@ Per rule, `when` and `use` are required.
 Both `use` and the optional top-level `default` accept either one profile object or a non-empty array of profile objects.
 The single-object form stays fully backward-compatible, and every profile needs `harness`.
 Profile `model` and `effort` fields and rule `why` are optional.
-`ultra` is native-only: the model-aware validation contract and launch mapping are owned by `bin/fm-harness.sh validate-native-effort` and `bin/fm-spawn.sh` respectively.
 An omitted model or effort means the selected harness uses its own default for that axis.
 Every profile array is a quota-aware choice firstmate makes at intake under `AGENTS.md` section 4; no script makes it.
 If no dispatch rule fits, firstmate resolves `default` through the same object-or-array path before falling back to `config/crew-harness`.
-Except for `ultra` under the native-effort contract above and Deck's refusal under [Harness support](#harness-support), an effort value the chosen harness does not accept is recorded as `effort=` in task meta for traceability but omitted from the launch flags.
+[Harness support](#harness-support) owns effort refusal; unsupported effort is never silently omitted.
 Bootstrap reports unsupported harness/model/effort combinations as a `CREW_DISPATCH` diagnostic when they are visible in the file.
 A profile's `model` may also be a fallback chain: either one `<provider>/<model-id>` label, which is an exact pin exactly as before, or a comma-separated list of labels such as `codex/gpt-6-luna,zai/glm-5.3,vercel/xiaomi/mimo-v2.6-flash`, resolved in preference order at spawn time; "Model fallback chains" above owns the chain syntax, cooldowns, and refusal contract.
 The dispatch profile consultation resolves a concrete profile and passes it to `fm-spawn.sh` unchanged, so a chain rides in the `--model` value and no dispatch-side judgment substitutes a model outside the captain-approved order.
 See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a starting point to copy into local `config/crew-dispatch.json`.
 When the file exists, bootstrap validates it with `jq`.
 Valid files stay silent by default; with `FM_BOOTSTRAP_VERBOSE_FACTS=1`, bootstrap emits `BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json`, one `BOOTSTRAP_INFO:` fact per rule, and one fact for the optional default profile set.
-Malformed JSON, an empty or malformed rule/default array, a harness other than pi, pi-signed, or deck, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`; missing `jq` is reported through the normal `MISSING: jq` install-consent flow, so an absent prerequisite is never reported as invalid configuration.
+Malformed JSON, an empty or malformed rule/default array, a harness other than deck, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`; missing `jq` is reported through the normal `MISSING: jq` install-consent flow, so an absent prerequisite is never reported as invalid configuration.
 While the file remains present, no crewmate or scout spawn may proceed without an explicit resolved harness; malformed configuration must be reported and corrected rather than selected around.
 Secondmate homes inherit this file from the primary, so a secondmate's own crewmates apply the same dispatch profile behavior.
 
@@ -643,7 +559,6 @@ A fail-closed poll that already queued a wake, and a timeout, always print so th
 It is a standing watcher check: `bin/fm-autoland.sh arm` writes `state/autoland.check.sh` and binds it with `bin/fm-check-register.sh`, and `disarm` removes it.
 The watcher runs that one check when `FM_AUTOLAND_INTERVAL` seconds (default 90) have elapsed, or during a full `FM_CHECK_INTERVAL` sweep, and turns the line it prints into a `check:` wake without speeding up other checks.
 The cadence is checked on watcher polls, so polling and other sweep work can delay a tick.
-Auto-land is main-owned: a tick invoked as the Pi supervision branch does nothing, including no deployment scan (actor handling is owned by the script header).
 Each tick makes one batched GraphQL discovery call; merge attempts add live PR reads and merge calls, including a queue query when a task-owned PR remains open.
 The discovery snapshot is unpaginated: at most 100 open PRs across the configured owners, 100 check contexts per head, and 20 labels per PR.
 `bin/fm-autoland.sh status` prints each repository's authority, the deployed commit and last run of each hook, and the recent reports.
@@ -746,7 +661,7 @@ The watcher accepts the shim only when its bytes match the expected generated co
 This section is the single owner of the Relay cadence contract: a Relay instance polls every 30 seconds instead of the default 300, only a Relay instance speeds up because a non-Relay home has no `config/x-mode.env`, and the session-start supervision operating block includes the cadence instruction when that file exists.
 The active primary-harness supervision protocol owns how that sourced cadence reaches the watcher process.
 Because `bin/fm-watch.sh` reads `FM_CHECK_INTERVAL` only at process start, a cadence transition - opt-in while a watcher is already running, or opt-out - is applied by restarting the home-scoped watcher through the emitted harness protocol; bootstrap deliberately never restarts the watcher itself.
-While a legacy daemon flag is active the daemon owns the watcher and its default cadence applies; on Pi the away-posture record alone leaves the ordinary Relay watcher cadence active, and daemon-backed Relay cadence remains a deferred follow-up.
+While a legacy daemon flag is active the daemon owns the watcher and its default cadence applies.
 When the token is removed or empty, the next locked session-start bootstrap step removes those artifacts.
 Steady-state off is silent and writes nothing.
 Relay remains additive to non-Relay lifecycle behavior: homes without the generated artifacts keep the default watcher cadence and do not run the Relay poll.
@@ -851,7 +766,7 @@ This is one narrow extension type, not a general plugin or hook system.
 `bin/fm-extension.sh --help` and `bin/fm-procevent.sh --help` own exact command mechanics.
 
 Discovery reads only mode-`0600` bindings under this home's mode-`0700` `config/extensions.d/` directory.
-The current directory, projects, task copies, worker text, environment payloads, and Pi packages are never searched for extensions.
+The current directory, projects, task copies, worker text, and environment payloads are never searched for extensions.
 When the directory is absent, ordinary process-event commands perform only a bounded absence check, create no package or extension state, and preserve every built-in adapter path.
 
 Binding separates the package's own manifest from this home's explicit enablement.
@@ -1023,7 +938,7 @@ For a runner whose ownership can still be proved, the nominal detection bound is
 That grace is a ceiling rather than a delay every stop pays: two seconds for the ordinary signal and two more for the forced one, spent only by a group that outlives the signal it was sent, which is why a healthy runner's stop completes in a fraction of a second.
 The group signal reaches the blocking child and everything under it exactly as retirement does.
 A runner exports the inherited `FM_PROCEVENT_IN_RUNNER` marker and every lease refresh is skipped under it, so a runner and its ordinary children do not certify their own owner, and the next reconcile in a live home simply starts a replacement runner.
-That no-self-refresh rule is CONFUSED-AGENT-GRADE, the same deliberate captain-decided grade `bin/fm-lease-lib.sh` documents: it stops the accidental case this boundary exists for, an orphaned or test-scaffolding source tree that would otherwise keep its own owner alive.
+That no-self-refresh rule is CONFUSED-AGENT-GRADE, a deliberate captain-decided grade: it stops the accidental case this boundary exists for, an orphaned or test-scaffolding source tree that would otherwise keep its own owner alive.
 A source that DELIBERATELY strips the marker from its environment can still refresh the lease, so adversarial-grade unforgeability is explicitly out of scope here and tracked as separate follow-up design work.
 Scope is the owning state root and one runner generation, never a script or process name, so a live source in another home is untouched: that home refreshes its own lease.
 `FM_PROCEVENT_OWNER_LEASE_SECONDS` (default 600, range 1..86400) is how long a runner keeps going with no sign of activity in its owning home, and `FM_PROCEVENT_OWNER_CHECK_SECONDS` (default 15, range 1..3600) is the guard's detection interval: it re-reads the lease and the recorded state-root identity twice within each interval, half an interval apart, so the two reads its debounce needs fit inside one interval rather than costing two.
@@ -1068,7 +983,7 @@ The model-backed subcommands of `bin/fm-inbox.sh` reach a paid API in a named ac
 Each is one line in a local, gitignored `config/` file, with an environment variable that overrides it for a single run, and a missing required value refuses with the path to write rather than falling back to a value that belongs to another home.
 That configuration is the whole opt-in: an unconfigured home cannot run `fm-inbox.sh say` or `ask`, while `note`, `status`, `list` and `drain` need no configuration at all because they make no model call.
 Ziggy's firstmate agent (`agents/firstmate/fm_a2a_server.py` in the Ziggy repository) reads this home's records through `bin/fm_voice_records.py` and hands work over through `note`, so it keeps working in a home that has configured nothing.
-In a live Pi session using the polling fallback, a captain note due for delivery cuts short the idle wait and normally reaches the session within a few seconds instead of after the full `FM_POLL`; Herdr's native event wait is unchanged.
+In a live session using the polling fallback, a captain note due for delivery cuts short the idle wait and normally reaches the session within a few seconds instead of after the full `FM_POLL`; Herdr's native event wait is unchanged.
 A note stays unread until `fm-inbox.sh drain --ack <id>` moves it to `state/inbox/handled/`, and `fm-wake-drain.sh --ack-through` never consumes the `inbox:<id>` wake row of an unread note: it keeps the row, says so on its last line, and marks it so the next watcher cycle surfaces the note again.
 An unread note is also surfaced again every `FM_INBOX_RESURFACE_SECS` (default 300), at most `FM_INBOX_RESURFACE_MAX` (default 3) more times.
 Once a note has been unread for `FM_INBOX_OVERDUE_SECS` (default 600), `bin/fm-guard.sh` prints a `CAPTAIN INBOX NOT READ` banner on every guarded command and drain, and every later `fm-inbox.sh note` prints a `delivery: degraded` line that `bin/fm_voice_records.py` passes on as `delivery_warning`.
@@ -1182,17 +1097,12 @@ FMX_FOLLOWUP_MAX_AGE_SECS=604800   # local window for posting Relay completion f
 FMX_FOLLOWUP_MAX_COUNT=3   # local cap on Relay completion follow-ups per linked mention
 FM_PF_RETRY_BACKOFF_SECS=900   # seconds before the next attempt after a retryable promised-public-reply delivery error
 FM_LOCK_STALE_AFTER=2   # grace seconds for missing or nonnumeric lock-owner PIDs (minimum 2s); dead numeric PIDs have no age grace
-FM_GUARD_GRACE=300      # beacon freshness threshold for guard verdicts, arm health checks, and the primary turn-end guard; see docs/turnend-guard.md for model-aware exceptions
+FM_GUARD_GRACE=300      # beacon freshness threshold for guard verdicts, and arm health checks
 FM_ARM_CONFIRM_TIMEOUT=10   # seconds fm-watch-arm waits to confirm a fresh watcher before reporting FAILED; default 30 on Git Bash/MSYS
 FM_ARM_ATTACH_POLL=0.5  # seconds between checks while fm-watch-arm is attached to an existing healthy watcher cycle
-FM_PI_ARM_READY_TIMEOUT_MS=12000   # milliseconds the Pi watcher extension waits for a successor arm to report started or attached; default 35000 on Windows to stay above the MSYS confirm budget
-FM_WATCH_ARM_RETIRE_TIMEOUT_MS=1000   # milliseconds Pi waits for an unready successor arm to exit before abandoning retries
-FM_WATCH_REARM_RETRY_BASE_MS=250   # Pi adapter base delay for continuity restoration retries
-FM_WATCH_REARM_RETRY_MAX_MS=4000   # Pi adapter cap for exponential continuity retry delay
-FM_WATCH_REARM_RETRY_LIMIT=5   # Pi adapter launch-failure retries before surfacing restoration failure
 FM_WATCH_CYCLE_LOG_MAX_BYTES=262144   # size cap for the arm-owned watcher lifecycle ledger
 FM_WATCH_CYCLE_LOG_KEEP_LINES=1000   # newest complete lifecycle rows considered when the ledger is capped
-FM_WATCHER_STALE_GRACE=300   # defaults to FM_GUARD_GRACE if set, else the poll-derived grace (docs/turnend-guard.md "Guard grace and the poll cadence"); seconds a live watcher lock may have a stale beacon before re-arm errors
+FM_WATCHER_STALE_GRACE=300   # defaults to FM_GUARD_GRACE if set, else the poll-derived grace; seconds a live watcher lock may have a stale beacon before re-arm errors
 FM_SIGNAL_GRACE=30      # seconds to coalesce nearby status and turn-end signals into one wake
 FM_TURNEND_CHURN_ABSORB_SECS=900   # longest one endpoint's bare turn-ends may be deferred on pane-churn evidence alone; only consulted when config/turnend-churn-absorb is present
 FM_CAPTAIN_RE='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'   # captain-relevant status regex; nonterminal progress verbs remain excluded even when their prose matches
@@ -1218,7 +1128,7 @@ FM_FLEET_SYNC_PACKED_REFS_LOCK_AGE_SECS=30       # min mtime age before fm-fleet
 FM_BUSY_REGEX=          # optional override for rendered delivery guards; converted worker state ignores it
 FM_COMPOSER_IDLE_RE=    # optional fleet-wide idle-placeholder regex override (bin/fm-composer-lib.sh); a match alone does not prove emptiness because shape-specific position and ANSI de-emphasis safety gates still apply
 FM_COMPOSER_CAPTURE_LINES=20   # fleet-wide bound for tail-capture composer reads; tmux instead supplies its bounded visible pane, while the other adapters use this small window so stale scrollback banners stay out of the candidate set
-FM_COMPOSER_PI_MAX_LINES=8     # fleet-wide: maximum rows admitted between Pi's identity-corroborated separator pair; taller or ambiguous candidates stay unknown
+FM_COMPOSER_PI_MAX_LINES=8     # fleet-wide: maximum rows admitted between a retained identity-corroborated separator pair; taller or ambiguous candidates stay unknown
 FM_COMPOSER_GHOST_LUMA_MAX=128   # fleet-wide: max perceived luminance (0.299R+0.587G+0.114B, 0-255) for a TRUECOLOR foreground to count as de-emphasised ghost/placeholder text and be stripped; dim/faint (SGR 2) is stripped regardless. Assumes a dark terminal theme (bin/fm-composer-lib.sh's fm_composer_strip_ghost)
 FM_SEND_RETRIES=3       # fm-send typed-plane Enter-retry attempts after typing the line once
 FM_SEND_SLEEP=0.4       # seconds between fm-send typed-plane submit checks

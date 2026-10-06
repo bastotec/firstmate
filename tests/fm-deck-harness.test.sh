@@ -38,8 +38,7 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 
-unset CLAUDECODE PI_CODING_AGENT FM_PI_HARNESS GROK_AGENT CURSOR_AGENT CURSOR_INVOKED_AS \
-  ATLASSIAN_AGENT_TYPE ROVODEV_CLI GEMINI_CLI AGENT FM_OMP_HARNESS FM_DECK_MCP_CONFIG FM_CONFIG_OVERRIDE
+unset FM_DECK_MCP_CONFIG FM_CONFIG_OVERRIDE
 
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-control-lib.sh"
@@ -281,7 +280,7 @@ test_turns_drive_the_busy_record_and_turn_end() {
   [ "$(fm_busy_classify tmux fake deck t1 "$dir/state")" = "idle deck-wrapper" ] \
     || fail "busy-lib does not trust the deck driver's record: $(fm_busy_classify tmux fake deck t1 "$dir/state")"
   [ "$(fm_busy_classify tmux fake pi t1 "$dir/state")" = "unknown source-mismatch" ] \
-    || fail "the deck driver's record must not classify another adapter"
+    || fail "the deck driver's record must not classify a stale record naming a removed adapter"
   pass "fm-deck-worker: turns open and close the deck-wrapper busy record and touch turn-end"
 }
 
@@ -1168,9 +1167,7 @@ test_deck_supervision_model_is_scoped_to_secondmate_launches() {
   mkdir -p "$bin"
   ln -sf /bin/bash "$bin/deck"
   # shellcheck disable=SC2016 # the quoted body expands inside the named shell
-  out=$(env -u CLAUDECODE -u PI_CODING_AGENT -u FM_PI_HARNESS -u GROK_AGENT \
-    -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI -u FM_OMP_HARNESS \
-    -u FM_SUPERVISION_MODEL "$bin/deck" -c '. "$1"; fm_supervision_model; :' \
+  out=$(env -u FM_SUPERVISION_MODEL "$bin/deck" -c '. "$1"; fm_supervision_model; :' \
     _ "$ROOT/bin/fm-wake-lib.sh")
   [ "$out" = persistent ] || fail "a Deck-named main process received the secondmate supervision model: $out"
   out=$(FM_SUPERVISION_MODEL=autoarm bash -c '. "$1"; fm_supervision_model' \

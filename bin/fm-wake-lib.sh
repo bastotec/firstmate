@@ -142,27 +142,14 @@ fm_path_age() {
 # Defaults to $FM_POLL (fm-watch.sh's own poll env var) when no argument is
 # given, so a caller with no independent notion of the poll cadence still
 # derives the same default fm-watch.sh itself would use.
-# docs/turnend-guard.md "Guard grace and the poll cadence" is the single owner
-# of the rationale; every FM_GUARD_GRACE default should derive from this.
+# This function is the single owner of that rationale; every FM_GUARD_GRACE
+# default should derive from it.
 fm_poll_derived_grace() {
   local poll=${1:-${FM_POLL:-15}} margin=60 derived
   case "$poll" in ''|*[!0-9]*) poll=15 ;; esac
   derived=$((poll + margin))
   [ "$derived" -ge 300 ] || derived=300
   printf '%s\n' "$derived"
-}
-
-# fm_watcher_lock_unheld <state>
-# True when the watcher lock or its symlinked owner directory is absent, or when
-# the existing lock records no pid at all. Any non-empty pid remains held here;
-# its syntax, liveness, ownership metadata, and identity are health concerns.
-fm_watcher_lock_unheld() {
-  local state=$1 lockdir pid
-  lockdir="$state/.watch.lock"
-  [ ! -e "$lockdir" ] && return 0
-  [ ! -e "$lockdir/pid" ] && return 0
-  pid=$(cat "$lockdir/pid" 2>/dev/null) || return 1
-  [ -z "$pid" ]
 }
 
 FM_WATCHER_MATCHED_IDENTITY=
@@ -206,108 +193,27 @@ fm_watcher_healthy() {
 # identity-matched watcher PROCESS holds this home's lock with a fresh beacon. The
 # arm layer (bin/fm-watch-arm.sh) needs exactly that - it decides whether to
 # start, attach to, or replace a real watcher process, so a leftover beacon must
-# never satisfy it. bin/fm-turnend-guard.sh also keeps this strict check because
-# it fires at the turn boundary. The pull warning (bin/fm-guard.sh) fires
+# never satisfy it. The pull warning (bin/fm-guard.sh) fires
 # mid-turn, where the selected supervision model may permit a verified hand-off
 # without a live watcher process, so it wants a different, model-aware question:
 
 # fm_supervision_model
-# Print the supervision model of this home's PRIMARY harness:
-#   autoarm     never detected from the harness; a Deck secondmate receives it
-#               only as a launch-scoped override. Its persistent driver
-#               continuously replaces exited watchers, and a fresh beacon with no
-#               live watcher process covers that bounded child hand-off. A stale
-#               or absent beacon is a genuine lapse.
-#   extension   Pi (and pi-signed): .pi/extensions/fm-primary-pi-watch.ts owns
-#               continuity. It tears the watcher down on every actionable wake and
-#               spawns the replacement itself, so a genuinely unheld singleton lock
-#               is healthy during that hand-off only with extension ownership and a
-#               fresh beacon. Any held but unhealthy lock remains down.
-#   persistent  every other harness (deck, unknown): the watcher runs as a
-#               tracked live process, so a live identity-matched pid is the real
-#               liveness signal.
-# FM_SUPERVISION_MODEL overrides detection (tests, and callers that already know
-# the harness). Otherwise bin/fm-harness.sh is the single detection owner, so this
-# stays consistent with the harness-specific repair line the guards already emit.
+# Print the supervision model of this home's PRIMARY:
+#   autoarm     never detected; a Deck secondmate receives it only as a
+#               launch-scoped override. Its persistent driver continuously
+#               replaces exited watchers, and a fresh beacon with no live watcher
+#               process covers that bounded child hand-off. A stale or absent
+#               beacon is a genuine lapse.
+#   persistent  the default (a deck primary): the watcher runs as a tracked live
+#               process, so a live identity-matched pid is the real liveness
+#               signal.
+# FM_SUPERVISION_MODEL overrides the default (tests, and the Deck secondmate
+# launch).
 fm_supervision_model() {
-  local harness
   case "${FM_SUPERVISION_MODEL:-}" in
-    autoarm|extension|persistent) printf '%s\n' "$FM_SUPERVISION_MODEL"; return 0 ;;
+    autoarm|persistent) printf '%s\n' "$FM_SUPERVISION_MODEL"; return 0 ;;
   esac
-  harness=$("$FM_WAKE_LIB_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
-  case "$harness" in
-    pi|pi-signed) printf 'extension\n' ;;
-    *) printf 'persistent\n' ;;
-  esac
-}
-
-# Pi primary supervision evidence. The Pi extensions record, in their state
-# markers, the exact build they loaded and the session process that loaded it, so
-# "a live Pi session owns supervision" is provable from durable state without a
-# watcher process and without reading any vendor-rendered surface.
-#
-# fm_pi_extension_version <file>
-# Print the marker version string the Pi extensions record for <file>. Must stay
-# byte-identical to the "sha256:<hex>" digest .pi/extensions/fm-primary-pi-watch.ts
-# and .pi/extensions/fm-primary-turnend-guard.ts compute for themselves; a host
-# with no SHA-256 tool falls back to a form no marker can match, which keeps every
-# consumer loud rather than silently satisfied.
-fm_pi_extension_version() {
-  local file=$1
-  [ -f "$file" ] || return 1
-  if command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$file" | awk '{print "sha256:" $1}'
-  elif command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$file" | awk '{print "sha256:" $1}'
-  else
-    cksum "$file" | awk '{print "cksum:" $1 ":" $2}'
-  fi
-}
-
-# fm_pi_extension_loaded <marker> <expected-version> <session-lock>
-# True when <marker> records <expected-version> and names the session process in
-# <session-lock>, i.e. the session holding this home loaded exactly this build.
-fm_pi_extension_loaded() {
-  local marker=$1 expected_version=$2 lock=$3 marker_version marker_pid lock_pid
-  [ -f "$marker" ] && [ -f "$lock" ] && [ -n "$expected_version" ] || return 1
-  marker_version=$(sed -n '1p' "$marker")
-  marker_pid=$(sed -n '2p' "$marker")
-  lock_pid=$(sed -n '1p' "$lock")
-  [ -n "$marker_pid" ] || return 1
-  [ "$marker_version" = "$expected_version" ] && [ "$marker_pid" = "$lock_pid" ]
-}
-
-# fm_pi_extension_owns_supervision <state> <root>
-# True when a LIVE Pi session owns supervision continuity for this home: both
-# primary extensions are loaded at their current on-disk builds by the process
-# recorded in this home's session lock, and that process is still alive.
-# Requiring the turn-end guard extension too is deliberate - it is the structural
-# backstop that catches a cycle the watch extension failed to restore, so a home
-# missing it has no benign hand-off to tolerate.
-fm_pi_extension_owns_supervision() {
-  fm_extension_pair_owns_supervision "$1" "$2/.pi/extensions" \
-    "fm-primary-pi-watch.ts:.pi-watch-extension-loaded" \
-    "fm-primary-turnend-guard.ts:.pi-turnend-extension-loaded"
-}
-
-# fm_extension_owns_supervision <state> <root>
-# The extension-model proof the verdict below consults.
-fm_extension_owns_supervision() {
-  fm_pi_extension_owns_supervision "$1" "$2"
-}
-
-fm_extension_pair_owns_supervision() {  # <state> <extension-dir> <source:marker>...
-  local state=$1 dir=$2 lock session_pid pair source marker version
-  shift 2
-  lock="$state/.lock"
-  for pair in "$@"; do
-    source=${pair%%:*}
-    marker=${pair#*:}
-    version=$(fm_pi_extension_version "$dir/$source") || return 1
-    fm_pi_extension_loaded "$state/$marker" "$version" "$lock" || return 1
-  done
-  session_pid=$(sed -n '1p' "$lock" 2>/dev/null)
-  fm_pid_alive "$session_pid"
+  printf 'persistent\n'
 }
 
 # Away-mode supervision evidence. While state/.afk exists the away-mode daemon
@@ -361,7 +267,7 @@ fm_afk_mode() {
   esac
 }
 
-# fm_watcher_supervision_verdict <state> <watch-path> [grace] [home] [root]
+# fm_watcher_supervision_verdict <state> <watch-path> [grace] [home]
 # Model-aware "is supervision healthy right now" verdict for the pull warning
 # guard (bin/fm-guard.sh), NOT the arm layer or the turn-end guard. Sets:
 #   FM_WATCHER_VERDICT_OK      true when supervision is healthy for this model
@@ -374,14 +280,6 @@ fm_afk_mode() {
 # autoarm: a fresh beacon within grace is healthy even with no live watcher. A
 # Deck secondmate's scoped override uses it across the persistent driver's
 # bounded watcher hand-off. A stale or absent beacon is a genuine lapse.
-# extension: a live identity-matched watcher is the ordinary healthy state, but a
-# genuinely unheld lock is also healthy while the beacon is fresh AND a live Pi
-# session provably owns continuity (fm_extension_owns_supervision) - that is the
-# extension's own tear-down-and-respawn hand-off, which it retries and escalates
-# itself. A lock with any recorded pid remains down if the strict health check fails.
-# Without ownership proof an unheld lock is down exactly as before, so an unloaded,
-# version-drifted, or exited Pi session still alarms immediately, and a cycle the
-# extension never restores still alarms once the beacon passes grace.
 # persistent: require a live identity-matched watcher with a fresh beacon
 # (fm_watcher_healthy); a fresh leftover beacon with no live watcher is still down.
 # shellcheck disable=SC2034 # Read by callers after the function returns.
@@ -390,7 +288,6 @@ FM_WATCHER_VERDICT_OK=false
 FM_WATCHER_VERDICT_REASON=stale-beacon
 fm_watcher_supervision_verdict() {
   local state=$1 watch=$2 grace=${3:-${FM_GUARD_GRACE:-300}} home=${4:-$FM_HOME}
-  local root=${5:-$FM_ROOT}
   local beat age fresh=false model
   FM_WATCHER_VERDICT_OK=false
   FM_WATCHER_VERDICT_REASON=stale-beacon
@@ -412,14 +309,8 @@ fm_watcher_supervision_verdict() {
     # shellcheck disable=SC2034 # Read by callers after the function returns.
     FM_WATCHER_VERDICT_OK=true
   elif [ "$fresh" = true ]; then
-    if [ "$model" = extension ] && fm_watcher_lock_unheld "$state" \
-      && fm_extension_owns_supervision "$state" "$root"; then
-      # shellcheck disable=SC2034 # Read by callers after the function returns.
-      FM_WATCHER_VERDICT_OK=true
-    else
-      # shellcheck disable=SC2034 # Read by callers after the function returns.
-      FM_WATCHER_VERDICT_REASON=no-watcher
-    fi
+    # shellcheck disable=SC2034 # Read by callers after the function returns.
+    FM_WATCHER_VERDICT_REASON=no-watcher
   fi
   return 0
 }
@@ -1561,77 +1452,21 @@ fm_wake_print_deduped() {
   ' "$file"
 }
 
-# --- branch grant evidence and per-actor pending rows ------------------------
-#
-# docs/watcher-continuity.md "Per-actor acknowledgement" owns the contract these
-# helpers read; this is its single implementation, shared by the drain (which
-# repairs and consumes a grant under the queue lock), the grant publisher, and
-# the guard (which only counts, and never takes the lock).
+# --- presented-row claims and pending rows -----------------------------------
 
 # 0 when <rows-file> is a non-empty list of distinct sequence numbers.
 fm_wake_grant_rows_valid() {  # <rows-file>
   [ -s "$1" ] && awk 'BEGIN { ok=1 } !/^[0-9]+$/ || seen[$0]++ { ok=0 } END { exit !ok }' "$1"
 }
 
-# 0 when <owner-file> holds the supported record, names a live process whose
-# identity still matches what was recorded, and matches any expected pid and
-# generation the caller pins. An unreadable, malformed, or superseded record is
-# not a match, so uncertainty reads as "no live owner".
-fm_wake_branch_owner_matches() {  # <owner-file> [<pid>] [<generation>]
-  local file=$1 expected_pid=${2:-} expected_generation=${3:-}
-  local version pid identity generation current extra
-  [ -f "$file" ] && [ ! -L "$file" ] || return 1
-  exec 8< "$file" || return 1
-  IFS= read -r version <&8 || { exec 8<&-; return 1; }
-  IFS= read -r pid <&8 || { exec 8<&-; return 1; }
-  IFS= read -r identity <&8 || { exec 8<&-; return 1; }
-  IFS= read -r generation <&8 || { exec 8<&-; return 1; }
-  if IFS= read -r extra <&8; then exec 8<&-; return 1; fi
-  exec 8<&-
-  [ "$version" = fm-branch-eligible-owner-v1 ] || return 1
-  case "$pid" in ''|*[!0-9]*|1) return 1 ;; esac
-  case "$generation" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
-  [ -z "$expected_pid" ] || [ "$pid" = "$expected_pid" ] || return 1
-  [ -z "$expected_generation" ] || [ "$generation" = "$expected_generation" ] || return 1
-  current=$(fm_pid_identity "$pid" 2>/dev/null) || return 1
-  [ -n "$current" ] && [ "$current" = "$identity" ]
-}
-
-# 0 when a branch grant is currently reserving rows: a valid row snapshot whose
-# recorded owner is still live. Anything else means no row is reserved.
-fm_wake_branch_grant_live() {  # <rows-file> <owner-file>
-  fm_wake_grant_rows_valid "$1" && fm_wake_branch_owner_matches "$2"
-}
-
-# How many queued rows <actor> can act on right now - exactly the rows a drain
-# by that actor would present or retire, and therefore the only rows worth
-# telling that actor to drain. Main owns every structurally valid row a live
-# branch grant does not reserve, plus every structurally invalid row. The branch
-# owns exactly the rows its live grant names. Read without the queue lock: a
-# torn read can only mis-count one poll, and the drain re-derives the set under
-# the lock before it presents or mutates anything.
-fm_wake_actor_pending_count() {  # <actor> [<rows-file> <owner-file>]
-  local actor=${1:-main} rows=${2:-$STATE/.branch-eligible-rows}
-  local owner=${3:-$STATE/.branch-eligible-owner} grant='' count=''
+# How many queued rows a drain can act on right now - every row, structurally
+# valid or not, since the drain presents the valid ones and retires the rest.
+# Read without the queue lock: a torn read can only mis-count one poll, and the
+# drain re-derives the set under the lock before it presents or mutates anything.
+fm_wake_pending_count() {
+  local count=''
   [ -f "$FM_WAKE_QUEUE" ] || { printf '0\n'; return 0; }
-  if fm_wake_branch_grant_live "$rows" "$owner"; then
-    grant=$rows
-  fi
-  if [ "$actor" = branch ]; then
-    [ -n "$grant" ] || { printf '0\n'; return 0; }
-    count=$(awk -F '\t' -v seqs="$grant" '
-      BEGIN { while ((getline line < seqs) > 0) keep[line] = 1 }
-      NF >= 5 && $2 ~ /^[0-9]+$/ && ($2 in keep) { n++ }
-      END { print n + 0 }
-    ' "$FM_WAKE_QUEUE") || count=''
-  else
-    count=$(awk -F '\t' -v seqs="$grant" '
-      BEGIN { if (seqs != "") while ((getline line < seqs) > 0) reserved[line] = 1 }
-      NF < 5 || $2 !~ /^[0-9]+$/ { n++; next }
-      !($2 in reserved) { n++ }
-      END { print n + 0 }
-    ' "$FM_WAKE_QUEUE") || count=''
-  fi
+  count=$(awk 'END { print NR + 0 }' "$FM_WAKE_QUEUE") || count=''
   # A queue that exists but cannot be counted (unreadable file, unreadable
   # state/) is not evidence of an empty queue: report a pending row so callers
   # still raise the alarm on a queue nobody can prove is drained. A failed count

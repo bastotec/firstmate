@@ -25,19 +25,14 @@ The failure repeated across harnesses and homes, and the workaround (remember to
 A raw-command spawn records the command's basename as `harness=`.
 `fm_control_harness_family` accepts only exact supported adapter names; [Fail-closed boundaries](#fail-closed-boundaries) owns the refusal for every other recorded value.
 
-## Primary owner prerequisites
+## Primary sessions
 
-The runtime/control-plane owner implements bounded primary lifecycle and execution-bound native steering through [`bin/fm-primary.py`](../bin/fm-primary.py), separate from task metadata.
-[Managed primary setup](managed-primary.md) owns the opt-in launch path, supported profiles, discovery integration and refusal boundary.
-The [README launch commands](../README.md#install-and-launch) remain valid for ordinary unregistered sessions, including the signed-primary boundary, and `fm-spawn.sh` remains task-only.
-
-The [host executable's header and help](../bin/fm-ui-host-control.py) own the exact managed-primary binding and execution-bound payloads.
-[`tests/fm-primary.test.sh`](../tests/fm-primary.test.sh) proves the supported setup and genuine owned-child controls through that browser-safe host route using fixture/standby processes only.
-`tests/fm-ui-host-control.test.sh` continues to pin the honest refusal boundary for unregistered primary targets and exact captain-call decision bindings.
+The primary runs under the Deck chat host, [`bin/fm-deck-chat.sh`](../bin/fm-deck-chat.sh), which owns its own lifecycle; `fm-spawn.sh` and `fm-control.sh` remain task-only.
+`tests/fm-ui-host-control.test.sh` pins the honest refusal boundary for primary lifecycle and steering targets and exact captain-call decision bindings.
 
 ## Verbs
 
-The remaining sections describe task control through `fm-control.sh`; managed-primary semantics are owned by [managed primary setup](managed-primary.md).
+The remaining sections describe task control through `fm-control.sh`.
 
 | Verb | Effect | Postcondition |
 | --- | --- | --- |
@@ -62,7 +57,7 @@ An agent found gone during that gate is reported stopped instead, since a dead e
 Removing a worktree, independently closing an endpoint, or discarding work stays with [`bin/fm-teardown.sh`](../bin/fm-teardown.sh), which owns the landed-work test.
 
 **`resume` is not a verb.**
-pi and pi-signed have no verified pane-resume contract, and Deck's driver starts a new session from the brief on disk.
+Deck's driver starts a new session from the brief on disk.
 `relaunch` covers the same need on every adapter, because the brief on disk - not a harness-private session - is the durable instruction.
 
 ## Transactional relaunch
@@ -73,6 +68,7 @@ Only the instructions are ever rolled back from those copies; the record copy is
 1. **Resolve the profile.**
    An explicit `--harness`, `--model`, or `--effort` wins, and `recover-missing` accepts exactly the same three flags with exactly this precedence - a rescue that names a replacement runtime is one transaction, not a failed recovery followed by a relaunch.
    For local records, a `kind=secondmate` task otherwise re-resolves its durable `config/secondmate-harness` pin, including that file's optional model and effort tokens, exactly as every other respawn does - so setting the pin and relaunching is the ordinary way to move a secondmate's runtime.
+   Invalid static harness configuration refuses with the resolver's diagnostic before the existing worker is stopped; only a successful empty resolution may fall back to its recorded harness, and an explicit supported `--harness` bypasses the configured pin.
    A ship or scout keeps the harness already recorded for it, because that harness comes from firstmate's dispatch-profile judgment at intake and must not be silently re-read from configuration.
    A harness change resets model and effort unless they are named too, because a model chosen for one adapter does not transfer to another.
    A harness that has no effort control refuses a named effort: `deck` rejects `--effort` with "deck has no effort control", while an effort recorded for the previous harness is reset to `default` by the harness change and so never makes the rescue refuse itself.
@@ -137,7 +133,7 @@ It differs from the steps above in exactly three places.
 - A remotely placed secondmate is never driven from this home's own endpoint view.
   Its agent runs on another host, so none of the postconditions this plane verifies could be read for it here; local endpoint validation would refuse the record regardless, because `window=remote:<id>` can never match a local backend's required shape.
   [Remote lifecycle routing](remote-secondmates.md#lifecycle-control-and-backend-migration) owns its supported primary verbs, readiness gate, and host-to-parent rebinding; the host-local record is ordinary and local, so the transaction's checkpoint, journal, rollback, and postconditions apply there.
-- A recorded harness other than exact `pi`, `pi-signed`, or `deck` is refused before any lifecycle action, including `relaunch` or `recover-missing` with an explicit replacement `--harness`.
+- A recorded harness other than exact `deck` is refused before any lifecycle action, including `relaunch` or `recover-missing` with an explicit replacement `--harness`.
   Removed adapters and noncanonical raw-command basenames have no verified control mechanics; an override does not bypass that check, and their records and work remain untouched.
 - An adapter that is not verified for this task's kind is refused **before** the running agent is stopped, not after.
   The same table refuses a `recover-missing` before the terminal is recreated, where there is no running agent to stop and nothing has been touched at all.
@@ -179,4 +175,3 @@ The empirical basis for each adapter's value is the `harness-adapters` skill's v
 - `tests/fm-control-recover-missing.test.sh` - the missing-terminal recovery: the success path under the recorded handle for both losses (a missing window in a live session, and a whole gone session recreated before it), the live, ambiguous, absent-copy, and pool-slot-ownership refusals leaving the record and instructions byte-identical, a rescue succeeding on a copy full of uncommitted work and leaving every one of those changes byte-identical, the refusal when the session cannot be recreated, the recorded profile surviving a differing configured secondmate pin, the explicit replacement-profile recoveries and their refusals (axis resets, deck from a recorded effort, an explicit deck effort, an unverified harness, a held backlog row, and the failed-handoff rollback that keeps the recorded runtime), removed-adapter records refusing without mutation, a still-starting shell being waited out rather than handed over and the refusal when it never settles, a failed recreation rolling the progress note back while leaving a concurrent write to the durable record in place, and the message after a failed launch handoff.
 - `tests/fm-backend-stream.test.sh` - backend migration between real stream and isolated tmux endpoints, including idle and positively dead agents, busy and unknown live-agent refusal, missing-registry refusal, and preservation of the secondmate home and unhandled steers.
 - [Portable stream-parity regressions](verification/runtime-backends.md#portable-stream-parity-regressions) - stream endpoint rebinding, owning-home agent refusal, and confirmed versus unconfirmed cleanup after a failed rebind.
-- `tests/fm-control-herdr-smoke.test.sh` - the second state-verified backend against the real herdr binary, on an isolated throwaway lab session.

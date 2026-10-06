@@ -28,7 +28,6 @@
 # per-harness trust table; a record whose source is not trusted for the
 # task's recorded harness classifies unknown, so one adapter's writer can
 # never classify another adapter):
-#   pi-ext           Pi/pi-signed per-task extension (agent_start/agent_settled)
 #   deck-wrapper     bin/fm-deck-worker.sh, which starts and ends every Deck
 #                    turn itself (turn-start opens; turn-end, turn-failed,
 #                    interrupted, and session-end close)
@@ -91,7 +90,6 @@ fm_busy_sources_for_harness() {  # <harness>
   local adapter=
   case "${1:-}" in
     deck) adapter=deck-wrapper ;;
-    pi|pi-signed) adapter=pi-ext ;;
     *) printf ''; return 0 ;;
   esac
   printf '%s fm-spawn fm-interrupt fm-recovery' "$adapter"

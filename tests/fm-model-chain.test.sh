@@ -4,8 +4,7 @@
 # resolution wired into bin/fm-spawn.sh and bin/fm-control.sh).
 #
 # Four capabilities are under test:
-#   A) Parsing. The branch idiom (.pi/extensions/lib/fm-branch-model-chain.ts)
-#      literally: one <provider>/<model-id> label per line split at the FIRST
+#   A) Parsing. One <provider>/<model-id> label per line split at the FIRST
 #      slash (provider-qualified ids survive), blank and # comment lines
 #      skipped, and any malformed or duplicate label a loud refusal naming that
 #      line instead of a silent selection around it.
@@ -193,8 +192,8 @@ make_chain_case() {
   proj="$case_dir/project"
   wt="$case_dir/wt"
   launchlog="$case_dir/launch.log"
-  fakebin=$(make_spawn_fakebin "$case_dir/fake" pi)
-  fm_test_spawn_home "$home" pi
+  fakebin=$(make_spawn_fakebin "$case_dir/fake" deck)
+  fm_test_spawn_home "$home" deck
   fm_git_worktree "$proj" "$wt" "wt-$name"
   [ -n "$id" ] && fm_test_spawn_brief "$home" "$id"
   printf '%s\n' "$case_dir|$home|$proj|$wt|$fakebin|$launchlog"
@@ -236,7 +235,7 @@ test_exact_pin_is_byte_identical() {
 test_relaunch_resolves_a_chained_model_and_records_its_lane() {
   local dir out rc model lane
   dir=$(new_case chain-model rl61)
-  add_ship_task "$dir" rl61 pi
+  add_ship_task "$dir" rl61 deck
   # A prior record naming a chain relaunches through the same chain, on the
   # task lane; fm-control resolves before stopping the old agent, so the
   # refusal recorder reads the same published record the prior launch left.

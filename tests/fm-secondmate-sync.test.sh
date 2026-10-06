@@ -80,7 +80,7 @@ add_sm_worktree() {
   {
     printf 'window=firstmate:fm-%s\n' "$id"
     printf 'kind=secondmate\n'
-    printf 'harness=pi\n'
+    printf 'harness=deck\n'
     printf 'home=%s/%s\n' "$w" "$id"
   } > "$w/home/state/$id.meta"
 }
@@ -342,7 +342,7 @@ case "$*" in
     sed -n 's/^window=[^:]*://p' "${FM_HOME:?}"/state/*.meta
     exit 0
     ;;
-  *display-message*'#{pane_current_command}'*) printf '%s\n' pi; exit 0 ;;
+  *display-message*'#{pane_current_command}'*) printf '%s\n' fm-deck-worker; exit 0 ;;
   *display-message*'#{pane_id}'*) printf '%s\n' '%1'; exit 0 ;;
   *display-message*'#{cursor_y}'*) printf '%s\n' 0; exit 0 ;;
   *capture-pane*) printf '❯\n'; exit 0 ;;
@@ -663,6 +663,12 @@ case "\$cmd \$sub" in
       printf '{"error":{"code":"agent_not_found","message":"gone"}}\n' >&2
     fi
     ;;
+  "pane process-info")
+    # A deck record is proven agent-free only by the pane's process view: a
+    # real, childless process stands in for the pane shell.
+    shell_pid=\${FM_FAKE_HERDR_SHELL_PID:?}
+    printf '{"result":{"type":"pane_process_info","process_info":{"pane_id":"%s","shell_pid":%s,"foreground_process_group_id":%s,"foreground_processes":[{"pid":%s,"name":"zsh","argv0":"zsh","argv":["-zsh"]}]}}}\\n' "\${4:-}" "\$shell_pid" "\$shell_pid" "\$shell_pid"
+    ;;
   "pane send-text"|"pane run"|"pane send-keys")
     if [ "\$arg" = "${stale#*:}" ]; then
       exit 1
@@ -677,7 +683,7 @@ SH
 }
 
 test_nudge_retry_uses_fresh_herdr_endpoint_after_respawn() {
-  local w c1 stale fresh fakebin herdrfb toolchain out meta window resolved stale_send fresh_send spawn_stub marker
+  local w c1 stale fresh fakebin herdrfb toolchain out meta window resolved stale_send fresh_send spawn_stub marker shell_pid
   stale=default:w9:pY
   fresh=default:wA:p2
   w=$(new_world nudge-herdr-rotate)
@@ -690,7 +696,7 @@ test_nudge_retry_uses_fresh_herdr_endpoint_after_respawn() {
     printf 'window=%s\n' "$stale"
     printf 'backend=herdr\n'
     printf 'kind=secondmate\n'
-    printf 'harness=pi\n'
+    printf 'harness=deck\n'
     printf 'home=%s/sm-instr\n' "$w"
   } > "$meta"
 
@@ -715,10 +721,13 @@ SH
     pass "T8b nudge selector herdr respawn skipped without jq"
     return
   fi
+  sleep 300 &
+  shell_pid=$!
   out=$(PATH="$herdrfb:$toolchain:$BASE_PATH" HERDR_ENV=1 FM_BACKEND=herdr \
-    FM_SEND_SETTLE=0 \
+    FM_SEND_SETTLE=0 FM_FAKE_HERDR_SHELL_PID="$shell_pid" \
     FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
     "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
+  kill "$shell_pid" 2>/dev/null || true
 
   # The nudge now rides the durable inbox: a stale endpoint can only swallow
   # the best-effort doorbell, never the steer itself, so the nudge is SENT
@@ -797,14 +806,14 @@ test_spawn_fast_forwards_before_launch() {
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" pi
+  fm_fake_exit0 "$fakebin" deck
 
   PATH="$fakebin:$BASE_PATH" TMUX='' \
     FM_ROOT_OVERRIDE="$w/main" FM_HOME="$w/home" \
     FM_STATE_OVERRIDE="$w/home/state" FM_DATA_OVERRIDE="$w/home/data" \
     FM_PROJECTS_OVERRIDE="$w/home/projects" FM_CONFIG_OVERRIDE="$w/home/config" \
     FM_SPAWN_NO_GUARD=1 \
-    "$ROOT/bin/fm-spawn.sh" sm "$w/sm" pi --secondmate >/dev/null 2>&1 || true
+    "$ROOT/bin/fm-spawn.sh" sm "$w/sm" deck --secondmate >/dev/null 2>&1 || true
 
   [ "$(head_of "$w/sm")" = "$c2" ] \
     || fail "spawn did not fast-forward the secondmate worktree to the primary's HEAD"
@@ -832,14 +841,14 @@ test_spawn_warns_when_sync_skipped_before_launch() {
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" pi
+  fm_fake_exit0 "$fakebin" deck
 
   PATH="$fakebin:$BASE_PATH" TMUX='' \
     FM_ROOT_OVERRIDE="$w/main" FM_HOME="$w/home" \
     FM_STATE_OVERRIDE="$w/home/state" FM_DATA_OVERRIDE="$w/home/data" \
     FM_PROJECTS_OVERRIDE="$w/home/projects" FM_CONFIG_OVERRIDE="$w/home/config" \
     FM_SPAWN_NO_GUARD=1 \
-    "$ROOT/bin/fm-spawn.sh" sm "$w/sm" pi --secondmate >/dev/null 2>"$err" || true
+    "$ROOT/bin/fm-spawn.sh" sm "$w/sm" deck --secondmate >/dev/null 2>"$err" || true
 
   assert_contains "$(cat "$err")" \
     "warning: secondmate sm sync skipped before launch: dirty working tree" \
@@ -1259,7 +1268,7 @@ test_bootstrap_syncs_remote_home_to_primary_commit() {
   mkdir -p "$w/sm/state/parent-route"
   fm_write_meta "$w/sm/state/parent-route/sm.meta" \
     'window=fm-remote:p1' 'endpoint_task_id=sm' 'worktree=-' 'project=-' \
-    'backend=herdr' 'harness=pi' 'herdr_session=fm-remote' \
+    'backend=herdr' 'harness=deck' 'herdr_session=fm-remote' \
     'herdr_workspace_id=w1' 'herdr_tab_id=t1' 'herdr_pane_id=p1'
 
   fakebin=$(make_remote_leg_ssh_stub "$w")
@@ -1342,12 +1351,12 @@ test_remote_launch_does_not_retarget_host_copy() {
   install_remote_herdr_fixture "$herdrbin" "$w/herdr.state" "$w/herdr.log" \
     "$w/herdr.sendfail" "$w/herdr.sock"
   cp "$herdrbin/bin/herdr" "$fakebin/herdr"
-  fm_fake_exit0 "$fakebin" gh treehouse tmux node pi
+  fm_fake_exit0 "$fakebin" gh treehouse tmux node deck
 
   # The real launch leg, exactly as the parent invokes it after its own sync.
   launch_out=$(PATH="$fakebin:$BASE_PATH" \
     FM_HOME="$w/launched" FM_ROOT_OVERRIDE="$w/coderoot" FM_SPAWN_NO_GUARD=1 \
-    "$ROOT/bin/fm-remote-secondmate-control.sh" launch launched pi - - herdr 2>&1) || true
+    "$ROOT/bin/fm-remote-secondmate-control.sh" launch launched deck - - herdr 2>&1) || true
   [ "$(head_of "$w/launched")" = "$c1" ] \
     || fail "a remote launch moved the home onto the host's own Firstmate copy (out: $launch_out)"
 
@@ -1357,7 +1366,7 @@ test_remote_launch_does_not_retarget_host_copy() {
     FM_HOME="$w/coderoot" FM_ROOT_OVERRIDE="$w/coderoot" \
     FM_STATE_OVERRIDE="$w/control/state" FM_DATA_OVERRIDE="$w/control/data" \
     FM_CONFIG_OVERRIDE="$w/control/config" FM_SPAWN_NO_GUARD=1 \
-    "$ROOT/bin/fm-spawn.sh" control "$w/control" --secondmate --harness pi --backend herdr 2>&1) || true
+    "$ROOT/bin/fm-spawn.sh" control "$w/control" --secondmate --harness deck --backend herdr 2>&1) || true
   [ "$(head_of "$w/control")" = "$c2" ] \
     || fail "the ordinary secondmate spawn did not follow its own checkout, so the launch case is vacuous (out: $control_out)"
 

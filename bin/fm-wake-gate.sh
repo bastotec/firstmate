@@ -30,8 +30,7 @@
 #   fm-wake-gate.sh commit-look <task-id> <none|failure|finished|failure,finished>
 #       Record a granted model look after its wake has been durably queued.
 #   fm-wake-gate.sh report
-#       Summarize shadow decisions, and when state/branch-outcomes.jsonl exists
-#       list every would-skip alarm whose supervision outcome went to the captain.
+#       Summarize shadow decisions.
 #   fm-wake-gate.sh cost
 #       Print measured Jev usage so far.
 #
@@ -326,15 +325,9 @@ cmd_commit_look() {
 }
 
 cmd_report() {
-  local f="$STATE/wake-gate/shadow.log" o="$STATE/branch-outcomes.jsonl"
+  local f="$STATE/wake-gate/shadow.log"
   [ -f "$f" ] || { echo "no gate decisions recorded"; return 0; }
   awk -F'\t' '{n++; d[$4]++; w[$4" "$5]++} END {printf "alarms=%d call=%d skip=%d\n", n, d["call"], d["skip"]; for (k in w) printf "  %s: %d\n", k, w[k]}' "$f" | sort
-  [ -f "$o" ] && command -v jq >/dev/null 2>&1 || return 0
-  echo "would-skip alarms whose supervision outcome went to the captain (within 20 min):"
-  awk -F'\t' '$4=="skip"{print $1"\t"$2}' "$f" | while IFS=$'\t' read -r epoch task; do
-    jq -r --arg t "$task" --argjson e "$epoch" \
-      'select(.task==$t and (.wake|startswith("stale")) and .verdict=="captain" and .epoch>=$e and .epoch<=($e+1200)) | "  \($e)\t\($t)\t\(.summary[0:160])"' "$o" 2>/dev/null | head -1
-  done
 }
 
 cmd_cost() {

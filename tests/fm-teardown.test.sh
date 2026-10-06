@@ -680,9 +680,6 @@ test_local_only_fork_remote_allows() {
   write_meta "$case_dir" local-only ship
   wt_commit "$case_dir" "fix the thing"
   add_fork_with_pushed_branch "$case_dir"
-  # The supervision branch's bounded per-task outcome cache is a footprint of
-  # the retired task, not a record anything reads after it is gone.
-  printf 'fm-branch-outcome-index-v1\t5\t0\t-\n' > "$case_dir/state/.task-x1.branch-outcome-index"
   mkdir -p "$case_dir/state/wake-gate"
   printf '%s\tfailure\n' "$(date +%s)" > "$case_dir/state/wake-gate/task-x1.look"
 
@@ -693,23 +690,8 @@ test_local_only_fork_remote_allows() {
 
   expect_code 0 "$rc" "fork-allow: teardown should succeed when HEAD is on a fork remote"
   ! grep -q REFUSED "$case_dir/stderr" || fail "fork-allow: teardown printed a REFUSED line"
-  [ ! -e "$case_dir/state/.task-x1.branch-outcome-index" ] \
-    || fail "fork-allow: teardown left the task's branch outcome index behind"
   assert_absent "$case_dir/state/wake-gate/task-x1.look" \
     "fork-allow: teardown left the task's model-look state for a replacement"
-  # The supervision branch reports the teardown it just performed AFTER the
-  # task's records are gone (bin/fm-branch-prompt.sh); that report must be
-  # stored, must publish its ready sequence, and must not recreate the index.
-  post_seq=$(FM_STATE_OVERRIDE="$case_dir/state" "$ROOT/bin/fm-branch-outcome.sh" append \
-    --task task-x1 --verdict captain --summary 'PR merged and cleaned up') \
-    || fail "fork-allow: post-teardown branch report was refused"
-  [ "$post_seq" = 1 ] || fail "fork-allow: post-teardown branch report got seq $post_seq, expected 1"
-  grep -q '"task":"task-x1"' "$case_dir/state/branch-outcomes.jsonl" \
-    || fail "fork-allow: post-teardown branch report was not stored"
-  [ ! -e "$case_dir/state/.task-x1.branch-outcome-index" ] \
-    || fail "fork-allow: post-teardown branch report recreated the retired task index"
-  [ "$(cat "$case_dir/state/.branch-outcome-index-ready")" = 1 ] \
-    || fail "fork-allow: post-teardown branch report did not publish its ready sequence"
   jq -e --arg id task-x1 '
     .schema == "fm-secondmate-home-summary.v1"
     and all(.endpoints[]; .id != $id)
@@ -1270,7 +1252,7 @@ write_legacy_meta() {
     "project=$case_dir/project" \
     "kind=$kind" \
     "mode=$mode" \
-    "harness=pi"
+    "harness=deck"
 }
 
 # Count spawn_gen fields in the task's meta, so a refusal can prove it left the
@@ -1981,7 +1963,7 @@ test_secondmate_home_teardown_delivers_final_line_or_refuses() {
   channel="$case_dir/parent/state/mate-x.status"
   write_meta "$case_dir" local-only ship
   mkdir -p "$case_dir/tasktmp"
-  printf '!\n' > "$case_dir/state/task-x1.pi-ext.ts"
+  printf '!\n' > "$case_dir/state/task-x1.turn-ended"
   printf 'tasktmp=%s\n' "$case_dir/tasktmp" >> "$case_dir/state/task-x1.meta"
   wt_commit "$case_dir" "merged work"
   wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
@@ -1996,7 +1978,7 @@ test_secondmate_home_teardown_delivers_final_line_or_refuses() {
     || fail "mate-teardown-refuses: refusal did not name the parent channel: $(cat "$case_dir/stderr")"
   [ -f "$case_dir/state/task-x1.meta" ] && [ -f "$case_dir/state/task-x1.status" ] \
     || fail "mate-teardown-refuses: refusal did not retain the task records"
-  [ -f "$case_dir/state/task-x1.pi-ext.ts" ] \
+  [ -f "$case_dir/state/task-x1.turn-ended" ] \
     && [ -d "$case_dir/tasktmp" ] \
     || fail "mate-teardown-refuses: refusal removed endpoint records before parent delivery"
   rmdir "$channel"
@@ -2014,7 +1996,7 @@ test_secondmate_home_teardown_delivers_final_line_or_refuses() {
   grep -Eq '^done \[key=child-outcome-task-x1-done-[0-9a-f]{8}\]: child task-x1 done: PR https://github.com/example/repo/pull/9 checks green' "$channel" \
     || fail "mate-teardown-refuses: the rerun did not deliver the final line"
   [ ! -e "$case_dir/state/task-x1.meta" ] || fail "mate-teardown-refuses: rerun left the task record"
-  [ ! -e "$case_dir/state/task-x1.pi-ext.ts" ] || fail "mate-teardown-refuses: rerun left the pi extension"
+  [ ! -e "$case_dir/state/task-x1.turn-ended" ] || fail "mate-teardown-refuses: rerun left the turn-ended marker"
   pass "a secondmate home's teardown delivers the child's final line or refuses until it can"
 }
 

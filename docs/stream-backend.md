@@ -90,9 +90,8 @@ The binaries are built from `crates/`, not tracked in git:
 
 Running hubs and agents keep the binary they started with; a rebuild changes only what the next `hub start` or spawn runs.
 
-The managed primary and Bridge order path have their own limits:
+The Bridge order path has its own limit:
 
-- `bin/fm-primary.py` still imports `bin/fm-stream-agent.py` in-process for the managed primary, whatever `config/stream-impl` says, so that path stays on the Python agent until it is ported to launch the native one.
 - The Bridge order path (`command`, `reconcile`) is still Python-only; [Rust bridge](#rust-bridge) owns what the native bridge covers.
 
 ### Running the hub as a systemd user service
@@ -275,7 +274,6 @@ The adapter header owns acceptance and hub capability negotiation, and `bin/fm_s
 In `command` mode, the owning agent's report that its worker ended produces an authoritative membership nack, while unresolved membership or application produces no record and remains pending.
 Before registering a worker, an agent requires the hub's advertised `idempotent_command_results` capability so retrying a result after a lost response is safe; an older running hub is rejected with a restart-or-upgrade diagnostic.
 Ordinary PTY agents advertise both reliable result acknowledgement and `native_steering_receiver`, and the hub requires both per-endpoint capabilities before placing Bridge orders.
-Managed-primary registration is adapter-bound by [the launcher](../bin/fm-primary.py); Pi and Pi-signed registrations omit the native receiver capability.
 Retained protocol-3 agents without the receiver capability can re-register and retain input, status, and kill support, but Bridge orders are refused before routing rather than sent through legacy PTY input; upgrade those agents only at a safe worker boundary.
 Protocol-2 agents cannot register, while protocol-3 tail publishers remain visible but non-orderable.
 Each internal HTTP order carries the hub generation returned by compatibility negotiation; a replacement hub rejects a stale generation before placement, the adapter renegotiates before retrying, and the Bridge `command`, `command_ack`, and `command_nack` records do not change.
@@ -323,15 +321,14 @@ The browser never writes state directly, supplies an owner-home path, or invokes
 A crew-owned `no-mistakes axi respond` remains worker-owned and is never invoked by this host route.
 Existing owner guards remain authoritative, including endpoint retirement and stand-down refusals; the host route does not bypass those refusals to revive or reassign workers.
 
-Managed primary lifecycle and Deck native steering are available through the opt-in owner described in [managed primary setup](managed-primary.md).
-A `deck chat` primary can also run inside a stream endpoint through `bin/fm-deck-chat.sh --stream`; see [deck chat primary](managed-primary.md#deck-chat-primary).
+A `deck chat` primary can run inside a stream endpoint through `bin/fm-deck-chat.sh --stream`; [its header](../bin/fm-deck-chat.sh) owns that path.
 The [host executable's header and help](../bin/fm-ui-host-control.py) own discovery, execution-bound payloads and the honest refusal boundary for unregistered sessions.
 Primary decision control is supported through an explicit host-registry captain-call binding under the primary owner's `FM_HOME`, while task-key decisions use an exact task binding in their owning home.
-Notes-only, worker-only and unregistered primary bindings do not constitute managed primary control.
+Notes-only, worker-only and unregistered primary bindings do not constitute primary lifecycle control.
 
 The read-only `targets` subcommand provides browser-safe discovery for registered primaries, secondmates, and workers even when they are absent from the hub feed.
 The [host executable's header and help](../bin/fm-ui-host-control.py) own its row schema, classification, advertised operations, call-binding semantics, and all-or-nothing validation.
-[Primary owner prerequisites](agent-control.md#primary-owner-prerequisites) belong to the runtime/control-plane owner; discovery alone does not implement those controls.
+[Primary sessions](agent-control.md#primary-sessions) own their own lifecycle; discovery alone does not implement primary controls.
 
 The Bridge command plane remains `steer` only.
 The hub's leaf-plus-execution order journal binds steer text and routes the native receiver contract; it does not journal arbitrary command kinds.
@@ -527,7 +524,6 @@ Losing the hub costs observation across the whole fleet at once, and costs no wo
 
 - Experimental; CI's Rust agent parity step exercises disposable Python hubs and real PTYs, not installed harnesses.
   [Rust PTY agent](#rust-pty-agent) owns the native agent's verification coverage.
-  [`tests/fm-stream-agent-live-e2e.test.sh`](../tests/fm-stream-agent-live-e2e.test.sh) refreshes the dated Python-reference harness evidence in [`docs/verification/runtime-backends.md`](verification/runtime-backends.md#live-harness-identity), not installed-harness liveness through the Rust publisher.
   Native Deck steering has its own live guard and portable receiver regressions, linked in the [Deck native mid-turn verification record](verification/runtime-backends.md#deck-native-mid-turn-steering-over-stream).
   The other portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, and `tests/fm-stream-bridge.test.sh`.
   The secondmate credential-seeding regressions from the Security section above ride `tests/fm-secondmate-safety.test.sh`.
