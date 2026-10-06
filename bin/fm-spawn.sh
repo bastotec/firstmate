@@ -66,18 +66,20 @@
 #   supported Pi launches receive --codex-effort ultra, never --thinking ultra.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only (docs/configuration.md "Runtime backend" owns when that flag
-#   is authorized). Without it, the script resolves FM_BACKEND, then
-#   config/backend, then runtime auto-detection from the runtime firstmate's
-#   environment: $TMUX or HERDR_ENV=1 (via bin/fm-backend.sh's
+#   is authorized). For a new local spawn without it, the script resolves
+#   FM_BACKEND, then config/backend, then runtime auto-detection from the
+#   runtime firstmate's environment: $TMUX or HERDR_ENV=1 (via bin/fm-backend.sh's
 #   fm_backend_detect), then tmux.
 #   Spawn-capable backends are the reference tmux adapter and experimental
 #   herdr and stream, all session providers only, so every ship/scout spawn
 #   runs treehouse get. An auto-detected herdr spawn prints a loud stderr
 #   notice; auto-detected tmux stays silent; stream is never auto-detected.
-#   Every spawn writes backend=<name> to meta, tmux included; an absent
-#   backend= (older records) still means tmux, and bin/fm-meta-backfill.sh
-#   makes those explicit. Stream supports --secondmate through the same
-#   home-host driver as tmux/herdr.
+#   Every local spawn writes backend=<name> to meta, tmux included; an absent
+#   backend= (older local records) still means tmux, and bin/fm-meta-backfill.sh
+#   makes those explicit. docs/remote-secondmates.md "Normal operation" owns
+#   remote secondmate backend selection; bin/fm-remote-control-lib.sh owns the
+#   parent record's remote endpoint binding. Stream supports --secondmate
+#   through the same home-host driver as tmux/herdr.
 #   A backend spawn refusal (missing dependency, version gate, unauthenticated
 #   socket, or unsupported secondmate mode) is terminal for that selected backend;
 #   callers must surface it instead of silently retrying another backend.
