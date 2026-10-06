@@ -376,8 +376,9 @@ mod tests {
     }
     #[test]
     fn foreground_job_started_during_close_dies() {
+        // Stay in builtins: modern Bash can defer TERM traps while in readline.
         assert_foreground_job_dies(
-            b"late_job() { bash -c 'trap \"\" HUP TERM; echo FG_JOB_''READY; exec sleep 300'; }; trap late_job TERM; echo SHELL_''READY\n",
+            b"late_job() { bash -c 'trap \"\" HUP TERM; echo FG_JOB_''READY; exec sleep 300'; }; trap late_job TERM; echo SHELL_''READY; while :; do :; done\n",
             "SHELL_READY",
         );
     }

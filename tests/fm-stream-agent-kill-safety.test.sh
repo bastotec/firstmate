@@ -375,7 +375,8 @@ foreground_case(
 foreground_case(
     "foreground-job-started-during-close-dies",
     b"late_job() { bash -c 'trap \"\" HUP TERM; echo FG_JOB_''READY; exec sleep 300'; }; "
-    b"trap late_job TERM; echo SHELL_''READY\n",
+    # Stay in builtins: modern Bash can defer TERM traps while in readline.
+    b"trap late_job TERM; echo SHELL_''READY; while :; do :; done\n",
     b"SHELL_READY")
 
 # --- a reaped endpoint is never signalled ----------------------------------
