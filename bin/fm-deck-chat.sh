@@ -42,7 +42,8 @@
 #       leaves the host running; docs/stream-backend.md "Interactive attach"
 #       owns prerequisites). `bin/fm-send.sh primary <text>` also steers it.
 #   fm-deck-chat.sh stop [--home H]
-#       SIGTERM the registered host: deck quits and the host exits cleanly.
+#       SIGTERM the live registered host: deck quits and the host exits cleanly.
+#       Refuses when bin/fm_primary_chat.py's host_alive identity check fails.
 # --home defaults to FM_HOME, else this checkout. --session defaults to the id
 # persisted in state/primary-chat/session (created on first run).
 #
@@ -57,8 +58,9 @@
 #                          is used when no key is set, as for deck workers
 #
 # Exit: deck chat's own exit code once it ran; 1 refused (lock held by another
-# session, session start failed); 2 usage or missing prerequisite; 3 gate-context
-# refusal (bin/fm-gate-refuse-lib.sh).
+# session, task named primary exists, session start failed, no live host to stop
+# or stop failed); 2 usage or missing prerequisite; 3 gate-context refusal
+# (bin/fm-gate-refuse-lib.sh).
 set -u
 
 SCRIPT_DIR=$(CDPATH='' cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)

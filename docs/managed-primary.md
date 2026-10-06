@@ -130,6 +130,7 @@ The normal primary `exit` action deliberately does not stop the manager.
 [`bin/fm-deck-chat.sh`](../bin/fm-deck-chat.sh) hosts the primary as an interactive `deck chat` session instead of one `deck run` per turn.
 It is separate from `fm-primary.py`: no owner socket, no capability and no UI control routing.
 Stop any existing primary for this home normally before launching; a second primary of any harness is refused.
+A home with an existing task named `primary` is also refused; finish that task through its ordinary lifecycle before launching the chat host.
 The host supplies startup input and continuous supervision, so do not rerun session start or arm a watcher from the chat.
 Restarting resumes the saved Deck session by default.
 [The host header](../bin/fm-deck-chat.sh) owns launch options, prerequisites, startup ordering, watcher recovery, away-mode handoff and lock lifetime; [`fm_primary_chat.py`](../bin/fm_primary_chat.py) owns the private state layout.
@@ -153,7 +154,7 @@ Plain `bin/fm-stream.sh attach <target>` is read-only, and `FM_HOME=<home> bin/f
 
 Stop it with `/quit` in the chat, or `bin/fm-deck-chat.sh stop --home <home>`.
 After a clean exit, another primary can start in the same home.
-Verification: [`tests/fm-deck-chat.test.sh`](../tests/fm-deck-chat.test.sh) drives the host with a fake `deck chat`, including a run inside a disposable stream hub endpoint.
+Verification: [`tests/fm-deck-chat.test.sh`](../tests/fm-deck-chat.test.sh) drives the host with a fake `deck chat`, including a run inside a disposable stream hub endpoint, symlinked-code-root launch/steer/stop, rejection of another home's recorded PID even when its path is a whitespace-delimited prefix, and the task-name refusal.
 
 ## Verification and scope
 

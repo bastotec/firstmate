@@ -17,7 +17,7 @@ Record (state/primary-chat.json):
   {"version":1,"home":ABS,"session":ID,"steer_dir":ABS,"events_file":ABS,
    "endpoint":"<hub-tag>:<endpoint-id>"|null,"host_pid":N,"started_at":EPOCH}
 A clean host exit adds "stopped_at". A record is live only when it has no
-stopped_at and host_pid is a live fm-deck-chat process.
+stopped_at and host_alive(host_pid, home) validates the host identity below.
 
 Subcommands:
   steer publish (--text T | --file F) [--kind wake|away|captain|other] [--home H]
@@ -101,8 +101,12 @@ def read_record(home):
 def host_alive(pid, home):
     """True when pid is a live fm-deck-chat host for exactly this home.
 
-    The host runs as argv[0] fm-deck-chat with --home <canonical home>, so a
-    recycled pid that now hosts another home's primary is not this one.
+    The host re-execs with argv[0] fm-deck-chat, the physical script path,
+    and --home <canonical home> last. The terminal home suffix prevents a
+    whitespace-delimited path prefix from accepting another home's host;
+    resolving the script path keeps symlinked launches consistent with BIN.
+    Steering reads, publications and stop all use this identity check.
+    Regression coverage: tests/fm-deck-chat.test.sh.
     """
     if not isinstance(pid, int) or pid <= 1:
         return False
