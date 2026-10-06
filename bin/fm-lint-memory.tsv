@@ -391,7 +391,6 @@ tests/fm-transition-lib.test.sh	9aaaf9fe532764a3f31b916b56f0660906265cbe6d1314c9
 tests/fm-turnend-guard.test.sh	5df10268058ac9eb976e933feb72e32cbddaa15a34243e74af5a59402abc9351	331008
 tests/fm-update.test.sh	ce512c04132e82504fcbb4a8af9ff9e51d37326b4d6a03cd41692f05fd65c1f2	120048
 tests/fm-vendor-auth-probe.test.sh	1c5709271740e501cf3fa65bd35810845b9645403a5be42f479eb853ae88f76f	102624
-tests/fm-voice-relay.test.sh	59dcf0cb939d19d71edcb399d985ae2fc6c0fc124678764e4079e6d8e50676a5	309472
 tests/fm-wake-daemon-lifecycle-e2e.test.sh	9cd7a04709a2d129a86507c3286e523498e9a33fd809897da8e8412902de7e35	113904
 tests/fm-wake-drain-open-decisions-cursor.test.sh	918664b3b09e11a3c3cc38ec3cc47e48232422527288dc6ed95bba1847f3f9b8	135408
 tests/fm-wake-drain-open-decisions.test.sh	6389aaa9f98412b64f9e5ab8404a559a0d956020e64dd55f0f1a06d7f1c4bd8c	114928

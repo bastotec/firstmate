@@ -34,4 +34,6 @@ front end may hold read access to the captain's records, so the captain does
 sometimes get a substantive answer from something that is not the first mate.
 Whether `VISION.md` should be reconciled to describe that is the captain's call
 and is not settled by any single pull request. Raising it as new is what this rule
-is here to stop; `bin/fm-voice-relay.py` is the surface it was decided on.
+is here to stop; the spoken relay, `bin/fm-voice-relay.py`, is the surface it was
+decided on. That relay now lives in the Ziggy repository, and the read and
+handover half it relied on stays here as `bin/fm_voice_records.py`.

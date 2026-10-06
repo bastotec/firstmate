@@ -1116,45 +1116,28 @@ The published `lavish-axi poll` clears feedback destructively before returning i
 Never describe this path as at-least-once, no-loss, or lossless.
 `docs/verification/process-event-sources.md` holds the measurements and `.agents/skills/process-event-sources/SKILL.md` owns the handling procedure.
 
-## Spoken interface and captain inbox (config/voice-*, config/inbox-*)
+## Inbox and voice records (config/inbox-*, config/voice-read-*)
 
-The spoken interface in [`docs/voice-relay.md`](voice-relay.md) defaults to Bedrock; its optional hybrid engine uses local speech and a configured text gateway.
-The Bedrock engine and the model-backed subcommands of `bin/fm-inbox.sh` reach a paid API in a named account, so no region, speech model id or AWS profile is shipped as a tracked default.
+The model-backed subcommands of `bin/fm-inbox.sh` reach a paid API in a named account, so no region, speech model id or AWS profile is shipped as a tracked default.
 Each is one line in a local, gitignored `config/` file, with an environment variable that overrides it for a single run, and a missing required value refuses with the path to write rather than falling back to a value that belongs to another home.
-That configuration is the whole opt-in: an unconfigured home cannot start the relay and cannot run `fm-inbox.sh say` or `ask`, while `note`, `status`, `list` and `drain` need no configuration at all because they make no model call.
-The voice handover depends on `note`, so it keeps working in a home that has configured nothing.
+That configuration is the whole opt-in: an unconfigured home cannot run `fm-inbox.sh say` or `ask`, while `note`, `status`, `list` and `drain` need no configuration at all because they make no model call.
+Ziggy's firstmate agent (`agents/firstmate/fm_a2a_server.py` in the Ziggy repository) reads this home's records through `bin/fm_voice_records.py` and hands work over through `note`, so it keeps working in a home that has configured nothing.
 In a live Pi session using the polling fallback, a captain note due for delivery cuts short the idle wait and normally reaches the session within a few seconds instead of after the full `FM_POLL`; Herdr's native event wait is unchanged.
 A note stays unread until `fm-inbox.sh drain --ack <id>` moves it to `state/inbox/handled/`, and `fm-wake-drain.sh --ack-through` never consumes the `inbox:<id>` wake row of an unread note: it keeps the row, says so on its last line, and marks it so the next watcher cycle surfaces the note again.
 An unread note is also surfaced again every `FM_INBOX_RESURFACE_SECS` (default 300), at most `FM_INBOX_RESURFACE_MAX` (default 3) more times.
-Once a note has been unread for `FM_INBOX_OVERDUE_SECS` (default 600, inside the voice relay's 900-second ask window), `bin/fm-guard.sh` prints a `CAPTAIN INBOX NOT READ` banner on every guarded command and drain, and every later `fm-inbox.sh note` prints a `delivery: degraded` line that the voice handover passes on to the captain as `delivery_warning`.
+Once a note has been unread for `FM_INBOX_OVERDUE_SECS` (default 600), `bin/fm-guard.sh` prints a `CAPTAIN INBOX NOT READ` banner on every guarded command and drain, and every later `fm-inbox.sh note` prints a `delivery: degraded` line that `bin/fm_voice_records.py` passes on as `delivery_warning`.
 
 | File | Environment | Holds |
 | --- | --- | --- |
-| `config/voice-engine` | `FM_VOICE_ENGINE` | `bedrock` (default when absent) or `hybrid`; the hybrid keeps speech local and sends transcribed text and allowed tool results to a configured thinking gateway. |
-| `config/voice-local-url` | `FM_VOICE_LOCAL_URL` | Required for hybrid: `ws://<loopback-IP>:<port>/v1/realtime`, without credentials, query or fragment; no default endpoint. |
-| `config/voice-gateway-url` | `FM_VOICE_GATEWAY_URL` | Required for hybrid: the explicit OpenAI-compatible thinking gateway base URL, without credentials; HTTPS is required except for HTTP loopback-IP tunnel endpoints. |
-| `config/voice-gateway-model` | `FM_VOICE_GATEWAY_MODEL` | Hybrid text model route; interim default `codex/gpt-6-astra`, explicitly configurable without automatic fallback. |
-| `config/voice-gateway-key` | `FM_VOICE_GATEWAY_KEY` | Optional hybrid gateway key, passed to the external server environment, never its command line; protect this file as a credential. |
-| `config/voice-local-command` | `FM_VOICE_LOCAL_COMMAND` | Required only by `--start-engine`: absolute path to the external stack's executable in its own virtual environment. |
-| `config/voice-local-cache` | `FM_VOICE_LOCAL_CACHE` | Required only by `--start-engine`: existing absolute directory for the external engine's home and caches. |
-| `config/voice-gate-key-var` | `FM_VOICE_GATE_KEY_VAR` | Opt-in for the hybrid engine's fast routing layer: first line names the secrets variable holding the gateway key, which is read at call time and never logged; absent, the fast layer is inert and the relay behaves exactly as before. |
-| `config/voice-gate-mode` | `FM_VOICE_GATE_MODE` | Fast-layer mode; `shadow` (the default when absent) logs every route decision beside what the heavy model actually did and acts on none, while `act` refuses in this build. |
-| `config/voice-region` | `FM_VOICE_REGION` | Bedrock region for the relay's bidirectional session, required when the engine is `bedrock`. |
-| `config/voice-model` | `FM_VOICE_MODEL` | Speech-to-speech model id, required when the engine is `bedrock`. |
-| `config/voice-profile` | `FM_VOICE_PROFILE` | AWS profile the relay exports credentials from; absent, or an explicitly empty variable, means it uses only credentials already in its environment. |
-| `config/voice-id` | `FM_VOICE_ID` | Output voice id, optional, `matthew` when unset. |
-| `config/voice-read-scope` | none | `counts` (the default, and what an absent file means) or `full`; see [`docs/voice-relay.md`](voice-relay.md) for what each scope may say. |
+| `config/voice-read-scope` | none | `counts` (the default, and what an absent file means) or `full`; the `bin/fm_voice_records.py` header says what each scope may contain. |
 | `config/voice-read-deny` | none | One plain case-insensitive substring per line; a matching open item is withheld from every list and reduced to a count. |
 | `config/inbox-region` | `FM_INBOX_REGION` | AWS region for `fm-inbox.sh say` and `ask`. |
 | `config/inbox-stt-model` | `FM_INBOX_STT_MODEL` | Speech-to-text model id, required by `fm-inbox.sh say`. |
 | `config/inbox-ask-model` | `FM_INBOX_ASK_MODEL` | Side-question model id, required by `fm-inbox.sh ask`. |
 | `config/inbox-profile` | `FM_INBOX_PROFILE` | AWS profile for those two calls; absent, or an explicitly empty variable, means whatever credentials are already in the environment. |
 
-Each engine, endpoint, command, cache, account, model and voice file above is read as its first line that is not blank and not a `#` comment, so a comment above the value is fine.
-Gateway, model and key settings configure the external hybrid server at its explicit `--start-engine` launch; changing them requires restarting that server, not just reconnecting the relay.
-Ordinary relay startup never installs models or launches an engine.
+Each region, model and profile file above is read as its first line that is not blank and not a `#` comment, so a comment above the value is fine.
 The two read files are parsed differently: `config/voice-read-scope` must hold the bare word and nothing but blank space around it, so a comment header there refuses instead of being skipped, while every line of `config/voice-read-deny` that is not blank and not a `#` comment is one more substring.
-`FM_VOICE_RELAY` and `FM_VOICE_PYTHON` belong to the laptop rather than to a home, so they have no config file: `bin/fm-voice-client.py` requires the relay path as a flag or that variable and carries no default path.
 
 ## Environment variables
 
@@ -1321,29 +1304,14 @@ FM_CRASH_BACKOFF=60                # seconds to wait after crossing the crash th
 FM_CRASH_NORMAL_SLEEP=5            # seconds to wait after an isolated watcher crash
 FM_LOG_MAX_BYTES=1048576           # daemon log size that triggers trimming
 FM_LOG_KEEP_LINES=2000             # daemon log lines kept when trimming
-# spoken interface and captain inbox; see "Spoken interface and captain inbox" above
-FM_VOICE_ENGINE=        # overrides config/voice-engine; bedrock when neither is set
-FM_VOICE_LOCAL_URL=     # overrides config/voice-local-url for hybrid
-FM_VOICE_GATEWAY_URL=   # overrides config/voice-gateway-url for hybrid
-FM_VOICE_GATEWAY_MODEL= # overrides config/voice-gateway-model; interim default codex/gpt-6-astra
-FM_VOICE_GATEWAY_KEY=   # overrides config/voice-gateway-key; never place it in a URL or command line
-FM_VOICE_LOCAL_COMMAND= # overrides config/voice-local-command for --start-engine
-FM_VOICE_LOCAL_CACHE=   # overrides config/voice-local-cache for --start-engine
-FM_VOICE_GATE_KEY_VAR=  # overrides config/voice-gate-key-var; the fast layer's whole opt-in
-FM_VOICE_GATE_MODE=     # overrides config/voice-gate-mode; shadow when neither is set
-FM_VOICE_REGION=        # overrides config/voice-region for one Bedrock relay run
-FM_VOICE_MODEL=         # overrides config/voice-model for one Bedrock relay run
-FM_VOICE_PROFILE=       # overrides config/voice-profile; explicitly empty forces ambient credentials
-FM_VOICE_ID=            # overrides config/voice-id; matthew when neither is set
-FM_VOICE_RELAY=         # laptop-side path to bin/fm-voice-relay.py on the desktop; required by fm-voice-client.py unless --relay is passed
-FM_VOICE_PYTHON=python3 # laptop-side interpreter used to start the relay over ssh
+# inbox; see "Inbox and voice records" above
 FM_INBOX_REGION=        # overrides config/inbox-region for fm-inbox.sh say and ask
 FM_INBOX_STT_MODEL=     # overrides config/inbox-stt-model for fm-inbox.sh say
 FM_INBOX_ASK_MODEL=     # overrides config/inbox-ask-model for fm-inbox.sh ask
 FM_INBOX_PROFILE=       # overrides config/inbox-profile; explicitly empty forces ambient credentials
 FM_INBOX_RESURFACE_SECS=300  # seconds before an unread captain note is surfaced again; invalid or zero values use 300
 FM_INBOX_RESURFACE_MAX=3     # maximum watcher re-surfacings after the first; invalid values use 3
-FM_INBOX_OVERDUE_SECS=600    # unread age that raises the repeated guard and voice-handover delivery warning; invalid values use 600
+FM_INBOX_OVERDUE_SECS=600    # unread age that raises the repeated guard and records-handover delivery warning; invalid values use 600
 ```
 
 `fm-teardown.sh` retries only Git's `Unable to create '...index.lock': File exists` return failure up to `FM_TREEHOUSE_RETURN_LOCK_RETRIES` times.

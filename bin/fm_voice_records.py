@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-"""fm_voice_records.py - what the voice agent is allowed to know, and how it hands work over.
+"""fm_voice_records.py - what Ziggy's firstmate agent may read, and how it hands work over.
 
-The voice agent answers status questions from firstmate's durable records and
+ITS ONLY CALLER is Ziggy's agents/firstmate/fm_a2a_server.py (in the Ziggy
+repository), which imports this file by name from the home it serves and calls
+read_scope, fleet_status and queue_request. Nothing in this repository imports
+it, so keep the file name and those three signatures stable.
+
+That agent answers status questions from firstmate's durable records and
 queues everything else. This module owns both halves, because both halves are
 where a mistake is expensive: one sends the captain's records to a model in
 another region, and the other writes to firstmate's wake queue.
@@ -19,7 +24,7 @@ Only open task lines and this home's own runtime records are ever assembled.
 That is a confidentiality boundary as much as a brevity one. Verified on the
 captain's live records on 2026-08-21: every occurrence of the one engagement
 identifier those records contain sits in Done history or a note body, so
-nothing in a full status answer named a customer. tests/fm-voice-relay.test.sh
+nothing in a full status answer named a customer. tests/fm-voice-records.test.sh
 holds that boundary as an executable check, so widening the reader later fails
 the test rather than quietly widening what is sent.
 
@@ -87,8 +92,8 @@ Usage:
   fm_voice_records.py status [--home <dir>] [--scope counts|full]
   fm_voice_records.py queue <text>... [--home <dir>]
 
-Both subcommands print JSON, which is exactly what the relay hands to the model
-as a tool result, so the shell form is the same interface the relay uses.
+Both subcommands print JSON, the same shape the functions return to the agent
+as a tool result, so the shell form is the same interface it uses.
 """
 
 import argparse
@@ -202,38 +207,6 @@ def _read_config(home, name):
             return handle.read()
     except FileNotFoundError:
         return None
-
-
-def read_setting(home, name, env=None):
-    """Return a one-line setting from the environment or this home's config, else None.
-
-    The values this feature needs, an AWS profile and a region and a model id,
-    name somebody's account and somebody's choices. They belong to the home that
-    runs the relay rather than to the repository, so they are read from gitignored
-    config/ with an environment override and never carry a tracked default.
-    """
-    if env:
-        value = (os.environ.get(env) or "").strip()
-        if value:
-            return value
-    raw = _read_config(home, name)
-    if raw is None:
-        return None
-    for line in raw.splitlines():
-        text = line.split("#", 1)[0].strip()
-        if text:
-            return text
-    return None
-
-
-def require_setting(home, name, env, what):
-    """Return a setting, or refuse naming the file to write and the variable to set."""
-    value = read_setting(home, name, env)
-    if value is None:
-        raise RecordError(
-            "no {} is configured: write one line into {} or set {}".format(
-                what, os.path.join(config_dir(home), name), env))
-    return value
 
 
 def read_scope(home):
@@ -366,7 +339,7 @@ def _workers(state_dir):
 
 
 def fleet_status(home=None, scope=None):
-    """Return the status answer the voice agent is allowed to give."""
+    """Return the status answer the agent is allowed to give."""
     home = home or default_home()
     scope = scope or read_scope(home)
     if scope not in SCOPES:
@@ -520,9 +493,8 @@ def queue_request(text, home=None, root=None):
     env = dict(os.environ, FM_HOME=home)
     done = subprocess.run(
         [inbox, "note", body],
-        # The relay's stdin is the captain's audio when this runs under
-        # --serve, and fm-inbox.sh reads a body from stdin for an argument of
-        # "-", so no child of the relay is given that stream to consume.
+        # fm-inbox.sh reads a body from stdin for an argument of "-", and the
+        # caller's stdin is not ours to hand on, so the child gets none.
         stdin=subprocess.DEVNULL,
         env=env, capture_output=True, text=True, timeout=30, check=False)
     if done.returncode != 0:
