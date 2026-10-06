@@ -15,9 +15,11 @@
 # fm-session-start.sh still owns how many tail lines it prints per task. This
 # file owns only the per-line cut.
 #
-# The cap counts characters, so a plain-ASCII line - what status lines are in
-# practice - is bounded to the same number of bytes, and a multibyte character
-# is never cut in half into an invalid sequence.
+# The cap follows the caller's Bash locale: characters in a UTF-8 locale,
+# bytes in a C/POSIX locale. After slicing, a byte-local check drops any trailing
+# partial UTF-8 sequence so valid UTF-8 input stays valid; whole-character cuts
+# are unchanged. Deck's argv parser rejects a prompt with invalid UTF-8.
+# Regression coverage: tests/fm-line-cap-lib.test.sh.
 # Truncation stays recoverable because the session-start digest prints each
 # task's full status log path, while every OPEN DECISIONS entry begins with the
 # task id that identifies its durable state/<id>.status source.
@@ -26,8 +28,9 @@ FM_LINE_CAP_DEFAULT=220
 FM_LINE_CAP_SUFFIX=' [truncated]'
 
 # fm_cap_line_var <line> [<max>]: put <line> in FM_LINE_CAP_LINE, cut to <max>
-# characters with FM_LINE_CAP_SUFFIX in place of the tail when it is longer. A
-# line at or under the cap is kept unchanged, marker and all bytes intact.
+# in the locale-dependent units above with FM_LINE_CAP_SUFFIX in place of the
+# tail when it is longer. A line at or under the cap is kept unchanged, marker
+# and all bytes intact.
 # This is the rule itself. It assigns rather than prints so a caller that needs
 # the value - the wake digest builds its section in a variable to weigh each
 # item against a global budget - never pays a command substitution per item on
@@ -40,7 +43,22 @@ fm_cap_line_var() {
   fi
   keep=$((max - ${#FM_LINE_CAP_SUFFIX}))
   [ "$keep" -ge 0 ] || keep=0
-  FM_LINE_CAP_LINE="${line:0:$keep}$FM_LINE_CAP_SUFFIX"
+  line=${line:0:$keep}
+  fm_cap_line_drop_partial_utf8
+  FM_LINE_CAP_LINE="$line$FM_LINE_CAP_SUFFIX"
+}
+
+# Drops an incomplete trailing UTF-8 sequence from the caller's $line. Byte
+# semantics (LC_ALL=C) make this a no-op on a cut that ended on a whole
+# character, whatever the caller's locale.
+fm_cap_line_drop_partial_utf8() {
+  local LC_ALL=C lead2=$'[\xc0-\xff]' lead3=$'[\xe0-\xff]' lead4=$'[\xf0-\xff]' cont=$'[\x80-\xbf]'
+  # shellcheck disable=SC2254 # the patterns are byte classes, not literals
+  case "$line" in
+    *$lead2) line=${line%?} ;;
+    *$lead3$cont) line=${line%??} ;;
+    *$lead4$cont$cont) line=${line%???} ;;
+  esac
 }
 
 # fm_cap_line <line> [<max>]: the same cut, printed on stdout, for a caller that
