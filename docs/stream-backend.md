@@ -136,11 +136,13 @@ Ordinary supervision does not need any of that.
   Keys typed while a send is in flight go out together in the next one.
   Any non-2xx response or transport error ends the session with an explicit failed or uncertain delivery message, without retrying input.
 - A local resize goes to `POST /v1/tasks/<id>/resize` (`rows`, `cols`, 1-1000 each).
+  Resize monitoring starts before the initial size is sampled, so a resize during startup requests is preserved for forwarding once the session starts.
   Before changing the pseudoterminal and triggering `SIGWINCH`, the native agent posts a geometry frame that resizes the native hub's screen at ingestion; re-registration after a hub restart reports the new size.
   Identical geometry leaves the screen and scroll region unchanged.
   HTTP 404 or a 502 `agent_refused` response reporting `unknown command kind` disables further resizes while keeping the session open, supporting older hubs and Python-backed endpoints.
   Any other non-2xx response or transport error ends the session with a failed or uncertain resize delivery message, without retrying.
 - Ctrl-] (or `--detach-key`, written `C-<key>`) detaches and leaves the endpoint running after draining preceding input, including partial-byte payloads, for at most two seconds.
+  External `SIGINT`, `SIGTERM`, and `SIGHUP` follow the same bounded detach drain; typed Ctrl-C remains ordinary input forwarded to the endpoint.
   A failed or timed-out drain reports unsuccessful or uncertain delivery instead of a clean detach.
   Endpoint exit status is propagated; a negative signal status becomes `128 + signal`, and an unknown status becomes 1.
 - Every session exit restores terminal attributes and locally leaves the alternate screen, shows the cursor, disables bracketed paste and mouse reporting, and resets SGR before printing the final message.
