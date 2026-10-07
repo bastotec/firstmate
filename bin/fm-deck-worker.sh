@@ -630,12 +630,13 @@ pipeline_run_id() {  # <state-line>
 pipeline_arm() {
   local line run
   PIPELINE_WATCH=0
-  [ "$SECONDMATE" != 1 ] && [ "$PIPELINE_WAIT" -gt 0 ] || return 0
+  [ "$SECONDMATE" != 1 ] || return 0
   [ "$(pipeline_meta kind)" = ship ] && command -v no-mistakes >/dev/null 2>&1 || return 0
   line=$(pipeline_state)
   case "$line" in 'state: working · source: run-step'*) ;; *) return 0 ;; esac
-  run=$(pipeline_run_id "$line")
   FM_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/fm-crew-state.sh" --follow-detached "$ID" >/dev/null 2>&1 || true
+  [ "$PIPELINE_WAIT" -gt 0 ] || return 0
+  run=$(pipeline_run_id "$line")
   PIPELINE_WATCH=1
   PIPELINE_UNTIL=$(( $(date +%s) + PIPELINE_WAIT ))
   printf '\n⛵ no-mistakes run %s still working; the next turn starts when it changes state.\n' "${run:-(id unavailable)}"

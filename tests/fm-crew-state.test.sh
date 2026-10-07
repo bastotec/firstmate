@@ -491,6 +491,10 @@ test_publish_writes_the_run_step_record_and_removes_it_without_a_run() {
   assert_equals "$(record_value "$record" step_status)" running "the record carries that step's status"
   assert_equals "$(record_value "$record" run)" 01RUN "the record carries the run id"
   assert_equals "$(record_value "$record" detail)" "validating (running)" "the record carries the reader's detail"
+  python3 - "$record" <<'PYTHON'
+import os, stat, sys
+assert stat.S_IMODE(os.stat(sys.argv[1]).st_mode) == 0o600, 'the validation record must be owner-only'
+PYTHON
   stamp=$(record_value "$record" updated_at)
   [ -n "$stamp" ] || fail "the record should say when it last changed"
   sleep 1
@@ -502,6 +506,10 @@ test_publish_writes_the_run_step_record_and_removes_it_without_a_run() {
   assert_equals "$(record_value "$record" verdict)" parked "a gate is published as parked"
   assert_equals "$(record_value "$record" step)" review "a parked record names the gate's step"
   assert_equals "$(record_value "$record" step_status)" fix_review "a parked record carries the gate's status"
+  python3 - "$record" <<'PYTHON'
+import os, stat, sys
+assert stat.S_IMODE(os.stat(sys.argv[1]).st_mode) == 0o600, 'a replaced validation record must remain owner-only'
+PYTHON
 
   FM_FAKE_AXI_STATUS="$(run_running fm/other-branch)"
   publish_crew_state "$d" feat-pub >/dev/null

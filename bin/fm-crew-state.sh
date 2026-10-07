@@ -114,8 +114,7 @@
 #
 #   Who refreshes it: every caller that already learns of a run-step change.
 #   bin/fm-deck-worker.sh publishes from its idle-prompt pipeline check, and
-#   starts `--follow-detached` when a turn ends with the run still working and
-#   the idle-prompt pipeline wake is enabled (FM_DECK_PIPELINE_WAIT_SECS > 0).
+#   starts `--follow-detached` when a turn ends with the run still working.
 #   Independently, its pre_tool_use and post_tool_use hooks start it whenever
 #   the tool event JSON on stdin mentions no-mistakes, covering both a blocking
 #   drive call and its return.
@@ -243,7 +242,7 @@ crew_state_publish() {  # <state> <detail>
   fi
   tmp=$(mktemp "$STATE/.$ID.crew-state.XXXXXX" 2>/dev/null) || return 0
   if printf '%s\nupdated_at=%s\n' "$body" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp" \
-    && chmod 644 "$tmp" && mv -f -- "$tmp" "$record"; then
+    && mv -f -- "$tmp" "$record"; then
     return 0
   fi
   rm -f -- "$tmp"

@@ -1800,6 +1800,40 @@ SH
   pass "fm-deck-worker: the pre hook follows a delayed run during a blocking tool call"
 }
 
+test_turn_end_follows_validation_with_automatic_wakes_disabled() {
+  local dir="$TMP_ROOT/pipeline-follow-no-wake" gen _
+  make_pipeline_case "$dir"
+  gen=$("$BUSY_EVENT" arm "$dir/state" t1)
+  mkfifo "$dir/in"
+  exec 3<>"$dir/in"
+  PATH="$dir/fakebin:$PATH" FM_TEST_NM_RUN="$dir/nm-run" FM_TEST_STATUS="$dir/state/t1.status" \
+    FM_TEST_HOOK_EVENT='' FM_DECK_PIPELINE_WAIT_SECS=0 FM_CREW_STATE_FOLLOW_SECS=1 \
+    FM_CREW_STATE_FOLLOW_GRACE_SECS=0 FM_CREW_STATE_FOLLOW_MAX_SECS=20 \
+    "$WORKER" --id t1 --state "$dir/state" --gen "$gen" \
+      --deck "$dir/deck" -- write-status < "$dir/in" > "$dir/pane.out" 2>&1 &
+  PIPELINE_WORKER_PID=$!
+  fm_test_track_helper_pid "$PIPELINE_WORKER_PID"
+  wait_pane_count "$dir" 'idle since' 1 || fail "the turn never reached its idle prompt"
+  for _ in $(seq 100); do
+    [ -d "$dir/state/.t1.crew-state-follow" ] && break
+    sleep 0.1
+  done
+  [ -d "$dir/state/.t1.crew-state-follow" ] || fail "turn end did not start the follower with automatic wakes disabled"
+  assert_grep 'verdict=working' "$dir/state/t1.crew-state" "turn end did not publish the working run"
+  pipeline_run "$dir" parked
+  for _ in $(seq 100); do
+    grep -q 'verdict=parked' "$dir/state/t1.crew-state" 2>/dev/null \
+      && [ ! -d "$dir/state/.t1.crew-state-follow" ] && break
+    sleep 0.1
+  done
+  assert_grep 'verdict=parked' "$dir/state/t1.crew-state" "the turn-end follower did not publish the returned gate"
+  [ ! -d "$dir/state/.t1.crew-state-follow" ] || fail "the follower did not stop at the gate"
+  [ "$(deck_runs "$dir")" = 1 ] || fail "the follower enabled an automatic next turn"
+  assert_not_contains "$(cat "$dir/pane.out")" 'still working; the next turn' "a disabled wait armed an automatic wake"
+  stop_pipeline_worker "$dir"
+  pass "fm-deck-worker: turn end publishes and follows validation without enabling automatic wakes"
+}
+
 test_pipeline_omits_terminal_id_when_a_live_successor_is_working() {
   local dir="$TMP_ROOT/pipeline-successor" head successor wake
   make_pipeline_case "$dir"
@@ -2019,6 +2053,7 @@ test_spawn_launches_the_driver_with_binary_gen_and_model
 test_spawn_refuses_deck_effort
 test_pipeline_state_change_wakes_an_idle_worker_once
 test_a_no_mistakes_tool_call_publishes_the_validation_record
+test_turn_end_follows_validation_with_automatic_wakes_disabled
 test_pipeline_omits_terminal_id_when_a_live_successor_is_working
 test_pipeline_wait_takes_input_immediately_and_is_bounded
 test_pipeline_failed_run_wakes_once
