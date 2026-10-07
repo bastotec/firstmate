@@ -101,6 +101,33 @@ SH
   pass "tree cleanup freezes and rescans descendants before killing them"
 }
 
+test_path_reaper_signals_only_fixture_processes() {
+  # The reaper finds leftovers by the fixture path in their command line, so it
+  # must never select a process of its own: an awk handed the path as an
+  # argument, or a reaper shell whose argv carries it. Signalling either one
+  # can freeze or kill cleanup while it is still reading its own matches.
+  local dir worker record extra
+  dir=$(fm_test_tmproot fm-test-reaper-self)
+  record="$dir/signalled"
+  bash -c 'sleep 120; :' fixture-worker "$dir" >/dev/null 2>&1 &
+  worker=$!
+  fm_test_track_helper_pid "$worker"
+  # The probe shell's own argv holds the path too, as an inherited argv can.
+  bash -c '
+    . "$1"
+    probe_dir=$2
+    fm_test_kill_tree() { printf "%s\n" "$1" >> "$probe_dir/signalled"; }
+    for _ in 1 2 3 4 5 6 7 8; do fm_test_reap_startup_network_workers "$probe_dir"; done
+  ' _ "$LIB" "$dir" || fail "the reaper probe did not run"
+  kill -9 "$worker" 2>/dev/null || true
+  wait "$worker" 2>/dev/null || true
+  grep -qx "$worker" "$record" 2>/dev/null ||
+    fail "the reaper missed a live process carrying the fixture path (pid $worker)"
+  extra=$(grep -vx "$worker" "$record" | sort -u | tr '\n' ' ')
+  [ -z "$extra" ] || fail "the reaper selected its own processes for signalling: $extra"
+  pass "the fixture-path reaper selects fixture processes and never its own"
+}
+
 test_helper_pids_registered_in_a_subshell_are_still_reaped() {
   # The whole point of the `$$`-keyed registry. Suites start their helpers from
   # inside a command substitution (`endpoint=$(start_agent box-a worker)`), and
@@ -331,6 +358,7 @@ test_orphan_sweep_reaps_read_only_package_tree() {
 
 test_status_worker_identity_is_checked_before_cleanup
 test_tree_cleanup_catches_a_child_forked_during_the_snapshot
+test_path_reaper_signals_only_fixture_processes
 test_fixture_root_gone_after_normal_exit
 test_fixture_root_gone_after_sigterm
 test_helper_pids_registered_in_a_subshell_are_still_reaped
