@@ -16,7 +16,7 @@ Only entries marked `inherited` below, plus `data/captain-shared.md`, propagate 
 Entries marked "never touch" are watcher or sub-supervisor internals.
 
 ```
-.env                      Relay pairing token and mail-plane credentials (docs/relay.md, "Mail plane")
+.env                      Relay pairing token (docs/relay.md) and mail-plane credentials ("Mail plane")
 .tasks.toml               tracked tasks-axi backend config ("Backlog backend")
 config/
   crew-harness            crewmate harness; absent or default = deck; inherited ("Harness support")
@@ -647,7 +647,7 @@ FM_ARM_CONFIRM_TIMEOUT=10   # seconds fm-watch-arm waits to confirm a fresh watc
 FM_ARM_ATTACH_POLL=0.5      # poll interval while attached to an existing healthy watcher
 FM_WATCH_CYCLE_LOG_MAX_BYTES=262144   # cap for the watcher lifecycle ledger
 FM_WATCH_CYCLE_LOG_KEEP_LINES=1000    # rows kept when that ledger is capped
-FM_WATCHER_STALE_GRACE=300  # seconds a live watcher lock may have a stale beacon before re-arm errors
+FM_WATCHER_STALE_GRACE=     # stale-lock threshold; defaults to FM_GUARD_GRACE if set, else max(300, FM_POLL + 60) seconds
 # fleet snapshot and Bearings
 FM_SNAPSHOT_CREW_STATE_TIMEOUT=10      # bound on each local current-state read in bin/fm-fleet-snapshot.sh
 FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=8   # concurrent local task reads

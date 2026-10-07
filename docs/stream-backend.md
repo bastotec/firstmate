@@ -446,6 +446,6 @@ Losing the hub costs centralized observation across the whole fleet at once, but
   Only one of those two states authorizes recovery, and reporting silence as death is how a healthy worker gets torn down.
 - The hub is a single point of observation, not of execution; [When the hub is down](#when-the-hub-is-down) owns that contract.
 - The hub token file is read only at start, so adding or revoking a credential costs a hub restart.
-- CI's Rust agent parity step exercises disposable Python hubs and real PTYs, not installed harnesses.
+- Experimental; CI's Rust agent parity step exercises disposable Python hubs and real PTYs, not installed harnesses.
   Native Deck steering has its own live guard, recorded in the [Deck native mid-turn verification record](verification/runtime-backends.md#deck-native-mid-turn-steering-over-stream).
   The portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, and `tests/fm-stream-bridge.test.sh`; `tests/fm-ui-host-control.test.sh` and `tests/fm-control.test.sh` cover the private host route.

@@ -65,7 +65,7 @@ The file is size-capped through `FM_WATCH_CYCLE_LOG_MAX_BYTES` and `FM_WATCH_CYC
 A running watcher re-execs itself in place when any `bin/*.sh` is newer than its filesystem-clock start reference and the change has settled for `FM_WATCH_CODE_SETTLE` seconds (default 2), because bash keeps the loop it parsed at start and a merge would otherwise leave the old loop supervising until the next wake.
 The pid, the singleton lock, and the arm's wait carry over, the reloaded image skips the recovery bookkeeping of a fresh arm, and a changed `fm-watch.sh` that does not parse keeps the running code.
 
-The guard's liveness grace defaults to the larger of 300 seconds and the poll interval plus 60 (`bin/fm-wake-lib.sh`'s `fm_poll_derived_grace`).
+[`configuration.md`](configuration.md#environment-variables) owns the guard, arm, and watcher stale-lock grace settings; `bin/fm-wake-lib.sh`'s `fm_poll_derived_grace` owns the poll-derived default's rationale.
 Only the watcher process touches `state/.last-watcher-beat`; no helper process can make a wedged watcher appear healthy.
 
 ## Regression coverage

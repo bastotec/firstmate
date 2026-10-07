@@ -80,7 +80,7 @@ Firstmate alone resolves a matched profile array, keeps malformed profile config
 Absent `config/backend` means stream, and a leftover `tmux` or `herdr` value is refused.
 Pass a per-spawn `--backend` only under that task's own authority, never as precedent ([`docs/configuration.md`](docs/configuration.md) "Runtime backend").
 A missing dependency, authentication failure, unsupported backend, or version refusal is a blocker; never silently retry around it.
-A task record left on the retired tmux or herdr backends reads as unverified or dead and cannot be relaunched; only the operator retires it, by running `bin/fm-retire-endpoint.sh` themselves.
+A task record left on a retired backend cannot be relaunched; only the operator retires it, by running `bin/fm-retire-endpoint.sh` themselves ([`docs/configuration.md`](docs/configuration.md#runtime-backend-configbackend--fm_backend) owns retired-record classification).
 
 ## 5. Recovery
 
@@ -165,7 +165,7 @@ A worker opens its PR ready for review and never parks a green PR as a draft or 
 
 Delivery mode and `yolo` are orthogonal: with `yolo` off, the captain approves every PR merge and local-only landing; with it on, firstmate merges green, in-scope work itself.
 [`docs/configuration.md` "Auto-land"](docs/configuration.md#auto-land-configautolandjson-configpost-merge) owns auto-land's standing authority and scope; a home armed with `bin/fm-autoland.sh` merges green PRs in merge-authorized projects without a model turn.
-Never merge a red PR unless a current explicit captain instruction names the single GitHub check waived through `fm-pr-merge.sh --allow-red`; every other check must still be green, and `yolo` never authorizes a red merge.
+Never merge a red PR unless a current explicit captain instruction names the single GitHub check waived through the attended-only `fm-pr-merge.sh --allow-red`; every other check must still be green, and `yolo` never authorizes a red merge.
 Destructive, irreversible, and security-sensitive merges still escalate.
 Merge task PRs only through `bin/fm-pr-merge.sh` and land local-only work only through `bin/fm-merge-local.sh`, never a lower-level merge command around their guards.
 

@@ -127,7 +127,7 @@ Supported by tests:
 
 - output that reached the runner is stored atomically at mode `0600` **before** any event referencing it is published;
 - the remote-reply adapter reads its append-only source non-destructively from an offset plus prefix hash, so a pre-capture retry can derive the same bytes again, while source truncation or replacement is detected rather than silently rebased;
-- proactive delivery, adapter-owned terminal retirement, and adapter-owned automatic application follow the operating contract in [`docs/configuration.md`](../../../docs/configuration.md);
+- proactive delivery, adapter-owned terminal retirement, and adapter-owned automatic application follow the operating contract in [`docs/process-event-sources.md`](../../../docs/process-event-sources.md);
 - a durably captured result with no handled acknowledgement remains eligible for bounded re-announcement across any number of drains and restarts, and repeat wakes retain the same source and sequence for deduplication;
 - the handled acknowledgement is generation-keyed to the exact source and sequence, private, path-safe, durable, and idempotent, and is the only thing that stops re-announcement;
 - one identity-matched owner per canonical source, across homes that share one underlying source store;

@@ -3,7 +3,7 @@
 Audience: maintainer verification.
 
 This record holds reusable version-scoped evidence for the runner's active guarantees.
-`docs/configuration.md` owns the operating contract, each script's header and `--help` own its mechanics, and `.agents/skills/process-event-sources/SKILL.md` owns the handling procedure.
+[`process-event-sources.md`](../process-event-sources.md) owns the operating contract, each script's header and `--help` own its mechanics, and `.agents/skills/process-event-sources/SKILL.md` owns the handling procedure.
 
 Verified on 2026-07-31 on macOS (Darwin 25.5.0) with `lavish-axi` 0.1.45 installed.
 Generic keyed-answer feed verified on 2026-08-16 on the same platform, against the same published poll response shape.
@@ -225,7 +225,7 @@ Explicit external adapters instead use the single-capability contract in [`docs/
 An adapter's `terminal` command is optional and defaults to keeping the source armed.
 Its `silent` command is optional in the same way and defaults to announcing every result, so an adapter with no notion of a routine no-op is unchanged.
 Its `autohandle` command is optional in the same way and defaults to leaving the captured result unacknowledged, so it keeps being announced to a handler exactly as before.
-The optional `self-announcing` declaration changes ordering only for an adapter with its own durable downstream announcement; the operating contract in `docs/configuration.md` owns that boundary.
+The optional `self-announcing` declaration changes ordering only for an adapter with its own durable downstream announcement; the operating contract in [`process-event-sources.md`](../process-event-sources.md) owns that boundary.
 
 Proactive delivery is inside that same boundary.
 The watcher reports a queued process-event result through the one shared actionable-exit path (`wake` in `bin/fm-watch-wake-lib.sh`) that every existing signal, stale, and check wake already uses, so it reads no pane, queries no backend, and names no harness.

@@ -96,11 +96,12 @@ Adapters own every judgment about a result through optional seams, and the runne
 
 - `silent`: exit 0 records a routine no-op as handled without announcing it; for Lavish that is only an `ended` session with no queued content at all.
 - `terminal`: exit 0 retires the registration, so an ended source captures at most one terminal result and is never restarted.
-- `autohandle`: exit 0 means a built-in adapter applied and acknowledged its own result; it runs after terminal retirement so a handler that re-arms its source is not dropped.
+- `autohandle`: exit 0 means a built-in adapter applied and acknowledged its own result; terminal retirement runs afterwards and removes only the captured registration generation, preserving a replacement the handler armed.
 - `self-announcing`: exit 0 lets a built-in adapter apply first and publish a `check` wake only for what stays unhandled; the remote-secondmate reply adapter uses this so a mirrored status append is the single wake.
 - `answers` and `reconciles`: a built-in source bound with `bin/fm-captain-hold.sh bind` feeds the keyed-answer intake or reconcile-request intake, which own what happens next ([`captain-hold-lifecycle.md`](captain-hold-lifecycle.md#reconcile-re-check-reality-never-a-blind-close)).
 
-A missing seam command, an error, or any other exit always falls back to publishing the `check` wake and keeping the source armed, so an unknown or degraded result reaches its handler.
+A missing or failing `silent` command does not suppress a wake, and a missing or failing `autohandle` leaves the result unhandled; neither overrides the separate terminal verdict.
+Only an exit-0 `terminal` verdict retires the registration, so an adapter with no terminal knowledge keeps its source armed.
 A failed terminal removal stays durably terminal and is completed by ordinary reconciliation without restarting its poll, while a concurrently replaced registration survives as its own generation.
 Feeding an intake never acknowledges a result or suppresses its wake, and external binding responses never enter either authority-bearing intake.
 
