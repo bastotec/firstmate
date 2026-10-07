@@ -126,9 +126,14 @@
 #   full read only when those changed or FM_CREW_STATE_FOLLOW_FULL_SECS (default
 #   60) passed; after the grace it exits on a non-working read, or at any time
 #   when the metadata goes or FM_CREW_STATE_FOLLOW_MAX_SECS (default 21600;
-#   0 disables it) runs out. A second follower for the same task exits at once
-#   (state/.<id>.crew-state-follow holds the owner's pid). Publication serializes
-#   the entire read under state/.<id>.crew-state.lock; plain reads take no lock.
+#   0 disables polling) runs out. A second starter requests renewed grace via
+#   state/.<id>.crew-state-follow.rearm before leaving the existing owner
+#   (state/.<id>.crew-state-follow holds its pid). Non-working shutdown releases
+#   ownership and rechecks the request so a racing starter is not lost.
+#   --follow-detached always performs one detached --publish before following,
+#   including when polling is disabled. Teardown removes the re-arm request.
+#   Publication serializes the entire read under state/.<id>.crew-state.lock;
+#   plain reads take no lock.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -162,10 +167,11 @@ if [ "$MODE" != read ]; then
 fi
 if [ "$MODE" = follow-detached ]; then
   # A new session, so the caller (a Deck hook, the driver) never waits on it.
+  DETACHED=(bash -c "\"\$1\" --publish \"\$2\"; exec \"\$1\" --follow \"\$2\"" _ "$0" "$ID")
   if command -v setsid >/dev/null 2>&1; then
-    setsid "$0" --follow "$ID" </dev/null >/dev/null 2>&1 &
+    setsid "${DETACHED[@]}" </dev/null >/dev/null 2>&1 &
   else
-    perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 1' "$0" --follow "$ID" </dev/null >/dev/null 2>&1 &
+    perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 1' "${DETACHED[@]}" </dev/null >/dev/null 2>&1 &
   fi
   exit 0
 fi
@@ -294,7 +300,8 @@ crew_state_fingerprint() {
 
 # Header: PUBLISHED RECORD (the follower).
 crew_state_follow() {
-  local lock="$STATE/.$ID.crew-state-follow" deadline grace_until now fp last='' line='' full_at=0
+  local lock="$STATE/.$ID.crew-state-follow" rearm="$STATE/.$ID.crew-state-follow.rearm"
+  local deadline grace_until now fp last='' line='' full_at=0
   local every=${FM_CREW_STATE_FOLLOW_SECS:-5} full=${FM_CREW_STATE_FOLLOW_FULL_SECS:-60}
   local bound=${FM_CREW_STATE_FOLLOW_MAX_SECS:-21600} grace=${FM_CREW_STATE_FOLLOW_GRACE_SECS:-60}
   case "$every" in ''|*[!0-9]*|0) every=5 ;; esac
@@ -302,10 +309,14 @@ crew_state_follow() {
   case "$bound" in ''|*[!0-9]*) bound=21600 ;; esac
   case "$grace" in ''|*[!0-9]*) grace=60 ;; esac
   [ "$PUBLISH_READY" = 1 ] && [ "$bound" -gt 0 ] || exit 0
-  fm_lock_try_acquire "$lock" || exit 0
+  if ! fm_lock_try_acquire "$lock"; then
+    : > "$rearm" || exit 1
+    fm_lock_try_acquire "$lock" || exit 0
+  fi
   trap 'fm_lock_release "$lock"' EXIT
   trap 'exit 143' TERM
   trap 'exit 130' INT
+  rm -f -- "$rearm"
   now=$(date +%s)
   deadline=$(( now + bound ))
   grace_until=$(( now + grace ))
@@ -319,7 +330,18 @@ crew_state_follow() {
     fi
     case "$line" in
       "state: working${SEP}source: run-step"*) ;;
-      *) [ "$(date +%s)" -lt "$grace_until" ] || break ;;
+      *)
+        now=$(date +%s)
+        if [ "$now" -ge "$grace_until" ]; then
+          if [ ! -f "$rearm" ]; then
+            fm_lock_release "$lock"
+            [ -f "$rearm" ] || break
+            fm_lock_try_acquire "$lock" || break
+          fi
+          rm -f -- "$rearm"
+          grace_until=$(( now + grace ))
+        fi
+        ;;
     esac
     last=$fp
     sleep "$every"

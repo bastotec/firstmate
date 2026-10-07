@@ -532,7 +532,7 @@ test_the_follower_publishes_each_step_and_stops_when_the_run_leaves_working() {
   PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" FM_CREW_STATE_FOLLOW_SECS=1 \
     FM_CREW_STATE_FOLLOW_GRACE_SECS=0 \
     "$CREW_STATE" --follow-detached feat-follow
-  while [ "$waited" -lt 50 ] && [ "$(record_value "$record" step 2>/dev/null)" != review ]; do
+  while [ "$waited" -lt 50 ] && { [ "$(record_value "$record" step 2>/dev/null)" != review ] || [ ! -d "$lock" ]; }; do
     sleep 0.2; waited=$((waited + 1))
   done
   assert_equals "$(record_value "$record" step)" review "the follower publishes the step it starts on"
@@ -647,6 +647,68 @@ test_follower_grace_expires_without_a_fingerprint_change_and_zero_disables_it() 
   assert_equals "$(record_value "$d/state/feat-grace.crew-state" verdict)" parked "the grace follower publishes a non-working run"
   [ ! -e "$lock" ] || fail "the grace follower did not release its lock"
   pass "follow: grace expires on unchanged non-working state and zero disables publication"
+}
+
+test_follower_rearms_a_parked_owner_after_its_grace() {
+  reset_fakes
+  local d owner lock rearm record _
+  d=$(new_case follow-rearm)
+  make_repo_on_branch "$d/wt" fm/feat-rearm
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-rearm.meta" "worktree=$d/wt" "kind=ship"
+  lock="$d/state/.feat-rearm.crew-state-follow"
+  rearm="$lock.rearm"
+  record="$d/state/feat-rearm.crew-state"
+  run_parked fm/feat-rearm > "$d/run"
+  PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" FM_FAKE_AXI_STATUS_FILE="$d/run" \
+    FM_FAKE_STATUS_HOLD="$d" FM_CREW_STATE_FOLLOW_GRACE_SECS=5 FM_CREW_STATE_FOLLOW_SECS=1 \
+    FM_CREW_STATE_FOLLOW_MAX_SECS=30 "$CREW_STATE" --follow feat-rearm > "$d/owner.out" &
+  owner=$!
+  fm_test_track_helper_pid "$owner"
+  for _ in $(seq 100); do [ -f "$d/captured" ] && break; sleep 0.1; done
+  [ -f "$d/captured" ] || fail "the owner did not capture the parked run"
+  sleep 6
+  PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" FM_CREW_STATE_FOLLOW_GRACE_SECS=5 \
+    "$CREW_STATE" --follow feat-rearm
+  [ -f "$rearm" ] || fail "a competing start did not request renewed grace"
+  : > "$d/release"
+  for _ in $(seq 100); do [ "$(record_value "$record" verdict 2>/dev/null)" = parked ] && break; sleep 0.1; done
+  assert_equals "$(record_value "$record" verdict)" parked "the owner should publish its parked observation"
+  sleep 1
+  kill -0 "$owner" 2>/dev/null || fail "the owner exited despite a new start request"
+  assert_equals "$(cat "$lock/pid")" "$owner" "the same owner must keep following"
+  [ ! -f "$rearm" ] || fail "the owner did not consume the re-arm request"
+  run_running fm/feat-rearm > "$d/next"
+  mv "$d/next" "$d/run"
+  for _ in $(seq 100); do [ "$(record_value "$record" verdict 2>/dev/null)" = working ] && break; sleep 0.1; done
+  assert_equals "$(record_value "$record" verdict)" working "the re-armed owner must publish validation resuming"
+  rm "$d/state/feat-rearm.meta"
+  wait "$owner" || fail "the re-armed owner did not stop after task retirement"
+  [ ! -e "$lock" ] && [ ! -f "$rearm" ] || fail "the re-armed owner left follower state"
+  pass "follow: a competing start renews an expired parked owner's grace and observes resumed work"
+}
+
+test_detached_start_publishes_once_when_polling_is_disabled() {
+  reset_fakes
+  local d record _
+  d=$(new_case detached-publish)
+  make_repo_on_branch "$d/wt" fm/feat-detached
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-detached.meta" "worktree=$d/wt" "kind=ship"
+  record="$d/state/feat-detached.crew-state"
+  FM_FAKE_AXI_STATUS=$(run_parked fm/feat-detached)
+  PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" FM_CREW_STATE_FOLLOW_MAX_SECS=0 \
+    "$CREW_STATE" --follow-detached feat-detached
+  for _ in $(seq 100); do [ "$(record_value "$record" verdict 2>/dev/null)" = parked ] && break; sleep 0.1; done
+  assert_equals "$(record_value "$record" verdict)" parked "a detached start must publish the returned gate even with polling disabled"
+  FM_FAKE_AXI_STATUS=$(run_passed fm/feat-detached)
+  PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" FM_CREW_STATE_FOLLOW_MAX_SECS=0 \
+    "$CREW_STATE" --follow-detached feat-detached
+  for _ in $(seq 100); do [ "$(record_value "$record" verdict 2>/dev/null)" = "done" ] && break; sleep 0.1; done
+  assert_equals "$(record_value "$record" verdict)" "done" "a detached start must publish the returned outcome even with polling disabled"
+  [ ! -e "$d/state/.feat-detached.crew-state-follow" ] || fail "a disabled detached follower must not acquire a polling lock"
+  [ ! -f "$d/state/.feat-detached.crew-state-follow.rearm" ] || fail "a disabled detached follower must not request re-arm"
+  pass "follow-detached: gate and outcome publication stay enabled when polling is disabled"
 }
 
 test_active_run_is_authoritative() {
@@ -2360,6 +2422,8 @@ test_publish_writes_the_run_step_record_and_removes_it_without_a_run
 test_publish_serializes_observation_and_leaves_plain_reads_unlocked
 test_follower_respects_fresh_acquisition_and_releases_only_its_own_lock
 test_follower_grace_expires_without_a_fingerprint_change_and_zero_disables_it
+test_follower_rearms_a_parked_owner_after_its_grace
+test_detached_start_publishes_once_when_polling_is_disabled
 test_the_follower_publishes_each_step_and_stops_when_the_run_leaves_working
 test_stale_needs_decision_superseded
 test_stale_blocked_superseded

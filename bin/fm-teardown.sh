@@ -2885,7 +2885,8 @@ cleanup_firstmate_home_children() {
     retire_wake_gate_task_state "$sub_state" "$child_id" || return 1
     fm_backlog_atomic_transition remove "$sub_state/$child_id.meta" "task record" "$sub_state" || return 1
     rm -f "$sub_state/$child_id.turn-ended" "$sub_state/$child_id.progress" \
-      "$sub_state/$child_id.reconcile-nudged" "$sub_state/$child_id.crew-state"
+      "$sub_state/$child_id.reconcile-nudged" "$sub_state/$child_id.crew-state" \
+      "$sub_state/.$child_id.crew-state-follow.rearm"
     fm_lock_remove_path "$sub_state/.$child_id.crew-state-follow" || true
     fm_lock_remove_path "$sub_state/.$child_id.crew-state.lock" || true
   done
@@ -3217,7 +3218,8 @@ retire_wake_gate_task_state "$STATE" "$ID" || exit 1
 rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.progress" \
   "$STATE/$ID.control-relaunch" "$STATE/$ID.control-relaunch.meta-prior" \
   "$STATE/$ID.control-relaunch.brief-prior" "$STATE/$ID.control-relaunch.note" \
-  "$STATE/$ID.reconcile-nudged" "$STATE/$ID.crew-state"
+  "$STATE/$ID.reconcile-nudged" "$STATE/$ID.crew-state" \
+  "$STATE/.$ID.crew-state-follow.rearm"
 # The published validation record's follower exits on its own once the copy or
 # record is gone (bin/fm-crew-state.sh "PUBLISHED RECORD"); its lock goes here.
 fm_lock_remove_path "$STATE/.$ID.crew-state-follow" || true
