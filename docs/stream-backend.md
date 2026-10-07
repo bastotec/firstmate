@@ -120,6 +120,16 @@ Ordinary supervision does not need any of that: `fm-peek.sh`, `fm-send.sh`, `fm-
 [`fm_backend_agent_pids`](../bin/fm-backend.sh) owns the process-identity read contract, including stream's local-machine restriction.
 [Portable stream-parity regressions](verification/runtime-backends.md#portable-stream-parity-regressions) distinguish fake-fleet integration coverage from real agent process reporting.
 
+### Task events
+
+A client that would otherwise poll `GET /v1/tasks` subscribes to `GET /v1/tasks/events` instead, with the same `subscribe` token in the `Authorization` header (never a query token).
+It is a `text/event-stream`: an `event: snapshot` record carries `seq`, the hub `generation`, `machines`, and exactly the records `/v1/tasks` would list, then each `event: delta` record carries the next `seq`, the changed `tasks` records, and the `removed` endpoint ids, with a `: keepalive` comment after 15 idle seconds.
+An endpoint's record is pushed again when any listed fact other than its measured ages and output offset changes, including whether it is its leaf's current execution, whether its agent has been silent past the 10-second presumption window, and whether a state frame has arrived.
+Output growth is pushed at once after a quiet spell and then at most once every 2 seconds per endpoint, so a busy worker costs a subscriber one small record per 2 seconds rather than one per frame.
+Ages in a pushed record are as measured when it was sent and are not refreshed in between, and `machines` arrives only in the snapshot.
+The hub advertises the route as the `task_events` capability in `/v1/health`; an older hub answers 404, so a client keeps reading `/v1/tasks` there, and a reconnect after a hub restart starts again from a new snapshot with a new `generation`.
+The Rust hub wakes a subscriber on its registry change signal; the Python rollback has none and re-reads its own memory every quarter second, which changes cost on the hub only, not what is sent.
+
 ### Interactive attach
 
 `bin/fm-stream.sh attach --interactive <endpoint-or-target> [--detach-key C-]]` takes over the local terminal, which is how a TUI hosted on an endpoint (a `deck chat` primary, for one) is used by hand.

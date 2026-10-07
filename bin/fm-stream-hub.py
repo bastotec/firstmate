@@ -27,6 +27,10 @@ late acknowledgement changes); HTTP 404 no_such_order means only that this id
 is absent, possibly evicted or lost on restart, never that its worker is gone.
 No command text or endpoint capability is exposed by this read.
 
+GET /v1/tasks/events requires subscribe and pushes the /v1/tasks listing once,
+then a delta whenever an endpoint's listed facts or liveness change;
+docs/stream-backend.md "Task events" owns that contract.
+
 The five-point backend lifecycle contract maps onto these routes:
 
   1. create a task endpoint with a durable id   the agent creates the pty and
@@ -131,7 +135,13 @@ ORDERABLE_ENDPOINT_CAPABILITY = "result_retry_orderability"
 NATIVE_STEERING_CAPABILITY = "native_steering_receiver"
 HUB_CAPABILITIES = ("current_execution", RESULT_RETRY_CAPABILITY,
                     ORDERABLE_ENDPOINT_CAPABILITY, "endpoint_command_auth",
-                    "deck_midturn_orders")
+                    "deck_midturn_orders", "task_events")
+# A task-events subscriber hears an endpoint's output growth at most this often
+# (docs/stream-backend.md "Task events").
+EVENT_OUTPUT_SECS = 2.0
+# This rollback hub has no registry-wide change signal, so a task-events
+# stream re-reads its own memory this often; the wire stays push-only.
+EVENT_SCAN_SECS = 0.25
 
 DEFAULT_PORT = 7717
 DEFAULT_RING_BYTES = 262144
@@ -2018,6 +2028,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._order_route(query)
             return
 
+        if path == "/v1/tasks/events" and method == "GET":
+            self._require(CLASS_SUBSCRIBE, query)
+            self._task_events()
+            return
+
         if path.startswith("/v1/tasks/"):
             rest = path[len("/v1/tasks/"):]
             endpoint_id, _, tail = rest.partition("/")
@@ -2326,6 +2341,76 @@ class Handler(http.server.BaseHTTPRequestHandler):
         else:
             answer["cwd"] = state.get("cwd") or ""
         return answer
+
+    def _task_events(self) -> None:
+        """The /v1/tasks listing once, then deltas; docs/stream-backend.md "Task events"."""
+        hub = self.server.hub
+        self.send_response(int(HTTPStatus.OK))
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        told = {}
+        seq = 0
+        last_reap = 0.0
+        last_sent = _now()
+        try:
+            while True:
+                at = _now()
+                if at - last_reap >= 1.0:
+                    hub.reap()
+                    last_reap = at
+                changed = []
+                records = hub.list_task_records()
+                with hub.lock:
+                    live = {e.endpoint_id: e for e in hub.endpoints.values()}
+                for record in records:
+                    endpoint = live.get(record["endpoint_id"])
+                    silent = record["agent_silent_for_secs"]
+                    projection = (
+                        record["machine"], record["label"], record["cwd"],
+                        record["rows"], record["cols"], record["closed_at"],
+                        record["closed_by"], json.dumps(record["exit_code"]),
+                        record["current_execution"],
+                        record["closed_at"] is None and silent <= AGENT_SILENCE_PRESUMED_SECS,
+                        bool(endpoint and endpoint.state_received_at))
+                    offset = record["stream_offset"]
+                    previous = told.get(record["endpoint_id"])
+                    if (previous is None or previous[0] != projection
+                            or (previous[1] != offset
+                                and at - previous[2] >= EVENT_OUTPUT_SECS)):
+                        offset_at = previous[2] if previous and previous[1] == offset else at
+                        told[record["endpoint_id"]] = (projection, offset, offset_at)
+                        changed.append(record)
+                listed = {record["endpoint_id"] for record in records}
+                removed = [eid for eid in told if eid not in listed]
+                for eid in removed:
+                    told.pop(eid)
+                if seq == 0:
+                    payload = {
+                        "ok": True, "seq": 1, "generation": hub.generation,
+                        "machines": [m.describe(hub.options.state_max_age_secs)
+                                     for m in hub.list_machines()],
+                        "tasks": changed,
+                    }
+                    chunk = "event: snapshot\ndata: %s\n\n" % json.dumps(payload)
+                elif changed or removed:
+                    payload = {"seq": seq + 1, "generation": hub.generation,
+                               "tasks": changed, "removed": removed}
+                    chunk = "event: delta\ndata: %s\n\n" % json.dumps(payload)
+                elif at - last_sent >= 15.0:
+                    chunk = ": keepalive\n\n"
+                else:
+                    chunk = ""
+                if chunk:
+                    if not chunk.startswith(":"):
+                        seq += 1
+                    last_sent = at
+                    self.wfile.write(chunk.encode("utf-8"))
+                    self.wfile.flush()
+                time.sleep(EVENT_SCAN_SECS)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def _stream(self, endpoint: "Endpoint", query: dict) -> None:
         replay = _query_one(query, "replay", "") in ("1", "true", "yes")

@@ -219,6 +219,60 @@ wait_until_quiet() {  # <endpoint>
   return 1
 }
 
+# next_task_event <file> <after-count> - wait for the event-stream file to hold
+# more than <after-count> data records, then print the newest one's JSON.
+next_task_event() {  # <file> <after-count>
+  local file=$1 after=$2 waited=0
+  while [ "$waited" -lt 100 ]; do
+    if [ "$(grep -c '^data: ' "$file" 2>/dev/null)" -gt "$after" ]; then
+      grep '^data: ' "$file" | sed -n "$((after + 1))p" | cut -c7-
+      return 0
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
+test_task_events_push_the_listing_then_each_change() {
+  start_hub task-events
+  local endpoint events pid snapshot delta n
+  endpoint=$(start_agent box-a evented)
+  events="$CASE_DIR/events"
+  publish GET /v1/tasks/events >/dev/null
+  assert_equals "$(api_code)" 403 "a publishing credential should not subscribe to the fleet"
+  curl -sS -N -H "Authorization: Bearer $VIEW_ONLY_TOKEN" "$URL/v1/tasks/events" > "$events" 2>/dev/null &
+  pid=$!
+  disown "$pid" 2>/dev/null || true
+  fm_test_track_helper_pid "$pid"
+  snapshot=$(next_task_event "$events" 0) || fail "no snapshot arrived: $(cat "$events")"
+  assert_grep 'event: snapshot' "$events" "the first record should be the snapshot"
+  assert_equals "$(printf '%s' "$snapshot" | jq -r --arg id "$endpoint" '.tasks[] | select(.endpoint_id==$id) | .current_execution')" true \
+    "the snapshot should carry the listing's own record for the endpoint"
+  assert_equals "$(printf '%s' "$(view GET /v1/tasks)" | jq -r '[.tasks[].endpoint_id] | join(",")')" \
+    "$(printf '%s' "$snapshot" | jq -r '[.tasks[].endpoint_id] | join(",")')" \
+    "the snapshot should list exactly what /v1/tasks lists"
+  n=$(grep -c '^data: ' "$events")
+  view POST "/v1/tasks/$endpoint/input" '{"text":"echo EVENTED-OUTPUT","submit":true}' >/dev/null
+  delta=$(next_task_event "$events" "$n") || fail "worker output pushed no delta: $(cat "$events")"
+  assert_equals "$(printf '%s' "$delta" | jq -r --arg id "$endpoint" '[.tasks[] | select(.endpoint_id==$id) | .stream_offset > 0] | any')" true \
+    "output should be pushed with the endpoint's grown offset"
+  wait_for_capture "$endpoint" EVENTED-OUTPUT || fail "the input never reached the endpoint"
+  view DELETE "/v1/tasks/$endpoint" >/dev/null
+  assert_equals "$(api_code)" 200 "the operator should close the worker"
+  local waited=0 closed=''
+  while [ "$waited" -lt 100 ]; do
+    closed=$(grep '^data: ' "$events" | cut -c7- | jq -r --arg id "$endpoint" '.tasks[]? | select(.endpoint_id==$id) | .closed_by // empty' | tail -1)
+    [ "$closed" = agent ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_equals "$closed" agent "the close should be pushed with the agent's own attribution"
+  assert_grep 'event: delta' "$events" "later records should be deltas"
+  kill "$pid" 2>/dev/null || true
+  pass "hub: task events push the listing once, then output and close deltas"
+}
+
 test_every_data_route_requires_a_token() {
   start_hub auth
   local raw
@@ -2613,6 +2667,7 @@ test_a_viewing_token_cannot_steer_or_close_a_worker
 test_the_screen_read_answers_with_the_live_screen_and_cursor
 test_capture_stays_readable_while_frames_are_arriving
 test_one_hub_lists_endpoints_from_several_machines
+test_task_events_push_the_listing_then_each_change
 test_the_fleet_listing_answers_while_machines_are_joining
 test_input_reaches_the_endpoint_and_capture_reads_it_back
 test_input_with_no_agent_to_acknowledge_is_refused
