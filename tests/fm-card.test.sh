@@ -212,6 +212,38 @@ test_answer_removes_the_card() {
   pass "fm-captain-hold: answering or releasing a call removes its card"
 }
 
+test_stale_clear_never_reads_as_the_captains_words() {
+  local home ev body
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home stale-clear)
+  run_captain "$home" hold sc-a --title "Approve PR84" --reason "merge approval" >/dev/null || fail "hold failed"
+  ev="$home/ev.txt"
+  printf 'PR https://github.com/bastotec/firstmate/pull/84 merged on 2026-10-06.\n' > "$ev"
+  run_captain "$home" stale-clear sc-a --evidence-file "$ev" | grep -q '^stale-cleared: sc-a$' \
+    || fail "stale-clear did not report"
+  body=$(tasks_in "$home" show sc-a --full)
+  assert_contains "$body" "Stale-clear evidence:" "evidence label recorded"
+  assert_not_contains "$body" "Captain decision:" "never labelled as the captain's words"
+  assert_contains "$body" "state: done" "task closed"
+  assert_absent "$home/state/cards/sc-a.json" "card removed"
+  run_captain "$home" stale-clear sc-a --evidence-file "$ev" | grep -q '^stale-cleared: sc-a$' \
+    || fail "an exact retry must be a quiet no-op"
+  pass "fm-captain-hold: stale-clear closes on evidence under its own label"
+}
+
+test_stale_clear_refuses_a_task_not_held_for_the_captain() {
+  local home ev rc=0
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home stale-refuse)
+  tasks_in "$home" add plain "Plain" --repo firstmate >/dev/null
+  ev="$home/ev.txt"
+  printf 'whatever\n' > "$ev"
+  run_captain "$home" stale-clear plain --evidence-file "$ev" >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "refused"
+  assert_contains "$(tasks_in "$home" show plain --full)" "state: queued" "task untouched"
+  pass "fm-captain-hold: stale-clear refuses a task that is not a captain call"
+}
+
 test_write_and_show_round_trip
 test_validate_names_the_broken_field
 test_show_reports_a_corrupt_card_as_invalid
@@ -223,3 +255,5 @@ test_hold_without_card_writes_a_draft
 test_hold_with_card_file_writes_the_full_card
 test_hold_refuses_an_invalid_card_before_holding
 test_answer_removes_the_card
+test_stale_clear_never_reads_as_the_captains_words
+test_stale_clear_refuses_a_task_not_held_for_the_captain

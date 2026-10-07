@@ -34,6 +34,7 @@
 #   fm-captain-hold.sh open <task-id> [--identity] [--distinguish-absent]
 #   fm-captain-hold.sh diverged
 #   fm-captain-hold.sh reconcile list
+#   fm-captain-hold.sh stale-clear <task-id> --evidence-file <path>
 #   fm-captain-hold.sh reconcile close <task-id> --evidence-file <path>
 #   fm-captain-hold.sh reconcile note <task-id> --note-file <path>
 #
@@ -521,10 +522,15 @@ closed_answer_replay_mode_compatible() {  # <mode> <task-body>
 
 # The record's label is what keeps an evidence-backed reconciliation from
 # reading as the captain's own words. `reconciled` closes a call that went moot
-# and carries verified evidence; every other mode carries what the captain said.
+# and carries verified evidence, `stale-cleared` closes a stale call on the
+# first mate's evidence under the captain's standing ruling, and every other
+# mode carries what the captain said.
 resolution_block() {  # <mode>
   local label='Captain decision:'
-  [ "$1" != reconciled ] || label='Reconciliation evidence:'
+  case "$1" in
+    reconciled) label='Reconciliation evidence:' ;;
+    stale-cleared) label='Stale-clear evidence:' ;;
+  esac
   printf 'Resolution recorded by fm-captain-hold.\nDecision digest: %s\nResolution mode: %s\n\n%s\n%s\n' \
     "$DECISION_DIGEST" "$1" "$label" "$DECISION_TEXT"
 }
@@ -1593,6 +1599,48 @@ reconcile_close() {
   printf 'reconciled: %s\n' "$id"
 }
 
+# Evidence-backed clear of a stale captain call, under the captain's standing
+# ruling of 2026-10-07 that the first mate clears stale holds on its own and
+# reports them; bin/fm-card.sh `clear` is the caller and `restore` the undo.
+# The evidence is recorded under its own label so it can never read as the
+# captain's words, the task closes, and its card is removed.
+command_stale_clear() {
+  local id=${1:-} evidence_file='' show state hold_kind body occurrence
+  [ "$#" -ge 1 ] || { usage >&2; exit 2; }
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --evidence-file) shift; evidence_file=${1:-} ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+  validate_slug task-id "$id"
+  [ -n "$evidence_file" ] || fail "--evidence-file is required; a stale clear closes on evidence, never on assertion"
+  load_decision "$evidence_file"
+  acquire_task_control_lock "$id"
+  require_tasks_axi
+  task_show_or_fail "$id" "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
+  state=$(show_field "$show" state)
+  hold_kind=$(show_field_value "$show" hold_kind)
+  body=$(show_field "$show" body)
+  if [ "$state" = "done" ]; then
+    [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
+      && [ "$(recorded_resolution_mode "$body" || true)" = stale-cleared ] \
+      || fail "task $id is already closed by something other than this stale clear"
+    printf 'stale-cleared: %s\n' "$id"
+    return 0
+  fi
+  [ "$hold_kind" = captain ] \
+    || fail "task $id is not held for the captain; there is no captain call to clear"
+  occurrence=$(( $(resolution_record_count "$body") + 1 ))
+  write_resolution_record "$id" stale-cleared "$body"
+  close_answered "$id" 0 || fail "could not close stale captain-held task $id"
+  remove_interrupted_answer_stamp "$id"
+  publish_parent_hold "$id" "$occurrence" resolved stale-cleared
+  printf 'stale-cleared: %s\n' "$id"
+}
+
 # The still-active outcome. The hold survives, so the call stays the captain's
 # and stays on Captain's Call, now carrying what the re-check found.
 reconcile_note() {
@@ -1966,6 +2014,7 @@ case "${1:-}" in
   open) shift; command_open "$@" ;;
   diverged) shift; command_diverged "$@" ;;
   reconcile) shift; command_reconcile "$@" ;;
+  stale-clear) shift; command_stale_clear "$@" ;;
   -h|--help) usage ;;
   *) usage >&2; exit 2 ;;
 esac

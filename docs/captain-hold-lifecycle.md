@@ -42,7 +42,7 @@ A retained local-only delivery cannot reach the row because `--note` exists on `
 A relocated retained report cannot reach the row because tasks-axi accepts only `data/<id>/report.md`: `done` reports `Task report link must be a data/<id>/report.md path`, and `update` reports `--report must be a data/<id>/report.md path`.
 When an interrupted retention leaves such a relocated report in the validated pending-close record, `answer` skips only that known-unsupported row artifact and closes normally, so the delivery remains absent from Recently Landed instead of wedging the captain's answer.
 A pending-close record that fails validation outright is a different case and still refuses the answer, but the refusal names the record and the validation reason so the captain can repair it rather than facing a bare failure.
-`--force` does not lift the deferral, because it authorizes discarding unlanded work, never the captain's question; only `answer` with the captain's words or evidence-backed `reconcile close` resolves the call, by either closing the question or releasing the gated work.
+`--force` does not lift the deferral, because it authorizes discarding unlanded work, never the captain's question; only `answer` with the captain's words, evidence-backed `reconcile close`, or an evidence-backed `stale-clear` resolves the call, by either closing the question or releasing the gated work.
 `bin/fm-backlog-transition-lib.sh` owns the transition and its record, and `bin/fm-captain-hold.sh --help` owns the predicate's contract.
 
 ## Answer-time resolution
@@ -117,6 +117,14 @@ The validator's reservation scope must equal the adapter's reconcile-classificat
 Owner-aware routing for remote-secondmate decision cards is tracked separately: that follow-up must query landedness and route reconciliation in the authoritative secondmate home while honoring the remote and local consistency principle.
 Until then, an absent main-home task passes through this hygiene check unchanged, and its Reconcile selection remains announced but cannot create a main-home request because the main intake refuses an absent task.
 For a main-home call, the reconcile option is the recovery path for whatever still slips through.
+
+## Stale clear: the first mate's evidence, never the captain's words
+
+`bin/fm-captain-hold.sh stale-clear <task-id> --evidence-file <path>` closes a captain call that has gone stale.
+It rests on the captain's standing ruling of 2026-10-07 that the first mate clears stale holds on its own and reports them, so it needs no board-created reconcile request.
+It records the evidence under a `Stale-clear evidence:` label with resolution mode `stale-cleared`, so it can never read as the captain's words, then closes the task and removes its decision card file.
+An exact retry on the closed task is a no-op, and a task that is not held for the captain is refused.
+`bin/fm-card.sh` owns the decision card files, finds the stale candidates, calls this command through `clear`, logs every clear, and undoes one through `restore`.
 
 ## Structured read surfaces
 
