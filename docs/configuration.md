@@ -662,6 +662,7 @@ FM_CREW_STATE_NM_TIMEOUT=10    # per no-mistakes query in fm-crew-state.sh
 FM_CREW_STATE_RUNS_LIMIT=200   # recent no-mistakes runs scanned for attribution
 FM_CREW_STATE_FOLLOW_SECS=5         # validation-record follower poll while a run is working
 FM_CREW_STATE_FOLLOW_FULL_SECS=60   # follower's full re-read even when axi status looks unchanged
+FM_CREW_STATE_FOLLOW_GRACE_SECS=60  # keep polling a non-working read during the follower's start grace
 FM_CREW_STATE_FOLLOW_MAX_SECS=21600 # bound on one follower's life; 0 disables the follower
 FM_TEARDOWN_NM_TIMEOUT=10      # per no-mistakes query or abort in fm-teardown.sh
 FM_TEARDOWN_NM_RUNS_LIMIT=200  # recent runs scanned to prove a parked run belongs to teardown's task

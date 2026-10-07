@@ -396,7 +396,9 @@ PROGRESS_HOOK="diagnostic=\$($(q "$BUSY_EVENT") progress $(q "$STATE") $(q "$ID"
 # returning at a gate, an outcome, or its wait bound) refreshes the published
 # validation record through one follower (bin/fm-crew-state.sh "PUBLISHED RECORD").
 CREW_STATE_FOLLOW="FM_STATE_OVERRIDE=$(q "$STATE") $(q "$SCRIPT_DIR/fm-crew-state.sh") --follow-detached $(q "$ID")"
+PRE_TOOL_HOOK=''
 if [ "$SECONDMATE" != 1 ] && [ "$(sed -n 's/^kind=//p' "$STATE/$ID.meta" 2>/dev/null | tail -1)" = ship ]; then
+  PRE_TOOL_HOOK="hook_event=\$(cat); case \"\$hook_event\" in *no-mistakes*) $CREW_STATE_FOLLOW >/dev/null 2>&1 || true ;; esac"
   PROGRESS_HOOK="hook_event=\$(cat); $PROGRESS_HOOK; case \"\$hook_event\" in *no-mistakes*) $CREW_STATE_FOLLOW >/dev/null 2>&1 || true ;; esac"
 fi
 
@@ -467,6 +469,7 @@ run_turn() {  # <prompt>
   [ "$SECONDMATE" != 1 ] || watch_start || return 1
   [ "$SECONDMATE" != 1 ] || watch_confirm_handling_delivery || return 1
   local -a args=(run "$prompt" --max-turns "$MAX_TURNS" --deadline-secs "$DEADLINE" --hook "pre_complete=$EVIDENCE_HOOK")
+  [ -z "$PRE_TOOL_HOOK" ] || args+=(--hook "pre_tool_use=$PRE_TOOL_HOOK")
   [ -z "$PROGRESS_HOOK" ] || args+=(--hook "post_tool_use=$PROGRESS_HOOK")
   [ -z "$MODEL" ] || args+=(--model "$MODEL")
   [ -z "$MCP_CONFIG" ] || args+=(--mcp-config "$MCP_CONFIG")

@@ -2886,7 +2886,8 @@ cleanup_firstmate_home_children() {
     fm_backlog_atomic_transition remove "$sub_state/$child_id.meta" "task record" "$sub_state" || return 1
     rm -f "$sub_state/$child_id.turn-ended" "$sub_state/$child_id.progress" \
       "$sub_state/$child_id.reconcile-nudged" "$sub_state/$child_id.crew-state"
-    rm -rf "$sub_state/.$child_id.crew-state-follow"
+    fm_lock_remove_path "$sub_state/.$child_id.crew-state-follow" || true
+    fm_lock_remove_path "$sub_state/.$child_id.crew-state.lock" || true
   done
 }
 
@@ -3219,7 +3220,8 @@ rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.progress" \
   "$STATE/$ID.reconcile-nudged" "$STATE/$ID.crew-state"
 # The published validation record's follower exits on its own once the copy or
 # record is gone (bin/fm-crew-state.sh "PUBLISHED RECORD"); its lock goes here.
-rm -rf "$STATE/.$ID.crew-state-follow"
+fm_lock_remove_path "$STATE/.$ID.crew-state-follow" || true
+fm_lock_remove_path "$STATE/.$ID.crew-state.lock" || true
 # The steering inbox (bin/fm-task-inbox-lib.sh) is runtime state for the
 # retired endpoint; teardown only runs after landing is confirmed, so any
 # leftover unhandled steer here is moot rather than unlanded work.

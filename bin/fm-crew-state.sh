@@ -115,18 +115,20 @@
 #   Who refreshes it: every caller that already learns of a run-step change.
 #   bin/fm-deck-worker.sh publishes from its idle-prompt pipeline check, and
 #   starts `--follow-detached` when a turn ends with the run still working and
-#   from its post_tool_use hook whenever the tool call involved no-mistakes (the
-#   worker's own drive call returning at a gate, an outcome, or its wait bound).
+#   from its pre_tool_use and post_tool_use hooks whenever the tool call involved
+#   no-mistakes, covering both a blocking drive call and its return.
 #   no-mistakes offers no step-change subscription, so the steps a run walks
 #   through inside one blocking drive call are seen only by the follower: the
-#   single poll, one per task, alive only while the run reads working. Each
+#   single poll, one per task, alive while the run reads working or within its
+#   FM_CREW_STATE_FOLLOW_GRACE_SECS (default 60) start grace. Each
 #   FM_CREW_STATE_FOLLOW_SECS (default 5) it asks `no-mistakes axi status`
 #   (about 0.2 s) for the run's id, status, gate and step statuses, and runs the
 #   full read only when those changed or FM_CREW_STATE_FOLLOW_FULL_SECS (default
-#   60) passed; it exits when the run stops reading working, the metadata goes,
-#   or FM_CREW_STATE_FOLLOW_MAX_SECS (default 21600; 0 disables it) runs out. A second follower
-#   for the same task exits at once (state/.<id>.crew-state-follow holds the
-#   owner's pid).
+#   60) passed; after the grace it exits on a non-working read, or at any time
+#   when the metadata goes or FM_CREW_STATE_FOLLOW_MAX_SECS (default 21600;
+#   0 disables it) runs out. A second follower for the same task exits at once
+#   (state/.<id>.crew-state-follow holds the owner's pid). Publication serializes
+#   the entire read under state/.<id>.crew-state.lock; plain reads take no lock.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -248,6 +250,18 @@ emit() {  # <state> <source> [detail]
 
 # --- meta resolution --------------------------------------------------------
 
+if [ "$MODE" = publish ] || [ "$MODE" = follow ]; then
+  # shellcheck source=bin/fm-wake-lib.sh
+  . "$SCRIPT_DIR/fm-wake-lib.sh"
+fi
+if [ "$MODE" = publish ]; then
+  PUBLISH_LOCK="$STATE/.$ID.crew-state.lock"
+  fm_lock_acquire_wait "$PUBLISH_LOCK" || exit 1
+  trap 'fm_lock_release "$PUBLISH_LOCK"' EXIT
+  trap 'exit 143' TERM
+  trap 'exit 130' INT
+fi
+
 [ -f "$META" ] || emit unknown none "no metadata for $ID"
 
 meta_value() {  # <key>
@@ -280,26 +294,21 @@ crew_state_fingerprint() {
 
 # Header: PUBLISHED RECORD (the follower).
 crew_state_follow() {
-  local lock="$STATE/.$ID.crew-state-follow" owner deadline now fp last='' line full_at=0
+  local lock="$STATE/.$ID.crew-state-follow" deadline grace_until now fp last='' line='' full_at=0
   local every=${FM_CREW_STATE_FOLLOW_SECS:-5} full=${FM_CREW_STATE_FOLLOW_FULL_SECS:-60}
-  local bound=${FM_CREW_STATE_FOLLOW_MAX_SECS:-21600}
+  local bound=${FM_CREW_STATE_FOLLOW_MAX_SECS:-21600} grace=${FM_CREW_STATE_FOLLOW_GRACE_SECS:-60}
   case "$every" in ''|*[!0-9]*|0) every=5 ;; esac
   case "$full" in ''|*[!0-9]*) full=60 ;; esac
   case "$bound" in ''|*[!0-9]*) bound=21600 ;; esac
-  [ "$PUBLISH_READY" = 1 ] || exit 0
-  if ! mkdir "$lock" 2>/dev/null; then
-    owner=$(cat "$lock/pid" 2>/dev/null || true)
-    case "$owner" in ''|*[!0-9]*) ;; *)
-      if ps -p "$owner" -o args= 2>/dev/null | grep -q 'fm-crew-state.sh --follow'; then
-        exit 0
-      fi ;;
-    esac
-    rm -rf -- "$lock"
-    mkdir "$lock" 2>/dev/null || exit 0
-  fi
-  trap 'rm -rf -- "$lock"' EXIT
-  printf '%s\n' "$$" > "$lock/pid"
-  deadline=$(( $(date +%s) + bound ))
+  case "$grace" in ''|*[!0-9]*) grace=60 ;; esac
+  [ "$PUBLISH_READY" = 1 ] && [ "$bound" -gt 0 ] || exit 0
+  fm_lock_try_acquire "$lock" || exit 0
+  trap 'fm_lock_release "$lock"' EXIT
+  trap 'exit 143' TERM
+  trap 'exit 130' INT
+  now=$(date +%s)
+  deadline=$(( now + bound ))
+  grace_until=$(( now + grace ))
   while [ -f "$META" ] && [ -d "$WT" ]; do
     now=$(date +%s)
     [ "$now" -lt "$deadline" ] || break
@@ -307,8 +316,11 @@ crew_state_follow() {
     if [ "$fp" != "$last" ] || [ "$now" -ge "$full_at" ]; then
       line=$("$0" --publish "$ID" 2>/dev/null) || line=''
       full_at=$(( now + full ))
-      case "$line" in "state: working${SEP}source: run-step"*) ;; *) break ;; esac
     fi
+    case "$line" in
+      "state: working${SEP}source: run-step"*) ;;
+      *) [ "$(date +%s)" -lt "$grace_until" ] || break ;;
+    esac
     last=$fp
     sleep "$every"
   done

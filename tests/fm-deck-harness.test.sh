@@ -73,11 +73,11 @@ import json, sys
 with open(sys.argv[1], 'a') as output:
     output.write(json.dumps(sys.argv[2:]) + '\n')
 PYTHON
-prompt=$2; session=''; gate=''; progress=''
+prompt=$2; session=''; gate=''; progress=''; pre_tool=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --session) session=$2; shift 2 ;;
-    --hook) case "$2" in pre_complete=*) gate=${2#pre_complete=} ;; post_tool_use=*) progress=${2#post_tool_use=} ;; esac; shift 2 ;;
+    --hook) case "$2" in pre_complete=*) gate=${2#pre_complete=} ;; pre_tool_use=*) pre_tool=${2#pre_tool_use=} ;; post_tool_use=*) progress=${2#post_tool_use=} ;; esac; shift 2 ;;
     *) shift ;;
   esac
 done
@@ -85,6 +85,8 @@ done
 case "$prompt" in *slow*) sleep 0.8 ;; esac
 printf '{"type":"run_started","session":"%s","model":"m"}\n' "$session"
 printf '{"type":"text_delta","text":"echo: %s"}\n' "$prompt"
+[ -z "$pre_tool" ] || printf '%s' "${FM_TEST_HOOK_EVENT:-}" | bash -c "$pre_tool" || true
+[ -z "${FM_TEST_TOOL_COMMAND:-}" ] || bash -c "$FM_TEST_TOOL_COMMAND" || exit 1
 case "$prompt" in
   *replace-status*)
     rm -f -- "$FM_TEST_STATUS"
@@ -1758,20 +1760,44 @@ test_pipeline_state_change_wakes_an_idle_worker_once() {
 test_a_no_mistakes_tool_call_publishes_the_validation_record() {
   local dir="$TMP_ROOT/pipeline-hook" gen _
   make_pipeline_case "$dir"
+  cp "$dir/nm-run" "$dir/running-run"
+  : > "$dir/nm-run"
+  cat > "$dir/tool" <<'SH'
+#!/usr/bin/env bash
+set -eu
+dir=$1
+for _ in $(seq 100); do
+  [ "$(grep -c 'axi status' "$dir/nm-queries.log" 2>/dev/null || true)" -ge 3 ] && break
+  sleep 0.1
+done
+[ -d "$dir/state/.t1.crew-state-follow" ]
+[ ! -f "$dir/state/t1.crew-state" ]
+cp "$dir/running-run" "$dir/nm-run.tmp"
+mv "$dir/nm-run.tmp" "$dir/nm-run"
+for _ in $(seq 100); do
+  if grep -q 'verdict=working' "$dir/state/t1.crew-state" 2>/dev/null; then
+    : > "$dir/published-during-tool"
+    exit 0
+  fi
+  sleep 0.1
+done
+exit 1
+SH
   gen=$("$BUSY_EVENT" arm "$dir/state" t1)
-  printf 'write-status\n/quit\n' | PATH="$dir/fakebin:$PATH" FM_TEST_NM_RUN="$dir/nm-run" \
+  printf '/quit\n' | PATH="$dir/fakebin:$PATH" FM_TEST_NM_RUN="$dir/nm-run" \
     FM_TEST_STATUS="$dir/state/t1.status" FM_DECK_PIPELINE_WAIT_SECS=0 \
+    FM_CREW_STATE_FOLLOW_SECS=1 FM_CREW_STATE_FOLLOW_GRACE_SECS=3 FM_CREW_STATE_FOLLOW_MAX_SECS=20 \
+    FM_TEST_TOOL_COMMAND="bash '$dir/tool' '$dir'" \
     FM_TEST_HOOK_EVENT='{"tool":"shell","input":{"command":"no-mistakes axi run --intent x"}}' \
     "$WORKER" --id t1 --state "$dir/state" --gen "$gen" --deck "$dir/deck" -- write-status \
     > "$dir/pane.out" 2>&1 || fail "the driver did not exit cleanly: $(cat "$dir/pane.out")"
-  for _ in $(seq 100); do [ -f "$dir/state/t1.crew-state" ] && [ ! -d "$dir/state/.t1.crew-state-follow" ] && break; sleep 0.1; done
-  # The run is still working, so its follower keeps going; end it by ending the run.
+  [ -f "$dir/published-during-tool" ] || fail "the pre hook did not publish a delayed run during the blocking tool call"
   pipeline_run "$dir" passed
   for _ in $(seq 100); do grep -q 'verdict=done' "$dir/state/t1.crew-state" 2>/dev/null && [ ! -d "$dir/state/.t1.crew-state-follow" ] && break; sleep 0.1; done
   assert_grep 'run=01PIPE' "$dir/state/t1.crew-state" "a no-mistakes tool call did not publish the run's record"
   assert_grep 'verdict=done' "$dir/state/t1.crew-state" "the follower did not publish the finished run"
   [ ! -d "$dir/state/.t1.crew-state-follow" ] || fail "the follower outlived the run it followed"
-  pass "fm-deck-worker: a tool call involving no-mistakes publishes the validation record through its follower"
+  pass "fm-deck-worker: the pre hook follows a delayed run during a blocking tool call"
 }
 
 test_pipeline_omits_terminal_id_when_a_live_successor_is_working() {
