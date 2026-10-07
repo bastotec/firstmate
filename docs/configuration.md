@@ -55,6 +55,7 @@ state/
   <id>.status             crewmate "<state>: <note>" wake events, not current state (bin/fm-crew-state.sh owns that)
   <id>.turn-ended         touched by bin/fm-deck-worker.sh at turn end
   <id>.progress           in-turn native activity, read for the busy-age bound only (bin/fm-busy-event.sh)
+  <id>.crew-state         local ship task's validation record for file watchers; bin/fm-crew-state.sh "PUBLISHED RECORD" owns fields, refreshes, and cleanup
   <id>.inbox/             durable steering inbox; written by fm-send, removed by teardown (bin/fm-task-inbox-lib.sh)
   <id>.backlog-close      pending backlog transition for an interrupted cleanup (bin/fm-backlog-transition-lib.sh)
   <id>.external-wait      declared bounded external wait; written only by bin/fm-external-wait.sh, archived in external-waits/
@@ -88,6 +89,7 @@ state/
   .afk-contract afk-contracts/  away-posture record and archive; written only by bin/fm-afk-contract.sh
   .afk                    away or quiet mode flag (fm_afk_mode in bin/fm-wake-lib.sh)
   .afk-daemon.out .afk-launch.lock .afk-daemon-terminal  away daemon launch records (bin/fm-afk-launch.sh)
+  .<id>.crew-state.lock .<id>.crew-state-follow .<id>.crew-state-follow.rearm  validation publication, follower ownership, and re-arm internals (bin/fm-crew-state.sh); never touch
   .watch.lock .wake-queue.lock  watcher singleton and queue locks
   .hash-* .count-* .stale-* .stale-since-* .churn-since-* .paused-* .ext-wait-resurfaced-* .wedge-escalations-* .writing-* .seen-* .hb-surfaced-* .last-* .heartbeat-streak  watcher internals; never touch
   .watch-triage.log       absorbed-wake debug log; safe to delete
@@ -659,6 +661,10 @@ FM_RECONCILE_REQUEST_MAX_BYTES=1048576 # largest snapshot accepted for a reconci
 # no-mistakes queries and teardown
 FM_CREW_STATE_NM_TIMEOUT=10    # per no-mistakes query in fm-crew-state.sh
 FM_CREW_STATE_RUNS_LIMIT=200   # recent no-mistakes runs scanned for attribution
+FM_CREW_STATE_FOLLOW_SECS=5         # validation-record follower poll during working state or start grace
+FM_CREW_STATE_FOLLOW_FULL_SECS=60   # follower's full re-read even when axi status looks unchanged
+FM_CREW_STATE_FOLLOW_GRACE_SECS=60  # keep polling a non-working read during the follower's start grace
+FM_CREW_STATE_FOLLOW_MAX_SECS=21600 # bound on one follower's life; 0 disables polling, not detached publication
 FM_TEARDOWN_NM_TIMEOUT=10      # per no-mistakes query or abort in fm-teardown.sh
 FM_TEARDOWN_NM_RUNS_LIMIT=200  # recent runs scanned to prove a parked run belongs to teardown's task
 FM_STALE_WORKTREE_LOCK_AGE_SECS=30            # age before teardown treats a leftover index.lock as stale

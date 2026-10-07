@@ -1928,7 +1928,7 @@ test_secondmate_pr_registration_publishes_ready_line() {
 # every record) while the parent channel cannot be written; a rerun after the
 # repair delivers and completes.
 test_secondmate_home_teardown_delivers_final_line_or_refuses() {
-  local case_dir rc channel wt_head err seq generation
+  local case_dir rc channel wt_head err seq generation follow_owner publish_owner
 
   case_dir=$(make_case mate-teardown-delivers)
   configure_secondmate_home "$case_dir" local "$case_dir/parent"
@@ -1957,6 +1957,15 @@ test_secondmate_home_teardown_delivers_final_line_or_refuses() {
   write_meta "$case_dir" local-only ship
   mkdir -p "$case_dir/tasktmp"
   printf '!\n' > "$case_dir/state/task-x1.turn-ended"
+  printf 'verdict=done\n' > "$case_dir/state/task-x1.crew-state"
+  : > "$case_dir/state/.task-x1.crew-state-follow.rearm"
+  FM_STATE_OVERRIDE="$case_dir/state" bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2" && fm_lock_try_acquire "$3"
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$case_dir/state/.task-x1.crew-state-follow" \
+    "$case_dir/state/.task-x1.crew-state.lock" || fail "could not seed validation locks"
+  follow_owner=$(readlink "$case_dir/state/.task-x1.crew-state-follow")
+  publish_owner=$(readlink "$case_dir/state/.task-x1.crew-state.lock")
   printf 'tasktmp=%s\n' "$case_dir/tasktmp" >> "$case_dir/state/task-x1.meta"
   wt_commit "$case_dir" "merged work"
   wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
@@ -1990,6 +1999,11 @@ test_secondmate_home_teardown_delivers_final_line_or_refuses() {
     || fail "mate-teardown-refuses: the rerun did not deliver the final line"
   [ ! -e "$case_dir/state/task-x1.meta" ] || fail "mate-teardown-refuses: rerun left the task record"
   [ ! -e "$case_dir/state/task-x1.turn-ended" ] || fail "mate-teardown-refuses: rerun left the turn-ended marker"
+  [ ! -e "$case_dir/state/task-x1.crew-state" ] || fail "mate-teardown-refuses: rerun left the published validation record"
+  [ ! -e "$case_dir/state/.task-x1.crew-state-follow" ] || fail "mate-teardown-refuses: rerun left the record's follower lock"
+  [ ! -e "$case_dir/state/.task-x1.crew-state.lock" ] || fail "mate-teardown-refuses: rerun left the record's publish lock"
+  [ ! -e "$case_dir/state/.task-x1.crew-state-follow.rearm" ] || fail "mate-teardown-refuses: rerun left the follower's re-arm request"
+  [ ! -e "$follow_owner" ] && [ ! -e "$publish_owner" ] || fail "mate-teardown-refuses: rerun left the validation lock owners"
   pass "a secondmate home's teardown delivers the child's final line or refuses until it can"
 }
 
