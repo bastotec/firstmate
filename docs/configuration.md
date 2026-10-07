@@ -139,8 +139,11 @@ For a home whose `FM_HOME` is the code root, bootstrap reports a code-root backl
 Every task endpoint lives on the stream backend: one hub serves the fleet, and each task's pseudoterminal is owned by an agent on the machine that runs it.
 The hub URL and token come from `config/stream-hub` and `config/stream-token` (or `config/stream-hub-tokens`); [`stream-backend.md`](stream-backend.md) owns setup, prerequisites, the security model, and limits, and [`architecture.md`](architecture.md#runtime-session-backends) owns the runtime-internal axes.
 Treehouse remains the worktree provider, since stream is a session provider only.
-`config/backend` (first non-empty line) and `FM_BACKEND` may name `stream`; absent means stream, and any other value is refused.
-A task record on a retired backend (`tmux`, `herdr`, or earlier ones), including a record with no `backend=` field, reads as gone (`unverified` to the recovery classifier), its kill is unconfirmed, and it cannot be relaunched; retire it with [`bin/fm-retire-endpoint.sh`](../bin/fm-retire-endpoint.sh) once you have checked nothing still runs behind it.
+New local spawns select an explicitly authorized per-task `--backend` first, then `FM_BACKEND`, then the first non-empty line of `config/backend`, then `stream`.
+A per-task override requires a current captain instruction or the task's accepted brief and never establishes precedent for later tasks.
+Any selection other than `stream` is refused, and the earlier `zellij`, `orca`, and `cmux` adapters remain unsupported.
+A task record on the retired `tmux` or `herdr` backend, including a record with no `backend=` field, stays readable only for reconciliation and retirement: the recovery classifier reports `unverified`, its kill is unconfirmed, and relaunch is refused.
+[Endpoint retirement](stream-backend.md#retiring-a-record-no-backend-can-answer-for) owns the operator assertion required to retire such a record with [`bin/fm-retire-endpoint.sh`](../bin/fm-retire-endpoint.sh).
 `fm-spawn.sh` spawns local ship, scout, and `--secondmate` tasks on stream, and [remote placement](remote-secondmates.md#normal-operation) owns remote secondmates.
 A spawn refusal from a missing dependency, version gate, or unreachable hub is terminal, and firstmate surfaces it as a blocker.
 Every spawn records `backend=stream`, `endpoint_task_id=` (the cleanup binding between the metadata filename and the opaque endpoint), `stream_hub=`, and `stream_endpoint_id=` in task meta.
@@ -153,6 +156,7 @@ Otherwise an exact task id matching `state/<id>.meta` wins before the legacy `fm
 A metadata-routed selector returns the recorded target (`window=`) and carries secondmate-marker and recorded-harness context; explicit escape hatches do not.
 For explicit targets no metadata names, [`fm-send.sh`'s header](../bin/fm-send.sh) owns live-endpoint verification on this home's hub, and the constrained host-decision answer mode.
 `fm-teardown.sh <id>` validates the complete metadata-only endpoint identity before any runtime dispatch or cleanup, and preserves and refuses missing, duplicate, malformed, backend-inconsistent, or task-mismatched endpoint records.
+Retired tmux records still require the exact `fm-<id>` window shape, and retired Herdr records their task binding and consistent session, workspace, tab, and pane fields, so retirement cannot target a mismatched record.
 `config/backend` is inherited under the primary-authoritative contract owned by [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md).
 
 ## Away-mode supervisor backend (FM_SUPERVISOR_BACKEND / FM_SUPERVISOR_TARGET)
@@ -174,11 +178,7 @@ When the steer client reports no deck-chat primary (exit 3), the digest is typed
 
 ## Away-mode wedge alarm channels (config/wedge-alarm)
 
-When away-mode delivery wedges past `FM_MAX_DEFER_SECS`, the sub-supervisor writes `state/.subsuper-inject-wedged` and raises a rate-limited active alert that can reach the captain even when the primary's endpoint is unreadable.
-`config/wedge-alarm` lists channel directives (`off`, `auto`/`default`, `osascript`, `command:<cmd>`), one per line, and `FM_WEDGE_ALARM_CHANNEL` overrides the file with one directive.
-`off` anywhere disables every alert, and an absent file means `auto`, which is default-on on macOS so a wedged away-mode primary is never silent.
-A missing or failing channel logs and falls through to the next, never crashing the daemon.
-[`wedge-alarm.md`](wedge-alarm.md) owns the channel reference, [`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) the evidence, and [`examples/wedge-alarm`](examples/wedge-alarm) a copyable config.
+[`wedge-alarm.md`](wedge-alarm.md) owns `config/wedge-alarm` directives, defaults, overrides, delivery bounds, and safety; [`examples/wedge-alarm`](examples/wedge-alarm) is a copyable config.
 
 ## Trace context propagation (config/trace-context / FM_TRACE_CONTEXT)
 
@@ -347,7 +347,7 @@ The filter applies at the worker command boundary, after the terminal daemon and
 No script matches the rules: firstmate picks the best matching rule with judgment under `AGENTS.md` section 4, resolves its profile object or array, and passes only concrete `--harness`, `--model`, and `--effort` flags to `fm-spawn.sh`.
 While the file exists, `fm-spawn.sh` refuses crewmate and scout spawns without an explicit harness (`--harness`, a positional adapter, or a raw command; batch spawns use a shared `--harness`), and malformed configuration must be fixed rather than selected around.
 Secondmate spawns are exempt and resolve through `config/secondmate-harness`.
-This section owns the schema; `AGENTS.md` section 4 owns the intake boundary and how firstmate picks from an array.
+This section owns the schema; `AGENTS.md` section 4 owns the intake boundary, and [`harness-adapters`](../.agents/skills/harness-adapters/references/common/dispatch.md#configured-profile-selection) owns how firstmate picks from an array.
 
 ```json
 {

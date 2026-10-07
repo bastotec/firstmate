@@ -116,10 +116,10 @@ On return, `bin/fm-afk-return.sh` owns ordered shutdown, the archive, the return
 The presence-gated sub-supervisor `bin/fm-supervise-daemon.sh`, started by the `/afk` skill, owns triage while its `state/.afk` flag exists, and the watcher runs one-shot.
 Both share `bin/fm-classify-lib.sh` and classify every byte appended since they last read a log, never its last line alone.
 The daemon escalates as one batched digest with the canonical `away-supervisor` kind from `bin/fm-operational-input.sh`, so firstmate can tell it from a real message.
-It types only into a composer `bin/fm-composer-lib.sh` classifies as affirmatively `empty`, so every other or future verdict defers.
+For typed-input delivery, it types only into a composer `bin/fm-composer-lib.sh` classifies as affirmatively `empty`, so every other or future verdict defers.
 Stalled delivery writes `state/.subsuper-inject-wedged` and attempts an active alert after `FM_MAX_DEFER_SECS` instead of deferring forever.
 Away housekeeping has no worktree-write deferral, so a quiet crew still escalates as a possible wedge.
-[`configuration.md`](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target) owns the supervisor transport.
+[`configuration.md`](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target) owns the supervisor transport, delivery routing, and fallback, and the [`afk` skill](../.agents/skills/afk/SKILL.md#busy-guard-and-composer-guard) owns the typed-injection guards.
 
 ### Data plane and control plane
 

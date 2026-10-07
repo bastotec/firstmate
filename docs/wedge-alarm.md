@@ -42,4 +42,5 @@ The primary's `service-alert` entrypoint restores the caller's seam after sourci
 Production leaves the seam unset and uses the configured real channels.
 
 `tests/fm-daemon.test.sh` covers directive parsing, rate limiting, timeout and process-group cleanup, argv-safe dispatch, channel fallback, and safe `command:` summary delivery.
-[`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) records the bounded manual channel proof.
+`tests/fm-deck-chat.test.sh` covers the primary down alert's channel use, its once-per-outage rule, and its marker.
+[`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) records the bounded manual macOS channel proof.

@@ -17,6 +17,12 @@ The portable regression builds every case from real renamed processes and no ins
 bin/fm-test-run.sh tests/fm-harness-precedence.test.sh
 ```
 
+## Composer classification
+
+The shared composer classifier (`bin/fm-composer-lib.sh`, `fm_composer_classify_screen`) owns every composer shape; the stream adapter contributes only a capture and a capability descriptor.
+`tests/fm-composer-lib.test.sh` pins the retained shapes portably from captured samples, including Grok's three-column titled-bottom-border overhang and Codex 0.154's idle braille starfield.
+Those samples were captured live from harnesses that are no longer supported, so they establish only the measured renderings, and no live composer run against a Deck worker over stream is recorded here.
+
 ## stream
 
 ### Deck native mid-turn steering over stream
@@ -74,7 +80,7 @@ These observations were supplied without a run date, tool versions, binary revis
 [`tests/fixtures.sh`](../../tests/fixtures.sh)'s `fm_test_fake_stream` supplies fake fleet endpoints to the real adapter; its header owns setup and helper usage, and [`stream-hub-stub.py`](../../tests/assets/stream-hub-stub.py)'s docstring owns fake-shell behavior.
 `tests/fm-test-fixtures.test.sh`, `tests/fm-backend.test.sh`, `tests/fm-send-strict.test.sh`, and `tests/fm-crew-state.test.sh` exercise fixture round trips, spawn metadata, unrecorded explicit-target routing, and busy/idle/missing/unreachable crew reads.
 `tests/fm-control-recover-missing.test.sh` covers new-endpoint rebinding, refusal for a local agent with the task's label and owning status path, preservation of unrelated agents, and confirmed versus unconfirmed cleanup after a failed rebind.
-`tests/fm-endpoint-rebind-lib.test.sh` pins endpoint-only record replacement and identity refusals.
+`tests/fm-endpoint-rebind-lib.test.sh` pins endpoint-only record replacement and identity refusals; `tests/fm-teardown-endpoint-safety.test.sh` pins retired-record cleanup identity, and `tests/fm-backlog-atomicity.test.sh` covers operator retirement.
 These fake-fleet cases prove integration routing, not real PTY behavior or installed-harness identity.
 The local-PID regression in `tests/fm-backend-stream.test.sh` instead runs the real Python hub and agent with a harness-named stand-in process, checks that its reported PID exists locally, and refuses other-machine and unknown-endpoint PID reads.
 `tests/fm-stream-agent-kill-safety.test.sh` exercises Python foreground-job cleanup, and the Rust PTY tests `foreground_job_dies_with_its_endpoint`, `foreground_pipeline_dies_with_its_endpoint`, and `foreground_job_started_during_close_dies` in `crates/fm-stream-agent/src/pty.rs` cover the corresponding native cases.

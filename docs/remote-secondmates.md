@@ -77,7 +77,9 @@ bin/fm-on.sh <secondmate-id|ssh-alias> fm-remote-doctor.sh
 ```
 
 That run is read-only; route seeding and existing-home migration run the same check.
-It covers stream tools, the stream credential, the hub protocol, Linux logout survival, the GUI login session on macOS, and the remote job worker (including its Aqua scope on macOS).
+It checks stream tools, Linux logout survival, the GUI login session on macOS, and the remote job worker (including its Aqua scope on macOS).
+For an absent destination home, the home-specific credential and hub checks report `skip`, allowing seeding and migration to provision it first.
+Once that home exists, the doctor also requires its stream credential and authenticated hub protocol check before launch or relaunch.
 `--backend stream` is still accepted, and stream is the only backend.
 Stream gaps require operator action: `--fix` does not start a hub or mint a credential.
 It prints the exact `PATH` its own entrypoint launch produced, executes its required-tool probe through the installed worker when one is available, reports where each required and optional tool resolved, then reports one line per readiness check.
@@ -101,7 +103,7 @@ These steps are never automated and are always reported rather than silently att
 - The first console login on that Mac, and automatic login in System Settings > Users & Groups when the machine runs headless and must come back on its own after a reboot.
 - FileVault, which holds a reboot at pre-boot authentication before any login session exists.
 - Installing any missing required tool that no safe wrapper can resolve.
-- The required remote tool set is `git`, `jq`, compatible `tasks-axi`, `treehouse`, and `deck`; Deck additionally requires `python3`.
+- The doctor header and required-tool report own the remote tool set, including Deck and the stream adapter's tools.
 - Deck's model endpoint credential on that host (its proxai client key, see [Deck's adapter reference](../.agents/skills/harness-adapters/references/harness/deck.md)), and any keychain password prompt reading it needs.
 
 Firstmate never writes an auto-login password, never changes FileVault, and never stores an account password.
@@ -202,7 +204,8 @@ bin/fm-spawn.sh <id> --secondmate
 
 The primary resolves the verified secondmate harness and optional model and effort, runs the same readiness gate the seed runs, transfers the inherited-material allowlist, and asks the remote host to launch on stream.
 An explicit request for any other backend is refused, and the remote host refuses one too.
-A parent record that still names a retired backend (tmux or herdr) is refused; stop any agent left on that endpoint by hand, then retire the record with `bin/fm-retire-endpoint.sh`.
+A parent record that still names a retired backend (tmux or herdr) is refused; stop any agent left on that endpoint by hand, then use the host-local retirement command printed by `fm-remote-secondmate-control.sh`.
+That command selects the remote home's parent-route record, not its ordinary task state; [Endpoint retirement](stream-backend.md#retiring-a-record-no-backend-can-answer-for) owns the assertion and preservation guarantees.
 A launch after a host has drifted out of readiness fails with the doctor's own gap text instead of leaving a half-created endpoint.
 Raw launch commands are not accepted for remote secondmates.
 
