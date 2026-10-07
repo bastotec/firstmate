@@ -14,6 +14,8 @@
 #   fm-card.sh write <task-id> --file <card.json>
 #   fm-card.sh show <task-id>
 #   fm-card.sh remove <task-id>
+#   fm-card.sh draft <task-id> --title <title> --project <project> --situation <text>
+#   fm-card.sh backfill
 #
 # Input JSON for write carries project, title, situation, options and
 # recommended; the script adds version, task, draft, created and updated.
@@ -21,6 +23,11 @@
 # options keyed "1".."9" in order; label <= 40 chars; instruction <= 1000
 # chars; recommended names one option; no control characters except the one
 # newline allowed in situation.
+# A draft card (draft: true, no options, recommended null) stands in for a
+# hold whose holder could not write a judgment; `draft` never replaces a full
+# card, and the first mate replaces drafts with full cards at its next review.
+# `backfill` drafts a card for every captain-held task in this home that has
+# none, using its title, repo and hold reason.
 # `show` exits 1 when the task has no card and 2 when its card is invalid.
 # FM_CARD_NOW overrides the UTC timestamp for tests.
 set -eu
@@ -30,6 +37,7 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CARDS="$STATE/cards"
+TASKS="$SCRIPT_DIR/fm-tasks-axi.sh"
 
 usage() { awk '/^# Usage:/{on=1; next} on && /^#$/{exit} on{sub(/^#   /, ""); print}' "${BASH_SOURCE[0]}"; }
 die() { printf 'fm-card: %s\n' "$1" >&2; exit "${2:-2}"; }
@@ -129,11 +137,80 @@ cmd_remove() {
   rm -f -- "$(card_path "$id")"
 }
 
+tasks() { FM_HOME="$FM_HOME" "$TASKS" "$@"; }
+
+# A tasks-axi show field arrives either bare or as a JSON-encoded string.
+shown_value() {  # <show-output> <field>
+  local v
+  v=$(printf '%s\n' "$1" | sed -n "s/^  $2: //p" | head -1)
+  case "$v" in
+    \"*\") v=$(printf '%s' "$v" | jq -r . 2>/dev/null) || v='' ;;
+  esac
+  [ "$v" != '-' ] || v=''
+  printf '%s' "$v"
+}
+
+# Situation for a draft: first two lines, at most 280 characters, as JSON.
+clip_situation() {  # <text>
+  printf '%s' "$1" | awk 'NR<=2' | jq -Rs 'rtrimstr("\n") | .[0:280]'
+}
+
+cmd_draft() {
+  local id=${1:-} title='' project='' situation='' p ts
+  [ "$#" -ge 1 ] && shift
+  require_slug "$id"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --title) shift; title=${1:-} ;;
+      --project) shift; project=${1:-} ;;
+      --situation) shift; situation=${1:-} ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+  [ -n "$title" ] && [ -n "$project" ] && [ -n "$situation" ] \
+    || die "draft needs --title, --project and --situation"
+  case "$project" in *[!A-Za-z0-9._-]*) project=firstmate ;; esac
+  p=$(card_path "$id")
+  if [ -f "$p" ] && [ "$(jq -r '.draft // false' "$p" 2>/dev/null)" = false ]; then
+    printf 'kept: %s\n' "$p"
+    return 0
+  fi
+  ts=$(now)
+  jq -cn --arg task "$id" --arg project "$project" --arg title "$title" \
+    --argjson situation "$(clip_situation "$situation")" --arg ts "$ts" '
+    {version: 1, task: $task, project: $project, title: ($title | .[0:120]),
+     situation: $situation, options: [], recommended: null, draft: true,
+     created: $ts, updated: $ts}' | store_card "$id"
+}
+
+# Ids of tasks held for the captain: the last column of each listed row is
+# its hold kind, and an id is a slug, so neither needs CSV decoding.
+captain_held_ids() {
+  tasks list --state held --fields hold_kind 2>/dev/null \
+    | sed -n 's/^  \([A-Za-z0-9._-][A-Za-z0-9._-]*\),.*,captain$/\1/p'
+}
+
+cmd_backfill() {
+  local id show title repo reason
+  for id in $(captain_held_ids); do
+    [ -f "$(card_path "$id")" ] && continue
+    show=$(tasks show "$id" --full 2>/dev/null) || continue
+    title=$(shown_value "$show" title)
+    repo=$(shown_value "$show" repo)
+    reason=$(shown_value "$show" hold_reason)
+    cmd_draft "$id" --title "${title:-$id}" --project "${repo:-firstmate}" --situation "${reason:-${title:-$id}}" >/dev/null
+    printf 'drafted: %s\n' "$id"
+  done
+}
+
 case "${1:-}" in
   validate) shift; cmd_validate "$@" ;;
   write) shift; cmd_write "$@" ;;
   show) shift; cmd_show "$@" ;;
   remove) shift; cmd_remove "$@" ;;
+  draft) shift; cmd_draft "$@" ;;
+  backfill) shift; cmd_backfill "$@" ;;
   -h|--help|help) usage ;;
   *) usage >&2; exit 2 ;;
 esac

@@ -106,8 +106,54 @@ test_remove_is_idempotent() {
   pass "fm-card: remove is idempotent"
 }
 
+tasks_in() {  # <home> <args...>
+  local home=$1
+  shift
+  FM_HOME="$home" FM_DATA_OVERRIDE="$home/data" FM_STATE_OVERRIDE="$home/state" "$ROOT/bin/fm-tasks-axi.sh" "$@"
+}
+
+test_draft_never_overwrites_a_full_card() {
+  local home in out
+  home=$(make_home draft)
+  run_card "$home" draft d1 --title "Approve PR84?" --project firstmate --situation "Obsolete approval request" >/dev/null \
+    || fail "draft failed"
+  out=$(run_card "$home" show d1)
+  assert_equals true "$(printf '%s' "$out" | jq -r .draft)" "draft flagged"
+  assert_equals 0 "$(printf '%s' "$out" | jq '.options|length')" "draft has no options"
+  in="$home/in.json"
+  good_card "$in"
+  run_card "$home" write d1 --file "$in" >/dev/null
+  out=$(run_card "$home" draft d1 --title x --project firstmate --situation y)
+  assert_contains "$out" "kept:" "draft reports it kept the full card"
+  assert_equals false "$(run_card "$home" show d1 | jq -r .draft)" "full card survives a later draft"
+  pass "fm-card: a draft never replaces a full card"
+}
+
+test_backfill_drafts_every_uncarded_captain_hold() {
+  local home out
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home backfill)
+  tasks_in "$home" add held-a "Decide A, with a comma" --kind captain --repo cadia >/dev/null
+  tasks_in "$home" hold held-a --reason "Line one of the reason" --kind captain >/dev/null
+  tasks_in "$home" add plain-b "Not held" --repo cadia >/dev/null
+  tasks_in "$home" add other-c "Held, not for the captain" --repo cadia >/dev/null
+  tasks_in "$home" hold other-c --reason "waiting on CI" >/dev/null
+  out=$(run_card "$home" backfill) || fail "backfill failed"
+  assert_contains "$out" "drafted: held-a" "held task drafted"
+  assert_not_contains "$out" "plain-b" "unheld task ignored"
+  assert_not_contains "$out" "other-c" "non-captain hold ignored"
+  assert_equals "Line one of the reason" "$(run_card "$home" show held-a | jq -r .situation)" "reason becomes the situation"
+  assert_equals "Decide A, with a comma" "$(run_card "$home" show held-a | jq -r .title)" "full title kept"
+  assert_equals cadia "$(run_card "$home" show held-a | jq -r .project)" "repo becomes the project"
+  out=$(run_card "$home" backfill)
+  assert_not_contains "$out" "drafted: held-a" "backfill is idempotent"
+  pass "fm-card: backfill drafts a card for every uncarded captain hold, once"
+}
+
 test_write_and_show_round_trip
 test_validate_names_the_broken_field
 test_show_reports_a_corrupt_card_as_invalid
 test_rejects_unsafe_task_ids
 test_remove_is_idempotent
+test_draft_never_overwrites_a_full_card
+test_backfill_drafts_every_uncarded_captain_hold
