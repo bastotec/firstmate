@@ -269,7 +269,7 @@ test_answer_replays_and_repairs_remove_leftover_cards() {
     assert_equals "$before" "$(tasks_in "$home" show "$id" --full)" "replay does not repeat the backlog transition"
   done
   run_captain "$home" hold repair --title Call --reason r >/dev/null || fail "hold failed"
-  tasks_in "$home" done repair >/dev/null || fail "external close failed"
+  tasks_in "$home" "done" repair >/dev/null || fail "external close failed"
   run_captain "$home" answer repair --decision-file "$dec" >/dev/null || fail "answer repair failed"
   assert_absent "$home/state/cards/repair.json" "retroactive repair removes leftover card"
   assert_contains "$(tasks_in "$home" show repair --full)" "Resolution mode: repaired" "repair retains its resolution mode"
