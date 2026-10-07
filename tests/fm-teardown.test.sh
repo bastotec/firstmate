@@ -1957,6 +1957,8 @@ test_secondmate_home_teardown_delivers_final_line_or_refuses() {
   write_meta "$case_dir" local-only ship
   mkdir -p "$case_dir/tasktmp"
   printf '!\n' > "$case_dir/state/task-x1.turn-ended"
+  printf 'verdict=done\n' > "$case_dir/state/task-x1.crew-state"
+  mkdir -p "$case_dir/state/.task-x1.crew-state-follow"
   printf 'tasktmp=%s\n' "$case_dir/tasktmp" >> "$case_dir/state/task-x1.meta"
   wt_commit "$case_dir" "merged work"
   wt_head=$(git -C "$case_dir/wt" rev-parse HEAD)
@@ -1990,6 +1992,8 @@ test_secondmate_home_teardown_delivers_final_line_or_refuses() {
     || fail "mate-teardown-refuses: the rerun did not deliver the final line"
   [ ! -e "$case_dir/state/task-x1.meta" ] || fail "mate-teardown-refuses: rerun left the task record"
   [ ! -e "$case_dir/state/task-x1.turn-ended" ] || fail "mate-teardown-refuses: rerun left the turn-ended marker"
+  [ ! -e "$case_dir/state/task-x1.crew-state" ] || fail "mate-teardown-refuses: rerun left the published validation record"
+  [ ! -e "$case_dir/state/.task-x1.crew-state-follow" ] || fail "mate-teardown-refuses: rerun left the record's follower lock"
   pass "a secondmate home's teardown delivers the child's final line or refuses until it can"
 }
 

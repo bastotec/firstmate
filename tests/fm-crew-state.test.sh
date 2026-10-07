@@ -87,6 +87,7 @@ case "${1:-}" in
       status)
         shift
         if [ "${1:-}" = --run ]; then printf '%s\n' "${FM_FAKE_AXI_STATUS_RUN:-}"
+        elif [ -n "${FM_FAKE_AXI_STATUS_FILE:-}" ]; then cat "$FM_FAKE_AXI_STATUS_FILE"
         else printf '%s\n' "${FM_FAKE_AXI_STATUS:-}"; fi ;;
       logs)
         printf '%s\n' "${FM_FAKE_CI_LOGS:-}" ;;
@@ -450,6 +451,102 @@ EOF
 
 # ---------------------------------------------------------------------------
 # (a) active run-step is authoritative
+# --- the published record (--publish / --follow) ----------------------------
+
+publish_crew_state() {  # <case-dir> <id>
+  PATH="$1/fakebin:$PATH" FM_STATE_OVERRIDE="$1/state" "$CREW_STATE" --publish "$2"
+}
+
+record_value() {  # <record> <key>
+  sed -n "s/^$2=//p" "$1"
+}
+
+test_publish_writes_the_run_step_record_and_removes_it_without_a_run() {
+  reset_fakes
+  local d out record stamp
+  d=$(new_case publish)
+  make_repo_on_branch "$d/wt" fm/feat-pub
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-pub.meta" $(fm_test_stream_task "$d/state" "feat-pub") "worktree=$d/wt" "kind=ship"
+  record="$d/state/feat-pub.crew-state"
+  FM_FAKE_AXI_STATUS="$(run_running fm/feat-pub)"
+  out=$(run_crew_state "$d" feat-pub)
+  assert_contains "$out" "state: working" "a plain read still reads the run"
+  [ ! -e "$record" ] || fail "a plain read must not publish a record"
+
+  out=$(publish_crew_state "$d" feat-pub)
+  assert_contains "$out" "state: working · source: run-step" "publishing prints the same line a read prints"
+  assert_equals "$(record_value "$record" verdict)" working "the record carries the reader's verdict"
+  assert_equals "$(record_value "$record" step)" review "the record names the step the run is on"
+  assert_equals "$(record_value "$record" step_status)" running "the record carries that step's status"
+  assert_equals "$(record_value "$record" run)" 01RUN "the record carries the run id"
+  assert_equals "$(record_value "$record" detail)" "validating (running)" "the record carries the reader's detail"
+  stamp=$(record_value "$record" updated_at)
+  [ -n "$stamp" ] || fail "the record should say when it last changed"
+  sleep 1
+  publish_crew_state "$d" feat-pub >/dev/null
+  assert_equals "$(record_value "$record" updated_at)" "$stamp" "an unchanged read must not rewrite the record"
+
+  FM_FAKE_AXI_STATUS="$(run_parked_in_gate_block fm/feat-pub)"
+  publish_crew_state "$d" feat-pub >/dev/null
+  assert_equals "$(record_value "$record" verdict)" parked "a gate is published as parked"
+  assert_equals "$(record_value "$record" step)" review "a parked record names the gate's step"
+  assert_equals "$(record_value "$record" step_status)" fix_review "a parked record carries the gate's status"
+
+  FM_FAKE_AXI_STATUS="$(run_running fm/other-branch)"
+  publish_crew_state "$d" feat-pub >/dev/null
+  [ ! -e "$record" ] || fail "a task with no attributed run must not keep a stale record"
+  local leftover
+  for leftover in "$d/state"/.feat-pub.crew-state.*; do
+    [ ! -e "$leftover" ] || fail "no temporary record may be left behind: $leftover"
+  done
+
+  fm_write_meta "$d/state/scout-pub.meta" $(fm_test_stream_task "$d/state" "scout-pub") "worktree=$d/wt" "kind=scout"
+  publish_crew_state "$d" scout-pub >/dev/null
+  [ ! -e "$d/state/scout-pub.crew-state" ] || fail "a scout never publishes a record"
+  pass "publish: the run-step record is written atomically, only on change, and removed without a run"
+}
+
+test_the_follower_publishes_each_step_and_stops_when_the_run_leaves_working() {
+  reset_fakes
+  local d record waited=0 lock
+  d=$(new_case follow)
+  make_repo_on_branch "$d/wt" fm/feat-follow
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-follow.meta" $(fm_test_stream_task "$d/state" "feat-follow") "worktree=$d/wt" "kind=ship"
+  record="$d/state/feat-follow.crew-state"
+  lock="$d/state/.feat-follow.crew-state-follow"
+  FM_FAKE_AXI_STATUS_FILE="$d/axi-status"
+  export FM_FAKE_AXI_STATUS_FILE
+  run_running fm/feat-follow > "$FM_FAKE_AXI_STATUS_FILE"
+  PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" FM_CREW_STATE_FOLLOW_SECS=1 \
+    "$CREW_STATE" --follow-detached feat-follow
+  while [ "$waited" -lt 50 ] && [ "$(record_value "$record" step 2>/dev/null)" != review ]; do
+    sleep 0.2; waited=$((waited + 1))
+  done
+  assert_equals "$(record_value "$record" step)" review "the follower publishes the step it starts on"
+  [ -d "$lock" ] || fail "a working run keeps its follower"
+  PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" --follow feat-follow >/dev/null
+  # The second follower above returned at once instead of polling alongside.
+  { run_running fm/feat-follow | sed 's/review,running/review,completed/; s/steps\[2\]/steps[3]/'
+    printf '    test,running,0,0\n'; } > "$d/next"
+  mv "$d/next" "$FM_FAKE_AXI_STATUS_FILE"
+  waited=0
+  while [ "$waited" -lt 50 ] && [ "$(record_value "$record" step 2>/dev/null)" != test ]; do
+    sleep 0.2; waited=$((waited + 1))
+  done
+  assert_equals "$(record_value "$record" step)" test "the follower publishes the next step without being asked"
+  run_parked fm/feat-follow > "$FM_FAKE_AXI_STATUS_FILE"
+  waited=0
+  while [ "$waited" -lt 50 ] && [ -d "$lock" ]; do
+    sleep 0.2; waited=$((waited + 1))
+  done
+  assert_equals "$(record_value "$record" verdict)" parked "the follower publishes the gate"
+  [ ! -d "$lock" ] || fail "the follower stops once the run is no longer working"
+  unset FM_FAKE_AXI_STATUS_FILE
+  pass "follow: one follower publishes each step and stops at the gate"
+}
+
 test_active_run_is_authoritative() {
   reset_fakes
   local d; d=$(new_case active)
@@ -2157,6 +2254,8 @@ EOF
 }
 
 test_active_run_is_authoritative
+test_publish_writes_the_run_step_record_and_removes_it_without_a_run
+test_the_follower_publishes_each_step_and_stops_when_the_run_leaves_working
 test_stale_needs_decision_superseded
 test_stale_blocked_superseded
 test_daemon_claim_over_live_run_reads_run_alive

@@ -90,8 +90,43 @@
 #      classified by step 4. Backends with no classifier keep reading a failed
 #      capture as gone. The fallback's own comment owns the per-verdict rules.
 #
-# Read-only and side-effect free. Always exits 0 on a successful read regardless
-# of state; exit 2 only on a usage error (no id).
+# A plain read is read-only and side-effect free. Always exits 0 on a successful
+# read regardless of state; exit 2 only on a usage error (no id).
+#
+# PUBLISHED RECORD (--publish, --follow, --follow-detached)
+#   `fm-crew-state.sh --publish <id>` does the same read, then keeps
+#   state/<id>.crew-state current for a local ship task so a file watcher (the
+#   Bridge feed) sees the validation step without asking no-mistakes itself.
+#   While a no-mistakes run is attributed to the task the record is rewritten
+#   atomically (temp file + rename in state/), and only when a value other than
+#   updated_at changed; once no run is attributed it is removed. Lines, in order:
+#     verdict=<working|parked|done|failed|unknown>  this reader's state word
+#     step=<step>          the run's current step (the gate's step when parked,
+#                          else the first step not completed or skipped, else
+#                          the last step that ran); empty from the coarse ledger
+#     step_status=<word>   that step's status, or the coarse ledger's run status
+#     run=<id>             the no-mistakes run id, when axi status names it
+#     pr=<url>             the run's PR, when it has one
+#     detail=<text>        this reader's one-line detail
+#     updated_at=<UTC>     when any other line last changed
+#   Scouts, secondmates, remote mates, missing metadata and torn-down copies
+#   publish nothing; bin/fm-teardown.sh removes the record.
+#
+#   Who refreshes it: every caller that already learns of a run-step change.
+#   bin/fm-deck-worker.sh publishes from its idle-prompt pipeline check, and
+#   starts `--follow-detached` when a turn ends with the run still working and
+#   from its post_tool_use hook whenever the tool call involved no-mistakes (the
+#   worker's own drive call returning at a gate, an outcome, or its wait bound).
+#   no-mistakes offers no step-change subscription, so the steps a run walks
+#   through inside one blocking drive call are seen only by the follower: the
+#   single poll, one per task, alive only while the run reads working. Each
+#   FM_CREW_STATE_FOLLOW_SECS (default 5) it asks `no-mistakes axi status`
+#   (about 0.2 s) for the run's id, status, gate and step statuses, and runs the
+#   full read only when those changed or FM_CREW_STATE_FOLLOW_FULL_SECS (default
+#   60) passed; it exits when the run stops reading working, the metadata goes,
+#   or FM_CREW_STATE_FOLLOW_MAX_SECS (default 21600; 0 disables it) runs out. A second follower
+#   for the same task exits at once (state/.<id>.crew-state-follow holds the
+#   owner's pid).
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -110,8 +145,28 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
 
+MODE='read'
+case "${1:-}" in
+  --publish) MODE=publish; shift ;;
+  --follow) MODE=follow; shift ;;
+  --follow-detached) MODE=follow-detached; shift ;;
+esac
 ID=${1:-}
-[ -n "$ID" ] || { echo "usage: fm-crew-state.sh <id>" >&2; exit 2; }
+[ -n "$ID" ] || { echo "usage: fm-crew-state.sh [--publish|--follow|--follow-detached] <id>" >&2; exit 2; }
+if [ "$MODE" != read ]; then
+  case "$ID" in
+    .*|*[!A-Za-z0-9._-]*) echo "fm-crew-state.sh: unsafe task id for a published record: $ID" >&2; exit 2 ;;
+  esac
+fi
+if [ "$MODE" = follow-detached ]; then
+  # A new session, so the caller (a Deck hook, the driver) never waits on it.
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$0" --follow "$ID" </dev/null >/dev/null 2>&1 &
+  else
+    perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 1' "$0" --follow "$ID" </dev/null >/dev/null 2>&1 &
+  fi
+  exit 0
+fi
 
 # Fleet snapshot composition supplies its captured metadata path here so every
 # state read resolves the same task generation selected by that snapshot.
@@ -129,8 +184,62 @@ FM_CREW_STATE_RUNS_LIMIT=${FM_CREW_STATE_RUNS_LIMIT:-200}
 case "$FM_CREW_STATE_RUNS_LIMIT" in ''|*[!0-9]*) FM_CREW_STATE_RUNS_LIMIT=200 ;; esac
 SEP=' · '
 
+# Set once this read is about a local ship task whose copy exists, the only
+# reads that may write or remove its published record.
+PUBLISH_READY=0
+HAVE_RUN=0
+RUN_OUT=''
+RUN_SOURCE=full
+COARSE_STATUS=''
+
+# The run's current step and that step's status, tab-separated (header: step=).
+crew_state_step() {
+  local gate rows
+  gate=$(strip_quotes "$(nm_field gate)")
+  if [ -n "$gate" ]; then
+    printf '%s\t%s' "$gate" "$(nm_gate_status)"
+    return
+  fi
+  rows=$(nm_steps_rows | sed 's/^[[:space:]]*//')
+  [ -n "$rows" ] || return 0
+  printf '%s\n' "$rows" | awk -F, '
+    $2 != "completed" && $2 != "skipped" { printf "%s\t%s", $1, $2; found = 1; exit }
+    $2 != "skipped" { last = $1 "\t" $2 }
+    END { if (!found && last != "") printf "%s", last }'
+}
+
+# Header: PUBLISHED RECORD.
+crew_state_publish() {  # <state> <detail>
+  local record="$STATE/$ID.crew-state" tmp body step='' step_status='' run='' pr=''
+  [ "$PUBLISH_READY" = 1 ] || return 0
+  if [ "$HAVE_RUN" != 1 ]; then
+    rm -f -- "$record"
+    return 0
+  fi
+  if [ "$RUN_SOURCE" = coarse ]; then
+    step_status=$COARSE_STATUS
+  else
+    IFS=$'\t' read -r step step_status <<< "$(crew_state_step)" || true
+    run=$(strip_quotes "$(nm_field id)")
+    pr=$(strip_quotes "$(nm_field pr)")
+  fi
+  body=$(printf 'verdict=%s\nstep=%s\nstep_status=%s\nrun=%s\npr=%s\ndetail=%s' \
+    "$1" "$step" "$step_status" "$run" "$pr" "$(printf '%s' "$2" | tr '\n\r' '  ')")
+  [ ! -L "$record" ] || return 0
+  if [ -f "$record" ] && [ "$(grep -v '^updated_at=' "$record" 2>/dev/null)" = "$body" ]; then
+    return 0
+  fi
+  tmp=$(mktemp "$STATE/.$ID.crew-state.XXXXXX" 2>/dev/null) || return 0
+  if printf '%s\nupdated_at=%s\n' "$body" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$tmp" \
+    && chmod 644 "$tmp" && mv -f -- "$tmp" "$record"; then
+    return 0
+  fi
+  rm -f -- "$tmp"
+}
+
 # Emit the one canonical line and exit 0. Detail is optional.
 emit() {  # <state> <source> [detail]
+  [ "$MODE" != publish ] || crew_state_publish "$1" "${3:-}"
   local line="state: $1${SEP}source: $2"
   [ -n "${3:-}" ] && line="$line${SEP}$3"
   printf '%s\n' "$line"
@@ -157,6 +266,55 @@ REMOTE_HOST=$(meta_value remote_host)
 if [ -z "$REMOTE_HOST" ] && { [ -z "$WT" ] || [ ! -d "$WT" ]; }; then
   emit unknown none "worktree gone (torn down?)"
 fi
+[ -n "$REMOTE_HOST" ] || [ "$KIND" != ship ] || PUBLISH_READY=1
+
+# What the follower compares between polls: the run's identity, status, gate and
+# step statuses from one `axi status`, without its clocks.
+crew_state_fingerprint() {
+  fm_nm_run "$WT" "$NM_TIMEOUT" axi status | awk '
+    /^[[:space:]]*steps\[[0-9]+\]\{/ { inblock = 1; next }
+    inblock && /^[[:space:]]+[A-Za-z_-]+,/ { sub(/^[[:space:]]+/, ""); split($0, f, ","); print f[1] "," f[2]; next }
+    { inblock = 0 }
+    /^[[:space:]]*(id|branch|status|outcome|head|gate|step|pr|findings):/ { print }'
+}
+
+# Header: PUBLISHED RECORD (the follower).
+crew_state_follow() {
+  local lock="$STATE/.$ID.crew-state-follow" owner deadline now fp last='' line full_at=0
+  local every=${FM_CREW_STATE_FOLLOW_SECS:-5} full=${FM_CREW_STATE_FOLLOW_FULL_SECS:-60}
+  local bound=${FM_CREW_STATE_FOLLOW_MAX_SECS:-21600}
+  case "$every" in ''|*[!0-9]*|0) every=5 ;; esac
+  case "$full" in ''|*[!0-9]*) full=60 ;; esac
+  case "$bound" in ''|*[!0-9]*) bound=21600 ;; esac
+  [ "$PUBLISH_READY" = 1 ] || exit 0
+  if ! mkdir "$lock" 2>/dev/null; then
+    owner=$(cat "$lock/pid" 2>/dev/null || true)
+    case "$owner" in ''|*[!0-9]*) ;; *)
+      if ps -p "$owner" -o args= 2>/dev/null | grep -q 'fm-crew-state.sh --follow'; then
+        exit 0
+      fi ;;
+    esac
+    rm -rf -- "$lock"
+    mkdir "$lock" 2>/dev/null || exit 0
+  fi
+  trap 'rm -rf -- "$lock"' EXIT
+  printf '%s\n' "$$" > "$lock/pid"
+  deadline=$(( $(date +%s) + bound ))
+  while [ -f "$META" ] && [ -d "$WT" ]; do
+    now=$(date +%s)
+    [ "$now" -lt "$deadline" ] || break
+    fp="fp:$(crew_state_fingerprint)"
+    if [ "$fp" != "$last" ] || [ "$now" -ge "$full_at" ]; then
+      line=$("$0" --publish "$ID" 2>/dev/null) || line=''
+      full_at=$(( now + full ))
+      case "$line" in "state: working${SEP}source: run-step"*) ;; *) break ;; esac
+    fi
+    last=$fp
+    sleep "$every"
+  done
+  exit 0
+}
+[ "$MODE" != follow ] || crew_state_follow
 
 # --- status log ------------------------------------------------------------
 

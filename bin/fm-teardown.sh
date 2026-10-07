@@ -2885,7 +2885,8 @@ cleanup_firstmate_home_children() {
     retire_wake_gate_task_state "$sub_state" "$child_id" || return 1
     fm_backlog_atomic_transition remove "$sub_state/$child_id.meta" "task record" "$sub_state" || return 1
     rm -f "$sub_state/$child_id.turn-ended" "$sub_state/$child_id.progress" \
-      "$sub_state/$child_id.reconcile-nudged"
+      "$sub_state/$child_id.reconcile-nudged" "$sub_state/$child_id.crew-state"
+    rm -rf "$sub_state/.$child_id.crew-state-follow"
   done
 }
 
@@ -3215,7 +3216,10 @@ retire_wake_gate_task_state "$STATE" "$ID" || exit 1
 rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.progress" \
   "$STATE/$ID.control-relaunch" "$STATE/$ID.control-relaunch.meta-prior" \
   "$STATE/$ID.control-relaunch.brief-prior" "$STATE/$ID.control-relaunch.note" \
-  "$STATE/$ID.reconcile-nudged"
+  "$STATE/$ID.reconcile-nudged" "$STATE/$ID.crew-state"
+# The published validation record's follower exits on its own once the copy or
+# record is gone (bin/fm-crew-state.sh "PUBLISHED RECORD"); its lock goes here.
+rm -rf "$STATE/.$ID.crew-state-follow"
 # The steering inbox (bin/fm-task-inbox-lib.sh) is runtime state for the
 # retired endpoint; teardown only runs after landing is confirmed, so any
 # leftover unhandled steer here is moot rather than unlanded work.

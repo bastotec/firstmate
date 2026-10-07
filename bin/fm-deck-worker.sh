@@ -36,6 +36,9 @@
 #     prompt and, when the reader reports a run-step state other than working
 #     or unknown (such as parked at a gate, done, failed), starts ONE next turn
 #     of the same session with that state line and a run id when safely available.
+#     Those reads publish state/<id>.crew-state, and a turn that ends with the
+#     run working (or any tool call involving no-mistakes) starts that record's
+#     single follower (bin/fm-crew-state.sh "PUBLISHED RECORD").
 #     Only a working -> other transition observed after a turn wakes, so a run
 #     that stays parked or done never re-wakes; typed input (a steer, the doorbell,
 #     /quit, the composer clear) preempts the poll delay, and input queued during
@@ -389,6 +392,13 @@ watch_maintain() {
 # to the model and fails the run after its own bounded number of refusals.
 EVIDENCE_HOOK="python3 $(q "$STATE_IO") root-worker-status-after $(q "$STATE") $(q "$ID.status") \"\$(cat $(q "$TURN_MARK") 2>/dev/null || echo 0)\" 2>/dev/null || { echo $(q "Before you finish, append one line to $STATUS_FILE as your instructions' status protocol describes (done:, needs-decision:, blocked:, failed:, or working:), stating what you did and the evidence. Then finish.") >&2; exit 2; }"
 PROGRESS_HOOK="diagnostic=\$($(q "$BUSY_EVENT") progress $(q "$STATE") $(q "$ID") --gen $(q "$GEN") 2>&1 >/dev/null) || { printf '%s\\n' \"\$diagnostic\" >&2; diagnostic=\$(printf '%s' \"\$diagnostic\" | tr '\\n\\r' '  '); printf 'failed: deck wrapper could not refresh progress: %s\\n' \"\$diagnostic\" | python3 $(q "$STATE_IO") root-append $(q "$STATE") $(q "$ID.status"); exit 1; }"
+# A ship worker's tool call that involved no-mistakes (its own drive call
+# returning at a gate, an outcome, or its wait bound) refreshes the published
+# validation record through one follower (bin/fm-crew-state.sh "PUBLISHED RECORD").
+CREW_STATE_FOLLOW="FM_STATE_OVERRIDE=$(q "$STATE") $(q "$SCRIPT_DIR/fm-crew-state.sh") --follow-detached $(q "$ID")"
+if [ "$SECONDMATE" != 1 ] && [ "$(sed -n 's/^kind=//p' "$STATE/$ID.meta" 2>/dev/null | tail -1)" = ship ]; then
+  PROGRESS_HOOK="hook_event=\$(cat); $PROGRESS_HOOK; case \"\$hook_event\" in *no-mistakes*) $CREW_STATE_FOLLOW >/dev/null 2>&1 || true ;; esac"
+fi
 
 # Readable pane rendering of Deck's event stream. Reasoning and usage events
 # are bookkeeping and stay out of the pane.
@@ -594,7 +604,7 @@ pipeline_meta() {  # <key>
 }
 
 pipeline_state() {
-  FM_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/fm-crew-state.sh" "$ID" 2>/dev/null | tail -1
+  FM_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/fm-crew-state.sh" --publish "$ID" 2>/dev/null | tail -1
 }
 
 # State attribution stays with fm-crew-state.sh. This separate id query may see
@@ -625,6 +635,7 @@ pipeline_arm() {
   line=$(pipeline_state)
   case "$line" in 'state: working · source: run-step'*) ;; *) return 0 ;; esac
   run=$(pipeline_run_id "$line")
+  FM_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/fm-crew-state.sh" --follow-detached "$ID" >/dev/null 2>&1 || true
   PIPELINE_WATCH=1
   PIPELINE_UNTIL=$(( $(date +%s) + PIPELINE_WAIT ))
   printf '\n⛵ no-mistakes run %s still working; the next turn starts when it changes state.\n' "${run:-(id unavailable)}"

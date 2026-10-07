@@ -55,6 +55,7 @@ state/
   <id>.status             crewmate "<state>: <note>" wake events, not current state (bin/fm-crew-state.sh owns that)
   <id>.turn-ended         touched by bin/fm-deck-worker.sh at turn end
   <id>.progress           in-turn native activity, read for the busy-age bound only (bin/fm-busy-event.sh)
+  <id>.crew-state         a ship task's no-mistakes validation record (verdict, step, run, updated_at) for file watchers; written atomically by bin/fm-crew-state.sh --publish, removed by teardown
   <id>.inbox/             durable steering inbox; written by fm-send, removed by teardown (bin/fm-task-inbox-lib.sh)
   <id>.backlog-close      pending backlog transition for an interrupted cleanup (bin/fm-backlog-transition-lib.sh)
   <id>.external-wait      declared bounded external wait; written only by bin/fm-external-wait.sh, archived in external-waits/
@@ -659,6 +660,9 @@ FM_RECONCILE_REQUEST_MAX_BYTES=1048576 # largest snapshot accepted for a reconci
 # no-mistakes queries and teardown
 FM_CREW_STATE_NM_TIMEOUT=10    # per no-mistakes query in fm-crew-state.sh
 FM_CREW_STATE_RUNS_LIMIT=200   # recent no-mistakes runs scanned for attribution
+FM_CREW_STATE_FOLLOW_SECS=5         # validation-record follower poll while a run is working
+FM_CREW_STATE_FOLLOW_FULL_SECS=60   # follower's full re-read even when axi status looks unchanged
+FM_CREW_STATE_FOLLOW_MAX_SECS=21600 # bound on one follower's life; 0 disables the follower
 FM_TEARDOWN_NM_TIMEOUT=10      # per no-mistakes query or abort in fm-teardown.sh
 FM_TEARDOWN_NM_RUNS_LIMIT=200  # recent runs scanned to prove a parked run belongs to teardown's task
 FM_STALE_WORKTREE_LOCK_AGE_SECS=30            # age before teardown treats a leftover index.lock as stale

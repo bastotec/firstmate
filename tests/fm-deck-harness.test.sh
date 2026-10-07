@@ -101,7 +101,7 @@ case "$prompt" in
     bash -c 'printf "%s\n" "$$" > "$1/interrupt-ready"; exec sleep 30' _ "$dir"
     ;;
 esac
-[ -z "$progress" ] || bash -c "$progress" </dev/null || true
+[ -z "$progress" ] || printf '%s' "${FM_TEST_HOOK_EVENT:-}" | bash -c "$progress" || true
 if [ -n "$gate" ]; then
   if bash -c "$gate" </dev/null 2>>"$dir/gate.err"; then
     echo pass >> "$dir/gate.log"
@@ -1680,8 +1680,10 @@ start_pipeline_worker() {  # <dir> <poll-secs> <wait-secs>
   gen=$("$BUSY_EVENT" arm "$dir/state" t1)
   mkfifo "$dir/in"
   exec 3<>"$dir/in"
+  # The validation record's follower would race these cases for the fake's
+  # one-shot probe delay; the follower has its own case.
   PATH="$dir/fakebin:$PATH" FM_TEST_NM_RUN="$dir/nm-run" FM_TEST_STATUS="$dir/state/t1.status" \
-    FM_DECK_PIPELINE_POLL_SECS=$2 FM_DECK_PIPELINE_WAIT_SECS=$3 \
+    FM_DECK_PIPELINE_POLL_SECS=$2 FM_DECK_PIPELINE_WAIT_SECS=$3 FM_CREW_STATE_FOLLOW_MAX_SECS=0 \
     "$WORKER" --id t1 --state "$dir/state" --gen "$gen" \
       --deck "$dir/deck" -- write-status < "$dir/in" > "$dir/pane.out" 2>&1 &
   PIPELINE_WORKER_PID=$!
@@ -1730,6 +1732,7 @@ test_pipeline_state_change_wakes_an_idle_worker_once() {
   pipeline_run "$dir" parked
   wait_deck_runs "$dir" 2 || fail "a run parked at a gate did not wake the idle worker: $(cat "$dir/pane.out")"
   wake=$(sed -n 2p "$dir/argv.log")
+  assert_grep 'verdict=parked' "$dir/state/t1.crew-state" "the pipeline read did not publish the parked run"
   assert_contains "$wake" 'Your no-mistakes run 01PIPE changed state' "the wake did not name the run id"
   assert_contains "$wake" 'state: parked · source: run-step · parked at review' "the wake did not carry the run state"
   assert_contains "$wake" '--session s-fake-' "the wake did not resume the worker's Deck session"
@@ -1750,6 +1753,25 @@ test_pipeline_state_change_wakes_an_idle_worker_once() {
   [ "$(deck_runs "$dir")" = 4 ] || fail "a finished run woke the worker more than once"
   stop_pipeline_worker "$dir"
   pass "fm-deck-worker: a run leaving working wakes the idle worker once per change, naming run id and state"
+}
+
+test_a_no_mistakes_tool_call_publishes_the_validation_record() {
+  local dir="$TMP_ROOT/pipeline-hook" gen _
+  make_pipeline_case "$dir"
+  gen=$("$BUSY_EVENT" arm "$dir/state" t1)
+  printf 'write-status\n/quit\n' | PATH="$dir/fakebin:$PATH" FM_TEST_NM_RUN="$dir/nm-run" \
+    FM_TEST_STATUS="$dir/state/t1.status" FM_DECK_PIPELINE_WAIT_SECS=0 \
+    FM_TEST_HOOK_EVENT='{"tool":"shell","input":{"command":"no-mistakes axi run --intent x"}}' \
+    "$WORKER" --id t1 --state "$dir/state" --gen "$gen" --deck "$dir/deck" -- write-status \
+    > "$dir/pane.out" 2>&1 || fail "the driver did not exit cleanly: $(cat "$dir/pane.out")"
+  for _ in $(seq 100); do [ -f "$dir/state/t1.crew-state" ] && [ ! -d "$dir/state/.t1.crew-state-follow" ] && break; sleep 0.1; done
+  # The run is still working, so its follower keeps going; end it by ending the run.
+  pipeline_run "$dir" passed
+  for _ in $(seq 100); do grep -q 'verdict=done' "$dir/state/t1.crew-state" 2>/dev/null && [ ! -d "$dir/state/.t1.crew-state-follow" ] && break; sleep 0.1; done
+  assert_grep 'run=01PIPE' "$dir/state/t1.crew-state" "a no-mistakes tool call did not publish the run's record"
+  assert_grep 'verdict=done' "$dir/state/t1.crew-state" "the follower did not publish the finished run"
+  [ ! -d "$dir/state/.t1.crew-state-follow" ] || fail "the follower outlived the run it followed"
+  pass "fm-deck-worker: a tool call involving no-mistakes publishes the validation record through its follower"
 }
 
 test_pipeline_omits_terminal_id_when_a_live_successor_is_working() {
@@ -1970,6 +1992,7 @@ test_deck_supervision_model_is_scoped_to_secondmate_launches
 test_spawn_launches_the_driver_with_binary_gen_and_model
 test_spawn_refuses_deck_effort
 test_pipeline_state_change_wakes_an_idle_worker_once
+test_a_no_mistakes_tool_call_publishes_the_validation_record
 test_pipeline_omits_terminal_id_when_a_live_successor_is_working
 test_pipeline_wait_takes_input_immediately_and_is_bounded
 test_pipeline_failed_run_wakes_once
