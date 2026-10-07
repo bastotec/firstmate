@@ -49,6 +49,46 @@ test_helper_pids_registered_in_a_subshell_are_still_reaped() {
   pass "helpers registered from a command substitution are reaped with the suite"
 }
 
+test_a_stub_hub_stops_once_its_killed_suite_is_gone() {
+  # SIGKILL - what an agent's command timeout sends - runs no trap, so the
+  # helper registry is never read. The stub hub has to notice on its own that
+  # the suite that started it is gone, or it keeps listening indefinitely.
+  local harness pidfile pid stub tries
+  command -v python3 >/dev/null 2>&1 || {
+    pass "a stub hub stops once its killed suite is gone (skipped: python3 not found)"
+    return 0
+  }
+  harness=$(fm_test_tmproot fm-test-cleanup-stub-owner)
+  pidfile="$harness/stub-pid"
+  bash -c '
+    . "$1/tests/fixtures.sh"
+    fm_test_fake_stream "$2/hub" || exit 1
+    cat "$FM_TEST_HELPER_PID_REGISTRY" > "$3"
+    while :; do sleep 0.1; done
+  ' _ "$ROOT" "$harness" "$pidfile" >/dev/null 2>&1 &
+  pid=$!
+  tries=0
+  while [ "$tries" -lt 200 ] && [ ! -s "$pidfile" ]; do
+    sleep 0.05
+    tries=$((tries + 1))
+  done
+  [ -s "$pidfile" ] || { kill -9 "$pid"; fail "the child never started its stub hub"; }
+  stub=$(head -1 "$pidfile")
+  kill -0 "$stub" 2>/dev/null || { kill -9 "$pid"; fail "the stub hub was not running before its suite was killed"; }
+  kill -9 "$pid"
+  wait "$pid" 2>/dev/null
+  tries=0
+  while [ "$tries" -lt 100 ] && kill -0 "$stub" 2>/dev/null; do
+    sleep 0.1
+    tries=$((tries + 1))
+  done
+  if kill -0 "$stub" 2>/dev/null; then
+    kill -9 "$stub" 2>/dev/null || true
+    fail "a stub hub kept running after the suite that started it was killed (pid $stub)"
+  fi
+  pass "a stub hub stops once its killed suite is gone"
+}
+
 test_fixture_root_gone_after_normal_exit() {
   local child_out child_dir
   child_out=$(bash -c '
@@ -203,3 +243,4 @@ test_cleanup_registry_resists_precreation
 test_fixture_registration_failure_rolls_back_root
 test_orphan_sweep_respects_fixture_ownership
 test_orphan_sweep_reaps_read_only_package_tree
+test_a_stub_hub_stops_once_its_killed_suite_is_gone

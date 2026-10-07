@@ -241,6 +241,29 @@ test_lock_steals_dead_pid_lock() {
   pass "dead-pid stale lock is reclaimed by a single acquirer"
 }
 
+test_lock_wait_returns_when_its_directory_is_gone() {
+  # A missing lock directory makes every create fail and the unreadable pid look
+  # like a dead holder, so the stale-steal path once recursed into
+  # .steal.steal... forever. Acquisition there must refuse, not wait.
+  local dir state rc
+  dir=$(make_case lock-dir-gone)
+  state="$dir/state"
+  rc=0
+  # shellcheck source=bin/fm-timeout-lib.sh
+  . "$ROOT/bin/fm-timeout-lib.sh"
+  # shellcheck disable=SC2016  # Expanded by the child shell.
+  FM_STATE_OVERRIDE="$state" fm_run_timed 10 bash -c '
+    . "$1"
+    rm -rf "$2"
+    if fm_lock_try_acquire "$2/.contend.lock"; then exit 3; fi
+    if fm_lock_acquire_wait "$2/.contend.lock"; then exit 4; fi
+    exit 0
+  ' _ "$LIB" "$state" || rc=$?
+  [ "$rc" -ne 124 ] || fail "a lock wait in a removed directory never returned"
+  [ "$rc" -eq 0 ] || fail "a lock in a removed directory was reported acquired (rc=$rc)"
+  pass "a lock whose directory is gone is refused at once instead of waited on"
+}
+
 test_lock_stale_steal_single_winner_under_concurrency() {
   local dir state lockdir dead marker i pids pid wins
   dir=$(make_case lock-stale-concurrency)
@@ -1116,6 +1139,7 @@ test_live_stale_watch_lock_is_actionable
 test_guard_warnings
 test_lock_single_winner_under_concurrency
 test_lock_steals_dead_pid_lock
+test_lock_wait_returns_when_its_directory_is_gone
 test_lock_stale_steal_single_winner_under_concurrency
 test_lock_live_steal_mutex_is_not_reclaimed
 test_lock_does_not_steal_live_lock

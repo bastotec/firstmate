@@ -238,6 +238,75 @@ fm_test_kill_foreign_pids() {  # <pid...>
   done
 }
 
+# The system ps, named by path because fixtures put PATH shims for ps in front
+# of it, and bash keeps using a shim it already hashed even under `command -p`.
+FM_TEST_SYSTEM_PS="ps"
+for _fm_test_ps in /bin/ps /usr/bin/ps; do
+  if [ -x "$_fm_test_ps" ]; then
+    FM_TEST_SYSTEM_PS=$_fm_test_ps
+    break
+  fi
+done
+unset _fm_test_ps
+
+# fm_test_process_tree <pid> - print <pid> and every live process descended
+# from it, one per line, read from parent links.
+fm_test_process_tree() {  # <pid>
+  "$FM_TEST_SYSTEM_PS" -eo pid=,ppid= 2>/dev/null | awk -v root="$1" '
+    { parent[$1] = $2; order[NR] = $1 }
+    END {
+      keep[root] = 1
+      changed = 1
+      while (changed) {
+        changed = 0
+        for (i = 1; i <= NR; i++) {
+          p = order[i]
+          if (!(p in keep) && (parent[p] in keep)) { keep[p] = 1; changed = 1 }
+        }
+      }
+      for (p in keep) print p
+    }'
+}
+
+# fm_test_kill_tree <pid> - SIGKILL a foreign pid and every process descended
+# from it, best effort. A detached worker that wraps its own work in a bounded
+# child (bin/fm-timeout-lib.sh puts that child in a separate process group)
+# cannot be stopped by signalling its group alone, so every member of the tree
+# is signalled.
+fm_test_kill_tree() {  # <pid>
+  local pid
+  fm_test_pid_is_foreign "$1" || return 0
+  for pid in $(fm_test_process_tree "$1"); do
+    [ "$pid" = "$$" ] || kill -9 "$pid" 2>/dev/null || true
+  done
+}
+
+# fm_test_reap_startup_network_workers <dir...> - stop every deferred startup
+# worker a fixture home under <dir> recorded. bin/fm-startup-network.sh detaches
+# that worker into its own process group with nohup on purpose, so neither a
+# killed suite's process group nor removing the fixture reaches it; the pid its
+# status record names does. The recorded pid is signalled only while it is still
+# that worker, so a pid reused since the record was written is left alone.
+fm_test_reap_startup_network_workers() {  # <dir...>
+  local d status pid
+  for d in "$@"; do
+    [ -n "$d" ] && [ -d "$d" ] && [ ! -L "$d" ] || continue
+    while IFS= read -r status; do
+      pid=$(sed -n 's/^pid=//p' "$status" 2>/dev/null | tail -1)
+      case $pid in '' | 0 | *[!0-9]*) continue ;; esac
+      case $("$FM_TEST_SYSTEM_PS" -o command= -p "$pid" 2>/dev/null) in
+        *fm-startup-network.sh*) fm_test_kill_tree "$pid" ;;
+      esac
+    done < <(find "$d" -maxdepth 6 -name .startup-network.status -type f 2>/dev/null)
+  done
+}
+
+# Every test stub that serves until it is stopped (tests/assets/stream-hub-stub.py)
+# also stops itself once this pid is gone. Cleanup traps cannot run when a suite
+# is SIGKILLed - an agent's command timeout does exactly that - and a stub that
+# waits for a trap that never comes keeps serving for days.
+export FM_TEST_OWNER_PID=$$
+
 # --- process-event runner reaping -------------------------------------------
 #
 # A process-event runner is detached into its own process group and reparents to
@@ -291,6 +360,12 @@ export FM_TEST_STUB_MAX_BLOCK_SECONDS
 fm_test_cleanup() {
   local d
   fm_test_reap_procevent_homes
+  fm_test_reap_startup_network_workers "${FM_TEST_CLEANUP_DIRS[@]:-}"
+  if [ -f "$FM_TEST_CLEANUP_REGISTRY" ]; then
+    while IFS= read -r d; do
+      fm_test_reap_startup_network_workers "$d"
+    done < "$FM_TEST_CLEANUP_REGISTRY"
+  fi
   for d in "${FM_TEST_CLEANUP_DIRS[@]:-}"; do
     [ -n "$d" ] && rm -rf "$d"
   done
@@ -352,6 +427,7 @@ fm_test_reap_orphans() {
     mtime=$(stat -c %Y "$marker" 2>/dev/null || stat -f %m "$marker" 2>/dev/null) || continue
     [ $((now - mtime)) -ge "$FM_TEST_ORPHAN_MAX_AGE_SECONDS" ] || continue
     dir=$(dirname "$marker")
+    fm_test_reap_startup_network_workers "$dir"
     if [ -d "$dir" ] && [ ! -L "$dir" ]; then
       find "$dir" -type d -exec chmod u+rwx {} + 2>/dev/null || true
     fi

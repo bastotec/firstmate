@@ -532,7 +532,7 @@ EOF
 }
 
 test_session_lock_concurrent_single_winner() {
-  local rec root home fakebin ready completed winners pids i pid count
+  local rec root home fakebin ready completed winners pids i pid count deadline
   rec=$(new_world lock-concurrency)
   IFS='|' read -r root home fakebin <<EOF
 $rec
@@ -579,7 +579,12 @@ SH
       harness_pid=$(sh -c 'printf "%s\n" "$PPID"')
       : > "$home/state/harness-$harness_pid"
       : > "$ready/$i"
-      while [ "$(find "$ready" -type f | wc -l | tr -d ' ')" -lt 40 ]; do
+      # Each barrier also ends when its fixture is removed or a minute passes,
+      # so a cohort whose suite was killed mid-case cannot poll a deleted
+      # directory forever.
+      deadline=$((SECONDS + 60))
+      while [ -d "$ready" ] && [ "$SECONDS" -lt "$deadline" ] \
+        && [ "$(find "$ready" -type f | wc -l | tr -d ' ')" -lt 40 ]; do
         sleep 0.01
       done
       if FM_HOME="$home" FM_FAKE_LOCK_STATE="$home/state" \
@@ -588,7 +593,8 @@ SH
         printf '%s\n' "$harness_pid" >> "$winners"
       fi
       : > "$completed/$i"
-      while [ "$(find "$completed" -type f | wc -l | tr -d ' ')" -lt 40 ]; do
+      while [ -d "$completed" ] && [ "$SECONDS" -lt "$deadline" ] \
+        && [ "$(find "$completed" -type f | wc -l | tr -d ' ')" -lt 40 ]; do
         sleep 0.01
       done
     ) &
