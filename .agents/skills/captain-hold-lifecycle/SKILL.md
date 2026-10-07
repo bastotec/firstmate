@@ -70,7 +70,7 @@ Every captain call carries a decision card file, which the Fleet app and Ziggy s
 When you hold, write the card yourself: project, a title, the situation in at most two plain lines, one to nine options each carrying the exact instruction you will carry out, and your recommendation.
 Pass it as `bin/fm-captain-hold.sh hold <id> --reason "<reason>" --card-file <path>`; re-holding an active call this way replaces its card and keeps its timestamp.
 A script that holds on its own leaves a draft card, which is not a judgment.
-On every heartbeat, replace each draft with a full card and run `bin/fm-card.sh stale`.
+On every heartbeat, run `bin/fm-card.sh backfill` first, then replace each draft with a full card, then run `bin/fm-card.sh stale`.
 Check each candidate's evidence yourself, clear the ones it confirms with `bin/fm-card.sh clear <id> --why "<one line of evidence>"`, keep any call the captain still needs, and tell the captain how many you cleared and why in your next natural reply.
 A message "card <id>: option <key>" is the captain choosing that option; a redirect text is the captain's words too.
 If that call was already cleared, run `bin/fm-card.sh restore <id>` first so the captain's answer is recorded rather than refused.
