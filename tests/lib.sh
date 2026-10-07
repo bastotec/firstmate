@@ -311,7 +311,7 @@ fm_test_kill_tree() {  # <pid>
 # tests/fm-test-fixture-cleanup.test.sh and tests/fm-startup-network.test.sh
 # cover identity checks, orphan-sweep safety, and overlapping generations.
 fm_test_reap_startup_network_workers() {  # <dir...>
-  local d status pid started elapsed delta
+  local d status pid started elapsed delta matches
   for d in "$@"; do
     [ -n "$d" ] && [ -d "$d" ] && [ ! -L "$d" ] || continue
     while IFS= read -r status; do
@@ -338,10 +338,22 @@ fm_test_reap_startup_network_workers() {  # <dir...>
       [ "$delta" -ge -3 ] && [ "$delta" -le 3 ] || continue
       fm_test_kill_tree "$pid"
     done < <(find "$d" -maxdepth 6 -name .startup-network.status -type f 2>/dev/null)
-    while IFS= read -r pid; do
+    # The path reaches awk through its environment, never its argv: an awk
+    # whose own command line held the path would match itself. The reaper's
+    # own shells - this one, the substitution subshell running the pipeline,
+    # and their parent - can carry the path in an inherited argv, so they are
+    # dropped by pid. Matches are collected before any signal, so no member of
+    # this pipeline is still alive to be frozen mid-write.
+    matches=$(
+      # bash 3.2 has no BASHPID; a child exec'd from here reports this pid.
+      self=" $$ ${BASHPID:-$(exec sh -c 'echo "$PPID"')} $PPID "
+      "$FM_TEST_SYSTEM_PS" -eo pid=,command= 2>/dev/null |
+        FM_TEST_REAP_FIXTURE="$d" FM_TEST_REAP_SELF="$self" awk '
+          index($0, ENVIRON["FM_TEST_REAP_FIXTURE"]) &&
+            !index(ENVIRON["FM_TEST_REAP_SELF"], " " $1 " ") { print $1 }')
+    for pid in $matches; do
       fm_test_kill_tree "$pid"
-    done < <("$FM_TEST_SYSTEM_PS" -eo pid=,command= 2>/dev/null | awk -v fixture="$d" '
-      index($0, fixture) { print $1 }')
+    done
   done
 }
 
