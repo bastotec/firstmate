@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 struct Request {
     method: hyper::Method,
@@ -189,6 +189,7 @@ enum Answer {
     Json(u16, Value),
     Text(String, &'static str),
     Stream(String, bool, Option<u64>),
+    TaskEvents,
 }
 /// The largest PTY geometry a resize accepts, per side.
 const MAX_GEOMETRY: u16 = 1000;
@@ -445,6 +446,10 @@ fn route(h: &Hub, r: &mut Request, path: &str, q: &Query) -> Result<Answer> {
             &r.forwarded()?.get("text").encode(),
             oid,
         )?);
+    }
+    if path == "/v1/tasks/events" && method == "GET" {
+        require(h, r, q, "subscribe", false)?;
+        return Ok(Answer::TaskEvents);
     }
     if let Some(rest) = path.strip_prefix("/v1/tasks/") {
         let (eid, tail) = rest.split_once('/').unwrap_or((rest, ""));
@@ -796,6 +801,135 @@ fn stream(h: Arc<Hub>, eid: String, replay: bool, from: Option<u64>) -> Result<H
     });
     Ok(StreamBody::new(tokio_stream::wrappers::ReceiverStream::new(rx)).boxed())
 }
+/// One event-stream record, `event: <kind>` then the JSON on one `data:` line.
+fn event_record(kind: &str, data: &Value) -> Bytes {
+    Bytes::from(format!("event: {kind}\ndata: {}\n\n", encode(data)))
+}
+/// What one subscriber was last told about one endpoint: its projection, and
+/// the output offset it saw with when that offset was sent.
+struct Told {
+    projection: String,
+    offset: u64,
+    offset_at: f64,
+}
+/// `GET /v1/tasks/events`: the `/v1/tasks` listing once, then a delta carrying
+/// each endpoint record whose projection changed, whose output grew (at most
+/// once per EVENT_OUTPUT_SECS per endpoint), or that left the registry.
+/// Registry evaluations are spaced at least 25 ms apart to bound wake-driven work.
+/// docs/stream-backend.md "Task events" owns the contract.
+fn task_events(h: Arc<Hub>) -> HttpBody {
+    let (tx, rx) = tokio::sync::mpsc::channel(16);
+    std::thread::spawn(move || {
+        let mut told: BTreeMap<String, Told> = BTreeMap::new();
+        let mut seq = 0u64;
+        let mut last_reap = 0f64;
+        let mut last_sent = now();
+        let mut wait = 0f64;
+        let mut last_evaluation = Instant::now();
+        loop {
+            let mut s = h.state.lock().unwrap();
+            if seq > 0 {
+                s = h
+                    .wake
+                    .wait_timeout(s, Duration::from_secs_f64(wait.clamp(0.001, 1.)))
+                    .unwrap()
+                    .0;
+                if let Some(remaining) =
+                    Duration::from_millis(25).checked_sub(last_evaluation.elapsed())
+                {
+                    drop(s);
+                    std::thread::sleep(remaining);
+                    s = h.state.lock().unwrap();
+                }
+            }
+            if tx.is_closed() {
+                return;
+            }
+            last_evaluation = Instant::now();
+            let at = now();
+            if at - last_reap >= 1. {
+                Hub::reap(&mut s);
+                last_reap = at;
+            }
+            let ordered = Hub::ordered(&s);
+            let mut changed = Vec::new();
+            let mut next = last_sent + 15.;
+            for (e, current) in &ordered {
+                let projection = e.projection(*current);
+                let fresh = match told.get(&e.id) {
+                    None => true,
+                    Some(t) if t.projection != projection => true,
+                    Some(t) if t.offset != e.end => {
+                        let due = t.offset_at + EVENT_OUTPUT_SECS;
+                        next = next.min(due);
+                        at >= due
+                    }
+                    Some(_) => false,
+                };
+                if e.closed == 0. && rounded(e.silent()) <= PRESUMED_SECS {
+                    next = next.min(e.seen + PRESUMED_SECS + 0.002);
+                }
+                if fresh {
+                    let offset_at = match told.get(&e.id) {
+                        None => 0.,
+                        Some(t) if t.offset == e.end => t.offset_at,
+                        Some(_) => at,
+                    };
+                    told.insert(
+                        e.id.clone(),
+                        Told {
+                            projection,
+                            offset: e.end,
+                            offset_at,
+                        },
+                    );
+                    changed.push(Hub::record(e, *current));
+                }
+            }
+            let removed: Vec<String> = told
+                .keys()
+                .filter(|id| !s.endpoints.contains_key(*id))
+                .cloned()
+                .collect();
+            for id in &removed {
+                told.remove(id);
+            }
+            let record = if seq == 0 {
+                let machines: Vec<_> = s
+                    .machines
+                    .iter()
+                    .map(|(name, m)| m.describe(name, h.max_age))
+                    .collect();
+                Some(event_record(
+                    "snapshot",
+                    &json!({"ok":true,"seq":1,"generation":h.generation,"machines":machines,"tasks":changed}),
+                ))
+            } else if !changed.is_empty() || !removed.is_empty() {
+                Some(event_record(
+                    "delta",
+                    &json!({"seq":seq + 1,"generation":h.generation,"tasks":changed,"removed":removed}),
+                ))
+            } else if at - last_sent >= 15. {
+                Some(Bytes::from_static(b": keepalive\n\n"))
+            } else {
+                None
+            };
+            drop(s);
+            if let Some(record) = record {
+                if !record.starts_with(b":") {
+                    seq += 1;
+                }
+                last_sent = at;
+                next = next.min(at + 15.);
+                if tx.blocking_send(Ok(Frame::data(record))).is_err() {
+                    return;
+                }
+            }
+            wait = next - now();
+        }
+    });
+    StreamBody::new(tokio_stream::wrappers::ReceiverStream::new(rx)).boxed()
+}
 async fn handle(
     h: Arc<Hub>,
     request: hyper::Request<Incoming>,
@@ -876,6 +1010,10 @@ async fn handle(
             "application/json",
         ),
         Answer::Text(text, ctype) => (200, Full::new(Bytes::from(text)).boxed(), ctype),
+        Answer::TaskEvents => {
+            close = true;
+            (200, task_events(h), "text/event-stream")
+        }
         Answer::Stream(eid, replay, from) => {
             close = true;
             match stream(h, eid, replay, from) {
@@ -1966,6 +2104,169 @@ mod tests {
             bytes.is_empty(),
             "replacement bytes or obsolete close event: {bytes:?}"
         );
+        server.abort();
+    }
+
+    /// Reads the next non-comment event-stream record as (event, data).
+    async fn next_event(body: &mut Incoming, buffer: &mut Vec<u8>) -> (String, Value) {
+        loop {
+            if let Some(end) = buffer.windows(2).position(|w| w == b"\n\n") {
+                let record = String::from_utf8(buffer.drain(..end + 2).collect()).unwrap();
+                if record.starts_with(':') {
+                    continue;
+                }
+                let mut kind = String::new();
+                let mut data = Value::Null;
+                for line in record.lines() {
+                    if let Some(k) = line.strip_prefix("event: ") {
+                        kind = k.to_owned();
+                    } else if let Some(d) = line.strip_prefix("data: ") {
+                        data = serde_json::from_str(d).unwrap();
+                    }
+                }
+                return (kind, data);
+            }
+            let frame = tokio::time::timeout(Duration::from_secs(5), body.frame())
+                .await
+                .expect("an event within five seconds")
+                .unwrap()
+                .unwrap();
+            if let Ok(data) = frame.into_data() {
+                buffer.extend_from_slice(&data);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn task_events_push_the_listing_then_only_what_changed() {
+        let (h, eid, _) = fixture();
+        let (address, server) = server(h.clone()).await;
+        let health =
+            json_response(request(address, "GET", "/v1/health", json!({}), "").await).await;
+        assert!(health.1["capabilities"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("task_events")));
+        let response = request(address, "GET", "/v1/tasks/events", json!({}), "").await;
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.headers()["Content-Type"], "text/event-stream");
+        let mut body = response.into_body();
+        let mut buffer = Vec::new();
+        let (kind, snapshot) = next_event(&mut body, &mut buffer).await;
+        assert_eq!(kind, "snapshot");
+        assert_eq!(snapshot["seq"], 1);
+        assert_eq!(snapshot["generation"], json!(h.generation));
+        let (_, listing) =
+            json_response(request(address, "GET", "/v1/tasks", json!({}), "").await).await;
+        let ids = |v: &Value| {
+            v.as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t["endpoint_id"].clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&snapshot["tasks"]), ids(&listing["tasks"]));
+        assert_eq!(snapshot["tasks"][0]["current_execution"], true);
+
+        // The agent speaking again changes no projected fact: nothing is pushed.
+        // Its first output is pushed at once, the next within the output window.
+        let frames = |payload: Value| async move {
+            request(address, "POST", "/v1/agent/frames", payload, "")
+                .await
+                .status()
+        };
+        assert_eq!(frames(json!({"machine":"box","frames":[{"endpoint_id":eid,"b64":STANDARD.encode(b"hello")}]})).await, 200);
+        let (kind, delta) =
+            tokio::time::timeout(Duration::from_secs(1), next_event(&mut body, &mut buffer))
+                .await
+                .expect("first output is not throttled by the snapshot");
+        assert_eq!(kind, "delta");
+        assert_eq!(delta["seq"], 2);
+        assert_eq!(delta["tasks"][0]["stream_offset"], 5);
+        assert_eq!(delta["removed"], json!([]));
+        let started = std::time::Instant::now();
+        assert_eq!(frames(json!({"machine":"box","frames":[{"endpoint_id":eid,"b64":STANDARD.encode(b"again")}]})).await, 200);
+        let (_, delta) = next_event(&mut body, &mut buffer).await;
+        assert_eq!(delta["tasks"][0]["stream_offset"], 10);
+        assert!(started.elapsed() >= Duration::from_secs_f64(EVENT_OUTPUT_SECS - 0.5));
+
+        // A close is pushed with the agent's own attribution.
+        assert_eq!(
+            frames(
+                json!({"machine":"box","frames":[{"endpoint_id":eid,"closed":true,"exit_code":3}]})
+            )
+            .await,
+            200
+        );
+        let (_, delta) = next_event(&mut body, &mut buffer).await;
+        assert_eq!(delta["tasks"][0]["closed_by"], "agent");
+        assert_eq!(delta["tasks"][0]["exit_code"], 3);
+
+        // A second endpoint going quiet past the presumption window is pushed
+        // without any request, and deleting the first one reports its removal.
+        let other = "c".repeat(32);
+        h.register(&json!({"protocol":3,"endpoint_id":other,"machine":"box","label":"quiet","rows":2,"cols":8}), "").unwrap();
+        h.wake.notify_all();
+        let (_, delta) = next_event(&mut body, &mut buffer).await;
+        assert_eq!(delta["tasks"][0]["endpoint_id"], json!(other));
+        assert!(delta["tasks"][0]["agent_silent_for_secs"].as_f64().unwrap() <= PRESUMED_SECS);
+        h.state
+            .lock()
+            .unwrap()
+            .endpoints
+            .get_mut(&other)
+            .unwrap()
+            .seen = now() - PRESUMED_SECS + 0.3;
+        let (_, delta) = next_event(&mut body, &mut buffer).await;
+        assert_eq!(delta["tasks"][0]["endpoint_id"], json!(other));
+        assert!(delta["tasks"][0]["agent_silent_for_secs"].as_f64().unwrap() > PRESUMED_SECS);
+        h.state.lock().unwrap().endpoints.remove(&eid);
+        h.wake.notify_all();
+        let (_, delta) = next_event(&mut body, &mut buffer).await;
+        assert_eq!(delta["removed"], json!([eid]));
+        assert_eq!(delta["tasks"], json!([]));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn task_events_require_a_subscribe_token_in_the_header() {
+        let h = Hub::new(
+            vec![
+                ("pub".into(), vec!["publish".into()]),
+                ("view".into(), vec!["subscribe".into()]),
+            ],
+            30.,
+            3.,
+        );
+        let (address, server) = server(h).await;
+        let get = |token: &'static str, path: &'static str| async move {
+            let socket = tokio::net::TcpStream::connect(address).await.unwrap();
+            let (mut sender, connection) =
+                hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(socket))
+                    .await
+                    .unwrap();
+            tokio::spawn(async move {
+                let _ = connection.await;
+            });
+            let mut builder = hyper::Request::builder()
+                .method("GET")
+                .uri(path)
+                .header("Host", "hub");
+            if !token.is_empty() {
+                builder = builder.header("Authorization", format!("Bearer {token}"));
+            }
+            sender
+                .send_request(builder.body(Full::new(Bytes::new())).unwrap())
+                .await
+                .unwrap()
+                .status()
+                .as_u16()
+        };
+        assert_eq!(get("", "/v1/tasks/events").await, 401);
+        assert_eq!(get("", "/v1/tasks/events?access_token=view").await, 401);
+        assert_eq!(get("pub", "/v1/tasks/events").await, 403);
+        assert_eq!(get("view", "/v1/tasks/events").await, 200);
+        assert_eq!(get("view", "/v1/tasks").await, 200);
         server.abort();
     }
 }

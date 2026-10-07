@@ -7,13 +7,18 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
 
 pub const VERSION: &str = "2.0.0";
-pub const CAPS: [&str; 5] = [
+pub const CAPS: [&str; 6] = [
     "current_execution",
     "idempotent_command_results",
     "result_retry_orderability",
     "endpoint_command_auth",
     "deck_midturn_orders",
+    "task_events",
 ];
+/// Agent silence past which the hub presumes an endpoint's agent gone.
+pub const PRESUMED_SECS: f64 = 10.;
+/// A task-events subscriber hears an endpoint's output growth at most this often.
+pub const EVENT_OUTPUT_SECS: f64 = 2.;
 pub fn now() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -112,6 +117,25 @@ impl Endpoint {
     }
     pub fn describe(&self) -> Value {
         json!({"endpoint_id":self.id,"machine":self.machine,"label":self.label,"cwd":self.cwd,"rows":self.rows,"cols":self.cols,"created_at":self.created,"closed_at":if self.closed==0. {Value::Null} else {json!(self.closed)},"closed_by":if self.closed_by.is_empty() {Value::Null} else {json!(self.closed_by)},"exit_code":self.exit,"stream_offset":self.end,"state_age_secs":self.age().map(rounded),"agent_silent_for_secs":rounded(self.silent())})
+    }
+    /// What a task-events subscriber is told about: every listed fact except the
+    /// measured ages and the output offset, plus whether the agent is within the
+    /// presumption window. A change here is a delta; ages alone never are.
+    pub fn projection(&self, current: bool) -> String {
+        format!(
+            "{}\0{}\0{}\0{}x{}\0{}\0{}\0{}\0{}\0{}\0{}",
+            self.machine,
+            self.label,
+            self.cwd,
+            self.rows,
+            self.cols,
+            self.closed,
+            self.closed_by,
+            self.exit,
+            current,
+            self.closed == 0. && rounded(self.silent()) <= PRESUMED_SECS,
+            self.received > 0.,
+        )
     }
     pub fn close(&mut self, exit: Value, by: &str) {
         self.capability.clear();
@@ -319,7 +343,7 @@ impl Hub {
     }
     pub fn reap(s: &mut State) {
         for e in s.endpoints.values_mut() {
-            if e.closed == 0. && e.silent() > 10. {
+            if e.closed == 0. && e.silent() > PRESUMED_SECS {
                 e.presumed = true;
             }
         }
@@ -401,7 +425,8 @@ impl Hub {
         es.sort_by(|a, b| a.created.total_cmp(&b.created));
         es
     }
-    pub fn listing(s: &State) -> Vec<Value> {
+    /// Every endpoint in listing order, each with whether it is its leaf's current execution.
+    pub fn ordered(s: &State) -> Vec<(&Endpoint, bool)> {
         let mut es: Vec<_> = s.endpoints.values().collect();
         es.sort_by(|a, b| {
             a.machine
@@ -416,13 +441,22 @@ impl Hub {
             .into_iter()
             .map(|(leaf, members)| (leaf, Self::current(&members).unwrap().id.as_str()))
             .collect();
-        es.iter()
+        es.into_iter()
             .map(|e| {
-                let mut record = e.describe();
-                record["current_execution"] =
-                    json!(current[&(e.machine.as_str(), e.label.as_str())] == e.id);
-                record
+                let is_current = current[&(e.machine.as_str(), e.label.as_str())] == e.id;
+                (e, is_current)
             })
+            .collect()
+    }
+    pub fn record(e: &Endpoint, current: bool) -> Value {
+        let mut record = e.describe();
+        record["current_execution"] = json!(current);
+        record
+    }
+    pub fn listing(s: &State) -> Vec<Value> {
+        Self::ordered(s)
+            .into_iter()
+            .map(|(e, current)| Self::record(e, current))
             .collect()
     }
     pub fn register(&self, p: &Value, cap: &str) -> Result<Value> {
