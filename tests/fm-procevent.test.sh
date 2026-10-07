@@ -2767,14 +2767,37 @@ fm_test_track_procevent_home "$HPACE_RACE"
 PACE_RACE_LOG="$TMP_ROOT/registration-pacing-race.log"
 pe_register "$HPACE_RACE" lavish pace-race-src -- "$FAST_SOURCE" "$PACE_RACE_LOG" >/dev/null
 FM_PROCEVENT_LAUNCH_FLOOR_SECONDS=3 pe "$HPACE_RACE" start pace-race-src >/dev/null
-FM_PROCEVENT_LAUNCH_FLOOR_SECONDS=3 \
+# Hold the launch-floor dependency at a handshake, rather than assuming the
+# replacement registration finishes within three seconds on a loaded runner.
+# The real pacing command still executes after the replacement is published;
+# the runner must then reject its old registration before invoking the source.
+PACE_BIN=$(fm_fakebin "$TMP_ROOT/pacing-race-bin")
+PACE_REAL_PERL=$(command -v perl) || fail "this host has no perl for the pacing fixture"
+PACE_READY="$TMP_ROOT/pacing-race.ready"
+PACE_RELEASE="$TMP_ROOT/pacing-race.release"
+cat > "$PACE_BIN/perl" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = '-MTime::HiRes=clock_gettime,sleep,CLOCK_MONOTONIC' ]; then
+  printf 'ready\n' > "$PACE_READY" || exit 1
+  while [ ! -e "$PACE_RELEASE" ]; do
+    [ "$SECONDS" -lt 60 ] || exit 1
+    sleep 0.02
+  done
+fi
+exec "$PACE_REAL_PERL" "$@"
+SH
+chmod +x "$PACE_BIN/perl"
+PATH="$PACE_BIN:$PATH" PACE_REAL_PERL="$PACE_REAL_PERL" \
+  PACE_READY="$PACE_READY" PACE_RELEASE="$PACE_RELEASE" \
+  FM_PROCEVENT_LAUNCH_FLOOR_SECONDS=3 \
   pe "$HPACE_RACE" start pace-race-src > "$TMP_ROOT/registration-pacing-race.out" 2>&1 &
 PACE_RACE_PID=$!
-wait_for "$FM_PROCEVENT_CLAIM_ROOT/pace-race-src.claim" \
-  || fail "the superseded pacing fixture did not claim its registration"
+wait_for "$PACE_READY" \
+  || fail "the superseded pacing fixture did not reach its launch floor"
 [ "$(wc -l < "$PACE_RACE_LOG" | tr -d ' ')" = 1 ] \
   || fail "the superseded pacing fixture was not waiting on its launch floor"
 pe_register "$HPACE_RACE" lavish pace-race-src -- "$FAST_SOURCE" "$PACE_RACE_LOG" >/dev/null
+printf 'release\n' > "$PACE_RELEASE"
 wait "$PACE_RACE_PID" || fail "the superseded paced runner failed"
 [ "$(wc -l < "$PACE_RACE_LOG" | tr -d ' ')" = 1 ] \
   || fail "the superseded paced runner invoked its stale command"
