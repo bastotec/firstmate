@@ -150,6 +150,68 @@ test_backfill_drafts_every_uncarded_captain_hold() {
   pass "fm-card: backfill drafts a card for every uncarded captain hold, once"
 }
 
+run_captain() {  # <home> <command args...>
+  local home=$1
+  shift
+  PATH="$home/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+    FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" FM_CARD_NOW=2026-10-07T12:00:00Z \
+    "$ROOT/bin/fm-captain-hold.sh" "$@"
+}
+
+test_hold_without_card_writes_a_draft() {
+  local home
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home hold-draft)
+  run_captain "$home" hold card-a --title "Decide A" --repo cadia --reason "Pick a language rule" >/dev/null \
+    || fail "hold failed"
+  assert_present "$home/state/cards/card-a.json" "hold wrote a card"
+  assert_equals true "$(jq -r .draft "$home/state/cards/card-a.json")" "card is a draft"
+  assert_equals "Pick a language rule" "$(jq -r .situation "$home/state/cards/card-a.json")" "reason is the draft situation"
+  assert_equals cadia "$(jq -r .project "$home/state/cards/card-a.json")" "repo is the draft project"
+  pass "fm-captain-hold: a hold without a card gets a draft card"
+}
+
+test_hold_with_card_file_writes_the_full_card() {
+  local home card
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home hold-card)
+  card="$home/card.json"
+  printf '%s' '{"project":"cadia","title":"Decide B","situation":"Two ways forward.","options":[{"key":"1","label":"A","instruction":"Do A."},{"key":"2","label":"B","instruction":"Do B."}],"recommended":"2"}' > "$card"
+  run_captain "$home" hold card-b --title "Decide B" --repo cadia --reason "r" --card-file "$card" >/dev/null \
+    || fail "hold with a card failed"
+  assert_equals false "$(jq -r .draft "$home/state/cards/card-b.json")" "full card stored"
+  assert_equals 2 "$(jq -r .recommended "$home/state/cards/card-b.json")" "recommendation stored"
+  pass "fm-captain-hold: a hold with --card-file stores the full card"
+}
+
+test_hold_refuses_an_invalid_card_before_holding() {
+  local home bad rc=0
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home hold-badcard)
+  bad="$home/bad.json"
+  printf '{"title":"x"}' > "$bad"
+  run_captain "$home" hold card-c --title "Decide C" --reason "r" --card-file "$bad" >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "invalid card refuses the hold"
+  assert_absent "$home/state/cards/card-c.json" "no card written"
+  tasks_in "$home" show card-c >/dev/null 2>&1 && fail "task must not be created when its card is invalid"
+  pass "fm-captain-hold: an invalid card refuses the hold before any backlog change"
+}
+
+test_answer_removes_the_card() {
+  local home dec
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home answer-card)
+  run_captain "$home" hold card-d --title "Decide D" --reason "r" >/dev/null || fail "hold failed"
+  dec="$home/dec.txt"
+  printf 'Go with option 1.\n' > "$dec"
+  run_captain "$home" answer card-d --decision-file "$dec" >/dev/null || fail "answer failed"
+  assert_absent "$home/state/cards/card-d.json" "answer removed the card"
+  run_captain "$home" hold card-e --title "Decide E" --reason "r" >/dev/null || fail "hold failed"
+  run_captain "$home" answer card-e --decision-file "$dec" --release >/dev/null || fail "release failed"
+  assert_absent "$home/state/cards/card-e.json" "release removed the card"
+  pass "fm-captain-hold: answering or releasing a call removes its card"
+}
+
 test_write_and_show_round_trip
 test_validate_names_the_broken_field
 test_show_reports_a_corrupt_card_as_invalid
@@ -157,3 +219,7 @@ test_rejects_unsafe_task_ids
 test_remove_is_idempotent
 test_draft_never_overwrites_a_full_card
 test_backfill_drafts_every_uncarded_captain_hold
+test_hold_without_card_writes_a_draft
+test_hold_with_card_file_writes_the_full_card
+test_hold_refuses_an_invalid_card_before_holding
+test_answer_removes_the_card

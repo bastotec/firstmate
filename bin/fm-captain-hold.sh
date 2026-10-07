@@ -21,7 +21,8 @@
 #
 # Usage:
 #   fm-captain-hold.sh hold <task-id> --reason <reason> \
-#     [--title <title>] [--repo <repo>] [--origin <origin-id>] [--until YYYY-MM-DD]
+#     [--title <title>] [--repo <repo>] [--origin <origin-id>] [--until YYYY-MM-DD] \
+#     [--card-file <path>]
 #   fm-captain-hold.sh answer <task-id> --decision-file <path> [--release]
 #   fm-captain-hold.sh answers [<legacy-origin> | --any-origin] --source <provenance>   (keyed answers on stdin)
 #   fm-captain-hold.sh reconcile-requests --source-id <source-id> --source <provenance>   (task ids on stdin)
@@ -46,6 +47,12 @@
 # A task already closed is refused rather than reopened. `--until` records the
 # captain's own deferral date through `tasks-axi hold --until`, so a "revisit
 # later" answer is stored as a date instead of a live card.
+# Every hold carries a decision card (bin/fm-card.sh owns the file and its
+# schema).
+# With --card-file the card is validated before anything is held and written
+# once the hold is durable; without it a draft card is written from the title,
+# repo and reason unless a card already exists.
+# Every successful close or release removes the card.
 #
 # `answer` records the captain's exact words and resolves the call in the same
 # act. It requires a non-empty captain decision file of at most 8192 bytes and
@@ -222,6 +229,7 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-parent-channel-lib.sh"
 
 PARENT_HOLD_PUBLISHED=0
+CARD_TOOL="$SCRIPT_DIR/fm-card.sh"
 publish_parent_hold() {  # <task-id> <occurrence> <verb> <note>
   local id=$1 occurrence=$2 verb=$3 note=$4 rc=0
   PARENT_HOLD_PUBLISHED=0
@@ -823,7 +831,7 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how>"
 
 command_hold() {
   local id=${1:-} title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence
-  local existing_hold_kind='' existing_held='' preserve_hold_set=0
+  local existing_hold_kind='' existing_held='' preserve_hold_set=0 card_file=''
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -833,6 +841,7 @@ command_hold() {
       --repo) shift; repo=${1:-} ;;
       --origin) shift; origin=${1:-} ;;
       --until) shift; until=${1:-} ;;
+      --card-file) shift; card_file=${1:-} ;;
       *) usage >&2; exit 2 ;;
     esac
     shift
@@ -848,6 +857,10 @@ command_hold() {
       [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) : ;;
       *) fail "--until must be a YYYY-MM-DD date: $until" ;;
     esac
+  fi
+  if [ -n "$card_file" ]; then
+    "$CARD_TOOL" validate --file "$card_file" \
+      || fail "the decision card for $id is invalid; nothing was held"
   fi
   hold_set=${FM_CAPTAIN_HOLD_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
   case "$hold_set" in
@@ -912,6 +925,14 @@ command_hold() {
   [ -n "$(body_hold_set_timestamp "$(show_field_value "$show" body)")" ] \
     || fail "task $id lost its hold-set stamp while being held"
   publish_parent_hold "$id" "$occurrence" needs-decision "$reason"
+  if [ -n "$card_file" ]; then
+    "$CARD_TOOL" write "$id" --file "$card_file" >/dev/null \
+      || fail "task $id is held but its decision card could not be written"
+  elif [ ! -f "$STATE/cards/$id.json" ]; then
+    "$CARD_TOOL" draft "$id" --title "$(show_field_value "$show" title)" \
+      --project "$(show_field_value "$show" repo)" --situation "$reason" >/dev/null \
+      || fail "task $id is held but its draft decision card could not be written"
+  fi
   printf '%s\n' "$id"
 }
 
@@ -973,11 +994,13 @@ apply_pending_retained_artifact() {  # <task-id>
 
 close_answered() {  # <task-id> <release-0-or-1>
   if [ "$2" = 1 ]; then
-    tasks_axi unhold "$1" >/dev/null
+    tasks_axi unhold "$1" >/dev/null || return 1
   else
     apply_pending_retained_artifact "$1" || return 1
-    tasks_axi "done" "$1" >/dev/null
+    tasks_axi "done" "$1" >/dev/null || return 1
   fi
+  "$CARD_TOOL" remove "$1" \
+    || printf 'actionable: closed %s but could not remove its decision card\n' "$1" >&2
 }
 
 remove_interrupted_answer_stamp() {  # <task-id>
