@@ -184,9 +184,8 @@ cmd_draft() {
     esac
     shift
   done
-  [ -n "$title" ] && [ -n "$project" ] && [ -n "$situation" ] \
-    || die "draft needs --title, --project and --situation"
-  case "$project" in *[!A-Za-z0-9._-]*) project=firstmate ;; esac
+  [ -n "$title" ] && [ -n "$situation" ] || die "draft needs --title and --situation"
+  case "$project" in ''|*[!A-Za-z0-9._-]*) project=firstmate ;; esac
   p=$(card_path "$id")
   if [ -f "$p" ] && [ "$(jq -r '.draft // false' "$p" 2>/dev/null)" = false ]; then
     printf 'kept: %s\n' "$p"
@@ -222,7 +221,18 @@ cmd_backfill() {
 
 hold_tool() { FM_HOME="$FM_HOME" "$HOLD" "$@"; }
 
-is_captain_held() { hold_tool open "$1" >/dev/null 2>&1; }
+# 0 when the task is an open captain call, 1 when it is not; anything else
+# means the backlog could not answer, which is never read as "not held".
+held_state() {  # <task-id>
+  local rc=0
+  hold_tool open "$1" >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    0|1) return "$rc" ;;
+    *) die "cannot tell whether $1 is held for the captain; refusing to act" ;;
+  esac
+}
+
+is_captain_held() { held_state "$1"; }
 
 epoch_of() {  # <UTC YYYY-MM-DDTHH:MM:SSZ or YYYY-MM-DD>
   local t=$1
@@ -231,13 +241,10 @@ epoch_of() {  # <UTC YYYY-MM-DDTHH:MM:SSZ or YYYY-MM-DD>
 }
 
 mtime_of() {  # <path>
-  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1"
-}
-
-hold_set_of() {  # <task-id>
-  local show
-  show=$(tasks show "$1" --full 2>/dev/null) || return 0
-  shown_value "$show" body | sed -n '1s/^Captain hold set: \([0-9TZ:-]*\)$/\1/p'
+  case "$(uname -s)" in
+    Darwin) /usr/bin/stat -f %m "$1" ;;
+    *) stat -c %Y "$1" ;;
+  esac
 }
 
 meta_get() {  # <task-id> <key>
@@ -246,7 +253,7 @@ meta_get() {  # <task-id> <key>
 }
 
 cmd_stale() {
-  local days=3 p id now_s cutoff set set_s
+  local days=3 p id now_s cutoff set set_s show until
   while [ "$#" -gt 0 ]; do
     case "$1" in --days) shift; days=${1:-} ;; *) usage >&2; exit 2 ;; esac
     shift
@@ -262,11 +269,19 @@ cmd_stale() {
       printf '%s\torphan\tcard has no open captain hold\n' "$id"
       continue
     fi
+    show=$(tasks show "$id" --full 2>/dev/null) || die "cannot read task $id"
     if [ -n "$(meta_get "$id" pr)" ] && [ -f "$STATE/$id.pr-poll-merge-notified" ]; then
       printf '%s\tpr-merged\t%s merged\n' "$id" "$(meta_get "$id" pr)"
       continue
     fi
-    set=$(hold_set_of "$id")
+    # A hold that gates a tracked worker, or that the captain deferred to a
+    # date, is not idle; those leave through their own paths.
+    [ ! -f "$STATE/$id.meta" ] || continue
+    until=$(shown_value "$show" hold_until)
+    if [ -n "$until" ] && [ "$(epoch_of "$until" || echo 0)" -gt "$now_s" ]; then
+      continue
+    fi
+    set=$(shown_value "$show" body | sed -n '1s/^Captain hold set: \([0-9TZ:-]*\)$/\1/p')
     [ -n "$set" ] || continue
     set_s=$(epoch_of "$set") || continue
     [ "$set_s" -lt "$cutoff" ] || continue
@@ -318,7 +333,7 @@ cmd_clear() {
 }
 
 cmd_restore() {
-  local id=${1:-} line reason card input
+  local id=${1:-} line reason card input show mode
   require_slug "$id"
   [ -f "$CLEAR_LOG" ] || die "nothing was cleared"
   line=$(jq -c --arg id "$id" 'select(.task == $id)' "$CLEAR_LOG" | tail -n 1)
@@ -327,6 +342,12 @@ cmd_restore() {
   ! is_captain_held "$id" || die "$id is already held again; nothing to restore"
   reason=$(printf '%s' "$line" | jq -r .reason)
   [ -n "$reason" ] || die "$id was an orphan card; there is no hold to restore"
+  # Only undo the clear itself: the task must still be closed by it, with no
+  # newer answer or work on top.
+  show=$(tasks show "$id" --full 2>/dev/null) || die "cannot read task $id"
+  [ "$(shown_value "$show" state)" = "done" ] || die "$id has moved on since it was cleared; nothing to restore"
+  mode=$(shown_value "$show" body | sed -n 's/^Resolution mode: //p' | head -1)
+  [ "$mode" = stale-cleared ] || die "$id was resolved again after the clear; refusing to undo that"
   card=$(printf '%s' "$line" | jq -c .card)
   tasks reopen "$id" >/dev/null || die "could not reopen $id"
   if [ "$card" != null ] && [ "$(printf '%s' "$card" | jq -r .draft)" = false ]; then

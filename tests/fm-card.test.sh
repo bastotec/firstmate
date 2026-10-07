@@ -50,7 +50,10 @@ test_write_and_show_round_trip() {
   assert_equals false "$(printf '%s' "$out" | jq -r .draft)" "full card is not a draft"
   assert_equals 2026-10-07T12:00:00Z "$(printf '%s' "$out" | jq -r .created)" "created stamped"
   assert_equals "$(jq -r .situation "$in")" "$(printf '%s' "$out" | jq -r .situation)" "situation round-trips byte for byte"
-  mode=$(stat -f %Lp "$home/state/cards/site-lang-6.json" 2>/dev/null || stat -c %a "$home/state/cards/site-lang-6.json")
+  case "$(uname -s)" in
+    Darwin) mode=$(/usr/bin/stat -f %Lp "$home/state/cards/site-lang-6.json") ;;
+    *) mode=$(stat -c %a "$home/state/cards/site-lang-6.json") ;;
+  esac
   assert_equals 600 "$mode" "card is owner-only"
   pass "fm-card: write then show round-trips a valid card at mode 0600"
 }
@@ -318,10 +321,124 @@ test_restore_refuses_when_held_again() {
   home=$(make_home restore-refuse)
   FM_CAPTAIN_HOLD_NOW=2026-10-01T00:00:00Z hold_it "$home" t9 "Call" "waiting"
   run_card "$home" clear t9 --why idle >/dev/null || fail "clear failed"
-  run_card "$home" restore t9 >/dev/null || fail "first restore failed"
+  tasks_in "$home" reopen t9 >/dev/null
+  hold_it "$home" t9 "Call" "a new question"
   run_card "$home" restore t9 >/dev/null 2>&1 || rc=$?
-  assert_equals 2 "$rc" "a second restore on a live hold is refused"
+  assert_equals 2 "$rc" "restore on a call held again some other way is refused"
+  assert_equals "a new question" "$(jq -r .situation "$home/state/cards/t9.json")" "the newer card survives"
   pass "fm-card: restore refuses when the call is already held again"
+}
+
+test_restore_refuses_after_the_captain_answered() {
+  local home rc=0 dec
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home restore-answered)
+  FM_CAPTAIN_HOLD_NOW=2026-10-01T00:00:00Z hold_it "$home" t8 "Call" "waiting"
+  run_card "$home" clear t8 --why idle >/dev/null || fail "clear failed"
+  tasks_in "$home" reopen t8 >/dev/null
+  hold_it "$home" t8 "Call" "a new question"
+  dec="$home/dec.txt"
+  printf 'Do the new thing.\n' > "$dec"
+  run_captain "$home" answer t8 --decision-file "$dec" >/dev/null || fail "answer failed"
+  run_card "$home" restore t8 >/dev/null 2>&1 || rc=$?
+  assert_equals 2 "$rc" "restore refuses to undo a newer captain answer"
+  run_captain "$home" open t8 && fail "the answered call must stay closed"
+  pass "fm-card: restore never reopens a call the captain answered after the clear"
+}
+
+test_unreadable_backlog_never_reads_as_orphan() {
+  local home rc=0 out
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home unreadable)
+  hold_it "$home" live "Live call" "waiting"
+  chmod 000 "$home/data/backlog.md"
+  out=$(run_card "$home" stale 2>/dev/null) || rc=$?
+  chmod 600 "$home/data/backlog.md"
+  assert_not_equals 0 "$rc" "stale fails when holds cannot be read"
+  assert_not_contains "$out" "orphan" "an unreadable hold is never called an orphan"
+  rc=0
+  chmod 000 "$home/data/backlog.md"
+  run_card "$home" clear live --why x >/dev/null 2>&1 || rc=$?
+  chmod 600 "$home/data/backlog.md"
+  assert_equals 2 "$rc" "clear refuses when the hold cannot be read"
+  assert_present "$home/state/cards/live.json" "card survives"
+  pass "fm-card: a backlog that cannot be read never turns live holds into orphans"
+}
+
+test_hold_on_a_task_without_repo_still_gets_a_card() {
+  local home rc=0
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home norepo)
+  tasks_in "$home" add norepo-a "No repo call" >/dev/null
+  run_captain "$home" hold norepo-a --reason "waiting" >/dev/null 2>&1 || rc=$?
+  assert_equals 0 "$rc" "hold succeeds"
+  assert_equals firstmate "$(jq -r .project "$home/state/cards/norepo-a.json")" "draft defaults the project"
+  pass "fm-captain-hold: a task with no repo still gets a draft card"
+}
+
+test_new_hold_replaces_a_leftover_card() {
+  local home card
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home leftover)
+  card="$home/card.json"
+  good_card "$card"
+  run_captain "$home" hold lo-a --title "Old" --repo cadia --reason "old question" --card-file "$card" >/dev/null || fail "hold failed"
+  tasks_in "$home" unhold lo-a >/dev/null
+  run_captain "$home" hold lo-a --reason "a totally new question" >/dev/null || fail "re-hold failed"
+  assert_equals true "$(jq -r .draft "$home/state/cards/lo-a.json")" "new question gets a draft"
+  assert_equals "a totally new question" "$(jq -r .situation "$home/state/cards/lo-a.json")" "draft carries the new question"
+  pass "fm-captain-hold: a new hold never inherits a leftover card"
+}
+
+test_stale_clear_retires_a_pending_reconcile_request() {
+  local home ev
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home stale-request)
+  hold_it "$home" rq-a "Call" "waiting"
+  mkdir -p "$home/state/reconcile-requests"
+  printf 'schema=fm-reconcile-request.v1\ntask=rq-a\nrequested=2026-10-06T00:00:00Z\nsource=test\n' > "$home/state/reconcile-requests/rq-a.request"
+  ev="$home/ev.txt"
+  printf 'stale\n' > "$ev"
+  run_captain "$home" stale-clear rq-a --evidence-file "$ev" >/dev/null || fail "stale-clear failed"
+  assert_not_contains "$(run_captain "$home" reconcile list)" "rq-a" "the reconcile request is retired"
+  pass "fm-captain-hold: stale-clear retires a pending reconcile request"
+}
+
+test_idle_skips_deferred_and_worker_tracked_holds() {
+  local home out
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home idle-skip)
+  FM_CAPTAIN_HOLD_NOW=2026-10-01T00:00:00Z run_captain "$home" hold later-a --title "Later" --repo firstmate \
+    --reason "revisit in November" --until 2026-11-01 >/dev/null || fail "dated hold failed"
+  FM_CAPTAIN_HOLD_NOW=2026-10-01T00:00:00Z hold_it "$home" work-a "Work" "approve the worker's plan"
+  printf 'project=firstmate\n' > "$home/state/work-a.meta"
+  out=$(run_card "$home" stale --days 3)
+  assert_not_contains "$out" "later-a" "a captain deferral is not stale"
+  assert_not_contains "$out" "work-a" "a hold gating a tracked worker is not idle-cleared"
+  pass "fm-card: idle skips captain deferrals and holds that gate a tracked worker"
+}
+
+test_stale_with_gnu_coreutils() {
+  local home out shim
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  if [ "$(uname -s)" = Darwin ]; then
+    if ! command -v gstat >/dev/null 2>&1 || ! command -v gdate >/dev/null 2>&1; then
+      echo "skip: GNU stat/date not installed"
+      return 0
+    fi
+  fi
+  home=$(make_home gnu)
+  FM_CAPTAIN_HOLD_NOW=2026-10-01T00:00:00Z hold_it "$home" busy-one "Busy call" "waiting"
+  printf 'working: still at it\n' > "$home/state/busy-one.status"
+  shim="$home/gnu"
+  mkdir -p "$shim"
+  if [ "$(uname -s)" = Darwin ]; then
+    ln -s "$(command -v gstat)" "$shim/stat"
+    ln -s "$(command -v gdate)" "$shim/date"
+  fi
+  out=$(PATH="$shim:$PATH" run_card "$home" stale --days 3)
+  assert_not_contains "$out" "busy-one" "a busy hold is not idle under GNU stat"
+  pass "fm-card: stale reads file times correctly with GNU coreutils"
 }
 
 test_write_and_show_round_trip
@@ -342,3 +459,10 @@ test_clear_then_restore_round_trips
 test_clear_removes_an_orphan_card_without_touching_the_backlog
 test_clear_refuses_a_task_that_is_not_a_captain_call
 test_restore_refuses_when_held_again
+test_restore_refuses_after_the_captain_answered
+test_unreadable_backlog_never_reads_as_orphan
+test_hold_on_a_task_without_repo_still_gets_a_card
+test_new_hold_replaces_a_leftover_card
+test_stale_clear_retires_a_pending_reconcile_request
+test_idle_skips_deferred_and_worker_tracked_holds
+test_stale_with_gnu_coreutils

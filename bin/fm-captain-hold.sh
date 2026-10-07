@@ -931,13 +931,17 @@ command_hold() {
   [ -n "$(body_hold_set_timestamp "$(show_field_value "$show" body)")" ] \
     || fail "task $id lost its hold-set stamp while being held"
   publish_parent_hold "$id" "$occurrence" needs-decision "$reason"
+  # The hold is durable by now, so a card that cannot be written is reported,
+  # never turned into a failed hold. A new hold replaces any leftover card so
+  # an old question's options can never ride on a new one.
   if [ -n "$card_file" ]; then
     "$CARD_TOOL" write "$id" --file "$card_file" >/dev/null \
-      || fail "task $id is held but its decision card could not be written"
-  elif [ ! -f "$STATE/cards/$id.json" ]; then
+      || printf 'actionable: task %s is held but its decision card could not be written\n' "$id" >&2
+  elif [ "$preserve_hold_set" = 0 ] || [ ! -f "$STATE/cards/$id.json" ]; then
+    "$CARD_TOOL" remove "$id" 2>/dev/null || true
     "$CARD_TOOL" draft "$id" --title "$(show_field_value "$show" title)" \
       --project "$(show_field_value "$show" repo)" --situation "$reason" >/dev/null \
-      || fail "task $id is held but its draft decision card could not be written"
+      || printf 'actionable: task %s is held but its draft decision card could not be written\n' "$id" >&2
   fi
   printf '%s\n' "$id"
 }
@@ -1624,20 +1628,32 @@ command_stale_clear() {
   state=$(show_field "$show" state)
   hold_kind=$(show_field_value "$show" hold_kind)
   body=$(show_field "$show" body)
+  # Mirrors reconcile_close: an exact retry finishes an interrupted clear, and
+  # a record already written is never written twice.
   if [ "$state" = "done" ]; then
     [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
       && [ "$(recorded_resolution_mode "$body" || true)" = stale-cleared ] \
       || fail "task $id is already closed by something other than this stale clear"
+    occurrence=$(resolution_record_count "$body")
+    remove_interrupted_answer_stamp "$id"
+    "$CARD_TOOL" remove "$id" || true
+    publish_parent_resolution_then_retire "$id" "$occurrence" stale-cleared
     printf 'stale-cleared: %s\n' "$id"
     return 0
   fi
   [ "$hold_kind" = captain ] \
     || fail "task $id is not held for the captain; there is no captain call to clear"
-  occurrence=$(( $(resolution_record_count "$body") + 1 ))
-  write_resolution_record "$id" stale-cleared "$body"
+  if body_has_resolution_record "$body" \
+    && [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
+    && [ "$(recorded_resolution_mode "$body" || true)" = stale-cleared ]; then
+    occurrence=$(resolution_record_count "$body")
+  else
+    occurrence=$(( $(resolution_record_count "$body") + 1 ))
+    write_resolution_record "$id" stale-cleared "$body"
+  fi
   close_answered "$id" 0 || fail "could not close stale captain-held task $id"
   remove_interrupted_answer_stamp "$id"
-  publish_parent_hold "$id" "$occurrence" resolved stale-cleared
+  publish_parent_resolution_then_retire "$id" "$occurrence" stale-cleared
   printf 'stale-cleared: %s\n' "$id"
 }
 
