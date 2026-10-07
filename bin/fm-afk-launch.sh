@@ -2,9 +2,9 @@
 # fm-afk-launch.sh - the single owner of away-mode ENTRY and EXIT: the
 # read-back-and-confirm entry that writes the away-posture record through
 # bin/fm-afk-contract.sh, and the away-mode daemon endpoint lifecycle where a
-# daemon still runs: launch it in a NON-VISIBLE tracked terminal or a detached
-# process, record its exact identity, tear it down by that identity, and
-# reconcile a leaked endpoint after a crash.
+# daemon still runs: launch it as a detached process, record its exact
+# identity, tear it down by that identity, and reconcile a leaked process
+# after a crash.
 #
 # ENTRY (the posture record). `/afk [words]` is two steps so the captain hears
 # the mandate back before it binds: `propose` compiles the words and clauses
@@ -22,11 +22,10 @@
 # with its own tracked background tool; otherwise this launches the daemon as a
 # detached session leader and records its exact identity.
 #
-# Correct supervisor targeting: the daemon finds the captain pane to inject into
-# from its OWN inherited env (discover_supervisor_target). Running it in a
-# separate terminal would make it discover its OWN pane, so this captures the
-# captain pane FIRST (from the pane this script runs in) and passes it in as
-# FM_SUPERVISOR_TARGET/FM_SUPERVISOR_BACKEND explicitly.
+# Correct supervisor targeting: capture the primary's stream endpoint or
+# steer-only target before detaching, using discover_supervisor_target, and
+# pass FM_SUPERVISOR_TARGET/FM_SUPERVISOR_BACKEND explicitly so delivery stays
+# bound to that primary.
 #
 # Usage:
 #   fm-afk-launch.sh propose [--words-file <path> | --words <text>]
@@ -42,21 +41,20 @@
 #                              ids that may merge-when-green while away.
 #   fm-afk-launch.sh confirm   Promote the required proposal and print the entry
 #                              announcement.
-#   fm-afk-launch.sh start     Capture the captain pane, then (unless the daemon
-#                              is already running) launch the daemon in a fresh
-#                              non-visible terminal or detached process for the
-#                              detected backend and record it. Idempotent: an already-running daemon
-#                              just refreshes state/.afk; a recorded-but-dead
-#                              terminal is reconciled (closed by id) first.
+#   fm-afk-launch.sh start     Capture the primary target, then (unless the daemon
+#                              is already running) launch and record a detached
+#                              daemon process. Idempotent: an already-running
+#                              daemon just refreshes state/.afk; a recorded-but-
+#                              dead process is reconciled first.
 #   fm-afk-launch.sh start-native
 #                              Prepare lifecycle state for a harness-native
 #                              background job and record that no terminal exists.
 #   fm-afk-launch.sh stop      Correct-ordered exit: SIGTERM the daemon so its
 #                              cleanup flushes WHILE state/.afk is still present,
-#                              wait for it, close the recorded terminal by exact
-#                              id, clear state/.afk, then archive the record last.
-#   fm-afk-launch.sh reconcile Close a recorded-but-dead daemon terminal by exact
-#                              id and drop the record (recovery after a crash).
+#                              wait for it, confirm the recorded process is gone,
+#                              clear state/.afk, then archive the record last.
+#   fm-afk-launch.sh reconcile Reconcile a recorded-but-dead daemon process and
+#                              drop its record (recovery after a crash).
 #
 # The primary is a deck-chat host, usually on a stream endpoint, so there is no
 # local pane to put a hidden terminal next to: the daemon runs as a detached
@@ -71,10 +69,10 @@
 # lead its own process group; a mismatch reads as gone and is never signalled.
 # tests/fm-afk-launch.test.sh covers detached launch, shutdown, and mismatches.
 #
-# Test seam: FM_AFK_LAUNCH_ENTRY overrides the command run in the created
-# terminal (default bin/fm-afk-start.sh), so a topology test can run a harmless
-# placeholder instead of a real daemon. FM_SUPERVISOR_TARGET/FM_SUPERVISOR_BACKEND
-# override the captured captain pane/backend (an isolated lab pane in tests).
+# Test seam: FM_AFK_LAUNCH_ENTRY overrides the detached entry command (default
+# bin/fm-afk-start.sh), so a lifecycle test can run a harmless placeholder
+# instead of a real daemon. FM_SUPERVISOR_TARGET/FM_SUPERVISOR_BACKEND override
+# the captured primary target/backend (an isolated stream endpoint in tests).
 # FM_AFK_MODE (away|quiet, default away) declares which mode a `start` entry
 # requests; leave it unset for a plain refresh of an already-running daemon
 # so its current mode is preserved (bin/fm-afk-start.sh fm_afk_flag_write).

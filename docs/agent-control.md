@@ -127,7 +127,7 @@ It differs from the steps above in exactly three places.
 
 - Targeting is exact.
   Only a bare task id with a `state/<id>.meta` record in this home is accepted, and that record must pass the shared endpoint-identity validation.
-  A legacy `fm-<id>` window label, an explicit `session:window` endpoint, and a record whose `endpoint_task_id` names another task are all refused.
+  A legacy `fm-<id>` task label, an explicit `<hub-tag>:<endpoint-id>` endpoint, and a record whose `endpoint_task_id` names another task are all refused.
 - A remotely placed secondmate is never driven from this home's own endpoint view.
   Its agent runs on another host, so none of the postconditions this plane verifies could be read for it here; local endpoint validation would refuse the record regardless, because `window=remote:<id>` can never match a local backend's required shape.
   [Remote lifecycle routing](remote-secondmates.md#lifecycle-control) owns its supported primary verbs, readiness gate, and host-to-parent rebinding; the host-local record is ordinary and local, so the transaction's checkpoint, journal, rollback, and postconditions apply there.

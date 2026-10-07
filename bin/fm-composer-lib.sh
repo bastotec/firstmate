@@ -1447,8 +1447,8 @@ EOF
 # retyping would duplicate it. Proven pending (and pending-unproven) retries
 # consume the budget; any other verdict returns immediately, so `unknown`
 # stays a loud refusal rather than a blind retry into an unreadable pane.
-# No shape knowledge lives in any loop; callers consume this shared verdict
-# plus fm_composer_queued_enter_verdict.
+# No shape knowledge lives in this loop; the stream adapter requires its
+# cleared-composer verdict and does not apply the queued-Enter helper below.
 fm_composer_submit_retry_core() {  # <send-key-fn> <state-fn> <target> <retries> <enter-sleep> [expected-label]
   local send_key_fn=$1 state_fn=$2 target=$3 retries=$4 sleep_s=$5 expected_label=${6:-} i=0 state
   while :; do
@@ -1472,8 +1472,8 @@ fm_composer_submit_retry_core() {  # <send-key-fn> <state-fn> <target> <retries>
 #   pending + unknown -> pending (unreadable busy is not proof of a queue)
 # Every other composer verdict is returned unchanged, so pending-unproven,
 # empty, and unknown never receive this conversion.
-# The adapter supplies its own busy primitive (the stream adapter reads a
-# rendered busy footer). This function does not read a pane.
+# This retained helper accepts a caller's busy verdict and does not read a
+# pane; the production stream submit path does not invoke it.
 fm_composer_queued_enter_verdict() {  # <composer-state> <busy|idle|unknown>
   local state=$1 busy=${2:-}
   [ "$state" = pending ] || { printf '%s' "$state"; return 0; }

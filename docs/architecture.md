@@ -184,7 +184,7 @@ These delivery checks are harness-scoped rather than a global pattern union, and
 ## Runtime session backends
 
 The runtime backend is the session-provider layer below firstmate's scripts.
-It owns task endpoint creation, bounded capture, text/key sends, current-path reads for spawn-time worktree discovery when the backend does not create the worktree itself, live-window fallback lookup, agent-process liveness probes where verified, and endpoint teardown.
+It owns task endpoint creation, bounded capture, text/key sends, current-path reads for spawn-time worktree discovery, agent-process liveness probes, and endpoint teardown.
 Endpoint teardown carries one cross-backend contract that the layer above depends on: a kill reports whether the endpoint is gone, could not be proved gone, or could never be attempted, and only the first licenses removing the durable records that assert a worker stopped - `fm_backend_kill` in `bin/fm-backend.sh` owns that contract, and each adapter's own header owns what its backend can prove.
 `bin/fm-backend.sh` centralizes backend selection, `state/<id>.meta` helpers, metadata-only cleanup identity validation, selector resolution, and operation dispatch to the one adapter, `bin/backends/stream.sh`; it also reads records left on the retired tmux and herdr backends as undrivable rather than crashing.
 [`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns selection and the loud refusal of any other name.
@@ -196,8 +196,7 @@ Relaying that pty over the network adds one state a local terminal would not hav
 
 ## Worktrees, not branches in your checkout
 
-Crewmates never intentionally touch your project clone: [treehouse](https://github.com/kunchenguid/treehouse) pools clean worktrees for every session-provider-only backend, while a backend that owns worktree lifecycle itself creates its own.
-[`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns which backends are which.
+Crewmates never intentionally touch your project clone; [`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns the worktree-provider contract.
 The [`fm-spawn.sh` header](../bin/fm-spawn.sh) owns ship/scout worktree isolation and fresh-base refusal rules, including spawns from linked homes.
 Portable regressions live in [`tests/fm-spawn-pool-base-freshen.test.sh`](../tests/fm-spawn-pool-base-freshen.test.sh) for spawn isolation and base freshness, and [`tests/fm-control-relaunch.test.sh`](../tests/fm-control-relaunch.test.sh) for preserving the recorded copy on relaunch.
 
