@@ -2,7 +2,7 @@
 name: captain-hold-lifecycle
 description: >-
   Agent-only policy for completing investigations and visual reviews without losing unresolved captain calls, and for closing what the captain owns with his actual words.
-  Load before treating an investigation, scout report, structured review, or Lavish review as complete, before ending a visual review that exposed a captain decision, when recording or routing the captain's answer, and on any RECORD DIVERGENCE line the wake drain prints.
+  Load before treating an investigation, scout report, structured review, or Lavish review as complete, before ending a visual review that exposed a captain decision, when recording or routing the captain's answer, on every heartbeat for the decision-card sweep, on a "card <id>: option <key>" or "undo clear <id>" message, and on any RECORD DIVERGENCE line the wake drain prints.
 user-invocable: false
 metadata:
   internal: true
@@ -58,11 +58,22 @@ The absence of a routed work item is not a divergence and the guard never requir
 
 1. Read the complete investigation result and complete the visual review before declaring either complete.
 2. Inventory only genuine unresolved choices that require the captain, and find the task each one gates.
-3. Hold that task - or create one captain-held task for the review's open questions - with a concise reason carrying the question and options.
+3. Hold that task - or create one captain-held task for the review's open questions - with a concise reason carrying the question and options, and its decision card (below).
 4. Run `complete` with the full captain-held inventory for that review pass.
 5. Relay the choices to the captain as decisions from Bearings' Captain's Call section under `AGENTS.md` section 9; do not use the word hold in captain chat.
 6. Close each call only through `answer` (or a channel that feeds `answers`), close a board-requested moot call through evidence-backed `reconcile close`, record a still-active reconciliation through `reconcile note`, use `--until` when the captain defers it, or confirm a channel already closed it.
 7. Confirm Bearings reflects the outcome: answered or reconciled-moot calls leave Captain's Call, released work resumes, active reconciliations remain held, and deferred calls sit in Charted Next with their date.
+
+## Decision cards
+
+Every captain call carries a decision card file, which the Fleet app and Ziggy show the captain instead of the raw hold reason.
+When you hold, write the card yourself: project, a title, the situation in at most two plain lines, one to nine options each carrying the exact instruction you will carry out, and your recommendation.
+Pass it as `bin/fm-captain-hold.sh hold <id> --reason "<reason>" --card-file <path>`; re-holding an active call this way replaces its card and keeps its timestamp.
+A script that holds on its own leaves a draft card, which is not a judgment.
+On every heartbeat, replace each draft with a full card, run `bin/fm-card.sh stale`, clear each candidate with `bin/fm-card.sh clear <id> --why "<one line of evidence>"`, and tell the captain how many stale calls you cleared and why in your next natural reply.
+A message "card <id>: option <key>" is the captain choosing that option: carry out its instruction, then record it with `answer` using the captain's words; a redirect text is the captain's words too.
+"Undo clear <id>" means `bin/fm-card.sh restore <id>`.
+`bin/fm-card.sh --help` owns the card schema, limits, stale rules, and log format.
 
 `bin/fm-captain-hold.sh --help` owns command syntax, close modes, legacy-identity compatibility, completion attestation, retry behavior, and close ordering.
 `docs/captain-hold-lifecycle.md` records the mechanism and regression evidence without restating this policy.

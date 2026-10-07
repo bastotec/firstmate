@@ -354,6 +354,6 @@ case "${1:-}" in
   stale) shift; cmd_stale "$@" ;;
   clear) shift; cmd_clear "$@" ;;
   restore) shift; cmd_restore "$@" ;;
-  -h|--help|help) usage ;;
+  -h|--help|help) awk 'NR == 1 {next} /^#/ {sub(/^# ?/, ""); print; next} {exit}' "${BASH_SOURCE[0]}" ;;
   *) usage >&2; exit 2 ;;
 esac
