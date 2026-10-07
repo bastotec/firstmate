@@ -244,6 +244,86 @@ test_stale_clear_refuses_a_task_not_held_for_the_captain() {
   pass "fm-captain-hold: stale-clear refuses a task that is not a captain call"
 }
 
+hold_it() {  # <home> <id> <title> <reason>
+  run_captain "$1" hold "$2" --title "$3" --repo firstmate --reason "$4" >/dev/null || fail "hold $2 failed"
+}
+
+test_stale_finds_orphans_merged_and_idle_holds() {
+  local home out
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home stale)
+  run_card "$home" draft ghost --title Ghost --project firstmate --situation "No task behind me" >/dev/null
+  FM_CAPTAIN_HOLD_NOW=2026-10-01T00:00:00Z hold_it "$home" old-one "Old call" "waiting"
+  FM_CAPTAIN_HOLD_NOW=2026-10-07T11:00:00Z hold_it "$home" new-one "New call" "waiting"
+  FM_CAPTAIN_HOLD_NOW=2026-10-07T11:00:00Z hold_it "$home" merged-one "Merge call" "waiting"
+  printf 'pr=https://github.com/o/r/pull/9\n' > "$home/state/merged-one.meta"
+  printf 'fm-pr-poll-merge-notified-v1 github github.com o/r 9\n' > "$home/state/merged-one.pr-poll-merge-notified"
+  FM_CAPTAIN_HOLD_NOW=2026-10-01T00:00:00Z hold_it "$home" busy-one "Busy call" "waiting"
+  printf 'working: still at it\n' > "$home/state/busy-one.status"
+  out=$(run_card "$home" stale --days 3)
+  assert_contains "$out" $'ghost\torphan' "orphan found"
+  assert_contains "$out" $'old-one\tidle' "idle hold found"
+  assert_contains "$out" $'merged-one\tpr-merged' "merged PR found"
+  assert_not_contains "$out" "new-one" "fresh hold left alone"
+  assert_not_contains "$out" "busy-one" "hold with recent activity left alone"
+  pass "fm-card: stale finds orphan cards, merged PRs and holds idle past the threshold"
+}
+
+test_clear_then_restore_round_trips() {
+  local home line card
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home clear)
+  FM_CAPTAIN_HOLD_NOW=2026-10-01T00:00:00Z hold_it "$home" old-one "Old call" 'waiting on "quotes" and é'
+  card="$home/card.json"
+  good_card "$card"
+  run_captain "$home" hold old-one --reason 'waiting on "quotes" and é' --card-file "$card" >/dev/null || fail "card hold failed"
+  run_card "$home" clear old-one --why "idle 6 days, no activity" >/dev/null || fail "clear failed"
+  assert_absent "$home/state/cards/old-one.json" "card gone"
+  line=$(tail -n 1 "$home/state/cards-cleared.log")
+  assert_equals cleared "$(printf '%s' "$line" | jq -r .event)" "logged as cleared"
+  assert_equals 'waiting on "quotes" and é' "$(printf '%s' "$line" | jq -r .reason)" "reason preserved exactly"
+  assert_equals "$(jq -r .situation "$card")" "$(printf '%s' "$line" | jq -r .card.situation)" "card preserved exactly"
+  run_card "$home" restore old-one >/dev/null || fail "restore failed"
+  run_captain "$home" open old-one || fail "task is not held again"
+  assert_equals false "$(jq -r .draft "$home/state/cards/old-one.json")" "full card back"
+  assert_equals restored "$(tail -n 1 "$home/state/cards-cleared.log" | jq -r .event)" "restore logged"
+  pass "fm-card: clear then restore brings back the hold, reason and card"
+}
+
+test_clear_removes_an_orphan_card_without_touching_the_backlog() {
+  local home
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home clear-orphan)
+  run_card "$home" draft ghost --title Ghost --project firstmate --situation "No task behind me" >/dev/null
+  run_card "$home" clear ghost --why "no open captain hold" >/dev/null || fail "orphan clear failed"
+  assert_absent "$home/state/cards/ghost.json" "orphan card removed"
+  assert_equals orphan "$(tail -n 1 "$home/state/cards-cleared.log" | jq -r .kind)" "logged as orphan"
+  pass "fm-card: clear removes an orphan card and logs it"
+}
+
+test_clear_refuses_a_task_that_is_not_a_captain_call() {
+  local home rc=0
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home clear-refuse)
+  tasks_in "$home" add plain "Plain" --repo firstmate >/dev/null
+  run_card "$home" clear plain --why "x" >/dev/null 2>&1 || rc=$?
+  assert_equals 2 "$rc" "refused"
+  assert_absent "$home/state/cards-cleared.log" "nothing logged"
+  pass "fm-card: clear refuses a task that is neither orphaned nor captain-held"
+}
+
+test_restore_refuses_when_held_again() {
+  local home rc=0
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home restore-refuse)
+  FM_CAPTAIN_HOLD_NOW=2026-10-01T00:00:00Z hold_it "$home" t9 "Call" "waiting"
+  run_card "$home" clear t9 --why idle >/dev/null || fail "clear failed"
+  run_card "$home" restore t9 >/dev/null || fail "first restore failed"
+  run_card "$home" restore t9 >/dev/null 2>&1 || rc=$?
+  assert_equals 2 "$rc" "a second restore on a live hold is refused"
+  pass "fm-card: restore refuses when the call is already held again"
+}
+
 test_write_and_show_round_trip
 test_validate_names_the_broken_field
 test_show_reports_a_corrupt_card_as_invalid
@@ -257,3 +337,8 @@ test_hold_refuses_an_invalid_card_before_holding
 test_answer_removes_the_card
 test_stale_clear_never_reads_as_the_captains_words
 test_stale_clear_refuses_a_task_not_held_for_the_captain
+test_stale_finds_orphans_merged_and_idle_holds
+test_clear_then_restore_round_trips
+test_clear_removes_an_orphan_card_without_touching_the_backlog
+test_clear_refuses_a_task_that_is_not_a_captain_call
+test_restore_refuses_when_held_again

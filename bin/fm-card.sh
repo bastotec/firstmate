@@ -16,6 +16,9 @@
 #   fm-card.sh remove <task-id>
 #   fm-card.sh draft <task-id> --title <title> --project <project> --situation <text>
 #   fm-card.sh backfill
+#   fm-card.sh stale [--days <n>]
+#   fm-card.sh clear <task-id> --why <text>
+#   fm-card.sh restore <task-id>
 #
 # Input JSON for write carries project, title, situation, options and
 # recommended; the script adds version, task, draft, created and updated.
@@ -28,6 +31,17 @@
 # card, and the first mate replaces drafts with full cards at its next review.
 # `backfill` drafts a card for every captain-held task in this home that has
 # none, using its title, repo and hold reason.
+# `stale` is read-only and prints "<task-id>\t<kind>\t<why>" per candidate:
+# `orphan` (a card with no open captain hold), `pr-merged` (the task's
+# recorded PR has a merge notification), or `idle` (held longer than --days,
+# default 3, with no status-log change since the cutoff).
+# `clear` removes an orphan card, or closes a stale call through
+# `fm-captain-hold.sh stale-clear` with the why as evidence; either way it
+# appends one JSON line to state/cards-cleared.log carrying the prior hold
+# reason and card.
+# `restore` undoes the newest clear of a task: it reopens the task and re-holds
+# it with its original reason and card, and refuses when the call is already
+# held again or was an orphan card.
 # `show` exits 1 when the task has no card and 2 when its card is invalid.
 # FM_CARD_NOW overrides the UTC timestamp for tests.
 set -eu
@@ -37,6 +51,8 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CARDS="$STATE/cards"
+CLEAR_LOG="$STATE/cards-cleared.log"
+HOLD="$SCRIPT_DIR/fm-captain-hold.sh"
 TASKS="$SCRIPT_DIR/fm-tasks-axi.sh"
 
 usage() { awk '/^# Usage:/{on=1; next} on && /^#$/{exit} on{sub(/^#   /, ""); print}' "${BASH_SOURCE[0]}"; }
@@ -204,6 +220,130 @@ cmd_backfill() {
   done
 }
 
+hold_tool() { FM_HOME="$FM_HOME" "$HOLD" "$@"; }
+
+is_captain_held() { hold_tool open "$1" >/dev/null 2>&1; }
+
+epoch_of() {  # <UTC YYYY-MM-DDTHH:MM:SSZ or YYYY-MM-DD>
+  local t=$1
+  case "$t" in ????-??-??) t="${t}T00:00:00Z" ;; esac
+  date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$t" +%s 2>/dev/null || date -u -d "$t" +%s 2>/dev/null
+}
+
+mtime_of() {  # <path>
+  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1"
+}
+
+hold_set_of() {  # <task-id>
+  local show
+  show=$(tasks show "$1" --full 2>/dev/null) || return 0
+  shown_value "$show" body | sed -n '1s/^Captain hold set: \([0-9TZ:-]*\)$/\1/p'
+}
+
+meta_get() {  # <task-id> <key>
+  [ -f "$STATE/$1.meta" ] || return 0
+  sed -n "s/^$2=//p" "$STATE/$1.meta" | tail -1
+}
+
+cmd_stale() {
+  local days=3 p id now_s cutoff set set_s
+  while [ "$#" -gt 0 ]; do
+    case "$1" in --days) shift; days=${1:-} ;; *) usage >&2; exit 2 ;; esac
+    shift
+  done
+  case "$days" in ''|*[!0-9]*) die "--days must be a whole number" ;; esac
+  now_s=$(epoch_of "$(now)") || die "cannot read the current time"
+  cutoff=$(( now_s - days * 86400 ))
+  [ -d "$CARDS" ] || return 0
+  for p in "$CARDS"/*.json; do
+    [ -f "$p" ] || continue
+    id=$(basename "$p" .json)
+    if ! is_captain_held "$id"; then
+      printf '%s\torphan\tcard has no open captain hold\n' "$id"
+      continue
+    fi
+    if [ -n "$(meta_get "$id" pr)" ] && [ -f "$STATE/$id.pr-poll-merge-notified" ]; then
+      printf '%s\tpr-merged\t%s merged\n' "$id" "$(meta_get "$id" pr)"
+      continue
+    fi
+    set=$(hold_set_of "$id")
+    [ -n "$set" ] || continue
+    set_s=$(epoch_of "$set") || continue
+    [ "$set_s" -lt "$cutoff" ] || continue
+    if [ -f "$STATE/$id.status" ] && [ "$(mtime_of "$STATE/$id.status")" -ge "$cutoff" ]; then
+      continue
+    fi
+    printf '%s\tidle\theld since %s with no activity for %s days\n' "$id" "$set" "$days"
+  done
+}
+
+log_line() {  # <event> <task> <kind> <why> <reason> <card-json-or-null>
+  (umask 077; touch "$CLEAR_LOG")
+  jq -cn --arg at "$(now)" --arg event "$1" --arg task "$2" --arg kind "$3" \
+    --arg why "$4" --arg reason "$5" --argjson card "$6" \
+    '{at: $at, event: $event, task: $task, kind: $kind, why: $why, reason: $reason, card: $card}' >> "$CLEAR_LOG"
+}
+
+cmd_clear() {
+  local id=${1:-} why='' p card='null' show reason ev
+  [ "$#" -ge 1 ] && shift
+  require_slug "$id"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in --why) shift; why=${1:-} ;; *) usage >&2; exit 2 ;; esac
+    shift
+  done
+  [ -n "$why" ] || die "--why is required"
+  p=$(card_path "$id")
+  if [ -f "$p" ]; then
+    card=$(jq -c . "$p" 2>/dev/null) || card='null'
+  fi
+  if ! is_captain_held "$id"; then
+    [ -f "$p" ] || die "task $id is not a captain call and has no card"
+    rm -f -- "$p"
+    log_line cleared "$id" orphan "$why" "" "$card"
+    printf 'cleared: %s (orphan card)\n' "$id"
+    return 0
+  fi
+  show=$(tasks show "$id" --full 2>/dev/null) || die "cannot read task $id"
+  reason=$(shown_value "$show" hold_reason)
+  ev=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-card-evidence.XXXXXX") || die "cannot stage evidence"
+  printf '%s\n' "$why" > "$ev"
+  if ! hold_tool stale-clear "$id" --evidence-file "$ev" >/dev/null; then
+    rm -f -- "$ev"
+    die "could not clear $id"
+  fi
+  rm -f -- "$ev"
+  log_line cleared "$id" stale "$why" "$reason" "$card"
+  printf 'cleared: %s\n' "$id"
+}
+
+cmd_restore() {
+  local id=${1:-} line reason card input
+  require_slug "$id"
+  [ -f "$CLEAR_LOG" ] || die "nothing was cleared"
+  line=$(jq -c --arg id "$id" 'select(.task == $id)' "$CLEAR_LOG" | tail -n 1)
+  [ -n "$line" ] || die "no clear recorded for $id"
+  [ "$(printf '%s' "$line" | jq -r .event)" = cleared ] || die "$id was already restored"
+  ! is_captain_held "$id" || die "$id is already held again; nothing to restore"
+  reason=$(printf '%s' "$line" | jq -r .reason)
+  [ -n "$reason" ] || die "$id was an orphan card; there is no hold to restore"
+  card=$(printf '%s' "$line" | jq -c .card)
+  tasks reopen "$id" >/dev/null || die "could not reopen $id"
+  if [ "$card" != null ] && [ "$(printf '%s' "$card" | jq -r .draft)" = false ]; then
+    input=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-card-restore.XXXXXX") || die "cannot stage the card"
+    printf '%s' "$card" | jq '{project, title, situation, options, recommended}' > "$input"
+    if ! hold_tool hold "$id" --reason "$reason" --card-file "$input" >/dev/null; then
+      rm -f -- "$input"
+      die "could not re-hold $id"
+    fi
+    rm -f -- "$input"
+  else
+    hold_tool hold "$id" --reason "$reason" >/dev/null || die "could not re-hold $id"
+  fi
+  log_line restored "$id" "$(printf '%s' "$line" | jq -r .kind)" "restored on request" "$reason" "$card"
+  printf 'restored: %s\n' "$id"
+}
+
 case "${1:-}" in
   validate) shift; cmd_validate "$@" ;;
   write) shift; cmd_write "$@" ;;
@@ -211,6 +351,9 @@ case "${1:-}" in
   remove) shift; cmd_remove "$@" ;;
   draft) shift; cmd_draft "$@" ;;
   backfill) shift; cmd_backfill "$@" ;;
+  stale) shift; cmd_stale "$@" ;;
+  clear) shift; cmd_clear "$@" ;;
+  restore) shift; cmd_restore "$@" ;;
   -h|--help|help) usage ;;
   *) usage >&2; exit 2 ;;
 esac
