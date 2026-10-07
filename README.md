@@ -30,14 +30,14 @@ You can run one coding agent easily.
 But the moment you want three project tasks done in parallel - fixes, investigations, plans, audits - you become a tab-juggler: babysitting sessions, copy-pasting context between repos, forgetting which terminal had the failing test.
 
 firstmate flips the model.
-You talk to a single agent - the first mate - and it runs the crew for you: spawning autonomous agents in a visible session backend, giving each a clean git worktree, supervising them to completion, and handing you finished PRs, approved local merges, or standalone investigation reports.
+You talk to a single agent - the first mate - and it runs the crew for you: spawning autonomous agents on visible stream endpoints, giving each a clean git worktree, supervising them to completion, and handing you finished PRs, approved local merges, or standalone investigation reports.
 For larger fleets, you can opt in to persistent secondmates: second mates that are still ordinary direct reports, but run from their own isolated firstmate homes on this machine or another SSH-reachable host.
 
 firstmate is not a model, not a harness, not a skill, not an MCP server, and not a CLI.
 firstmate is an agent distro for running a crew of agents.
 An agent distro is a portable directory of instructions, skills, tooling, policies, and state conventions that turns a general-purpose agent into a specialized one.
 There is no app to install: the cloned repo is the distro - `AGENTS.md`, bundled firstmate skills, and helper scripts that any terminal coding agent can follow.
-Launching a supported harness inside it for your primary session instantiates your first mate - and makes you the captain.
+Launching the Deck chat host inside it for your primary session instantiates your first mate - and makes you the captain.
 
 ## Features
 
@@ -61,7 +61,7 @@ Full detail on every feature lives in [docs/architecture.md](docs/architecture.m
 
 - [Deck](https://github.com/bastotec/deck), the only supported agent harness, with a key its gateway accepts.
 - Git and the GitHub CLI, authenticated through `gh auth login`.
-- The stream backend's dependencies (python3, curl, jq) and a reachable hub ([docs/stream-backend.md](docs/stream-backend.md)).
+- The stream backend's dependencies (python3, curl, jq, treehouse) and a reachable hub ([docs/stream-backend.md](docs/stream-backend.md)).
 
 The first mate detects and offers to install supported missing tools after you approve.
 Backend-specific setup is linked in [Documentation](#documentation).
@@ -93,7 +93,7 @@ The plain launch above keeps the primary in its own terminal, so bare `deck chat
 > ahoy! look at my github project xyz, then fix the flaky login test and add dark mode
 
 # firstmate checks its toolchain (asking your consent before installing anything),
-# clones the project under projects/ and spawns two isolated workers in the active backend.
+# clones the project under projects/ and spawns two isolated workers on the stream hub.
 # Minutes later:
 
   PR ready for review, captain: https://github.com/you/xyz/pull/42
@@ -101,10 +101,6 @@ The plain launch above keeps the primary in its own terminal, so bare `deck chat
 
 > alright merge it
 ```
-
-### More backends
-
-[docs/configuration.md](docs/configuration.md) ("Runtime backend") lists every accepted backend and its status, and the setup guide for each one is linked in [Documentation](#documentation) below.
 
 ## How It Works
 
@@ -117,10 +113,10 @@ The plain launch above keeps the primary in its own terminal, so bare `deck chat
  │ reads projects/ + firstmate routes  │
  │ writes guarded backlog/briefs/state │
  └──┬──────────────┬───────────────┬───┘
-    │ backend sends / status files │
+    │ steering inbox / status files │
     ▼              ▼               ▼
  ┌────────┐   ┌────────┐      ┌────────┐
- │fm-task1│   │fm-task2│  ... │fm-taskN│   one container per task on the active session backend
+ │fm-task1│   │fm-task2│  ... │fm-taskN│   one stream endpoint per task
  │crewmate│   │crewmate│      │crewmate│   one autonomous agent each
  └───┬────┘   └───┬────┘      └───┬────┘
      ▼            ▼               ▼
@@ -133,14 +129,14 @@ The plain launch above keeps the primary in its own terminal, so bare `deck chat
 
 You chat with the first mate.
 It routes each request to a crewmate in its own session endpoint and git worktree, supervises the fleet with a zero-token event-driven watcher, and brings you finished PRs, approved local merges, or investigation reports.
-Optional secondmates extend this to persistent local or whole-home remote second mates, dispatch profiles let you steer which harness handles which task, and opt-in Relay lets the same fleet answer public mentions.
+Optional secondmates extend this to persistent local or whole-home remote second mates, dispatch profiles let you steer which model handles which task, and opt-in Relay lets the same fleet answer public mentions.
 
 Full architecture - the supervision engine, worktree isolation, secondmates, dispatch profiles, project modes, optional Relay, fleet sync, and self-update - is in [docs/architecture.md](docs/architecture.md).
 
 ## Built-in skills
 
 Firstmate ships these user-invocable built-in skills.
-The slash form is shown here; when a harness's exact command form is uncertain, ask in natural language.
+The slash form is shown here; Deck has no slash-skill form, so ask for the skill in natural language.
 
 | Skill              | What it does                                                                                                                                  |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -173,7 +169,9 @@ Firstmate's skills live in two separate places with different audiences:
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md) - maintainer architecture for the crew, supervision, worktrees, secondmates, and project modes.
-- [docs/configuration.md](docs/configuration.md) - environment variables, `FM_HOME`, runtime backend selection, optional Relay and its X and Discord setup steps, trusted external process-event adapter setup, the files you set, and harness support.
+- [docs/configuration.md](docs/configuration.md) - environment variables, `FM_HOME`, the files you set and the home layout, runtime backend selection, and harness support.
+- [docs/relay.md](docs/relay.md) - optional Relay, its X and Discord setup steps, and promised public replies.
+- [docs/process-event-sources.md](docs/process-event-sources.md) - process-to-event sources and trusted external process-event adapter setup.
 - [docs/extension-bindings.md](docs/extension-bindings.md) - maintainer architecture for the narrow trusted external `process-event-adapter/1` package, binding, handshake, and evidence boundary.
 - [docs/remote-secondmates.md](docs/remote-secondmates.md) - current setup, routing, transfer, recovery, and safety behavior for whole-home remote second mates.
 - [docs/wedge-alarm.md](docs/wedge-alarm.md) - configure the active alert for an away-mode escalation delivery that gets stuck.

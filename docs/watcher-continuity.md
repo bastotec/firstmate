@@ -1,11 +1,11 @@
 # Watcher continuity
 
 The watcher remains intentionally one-shot: one actionable reason closes one watcher cycle.
-Must-work continuity now lives above that process boundary instead of depending on the model remembering a re-arm step.
+Must-work continuity lives above that process boundary instead of depending on the model remembering a re-arm step.
 
 ## Ownership
 
-The Deck `run` home driver uses no harness hook: persistent `fm-deck-worker.sh` owns one tracked arm child, replaces it whenever it exits during a Deck turn, and retains its result for a serialized durable-inbox turn.
+In a Deck `run` home, the persistent `fm-deck-worker.sh` driver owns one tracked arm child, replaces it whenever it exits during a Deck turn, and retains its result for a serialized durable-inbox turn.
 The driver header owns the exact child and hand-off mechanics; [the separate chat host header](../bin/fm-deck-chat.sh) owns steering-based continuity for `deck chat` primaries.
 [`supervision-protocols/deck.md`](supervision-protocols/deck.md) owns the model's handling duty for both hosts.
 
@@ -16,11 +16,9 @@ It accumulates watcher results that arrive while a Deck turn runs and delivers t
 
 The recovery-episode contract below owns once-per-generation announcement.
 A handling successor does not re-announce; it enters its poll loop immediately and keeps scanning signals, stale panes, and checks.
-The model no longer re-arms after ordinary wakes.
-No PreToolUse hook denies fleet commands based on watcher status.
+The model does not re-arm after ordinary wakes.
 Terminal arm-output classification (`started`, `attached`, or `FAILED`) remains defense in depth for the manual recovery path.
-No hook adapter starts an untracked replacement with shell `&`.
-The Deck driver uses `&` only for an owned child whose PID it monitors and waits during cleanup.
+The Deck driver uses `&` only for an owned child whose PID it monitors and waits during cleanup, never for an untracked replacement watcher.
 
 Deck `run` home hosts check the driver-owned postcondition before each turn completes; the chat host's header owns its separate supervision boundary.
 
@@ -67,7 +65,7 @@ The file is size-capped through `FM_WATCH_CYCLE_LOG_MAX_BYTES` and `FM_WATCH_CYC
 A running watcher re-execs itself in place when any `bin/*.sh` is newer than its filesystem-clock start reference and the change has settled for `FM_WATCH_CODE_SETTLE` seconds (default 2), because bash keeps the loop it parsed at start and a merge would otherwise leave the old loop supervising until the next wake.
 The pid, the singleton lock, and the arm's wait carry over, the reloaded image skips the recovery bookkeeping of a fresh arm, and a changed `fm-watch.sh` that does not parse keeps the running code.
 
-The default 300-second grace is unchanged.
+[`configuration.md`](configuration.md#environment-variables) owns the guard, arm, and watcher stale-lock grace settings; `bin/fm-wake-lib.sh`'s `fm_poll_derived_grace` owns the poll-derived default's rationale.
 Only the watcher process touches `state/.last-watcher-beat`; no helper process can make a wedged watcher appear healthy.
 
 ## Regression coverage

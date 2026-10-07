@@ -1,7 +1,7 @@
 # Trusted external process-event adapter bindings
 
 This document is the maintainer-architecture owner for the package manifest, enabled binding, handshake, invocation envelope, trust boundary, and `process-event-adapter/1` capability.
-[`configuration.md`](configuration.md#trusted-external-process-event-adapters-configextensionsd) owns operator setup and the home-local layout.
+[`process-event-sources.md`](process-event-sources.md#trusted-external-process-event-adapters-configextensionsd) owns operator setup and the home-local layout.
 `bin/fm-extension.sh --help` and `bin/fm-procevent.sh --help` own command mechanics.
 
 ## Scope and design
@@ -211,15 +211,19 @@ A malformed binding, integrity mismatch, failed handshake, crash, nonzero exit, 
 A source invocation failure is captured as bounded host evidence and remains unhandled.
 A classification, terminal, or silence failure returns no positive verdict.
 Replay uses the exact request id as the package's idempotence key, including a stable pre-capture retry from the generic runner, but Firstmate makes no generic exactly-once or source-side losslessness claim.
-The process-event durability boundary remains owned by [`configuration.md`](configuration.md#process-to-event-sources-stateprocevent).
+The process-event durability boundary remains owned by [`process-event-sources.md`](process-event-sources.md).
 
 ## Runtime independence
 
 The host runs in the Firstmate home that owns the source, never in a task worker or its session container.
 Deck therefore exposes no package-loading surface for this capability.
-The result reaches every supported primary through the existing bounded `check` wake path, including the unknown-protocol fallback used where no specialized primary continuation exists.
+The result reaches the primary through the existing bounded `check` wake path, under the Deck supervision protocol or the unknown-harness fallback.
 The stream session provider is not consulted because a process-event source has no task endpoint.
-Remote and local secondmate homes bind and install independently, and the primary never executes a missing remote-home package locally. `remote-bind` carries one canonical `firstmate.extension-package-transfer.v1` JSON envelope over the existing bounded `fm-on` stdin/stdout job. Its hashed manifest pins the extension id, version, complete package-tree digest, entry count, total bytes, and byte-sorted entries. Entries are limited to normalized relative directories at mode 0755 and single regular files at mode 0644 or 0755, each with an exact size and SHA-256 payload digest. The receiver accepts at most 128 entries, 256 KiB per file, 512 KiB of package bytes, and 900,000 serialized bytes; it rejects malformed or truncated JSON, duplicate keys or paths, collisions, absolute or traversing names, links and special files, noncanonical modes, hash or size mismatches, and duplicate transfer identities.
+Remote and local secondmate homes bind and install independently, and the primary never executes a missing remote-home package locally.
+`remote-bind` carries one canonical `firstmate.extension-package-transfer.v1` JSON envelope over the existing bounded `fm-on` stdin/stdout job.
+Its hashed manifest pins the extension id, version, complete package-tree digest, entry count, total bytes, and byte-sorted entries.
+Entries are limited to normalized relative directories at mode 0755 and single regular files at mode 0644 or 0755, each with an exact size and SHA-256 payload digest.
+The receiver accepts at most 128 entries, 256 KiB per file, 512 KiB of package bytes, and 900,000 serialized bytes; it rejects malformed or truncated JSON, duplicate keys or paths, collisions, absolute or traversing names, links and special files, noncanonical modes, hash or size mismatches, and duplicate transfer identities.
 
 The receiver creates the package in a private temporary directory below `data/extensions/staging`, validates ownership, permissions, the package manifest, executable, and complete reconstructed tree, then atomically publishes the transfer before the normal bind handshake and binding publication.
 A failed bind moves the exact transfer identity into `data/extensions/retired-staging` without enabling it.
@@ -234,4 +238,4 @@ Bindings and credentials are deliberately absent from the inherited secondmate c
 [`examples/process-event-extension`](examples/process-event-extension) is a complete external `file-signal` adapter package.
 It waits for one configured absolute file, returns that file's bounded UTF-8 contents as evidence, classifies the result as `file-signal`, and reports it terminal.
 The package is intentionally copied outside this Git project before binding, proving that project-local package discovery is not a registration path.
-The operator commands live in [`configuration.md`](configuration.md#trusted-external-process-event-adapters-configextensionsd), and `tests/fm-extension-binding.test.sh` runs the complete example path.
+The operator commands live in [`process-event-sources.md`](process-event-sources.md#trusted-external-process-event-adapters-configextensionsd), and `tests/fm-extension-binding.test.sh` runs the complete example path.

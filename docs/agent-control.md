@@ -9,7 +9,7 @@ The **control plane** is [`bin/fm-control.sh`](../bin/fm-control.sh): allowliste
 
 The split exists because the data plane's marking is exactly right for a message and exactly wrong for a lifecycle command.
 A routing-marked `/quit` arrives as ordinary chat - `[fm-from-firstmate] /quit` - which the agent reasons about instead of executing.
-The failure repeated across harnesses and homes, and the workaround (remember to use an unmarked send for agent-control commands, and improvise the right key or command per harness) lived only in agent prose, so it failed again every time a session did not happen to recall it.
+A workaround that lives only in agent prose, such as remembering to send lifecycle commands unmarked with the right key, fails every time a session does not recall it, so the control plane makes those mechanics executable.
 
 ## What the control plane owns
 
@@ -19,7 +19,7 @@ The failure repeated across harnesses and homes, and the workaround (remember to
   There is no arbitrary-text and no generic raw-key entry point.
   A caller either names an allowlisted verb or is refused.
 - **Per-harness mechanics**: the key that cancels a running turn, how many times it must be delivered, whether the composer needs clearing afterwards, the command that exits the agent, and which task kinds the adapter is verified to run.
-  These were previously carried only in the [`harness-adapters`](../.agents/skills/harness-adapters/SKILL.md) skill's tool references, which now point here.
+  The [`harness-adapters`](../.agents/skills/harness-adapters/SKILL.md) skill's tool references point here.
 - **Per-backend capability**: which named keys a runtime backend can deliver, and whether it has a recovery-grade agent-state classifier able to prove an agent stopped or its endpoint gone.
 
 A raw-command spawn records the command's basename as `harness=`.

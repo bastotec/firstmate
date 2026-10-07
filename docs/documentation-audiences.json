@@ -157,6 +157,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/task-delivery/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/updatefirstmate/SKILL.md",
       "audience": "agent-runtime"
     },
@@ -247,6 +251,14 @@
     {
       "path": "docs/gitlab-merge-watch.md",
       "audience": "maintainer-verification"
+    },
+    {
+      "path": "docs/process-event-sources.md",
+      "audience": "operator-current"
+    },
+    {
+      "path": "docs/relay.md",
+      "audience": "operator-current"
     },
     {
       "path": "docs/remote-secondmates.md",
