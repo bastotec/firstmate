@@ -1011,11 +1011,10 @@ fmx_meta_link_clear() {
   lock=$(fm_meta_lock_path "$meta") || return 1
   if [ "$expected_set" -eq 1 ]; then
     # A guarded clear runs unattended over the secondmate transport, so it must
-    # refuse rather than wedge. The parent's writability can flip between the
-    # check above and lock creation, and the ordinary unbounded wait would then
-    # retry forever instead of returning the reconciliation refusal this guard
-    # exists to produce. A bounded acquire turns that race, and a live holder,
-    # into a refusal. Unguarded local callers keep the ordinary wait unchanged.
+    # refuse rather than wedge behind a live lock holder. A bounded acquire
+    # turns that contention into the reconciliation refusal this guard exists
+    # to produce. bin/fm-wake-lib.sh owns unusable-parent refusal for both wait
+    # variants; unguarded local callers keep the ordinary contention wait.
     lock_timeout=${FMX_LINK_CLEAR_LOCK_TIMEOUT:-10}
     case "$lock_timeout" in ''|*[!0-9]*|0) lock_timeout=10 ;; esac
     fm_lock_acquire_wait_bounded "$lock" "$lock_timeout" || return 1

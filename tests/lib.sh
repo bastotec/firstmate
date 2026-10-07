@@ -164,8 +164,8 @@ fm_test_reap_helper_pids() {
 }
 
 # fm_test_pid_is_foreign <pid> [reason-var] - is this pid safe for the suite to
-# signal? It owns the rule; the two callers below differ only in what they do
-# with a no.
+# signal? It owns the ancestry rule shared by the signalling helpers below;
+# callers must first establish that the target belongs to their fixture.
 #
 # The rule is ANCESTRY, not the process group. A non-interactive shell has no
 # job control, so every helper a case starts in the background shares the
@@ -271,8 +271,10 @@ fm_test_process_tree() {  # <pid>
 # fm_test_kill_tree <pid> - SIGKILL a foreign pid and every process descended
 # from it, best effort. A detached worker that wraps its own work in a bounded
 # child (bin/fm-timeout-lib.sh puts that child in a separate process group)
-# cannot be stopped by signalling its group alone, so every member of the tree
-# is signalled.
+# cannot be stopped by signalling its group alone. Freeze the root and each
+# discovered descendant, rescanning for forks missed by the preceding snapshot
+# for at most eight rounds before killing the collected tree.
+# tests/fm-test-fixture-cleanup.test.sh exercises a fork during the snapshot.
 fm_test_kill_tree() {  # <pid>
   local pid members="$1" seen=$'\n' round=0 changed
   fm_test_pid_is_foreign "$1" || return 0
@@ -296,12 +298,18 @@ fm_test_kill_tree() {  # <pid>
   done
 }
 
-# fm_test_reap_startup_network_workers <dir...> - stop every deferred startup
-# worker a fixture home under <dir> recorded. bin/fm-startup-network.sh detaches
-# that worker into its own process group with nohup on purpose, so neither a
-# killed suite's process group nor removing the fixture reaches it; the pid its
-# status record names does. The recorded pid is signalled only while it is still
-# that worker, so a pid reused since the record was written is left alone.
+# fm_test_reap_startup_network_workers <dir...> - reap fixture-owned process
+# trees before removing this run's registered directories. Startup workers
+# detach, and their bounded children use separate groups, so group signalling
+# alone cannot reach everything. A status-record pid requires a startup-worker
+# command and a process start time within three seconds of recorded started=.
+# Also reap command lines containing the per-run-unique fixture path: a newer
+# generation overwrites the status pid while older workers can still be alive.
+# Every root goes through fm_test_pid_is_foreign before tree signalling.
+# This is active-run cleanup only; fm_test_reap_orphans removes old directories
+# without signalling their recorded pids, which may have been reused.
+# tests/fm-test-fixture-cleanup.test.sh and tests/fm-startup-network.test.sh
+# cover identity checks, orphan-sweep safety, and overlapping generations.
 fm_test_reap_startup_network_workers() {  # <dir...>
   local d status pid started elapsed delta
   for d in "$@"; do

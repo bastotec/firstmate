@@ -911,7 +911,8 @@ fm_lock_try_acquire() {
 }
 
 # Waits as long as a live holder keeps the lock, but returns 1 at once when the
-# lock's directory is gone or unwritable, because no wait can ever succeed there.
+# lock's parent directory is gone or unwritable; retrying there cannot acquire it.
+# tests/fm-watcher-lock.test.sh covers refusal after the parent is removed.
 fm_lock_acquire_wait() {
   local lockdir=$1
   while ! fm_lock_try_acquire "$lockdir"; do
