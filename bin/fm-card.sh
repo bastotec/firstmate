@@ -16,7 +16,7 @@
 #   fm-card.sh remove <task-id>
 #   fm-card.sh draft <task-id> --title <title> --project <project> --situation <text>
 #   fm-card.sh backfill
-#   fm-card.sh stale [--days <n>]
+#   fm-card.sh stale
 #   fm-card.sh clear <task-id> --why <text>
 #   fm-card.sh restore <task-id>
 #
@@ -33,8 +33,8 @@
 # none, using its title, repo and hold reason.
 # `stale` is read-only and prints "<task-id>\t<kind>\t<why>" per candidate:
 # `orphan` (a card with no open captain hold), `pr-merged` (the task's
-# recorded PR has a merge notification), or `idle` (held longer than --days,
-# default 3, with no status-log change since the cutoff).
+# recorded PR has a matching merge notification), or `idle` (held 3+ days,
+# with no status-log change since the cutoff).
 # `clear` removes an orphan card, or closes a stale call through
 # `fm-captain-hold.sh stale-clear` with the why as evidence; either way it
 # appends one JSON line to state/cards-cleared.log carrying the prior hold
@@ -55,6 +55,9 @@ CLEAR_LOG="$STATE/cards-cleared.log"
 HOLD="$SCRIPT_DIR/fm-captain-hold.sh"
 TASKS="$SCRIPT_DIR/fm-tasks-axi.sh"
 
+# shellcheck source=bin/fm-pr-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-pr-lib.sh"
+
 usage() { awk '/^# Usage:/{on=1; next} on && /^#$/{exit} on{sub(/^#   /, ""); print}' "${BASH_SOURCE[0]}"; }
 die() { printf 'fm-card: %s\n' "$1" >&2; exit "${2:-2}"; }
 now() { printf '%s' "${FM_CARD_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"; }
@@ -70,9 +73,11 @@ card_path() { printf '%s/%s.json\n' "$CARDS" "$1"; }
 # Prints the first validation error as "<field>: <why>", or nothing when valid.
 # Works on the input shape and on stored full cards alike.
 card_error() {  # <path>
-  jq -r '
+  jq -rs '
     def ctl: test("[\u0000-\u0009\u000b-\u001f\u007f]");
     def oneline: test("[\u0000-\u001f\u007f]");
+    if length != 1 then "card: exactly one JSON object required"
+    else .[0] |
     if type != "object" then "card: not a JSON object"
     elif (.title|type) != "string" or (.title|length) == 0 or (.title|length) > 120 or (.title|oneline) then "title: required, one line, at most 120 characters"
     elif (.project|type) != "string" or (.project|test("^[A-Za-z0-9._-]+$")|not) then "project: required slug"
@@ -82,7 +87,7 @@ card_error() {  # <path>
     elif ([.options[]|select((.label|type) != "string" or (.label|length) == 0 or (.label|length) > 40 or (.label|oneline))]|length) > 0 then "options: each label is one line of at most 40 characters"
     elif ([.options[]|select((.instruction|type) != "string" or (.instruction|length) == 0 or (.instruction|length) > 1000 or (.instruction|ctl))]|length) > 0 then "options: each instruction is at most 1000 characters"
     elif (.recommended|type) != "string" or (.recommended as $r | [.options[].key] | index($r)) == null then "recommended: must name one option key"
-    else empty end
+    else empty end end
   ' "$1" 2>/dev/null || printf 'card: not valid JSON\n'
 }
 
@@ -253,14 +258,10 @@ meta_get() {  # <task-id> <key>
 }
 
 cmd_stale() {
-  local days=3 p id now_s cutoff set set_s show until
-  while [ "$#" -gt 0 ]; do
-    case "$1" in --days) shift; days=${1:-} ;; *) usage >&2; exit 2 ;; esac
-    shift
-  done
-  case "$days" in ''|*[!0-9]*) die "--days must be a whole number" ;; esac
+  local p id now_s cutoff set set_s show until pr
+  [ "$#" -eq 0 ] || { usage >&2; exit 2; }
   now_s=$(epoch_of "$(now)") || die "cannot read the current time"
-  cutoff=$(( now_s - days * 86400 ))
+  cutoff=$(( now_s - 3 * 86400 ))
   [ -d "$CARDS" ] || return 0
   for p in "$CARDS"/*.json; do
     [ -f "$p" ] || continue
@@ -270,25 +271,25 @@ cmd_stale() {
       continue
     fi
     show=$(tasks show "$id" --full 2>/dev/null) || die "cannot read task $id"
-    if [ -n "$(meta_get "$id" pr)" ] && [ -f "$STATE/$id.pr-poll-merge-notified" ]; then
-      printf '%s\tpr-merged\t%s merged\n' "$id" "$(meta_get "$id" pr)"
+    pr=$(meta_get "$id" pr)
+    if fm_pr_url_parse "$pr" \
+      && fm_pr_poll_merge_already_notified "$STATE" "$id" "$FM_PR_PROVIDER" "$FM_PR_HOST" "$FM_PR_PATH" "$FM_PR_NUMBER"; then
+      printf '%s\tpr-merged\t%s merged\n' "$id" "$pr"
       continue
     fi
     # A hold that gates a tracked worker, or that the captain deferred to a
     # date, is not idle; those leave through their own paths.
     [ ! -f "$STATE/$id.meta" ] || continue
     until=$(shown_value "$show" hold_until)
-    if [ -n "$until" ] && [ "$(epoch_of "$until" || echo 0)" -gt "$now_s" ]; then
-      continue
-    fi
+    [ -z "$until" ] || continue
     set=$(shown_value "$show" body | sed -n '1s/^Captain hold set: \([0-9TZ:-]*\)$/\1/p')
     [ -n "$set" ] || continue
     set_s=$(epoch_of "$set") || continue
-    [ "$set_s" -lt "$cutoff" ] || continue
+    [ "$set_s" -le "$cutoff" ] || continue
     if [ -f "$STATE/$id.status" ] && [ "$(mtime_of "$STATE/$id.status")" -ge "$cutoff" ]; then
       continue
     fi
-    printf '%s\tidle\theld since %s with no activity for %s days\n' "$id" "$set" "$days"
+    printf '%s\tidle\theld since %s with no activity for 3 days\n' "$id" "$set"
   done
 }
 

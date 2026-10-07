@@ -76,6 +76,39 @@ test_validate_names_the_broken_field() {
   pass "fm-card: validate refuses broken cards and names the field"
 }
 
+test_card_requires_exactly_one_json_object() {
+  local home in kind rc before
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home single-object)
+  in="$home/in.json"
+  mkdir -p "$home/state/cards"
+  before=$(tasks_in "$home" list)
+  for kind in empty whitespace multiple nonobject; do
+    case "$kind" in
+      empty) : > "$in" ;;
+      whitespace) printf ' \n\t ' > "$in" ;;
+      multiple) good_card "$in"; good_card "$home/second.json"; cat "$home/second.json" >> "$in" ;;
+      nonobject) printf '[]\n' > "$in" ;;
+    esac
+    rc=0
+    run_card "$home" validate --file "$in" >/dev/null 2>&1 || rc=$?
+    assert_equals 2 "$rc" "$kind input is invalid"
+    rc=0
+    run_card "$home" write "$kind" --file "$in" >/dev/null 2>&1 || rc=$?
+    assert_equals 2 "$rc" "$kind input cannot be written"
+    assert_absent "$home/state/cards/$kind.json" "invalid write publishes nothing"
+    cp "$in" "$home/state/cards/$kind.json"
+    rc=0
+    run_card "$home" show "$kind" >/dev/null 2>&1 || rc=$?
+    assert_equals 2 "$rc" "$kind stored card is invalid"
+    rc=0
+    run_captain "$home" hold "$kind" --title Invalid --reason r --card-file "$in" >/dev/null 2>&1 || rc=$?
+    assert_not_equals 0 "$rc" "$kind card refuses the hold"
+    assert_equals "$before" "$(tasks_in "$home" list)" "invalid hold leaves backlog unchanged"
+  done
+  pass "fm-card: empty, whitespace, multiple documents and nonobjects are refused at every full-card boundary"
+}
+
 test_show_reports_a_corrupt_card_as_invalid() {
   local home rc=0
   home=$(make_home corrupt)
@@ -215,6 +248,43 @@ test_answer_removes_the_card() {
   pass "fm-captain-hold: answering or releasing a call removes its card"
 }
 
+test_answer_replays_and_repairs_remove_leftover_cards() {
+  local home dec id before out flag
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home answer-retry-card)
+  dec="$home/dec.txt"
+  printf 'Go with option 1.\n' > "$dec"
+  for id in close release; do
+    flag=''
+    [ "$id" != release ] || flag=--release
+    run_captain "$home" hold "$id" --title Call --reason r >/dev/null || fail "hold failed"
+    chmod 500 "$home/state/cards"
+    out=$(run_captain "$home" answer "$id" --decision-file "$dec" ${flag:+"$flag"} 2>&1) || fail "answer failed"
+    assert_contains "$out" "could not remove its decision card" "cleanup failure is visible"
+    assert_present "$home/state/cards/$id.json" "failed cleanup leaves card for retry"
+    before=$(tasks_in "$home" show "$id" --full)
+    chmod 700 "$home/state/cards"
+    run_captain "$home" answer "$id" --decision-file "$dec" ${flag:+"$flag"} >/dev/null || fail "answer replay failed"
+    assert_absent "$home/state/cards/$id.json" "replay removes leftover card"
+    assert_equals "$before" "$(tasks_in "$home" show "$id" --full)" "replay does not repeat the backlog transition"
+  done
+  run_captain "$home" hold repair --title Call --reason r >/dev/null || fail "hold failed"
+  tasks_in "$home" done repair >/dev/null || fail "external close failed"
+  run_captain "$home" answer repair --decision-file "$dec" >/dev/null || fail "answer repair failed"
+  assert_absent "$home/state/cards/repair.json" "retroactive repair removes leftover card"
+  assert_contains "$(tasks_in "$home" show repair --full)" "Resolution mode: repaired" "repair retains its resolution mode"
+  run_captain "$home" hold keyed --title Call --reason r >/dev/null || fail "hold failed"
+  chmod 500 "$home/state/cards"
+  printf 'keyed\tyes\tYes\n' | run_captain "$home" answers --source test >/dev/null 2>&1 || fail "keyed answer failed"
+  assert_present "$home/state/cards/keyed.json" "keyed cleanup failed as intended"
+  before=$(tasks_in "$home" show keyed --full)
+  chmod 700 "$home/state/cards"
+  printf 'keyed\tyes\tYes\n' | run_captain "$home" answers --source test >/dev/null || fail "keyed replay failed"
+  assert_absent "$home/state/cards/keyed.json" "keyed replay removes leftover card"
+  assert_equals "$before" "$(tasks_in "$home" show keyed --full)" "keyed replay does not repeat the transition"
+  pass "fm-captain-hold: answer replays and retroactive repairs retry card cleanup"
+}
+
 test_stale_clear_never_reads_as_the_captains_words() {
   local home ev body
   command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
@@ -232,6 +302,38 @@ test_stale_clear_never_reads_as_the_captains_words() {
   run_captain "$home" stale-clear sc-a --evidence-file "$ev" | grep -q '^stale-cleared: sc-a$' \
     || fail "an exact retry must be a quiet no-op"
   pass "fm-captain-hold: stale-clear closes on evidence under its own label"
+}
+
+test_stale_clear_retry_retains_one_verifiable_resolution() {
+  local home ev real before rc=0 body
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home stale-clear-retry)
+  hold_it "$home" sc-retry Call waiting
+  ev="$home/ev.txt"
+  printf 'The premise no longer applies.\n' > "$ev"
+  real=$(command -v tasks-axi)
+  cat > "$home/fakebin/tasks-axi" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = done ]; then exit 93; fi
+exec "$real" "\$@"
+EOF
+  chmod +x "$home/fakebin/tasks-axi"
+  run_captain "$home" stale-clear sc-retry --evidence-file "$ev" >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "fixture interrupts after recording evidence but before closing"
+  before=$(tasks_in "$home" show sc-retry --full)
+  assert_contains "$before" "Stale-clear evidence:" "interrupted clear has durable evidence"
+  run_captain "$home" open sc-retry || fail "interrupted clear must leave the hold open"
+  rm "$home/fakebin/tasks-axi"
+  run_captain "$home" stale-clear sc-retry --evidence-file "$ev" >/dev/null || fail "retry failed"
+  body=$(tasks_in "$home" show sc-retry --full)
+  assert_equals 1 "$(printf '%s' "$body" | grep -o 'Resolution recorded by fm-captain-hold.' | wc -l | tr -d ' ')" "retry retains exactly one resolution"
+  mkdir -p "$home/data/sc-origin"
+  printf 'kind=scout\n' > "$home/state/sc-origin.meta"
+  run_captain "$home" complete sc-origin sc-retry >/dev/null || fail "complete must recognize stale-clear evidence"
+  run_captain "$home" verify sc-origin >/dev/null || fail "verify must recognize stale-clear evidence"
+  run_captain "$home" stale-clear sc-retry --evidence-file "$ev" >/dev/null || fail "closed retry failed"
+  assert_equals "$body" "$(tasks_in "$home" show sc-retry --full)" "closed retry is idempotent"
+  pass "fm-captain-hold: interrupted stale clears retry once and pass completion verification"
 }
 
 test_stale_clear_refuses_a_task_not_held_for_the_captain() {
@@ -260,16 +362,56 @@ test_stale_finds_orphans_merged_and_idle_holds() {
   FM_CAPTAIN_HOLD_NOW=2026-10-07T11:00:00Z hold_it "$home" new-one "New call" "waiting"
   FM_CAPTAIN_HOLD_NOW=2026-10-07T11:00:00Z hold_it "$home" merged-one "Merge call" "waiting"
   printf 'pr=https://github.com/o/r/pull/9\n' > "$home/state/merged-one.meta"
-  printf 'fm-pr-poll-merge-notified-v1 github github.com o/r 9\n' > "$home/state/merged-one.pr-poll-merge-notified"
+  mark_merge "$home" merged-one 9
   FM_CAPTAIN_HOLD_NOW=2026-10-01T00:00:00Z hold_it "$home" busy-one "Busy call" "waiting"
   printf 'working: still at it\n' > "$home/state/busy-one.status"
-  out=$(run_card "$home" stale --days 3)
+  out=$(run_card "$home" stale)
   assert_contains "$out" $'ghost\torphan' "orphan found"
   assert_contains "$out" $'old-one\tidle' "idle hold found"
   assert_contains "$out" $'merged-one\tpr-merged' "merged PR found"
   assert_not_contains "$out" "new-one" "fresh hold left alone"
   assert_not_contains "$out" "busy-one" "hold with recent activity left alone"
   pass "fm-card: stale finds orphan cards, merged PRs and holds idle past the threshold"
+}
+
+mark_merge() {
+  bash -c '. "$1"; fm_pr_poll_merge_mark_notified "$2" "$3" github github.com o/r "$4"' \
+    _ "$ROOT/bin/fm-pr-lib.sh" "$1/state" "$2" "$3" || fail "could not record merge notification"
+}
+
+test_stale_matches_the_current_pr_identity() {
+  local home out
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home stale-pr-identity)
+  hold_it "$home" switched Call waiting
+  mark_merge "$home" switched 9
+  printf 'pr=https://github.com/o/r/pull/10\n' > "$home/state/switched.meta"
+  out=$(run_card "$home" stale) || fail "stale failed"
+  assert_not_contains "$out" "switched" "PR A's merge does not clear an approval for PR B"
+  mark_merge "$home" switched 10
+  out=$(run_card "$home" stale) || fail "stale failed"
+  assert_contains "$out" $'switched\tpr-merged\thttps://github.com/o/r/pull/10 merged' "matching merge notification is a candidate"
+  printf 'pr=https://github.com/o/other/pull/10\n' > "$home/state/switched.meta"
+  out=$(run_card "$home" stale) || fail "stale failed"
+  assert_not_contains "$out" "switched" "the repository is part of the merge identity"
+  printf 'pr=https://gitlab.example/o/r/-/merge_requests/10\n' > "$home/state/switched.meta"
+  out=$(run_card "$home" stale) || fail "stale failed"
+  assert_not_contains "$out" "switched" "the forge and host are part of the merge identity"
+  pass "fm-card: stale reports merged only for the current PR identity"
+}
+
+test_stale_uses_the_fixed_three_day_cutoff() {
+  local home out rc=0
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home stale-cutoff)
+  FM_CAPTAIN_HOLD_NOW=2026-10-04T12:00:00Z hold_it "$home" boundary Call waiting
+  FM_CAPTAIN_HOLD_NOW=2026-10-04T12:00:01Z hold_it "$home" fresh Call waiting
+  out=$(run_card "$home" stale) || fail "stale failed"
+  assert_contains "$out" $'boundary\tidle' "a hold idle exactly three days is a candidate"
+  assert_not_contains "$out" "fresh" "a hold younger than three days is not idle"
+  run_card "$home" stale --days 1 >/dev/null 2>&1 || rc=$?
+  assert_equals 2 "$rc" "the threshold cannot be overridden"
+  pass "fm-card: stale uses a fixed three-day cutoff"
 }
 
 test_clear_then_restore_round_trips() {
@@ -410,10 +552,16 @@ test_idle_skips_deferred_and_worker_tracked_holds() {
   home=$(make_home idle-skip)
   FM_CAPTAIN_HOLD_NOW=2026-10-01T00:00:00Z run_captain "$home" hold later-a --title "Later" --repo firstmate \
     --reason "revisit in November" --until 2026-11-01 >/dev/null || fail "dated hold failed"
+  FM_CAPTAIN_HOLD_NOW=2026-10-01T00:00:00Z run_captain "$home" hold past-a --title "Past" --repo firstmate \
+    --reason "revisit yesterday" --until 2026-10-06 >/dev/null || fail "past dated hold failed"
+  FM_CAPTAIN_HOLD_NOW=2026-10-01T00:00:00Z run_captain "$home" hold today-a --title "Today" --repo firstmate \
+    --reason "revisit today" --until 2026-10-07 >/dev/null || fail "today dated hold failed"
   FM_CAPTAIN_HOLD_NOW=2026-10-01T00:00:00Z hold_it "$home" work-a "Work" "approve the worker's plan"
   printf 'project=firstmate\n' > "$home/state/work-a.meta"
-  out=$(run_card "$home" stale --days 3)
-  assert_not_contains "$out" "later-a" "a captain deferral is not stale"
+  out=$(run_card "$home" stale)
+  assert_not_contains "$out" "later-a" "a future captain deferral is not stale"
+  assert_not_contains "$out" "past-a" "an expired captain deferral is not idle"
+  assert_not_contains "$out" "today-a" "a captain deferral due today is not idle"
   assert_not_contains "$out" "work-a" "a hold gating a tracked worker is not idle-cleared"
   pass "fm-card: idle skips captain deferrals and holds that gate a tracked worker"
 }
@@ -436,13 +584,14 @@ test_stale_with_gnu_coreutils() {
     ln -s "$(command -v gstat)" "$shim/stat"
     ln -s "$(command -v gdate)" "$shim/date"
   fi
-  out=$(PATH="$shim:$PATH" run_card "$home" stale --days 3)
+  out=$(PATH="$shim:$PATH" run_card "$home" stale)
   assert_not_contains "$out" "busy-one" "a busy hold is not idle under GNU stat"
   pass "fm-card: stale reads file times correctly with GNU coreutils"
 }
 
 test_write_and_show_round_trip
 test_validate_names_the_broken_field
+test_card_requires_exactly_one_json_object
 test_show_reports_a_corrupt_card_as_invalid
 test_rejects_unsafe_task_ids
 test_remove_is_idempotent
@@ -452,9 +601,13 @@ test_hold_without_card_writes_a_draft
 test_hold_with_card_file_writes_the_full_card
 test_hold_refuses_an_invalid_card_before_holding
 test_answer_removes_the_card
+test_answer_replays_and_repairs_remove_leftover_cards
 test_stale_clear_never_reads_as_the_captains_words
+test_stale_clear_retry_retains_one_verifiable_resolution
 test_stale_clear_refuses_a_task_not_held_for_the_captain
 test_stale_finds_orphans_merged_and_idle_holds
+test_stale_matches_the_current_pr_identity
+test_stale_uses_the_fixed_three_day_cutoff
 test_clear_then_restore_round_trips
 test_clear_removes_an_orphan_card_without_touching_the_backlog
 test_clear_refuses_a_task_that_is_not_a_captain_call

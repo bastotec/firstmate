@@ -475,6 +475,7 @@ body_has_resolution_record() {  # <task-body>
     *"Resolution recorded by fm-captain-hold."*"Captain decision:"*) return 0 ;;
     *"Resolution recorded by fm-decision-hold."*"Captain decision:"*) return 0 ;;
     *"Resolution recorded by fm-captain-hold."*"Reconciliation evidence:"*) return 0 ;;
+    *"Resolution recorded by fm-captain-hold."*"Stale-clear evidence:"*) return 0 ;;
   esac
   return 1
 }
@@ -1009,6 +1010,10 @@ close_answered() {  # <task-id> <release-0-or-1>
     apply_pending_retained_artifact "$1" || return 1
     tasks_axi "done" "$1" >/dev/null || return 1
   fi
+  remove_decision_card "$1"
+}
+
+remove_decision_card() {
   "$CARD_TOOL" remove "$1" \
     || printf 'actionable: closed %s but could not remove its decision card\n' "$1" >&2
 }
@@ -1443,6 +1448,7 @@ reconcile_request_retire() {  # <task-id>
 publish_parent_resolution_then_retire() {  # <task-id> <occurrence> <note>
   local id=$1 occurrence=$2 note=$3 request
   request=$(reconcile_request_path "$id")
+  remove_decision_card "$id"
   publish_parent_hold "$id" "$occurrence" resolved "$note"
   if [ -e "$request" ] && [ "$PARENT_HOLD_PUBLISHED" != 1 ]; then
     fail "could not publish the answered captain-held task $id to its parent"
@@ -1573,6 +1579,7 @@ reconcile_close() {
       || fail "task $id was not closed by reconciliation"
     occurrence=$(resolution_record_count "$body")
     remove_interrupted_answer_stamp "$id"
+    remove_decision_card "$id"
     publish_parent_hold "$id" "$occurrence" resolved reconciled
     [ "$PARENT_HOLD_PUBLISHED" = 1 ] \
       || fail "could not publish the reconciled captain-held task $id to its parent"
@@ -1636,7 +1643,6 @@ command_stale_clear() {
       || fail "task $id is already closed by something other than this stale clear"
     occurrence=$(resolution_record_count "$body")
     remove_interrupted_answer_stamp "$id"
-    "$CARD_TOOL" remove "$id" || true
     publish_parent_resolution_then_retire "$id" "$occurrence" stale-cleared
     printf 'stale-cleared: %s\n' "$id"
     return 0

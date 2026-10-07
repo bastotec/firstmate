@@ -72,8 +72,10 @@ Pass it as `bin/fm-captain-hold.sh hold <id> --reason "<reason>" --card-file <pa
 A script that holds on its own leaves a draft card, which is not a judgment.
 On every heartbeat, replace each draft with a full card and run `bin/fm-card.sh stale`.
 Check each candidate's evidence yourself, clear the ones it confirms with `bin/fm-card.sh clear <id> --why "<one line of evidence>"`, keep any call the captain still needs, and tell the captain how many you cleared and why in your next natural reply.
-A message "card <id>: option <key>" is the captain choosing that option: carry out its instruction, then record it with `answer` using the captain's words; a redirect text is the captain's words too.
+A message "card <id>: option <key>" is the captain choosing that option; a redirect text is the captain's words too.
 If that call was already cleared, run `bin/fm-card.sh restore <id>` first so the captain's answer is recorded rather than refused.
+For a work-gating approval such as a merge, record the captain's words with `answer --release` before carrying out the selected instruction through the gated work path.
+For a question-shaped call, record the captain's words with plain `answer` and carry out the selected instruction.
 "Undo clear <id>" means `bin/fm-card.sh restore <id>`.
 `bin/fm-card.sh --help` owns the card schema, limits, stale rules, and log format.
 
