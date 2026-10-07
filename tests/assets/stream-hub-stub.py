@@ -31,6 +31,10 @@ test can measure rather than infer.
   --fleet                  also serve the firstmate-facing task routes against
                            fake endpoints (see "Fleet mode" below)
 
+The stub stops itself once the test suite that started it is gone: tests/lib.sh
+exports FM_TEST_OWNER_PID, and a suite killed too hard for its cleanup trap to
+run would otherwise leave this server listening indefinitely.
+
 Fleet mode is what tests/fixtures.sh's fm_test_fake_stream runs. Endpoints are
 registered by tests/assets/stream-agent-stub.py, which bin/backends/stream.sh
 starts in place of the real agent, and each one is a fake shell held here: a
@@ -92,6 +96,7 @@ ordinary "<state>: <note>" line to the status path the stub agent registered.
 import argparse
 import http.server
 import json
+import os
 import re
 import socketserver
 import subprocess
@@ -662,8 +667,28 @@ def main() -> int:
         host, port = server.server_address[0], server.server_address[1]
         with open(options.ready_file, "w", encoding="utf-8") as fh:
             fh.write("%s %s\n" % (host, port))
+    watch_owner(server, os.environ.get("FM_TEST_OWNER_PID", ""))
     server.serve_forever(poll_interval=0.2)
     return 0
+
+
+def watch_owner(server, owner: str) -> None:
+    """Shut the server down once the owning test process has exited."""
+    if not owner.isdigit() or int(owner) <= 1:
+        return
+
+    def run() -> None:
+        while True:
+            time.sleep(1)
+            try:
+                os.kill(int(owner), 0)
+            except ProcessLookupError:
+                server.shutdown()
+                return
+            except PermissionError:
+                pass
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 if __name__ == "__main__":

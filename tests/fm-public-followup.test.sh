@@ -2706,13 +2706,9 @@ test_remote_retire_accepts_nonwritable_absence() {
   pass "retire accepts link absence in non-writable remote state"
 }
 
-# The guarded clear runs unattended over the transport, so it must REFUSE rather
-# than wedge when it cannot take the metadata lock. The writability precondition
-# narrows that window but cannot close it: the parent can turn non-writable
-# between that check and lock creation, and a lock held by a live holder is
-# indistinguishable from it at the acquire. The ordinary wait retries forever, so
-# before the bounded acquire this path hung instead of returning the
-# reconciliation refusal, leaving deliver or retire stuck with nothing reported.
+# Exercise fmx_meta_link_clear's guarded contention refusal (bin/fm-x-lib.sh)
+# with a live metadata-lock holder, leaving deliver or retire free to report
+# the reconciliation refusal instead of hanging.
 #
 # The state directory is deliberately left WRITABLE here, so a refusal can only
 # come from the bounded lock wait and never from the writability precondition.

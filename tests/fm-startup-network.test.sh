@@ -436,6 +436,159 @@ EOF
   pass "fm-startup-network: an aggregate bound turns a wedged sweep into an actionable line"
 }
 
+# await_gone <seconds> <pid...>: succeed once every pid has exited, otherwise
+# print the pids still alive.
+await_gone() {
+  local limit=$(( $1 * 10 )) waited=0 pid alive
+  shift
+  while :; do
+    alive=
+    for pid in "$@"; do
+      kill -0 "$pid" 2>/dev/null && alive="$alive $pid"
+    done
+    [ -n "$alive" ] || return 0
+    [ "$waited" -lt "$limit" ] || { printf '%s\n' "$alive"; return 1; }
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+}
+
+await_worker_pid() {  # <home>
+  local home=$1 pid waited=0
+  while [ "$waited" -lt 100 ]; do
+    pid=$(sed -n 's/^pid=//p' "$home/state/.startup-network.status" 2>/dev/null | tail -1)
+    case $pid in '' | 0 | *[!0-9]*) ;; *) printf '%s\n' "$pid"; return 0 ;; esac
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
+# A home removed under a running worker - a test fixture cleaned up while its
+# detached worker was still delivering - used to make every lock wait recurse
+# into .steal.steal... forever, leaving the worker spawning subshells for days.
+test_a_worker_whose_home_is_removed_exits() {
+  local rec home root log claimant worker left waited=0
+  rec=$(new_world home-removed)
+  IFS='|' read -r home root log <<EOF
+$rec
+EOF
+  printf '%s\n' $$ > "$home/state/.lock"
+  sleep 30 &
+  claimant=$!
+  FM_FAKE_BOOTSTRAP_LOG="$log" FM_FAKE_BOOTSTRAP_SLEEP=4 \
+    run_stage "$home" "$root" start --locked 1 --harvest-pid "$claimant"
+  worker=$(await_worker_pid "$home") || fail "the detached worker never recorded its pid"
+  while ! grep -Fq 'network=only' "$log" 2>/dev/null && [ "$waited" -lt 100 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_grep 'network=only' "$log" "the worker never reached its bounded bootstrap"
+  rm -rf "$home"
+  left=$(await_gone 15 "$worker") || {
+    fm_test_kill_tree "$worker"
+    kill "$claimant" 2>/dev/null || true
+    fail "a worker whose home was removed kept running (pid$left)"
+  }
+  kill "$claimant" 2>/dev/null || true
+  wait "$claimant" 2>/dev/null || true
+  pass "fm-startup-network: a worker whose home is removed exits instead of spinning on its locks"
+}
+
+has_sleeping_bootstrap() {  # <pid...>
+  local pid
+  for pid in "$@"; do
+    [ "$(ps -o command= -p "$pid" 2>/dev/null)" = "sleep 60" ] && return 0
+  done
+  return 1
+}
+
+# The runner an agent starts is killed when its command times out. Whatever the
+# signal, nothing the suite started may keep running after it: a TERM runs the
+# suite's cleanup, which reaps the detached worker and its bounded child at once,
+# and a KILL leaves the worker to its own stage bound and dead-claimant check.
+killed_runner_case() {  # <signal> <stage-bound> <seconds-to-settle>
+  local signal=$1 bound=$2 settle=$3 generations=${4:-1} rec home root log runner worker workers tree generation_tree left waited
+  rec=$(new_world "killed-runner-$signal")
+  IFS='|' read -r home root log <<EOF
+$rec
+EOF
+  # shellcheck disable=SC2016  # Expanded by the child runner.
+  FM_FAKE_BOOTSTRAP_LOG="$log" FM_FAKE_BOOTSTRAP_SLEEP=60 FM_STARTUP_NETWORK_TIMEOUT="$bound" \
+    PATH="$root/bin:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \
+    bash -c '
+      . "$1/tests/lib.sh"
+      FM_TEST_CLEANUP_DIRS+=("$2")
+      printf "%s\n" $$ > "$FM_HOME/state/.lock"
+      if [ "$3" = 2 ]; then
+        FM_FAKE_HARNESS_PID=$$ "$FM_ROOT_OVERRIDE/bin/fm-startup-network.sh" start --locked 0 --harvest-pid $$
+        sed -n "s/^pid=//p" "$FM_HOME/state/.startup-network.status" > "$2/first-pid"
+        waited=0
+        while ! grep -Fq "network=only" "$FM_FAKE_BOOTSTRAP_LOG" 2>/dev/null; do
+          [ "$waited" -lt 100 ] || exit 1
+          sleep 0.1
+          waited=$((waited + 1))
+        done
+      fi
+      FM_FAKE_HARNESS_PID=$$ "$FM_ROOT_OVERRIDE/bin/fm-startup-network.sh" start --locked 1 --harvest-pid $$
+      touch "$2/runner-ready"
+      while :; do sleep 0.2; done
+    ' _ "$ROOT" "${home%/home}" "$generations" >/dev/null 2>&1 &
+  runner=$!
+  waited=0
+  while [ ! -f "${home%/home}/runner-ready" ] && [ "$waited" -lt 100 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -f "${home%/home}/runner-ready" ] || {
+    kill -TERM "$runner" 2>/dev/null || true
+    fail "the runner never launched all worker generations"
+  }
+  worker=$(await_worker_pid "$home") || {
+    kill -9 "$runner" 2>/dev/null || true
+    fail "the runner's detached worker never recorded its pid"
+  }
+  # Wait until the fake bootstrap is sleeping inside the worker's bounded child,
+  # so the case proves that child is reaped too rather than passing on a worker
+  # that had not reached it yet.
+  workers=$worker
+  [ "$generations" != 2 ] || workers+=" $(cat "${home%/home}/first-pid")"
+  tree=
+  for worker in $workers; do
+    waited=0
+    # shellcheck disable=SC2086
+    until generation_tree=$(fm_test_process_tree "$worker") && has_sleeping_bootstrap $generation_tree; do
+      [ "$waited" -lt 100 ] || {
+        kill -TERM "$runner" 2>/dev/null || true
+        fm_test_kill_tree "$worker"
+        fail "the worker never started its bounded child, so this case would prove nothing"
+      }
+      sleep 0.1
+      waited=$((waited + 1))
+    done
+    tree+=" $generation_tree"
+  done
+  kill "-$signal" "$runner" 2>/dev/null || fail "could not signal the runner"
+  wait "$runner" 2>/dev/null || true
+  # shellcheck disable=SC2086  # One pid per word.
+  left=$(await_gone "$settle" $tree) || {
+    for worker in $left; do kill -9 "$worker" 2>/dev/null || true; done
+    fail "a runner killed with SIG$signal left processes running:$left"
+  }
+}
+
+test_a_terminated_runner_leaves_no_worker_running() {
+  # Settling well inside the stage bound proves cleanup reaped the worker
+  # rather than the worker reaching its own deadline.
+  killed_runner_case TERM 120 5 2
+  pass "fm-startup-network: a runner killed with SIGTERM leaves no worker or bounded child running"
+}
+
+test_a_killed_runner_leaves_no_worker_running() {
+  killed_runner_case KILL 3 15
+  pass "fm-startup-network: a runner killed with SIGKILL leaves no worker or bounded child running past its bound"
+}
+
 # A worker killed before publication leaves a `running` record behind.
 # That record must read as work to redo, not as work still in flight.
 test_an_abandoned_run_reads_as_needing_a_rerun() {
@@ -779,4 +932,7 @@ test_records_share_one_origin_so_offsets_form_a_timeline
 test_timings_are_published_and_only_the_on_demand_report_prints_them
 test_a_bounded_run_still_publishes_the_timings_it_managed_to_record
 test_the_timing_artifact_cannot_carry_a_command_line_or_forge_records
+test_a_worker_whose_home_is_removed_exits
+test_a_terminated_runner_leaves_no_worker_running
+test_a_killed_runner_leaves_no_worker_running
 echo "# fm-startup-network.test.sh: all assertions passed"

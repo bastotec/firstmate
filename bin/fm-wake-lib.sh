@@ -794,6 +794,21 @@ fm_recovery_marker_reopen_announced() {
   fm_recovery_transition "$1" reopen-announced
 }
 
+# A lock can only ever be created inside an existing, writable directory. When
+# that directory is gone - a home or fixture removed under a process still using
+# it - the create fails forever and the missing pid record reads as a dead
+# holder, so the stale-steal path below would recurse into .steal.steal... without
+# end. Callers treat an unusable directory as "cannot acquire", never "wait".
+fm_lock_dir_usable() {
+  local parent
+  case "$1" in
+    */*) parent=${1%/*} ;;
+    *) parent=. ;;
+  esac
+  parent=${parent:-/}
+  [ -d "$parent" ] && [ -w "$parent" ]
+}
+
 fm_lock_try_acquire() {
   local lockdir=$1 pid steal cur rc steal_owner primary_owner current
   FM_LOCK_HELD_PID=
@@ -803,6 +818,7 @@ fm_lock_try_acquire() {
   if fm_lock_try_create "$lockdir"; then
     return 0
   fi
+  fm_lock_dir_usable "$lockdir" || return 1
 
   fm_current_pid current || return 1
   pid=$(cat "$lockdir/pid" 2>/dev/null || true)
@@ -894,9 +910,13 @@ fm_lock_try_acquire() {
   return "$rc"
 }
 
+# Waits as long as a live holder keeps the lock, but returns 1 at once when the
+# lock's parent directory is gone or unwritable; retrying there cannot acquire it.
+# tests/fm-watcher-lock.test.sh covers refusal after the parent is removed.
 fm_lock_acquire_wait() {
   local lockdir=$1
   while ! fm_lock_try_acquire "$lockdir"; do
+    fm_lock_dir_usable "$lockdir" || return 1
     sleep 0.1
   done
 }
