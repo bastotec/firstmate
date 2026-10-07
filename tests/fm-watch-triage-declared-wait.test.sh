@@ -22,8 +22,9 @@ set -u
 # reach the stale path. Returns 1 when the watcher does the other thing.
 parked_watch_round() {  # <state> <fakebin> <out> <capture> <window> <exit|absorb>
   local state=$1 fakebin=$2 out=$3 capture=$4 window=$5 mode=$6 pid cycles=0
-  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
-    FM_FAKE_TMUX_CURRENT_COMMAND=grok \
+  stream_capture "$window" "$capture"
+  stream_foreground "$window" grok
+  PATH="$fakebin:$PATH" \
     FM_FAKE_CREW_STATE='state: paused · source: status-log · parked' \
     FM_WATCH_HANDLING_SUCCESSOR=1 \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
@@ -65,8 +66,8 @@ test_live_declared_wait_churn_honors_the_resurface_throttle() {
     name=${spec%%|*}; status_line=${spec#*|}
     dir=$(make_case "$name"); state="$dir/state"; fakebin="$dir/fakebin"
     out="$dir/watch.out"; capture_file="$dir/pane.txt"; statusf="$state/parked.status"
-    window="test:fm-parked"
-    printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/parked.meta"
+    window=$(stream_window "$state" parked)
+    printf 'window=%s\nkind=ship\nharness=grok\nbackend=stream\n' "$window" > "$state/parked.meta"
     printf '%s\n' "$status_line" > "$statusf"
     sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
     key=$(printf '%s' "$window" | tr ':/.' '___')
@@ -146,8 +147,8 @@ test_live_paused_until_controls_recheck_time() {
   local dir state fakebin out capture_file statusf window key sig wakes future past
   dir=$(make_case live-paused-until); state="$dir/state"; fakebin="$dir/fakebin"
   out="$dir/watch.out"; capture_file="$dir/pane.txt"; statusf="$state/parked.status"
-  window="test:fm-parked"
-  printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/parked.meta"
+  window=$(stream_window "$state" parked)
+  printf 'window=%s\nkind=ship\nharness=grok\nbackend=stream\n' "$window" > "$state/parked.meta"
   future=$(iso_utc_at "$(( $(date +%s) + 7200 ))")
   printf 'paused: rate limit until %s\n' "$future" > "$statusf"
   sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-parked_status"
@@ -203,10 +204,10 @@ iso_utc_at() {  # <epoch>
 paused_until_fixture() {  # <name> <until-epoch> <status-age-secs>
   local name=$1 until=$2 age=$3 dir state statusf window key back
   dir=$(make_case "$name"); state="$dir/state"
-  window="test:fm-until"
+  window=$(stream_window "$state" until)
   statusf="$state/until.status"
   printf 'idle, waiting for the reset\n' > "$dir/pane.txt"
-  printf 'window=%s\nkind=secondmate\n' "$window" > "$state/until.meta"
+  printf 'window=%s\nbackend=stream\nkind=secondmate\n' "$window" > "$state/until.meta"
   printf 'paused: rate limit resets, until %s, then resuming\n' "$(iso_utc_at "$until")" > "$statusf"
   back=$(( $(date +%s) - age ))
   if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$statusf"
@@ -220,7 +221,8 @@ paused_until_fixture() {  # <name> <until-epoch> <status-age-secs>
 
 until_watch() {  # <dir> <cadence> -> pid in UNTIL_PID
   local dir=$1
-  PATH="$dir/fakebin:$PATH" FM_FAKE_TMUX_WINDOW=test:fm-until FM_FAKE_TMUX_CAPTURE="$dir/pane.txt" \
+  stream_capture "$(fm_test_stream_target_of "$dir/state" until)" "$dir/pane.txt"
+  PATH="$dir/fakebin:$PATH" \
     FM_FAKE_CREW_STATE='state: unknown · source: none · no current-state source available' \
     FM_STATE_OVERRIDE="$dir/state" FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" \
     FM_PAUSE_RESURFACE_SECS="$2" FM_POLL=1 FM_SIGNAL_GRACE=1 \
@@ -248,7 +250,7 @@ test_paused_until_wrong_year_is_bounded_by_the_cadence() {
   until_watch "$dir" 240
   wait_for_exit "$UNTIL_PID" 100 \
     || { reap "$UNTIL_PID"; fail "a wrong-year declared time silenced the wait beyond the recheck cadence"; }
-  grep -F 'stale: test:fm-until' "$dir/watch.out" >/dev/null \
+  grep -F "stale: $(fm_test_stream_target_of "$state" until)" "$dir/watch.out" >/dev/null \
     || fail "the bounded wrong-year recheck did not print a stale wake: $(cat "$dir/watch.out")"
   grep -F 'declared time is beyond the recheck cadence' "$dir/watch.out" >/dev/null \
     || fail "the bounded recheck gave the wrong reason: $(cat "$dir/watch.out")"
@@ -262,7 +264,7 @@ test_paused_until_that_passed_is_rechecked_before_the_cadence() {
   dir=$(paused_until_fixture until-passed "$(( $(date +%s) - 30 ))" 60); state="$dir/state"
   until_watch "$dir" 999
   wait_for_exit "$UNTIL_PID" 100 || { reap "$UNTIL_PID"; fail "a declared wait whose until time passed was not rechecked ahead of the cadence"; }
-  grep -F 'stale: test:fm-until' "$dir/watch.out" >/dev/null || fail "the due recheck did not print a stale wake: $(cat "$dir/watch.out")"
+  grep -F "stale: $(fm_test_stream_target_of "$state" until)" "$dir/watch.out" >/dev/null || fail "the due recheck did not print a stale wake: $(cat "$dir/watch.out")"
   grep -F 'declared clearing time has passed' "$dir/watch.out" >/dev/null \
     || fail "the due recheck did not say the declared time passed: $(cat "$dir/watch.out")"
   grep -F 'possible wedge' "$dir/watch.out" >/dev/null && fail "a due declared wait was mislabeled a possible wedge"

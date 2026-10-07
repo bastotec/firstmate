@@ -24,7 +24,7 @@ Deck secondmate startup, stable lock ownership, and driver-owned turn-end superv
 
 ## Wedge-alarm channels
 
-The two real notification channels were bounded manually on 2026-07-10 on macOS 26.5.2 with Herdr 0.7.3.
+The Notification Center channel was bounded manually on 2026-07-10 on macOS 26.5.2.
 Automated suites never execute these real notification commands.
 
 Argv-safe Notification Center command:
@@ -38,19 +38,5 @@ Argv-safe Notification Center command:
 ```
 
 Observed output: no stdout, exit 0, and one banner with the supplied body.
-
-Herdr command:
-
-```sh
-herdr notification show 'FIRSTMATE TEST - IGNORE' \
-  --body 'FIRSTMATE TEST - IGNORE (wedge-alarm channel verification)' \
-  --sound request
-```
-
-Observed output:
-
-```json
-{"id":"cli:notification:show","result":{"reason":"shown","shown":true,"type":"notification_show"}}
-```
 
 The safe command-channel contract is covered without a notification by `tests/fm-daemon.test.sh`: the summary reaches both `$1` and stdin, every channel is process-group bounded, and a failed channel falls through.

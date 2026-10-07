@@ -15,7 +15,7 @@ metadata:
 Use this playbook when the session-start digest reports an ordinary direct report's endpoint dead or its metadata has no window, or when a direct report is stale, looping, repeatedly confused, asking a question its brief already answers, unresponsive, or when a steer failed to land.
 
 Interrupt, stop, relaunch, and recover a worker through `bin/fm-control.sh <task-id> interrupt|exit|relaunch|recover-missing`, which resolves the recorded runtime itself, verifies each action, and never tears down or discards anything ([`docs/agent-control.md`](../../../docs/agent-control.md)).
-For any secondmate recovery, load `secondmate-provisioning`; [remote lifecycle routing](../../../docs/remote-secondmates.md#lifecycle-control-and-backend-migration) owns the primary control plane's supported remote verbs.
+For any secondmate recovery, load `secondmate-provisioning`; [remote lifecycle routing](../../../docs/remote-secondmates.md#lifecycle-control) owns the primary control plane's supported remote verbs.
 Load `harness-adapters` before a resume command or a harness-specific skill invocation, and whenever the adapter's own quirks matter.
 The target window's harness is recorded as `harness=` in `state/<id>.meta`.
 
@@ -32,7 +32,8 @@ Read the targeted current state with `bin/fm-crew-state.sh <id>` before deciding
 A no-mistakes run matched to the crew's branch and current code remains authoritative when the endpoint is dead: handle a terminal or parked run through the normal lifecycle, and keep supervising an active run instead of creating a duplicate worker.
 
 When no authoritative run accounts for the task, inspect only its recorded backend and worktree inventory.
-Use `treehouse status` for treehouse-backed tmux, herdr, or stream tasks.
+Use `treehouse status` for the recorded stream task's worktree.
+A retired-backend record cannot be recovered through lifecycle control; [Runtime backend](../../../docs/configuration.md#runtime-backend-configbackend--fm_backend) owns its reconciliation and retirement boundary.
 Do not sweep another home's endpoints or infer ownership from a matching window label.
 
 Before relaunch, prove that no live agent still owns the recorded task and that the existing worktree remains available.

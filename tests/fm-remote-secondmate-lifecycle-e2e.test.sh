@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
 # Full remote secondmate lifecycle over the deterministic generic SSH boundary.
+#
+# The remote mate runs on stream the way tests/fm-remote-secondmate-stream.test.sh
+# drives it: a real hub (bin/fm-stream-hub.py) on an ephemeral loopback port and
+# the real bin/fm-stream-agent.py owning a real pseudoterminal that runs the real
+# Deck host driver over a fake `deck` binary, which records every turn's argv.
+# The fake SSH boundary plays the fleet's seeding of each remote home's own
+# config/stream-hub and config/stream-token before a launch reaches it. A LOCAL
+# endpoint (a migration source) lives on the suite's stub hub (tests/fixtures.sh).
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-# shellcheck source=tests/remote-herdr-fixture.sh
-. "$(dirname "${BASH_SOURCE[0]}")/remote-herdr-fixture.sh"
-# shellcheck source=tests/herdr-client-pair-fixture.sh
-. "$(dirname "${BASH_SOURCE[0]}")/herdr-client-pair-fixture.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
-command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
+for tool in jq python3 curl perl; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "skip: $tool not found"; exit 0; }
+done
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 TMP_ROOT=$(fm_test_tmproot fm-remote-secondmate-e2e)
 mkdir -p "$TMP_ROOT"
@@ -21,18 +27,28 @@ LOCAL_HOME="$TMP_ROOT/local-home"
 FAKEBIN=$(fm_fakebin "$TMP_ROOT/fake")
 SSH_COUNT="$TMP_ROOT/ssh.count"
 DOCTOR_LOG="$TMP_ROOT/doctor.log"
-HERDR_STATE="$TMP_ROOT/remote-herdr.state"
-HERDR_LOG="$TMP_ROOT/remote-herdr.log"
-TMUX_LOG="$TMP_ROOT/remote-tmux.log"
-TMUX_STATE="$TMP_ROOT/remote-tmux.state"
+TURNS="$TMP_ROOT/remote-turns"
 CLAIMS="$TMP_ROOT/claims"
+HUB_TOKEN="remote-lifecycle-token-$$"
+HUB_PID=
 mkdir -p "$PARENT/data" "$PARENT/state" "$PARENT/config" "$PARENT/projects" "$REMOTE_ROOT" "$CLAIMS"
+
+# remote_agents [<id>]: the pids of the stream agents this host runs (for <id>).
+remote_agents() {
+  ps -eo pid,args 2>/dev/null \
+    | awk -v l="--label fm-${1:-}" -v r="$REMOTE_ROOT" \
+        'index($0, "fm-stream-agent.py") && index($0, r) && index($0, l) && !index($0, "awk") {print $1}'
+}
+remote_agent_count() { remote_agents "${1:-}" | wc -l | tr -d ' '; }
+
 cleanup() {
-  local worker_pid='' wait_attempt=0
+  local worker_pid='' wait_attempt=0 pid
   touch "$TMP_ROOT/provision.release" "$TMP_ROOT/seed.release" "$TMP_ROOT/handoff.release" \
     "$TMP_ROOT/inherit.release" "$TMP_ROOT/launch.release" 2>/dev/null || true
   FM_HOME="$PARENT" FM_PROCEVENT_CLAIM_ROOT="$CLAIMS" \
     "$ROOT/bin/fm-procevent.sh" sweep-home >/dev/null 2>&1 || true
+  for pid in $(remote_agents); do kill "$pid" 2>/dev/null || true; done
+  [ -z "$HUB_PID" ] || kill "$HUB_PID" 2>/dev/null || true
   if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then
     worker_pid=$(cat "$TMP_ROOT/remote-jobs/worker.pid")
     kill "$worker_pid" 2>/dev/null || true
@@ -42,8 +58,22 @@ cleanup() {
     done
   fi
   rm -rf -- "$TMP_ROOT"
+  fm_test_cleanup || true
 }
 trap cleanup EXIT
+
+# --- the fleet hub every remote home publishes to: real, loopback ------------
+printf 'publish,subscribe,control:%s\n' "$HUB_TOKEN" > "$TMP_ROOT/hub-tokens"
+chmod 600 "$TMP_ROOT/hub-tokens"
+python3 "$ROOT/bin/fm-stream-hub.py" serve --bind 127.0.0.1 --port 0 \
+  --token-file "$TMP_ROOT/hub-tokens" --ready-file "$TMP_ROOT/hub-ready" \
+  > "$TMP_ROOT/hub.log" 2>&1 &
+HUB_PID=$!
+waited=0
+while [ ! -s "$TMP_ROOT/hub-ready" ] && [ "$waited" -lt 100 ]; do sleep 0.1; waited=$((waited + 1)); done
+[ -s "$TMP_ROOT/hub-ready" ] || fail "hub did not start: $(cat "$TMP_ROOT/hub.log")"
+read -r HUB_HOST HUB_PORT < "$TMP_ROOT/hub-ready"
+HUB_URL="http://$HUB_HOST:$HUB_PORT"
 
 # Materialize the current branch as the remote host's tracked code root. The
 # fixture is a real git repository because provisioning and guarded sync exercise
@@ -52,55 +82,32 @@ trap cleanup EXIT
   cd "$ROOT" || exit
   tar --exclude=.git --exclude=.no-mistakes --exclude=data --exclude=state --exclude=config -cf - .
 ) | (cd "$REMOTE_ROOT" && tar -xf -)
-cat > "$REMOTE_ROOT/bin/tmux" <<SH
+# The Deck host's startup diagnostics and watcher are shimmed exactly as
+# tests/fm-backend-stream.test.sh shims them; the host driver itself is real.
+# The `deck` binary records each turn's argv (the model and the prompt) in a log
+# kept outside every remote home, so it never dirties a home's tree.
+cat > "$REMOTE_ROOT/bin/fm-session-start.sh" <<'SH'
 #!/usr/bin/env bash
-set -u
-log='$TMUX_LOG'
-state='$TMUX_STATE'
-fail_send='$TMP_ROOT/tmux-send-fail'
-printf '%s\n' "\$*" >> "\$log"
-case "\${1:-}" in
-  has-session|new-session|set-window-option) exit 0 ;;
-  list-windows)
-    [ -f "\$state" ] || exit 0
-    name=\$(cut -d'|' -f1 "\$state")
-    case "\$*" in *'#{session_name}:#{window_name}'*) printf 'firstmate:%s\n' "\$name" ;; *) printf '%s\n' "\$name" ;; esac
-    exit 0
-    ;;
-  new-window)
-    name=; cwd=
-    while [ "\$#" -gt 0 ]; do
-      case "\$1" in -n) shift; name=\$1 ;; -c) shift; cwd=\$1 ;; esac
-      shift
-    done
-    printf '%s|%s\n' "\$name" "\$cwd" > "\$state"
-    printf '@1\n'
-    exit 0
-    ;;
-  display-message)
-    case "\$*" in
-      *'#{pane_current_path}'*) cut -d'|' -f2- "\$state" ;;
-      *'#{pane_current_command}'*) printf 'fm-deck-worker\n' ;;
-      *'#{cursor_y}'*) printf '0\n' ;;
-      *'#S'*) printf 'firstmate\n' ;;
-      *) printf '%%1\n' ;;
-    esac
-    exit 0
-    ;;
-  capture-pane) printf '❯\n'; exit 0 ;;
-  send-keys) [ ! -f "\$fail_send" ] || exit 1; exit 0 ;;
-  kill-window) rm -f -- "\$state"; exit 0 ;;
-  list-panes) printf 'fm-deck-worker\n'; exit 0 ;;
-esac
-exit 0
+"$(dirname "$0")/fm-lock.sh" || exit
+cat "$FM_HOME/state/.lock" > "$FM_HOME/state/.session-start-complete"
+printf 'fixture startup\n'
 SH
-chmod +x "$REMOTE_ROOT/bin/tmux"
-# The remote secondmate runs on deck, whose launch resolves the executable on the
-# host's PATH; the pane runs bin/fm-deck-worker.sh, so an exit-0 stub suffices.
-printf '#!/usr/bin/env bash\nexit 0\n' > "$REMOTE_ROOT/bin/deck"
-chmod +x "$REMOTE_ROOT/bin/deck"
-install_remote_herdr_fixture "$REMOTE_ROOT" "$HERDR_STATE" "$HERDR_LOG" \
-  "$TMP_ROOT/herdr-send-fail" "$TMP_ROOT/herdr.sock"
+cat > "$REMOTE_ROOT/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" != --handling-delivered ] || exit 0
+printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
+while :; do sleep 1; done
+SH
+cat > "$REMOTE_ROOT/bin/deck" <<PY
+#!/usr/bin/env python3
+import json, os, sys
+with open('$TURNS', 'a') as log:
+    log.write(json.dumps({'cwd': os.getcwd(), 'argv': sys.argv[1:]}) + '\n')
+print(json.dumps({'type': 'run_started', 'session': 'fixture-session'}), flush=True)
+print(json.dumps({'type': 'text_delta', 'text': 'REMOTE-FIXTURE-TURN'}), flush=True)
+print(json.dumps({'type': 'run_finished', 'output': 'ready', 'turns': 1}), flush=True)
+PY
+chmod +x "$REMOTE_ROOT/bin/fm-session-start.sh" "$REMOTE_ROOT/bin/fm-watch-arm.sh" "$REMOTE_ROOT/bin/deck"
 # Use the worker's OS Bash for the simulated host's env-based shebangs too.
 ln -s /bin/bash "$REMOTE_ROOT/bin/bash"
 git -C "$REMOTE_ROOT" init -q -b main
@@ -150,8 +157,8 @@ cat > "$PARENT/data/projects.md" <<EOF
 - alpha [direct-PR] - alpha project (added 2026-08-02)
 EOF
 printf 'deck\n' > "$PARENT/config/secondmate-harness"
-printf 'tmux\n' > "$PARENT/config/backend"
 printf 'primary harness defaults\n' > "$PARENT/config/crew-harness"
+printf 'manual\n' > "$PARENT/config/backlog-backend"
 
 cat > "$FAKEBIN/fake-ssh" <<'SH'
 #!/usr/bin/env bash
@@ -166,15 +173,28 @@ shift 2
 [ "$host" = remote-mac ] || exit 91
 [ "$entry" = fm-remote-entrypoint.sh ] || exit 92
 cd "$FM_FAKE_REMOTE_CWD" || exit 93
+home_b64=$3
 argv_b64=$4
 command_fields=$(perl -MMIME::Base64=decode_base64 -e '
   my $data=decode_base64($ARGV[0]);
   my @args=split(/\0/, $data);
-  print join("\t", map { defined $_ ? $_ : "" } @args[0..2]);
+  print join("\t", map { defined $_ && $_ ne "" ? $_ : "-" } @args[0..3]);
 ' "$argv_b64")
-IFS=$'\t' read -r command_name _command_action command_rel <<EOF
+IFS=$'\t' read -r command_name _command_action command_rel command_extra <<EOF
 $command_fields
 EOF
+# The fleet seeds every remote home with the hub its agents publish to and the
+# credential for it (docs/stream-backend.md "Security"); this boundary plays
+# that seeding for a home about to launch, including a freshly migrated one.
+if [ "$command_name" = fm-remote-secondmate-control.sh ] \
+  && { [ "$_command_action" = launch ] || [ "$_command_action" = relaunch ]; }; then
+  remote_home=$(perl -MMIME::Base64=decode_base64 -e 'print decode_base64($ARGV[0])' "$home_b64")
+  if [ -d "$remote_home/config" ] && [ ! -f "$remote_home/config/stream-hub" ]; then
+    printf '%s\n' "$FM_FAKE_HUB_URL" > "$remote_home/config/stream-hub"
+    (umask 077; printf '%s\n' "$FM_FAKE_HUB_TOKEN" > "$remote_home/config/stream-token")
+    printf 'python\n' > "$remote_home/config/stream-impl"
+  fi
+fi
 case "${FM_FAKE_SSH_MODE:-normal}:$command_name:$command_rel" in
   inherit-partial:fm-remote-inherit.sh:config/crew-harness) exit 255 ;;
   inherit-block:fm-remote-inherit.sh:data/captain-shared.md)
@@ -190,16 +210,22 @@ esac
 # owns the doctor's real behavior against controlled account fixtures; this
 # boundary owns only what the callers do with its verdict.
 if [ "$command_name" = fm-remote-doctor.sh ]; then
-  printf '%s %s\n' "${FM_FAKE_SSH_MODE:-normal}" "${_command_action:--}" >> "$FM_FAKE_DOCTOR_LOG"
+  # The readiness gate always names the stream backend; --fix follows it.
+  doctor_mode=-
+  for arg in "$_command_action" "$command_rel" "$command_extra"; do
+    [ "$arg" != --fix ] || doctor_mode=--fix
+  done
+  _command_action=$doctor_mode
+  printf '%s %s\n' "${FM_FAKE_SSH_MODE:-normal}" "$doctor_mode" >> "$FM_FAKE_DOCTOR_LOG"
   case "${FM_FAKE_SSH_MODE:-normal}" in
     unreachable) exit 255 ;;
     doctor-fix-unknown)
       if [ "${_command_action:-}" = --fix ]; then
-        printf 'fix launchagent=applied: wrote the Aqua-scoped launch agent\n'
+        printf 'fix remote-job-worker=applied: installed or reloaded dev.firstmate.remote-job\n'
         exit 255
       fi
-      printf 'check launchagent=fixable: no Firstmate herdr launch agent\n'
-      printf 'error: this host is not ready for a remote second mate; unresolved: launchagent\n' >&2
+      printf 'check remote-job-worker=fixable: the Linux remote job worker is not running\n'
+      printf 'error: this host is not ready for a remote second mate; unresolved: remote-job-worker\n' >&2
       exit 1
       ;;
     doctor-human)
@@ -212,18 +238,18 @@ if [ "$command_name" = fm-remote-doctor.sh ]; then
       # Red until --fix runs on this host, green on every later read-only run.
       if [ "${_command_action:-}" = --fix ]; then
         touch "$FM_FAKE_DOCTOR_REPAIRED"
-        printf 'fix launchagent=applied: wrote the Aqua-scoped launch agent\n'
+        printf 'fix remote-job-worker=applied: installed or reloaded dev.firstmate.remote-job\n'
         printf 'ok: remote second-mate readiness confirmed on this host\n'
         exit 0
       fi
       [ -f "$FM_FAKE_DOCTOR_REPAIRED" ] || {
-        printf 'check launchagent=fixable: no Firstmate herdr launch agent\n'
-        printf 'error: this host is not ready for a remote second mate; unresolved: launchagent\n' >&2
+        printf 'check remote-job-worker=fixable: the Linux remote job worker is not running\n'
+        printf 'error: this host is not ready for a remote second mate; unresolved: remote-job-worker\n' >&2
         exit 1
       }
       ;;
   esac
-  printf 'check herdr=ok: /usr/bin/herdr\n'
+  printf 'check stream-hub=ok: the hub accepted this home token\n'
   printf 'ok: remote second-mate readiness confirmed on this host\n'
   exit 0
 fi
@@ -236,7 +262,14 @@ if [ "${FM_FAKE_SSH_MODE:-normal}" = doctor-fixable ] \
 fi
 case "${FM_FAKE_SSH_MODE:-normal}:$command_name:$command_rel" in
   migration-launch-fail:fm-remote-secondmate-control.sh:*)
-    if [ "$_command_action" = launch ]; then exit 1; fi
+    # A launch that reports failure with its endpoint left agent-free: the
+    # host's own control plane stops the agent it just started.
+    if [ "$_command_action" = launch ]; then
+      "$FM_FAKE_REMOTE_ENTRYPOINT" "$@" >/dev/null 2>&1
+      exit_b64=$(printf '%s\0' fm-remote-secondmate-control.sh control "$command_rel" exit | base64 | tr -d '\n')
+      "$FM_FAKE_REMOTE_ENTRYPOINT" "$1" "$2" "$3" "$exit_b64" >/dev/null 2>&1
+      exit 1
+    fi
     ;;
   migration-launch-unknown:fm-remote-secondmate-control.sh:*)
     if [ "$_command_action" = launch ]; then "$FM_FAKE_REMOTE_ENTRYPOINT" "$@"; exit 255; fi
@@ -244,20 +277,11 @@ case "${FM_FAKE_SSH_MODE:-normal}:$command_name:$command_rel" in
   migration-stage-unknown:fm-remote-home-provision.sh:*)
     "$FM_FAKE_REMOTE_ENTRYPOINT" "$@"; exit 255
     ;;
-  launch-nonherdr-route:fm-remote-secondmate-control.sh:*)
+  launch-nonstream-route:fm-remote-secondmate-control.sh:*)
     [ "$_command_action" = launch ] || exit 93
     printf 'schema=fm-remote-secondmate-control.v1\n'
     printf 'backend=tmux\n'
     printf 'target=firstmate:fm-ios\n'
-    printf 'harness=deck\n'
-    exit 0
-    ;;
-  launch-default-session-route:fm-remote-secondmate-control.sh:*)
-    [ "$_command_action" = launch ] || exit 93
-    printf 'schema=fm-remote-secondmate-control.v1\n'
-    printf 'backend=herdr\n'
-    printf 'target=default:w1:p2\n'
-    printf 'herdr_session=default\n'
     printf 'harness=deck\n'
     exit 0
     ;;
@@ -315,8 +339,27 @@ remote_env() {
   FM_FAKE_INHERIT_PAYLOAD="$TMP_ROOT/inherit.payload" \
   FM_FAKE_LAUNCH_ENTERED="$TMP_ROOT/launch.entered" \
   FM_FAKE_LAUNCH_RELEASE="$TMP_ROOT/launch.release" \
+  FM_FAKE_HUB_URL="$HUB_URL" FM_FAKE_HUB_TOKEN="$HUB_TOKEN" \
   FM_SEND_SETTLE=0 FM_SEND_SLEEP=0 FM_REMOTE_REPLY_WAIT_SECONDS=10 \
   "$@"
+}
+
+# The host-side adapter as that host itself reads <home>'s endpoints.
+# shellcheck disable=SC2016 # $1 and $@ expand in the inner shell.
+host_backend() {  # <home> <function> [args...]
+  local home=$1
+  shift
+  env -u FM_STREAM_HUB -u FM_STREAM_TOKEN -u FM_STREAM_MACHINE -u FM_STREAM_AGENT_BIN \
+    FM_HOME="$home" FM_ROOT_OVERRIDE="$REMOTE_ROOT" FM_ROOT="$REMOTE_ROOT" \
+    bash -c '. "$1/bin/fm-backend.sh"; shift; "$@"' _ "$REMOTE_ROOT" "$@"
+}
+
+# turns_with <text>: how many recorded Deck turns carry <text> in their argv.
+turns_with() { grep -cF -- "$1" "$TURNS" 2>/dev/null || true; }
+wait_turn_with() {  # <text>
+  local waited=0
+  while [ "$(turns_with "$1")" = 0 ] && [ "$waited" -lt 300 ]; do sleep 0.1; waited=$((waited + 1)); done
+  [ "$(turns_with "$1")" != 0 ]
 }
 
 sha256_file() {
@@ -347,11 +390,12 @@ seed_env() {
   FM_FAKE_SEED_RELEASE="$TMP_ROOT/seed.release" \
   FM_FAKE_DOCTOR_LOG="$DOCTOR_LOG" \
   FM_FAKE_DOCTOR_REPAIRED="$TMP_ROOT/doctor.repaired" \
+  FM_FAKE_HUB_URL="$HUB_URL" FM_FAKE_HUB_TOKEN="$HUB_TOKEN" \
   "$@"
 }
 
 # Migration uses the same real transport/provisioning/spawn owners and the
-# stateful Herdr fixture, never the runner's real sessions or remote accounts.
+# real stream hub and agent, never the runner's real sessions or remote accounts.
 if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
   # <id> [<project-delivery-mode>]: a source home is a real firstmate checkout
   # carrying durable records, an excluded credential set, and optionally one
@@ -375,12 +419,21 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
     printf 'pending note\n' > "$source/state/inbox/note.md"
     printf 'needs-decision [key=old]: preserved historical event\n' > "$source/state/old.status"
     printf 'deck\n' > "$source/config/crew-harness"
+    printf 'source-only-token\n' > "$source/config/stream-token"
+    printf 'http://source-only.invalid:7717\n' > "$source/config/stream-hub"
+    printf 'rust\n' > "$source/config/stream-impl"
     printf 'secret-value-never-transfer\n' > "$source/config/cmux-socket-password"
     printf 'secret-value-never-transfer\n' > "$source/.env"
     mkdir "$source/data/credentials"
     printf 'secret-value-never-transfer\n' > "$source/data/credentials/token"
     printf -- '- %s - Persistent responsibility (home: %s; scope: exact selected work; projects: ; added 2026-08-02)\n' "$id" "$source" >> "$PARENT/data/secondmates.md"
-    printf 'window=fm-remote:missing\nbackend=herdr\nherdr_session=fm-remote\nherdr_pane_id=missing\nherdr_workspace_id=missing-workspace\nherdr_tab_id=missing-tab\nendpoint_task_id=%s\nharness=deck\nkind=secondmate\nhome=%s\nworktree=%s\nproject=%s\n' "$id" "$source" "$source" "$REMOTE_ROOT" > "$PARENT/state/$id.meta"
+    # The stopped local mate: its endpoint stands with only its shell in the
+    # foreground, which is what reads `dead` - the state a migration requires.
+    {
+      fm_test_stream_task "$PARENT/state" "$id"
+      fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$PARENT/state" "$id")" bash
+      printf 'harness=deck\nkind=secondmate\nhome=%s\nworktree=%s\nproject=%s\n' "$source" "$source" "$REMOTE_ROOT"
+    } > "$PARENT/state/$id.meta"
   }
   migrate() {
     local id=$1
@@ -477,11 +530,27 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
     assert_absent "$TMP_ROOT/migrated-move-work/$path" 'credential transferred'
     assert_present "$TMP_ROOT/source-move-work/$path" 'excluded credential removed locally'
   done
+  for name in stream-token stream-hub stream-impl; do
+    assert_present "$TMP_ROOT/source-move-work/config/$name" 'host-local stream config removed locally'
+    jq -e --arg p "config/$name" \
+      '(.excluded | index($p)) != null and all(.records[]; .path != $p)' \
+      "$TMP_ROOT/migrated-move-work/.fm-migration/bundle.json" >/dev/null \
+      || fail "host-bound stream config was transferred: $name"
+  done
+  [ "$(cat "$TMP_ROOT/migrated-move-work/config/stream-hub")" = "$HUB_URL" ] \
+    || fail 'migration overwrote destination hub routing'
+  [ "$(cat "$TMP_ROOT/migrated-move-work/config/stream-impl")" = python ] \
+    || fail 'migration overwrote destination stream implementation'
+  [ "$(cat "$TMP_ROOT/migrated-move-work/config/stream-token")" = "$HUB_TOKEN" ] \
+    || fail 'migration replaced the destination credential with the source token'
   if FM_HOME="$TMP_ROOT/source-move-work" "$ROOT/bin/fm-lock.sh" > "$TMP_ROOT/frozen.out" 2>&1; then fail 'archive acquired session'; fi
   assert_grep 'frozen migration archive' "$TMP_ROOT/frozen.out" 'archive not protected'
   if FM_HOME="$TMP_ROOT/source-move-work" "$ROOT/bin/fm-spawn.sh" unsafe --secondmate > "$TMP_ROOT/frozen.out" 2>&1; then fail 'archive spawned work'; fi
   assert_grep 'frozen migration archive' "$TMP_ROOT/frozen.out" 'archive dispatch not protected'
-  assert_grep 'remote_herdr_session=fm-remote' "$PARENT/state/move-work.meta" 'migration did not launch on fm-remote'
+  assert_grep 'remote_backend=stream' "$PARENT/state/move-work.meta" 'migration did not launch on stream'
+  [ "$(host_backend "$TMP_ROOT/migrated-move-work" fm_backend_agent_state stream \
+    "$(sed -n 's/^remote_target=//p' "$PARENT/state/move-work.meta")")" = alive ] \
+    || fail 'the migrated mate is not running on the host'
   [ -z "$(find "$TMP_ROOT" -maxdepth 1 -name '.fm-migration-move-work.*' -print)" ] \
     || fail 'a published migration left a duplicate of the durable records staged outside the home'
   pass 'migration refuses children and doctor gaps, converges a rerun that finds new steering, preserves exact durable bytes and correlations, excludes secrets, and relaunches the same identity'
@@ -517,13 +586,12 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
   FM_FAKE_SSH_MODE=migration-launch-unknown migrate unknown-work > "$TMP_ROOT/migrate.out" 2>&1 || rc=$?
   [ "$rc" = 255 ] || fail "unknown launch did not retain SSH255: $(cat "$TMP_ROOT/migrate.out")"
   assert_grep 'unknown-work - Persistent responsibility (host:' "$PARENT/data/secondmates.md" 'unknown launch rolled back route'
-  # Count the endpoints that EXIST, not the creations: recovering a pane that
-  # died closes the old one before launching, so only a genuine duplicate leaves
-  # the fleet holding one more endpoint than it did before the rerun.
-  endpoints=$(jq '.tabs | length' "$HERDR_STATE")
+  # Count the agents that EXIST, not the creations: only a genuine duplicate
+  # leaves the host running one more agent for this mate than before the rerun.
+  endpoints=$(remote_agent_count unknown-work)
   out=$(migrate unknown-work 2>&1) || fail "unknown launch reconciliation failed: $out"
-  [ "$(jq '.tabs | length' "$HERDR_STATE")" = "$endpoints" ] \
-    || fail "unknown recovery left a duplicate endpoint: $endpoints -> $(jq '.tabs | length' "$HERDR_STATE")"
+  [ "$(remote_agent_count unknown-work)" = "$endpoints" ] \
+    || fail "unknown recovery left a duplicate endpoint: $endpoints -> $(remote_agent_count unknown-work)"
   cmp -s "$TMP_ROOT/sibling.meta" "$PARENT/state/keep-local.meta" || fail 'migration touched local sibling endpoint'
   cmp -s "$TMP_ROOT/sibling.backlog" "$TMP_ROOT/source-keep-local/data/backlog.md" || fail 'migration touched local sibling home'
   assert_grep 'keep-local - Persistent responsibility (home:' "$PARENT/data/secondmates.md" 'migration moved an unselected sibling'
@@ -558,8 +626,8 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
     || fail 'the rest of the oversized snapshot did not cross byte-exact'
   assert_grep 'big-work - Persistent responsibility (host:' "$PARENT/data/secondmates.md" \
     'the oversized migration did not switch the route'
-  assert_grep 'remote_herdr_session=fm-remote' "$PARENT/state/big-work.meta" \
-    'the oversized migration did not launch on fm-remote'
+  assert_grep 'remote_backend=stream' "$PARENT/state/big-work.meta" \
+    'the oversized migration did not launch on stream'
   pass 'a snapshot past the ordinary remote job ceiling stages, reaches the worker, and completes'
 
   # Records only ever arrive or change while the source is frozen, so a snapshot
@@ -1098,46 +1166,43 @@ pass "mixed local and remote routes validate without migration"
 # host placement separately from that backend and arms the reply source.
 printf 'deck\n' > "$PARENT/config/crew-harness"
 printf 'deck codex/gpt-6-luna\n' > "$PARENT/config/secondmate-harness"
-launches_before_inherit=0
-[ ! -f "$HERDR_LOG" ] || launches_before_inherit=$(grep -c '^tab create' "$HERDR_LOG" || true)
+launches_before_inherit=$(remote_agent_count ios)
 if FM_FAKE_SSH_MODE=inherit-partial remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmate \
   > "$TMP_ROOT/spawn-inherit-partial.out" 2>&1; then
   fail "remote spawn launched after ambiguous partial inheritance"
 fi
-launches_after_inherit=0
-[ ! -f "$HERDR_LOG" ] || launches_after_inherit=$(grep -c '^tab create' "$HERDR_LOG" || true)
+launches_after_inherit=$(remote_agent_count ios)
 [ "$launches_before_inherit" -eq "$launches_after_inherit" ] \
   || fail "remote spawn reached launch after ambiguous partial inheritance"
 assert_absent "$PARENT/state/ios.meta" "failed remote inheritance published launch metadata"
 out=$(remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmate)
-assert_contains "$out" 'remote=remote-mac backend=herdr' "remote spawn did not report separate host and backend dimensions"
+assert_contains "$out" 'remote=remote-mac backend=stream' "remote spawn did not report separate host and backend dimensions"
 assert_grep 'remote_host=remote-mac' "$PARENT/state/ios.meta" "parent metadata omitted the remote host"
-assert_grep 'remote_backend=herdr' "$PARENT/state/ios.meta" "parent metadata omitted the remote-local backend"
-assert_grep 'remote_herdr_session=fm-remote' "$PARENT/state/ios.meta" "parent metadata omitted the pinned remote Herdr session"
-assert_grep 'remote_target=fm-remote:' "$PARENT/state/ios.meta" "parent metadata did not record an fm-remote endpoint"
-assert_grep 'herdr_session=fm-remote' "$REMOTE_HOME/state/parent-route/ios.meta" "remote metadata did not record the pinned Herdr session"
-assert_grep '--session fm-remote' "$HERDR_LOG" "remote launch did not target the fm-remote session"
-assert_no_grep '--session default' "$HERDR_LOG" "remote launch targeted the interactive default session"
+assert_grep 'remote_backend=stream' "$PARENT/state/ios.meta" "parent metadata omitted the remote-local backend"
+assert_grep "remote_stream_hub=$HUB_URL" "$PARENT/state/ios.meta" "parent metadata did not record the hub the agent publishes to"
+assert_grep "remote_target=$(sed -n 's/^window=//p' "$REMOTE_HOME/state/parent-route/ios.meta")" "$PARENT/state/ios.meta" \
+  "parent metadata does not name the endpoint the host recorded"
+assert_grep 'backend=stream' "$REMOTE_HOME/state/parent-route/ios.meta" "remote metadata did not record its stream endpoint"
+assert_no_grep "$HUB_TOKEN" "$PARENT/state/ios.meta" "the parent record carries the hub credential"
+[ "$(remote_agent_count ios)" = 1 ] || fail "remote launch did not run exactly one agent for the mate"
 assert_grep 'window=remote:ios' "$PARENT/state/ios.meta" "parent metadata pretended the endpoint was local"
 assert_present "$PARENT/state/procevent/remote-reply-ios.source" "remote spawn did not arm its reply source"
 publish_healthy_watcher_identity "$PARENT/state" "$PARENT" "$ROOT/bin/fm-watch.sh"
 [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = alive ] \
   || fail "remote endpoint was not projected alive from its own host"
-# Herdr reports a native agent state, so the delivery observation resolves
-# without the rendered-output fallback a tmux endpoint needs. A Deck endpoint's
-# liveness above is proved from its driver process, not an agent read, so this
-# is the first native read since the launch submitted its turn: busy or idle are
-# both native answers, while fallback-idle or unknown would mean it never ran.
-case "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh observe ios)" in
-  busy|idle) ;;
-  *) fail "remote endpoint delivery observation did not execute on its own host" ;;
+# The delivery observation runs on the mate's own host: busy or idle are both
+# answers from its endpoint, while unknown would mean it never read it.
+observed=$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh observe ios)
+case "$observed" in
+  busy|idle|fallback-idle) ;;
+  *) fail "remote endpoint delivery observation did not execute on its own host: $observed" ;;
 esac
 pass "remote spawn launches on the remote-local backend and records a host-qualified route"
 grep -Fx 'model=codex/gpt-6-luna' "$PARENT/state/ios.meta" >/dev/null \
   || fail "configured exact model did not reach parent metadata"
 grep -Fx 'model=codex/gpt-6-luna' "$REMOTE_HOME/state/parent-route/ios.meta" >/dev/null \
   || fail "configured exact model did not reach host launch metadata"
-assert_grep "--model 'codex/gpt-6-luna'" "$HERDR_LOG" "configured exact model did not reach the submitted launch command"
+wait_turn_with codex/gpt-6-luna || fail "configured exact model did not reach the remote agent's turns"
 pass "remote configured exact model launches without an undefined resolver"
 printf 'Configured-model launch output:\n%s\n' "$out"
 remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh route ios
@@ -1147,20 +1212,55 @@ remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh route ios
 # chain. The host transport and terminal are the existing deterministic rig;
 # the spawn, bootstrap, host-local control and replacement processes are real.
 stop_model_endpoint() {
-  local target
+  local target state
   target=$(sed -n 's/^window=//p' "$REMOTE_HOME/state/parent-route/ios.meta")
-  FM_HOME="$REMOTE_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" PATH="$REMOTE_ROOT/bin:$PATH" \
-    bash -c '. "$1/bin/fm-backend.sh"; fm_backend_kill herdr "$2"' _ "$REMOTE_ROOT" "$target" \
+  host_backend "$REMOTE_HOME" fm_backend_kill stream "$target" >/dev/null \
     || fail "could not stop the remote model endpoint"
-  [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = missing ] \
-    || fail "the remote endpoint was not stopped before recovery"
+  # The kill returns once the hub took the close; the agent exits a beat later,
+  # so read the state until it settles rather than once.
+  local i=0
+  while :; do
+    state=$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)
+    case "$state" in dead|missing) break ;; esac
+    [ "$i" -lt 30 ] || fail "the remote endpoint was not stopped before recovery: $state"
+    i=$((i + 1))
+    sleep 0.5
+  done
+  # The hub frees the fm-ios label only once the endpoint is closed; a
+  # relaunch before that is refused as a duplicate label.
+  i=0
+  while [ -n "$(open_mate_endpoints)" ]; do
+    [ "$i" -lt 100 ] || fail "fm-ios endpoints still open after stopping $target: $(open_mate_endpoints | tr '\n' ' ')
+$(mate_close_diagnostics)"
+    i=$((i + 1))
+    sleep 0.1
+  done
+}
+mate_close_diagnostics() {
+  curl -sS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\n' "$HUB_TOKEN") "$HUB_URL/v1/tasks" \
+    | jq -c '.tasks[] | select(.label == "fm-ios")' 2>&1
+  ps -eo pid,ppid,pgid,sid,stat,args 2>/dev/null | awk '/fm-stream-agent|deck|fm-deck/ && !/awk/'
+}
+open_mate_endpoints() {
+  curl -fsS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\n' "$HUB_TOKEN") \
+    "$HUB_URL/v1/tasks" \
+    | jq -r '.tasks[] | select(.label == "fm-ios" and .closed_at == null) | .endpoint_id'
+}
+# A relaunch returns once the endpoint took the launch line; the agent starts
+# a beat later.
+mate_alive_soon() {
+  local i=0
+  until [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = alive ]; do
+    [ "$i" -lt 30 ] || return 1
+    i=$((i + 1))
+    sleep 0.5
+  done
 }
 stop_model_endpoint
 printf 'deck codex/gpt-6-luna,codex/gpt-6-luna-fallback\n' > "$PARENT/config/secondmate-harness"
 model_boot=$(remote_env "$ROOT/bin/fm-bootstrap.sh" 2>&1)
 assert_not_contains "$model_boot" 'command not found' "configured chain recovery crashed before launch"
-[ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = alive ] \
-  || fail "startup did not recover the stopped remote agent with a configured chain: $model_boot"
+mate_alive_soon || fail "startup did not recover the stopped remote agent with a configured chain: $model_boot"
 grep -Fx 'model=codex/gpt-6-luna' "$PARENT/state/ios.meta" >/dev/null \
   || fail "recovery did not publish the chain head"
 assert_present "$PARENT/state/model-chain/secondmate.state" "recovery did not materialize the configured chain lane"
@@ -1184,7 +1284,7 @@ grep -Fx 'model=codex/gpt-6-luna-fallback' "$PARENT/state/ios.meta" >/dev/null \
   || fail "fallback did not reach parent metadata"
 grep -Fx 'model=codex/gpt-6-luna-fallback' "$REMOTE_HOME/state/parent-route/ios.meta" >/dev/null \
   || fail "fallback did not reach the host launch"
-assert_grep "--model 'codex/gpt-6-luna-fallback'" "$HERDR_LOG" "fallback did not reach the submitted launch command"
+wait_turn_with codex/gpt-6-luna-fallback || fail "fallback did not reach the remote agent's turns"
 [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = alive ] \
   || fail "the fallback left no live remote replacement"
 pass "a remote recovery skips a refused head and launches its configured tail"
@@ -1195,14 +1295,14 @@ FM_HOME="$PARENT" bash -c '. "$1/bin/fm-model-chain-lib.sh";
   fm_model_chain_record_refusal "$2/state/model-chain/secondmate.state" "$3" "$(date +%s)"' \
   _ "$ROOT" "$PARENT" codex/gpt-6-luna-fallback || fail "could not seed the tail cooldown"
 cp "$PARENT/state/ios.meta" "$TMP_ROOT/model-before-exhaustion.meta"
-model_launches=$(grep -c '^tab create' "$HERDR_LOG" || true)
+model_launches=$(remote_agent_count ios)
 if model_exhaust=$(remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmate 2>&1); then
   fail "an exhausted remote model chain launched: $model_exhaust"
 fi
 assert_contains "$model_exhaust" 'model chain exhausted' "remote exhaustion did not explain its refusal"
 cmp -s "$PARENT/state/ios.meta" "$TMP_ROOT/model-before-exhaustion.meta" \
   || fail "remote exhaustion changed the preserved route"
-[ "$(grep -c '^tab create' "$HERDR_LOG" || true)" = "$model_launches" ] \
+[ "$(remote_agent_count ios)" = "$model_launches" ] \
   || fail "remote exhaustion created a new endpoint"
 [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = alive ] \
   || fail "remote exhaustion stopped the existing agent"
@@ -1211,69 +1311,52 @@ printf 'Exhausted-chain refusal output:\n%s\n' "$model_exhaust"
 # Subsequent lifecycle cases retain their original default-model posture.
 printf 'deck\n' > "$PARENT/config/secondmate-harness"
 
+# A host record whose window does not name its recorded endpoint is refused by
+# every verb before the adapter is asked anything, and the live agent and both
+# records are left exactly as they were.
 remote_route_meta="$REMOTE_HOME/state/parent-route/ios.meta"
-cp "$remote_route_meta" "$TMP_ROOT/remote-ios-before-default-session.meta"
-legacy_pane=$(sed -n 's/^herdr_pane_id=//p' "$remote_route_meta")
-awk -v pane="$legacy_pane" '
-  /^window=/ { print "window=default:" pane; next }
-  /^herdr_session=/ { print "herdr_session=default"; next }
+cp "$remote_route_meta" "$TMP_ROOT/remote-ios-before-mismatch.meta"
+live_target=$(sed -n 's/^window=//p' "$remote_route_meta")
+awk -v t="${live_target%%:*}:ffffffffffffffffffffffffffffffff" '
+  /^window=/ { print "window=" t; next }
   { print }
-' "$TMP_ROOT/remote-ios-before-default-session.meta" > "$remote_route_meta"
-cp "$HERDR_LOG" "$TMP_ROOT/herdr-before-default-session.log"
+' "$TMP_ROOT/remote-ios-before-mismatch.meta" > "$remote_route_meta"
+cp "$remote_route_meta" "$TMP_ROOT/remote-ios-mismatched.meta"
+turns_before_mismatch=$(wc -l < "$TURNS" | tr -d ' ')
 [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios 2>/dev/null)" = unverified ] \
-  || fail "legacy default-session metadata was not classified unverified"
+  || fail "mismatched remote endpoint metadata was not classified unverified"
 if remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh route ios >/dev/null 2>&1 \
   || remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh send ios probe >/dev/null 2>&1 \
   || remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh key ios Enter >/dev/null 2>&1 \
   || remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh capture ios >/dev/null 2>&1 \
   || remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh observe ios >/dev/null 2>&1 \
   || remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh retire ios --force >/dev/null 2>&1 \
-  || remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh launch ios deck - - herdr >/dev/null 2>&1; then
-  fail "legacy default-session metadata remained operational"
+  || remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh launch ios deck - - stream >/dev/null 2>&1; then
+  fail "mismatched remote endpoint metadata remained operational"
 fi
-cmp -s "$TMP_ROOT/herdr-before-default-session.log" "$HERDR_LOG" \
-  || fail "legacy default-session metadata caused a Herdr operation"
-assert_present "$REMOTE_HOME" "refused legacy retirement removed the remote home"
-assert_grep 'herdr_session=default' "$remote_route_meta" "refused legacy retirement rewrote endpoint metadata"
+cmp -s "$TMP_ROOT/remote-ios-mismatched.meta" "$remote_route_meta" \
+  || fail "a refused verb rewrote the mismatched endpoint metadata"
+assert_present "$REMOTE_HOME" "refused retirement removed the remote home"
+[ "$(remote_agent_count ios)" = 1 ] || fail "a refused verb started or stopped an agent"
+[ "$(wc -l < "$TURNS" | tr -d ' ')" = "$turns_before_mismatch" ] || fail "a refused verb reached the live agent"
+mv -f "$TMP_ROOT/remote-ios-before-mismatch.meta" "$remote_route_meta"
+pass "mismatched remote endpoints fail closed before backend access"
 
-awk -v pane="$legacy_pane" '
-  /^window=/ { print "window=default:" pane; next }
-  { print }
-' "$TMP_ROOT/remote-ios-before-default-session.meta" > "$remote_route_meta"
-[ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios 2>/dev/null)" = unverified ] \
-  || fail "mismatched fm-remote target was not classified unverified"
-cmp -s "$TMP_ROOT/herdr-before-default-session.log" "$HERDR_LOG" \
-  || fail "mismatched fm-remote target caused a Herdr operation"
-mv -f "$TMP_ROOT/remote-ios-before-default-session.meta" "$remote_route_meta"
-pass "legacy and mismatched remote endpoints fail closed before backend access"
-
-cp "$PARENT/state/ios.meta" "$TMP_ROOT/parent-ios-before-nonherdr.meta"
-cp "$PARENT/data/secondmates.md" "$TMP_ROOT/registry-before-nonherdr.md"
+cp "$PARENT/state/ios.meta" "$TMP_ROOT/parent-ios-before-nonstream.meta"
+cp "$PARENT/data/secondmates.md" "$TMP_ROOT/registry-before-nonstream.md"
 set +e
-FM_FAKE_SSH_MODE=launch-nonherdr-route remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmate \
-  > "$TMP_ROOT/spawn-nonherdr-route.out" 2>&1
-nonherdr_parent_rc=$?
+FM_FAKE_SSH_MODE=launch-nonstream-route remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmate \
+  > "$TMP_ROOT/spawn-nonstream-route.out" 2>&1
+nonstream_parent_rc=$?
 set -e
-[ "$nonherdr_parent_rc" -ne 0 ] || fail "parent accepted a non-herdr remote launch route"
-assert_grep "remote launch returned backend 'tmux', expected herdr" "$TMP_ROOT/spawn-nonherdr-route.out" \
+[ "$nonstream_parent_rc" -ne 0 ] || fail "parent accepted a non-stream remote launch route"
+assert_grep "remote launch returned backend 'tmux', expected stream" "$TMP_ROOT/spawn-nonstream-route.out" \
   "parent refusal did not name the returned remote backend"
-cmp -s "$TMP_ROOT/parent-ios-before-nonherdr.meta" "$PARENT/state/ios.meta" \
-  || fail "parent rewrote its endpoint metadata after a non-herdr route refusal"
-cmp -s "$TMP_ROOT/registry-before-nonherdr.md" "$PARENT/data/secondmates.md" \
-  || fail "parent removed or changed the registry route after a non-herdr route refusal"
+cmp -s "$TMP_ROOT/parent-ios-before-nonstream.meta" "$PARENT/state/ios.meta" \
+  || fail "parent rewrote its endpoint metadata after a non-stream route refusal"
+cmp -s "$TMP_ROOT/registry-before-nonstream.md" "$PARENT/data/secondmates.md" \
+  || fail "parent removed or changed the registry route after a non-stream route refusal"
 
-set +e
-FM_FAKE_SSH_MODE=launch-default-session-route remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmate \
-  > "$TMP_ROOT/spawn-default-session-route.out" 2>&1
-default_session_parent_rc=$?
-set -e
-[ "$default_session_parent_rc" -ne 0 ] || fail "parent accepted an interactive default-session remote route"
-assert_grep "remote launch returned Herdr session 'default', expected 'fm-remote'" "$TMP_ROOT/spawn-default-session-route.out" \
-  "parent refusal did not name the default session"
-cmp -s "$TMP_ROOT/parent-ios-before-nonherdr.meta" "$PARENT/state/ios.meta" \
-  || fail "parent rewrote its endpoint metadata after a default-session route refusal"
-
-remote_route_meta="$REMOTE_HOME/state/parent-route/ios.meta"
 cp "$remote_route_meta" "$TMP_ROOT/remote-ios-before-legacy.meta"
 cat > "$remote_route_meta" <<EOF
 window=firstmate:fm-ios
@@ -1284,60 +1367,67 @@ kind=secondmate
 backend=tmux
 EOF
 cp "$remote_route_meta" "$TMP_ROOT/remote-ios-legacy-before-refusal.meta"
-printf 'fm-ios|%s\n' "$REMOTE_HOME" > "$TMUX_STATE"
 set +e
-remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh launch ios deck - - herdr \
-  > "$TMP_ROOT/legacy-alive-refusal.out" 2>&1
-legacy_alive_rc=$?
+remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh launch ios deck - - stream \
+  > "$TMP_ROOT/legacy-refusal.out" 2>&1
+legacy_rc=$?
 set -e
-[ "$legacy_alive_rc" -ne 0 ] || fail "remote control reused an alive legacy tmux endpoint"
-assert_grep "endpoint is recorded on backend 'tmux', expected 'herdr'" "$TMP_ROOT/legacy-alive-refusal.out" \
-  "remote refusal did not name the endpoint's recorded backend"
+[ "$legacy_rc" -ne 0 ] || fail "remote control relaunched over a record left on a retired backend"
+assert_grep "recorded on the retired 'tmux' backend" "$TMP_ROOT/legacy-refusal.out" \
+  "remote refusal did not name the endpoint's retired backend"
+printf -v retirement_command 'FM_HOME=%q FM_ROOT_OVERRIDE=%q FM_STATE_OVERRIDE=%q FM_DATA_OVERRIDE=%q FM_CONFIG_OVERRIDE=%q %q %q' \
+  "$REMOTE_ROOT" "$REMOTE_ROOT" "$REMOTE_HOME/state/parent-route" "$REMOTE_HOME/data/.parent-route" \
+  "$REMOTE_HOME/config" "$REMOTE_ROOT/bin/fm-retire-endpoint.sh" ios
+assert_contains "$(cat "$TMP_ROOT/legacy-refusal.out")" "retire the record on this host with $retirement_command" \
+  "remote refusal printed a retirement command that cannot reach the parent-route record"
 cmp -s "$TMP_ROOT/remote-ios-legacy-before-refusal.meta" "$remote_route_meta" \
   || fail "remote refusal changed the legacy endpoint metadata"
-assert_present "$TMUX_STATE" "remote refusal killed the alive legacy endpoint"
-cmp -s "$TMP_ROOT/registry-before-nonherdr.md" "$PARENT/data/secondmates.md" \
+cmp -s "$TMP_ROOT/registry-before-nonstream.md" "$PARENT/data/secondmates.md" \
   || fail "remote legacy refusal removed or changed the registry route"
 mv -f "$TMP_ROOT/remote-ios-before-legacy.meta" "$remote_route_meta"
-rm -f "$TMUX_STATE"
-pass "non-herdr remote endpoints are refused without changing either route"
+[ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = alive ] \
+  || fail "the refusals disturbed the live remote agent"
+pass "non-stream remote routes and records on a retired backend are refused without changing either route"
 
-# An agent-less endpoint frees its id for a relaunch only once the backend
-# CONFIRMS its close. The shared kill contract (bin/fm-backend.sh's
-# fm_backend_kill) is what stands between this host's control plane and a
-# duplicate worker: a close the adapter cannot prove landed must refuse the
-# launch here, carrying the adapter's own reason, rather than starting a second
-# agent over a first one that may still be running.
-unconfirmed_pane=$(sed -n 's/^herdr_pane_id=//p' "$remote_route_meta")
-[ -n "$unconfirmed_pane" ] || fail "remote route metadata carries no herdr pane to close"
 cp "$remote_route_meta" "$TMP_ROOT/remote-ios-before-unconfirmed-kill.meta"
-cp "$HERDR_STATE" "$TMP_ROOT/herdr-before-unconfirmed-kill.state"
-# The Deck driver has left the pane but the pane is still standing: the
-# agent-less state the launch path treats as a reusable id. The driver stand-in
-# itself keeps running until the saved fixture state is restored below.
-jq --arg p "$unconfirmed_pane" 'del(.typed[$p]) | del(.working[$p]) | del(.agents[$p]) | del(.argv[$p])' \
-  "$TMP_ROOT/herdr-before-unconfirmed-kill.state" > "$HERDR_STATE"
+cp "$REMOTE_HOME/config/stream-hub" "$TMP_ROOT/remote-hub-before-unconfirmed-kill"
+cp "$REMOTE_HOME/config/stream-token" "$TMP_ROOT/remote-token-before-unconfirmed-kill"
+{
+  fm_test_stream_task "$REMOTE_HOME/state/parent-route" ios
+  printf 'harness=deck\nkind=secondmate\nworktree=%s\nproject=%s\n' "$REMOTE_HOME" "$REMOTE_ROOT"
+} > "$remote_route_meta"
+unconfirmed_target=$(fm_test_stream_target_of "$REMOTE_HOME/state/parent-route" ios)
+fm_test_fake_stream_foreground "$unconfirmed_target" bash
+fm_test_fake_stream_set "$unconfirmed_target" '{"kill_undelivered": true}'
+printf '%s\n' "$FM_TEST_STREAM_URL" > "$REMOTE_HOME/config/stream-hub"
+printf 'fake-stream-token\n' > "$REMOTE_HOME/config/stream-token"
 [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = dead ] \
-  || fail "an agent-less remote pane was not projected dead, so the relaunch gate is not the case under test"
-: > "$TMP_ROOT/herdr-send-fail.close"   # every close leaves its pane standing
-set +e
-remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh launch ios deck - - herdr \
-  > "$TMP_ROOT/unconfirmed-kill-refusal.out" 2>&1
-unconfirmed_kill_rc=$?
-set -e
-rm -f "$TMP_ROOT/herdr-send-fail.close"
-[ "$unconfirmed_kill_rc" -ne 0 ] || fail "remote control launched over an endpoint whose kill nothing confirmed"
-assert_grep "was not confirmed gone, so this launch would risk a duplicate" \
-  "$TMP_ROOT/unconfirmed-kill-refusal.out" "the refusal did not say the unconfirmed kill risks a duplicate"
-assert_grep "may still be running" "$TMP_ROOT/unconfirmed-kill-refusal.out" \
-  "the refusal did not carry the adapter's own reason"
-[ "$(jq -r --arg p "$unconfirmed_pane" '[.tabs[]|select(.pane_id==$p)]|length' "$HERDR_STATE")" = 1 ] \
-  || fail "the refused launch lost the endpoint pane it could not confirm closed"
-[ "$(jq '.tabs|length' "$HERDR_STATE")" = "$(jq '.tabs|length' "$TMP_ROOT/herdr-before-unconfirmed-kill.state")" ] \
-  || fail "the refused launch created a second endpoint on the remote host"
-cmp -s "$TMP_ROOT/remote-ios-before-unconfirmed-kill.meta" "$remote_route_meta" \
-  || fail "the refused launch rewrote the endpoint metadata it could not confirm closed"
-mv -f "$TMP_ROOT/herdr-before-unconfirmed-kill.state" "$HERDR_STATE"
+  || fail 'the unconfirmed-kill fixture is not an agent-less endpoint'
+cp "$remote_route_meta" "$TMP_ROOT/remote-ios-unconfirmed-kill.meta"
+fm_test_fake_stream_endpoints | jq -S '.endpoints | sort_by(.endpoint_id)' > "$TMP_ROOT/endpoints-before-unconfirmed-kill.json"
+turns_before_unconfirmed_kill=$(wc -l < "$TURNS" | tr -d ' ')
+if remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh launch ios deck - - stream \
+  > "$TMP_ROOT/unconfirmed-kill.out" 2>&1; then
+  fail 'remote launch replaced an endpoint whose kill was not acknowledged'
+fi
+assert_grep 'was not confirmed gone, so this launch would risk a duplicate' "$TMP_ROOT/unconfirmed-kill.out" \
+  'remote launch did not explain the unconfirmed kill refusal'
+cmp -s "$TMP_ROOT/remote-ios-unconfirmed-kill.meta" "$remote_route_meta" \
+  || fail 'unconfirmed kill changed the host endpoint metadata'
+cmp -s "$TMP_ROOT/parent-ios-before-nonstream.meta" "$PARENT/state/ios.meta" \
+  || fail 'unconfirmed kill changed the parent endpoint metadata'
+fm_test_fake_stream_endpoints | jq -S '.endpoints | sort_by(.endpoint_id)' > "$TMP_ROOT/endpoints-after-unconfirmed-kill.json"
+cmp -s "$TMP_ROOT/endpoints-before-unconfirmed-kill.json" "$TMP_ROOT/endpoints-after-unconfirmed-kill.json" \
+  || fail 'unconfirmed kill stopped, replaced, or steered a fake endpoint'
+[ "$(remote_agent_count ios)" = 1 ] || fail 'unconfirmed kill started or stopped a real agent'
+[ "$(wc -l < "$TURNS" | tr -d ' ')" = "$turns_before_unconfirmed_kill" ] \
+  || fail 'unconfirmed kill launched a replacement turn'
+fm_test_fake_stream_set "$unconfirmed_target" '{"forget": true}'
+mv -f "$TMP_ROOT/remote-ios-before-unconfirmed-kill.meta" "$remote_route_meta"
+mv -f "$TMP_ROOT/remote-hub-before-unconfirmed-kill" "$REMOTE_HOME/config/stream-hub"
+mv -f "$TMP_ROOT/remote-token-before-unconfirmed-kill" "$REMOTE_HOME/config/stream-token"
+[ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = alive ] \
+  || fail 'unconfirmed kill refusal disturbed the live remote agent'
 pass "an agent-less remote endpoint whose kill nothing confirmed is refused, not relaunched onto"
 
 rm -f "$TMP_ROOT/inherit.entered" "$TMP_ROOT/inherit.release" "$TMP_ROOT/inherit.payload"
@@ -1402,8 +1492,8 @@ ssh_after_send=$(cat "$SSH_COUNT")
 records_after_send=$(find "$REMOTE_HOME/state/parent-route/ios.inbox" -maxdepth 1 -name '*.msg' | wc -l | tr -d ' ')
 [ "$records_after_send" -eq $((records_before_send + 1)) ] \
   || fail "the retried remote steer did not dedup onto one new record, went $records_before_send -> $records_after_send"
-assert_no_grep 'report the build result' "$HERDR_LOG" "the steer payload was typed into the remote pane"
-assert_grep 'Firstmate instruction waiting' "$HERDR_LOG" "the remote doorbell never rang"
+wait_turn_with 'Firstmate instruction waiting' || fail "the remote doorbell never rang"
+[ "$(turns_with 'report the build result')" = 0 ] || fail "the steer payload was typed into the remote agent"
 CORR=$(newest_remote_inbox_corr)
 [ -n "$CORR" ] || fail "remote send did not carry a correlation token"
 # Tie the charter's named inbox to the directory the real steer just wrote into,
@@ -1613,35 +1703,19 @@ rm -f "$TMP_ROOT/doctor.repaired"
 : > "$DOCTOR_LOG"
 [ "$(FM_FAKE_SSH_MODE=doctor-fixable remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = unreadable ] \
   || fail "the stopped-server fixture did not make the pre-repair endpoint probe unreadable"
-launches_before_repair=$(grep -c '^tab create' "$HERDR_LOG" || true)
+launches_before_repair=$(remote_agent_count ios)
 BOOT_REPAIRED=$(FM_FAKE_SSH_MODE=doctor-fixable remote_env "$ROOT/bin/fm-bootstrap.sh")
 [ "$(cat "$DOCTOR_LOG")" = 'doctor-fixable -
 doctor-fixable --fix
 doctor-fixable -' ] || fail "liveness did not check, repair, and re-check readiness before probing"$'\n'"$(cat "$DOCTOR_LOG")"
 assert_not_contains "$BOOT_REPAIRED" 'SECONDMATE_LIVENESS: secondmate ios:' \
   "successful pre-probe readiness repair produced a liveness failure"
-launches_after_repair=$(grep -c '^tab create' "$HERDR_LOG" || true)
+launches_after_repair=$(remote_agent_count ios)
 [ "$launches_before_repair" -eq "$launches_after_repair" ] \
   || fail "readiness repair introduced a new remote relaunch point"
 [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = alive ] \
   || fail "the endpoint was not probed successfully after readiness repair"
 pass "startup repairs remote readiness before probing without relaunching"
-
-# --- a stale herdr client shadowing the one the server accepts --------------
-# The remote host's job PATH can resolve an older self-updated herdr ahead of
-# the one its running server accepts; the server then refuses every command
-# from it with protocol_mismatch. The host-local state read must still reach
-# the live endpoint through the accepted client.
-make_herdr_client_pair "$TMP_ROOT/client-pair" 0.7.1 14 0.7.5 16
-export FM_HERDR_PAIR_DIR="$TMP_ROOT/client-pair"
-SHADOWED_STATE=$(FM_HOME="$REMOTE_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" \
-  PATH="$TMP_ROOT/client-pair/stale:$REMOTE_ROOT/bin:$TMP_ROOT/client-pair/tools:/usr/bin:/bin" \
-  "$REMOTE_ROOT/bin/fm-remote-secondmate-control.sh" state ios 2>"$TMP_ROOT/shadowed-state.err")
-[ "$SHADOWED_STATE" = alive ] \
-  || fail "a live endpoint behind a stale shadowing client must still read alive, got: $SHADOWED_STATE ($(cat "$TMP_ROOT/shadowed-state.err"))"
-assert_contains "$(cat "$TMP_ROOT/client-pair/stale.log")" 'pane get' "the stale client was not the one the job PATH resolved first"
-unset FM_HERDR_PAIR_DIR
-pass "the host-local state read steps around a stale shadowing herdr client"
 
 remote_route_meta="$REMOTE_HOME/state/parent-route/ios.meta"
 cp "$remote_route_meta" "$TMP_ROOT/remote-ios-before-liveness-legacy.meta"
@@ -1656,9 +1730,7 @@ kind=secondmate
 backend=tmux
 EOF
 cp "$remote_route_meta" "$TMP_ROOT/remote-ios-liveness-legacy.meta"
-printf 'fm-ios|%s\n' "$REMOTE_HOME" > "$TMUX_STATE"
-tmux_state_before=$(cat "$TMUX_STATE")
-launches_before_legacy=$(grep -c '^tab create' "$HERDR_LOG" || true)
+launches_before_legacy=$(remote_agent_count ios)
 BOOT_LEGACY=$(remote_env "$ROOT/bin/fm-bootstrap.sh")
 assert_contains "$BOOT_LEGACY" "SECONDMATE_LIVENESS: secondmate ios: skipped: remote endpoint state is unverified on remote-mac" \
   "liveness accepted an alive legacy remote backend"
@@ -1668,21 +1740,18 @@ cmp -s "$TMP_ROOT/parent-ios-before-liveness-legacy.meta" "$PARENT/state/ios.met
   || fail "liveness rewrote the parent route metadata for an alive legacy endpoint"
 cmp -s "$TMP_ROOT/registry-before-liveness-legacy.md" "$PARENT/data/secondmates.md" \
   || fail "liveness changed the registry route for an alive legacy endpoint"
-[ "$(cat "$TMUX_STATE")" = "$tmux_state_before" ] \
-  || fail "liveness changed or killed the alive legacy endpoint"
-launches_after_legacy=$(grep -c '^tab create' "$HERDR_LOG" || true)
+launches_after_legacy=$(remote_agent_count ios)
 [ "$launches_before_legacy" -eq "$launches_after_legacy" ] \
   || fail "liveness relaunched an alive legacy endpoint"
 mv -f "$TMP_ROOT/remote-ios-before-liveness-legacy.meta" "$remote_route_meta"
-rm -f "$TMUX_STATE"
-pass "startup reports alive legacy backends without changing their routes"
+pass "startup reports records on a retired backend without changing their routes"
 
 # Host loss never creates a local replacement. Remove both the published ledger
 # and its parent-side cache so the structured-home read degrades explicitly;
 # endpoint liveness remains the startup supervisor's concern.
 rm -f -- "$REMOTE_HOME/state/home-summary.json"
 rm -rf -- "$PARENT/state/secondmate-summary-cache"
-launches_before=$(grep -c '^tab create' "$HERDR_LOG" || true)
+launches_before=$(remote_agent_count ios)
 rm -rf -- "$PARENT/state/.watch.lock"
 rm -f -- "$PARENT/state/.last-watcher-beat"
 BOOT_UNAVAILABLE=$(FM_FAKE_SSH_MODE=unreachable remote_env "$ROOT/bin/fm-bootstrap.sh")
@@ -1696,7 +1765,7 @@ printf '%s' "$UNAVAILABLE" | jq -e '.secondmate_current.records | any(.id == "io
 printf '%s' "$UNAVAILABLE" | jq -e '.tasks[] | select(.id == "ios") | .paths.home.present == null and .endpoint.agent_alive == "unknown"' >/dev/null \
   || fail "unreachable remote endpoint liveness was not left to supervision"
 rm -f "$PARENT/state/.wake-queue"
-launches_after=$(grep -c '^tab create' "$HERDR_LOG" || true)
+launches_after=$(remote_agent_count ios)
 [ "$launches_before" -eq "$launches_after" ] || fail "unreachable projection attempted a replacement launch"
 assert_present "$PARENT/state/ios.meta" "unreachable readiness removed the parent route metadata"
 assert_grep '- ios ' "$PARENT/data/secondmates.md" "unreachable readiness removed the registry route"
@@ -1704,20 +1773,25 @@ pass "unreachable no-ledger remote state remains explicit with no local respawn 
 
 # Retirement delegates its safety check to the remote home. An in-flight child
 # record refuses cleanup and preserves both machines' durable routes.
-# A sibling remote secondmate workspace shares fm-remote and must survive every
-# refusal and the eventual successful retirement of ios.
+# A sibling remote secondmate's agent publishes to the same hub from the same
+# host and must survive every refusal and the eventual successful retirement of
+# ios.
 # This fixture overrides FM_ROOT for transport, so teardown's root-owned guard
 # sees the fixture root rather than the source script path used by fm-send.
 publish_healthy_watcher_identity "$PARENT/state" "$PARENT" "$REMOTE_ROOT/bin/fm-watch.sh"
 resolve_ios_pending
-SIBLING_CREATE=$("$REMOTE_ROOT/bin/herdr" workspace create --cwd "$REMOTE_ROOT" \
-  --label 2ndmate-macos --no-focus --session fm-remote)
-SIBLING_WORKSPACE=$(printf '%s' "$SIBLING_CREATE" | jq -r '.result.workspace.workspace_id')
-SIBLING_PANE=$(printf '%s' "$SIBLING_CREATE" | jq -r '.result.root_pane.pane_id')
-[ -n "$SIBLING_WORKSPACE" ] && [ "$SIBLING_WORKSPACE" != null ] \
-  || fail "the shared-session sibling fixture did not create a workspace"
-[ -n "$SIBLING_PANE" ] && [ "$SIBLING_PANE" != null ] \
-  || fail "the shared-session sibling fixture did not create a pane"
+mkdir -p "$TMP_ROOT/sibling"
+(umask 077; printf '%s\n' "$HUB_TOKEN" > "$TMP_ROOT/sibling/token")
+python3 "$REMOTE_ROOT/bin/fm-stream-agent.py" serve --hub "$HUB_URL" \
+  --token-file "$TMP_ROOT/sibling/token" --machine "$(hostname | tr -c 'A-Za-z0-9._-' '-')" \
+  --label fm-macos --cwd "$TMP_ROOT/sibling" --status-path "$TMP_ROOT/sibling/macos.status" \
+  --ready-file "$TMP_ROOT/sibling/ready" > "$TMP_ROOT/sibling/agent.log" 2>&1 &
+waited=0
+while [ ! -s "$TMP_ROOT/sibling/ready" ] && [ "$waited" -lt 150 ]; do sleep 0.1; waited=$((waited + 1)); done
+SIBLING_EID=$(awk '{print $NF}' "$TMP_ROOT/sibling/ready" 2>/dev/null)
+[ -n "$SIBLING_EID" ] || fail "the sibling agent did not register: $(cat "$TMP_ROOT/sibling/agent.log")"
+SIBLING_PID=$(remote_agents macos | head -1)
+[ -n "$SIBLING_PID" ] || fail "the sibling agent is not running"
 printf 'kind=ship\n' > "$REMOTE_HOME/state/child.meta"
 rm -rf "$PARENT/state/procevent"
 : > "$PARENT/state/procevent"
@@ -1783,7 +1857,7 @@ while [ ! -f "$TMP_ROOT/handoff.entered" ]; do
   [ "$handoff_wait" -le 250 ] || fail "handoff lock holder never acquired the route lock"
   sleep 0.02
 done
-rm -f "$TMUX_STATE" "$TMP_ROOT/launch.entered" "$TMP_ROOT/launch.release"
+rm -f "$TMP_ROOT/launch.entered" "$TMP_ROOT/launch.release"
 FM_FAKE_SSH_MODE=launch-block remote_env "$ROOT/bin/fm-spawn.sh" ios --secondmate \
   > "$TMP_ROOT/spawn-retirement.out" 2>&1 &
 spawn_retirement_pid=$!
@@ -1820,13 +1894,10 @@ assert_absent "$PARENT/state/.backlog-handoff-ios.wake-pending" \
   "remote retirement left receiver wake state that could poison a replacement route"
 assert_absent "$retired_wake_rec" "remote retirement left the retired receiver wake correlation"
 assert_no_grep '- ios ' "$PARENT/data/secondmates.md" "remote retirement did not remove the registry route"
-jq -e --arg workspace "$SIBLING_WORKSPACE" --arg pane "$SIBLING_PANE" '
-  any(.workspaces[]; .workspace_id == $workspace and .label == "2ndmate-macos")
-  and any(.tabs[]; .workspace_id == $workspace and .pane_id == $pane)
-' "$HERDR_STATE" >/dev/null \
-  || fail "remote retirement removed the sibling secondmate workspace or pane from fm-remote"
-assert_no_grep 'session stop' "$HERDR_LOG" "remote retirement stopped the shared fm-remote session"
-assert_no_grep 'server stop' "$HERDR_LOG" "remote retirement stopped the shared fm-remote server"
-pass "remote retirement refuses child work, then removes only its own endpoint while a shared-session sibling survives"
+[ "$(remote_agent_count ios)" = 0 ] || fail "remote retirement left the retired mate's agent running"
+kill -0 "$SIBLING_PID" 2>/dev/null || fail "remote retirement stopped the sibling secondmate's agent"
+curl -sS -m 5 -o /dev/null --config <(printf 'header = "Authorization: Bearer %s"\n' "$HUB_TOKEN") \
+  "$HUB_URL/v1/health" || fail "remote retirement stopped the shared hub"
+pass "remote retirement refuses child work, then removes only its own endpoint while a sibling on the same hub survives"
 
 echo "ALL TESTS PASSED"

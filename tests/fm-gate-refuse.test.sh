@@ -25,6 +25,9 @@
 # Finally, assert firstmate's TRACKED .no-mistakes.yaml parses and sets
 # disable_project_settings: true (the trusted-only opt-out that neutralizes gate
 # agents' project instructions on the no-mistakes side).
+# fm_test_stream_task prints a task record identity one field per word,
+# so its unquoted expansion in fm_write_meta argument lists is deliberate.
+# shellcheck disable=SC2046
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -144,7 +147,7 @@ run_spawn() {
       FM_ROOT_OVERRIDE='' FM_HOME="$home" \
       FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
       FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
-      FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$pane" TMUX=fake,1,0 \
+      FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$pane" \
       PATH="$fakebin:$PATH" "$@" \
       "$SPAWN" "$id" "$proj" deck --mode no-mistakes --yolo off ) 2>&1
 }
@@ -182,36 +185,12 @@ test_spawn_refuses_and_admits() {
 
 # --- fm-send ----------------------------------------------------------------
 
-# A fake tmux that logs send-keys to FM_TMUX_LOG and reports live endpoints
-# (mirrors tests/fm-send-strict), so a successful send is observable and a
-# refused one leaves an empty log (proving no message was typed).
+# The lane is a fake stream endpoint whose launch log records every text it
+# receives, so a successful send is observable and a refused one leaves an
+# empty log (proving no message was typed).
 make_send_fakebin() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-set -u
-case "${1:-}" in
-  send-keys)
-    shift; literal=0; target=
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -t) target=$2; shift 2 ;;
-        -l) literal=1; shift ;;
-        *) break ;;
-      esac
-    done
-    printf 'send-keys target=%s literal=%s arg=%s\n' "$target" "$literal" "${1:-}" >> "$FM_TMUX_LOG"
-    exit 0 ;;
-  display-message)
-    for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac; done
-    printf '%%1\n'; exit 0 ;;
-  capture-pane) printf '╭────╮\n│    │\n╰────╯\n'; exit 0 ;;
-  list-windows) printf 'fm-lane-ok\n'; exit 0 ;;
-esac
-exit 0
-SH
-  chmod +x "$fakebin/tmux"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$fakebin/sleep"
   chmod +x "$fakebin/sleep"
   printf '%s\n' "$fakebin"
@@ -222,7 +201,7 @@ run_send() {
   local cwd=$1 home=$2 fakebin=$3 log=$4 target=$5 text=$6; shift 6
   ( cd "$cwd" && env -u NO_MISTAKES_GATE -u FM_GATE_REFUSE_BYPASS \
       "PATH=$fakebin:$PATH" "FM_HOME=$home" "FM_ROOT_OVERRIDE=$home" \
-      "FM_TMUX_LOG=$log" "FM_SEND_SETTLE=0" "$@" \
+      "FM_SEND_SETTLE=0" "$@" \
       "$SEND" "$target" "$text" ) 2>&1
 }
 
@@ -230,8 +209,9 @@ test_send_refuses_and_admits() {
   local home fakebin log out rc
   home="$TMP/send-home"; mkdir -p "$home/state"
   fakebin=$(make_send_fakebin "$TMP/send-fake")
-  log="$TMP/send-tmux.log"
-  fm_write_meta "$home/state/lane-ok.meta" "window=sess:fm-lane-ok" "kind=ship" "harness=deck"
+  log="$TMP/send-endpoint.log"; : > "$log"
+  { fm_test_stream_task "$home/state" lane-ok "$log"; printf '%s\n' kind=ship harness=deck; } \
+    > "$home/state/lane-ok.meta" || fail "could not register the lane endpoint"
 
   # env-marker refuse.
   : > "$log"
@@ -256,9 +236,9 @@ test_send_refuses_and_admits() {
   [ "$(bash -c '. "$1"; fm_task_inbox_body "$2"' _ "$ROOT/bin/fm-task-inbox-lib.sh" \
       "$home/state/lane-ok.inbox/001.msg")" = "hello captain" ] \
     || fail "send: normal steer was not durably enqueued"
-  assert_not_contains "$(cat "$log")" "literal=1 arg=hello captain" \
+  assert_not_contains "$(cat "$log")" "hello captain" \
     "send: normal steer payload must not be typed"
-  assert_contains "$(cat "$log")" "target=sess:fm-lane-ok literal=1 arg=: Firstmate instruction waiting" \
+  assert_contains "$(cat "$log")" ": Firstmate instruction waiting" \
     "send: normal steer should ring the durable inbox doorbell"
   pass "fm-send: refuses on marker and gate-worktree backstop; a normal steer uses the inbox"
 }
@@ -269,13 +249,11 @@ test_send_refuses_and_admits() {
 # task (HEAD reachable from origin), so a normal teardown genuinely succeeds and a
 # refused one leaves the task untouched (mirrors tests/fm-teardown make_case).
 make_teardown_case() {
-  local name=$1 case_dir fakebin t
+  local name=$1 case_dir fakebin
   case_dir="$TMP/$name"; fakebin="$case_dir/fakebin"
   mkdir -p "$case_dir/state" "$case_dir/config" "$case_dir/data" "$fakebin"
-  for t in treehouse tmux; do
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$fakebin/$t"
-    chmod +x "$fakebin/$t"
-  done
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fakebin/treehouse"
+  chmod +x "$fakebin/treehouse"
   cat > "$fakebin/gh-axi" <<'SH'
 #!/usr/bin/env bash
 case "${1:-} ${2:-}" in
@@ -305,7 +283,7 @@ SH
   git -C "$case_dir/wt" push -q origin fm/task-x1
   git -C "$case_dir/project" fetch -q origin
   fm_write_meta "$case_dir/state/task-x1.meta" \
-    "window=firstmate:fm-task-x1" "endpoint_task_id=task-x1" \
+    $(fm_test_stream_task "$case_dir/state" "task-x1") \
     "worktree=$case_dir/wt" "project=$case_dir/project" \
     "kind=ship" "mode=no-mistakes" "spawn_gen=spawn-gate-refuse-task-x1"
   touch "$case_dir/state/.last-watcher-beat"
@@ -342,7 +320,7 @@ test_teardown_refuses_and_admits() {
   # no-regression: a normal session tears down the landed task.
   case_dir=$(make_teardown_case teardown-ok)
   out=$(run_teardown "$NORMAL_CWD" "$case_dir"); rc=$?
-  expect_code 0 "$rc" "teardown: a normal session must still tear down landed work"
+  expect_code 0 "$rc" "teardown: a normal session must still tear down landed work"$'\n'"$out"
   assert_not_contains "$out" "$ENV_MSG" "teardown: normal teardown must not print the gate refusal"
   assert_not_contains "$out" "$PATH_MSG" "teardown: normal teardown must not print the backstop refusal"
   assert_not_contains "$out" "REFUSED" "teardown: normal teardown of landed work must not refuse"

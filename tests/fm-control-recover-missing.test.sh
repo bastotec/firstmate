@@ -46,156 +46,93 @@ recover_cleanup() {
 }
 trap 'recover_cleanup; fm_test_cleanup' EXIT
 
-# The same lifecycle-modelling tmux stub the relaunch suite uses, plus a real
-# new-window: the window inventory in $D/windows is what decides missing vs
-# present, and creating the window puts the recorded name back and leaves a
-# bare shell in it (agent-free), which is exactly the state fm-spawn --relaunch
-# requires before it adopts the endpoint.
-make_tmux_stub() {  # <dir>
+# --- fake session provider --------------------------------------------------
+#
+# Each task is a fake stream endpoint driven by the fake-dir model in
+# tests/fixtures.sh (fm_test_fake_dir_*), as in tests/fm-control.test.sh:
+# command, becomes, cwd and windows under $dir/fake steer the endpoint, and
+# literal and keys record what it received. Emptying windows makes the hub
+# forget the endpoint, so it reads `missing`. A stream recovery cannot bring
+# that endpoint back: it creates a NEW one (the agent stub registers it, same
+# fm-<id> label, the worktree as its cwd) and rebinds the record to it, so
+# run_control follows the record's window= afterwards. The new endpoint inherits
+# the fake dir through the hub's endpoint defaults: its `becomes`, its cwd, and
+# these fault variables:
+#   FM_FAKE_SHELL_BUSY_READS  the new endpoint's first n process reads show an
+#                             unattributable foreground (busy_reads), a shell
+#                             still running its rc files
+#   FM_FAKE_META_RACE[_LINE]  the first request made of the new endpoint
+#                             appends LINE to that file (on_request), another
+#                             writer landing mid-recreation
+#   FM_FAKE_NEW_ENDPOINT_FAIL the agent fails to register, so nothing is created
+#   FM_FAKE_LOSE_HUB          ...and the hub stops answering task routes too
+make_fakebin() {  # <dir>
   local fb="$1/fakebin"
   mkdir -p "$fb"
   # Exit-0 stand-ins for every launchable worker harness, so a launch resolves
   # its executable here rather than whatever the developer has installed.
   fm_fake_exit0 "$fb" deck
-  cat > "$fb/tmux" <<'SH'
-#!/usr/bin/env bash
-set -u
-D=$FM_FAKE_DIR
-case "${1:-}" in
-  send-keys)
-    shift
-    literal=0
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -t) shift 2 ;;
-        -l) literal=1; shift ;;
-        *) break ;;
-      esac
-    done
-    payload=${1:-}
-    if [ "$literal" = 1 ]; then
-      printf '%s\n' "$payload" >> "$D/literal"
-      case "$payload" in
-        *'encode launch-brief'*) cat "$D/becomes" > "$D/command" ;;
-      esac
-    else
-      printf '%s\n' "$payload" >> "$D/keys"
-    fi
-    exit 0 ;;
-  display-message)
-    for a in "$@"; do
-      case "$a" in
-        *cursor_y*) printf '1\n'; exit 0 ;;
-        *pane_current_command*)
-          # A just-created pane is still running its login shell's rc files,
-          # and each command they start owns the pane tty's foreground process
-          # group for a moment. $D/busy-reads is how many reads report one of
-          # those (classified `other`, so the endpoint reads `ambiguous`)
-          # before the shell reaches its prompt.
-          busy=$(cat "$D/busy-reads" 2>/dev/null || printf '0')
-          if [ "${busy:-0}" -gt 0 ] 2>/dev/null; then
-            printf '%s\n' "$((busy - 1))" > "$D/busy-reads"
-            printf 'node\n'
-            exit 0
-          fi
-          cat "$D/command"; printf '\n'; exit 0 ;;
-        *pane_current_path*) cat "$D/cwd"; printf '\n'; exit 0 ;;
-      esac
-    done
-    printf 'fakepane\n'; exit 0 ;;
-  capture-pane)
-    printf '╭────╮\n│    │\n╰────╯\n'
-    exit 0 ;;
-  new-window)
-    if [ -n "${FM_FAKE_NEW_WINDOW_FAIL:-}" ]; then
-      [ -z "${FM_FAKE_LOSE_SERVER:-}" ] || : > "$D/server-lost"
-      echo "can't create window" >&2
-      exit 1
-    fi
-    name=
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -n) name=${2:-}; shift 2 ;;
-        *) shift ;;
-      esac
-    done
-    printf '%s\n' "$name" >> "$D/windows"
-    printf '%s\n' "$name" >> "$D/created-windows"
-    # Stand in for another process writing the task's durable record while the
-    # recreating phase is in flight - the real one is bin/fm-pr-check.sh
-    # appending `pr=` under the per-task record lock when the merge poll is
-    # armed. Creating the window is inside that phase, so this write lands
-    # after fm-control took its snapshot and before any rollback.
-    if [ -n "${FM_FAKE_META_RACE:-}" ]; then
-      printf '%s\n' "${FM_FAKE_META_RACE_LINE:?}" >> "$FM_FAKE_META_RACE"
-    fi
-    # A freshly created window holds a bare shell: agent-free, not missing.
-    printf 'zsh' > "$D/command"
-    printf '%s\n' "${FM_FAKE_SHELL_BUSY_READS:-0}" > "$D/busy-reads"
-    printf '@999\n'
-    exit 0 ;;
-  set-window-option) exit 0 ;;
-  has-session)
-    shift
-    ses=
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -t) ses=${2:-}; shift 2 ;;
-        *) shift ;;
-      esac
-    done
-    # Real tmux treats a leading '=' as "match this name exactly".
-    ses=${ses#=}
-    grep -qxF "$ses" "$D/sessions" 2>/dev/null && exit 0
-    echo "can't find session: $ses" >&2
-    exit 1 ;;
-  new-session)
-    [ -z "${FM_FAKE_NEW_SESSION_FAIL:-}" ] || { echo "create session failed" >&2; exit 1; }
-    shift
-    ses=
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -s) ses=${2:-}; shift 2 ;;
-        -c) shift 2 ;;
-        *) shift ;;
-      esac
-    done
-    printf '%s\n' "$ses" >> "$D/sessions"
-    printf '%s\n' "$ses" >> "$D/created-sessions"
-    exit 0 ;;
-  list-windows)
-    shift
-    ses=
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -t) ses=${2:-}; shift 2 ;;
-        *) shift ;;
-      esac
-    done
-    ses=${ses#=}
-    if [ -f "$D/server-lost" ]; then
-      # Not one of the wordings the classifier reads as a gone session, so the
-      # endpoint reads `unreadable`: nothing is proven about the window.
-      echo "lost server" >&2
-      exit 1
-    fi
-    if ! grep -qxF "$ses" "$D/sessions" 2>/dev/null; then
-      # Exactly what real tmux writes when the whole session is gone; the
-      # recovery-grade classifier reads this as `missing`.
-      echo "can't find session: $ses" >&2
-      exit 1
-    fi
-    [ -f "$D/windows" ] && cat "$D/windows"
-    exit 0 ;;
-esac
-exit 0
-SH
-  chmod +x "$fb/tmux"
   cat > "$fb/sleep" <<'SH'
 #!/usr/bin/env bash
 exit 0
 SH
   chmod +x "$fb/sleep"
+}
+
+# new_endpoint_defaults <case-dir>: the knobs every endpoint created from now on
+# starts with (fm_test_fake_stream_defaults), from the fake dir and the fault
+# variables above.
+new_endpoint_defaults() {  # <case-dir>
+  local dir=$1 hook=''
+  if [ -n "${FM_FAKE_META_RACE:-}" ]; then
+    hook="$dir/fake/meta-race"
+    cat > "$hook" <<SH
+#!/usr/bin/env bash
+[ -e '$dir/fake/meta-race.done' ] && exit 0
+: > '$dir/fake/meta-race.done'
+printf '%s\n' '${FM_FAKE_META_RACE_LINE:?}' >> '$FM_FAKE_META_RACE'
+SH
+    chmod +x "$hook"
+  fi
+  jq -nc --arg b "$(cat "$dir/fake/becomes" 2>/dev/null)" --arg c "$(cat "$dir/fake/cwd" 2>/dev/null)" \
+    --argjson n "${FM_FAKE_SHELL_BUSY_READS:-0}" --arg h "$hook" \
+    '{becomes: $b, busy_reads: $n} + (if $c == "" then {} else {cwd: $c} end)
+     + (if $h == "" then {} else {on_request: $h} end)'
+}
+
+# created_endpoint_count <case-dir> <id>: open endpoints labelled fm-<id> other
+# than the one the task was recorded on - the ones a recovery created.
+created_endpoint_count() {  # <case-dir> <id>
+  fm_test_fake_stream_endpoints | jq --arg l "fm-$2" --arg o "$(cat "$1/fake/orig" 2>/dev/null)" \
+    '[.endpoints[] | select(.label == $l and .closed_at == null and .endpoint_id != $o)] | length'
+}
+
+assert_created() {  # <case-dir> <id> <message>
+  [ "$(created_endpoint_count "$1" "$2")" -ge 1 ] || fail "$3"
+}
+
+# record_without_binding <meta>: the record minus the lines naming its stream
+# endpoint. A stream recovery binds the record to the endpoint it created as
+# soon as that endpoint exists - a later handoff failure leaves the bare shell
+# there for 'relaunch' to act on - and the rebind rewrites those lines at the
+# end of the record (bin/fm-endpoint-rebind-lib.sh), so "the prior record" is
+# everything else, in its order.
+record_without_binding() {  # <meta>
+  grep -v '^\(window\|backend\|stream_hub\|stream_endpoint_id\)=' "$1"
+}
+
+# assert_bound_to_created <case-dir> <id>: the record names an endpoint the
+# recovery created, not the one it lost.
+assert_bound_to_created() {  # <case-dir> <id>
+  local window
+  window=$(grep '^window=' "$1/home/state/$2.meta" | tail -1 | cut -d= -f2-)
+  [ "$window" != "$FM_TEST_STREAM_TAG:$(cat "$1/fake/orig")" ] \
+    || fail "the record still names the lost endpoint after the terminal was recreated"
+  [ "$(grep -c '^backend=stream$' "$1/home/state/$2.meta")" = 1 ] \
+    || fail "the rebound record must stay on exactly one stream backend line"
+  fm_test_fake_stream_endpoints | jq -e --arg e "${window##*:}" --arg l "fm-$2" \
+    '.endpoints[] | select(.endpoint_id == $e and .label == $l)' >/dev/null \
+    || fail "the record names $window, which is not the endpoint the recovery created"
 }
 
 # new_case <name> [id] -> echoes a case dir whose endpoint currently holds a
@@ -206,19 +143,16 @@ new_case() {
   mkdir -p "$dir/home/state" "$dir/home/data" "$dir/fake"
   : > "$dir/fake/literal"
   : > "$dir/fake/keys"
-  : > "$dir/fake/created-windows"
   printf 'fm-deck-worker' > "$dir/fake/command"
   printf 'fm-deck-worker' > "$dir/fake/becomes"
   printf '%s\n' "fm-$id" > "$dir/fake/windows"
-  printf 'fmses\n' > "$dir/fake/sessions"
-  : > "$dir/fake/created-sessions"
-  make_tmux_stub "$dir"
+  make_fakebin "$dir"
   printf '%s\n' "$dir"
 }
 
-# add_ship_task <case-dir> <id> [worktree]: a deck ship task recorded on the
-# tmux endpoint fmses:fm-<id>. The worktree defaults to <case-dir>/wt; a pool
-# case passes its slot checkout instead.
+# add_ship_task <case-dir> <id> [worktree]: a deck ship task recorded on its
+# fake stream endpoint. The worktree defaults to <case-dir>/wt; a pool case
+# passes its slot checkout instead.
 add_ship_task() {
   local dir=$1 id=$2 wt=${3:-$1/wt}
   local home="$dir/home" proj="$dir/proj"
@@ -233,8 +167,7 @@ Exercise missing-endpoint recovery for $id.
 Recreate the terminal without touching the local copy.
 EOF
   {
-    echo "window=fmses:fm-$id"
-    echo "endpoint_task_id=$id"
+    fm_test_fake_dir_task "$dir/fake" "$home/state" "$id"
     echo "worktree=$wt"
     echo "project=$proj"
     echo "harness=deck"
@@ -246,23 +179,13 @@ EOF
     echo "effort=default"
   } > "$home/state/$id.meta"
   printf '%s' "$wt" > "$dir/fake/cwd"
+  sed 's/.*://' "$dir/fake/target" > "$dir/fake/orig"
   TASK_TMPS+=("$dir/tasktmp")
 }
 
-# Drop the recorded window out of the session inventory: tmux's recovery-grade
-# classifier reports `missing` for a window the session does not list.
+# The hub forgets the recorded endpoint, so it answers 404 for it and the
+# recovery-grade classifier reports `missing` once its rejoin grace runs out.
 make_endpoint_missing() {  # <case-dir>
-  rm -f "$1/fake/windows"
-  : > "$1/fake/windows"
-}
-
-# Drop the whole SESSION out of the server inventory: the recorded window is
-# gone with it, and tmux answers the classifier's window listing with "can't
-# find session", which is the second shape that reads `missing`. This is the
-# shape a task records as window=<session>:fm-<id> when that session no longer
-# exists on the machine at all.
-make_session_missing() {  # <case-dir>
-  : > "$1/fake/sessions"
   : > "$1/fake/windows"
 }
 
@@ -276,24 +199,38 @@ pool_slot_worktree() {  # <case-dir>
   printf '%s\n' "$pool/1/checkout"
 }
 
-run_control() {  # <case-dir> <args...>
-  local dir=$1; shift
+run_control() {  # <case-dir> <id> <args...>
+  local dir=$1 id=$2 rc window; shift
   # Recovery reaches the launch owner through fm-spawn.sh, so it runs against
   # a throwaway HOME: nothing a launch writes under the user's home may reach
   # the developer's real one.
   mkdir -p "$dir/user-home"
-  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
+  fm_test_fake_dir_push "$dir/fake"
+  fm_test_fake_stream_defaults "$(new_endpoint_defaults "$dir")"
+  # A created endpoint logs what it receives to the fake dir's log too, so
+  # literal and keys keep recording every text and key sent to the task.
+  env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" \
     HOME="$dir/user-home" \
     FM_SPAWN_NO_GUARD=1 \
     FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT="${FM_CONTROL_EXIT_WAIT:-0.05}" \
     FM_CONTROL_LAUNCH_WAIT=0.05 \
-    FM_FAKE_NEW_WINDOW_FAIL="${FM_FAKE_NEW_WINDOW_FAIL:-}" \
-    FM_FAKE_NEW_SESSION_FAIL="${FM_FAKE_NEW_SESSION_FAIL:-}" \
-    FM_FAKE_LOSE_SERVER="${FM_FAKE_LOSE_SERVER:-}" \
-    FM_FAKE_SHELL_BUSY_READS="${FM_FAKE_SHELL_BUSY_READS:-0}" \
-    FM_FAKE_META_RACE="${FM_FAKE_META_RACE:-}" \
-    FM_FAKE_META_RACE_LINE="${FM_FAKE_META_RACE_LINE:-}" \
+    FM_FAKE_LAUNCH_LOG="$dir/fake/log" \
+    FM_FAKE_AGENT_REGISTER_FAIL="${FM_FAKE_NEW_ENDPOINT_FAIL:-}" \
+    FM_FAKE_AGENT_BREAK_HUB="${FM_FAKE_LOSE_HUB:-}" \
     "$CONTROL" "$@" 2>&1
+  rc=$?
+  fm_test_fake_stream_defaults '{}'
+  # A case that lost the hub (FM_FAKE_LOSE_HUB) gives it back to the next one.
+  curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
+    --data-binary '{"task_routes_unavailable": false}' "$FM_TEST_STREAM_URL/v1/test/config" >/dev/null
+  # Follow a recovery onto the endpoint it rebound the record to.
+  window=$(grep '^window=' "$dir/home/state/$id.meta" 2>/dev/null | tail -1 | cut -d= -f2-)
+  if [ -n "$window" ] && [ "$window" != "$(cat "$dir/fake/target" 2>/dev/null)" ]; then
+    printf '%s\n' "$window" > "$dir/fake/target"
+    printf 'fm-%s\n' "$id" > "$dir/fake/windows"
+  fi
+  fm_test_fake_dir_pull "$dir/fake"
+  return "$rc"
 }
 
 meta_field() {  # <case-dir> <id> <key>
@@ -316,13 +253,18 @@ test_recover_missing_recreates_the_terminal_and_launches_the_replacement() {
   out=$(run_control "$dir" rm1 recover-missing --note "the terminal was closed out from under it"); rc=$?
   expect_code 0 "$rc" "recovering a missing endpoint should succeed"$'\n'"$out"
   assert_contains "$out" "recovered rm1 harness=deck from=deck" "the outcome should name the recovered task and its runtime"
-  assert_contains "$out" "endpoint=fmses:fm-rm1" "the outcome should name the recreated endpoint"
+  assert_contains "$out" "endpoint=$(meta_field "$dir" rm1 window)" "the outcome should name the recreated endpoint"
 
-  assert_grep "fm-rm1" "$dir/fake/created-windows" "the missing terminal should have been recreated under its recorded name"
+  assert_created "$dir" rm1 "the missing terminal should have been recreated under its recorded name"
   assert_grep "encode launch-brief" "$dir/fake/literal" "the launch should have been handed to the existing owner"
 
-  [ "$(meta_field "$dir" rm1 window)" = "fmses:fm-rm1" ] \
-    || fail "the recreated endpoint must keep the recorded handle"
+  # A stream endpoint cannot be recreated under its old id: the record names
+  # the new endpoint, on the same hub, for the same task.
+  [ "$(meta_field "$dir" rm1 window)" != "$FM_TEST_STREAM_TAG:$(cat "$dir/fake/orig")" ] \
+    || fail "the record must be rebound to the recreated endpoint"
+  [ "$(meta_field "$dir" rm1 window)" = "$FM_TEST_STREAM_TAG:$(meta_field "$dir" rm1 stream_endpoint_id)" ] \
+    || fail "window= and stream_endpoint_id= must name the same recreated endpoint"
+  [ "$(meta_field "$dir" rm1 endpoint_task_id)" = rm1 ] || fail "the task binding must survive recovery"
   [ "$(meta_field "$dir" rm1 worktree)" = "$dir/wt" ] \
     || fail "the local copy must be reused, never reallocated"
   [ "$(meta_field "$dir" rm1 harness)" = deck ] || fail "the recorded harness must survive recovery"
@@ -376,7 +318,7 @@ test_recover_missing_refuses_a_terminal_that_never_settles() {
   # tell the operator the recreation never happened. The pane was just measured
   # as NOT agent-free, so the only advice the operator gets is the refusal's own
   # qualified line; the rollback must not duplicate it with an unqualified one.
-  assert_grep "fm-rm22" "$dir/fake/created-windows" "the terminal should already have been recreated"
+  assert_created "$dir" rm22 "the terminal should already have been recreated"
   assert_contains "$out" "recreated the terminal but could not hand it over" \
     "the rollback must admit the terminal now exists"
   assert_contains "$out" "once its shell is idle bring the worker up with 'relaunch'" \
@@ -395,7 +337,7 @@ assert_nothing_changed() {
     || fail "a refused recovery must leave the durable record byte-identical"
   [ "$(cat "$dir/home/data/$id/brief.md")" = "$brief_before" ] \
     || fail "a refused recovery must leave the instructions byte-identical"
-  [ ! -s "$dir/fake/created-windows" ] \
+  [ "$(created_endpoint_count "$dir" "$id")" = 0 ] \
     || fail "a refused recovery must not create a terminal"
   ! grep -Fq "encode launch-brief" "$dir/fake/literal" \
     || fail "a refused recovery must not launch an agent"
@@ -416,7 +358,7 @@ test_recover_missing_verified_deck_recreates_the_endpoint() {
   expect_code 0 "$rc" "verified Deck recovery should succeed: $out"
   [ "$(meta_field "$dir" rm22 harness)" = deck ] || fail "Deck recovery changed the recorded harness"
   [ "$(cat "$dir/fake/command")" = deck ] || fail "Deck recovery did not launch the replacement agent"
-  assert_grep "fm-rm22" "$dir/fake/created-windows" "Deck recovery did not recreate the endpoint"
+  assert_created "$dir" rm22 "Deck recovery did not recreate the endpoint"
   pass "fm-control recover-missing: verified Deck recreates and relaunches its endpoint"
 }
 
@@ -532,7 +474,7 @@ test_failed_recreation_rolls_the_progress_note_back() {
   # and the agent is never touched in any phase of a recovery, so a recreation
   # that fails must put the instructions back. Otherwise every retry after the
   # operator fixes the session provider stacks another progress note.
-  out=$(FM_FAKE_NEW_WINDOW_FAIL=1 run_control "$dir" rm11 recover-missing --note "first attempt"); rc=$?
+  out=$(FM_FAKE_NEW_ENDPOINT_FAIL=1 run_control "$dir" rm11 recover-missing --note "first attempt"); rc=$?
   expect_code 1 "$rc" "a failed recreation must refuse"$'\n'"$out"
   assert_contains "$out" "failed while recreating the terminal" "the refusal should name the phase it failed in"
   # Nothing was created here: the window never appeared, so the endpoint still
@@ -577,7 +519,7 @@ test_failed_recreation_keeps_a_concurrent_record_write() {
     FM_FAKE_META_RACE_LINE='pr=https://github.com/o/r/pull/7' \
     run_control "$dir" rm24 recover-missing --note "recover"); rc=$?
   expect_code 1 "$rc" "a terminal that never settles must refuse"$'\n'"$out"
-  assert_grep "fm-rm24" "$dir/fake/created-windows" \
+  assert_created "$dir" rm24 \
     "the terminal should have been recreated before the settle wait timed out"
   grep -qxF 'pr=https://github.com/o/r/pull/7' "$dir/home/state/rm24.meta" \
     || fail "a refused recovery must not revert a record write it never made"
@@ -597,7 +539,7 @@ test_unreadable_endpoint_after_a_failed_recreation_claims_nothing() {
   # The window creation fails and the session provider then goes unreachable,
   # so the rollback's own read comes back `unreadable`. Nothing proves a window
   # exists, so it must not tell the operator one was recreated.
-  out=$(FM_FAKE_NEW_WINDOW_FAIL=1 FM_FAKE_LOSE_SERVER=1 \
+  out=$(FM_FAKE_NEW_ENDPOINT_FAIL=1 FM_FAKE_LOSE_HUB=1 \
     run_control "$dir" rm23 recover-missing --note "first attempt"); rc=$?
   expect_code 1 "$rc" "a failed recreation must refuse"$'\n'"$out"
   assert_contains "$out" "failed while recreating the terminal" \
@@ -612,21 +554,22 @@ test_launch_failure_never_claims_an_agent_was_stopped() {
   dir=$(new_case launch-fail rm12)
   add_ship_task "$dir" rm12
   make_endpoint_missing "$dir"
-  before=$(cat "$dir/home/state/rm12.meta")
+  before=$(record_without_binding "$dir/home/state/rm12.meta")
   # The recreated shell reports a cwd outside the recorded local copy, so the
   # launch owner refuses AFTER the terminal has already been recreated.
   printf '%s' "$dir/proj" > "$dir/fake/cwd"
 
   out=$(run_control "$dir" rm12 recover-missing --note "carry this forward"); rc=$?
   expect_code 1 "$rc" "a failed launch handoff should fail closed"$'\n'"$out"
-  assert_grep "fm-rm12" "$dir/fake/created-windows" "the terminal should already have been recreated"
+  assert_created "$dir" rm12 "the terminal should already have been recreated"
   assert_contains "$out" "no agent was ever stopped" \
     "the failure must not claim a recovery stopped an agent it never touched"
   assert_contains "$out" "retry with 'relaunch'" \
     "the failure should name the verb that acts on the bare shell it left behind"
   assert_contains "$out" "$dir/wt" "the failure should say where the work is preserved"
-  [ "$(cat "$dir/home/state/rm12.meta")" = "$before" ] \
-    || fail "a failed launch handoff must keep the prior durable record"
+  [ "$(record_without_binding "$dir/home/state/rm12.meta")" = "$before" ] \
+    || fail "a failed launch handoff must keep the prior durable record:"$'\n'"$(diff <(printf '%s\n' "$before") <(record_without_binding "$dir/home/state/rm12.meta"))"
+  assert_bound_to_created "$dir" rm12
   [ "$(journal_field "$dir" rm12 phase)" = "failed:launching" ] \
     || fail "the journal should record the failed phase"
   assert_grep "carry this forward" "$dir/home/data/rm12/brief.md" \
@@ -641,15 +584,16 @@ test_launch_failure_never_claims_an_agent_was_stopped() {
 add_stream_deck_task() {
   local dir=$1 id=$2 old_id=0123456789abcdef0123456789abcdef
   add_ship_task "$dir" "$id"
-  sed -i.bak -e "s|^window=.*|window=$FM_TEST_STREAM_TAG:$old_id|" -e 's/^harness=.*/harness=deck/' \
+  # The record names an endpoint this hub never registered; the one the fake
+  # dir registered is forgotten, so the case's hub starts with no endpoints.
+  fm_test_fake_stream_set "$(cat "$dir/fake/target")" '{"forget": true}'
+  : > "$dir/fake/windows"
+  : > "$dir/fake/target"
+  sed -i.bak -e "s|^window=.*|window=$FM_TEST_STREAM_TAG:$old_id|" \
+    -e "s|^stream_endpoint_id=.*|stream_endpoint_id=$old_id|" -e 's/^harness=.*/harness=deck/' \
     "$dir/home/state/$id.meta"
   rm -f "$dir/home/state/$id.meta.bak"
-  {
-    echo "backend=stream"
-    echo "stream_hub=$FM_TEST_STREAM_URL"
-    echo "stream_endpoint_id=$old_id"
-    echo "spawn_gen=1"
-  } >> "$dir/home/state/$id.meta"
+  echo "spawn_gen=1" >> "$dir/home/state/$id.meta"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/fakebin/deck"
   chmod +x "$dir/fakebin/deck"
 }
@@ -810,30 +754,31 @@ SH
   pass "fm-control recover-missing: failed stream rebind reports the actual cleanup verdict"
 }
 
-test_recover_missing_refuses_a_backend_it_cannot_recreate_on() {
-  local dir out rc meta_before brief_before
-  dir=$(new_case herdr-backend rm13)
-  add_ship_task "$dir" rm13
-  # A herdr record: its classifier is recovery-grade, so the refusal has to come
-  # from the recreation side rather than from the agent-state gate.
-  {
-    echo "backend=herdr"
-    echo "herdr_session=hses"
-    echo "herdr_workspace_id=ws1"
-    echo "herdr_tab_id=t1"
-    echo "herdr_pane_id=p1"
-  } >> "$dir/home/state/rm13.meta"
-  sed -i.bak 's|^window=.*|window=hses:p1|' "$dir/home/state/rm13.meta"
-  rm -f "$dir/home/state/rm13.meta.bak"
-  meta_before=$(cat "$dir/home/state/rm13.meta")
-  brief_before=$(cat "$dir/home/data/rm13/brief.md")
+test_recover_missing_refuses_a_record_on_a_retired_backend() {
+  local dir out rc meta_before brief_before backend
+  for backend in tmux herdr; do
+    dir=$(new_case "retired-$backend" rm13)
+    add_ship_task "$dir" rm13
+    make_endpoint_missing "$dir"
+    # The same task recorded on a retired backend's endpoint.
+    {
+      grep -v '^\(window\|backend\|stream_hub\|stream_endpoint_id\)=' "$dir/home/state/rm13.meta"
+      if [ "$backend" = tmux ]; then
+        echo "window=fmses:fm-rm13"
+      else
+        printf '%s\n' window=hses:p1 herdr_session=hses herdr_workspace_id=ws1 herdr_tab_id=t1 herdr_pane_id=p1
+      fi
+      echo "backend=$backend"
+    } > "$dir/rm13.meta" && mv "$dir/rm13.meta" "$dir/home/state/rm13.meta"
+    meta_before=$(cat "$dir/home/state/rm13.meta")
+    brief_before=$(cat "$dir/home/data/rm13/brief.md")
 
-  out=$(run_control "$dir" rm13 recover-missing --note "recover"); rc=$?
-  expect_code 1 "$rc" "a backend with no recreation support must refuse"$'\n'"$out"
-  assert_contains "$out" "no supported way to recreate an endpoint with the recorded identity" \
-    "the refusal should name what the backend cannot do"
-  assert_nothing_changed "$dir" rm13 "$meta_before" "$brief_before"
-  pass "fm-control recover-missing: a backend that cannot recreate the recorded endpoint refuses before anything changes"
+    out=$(run_control "$dir" rm13 recover-missing --note "recover"); rc=$?
+    expect_code 1 "$rc" "a record on the retired $backend backend must refuse"$'\n'"$out"
+    assert_contains "$out" "$backend" "the refusal should name the retired $backend backend"
+    assert_nothing_changed "$dir" rm13 "$meta_before" "$brief_before"
+  done
+  pass "fm-control recover-missing: a record on a retired tmux or herdr backend refuses before anything changes"
 }
 
 
@@ -870,7 +815,7 @@ test_recover_missing_accepts_an_explicit_replacement_harness() {
     || fail "the durable record must name the replacement harness that actually launched"
   [ "$(cat "$dir/fake/command")" = fm-deck-worker ] \
     || fail "the replacement agent should be the named harness"
-  assert_grep "fm-rm-switch-1" "$dir/fake/created-windows" \
+  assert_created "$dir" rm-switch-1 \
     "the missing terminal should still be recreated under its recorded name"
   [ "$(journal_field "$dir" rm-switch-1 from_harness)" = deck ] \
     || fail "the journal should record the runtime the task ran on"
@@ -966,21 +911,22 @@ test_recover_missing_replacement_rolls_back_to_the_recorded_runtime_on_failure()
   add_ship_task "$dir" rm-switch-10
   printf 'deck' > "$dir/fake/becomes"
   make_endpoint_missing "$dir"
-  before=$(cat "$dir/home/state/rm-switch-10.meta")
+  before=$(record_without_binding "$dir/home/state/rm-switch-10.meta")
   # The recreated shell reports a cwd outside the recorded local copy, so the
   # launch owner refuses AFTER the terminal has already been recreated.
   printf '%s' "$dir/proj" > "$dir/fake/cwd"
 
   out=$(run_control "$dir" rm-switch-10 recover-missing --harness deck --note "carry this forward"); rc=$?
   expect_code 1 "$rc" "a failed replacement handoff should fail closed"$'\n'"$out"
-  assert_grep "fm-rm-switch-10" "$dir/fake/created-windows" \
+  assert_created "$dir" rm-switch-10 \
     "the terminal should already have been recreated"
   assert_contains "$out" "no agent was ever stopped" \
     "the failure must not claim a recovery stopped an agent it never touched"
   assert_contains "$out" "retry with 'relaunch'" \
     "the failure should name the verb that acts on the bare shell it left behind"
-  [ "$(cat "$dir/home/state/rm-switch-10.meta")" = "$before" ] \
-    || fail "a failed replacement handoff must keep the prior durable record, runtime included"
+  [ "$(record_without_binding "$dir/home/state/rm-switch-10.meta")" = "$before" ] \
+    || fail "a failed replacement handoff must keep the prior durable record, runtime included:"$'\n'"$(diff <(printf '%s\n' "$before") <(record_without_binding "$dir/home/state/rm-switch-10.meta"))"
+  assert_bound_to_created "$dir" rm-switch-10
   assert_grep "carry this forward" "$dir/home/data/rm-switch-10/brief.md" \
     "the progress note must survive the failed handoff so the retry still has it"
   pass "fm-control recover-missing: a failed replacement handoff keeps the recorded runtime and never claims a stop"
@@ -1002,7 +948,7 @@ test_profile_switch_flags_are_rejected_on_other_verbs() {
     assert_contains "$out" "apply to 'relaunch' and 'recover-missing' only" \
       "the refusal should scope the flags to the verbs that own them"
   done
-  [ ! -s "$dir/fake/created-windows" ] || fail "a rejected flag must not create a terminal"
+  [ "$(created_endpoint_count "$dir" rm9)" = 0 ] || fail "a rejected flag must not create a terminal"
   pass "fm-control: profile-switch flags belong to relaunch and recover-missing only"
 }
 
@@ -1015,78 +961,8 @@ test_recover_missing_requires_a_note_for_a_ship_task() {
   out=$(run_control "$dir" rm10 recover-missing); rc=$?
   expect_code 1 "$rc" "a ship recovery without a note must refuse"$'\n'"$out"
   assert_contains "$out" "requires --note" "the refusal should name the missing note"
-  [ ! -s "$dir/fake/created-windows" ] || fail "a refused recovery must not create a terminal"
+  [ "$(created_endpoint_count "$dir" rm10)" = 0 ] || fail "a refused recovery must not create a terminal"
   pass "fm-control recover-missing: a ship task's recovery requires the progress note"
-}
-
-# --- 4. the second missing shape: the whole session is gone -----------------
-
-test_recover_missing_recreates_a_gone_session_before_the_window() {
-  local dir out rc
-  dir=$(new_case gone-session rm16)
-  add_ship_task "$dir" rm16
-  make_session_missing "$dir"
-
-  out=$(run_control "$dir" rm16 recover-missing --note "the whole session went away"); rc=$?
-  expect_code 0 "$rc" "a task whose whole session is gone should recover"$'\n'"$out"
-  assert_contains "$out" "recovered rm16 harness=deck from=deck" \
-    "the outcome should name the recovered task and its runtime"
-  assert_contains "$out" "endpoint=fmses:fm-rm16" \
-    "the recreated endpoint must keep the recorded handle, session included"
-
-  assert_grep "fmses" "$dir/fake/created-sessions" \
-    "the gone session must be recreated under its exact recorded name"
-  assert_grep "fm-rm16" "$dir/fake/created-windows" \
-    "the task window must then be recreated inside it"
-  assert_grep "encode launch-brief" "$dir/fake/literal" \
-    "the launch should still be handed to the existing owner"
-
-  [ "$(meta_field "$dir" rm16 window)" = "fmses:fm-rm16" ] \
-    || fail "recreating the session must not rewrite the recorded endpoint"
-  [ "$(meta_field "$dir" rm16 worktree)" = "$dir/wt" ] \
-    || fail "the local copy must be reused, never reallocated"
-  [ "$(journal_field "$dir" rm16 phase)" = complete ] \
-    || fail "the transaction journal should end complete"
-  pass "fm-control recover-missing: a whole gone session is recreated under its recorded name, then the task window"
-}
-
-test_recover_missing_does_not_recreate_a_session_that_is_still_alive() {
-  local dir out rc
-  dir=$(new_case live-session rm17)
-  add_ship_task "$dir" rm17
-  # Only the WINDOW is gone here; the session is still listed.
-  make_endpoint_missing "$dir"
-
-  out=$(run_control "$dir" rm17 recover-missing --note "only the window went away"); rc=$?
-  expect_code 0 "$rc" "a missing window in a live session should recover"$'\n'"$out"
-  [ ! -s "$dir/fake/created-sessions" ] \
-    || fail "a session that still exists must be left exactly as it is, not recreated"
-  assert_grep "fm-rm17" "$dir/fake/created-windows" \
-    "the task window must still be recreated"
-  pass "fm-control recover-missing: a surviving session is left untouched and only the window comes back"
-}
-
-test_recover_missing_refuses_when_the_session_cannot_be_recreated() {
-  local dir out rc meta_before brief_before
-  dir=$(new_case session-fail rm18)
-  add_ship_task "$dir" rm18
-  make_session_missing "$dir"
-  meta_before=$(cat "$dir/home/state/rm18.meta")
-  brief_before=$(cat "$dir/home/data/rm18/brief.md")
-
-  out=$(FM_FAKE_NEW_SESSION_FAIL=1 run_control "$dir" rm18 recover-missing --note "recover"); rc=$?
-  expect_code 1 "$rc" "an unrecreatable session must refuse"$'\n'"$out"
-  assert_contains "$out" "recorded tmux session 'fmses' is gone and could not be recreated" \
-    "the refusal should name the session it could not bring back"
-  [ ! -s "$dir/fake/created-windows" ] \
-    || fail "a refused session recreation must not go on to create a window"
-  [ "$(cat "$dir/home/state/rm18.meta")" = "$meta_before" ] \
-    || fail "a refused recovery must leave the durable record byte-identical"
-  [ "$(cat "$dir/home/data/rm18/brief.md")" = "$brief_before" ] \
-    || fail "a refused recovery must roll the progress note back"
-  ! grep -Fq "encode launch-brief" "$dir/fake/literal" \
-    || fail "a refused recovery must not launch an agent"
-  pass "fm-control recover-missing: a session that cannot be recreated refuses and leaves everything in place"
 }
 
 # --- 5. every identity axis comes from the task's own record ----------------
@@ -1116,8 +992,7 @@ test_recover_missing_freezes_the_recorded_profile_for_a_secondmate() {
     commit --quiet -m "secondmate home" \
     || fail "the secondmate home fixture could not be committed"
   {
-    echo "window=fmses:fm-sm9"
-    echo "endpoint_task_id=sm9"
+    fm_test_fake_dir_task "$dir/fake" "$home/state" sm9
     echo "worktree=$dir/smhome"
     echo "project=$dir/smhome"
     echo "harness=deck"
@@ -1172,7 +1047,7 @@ test_recover_missing_preserves_uncommitted_work() {
   out=$(run_control "$dir" rm19 recover-missing --note "the terminal died mid-task"); rc=$?
   expect_code 0 "$rc" "a mid-work local copy is exactly what this verb rescues"$'\n'"$out"
   assert_contains "$out" "recovered rm19 harness=deck" "the rescue should complete"
-  assert_grep "fm-rm19" "$dir/fake/created-windows" "the terminal should have been recreated"
+  assert_created "$dir" rm19 "the terminal should have been recreated"
   assert_grep "encode launch-brief" "$dir/fake/literal" \
     "the launch should have been handed to the existing owner"
 
@@ -1209,9 +1084,6 @@ test_recover_missing_records_the_dirty_state_it_found() {
 
 
 
-test_recover_missing_recreates_a_gone_session_before_the_window
-test_recover_missing_does_not_recreate_a_session_that_is_still_alive
-test_recover_missing_refuses_when_the_session_cannot_be_recreated
 test_recover_missing_freezes_the_recorded_profile_for_a_secondmate
 test_recover_missing_preserves_uncommitted_work
 test_recover_missing_records_the_dirty_state_it_found
@@ -1240,7 +1112,7 @@ test_failed_recreation_rolls_the_progress_note_back
 test_failed_recreation_keeps_a_concurrent_record_write
 test_unreadable_endpoint_after_a_failed_recreation_claims_nothing
 test_launch_failure_never_claims_an_agent_was_stopped
-test_recover_missing_refuses_a_backend_it_cannot_recreate_on
+test_recover_missing_refuses_a_record_on_a_retired_backend
 test_recover_missing_refuses_a_removed_adapter_record
 test_profile_switch_flags_are_rejected_on_other_verbs
 test_recover_missing_requires_a_note_for_a_ship_task

@@ -10,19 +10,16 @@
 #   Without this flag the legacy selector and typed-plane behavior is unchanged.
 #   For ordinary sends, <target> may be an exact task id, a legacy fm-<id>
 #   task label resolved through this home's state/<id>.meta, or an explicit
-#   well-formed backend target. fm-send refuses unresolved guesses rather than falling back to a
-#   tmux window search, because a "successful" send to the wrong endpoint is
-#   worse than a loud failure. An explicit target no record names is guessed by
-#   shape: two or more colons is herdr, "<hub-tag>:<32-hex id>" on this home's
-#   configured stream hub is stream, any other "a:b" is tmux; the guessed
-#   endpoint must then verify live.
+#   well-formed stream target. fm-send refuses unresolved guesses, because a
+#   "successful" send to the wrong endpoint is worse than a loud failure. An
+#   explicit target no record names must be a "<hub-tag>:<32-hex id>" on this
+#   home's configured stream hub, and must then verify live.
 # The reserved `primary` selector, only when state/primary.meta is absent,
 # publishes plain text to a live Deck chat host instead of either task plane
 # below: fm-send.sh primary <text...> (no options or native-key handling).
 # bin/fm-primary-steer.sh owns its publication and delivery-check contract.
 # Special keys instead of text: fm-send.sh <target> --key Enter
-# Key support is backend-specific: tmux, herdr and stream support Escape,
-# Enter, C-c and C-u.
+# Supported keys: Escape, Enter, C-c and C-u.
 #
 # Two data planes:
 #
@@ -81,9 +78,8 @@
 # before any resend, and never re-type blindly; a marked request's
 # pending-reply expectation stays armed because this outcome is not a proven
 # failure); any other nonzero = the send failed and nothing may be assumed
-# delivered. Submission dispatches through the target's recorded backend; the
-# tmux adapter shares its composer/submit core with the away-mode daemon via
-# bin/fm-tmux-lib.sh. Tune with FM_SEND_RETRIES (default 3) / FM_SEND_SLEEP
+# delivered. Submission dispatches through the target's recorded backend, whose
+# composer/submit core the away-mode daemon shares. Tune with FM_SEND_RETRIES (default 3) / FM_SEND_SLEEP
 # (0.4). Slash commands get a longer pre-Enter settle so completion popups do
 # not swallow Enter.
 # A remote secondmate target has no typed text plane at all:
@@ -267,28 +263,10 @@ fm_send_id_from_meta() {  # <meta-file>
   printf '%s' "${base%.meta}"
 }
 
-fm_send_meta_for_key_value() {  # <state-dir> <key> <value>
-  local state=$1 key=$2 value=$3 meta got
-  for meta in "$state"/*.meta; do
-    [ -e "$meta" ] || continue
-    got=$(fm_meta_get "$meta" "$key")
-    [ "$got" = "$value" ] || continue
-    printf '%s' "$meta"
-    return 0
-  done
-  return 1
-}
-
-fm_send_count_colons() {  # <string>
-  local s=$1 no_colons
-  no_colons=${s//:/}
-  printf '%s' $(( ${#s} - ${#no_colons} ))
-}
-
 # fm_send_target_is_stream: an unrecorded "<hub-tag>:<endpoint-id>" target is
 # a stream endpoint when its tag is this home's configured hub tag and its id
 # is the 32-hex durable id a stream agent registers (bin/backends/stream.sh
-# owns that target shape). Anything else keeps the tmux guess.
+# owns that target shape). Anything else is refused.
 fm_send_target_is_stream() {  # <raw-target>
   local raw=$1 tag endpoint configured
   tag=${raw%%:*}
@@ -301,7 +279,7 @@ fm_send_target_is_stream() {  # <raw-target>
 }
 
 fm_send_resolve_target() {  # <raw-target>
-  local raw=$1 meta pane_meta target backend assumed colons id session hint
+  local raw=$1 meta target backend id
 
   RESOLVED_TARGET=""
   TARGET_BACKEND=""
@@ -353,26 +331,13 @@ fm_send_resolve_target() {  # <raw-target>
   fi
 
   case "$raw" in
-    fm-*:*)
-      # A named Herdr session may itself begin with "fm-". Keep that explicit
-      # session:pane target on the validated backend-target path below rather
-      # than mistaking it for an unresolved task selector.
-      ;;
+    fm-*:*) ;;
     fm-*)
       RESOLUTION_TRIED="meta=$STATE/$raw.meta; legacy-meta=$STATE/${raw#fm-}.meta; backend=none"
       echo "error: no metadata for $raw in $STATE (tried $RESOLUTION_TRIED); pass a well-formed explicit backend target only when targeting outside this firstmate home" >&2
       return 1
       ;;
   esac
-
-  pane_meta=$(fm_send_meta_for_key_value "$STATE" herdr_pane_id "$raw" 2>/dev/null || true)
-  if [ -n "$pane_meta" ]; then
-    session=$(fm_meta_get "$pane_meta" herdr_session)
-    hint="${session:-<herdr-session>}:$raw"
-    id=$(fm_send_id_from_meta "$pane_meta")
-    echo "error: target '$raw' matches herdr_pane_id in $pane_meta but is missing its herdr session prefix; expected <herdr-session>:<pane-id> such as '$hint' or use 'fm-$id' (tried meta=$STATE/$raw.meta; backend=herdr)" >&2
-    return 1
-  fi
 
   meta=$(fm_backend_meta_for_window "$raw" "$STATE" 2>/dev/null || true)
   if [ -n "$meta" ]; then
@@ -391,26 +356,18 @@ fm_send_resolve_target() {  # <raw-target>
 
   case "$raw" in
     *:*)
-      colons=$(fm_send_count_colons "$raw")
-      if [ "$colons" -ge 2 ]; then
-        assumed=herdr
-      elif fm_send_target_is_stream "$raw"; then
-        assumed=stream
-      else
-        assumed=tmux
-      fi
-      if ! fm_backend_target_exists "$assumed" "$raw"; then
-        echo "error: explicit target '$raw' is not a live $assumed endpoint (tried meta=$STATE/$raw.meta; metadata window/terminal lookup; backend=$assumed). Use fm-<id> for a recorded task/lane, or pass a target whose backend endpoint can be verified." >&2
+      if ! fm_send_target_is_stream "$raw" || ! fm_backend_target_exists stream "$raw"; then
+        echo "error: explicit target '$raw' is not a live stream endpoint on this home's hub (tried meta=$STATE/$raw.meta; metadata window/terminal lookup; backend=stream). Use fm-<id> for a recorded task/lane, or pass a <hub-tag>:<endpoint-id> target whose endpoint can be verified." >&2
         return 1
       fi
       RESOLVED_TARGET=$raw
-      TARGET_BACKEND=$assumed
-      RESOLUTION_TRIED="meta=$STATE/$raw.meta; metadata window/terminal lookup; backend=$assumed; endpoint=verified"
+      TARGET_BACKEND=stream
+      RESOLUTION_TRIED="meta=$STATE/$raw.meta; metadata window/terminal lookup; backend=stream; endpoint=verified"
       return 0
       ;;
   esac
 
-  echo "error: target '$raw' is not resolvable (tried meta=$STATE/$raw.meta; metadata window/terminal lookup; backend=none). Use fm-$raw for a recorded task/lane, or pass a well-formed explicit backend target such as session:window." >&2
+  echo "error: target '$raw' is not resolvable (tried meta=$STATE/$raw.meta; metadata window/terminal lookup; backend=none). Use fm-$raw for a recorded task/lane, or pass a well-formed <hub-tag>:<endpoint-id> stream target." >&2
   return 1
 }
 
@@ -701,8 +658,8 @@ fm_send_feed_resolved_holds() {  # <answer-text>
 # typed-plane popup settling (see the header); the resolved backend determines
 # dispatch.
 # Do not add a separate passive liveness preflight here. Active send paths own
-# backend readiness: herdr, for example, must route through its session-aware
-# target_ready path before sending. A failed backend send is still surfaced below as a hard
+# backend readiness: the stream adapter checks its target before sending. A
+# failed backend send is still surfaced below as a hard
 # error with the attempted resolution attached.
 
 if [ "${1:-}" = "--key" ]; then

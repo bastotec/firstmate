@@ -8,7 +8,7 @@
 #          Lines: "MISSING: <tool> (install: <command>)",
 #                 "VERSION_UNREADABLE: <tool> (installed build; requires semantic version >=<floor>; upgrade: <command>)",
 #                 "PRESENTATION_UNAVAILABLE: lavish-axi (requires >=<floor>; install: <command>) - nonvisual work may proceed with plain-text decisions and reports; install or upgrade before using Lavish",
-#                 "MISSING_MANUAL: <tool> (instructions: <url>)", "NEEDS_GH_AUTH",
+#                 "NEEDS_GH_AUTH",
 #                 "BACKEND_INVALID: <name> (known: <names>)",
 #                 "STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget - <reason>",
 #                 "CREW_DISPATCH: invalid config/crew-dispatch.json - <reason>",
@@ -695,11 +695,9 @@ report_relaunch() {  # <id> <cause> <where>
 secondmate_liveness_sweep() {
   # Idempotent secondmate liveness guarantee - SESSION START ONLY. The detailed
   # state machine and its only recovery-authorizing states are owned by
-  # fm_backend_agent_state. A missing tmux pane is not enough: tmux must prove
-  # the window or session absent. This preserves duplicate prevention for
-  # existing ambiguous processes and every transiently unreadable target while
-  # adding the missing-session path the original bare-shell and Herdr-husk sweep
-  # lacked.
+  # fm_backend_agent_state. Only a positively agent-free endpoint is
+  # relaunched, which preserves duplicate prevention for existing ambiguous
+  # processes and every transiently unreadable target.
   # A meta with no window remains owned by secondmate-provisioning recovery.
   # Secondmate homes never contain kind=secondmate meta, so this is naturally a
   # primary-only no-op there. Mid-session liveness remains explicitly out of
@@ -742,16 +740,14 @@ secondmate_liveness_one_timed() {  # <meta> <id> <label>
 # secondmate_note_respawned so a concurrent sweep can collect them after wait.
 secondmate_liveness_one() {  # <meta> <id>
   local meta=$1 id=$2
-  local window harness backend target agent_state out cause remote_host remote_rc readiness_reason route_out remote_backend route_backend kill_out flag
+  local window harness backend target agent_state out cause remote_host remote_rc readiness_reason route_out route_backend kill_out flag
   window=$(fm_meta_get "$meta" window)
   [ -n "$window" ] || return 0
   harness=$(fm_meta_get "$meta" harness)
   remote_host=$(fm_meta_get "$meta" remote_host)
   if [ -n "$remote_host" ]; then
-    remote_backend=$(fm_meta_get "$meta" remote_backend)
-    [ -n "$remote_backend" ] || remote_backend=herdr
     remote_rc=0
-    fm_remote_readiness_ensure "$SCRIPT_DIR" "$id" "$remote_backend" || remote_rc=$?
+    fm_remote_readiness_ensure "$SCRIPT_DIR" "$id" || remote_rc=$?
     if [ "$remote_rc" -eq 255 ]; then
       echo "SECONDMATE_LIVENESS: secondmate $id: skipped: remote host unavailable or endpoint state unknown; route preserved on $remote_host"
       return 0
@@ -795,7 +791,7 @@ secondmate_liveness_one() {  # <meta> <id>
         fi
         route_backend=$(printf '%s\n' "$route_out" | sed -n 's/^backend=//p' | tail -1)
         case "$route_backend" in
-          herdr|stream) ;;
+          stream) ;;
           *)
             echo "SECONDMATE_LIVENESS: secondmate $id: skipped: alive remote endpoint is recorded on backend '${route_backend:-missing}'; migrate or retire it explicitly"
             return 0
@@ -804,19 +800,10 @@ secondmate_liveness_one() {  # <meta> <id>
         [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" != 1 ] || echo "BOOTSTRAP_INFO: remote secondmate $id already live (host=$remote_host)"
         ;;
       missing)
-        # The same stream-only rule as a local mate below: the hub's registry
-        # not knowing an endpoint is not process-authoritative absence.
-        if [ "$remote_backend" = stream ]; then
-          echo "SECONDMATE_LIVENESS: secondmate $id: skipped: remote stream endpoint reads missing (absence from the hub registry is not proof the agent is gone); inspect it on $remote_host and relaunch explicitly"
-          return 0
-        fi
-        cause="remote endpoint $agent_state on its configured host"
-        if out=$(FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate 2>&1); then
-          secondmate_note_respawned "$id"
-          report_relaunch "$id" "$cause" "host=$remote_host"
-        else
-          echo "SECONDMATE_LIVENESS: secondmate $id: respawn failed after $cause: $(first_line "$out")"
-        fi
+        # The same rule as a local mate below: the hub's registry not knowing
+        # an endpoint is not process-authoritative absence.
+        echo "SECONDMATE_LIVENESS: secondmate $id: skipped: remote stream endpoint reads missing (absence from the hub registry is not proof the agent is gone); inspect it on $remote_host and relaunch explicitly"
+        return 0
         ;;
       dead)
         cause="remote endpoint $agent_state on its configured host"
@@ -922,7 +909,7 @@ secondmate_handoff_detect() {
 
 install_cmd() {
   case "$1" in
-    tmux|node|git|gh|curl|jq|python3) echo "brew install $1  # or the platform's package manager" ;;
+    node|git|gh|curl|jq|python3) echo "brew install $1  # or the platform's package manager" ;;
     treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
     gh-axi|chrome-devtools-axi|lavish-axi) echo "npm install -g $1 && $1 setup hooks" ;;
@@ -931,27 +918,14 @@ install_cmd() {
   esac
 }
 
-manual_install_url() {
-  case "$1" in
-    herdr) echo "https://herdr.dev" ;;
-    *) return 1 ;;
-  esac
-}
-
 missing_tool_diagnostic() {
-  local tool=$1 instructions
-  if instructions=$(manual_install_url "$tool"); then
-    echo "MISSING_MANUAL: $tool (instructions: $instructions)"
-    return 0
-  fi
-  echo "MISSING: $tool (install: $(install_cmd "$tool"))"
+  echo "MISSING: $1 (install: $(install_cmd "$1"))"
 }
 
-# Required-tool detection follows the RESOLVED backend, not a one-size default:
-# a universal toolchain every home needs plus the backend-specific delta owned by
-# fm_backend_required_tools (bin/fm-backend.sh). So a herdr/stream home is never
-# told tmux is missing. A backend value with
-# no verified dependency set is reported before the universal checks continue.
+# Required-tool detection: a universal toolchain every home needs plus the
+# backend-specific delta owned by fm_backend_required_tools (bin/fm-backend.sh).
+# A backend value with no verified dependency set (a leftover tmux or herdr
+# config/backend) is reported before the universal checks continue.
 COMMON_TOOLS="node git gh no-mistakes gh-axi chrome-devtools-axi tasks-axi quota-axi"
 BACKEND=$(fm_backend_name)
 BACKEND_VALID=1
@@ -1414,11 +1388,7 @@ if [ "${1:-}" = "install" ]; then
   shift
   [ $# -gt 0 ] || { echo "usage: fm-bootstrap.sh install <tool>..." >&2; exit 1; }
   for t in "$@"; do
-    if ! cmd=$(install_cmd "$t"); then
-      instructions=$(manual_install_url "$t") || { echo "error: unknown tool $t" >&2; exit 1; }
-      echo "error: $t requires manual installation (instructions: $instructions)" >&2
-      exit 1
-    fi
+    cmd=$(install_cmd "$t") || { echo "error: unknown tool $t" >&2; exit 1; }
     cmd=${cmd%%  #*}
     echo "installing $t: $cmd"
     eval "$cmd"

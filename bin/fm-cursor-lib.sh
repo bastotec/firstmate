@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Cursor executable resolution and Cursor process identity.
-# Sourced by bin/fm-agent-process-lib.sh and bin/fm-tmux-lib.sh for pane
-# liveness and composer reads only; Cursor is not a supported harness. This
-# file is sourced by scripts and has no side effects on source.
+# Sourced by bin/fm-agent-process-lib.sh, bin/fm-session-lock-lib.sh and
+# bin/fm-harness.sh for process identity only; Cursor is not a supported
+# harness. This file is sourced by scripts and has no side effects on source.
 #
 # Why one owner: cursor ships TWO executable names - `cursor-agent`, plus the
 # legacy alias `agent` it installs on every platform. `agent` is far too
@@ -210,8 +210,8 @@ fm_cursor_argv0_is_cursor() {  # <argv0>
 
 # True when the process described by command name $1 and structured argv0 $3 is
 # Cursor. The single owner of Cursor process identity for the ancestry walk
-# (bin/fm-session-lock-lib.sh), harness detection (bin/fm-harness.sh), pane
-# liveness (bin/backends/tmux.sh), and worker-server discovery (bin/fm-spawn.sh).
+# (bin/fm-session-lock-lib.sh), harness detection (bin/fm-harness.sh), endpoint
+# liveness (bin/fm-agent-process-lib.sh), and worker-server discovery (bin/fm-spawn.sh).
 #
 # Accepted: an exact cursor-agent command name; a MainThread or bare
 # interpreter whose structured argv[0] carries Cursor's install path; a legacy

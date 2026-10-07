@@ -5,14 +5,15 @@
 # is built from, and the bound that keeps one slow home from blocking the sweep.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 CASCADE="$ROOT/bin/fm-stow-cascade.sh"
 TMP_ROOT=$(fm_test_tmproot fm-stow-cascade)
 mkdir -p "$TMP_ROOT"
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd -P)
+fm_test_fake_stream_ensure || fail "the fake stream hub did not start"
 FAKEBIN=$(fm_fakebin "$TMP_ROOT/fakebin")
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 
@@ -50,23 +51,9 @@ esac
 SH
 chmod +x "$FAKEBIN/fake-ssh"
 
-# A tmux whose pane reports a running agent, so the local endpoint probe has a
-# real backend read to classify rather than a stubbed verdict.
-cat > "$FAKEBIN/tmux" <<'SH'
-#!/usr/bin/env bash
-set -u
-case "$*" in
-  *list-windows*) printf '%s\n' "${FM_FAKE_TMUX_WINDOW:-}" ;;
-  *list-panes*) printf '%s\n' "${FM_FAKE_TMUX_PANE:-}" ;;
-  *display-message*'#{pane_current_command}'*) printf '%s\n' "${FM_FAKE_TMUX_COMMAND:-fm-deck-worker}" ;;
-  *display-message*'#{pane_pid}'*) printf '%s\n' "$$" ;;
-  *display-message*'#{pane_id}'*) printf '%s\n' '%1' ;;
-  *display-message*'#{cursor_y}'*) printf '%s\n' 0 ;;
-  *capture-pane*) printf '❯\n' ;;
-esac
-exit 0
-SH
-chmod +x "$FAKEBIN/tmux"
+# A local mate's endpoint is a fake stream endpoint (tests/fixtures.sh), so the
+# local endpoint probe has a real backend read to classify rather than a
+# stubbed verdict.
 
 # new_home <name> [budget] -> path to a seeded local secondmate home.
 new_home() {
@@ -105,6 +92,8 @@ run_cascade() { # <primary-home> [env assignments...]
     TMPDIR="${TMPDIR:-/tmp}" \
     FM_HOME="$home" \
     FM_SSH_BIN="$FAKEBIN/fake-ssh" \
+    FM_STREAM_HUB="$FM_STREAM_HUB" FM_STREAM_TOKEN="$FM_STREAM_TOKEN" \
+    FM_STREAM_MACHINE="$FM_STREAM_MACHINE" FM_STREAM_IMPL="${FM_STREAM_IMPL:-python}" \
     "$@" \
     "$CASCADE"
 }
@@ -212,14 +201,14 @@ test_transport_routes_by_placement_and_liveness() {
     local_record idle-local "$idle"
     remote_record remote-live remote-mac "$TMP_ROOT/remote-root" "$remote"
   } > "$primary/data/secondmates.md"
-  fm_write_secondmate_meta "$primary/state/live-local.meta" "$live" 'firstmate:fm-live-local' alpha deck
-  fm_write_secondmate_meta "$primary/state/remote-live.meta" "$remote" 'fm-remote:fm-remote-live' alpha deck
+  fm_test_stream_secondmate_meta "$primary/state/live-local.meta" "$live" alpha deck
+  fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$primary/state" live-local)" deck
+  fm_write_secondmate_meta "$primary/state/remote-live.meta" "$remote" 'remote:remote-live' alpha deck
   printf 'role=secondmate\neffective_budget_tokens=7500\ntotal_estimated_tokens=100\nbudget_status=within-budget\n' \
     > "$TMP_ROOT/remote-budget.txt"
 
   set +e
   out=$(run_cascade "$primary" \
-    FM_FAKE_TMUX_WINDOW='fm-live-local' \
     FM_FAKE_REMOTE_BUDGET="$TMP_ROOT/remote-budget.txt" \
     FM_FAKE_REMOTE_AGENT_STATE=alive)
   set -e
@@ -239,7 +228,6 @@ test_transport_routes_by_placement_and_liveness() {
 
   set +e
   out=$(run_cascade "$primary" \
-    FM_FAKE_TMUX_WINDOW='fm-live-local' \
     FM_FAKE_REMOTE_BUDGET="$TMP_ROOT/remote-budget.txt" \
     FM_FAKE_REMOTE_AGENT_STATE=dead)
   set -e

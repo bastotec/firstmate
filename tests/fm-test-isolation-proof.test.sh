@@ -100,7 +100,7 @@ SH
   cat >"$repo/tests/fm-proof-skipped.test.sh" <<'SH'
 #!/usr/bin/env bash
 echo
-echo "skip: herdr not found"
+echo "skip: tasks-axi not found"
 SH
   chmod +x "$proof" "$repo/bin/fm-test-run.sh" "$repo/tests/fm-proof-"*.test.sh
   set +e
@@ -153,7 +153,7 @@ assert artifact["summary"]["failed"] == 0
   [ "$rc" -eq 1 ] || fail "gate-skipped family proof must fail, got $rc"
   grep -Fq 'pool skipped-family candidate gate-skipped' "$tmp/skipped.err" \
     || fail "gate-skipped proof did not name its pool: $(cat "$tmp/skipped.err")"
-  grep -Fq 'tests/fm-proof-skipped.test.sh: skip: herdr not found' "$tmp/skipped.err" \
+  grep -Fq 'tests/fm-proof-skipped.test.sh: skip: tasks-axi not found' "$tmp/skipped.err" \
     || fail "gate-skipped proof did not name its candidate and prerequisite: $(cat "$tmp/skipped.err")"
   python3 -c '
 import json, sys
@@ -268,10 +268,8 @@ test_candidates_exclude_serial_classes() {
   listed=$("$PROOF" --list)
   for banned in \
     tests/fm-test-isolation-proof.test.sh \
-    tests/fm-backend-tmux-smoke.test.sh \
     tests/fm-watcher-lock.test.sh \
     tests/fm-wake-queue.test.sh \
-    tests/fm-backend-herdr-smoke.test.sh \
     tests/fm-afk-inject-e2e.test.sh \
     tests/fm-pr-check-security.test.sh; do
     printf '%s\n' "$listed" | grep -Fxq "$banned" \
@@ -284,7 +282,6 @@ test_extra_hermetic_candidates_present() {
   local listed
   listed=$("$PROOF" --list)
   for want in \
-    tests/fm-backend-herdr.test.sh \
     tests/fm-send-strict.test.sh \
     tests/fm-spawn-batch.test.sh \
     tests/fm-pr-merge.test.sh \
@@ -302,8 +299,8 @@ test_list_exclusions_documents_reasons() {
   [ -n "$out" ] || fail "--list-exclusions printed nothing"
   printf '%s\n' "$out" | grep -Fq 'fm-watcher-lock.test.sh' \
     || fail "exclusions must document watcher-lock serial reason"
-  printf '%s\n' "$out" | grep -Fq 'fm-backend-herdr-smoke.test.sh' \
-    || fail "exclusions must document real-herdr serial reason"
+  printf '%s\n' "$out" | grep -Fq 'fm-afk-inject-e2e.test.sh' \
+    || fail "exclusions must document the AFK serial reason"
   pass "exclusion list documents serial reasons"
 }
 

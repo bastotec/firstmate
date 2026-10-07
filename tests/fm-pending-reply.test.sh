@@ -31,8 +31,8 @@
 #      once delivered, and its delivery-unknown decision still closes on resolve
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 # shellcheck source=bin/fm-marker-lib.sh
 . "$ROOT/bin/fm-marker-lib.sh"
 # shellcheck source=bin/fm-pending-reply-lib.sh
@@ -47,36 +47,11 @@ export FM_SEND_SETTLE=0
 
 # --- fixtures ---------------------------------------------------------------
 
+# Send targets are fake stream endpoints (tests/fixtures.sh) whose launch log
+# is the test's send log. A no-op sleep keeps the submit path fast.
 make_stubs() {  # <dir> -> fakebin
   local dir=$1 fb="$1/fakebin"
   mkdir -p "$fb"
-  cat > "$fb/tmux" <<'SH'
-#!/usr/bin/env bash
-set -u
-case "${1:-}" in
-  send-keys)
-    shift
-    literal=0
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -t) shift 2 ;;
-        -l) literal=1; shift ;;
-        *) break ;;
-      esac
-    done
-    if [ "$literal" = 1 ]; then
-      printf '%s' "${1:-}" >> "$FM_SEND_LOG"
-    fi
-    exit 0 ;;
-  display-message)
-    for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac; done
-    printf 'fakepane\n'; exit 0 ;;
-  capture-pane) printf '╭────╮\n│    │\n╰────╯\n'; exit 0 ;;
-  list-windows) exit 0 ;;
-esac
-exit 0
-SH
-  chmod +x "$fb/tmux"
   cat > "$fb/sleep" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -844,9 +819,9 @@ test_unmarked_captain_input_creates_no_expectation() {
   fb=$(make_stubs "$dir"); log="$dir/send.log"
   home=$(setup_parent unmarked)
   # Crewmate target stays unmarked and creates no pending-reply record.
-  fm_write_meta "$home/state/build.meta" \
-    "window=sess:fm-build" "worktree=$home/wt" "project=$home/p" \
-    "harness=echo" "kind=ship" "mode=no-mistakes" "yolo=off"
+  { fm_test_stream_task "$home/state" build "$log"
+    printf '%s\n' "worktree=$home/wt" "project=$home/p" \
+      "harness=echo" "kind=ship" "mode=no-mistakes" "yolo=off"; } > "$home/state/build.meta"
   run_send "$fb" "$home" "$log" "build" "captain says hello"; rc=$?
   expect_code 0 "$rc" "unmarked crewmate send should succeed"
   [ "$(latest_record_body "$home" build)" = "captain says hello" ] \
@@ -861,7 +836,7 @@ test_fm_send_marked_secondmate_creates_pending_and_embeds_corr() {
   dir="$TMP_ROOT/send-pending"; mkdir -p "$dir"
   fb=$(make_stubs "$dir"); log="$dir/send.log"
   home=$(setup_parent send-pending)
-  fm_write_secondmate_meta "$home/state/hibit.meta" "$home/sm" "sess:fm-hibit"
+  fm_test_stream_secondmate_meta "$home/state/hibit.meta" "$home/sm" alpha echo "$log"
   run_send "$fb" "$home" "$log" "hibit" "audit the build"; rc=$?
   expect_code 0 "$rc" "secondmate send should succeed"
   got=$(latest_record_body "$home" hibit)
@@ -924,7 +899,7 @@ test_busy_idle_observation_via_backend_abstraction() {
   corr=$(fm_pending_reply_create "$home" "$state" "hibit" "backend turn")
   fm_pending_reply_mark_delivered "$state" "$corr"
   # Simulates Pi/Claude secondmate busy_state from fm_backend_busy_state without
-  # reading conversation text (herdr native idle/busy or tmux unknown fallback).
+  # reading conversation text (a native idle/busy source, or the unknown capture fallback).
   fm_pending_reply_observe_busy "$state" "$corr" unknown
   [ -z "$(fm_pending_reply_get "$(fm_pending_reply_path "$state" "$corr")" request_turn_completed_epoch)" ] \
     || fail "unknown busy_state must not prove turn completion"
@@ -936,55 +911,53 @@ test_busy_idle_observation_via_backend_abstraction() {
 }
 
 test_unknown_backend_state_uses_capture_fallback() {
-  local backend
-  for backend in tmux stream; do
-    (
-      local home state corr rec sm_home
-      home=$(setup_parent "fallback-$backend")
-      state="$home/state"
-      sm_home="$home/sm"
-      mkdir -p "$sm_home/state"
-      export FM_PENDING_REPLY_GRACE_SECS=10
-      # These fixture overrides are intentionally scoped to the isolated subshell.
-      # shellcheck disable=SC2030,SC2031
-      export FM_PENDING_REPLY_NOW=10000
-      corr=$(fm_pending_reply_create "$home" "$state" "hibit" "$backend fallback")
-      fm_pending_reply_mark_delivered "$state" "$corr"
-      fm_write_secondmate_meta "$state/hibit.meta" "$sm_home" "session:fm-hibit" alpha deck
-      [ "$backend" = tmux ] || printf 'backend=%s\n' "$backend" >> "$state/hibit.meta"
-      # Deck renders no busy footer of its own, so this case supplies the
-      # delivery busy signature the capture fallback matches.
-      export FM_BUSY_REGEX='Working\.\.\.'
-      fm_backend_busy_state() { printf 'unknown'; }
-      fm_backend_capture() { printf '%s' "$FM_PENDING_TEST_CAPTURE"; }
-      # Invoked indirectly through FM_PENDING_REPLY_SEND_HOOK.
-      # shellcheck disable=SC2329
-      recovery_hook() { :; }
-      # This hook override is intentionally scoped to the isolated subshell.
-      # shellcheck disable=SC2030,SC2031
-      export FM_PENDING_REPLY_SEND_HOOK=recovery_hook
-      export FM_PENDING_TEST_CAPTURE='idle footer'
-      fm_pending_reply_tick "$state"
-      rec=$(fm_pending_reply_path "$state" "$corr")
-      [ -z "$(fm_pending_reply_get "$rec" request_turn_completed_epoch)" ] \
-        || fail "$backend fallback must not accept stale idle before grace"
-      # Continue advancing the subshell-local fixture clock.
-      # shellcheck disable=SC2030,SC2031
-      export FM_PENDING_REPLY_NOW=10010
-      fm_pending_reply_tick "$state"
-      [ "$(phase_of "$state" "$corr")" = recovery_sent ] \
-        || fail "$backend fallback idle should trigger recovery after grace"
-      export FM_PENDING_REPLY_NOW=10011
-      export FM_PENDING_TEST_CAPTURE='Working...'
-      fm_pending_reply_tick "$state"
-      export FM_PENDING_REPLY_NOW=10012
-      export FM_PENDING_TEST_CAPTURE='idle footer'
-      fm_pending_reply_tick "$state"
-      [ "$(phase_of "$state" "$corr")" = escalated ] \
-        || fail "$backend capture busy-to-idle should complete recovery turn"
-    ) || fail "$backend unknown-state capture fallback failed"
-  done
-  pass "tmux and stream unknown states use bounded capture fallback"
+  local backend=stream
+  (
+    local home state corr rec sm_home
+    home=$(setup_parent "fallback-$backend")
+    state="$home/state"
+    sm_home="$home/sm"
+    mkdir -p "$sm_home/state"
+    export FM_PENDING_REPLY_GRACE_SECS=10
+    # These fixture overrides are intentionally scoped to the isolated subshell.
+    # shellcheck disable=SC2030,SC2031
+    export FM_PENDING_REPLY_NOW=10000
+    corr=$(fm_pending_reply_create "$home" "$state" "hibit" "$backend fallback")
+    fm_pending_reply_mark_delivered "$state" "$corr"
+    fm_write_secondmate_meta "$state/hibit.meta" "$sm_home" "session:fm-hibit" alpha deck
+    printf 'backend=%s\n' "$backend" >> "$state/hibit.meta"
+    # Deck renders no busy footer of its own, so this case supplies the
+    # delivery busy signature the capture fallback matches.
+    export FM_BUSY_REGEX='Working\.\.\.'
+    fm_backend_busy_state() { printf 'unknown'; }
+    fm_backend_capture() { printf '%s' "$FM_PENDING_TEST_CAPTURE"; }
+    # Invoked indirectly through FM_PENDING_REPLY_SEND_HOOK.
+    # shellcheck disable=SC2329
+    recovery_hook() { :; }
+    # This hook override is intentionally scoped to the isolated subshell.
+    # shellcheck disable=SC2030,SC2031
+    export FM_PENDING_REPLY_SEND_HOOK=recovery_hook
+    export FM_PENDING_TEST_CAPTURE='idle footer'
+    fm_pending_reply_tick "$state"
+    rec=$(fm_pending_reply_path "$state" "$corr")
+    [ -z "$(fm_pending_reply_get "$rec" request_turn_completed_epoch)" ] \
+      || fail "$backend fallback must not accept stale idle before grace"
+    # Continue advancing the subshell-local fixture clock.
+    # shellcheck disable=SC2030,SC2031
+    export FM_PENDING_REPLY_NOW=10010
+    fm_pending_reply_tick "$state"
+    [ "$(phase_of "$state" "$corr")" = recovery_sent ] \
+      || fail "$backend fallback idle should trigger recovery after grace"
+    export FM_PENDING_REPLY_NOW=10011
+    export FM_PENDING_TEST_CAPTURE='Working...'
+    fm_pending_reply_tick "$state"
+    export FM_PENDING_REPLY_NOW=10012
+    export FM_PENDING_TEST_CAPTURE='idle footer'
+    fm_pending_reply_tick "$state"
+    [ "$(phase_of "$state" "$corr")" = escalated ] \
+      || fail "$backend capture busy-to-idle should complete recovery turn"
+  ) || fail "$backend unknown-state capture fallback failed"
+  pass "a stream unknown state uses the bounded capture fallback"
 }
 
 test_capture_fallback_uses_recorded_harness() (
@@ -999,15 +972,16 @@ test_capture_fallback_uses_recorded_harness() (
   corr=$(fm_pending_reply_create "$home" "$state" hibit "deck fallback")
   fm_pending_reply_mark_delivered "$state" "$corr"
   fm_write_secondmate_meta "$state/hibit.meta" "$sm_home" "session:fm-hibit" alpha deck
+  printf 'backend=stream\n' >> "$state/hibit.meta"
   fm_backend_busy_state() { printf 'unknown'; }
   fm_backend_capture() { printf '%s' "$FM_PENDING_HARNESS_CAPTURE"; }
   export FM_PENDING_HARNESS_CAPTURE='esc to interrupt'
 
-  [ "$(fm_pending_reply_backend_observation tmux session:fm-hibit fm-hibit deck)" = fallback-idle ] \
+  [ "$(fm_pending_reply_backend_observation stream session:fm-hibit fm-hibit deck)" = fallback-idle ] \
     || fail "another harness's busy token leaked into a deck observation"
-  [ "$(fm_pending_reply_backend_observation tmux session:fm-hibit fm-hibit pi)" = fallback-idle ] \
+  [ "$(fm_pending_reply_backend_observation stream session:fm-hibit fm-hibit pi)" = fallback-idle ] \
     || fail "a removed harness borrowed the unrecorded-harness busy union"
-  [ "$(fm_pending_reply_backend_observation tmux session:fm-hibit fm-hibit '')" = busy ] \
+  [ "$(fm_pending_reply_backend_observation stream session:fm-hibit fm-hibit '')" = busy ] \
     || fail "an unrecorded harness lost the busy union fallback"
   pass "pending replies scope capture fallback by recorded harness"
 )
@@ -1089,8 +1063,8 @@ test_correlations_reuse_only_for_matching_open_task() {
   fb=$(make_stubs "$dir"); log="$dir/send.log"
   home=$(setup_parent corr-reuse)
   state="$home/state"
-  fm_write_secondmate_meta "$state/domain.meta" "$home/domain" "sess:fm-domain"
-  fm_write_secondmate_meta "$state/other.meta" "$home/other" "sess:fm-other"
+  fm_test_stream_secondmate_meta "$state/domain.meta" "$home/domain" alpha echo "$log"
+  fm_test_stream_secondmate_meta "$state/other.meta" "$home/other" alpha echo "$log"
   run_send "$fb" "$home" "$log" domain "first request" || fail "first marked send failed"
   got=$(latest_record_body "$home" domain)
   corr1=$(fm_pending_reply_extract_corr "$got")
@@ -1180,8 +1154,8 @@ test_remote_repost_waits_for_the_reply_channel() {
   export FM_PENDING_REPLY_SEND_HOOK=remote_repost_hook
 
   fm_write_meta "$state/ios.meta" \
-    "window=fm-remote:w1:p1" "harness=deck" "kind=secondmate" "mode=secondmate" \
-    "remote_host=remote-mac" "remote_root=/remote/root" "remote_backend=herdr"
+    "window=127.0.0.1-9:0123456789abcdef0123456789abcdef" "harness=deck" "kind=secondmate" "mode=secondmate" \
+    "remote_host=remote-mac" "remote_root=/remote/root" "remote_backend=stream"
   corr=$(fm_pending_reply_create "$home" "$state" "ios" "status of the iOS build")
   fm_pending_reply_mark_delivered "$state" "$corr"
   fm_pending_reply_observe_busy "$state" "$corr" busy
@@ -1238,8 +1212,8 @@ test_mirrored_remote_reply_never_triggers_a_repost() {
   export FM_PENDING_REPLY_SEND_HOOK=mirrored_reply_hook
 
   fm_write_meta "$state/ios.meta" \
-    "window=fm-remote:w1:p1" "harness=deck" "kind=secondmate" "mode=secondmate" \
-    "remote_host=remote-mac" "remote_root=/remote/root" "remote_backend=herdr"
+    "window=127.0.0.1-9:0123456789abcdef0123456789abcdef" "harness=deck" "kind=secondmate" "mode=secondmate" \
+    "remote_host=remote-mac" "remote_root=/remote/root" "remote_backend=stream"
   corr=$(fm_pending_reply_create "$home" "$state" "ios" "did the build go green")
   fm_pending_reply_mark_delivered "$state" "$corr"
   fm_pending_reply_mark_turn_completed "$state" "$corr" request

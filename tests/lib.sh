@@ -532,10 +532,9 @@ SH
 # ancestry proves nothing. A case that must not inherit the harness the SUITE was
 # launched from (a Deck session running the tests) needs this; without it, that
 # ancestry decides the verdict.
-# Every other ps query reaches the real ps untouched, and the pid-first form is
-# deliberately among them: bin/fm-tmux-lib.sh and bin/backends/tmux.sh read pane and
-# cursor identity with `ps -p <pid> -o args=`, so intercepting that shape too would make
-# a pane assertion under a PATH-wide blind read `bash` and reject every cursor pane.
+# Every other ps query reaches the real ps untouched, including the pid-first form
+# `ps -p <pid> -o args=`, so process-identity reads outside the ancestry walk still
+# see the real process.
 fm_fake_blind_ancestry() {
   local fakebin=$1 real_ps
   real_ps=$(command -v ps) || return 1

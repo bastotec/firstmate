@@ -9,8 +9,8 @@
       "git": { "repo": "/absolute/path/to/agents-on-the-go", "remote": "origin", "branch": "mainline" }
     },
     {
-      "name": "herdr",
-      "command": "herdr",
+      "name": "deck",
+      "command": "deck",
       "version_args": ["--version"]
     },
     {

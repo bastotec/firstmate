@@ -69,67 +69,44 @@ A home whose `FM_HOME` is elsewhere is never pointed at the code root's data fil
 
 ## Runtime backend (config/backend / FM_BACKEND)
 
-For spawn-capable adapters, the runtime session-provider backend controls where task windows/endpoints are created, captured, sent to, watched, and killed.
-This section is the authoritative source for the accepted backend list, for each backend's spawn capability, for auto-detected versus explicit-only selection, for secondmate support, for which backends are session providers only versus which own their own worktree lifecycle, and for which guide owns its details; where any other document disagrees on one of those axes, this one is correct.
-[`architecture.md`](architecture.md#runtime-session-backends) owns the runtime-internal axes instead: which backends expose a native busy primitive and which have verified agent-process classifiers.
-`tmux` is the verified reference backend (see [`docs/tmux-backend.md`](tmux-backend.md)); `herdr` has its own required CI lane (see [`docs/herdr-backend.md`](herdr-backend.md)).
-`stream` remains experimental; [`docs/stream-backend.md`](stream-backend.md#rust-pty-agent) owns its native adapter CI coverage and installed-harness verification limits.
-Treehouse remains the worktree provider for tmux, herdr, and stream, since all three are session providers only.
-New local spawns choose the backend in this order: an explicit `--backend` flag that current authority for that exact task alone has authorized (a present captain instruction or the task's own accepted brief; never later-task precedent by analogy), then `FM_BACKEND`, then the first non-empty line of local gitignored `config/backend`, then runtime auto-detection from `$TMUX` or `HERDR_ENV=1`, then default `tmux`.
-If both runtime markers are present, detection resolves innermost-first: `$TMUX` is checked before `HERDR_ENV=1`.
-Auto-detected herdr prints a stderr notice naming `config/backend` and `--backend tmux` as opt-outs; auto-detected tmux stays silent to preserve existing default behavior.
-Stream is never auto-detected; select it by putting the name in a local `config/backend` file, by exporting `FM_BACKEND=<name>`, or by telling the first mate in chat.
-Any value other than `tmux`, `herdr`, or `stream` is rejected, including in existing task metadata; the former `zellij`, `orca`, and `cmux` adapters were removed without automatic migration.
-`fm-spawn.sh` accepts all three for local ship, scout, and `--secondmate` tasks; [remote placement](remote-secondmates.md#normal-operation) owns the remote secondmate exception to backend choices and selection precedence.
-The session-start secondmate liveness sweep uses the recovery-grade `fm_backend_agent_state` classifier where verified.
-The comment above that function in `bin/fm-backend.sh` is the single owner of its detailed state contract and recovery authorization.
-The compatibility helper `fm_backend_agent_alive` continues to collapse those detailed results to `alive`, `dead`, or `unknown` for older callers.
-A herdr spawn additionally version-gates against the installed `herdr` binary's protocol and requires `jq`, refusing loudly on an incompatible or missing installation.
-For stream spawn prerequisites and refusal behavior, see [`docs/stream-backend.md`](stream-backend.md#prerequisites).
-A backend spawn refusal from a missing dependency or version gate is terminal for that selected backend; firstmate surfaces it as a blocker instead of silently retrying another backend.
-Every spawn records `backend=<name>` in task meta, `tmux` included.
-An absent `backend=` still reads as `tmux` for older records.
-[`bin/fm-meta-backfill.sh`](../bin/fm-meta-backfill.sh) makes those legacy records explicit; its header and help own usage, classification refusals, and remote-record exclusions.
-Every new task records `endpoint_task_id=` as the cleanup binding between the metadata filename and its opaque runtime endpoint.
-A herdr task additionally records `herdr_session=`, `herdr_workspace_id=`, `herdr_tab_id=`, and `herdr_pane_id=`.
-A stream task additionally records `stream_hub=` and `stream_endpoint_id=`.
+Every task endpoint lives on the stream backend: one hub serves the whole fleet, and each task's pseudoterminal is owned by an agent on the machine that runs it.
+This home's hub URL and token come from `config/stream-hub` and `config/stream-token` (or `config/stream-hub-tokens` when the fleet separates publishing from control); [`docs/stream-backend.md`](stream-backend.md) owns setup, prerequisites, the security model, and limits.
+[`architecture.md`](architecture.md#runtime-session-backends) owns the runtime-internal axes.
+Treehouse remains the worktree provider, since stream is a session provider only.
+New local spawns select an explicitly authorized per-task `--backend` first, then `FM_BACKEND`, then the first non-empty line of `config/backend`, then `stream`.
+A per-task override requires a current captain instruction or the task's accepted brief and never establishes precedent for later tasks.
+Any selection other than `stream` is refused; `tmux` and `herdr` refusals point to stream.
+Existing `tmux` and `herdr` metadata remains readable only for reconciliation and retirement, not dispatch: the recovery classifier reports `unverified`, kill is unconfirmed, and relaunch is refused.
+[Endpoint retirement](stream-backend.md#retiring-a-record-no-backend-can-answer-for) owns the operator assertion required to retire these records.
+The earlier `zellij`, `orca`, and `cmux` adapters remain unsupported.
+`fm-spawn.sh` spawns local ship, scout, and `--secondmate` tasks on stream; [remote placement](remote-secondmates.md#normal-operation) owns remote secondmates.
+The session-start secondmate liveness sweep uses the recovery-grade `fm_backend_agent_state` classifier; the comment above that function in `bin/fm-backend.sh` owns its state contract and recovery authorization.
+A backend spawn refusal from a missing dependency, version gate, or unreachable hub is terminal; firstmate surfaces it as a blocker.
+Every spawn records `backend=stream`, `endpoint_task_id=` (the cleanup binding between the metadata filename and the opaque endpoint), `stream_hub=`, and `stream_endpoint_id=` in task meta.
+An absent `backend=` reads as the retired `tmux` for records that predate the field.
 The [`fm-remote-control-lib.sh` header](../bin/fm-remote-control-lib.sh) owns a remote secondmate's parent-record endpoint binding; [remote placement](remote-secondmates.md#stream-on-the-remote-host) owns its operator setup.
-Use the [control plane's backend migration](agent-control.md#verbs) to move an existing task; changing `config/backend` does not move a running endpoint.
 Ordinary task selectors for `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh` use the shared backend selector vocabulary.
-A selector containing `:` is passed through as an explicit backend endpoint escape hatch.
+A selector containing `:` is passed through as an explicit `<hub-tag>:<endpoint-id>` escape hatch.
 Otherwise an exact task id matching `state/<id>.meta` wins before the legacy `fm-<id>` label fallback, so task ids that themselves start with `fm-` route to their own metadata instead of being stripped.
 A metadata-routed selector returns the recorded backend target (`window=`), and matching explicit targets can still recover the recorded backend when metadata contains the same endpoint.
 Only metadata-routed task selectors carry secondmate-marker and recorded-harness context; explicit endpoint escape hatches do not.
-This paragraph is the single owner of the ordinary task-selector vocabulary; backend guides and other documents point here instead of restating the resolution order.
-For explicit targets no metadata names, [`fm-send.sh`'s header](../bin/fm-send.sh) owns backend inference and live-endpoint verification, including stream-shaped targets on this home's configured hub.
+This paragraph is the single owner of the ordinary task-selector vocabulary; other documents point here instead of restating the resolution order.
+For explicit targets no metadata names, [`fm-send.sh`'s header](../bin/fm-send.sh) owns live-endpoint verification on this home's configured hub.
 Host decision answers instead use the constrained mode owned by [`bin/fm-send.sh`'s header](../bin/fm-send.sh).
 `fm-teardown.sh <id>` takes a task id directly and validates the complete metadata-only endpoint identity before any runtime dispatch or cleanup mutation.
 Missing, empty, duplicate, malformed, backend-inconsistent, or task-mismatched endpoint records are preserved and refused.
-Legacy tmux metadata remains cleanup-compatible when its exact window name is `fm-<id>`; opaque non-tmux endpoints require their recorded `endpoint_task_id=` binding.
-`FM_HOME` determines Herdr's home label: the primary home uses `firstmate`, and a secondmate home marked by `.fm-secondmate-home` uses `2ndmate-<secondmate-id>`.
-[`herdr-backend.md`](herdr-backend.md#watching-and-task-containers) owns launcher-bound workspace placement, the label-only fallback, collision handling, and recovery behavior.
-The local `config/herdr-presentation-spaces` file instead opts a home out of, or explicitly in to, Herdr's default-on disposable single-task visual projection; [Presentation spaces](herdr-backend.md#presentation-spaces) owns its accepted values, default, Herdr version floor, migration, behavior, safety limits, recovery contract, and narrow locked session-start cleanup of exact restored idle-shell children.
-The setting is inherited into secondmate homes under the primary-authoritative contract owned by [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md).
-For normal herdr operations, `HERDR_SESSION` selects the named session, but destructive test cleanup must not rely on `HERDR_SESSION` alone.
-Use the explicit guarded cleanup path described in [`docs/herdr-backend.md`](herdr-backend.md) instead of `herdr server stop`.
-Stream has no session layer: one hub serves the whole fleet, each task's pseudoterminal is owned by an agent on the machine that runs it, and this home's hub URL and token come from `config/stream-hub` and `config/stream-token` (or `config/stream-hub-tokens` when the fleet separates publishing from viewing credentials), never committed.
-[`docs/stream-backend.md`](stream-backend.md) owns its setup, security model, and limits.
+Retired tmux records still require the exact `fm-<id>` window shape; retired Herdr records still require their task binding and consistent session, workspace, tab, and pane fields, so retirement cannot target a mismatched record.
 `config/backend` is inherited into secondmate homes under the primary-authoritative contract owned by [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md).
 
 ## Away-mode supervisor backend (FM_SUPERVISOR_BACKEND / FM_SUPERVISOR_TARGET)
 
-The `/afk` sub-supervisor delivers escalation digests to firstmate independently of where new task endpoints are spawned.
-It supports `tmux`, `herdr`, and `stream` supervisors.
-Set `FM_SUPERVISOR_BACKEND=tmux|herdr|stream` and `FM_SUPERVISOR_TARGET=<target>` to override both axes explicitly; for herdr the target is `"<session>:<pane-id>"`, for stream `"<hub-tag>:<endpoint-id>"`.
-Without overrides, backend detection uses, in order: `FM_STREAM_ENDPOINT_ID` with `FM_STREAM_HUB` (set by the stream agent for the process it hosts), a live deck-chat primary reported by `bin/fm-primary-steer.sh status`, `$TMUX_PANE`, then `HERDR_ENV=1` with `HERDR_PANE_ID`, then falls back to `tmux`.
-The stream signals come first because a stream-hosted process also inherits its launcher's `$TMUX_PANE`, and while a deck-chat primary owns the home the caller's own pane is never the primary.
-A tmux pane nested inside herdr stays on the tmux transport, matching the runtime backend's innermost-first rule.
-Target detection follows the same order: `FM_SUPERVISOR_TARGET`, the stream endpoint from the environment, the record's `endpoint` (or `-` when it has none), `$TMUX_PANE`, `"${HERDR_SESSION:-default}:${HERDR_PANE_ID}"` under herdr, then the legacy `firstmate:0` tmux fallback with a warning.
-With an explicit `FM_SUPERVISOR_BACKEND=stream` and no explicit target, only the stream signals are considered; when neither supplies a target, it resolves to `-` so delivery can use steering alone.
+The `/afk` sub-supervisor delivers escalation digests to the primary, a deck-chat host (`bin/fm-deck-chat.sh`), over the stream backend.
+`FM_SUPERVISOR_BACKEND` may only name `stream`; any other value refuses at daemon startup.
+`FM_SUPERVISOR_TARGET=<hub-tag>:<endpoint-id>` overrides the primary's endpoint.
+Without it, the target is the stream endpoint this process runs in (`FM_STREAM_ENDPOINT_ID` with `FM_STREAM_HUB`, set by the stream agent for the process it hosts), else the live deck-chat record's `endpoint` reported by `bin/fm-primary-steer.sh status`, else `-`, so delivery can use steering alone.
 Both discovery sources are logged at startup so a wrong-but-resolving fallback is detectable.
-Selecting any other supervisor backend refuses at daemon startup instead of trying tmux injection primitives against a non-tmux pane.
 
-On `stream`, a digest goes to the deck-chat primary through `bin/fm-primary-steer.sh publish --kind away` (override the client with `FM_PRIMARY_STEER_BIN`), keeping the typed operational-input prefix so the primary reads it as internal.
+A digest goes to the deck-chat primary through `bin/fm-primary-steer.sh publish --kind away` (override the client with `FM_PRIMARY_STEER_BIN`), keeping the typed operational-input prefix so the primary reads it as internal.
 `fm-primary-steer.sh status` is the busy guard: anything but `idle` defers.
 Submit proof is `fm-primary-steer.sh delivered <seq>` within the usual `FM_INJECT_CONFIRM_RETRIES` x `FM_INJECT_CONFIRM_SLEEP` budget.
 An unacknowledged digest stays buffered and its pending sequence is re-checked only against the publishing session; a changed or unreadable session drops the binding and retains the buffer for republication.
@@ -137,21 +114,14 @@ A growing digest waits for the earlier sequence to settle before publishing the 
 [`inject_msg_stream` in `bin/fm-supervise-daemon.sh`](../bin/fm-supervise-daemon.sh) owns the pending-record format and retry mechanics.
 The steer body is capped at 60,000 UTF-8 bytes after operational encoding, retaining the operational prefix and complete events that fit, and reporting the omitted count and evidence path; before a truncated digest is published, the full buffer is appended to `state/.subsuper-escalations.overflow`.
 That evidence survives buffer clearing and fresh entry; the cap does not apply to typed-pane delivery.
-Max-defer and the wedge alarm fire as they do for a pane.
+Max-defer and the wedge alarm fire as they do for typed delivery.
 When the steer client reports no deck-chat primary (exit 3), the digest is typed into the recorded stream endpoint through the stream adapter, with the same composer guard and submit proof as `fm-send.sh`.
 `bin/fm-afk-launch.sh start` runs the daemon for a stream primary as a detached process in its own session, with output in `state/.afk-daemon.out`; a recorded process whose identity no longer matches is never signalled.
 [`bin/fm-afk-launch.sh`'s header](../bin/fm-afk-launch.sh) owns the launch-record schema and process-identity mechanics.
 
 ## Away-mode wedge alarm channels (config/wedge-alarm)
 
-When away-mode injection wedges past `FM_MAX_DEFER_SECS`, the sub-supervisor raises a loud, rate-limited alarm.
-Beyond the durable `state/.subsuper-inject-wedged` marker and the tmux status-line flash, it attempts a configured backend-independent active alert that can reach the captain even when every pane and its backend status-line is unreadable.
-`config/wedge-alarm` (local, gitignored) lists channel directives, one per non-empty, non-comment line; every listed non-`off` channel fires, best-effort.
-`FM_WEDGE_ALARM_CHANNEL` overrides the file with a single directive.
-Directives are `off` (a position-independent kill switch that disables every active alert), `auto`/`default`, `osascript` (macOS Notification Center banner), `herdr` (herdr UI notification), and `command:<cmd>` (run `<cmd>` via `sh -c`, summary on `$1` and stdin).
-An absent file means `auto`, i.e. default-on on macOS: the alarm exists precisely so a wedged away-mode primary is never silent, and it fires at most once per max-defer window after a genuine wedge.
-A missing or failing channel logs and falls through to the next, never crashing the daemon.
-See [`wedge-alarm.md`](wedge-alarm.md) for the current channel reference, [`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) for active evidence, and [`examples/wedge-alarm`](examples/wedge-alarm) for a copyable config.
+[`wedge-alarm.md`](wedge-alarm.md) owns `config/wedge-alarm` directives, defaults, overrides, delivery bounds, and safety; [`examples/wedge-alarm`](examples/wedge-alarm) is a copyable config.
 
 ## Trace context propagation (config/trace-context / FM_TRACE_CONTEXT)
 
@@ -210,7 +180,7 @@ The [`firstmate-coding-guidelines` skill](../.agents/skills/firstmate-coding-gui
 `commands.test`, `test.skip`, and `test.instructions` decide what the gate runs, so no-mistakes honors them only from the default-branch copy of `.no-mistakes.yaml`; a pushed branch cannot change its own validation rules.
 A PR that first enables `test.skip` still runs the Test step until that setting lands on the default branch.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the firstmate-specific local test policy and entry points.
-Portable shard evidence and coverage rules are in [fm-test-portable-shards.md](fm-test-portable-shards.md); [herdr-backend.md](herdr-backend.md#destructive-lab-safety) owns the real-Herdr lane's isolation boundary, and [runtime-backends.md](verification/runtime-backends.md#herdr) owns active evidence.
+Portable shard evidence and coverage rules are in [fm-test-portable-shards.md](fm-test-portable-shards.md).
 
 ## Captain Preferences (data/captain.md / data/captain-shared.md)
 
@@ -289,7 +259,6 @@ Before `fm-brief.sh`, `fm-spawn.sh`, or `fm-afk-launch.sh` persists a path or pa
 `fm-spawn.sh` additionally rejects control bytes in those raw directory inputs before shell or filesystem normalization can change which path the backlog gate checks.
 Lifecycle access to a backlog, task record, or pending-close record must resolve within its configured data or state root, and a final-component symlink is refused even when its target remains within that root.
 Bootstrap applies the same relative `FM_HOME` resolution only when embedding that home in the generated Relay poll shim; other transient consumers retain their existing shell-relative behavior.
-For the herdr backend, `FM_HOME` also determines the workspace label used by the adapter.
 
 ## Harness support
 
@@ -427,10 +396,9 @@ The essential universal toolchain is node, git, gh with GitHub auth via `gh auth
 This section is the single owner of that universal toolchain list; backend guides' prerequisites point here and add only their backend-specific tools.
 In that list, no-mistakes runs the validation pipeline, gh-axi and chrome-devtools-axi cover GitHub and browser operations, and tasks-axi plus quota-axi back backlog mutations and quota-aware array dispatch.
 Lavish is a presentation-only dependency for visual decisions and reports; nonvisual work can proceed with plain text when it is unavailable.
-The per-backend delta is required only for the backend resolved from `FM_BACKEND`, then `config/backend`, then runtime auto-detection, then default `tmux`, so a home is never told to install a tool an inactive backend or feature would need.
-That delta is owned in code by `fm_backend_required_tools` in `bin/fm-backend.sh`, whose comment states each backend's exact set and why: the backend's own client tooling - a session-provider CLI, or `python3` and `curl` for stream, whose session host is the fleet's hub over HTTP - plus `jq` for the adapters that parse JSON and the `treehouse` worktree provider for every session-provider-only backend.
-An unknown resolved backend emits `BACKEND_INVALID` and blocks dispatch instead of silently dropping its dependency delta or falling back to tmux.
-A herdr or stream home is therefore never told `tmux` is missing.
+The backend delta is required for the backend resolved from `FM_BACKEND`, then `config/backend`, then stream.
+That delta is owned in code by `fm_backend_required_tools` in `bin/fm-backend.sh`, whose comment states the exact set and why: `python3` and `curl` (the hub is reached over HTTP), `jq`, and the `treehouse` worktree provider.
+Any other resolved backend, including a leftover `tmux` or `herdr` setting, emits `BACKEND_INVALID` and blocks dispatch.
 When `config/crew-dispatch.json` exists, bootstrap also requires `jq` for dispatch profile validation.
 When Relay is opted in, bootstrap also requires `curl` and `jq` before arming the relay poll shim.
 `tasks-axi` and `quota-axi` are essential bootstrap tools in every profile.
@@ -983,7 +951,7 @@ The model-backed subcommands of `bin/fm-inbox.sh` reach a paid API in a named ac
 Each is one line in a local, gitignored `config/` file, with an environment variable that overrides it for a single run, and a missing required value refuses with the path to write rather than falling back to a value that belongs to another home.
 That configuration is the whole opt-in: an unconfigured home cannot run `fm-inbox.sh say` or `ask`, while `note`, `status`, `list` and `drain` need no configuration at all because they make no model call.
 Ziggy's firstmate agent (`agents/firstmate/fm_a2a_server.py` in the Ziggy repository) reads this home's records through `bin/fm_voice_records.py` and hands work over through `note`, so it keeps working in a home that has configured nothing.
-In a live session using the polling fallback, a captain note due for delivery cuts short the idle wait and normally reaches the session within a few seconds instead of after the full `FM_POLL`; Herdr's native event wait is unchanged.
+In a live session using the polling fallback, a captain note due for delivery cuts short the idle wait and normally reaches the session within a few seconds instead of after the full `FM_POLL`.
 A note stays unread until `fm-inbox.sh drain --ack <id>` moves it to `state/inbox/handled/`, and `fm-wake-drain.sh --ack-through` never consumes the `inbox:<id>` wake row of an unread note: it keeps the row, says so on its last line, and marks it so the next watcher cycle surfaces the note again.
 An unread note is also surfaced again every `FM_INBOX_RESURFACE_SECS` (default 300), at most `FM_INBOX_RESURFACE_MAX` (default 3) more times.
 Once a note has been unread for `FM_INBOX_OVERDUE_SECS` (default 600), `bin/fm-guard.sh` prints a `CAPTAIN INBOX NOT READ` banner on every guarded command and drain, and every later `fm-inbox.sh note` prints a `delivery: degraded` line that `bin/fm_voice_records.py` passes on as `delivery_warning`.
@@ -1015,9 +983,6 @@ FM_PROC_ROOT_OVERRIDE=   # alternate /proc root for Linux process-identity reads
 FM_BACKEND=             # optional runtime backend override for new spawns; see "Runtime backend" for the accepted values and their status
 FM_TRACE_CONTEXT=       # optional trace-context override; see "Trace context propagation"
 FM_TASK_ID=             # internal task-worker marker fm-spawn.sh exports into ship and scout panes, never set by hand; bin/fm-test-run.sh refuses to execute in the repository primary checkout while it is set
-HERDR_SESSION=default  # herdr-only: named session for normal backend ops; not enough for destructive cleanup (docs/herdr-backend.md)
-FM_BACKEND_HERDR_SUBMIT_POLLS=6  # herdr-only: agent-state samples spread across each Enter attempt's budget when confirming a submit (docs/herdr-backend.md "Current transport behavior")
-FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0.6  # herdr-only: minimum per-Enter confirmation budget before polling agent-state after an idle baseline
 FM_STREAM_HUB=          # stream-only: the fleet hub's base URL, checked before config/stream-hub (docs/stream-backend.md)
 FM_STREAM_TOKEN=        # stream-only: this home's hub client token, checked before config/stream-token; never committed
 FM_STREAM_MACHINE=      # stream-only: the name this home's endpoints are grouped under in the central view, checked before config/stream-machine; defaults to the hostname
@@ -1127,7 +1092,7 @@ FM_FLEET_SYNC_PACKED_REFS_LOCK_RETRY_WAIT_SECS=1 # seconds fm-fleet-sync.sh wait
 FM_FLEET_SYNC_PACKED_REFS_LOCK_AGE_SECS=30       # min mtime age before fm-fleet-sync.sh treats a leftover packed-refs.lock as provably stale
 FM_BUSY_REGEX=          # optional override for rendered delivery guards; converted worker state ignores it
 FM_COMPOSER_IDLE_RE=    # optional fleet-wide idle-placeholder regex override (bin/fm-composer-lib.sh); a match alone does not prove emptiness because shape-specific position and ANSI de-emphasis safety gates still apply
-FM_COMPOSER_CAPTURE_LINES=20   # fleet-wide bound for tail-capture composer reads; tmux instead supplies its bounded visible pane, while the other adapters use this small window so stale scrollback banners stay out of the candidate set
+FM_COMPOSER_CAPTURE_LINES=20   # fleet-wide bound for tail-capture composer reads; this small window keeps stale scrollback banners out of the candidate set
 FM_COMPOSER_PI_MAX_LINES=8     # fleet-wide: maximum rows admitted between a retained identity-corroborated separator pair; taller or ambiguous candidates stay unknown
 FM_COMPOSER_GHOST_LUMA_MAX=128   # fleet-wide: max perceived luminance (0.299R+0.587G+0.114B, 0-255) for a TRUECOLOR foreground to count as de-emphasised ghost/placeholder text and be stripped; dim/faint (SGR 2) is stripped regardless. Assumes a dark terminal theme (bin/fm-composer-lib.sh's fm_composer_strip_ghost)
 FM_SEND_RETRIES=3       # fm-send typed-plane Enter-retry attempts after typing the line once
@@ -1143,9 +1108,9 @@ FM_PRIMARY_STEER_BIN=              # optional steer client override; see bin/fm-
 FM_INJECT_SKIP=heartbeat           # |-prefixes force-self-handled bypassing classification; empty disables
 FM_ESCALATE_BATCH_SECS=90          # buffer window for batched escalation digests; 0 = flush immediately
 FM_MAX_DEFER_SECS=300              # max buffered escalation age before retry plus wedge alarm; 0 disables
-FM_WEDGE_ALARM_CHANNEL=            # override config/wedge-alarm with one active-alert directive for the wedge alarm; off|auto|osascript|herdr|command:<cmd>; absent = auto (macOS -> an OS notification)
-FM_WEDGE_ALARM_EXEC=              # notifier seam: route every channel (osascript, herdr, command:) through this command as `<cmd> <channel> <summary>`; "discard" fires nothing; unset in production; the daemon defaults it to "discard" when sourced so no test posts a real notification (docs/wedge-alarm.md)
-FM_WEDGE_ALARM_TIMEOUT_SECS=10    # maximum seconds for each osascript, herdr, override, or command: notifier before its watchdog terminates it and continues to the next channel; invalid or zero values use 10
+FM_WEDGE_ALARM_CHANNEL=            # override config/wedge-alarm with one active-alert directive for the wedge alarm; off|auto|osascript|command:<cmd>; absent = auto (macOS -> an OS notification)
+FM_WEDGE_ALARM_EXEC=              # notifier seam: route every channel (osascript, command:) through this command as `<cmd> <channel> <summary>`; "discard" fires nothing; unset in production; the daemon defaults it to "discard" when sourced so no test posts a real notification (docs/wedge-alarm.md)
+FM_WEDGE_ALARM_TIMEOUT_SECS=10    # maximum seconds for each osascript, override, or command: notifier before its watchdog terminates it and continues to the next channel; invalid or zero values use 10
 FM_INJECT_FAIL_SLEEP=30            # seconds to back off when the supervisor pane is unavailable
 FM_INJECT_CONFIRM_RETRIES=3        # daemon Enter-retry attempts after typing a digest once
 FM_INJECT_CONFIRM_SLEEP=0.5        # seconds between daemon submit checks

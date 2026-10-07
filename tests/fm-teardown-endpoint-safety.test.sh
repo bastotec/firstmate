@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Regression tests for cleanup endpoint and worktree-slot identity validation.
+# fm_test_stream_task prints a task record identity one field per word,
+# so its unquoted expansion in fm_write_meta argument lists is deliberate.
+# shellcheck disable=SC2046
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
 TMP_ROOT=$(fm_test_tmproot fm-teardown-endpoint-safety)
-REAL_TMUX=$(command -v tmux || true)
 
 make_case() {  # <name>
   local dir=$1
@@ -17,13 +19,6 @@ make_case() {  # <name>
   git init -q "$TMP_ROOT/$dir/project"
   : > "$TMP_ROOT/$dir/worktree/sentinel"
   : > "$TMP_ROOT/$dir/runtime.log"
-  cat > "$TMP_ROOT/$dir/fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-printf 'tmux' >> "${FM_RUNTIME_LOG:?}"
-printf ' <%s>' "$@" >> "${FM_RUNTIME_LOG:?}"
-printf '\n' >> "${FM_RUNTIME_LOG:?}"
-exit 0
-SH
   cat > "$TMP_ROOT/$dir/fakebin/treehouse" <<'SH'
 #!/usr/bin/env bash
 printf 'treehouse' >> "${FM_RUNTIME_LOG:?}"
@@ -31,7 +26,7 @@ printf ' <%s>' "$@" >> "${FM_RUNTIME_LOG:?}"
 printf '\n' >> "${FM_RUNTIME_LOG:?}"
 exit 0
 SH
-  chmod +x "$TMP_ROOT/$dir/fakebin/tmux" "$TMP_ROOT/$dir/fakebin/treehouse"
+  chmod +x "$TMP_ROOT/$dir/fakebin/treehouse"
   printf '%s\n' "$TMP_ROOT/$dir"
 }
 
@@ -116,7 +111,7 @@ test_control_lock_contention_refuses_before_mutation() {
   local dir id=locked-task lock holder i=0 rc
   dir=$(make_case control-lock)
   fm_write_meta "$dir/home/state/$id.meta" \
-    "window=isolated:fm-$id" "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
     "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
   lock="$dir/home/state/.control-$id.lock"
   (
@@ -160,7 +155,7 @@ test_non_pool_teardown_ignores_task_set_lock() {
   local dir id=non-pool-task lock ready holder i=0
   dir=$(make_case non-pool-task-set-lock)
   fm_write_meta "$dir/home/state/$id.meta" \
-    "window=isolated:fm-$id" "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
     "worktree=$dir/missing-worktree" "project=$dir/project" "kind=scout"
   lock="$dir/home/state/.task-set.lock"
   ready="$dir/task-set-lock-ready"
@@ -196,7 +191,7 @@ test_metadata_lock_serializes_destructive_cleanup() {
   local dir id=metadata-locked-task lock ready release holder teardown_pid i=0 rc
   dir=$(make_case metadata-lock)
   fm_write_meta "$dir/home/state/$id.meta" \
-    "window=isolated:fm-$id" "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
     "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
   lock="$dir/home/state/.meta-$id.lock"
   ready="$dir/meta-lock-ready"
@@ -286,20 +281,6 @@ test_supported_backend_endpoint_records_validate() {
   pass "cleanup identity: valid tmux and Herdr records validate, a removed backend refuses, and every empty backend target refuses"
 }
 
-test_tmux_empty_target_refuses_without_invocation() {
-  local dir rc
-  dir=$(make_case direct-empty)
-  set +e
-  FM_RUNTIME_LOG="$dir/runtime.log" PATH="$dir/fakebin:$PATH" \
-    bash -c '. "$1/bin/fm-backend.sh"; fm_backend_source tmux; fm_backend_tmux_kill ""' _ "$ROOT" \
-    > "$dir/stdout" 2> "$dir/stderr"
-  rc=$?
-  set -e
-  [ "$rc" -ne 0 ] || fail "direct empty tmux target unexpectedly succeeded"
-  [ ! -s "$dir/runtime.log" ] || fail "direct empty tmux target invoked tmux"
-  pass "tmux backend: direct empty target returns nonzero without invoking tmux"
-}
-
 test_recorded_process_identity_cleanup_is_exact() {
   local dir target_pid control_pid target_record control_record live_command
   dir=$(make_case recorded-process)
@@ -324,160 +305,85 @@ test_recorded_process_identity_cleanup_is_exact() {
   pass "process cleanup: creation-time PID identity removes only the exact child and preserves the control child"
 }
 
-isolated_tmux_window_exists() {  # <dir> <socket> <session> <window>
-  ( cd "$1" && "$REAL_TMUX" -S "$2" list-windows -t "$3" -F '#{window_name}' 2>/dev/null ) \
-    | grep -Fqx "$4"
-}
-
 # A close a backend accepts and does not perform is a real, documented shape,
 # not a hypothetical: the former cmux adapter's `close-workspace` answered OK
-# and left the last workspace in its window standing. This fixture reproduces exactly that class against a
-# REAL tmux server - every read, including the inventory the verdict comes
-# from, is the real one, and only the close is suppressed - so the assertions
-# below are about what cleanup does with a worker that is provably still
-# there, never about a rewritten classifier.
+# and left the last workspace in its window standing. The fake stream hub
+# reproduces exactly that class with kill_undelivered - the hub answers the
+# kill, its agent never acknowledges it, and the endpoint stays live - so the
+# assertions below are about what cleanup does with a worker that is provably
+# still there.
 test_unconfirmed_endpoint_kill_refuses_record_removal() {
-  local dir socket socket_id session='unconfirmed kill' id=unconfirmed target=fm-unconfirmed rc
-  [ -n "$REAL_TMUX" ] || { echo "skip - tmux not installed"; return 0; }
+  local dir id=unconfirmed target rc
   dir=$(make_case unconfirmed-kill)
-  socket=dedicated.sock
-  socket_id="$dir/$socket"
-  ( cd "$dir" && env -u TMUX -u TMUX_PANE "$REAL_TMUX" -S "$socket" new-session -d -s "$session" -n control )
-  ( cd "$dir" && env -u TMUX -u TMUX_PANE "$REAL_TMUX" -S "$socket" new-window -d -t "$session:" -n "$target" )
-  : > "$dir/suppress-kill"
-  cat > "$dir/fakebin/tmux" <<SH
-#!/usr/bin/env bash
-set -eu
-printf 'tmux' >> "\${FM_RUNTIME_LOG:?}"
-printf ' <%s>' "\$@" >> "\${FM_RUNTIME_LOG:?}"
-printf '\n' >> "\${FM_RUNTIME_LOG:?}"
-if [ -e '$dir/suppress-kill' ] && [ "\${1:-}" = kill-window ]; then
-  exit 0
-fi
-cd '$dir'
-exec '$REAL_TMUX' -S '$socket' "\$@"
-SH
-  chmod +x "$dir/fakebin/tmux"
   fm_write_meta "$dir/home/state/$id.meta" \
-    "window=$session:$target" "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
     "worktree=$dir/nonexistent-worktree" "project=$dir/nonexistent-project" \
     "kind=scout" "mode=no-mistakes"
+  target=$(fm_test_stream_target_of "$dir/home/state" "$id")
+  fm_test_fake_stream_set "$target" '{"kill_undelivered": true}'
 
   set +e
-  env -u TMUX -u TMUX_PANE FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
     FM_RUNTIME_LOG="$dir/runtime.log" PATH="$dir/fakebin:$PATH" \
     "$TEARDOWN" "$id" --force > "$dir/unconfirmed.out" 2> "$dir/unconfirmed.err"
   rc=$?
   set -e
   [ "$rc" -ne 0 ] || fail "cleanup reported success for a kill nothing proved landed"
-  isolated_tmux_window_exists "$dir" "$socket" "$session" "$target" \
-    || fail "the unconfirmed case is vacuous: the window was actually removed"
+  endpoint_closed "$target" \
+    && fail "the unconfirmed case is vacuous: the endpoint was actually closed"
   assert_present "$dir/home/state/$id.meta" \
     "cleanup removed the durable endpoint record while its worker was still running"
   assert_contains "$(cat "$dir/unconfirmed.err")" "not confirmed gone" \
     "cleanup did not report the unproven result: $(cat "$dir/unconfirmed.err")"
 
-  # An already-absent endpoint is ordinary idempotent cleanup and must stay a
-  # success, so the same contract cannot be satisfied by refusing everything.
-  # shellcheck disable=SC2016 # $1 and $2 expand inside the isolated child shell.
-  env -u TMUX -u TMUX_PANE FM_RUNTIME_LOG="$dir/runtime.log" PATH="$dir/fakebin:$PATH" \
-    bash -c '. "$1/bin/fm-backend.sh"; fm_backend_kill tmux "$2"' _ "$ROOT" "$session:fm-never-existed" \
-    > "$dir/absent.out" 2> "$dir/absent.err" \
-    || fail "a kill against an endpoint that was never there must stay a success: $(cat "$dir/absent.err")"
-  [ ! -s "$dir/absent.err" ] || fail "an already-absent endpoint should say nothing: $(cat "$dir/absent.err")"
-
   # The same cleanup, once the close is performed for real, removes the record.
-  rm -f "$dir/suppress-kill"
-  env -u TMUX -u TMUX_PANE FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+  fm_test_fake_stream_set "$target" '{"kill_undelivered": false}'
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
     FM_RUNTIME_LOG="$dir/runtime.log" PATH="$dir/fakebin:$PATH" \
     "$TEARDOWN" "$id" --force > "$dir/confirmed.out" 2> "$dir/confirmed.err" \
     || fail "cleanup failed after a kill the backend confirmed: $(cat "$dir/confirmed.err")"
-  isolated_tmux_window_exists "$dir" "$socket" "$session" "$target" \
-    && fail "the confirmed case did not actually remove the window"
+  endpoint_closed "$target" || fail "the confirmed case did not actually close the endpoint"
   assert_absent "$dir/home/state/$id.meta" \
     "cleanup kept the durable endpoint record after a confirmed kill"
-
-  ( cd "$dir" && env -u TMUX -u TMUX_PANE "$REAL_TMUX" -S "$socket" kill-server 2>/dev/null ) || true
-  pass "fm-teardown: an unconfirmed endpoint kill keeps every durable record, while an already-absent endpoint and a confirmed kill both stay successful"
+  pass "fm-teardown: an unconfirmed endpoint kill keeps every durable record, while a confirmed kill stays successful"
 }
 
-test_isolated_tmux_invalid_and_valid_cleanup() {
-  local dir socket socket_id session='endpoint safety' target_id=target control=control target=fm-target
-  local prefix_target=fm-prefix prefix_survivor=fm-prefix2 rc
-  [ -n "$REAL_TMUX" ] || { echo "skip - tmux not installed"; return 0; }
-  dir=$(make_case isolated-real)
-  socket=dedicated.sock
-  socket_id="$dir/$socket"
-  ( cd "$dir" && env -u TMUX -u TMUX_PANE "$REAL_TMUX" -S "$socket" new-session -d -s "$session" -n "$control" )
-  ( cd "$dir" && env -u TMUX -u TMUX_PANE "$REAL_TMUX" -S "$socket" new-window -d -t "$session:" -n "$target" )
-  printf '%s\n' "$socket_id" > "$dir/socket.identity"
-  cat > "$dir/fakebin/tmux" <<SH
-#!/usr/bin/env bash
-set -eu
-[ -z "\${TMUX:-}" ] && [ -z "\${TMUX_PANE:-}" ] || exit 91
-[ "\${FM_TEST_TMUX_SOCKET:-}" = '$socket_id' ] || exit 92
-[ "\$(cat '$dir/socket.identity')" = '$socket_id' ] || exit 93
-printf 'tmux' >> "\${FM_RUNTIME_LOG:?}"
-printf ' <%s>' "\$@" >> "\${FM_RUNTIME_LOG:?}"
-printf '\n' >> "\${FM_RUNTIME_LOG:?}"
-cd '$dir'
-exec '$REAL_TMUX' -S '$socket' "\$@"
-SH
-  chmod +x "$dir/fakebin/tmux"
+# endpoint_closed <target>: whether the fake hub holds the endpoint as closed.
+endpoint_closed() {  # <target>
+  [ -n "$(fm_test_fake_stream_endpoints | jq -r --arg e "${1##*:}" \
+    '.endpoints[] | select(.endpoint_id == $e) | .closed_at // empty')" ]
+}
+
+test_exact_endpoint_cleanup_spares_its_neighbors() {
+  local dir target_id=target control=control target control_target rc
+  dir=$(make_case exact-endpoint)
+  fm_test_stream_task "$dir/control-home" "$control" >/dev/null || fail "could not register the control endpoint"
+  control_target=$(fm_test_stream_target_of "$dir/control-home" "$control")
 
   fm_write_meta "$dir/home/state/invalid.meta" \
     "window=" "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
   set +e
-  env -u TMUX -u TMUX_PANE FM_TEST_TMUX_SOCKET="$socket_id" \
-    FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" FM_RUNTIME_LOG="$dir/runtime.log" \
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" FM_RUNTIME_LOG="$dir/runtime.log" \
     PATH="$dir/fakebin:$PATH" "$TEARDOWN" invalid --force \
     > "$dir/invalid.out" 2> "$dir/invalid.err"
   rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "isolated invalid endpoint unexpectedly succeeded"
-  [ ! -s "$dir/runtime.log" ] || fail "isolated invalid endpoint reached tmux"
-  isolated_tmux_window_exists "$dir" "$socket" "$session" "$control" || fail "invalid cleanup removed control window"
-  isolated_tmux_window_exists "$dir" "$socket" "$session" "$target" || fail "invalid cleanup removed target window"
-
-  set +e
-  # shellcheck disable=SC2016 # $1 expands inside the isolated child shell.
-  env -u TMUX -u TMUX_PANE FM_TEST_TMUX_SOCKET="$socket_id" FM_RUNTIME_LOG="$dir/runtime.log" \
-    PATH="$dir/fakebin:$PATH" bash -c \
-    '. "$1/bin/fm-backend.sh"; fm_backend_source tmux; fm_backend_tmux_kill ""' _ "$ROOT" \
-    > "$dir/empty.out" 2> "$dir/empty.err"
-  rc=$?
-  set -e
-  [ "$rc" -ne 0 ] || fail "isolated direct empty target unexpectedly succeeded"
-  [ ! -s "$dir/runtime.log" ] || fail "isolated direct empty target reached tmux"
-  isolated_tmux_window_exists "$dir" "$socket" "$session" "$control" || fail "direct empty cleanup removed control window"
-  isolated_tmux_window_exists "$dir" "$socket" "$session" "$target" || fail "direct empty cleanup removed target window"
-
-  ( cd "$dir" && env -u TMUX -u TMUX_PANE "$REAL_TMUX" -S "$socket" new-window -d -t "=$session:" -n "$prefix_survivor" )
-  # shellcheck disable=SC2016 # $1 and $2 expand inside the isolated child shell.
-  env -u TMUX -u TMUX_PANE FM_TEST_TMUX_SOCKET="$socket_id" FM_RUNTIME_LOG="$dir/runtime.log" \
-    PATH="$dir/fakebin:$PATH" bash -c \
-    '. "$1/bin/fm-backend.sh"; fm_backend_source tmux; fm_backend_tmux_kill "$2"' _ "$ROOT" "$session:$prefix_target"
-  isolated_tmux_window_exists "$dir" "$socket" "$session" "$prefix_survivor" \
-    || fail "missing exact target cleanup removed its prefix-matched neighbor"
+  [ "$rc" -ne 0 ] || fail "an invalid endpoint record unexpectedly tore down"
+  [ ! -s "$dir/runtime.log" ] || fail "an invalid endpoint record reached a runtime command"
+  endpoint_closed "$control_target" && fail "invalid cleanup closed the control endpoint"
 
   fm_write_meta "$dir/home/state/$target_id.meta" \
-    "window=$session:$target" "endpoint_task_id=$target_id" \
+    $(fm_test_stream_task "$dir/home/state" "$target_id") \
     "worktree=$dir/nonexistent-worktree" "project=$dir/nonexistent-project" \
     "kind=scout" "mode=no-mistakes"
-  env -u TMUX -u TMUX_PANE FM_TEST_TMUX_SOCKET="$socket_id" \
-    FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" FM_RUNTIME_LOG="$dir/runtime.log" \
+  target=$(fm_test_stream_target_of "$dir/home/state" "$target_id")
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" FM_RUNTIME_LOG="$dir/runtime.log" \
     PATH="$dir/fakebin:$PATH" "$TEARDOWN" "$target_id" --force \
     > "$dir/valid.out" 2> "$dir/valid.err" \
-    || fail "isolated valid endpoint teardown failed: $(cat "$dir/valid.err")"
-  isolated_tmux_window_exists "$dir" "$socket" "$session" "$target" \
-    && fail "valid cleanup did not remove the exact target window"
-  isolated_tmux_window_exists "$dir" "$socket" "$session" "$control" \
-    || fail "valid cleanup removed the independent control window"
-  grep -Fqx "tmux <kill-window> <-t> <=$session:=$target>" "$dir/runtime.log" \
-    || fail "valid cleanup did not invoke exactly the recorded target: $(cat "$dir/runtime.log")"
-
-  ( cd "$dir" && env -u TMUX -u TMUX_PANE "$REAL_TMUX" -S "$socket" kill-server 2>/dev/null ) || true
-  pass "fm-teardown: exact tmux cleanup preserves invalid and prefix-matched neighbors while removing only the recorded target"
+    || fail "a valid endpoint teardown failed: $(cat "$dir/valid.err")"
+  endpoint_closed "$target" || fail "valid cleanup did not close the exact target endpoint"
+  endpoint_closed "$control_target" && fail "valid cleanup closed the independent control endpoint"
+  pass "fm-teardown: exact endpoint cleanup refuses an invalid record and closes only the recorded target"
 }
 
 test_bare_relative_origin_shares_project_lock_with_clone() {
@@ -513,10 +419,10 @@ test_reused_pool_slot_refuses_before_touching_the_other_task() {
   # The reuse collision: the pool slot recorded for a finished task has already
   # been handed to another task, whose worker is live in it right now.
   fm_write_meta "$dir/home/state/$id.meta" \
-    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
     "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
   fm_write_meta "$dir/home/state/$other.meta" \
-    "window=firstmate:fm-$other" "endpoint_task_id=$other" \
+    $(fm_test_stream_task "$dir/home/state" "$other") \
     "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
   # Staged in this shell, not a command substitution: a background child of a
   # $(...) subshell does not outlive it, and the point of this worker is to be
@@ -546,10 +452,10 @@ test_reused_pool_slot_refuses_before_touching_the_other_task() {
   dir=$(make_case slot-reuse-home)
   mark_case_as_treehouse_pool "$dir"
   fm_write_meta "$dir/home/state/$id.meta" \
-    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
     "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
   fm_write_meta "$dir/home/state/$other.meta" \
-    "window=firstmate:fm-$other" "endpoint_task_id=$other" \
+    $(fm_test_stream_task "$dir/home/state" "$other") \
     "worktree=$dir/worktree" "home=$dir/worktree" \
     "project=$dir/project" "kind=secondmate"
   set +e
@@ -579,10 +485,10 @@ test_cross_home_pool_slot_collision_refuses() {
   printf '%s\n' "- mate - fixture (home: $second_home; scope: test; projects: project; added 2026-01-01)" \
     > "$dir/home/data/secondmates.md"
   fm_write_meta "$dir/home/state/$id.meta" \
-    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
     "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
   fm_write_meta "$second_home/state/$other.meta" \
-    "window=firstmate:fm-$other" "endpoint_task_id=$other" \
+    $(fm_test_stream_task "$second_home/state" "$other") \
     "worktree=$dir/worktree" "project=$second_project" "kind=scout"
 
   set +e
@@ -606,12 +512,12 @@ test_sole_slot_record_still_tears_down() {
   dir=$(make_case slot-sole)
   mark_case_as_treehouse_pool "$dir"
   fm_write_meta "$dir/home/state/$id.meta" \
-    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
     "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
   # A neighbouring task on its OWN slot must not look like a collision.
   mkdir -p "$dir/other-worktree"
   fm_write_meta "$dir/home/state/neighbour.meta" \
-    "window=firstmate:fm-neighbour" "endpoint_task_id=neighbour" \
+    $(fm_test_stream_task "$dir/home/state" "neighbour") \
     "worktree=$dir/other-worktree" "project=$dir/project" "kind=scout"
   ( cd "$dir/other-worktree" && exec sleep 30 ) &
   worker=$!
@@ -636,27 +542,17 @@ test_recorded_endpoint_that_changed_directory_still_tears_down() {
   mkdir -p "$dir/other-directory"
   # The exact recorded worker may legitimately cd outside its worktree. Its
   # endpoint identity still owns the lifecycle; cwd alone must not brick it.
-  cat > "$dir/fakebin/tmux" <<SH
-#!/usr/bin/env bash
-if [ "\${1:-}" = display-message ]; then
-  printf '%s\n' '$dir/other-directory'
-  exit 0
-fi
-printf 'tmux' >> "\${FM_RUNTIME_LOG:?}"
-printf ' <%s>' "\$@" >> "\${FM_RUNTIME_LOG:?}"
-printf '\n' >> "\${FM_RUNTIME_LOG:?}"
-exit 0
-SH
-  chmod +x "$dir/fakebin/tmux"
   fm_write_meta "$dir/home/state/$id.meta" \
-    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
     "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_test_fake_stream_set "$(fm_test_stream_target_of "$dir/home/state" "$id")" \
+    "$(jq -nc --arg d "$dir/other-directory" '{cwd: $d}')"
 
   run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr" \
     || fail "teardown refused its recorded endpoint after it changed directory: $(cat "$dir/stderr")"
   assert_absent "$dir/home/state/$id.meta" "moved-endpoint teardown left the task record"
-  grep -Fq "tmux <kill-window> <-t> <=firstmate:=fm-$id>" "$dir/runtime.log" \
-    || fail "moved-endpoint teardown did not stop the exact recorded worker: $(cat "$dir/runtime.log")"
+  endpoint_closed "$(fm_test_stream_target_of "$dir/home/state" "$id")" \
+    || fail "moved-endpoint teardown did not stop the exact recorded worker"
   grep -Fq "treehouse <return>" "$dir/runtime.log" \
     || fail "moved-endpoint teardown did not return its uncontested pool slot: $(cat "$dir/runtime.log")"
 
@@ -765,7 +661,7 @@ test_remote_seeded_home_returns_its_uncontested_slot() {
   mark_case_as_treehouse_pool "$dir"
   write_remote_parent_record "$dir/home"
   fm_write_meta "$dir/home/state/$id.meta" \
-    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
     "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
 
   set +e
@@ -807,10 +703,10 @@ test_remote_seeded_home_still_refuses_a_slot_its_child_holds() {
   printf '%s\n' "- mate - fixture (home: $child_home; scope: test; projects: project; added 2026-01-01)" \
     > "$dir/home/data/secondmates.md"
   fm_write_meta "$dir/home/state/$id.meta" \
-    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
     "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
   fm_write_meta "$child_home/state/$other.meta" \
-    "window=firstmate:fm-$other" "endpoint_task_id=$other" \
+    $(fm_test_stream_task "$child_home/state" "$other") \
     "worktree=$dir/worktree" "project=$child_project" "kind=scout"
 
   set +e
@@ -853,7 +749,7 @@ test_remote_layout_homes_serialize_on_one_project_lock() {
   write_local_parent_record "$child_home" "$dir/home"
   git clone -q "$dir/project" "$child_project"
   fm_write_meta "$dir/home/state/$id.meta" \
-    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
     "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
 
   # The local child takes the lock its own home derives and stays alive holding
@@ -921,7 +817,7 @@ test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot() {
   dir=$(make_case slot-reassigned)
   mark_case_as_treehouse_pool "$dir"
   fm_write_meta "$dir/home/state/$id.meta" \
-    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
     "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
   claim_pool_slot "$dir" "$other" "$dir/other-home"
   # Staged in this shell, not a command substitution: a background child of a
@@ -955,7 +851,7 @@ test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot() {
   [ -z "$(git -C "$dir/worktree" status --porcelain)" ] \
     || fail "clean-slot fixture is not clean: $(git -C "$dir/worktree" status --porcelain)"
   fm_write_meta "$dir/home/state/$id.meta" \
-    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
     "worktree=$dir/worktree" "project=$dir/project" "kind=ship"
   claim_pool_slot "$dir" "$other" "$dir/other-home"
   ( cd "$dir/worktree" && exec sleep 30 ) &
@@ -978,7 +874,7 @@ test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot() {
   dir=$(make_case slot-claim-unreadable)
   mark_case_as_treehouse_pool "$dir"
   fm_write_meta "$dir/home/state/$id.meta" \
-    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
     "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
   printf 'not-a-claim\n' > "$dir/pool/1/.fm-slot-owner"
 
@@ -1006,7 +902,7 @@ test_own_and_absent_slot_claims_still_tear_down() {
   dir=$(make_case slot-claim-own)
   mark_case_as_treehouse_pool "$dir"
   fm_write_meta "$dir/home/state/$id.meta" \
-    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
     "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
   claim_pool_slot "$dir" "$id"
 
@@ -1020,7 +916,7 @@ test_own_and_absent_slot_claims_still_tear_down() {
   dir=$(make_case slot-claim-absent)
   mark_case_as_treehouse_pool "$dir"
   fm_write_meta "$dir/home/state/$id.meta" \
-    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
     "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
 
   run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr" \
@@ -1037,9 +933,8 @@ test_control_lock_contention_refuses_before_mutation
 test_non_pool_teardown_ignores_task_set_lock
 test_metadata_lock_serializes_destructive_cleanup
 test_supported_backend_endpoint_records_validate
-test_tmux_empty_target_refuses_without_invocation
 test_recorded_process_identity_cleanup_is_exact
-test_isolated_tmux_invalid_and_valid_cleanup
+test_exact_endpoint_cleanup_spares_its_neighbors
 test_unconfirmed_endpoint_kill_refuses_record_removal
 test_bare_relative_origin_shares_project_lock_with_clone
 test_reused_pool_slot_refuses_before_touching_the_other_task

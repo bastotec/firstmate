@@ -104,7 +104,7 @@ init_changed_fixture_repo() {
     fm-supervision-instructions.test.sh \
     fm-daemon.test.sh \
     fm-harness-adapter-references.test.sh \
-    fm-backend-herdr-smoke.test.sh \
+    fm-stream-deck-live-e2e.test.sh \
     fm-secondmate-safety.test.sh \
     fm-session-start.test.sh \
     fm-deck-host-live-e2e.test.sh \
@@ -113,13 +113,11 @@ init_changed_fixture_repo() {
     fm-procevent-quota.test.sh \
     fm-guard-stale-banner.test.sh \
     fm-afk-return.test.sh \
-    fm-bearings-snapshot.test.sh \
-    fm-herdr-session-cleanup-e2e.test.sh; do
+    fm-bearings-snapshot.test.sh; do
     printf '#!/usr/bin/env bash\n# tests/lib.sh\n' >"$repo/tests/$script"
     chmod +x "$repo/tests/$script"
   done
   : >"$repo/tests/lib.sh"
-  : >"$repo/tests/fm-backend-herdr-eventwait.test.py"
   : >"$repo/bin/fm-supervisor-target-lib.sh"
   : >"$repo/bin/fm-control-lib.sh"
   : >"$repo/bin/fm-timeout-lib.sh"
@@ -138,11 +136,11 @@ init_changed_fixture_repo() {
   : >"$repo/tests/fixtures/demo/demo-fixture.sh"
   printf '# tests/fixtures/demo\n' >>"$repo/tests/fm-backend.test.sh"
   # A shared helper with no curated family of its own, named by exactly ONE
-  # script of the expensive real-Herdr family and consumed by one curated
-  # watcher script. This is the shape that made a one-line helper change select
-  # every real-Herdr E2E.
+  # script of the live-harness family and consumed by one curated watcher
+  # script. This is the shape that made a one-line helper change select a whole
+  # family.
   : >"$repo/bin/shared-probe-lib.sh"
-  printf '# shared-probe-lib.sh\n' >>"$repo/tests/fm-backend-herdr-smoke.test.sh"
+  printf '# shared-probe-lib.sh\n' >>"$repo/tests/fm-stream-deck-live-e2e.test.sh"
   # shellcheck disable=SC2016  # literal fixture text: the reference must reach
   # the file verbatim so the changed-file scan can find it, not expand here.
   printf '. "$ROOT/bin/shared-probe-lib.sh"\n' >"$repo/bin/fm-watch-probe.sh"
@@ -312,13 +310,6 @@ test_changed_dependency_selection_and_unmapped_failure() {
   git -C "$repo" add tests/git-config-helpers.sh
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm git-config-helper-change
 
-  printf '\n' >>"$repo/tests/fm-backend-herdr-eventwait.test.py"
-  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
-  assert_contains "$listed" "tests/fm-backend-herdr-smoke.test.sh" "eventwait test selects Herdr coverage"
-  assert_contains "$listed" "tests/fm-backend.test.sh" "eventwait test selects backend coverage"
-  git -C "$repo" add tests/fm-backend-herdr-eventwait.test.py
-  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm eventwait-change
-
   printf '\n' >>"$repo/bin/fm-supervisor-target-lib.sh"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
   assert_contains "$listed" "tests/fm-daemon.test.sh" "supervisor target selects daemon coverage"
@@ -394,7 +385,7 @@ test_changed_dependency_selection_and_unmapped_failure() {
 
 # A direct test reference is per-script evidence. Widening it to the referencing
 # test's whole family is what turned a one-line change to a shared helper into
-# every real-Herdr E2E, including scripts with no dependency on it at all.
+# a whole family's run, including scripts with no dependency on it at all.
 # Consumer bin/ scripts must still resolve through the curated map, so recorded
 # family-level coupling is not lost along the way.
 test_changed_bin_reference_selects_per_script_not_per_family() {
@@ -406,11 +397,11 @@ test_changed_bin_reference_selects_per_script_not_per_family() {
   printf '\n' >>"$repo/bin/shared-probe-lib.sh"
   listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
 
-  assert_contains "$listed" "tests/fm-backend-herdr-smoke.test.sh" \
-    "the one gated script that names the helper must still be selected"
+  assert_contains "$listed" "tests/fm-stream-deck-live-e2e.test.sh" \
+    "the one live-harness script that names the helper must still be selected"
   case "$listed" in
-    *tests/fm-herdr-session-cleanup-e2e.test.sh*)
-      fail "a single gated script's reference dragged in its whole family: $listed"
+    *tests/fm-deck-host-live-e2e.test.sh*)
+      fail "a single live-harness script's reference dragged in its whole family: $listed"
       ;;
   esac
   # The curated consumer keeps its family-level coupling.
@@ -431,7 +422,7 @@ test_changed_uses_bounded_automatic_concurrency() {
   repo="$tmp/repo"
   init_changed_fixture_repo "$repo"
   cp "$ROOT/bin/fm-timeout-lib.sh" "$repo/bin/fm-timeout-lib.sh"
-  for script in fm-backend-herdr-smoke.test.sh fm-daemon.test.sh fm-guard-stale-banner.test.sh; do
+  for script in fm-stream-deck-live-e2e.test.sh fm-daemon.test.sh fm-guard-stale-banner.test.sh; do
     cat >"$repo/tests/$script" <<'SH'
 #!/usr/bin/env bash
 sleep 1
@@ -893,7 +884,7 @@ test_gate_skip_accounting() {
   json="$tmp/timing.json"
   cat >"$skip_f" <<'SH'
 #!/usr/bin/env bash
-echo "skip: herdr not found"
+echo "skip: tasks-axi not found"
 exit 0
 SH
   chmod +x "$skip_f"
@@ -995,34 +986,34 @@ test_fail_on_gate_skip_token() {
   out="$tmp/out.txt"
   cat >"$skip_f" <<'SH'
 #!/usr/bin/env bash
-echo "skip: herdr not found"
+echo "skip: tasks-axi not found"
 exit 0
 SH
   chmod +x "$skip_f"
   set +e
-  "$RUNNER" --fail-on-gate-skip 'herdr not found' "$skip_f" >"$out" 2>"$tmp/err.txt"
+  "$RUNNER" --fail-on-gate-skip 'tasks-axi not found' "$skip_f" >"$out" 2>"$tmp/err.txt"
   rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "fail-on-gate-skip must make herdr-not-found a hard failure"
+  [ "$rc" -ne 0 ] || fail "fail-on-gate-skip must make tasks-axi-not-found a hard failure"
   grep -q 'FM_TEST_SUMMARY total=1 failed=1' "$out" \
     || fail "summary must report failed=1 under fail-on-gate-skip: $(grep FM_TEST_SUMMARY "$out")"
   grep -q 'required gate skip token' "$tmp/err.txt" \
     || fail "runner must log the required gate skip token"
   rm -rf "$tmp"
-  pass "fail-on-gate-skip converts herdr-not-found into a hard failure"
+  pass "fail-on-gate-skip converts tasks-axi-not-found into a hard failure"
 }
 
 test_exclude_family() {
   local listed
-  listed=$("$RUNNER" --list --all --exclude-family real-herdr-gated)
-  printf '%s\n' "$listed" | grep -Fq 'tests/fm-backend-herdr-smoke.test.sh' \
-    && fail "exclude-family real-herdr-gated left a real-herdr script"
+  listed=$("$RUNNER" --list --all --exclude-family pr-forge)
+  printf '%s\n' "$listed" | grep -Fq 'tests/fm-teardown.test.sh' \
+    && fail "exclude-family pr-forge left a pr-forge script"
   printf '%s\n' "$listed" | grep -Fq 'tests/fm-lint.test.sh' \
     || fail "exclude-family must retain pure-contract-unit scripts"
   # Explicit family mode still works; exclude of a different family is a no-op.
-  listed=$("$RUNNER" --list --family real-herdr-gated)
-  printf '%s\n' "$listed" | grep -Fq 'tests/fm-backend-herdr-smoke.test.sh' \
-    || fail "family real-herdr-gated must list smoke test"
+  listed=$("$RUNNER" --list --family pr-forge)
+  printf '%s\n' "$listed" | grep -Fq 'tests/fm-teardown.test.sh' \
+    || fail "family pr-forge must list the teardown suite"
   pass "exclude-family drops the named primary family after selection"
 }
 
@@ -1044,12 +1035,12 @@ runner = Path(sys.argv[1])
 hints = {
     "parallel": """tests/fm-lint.test.sh 110000
 tests/fm-brief.test.sh 100000
-tests/fm-backend-herdr.test.sh 90000
+tests/fm-crew-state.test.sh 90000
 tests/fm-captain-hold-lifecycle.test.sh 90000""",
     "serial": """tests/fm-brief.test.sh 200000
 tests/fm-review-diff.test.sh 70000
 tests/fm-lint.test.sh 40000
-tests/fm-backend-herdr.test.sh 30000
+tests/fm-crew-state.test.sh 30000
 tests/fm-captain-hold-lifecycle.test.sh 30000""",
 }
 serial_members = {line.split()[0] for line in hints["serial"].splitlines()}
@@ -1070,12 +1061,12 @@ PY
   printf '%s\n' \
     tests/fm-lint.test.sh \
     tests/fm-brief.test.sh \
-    tests/fm-backend-herdr.test.sh \
     tests/fm-captain-hold-lifecycle.test.sh \
+    tests/fm-crew-state.test.sh \
     tests/fm-review-diff.test.sh >"$tmp/expected"
   while IFS= read -r script; do
     case "$script" in
-      tests/fm-lint.test.sh|tests/fm-brief.test.sh|tests/fm-backend-herdr.test.sh|tests/fm-captain-hold-lifecycle.test.sh|tests/fm-review-diff.test.sh) ;;
+      tests/fm-lint.test.sh|tests/fm-brief.test.sh|tests/fm-crew-state.test.sh|tests/fm-captain-hold-lifecycle.test.sh|tests/fm-review-diff.test.sh) ;;
       *) printf '%s\n' "$script" >>"$tmp/expected" ;;
     esac
   done <"$tmp/members"
@@ -1154,12 +1145,11 @@ PY
 }
 
 test_portable_shard_union_and_coverage_guard() {
-  local s1 s2 proven serial herdr all_count union_count overlap out lane
+  local s1 s2 proven serial all_count union_count overlap out lane
   s1=$("$RUNNER" --list --lane portable-parallel-1)
   s2=$("$RUNNER" --list --lane portable-parallel-2)
   proven=$("$RUNNER" --list --proven-isolated)
   serial=$("$RUNNER" --list --lane portable-serial)
-  herdr=$("$RUNNER" --list --family real-herdr-gated)
   [ -n "$s1" ] && [ -n "$s2" ] || fail "portable parallel shards must be non-empty"
   # Shards disjoint.
   overlap=$(comm -12 <(printf '%s\n' "$s1" | LC_ALL=C sort) <(printf '%s\n' "$s2" | LC_ALL=C sort) || true)
@@ -1168,19 +1158,14 @@ test_portable_shard_union_and_coverage_guard() {
   [ "$(printf '%s\n' "$s1" "$s2" | LC_ALL=C sort -u)" = \
     "$(printf '%s\n' "$proven" | LC_ALL=C sort -u)" ] \
     || fail "shard union must equal proven-isolated set"
-  # No herdr in portable lanes.
-  printf '%s\n' "$s1" "$s2" "$serial" | grep -Fq 'tests/fm-backend-herdr-smoke.test.sh' \
-    && fail "portable lanes must not include real-herdr-gated smoke"
-  printf '%s\n' "$herdr" | grep -Fq 'tests/fm-backend-herdr-smoke.test.sh' \
-    || fail "herdr family must include smoke"
   out=$("$RUNNER" --check-coverage)
   assert_contains "$out" "FM_TEST_COVERAGE ok" "coverage guard success marker"
   all_count=$("$RUNNER" --list --all | wc -l | tr -d ' ')
-  union_count=$(printf '%s\n' "$s1" "$s2" "$serial" "$herdr" | LC_ALL=C sort -u | wc -l | tr -d ' ')
+  union_count=$(printf '%s\n' "$s1" "$s2" "$serial" | LC_ALL=C sort -u | wc -l | tr -d ' ')
   [ "$union_count" = "$all_count" ] \
     || fail "union of lanes ($union_count) must equal --all ($all_count)"
-  # No duplicates across the four partitions.
-  [ "$(printf '%s\n' "$s1" "$s2" "$serial" "$herdr" | LC_ALL=C sort | uniq -d | wc -l | tr -d ' ')" = "0" ] \
+  # No duplicates across the three partitions.
+  [ "$(printf '%s\n' "$s1" "$s2" "$serial" | LC_ALL=C sort | uniq -d | wc -l | tr -d ' ')" = "0" ] \
     || fail "lanes must not duplicate scripts"
   # LPT execution order, asserted against the runner's own measured schedule
   # rather than against a script name: naming the current longest script here is
@@ -1447,7 +1432,7 @@ test_jobs_admits_a_concurrent_safe_family() {
   # admission and the concurrent scheduler for real.
   set +e
   "$RUNNER" --jobs 2 \
-    tests/fm-supervision-events.test.sh tests/fm-session-lock-ancestry.test.sh \
+    tests/fm-mail-check.test.sh tests/fm-session-lock-ancestry.test.sh \
     >"$tmp/out" 2>"$tmp/err"
   rc=$?
   set -e
@@ -1830,12 +1815,12 @@ SH
 
   cat >"$repo/$d" <<'SH'
 #!/usr/bin/env bash
-echo "skip: herdr not found" >&2
+echo "skip: tasks-axi not found" >&2
 exit 0
 SH
   chmod +x "$repo/$d"
   set +e
-  "$runner" --jobs 2 --fail-on-gate-skip 'herdr not found' "$d" >"$tmp/out5" 2>"$tmp/err5"
+  "$runner" --jobs 2 --fail-on-gate-skip 'tasks-axi not found' "$d" >"$tmp/out5" 2>"$tmp/err5"
   rc=$?
   set -e
   [ "$rc" -ne 0 ] || { rm -rf "$tmp"; fail "parallel stderr gate skip must hard-fail"; }
@@ -1851,40 +1836,6 @@ SH
 
   rm -rf "$tmp"
   pass "jobs scheduler runs proven scripts; failure propagates; non-proven refused"
-}
-
-test_herdr_ci_family_run_has_a_step_timeout() {
-  # The required Herdr lane's hang tripwire is the family-run *step* bound, not
-  # the 75-minute job cap. Parse the workflow as YAML so nested `with.name`
-  # artifact keys cannot masquerade as the step contract.
-  command -v ruby >/dev/null 2>&1 \
-    || fail "ruby is required to parse .github/workflows/ci.yml as YAML"
-  local json job_timeout step_timeout
-  json=$(ruby -ryaml -rjson -e '
-doc = YAML.load_file(ARGV[0])
-job = doc.fetch("jobs").fetch("tests-herdr")
-step = job.fetch("steps").find { |s|
-  s.is_a?(Hash) && s["name"] == "Run real-Herdr family (serial, required)"
-}
-raise "missing family-run step" if step.nil?
-raise "family-run step has no timeout-minutes" unless step.key?("timeout-minutes")
-puts JSON.generate(
-  "job_timeout" => job.fetch("timeout-minutes"),
-  "step_timeout" => step.fetch("timeout-minutes")
-)
-' "$ROOT/.github/workflows/ci.yml") \
-    || fail "could not parse tests-herdr timeouts from ci.yml"
-  job_timeout=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["job_timeout"])' <<<"$json") \
-    || fail "could not read job timeout from parsed workflow"
-  step_timeout=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["step_timeout"])' <<<"$json") \
-    || fail "could not read step timeout from parsed workflow"
-  [ "$job_timeout" = 75 ] \
-    || fail "tests-herdr job backstop must stay 75 minutes, got $job_timeout"
-  [ "$step_timeout" = 20 ] \
-    || fail "family-run step timeout must be 20 minutes, got $step_timeout"
-  [ "$step_timeout" -lt "$job_timeout" ] \
-    || fail "family-run step timeout must be below the job backstop"
-  pass "Herdr CI family-run step times out at 20 min under a 75 min job backstop"
 }
 
 test_aggregate_json() {
@@ -1968,5 +1919,4 @@ test_concurrent_runs_are_ordered_longest_first
 test_per_script_timeout_bounds_a_hang
 test_max_wall_ms_is_a_result_not_advice
 test_jobs_parallel_scheduler_and_failure_propagation
-test_herdr_ci_family_run_has_a_step_timeout
 test_aggregate_json

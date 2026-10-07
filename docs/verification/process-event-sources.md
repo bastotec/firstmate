@@ -179,7 +179,7 @@ The 2026-08-27 review inspected `bin/fm-harness.sh`, `bin/fm-supervision-instruc
 | --- | --- |
 | Claude, Codex, OpenCode, Pi, pi-signed, Grok, and Cursor primaries | Applicable only at the existing watcher continuation after one shared `check` wake; no package byte, command, state path, or verdict enters a harness-specific integration. |
 | Pi and pi-signed task workers | Not applicable after inspecting harness detection and launch ownership, because source registration has no task metadata or worker endpoint and the package is never launched through `fm-spawn`. |
-| tmux, Herdr, and stream session providers | Not applicable after inspecting the known and spawn-capable backend dispatch sets, because process-event execution calls no backend selector, capture, send, liveness, or cleanup primitive. |
+| tmux and Herdr (since retired), and stream session providers | Not applicable after inspecting the known and spawn-capable backend dispatch sets, because process-event execution calls no backend selector, capture, send, liveness, or cleanup primitive. |
 | Local and remote secondmate homes | Applicable at the home boundary only; each home owns its own binding, content-addressed package, extension state, registration, result, and watcher, and `config/extensions.d` remains outside the inherited-material allowlist. |
 
 ## Runner lifetime and cleanup
@@ -226,6 +226,6 @@ Its `autohandle` command is optional in the same way and defaults to leaving the
 The optional `self-announcing` declaration changes ordering only for an adapter with its own durable downstream announcement; the operating contract in `docs/configuration.md` owns that boundary.
 
 Proactive delivery is inside that same boundary.
-The watcher reports a queued process-event result through the one shared actionable-exit path (`wake` in `bin/fm-push-transition-lib.sh`) that every existing signal, stale, and check wake already uses, so it reads no pane, queries no backend, and names no harness.
+The watcher reports a queued process-event result through the one shared actionable-exit path (`wake` in `bin/fm-watch-wake-lib.sh`) that every existing signal, stale, and check wake already uses, so it reads no pane, queries no backend, and names no harness.
 Both axes are therefore unaffected by construction rather than by assumption: every supported primary harness re-arms from that same exit, and every runtime backend supplies endpoint state only to the pane paths this change does not touch.
 While `state/.afk` exists the watcher stays one-shot as before, because this delivery ends the cycle exactly like the existing check path and leaves classification to the daemon.

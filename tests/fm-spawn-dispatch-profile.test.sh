@@ -2,9 +2,9 @@
 # Behavior tests for fm-spawn.sh concrete dispatch profile flags.
 #
 # These tests drive fm-spawn through meta writing and launch construction with a
-# fake tmux pane and a real isolated git worktree. The fake tmux captures the
-# literal launch command sent with `tmux send-keys -l`, so assertions pin the
-# command firstmate would run without starting any real harness.
+# fake stream endpoint and a real isolated git worktree. The endpoint logs the
+# literal launch command the spawn types, so assertions pin the command
+# firstmate would run without starting any real harness.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -59,6 +59,9 @@ make_seeded_secondmate_home() {
   printf 'charter for %s\n' "$id" > "$home/data/charter.md"
 }
 
+# The fake stream endpoint logs every text the spawn types, one per line
+# (treehouse get, the export lines, then the launch), so a case reads the
+# launch command as the log's last line.
 run_spawn() {
   local home=$1 wt=$2 fakebin=$3 launchlog=$4
   shift 4
@@ -98,7 +101,7 @@ test_no_profile_keeps_deck_profile_defaults() {
   assert_contains "$out" "spawned $id harness=deck" "spawn did not report deck"
   assert_meta_profile "$HOME_DIR/state/$id.meta" deck default default
 
-  launch=$(cat "$LAUNCH_LOG")
+  launch=$(tail -n 1 "$LAUNCH_LOG")
   gen=$(cat "$HOME_DIR/state/$id.busy-gen")
   assert_contains "$launch" "bash -c 'exec -a fm-deck-worker bash \"\$@\"' fm-deck-worker '$ROOT/bin/fm-deck-worker.sh' --id '$id' --state '$(cd "$HOME_DIR/state" && pwd -P)' --gen '$gen' --deck '$FAKEBIN_DIR/deck' -- " \
     "no-profile deck launch did not use the canonical worker driver"
@@ -123,13 +126,13 @@ test_relative_home_overrides_launch_with_absolute_cross_process_paths() {
     CDPATH="$CASE_DIR/cdpath" FM_ROOT_OVERRIDE='' FM_HOME=home \
       FM_STATE_OVERRIDE=home/state FM_DATA_OVERRIDE=home/data \
       FM_PROJECTS_OVERRIDE=home/projects FM_CONFIG_OVERRIDE=home/config \
-      FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
+      FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" \
       FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" PATH="$FAKEBIN_DIR:$PATH" \
       "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
   )
   status=$?
   expect_code 0 "$status" "spawn with relative home overrides should succeed"
-  launch=$(cat "$LAUNCH_LOG")
+  launch=$(tail -n 1 "$LAUNCH_LOG")
   assert_contains "$launch" "--state '$home_real/state'" \
     "relative FM_STATE_OVERRIDE leaked into the deck worker's cross-process state path"
   assert_contains "$launch" "< '$home_real/data/$id/launch-brief.md'" \
@@ -151,13 +154,13 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
     FM_ROOT_OVERRIDE='' FM_HOME=home \
       FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
       FM_PROJECTS_OVERRIDE=home/projects FM_CONFIG_OVERRIDE=home/config \
-      FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
+      FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" \
       FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" PATH="$FAKEBIN_DIR:$PATH" \
       "$SPAWN" "$relative_id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
   )
   status=$?
   expect_code 0 "$status" "spawn with relative FM_HOME defaults should succeed"
-  launch=$(cat "$LAUNCH_LOG")
+  launch=$(tail -n 1 "$LAUNCH_LOG")
   assert_contains "$launch" "--state '$home_real/state'" \
     "relative FM_HOME leaked into the deck worker's default cross-process state path"
   assert_contains "$launch" "< '$home_real/data/$relative_id/launch-brief.md'" \
@@ -170,13 +173,13 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
     FM_ROOT_OVERRIDE='' FM_HOME="$linked_home" \
       FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' \
       FM_PROJECTS_OVERRIDE="$linked_home/projects" FM_CONFIG_OVERRIDE="$linked_home/config" \
-      FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
+      FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" \
       FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" PATH="$FAKEBIN_DIR:$PATH" \
       "$SPAWN" "$absolute_id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
   )
   status=$?
   expect_code 0 "$status" "spawn with absolute symlink-spelled FM_HOME defaults should succeed"
-  launch=$(cat "$LAUNCH_LOG")
+  launch=$(tail -n 1 "$LAUNCH_LOG")
   assert_contains "$launch" "< '$linked_home/data/$absolute_id/launch-brief.md'" \
     "absolute FM_HOME spelling changed in the default cross-process brief path"
   pass "FM_HOME defaults resolve relative paths and preserve absolute spellings"
@@ -195,13 +198,13 @@ test_absolute_override_spelling_is_preserved_in_launch_paths() {
     FM_ROOT_OVERRIDE='' FM_HOME="$linked_home" \
       FM_STATE_OVERRIDE="$linked_home/state" FM_DATA_OVERRIDE="$linked_home/data" \
       FM_PROJECTS_OVERRIDE="$linked_home/projects" FM_CONFIG_OVERRIDE="$linked_home/config" \
-      FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
+      FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" \
       FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" PATH="$FAKEBIN_DIR:$PATH" \
       "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
   )
   status=$?
   expect_code 0 "$status" "spawn with absolute symlink-spelled overrides should succeed"
-  launch=$(cat "$LAUNCH_LOG")
+  launch=$(tail -n 1 "$LAUNCH_LOG")
   assert_contains "$launch" "< '$linked_home/data/$id/launch-brief.md'" \
     "absolute FM_DATA_OVERRIDE spelling changed in the cross-process brief path"
   pass "absolute override spellings are preserved in spawn launch paths"
@@ -293,7 +296,7 @@ test_active_dispatch_profile_allows_explicit_harness() {
   expect_code 0 "$status" "explicit harness should satisfy active dispatch-profile requirement"
   assert_contains "$out" "spawned $id harness=deck" "spawn did not report explicit deck harness"
   assert_meta_profile "$HOME_DIR/state/$id.meta" deck openai-codex/gpt-5 default
-  launch=$(cat "$LAUNCH_LOG")
+  launch=$(tail -n 1 "$LAUNCH_LOG")
   assert_contains "$launch" "--deck '$FAKEBIN_DIR/deck' --model 'openai-codex/gpt-5' -- " \
     "explicit harness launch did not thread the model"
   pass "active crew-dispatch profile allows an explicit resolved harness"
@@ -328,7 +331,7 @@ test_active_dispatch_profile_allows_raw_launch_command() {
   expect_code 0 "$status" "raw launch command should satisfy active dispatch-profile requirement"
   assert_contains "$out" "spawned $id harness=custom-agent" "spawn did not report raw command harness"
   assert_meta_profile "$HOME_DIR/state/$id.meta" custom-agent default default
-  launch=$(cat "$LAUNCH_LOG")
+  launch=$(tail -n 1 "$LAUNCH_LOG")
   [ "$launch" = "custom-agent --flag" ] || fail "raw launch command changed"$'\n'"actual: $launch"
   pass "active crew-dispatch profile allows the raw launch-command escape hatch"
 }
@@ -344,7 +347,7 @@ test_deck_missing_binary_refuses_before_endpoint_or_metadata() {
   out=$(FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
     FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
     FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
-    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" \
     FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" PATH="$FAKEBIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin" \
     "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1)
   status=$?
@@ -366,7 +369,7 @@ test_deck_threads_model_and_refuses_effort() {
   status=$?
   expect_code 0 "$status" "deck spawn with a model should succeed: $out"
   assert_meta_profile "$HOME_DIR/state/$id.meta" deck example/route default
-  launch=$(cat "$LAUNCH_LOG")
+  launch=$(tail -n 1 "$LAUNCH_LOG")
   assert_contains "$launch" "fm-deck-worker '$ROOT/bin/fm-deck-worker.sh' --id '$id'" \
     "deck launch did not run the deck worker driver for this task"
   assert_contains "$launch" "--deck '$FAKEBIN_DIR/deck' --model 'example/route' -- " \
@@ -414,7 +417,7 @@ test_deck_secondmate_uses_home_driver_and_configured_pin() {
   status=$?
   expect_code 0 "$status" "Deck secondmate spawn should succeed: $out"
   assert_meta_profile "$HOME_DIR/state/$id.meta" deck example/route default
-  launch=$(cat "$LAUNCH_LOG")
+  launch=$(tail -n 1 "$LAUNCH_LOG")
   assert_contains "$launch" "--secondmate --id '$id'" "Deck launch omitted host mode"
   assert_contains "$launch" "FM_HOME='$sm'" "Deck launch did not select the secondmate home"
   assert_contains "$launch" "< '$sm/data/charter.md'" "Deck launch lost the charter"
@@ -481,22 +484,24 @@ test_launch_environment_allowlist() {
     cat > "$probe" <<'SH'
 #!/bin/sh
 printf '%s\n' "${FM_TEST_AMBIENT_SENTINEL-unset}" "${FM_TEST_ALLOWED-unset}" \
-  "${FM_TEST_EMPTY-unset}" "${FM_TEST_UNSET-unset}" "$HOME" "$PATH" "$TERM" "$TMUX" "$GOTMPDIR"
+  "${FM_TEST_EMPTY-unset}" "${FM_TEST_UNSET-unset}" "$HOME" "$PATH" "$TERM" "$GOTMPDIR"
 SH
     out=$(FM_TEST_AMBIENT_SENTINEL=synthetic-unrelated \
       run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
       "$id" "$PROJ_DIR" --harness "/bin/sh '$probe'")
     status=$?
     expect_code 0 "$status" "allowlist=$setting spawn should succeed: $out"
-    launch=$(cat "$LAUNCH_LOG")
+    # The endpoint's log also holds the texts typed before the launch (the
+    # treehouse get and the export lines); the launch is the one running the probe.
+    launch=$(grep -F "$probe" "$LAUNCH_LOG" | tail -1)
     for pane_shell in /bin/sh /bin/bash /bin/zsh; do
       [ -x "$pane_shell" ] || continue
       pane_path=$(env -i HOME="$HOME_DIR/user-home" PATH=/usr/bin:/bin TERM=xterm \
-        TMUX=synthetic-pane GOTMPDIR=/synthetic/gotmp \
+        GOTMPDIR=/synthetic/gotmp \
         "$pane_shell" -c "printf %s \"\$PATH\"") \
         || fail "could not read $pane_shell startup PATH"
       result=$(env -i HOME="$HOME_DIR/user-home" PATH=/usr/bin:/bin TERM=xterm \
-      TMUX=synthetic-pane GOTMPDIR=/synthetic/gotmp \
+      GOTMPDIR=/synthetic/gotmp \
       FM_TEST_AMBIENT_SENTINEL=synthetic-unrelated FM_TEST_ALLOWED="$value" FM_TEST_EMPTY='' \
       "$pane_shell" -c "$launch") || fail "allowlist=$setting emitted launch failed in $pane_shell"
       case "$setting" in
@@ -504,7 +509,7 @@ SH
         enabled) expected=$(printf '%s\n' unset "$value" '' unset) ;;
         empty) expected=$(printf '%s\n' unset unset unset unset) ;;
       esac
-      expected="$expected"$'\n'"$HOME_DIR/user-home"$'\n'"$pane_path"$'\nxterm\nsynthetic-pane\n/synthetic/gotmp'
+      expected="$expected"$'\n'"$HOME_DIR/user-home"$'\n'"$pane_path"$'\nxterm\n/synthetic/gotmp'
       [ "$result" = "$expected" ] || fail "allowlist=$setting worker environment mismatch: $result"
     done
     pass "allowlist=$setting preserves the operational floor and filters only when opted in"
@@ -728,7 +733,8 @@ SH
       out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --mode "$kind" --yolo off)
     fi
     expect_code 0 "$?" "$kind worker spawn failed: $out"
-    launch=$(cat "$LAUNCH_LOG")
+    # The launch is the last text the spawn types into the endpoint.
+    launch=$(tail -n 1 "$LAUNCH_LOG")
     envelope="$CASE_DIR/prompt-envelope"
     encoded="$CASE_DIR/encoded-prompt"
     prompt="$CASE_DIR/prompt"

@@ -52,12 +52,14 @@ sub safe {
 }
 sub secret {
     my ($p) = @_;
-    return $p =~ m{(?:\A|/)(?:\.env(?:\..*)?|\.ssh|\.aws|\.gnupg|\.azure|\.pi|\.claude|\.codex|\.config|credentials?(?:\..*)?|secrets?(?:\..*)?|auth\.json|cmux-socket-password)(?:/|\z)}i
+    return $p eq 'config/stream-token'
+        || $p =~ m{(?:\A|/)(?:\.env(?:\..*)?|\.ssh|\.aws|\.gnupg|\.azure|\.pi|\.claude|\.codex|\.config|credentials?(?:\..*)?|secrets?(?:\..*)?|auth\.json|cmux-socket-password)(?:/|\z)}i
         || $p =~ /\.(?:pem|key|p12|pfx|keychain(?:-db)?)\z/i;
 }
 my %config = map { $_ => 1 } qw(crew-harness crew-dispatch.json secondmate-harness
-    backlog-backend backend herdr-presentation-spaces startup-memory-budget trace-context
+    backlog-backend backend startup-memory-budget trace-context
     launch-env-allowlist stow-pass-horizon turnend-churn-absorb wedge-alarm watched-tools.json);
+my %host_config = map { $_ => 1 } qw(stream-hub stream-impl);
 sub allowed {
     my ($p, $who) = @_;
     return 0 unless safe($p) && !secret($p);
@@ -97,7 +99,10 @@ if ($op eq 'pack' || $op eq 'classify') {
             }
             return if S_ISDIR($s[2]);
             die "unsafe artifact: $rel\n" unless S_ISREG($s[2]) && $s[3] == 1;
-            if ($dir eq 'config') { die "unclassified config: $rel\n" unless $config{substr($rel, 7)}; }
+            if ($dir eq 'config') {
+                if ($host_config{substr($rel, 7)}) { push @excluded, $rel; return; }
+                die "unclassified config: $rel\n" unless $config{substr($rel, 7)};
+            }
             return if $only_config;
             my $dest = $dir eq 'state' ? '.fm-migration/' . $rel : $rel;
             my $bytes = readfile($src);

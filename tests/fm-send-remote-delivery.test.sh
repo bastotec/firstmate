@@ -31,8 +31,8 @@
 #      armed.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 # shellcheck source=bin/fm-pending-reply-lib.sh
 . "$ROOT/bin/fm-pending-reply-lib.sh"
 # shellcheck source=bin/fm-marker-lib.sh
@@ -46,52 +46,20 @@ DRAIN="$ROOT/bin/fm-wake-drain.sh"
 TMP_ROOT=$(fm_test_tmproot fm-send-remote-delivery)
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd)
 
-# Stub tmux for the local typed-plane legs: logs literal typed text to
-# FM_SEND_LOG. The default composer reads empty (clean submit);
-# FM_FAKE_TMUX_PENDING=1 keeps a proven pending composer with no busy footer,
-# so the real submit core exhausts its Enter budget and reports the pending
-# verdict. The ssh stub counts invocations, logs the wire line, and either
-# fails with FM_FAKE_SSH_RC (emitting FM_FAKE_SSH_STDERR as the remote
-# stderr), or decodes the entrypoint argv and executes the REAL host-local
-# command against the decoded remote home - with FM_FAKE_SSH_AMBIGUOUS=1
-# reporting ssh exit 255 after that execution (completion unknown, but the
-# remote leg actually ran).
+# The local typed-plane legs run on the suite's fake stream hub
+# (tests/fixtures.sh); pending_screen pins an endpoint's screen to a proven
+# pending composer with no busy footer, so the real submit core exhausts its
+# Enter budget and reports the pending verdict. The ssh stub counts
+# invocations, logs the wire line, and either fails with FM_FAKE_SSH_RC
+# (emitting FM_FAKE_SSH_STDERR as the remote stderr), or decodes the entrypoint
+# argv and executes the REAL host-local command against the decoded remote home
+# - with FM_FAKE_SSH_AMBIGUOUS=1 reporting ssh exit 255 after that execution
+# (completion unknown, but the remote leg actually ran). The remote leg runs
+# without the suite's hub credential, so its best-effort doorbell fails the way
+# an unreachable endpoint does.
 make_stubs() {  # <dir> -> echoes fakebin dir
   local dir=$1 fb="$1/fakebin"
   mkdir -p "$fb"
-  cat > "$fb/tmux" <<'SH'
-#!/usr/bin/env bash
-set -u
-case "${1:-}" in
-  send-keys)
-    shift
-    literal=0
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        -t) shift 2 ;;
-        -l) literal=1; shift ;;
-        *) break ;;
-      esac
-    done
-    if [ "$literal" = 1 ]; then
-      printf '%s' "${1:-}" >> "$FM_SEND_LOG"
-    fi
-    exit 0 ;;
-  display-message)
-    for a in "$@"; do case "$a" in *cursor_y*) printf '1\n'; exit 0 ;; esac; done
-    printf 'fakepane\n'; exit 0 ;;
-  capture-pane)
-    if [ "${FM_FAKE_TMUX_PENDING:-0}" = 1 ]; then
-      printf '╭────────────╮\n│ > steer    │\n╰────────────╯\n'
-    else
-      printf '╭────╮\n│    │\n╰────╯\n'
-    fi
-    exit 0 ;;
-  list-windows) exit 0 ;;
-esac
-exit 0
-SH
-  chmod +x "$fb/tmux"
   cat > "$fb/sleep" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -130,7 +98,7 @@ while IFS= read -r -d '' a; do rargs+=("$a"); done \
   < <(perl -MMIME::Base64=decode_base64 -e 'print decode_base64($ARGV[0])' "$argv_b64")
 cmd=${rargs[0]}
 rc=0
-env FM_HOME="$remote_home" FM_ROOT_OVERRIDE="$FM_REMOTE_CODE_ROOT" \
+env -u FM_STREAM_HUB -u FM_STREAM_TOKEN FM_HOME="$remote_home" FM_ROOT_OVERRIDE="$FM_REMOTE_CODE_ROOT" \
   "$FM_REMOTE_CODE_ROOT/bin/$cmd" "${rargs[@]:1}" || rc=$?
 if [ "${FM_FAKE_SSH_AMBIGUOUS:-0}" = 1 ] \
   || { [ "${FM_FAKE_SSH_AFTER_AMBIGUOUS_RC:-0}" -ne 0 ] && [ "$count" -eq 1 ]; }; then
@@ -142,6 +110,21 @@ SH
   printf '%s\n' "$fb"
 }
 
+# The remote mate's recorded endpoint: a hub on a closed loopback port.
+REMOTE_STREAM_HUB=http://127.0.0.1:9
+REMOTE_STREAM_EID=0123456789abcdef0123456789abcdef
+REMOTE_STREAM_TARGET=127.0.0.1-9:$REMOTE_STREAM_EID
+
+# pending_screen <target>: a running pi whose screen reads a pending composer
+# no Enter clears.
+pending_screen() {
+  local file
+  file="$TMP_ROOT/pending-screen-${1##*:}.txt"
+  printf '╭────────────╮\n│ > steer    │\n╰────────────╯\n' > "$file"
+  fm_test_fake_stream_set "$1" "$(jq -nc --arg f "$file" '{capture_file: $f}')"
+  fm_test_fake_stream_foreground "$1" pi
+}
+
 setup_home() {  # <name> -> echoes a fresh home dir with an empty state/
   local home="$TMP_ROOT/$1-$RANDOM"
   mkdir -p "$home/state"
@@ -150,23 +133,21 @@ setup_home() {  # <name> -> echoes a fresh home dir with an empty state/
 
 # A seeded remote secondmate home the executed host-local leg validates and
 # writes into: identity marker, Firstmate-checkout shape, and a parent-route
-# endpoint record on Herdr in the dedicated fm-remote session.
+# stream endpoint record on a hub nothing answers.
 setup_remote_secondmate_home() {  # <name> -> echoes remote home dir
   local rh="$TMP_ROOT/$1-rhome"
   mkdir -p "$rh/state/parent-route" "$rh/bin"
   printf 'rsm\n' > "$rh/.fm-secondmate-home"
   printf '# remote secondmate home fixture\n' > "$rh/AGENTS.md"
   fm_write_meta "$rh/state/parent-route/rsm.meta" \
-    "window=fm-remote:p1" \
+    "window=$REMOTE_STREAM_TARGET" \
     "worktree=-" \
     "project=-" \
-    "backend=herdr" \
+    "backend=stream" \
+    "stream_hub=$REMOTE_STREAM_HUB" \
+    "stream_endpoint_id=$REMOTE_STREAM_EID" \
     "endpoint_task_id=rsm" \
-    "harness=deck" \
-    "herdr_session=fm-remote" \
-    "herdr_workspace_id=w1" \
-    "herdr_tab_id=t1" \
-    "herdr_pane_id=p1"
+    "harness=deck"
   printf '%s\n' "$rh"
 }
 
@@ -177,7 +158,7 @@ setup_remote_parent_home() {  # <name> <remote-home> -> echoes home dir
   home=$(setup_home "$1")
   mkdir -p "$home/data"
   fm_write_meta "$home/state/rsm.meta" \
-    "window=fm-remote:p1" \
+    "window=$REMOTE_STREAM_TARGET" \
     "endpoint_task_id=rsm" \
     "harness=deck" \
     "kind=secondmate" \
@@ -185,9 +166,10 @@ setup_remote_parent_home() {  # <name> <remote-home> -> echoes home dir
     "yolo=off" \
     "remote_host=remote-mac" \
     "remote_root=/remote/root" \
-    "remote_backend=herdr" \
-    "remote_herdr_session=fm-remote" \
-    "remote_target=fm-remote:p1"
+    "remote_backend=stream" \
+    "remote_stream_hub=$REMOTE_STREAM_HUB" \
+    "remote_stream_endpoint_id=$REMOTE_STREAM_EID" \
+    "remote_target=$REMOTE_STREAM_TARGET"
   cat > "$home/data/secondmates.md" <<EOF
 - rsm - remote test domain (host: remote-mac; root: /remote/root; home: $2; scope: remote testing; projects: alpha; added 2026-08-02)
 EOF
@@ -244,7 +226,7 @@ test_remote_steer_lands_in_remote_inbox() {
     *"$FM_FROMFIRST_MARK"*) : ;;
     *) fail "the remote record must carry the from-firstmate marker: $body" ;;
   esac
-  # The doorbell could not reach the fixture pane (no herdr CLI here); that
+  # The doorbell could not reach the recorded endpoint (no hub answers); that
   # never fails the send, and the notice still names the durable record.
   assert_contains "$err" "durably recorded" \
     "a failed doorbell must be reported as a notice on a durably sent steer"
@@ -708,19 +690,20 @@ test_remote_send_budget_bounds_busy_lane() {
 }
 
 test_local_secondmate_pending_keeps_expectation_armed() {
-  local dir fb log home rc rec corr
+  local dir fb home rc rec corr
   dir="$TMP_ROOT/local-pending-expectation"; mkdir -p "$dir"
-  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  fb=$(make_stubs "$dir")
   home=$(setup_home local-pending-expectation)
+  # shellcheck disable=SC2046 # one meta line per word.
   fm_write_meta "$home/state/lsm.meta" \
-    "window=sess:fm-lsm" "harness=deck" "kind=secondmate" "mode=secondmate" "home=$home/sm"
+    $(fm_test_stream_task "$home/state" lsm) "harness=deck" "kind=secondmate" "mode=secondmate" "home=$home/sm"
+  pending_screen "$(fm_test_stream_target_of "$home/state" lsm)"
 
   # A harness-native slash invocation keeps the typed plane for a LOCAL marked
   # secondmate target, so this pins the kept armed-expectation semantics there.
-  : > "$log"
   rc=0
-  env PATH="$fb:$PATH" FM_FAKE_TMUX_PENDING=1 \
-    FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
+  env PATH="$fb:$PATH" \
+    FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_SETTLE=0 \
     "$SEND" lsm "/audit the ledger" >/dev/null 2>&1 || rc=$?
   expect_code 3 "$rc" "an unconfirmed local secondmate submit must exit delivered-unconfirmed"
   rec=$(pending_record "$home")
@@ -737,18 +720,21 @@ test_local_secondmate_pending_keeps_expectation_armed() {
 }
 
 test_local_pending_reports_delivered_unconfirmed() {
-  local dir fb log home rc err
+  local dir fb home rc err target
   dir="$TMP_ROOT/local-pending"; mkdir -p "$dir"
-  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  fb=$(make_stubs "$dir")
   home=$(setup_home local-pending)
 
   # An explicit backend target is the typed plane, so the exit-3 ladder still
   # governs it.
-  : > "$log"
+  mkdir -p "$dir/unowned"
+  fm_test_stream_task "$dir/unowned" win >/dev/null
+  target=$(fm_test_stream_target_of "$dir/unowned" win)
+  pending_screen "$target"
   rc=0
-  env PATH="$fb:$PATH" FM_FAKE_TMUX_PENDING=1 \
-    FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
-    "$SEND" sess:win "steer text" >"$dir/out" 2>"$dir/err" || rc=$?
+  env PATH="$fb:$PATH" \
+    FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_SETTLE=0 \
+    "$SEND" "$target" "steer text" >"$dir/out" 2>"$dir/err" || rc=$?
   err=$(cat "$dir/err")
   expect_code 3 "$rc" "an unconfirmed local submit must exit with the delivered-unconfirmed status"
   assert_contains "$err" "submission is unconfirmed" \
@@ -761,19 +747,20 @@ test_local_pending_reports_delivered_unconfirmed() {
 }
 
 test_local_pending_does_not_close_resolve_key() {
-  local dir fb log home rc out
+  local dir fb home rc out
   dir="$TMP_ROOT/local-pending-key"; mkdir -p "$dir"
-  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  fb=$(make_stubs "$dir")
   home=$(setup_home local-pending-key)
-  fm_write_meta "$home/state/t2.meta" "window=sess:fm-t2" "kind=ship"
+  # shellcheck disable=SC2046 # one meta line per word.
+  fm_write_meta "$home/state/t2.meta" $(fm_test_stream_task "$home/state" t2) "kind=ship"
+  pending_screen "$(fm_test_stream_target_of "$home/state" t2)"
   printf 'blocked [key=creds]: need the deploy token\n' > "$home/state/t2.status"
 
   # A harness-native slash answer keeps the typed plane, so the unconfirmed
   # ladder still governs it; a plain-text answer would close at enqueue instead.
-  : > "$log"
   rc=0
-  env PATH="$fb:$PATH" FM_FAKE_TMUX_PENDING=1 \
-    FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
+  env PATH="$fb:$PATH" \
+    FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_SETTLE=0 \
     "$SEND" t2 --resolve-key creds "/vault fetch deploy-token" >/dev/null 2>&1 || rc=$?
   expect_code 3 "$rc" "an unconfirmed local answer must exit with the delivered-unconfirmed status"
   if grep -F 'resolved' "$home/state/t2.status" >/dev/null; then

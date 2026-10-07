@@ -6,21 +6,20 @@
 # state/<id>.meta under remote_host=. Its endpoint binding is the remote_*
 # namespace, read back from the host's own route
 # (bin/fm-remote-secondmate-control.sh route), never guessed here:
-#   remote_backend=herdr|stream
+#   remote_backend=stream
 #   remote_target=<the host-local endpoint target>
-#   remote_herdr_session=fm-remote                 (herdr only)
-#   remote_stream_hub=<hub URL the host's agent publishes to>   (stream only)
-#   remote_stream_endpoint_id=<32-hex hub endpoint id>          (stream only)
+#   remote_stream_hub=<hub URL the host's agent publishes to>
+#   remote_stream_endpoint_id=<32-hex hub endpoint id>
 # For stream, the hub is the one the remote home configures; a parent that
 # reaches that same hub through a tunnel sees the same endpoint id there.
 #
 # fm_remote_control_run is bin/fm-control.sh's remote arm: interrupt, exit, and
-# relaunch (including relaunch --backend) run that same control plane on the
+# relaunch run that same control plane on the
 # host over bin/fm-on.sh, and a relaunch rewrites this home's binding from the
 # host's route afterwards. It reads fm-control.sh's parsed globals.
 
 # fm_remote_route_parse <route-output>: validate one host route. Sets
-# FM_REMOTE_ROUTE_BACKEND, _TARGET, _HARNESS, _MODEL, _EFFORT, _HERDR_SESSION, _STREAM_HUB,
+# FM_REMOTE_ROUTE_BACKEND, _TARGET, _HARNESS, _MODEL, _EFFORT, _STREAM_HUB,
 # _STREAM_ENDPOINT_ID; on refusal returns 1 with FM_REMOTE_ROUTE_ERROR.
 fm_remote_route_field() {  # <route-output> <key>
   printf '%s\n' "$1" | sed -n "s/^$2=//p" | tail -1
@@ -34,7 +33,6 @@ fm_remote_route_parse() {  # <route-output>
   FM_REMOTE_ROUTE_HARNESS=$(fm_remote_route_field "$out" harness)
   FM_REMOTE_ROUTE_MODEL=$(fm_remote_route_field "$out" model)
   FM_REMOTE_ROUTE_EFFORT=$(fm_remote_route_field "$out" effort)
-  FM_REMOTE_ROUTE_HERDR_SESSION=$(fm_remote_route_field "$out" herdr_session)
   FM_REMOTE_ROUTE_STREAM_HUB=$(fm_remote_route_field "$out" stream_hub)
   FM_REMOTE_ROUTE_STREAM_ENDPOINT_ID=$(fm_remote_route_field "$out" stream_endpoint_id)
   [ -n "$FM_REMOTE_ROUTE_TARGET" ] || {
@@ -42,13 +40,6 @@ fm_remote_route_parse() {  # <route-output>
     return 1
   }
   case "$FM_REMOTE_ROUTE_BACKEND" in
-    herdr)
-      if [ "$FM_REMOTE_ROUTE_HERDR_SESSION" != fm-remote ] \
-        || [ "${FM_REMOTE_ROUTE_TARGET%%:*}" != fm-remote ]; then
-        FM_REMOTE_ROUTE_ERROR="remote launch returned Herdr session '${FM_REMOTE_ROUTE_HERDR_SESSION:-missing}', expected 'fm-remote'"
-        return 1
-      fi
-      ;;
     stream)
       case "$FM_REMOTE_ROUTE_STREAM_ENDPOINT_ID" in
         ''|*[!0-9a-f]*)
@@ -63,7 +54,7 @@ fm_remote_route_parse() {  # <route-output>
       fi
       ;;
     *)
-      FM_REMOTE_ROUTE_ERROR="remote launch returned backend '${FM_REMOTE_ROUTE_BACKEND:-missing}', expected herdr or stream"
+      FM_REMOTE_ROUTE_ERROR="remote launch returned backend '${FM_REMOTE_ROUTE_BACKEND:-missing}', expected stream"
       return 1
       ;;
   esac
@@ -72,12 +63,8 @@ fm_remote_route_parse() {  # <route-output>
 # The remote_* binding lines for the route fm_remote_route_parse accepted.
 fm_remote_route_binding_lines() {
   echo "remote_backend=$FM_REMOTE_ROUTE_BACKEND"
-  if [ "$FM_REMOTE_ROUTE_BACKEND" = herdr ]; then
-    echo "remote_herdr_session=$FM_REMOTE_ROUTE_HERDR_SESSION"
-  else
-    echo "remote_stream_hub=$FM_REMOTE_ROUTE_STREAM_HUB"
-    echo "remote_stream_endpoint_id=$FM_REMOTE_ROUTE_STREAM_ENDPOINT_ID"
-  fi
+  echo "remote_stream_hub=$FM_REMOTE_ROUTE_STREAM_HUB"
+  echo "remote_stream_endpoint_id=$FM_REMOTE_ROUTE_STREAM_ENDPOINT_ID"
   echo "remote_target=$FM_REMOTE_ROUTE_TARGET"
 }
 
@@ -111,7 +98,7 @@ fm_remote_route_rebind_meta() {  # <meta> <state-dir>
 
 # shellcheck disable=SC2153 # META, STATE, ID, VERB, and NEW_* are fm-control.sh's parsed globals.
 fm_remote_control_run() {
-  local host harness model effort prior_harness backend out rc route
+  local host harness model effort prior_harness out rc route
   local -a args
   host=$(fm_meta_get "$META" remote_host)
   case "$VERB" in
@@ -127,8 +114,7 @@ fm_remote_control_run() {
       return 1
       ;;
   esac
-  # Keep the recorded profile unless the caller names an axis; a backend
-  # migration moves the same agent profile to a new endpoint.
+  # Keep the recorded profile unless the caller names an axis.
   prior_harness=$(fm_meta_get "$META" harness)
   harness=${NEW_HARNESS:-$prior_harness}
   model=${NEW_MODEL:-$(fm_meta_get "$META" model)}
@@ -141,19 +127,15 @@ fm_remote_control_run() {
   [ -n "$effort" ] || effort=default
   [ -n "$harness" ] || { echo "error: task $ID has no recorded harness; pass --harness" >&2; return 1; }
   args=("$ID" "$harness" "$model" "$effort")
-  [ "$NEW_BACKEND_SET" = 0 ] || args+=(--backend "$NEW_BACKEND")
-  backend=$(fm_meta_get "$META" remote_backend)
-  backend=${backend:-herdr}
-  [ "$NEW_BACKEND_SET" = 0 ] || backend=$NEW_BACKEND
   # shellcheck source=bin/fm-remote-readiness-lib.sh
   . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
   rc=0
-  fm_remote_readiness_ensure "$SCRIPT_DIR" "$ID" "$backend" || rc=$?
+  fm_remote_readiness_ensure "$SCRIPT_DIR" "$ID" || rc=$?
   if [ "$rc" -ne 0 ]; then
     if [ "$rc" -eq 255 ]; then
       echo "error: remote secondmate $ID on $host readiness is unknown; relaunch refused" >&2
     else
-      echo "error: remote secondmate $ID host $host is not ready for backend $backend; relaunch refused" >&2
+      echo "error: remote secondmate $ID host $host is not ready for stream; relaunch refused" >&2
     fi
     [ -z "$FM_REMOTE_READINESS_OUT" ] || printf '%s\n' "$FM_REMOTE_READINESS_OUT" >&2
     return "$rc"

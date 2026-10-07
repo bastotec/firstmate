@@ -167,7 +167,7 @@ Primary harness integration: not applicable after inspection; [Harness support](
 Nothing here reads or renders harness-specific state.
 The only supervision surfaces touched are the session-start digest, whose protocol `bin/fm-supervision-instructions.sh` renders, and the wake payload produced by the existing relay poll.
 
-Runtime backends (tmux, herdr, stream): not applicable after inspection.
+Runtime backend (stream): not applicable after inspection.
 No command here reads `state/<id>.meta`'s backend fields, resolves an endpoint, or captures a pane.
 The lifecycle integrations are backlog-handoff warnings, promotion rechain hints, and `bin/fm-teardown.sh`'s owed-reply refusal plus non-blocking open-loop and legacy `x_request=` warnings.
 They inspect home, task, parent-binding, and registration records rather than backend fields or endpoints, so they behave identically on every backend.

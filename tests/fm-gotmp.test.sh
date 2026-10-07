@@ -42,7 +42,7 @@ TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/fm-gotmp-tests.XXXXXX")
 
 # Build a fake FM_HOME/FM_ROOT so the real fm-teardown.sh (symlinked in) resolves
 # state and helper scripts inside it. Stub the helper scripts fm-teardown calls so no
-# live tmux/treehouse/fleet state is touched. A nonexistent worktree path makes both
+# live session host, treehouse or fleet state is touched. A nonexistent worktree path makes both
 # `if [ -d "$WT" ]` guards skip, so teardown runs straight to the cleanup + state rm.
 make_fake_root() {
   local id=$1 tasktmp=$2
@@ -51,13 +51,16 @@ make_fake_root() {
   # Symlink the REAL teardown so the test exercises actual code, not a copy.
   ln -s "$TEARDOWN" "$fake/bin/fm-teardown.sh"
   cp "$ROOT/bin/fm-state-io.py" "$fake/bin/fm-state-io.py"
-  # fm-backend.sh is real, while its adapter is stubbed so this temp-cleanup
-  # test cannot depend on or mutate a host tmux server.
+  # fm-backend.sh is real, while its adapter's kill is stubbed so this
+  # temp-cleanup test needs no session host.
   ln -s "$ROOT/bin/fm-backend.sh" "$fake/bin/fm-backend.sh"
-  cat > "$fake/bin/backends/tmux.sh" <<'SH'
-fm_backend_tmux_kill() { return 0; }
+  # The real stream adapter with its kill stubbed to a confirmed close, so no
+  # hub is needed.
+  cat > "$fake/bin/backends/stream.sh" <<SH
+. "$ROOT/bin/backends/stream.sh"
+fm_backend_stream_kill() { return 0; }
+fm_backend_stream_agent_pids() { return 1; }
 SH
-  ln -s "$ROOT/bin/fm-tmux-lib.sh" "$fake/bin/fm-tmux-lib.sh"
   ln -s "$ROOT/bin/fm-busy-lib.sh" "$fake/bin/fm-busy-lib.sh"
   ln -s "$ROOT/bin/fm-cursor-lib.sh" "$fake/bin/fm-cursor-lib.sh"
   ln -s "$ROOT/bin/fm-composer-lib.sh" "$fake/bin/fm-composer-lib.sh"
@@ -117,7 +120,11 @@ SH
   ln -s "$ROOT/bin/fm-backlog-transition-lib.sh" "$fake/bin/fm-backlog-transition-lib.sh"
   # Meta with a nonexistent worktree so the dirty/treehouse blocks skip.
   cat > "$fake/state/$id.meta" <<META
-window=fakeses:fm-$id
+window=127.0.0.1-9:0123456789abcdef0123456789abcdef
+backend=stream
+stream_hub=http://127.0.0.1:9
+stream_endpoint_id=0123456789abcdef0123456789abcdef
+endpoint_task_id=$id
 worktree=$TMP_ROOT/nonexistent-worktree-$id
 project=$TMP_ROOT/nonexistent-project-$id
 harness=deck
@@ -157,10 +164,13 @@ test_teardown_skips_gracefully_without_tasktmp() {
   ln -s "$TEARDOWN" "$fake/bin/fm-teardown.sh"
   cp "$ROOT/bin/fm-state-io.py" "$fake/bin/fm-state-io.py"
   ln -s "$ROOT/bin/fm-backend.sh" "$fake/bin/fm-backend.sh"
-  cat > "$fake/bin/backends/tmux.sh" <<'SH'
-fm_backend_tmux_kill() { return 0; }
+  # The real stream adapter with its kill stubbed to a confirmed close, so no
+  # hub is needed.
+  cat > "$fake/bin/backends/stream.sh" <<SH
+. "$ROOT/bin/backends/stream.sh"
+fm_backend_stream_kill() { return 0; }
+fm_backend_stream_agent_pids() { return 1; }
 SH
-  ln -s "$ROOT/bin/fm-tmux-lib.sh" "$fake/bin/fm-tmux-lib.sh"
   ln -s "$ROOT/bin/fm-busy-lib.sh" "$fake/bin/fm-busy-lib.sh"
   ln -s "$ROOT/bin/fm-cursor-lib.sh" "$fake/bin/fm-cursor-lib.sh"
   ln -s "$ROOT/bin/fm-composer-lib.sh" "$fake/bin/fm-composer-lib.sh"
@@ -209,7 +219,11 @@ SH
   ln -s "$ROOT/bin/fm-backlog-transition-lib.sh" "$fake/bin/fm-backlog-transition-lib.sh"
   # No tasktmp= line at all.
   cat > "$fake/state/$id.meta" <<META
-window=fakeses:fm-$id
+window=127.0.0.1-9:0123456789abcdef0123456789abcdef
+backend=stream
+stream_hub=http://127.0.0.1:9
+stream_endpoint_id=0123456789abcdef0123456789abcdef
+endpoint_task_id=$id
 worktree=$TMP_ROOT/nonexistent-wt-$id
 project=$TMP_ROOT/nonexistent-proj-$id
 harness=deck

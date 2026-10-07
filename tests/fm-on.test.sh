@@ -68,10 +68,7 @@ case "\${1:-}:\${2:-}" in
 esac
 SH
 cp "$ROOT/bin/fm-remote-doctor.sh" "$ROOT/bin/fm-tasks-axi-lib.sh" \
-  "$ROOT/bin/fm-tool-version-lib.sh" "$ROOT/bin/fm-remote-herdr-owner-lib.sh" \
-  "$ROOT/bin/fm-backend.sh" "$REMOTE_ROOT/bin/"
-mkdir -p "$REMOTE_ROOT/bin/backends"
-cp "$ROOT/bin/backends/herdr.sh" "$REMOTE_ROOT/bin/backends/herdr.sh"
+  "$ROOT/bin/fm-tool-version-lib.sh" "$ROOT/bin/fm-backend.sh" "$REMOTE_ROOT/bin/"
 cat > "$REMOTE_ROOT/bin/fm-mutate.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'mutation\n' >> "$1"
@@ -342,16 +339,15 @@ out=$(HOME="$DOCTOR_HOME" PATH="$DOCTOR_BIN:/usr/bin:/bin:/usr/sbin:/sbin" "$ROO
 rc=$?
 set -e
 [ "$rc" -ne 0 ] || fail "the remote doctor passed with a missing required tool"
-assert_contains "$out" 'required herdr=MISSING' "the remote doctor did not mark a missing required tool"
-assert_contains "$out" 'required tasks-axi=MISSING' "the remote doctor did not mark every missing required tool"
-assert_contains "$out" 'required tools do not resolve on the remote runtime PATH: herdr tasks-axi treehouse harness' "the remote doctor did not name the missing tools"
+assert_contains "$out" 'required tasks-axi=MISSING' "the remote doctor did not mark a missing required tool"
+assert_contains "$out" 'required treehouse=MISSING' "the remote doctor did not mark every missing required tool"
+assert_contains "$out" 'required tools do not resolve on the remote runtime PATH: tasks-axi treehouse harness' "the remote doctor did not name the missing tools"
 assert_contains "$out" '.local/bin' "the remote doctor did not offer the wrapper escape hatch"
 ln -sf "$(command -v git)" "$DOCTOR_BIN/git"
 # The direct doctor fixture needs the complete required tool set. These stubs
-# exercise resolution only; the dedicated doctor suite owns worker and Herdr
-# lifecycle behavior against controlled launchctl fixtures.
+# exercise resolution only; the dedicated doctor suite owns worker and stream
+# readiness behavior against controlled fixtures.
 printf '#!/usr/bin/env bash\nexit 0\n' > "$DOCTOR_BIN/jq"
-printf '#!/usr/bin/env bash\nprintf "{\\\"server\\\":{\\\"running\\\":false}}\\n"\n' > "$DOCTOR_BIN/herdr"
 cat > "$DOCTOR_BIN/tasks-axi" <<'SH'
 #!/usr/bin/env bash
 case "${1:-}:${2:-}" in
@@ -362,19 +358,19 @@ esac
 SH
 printf '#!/usr/bin/env bash\nexit 0\n' > "$DOCTOR_BIN/treehouse"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$DOCTOR_BIN/deck"
-chmod +x "$DOCTOR_BIN/jq" "$DOCTOR_BIN/herdr" "$DOCTOR_BIN/tasks-axi" "$DOCTOR_BIN/treehouse" "$DOCTOR_BIN/deck"
+chmod +x "$DOCTOR_BIN/jq" "$DOCTOR_BIN/tasks-axi" "$DOCTOR_BIN/treehouse" "$DOCTOR_BIN/deck"
 set +e
 out=$(HOME="$DOCTOR_HOME" PATH="$DOCTOR_BIN:/usr/bin:/bin:/usr/sbin:/sbin" "$ROOT/bin/fm-remote-doctor.sh" 2>&1)
 rc=$?
 set -e
 assert_contains "$out" "required git=$DOCTOR_BIN/git" "the remote doctor did not report where the required tool resolved"
-doctor_tmux=$(PATH="$DOCTOR_BIN:/usr/bin:/bin:/usr/sbin:/sbin" command -v tmux 2>/dev/null || true)
-if [ -n "$doctor_tmux" ]; then
-  assert_contains "$out" "optional tmux=$doctor_tmux" "the remote doctor did not report the resolved optional tool"
+doctor_gh=$(PATH="$DOCTOR_BIN:/usr/bin:/bin:/usr/sbin:/sbin" command -v gh 2>/dev/null || true)
+if [ -n "$doctor_gh" ]; then
+  assert_contains "$out" "optional gh=$doctor_gh" "the remote doctor did not report the resolved optional tool"
 else
-  assert_contains "$out" 'optional tmux=absent' "the remote doctor did not report an absent optional tool"
+  assert_contains "$out" 'optional gh=absent' "the remote doctor did not report an absent optional tool"
 fi
-assert_contains "$out" "required herdr=$DOCTOR_BIN/herdr" "the remote doctor did not require herdr"
+assert_not_contains "$out" 'required herdr=' "the remote doctor still requires the retired herdr CLI"
 assert_contains "$out" "required tasks-axi=$DOCTOR_BIN/tasks-axi" "the remote doctor did not require compatible tasks-axi"
 assert_contains "$out" "required treehouse=$DOCTOR_BIN/treehouse" "the remote doctor did not require treehouse"
 assert_contains "$out" "required harness=deck:$DOCTOR_BIN/deck" "the remote doctor did not require a verified harness"

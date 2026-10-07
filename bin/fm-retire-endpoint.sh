@@ -9,18 +9,12 @@
 # backend cannot answer would otherwise stay forever. This is the one way they
 # are ever retired, and it runs only when a human names them.
 #
-# Why this rather than an automatic rule, and how it came to exist. The rule
-# first asked for was the obvious one for the stream hub: report an endpoint
-# gone when a healthy hub's task listing omits it. It was implemented, and then
-# reverted, because it is unsafe here - a worker's agent registers exactly once
-# and has no way back (docs/stream-backend.md), so a hub restart empties the
-# listing while every worker keeps running, and the rule would have read every
-# live worker as gone. Reverting it alone would have left every stream record
-# unretirable after a hub restart, so this command was authorized in its place.
-# No machine on this branch can tell a record the hub pruned from a live worker
-# behind a partition. A human looking at the machine can, and this is where
-# they say so - which is why the assertion is recorded with their name and the
-# time they made it. docs/stream-backend.md carries the operator-facing entry.
+# Absence from the hub is never proof that a worker stopped: a same-protocol
+# restart clears the registry while live agents rejoin on their own schedule,
+# and a partition can leave a worker running without an answer from its backend.
+# Only an operator inspecting that machine can assert it is stopped, which is
+# why this command records their name and the time before removing any record.
+# docs/stream-backend.md owns the operator-facing retirement contract.
 #
 # Retiring a record is RECORD bookkeeping and nothing else. Cleanup runs first,
 # because when its own gates allow it, it does the whole job properly. Two of
@@ -39,7 +33,7 @@
 # Every OTHER refusal stands and stops the retirement, because each protects
 # something no retirement has a say over: an outcome that never reached the
 # parent channel and must stay retryable, a backlog transition that cannot be
-# replayed, a runtime refusal only --override-runtime-refusal proceeds past.
+# replayed.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -59,16 +53,17 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 
 usage() {
   cat <<'EOF'
-usage: fm-retire-endpoint.sh [--override-runtime-refusal] <task-id> [<task-id>...]
+usage: fm-retire-endpoint.sh <task-id> [<task-id>...]
 
 Retires the durable records - the task record and its backlog row - of tasks
 whose runtime endpoint no backend can answer for, after you confirm the ids by
 typing them back.
 
-Use it only when the endpoint is hub-unanswerable: the backend that owned the
+Use it only when the endpoint is unanswerable: the backend that owned the
 worker can no longer say anything about it - a stream hub that was restarted or
-rebuilt and no longer has the endpoint - so cleanup can never prove the worker
-stopped and keeps refusing.
+rebuilt and no longer has the endpoint, or a record left on the retired tmux or
+herdr backends - so cleanup can never prove the worker stopped and keeps
+refusing.
 
 By naming a record here you assert, from your own inspection of the machine
 that ran it, that no worker is still running behind it. Cleanup will not make
@@ -96,22 +91,15 @@ What this reaches, exactly:
   record you are removing, and stopping it is then yours to do.
 
   Every other refusal stands and nothing is retired - an outcome that has not
-  reached the parent channel, a backlog transition that cannot be replayed, a
-  runtime refusal only --override-runtime-refusal proceeds past. Read cleanup's
-  own message and resolve it. A cleanup that fails only AFTER removing the task
-  record is reported as what it is: the run names the record that is already
-  gone and the pending close left behind, rather than claiming nothing was
-  retired.
-
-  --override-runtime-refusal additionally overrides a RUNTIME's own refusal to
-  answer for this task's endpoint: a herdr server that cannot be reached at
-  all. Without the flag that refusal stands and nothing is retired. The
-  override is recorded with your name and the time, exactly like the retirement
-  itself.
+  reached the parent channel, a backlog transition that cannot be replayed.
+  Read cleanup's own message and resolve it. A cleanup that fails only AFTER
+  removing the task record is reported as what it is: the run names the record
+  that is already gone and the pending close left behind, rather than claiming
+  nothing was retired.
 
   Every run appends one line to state/endpoint-retirements.log recording your
   ASSERTION - that you, at that time, asserted the named record should be
-  retired, and whether the override was used. It is written before anything is
+  retired. It is written before anything is
   removed, so nothing is ever removed without it; cleanup may still refuse
   afterwards and retire nothing, and no outcome is written back to the line.
 
@@ -131,15 +119,11 @@ refuse() {
 }
 
 IDS=()
-OVERRIDE_RUNTIME_REFUSAL=0
 for arg in "$@"; do
   case "$arg" in
     -h|--help)
       usage
       exit 0
-      ;;
-    --override-runtime-refusal)
-      OVERRIDE_RUNTIME_REFUSAL=1
       ;;
     *[][*?]*)
       refuse "refusing '$arg': name each task id exactly - a wildcard or all-records form cannot say which workers you inspected"
@@ -327,10 +311,8 @@ report_partial_cleanup() {  # <id> <status>
   fi
 }
 
-# bin/fm-teardown.sh's own statuses: the runtime refusal this retirement did
-# not override, and the work-protection refusal - the only one it proceeds
-# past, raised before anything on disk has been touched.
-RUNTIME_REFUSAL_EXIT=71
+# bin/fm-teardown.sh's work-protection refusal status - the only refusal this
+# retirement proceeds past, raised before anything on disk has been touched.
 WORK_GATE_EXIT=72
 
 # The durable answer to "who asserted this stop, and when". The retirement note
@@ -347,8 +329,8 @@ WORK_GATE_EXIT=72
 # not by firstmate.
 RETIREMENT_LOG="$STATE/endpoint-retirements.log"
 record_retirement_assertion() {  # <id>
-  printf '%s\tasserted\t%s\tby=%s\toverride_runtime_refusal=%s\n' \
-    "$retired_at" "$1" "$retired_by" "$OVERRIDE_RUNTIME_REFUSAL" >> "$RETIREMENT_LOG"
+  printf '%s\tasserted\t%s\tby=%s\n' \
+    "$retired_at" "$1" "$retired_by" >> "$RETIREMENT_LOG"
 }
 
 retired_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -368,18 +350,11 @@ for id in "${IDS[@]}"; do
     printf 'spawn_gen=%s\n' "$(fm_meta_get "$STATE/$id.meta" spawn_gen)"
     printf 'retired_by=%s\n' "$retired_by"
     printf 'retired_at=%s\n' "$retired_at"
-    printf 'runtime_refusal_override=%s\n' "$OVERRIDE_RUNTIME_REFUSAL"
   } > "$NOTE"
-  if [ "$OVERRIDE_RUNTIME_REFUSAL" = 1 ]; then
-    echo "note: $id is being retired with a runtime refusal overridden by $retired_by at $retired_at" >&2
-  fi
   teardown_rc=0
   "$SCRIPT_DIR/fm-teardown.sh" "$id" || teardown_rc=$?
   if [ "$teardown_rc" = 0 ]; then
     echo "note: $id retired; cleanup completed under the retirement recorded for $retired_by at $retired_at" >&2
-  elif [ "$teardown_rc" = "$RUNTIME_REFUSAL_EXIT" ]; then
-    status=1
-    echo "error: $id's runtime refused to answer and this retirement did not override that; nothing was retired - rerun with --override-runtime-refusal if that runtime can never answer for this record again" >&2
   elif [ "$teardown_rc" != "$WORK_GATE_EXIT" ]; then
     status=1
     if [ -e "$STATE/$id.meta" ] || [ -L "$STATE/$id.meta" ]; then
