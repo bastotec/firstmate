@@ -98,6 +98,7 @@ pub struct Screen {
     buf_len: usize,
     utf8: Vec<u8>,
     pending_bytes: usize,
+    history_cap: usize,
 }
 impl Screen {
     #[cfg(test)]
@@ -140,7 +141,17 @@ impl Screen {
             buf_len: 0,
             utf8: Vec::new(),
             pending_bytes: 0,
+            history_cap: 2000,
         })
+    }
+    /// The same screen without scrollback: the agent's local copy only ever
+    /// paints the visible rows, so it does not pay for 2000 rows of history.
+    /// (This file is also compiled into fm-stream-agent; see its local.rs.)
+    #[allow(dead_code)]
+    pub fn without_history(mut self) -> Self {
+        self.history_cap = 0;
+        self.history.clear();
+        self
     }
     pub fn feed(&mut self, data: &[u8]) {
         self.utf8.extend_from_slice(data);
@@ -332,7 +343,7 @@ impl Screen {
                 let row = self.cells.remove(self.top);
                 if self.top == 0 {
                     self.history.push_back(row);
-                    if self.history.len() > 2000 {
+                    if self.history.len() > self.history_cap {
                         self.history.pop_front();
                     }
                 }
@@ -539,7 +550,7 @@ impl Screen {
             for _ in trimmed..excess {
                 let row = self.cells.remove(0);
                 self.history.push_back(row);
-                if self.history.len() > 2000 {
+                if self.history.len() > self.history_cap {
                     self.history.pop_front();
                 }
                 self.cy = self.cy.saturating_sub(1);

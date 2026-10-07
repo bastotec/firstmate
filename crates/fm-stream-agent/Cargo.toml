@@ -10,6 +10,10 @@ license.workspace = true
 fm-stream-wire.workspace = true
 serde_json = { workspace = true, features = ["preserve_order", "arbitrary_precision", "float_roundtrip", "raw_value"] }
 unicode-general-category = "1"
+# The hub's screen model, compiled into the agent for same-machine attach
+# (src/local.rs); same versions as crates/fm-stream-hub.
+east-asian-width = "0.1"
+unicode-normalization = "0.1"
 libc = "0.2"
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-native-roots"] }

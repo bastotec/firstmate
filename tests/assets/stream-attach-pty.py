@@ -7,7 +7,9 @@ Starts a disposable native hub (loopback, ephemeral port, private token) and a
 native agent running bash, then attaches through firstmate's own entry point
 and proves: the existing screen is painted on connect, keystrokes reach the
 child, a local resize reaches the child's PTY (`stty size`), and the detach key
-leaves the endpoint running. Exits non-zero with a reason on the first failure.
+leaves the endpoint running - over the hub (FM_STREAM_ATTACH_LOCAL=0) and over
+the agent's same-machine socket, which must keep working with no hub at all.
+Exits non-zero with a reason on the first failure.
 """
 import base64
 import fcntl
@@ -17,10 +19,13 @@ import os
 import pty
 import secrets
 import select
+import shutil
 import signal
 import struct
 import subprocess
 import sys
+import stat
+import tempfile
 import termios
 import time
 import threading
@@ -28,6 +33,8 @@ import urllib.request
 
 ROOT, NATIVE, LAB = sys.argv[1:4]
 TOKEN = secrets.token_hex(16)
+# Short on purpose: a unix socket path must fit in 104 bytes on macOS.
+LOCAL = tempfile.mkdtemp(prefix="fmsa-", dir="/tmp")
 procs = []
 
 
@@ -62,6 +69,7 @@ def cleanup():
             proc.wait(5)
         except Exception:
             proc.kill()
+    shutil.rmtree(LOCAL, ignore_errors=True)
 
 
 os.makedirs(LAB + "/home/config", exist_ok=True)
@@ -71,7 +79,7 @@ token_file = LAB + "/token"
 with open(token_file, "w") as handle:
     handle.write(TOKEN + "\n")
 os.chmod(token_file, 0o600)
-env = dict(os.environ, FM_STREAM_TOKEN=TOKEN)
+env = dict(os.environ, FM_STREAM_TOKEN=TOKEN, FM_STREAM_LOCAL_DIR=LOCAL)
 try:
     procs.append(subprocess.Popen(
         [NATIVE + "/fm-stream-hub", "serve", "--bind", "127.0.0.1", "--port", "0",
@@ -79,7 +87,7 @@ try:
         env=env, stdout=subprocess.DEVNULL, stderr=open(LAB + "/hub.log", "w")))
     host, port = wait_file(LAB + "/hub.ready")
     URL = "http://%s:%s" % (host, port)
-    agent_env = dict(os.environ, SHELL="/bin/bash", TERM="xterm-256color")
+    agent_env = dict(os.environ, SHELL="/bin/bash", TERM="xterm-256color", FM_STREAM_LOCAL_DIR=LOCAL)
     agent_env.pop("FM_STREAM_TOKEN", None)
     procs.append(subprocess.Popen(
         [NATIVE + "/fm-stream-agent", "serve", "--hub", URL, "--token-file", token_file,
@@ -98,18 +106,26 @@ try:
         time.sleep(0.1)
 
     attach_env = dict(os.environ, FM_HOME=LAB + "/home", FM_STREAM_HUB=URL,
-                      FM_STREAM_TOKEN=TOKEN, FM_STREAM_NATIVE_DIR=NATIVE, TERM="xterm-256color")
-    def start_attach(hub=URL):
+                      FM_STREAM_TOKEN=TOKEN, FM_STREAM_NATIVE_DIR=NATIVE, TERM="xterm-256color",
+                      FM_STREAM_LOCAL_DIR=LOCAL)
+    def start_attach(hub=URL, local=True):
         global pid, master, seen
         seen = b""
         pid, master = pty.fork()
         if pid == 0:
             fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
-            env = dict(attach_env, FM_STREAM_HUB=hub)
+            env = dict(attach_env, FM_STREAM_HUB=hub, FM_STREAM_ATTACH_LOCAL="1" if local else "0")
             os.execve(ROOT + "/bin/fm-stream.sh",
                       [ROOT + "/bin/fm-stream.sh", "attach", "--interactive", endpoint], env)
 
-    start_attach()
+    socket_path = os.path.join(LOCAL, endpoint + ".sock")
+    if not os.path.exists(socket_path):
+        fail("the agent did not offer its same-machine socket")
+    if stat.S_IMODE(os.stat(socket_path).st_mode) != 0o600 or stat.S_IMODE(os.stat(LOCAL).st_mode) != 0o700:
+        fail("the same-machine socket is not private")
+
+    # The hub path first, forced: everything below must hold without the socket.
+    start_attach(local=False)
 
     def read_until(needle, secs=15):
         global seen
@@ -173,8 +189,40 @@ try:
         time.sleep(0.1)
     if json.loads(api("GET", "/v1/tasks/" + endpoint))["task"]["rows"] != 30:
         fail("the hub's screen did not follow the resize")
-    start_attach()
+
+    # Same machine: the socket alone carries the session, so a dead hub
+    # address changes nothing - paint, keys, resize, drained detach.
+    start_attach("http://127.0.0.1:9")
     if not read_until(b"after-2"):
+        fail("local attach did not paint the existing screen: %r" % seen[-400:])
+    os.write(master, b"echo local-$((3+4))\r")
+    if not read_until(b"local-7"):
+        fail("a keystroke did not reach the child locally: %r" % seen[-400:])
+    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 31, 101, 0, 0))
+    time.sleep(0.5)
+    os.write(master, b"stty size\r")
+    if not read_until(b"31 101"):
+        fail("the local resize did not reach the child's pty: %r" % seen[-400:])
+    os.write(master, b"echo local-drained-$((4+5))\r\x1d")
+    if not read_until(b"detached from"):
+        fail("the detach key did not detach locally: %r" % seen[-400:])
+    _, status = os.waitpid(pid, 0)
+    if os.WEXITSTATUS(status) != 0 or reset not in seen:
+        fail("local detach returned %d or left display modes set" % os.WEXITSTATUS(status))
+    os.close(master)
+    end = time.time() + 10
+    while "local-drained-9" not in api("GET", "/v1/tasks/%s/capture?lines=40" % endpoint):
+        if time.time() > end:
+            fail("local detach abandoned preceding input, or its output never reached the hub")
+        time.sleep(0.05)
+    end = time.time() + 5
+    while json.loads(api("GET", "/v1/tasks/" + endpoint))["task"]["rows"] != 31:
+        if time.time() > end:
+            fail("the hub's screen did not follow the local resize")
+        time.sleep(0.05)
+
+    start_attach()
+    if not read_until(b"local-drained-9"):
         fail("reattach failed")
     os.write(master, b"exit 7\r")
     if not read_until(b"endpoint closed, exit 7"):
@@ -183,6 +231,11 @@ try:
     if os.WEXITSTATUS(status) != 7 or reset not in seen:
         fail("endpoint status or display cleanup was lost")
     os.close(master)
+    end = time.time() + 10
+    while os.path.exists(socket_path):
+        if time.time() > end:
+            fail("the closed endpoint left its socket behind")
+        time.sleep(0.05)
 
     procs.append(subprocess.Popen(
         [sys.executable, ROOT + "/bin/fm-stream-agent.py", "serve", "--hub", URL,

@@ -3,6 +3,7 @@ mod attach;
 mod command_value;
 mod commands;
 mod hub_json;
+mod local;
 mod pty;
 mod receiver;
 use base64::Engine;
@@ -10,6 +11,7 @@ use fm_stream_wire::{is_machine_name, protocol_of_health, HUB_PROTOCOL};
 use pty::Pty;
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -21,6 +23,18 @@ const CAPABILITY: &str = "idempotent_command_results";
 const STARTUP_SECS: u64 = 12;
 const RESULT_RETRY_SECS: u64 = 900;
 const RESULT_POST_SECS: u64 = 15;
+/// Output is published as soon as the pty has nothing more ready: after a read,
+/// the reader waits this long for the rest of a burst the program is still
+/// writing, so a full-screen redraw leaves in one frame instead of dozens.
+const COALESCE_MILLIS: i32 = 1;
+/// ...but a steady stream is never held back longer than this.
+const COALESCE_LIMIT: Duration = Duration::from_millis(8);
+/// The largest output frame, and so the most one POST carries: well inside the
+/// hub's 256 KiB replay ring, like the reader's single reads always were.
+const FRAME_BYTES: usize = 65536;
+/// Output queued for the hub before the reader stops reading the pty. A hub
+/// that stops taking output back-pressures the endpoint, as it always has.
+const OUTBOX_BYTES: usize = 1 << 20;
 
 #[derive(Debug)]
 enum Error {
@@ -53,12 +67,25 @@ struct Hub {
     url: String,
     token: String,
     client: Client,
+    /// Output frames only: one kept-alive connection, so a keystroke's echo
+    /// does not pay a fresh connection through the tunnel on every chunk.
+    output: Client,
     capability: Mutex<String>,
     deadline: Mutex<Option<Instant>>,
 }
 impl Hub {
     fn call(
         &self,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+        timeout: Duration,
+    ) -> Result<hub_json::Response, Error> {
+        self.call_with(&self.client, method, path, body, timeout)
+    }
+    fn call_with(
+        &self,
+        client: &Client,
         method: &str,
         path: &str,
         body: Option<&Value>,
@@ -72,8 +99,7 @@ impl Hub {
             ),
             None => timeout,
         };
-        let mut request = self
-            .client
+        let mut request = client
             .request(method.parse().unwrap(), format!("{}{path}", self.url))
             .bearer_auth(&self.token)
             .timeout(timeout);
@@ -286,6 +312,94 @@ impl Wake {
         }
         *current != generation
     }
+    /// Wait until the generation moves past `generation` or `timeout` passes.
+    fn settle(&self, generation: u64, timeout: Duration) {
+        let current = self.generation.lock().unwrap();
+        if *current == generation {
+            let _ = self.changed.wait_timeout(current, timeout);
+        }
+    }
+}
+
+enum Item {
+    Bytes(Vec<u8>),
+    Geometry(u16, u16),
+}
+/// Output waiting for the hub, in order, with the geometry changes made between
+/// it so the hub's screen resizes exactly where the pty did.
+#[derive(Default)]
+struct Outbox {
+    state: Mutex<(VecDeque<Item>, usize, bool)>,
+    changed: Condvar,
+}
+impl Outbox {
+    fn push(&self, item: Item) {
+        let mut state = self.state.lock().unwrap();
+        if let Item::Bytes(bytes) = &item {
+            while state.1 >= OUTBOX_BYTES && !state.2 {
+                state = self
+                    .changed
+                    .wait_timeout(state, Duration::from_millis(100))
+                    .unwrap()
+                    .0;
+            }
+            state.1 += bytes.len();
+        }
+        state.0.push_back(item);
+        self.changed.notify_all();
+    }
+    fn finish(&self) {
+        self.state.lock().unwrap().2 = true;
+        self.changed.notify_all();
+    }
+    /// Everything queued, as frames for one POST of at most FRAME_BYTES of
+    /// output; None once the reader has finished and the queue is empty.
+    fn take(&self, id: &str) -> Option<Vec<Value>> {
+        let mut state = self.state.lock().unwrap();
+        while state.0.is_empty() && !state.2 {
+            state = self.changed.wait(state).unwrap();
+        }
+        if state.0.is_empty() {
+            return None;
+        }
+        let mut frames = Vec::new();
+        let mut bytes = Vec::new();
+        let mut total = 0;
+        while let Some(item) = state.0.front_mut() {
+            match item {
+                Item::Geometry(rows, cols) => {
+                    if !bytes.is_empty() {
+                        frames.push(json!({"endpoint_id":id,"b64":base64::engine::general_purpose::STANDARD.encode(&bytes)}));
+                        bytes.clear();
+                    }
+                    frames.push(json!({"endpoint_id":id,"geometry":{"rows":*rows,"cols":*cols}}));
+                    state.0.pop_front();
+                }
+                Item::Bytes(chunk) => {
+                    let room = FRAME_BYTES - total;
+                    if chunk.len() <= room {
+                        bytes.extend_from_slice(chunk);
+                        total += chunk.len();
+                        state.1 -= chunk.len();
+                        state.0.pop_front();
+                    } else {
+                        bytes.extend_from_slice(&chunk[..room]);
+                        chunk.drain(..room);
+                        state.1 -= room;
+                        total += room;
+                    }
+                    if total == FRAME_BYTES {
+                        break;
+                    }
+                }
+            }
+        }
+        if !bytes.is_empty() {
+            frames.push(json!({"endpoint_id":id,"b64":base64::engine::general_purpose::STANDARD.encode(&bytes)}));
+        }
+        self.changed.notify_all();
+        Some(frames)
+    }
 }
 struct Registration {
     not_before: Instant,
@@ -300,11 +414,16 @@ struct Agent {
     reader_stop: AtomicBool,
     stood_down: AtomicBool,
     wake: Wake,
+    /// Wakes the command loop the moment a take or a result post returns.
+    tick: Wake,
+    outbox: Outbox,
+    local: local::Local,
     registration: Mutex<Registration>,
     result_deadline: Mutex<Option<Instant>>,
     /// The PTY's current rows and cols; a resize changes it, and every
     /// re-registration reports it so a restarted hub renders the same size.
     geometry: Mutex<(u16, u16)>,
+    output: Mutex<Vec<u8>>,
 }
 impl Agent {
     fn registration(&self) -> Value {
@@ -330,10 +449,12 @@ impl Agent {
     fn halt(&self) {
         self.stop.store(true, Ordering::SeqCst);
         self.wake.notify();
+        self.tick.notify();
     }
     fn stand_down(&self) {
         self.stood_down.store(true, Ordering::SeqCst);
         self.wake.notify();
+        self.tick.notify();
     }
     fn recover(&self, final_frame: bool) -> bool {
         if self.stood_down.load(Ordering::SeqCst) {
@@ -385,13 +506,17 @@ impl Agent {
         true
     }
     fn frames(&self, frame: Value) {
-        let closing = frame["closed"] == true;
+        self.post_frames(vec![frame], &self.hub.client);
+    }
+    fn post_frames(&self, frames: Vec<Value>, client: &Client) {
+        let closing = frames.iter().any(|frame| frame["closed"] == true);
         if self.stood_down.load(Ordering::SeqCst) && !closing {
             return;
         }
-        let body = json!({"machine":self.options.machine,"frames":[frame]});
+        let body = json!({"machine":self.options.machine,"frames":frames});
         for attempt in 0..2 {
-            match self.hub.call(
+            match self.hub.call_with(
+                client,
                 "POST",
                 "/v1/agent/frames",
                 Some(&body),
@@ -405,18 +530,94 @@ impl Agent {
             return;
         }
     }
+    /// Read the pty as fast as it produces, and hand each burst on at once:
+    /// to local attach clients directly, and to the publisher for the hub.
+    /// Only a full outbox back-pressures reading; individual kernel reads do
+    /// not wait for a network round trip.
     fn reader(&self) {
-        let mut buffer = [0u8; 65536];
+        let mut buffer = vec![0u8; FRAME_BYTES];
+        let mut since = Instant::now();
         while !self.reader_stop.load(Ordering::SeqCst) {
-            match self.pty.read(&mut buffer) {
-                Ok(Some(0)) => break,
-                Ok(Some(n)) => self.frames(json!({"endpoint_id":self.id,"b64":base64::engine::general_purpose::STANDARD.encode(&buffer[..n])})),
-                Ok(None) => (),
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => (),
-                Err(_) => break,
+            let wait = if self.output.lock().unwrap().is_empty() {
+                100
+            } else {
+                COALESCE_MILLIS
+            };
+            let ready = self.pty.wait_readable(wait);
+            let mut batch = self.output.lock().unwrap();
+            let ended = match ready.and_then(|ready| {
+                if ready {
+                    self.pty.read_within(&mut buffer, 0)
+                } else {
+                    Ok(None)
+                }
+            }) {
+                Ok(Some(0)) => true,
+                Ok(Some(n)) => {
+                    if batch.is_empty() {
+                        since = Instant::now();
+                    }
+                    batch.extend_from_slice(&buffer[..n]);
+                    if batch.len() < FRAME_BYTES && since.elapsed() < COALESCE_LIMIT {
+                        continue;
+                    }
+                    false
+                }
+                Ok(None) => false,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => true,
+            };
+            if !batch.is_empty() {
+                self.publish(std::mem::take(&mut *batch));
+            }
+            if ended {
+                break;
             }
         }
+        let mut batch = self.output.lock().unwrap();
+        if !batch.is_empty() {
+            self.publish(std::mem::take(&mut *batch));
+        }
+        self.outbox.finish();
         self.halt();
+    }
+    fn resize_output(&self, rows: u16, cols: u16) -> Result<(), Error> {
+        if !(1..=1000).contains(&rows) || !(1..=1000).contains(&cols) {
+            return Err(Error::Other("resize rows and cols must be 1-1000".into()));
+        }
+        let mut batch = self.output.lock().unwrap();
+        if !self.pty.alive() {
+            return Err(Error::Other("the endpoint process has exited".into()));
+        }
+        if *self.geometry.lock().unwrap() == (rows, cols) {
+            return Ok(());
+        }
+        if !batch.is_empty() {
+            self.publish(std::mem::take(&mut *batch));
+        }
+        let mut buffer = vec![0; FRAME_BYTES];
+        while let Some(n) = self.pty.read_within(&mut buffer, 0)? {
+            if n == 0 {
+                break;
+            }
+            self.publish(buffer[..n].to_vec());
+        }
+        self.pty.resize(rows, cols)?;
+        self.local.resize(rows, cols);
+        *self.geometry.lock().unwrap() = (rows, cols);
+        self.outbox.push(Item::Geometry(rows, cols));
+        Ok(())
+    }
+    fn publish(&self, bytes: Vec<u8>) {
+        // The hub's copy first: the local screen parse must not delay it.
+        self.outbox.push(Item::Bytes(bytes.clone()));
+        self.local.feed(&bytes);
+    }
+    /// Post queued output in order, capped at FRAME_BYTES across each request.
+    fn publisher(&self) {
+        while let Some(frames) = self.outbox.take(&self.id) {
+            self.post_frames(frames, &self.hub.output);
+        }
     }
     fn heartbeat(&self) {
         while !self.stop.load(Ordering::SeqCst) {
@@ -474,26 +675,9 @@ impl Agent {
                 Ok(())
             }
             "resize" => {
-                let side = |name: &str| {
-                    payload[name]
-                        .as_u64()
-                        .and_then(|v| u16::try_from(v).ok())
-                        .filter(|v| *v > 0)
-                        .ok_or_else(|| Error::Other(format!("resize {name} must be 1-65535")))
-                };
-                let (rows, cols) = (side("rows")?, side("cols")?);
-                if !self.pty.alive() {
-                    return Err(Error::Other("the endpoint process has exited".into()));
-                }
-                self.hub.call(
-                    "POST",
-                    "/v1/agent/frames",
-                    Some(&json!({"machine":self.options.machine,"frames":[{"endpoint_id":self.id,"geometry":{"rows":rows,"cols":cols}}]})),
-                    Duration::from_secs(15),
-                )?;
-                self.pty.resize(rows, cols)?;
-                *self.geometry.lock().unwrap() = (rows, cols);
-                Ok(())
+                let (rows, cols) = local::geometry(payload)
+                    .ok_or_else(|| Error::Other("resize rows and cols must be 1-1000".into()))?;
+                self.resize_output(rows, cols)
             }
             "kill" => {
                 self.pty.close(
@@ -581,6 +765,14 @@ impl Agent {
             let a = self.clone();
             std::thread::spawn(move || a.commands())
         };
+        let publisher = {
+            let a = self.clone();
+            std::thread::spawn(move || a.publisher())
+        };
+        if let Some(listener) = self.local.listen(&self.id) {
+            let a = self.clone();
+            std::thread::spawn(move || local::serve(a, listener));
+        }
         while !self.stop.load(Ordering::SeqCst) {
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -589,12 +781,26 @@ impl Agent {
         self.wake.notify();
         // A signal must stop the child promptly, even during result retries.
         let close = self.pty.close(false);
+        // A local attach hears the exit now, not after the command loop's
+        // long poll returns: the reader has already handed it every byte.
+        if reader.is_finished() {
+            if let Ok(Some(code)) = self.pty.exit_code() {
+                self.local.close(json!(code));
+            }
+        }
         let _ = commands.join();
         let _ = heartbeat.join();
         self.reader_stop.store(true, Ordering::SeqCst);
         let _ = reader.join(); // No descriptor release while a read can name it.
+        self.outbox.finish();
+        let _ = publisher.join(); // All output reaches the hub before the close.
+        let exit = self.pty.exit_code();
+        self.local.close(match &exit {
+            Ok(Some(code)) => json!(code),
+            _ => Value::Null,
+        });
         close?;
-        let exit = self.pty.exit_code()?;
+        let exit = exit?;
         if exit.is_none() {
             return Err(Error::Other(
                 "child exit unconfirmed; refusing final close".into(),
@@ -602,6 +808,26 @@ impl Agent {
         }
         self.frames(json!({"endpoint_id":self.id,"closed":true,"exit_code":exit,"state":{"alive":false,"foreground":[],"cwd":"","published_at":now()}}));
         Ok(())
+    }
+}
+impl local::Endpoint for Agent {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn local(&self) -> &local::Local {
+        &self.local
+    }
+    fn input(&self, bytes: &[u8]) -> Result<(), String> {
+        if !self.pty.alive() {
+            return Err("the endpoint process has exited".into());
+        }
+        self.pty.write(bytes).map_err(|error| error.to_string())
+    }
+    /// The local twin of the hub's `resize` command. The hub's screen follows
+    /// through the outbox, in order with the output, and never blocks it.
+    fn resize(&self, rows: u16, cols: u16) -> Result<(), String> {
+        self.resize_output(rows, cols)
+            .map_err(|error| error.to_string())
     }
 }
 fn now() -> f64 {
@@ -623,6 +849,12 @@ fn serve(args: &[String]) -> Result<(), Error> {
         client: Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .pool_max_idle_per_host(0)
+            .build()
+            .map_err(|_| Error::Other("HTTP client initialization failed".into()))?,
+        output: Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .pool_idle_timeout(Duration::from_secs(30))
+            .tcp_nodelay(true)
             .build()
             .map_err(|_| Error::Other("HTTP client initialization failed".into()))?,
         capability: Mutex::new(String::new()),
@@ -674,12 +906,16 @@ fn serve(args: &[String]) -> Result<(), Error> {
         reader_stop: AtomicBool::new(false),
         stood_down: AtomicBool::new(false),
         wake: Wake::default(),
+        tick: Wake::default(),
+        outbox: Outbox::default(),
+        local: local::Local::new(options_rows, options_cols),
         registration: Mutex::new(Registration {
             not_before: Instant::now(),
             backoff: 2.0,
         }),
         result_deadline: Mutex::new(None),
         geometry: Mutex::new((options_rows, options_cols)),
+        output: Mutex::new(Vec::new()),
     });
     let startup = (|| {
         agent.hub.call(
@@ -746,5 +982,227 @@ fn main() {
                 std::process::exit(2);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn decoded(frame: &Value) -> Vec<u8> {
+        base64::engine::general_purpose::STANDARD
+            .decode(frame["b64"].as_str().unwrap())
+            .unwrap()
+    }
+
+    #[test]
+    fn outbox_coalesces_in_order_and_bounds_each_post() {
+        let outbox = Outbox::default();
+        outbox.push(Item::Bytes(b"ab".to_vec()));
+        outbox.push(Item::Bytes(b"cd".to_vec()));
+        outbox.push(Item::Geometry(30, 100));
+        outbox.push(Item::Bytes(b"ef".to_vec()));
+        // Everything already queued leaves in one POST, geometry in its place.
+        let frames = outbox.take("id").unwrap();
+        assert_eq!(frames.len(), 3);
+        assert_eq!(decoded(&frames[0]), b"abcd");
+        assert_eq!(frames[1]["geometry"], json!({"rows": 30, "cols": 100}));
+        assert_eq!(decoded(&frames[2]), b"ef");
+        // A burst larger than one frame is split, never reordered or lost.
+        let burst: Vec<u8> = (0..FRAME_BYTES + 10).map(|i| i as u8).collect();
+        outbox.push(Item::Bytes(burst.clone()));
+        let first = outbox.take("id").unwrap();
+        let second = outbox.take("id").unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(decoded(&first[0]).len(), FRAME_BYTES);
+        assert_eq!([decoded(&first[0]), decoded(&second[0])].concat(), burst);
+        assert_eq!(outbox.state.lock().unwrap().1, 0);
+        outbox.finish();
+        assert!(outbox.take("id").is_none());
+    }
+
+    #[test]
+    fn geometry_does_not_reset_the_post_output_budget() {
+        let outbox = Outbox::default();
+        let mut expected = Vec::new();
+        for row in 25..35 {
+            let chunk = vec![row as u8; FRAME_BYTES / 2 + 7];
+            expected.extend_from_slice(&chunk);
+            outbox.push(Item::Bytes(chunk));
+            outbox.push(Item::Geometry(row, 80));
+        }
+        outbox.finish();
+        let mut output = Vec::new();
+        let mut geometries = Vec::new();
+        while let Some(frames) = outbox.take("id") {
+            let mut total = 0;
+            for frame in frames {
+                if frame.get("b64").is_some() {
+                    let bytes = decoded(&frame);
+                    total += bytes.len();
+                    output.extend(bytes);
+                } else {
+                    geometries.push(frame["geometry"]["rows"].as_u64().unwrap());
+                }
+            }
+            assert!(total <= FRAME_BYTES);
+        }
+        assert_eq!(output, expected);
+        assert_eq!(geometries, (25..35).collect::<Vec<_>>());
+    }
+
+    fn resize_test_agent() -> Arc<Agent> {
+        let cwd = std::env::current_dir()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let options = Options::parse(&[
+            "--hub".into(),
+            "http://127.0.0.1:1".into(),
+            "--label".into(),
+            "resize-test".into(),
+            "--cwd".into(),
+            cwd.clone(),
+            "--rows".into(),
+            "24".into(),
+            "--cols".into(),
+            "80".into(),
+        ])
+        .unwrap();
+        let client = Client::builder().build().unwrap();
+        Arc::new(Agent {
+            options,
+            hub: Hub {
+                url: "http://127.0.0.1:1".into(),
+                token: String::new(),
+                client: client.clone(),
+                output: client,
+                capability: Mutex::new(String::new()),
+                deadline: Mutex::new(None),
+            },
+            pty: Pty::spawn(&cwd, 24, 80, "resize-test", "http://127.0.0.1:1").unwrap(),
+            id: "0123456789abcdef0123456789abcdef".into(),
+            stop: Arc::new(AtomicBool::new(false)),
+            reader_stop: AtomicBool::new(false),
+            stood_down: AtomicBool::new(false),
+            wake: Wake::default(),
+            tick: Wake::default(),
+            outbox: Outbox::default(),
+            local: local::Local::new(24, 80),
+            registration: Mutex::new(Registration {
+                not_before: Instant::now(),
+                backoff: 2.0,
+            }),
+            result_deadline: Mutex::new(None),
+            geometry: Mutex::new((24, 80)),
+            output: Mutex::new(Vec::new()),
+        })
+    }
+
+    #[test]
+    fn both_resize_paths_flush_old_output_before_new_geometry_and_redraw() {
+        for hub_command in [false, true] {
+            let agent = resize_test_agent();
+            let mut discard = [0; FRAME_BYTES];
+            let marker = std::env::current_dir().unwrap().join(format!(
+                ".resize-marker-{}-{hub_command}",
+                std::process::id()
+            ));
+            // Interactive line editors can emit a newline even with echo off,
+            // scrolling the bottom-row fixture. Use a plain command loop so
+            // only the test's printf output reaches the screen after setup.
+            let setup = format!(
+                "exec /bin/sh -c 'stty -echo; printf ready > \"{}\"; while IFS= read -r command; do eval \"$command\"; done'\r",
+                marker.display()
+            );
+            agent.pty.write(setup.as_bytes()).unwrap();
+            let until = Instant::now() + Duration::from_secs(10);
+            while !marker.is_file() && Instant::now() < until {
+                agent.pty.read_within(&mut discard, 5).unwrap();
+            }
+            assert!(marker.is_file());
+            fs::remove_file(&marker).unwrap();
+            while agent.pty.read_within(&mut discard, 100).unwrap().is_some() {}
+            *agent.output.lock().unwrap() = b"\x1b[24;1Hold-batch".to_vec();
+            let command = format!(
+                "printf '\\033[23;1Hold-kernel'; printf done > '{}'\r",
+                marker.display()
+            );
+            agent.pty.write(command.as_bytes()).unwrap();
+            let until = Instant::now() + Duration::from_secs(10);
+            while !marker.is_file() && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert!(marker.is_file());
+            fs::remove_file(&marker).unwrap();
+            if hub_command {
+                agent
+                    .apply(
+                        &json!({"kind":"resize", "payload":{"rows":40,"cols":80}}),
+                        &hub_json::decode(b"{}", false).unwrap(),
+                    )
+                    .unwrap();
+            } else {
+                local::Endpoint::resize(&*agent, 40, 80).unwrap();
+            }
+            assert!(agent.local.lines()[23].contains("old-batch"));
+            assert!(agent.local.lines()[22].contains("old-kernel"));
+            assert_eq!(agent.registration()["rows"], 40);
+            let reader_agent = agent.clone();
+            let reader = std::thread::spawn(move || reader_agent.reader());
+            agent
+                .pty
+                .write(b"printf '\\033[40;1Hnew-bottom'\r")
+                .unwrap();
+            let until = Instant::now() + Duration::from_secs(10);
+            while !agent.local.lines()[39].contains("new-bottom") && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            agent.reader_stop.store(true, Ordering::SeqCst);
+            reader.join().unwrap();
+            assert!(agent.local.lines()[39].contains("new-bottom"));
+            let mut before = Vec::new();
+            let mut after = Vec::new();
+            let mut resized = false;
+            while let Some(frames) = agent.outbox.take(&agent.id) {
+                for frame in frames {
+                    if frame.get("geometry").is_some() {
+                        assert_eq!(frame["geometry"], json!({"rows":40,"cols":80}));
+                        resized = true;
+                    } else if resized {
+                        after.extend(decoded(&frame));
+                    } else {
+                        before.extend(decoded(&frame));
+                    }
+                }
+            }
+            assert!(resized);
+            assert!(String::from_utf8_lossy(&before).contains("old-batch"));
+            assert!(String::from_utf8_lossy(&before).contains("old-kernel"));
+            assert!(String::from_utf8_lossy(&after).contains("new-bottom"));
+            agent.pty.close(true).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_full_outbox_holds_the_reader_until_the_publisher_drains() {
+        let outbox = Arc::new(Outbox::default());
+        outbox.push(Item::Bytes(vec![0; OUTBOX_BYTES]));
+        let pushed = Arc::new(AtomicBool::new(false));
+        let reader = {
+            let (outbox, pushed) = (outbox.clone(), pushed.clone());
+            std::thread::spawn(move || {
+                outbox.push(Item::Bytes(b"next".to_vec()));
+                pushed.store(true, Ordering::SeqCst);
+            })
+        };
+        std::thread::sleep(Duration::from_millis(150));
+        assert!(!pushed.load(Ordering::SeqCst));
+        while outbox.state.lock().unwrap().1 >= OUTBOX_BYTES {
+            outbox.take("id").unwrap();
+        }
+        reader.join().unwrap();
+        assert!(pushed.load(Ordering::SeqCst));
     }
 }

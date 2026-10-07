@@ -142,7 +142,8 @@ Ordinary supervision does not need any of that.
   Any non-2xx response or transport error ends the session with an explicit failed or uncertain delivery message, without retrying input.
 - A local resize goes to `POST /v1/tasks/<id>/resize` (`rows`, `cols`, 1-1000 each).
   Resize monitoring starts before the initial size is sampled, so a resize during startup requests is preserved for forwarding once the session starts.
-  Before changing the pseudoterminal and triggering `SIGWINCH`, the native agent posts a geometry frame that resizes the native hub's screen at ingestion; re-registration after a hub restart reports the new size.
+  The native agent serializes PTY reads and both resize paths: it publishes buffered old-size output, changes the PTY and local screen size, then queues geometry before any new-size output.
+  The publisher sends those queued frames in order, and the native hub resizes its screen at geometry ingestion; re-registration after a hub restart reports the current size.
   Identical geometry leaves the screen and scroll region unchanged.
   HTTP 404 or a 502 `agent_refused` response reporting `unknown command kind` disables further resizes while keeping the session open, supporting older hubs and Python-backed endpoints.
   Any other non-2xx response or transport error ends the session with a failed or uncertain resize delivery message, without retrying.
@@ -152,11 +153,33 @@ Ordinary supervision does not need any of that.
   Endpoint exit status is propagated; a negative signal status becomes `128 + signal`, and an unknown status becomes 1.
 - Every session exit restores terminal attributes and locally leaves the alternate screen, shows the cursor, disables bracketed paste and mouse reporting, and resets SGR before printing the final message.
 
+When the endpoint's native agent runs on the same machine as the client, the interactive session uses that agent's private unix socket, `<dir>/<endpoint-id>.sock`, instead of the hub transport:
+
+- `<dir>` is a nonempty `FM_STREAM_LOCAL_DIR`, else `/tmp/fm-stream-<uid>`.
+  Set an override identically for the agent and client; the fixed default lets a launchd agent and a terminal client find each other.
+  It must be a directory this user owns with no group or other permissions (the agent creates it 0700), the socket is 0600, and both sides check the peer uid.
+  An unsafe directory or a failed peer check disables the fast path rather than trusting it.
+- The agent keeps its own copy of the hub's screen model fed with the same bytes it publishes, so the session has the same shape: resize first, then a snapshot and the output that continues exactly after it, every keystroke written straight to the pseudoterminal, resizes forwarded, Ctrl-] and the signals detaching after an explicit input-drain acknowledgement from the agent, at most two seconds, and the endpoint's exit status propagated.
+  A client that falls far enough behind to queue 4096 output chunks is disconnected rather than stalling the endpoint.
+- Output is still queued for hub watchers, with local resizes ordered as described above.
+- No socket, a stale one, a Python agent, or an endpoint on another machine falls back to the hub path above.
+  A connected agent that does not answer the hello within three seconds also falls back; an explicit closed or refused response ends attach instead.
+  `FM_STREAM_ATTACH_LOCAL=0` forces the hub path.
+- A long `FM_STREAM_LOCAL_DIR` can push the socket path past the 104-byte limit macOS puts on it, which also just disables the fast path.
+
+The native agent coalesces PTY reads with a 1 ms continuation wait, publishing when the burst reaches 64 KiB or 8 ms instead of waiting for an HTTP round trip after each kernel read.
+Output enters a bounded 1 MiB hub outbox before local delivery; a full outbox blocks the reader, preserving endpoint backpressure.
+A separate publisher drains queued output over a dedicated kept-alive client, limiting each POST to 64 KiB of output across all geometry boundaries to stay inside the hub's 256 KiB replay ring.
+Other agent calls deliberately retain their unpooled client.
+The command loop wakes as soon as a take or result post completes, while empty polls retain a 100 ms start-to-start floor even with `--poll-secs 0`, and the native hub sends with `TCP_NODELAY`.
+[Interactive attach verification](verification/runtime-backends.md#interactive-attach-latency) owns the reproducible echo and redraw benchmark and recorded observations.
+
 The wrapper passes the token to the native `fm-stream-agent attach` client through the environment, never argv.
-Interactive attach needs both `subscribe` and `control` grants; [Security](#security) owns token classes and configuration.
+Hub-path interactive attach needs both `subscribe` and `control` grants; [Security](#security) owns token classes and configuration.
+The wrapper and native client still require a configured hub URL and nonempty token before trying the local socket, but local transport does not authenticate that token against the hub.
 The client requires [native binaries](#implementation-and-native-binaries) whatever `config/stream-impl` says, including in a Python home.
 Against the Python rollback hub it starts from the screen without exact offset continuity and cannot resize or send non-UTF-8 bytes; a Python-backed endpoint on the native hub supports exact-offset output but refuses resize and raw-byte input.
-`tests/fm-stream-attach-rust.test.sh` drives it from a real PTY against a disposable native hub and agent.
+`tests/fm-stream-attach-rust.test.sh` drives it from a real PTY against a disposable native hub and agent, over both the hub path and the same-machine socket (the latter with the hub address pointing nowhere).
 
 ## Bridge feed
 
@@ -213,6 +236,7 @@ Live comparisons exclude process-local clocks; help presentation, top-level comm
 Its `--help` owns the full option surface.
 The port uses the shared wire protocol with Reqwest/rustls, Serde JSON, POSIX PTYs, and signal-hook; it needs no Python interpreter at runtime.
 The adapter binds `FM_STREAM_CODE_ROOT` to its checkout so cached native binaries can invoke the existing `bin/fm-task-inbox-lib.sh` writer; when launching the agent directly outside the repository, set that variable to the repository root.
+`crates/fm-stream-agent/src/local.rs` owns the same-machine attach socket and its wire format ([Interactive attach](#interactive-attach)).
 `crates/fm-stream-agent/src/receiver.rs` implements the native Deck application interface described under [Command path](#command-path); `crates/fm-stream-agent/src/commands.rs` owns the Rust scheduler and durable result reconciliation.
 The native receiver scans both the task inbox and its `handled/` directory, leaving ordinary steering and unparseable stream-order sources untouched rather than letting them block other orders or recovery.
 Invalid UTF-8, missing source framing, invalid JSON bindings, and non-object bindings are skipped; filesystem errors and malformed receiver-owned recovery records still fail recovery.
@@ -364,6 +388,8 @@ Agents retain the capability only in memory, and listings, state reads, logs, an
 [Command path](#command-path) owns Bridge order compatibility; the endpoint authentication here also protects those orders.
 The Rust bridge remains a read-only feed, not a command adapter.
 The bundled viewer page is served without a credential - it is static, and the token it reads out of the URL fragment is what its own requests carry - but every data route behind it is authenticated, and opening it with a viewing token gives a read-only view whose send box is refused.
+The same-machine attach socket authenticates by filesystem isolation and peer uid rather than a token; [Interactive attach](#interactive-attach) owns its permission checks.
+That uid already holds the agent's credentials and could drive its pseudoterminal directly.
 
 ### The hub speaks plain HTTP
 
@@ -377,7 +403,8 @@ Cross-machine use means an SSH tunnel or an equivalent encrypted transport, whic
 Nothing binds a public interface on your behalf, so changing `--bind` is a deliberate act - and doing it without a tunnel publishes your fleet's terminals and their control channel to that network.
 
 Terminal content is never written to disk.
-It lives only in each endpoint's bounded in-memory ring buffer, which exists so a late subscriber can catch up, and it is lost when the hub restarts.
+Hub replay lives in each endpoint's bounded in-memory ring buffer, which exists so a late subscriber can catch up, and it is lost when the hub restarts.
+The native agent also keeps a visible-screen model without scrollback and a bounded parser tail for local snapshots; neither is written to disk.
 
 The status return channel writes on the machine that owns the endpoint.
 A status line travels as a command to that endpoint's own agent, which appends it to the local `state/<id>.status`, so the record is written where it belongs and never crosses the network as a path.
@@ -512,7 +539,8 @@ The hub owns no pseudoterminal, so it cannot take a worker with it.
 While it is down, unreachable, or restarting:
 
 - Every worker keeps running, and keeps producing output into the pty its own agent holds.
-- Nothing can be watched, newly steered, captured, or killed through this backend, because every one of those requests goes through the hub.
+- Hub-backed watching, new steering, capture, and kill requests are unavailable.
+  Same-machine interactive attach has a separate local transport ([Interactive attach](#interactive-attach)); it does not restore fleet-wide supervision.
   Already-reserved native Deck orders continue local reconciliation independently of hub connectivity under the [Command path](#command-path) contract.
 - Every endpoint reads stale, which is `unreadable`, never `dead`.
   Supervision must not treat that as evidence a worker died, because it is evidence of nothing at all.
@@ -523,7 +551,7 @@ A hub that RESTARTED comes back to none, and each agent registers its own endpoi
 Either way the terminal output produced in the meantime is gone, because the ring buffer is in memory too.
 
 The operational shape of that is worth saying plainly.
-Losing the hub costs observation across the whole fleet at once, and costs no work.
+Losing the hub costs centralized observation across the whole fleet at once, but does not stop the worker processes.
 
 ## Limits
 
