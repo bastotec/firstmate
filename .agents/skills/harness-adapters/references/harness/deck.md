@@ -26,7 +26,7 @@ The stable `run` driver uses `--secondmate` for secondmates; [`bin/fm-deck-chat.
 | Interrupt | `Ctrl+C`: the whole pane group gets SIGINT, Deck stops, the driver prints `Interrupted.`, records idle, and returns to its prompt. No clear key. |
 | Exit | `/quit`, one Enter; the driver records session-end and exits, leaving the pane's shell. Control-plane exit and either relaunch path also prove task-bound residual drivers stopped by matching the physical state path, signaling the driver and Deck itself, waiting boundedly for the isolated process group to exit, and escalating survivors to KILL before replacement. Deck 0.1.0 exits immediately on TERM, so this cleanup can interrupt an active in-process tool. |
 | Skill | No slash-skill form; use natural language. Deck reads the worktree's `AGENTS.md` chain and `.agents/skills` itself. |
-| Autonomy | Deck runs tools without approval prompts; guards are `pre_tool_use` hooks, none of which Firstmate adds. |
+| Autonomy | See [Harness support](../../../../../docs/configuration.md#harness-support) for the tool-approval posture; [the state-reader header](../../../../../bin/fm-crew-state.sh) owns the non-guard validation-observation hooks. |
 | Marker | None; see Detection and liveness below. |
 | Resume | Deterministic relaunch; the driver starts a new Deck session from the brief on disk. |
 

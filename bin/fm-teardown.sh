@@ -3220,8 +3220,7 @@ rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.progress" \
   "$STATE/$ID.control-relaunch.brief-prior" "$STATE/$ID.control-relaunch.note" \
   "$STATE/$ID.reconcile-nudged" "$STATE/$ID.crew-state" \
   "$STATE/.$ID.crew-state-follow.rearm"
-# The published validation record's follower exits on its own once the copy or
-# record is gone (bin/fm-crew-state.sh "PUBLISHED RECORD"); its lock goes here.
+# bin/fm-crew-state.sh "PUBLISHED RECORD" owns follower shutdown and lock cleanup.
 fm_lock_remove_path "$STATE/.$ID.crew-state-follow" || true
 fm_lock_remove_path "$STATE/.$ID.crew-state.lock" || true
 # The steering inbox (bin/fm-task-inbox-lib.sh) is runtime state for the

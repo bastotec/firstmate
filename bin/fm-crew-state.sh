@@ -100,13 +100,13 @@
 #   While a no-mistakes run is attributed to the task the record is rewritten
 #   atomically (temp file + rename in state/), and only when a value other than
 #   updated_at changed; once no run is attributed it is removed. Lines, in order:
-#     verdict=<working|parked|done|failed|unknown>  this reader's state word
+#     verdict=<working|parked|done|blocked|failed|unknown>  this reader's state word
 #     step=<step>          the run's current step (the gate's step when parked,
 #                          else the first step not completed or skipped, else
 #                          the last step that ran); empty from the coarse ledger
 #     step_status=<word>   that step's status, or the coarse ledger's run status
-#     run=<id>             the no-mistakes run id, when axi status names it
-#     pr=<url>             the run's PR, when it has one
+#     run=<id>             the no-mistakes run id; empty from the coarse ledger
+#     pr=<url>             the run's PR, when present; empty from the coarse ledger
 #     detail=<text>        this reader's one-line detail
 #     updated_at=<UTC>     when any other line last changed
 #   Scouts, secondmates, remote mates, missing metadata and torn-down copies
@@ -115,8 +115,10 @@
 #   Who refreshes it: every caller that already learns of a run-step change.
 #   bin/fm-deck-worker.sh publishes from its idle-prompt pipeline check, and
 #   starts `--follow-detached` when a turn ends with the run still working and
-#   from its pre_tool_use and post_tool_use hooks whenever the tool call involved
-#   no-mistakes, covering both a blocking drive call and its return.
+#   the idle-prompt pipeline wake is enabled (FM_DECK_PIPELINE_WAIT_SECS > 0).
+#   Independently, its pre_tool_use and post_tool_use hooks start it whenever
+#   the tool event JSON on stdin mentions no-mistakes, covering both a blocking
+#   drive call and its return.
 #   no-mistakes offers no step-change subscription, so the steps a run walks
 #   through inside one blocking drive call are seen only by the follower: the
 #   single poll, one per task, alive while the run reads working or within its
@@ -125,15 +127,17 @@
 #   (about 0.2 s) for the run's id, status, gate and step statuses, and runs the
 #   full read only when those changed or FM_CREW_STATE_FOLLOW_FULL_SECS (default
 #   60) passed; after the grace it exits on a non-working read, or at any time
-#   when the metadata goes or FM_CREW_STATE_FOLLOW_MAX_SECS (default 21600;
-#   0 disables polling) runs out. A second starter requests renewed grace via
+#   when the metadata or copy goes or FM_CREW_STATE_FOLLOW_MAX_SECS (default
+#   21600; 0 disables polling) runs out. A second starter requests renewed grace via
 #   state/.<id>.crew-state-follow.rearm before leaving the existing owner
-#   (state/.<id>.crew-state-follow holds its pid). Non-working shutdown releases
+#   (state/.<id>.crew-state-follow uses bin/fm-wake-lib.sh's ownership-aware
+#   lock primitives). Non-working shutdown releases
 #   ownership and rechecks the request so a racing starter is not lost.
 #   --follow-detached always performs one detached --publish before following,
-#   including when polling is disabled. Teardown removes the re-arm request.
+#   including when polling is disabled. Teardown removes both locks and the
+#   re-arm request for the task and for a retired secondmate home's children.
 #   Publication serializes the entire read under state/.<id>.crew-state.lock;
-#   plain reads take no lock.
+#   plain reads take no lock. Failure to acquire the publication lock exits 1.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

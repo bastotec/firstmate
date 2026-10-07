@@ -19,18 +19,20 @@ The skill tree rooted at [`.agents/skills/harness-adapters/SKILL.md`](../../.age
 
 The `deck run` surface has no interactive screen, so nearly every supervised worker behavior is Firstmate's own driver, `bin/fm-deck-worker.sh`, not a vendor surface.
 The separate `deck chat` primary host (`bin/fm-deck-chat.sh`) is outside the live evidence recorded here.
-The vendor facts it depends on are Deck's own CLI contract: `run` streams NDJSON (`run_started` carries the session id, `run_finished` / `run_failed` end a run), `--session` resumes a session, and `--hook EVENT=COMMAND` attaches `pre_complete` (exit 2 refuses completion and the stderr is sent back to the model) and `post_tool_use`.
-Deck's own tests pin that contract (`cargo test --locked`, 85 tests at `7308f21`).
+The vendor facts it depends on are Deck's own CLI contract: `run` streams NDJSON (`run_started` carries the session id, `run_finished` / `run_failed` end a run), `--session` resumes a session, and `--hook EVENT=COMMAND` attaches `pre_complete` (exit 2 refuses completion and the stderr is sent back to the model) and `pre_tool_use` / `post_tool_use`.
+Deck's own tests pin the original hook contract (`cargo test --locked`, 85 tests at `7308f21`).
 
 ## Portable regression
 
-`tests/fm-deck-harness.test.sh` drives the real driver against a fake `deck` that logs its arguments, honours `--session`, and runs the `pre_complete` and `post_tool_use` hooks the way Deck does:
+`tests/fm-deck-harness.test.sh` drives the real driver against a fake `deck` that logs its arguments, honours `--session`, and runs `pre_complete` plus `pre_tool_use` / `post_tool_use` with the tool event on stdin:
 
 ```sh
 bin/fm-test-run.sh tests/fm-deck-harness.test.sh
 ```
 
 The suite prints one `ok - ...` line per case; its case names are the current coverage list.
+Its validation-record case exercises a run starting during a blocking tool call after the pre-tool hook fired.
+[`tests/fm-crew-state.test.sh`](../../tests/fm-crew-state.test.sh) covers publication, serialized observations, follower ownership, grace expiry and re-arming, and detached publication with polling disabled; [`bin/fm-crew-state.sh`'s header](../../bin/fm-crew-state.sh) owns those contracts.
 
 The dispatch validator rejects Deck profiles with effort, spawn refuses a non-default `--effort` before launch or task metadata, and relaunch refuses it before stopping the current worker because Deck has no effort control.
 Those boundaries are pinned by `tests/fm-bootstrap.test.sh`, `tests/fm-deck-harness.test.sh`, and `tests/fm-control-relaunch.test.sh`.
