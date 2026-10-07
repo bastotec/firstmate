@@ -21,7 +21,8 @@
 #
 # Usage:
 #   fm-captain-hold.sh hold <task-id> --reason <reason> \
-#     [--title <title>] [--repo <repo>] [--origin <origin-id>] [--until YYYY-MM-DD]
+#     [--title <title>] [--repo <repo>] [--origin <origin-id>] [--until YYYY-MM-DD] \
+#     [--card-file <path>]
 #   fm-captain-hold.sh answer <task-id> --decision-file <path> [--release]
 #   fm-captain-hold.sh answers [<legacy-origin> | --any-origin] --source <provenance>   (keyed answers on stdin)
 #   fm-captain-hold.sh reconcile-requests --source-id <source-id> --source <provenance>   (task ids on stdin)
@@ -33,6 +34,7 @@
 #   fm-captain-hold.sh open <task-id> [--identity] [--distinguish-absent]
 #   fm-captain-hold.sh diverged
 #   fm-captain-hold.sh reconcile list
+#   fm-captain-hold.sh stale-clear <task-id> --evidence-file <path>
 #   fm-captain-hold.sh reconcile close <task-id> --evidence-file <path>
 #   fm-captain-hold.sh reconcile note <task-id> --note-file <path>
 #
@@ -45,7 +47,17 @@
 # existing timestamp, while re-holding released work starts a new lifecycle.
 # A task already closed is refused rather than reopened. `--until` records the
 # captain's own deferral date through `tasks-axi hold --until`, so a "revisit
-# later" answer is stored as a date instead of a live card.
+# later" answer is stored as a date rather than an undated live call; its
+# decision card remains until resolution.
+# Every hold carries a decision card (bin/fm-card.sh owns the file and schema).
+# With --card-file the card is validated before any backlog change and written
+# once the hold is durable; without it a draft card is written from the title,
+# repo and reason. Repeating an active hold without --card-file keeps an existing
+# card, while a new hold replaces any leftover card.
+# Card-write failures after a durable hold only warn; successful closes and
+# releases remove the card, including answer repairs and matching replays.
+# A removal failure warns without reversing the durable resolution; replay
+# retries cleanup.
 #
 # `answer` records the captain's exact words and resolves the call in the same
 # act. It requires a non-empty captain decision file of at most 8192 bytes and
@@ -103,7 +115,16 @@
 # appends one dated `Captain hold reconciled:` note and leaves the hold in
 # place. A normal answer also retires the request because the call is settled.
 # `list` is the read-only enumeration.
-# docs/captain-hold-lifecycle.md owns the semantics.
+# .agents/skills/captain-hold-lifecycle/SKILL.md owns the semantic policy.
+#
+# `stale-clear` closes on evidence without requiring a board-created request.
+# It uses the same non-empty, at-most-8192-byte input limit as `answer`, records
+# mode `stale-cleared` under `Stale-clear evidence:` rather than captain words,
+# closes the task, removes its card, and retires any pending reconcile request.
+# A matching digest and mode finish an interrupted clear without writing the
+# record twice; an exact retry on the closed task completes finalization.
+# A closed task with a different newest resolution, or an open task not held
+# for the captain, is refused.
 #
 # A channel's ONLY job is to turn whatever it received into those keyed lines
 # and pipe them here. It must never map keys to tasks, build decision records,
@@ -169,8 +190,8 @@
 # bin/fm-teardown.sh asks it before its automatic
 # backlog close and, on 0, returns the row to Queued with its deliverable
 # recorded instead (bin/fm-backlog-transition-lib.sh owns that transition), so
-# holding the very work item a question gates is safe; only `answer` with the
-# captain's words or evidence-backed `reconcile close` closes the call.
+# holding the very work item a question gates is safe; resolution follows the
+# answer or evidence-backed paths described above, never automatic cleanup.
 # bin/fm-watch.sh asks it when an ordinary
 # crew task reaches a due stale alarm - its open backlog hold need not appear in
 # the task's last status line - and on a 0 bounds repeated alarms from new pane
@@ -180,8 +201,8 @@
 # one captain call. See "record divergence" beside command_diverged below.
 #
 # Resolution records: the block written into the body names this script, the
-# decision digest, and a `Resolution mode:` of answered, released, repaired, or
-# reconciled. Records written by the retired fm-decision-hold.sh (routed,
+# decision digest, and a `Resolution mode:` of answered, released, repaired,
+# reconciled, or stale-cleared. Records written by the retired fm-decision-hold.sh (routed,
 # declined, answered, repaired) are recognized everywhere a record is read, so
 # nothing already closed needs rewriting.
 #
@@ -222,6 +243,7 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-parent-channel-lib.sh"
 
 PARENT_HOLD_PUBLISHED=0
+CARD_TOOL="$SCRIPT_DIR/fm-card.sh"
 publish_parent_hold() {  # <task-id> <occurrence> <verb> <note>
   local id=$1 occurrence=$2 verb=$3 note=$4 rc=0
   PARENT_HOLD_PUBLISHED=0
@@ -466,6 +488,7 @@ body_has_resolution_record() {  # <task-body>
     *"Resolution recorded by fm-captain-hold."*"Captain decision:"*) return 0 ;;
     *"Resolution recorded by fm-decision-hold."*"Captain decision:"*) return 0 ;;
     *"Resolution recorded by fm-captain-hold."*"Reconciliation evidence:"*) return 0 ;;
+    *"Resolution recorded by fm-captain-hold."*"Stale-clear evidence:"*) return 0 ;;
   esac
   return 1
 }
@@ -513,10 +536,15 @@ closed_answer_replay_mode_compatible() {  # <mode> <task-body>
 
 # The record's label is what keeps an evidence-backed reconciliation from
 # reading as the captain's own words. `reconciled` closes a call that went moot
-# and carries verified evidence; every other mode carries what the captain said.
+# and carries verified evidence, `stale-cleared` closes a stale call on the
+# first mate's evidence under the captain's standing ruling, and every other
+# mode carries what the captain said.
 resolution_block() {  # <mode>
   local label='Captain decision:'
-  [ "$1" != reconciled ] || label='Reconciliation evidence:'
+  case "$1" in
+    reconciled) label='Reconciliation evidence:' ;;
+    stale-cleared) label='Stale-clear evidence:' ;;
+  esac
   printf 'Resolution recorded by fm-captain-hold.\nDecision digest: %s\nResolution mode: %s\n\n%s\n%s\n' \
     "$DECISION_DIGEST" "$1" "$label" "$DECISION_TEXT"
 }
@@ -823,7 +851,7 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how>"
 
 command_hold() {
   local id=${1:-} title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence
-  local existing_hold_kind='' existing_held='' preserve_hold_set=0
+  local existing_hold_kind='' existing_held='' preserve_hold_set=0 card_file=''
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -833,6 +861,7 @@ command_hold() {
       --repo) shift; repo=${1:-} ;;
       --origin) shift; origin=${1:-} ;;
       --until) shift; until=${1:-} ;;
+      --card-file) shift; card_file=${1:-} ;;
       *) usage >&2; exit 2 ;;
     esac
     shift
@@ -848,6 +877,10 @@ command_hold() {
       [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) : ;;
       *) fail "--until must be a YYYY-MM-DD date: $until" ;;
     esac
+  fi
+  if [ -n "$card_file" ]; then
+    "$CARD_TOOL" validate --file "$card_file" \
+      || fail "the decision card for $id is invalid; nothing was held"
   fi
   hold_set=${FM_CAPTAIN_HOLD_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
   case "$hold_set" in
@@ -912,6 +945,18 @@ command_hold() {
   [ -n "$(body_hold_set_timestamp "$(show_field_value "$show" body)")" ] \
     || fail "task $id lost its hold-set stamp while being held"
   publish_parent_hold "$id" "$occurrence" needs-decision "$reason"
+  # The hold is durable by now, so a card that cannot be written is reported,
+  # never turned into a failed hold. A new hold replaces any leftover card so
+  # an old question's options can never ride on a new one.
+  if [ -n "$card_file" ]; then
+    "$CARD_TOOL" write "$id" --file "$card_file" >/dev/null \
+      || printf 'actionable: task %s is held but its decision card could not be written\n' "$id" >&2
+  elif [ "$preserve_hold_set" = 0 ] || [ ! -f "$STATE/cards/$id.json" ]; then
+    "$CARD_TOOL" remove "$id" 2>/dev/null || true
+    "$CARD_TOOL" draft "$id" --title "$(show_field_value "$show" title)" \
+      --project "$(show_field_value "$show" repo)" --situation "$reason" >/dev/null \
+      || printf 'actionable: task %s is held but its draft decision card could not be written\n' "$id" >&2
+  fi
   printf '%s\n' "$id"
 }
 
@@ -973,11 +1018,17 @@ apply_pending_retained_artifact() {  # <task-id>
 
 close_answered() {  # <task-id> <release-0-or-1>
   if [ "$2" = 1 ]; then
-    tasks_axi unhold "$1" >/dev/null
+    tasks_axi unhold "$1" >/dev/null || return 1
   else
     apply_pending_retained_artifact "$1" || return 1
-    tasks_axi "done" "$1" >/dev/null
+    tasks_axi "done" "$1" >/dev/null || return 1
   fi
+  remove_decision_card "$1"
+}
+
+remove_decision_card() {
+  "$CARD_TOOL" remove "$1" \
+    || printf 'actionable: closed %s but could not remove its decision card\n' "$1" >&2
 }
 
 remove_interrupted_answer_stamp() {  # <task-id>
@@ -1410,6 +1461,7 @@ reconcile_request_retire() {  # <task-id>
 publish_parent_resolution_then_retire() {  # <task-id> <occurrence> <note>
   local id=$1 occurrence=$2 note=$3 request
   request=$(reconcile_request_path "$id")
+  remove_decision_card "$id"
   publish_parent_hold "$id" "$occurrence" resolved "$note"
   if [ -e "$request" ] && [ "$PARENT_HOLD_PUBLISHED" != 1 ]; then
     fail "could not publish the answered captain-held task $id to its parent"
@@ -1540,6 +1592,7 @@ reconcile_close() {
       || fail "task $id was not closed by reconciliation"
     occurrence=$(resolution_record_count "$body")
     remove_interrupted_answer_stamp "$id"
+    remove_decision_card "$id"
     publish_parent_hold "$id" "$occurrence" resolved reconciled
     [ "$PARENT_HOLD_PUBLISHED" = 1 ] \
       || fail "could not publish the reconciled captain-held task $id to its parent"
@@ -1568,6 +1621,56 @@ reconcile_close() {
     || fail "could not publish the reconciled captain-held task $id to its parent"
   reconcile_request_retire "$id"
   printf 'reconciled: %s\n' "$id"
+}
+
+# bin/fm-card.sh `clear` calls this path; its `restore` supplies the undo.
+# The skill owns authority, and this script's header owns the close contract.
+command_stale_clear() {
+  local id=${1:-} evidence_file='' show state hold_kind body occurrence
+  [ "$#" -ge 1 ] || { usage >&2; exit 2; }
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --evidence-file) shift; evidence_file=${1:-} ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+  validate_slug task-id "$id"
+  [ -n "$evidence_file" ] || fail "--evidence-file is required; a stale clear closes on evidence, never on assertion"
+  load_decision "$evidence_file"
+  acquire_task_control_lock "$id"
+  require_tasks_axi
+  task_show_or_fail "$id" "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
+  state=$(show_field "$show" state)
+  hold_kind=$(show_field_value "$show" hold_kind)
+  body=$(show_field "$show" body)
+  # Mirrors reconcile_close: an exact retry finishes an interrupted clear, and
+  # a record already written is never written twice.
+  if [ "$state" = "done" ]; then
+    [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
+      && [ "$(recorded_resolution_mode "$body" || true)" = stale-cleared ] \
+      || fail "task $id is already closed by something other than this stale clear"
+    occurrence=$(resolution_record_count "$body")
+    remove_interrupted_answer_stamp "$id"
+    publish_parent_resolution_then_retire "$id" "$occurrence" stale-cleared
+    printf 'stale-cleared: %s\n' "$id"
+    return 0
+  fi
+  [ "$hold_kind" = captain ] \
+    || fail "task $id is not held for the captain; there is no captain call to clear"
+  if body_has_resolution_record "$body" \
+    && [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
+    && [ "$(recorded_resolution_mode "$body" || true)" = stale-cleared ]; then
+    occurrence=$(resolution_record_count "$body")
+  else
+    occurrence=$(( $(resolution_record_count "$body") + 1 ))
+    write_resolution_record "$id" stale-cleared "$body"
+  fi
+  close_answered "$id" 0 || fail "could not close stale captain-held task $id"
+  remove_interrupted_answer_stamp "$id"
+  publish_parent_resolution_then_retire "$id" "$occurrence" stale-cleared
+  printf 'stale-cleared: %s\n' "$id"
 }
 
 # The still-active outcome. The hold survives, so the call stays the captain's
@@ -1943,6 +2046,7 @@ case "${1:-}" in
   open) shift; command_open "$@" ;;
   diverged) shift; command_diverged "$@" ;;
   reconcile) shift; command_reconcile "$@" ;;
+  stale-clear) shift; command_stale_clear "$@" ;;
   -h|--help) usage ;;
   *) usage >&2; exit 2 ;;
 esac

@@ -212,7 +212,7 @@ A status line is a wake event, not current state; use `bin/fm-crew-state.sh` whe
 1. For `signal:`, read the listed event lines first, then reconcile current state only where action depends on it; a status annotation never replaces the raw record.
 2. For `stale:`, inspect the recorded endpoint and load `stuck-crewmate-recovery` for a stopped, looping, confused, or unresponsive worker; a deep-inspection reason also requires current-state and validation-log inspection.
 3. For `check:`, act on the named result, including merges, Relay events, process-to-event results, and captain inbox notes; acknowledge a handled inbox note with `bin/fm-inbox.sh drain --ack <id>` before the wake acknowledgement, or it surfaces again.
-4. For `heartbeat:`, review the whole fleet from the structured fleet view, reconcile suspicious tasks and PR state, update the backlog, and never report an unchanged fleet as progress.
+4. For `heartbeat:`, review the whole fleet from the structured fleet view, reconcile suspicious tasks and PR state, sweep decision cards (`captain-hold-lifecycle`), update the backlog, and never report an unchanged fleet as progress.
 
 When a wake reports a merged PR for a project cloned in this home, refresh that clone through guarded fleet sync.
 A secondmate's idle endpoint is healthy, and waiting on a healthy cycle is silent: empty polls, elapsed time, and no-change updates are not progress.
