@@ -178,7 +178,8 @@ An ask-user finding returns as `needs-decision`; `ask-user-authority` owns decid
 
 ### PR ready, landing, and teardown
 
-When a worker reports a PR or a ready local-only branch, load `task-delivery`, record the PR with `bin/fm-pr-check.sh`, and give the captain its full URL.
+When a worker reports a PR or a ready local-only branch, load `task-delivery`.
+For PR-based tasks, record the PR with `bin/fm-pr-check.sh` and give the captain its full URL.
 Bind any custom `state/<id>.check.sh` you write with `bin/fm-check-register.sh` before the watcher runs it, and retire it only through `bin/fm-check-unregister.sh` or teardown, never a hand-composed `rm`.
 Tear down a ship task only after landing is confirmed; a refusal for uncommitted or unlanded work means stop and investigate.
 Retire a secondmate only on an explicit captain or main-firstmate decision, with no work under way in its home; its empty queue is healthy.

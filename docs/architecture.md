@@ -206,7 +206,7 @@ The [`secondmate-provisioning` skill](../.agents/skills/secondmate-provisioning/
 ## Delivery modes are explicit per task
 
 `no-mistakes` tasks run the full validation pipeline, `direct-PR` tasks open PRs without it, and `local-only` tasks stay local until firstmate performs an approved fast-forward merge.
-Each task's mode and `yolo` merge posture are firstmate's decision at intake, passed explicitly to `bin/fm-brief.sh`, `bin/fm-spawn.sh`, and `bin/fm-promote.sh`, each of which refuses to guess.
+Each task's delivery mode and `yolo` merge posture are firstmate's decision at intake: pass the mode explicitly to `bin/fm-brief.sh` and both values to `bin/fm-spawn.sh` and `bin/fm-promote.sh`, each of which refuses to guess.
 A ship brief records its mode as a fixed line and spawn refuses a mismatch, so the worker's instructions and the recorded delivery cannot diverge.
 `bin/fm-dod-lib.sh` owns each mode's definition of done and the no-mistakes `--intent` contract for briefed and promoted workers alike, so a promoted worker cannot receive a weaker contract.
 `data/projects.md` records each project's standing posture as the captain's default, and `bin/fm-project-mode.sh` parses it for consumers with no task in hand.
