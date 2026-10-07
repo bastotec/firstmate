@@ -119,7 +119,7 @@ test_path_reaper_signals_only_fixture_processes() {
     fm_test_kill_tree() { printf "%s\n" "$1" >> "$probe_dir/signalled"; }
     for _ in 1 2 3 4 5 6 7 8; do fm_test_reap_startup_network_workers "$probe_dir"; done
   ' _ "$LIB" "$dir" || fail "the reaper probe did not run"
-  kill -9 "$worker" 2>/dev/null || true
+  fm_test_kill_tree "$worker"
   wait "$worker" 2>/dev/null || true
   grep -qx "$worker" "$record" 2>/dev/null ||
     fail "the reaper missed a live process carrying the fixture path (pid $worker)"
