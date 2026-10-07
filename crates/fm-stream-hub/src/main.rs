@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 struct Request {
     method: hyper::Method,
@@ -815,6 +815,7 @@ struct Told {
 /// `GET /v1/tasks/events`: the `/v1/tasks` listing once, then a delta carrying
 /// each endpoint record whose projection changed, whose output grew (at most
 /// once per EVENT_OUTPUT_SECS per endpoint), or that left the registry.
+/// Registry evaluations are spaced at least 25 ms apart to bound wake-driven work.
 /// docs/stream-backend.md "Task events" owns the contract.
 fn task_events(h: Arc<Hub>) -> HttpBody {
     let (tx, rx) = tokio::sync::mpsc::channel(16);
@@ -824,6 +825,7 @@ fn task_events(h: Arc<Hub>) -> HttpBody {
         let mut last_reap = 0f64;
         let mut last_sent = now();
         let mut wait = 0f64;
+        let mut last_evaluation = Instant::now();
         loop {
             let mut s = h.state.lock().unwrap();
             if seq > 0 {
@@ -832,10 +834,18 @@ fn task_events(h: Arc<Hub>) -> HttpBody {
                     .wait_timeout(s, Duration::from_secs_f64(wait.clamp(0.001, 1.)))
                     .unwrap()
                     .0;
+                if let Some(remaining) =
+                    Duration::from_millis(25).checked_sub(last_evaluation.elapsed())
+                {
+                    drop(s);
+                    std::thread::sleep(remaining);
+                    s = h.state.lock().unwrap();
+                }
             }
             if tx.is_closed() {
                 return;
             }
+            last_evaluation = Instant::now();
             let at = now();
             if at - last_reap >= 1. {
                 Hub::reap(&mut s);
@@ -861,8 +871,9 @@ fn task_events(h: Arc<Hub>) -> HttpBody {
                 }
                 if fresh {
                     let offset_at = match told.get(&e.id) {
+                        None => 0.,
                         Some(t) if t.offset == e.end => t.offset_at,
-                        _ => at,
+                        Some(_) => at,
                     };
                     told.insert(
                         e.id.clone(),
@@ -2165,7 +2176,10 @@ mod tests {
                 .status()
         };
         assert_eq!(frames(json!({"machine":"box","frames":[{"endpoint_id":eid,"b64":STANDARD.encode(b"hello")}]})).await, 200);
-        let (kind, delta) = next_event(&mut body, &mut buffer).await;
+        let (kind, delta) =
+            tokio::time::timeout(Duration::from_secs(1), next_event(&mut body, &mut buffer))
+                .await
+                .expect("first output is not throttled by the snapshot");
         assert_eq!(kind, "delta");
         assert_eq!(delta["seq"], 2);
         assert_eq!(delta["tasks"][0]["stream_offset"], 5);

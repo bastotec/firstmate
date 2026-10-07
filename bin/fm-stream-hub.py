@@ -2362,10 +2362,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     last_reap = at
                 changed = []
                 records = hub.list_task_records()
-                with hub.lock:
-                    live = {e.endpoint_id: e for e in hub.endpoints.values()}
                 for record in records:
-                    endpoint = live.get(record["endpoint_id"])
                     silent = record["agent_silent_for_secs"]
                     projection = (
                         record["machine"], record["label"], record["cwd"],
@@ -2373,13 +2370,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         record["closed_by"], json.dumps(record["exit_code"]),
                         record["current_execution"],
                         record["closed_at"] is None and silent <= AGENT_SILENCE_PRESUMED_SECS,
-                        bool(endpoint and endpoint.state_received_at))
+                        record["state_age_secs"] is not None)
                     offset = record["stream_offset"]
                     previous = told.get(record["endpoint_id"])
                     if (previous is None or previous[0] != projection
                             or (previous[1] != offset
                                 and at - previous[2] >= EVENT_OUTPUT_SECS)):
-                        offset_at = previous[2] if previous and previous[1] == offset else at
+                        offset_at = (0.0 if previous is None else
+                                     previous[2] if previous[1] == offset else at)
                         told[record["endpoint_id"]] = (projection, offset, offset_at)
                         changed.append(record)
                 listed = {record["endpoint_id"] for record in records}
