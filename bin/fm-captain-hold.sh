@@ -47,13 +47,17 @@
 # existing timestamp, while re-holding released work starts a new lifecycle.
 # A task already closed is refused rather than reopened. `--until` records the
 # captain's own deferral date through `tasks-axi hold --until`, so a "revisit
-# later" answer is stored as a date instead of a live card.
-# Every hold carries a decision card (bin/fm-card.sh owns the file and its
-# schema).
-# With --card-file the card is validated before anything is held and written
+# later" answer is stored as a date rather than an undated live call; its
+# decision card remains until resolution.
+# Every hold carries a decision card (bin/fm-card.sh owns the file and schema).
+# With --card-file the card is validated before any backlog change and written
 # once the hold is durable; without it a draft card is written from the title,
-# repo and reason unless a card already exists.
-# Every successful close or release removes the card.
+# repo and reason. Repeating an active hold without --card-file keeps an existing
+# card, while a new hold replaces any leftover card.
+# Card-write failures after a durable hold only warn; successful closes and
+# releases remove the card, including answer repairs and matching replays.
+# A removal failure warns without reversing the durable resolution; replay
+# retries cleanup.
 #
 # `answer` records the captain's exact words and resolves the call in the same
 # act. It requires a non-empty captain decision file of at most 8192 bytes and
@@ -111,7 +115,16 @@
 # appends one dated `Captain hold reconciled:` note and leaves the hold in
 # place. A normal answer also retires the request because the call is settled.
 # `list` is the read-only enumeration.
-# docs/captain-hold-lifecycle.md owns the semantics.
+# .agents/skills/captain-hold-lifecycle/SKILL.md owns the semantic policy.
+#
+# `stale-clear` closes on evidence without requiring a board-created request.
+# It uses the same non-empty, at-most-8192-byte input limit as `answer`, records
+# mode `stale-cleared` under `Stale-clear evidence:` rather than captain words,
+# closes the task, removes its card, and retires any pending reconcile request.
+# A matching digest and mode finish an interrupted clear without writing the
+# record twice; an exact retry on the closed task completes finalization.
+# A closed task with a different newest resolution, or an open task not held
+# for the captain, is refused.
 #
 # A channel's ONLY job is to turn whatever it received into those keyed lines
 # and pipe them here. It must never map keys to tasks, build decision records,
@@ -177,8 +190,8 @@
 # bin/fm-teardown.sh asks it before its automatic
 # backlog close and, on 0, returns the row to Queued with its deliverable
 # recorded instead (bin/fm-backlog-transition-lib.sh owns that transition), so
-# holding the very work item a question gates is safe; only `answer` with the
-# captain's words or evidence-backed `reconcile close` closes the call.
+# holding the very work item a question gates is safe; resolution follows the
+# answer or evidence-backed paths described above, never automatic cleanup.
 # bin/fm-watch.sh asks it when an ordinary
 # crew task reaches a due stale alarm - its open backlog hold need not appear in
 # the task's last status line - and on a 0 bounds repeated alarms from new pane
@@ -188,8 +201,8 @@
 # one captain call. See "record divergence" beside command_diverged below.
 #
 # Resolution records: the block written into the body names this script, the
-# decision digest, and a `Resolution mode:` of answered, released, repaired, or
-# reconciled. Records written by the retired fm-decision-hold.sh (routed,
+# decision digest, and a `Resolution mode:` of answered, released, repaired,
+# reconciled, or stale-cleared. Records written by the retired fm-decision-hold.sh (routed,
 # declined, answered, repaired) are recognized everywhere a record is read, so
 # nothing already closed needs rewriting.
 #
@@ -1610,11 +1623,8 @@ reconcile_close() {
   printf 'reconciled: %s\n' "$id"
 }
 
-# Evidence-backed clear of a stale captain call, under the captain's standing
-# ruling of 2026-10-07 that the first mate clears stale holds on its own and
-# reports them; bin/fm-card.sh `clear` is the caller and `restore` the undo.
-# The evidence is recorded under its own label so it can never read as the
-# captain's words, the task closes, and its card is removed.
+# bin/fm-card.sh `clear` calls this path; its `restore` supplies the undo.
+# The skill owns authority, and this script's header owns the close contract.
 command_stale_clear() {
   local id=${1:-} evidence_file='' show state hold_kind body occurrence
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }

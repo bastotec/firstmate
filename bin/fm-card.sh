@@ -20,12 +20,13 @@
 #   fm-card.sh clear <task-id> --why <text>
 #   fm-card.sh restore <task-id>
 #
-# Input JSON for write carries project, title, situation, options and
-# recommended; the script adds version, task, draft, created and updated.
+# Input JSON for write is exactly one object carrying project, title,
+# situation, options and recommended; the script adds version, task, draft,
+# created and updated.
 # Limits: title <= 120 chars; situation <= 280 chars and <= 2 lines; 1-9
 # options keyed "1".."9" in order; label <= 40 chars; instruction <= 1000
-# chars; recommended names one option; no control characters except the one
-# newline allowed in situation.
+# chars; recommended names one option; no control characters except newlines
+# in instruction and the single newline allowed in situation.
 # A draft card (draft: true, no options, recommended null) stands in for a
 # hold whose holder could not write a judgment; `draft` never replaces a full
 # card, and the first mate replaces drafts with full cards at its next review.
@@ -34,14 +35,24 @@
 # `stale` is read-only and prints "<task-id>\t<kind>\t<why>" per candidate:
 # `orphan` (a card with no open captain hold), `pr-merged` (the task's
 # recorded PR has a matching merge notification), or `idle` (held 3+ days,
-# with no status-log change since the cutoff).
+# with no status-log change since the cutoff, no worker record at
+# state/<task-id>.meta, and no hold_until date, past or future).
+# An unreadable backlog refuses classification or clearing rather than being
+# treated as proof that the card is orphaned.
+# These are candidates for the first mate to verify, not automatic closes;
+# there is no closed-PR rule because no closed-PR state is recorded locally.
 # `clear` removes an orphan card, or closes a stale call through
 # `fm-captain-hold.sh stale-clear` with the why as evidence; either way it
 # appends one JSON line to state/cards-cleared.log carrying the prior hold
-# reason and card.
-# `restore` undoes the newest clear of a task: it reopens the task and re-holds
-# it with its original reason and card, and refuses when the call is already
-# held again or was an orphan card.
+# reason and card. Each line has at (UTC timestamp), event (cleared or
+# restored), task, kind (orphan or stale), why (evidence or restore note),
+# reason (prior hold reason), and card (prior card object or null).
+# `restore` undoes the newest clear of a task only while it is still Done with
+# newest resolution mode stale-cleared: it reopens and re-holds with the prior
+# reason and full card, or a draft when no full card was saved.
+# It refuses after a newer captain answer, after other work has reopened the
+# task, when already held again, after a restore, or for an orphan card.
+# Restore starts a new hold lifecycle and does not restore a deferral date.
 # `show` exits 1 when the task has no card and 2 when its card is invalid.
 # FM_CARD_NOW overrides the UTC timestamp for tests.
 set -eu

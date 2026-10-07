@@ -94,7 +94,7 @@ Verification retires a request through one of two outcomes, and each one require
 `reconcile list` is the read-only enumeration of pending requests filed by board answers.
 A successful normal answer also retires any pending request, because an answered call has no remaining re-check obligation.
 Every retirement is checked: if request removal fails after an answer, close, or note is already durable, the durable outcome stands but the command fails and leaves the pending request visible for retry.
-No path here closes a captain call without either the captain's words through `answer` or the evidence through `reconcile close`.
+These request-driven outcomes remain separate from the standalone stale-clear path below.
 
 ## Card hygiene: a landed subject is not a live call
 
@@ -120,11 +120,9 @@ For a main-home call, the reconcile option is the recovery path for whatever sti
 
 ## Stale clear: the first mate's evidence, never the captain's words
 
-`bin/fm-captain-hold.sh stale-clear <task-id> --evidence-file <path>` closes a captain call that has gone stale.
-It rests on the captain's standing ruling of 2026-10-07 that the first mate clears stale holds on its own and reports them, so it needs no board-created reconcile request.
-It records the evidence under a `Stale-clear evidence:` label with resolution mode `stale-cleared`, so it can never read as the captain's words, then closes the task and removes its decision card file.
-An exact retry on the closed task is a no-op, and a task that is not held for the captain is refused.
-`bin/fm-card.sh` owns the decision card files, finds the stale candidates, calls this command through `clear`, logs every clear, and undoes one through `restore`.
+The [captain-hold lifecycle skill](../.agents/skills/captain-hold-lifecycle/SKILL.md#decision-cards) owns stale-clear authority, evidence review, reporting, and undo handling.
+The [`fm-captain-hold.sh` header](../bin/fm-captain-hold.sh) owns resolution labels, modes, retry finalization, and reconcile-request retirement; the [`fm-card.sh` header and help](../bin/fm-card.sh) own card schema, stale classification, clear-log fields, and restore guards.
+These card files are separate from the Bearings board's rendered cards described above; the backlog remains the authority on whether a call is open.
 
 ## Structured read surfaces
 
@@ -167,7 +165,7 @@ The away-posture restriction on queued merges and its residual limits are owned 
 ## Record divergence
 
 A captain call can have two records, and closing one does not close the other.
-A `resolved [key=...]` line closes the status-log fold; the structured captain-held task closes only through `answer`.
+A `resolved [key=...]` line closes the status-log fold; the structured captain-held task resolves only through the lifecycle owner's answer or evidence-backed close paths.
 Until this guard existed, closing on the status side alone left no trace of the disagreement: the fold went quiet, the durable record kept saying the captain owed an answer, and nothing warned.
 
 `bin/fm-captain-hold.sh diverged` is the read-only report of that state, and `bin/fm-wake-drain.sh` prints it as a bounded `RECORD DIVERGENCE` section beside OPEN DECISIONS on every drain.
@@ -197,7 +195,8 @@ The shim recognizes an exact replay of a pre-collapse routed resolution by its h
 
 ## Verification record
 
-The focused end-to-end regression suite is `tests/fm-captain-hold-lifecycle.test.sh`, using only synthetic `sample` identities and decision text.
+Card-specific regressions and hold hooks live in `tests/fm-card.test.sh`, covering full-card validation, owner-only storage, drafts and backfill, cleanup replay and repair, stale-clear retry and completion verification, fixed three-day classification with deferral and worker exclusions, PR-identity matching, unreadable-backlog refusal, and clear/restore guards.
+The focused end-to-end lifecycle regression suite is `tests/fm-captain-hold-lifecycle.test.sh`, using only synthetic `sample` identities and decision text.
 It proves: cleanup of a finished task whose own row is the captain call leaves that call open, queued, held, carrying its deliverable, and visible in Bearings' Captain's Call, leaves no pending record behind, survives a `--force` cleanup, and closes only when `answer` records the captain's words, while an ordinary finished task in the same home still closes with its report link; an interrupted cleanup leaves the row In flight and untouched with its pending record, the next session start retains it as queued and held with the deliverable recorded when it remains unanswered, and an answer before replay preserves that record's completed report while closing the call so the next session start retires the satisfied record without losing the delivery from Recently Landed; a pending-close record that cannot be validated refuses the answer while naming the record and the reason; a relocated data directory keeps the retention in its one configured backlog; direct PR and local-only merge entrypoint calls refuse a still-held task before reaching the forge or moving local main, while a released pull request passes the guarded PR entrypoint, cleanup records its artifact, and Recently Landed publishes it; an ordinary release still survives zero-retention cleanup and archives when configured; a ship row whose captain hold cannot be read refuses cleanup before any destructive step and surfaces the read failure; the reconstructed silent-divergence case is signalled - a status resolution over a still-open captain-held task reaches both `diverged` and the drain's `RECORD DIVERGENCE` section, under the collapsed and the legacy identity alike, while the backlog task, its hold, and the status log all survive the report unchanged and the printed hint names both reconciliation directions; the false-signal boundary holds - a captain call with no routed work item, a verified `captain-held` transfer, a still-open status decision, an already answered call, and an ordinary task whose keyed question was answered all stay silent; a released call whose decision text is `local main`, closed with no artifact, is not published as a local-only landing; a report-only unresolved captain call refuses `--none` completion before teardown can erase the source; non-forced scout teardown always requires the durable inventory verification; the recorded-answer guard (a bare `tasks-axi done` close fails `verify` until `answer` records the captain's word, and an ordinary finished task cannot be dressed up as an answered call); answer-time resolution through a bound channel with task-id keys, including the `release` mode, mode-matched replay idempotence, and the refusal of drifted, mode-mismatched, absent, unheld, and already-closed keys; the chat channel reaching the same intake; hold-set stamping that precedes visible hold state, preserves an active lifecycle's timestamp, and resets after release; interrupted answer closure retaining the stamp until close and restoring resolution-first ordering on retry; deferral through `--until` leaving `captain_actionable` false until due; and every legacy path (composed identities through the shim, pre-collapse `decision_keys=` metadata, routed-resolution replay, and a concrete-origin binding).
 The suite does not test the accepted merge-to-cleanup re-hold window or asynchronous queued-forge landing because those events occur after the locally serialized merge command has returned.
 
