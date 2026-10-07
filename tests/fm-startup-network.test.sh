@@ -468,7 +468,7 @@ await_worker_pid() {  # <home>
 # detached worker was still delivering - used to make every lock wait recurse
 # into .steal.steal... forever, leaving the worker spawning subshells for days.
 test_a_worker_whose_home_is_removed_exits() {
-  local rec home root log claimant worker left
+  local rec home root log claimant worker left waited=0
   rec=$(new_world home-removed)
   IFS='|' read -r home root log <<EOF
 $rec
@@ -476,9 +476,14 @@ EOF
   printf '%s\n' $$ > "$home/state/.lock"
   sleep 30 &
   claimant=$!
-  FM_FAKE_BOOTSTRAP_LOG="$log" FM_FAKE_BOOTSTRAP_SLEEP=1 \
+  FM_FAKE_BOOTSTRAP_LOG="$log" FM_FAKE_BOOTSTRAP_SLEEP=4 \
     run_stage "$home" "$root" start --locked 1 --harvest-pid "$claimant"
   worker=$(await_worker_pid "$home") || fail "the detached worker never recorded its pid"
+  while ! grep -Fq 'network=only' "$log" 2>/dev/null && [ "$waited" -lt 100 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_grep 'network=only' "$log" "the worker never reached its bounded bootstrap"
   rm -rf "$home"
   left=$(await_gone 15 "$worker") || {
     fm_test_kill_tree "$worker"
@@ -503,7 +508,7 @@ has_sleeping_bootstrap() {  # <pid...>
 # suite's cleanup, which reaps the detached worker and its bounded child at once,
 # and a KILL leaves the worker to its own stage bound and dead-claimant check.
 killed_runner_case() {  # <signal> <stage-bound> <seconds-to-settle>
-  local signal=$1 bound=$2 settle=$3 rec home root log runner worker tree left waited
+  local signal=$1 bound=$2 settle=$3 generations=${4:-1} rec home root log runner worker workers tree generation_tree left waited
   rec=$(new_world "killed-runner-$signal")
   IFS='|' read -r home root log <<EOF
 $rec
@@ -515,10 +520,30 @@ EOF
       . "$1/tests/lib.sh"
       FM_TEST_CLEANUP_DIRS+=("$2")
       printf "%s\n" $$ > "$FM_HOME/state/.lock"
+      if [ "$3" = 2 ]; then
+        FM_FAKE_HARNESS_PID=$$ "$FM_ROOT_OVERRIDE/bin/fm-startup-network.sh" start --locked 0 --harvest-pid $$
+        sed -n "s/^pid=//p" "$FM_HOME/state/.startup-network.status" > "$2/first-pid"
+        waited=0
+        while ! grep -Fq "network=only" "$FM_FAKE_BOOTSTRAP_LOG" 2>/dev/null; do
+          [ "$waited" -lt 100 ] || exit 1
+          sleep 0.1
+          waited=$((waited + 1))
+        done
+      fi
       FM_FAKE_HARNESS_PID=$$ "$FM_ROOT_OVERRIDE/bin/fm-startup-network.sh" start --locked 1 --harvest-pid $$
+      touch "$2/runner-ready"
       while :; do sleep 0.2; done
-    ' _ "$ROOT" "${home%/home}" >/dev/null 2>&1 &
+    ' _ "$ROOT" "${home%/home}" "$generations" >/dev/null 2>&1 &
   runner=$!
+  waited=0
+  while [ ! -f "${home%/home}/runner-ready" ] && [ "$waited" -lt 100 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -f "${home%/home}/runner-ready" ] || {
+    kill -TERM "$runner" 2>/dev/null || true
+    fail "the runner never launched all worker generations"
+  }
   worker=$(await_worker_pid "$home") || {
     kill -9 "$runner" 2>/dev/null || true
     fail "the runner's detached worker never recorded its pid"
@@ -526,16 +551,22 @@ EOF
   # Wait until the fake bootstrap is sleeping inside the worker's bounded child,
   # so the case proves that child is reaped too rather than passing on a worker
   # that had not reached it yet.
-  waited=0
-  # shellcheck disable=SC2086  # One pid per word.
-  until tree=$(fm_test_process_tree "$worker") && has_sleeping_bootstrap $tree; do
-    [ "$waited" -lt 100 ] || {
-      kill -9 "$runner" 2>/dev/null || true
-      fm_test_kill_tree "$worker"
-      fail "the worker never started its bounded child, so this case would prove nothing"
-    }
-    sleep 0.1
-    waited=$((waited + 1))
+  workers=$worker
+  [ "$generations" != 2 ] || workers+=" $(cat "${home%/home}/first-pid")"
+  tree=
+  for worker in $workers; do
+    waited=0
+    # shellcheck disable=SC2086
+    until generation_tree=$(fm_test_process_tree "$worker") && has_sleeping_bootstrap $generation_tree; do
+      [ "$waited" -lt 100 ] || {
+        kill -TERM "$runner" 2>/dev/null || true
+        fm_test_kill_tree "$worker"
+        fail "the worker never started its bounded child, so this case would prove nothing"
+      }
+      sleep 0.1
+      waited=$((waited + 1))
+    done
+    tree+=" $generation_tree"
   done
   kill "-$signal" "$runner" 2>/dev/null || fail "could not signal the runner"
   wait "$runner" 2>/dev/null || true
@@ -549,7 +580,7 @@ EOF
 test_a_terminated_runner_leaves_no_worker_running() {
   # Settling well inside the stage bound proves cleanup reaped the worker
   # rather than the worker reaching its own deadline.
-  killed_runner_case TERM 120 5
+  killed_runner_case TERM 120 5 2
   pass "fm-startup-network: a runner killed with SIGTERM leaves no worker or bounded child running"
 }
 

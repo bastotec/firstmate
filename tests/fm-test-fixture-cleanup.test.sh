@@ -17,6 +17,90 @@ set -u
 
 LIB="$ROOT/tests/lib.sh"
 
+await_cleanup_pid_exit() {
+  local pid=$1 waited=0
+  while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 100 ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  ! kill -0 "$pid" 2>/dev/null
+}
+
+test_status_worker_identity_is_checked_before_cleanup() {
+  local harness owned pid started
+  harness=$(fm_test_tmproot fm-test-worker-identity)
+  owned="$harness/owned"
+  mkdir -p "$owned/state"
+  printf '#!/usr/bin/env bash\nsleep 120\n:\n' > "$harness/fm-startup-network.sh"
+  bash "$harness/fm-startup-network.sh" >/dev/null 2>&1 &
+  pid=$!
+  fm_test_track_helper_pid "$pid"
+  started=$(date +%s)
+  printf 'pid=%s\nstarted=%s\n' "$pid" "$((started - 60))" > "$owned/state/.startup-network.status"
+  fm_test_reap_startup_network_workers "$owned"
+  kill -0 "$pid" 2>/dev/null || fail "cleanup signalled a worker whose process age did not match the record"
+  printf 'pid=%s\nstarted=%s\n' "$pid" "$started" > "$owned/state/.startup-network.status"
+  fm_test_reap_startup_network_workers "$owned"
+  wait "$pid" 2>/dev/null || true
+  await_cleanup_pid_exit "$pid" || fail "cleanup left the worker whose identity matched the record"
+  pass "startup worker cleanup requires a matching process start time"
+}
+
+test_tree_cleanup_catches_a_child_forked_during_the_snapshot() {
+  local dir root child real_ps late waited=0
+  dir=$(fm_test_tmproot fm-test-tree-fork)
+  real_ps=$FM_TEST_SYSTEM_PS
+  cat > "$dir/worker.sh" <<'SH'
+#!/usr/bin/env bash
+bash -c '
+  touch "$1/child-ready"
+  while [ ! -f "$1/launch" ]; do sleep 0.01; done
+  sleep 120 &
+  printf "%s\n" $! > "$1/late-pid"
+  wait
+' _ "$1" &
+printf '%s\n' $! > "$1/child-pid"
+wait
+SH
+  bash "$dir/worker.sh" "$dir" >/dev/null 2>&1 &
+  root=$!
+  fm_test_track_helper_pid "$root"
+  while [ ! -f "$dir/child-ready" ] && [ "$waited" -lt 100 ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  [ -f "$dir/child-ready" ] || fail "the fork probe never started its child"
+  child=$(cat "$dir/child-pid")
+  cat > "$dir/ps" <<SH
+#!/usr/bin/env bash
+if [ "\$*" = '-eo pid=,ppid=' ] && [ ! -f "$dir/launch" ]; then
+  "$real_ps" "\$@" > "$dir/snapshot"
+  touch "$dir/launch"
+  waited=0
+  while [ ! -s "$dir/late-pid" ] && [ "\$waited" -lt 100 ]; do
+    sleep 0.01
+    waited=\$((waited + 1))
+  done
+  cat "$dir/snapshot"
+else
+  exec "$real_ps" "\$@"
+fi
+SH
+  chmod +x "$dir/ps"
+  FM_TEST_SYSTEM_PS="$dir/ps"
+  fm_test_kill_tree "$root"
+  FM_TEST_SYSTEM_PS=$real_ps
+  wait "$root" 2>/dev/null || true
+  [ -s "$dir/late-pid" ] || fail "the snapshot probe did not exercise the fork race"
+  late=$(cat "$dir/late-pid")
+  fm_test_track_helper_pid "$child"
+  fm_test_track_helper_pid "$late"
+  if ! await_cleanup_pid_exit "$root" || ! await_cleanup_pid_exit "$child" || ! await_cleanup_pid_exit "$late"; then
+    fail "tree cleanup missed a descendant forked during its snapshot"
+  fi
+  pass "tree cleanup freezes and rescans descendants before killing them"
+}
+
 test_helper_pids_registered_in_a_subshell_are_still_reaped() {
   # The whole point of the `$$`-keyed registry. Suites start their helpers from
   # inside a command substitution (`endpoint=$(start_agent box-a worker)`), and
@@ -170,8 +254,12 @@ test_fixture_registration_failure_rolls_back_root() {
 }
 
 test_orphan_sweep_respects_fixture_ownership() {
-  local harness dirfile active_dir stale_dir fresh_dir pid tries
+  local harness dirfile active_dir stale_dir fresh_dir pid tries unrelated
   harness=$(fm_test_tmproot fm-test-cleanup-orphan-harness)
+  printf '#!/usr/bin/env bash\nsleep 120\n:\n' > "$harness/fm-startup-network.sh"
+  bash "$harness/fm-startup-network.sh" >/dev/null 2>&1 &
+  unrelated=$!
+  fm_test_track_helper_pid "$unrelated"
   dirfile="$harness/active-dir"
   bash -c '
     # shellcheck source=tests/lib.sh
@@ -194,6 +282,8 @@ test_orphan_sweep_respects_fixture_ownership() {
   stale_dir=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-cleanup-stale.XXXXXX")
   printf '%s\n%s\n' "$$" reused-process-identity > "$stale_dir/.fm-test-fixture"
   touch -t 202001010000 "$stale_dir/.fm-test-fixture"
+  mkdir -p "$stale_dir/state"
+  printf 'pid=%s\nstarted=%s\n' "$unrelated" "$(date +%s)" > "$stale_dir/state/.startup-network.status"
   fresh_dir=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-cleanup-fresh.XXXXXX")
   : > "$fresh_dir/.fm-test-fixture"
 
@@ -204,6 +294,9 @@ test_orphan_sweep_respects_fixture_ownership() {
 
   assert_absent "$stale_dir" \
     "a stale fixture root whose PID was reused by another process was not reaped"
+  kill -0 "$unrelated" 2>/dev/null || fail "the orphan sweep signalled a worker recorded in a stale fixture"
+  fm_test_kill_tree "$unrelated"
+  wait "$unrelated" 2>/dev/null || true
   assert_present "$active_dir" \
     "the orphan reaper removed an old fixture root whose owning process was still alive"
   assert_present "$fresh_dir" \
@@ -236,6 +329,8 @@ test_orphan_sweep_reaps_read_only_package_tree() {
   pass "the orphan sweep reaps read-only package fixtures"
 }
 
+test_status_worker_identity_is_checked_before_cleanup
+test_tree_cleanup_catches_a_child_forked_during_the_snapshot
 test_fixture_root_gone_after_normal_exit
 test_fixture_root_gone_after_sigterm
 test_helper_pids_registered_in_a_subshell_are_still_reaped

@@ -181,14 +181,14 @@ fm_test_pid_is_foreign() {  # <pid> [reason-var]
     esac
     if [ "$pid" = "$$" ]; then reason="it is this test process"; break; fi
     if [ "$pid" = 1 ]; then reason="it is pid 1"; break; fi
-    if ! ps -o pid= -p "$pid" >/dev/null 2>&1; then
+    if ! "$FM_TEST_SYSTEM_PS" -o pid= -p "$pid" >/dev/null 2>&1; then
       reason="pid $pid is already gone"
       break
     fi
     cursor=$$
     hops=0
     while [ "$cursor" -gt 1 ] && [ "$hops" -lt 64 ]; do
-      ppid=$(ps -o ppid= -p "$cursor" 2>/dev/null | tr -d ' ')
+      ppid=$("$FM_TEST_SYSTEM_PS" -o ppid= -p "$cursor" 2>/dev/null | tr -d ' ')
       [ -n "$ppid" ] || break
       if [ "$ppid" = "$pid" ]; then
         reason="pid $pid is an ancestor of this test process, so it is the harness or shell running the suite, not the process the case meant to resolve"
@@ -274,10 +274,25 @@ fm_test_process_tree() {  # <pid>
 # cannot be stopped by signalling its group alone, so every member of the tree
 # is signalled.
 fm_test_kill_tree() {  # <pid>
-  local pid
+  local pid members="$1" seen=$'\n' round=0 changed
   fm_test_pid_is_foreign "$1" || return 0
-  for pid in $(fm_test_process_tree "$1"); do
-    [ "$pid" = "$$" ] || kill -9 "$pid" 2>/dev/null || true
+  kill -STOP "$1" 2>/dev/null || return 0
+  seen+="$1"$'\n'
+  while [ "$round" -lt 8 ]; do
+    changed=0
+    for pid in $(fm_test_process_tree "$1"); do
+      case "$seen" in *$'\n'"$pid"$'\n'*) continue ;; esac
+      [ "$pid" != "$$" ] && [ "$pid" != 1 ] || continue
+      kill -STOP "$pid" 2>/dev/null || true
+      members+=" $pid"
+      seen+="$pid"$'\n'
+      changed=1
+    done
+    [ "$changed" -eq 1 ] || break
+    round=$((round + 1))
+  done
+  for pid in $members; do
+    kill -9 "$pid" 2>/dev/null || true
   done
 }
 
@@ -288,16 +303,37 @@ fm_test_kill_tree() {  # <pid>
 # status record names does. The recorded pid is signalled only while it is still
 # that worker, so a pid reused since the record was written is left alone.
 fm_test_reap_startup_network_workers() {  # <dir...>
-  local d status pid
+  local d status pid started elapsed delta
   for d in "$@"; do
     [ -n "$d" ] && [ -d "$d" ] && [ ! -L "$d" ] || continue
     while IFS= read -r status; do
       pid=$(sed -n 's/^pid=//p' "$status" 2>/dev/null | tail -1)
+      started=$(sed -n 's/^started=//p' "$status" 2>/dev/null | tail -1)
       case $pid in '' | 0 | *[!0-9]*) continue ;; esac
+      case $started in '' | *[!0-9]*) continue ;; esac
       case $("$FM_TEST_SYSTEM_PS" -o command= -p "$pid" 2>/dev/null) in
-        *fm-startup-network.sh*) fm_test_kill_tree "$pid" ;;
+        *fm-startup-network.sh*) ;;
+        *) continue ;;
       esac
+      elapsed=$("$FM_TEST_SYSTEM_PS" -o etime= -p "$pid" 2>/dev/null | awk '
+        NF == 1 && $1 ~ /^([0-9]+-)?([0-9]+:)?[0-9]+:[0-9]+$/ {
+          days=0
+          count=split($1, parts, "-")
+          if (count == 2) days=parts[1]
+          count=split(parts[count], clock, ":")
+          seconds=clock[count] + 60 * clock[count-1] + 86400 * days
+          if (count == 3) seconds+=3600 * clock[1]
+          print seconds
+        }')
+      case $elapsed in '' | *[!0-9]*) continue ;; esac
+      delta=$(( $(date +%s) - elapsed - started ))
+      [ "$delta" -ge -3 ] && [ "$delta" -le 3 ] || continue
+      fm_test_kill_tree "$pid"
     done < <(find "$d" -maxdepth 6 -name .startup-network.status -type f 2>/dev/null)
+    while IFS= read -r pid; do
+      fm_test_kill_tree "$pid"
+    done < <("$FM_TEST_SYSTEM_PS" -eo pid=,command= 2>/dev/null | awk -v fixture="$d" '
+      index($0, fixture) { print $1 }')
   done
 }
 
@@ -427,7 +463,6 @@ fm_test_reap_orphans() {
     mtime=$(stat -c %Y "$marker" 2>/dev/null || stat -f %m "$marker" 2>/dev/null) || continue
     [ $((now - mtime)) -ge "$FM_TEST_ORPHAN_MAX_AGE_SECONDS" ] || continue
     dir=$(dirname "$marker")
-    fm_test_reap_startup_network_workers "$dir"
     if [ -d "$dir" ] && [ ! -L "$dir" ]; then
       find "$dir" -type d -exec chmod u+rwx {} + 2>/dev/null || true
     fi
