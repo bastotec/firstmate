@@ -866,8 +866,8 @@ fn task_events(h: Arc<Hub>) -> HttpBody {
                     }
                     Some(_) => false,
                 };
-                if e.closed == 0. && e.silent() <= PRESUMED_SECS {
-                    next = next.min(e.seen + PRESUMED_SECS + 0.001);
+                if e.closed == 0. && rounded(e.silent()) <= PRESUMED_SECS {
+                    next = next.min(e.seen + PRESUMED_SECS + 0.002);
                 }
                 if fresh {
                     let offset_at = match told.get(&e.id) {

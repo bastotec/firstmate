@@ -133,7 +133,7 @@ impl Endpoint {
             self.closed_by,
             self.exit,
             current,
-            self.closed == 0. && self.silent() <= PRESUMED_SECS,
+            self.closed == 0. && rounded(self.silent()) <= PRESUMED_SECS,
             self.received > 0.,
         )
     }
