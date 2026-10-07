@@ -98,7 +98,8 @@
 #   state/<id>.crew-state current for a local ship task so a file watcher (the
 #   Bridge feed) sees the validation step without asking no-mistakes itself.
 #   While a no-mistakes run is attributed to the task the record is rewritten
-#   atomically (temp file + rename in state/), and only when a value other than
+#   atomically (temp file + rename in state/), with owner-only mode 0600 because
+#   detail can include private status-note text, and only when a value other than
 #   updated_at changed; once no run is attributed it is removed. Lines, in order:
 #     verdict=<working|parked|done|blocked|failed|unknown>  this reader's state word
 #     step=<step>          the run's current step (the gate's step when parked,
@@ -114,7 +115,8 @@
 #
 #   Who refreshes it: every caller that already learns of a run-step change.
 #   bin/fm-deck-worker.sh publishes from its idle-prompt pipeline check, and
-#   starts `--follow-detached` when a turn ends with the run still working.
+#   starts `--follow-detached` when a turn ends with the run still working, even
+#   when FM_DECK_PIPELINE_WAIT_SECS=0 disables automatic next-turn wakes.
 #   Independently, its pre_tool_use and post_tool_use hooks start it whenever
 #   the tool event JSON on stdin mentions no-mistakes, covering both a blocking
 #   drive call and its return.
