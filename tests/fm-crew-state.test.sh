@@ -2551,6 +2551,17 @@ test_stream_crew_reads_busy_idle_missing_and_unreachable() {
   assert_contains "$out" "state: parked" "an idle stream crew falls to its status log"
   assert_contains "$out" "source: status-log" "an idle stream crew reads the status log"
 
+  fm_test_fake_stream_set "$target" '{"fail_capture": true}'
+  out=$(run_crew_state "$d" feat-stream)
+  assert_contains "$out" 'state: parked' 'capture failure with a live process preserves idle status'
+  assert_contains "$out" 'source: status-log' 'capture failure still permits the status-log fallback'
+  assert_not_contains "$out" 'backend target gone' 'failed capture cannot prove process death'
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" feat-stream busy --gen "$gen" \
+    --source deck-wrapper --event run_started
+  out=$(run_crew_state "$d" feat-stream)
+  assert_contains "$out" 'state: working' 'capture failure with a live process preserves busy state'
+  fm_test_fake_stream_set "$target" '{"fail_capture": false}'
+
   # A crew whose endpoint cannot be read falls back to the recovery-grade
   # classifier, exactly as on tmux: only the hub's settled 404 is death
   # evidence, and a hub that does not answer is unreachable.
