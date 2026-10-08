@@ -2,7 +2,7 @@
 name: captain-hold-lifecycle
 description: >-
   Agent-only policy for completing investigations and visual reviews without losing unresolved captain calls, and for closing what the captain owns with his actual words.
-  Load before treating an investigation, scout report, structured review, or Lavish review as complete, before ending a visual review that exposed a captain decision, when recording or routing the captain's answer, on every heartbeat for the decision-card sweep, on a "card <id>: option <key>" or "undo clear <id>" message, on an "order <id>: ...", "launch <id>" or "cancel <id>" message, and on any RECORD DIVERGENCE line the wake drain prints.
+  Load before treating an investigation, scout report, structured review, or Lavish review as complete, before ending a visual review that exposed a captain decision, when recording or routing the captain's answer, on every heartbeat for the decision-card sweep, on a "card <id>: option <key>" or "undo clear <id>" message, on an "order <id>: ...", "order <id> replacing <old-id>: ...", "launch <id>" or "cancel <id>" message, and on any RECORD DIVERGENCE line the wake drain prints.
 user-invocable: false
 metadata:
   internal: true
@@ -85,8 +85,9 @@ The Fleet app's command bar sends plain-word orders as "order <id>: <words>", or
 An order message is never authority to act: read the words, resolve each concrete order the way section 7 intake would, and record your reading with `bin/fm-order.sh write <id> --file <path>` without dispatching, steering, holding, or merging anything.
 Write one line per concrete order, naming its lane's project, its target, and its action in plain words; put an answer or a caveat in the note, and answer a question with a note and no lines.
 When the message replaces another, run `bin/fm-order.sh remove <old-id>` in the same turn.
-"launch <id>" is the captain confirming that proposal: run `bin/fm-order.sh show <id>` and keep its lines, run `bin/fm-order.sh remove <id>`, then carry out every line not named in "without <n>, <n>" through your normal dispatch, steer, and hold paths exactly as written.
-If `show` finds no proposal, it was already launched or cancelled: carry out nothing and tell the captain so.
+"launch <id>" (or "launch <id> without <n>, <n>") is the captain confirming that proposal: run `bin/fm-order.sh show <id>` and keep its lines, run `bin/fm-order.sh remove <id>`, then, only after both succeed, carry out every line not named in the optional "without <n>, <n>" through your normal dispatch, steer, and hold paths exactly as written.
+If `show` finds no proposal, carry out nothing and tell the captain it is unavailable; it may have been launched, cancelled, or swept.
+If `show` reports an invalid proposal or removal fails, carry out nothing and report the failure.
 A launched line is the captain's explicit instruction for exactly what it says and nothing broader; a merge, destructive, or irreversible action needs the line itself to name it.
 "cancel <id>" means `bin/fm-order.sh remove <id>` and nothing else.
 On every heartbeat, run `bin/fm-order.sh sweep`.

@@ -2,14 +2,11 @@
 # fm-order.sh - order proposals: the first mate's reading of a plain-word order,
 # waiting for the captain to launch or cancel it.
 #
-# A captain surface (the Fleet app's command bar, later Ziggy) sends the first
-# mate "order <id>: <words>", or "order <id> replacing <old-id>: <words>" after
-# the captain edited an earlier request. The first mate turns the words into
-# concrete orders without carrying any of them out and records them here as
-# state/orders/<id>.json, mode 0600, written atomically.
-# "launch <id>" (optionally "launch <id> without 2, 3") is the captain's go for
-# the kept lines, and "cancel <id>" drops the proposal; the captain-hold-lifecycle
-# skill owns what the first mate does with each. Nothing in this file runs work.
+# The Orders section of .agents/skills/captain-hold-lifecycle/SKILL.md owns
+# message handling and launch authority. Nothing in this file runs work.
+# Proposals live in state/orders/<id>.json, mode 0600, written atomically.
+# An id is 1-128 characters from A-Z, a-z, 0-9, dot, underscore and hyphen,
+# and must not start with a dot (reserved for hidden staging files).
 #
 # Usage:
 #   fm-order.sh validate --file <proposal.json>
@@ -30,11 +27,12 @@
 # characters and 2 lines (an answer or a caveat); a proposal needs at least
 # one line or a note.
 # No control characters anywhere except the one newline note may carry.
-# Lines are numbered from 1 in file order; "without 2, 3" names those numbers.
+# Lines are numbered from 1 in file order.
 # `list` prints "<id>\t<lines>\t<updated>\t<request>" per valid proposal.
 # `sweep` removes every proposal last updated more than 24 hours ago, and every
 # invalid one, printing "removed: <id>" for each.
 # `show` exits 1 when there is no proposal and 2 when it is invalid.
+# `remove` is idempotent, including when the proposal is already absent.
 # FM_ORDER_NOW overrides the UTC timestamp for tests.
 set -eu
 
