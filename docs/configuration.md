@@ -58,6 +58,7 @@ state/
   <id>.crew-state         local ship task's validation record for file watchers; bin/fm-crew-state.sh "PUBLISHED RECORD" owns fields, refreshes, and cleanup
   cards/<task-id>.json    captain-facing decision card; bin/fm-card.sh owns schema and storage, bin/fm-captain-hold.sh owns hold and resolution hooks
   cards-cleared.log       stale-card clear and restore log; bin/fm-card.sh owns fields and undo guards
+  orders/<id>.json        order proposal waiting for the captain's launch or cancel; bin/fm-order.sh owns schema and storage
   <id>.inbox/             durable steering inbox; written by fm-send, removed by teardown (bin/fm-task-inbox-lib.sh)
   <id>.backlog-close      pending backlog transition for an interrupted cleanup (bin/fm-backlog-transition-lib.sh)
   <id>.external-wait      declared bounded external wait; written only by bin/fm-external-wait.sh, archived in external-waits/
