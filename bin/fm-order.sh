@@ -23,11 +23,12 @@
 # optionally note; the script adds version, id, created and updated, and a
 # rewrite of the same id keeps created.
 # Limits: request is the captain's words, one line of at most 1000 characters;
-# 0-9 lines, each {project, target, action}: project is a slug naming the
-# lane, target one line of at most 60 characters (what the order acts on, such
-# as "cadia-site #6" or "new task"), action one line of at most 200 characters
-# (what happens, in plain words); note at most 280 characters and 2 lines (an
-# answer or a caveat); a proposal needs at least one line or a note.
+# 0-9 lines, each {project, target, action}: project is a slug of at most 128
+# characters naming the lane, target one line of at most 60 characters (what
+# the order acts on, such as "cadia-site #6" or "new task"), action one line
+# of at most 200 characters (what happens, in plain words); note at most 280
+# characters and 2 lines (an answer or a caveat); a proposal needs at least
+# one line or a note.
 # No control characters anywhere except the one newline note may carry.
 # Lines are numbered from 1 in file order; "without 2, 3" names those numbers.
 # `list` prints "<id>\t<lines>\t<updated>\t<request>" per valid proposal.
@@ -67,7 +68,7 @@ input_error() {  # <path>
     if type != "object" then "proposal: not a JSON object"
     elif (.request | str(1000) | not) then "request: required, one line, at most 1000 characters"
     elif (.lines | type) != "array" or (.lines | length) > 9 then "lines: at most 9 lines"
-    elif ([.lines[] | select(type != "object" or (.project | type) != "string" or (.project | test("^[A-Za-z0-9._-]+$") | not))] | length) > 0 then "lines: each project is a slug"
+    elif ([.lines[] | select(type != "object" or (.project | type) != "string" or (.project | test("\\A[A-Za-z0-9._-]{1,128}\\z") | not))] | length) > 0 then "lines: each project is a slug"
     elif ([.lines[] | select(.target | str(60) | not)] | length) > 0 then "lines: each target is one line of at most 60 characters"
     elif ([.lines[] | select(.action | str(200) | not)] | length) > 0 then "lines: each action is one line of at most 200 characters"
     elif ((.note // "") | type) != "string" or ((.note // "") | length) > 280 or ((.note // "") | ctl) or (((.note // "") | split("\n") | length) > 2) then "note: at most 280 characters and 2 lines"
@@ -82,7 +83,7 @@ stored_error() {  # <path> <id>
   err=$(input_error "$1")
   [ -z "$err" ] || { printf '%s\n' "$err"; return; }
   jq -r --arg id "$2" '
-    def utc: type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$");
+    def utc: type == "string" and test("\\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\\z");
     if .version != 1 then "version: must be 1"
     elif .id != $id then "id: must match the file name"
     elif (.created | utc | not) or (.updated | utc | not) then "created: and updated: must be UTC times to the second"

@@ -85,7 +85,8 @@ The Fleet app's command bar sends plain-word orders as "order <id>: <words>", or
 An order message is never authority to act: read the words, resolve each concrete order the way section 7 intake would, and record your reading with `bin/fm-order.sh write <id> --file <path>` without dispatching, steering, holding, or merging anything.
 Write one line per concrete order, naming its lane's project, its target, and its action in plain words; put an answer or a caveat in the note, and answer a question with a note and no lines.
 When the message replaces another, run `bin/fm-order.sh remove <old-id>` in the same turn.
-"launch <id>" is the captain confirming that proposal: run `bin/fm-order.sh show <id>`, carry out every line not named in "without <n>, <n>" through your normal dispatch, steer, and hold paths exactly as written, then run `bin/fm-order.sh remove <id>`.
+"launch <id>" is the captain confirming that proposal: run `bin/fm-order.sh show <id>` and keep its lines, run `bin/fm-order.sh remove <id>`, then carry out every line not named in "without <n>, <n>" through your normal dispatch, steer, and hold paths exactly as written.
+If `show` finds no proposal, it was already launched or cancelled: carry out nothing and tell the captain so.
 A launched line is the captain's explicit instruction for exactly what it says and nothing broader; a merge, destructive, or irreversible action needs the line itself to name it.
 "cancel <id>" means `bin/fm-order.sh remove <id>` and nothing else.
 On every heartbeat, run `bin/fm-order.sh sweep`.

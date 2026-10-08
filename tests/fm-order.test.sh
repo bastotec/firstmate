@@ -70,6 +70,8 @@ test_validate_names_the_broken_field() {
     '.request=("x"*1001)|request' \
     '.lines=[range(10)|{project:"a",target:"t",action:"a"}]|lines' \
     '.lines[0].project="../etc"|lines' \
+    '.lines[0].project="cadia\n"|lines' \
+    '.lines[0].project=("p"*129)|lines' \
     '.lines[0].target=("t"*61)|target' \
     '.lines[1].action=""|action' \
     '.lines[1].action="tab\there"|action' \
