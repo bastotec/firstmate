@@ -90,6 +90,10 @@
 # A failed forge command releases the lock after it returns. A successful one
 # retains the lock until the accepted merge authority is persisted against the
 # still-matching task metadata.
+# Waiting for that control lock is bounded: the merge refuses, with nothing
+# merged, once the state directory vanishes or FM_PR_MERGE_LOCK_TIMEOUT seconds
+# (default 600) pass while a live holder keeps it, and the deadline also ends
+# anything the wait spawned. tests/fm-captain-hold-lifecycle.test.sh covers both.
 #
 # Extra args must not include --repo or -R in any form, including a bundled
 # short-option cluster such as -yR, because the repository comes only from the
@@ -335,7 +339,24 @@ merge_control_cleanup() {
 }
 trap merge_control_cleanup EXIT
 MERGE_CONTROL_LOCK="$STATE/.control-$ID.lock"
-fm_lock_acquire_wait "$MERGE_CONTROL_LOCK"
+MERGE_LOCK_TIMEOUT=${FM_PR_MERGE_LOCK_TIMEOUT:-600}
+case "$MERGE_LOCK_TIMEOUT" in
+  ''|*[!0-9]*|0)
+    echo "error: FM_PR_MERGE_LOCK_TIMEOUT must be a positive number of seconds" >&2
+    exit 2
+    ;;
+esac
+merge_lock_rc=0
+fm_lock_acquire_wait_bounded "$MERGE_CONTROL_LOCK" "$MERGE_LOCK_TIMEOUT" || merge_lock_rc=$?
+if [ "$merge_lock_rc" -ne 0 ]; then
+  if [ "$merge_lock_rc" -eq 124 ] && [ -n "${FM_LOCK_HELD_PID:-}" ]; then
+    echo "error: PR merge refused: task $ID is still locked by live process $FM_LOCK_HELD_PID after ${MERGE_LOCK_TIMEOUT}s; nothing was merged" >&2
+  else
+    echo "error: PR merge refused: could not take the task $ID control lock (is the state directory gone?); nothing was merged" >&2
+  fi
+  MERGE_CONTROL_LOCK=
+  exit 1
+fi
 if ! fm_backlog_meta_spawn_gen_optional "$META" "$STATE"; then
   echo "error: task $ID changed while waiting to merge; refusing: $FM_BACKLOG_TRANSITION_ERROR" >&2
   exit 1

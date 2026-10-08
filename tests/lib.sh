@@ -305,6 +305,8 @@ fm_test_kill_tree() {  # <pid>
 # command and a process start time within three seconds of recorded started=.
 # Also reap command lines containing the per-run-unique fixture path: a newer
 # generation overwrites the status pid while older workers can still be alive.
+# A matched process run by a firstmate entrypoint, such as bin/fm-pr-merge.sh's
+# lock wait, is reaped from that entrypoint down.
 # Every root goes through fm_test_pid_is_foreign before tree signalling.
 # This is active-run cleanup only; fm_test_reap_orphans removes old directories
 # without signalling their recorded pids, which may have been reused.
@@ -344,13 +346,29 @@ fm_test_reap_startup_network_workers() {  # <dir...>
     # and their parent - can carry the path in an inherited argv, so they are
     # dropped by pid. Matches are collected before any signal, so no member of
     # this pipeline is still alive to be frozen mid-write.
+    # A firstmate entrypoint such as bin/fm-pr-merge.sh names its fixture only
+    # through its environment, so a match climbs through its unbroken chain of
+    # bin/fm-*.sh parents and the topmost one is reaped with its whole tree.
     matches=$(
       # bash 3.2 has no BASHPID; a child exec'd from here reports this pid.
       self=" $$ ${BASHPID:-$(exec sh -c 'echo "$PPID"')} $PPID "
-      "$FM_TEST_SYSTEM_PS" -eo pid=,command= 2>/dev/null |
-        FM_TEST_REAP_FIXTURE="$d" FM_TEST_REAP_SELF="$self" awk '
-          index($0, ENVIRON["FM_TEST_REAP_FIXTURE"]) &&
-            !index(ENVIRON["FM_TEST_REAP_SELF"], " " $1 " ") { print $1 }')
+      "$FM_TEST_SYSTEM_PS" -eo pid=,ppid=,command= 2>/dev/null |
+        FM_TEST_REAP_FIXTURE="$d" FM_TEST_REAP_SELF="$self" \
+        FM_TEST_REAP_ENTRY="$ROOT/bin/fm-" awk '
+          function own(p) { return index(ENVIRON["FM_TEST_REAP_SELF"], " " p " ") }
+          { parent[$1] = $2; line[$1] = $0 }
+          index($0, ENVIRON["FM_TEST_REAP_FIXTURE"]) && !own($1) { hit[++n] = $1 }
+          END {
+            for (i = 1; i <= n; i++) {
+              p = hit[i]
+              for (hops = 0; hops < 16; hops++) {
+                q = parent[p]
+                if (q == "" || q <= 1 || own(q) || !index(line[q], ENVIRON["FM_TEST_REAP_ENTRY"])) break
+                p = q
+              }
+              if (!(p in seen)) { seen[p] = 1; print p }
+            }
+          }')
     for pid in $matches; do
       fm_test_kill_tree "$pid"
     done
