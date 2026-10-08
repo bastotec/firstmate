@@ -3100,6 +3100,159 @@ test_merge_refuses_when_the_away_record_cannot_be_locked() {
   pass "a merge that cannot lock the away record refuses instead of merging unlocked"
 }
 
+# Hold the task control lock from a live process until <release> appears.
+hold_control_lock() {  # <case_dir> <ready> <release>
+  FM_STATE_OVERRIDE="$1/state" bash -c '
+    . "$1"
+    fm_lock_acquire_wait "$2" || exit 10
+    printf "ready\n" > "$3"
+    while [ ! -e "$4" ] && [ -d "${4%/*}" ] \
+      && [ "$SECONDS" -lt "${FM_TEST_STUB_MAX_BLOCK_SECONDS:-120}" ]; do sleep 0.05; done
+    fm_lock_release "$2"
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$1/state/.control-task-x1.lock" "$2" "$3" &
+}
+
+await_file() {  # <path>
+  local i=0
+  while [ "$i" -lt 100 ] && [ ! -s "$1" ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  [ -s "$1" ]
+}
+
+test_all_zero_control_lock_timeouts_are_refused() {
+  local case_dir seconds rc lock
+  case_dir=$(make_case zero-control-lock-timeout)
+  add_gh_mocks "$case_dir" "$MR_HEAD"
+  lock="$case_dir/state/.timeout-validation.lock"
+  for seconds in 0 00 000000; do
+    rc=0
+    FM_STATE_OVERRIDE="$case_dir/state" bash -c '
+      . "$1"
+      fm_lock_acquire_wait_bounded "$2" "$3"
+    ' _ "$ROOT/bin/fm-wake-lib.sh" "$lock" "$seconds" || rc=$?
+    expect_code 2 "$rc" "bounded lock acquire must reject all-zero timeout $seconds"
+    [ ! -e "$lock" ] || fail "all-zero timeout $seconds acquired a lock"
+
+    rc=0
+    FM_PR_MERGE_LOCK_TIMEOUT="$seconds" run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/75 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    expect_code 2 "$rc" "FM_PR_MERGE_LOCK_TIMEOUT=$seconds must be refused"
+    assert_grep 'FM_PR_MERGE_LOCK_TIMEOUT must be a positive number of seconds' "$case_dir/stderr" \
+      "all-zero timeout $seconds refusal did not name the invalid setting"
+    assert_no_grep 'pr merge' "$case_dir/gh.log" \
+      "all-zero timeout $seconds reached gh pr merge"
+  done
+  FM_STATE_OVERRIDE="$case_dir/state" bash -c '
+    . "$1"
+    fm_lock_acquire_wait_bounded "$2" 01 || exit 10
+    fm_lock_release "$2"
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$lock" \
+    || fail "a positive timeout with a leading zero must remain valid"
+  pass "all-zero control-lock timeouts refuse before acquiring or merging"
+}
+
+test_a_wedged_control_lock_wait_refuses_at_its_deadline() {
+  # A merge queued behind a task control lock whose wait never returns - a live
+  # holder that never lets go, and a child of the wait that never exits, like a
+  # killed suite's barrier stub - must refuse at its deadline and take that
+  # child with it, instead of running for hours after its fixture is gone.
+  local case_dir rc holder_pid stub_pid merge_pid i
+  case_dir=$(make_case wedged-control-lock)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f
+  cat > "$case_dir/fakebin/sleep" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = 0.1 ] && [ -n "${FM_TEST_WEDGE_PID:-}" ]; then
+  printf '%s\n' "$$" > "$FM_TEST_WEDGE_PID"
+  while [ "$SECONDS" -lt "${FM_TEST_STUB_MAX_BLOCK_SECONDS:-120}" ]; do /bin/sleep 0.05; done
+  exit 75
+fi
+exec /bin/sleep "$@"
+SH
+  chmod +x "$case_dir/fakebin/sleep"
+  hold_control_lock "$case_dir" "$case_dir/holder.ready" "$case_dir/release-holder"
+  holder_pid=$!
+  await_file "$case_dir/holder.ready" \
+    || { kill "$holder_pid" 2>/dev/null || true; fail "wedged-control-lock: the fixture never took the control lock"; }
+
+  FM_TEST_WEDGE_PID="$case_dir/wedge.pid" FM_PR_MERGE_LOCK_TIMEOUT=2 \
+    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/75 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" &
+  merge_pid=$!
+  i=0
+  while [ "$i" -lt 400 ] && kill -0 "$merge_pid" 2>/dev/null; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  stub_pid=$(cat "$case_dir/wedge.pid" 2>/dev/null || true)
+  if kill -0 "$merge_pid" 2>/dev/null; then
+    fm_test_kill_tree "$merge_pid"
+    [ -z "$stub_pid" ] || kill -9 "$stub_pid" 2>/dev/null || true
+    : > "$case_dir/release-holder"
+    wait "$holder_pid" 2>/dev/null || true
+    fail "wedged-control-lock: the merge was still waiting after 20s, past its 2s lock deadline"
+  fi
+  set +e
+  wait "$merge_pid"
+  rc=$?
+  set -e
+  : > "$case_dir/release-holder"
+  wait "$holder_pid" 2>/dev/null || true
+
+  [ -n "$stub_pid" ] || fail "wedged-control-lock: the lock wait never reached its wedged child"
+  expect_code 1 "$rc" "wedged-control-lock: a lock wait past its deadline must refuse the merge"
+  assert_grep "still locked by live process $holder_pid after 2s; nothing was merged" "$case_dir/stderr" \
+    "wedged-control-lock: refusal did not name the live holder and the deadline"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "wedged-control-lock: gh pr merge ran without the task control lock"
+  if kill -0 "$stub_pid" 2>/dev/null; then
+    kill -9 "$stub_pid" 2>/dev/null || true
+    fail "wedged-control-lock: the wedged child of the lock wait outlived the refused merge"
+  fi
+  pass "a merge whose control-lock wait wedges refuses at its deadline and leaves nothing running"
+}
+
+test_a_control_lock_wait_ends_when_its_state_directory_vanishes() {
+  local case_dir rc merge_pid holder_pid i
+  case_dir=$(make_case vanished-control-lock)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" 6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a
+  hold_control_lock "$case_dir" "$case_dir/holder.ready" "$case_dir/release-holder"
+  holder_pid=$!
+  await_file "$case_dir/holder.ready" \
+    || { kill "$holder_pid" 2>/dev/null || true; fail "vanished-control-lock: the fixture never took the control lock"; }
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/76 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" &
+  merge_pid=$!
+  sleep 0.5
+  rm -rf "$case_dir/state"
+  i=0
+  while [ "$i" -lt 100 ] && kill -0 "$merge_pid" 2>/dev/null; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  : > "$case_dir/release-holder"
+  if kill -0 "$merge_pid" 2>/dev/null; then
+    fm_test_kill_tree "$merge_pid"
+    wait "$holder_pid" 2>/dev/null || true
+    fail "vanished-control-lock: the merge kept waiting after its state directory was removed"
+  fi
+  set +e
+  wait "$merge_pid"
+  rc=$?
+  set -e
+  wait "$holder_pid" 2>/dev/null || true
+  expect_code 1 "$rc" "vanished-control-lock: a vanished state directory must refuse the merge"
+  assert_grep 'could not take the task task-x1 control lock' "$case_dir/stderr" \
+    "vanished-control-lock: refusal did not name the control lock"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "vanished-control-lock: gh pr merge ran without the task control lock"
+  pass "a merge waiting on a control lock stops once its state directory is gone"
+}
+
 test_allow_red_refused_on_gitlab() {
   local case_dir rc
   case_dir=$(make_gitlab_case gitlab-allow-red)
@@ -3155,3 +3308,6 @@ test_away_record_cannot_change_between_the_authority_read_and_the_merge
 test_a_grant_revoked_before_the_merge_refuses_it
 test_merge_refuses_when_the_away_record_cannot_be_locked
 test_allow_red_refused_on_gitlab
+test_all_zero_control_lock_timeouts_are_refused
+test_a_wedged_control_lock_wait_refuses_at_its_deadline
+test_a_control_lock_wait_ends_when_its_state_directory_vanishes

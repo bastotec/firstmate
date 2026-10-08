@@ -245,6 +245,64 @@ test_fixture_root_gone_after_sigterm() {
   pass "fm_test_tmproot cleans up its fixture root on SIGTERM"
 }
 
+test_cleanup_reaps_a_merge_waiting_on_a_fixture_lock() {
+  # bin/fm-pr-merge.sh names its fixture only through its environment, so the
+  # path reaper sees just the lock wait it spawned. Cleanup must reap the merge
+  # itself; reaping only its child lets the merge run on after the suite.
+  local harness out pid merge_pid tries
+  harness=$(fm_test_tmproot fm-test-cleanup-merge-harness)
+  out="$harness/merge.err"
+  bash -c '
+    . "$1"
+    d=$(fm_test_tmproot fm-test-cleanup-merge)
+    mkdir -p "$d/state" "$d/data" "$d/config"
+    printf "worktree=%s\n" "$d/wt" > "$d/state/task-x1.meta"
+    FM_REAP_LOCK="$d/state/.control-task-x1.lock" FM_STATE_OVERRIDE="$d/state" bash -c '\''
+      . "$1"
+      fm_lock_acquire_wait "$FM_REAP_LOCK" || exit 10
+      : > "${FM_REAP_LOCK%/*}/held"
+      while [ -d "${FM_REAP_LOCK%/*}" ] && [ "$SECONDS" -lt 60 ]; do sleep 0.05; done
+    '\'' _ "$ROOT/bin/fm-wake-lib.sh" &
+    fm_test_track_helper_pid "$!"
+    while [ ! -e "$d/state/held" ]; do sleep 0.05; done
+    FM_HOME="$d" FM_STATE_OVERRIDE="$d/state" FM_DATA_OVERRIDE="$d/data" \
+      FM_CONFIG_OVERRIDE="$d/config" FM_PR_MERGE_LOCK_TIMEOUT=60 \
+      "$ROOT/bin/fm-pr-merge.sh" task-x1 https://github.com/example/repo/pull/77 \
+      > /dev/null 2> "$3" &
+    printf "%s\n" "$!" > "$2"
+    while :; do sleep 0.1; done
+  ' _ "$LIB" "$harness/merge.pid" "$out" 2> "$harness/suite.err" &
+  pid=$!
+  tries=0
+  while [ "$tries" -lt 100 ] && [ ! -s "$harness/merge.pid" ]; do
+    sleep 0.05
+    tries=$((tries + 1))
+  done
+  merge_pid=$(cat "$harness/merge.pid" 2>/dev/null) || merge_pid=
+  case $merge_pid in
+    '' | *[!0-9]*) kill -TERM "$pid" 2>/dev/null; fail "the probe suite never started its merge" ;;
+  esac
+  sleep 1
+  kill -0 "$merge_pid" 2>/dev/null || {
+    kill -TERM "$pid" 2>/dev/null
+    fail "the merge stopped before cleanup ran: $(cat "$out" 2>/dev/null)"
+  }
+  kill -TERM "$pid"
+  wait "$pid" 2>/dev/null
+  tries=0
+  while [ "$tries" -lt 40 ] && kill -0 "$merge_pid" 2>/dev/null; do
+    sleep 0.05
+    tries=$((tries + 1))
+  done
+  if kill -0 "$merge_pid" 2>/dev/null; then
+    fm_test_kill_tree "$merge_pid"
+    fail "a merge waiting on a fixture lock outlived its suite's cleanup (pid $merge_pid)"
+  fi
+  assert_no_grep 'PR merge refused' "$out" \
+    "cleanup reaped only the merge's lock wait, and the merge ran on to its own refusal"
+  pass "cleanup reaps a merge waiting on a fixture lock, not only its lock wait"
+}
+
 test_cleanup_registry_resists_precreation() {
   local harness shared_tmp victim
   harness=$(fm_test_tmproot fm-test-cleanup-registry-harness)
@@ -361,6 +419,7 @@ test_tree_cleanup_catches_a_child_forked_during_the_snapshot
 test_path_reaper_signals_only_fixture_processes
 test_fixture_root_gone_after_normal_exit
 test_fixture_root_gone_after_sigterm
+test_cleanup_reaps_a_merge_waiting_on_a_fixture_lock
 test_helper_pids_registered_in_a_subshell_are_still_reaped
 test_cleanup_registry_resists_precreation
 test_fixture_registration_failure_rolls_back_root

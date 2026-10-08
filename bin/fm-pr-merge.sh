@@ -90,6 +90,15 @@
 # A failed forge command releases the lock after it returns. A successful one
 # retains the lock until the accepted merge authority is persisted against the
 # still-matching task metadata.
+# FM_PR_MERGE_LOCK_TIMEOUT sets the control-lock acquisition deadline in whole
+# seconds (default 600, allowing for teardown/relaunch); callers must supply a
+# positive integer. It does not govern the later meta or authority locks.
+# The merge refuses with nothing merged when the wait observes a vanished or
+# unwritable state directory, or reaches its deadline with a live holder, whose
+# pid the refusal names. The deadline terminates the helper's whole process
+# group, including a wedged wait child; such a child can delay observing a
+# vanished directory until the deadline. tests/fm-pr-merge.test.sh covers the
+# deadline, child cleanup, and vanished-state refusals.
 #
 # Extra args must not include --repo or -R in any form, including a bundled
 # short-option cluster such as -yR, because the repository comes only from the
@@ -335,7 +344,22 @@ merge_control_cleanup() {
 }
 trap merge_control_cleanup EXIT
 MERGE_CONTROL_LOCK="$STATE/.control-$ID.lock"
-fm_lock_acquire_wait "$MERGE_CONTROL_LOCK"
+MERGE_LOCK_TIMEOUT=${FM_PR_MERGE_LOCK_TIMEOUT:-600}
+if [[ ! "$MERGE_LOCK_TIMEOUT" =~ ^[0-9]+$ || ! "$MERGE_LOCK_TIMEOUT" =~ [1-9] ]]; then
+  echo "error: FM_PR_MERGE_LOCK_TIMEOUT must be a positive number of seconds" >&2
+  exit 2
+fi
+merge_lock_rc=0
+fm_lock_acquire_wait_bounded "$MERGE_CONTROL_LOCK" "$MERGE_LOCK_TIMEOUT" || merge_lock_rc=$?
+if [ "$merge_lock_rc" -ne 0 ]; then
+  if [ "$merge_lock_rc" -eq 124 ] && [ -n "${FM_LOCK_HELD_PID:-}" ]; then
+    echo "error: PR merge refused: task $ID is still locked by live process $FM_LOCK_HELD_PID after ${MERGE_LOCK_TIMEOUT}s; nothing was merged" >&2
+  else
+    echo "error: PR merge refused: could not take the task $ID control lock (is the state directory gone?); nothing was merged" >&2
+  fi
+  MERGE_CONTROL_LOCK=
+  exit 1
+fi
 if ! fm_backlog_meta_spawn_gen_optional "$META" "$STATE"; then
   echo "error: task $ID changed while waiting to merge; refusing: $FM_BACKLOG_TRANSITION_ERROR" >&2
   exit 1
