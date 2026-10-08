@@ -352,7 +352,8 @@ test_fake_stream_owner_boundary() (
   local dir="$TMP_ROOT/owner-boundary" lines target eid route code auth
   fm_test_fake_stream "$dir" || fail 'owner fixture failed to start'
   mkdir -p "$dir/state" "$dir/fakebin"
-  export OWNER_REAL_CURL="$(command -v curl)" OWNER_CURL_PROBE="$dir/curl-calls"
+  OWNER_REAL_CURL="$(command -v curl)"
+  export OWNER_REAL_CURL OWNER_CURL_PROBE="$dir/curl-calls"
   cat > "$dir/fakebin/curl" <<'SH'
 #!/usr/bin/env bash
 set -eu
