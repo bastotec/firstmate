@@ -106,7 +106,7 @@ test_rejects_unsafe_ids() {
   home=$(make_home ids)
   in="$home/in.json"
   good_proposal "$in"
-  for id in '' '.' '..' 'a/b' 'a b' '../x'; do
+  for id in '' '.' '..' '.o-1' 'a/b' 'a b' '../x'; do
     run_order "$home" write "$id" --file "$in" >/dev/null 2>&1 && fail "write accepted id '$id'"
   done
   [ ! -e "$home/x.json" ] || fail "an unsafe id escaped state/orders"

@@ -50,7 +50,7 @@ now() { printf '%s' "${FM_ORDER_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"; }
 
 require_slug() {  # <id>
   case "${1:-}" in
-    ''|*[!A-Za-z0-9._-]*|.|..) die "order id must be a privacy-safe slug: ${1:-}" ;;
+    ''|.*|*[!A-Za-z0-9._-]*) die "order id must be a privacy-safe slug: ${1:-}" ;;
   esac
   [ "${#1}" -le 128 ] || die "order id is longer than 128 characters"
 }
