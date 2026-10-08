@@ -3121,6 +3121,38 @@ await_file() {  # <path>
   [ -s "$1" ]
 }
 
+test_all_zero_control_lock_timeouts_are_refused() {
+  local case_dir seconds rc lock
+  case_dir=$(make_case zero-control-lock-timeout)
+  add_gh_mocks "$case_dir" "$MR_HEAD"
+  lock="$case_dir/state/.timeout-validation.lock"
+  for seconds in 0 00 000000; do
+    rc=0
+    FM_STATE_OVERRIDE="$case_dir/state" bash -c '
+      . "$1"
+      fm_lock_acquire_wait_bounded "$2" "$3"
+    ' _ "$ROOT/bin/fm-wake-lib.sh" "$lock" "$seconds" || rc=$?
+    expect_code 2 "$rc" "bounded lock acquire must reject all-zero timeout $seconds"
+    [ ! -e "$lock" ] || fail "all-zero timeout $seconds acquired a lock"
+
+    rc=0
+    FM_PR_MERGE_LOCK_TIMEOUT="$seconds" run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/75 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    expect_code 2 "$rc" "FM_PR_MERGE_LOCK_TIMEOUT=$seconds must be refused"
+    assert_grep 'FM_PR_MERGE_LOCK_TIMEOUT must be a positive number of seconds' "$case_dir/stderr" \
+      "all-zero timeout $seconds refusal did not name the invalid setting"
+    assert_no_grep 'pr merge' "$case_dir/gh.log" \
+      "all-zero timeout $seconds reached gh pr merge"
+  done
+  FM_STATE_OVERRIDE="$case_dir/state" bash -c '
+    . "$1"
+    fm_lock_acquire_wait_bounded "$2" 01 || exit 10
+    fm_lock_release "$2"
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$lock" \
+    || fail "a positive timeout with a leading zero must remain valid"
+  pass "all-zero control-lock timeouts refuse before acquiring or merging"
+}
+
 test_a_wedged_control_lock_wait_refuses_at_its_deadline() {
   # A merge queued behind a task control lock whose wait never returns - a live
   # holder that never lets go, and a child of the wait that never exits, like a
@@ -3276,5 +3308,6 @@ test_away_record_cannot_change_between_the_authority_read_and_the_merge
 test_a_grant_revoked_before_the_merge_refuses_it
 test_merge_refuses_when_the_away_record_cannot_be_locked
 test_allow_red_refused_on_gitlab
+test_all_zero_control_lock_timeouts_are_refused
 test_a_wedged_control_lock_wait_refuses_at_its_deadline
 test_a_control_lock_wait_ends_when_its_state_directory_vanishes

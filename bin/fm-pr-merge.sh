@@ -345,12 +345,10 @@ merge_control_cleanup() {
 trap merge_control_cleanup EXIT
 MERGE_CONTROL_LOCK="$STATE/.control-$ID.lock"
 MERGE_LOCK_TIMEOUT=${FM_PR_MERGE_LOCK_TIMEOUT:-600}
-case "$MERGE_LOCK_TIMEOUT" in
-  ''|*[!0-9]*|0)
-    echo "error: FM_PR_MERGE_LOCK_TIMEOUT must be a positive number of seconds" >&2
-    exit 2
-    ;;
-esac
+if [[ ! "$MERGE_LOCK_TIMEOUT" =~ ^[0-9]+$ || ! "$MERGE_LOCK_TIMEOUT" =~ [1-9] ]]; then
+  echo "error: FM_PR_MERGE_LOCK_TIMEOUT must be a positive number of seconds" >&2
+  exit 2
+fi
 merge_lock_rc=0
 fm_lock_acquire_wait_bounded "$MERGE_CONTROL_LOCK" "$MERGE_LOCK_TIMEOUT" || merge_lock_rc=$?
 if [ "$merge_lock_rc" -ne 0 ]; then

@@ -962,7 +962,7 @@ _fm_lock_acquire_wait_handoff() {  # <lockdir> <caller-pid>
 # Mutation-critical callers that can safely block keep fm_lock_acquire_wait.
 fm_lock_acquire_wait_bounded() {
   local lockdir=$1 seconds=$2 caller_pid rc owner_pid
-  case "$seconds" in ''|*[!0-9]*|0) return 2 ;; esac
+  [[ "$seconds" =~ ^[0-9]+$ && "$seconds" =~ [1-9] ]] || return 2
   _fm_wake_require_timeout || return 1
   if fm_lock_try_acquire "$lockdir"; then
     return 0
