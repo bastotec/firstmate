@@ -90,10 +90,15 @@
 # A failed forge command releases the lock after it returns. A successful one
 # retains the lock until the accepted merge authority is persisted against the
 # still-matching task metadata.
-# Waiting for that control lock is bounded: the merge refuses, with nothing
-# merged, once the state directory vanishes or FM_PR_MERGE_LOCK_TIMEOUT seconds
-# (default 600) pass while a live holder keeps it, and the deadline also ends
-# anything the wait spawned. tests/fm-captain-hold-lifecycle.test.sh covers both.
+# FM_PR_MERGE_LOCK_TIMEOUT sets the control-lock acquisition deadline in whole
+# seconds (default 600, allowing for teardown/relaunch); callers must supply a
+# positive integer. It does not govern the later meta or authority locks.
+# The merge refuses with nothing merged when the wait observes a vanished or
+# unwritable state directory, or reaches its deadline with a live holder, whose
+# pid the refusal names. The deadline terminates the helper's whole process
+# group, including a wedged wait child; such a child can delay observing a
+# vanished directory until the deadline. tests/fm-pr-merge.test.sh covers the
+# deadline, child cleanup, and vanished-state refusals.
 #
 # Extra args must not include --repo or -R in any form, including a bundled
 # short-option cluster such as -yR, because the repository comes only from the
