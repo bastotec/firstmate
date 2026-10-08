@@ -599,13 +599,39 @@ fn run_local(
     paint(&snapshot);
     let (events, inbox) = mpsc::channel::<Event>();
     let detaching = Arc::new(AtomicBool::new(false));
+    // Keep pending local input bounded without parking the terminal reader
+    // behind socket backpressure (which would hide the detach key).
+    let (keys, keyed) = mpsc::sync_channel::<Input>(256);
     let begin_detach = {
-        let writer = writer.clone();
+        let keys = keys.clone();
         let events = events.clone();
         let detaching = detaching.clone();
         move || {
-            begin_local_detach(&writer, &events, &detaching);
+            begin_local_detach(&keys, &events, &detaching);
         }
+    };
+    {
+        let writer = writer.clone();
+        let events = events.clone();
+        std::thread::spawn(move || {
+            while let Ok(input) = keyed.recv() {
+                let mut writer = writer.lock().unwrap();
+                match input {
+                    Input::Bytes(bytes) => {
+                        if local::write_frame(&mut *writer, b'I', &bytes).is_err() {
+                            let _ = events.send(Event::Lost(
+                                "input delivery failed: the local agent connection closed; not retried".into(),
+                            ));
+                            return;
+                        }
+                    }
+                    Input::Detach => {
+                        let _ = writer.shutdown(std::net::Shutdown::Write);
+                        return;
+                    }
+                }
+            }
+        });
     };
 
     {
@@ -616,8 +642,8 @@ fn run_local(
     }
 
     {
+        let keys = keys.clone();
         let events = events.clone();
-        let writer = writer.clone();
         let detaching = detaching.clone();
         let begin_detach = begin_detach.clone();
         std::thread::spawn(move || {
@@ -631,18 +657,15 @@ fn run_local(
                         None => (&buffer[..n], false),
                     },
                 };
-                if !chunk.is_empty() {
-                    let mut writer = writer.lock().unwrap();
-                    if detaching.load(Ordering::SeqCst) {
-                        return;
-                    }
-                    if local::write_frame(&mut *writer, b'I', chunk).is_err() {
-                        let _ = events.send(Event::Lost(
-                            "input delivery failed: the local agent connection closed; not retried"
-                                .into(),
-                        ));
-                        return;
-                    }
+                if detaching.load(Ordering::SeqCst) {
+                    return;
+                }
+                if !chunk.is_empty() && keys.try_send(Input::Bytes(chunk.to_vec())).is_err() {
+                    let _ = events.send(Event::Lost(
+                        "input delivery uncertain: local input backlog full or closed; not retried"
+                            .into(),
+                    ));
+                    return;
                 }
                 if last {
                     begin_detach();
@@ -677,16 +700,13 @@ fn run_local(
 }
 
 fn begin_local_detach(
-    writer: &Arc<Mutex<UnixStream>>,
+    keys: &mpsc::SyncSender<Input>,
     events: &mpsc::Sender<Event>,
     detaching: &AtomicBool,
 ) {
     if !detaching.swap(true, Ordering::SeqCst) {
         let _ = events.send(Event::Detaching(Instant::now() + Duration::from_secs(2)));
-        let writer = writer.clone();
-        std::thread::spawn(move || {
-            let _ = writer.lock().unwrap().shutdown(std::net::Shutdown::Write);
-        });
+        let _ = keys.try_send(Input::Detach);
     }
 }
 
@@ -753,25 +773,22 @@ mod tests {
 
     #[test]
     fn a_signal_drain_deadline_does_not_wait_for_the_input_writer() {
-        let (stream, _peer) = UnixStream::pair().unwrap();
-        let writer = Arc::new(Mutex::new(stream));
-        let held = writer.lock().unwrap();
+        let (keys, _keyed) = mpsc::sync_channel(1);
+        keys.send(Input::Bytes(vec![b'x'])).unwrap();
         let detaching = Arc::new(AtomicBool::new(false));
         let (events, inbox) = mpsc::channel();
         let (done, finished) = mpsc::channel();
         let worker = {
-            let writer = writer.clone();
             let detaching = detaching.clone();
             std::thread::spawn(move || {
                 let started = Instant::now();
                 let outcome = await_outcome(&inbox, &AtomicBool::new(true), || {
-                    begin_local_detach(&writer, &events, &detaching);
+                    begin_local_detach(&keys, &events, &detaching);
                 });
                 done.send((outcome, started.elapsed())).unwrap();
             })
         };
         let result = finished.recv_timeout(Duration::from_secs(3));
-        drop(held);
         worker.join().unwrap();
         let (outcome, elapsed) = result.unwrap();
         assert!(matches!(outcome, Event::Lost(reason) if reason.contains("drain timed out")));
