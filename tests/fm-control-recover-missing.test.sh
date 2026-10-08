@@ -221,7 +221,7 @@ run_control() {  # <case-dir> <id> <args...>
   rc=$?
   fm_test_fake_stream_defaults '{}'
   # A case that lost the hub (FM_FAKE_LOSE_HUB) gives it back to the next one.
-  curl -fsS -m 10 -H "Authorization: Bearer $FM_STREAM_TOKEN" -X POST -H 'Content-Type: application/json' \
+  curl -fsS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") -X POST -H 'Content-Type: application/json' \
     --data-binary '{"task_routes_unavailable": false}' "$FM_TEST_STREAM_URL/v1/test/config" >/dev/null
   # Follow a recovery onto the endpoint it rebound the record to.
   window=$(grep '^window=' "$dir/home/state/$id.meta" 2>/dev/null | tail -1 | cut -d= -f2-)

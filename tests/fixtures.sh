@@ -299,7 +299,7 @@ fm_test_stream_task() {  # <state-dir> <task-id> [launch-log] [capture-file]
   body=$(jq -nc --arg e "$eid" --arg l "fm-$id" --arg c "$state" \
     --arg s "$state/$id.status" --arg log "$log" --arg cap "$capture" \
     '{endpoint_id:$e, machine:"fake-box", label:$l, cwd:$c, status_path:$s, replace_label:true, foreground:[], launch_log:$log, capture_file:$cap}')
-  curl -fsS -m 10 -H "Authorization: Bearer $FM_STREAM_TOKEN" -X POST -H 'Content-Type: application/json' --data-binary "$body" \
+  curl -fsS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") -X POST -H 'Content-Type: application/json' --data-binary "$body" \
     "$FM_TEST_STREAM_URL/v1/agent/endpoints" >/dev/null || return 1
   FM_TEST_STREAM_TARGET="$FM_TEST_STREAM_TAG:$eid"
   printf 'window=%s\nbackend=stream\nstream_hub=%s\nstream_endpoint_id=%s\nendpoint_task_id=%s\n' \
@@ -423,7 +423,7 @@ fm_test_fake_stream_foreground() {  # <target> <name>
 # cwd, foreground, alive, stale, closed_by, composer, and submitted (each line
 # the endpoint received with Enter, oldest first).
 fm_test_fake_stream_endpoints() {
-  curl -fsS -m 10 -H "Authorization: Bearer $FM_STREAM_TOKEN" "$FM_TEST_STREAM_URL/v1/test/endpoints"
+  curl -fsS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") "$FM_TEST_STREAM_URL/v1/test/endpoints"
 }
 
 # fm_test_fake_stream_submitted <target-or-endpoint-id>
@@ -440,7 +440,7 @@ fm_test_fake_stream_submitted() {
 # {"forget": true} (the hub then answers 404 for it).
 fm_test_fake_stream_set() {
   local id=${1##*:}
-  curl -fsS -m 10 -H "Authorization: Bearer $FM_STREAM_TOKEN" -X POST -H 'Content-Type: application/json' \
+  curl -fsS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") -X POST -H 'Content-Type: application/json' \
     --data-binary "$2" "$FM_TEST_STREAM_URL/v1/test/endpoints/$id" >/dev/null
 }
 
@@ -455,7 +455,7 @@ fm_test_close_task_endpoint() {  # <meta-file>
 # Endpoint knobs (fm_test_fake_stream_set's) applied to every endpoint
 # registered from now on, such as the one a spawn creates; '{}' clears them.
 fm_test_fake_stream_defaults() {
-  curl -fsS -m 10 -H "Authorization: Bearer $FM_STREAM_TOKEN" -X POST -H 'Content-Type: application/json' \
+  curl -fsS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") -X POST -H 'Content-Type: application/json' \
     --data-binary "$(jq -nc --argjson d "$1" '{endpoint_defaults: $d}')" \
     "$FM_TEST_STREAM_URL/v1/test/config" >/dev/null
 }
@@ -464,7 +464,7 @@ fm_test_fake_stream_defaults() {
 # Where a `treehouse get` typed into any fake endpoint moves its cwd - the
 # worktree a stream spawn then discovers through the endpoint's cwd.
 fm_test_fake_stream_treehouse() {
-  curl -fsS -m 10 -H "Authorization: Bearer $FM_STREAM_TOKEN" -X POST -H 'Content-Type: application/json' \
+  curl -fsS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") -X POST -H 'Content-Type: application/json' \
     --data-binary "$(jq -nc --arg d "$1" '{treehouse_cwd: $d}')" \
     "$FM_TEST_STREAM_URL/v1/test/config" >/dev/null
 }

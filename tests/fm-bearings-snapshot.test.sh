@@ -3036,7 +3036,7 @@ case " \$* " in
       printf 'needs-decision[replacement]: replacement-only decision https://github.com/acme/firstmate/pull/999\\n' > "\$RACE_STATUS"
       mkdir -p "\$(dirname "\$RACE_REPORT")"
       printf 'replacement-only report\\n' > "\$RACE_REPORT"
-      '$fakebin/curl.net' -fsS -m 10 -H 'Authorization: Bearer $FM_STREAM_TOKEN' -X POST -H 'Content-Type: application/json' \\
+      '$fakebin/curl.net' -fsS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\\n' "\$FM_STREAM_TOKEN") -X POST -H 'Content-Type: application/json' \\
         --data-binary '{"forget": true}' \\
         "\$FM_TEST_STREAM_URL/v1/test/endpoints/$(sed -n 's/^stream_endpoint_id=//p' "$home/race-identity")" >/dev/null
     fi

@@ -348,10 +348,33 @@ test_fake_stream_round_trip() {
   pass "fake stream: the real adapter creates, sends, captures, classifies, reports and kills fake endpoints"
 }
 
-test_fake_stream_owner_boundary() {
+test_fake_stream_owner_boundary() (
   local dir="$TMP_ROOT/owner-boundary" lines target eid route code auth
   fm_test_fake_stream "$dir" || fail 'owner fixture failed to start'
-  mkdir -p "$dir/state"
+  mkdir -p "$dir/state" "$dir/fakebin"
+  export OWNER_REAL_CURL="$(command -v curl)" OWNER_CURL_PROBE="$dir/curl-calls"
+  cat > "$dir/fakebin/curl" <<'SH'
+#!/usr/bin/env bash
+set -eu
+config=0
+for arg in "$@"; do
+  case "$arg" in
+    *"$FM_STREAM_TOKEN"*) printf 'owner credential exposed in argv\n' >&2; exit 91 ;;
+  esac
+  if [ "$config" = 1 ]; then
+    case "$arg" in
+      /dev/fd/*) [ -r "$arg" ] || exit 92 ;;
+      *) printf 'owner config is not a private descriptor\n' >&2; exit 92 ;;
+    esac
+  fi
+  config=0
+  [ "$arg" != --config ] || config=1
+done
+printf 'request\n' >> "$OWNER_CURL_PROBE"
+exec "$OWNER_REAL_CURL" "$@"
+SH
+  chmod +x "$dir/fakebin/curl"
+  export PATH="$dir/fakebin:$PATH"
   printf 'private capture contents\n' > "$dir/capture"
   printf '#!/usr/bin/env bash\nprintf invoked >> "%s"\n' "$dir/invoked" > "$dir/hook"
   chmod +x "$dir/hook"
@@ -382,15 +405,20 @@ test_fake_stream_owner_boundary() {
     curl -fsS "$FM_TEST_STREAM_URL/v1/$route" >/dev/null || fail 'public liveness route refused'
   done
   assert_absent "$dir/invoked" 'public reads or refused writes invoked helpers'
-  curl -fsS -H "Authorization: Bearer $FM_STREAM_TOKEN" \
+  curl -fsS --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") \
     "$FM_TEST_STREAM_URL/v1/tasks/$eid/capture" > "$dir/owner-capture" || fail 'owner capture refused'
   assert_grep 'private capture contents' "$dir/owner-capture" 'owner capture lost file contents'
-  curl -fsS -H "Authorization: Bearer $FM_STREAM_TOKEN" -H 'Content-Type: application/json' \
+  curl -fsS --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") -H 'Content-Type: application/json' \
     --data-binary '{"text":"trigger", "keys":["Enter"]}' \
     "$FM_TEST_STREAM_URL/v1/tasks/$eid/input" >/dev/null || fail 'owner helper invocation refused'
   assert_present "$dir/invoked" 'owner helper was not invoked'
-  pass 'fake hub startup token isolates file and helper controls while public liveness remains available'
-}
+  fm_test_fake_stream_defaults '{}' || fail 'owner defaults refused'
+  fm_test_fake_stream_treehouse "$dir" || fail 'owner treehouse configuration refused'
+  fm_test_fake_stream_endpoints | jq -e --arg eid "$eid" \
+    '.endpoints[] | select(.endpoint_id == $eid)' >/dev/null || fail 'owner listing lost registration'
+  assert_present "$dir/curl-calls" 'credential transport probe did not execute'
+  pass 'fake hub owner uses private descriptors for registration and privileged controls while public liveness remains available'
+)
 
 test_fake_stream_owner_boundary
 test_git_maintenance_is_owned_through_local_clone || fail 'Git fixture maintenance ownership'

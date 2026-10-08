@@ -145,7 +145,7 @@ phase_send() {
   # The endpoint recorded in this home's meta must win over a foreign endpoint
   # carrying the same label on another machine of the fleet.
   decoy=$(printf '%s' "$TMP_ROOT/decoy" | cksum | awk '{ printf "%08x%08x%08x%08x", $1, $1, $1, $1 }')
-  curl -fsS -m 10 -X POST -H 'Content-Type: application/json' \
+  curl -fsS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") -X POST -H 'Content-Type: application/json' \
     --data-binary "$(jq -nc --arg e "$decoy" '{endpoint_id: $e, machine: "other-box", label: "fm-design", cwd: "/"}')" \
     "$FM_TEST_STREAM_URL/v1/agent/endpoints" >/dev/null || fail "could not register the decoy endpoint"
   fm_test_fake_stream_foreground "$decoy" pi
