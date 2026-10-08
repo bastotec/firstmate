@@ -158,9 +158,9 @@ EOF
 
 # fm_test_make_spawn_fakebin <dir> [extra-exit0-tool...]
 # Creates <dir>/fakebin with a no-op treehouse and any extra exit-0 tools.
-# Echoes the fakebin path. It also starts the suite's shared fake stream hub
-# (fm_test_fake_stream_ensure), which the spawn's endpoint comes from: a spawn
-# reaches it through the FM_STREAM_* variables this file exports.
+# Echoes the fakebin path. It checks the suite's already-started shared fake
+# stream hub (fm_test_fake_stream_ensure), which the spawn's endpoint comes
+# from: a spawn reaches it through the FM_STREAM_* variables this file exports.
 fm_test_make_spawn_fakebin() {
   local dir=$1 fakebin
   shift
@@ -235,7 +235,10 @@ make_stubs() {
 # target starts with). Pass --backend stream (or FM_BACKEND=stream) to the
 # script under test. The stub is a tracked helper, so fm_test_cleanup and
 # fm_test_reap_helper_pids stop it. The stub's docstring owns the fake-shell
-# rules (what makes a harness the foreground, and how /quit returns).
+# rules and fixture-owner authorization boundary.
+# Keep the owner credential out of executable argv, including env assignments:
+# curl helpers use --config through a private descriptor, and cleaned child
+# environments must restore the credential from a private descriptor or file.
 fm_test_fake_stream() {
   local dir=$1 ready pid waited=0 host port token
   mkdir -p "$dir"

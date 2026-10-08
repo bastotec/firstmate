@@ -14,7 +14,7 @@ line per request - which is what turns "the agent backs off" into something a
 test can measure rather than infer.
 
   --port N                 loopback port to bind (0 for an ephemeral one)
-  --ready-file PATH        "<host> <port>" written there once bound
+  --ready-file PATH        "<host> <port>" in agent mode; fleet format below
   --journal PATH           one line per request, appended
   --frames-ok-first N      let the first N frame posts through, forgetting the
                            endpoint on every frame after those
@@ -63,9 +63,9 @@ transport that failed after the endpoint already acted; {"fail_text_and_exit":
 (the foreground returns to the shell), a stop whose own delivery reported
 failure; {"on_request": path}
 runs that executable with "<METHOD> <route-tail>" (tail empty for the task
-itself) before every request to the endpoint's task routes, for a suite to
-observe or stall reads; {"busy_reads": n} makes the next n process reads
-report an unattributable non-shell foreground ("node"), as a just-created
+itself) before every owner-authenticated request to the endpoint's task routes,
+for a suite to observe or stall reads; {"busy_reads": n} makes the next n process
+reads report an unattributable non-shell foreground ("node"), as a just-created
 shell still running its rc files, before the real one; POST /v1/test/config
 {"task_routes_unavailable": true} makes every task route answer 503 from then
 on, a hub that stopped answering;
