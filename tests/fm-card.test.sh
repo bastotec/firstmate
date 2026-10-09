@@ -886,6 +886,29 @@ test_rehold_with_a_new_reason_refreshes_the_card() {
   pass "fm-captain-hold: re-holding with a new reason refreshes the card instead of keeping old options"
 }
 
+test_interrupted_reopening_can_be_retried() {
+  local home dec body staged show
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home defer-reopen-retry)
+  dec="$home/dec.txt"
+  printf 'wait until needed\n' > "$dec"
+  run_captain "$home" hold again --title Call --reason "Log in now?" >/dev/null || fail "hold failed"
+  run_captain "$home" answer again --decision-file "$dec" --defer "When Cumbuca is needed" >/dev/null || fail "deferral failed"
+  # The reopening wrote its stamp and marker, then stopped before the captain hold landed.
+  body=$(tasks_in "$home" show again --full | sed -n 's/^  body: //p' | jq -r .)
+  staged="$home/body.txt"
+  printf 'Captain hold set: 2026-10-07T12:00:00Z\nDeferral reopened: 2026-10-07T12:00:00Z\n\n%s\n' "$body" > "$staged"
+  tasks_in "$home" update again --body-file "$staged" >/dev/null || fail "could not stage the interrupted reopening"
+  assert_contains "$(tasks_in "$home" show again --full)" "hold_kind: parked" "the interrupted reopening left the task parked"
+  run_captain "$home" hold again --reason "A task needs Cumbuca - log in?" --reopen-deferred >/dev/null \
+    || fail "an interrupted reopening must be retryable"
+  run_captain "$home" open again || fail "the retried reopening is an open captain call"
+  show=$(tasks_in "$home" show again --full)
+  assert_equals 1 "$(printf '%s' "$show" | grep -o 'Deferral reopened:' | wc -l | tr -d ' ')" "the retry adds no second marker"
+  assert_present "$home/state/cards/again.json" "the fresh call has a card"
+  pass "fm-captain-hold: a reopening interrupted before its captain hold landed can be retried"
+}
+
 test_write_and_show_round_trip
 test_validate_names_the_broken_field
 test_card_requires_exactly_one_json_object
@@ -923,3 +946,4 @@ test_replayed_answers_never_reopen_a_deferred_call
 test_reopened_deferral_records_repeated_words_as_a_fresh_answer
 test_interrupted_deferral_remains_settled_until_finalized
 test_rehold_with_a_new_reason_refreshes_the_card
+test_interrupted_reopening_can_be_retried

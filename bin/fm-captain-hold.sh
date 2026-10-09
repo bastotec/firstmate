@@ -92,6 +92,8 @@
 # plain re-holds are refused. Reopening writes `Deferral reopened: <stamp>`
 # immediately below the new leading hold-set stamp. The next answer prepends
 # a new resolution above that marker, even if its words repeat the old answer.
+# A reopening interrupted before its captain hold landed (marker written, task
+# still parked) may repeat `--reopen-deferred` without adding a second marker.
 #
 # ONE KEYED-ANSWER INTAKE, FED BY EVERY CHANNEL.
 # "A keyed answer resolves its matching captain-held task" is a single
@@ -886,7 +888,7 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how>"
 command_hold() {
   local id=${1:-} title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence
   local existing_hold_kind='' existing_held='' preserve_hold_set=0 card_file=''
-  local reopen_deferred=0 existing_reason='' tmp
+  local reopen_deferred=0 existing_reason='' tmp deferral_state=''
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -933,11 +935,14 @@ command_hold() {
     existing_hold_kind=$(show_field_value "$show" hold_kind)
     existing_held=$(show_field_value "$show" held)
     existing_reason=$(show_field_value "$show" hold_reason)
-    if [ "$(body_deferral_state "$(show_field_value "$show" body)")" = settled ]; then
+    deferral_state=$(body_deferral_state "$(show_field_value "$show" body)")
+    if [ "$deferral_state" = settled ]; then
       [ "$reopen_deferred" = 1 ] \
         || fail "task $id records the captain's deferred answer; it stays parked until its condition fires, then re-ask with --reopen-deferred"
     elif [ "$reopen_deferred" = 1 ]; then
-      fail "task $id does not record a deferred captain answer; --reopen-deferred does not apply"
+      # A reopening interrupted before the captain hold landed may be retried.
+      [ "$deferral_state" = reopened ] && [ "$existing_hold_kind" != captain ] \
+        || fail "task $id does not record a deferred captain answer; --reopen-deferred does not apply"
     fi
     if [ "$existing_hold_kind" = captain ] && [ "$existing_held" = yes ] && [ "$reopen_deferred" = 0 ]; then
       preserve_hold_set=1
@@ -974,7 +979,7 @@ command_hold() {
   task_show_or_fail "$id" "task $id disappeared while recording its hold-set stamp"
   [ -n "$(body_hold_set_timestamp "$(show_field_value "$show" body)")" ] \
     || fail "task $id did not retain its hold-set stamp"
-  if [ "$reopen_deferred" = 1 ]; then
+  if [ "$reopen_deferred" = 1 ] && [ "$deferral_state" = settled ]; then
     body=$(show_field_value "$show" body)
     tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-captain-hold-reopen.XXXXXX") \
       || fail "cannot stage the deferral reopening for $id"
