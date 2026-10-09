@@ -50,7 +50,7 @@ A declared wait re-surfaces on the long `FM_PAUSE_RESURFACE_SECS` cadence instea
 For a stopped ordinary crew the first sight still surfaces one stale wake, with inconclusive liveness fail-open, so a worker genuinely waiting on a decision is never silenced.
 A supervisor declaration's expiry alone restores ordinary escalation, and no declaration suppresses a genuinely new status line, check result, terminal outcome, or PR merge.
 A backlog captain call's first sight alarms and later alarms in its window are throttled, scoped to the call's lifecycle so a release and re-hold starts fresh; an unreadable backlog or incompatible `tasks-axi` leaves the ordinary alarm path unchanged.
-A secondmate's endpoint liveness is never read, and it reaches the pause cadence only through a status-line declaration, so a forgotten `paused:` cannot rot invisibly; a backlog-only secondmate hold is outside this guard to keep backlog reads off the poll hot path.
+Within this pause guard, a secondmate's endpoint liveness is never read, and it reaches the pause cadence only through a status-line declaration, so a forgotten `paused:` cannot rot invisibly; a backlog-only secondmate hold is outside this guard to keep backlog reads off the poll hot path.
 While the away-posture record exists, captain-held work is not rechecked and waits for the return brief.
 `tests/fm-watch-triage*.test.sh` and `tests/fm-external-wait.test.sh` pin these boundaries.
 
@@ -280,5 +280,5 @@ The [`/updatefirstmate` skill](../.agents/skills/updatefirstmate/SKILL.md) owns 
 ## Restart-proof
 
 Fleet state lives in each task's stream endpoint, no-mistakes run records, status event logs, local markdown under `data/`, and persistent secondmate homes.
-At session start, confirmed-dead secondmate endpoints are relaunched through the same spawn path, while ambiguous liveness reads are left untouched to avoid duplicate supervisors.
+[Secondmate lifecycle](stream-backend.md#secondmate-lifecycle) owns startup and watcher-run recovery, including deliberate-stop protection and inconclusive liveness handling.
 Run `/stow` before an intentional reset when the conversation may hold knowledge not yet on disk.

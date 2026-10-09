@@ -67,6 +67,11 @@
 # doorbell, retained until acknowledged after a serialized next turn;
 # the durable wake queue is acknowledged only by the model after handling.
 # Exactly one Deck turn runs at a time, including stdin and watcher turns.
+# Before a pending watcher turn, consume queued composer clears and stale own
+# doorbells, waiting up to five seconds from the first such line for following
+# input. An exact /quit reached there stops the host before watcher work; real
+# steers retain watcher priority. The grace covers the control plane's delayed
+# /quit after clear/re-read retries (tests/fm-deck-harness.test.sh).
 # Supervision uses child processes and stdin, never backend-specific injection.
 # Startup, lock, watcher, and event-capture failures publish failure status and
 # stop the driver, except a refused handling-delivery confirmation: the driver
@@ -753,14 +758,8 @@ while :; do
   if [ "$SECONDMATE" = 1 ]; then
     watch_start || exit 1
     watch_maintain || exit 1
-    # The control plane's composer clear (a Ctrl+U line, a bare Enter) is
-    # typed ahead of its /quit whenever it cannot prove the composer empty,
-    # which is always the case mid-turn, and a doorbell whose record the turn
-    # already took may sit ahead of both. Consume those start-nothing lines
-    # here so a /quit queued behind them still stops the host before a pending
-    # watcher wake starts another turn; otherwise the exit postcondition times
-    # out, rolls back as "agent alive", and the stale /quit stops the mate
-    # later with nothing left to relaunch it.
+    # Drain start-nothing input with the bounded lifecycle grace owned by the
+    # HOME HOST INVARIANTS above, before allowing automatic watcher dispatch.
     composer_grace_until=0
     while :; do
       if [ ! -f "$WORK/input.$input_seq" ]; then

@@ -4,16 +4,14 @@
 #
 # Usage: fm-secondmate-revive.sh scan [--help]
 #
-# Session start (bin/fm-bootstrap.sh's liveness sweep) is the only other place a
-# dead second mate is relaunched, so a mate that dies mid-session - a turn that
-# stops its own driver, a lifecycle exit that lands after its control action
-# gave up, a hub that forgot its endpoint - otherwise stays down until somebody
-# notices. The home's watcher (bin/fm-watch.sh) runs `scan` detached on a short
-# cadence; this script owns what a scan does.
+# The home's watcher (bin/fm-watch.sh) owns the detached scan cadence through
+# FM_SECONDMATE_REVIVE_INTERVAL; this script owns what a scan does.
+# docs/stream-backend.md "Secondmate lifecycle" owns operator behavior and
+# startup-recovery limits; tests/fm-secondmate-revive.test.sh pins this path.
 #
-# One scan, for every kind=secondmate record in THIS home's state (a home never
-# reads or acts on another home's records, so only the owning home revives a
-# mate):
+# One scan, for every kind=secondmate record with a window in THIS home's state
+# (a home never reads or acts on another home's records, so only the owning home
+# revives a mate):
 #   - read the endpoint the same way the control plane does: the local backend's
 #     agent-state classifier, or the configured host's `state` verb for a remote
 #     route (an unreachable host or unreadable answer is unknown, never dead);
@@ -24,18 +22,17 @@
 #     `bin/fm-control.sh <id> recover-missing`, whose own guard refuses while the
 #     mate's agent process is still running, so a hub that merely forgot a live
 #     endpoint is never duplicated;
-#   - remote `missing` has no primary-side recovery verb, so it is only
-#     escalated, under the same confirmation and budget as a failed revival;
+#   - remote `missing` has no primary-side recovery verb, so after confirmation
+#     it is escalated once with no revival attempts claimed;
 #   - anything else (ambiguous, unreadable, unknown) is left alone.
 # A down reading is acted on only after it has been seen on two scans at least
-# FM_SECONDMATE_REVIVE_CONFIRM_SECS apart, which keeps a relaunch already in
-# flight elsewhere (an update restart, a session-start sweep, an operator) from
-# being raced: those hold the mate's control lock, and fm-control refuses a
-# second lifecycle action while it is held.
+# FM_SECONDMATE_REVIVE_CONFIRM_SECS apart. fm-control refuses a second lifecycle
+# action while the mate's control lock is held; that refusal consumes no failure
+# and starts a fresh confirmation window. A fresh alive reading at automatic
+# admission clears the revive record without a failure.
 #
-# A mate stopped on purpose with `bin/fm-control.sh <id> exit` carries
-# state/<id>.held-stopped and is skipped until it is seen alive again or is
-# relaunched through fm-control.
+# bin/fm-control.sh's header owns deliberate-stop marker semantics.
+# A down mate carrying that marker is skipped.
 #
 # Budget and escalation. Each failed revival is counted in state/<id>.revive.
 # After FM_SECONDMATE_REVIVE_ATTEMPTS failures (2) the scan appends ONE
@@ -48,9 +45,9 @@
 # state/secondmate-revive.log. Each mate is handled by its own worker under
 # state/.secondmate-revive-<id>.lock, so one slow relaunch never delays another.
 #
-# The automatic relaunch passes --unless-held-stopped, so fm-control re-checks
-# the deliberate-stop record under the mate's control lock, and that record is
-# withdrawn here only under the same lock after a fresh alive reading.
+# Both automatic recovery verbs pass --unless-held-stopped for fm-control's
+# locked admission guard. This scan withdraws a stale deliberate-stop marker
+# only under that same control lock after a fresh alive reading.
 #
 # Environment knobs:
 #   FM_HOME                            required
@@ -99,7 +96,8 @@ one_line() {  # <text>
   printf '%s\n' "$1" | sed -n '/^warning: /d;/./{s/^error: //;s/[[:space:]]\{1,\}/ /g;p;q;}' | cut -c1-300
 }
 
-# Revive record fields: down_state first_seen failures escalated
+# Revive record fields: down_state first_seen failures escalated last.
+# `last` retains the deciding failure if escalation must be retried.
 record_read() {  # <id>
   local rec="$STATE/$1.revive"
   REC_STATE=; REC_SEEN=0; REC_FAILURES=0; REC_ESCALATED=0

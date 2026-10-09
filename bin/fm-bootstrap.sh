@@ -736,8 +736,8 @@ secondmate_liveness_one_timed() {  # <meta> <id> <label>
   fm_timing_record secondmate liveness "$__fm_timing_stamp" "$label"
 }
 
-# A mate stopped on purpose with bin/fm-control.sh <id> exit stays down until it
-# is relaunched explicitly (bin/fm-secondmate-revive.sh honors the same record).
+# Honor control-plane deliberate-stop protection at startup; bin/fm-control.sh's
+# header owns the marker and bin/fm-secondmate-revive.sh owns mid-session handling.
 held_stopped_skip() {  # <id>
   [ -e "$STATE/$1.held-stopped" ] || return 1
   echo "SECONDMATE_LIVENESS: secondmate $1: skipped: stopped on purpose with fm-control exit; relaunch it explicitly to bring it back"

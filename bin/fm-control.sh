@@ -39,10 +39,16 @@
 #              group stopped. Already-stopped is success (idempotent), including
 #              when the agent is found gone while the composer gate was
 #              re-reading a state it could not prove.
-#              A kind=secondmate exit also records state/<id>.held-stopped so
-#              bin/fm-secondmate-revive.sh leaves the stopped mate alone; a
-#              successful relaunch or recover-missing withdraws it, and either
-#              verb given --unless-held-stopped refuses while it exists.
+#              A successful kind=secondmate exit (including already-stopped)
+#              records state/<id>.held-stopped so automatic recovery leaves it
+#              down. A primary exit of a remote mate also records it on SSH
+#              exit 255: an unknown response may hide a deliberate stop.
+#              Successful relaunch or recover-missing withdraws it.
+#              --unless-held-stopped on either recovery verb checks this marker
+#              and re-reads agent liveness under this home's per-task control
+#              lock, refusing an alive mate with 'is not down'. For a remote
+#              mate the fresh state comes from its configured host; the flag
+#              guards primary admission, not the host-local delegated call.
 #   relaunch   Transactionally replace the running agent with a new one, in the
 #              SAME endpoint and SAME worktree, on the same or a newly chosen
 #              harness/model/effort - so switching harness is one ordinary use
@@ -91,8 +97,9 @@
 #              It continues the SAME run, so the recorded harness, model, and
 #              effort carry through unchanged - nothing is re-resolved from
 #              configuration, including a secondmate's config/secondmate-harness
-#              pin - and only --note/--note-file apply. Picking up a changed pin
-#              is what `relaunch` is for.
+#              pin. --note/--note-file carry the progress note and
+#              --unless-held-stopped applies the automatic-admission guard
+#              above. Picking up a changed pin is what `relaunch` is for.
 #              The one deliberate exception is an explicit replacement profile:
 #              --harness/--model/--effort are accepted here too,
 #              with the identical precedence, axis-reset, and refusal semantics
@@ -131,8 +138,9 @@
 # postcondition where the agent runs. A relaunch then re-reads the host's route
 # and rewrites this record's remote_* binding, so the parent points at the
 # mate's new endpoint. recover-missing
-# stays refused for a remote mate; its recovery is the secondmate liveness
-# sweep (bin/fm-bootstrap.sh). bin/fm-remote-control-lib.sh owns that route.
+# stays refused for a remote mate; a gone remote endpoint needs recovery on
+# its host (docs/remote-secondmates.md "Lifecycle control").
+# bin/fm-remote-control-lib.sh owns that route.
 #
 # Fail-closed boundaries:
 #   - A recorded harness outside the exact supported set is refused before any
@@ -378,10 +386,9 @@ fi
 # cannot say is WHY, and "malformed metadata" is the wrong thing to tell an
 # operator about a correctly configured remote route. Name the placement
 # instead, using the same `remote_host` signal bin/fm-send.sh routes on.
-# A second mate stopped on purpose stays stopped: its exit leaves
-# state/<id>.held-stopped, which bin/fm-secondmate-revive.sh respects, and a
-# successful relaunch or recovery withdraws it.
-held_stop_record() {  # <verb> - after that verb succeeded
+# The header owns deliberate-stop marker semantics; writes stay under the
+# control lock acquired above.
+held_stop_record() {  # <verb> - after success or an unknown remote exit
   [ "$(fm_meta_get "$META" kind)" = secondmate ] || return 0
   case "$1" in
     exit) printf 'stopped_at=%s\n' "$(date +%s)" > "$STATE/$ID.held-stopped" ;;
