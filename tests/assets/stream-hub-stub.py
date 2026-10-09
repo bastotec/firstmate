@@ -546,7 +546,7 @@ class Stub(http.server.BaseHTTPRequestHandler):
                 if int(endpoint.get("miss_first") or 0) > 0:
                     endpoint["miss_first"] = int(endpoint["miss_first"]) - 1
                     self._refuse(404, "no_such_endpoint", "no endpoint %s" % endpoint_id)
-                    return
+                    return True
                 self._json(200, {"ok": True, "task": self._describe(endpoint)})
             elif method == "GET" and tail in ("capture", "screen") and self._capture_refused(endpoint):
                 self._refuse(502, "capture_failed", "the screen of %s could not be read" % endpoint_id)
