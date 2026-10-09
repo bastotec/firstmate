@@ -429,6 +429,10 @@ That protection covers only the gap between a replacement's registration and its
 Readers wait one ordinary rejoin window before answering an unresolved Bridge order; if no endpoint appears, the order remains pending without a membership nack, and an identical resend can try placement again.
 The cheap presence probe behind capture, current-path and endpoint-addressed input answers from the first reply and pays no rejoin wait.
 
+The session-start fleet digest uses a settled form of that probe: it retries only a 404 (`no_such_endpoint`) once per second through the bounded six-second first-attempt rejoin window, prints the endpoint alive if it returns, and on that 404 path prints it dead only after every retry remains 404.
+Other probe refusals still render dead from the first reply; they are not rejoin evidence and get no retry.
+`tests/fm-session-start.test.sh` pins both a worker returning during the window and an absence lasting through it.
+
 The recovery-grade worker classifier waits its own bounded six-second window (`FM_BACKEND_STREAM_MISSING_GRACE_SECS` in `bin/backends/stream.sh`), after which it can report `missing` while a live agent remains in a longer backoff; that verdict produces no Bridge membership nack.
 That window is derived from both ends, and both matter.
 The lower bound is what it has to outlast, which is three terms, not one.
