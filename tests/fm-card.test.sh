@@ -198,7 +198,7 @@ test_expired_deferral_is_backfilled_and_listed_by_drafts() {
   run_captain "$home" open past-a || fail "expired deferral must remain an open captain call"
   tasks_in "$home" add closed-b "Already closed" --repo cadia >/dev/null
   tasks_in "$home" hold closed-b --reason "An old call" --kind captain >/dev/null
-  tasks_in "$home" done closed-b >/dev/null
+  tasks_in "$home" 'done' closed-b >/dev/null
   out=$(run_card "$home" drafts) || fail "drafts failed before backfill"
   assert_contains "$out" "past-a" "an expired call without a card is listed"
   assert_not_contains "$out" "closed-b" "a closed captain call is not listed"
