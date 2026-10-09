@@ -74,6 +74,9 @@ Recorded rounded macOS observations with a 10 ms simulated hub round trip and a 
 
 These observations were supplied without a run date, tool versions, binary revisions, or raw JSON, so they are indicative comparisons rather than version-scoped verification or a guaranteed latency budget.
 `tests/fm-stream-attach-rust.test.sh` is the functional regression entry point for snapshot, input, resize, detach, and exit-status behavior over both transports; it is not a timing assertion.
+`tests/fm-stream-attach-boundaries.test.sh` adds public socket/HTTP/PTY regressions for supported large startup geometry, geometry publication failure, prompt saturated-resize refusal and recovery, local/hub input serialization, and bounded Ctrl-] detach under socket backpressure.
+The `fm-stream-agent` unit tests in `crates/fm-stream-agent/src/attach.rs` cover full-queue drain acknowledgement and concurrent input admission versus signal detach; `saturated_resize_refuses_without_publishing_or_changing_geometry` in `crates/fm-stream-agent/src/main.rs` covers saturation refusal through both resize entry points.
+These are regression entry points, not a recorded run or production latency guarantee.
 
 ### Portable stream-parity regressions
 

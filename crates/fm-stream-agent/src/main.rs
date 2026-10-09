@@ -538,8 +538,8 @@ impl Agent {
     }
     /// Read the pty as fast as it produces, and hand each burst on at once:
     /// to local attach clients directly, and to the publisher for the hub.
-    /// Only a full outbox back-pressures reading; individual kernel reads do
-    /// not wait for a network round trip.
+    /// Publication capacity back-pressures reading outside the output lock;
+    /// individual kernel reads do not wait for a network round trip.
     fn reader(&self) {
         let mut buffer = vec![0u8; FRAME_BYTES];
         let mut since = Instant::now();
@@ -858,8 +858,8 @@ impl local::Endpoint for Agent {
         }
         self.pty.write(bytes).map_err(|error| error.to_string())
     }
-    /// The local twin of the hub's `resize` command. The hub's screen follows
-    /// through the outbox, in order with the output, and never blocks it.
+    /// The local twin of the hub's `resize` command. Saturation must refuse
+    /// rather than wait for hub progress while holding the output lock.
     fn resize(&self, rows: u16, cols: u16) -> Result<(), String> {
         self.resize_output(rows, cols)
             .map_err(|error| error.to_string())

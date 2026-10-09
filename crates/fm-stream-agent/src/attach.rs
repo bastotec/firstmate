@@ -582,10 +582,10 @@ fn handshake(endpoint: &str, stream: UnixStream) -> Result<Option<Handshake>, St
     Ok(Some((snapshot, reader, Arc::new(Mutex::new(writer)))))
 }
 
-/// The same session as the hub path, over the agent's local socket: output
-/// frames written as they arrive, input written straight to the agent, and a
-/// detach that waits for the agent to confirm it has written everything typed
-/// before it.
+/// The same session as the hub path, over the agent's local socket. Input
+/// admission must stay independent of the socket writer so backpressure cannot
+/// hide the detach key; a clean detach requires acknowledgement of admitted
+/// input within the outcome deadline.
 fn run_local(
     endpoint: String,
     snapshot: Value,
