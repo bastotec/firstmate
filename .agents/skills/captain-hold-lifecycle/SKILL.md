@@ -72,7 +72,8 @@ Pass it as `bin/fm-captain-hold.sh hold <id> --reason "<reason>" --card-file <pa
 A script that holds on its own leaves a draft card, which is not a judgment.
 The mate whose home holds the call owns its card, a second mate included, and writes its situation and options for the captain in plain words.
 To replace a draft without touching the hold, run `bin/fm-card.sh write <id> --file <path>`.
-Every locked session start drafts a card for each uncarded captain call and lists the calls whose card is still a draft under `DECISION CARDS`; write a full card for each before going idle, which reconciles calls the home already holds and so binds an idle second mate too.
+When the session-start digest's `DECISION CARDS` subsection lists calls without a full card, write one for each before going idle, once this session has verified lock ownership.
+This reconciles calls the home already holds and so binds an idle second mate too; `bin/fm-session-start.sh`'s header owns startup backfill and listing mechanics.
 On every heartbeat, run `bin/fm-card.sh backfill` first, then replace each draft with a full card, then run `bin/fm-card.sh stale`.
 Under the captain's standing ruling of 2026-10-07, check each candidate's evidence yourself, clear the ones it confirms with `bin/fm-card.sh clear <id> --why "<one line of evidence>"`, keep any call the captain still needs, and tell the captain how many you cleared and why in your next natural reply.
 A message "card <id>: option <key>" is the captain choosing that option; a redirect text is the captain's words too.

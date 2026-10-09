@@ -35,10 +35,11 @@
 #                       handoff retry, X-mode artifact writes, fleet sync) also run only when
 #                       locked; the four network sweeps run in the deferred
 #                       stage rather than this synchronous bootstrap section.
-#                       Its DECISION CARDS tail drafts a card for every
-#                       uncarded captain hold when locked (bin/fm-card.sh
-#                       backfill) and, in either mode, lists the captain calls
-#                       whose card is still a draft for this home to finish.
+#                       Its DECISION CARDS tail, when compatible tasks-axi is
+#                       available, idempotently drafts a card for every
+#                       uncarded open captain call when locked (bin/fm-card.sh
+#                       backfill) and, in either mode, lists calls whose card
+#                       is still a draft or missing for this home to finish.
 #   3. wake-drain     - presents durable wakes and advances recovery handling
 #                       state, so it only runs when locked. The local bounded
 #                       inactive-outcome startup scan runs in the deferred worker.
@@ -541,12 +542,9 @@ else
   printf '(silent - all good)\n'
 fi
 
-# Decision cards, still inside the bootstrap stage: every captain call this
-# home holds must carry a card, and the heartbeat that upgrades drafts never
-# reaches an idle second mate, so session start is the one boundary every home
-# crosses - including the restart /updatefirstmate performs. A locked session
-# drafts a card for every uncarded captain hold (bin/fm-card.sh backfill,
-# idempotent); any session then lists the calls whose card is still a draft.
+# Decision cards stay inside the bootstrap stage. Idle second mates cannot
+# rely on a heartbeat wake to discover pre-card calls, so startup supplies
+# that discovery boundary without changing bootstrap's sweep inventory.
 subsection "DECISION CARDS"
 if [ "$TASKS_AXI_COMPATIBLE" -ne 1 ]; then
   printf 'skipped - compatible tasks-axi is unavailable, so captain calls could not be listed.\n'

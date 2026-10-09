@@ -30,14 +30,13 @@
 # in instruction and the single newline allowed in situation.
 # A draft card (draft: true, no options, recommended null) stands in for a
 # hold whose holder could not write a judgment; `draft` never replaces a full
-# card, and the first mate replaces drafts with full cards at its next review.
-# `backfill` drafts a card for every captain-held task in this home that has
-# none, using its title, repo and hold reason; it is idempotent, and
-# bin/fm-session-start.sh runs it at every locked session start, so holds made
-# before cards existed, or outside bin/fm-captain-hold.sh, gain a card in every
-# home, idle second mates included.
-# `drafts` is read-only and prints "<task-id>\t<title>" for every captain-held
-# task in this home whose card is still a draft or missing: the calls whose
+# card; .agents/skills/captain-hold-lifecycle/SKILL.md owns the holding mate's
+# obligation to replace drafts with full cards.
+# `backfill` idempotently drafts a card for every open captain call in this
+# home that has none, using its title, repo and hold reason.
+# bin/fm-session-start.sh's header owns startup backfill and draft discovery.
+# `drafts` is read-only and prints "<task-id>\t<title>" for every open captain
+# call in this home whose card is still a draft or missing: the calls whose
 # owning mate still has to write a full card.
 # Both refuse (exit 2) when this home's backlog cannot be listed, rather than
 # reading an unreadable backlog as "no captain calls".
@@ -224,8 +223,9 @@ cmd_draft() {
      created: $ts, updated: $ts}' | store_card "$id"
 }
 
-# Ids of tasks held for the captain: the last column of each listed row is
-# its hold kind, and an id is a slug, so neither needs CSV decoding.
+# Match fm-captain-hold.sh open, not tasks-axi's live date gate: an expired
+# deferral still carries an open captain call. The last column is hold kind,
+# and an id is a slug, so neither needs CSV decoding.
 captain_held_ids() {
   local listed
   listed=$(tasks list --fields hold_kind 2>/dev/null) \
