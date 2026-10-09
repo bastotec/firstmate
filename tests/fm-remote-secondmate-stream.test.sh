@@ -148,9 +148,9 @@ argv_b64=$4
 command_fields=$(perl -MMIME::Base64=decode_base64 -e '
   my $data=decode_base64($ARGV[0]);
   my @args=split(/\0/, $data);
-  print join("\t", map { defined $_ ? $_ : "" } @args[0..2]);
+  print join("\t", map { defined $_ ? $_ : "" } @args[0..3]);
 ' "$argv_b64")
-IFS=$'\t' read -r command_name command_action command_arg <<EOF
+IFS=$'\t' read -r command_name command_action command_arg command_verb <<EOF
 $command_fields
 EOF
 # The readiness gate is answered here (tests/fm-remote-doctor.test.sh owns the
@@ -166,6 +166,17 @@ if [ "$command_name" = fm-remote-doctor.sh ]; then
 fi
 if [ "$command_name" = fm-remote-secondmate-control.sh ]; then
   printf '%s %s\n' "$command_action" "$command_arg" >> "$FM_FAKE_CONTROL_LOG"
+  if [ "$command_action" = state ] && [ -n "${FM_FAKE_STALE_STATE_FILE:-}" ] && [ ! -e "$FM_FAKE_STALE_STATE_FILE" ]; then
+    : > "$FM_FAKE_STALE_STATE_FILE"
+    printf 'dead\n'
+    exit 0
+  fi
+  if [ "$command_action" = control ] && [ "$command_verb" = exit ]; then
+    case "${FM_FAKE_EXIT_RC:-0}" in
+      1) echo 'error: remote exit refused' >&2; exit 1 ;;
+      255) "$FM_FAKE_REMOTE_ENTRYPOINT" "$@" || exit $?; exit 255 ;;
+    esac
+  fi
 fi
 exec "$FM_FAKE_REMOTE_ENTRYPOINT" "$@"
 SH
@@ -248,6 +259,22 @@ for pid in $(stream_agent_pids); do
 done
 pass "remote: a stream launch records the stream binding and runs the agent on the host's hub"
 
+cp "$PARENT_META" "$TMP_ROOT/alive-parent.meta"
+cp "$HOST_META" "$TMP_ROOT/alive-host.meta"
+cp "$REMOTE_HOME/state/parent-route/$ID.agent-identity" "$TMP_ROOT/alive-identity"
+control_count=$(wc -l < "$CONTROL_LOG" | tr -d ' ')
+rc=0
+out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" relaunch --unless-held-stopped 2>&1) || rc=$?
+expect_code 1 "$rc" "automatic remote admission should refuse an already-live mate"
+assert_contains "$out" 'is not down' "remote admission did not identify the recovered mate: $out"
+assert_equals "$((control_count + 1))" "$(wc -l < "$CONTROL_LOG" | tr -d ' ')" "automatic admission did more than probe the remote mate"
+assert_equals "state $ID" "$(tail -1 "$CONTROL_LOG")" "automatic admission did not read host-local liveness"
+cmp -s "$PARENT_META" "$TMP_ROOT/alive-parent.meta" || fail "automatic admission changed the live parent route"
+cmp -s "$HOST_META" "$TMP_ROOT/alive-host.meta" || fail "automatic admission changed the live host route"
+cmp -s "$REMOTE_HOME/state/parent-route/$ID.agent-identity" "$TMP_ROOT/alive-identity" || fail "automatic admission restarted the recovered remote mate"
+wait_hub_state "$STREAM_TARGET" alive
+pass "remote: automatic admission probes its host and never restarts an already-live mate"
+
 assert_readiness_refusal() {
   local expected_rc=$1 expected_check=$2 expected_calls=$3 out rc=0
   shift 3
@@ -303,7 +330,10 @@ assert_contains "$out" "interrupt-delivered $ID" "remote interrupt did not repor
 pass "remote: send, peek, crew-state, and interrupt reach a stream mate"
 
 # --- liveness: an alive stream route is accepted, never respawned ------------
-out=$(FM_BOOTSTRAP_NETWORK=only remote_env "$ROOT/bin/fm-bootstrap.sh" 2>&1) || true
+cp "$REMOTE_HOME/state/parent-route/$ID.agent-identity" "$TMP_ROOT/before-startup-identity"
+out=$(FM_FAKE_STALE_STATE_FILE="$TMP_ROOT/stale-state" FM_BOOTSTRAP_NETWORK=only remote_env "$ROOT/bin/fm-bootstrap.sh" 2>&1) || true
+assert_present "$TMP_ROOT/stale-state" "startup recovery did not see the injected stale down reading"
+cmp -s "$REMOTE_HOME/state/parent-route/$ID.agent-identity" "$TMP_ROOT/before-startup-identity" || fail "startup recovery restarted a remotely recovered mate"
 assert_not_contains "$out" "secondmate $ID: skipped" "the liveness sweep refused a live stream route: $out"
 assert_not_contains "$out" "secondmate $ID: respawn" "the liveness sweep respawned a live stream mate: $out"
 assert_equals "$STREAM_TARGET" "$(meta_value "$PARENT_META" remote_target)" "the liveness sweep moved the mate"
@@ -366,6 +396,36 @@ out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" recover-missing 2>&1) \
 assert_contains "$out" "not available for it here" "recover-missing refusal was not named: $out"
 out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" exit 2>&1) || fail "remote exit failed: $out"
 wait_hub_state "$STREAM_TARGET" dead
+assert_present "$PARENT/state/$ID.held-stopped" "a successful remote exit left no primary stop record"
+assert_present "$REMOTE_HOME/state/parent-route/$ID.held-stopped" "a successful remote exit left no host stop record"
 pass "remote: exit stops a stream mate on its host; recover-missing stays refused"
+
+out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" relaunch 2>&1) || fail "explicit relaunch after remote exit failed: $out"
+wait_hub_state "$STREAM_TARGET" alive
+assert_absent "$PARENT/state/$ID.held-stopped" "explicit remote relaunch kept the primary stop record"
+rc=0
+out=$(FM_FAKE_EXIT_RC=255 remote_env "$ROOT/bin/fm-control.sh" "$ID" exit 2>&1) || rc=$?
+expect_code 255 "$rc" "a lost remote exit response should remain unknown"
+wait_hub_state "$STREAM_TARGET" dead
+assert_present "$REMOTE_HOME/state/parent-route/$ID.held-stopped" "the exit with a lost response did not reach the host"
+assert_present "$PARENT/state/$ID.held-stopped" "a lost remote exit response left no primary stop record"
+cp "$CONTROL_LOG" "$TMP_ROOT/after-lost-exit.log"
+rc=0
+out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" relaunch --unless-held-stopped 2>&1) || rc=$?
+expect_code 1 "$rc" "automatic revival after a lost remote exit response should refuse"
+assert_contains "$out" 'was stopped on purpose' "automatic revival did not honor the unknown remote exit"
+cmp -s "$CONTROL_LOG" "$TMP_ROOT/after-lost-exit.log" || fail "automatic revival reached the stopped remote host"
+wait_hub_state "$STREAM_TARGET" dead
+pass "remote: a lost exit response still records the stop and prevents automatic revival"
+
+out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" relaunch 2>&1) || fail "explicit relaunch after unknown exit failed: $out"
+wait_hub_state "$STREAM_TARGET" alive
+rc=0
+out=$(FM_FAKE_EXIT_RC=1 remote_env "$ROOT/bin/fm-control.sh" "$ID" exit 2>&1) || rc=$?
+expect_code 1 "$rc" "a rejected remote exit should report failure"
+assert_absent "$PARENT/state/$ID.held-stopped" "a rejected remote exit recorded a deliberate stop"
+assert_absent "$REMOTE_HOME/state/parent-route/$ID.held-stopped" "a rejected remote exit reached host-local control"
+wait_hub_state "$STREAM_TARGET" alive
+pass "remote: a rejected exit does not record a deliberate stop"
 
 echo "ALL TESTS PASSED"

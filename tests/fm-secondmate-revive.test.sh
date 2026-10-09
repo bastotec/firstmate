@@ -340,6 +340,52 @@ SH
   pass "a relaunch refused because the mate was stopped on purpose is not a failure"
 }
 
+test_recovery_between_the_scan_and_admission_is_not_a_failure() {
+  local dir target worker placement
+  for placement in local remote; do
+    dir=$(new_case "recovered-at-admission-$placement")
+    target=
+    if [ "$placement" = local ]; then
+      target=$(add_local_mate "$dir" sm1 zsh)
+    else
+      add_remote_mate "$dir" sm1
+      printf 'dead\n' > "$dir/home/remote-state"
+    fi
+    scan "$dir"
+    cp "$ROOT/bin/fm-control.sh" "$dir/bin/fm-control.real"
+    cat > "$dir/bin/fm-control.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_HOME/control-calls"
+: > "$FM_HOME/admission-ready"
+while [ ! -e "$FM_HOME/admission-release" ]; do sleep 0.1; done
+exec bash "$(dirname "$0")/fm-control.real" "$@"
+SH
+    chmod +x "$dir/bin/fm-control.sh"
+    scan "$dir" &
+    worker=$!
+    fm_test_track_helper_pid "$worker"
+    for _ in $(seq 100); do
+      [ ! -e "$dir/home/admission-ready" ] || break
+      sleep 0.1
+    done
+    [ -e "$dir/home/admission-ready" ] || fail "the $placement scan never reached automatic admission"
+    if [ "$placement" = local ]; then
+      fm_test_fake_stream_foreground "$target" fm-deck-worker
+    else
+      printf 'alive\n' > "$dir/home/remote-state"
+    fi
+    touch "$dir/home/admission-release"
+    wait "$worker" || fail "the $placement scan failed after the mate recovered"
+    [ ! -e "$dir/home/state/sm1.revive" ] || fail "a recovered $placement mate consumed a failed revival: $(cat "$dir/home/state/sm1.revive")"
+    [ "$(queued_revive_wakes "$dir")" = 0 ] || fail "a recovered $placement mate escalated a failed revival"
+    [ "$(calls "$dir" | wc -l | tr -d ' ')" = 1 ] || fail "a recovered $placement mate caused multiple control calls"
+    grep -q 'sm1 is alive again' "$dir/home/state/secondmate-revive.log" || fail "the $placement admission recovery was not logged"
+    scan "$dir"
+    [ "$(calls "$dir" | wc -l | tr -d ' ')" = 1 ] || fail "the recovered $placement mate was retried"
+  done
+  pass "a mate recovered between scanning and locked admission resets its episode without a failure"
+}
+
 test_a_gone_remote_endpoint_is_reported_without_claiming_attempts() {
   local dir
   dir=$(new_case remote-gone)
@@ -403,6 +449,7 @@ test_watcher_surfaces_a_failed_revival_on_its_own
 test_a_slow_mate_does_not_hold_back_later_scans_of_another
 test_a_fresh_exit_keeps_its_record_while_the_control_lock_is_held
 test_a_refused_held_relaunch_is_not_a_failure
+test_recovery_between_the_scan_and_admission_is_not_a_failure
 test_a_gone_remote_endpoint_is_reported_without_claiming_attempts
 test_watcher_revives_a_dead_mate_without_a_turn
 echo "# all fm-secondmate-revive tests passed"

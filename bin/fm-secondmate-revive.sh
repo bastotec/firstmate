@@ -218,6 +218,11 @@ revive_one() {  # <meta> <id>
     return 0
   fi
   case "$out" in
+    *"is not down"*)
+      rm -f "$STATE/$id.revive"
+      log "$id is alive again"
+      return 0
+      ;;
     *"was stopped on purpose"*)
       rm -f "$STATE/$id.revive"
       log "$id was stopped on purpose; leaving it down"

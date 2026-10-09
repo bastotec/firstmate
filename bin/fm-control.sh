@@ -398,9 +398,17 @@ fi
 if [ -n "$(fm_meta_get "$META" remote_host)" ]; then
   # shellcheck source=bin/fm-remote-control-lib.sh
   . "$SCRIPT_DIR/fm-remote-control-lib.sh"
+  if [ "$UNLESS_HELD_STOPPED" = 1 ]; then
+    if remote_state=$("$SCRIPT_DIR/fm-on.sh" "$ID" fm-remote-secondmate-control.sh state "$ID" < /dev/null 2>/dev/null); then
+      [ "$(printf '%s\n' "$remote_state" | tail -1)" != alive ] \
+        || die "task $ID is not down; automatic revival refused"
+    fi
+  fi
   remote_rc=0
   fm_remote_control_run || remote_rc=$?
-  [ "$remote_rc" -ne 0 ] || held_stop_record "$VERB"
+  if [ "$remote_rc" -eq 0 ] || { [ "$VERB" = exit ] && [ "$remote_rc" -eq 255 ]; }; then
+    held_stop_record "$VERB"
+  fi
   exit "$remote_rc"
 fi
 
@@ -425,6 +433,10 @@ fm_backend_validate "$BACKEND" || exit 1
 agent_state() {
   fm_backend_agent_state "$BACKEND" "$T"
 }
+
+if [ "$UNLESS_HELD_STOPPED" = 1 ] && [ "$(agent_state)" = alive ]; then
+  die "task $ID is not down; automatic revival refused"
+fi
 
 busy_verdict() {
   fm_busy_classify_meta "$META" "$ID" "$STATE"

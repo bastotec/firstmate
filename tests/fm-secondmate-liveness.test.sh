@@ -347,6 +347,64 @@ test_sweep_skips_a_secondmate_with_a_live_control_lock() {
   pass "sweep: a live lifecycle lock prevents recovery until its owner releases it"
 }
 
+test_sweep_refreshes_a_recovered_mates_binding_under_the_control_lock() {
+  local w fb worker target replacement out closed_before
+  w=$(new_world sweep-recovered-binding)
+  add_sm_home "$w" sm1
+  endpoint_mode "$w" sm1 zsh
+  fb=$(make_toolchain "$w")
+  mkdir -p "$w/code" "$w/replacement-state"
+  cp -R "$ROOT/bin" "$w/code/bin"
+  mv "$w/code/bin/fm-backend.sh" "$w/code/bin/fm-backend.real.sh"
+  cat > "$w/code/bin/fm-backend.sh" <<'SH'
+. "$(dirname "${BASH_SOURCE[0]}")/fm-backend.real.sh"
+fm_backend_agent_state() {
+  local state
+  fm_backend_source "$1" || return 1
+  state=$(fm_backend_stream_agent_state "$2")
+  if [ "$state" = dead ] && [ ! -e "$FM_HOME/probe-sampled" ]; then
+    : > "$FM_HOME/probe-sampled"
+    while [ ! -e "$FM_HOME/probe-release" ]; do sleep 0.1; done
+  fi
+  if [ -e "$STATE/.control-sm1.lock" ]; then
+    printf '%s %s\n' "$2" "$state" > "$FM_HOME/locked-probe"
+  fi
+  printf '%s\n' "$state"
+}
+SH
+  PATH="$fb:$BASE_PATH" FM_HOME="$w/home" FM_BOOTSTRAP_NETWORK=only \
+    "$w/code/bin/fm-bootstrap.sh" > "$w/bootstrap.out" 2>&1 &
+  worker=$!
+  fm_test_track_helper_pid "$worker"
+  for _ in $(seq 100); do
+    [ ! -e "$w/home/probe-sampled" ] || break
+    sleep 0.1
+  done
+  [ -e "$w/home/probe-sampled" ] || fail "startup recovery never sampled the dead mate"
+  target=$(cat "$w/sm1.target")
+  {
+    fm_test_stream_task "$w/replacement-state" sm1
+    printf 'kind=secondmate\nharness=deck\nhome=%s\n' "$w/sm1"
+  } > "$w/home/state/sm1.meta"
+  replacement=$(fm_test_stream_target_of "$w/replacement-state" sm1)
+  fm_test_fake_stream_foreground "$replacement" fm-deck-worker
+  cp "$w/home/state/sm1.meta" "$w/recovered.meta"
+  closed_before=$(fm_test_fake_stream_endpoints | jq -r --arg e "${target##*:}" '.endpoints[] | select(.endpoint_id == $e) | .closed_by // empty')
+  touch "$w/home/probe-release"
+  wait "$worker" || fail "startup recovery failed after the mate recovered"
+  out=$(cat "$w/bootstrap.out")
+  cmp -s "$w/home/state/sm1.meta" "$w/recovered.meta" || fail "startup recovery replaced a freshly recovered mate: $out"
+  [ "$(cat "$w/home/locked-probe")" = "$replacement alive" ] || fail "startup recovery did not read the current binding under its control lock"
+  [ "$(fm_test_fake_stream_endpoints | jq -r --arg e "${target##*:}" '.endpoints[] | select(.endpoint_id == $e) | .closed_by // empty')" = "$closed_before" ] \
+    || fail "startup recovery changed the stale endpoint after recovery"
+  [ "$(fm_test_fake_stream_endpoints | jq -r --arg e "${replacement##*:}" '.endpoints[] | select(.endpoint_id == $e) | .closed_by // empty')" = '' ] \
+    || fail "startup recovery killed the freshly recovered endpoint"
+  [ "$target" != "$replacement" ] || fail "the replacement endpoint did not differ from the sampled endpoint"
+  [ ! -e "$w/home/state/.control-sm1.lock" ] && [ ! -L "$w/home/state/.control-sm1.lock" ] \
+    || fail "startup recovery kept its control lock after reading a freshly live mate"
+  pass "sweep: a recovered mate's current binding is re-read under the control lock and left alone"
+}
+
 test_sweep_skips_relaunch_when_the_endpoint_kill_is_unconfirmed() {
   local w fb out
   w=$(new_world sweep-kill-unconfirmed)
@@ -575,6 +633,7 @@ test_agent_state_dispatcher_and_compatibility
 test_sweep_respawns_confirmed_dead_secondmate
 test_sweep_leaves_a_deliberately_stopped_secondmate_down
 test_sweep_skips_a_secondmate_with_a_live_control_lock
+test_sweep_refreshes_a_recovered_mates_binding_under_the_control_lock
 test_sweep_skips_relaunch_when_the_endpoint_kill_is_unconfirmed
 test_sweep_leaves_alive_secondmate_untouched
 test_sweep_never_relaunches_a_registry_absent_secondmate

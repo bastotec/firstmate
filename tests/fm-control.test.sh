@@ -644,6 +644,27 @@ test_secondmate_exit_records_a_deliberate_stop() {
   pass "fm-control: a secondmate exit records a deliberate stop the revival respects"
 }
 
+test_automatic_recovery_refuses_an_already_live_secondmate() {
+  local dir out rc verb
+  for verb in relaunch recover-missing; do
+    dir=$(new_case "automatic-alive-$verb")
+    add_task "$dir" domain deck secondmate
+    alive_as "$dir" fm-deck-worker
+    cp "$dir/home/state/domain.meta" "$dir/before.meta"
+    out=$(run_control "$dir" domain "$verb" --unless-held-stopped); rc=$?
+    expect_code 1 "$rc" "automatic $verb should refuse an already-live mate"$'\n'"$out"
+    assert_contains "$out" 'is not down' "the refusal did not identify the recovered mate"
+    [ -z "$(literals "$dir")" ] || fail "automatic $verb typed into an already-live mate"
+    [ -z "$(keys_sent "$dir")" ] || fail "automatic $verb interrupted an already-live mate"
+    [ ! -e "$dir/home/state/domain.control-relaunch" ] || fail "automatic $verb opened a transaction for a live mate"
+    cmp -s "$dir/home/state/domain.meta" "$dir/before.meta" || fail "automatic $verb changed a live mate's record"
+    [ "$(cat "$dir/fake/command")" = fm-deck-worker ] || fail "automatic $verb stopped the recovered mate"
+    [ ! -e "$dir/home/state/.control-domain.lock" ] && [ ! -L "$dir/home/state/.control-domain.lock" ] \
+      || fail "automatic $verb left the lifecycle lock held"
+  done
+  pass "fm-control: automatic admission refuses an already-live secondmate without touching it"
+}
+
 test_unless_held_stopped_refuses_before_touching_the_agent() {
   local dir out rc verb
   for verb in relaunch recover-missing; do
@@ -908,6 +929,7 @@ PY
 
 test_host_route_reaches_guarded_worker_owners
 test_secondmate_exit_records_a_deliberate_stop
+test_automatic_recovery_refuses_an_already_live_secondmate
 test_unless_held_stopped_refuses_before_touching_the_agent
 test_exit_types_each_harness_verified_command
 test_interrupt_sends_each_harness_verified_key
