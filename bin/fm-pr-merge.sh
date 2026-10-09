@@ -71,9 +71,11 @@
 # absent stops the merge before any state is recorded.
 #
 # Before either forge merge, the task's existing per-task control lock
-# serializes the captain-hold check through the forge command. A still-held or
-# unreadable row refuses before that command, so a captain approval must be
-# recorded as an `answer --release` before this entrypoint is invoked. While
+# serializes the lifecycle checks through the forge command. An open captain
+# call, conditional wait, or unreadable row refuses before that command;
+# bin/fm-captain-hold.sh owns the `open` and `deferred` predicates. A captain
+# approval must be recorded as an `answer --release` before this entrypoint is
+# invoked. While
 # state/.afk-contract exists, a merge for this task also proceeds only if its
 # meta yolo=on or its id is in that record's merge-grant list; otherwise it is
 # held for the captain return. An unreadable record refuses rather than being
@@ -832,9 +834,24 @@ require_released_captain_hold() {
       echo "error: task $ID is still held for the captain; release it before merging" >&2
       return 1
       ;;
-    1|3) return 0 ;;
+    1) ;;
+    3) return 0 ;;
     *)
       echo "error: could not determine whether task $ID is still held for the captain; refusing to merge" >&2
+      return 1
+      ;;
+  esac
+  hold_status=0
+  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+    "$SCRIPT_DIR/fm-captain-hold.sh" deferred "$ID" || hold_status=$?
+  case "$hold_status" in
+    0)
+      echo "error: the captain deferred task $ID; start a fresh call with hold --reopen-deferred before merging" >&2
+      return 1
+      ;;
+    1) return 0 ;;
+    *)
+      echo "error: could not determine whether the captain deferred task $ID; refusing to merge" >&2
       return 1
       ;;
   esac

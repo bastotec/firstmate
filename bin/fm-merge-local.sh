@@ -9,10 +9,12 @@
 # auto-approves), and only as a clean fast-forward - it refuses a diverged branch
 # and tells you to have the crewmate rebase. See AGENTS.md prime directives,
 # project management, and task lifecycle.
-# The task's existing per-task control lock serializes the captain-hold check
-# through that fast-forward. A still-held or unreadable row refuses before the
-# merge, so a captain approval must be recorded as an `answer --release` before
-# this entrypoint is invoked. The lock ends when the fast-forward returns;
+# The task's existing per-task control lock serializes the lifecycle checks
+# through that fast-forward. An open captain call, conditional wait, or
+# unreadable row refuses before the merge; bin/fm-captain-hold.sh owns the `open`
+# and `deferred` predicates. A captain approval must be recorded as an
+# `answer --release` before this entrypoint is invoked. The lock ends when the
+# fast-forward returns;
 # docs/captain-hold-lifecycle.md owns the accepted merge-to-cleanup residual.
 # Usage: fm-merge-local.sh <task-id>
 set -eu
@@ -116,6 +118,20 @@ case "$hold_status" in
   1|3) ;;
   *)
     echo "error: could not determine whether task $ID is still held for the captain; refusing to merge" >&2
+    exit 1
+    ;;
+esac
+hold_status=0
+FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+  "$SCRIPT_DIR/fm-captain-hold.sh" deferred "$ID" || hold_status=$?
+case "$hold_status" in
+  0)
+    echo "error: the captain deferred task $ID; start a fresh call with hold --reopen-deferred before merging" >&2
+    exit 1
+    ;;
+  1) ;;
+  *)
+    echo "error: could not determine whether the captain deferred task $ID; refusing to merge" >&2
     exit 1
     ;;
 esac

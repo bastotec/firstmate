@@ -21,12 +21,12 @@
 # None of this loosens the landed-work gates below: the transition runs only on
 # the paths that already proceed to remove the record.
 # The close - and only the close - is replaced by `tasks-axi reopen` with the
-# deliverable recorded while the backlog item is still an open captain call
-# (bin/fm-captain-hold.sh `open` owns that predicate), because the policy holds
+# deliverable recorded while the backlog item is an open captain call or
+# conditional wait (bin/fm-captain-hold.sh owns both predicates), because the policy holds
 # the very work item a question gates and cleanup must never retire the
 # captain's own question.
-# NOTE: this uses `open`'s silent default and depends only on its unchanged
-# 0/1/2 exit-code contract. The optional `--identity` output that bin/fm-watch.sh
+# NOTE: this uses the silent `open` and `deferred` predicates and their
+# 0/1/2 exit-code contracts. The optional `--identity` output that bin/fm-watch.sh
 # asks for prints only on an exit 0 and changes nothing read here.
 # The same pending-close record carries that intent as
 # `mode=retain`, so an interrupted cleanup replays the retention rather than a
@@ -452,7 +452,22 @@ if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ]; then
     "$SCRIPT_DIR/fm-captain-hold.sh" open "$ID" 2>&1) || TEARDOWN_CAPTAIN_OPEN_STATUS=$?
   case "$TEARDOWN_CAPTAIN_OPEN_STATUS" in
     0) TEARDOWN_BACKLOG_TRANSITION=retain ;;
-    1) ;;
+    1)
+      TEARDOWN_CAPTAIN_OPEN_STATUS=0
+      TEARDOWN_CAPTAIN_OPEN_OUT=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+        FM_DATA_OVERRIDE="$DATA" FM_CONFIG_OVERRIDE="$CONFIG" \
+        "$SCRIPT_DIR/fm-captain-hold.sh" deferred "$ID" 2>&1) || TEARDOWN_CAPTAIN_OPEN_STATUS=$?
+      case "$TEARDOWN_CAPTAIN_OPEN_STATUS" in
+        0) TEARDOWN_BACKLOG_TRANSITION=retain ;;
+        1) ;;
+        *)
+          echo "error: could not determine whether the captain deferred task $ID; refusing cleanup" >&2
+          [ -z "$TEARDOWN_CAPTAIN_OPEN_OUT" ] || printf '%s\n' "$TEARDOWN_CAPTAIN_OPEN_OUT" >&2
+          exit 1
+          ;;
+      esac
+      ;;
+
     *)
       echo "error: task $ID cannot be torn down because whether its backlog item is still held for the captain could not be read; fix that read and retry rather than risk closing a captain call with no recorded answer" >&2
       [ -z "$TEARDOWN_CAPTAIN_OPEN_OUT" ] || printf '%s\n' "$TEARDOWN_CAPTAIN_OPEN_OUT" >&2
@@ -1382,7 +1397,7 @@ backlog_refresh_reminder() {
     backlog_display="${DATA%/}/backlog.md"
   fi
   if [ "$BACKLOG_CLOSED" = 1 ] && [ "$BACKLOG_TRANSITION" = retain ]; then
-    printf '%s\n' "Backlog: $ID stays open in $backlog_display, still held for the captain with its deliverable recorded. Relay the question and close it only with bin/fm-captain-hold.sh answer."
+    printf '%s\n' "Backlog: $ID stays open in $backlog_display, still held for the captain or conditionally deferred with its deliverable recorded. Resolve it through bin/fm-captain-hold.sh."
   elif [ "$BACKLOG_CLOSED" = 1 ]; then
     printf '%s\n' "Backlog: $ID is closed in $backlog_display. Run bin/fm-tasks-axi.sh ready for dependency-cleared candidates, check date gates, and dispatch only work whose blockers are gone and date is due."
   else

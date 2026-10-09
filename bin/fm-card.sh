@@ -17,6 +17,7 @@
 #   fm-card.sh draft <task-id> --title <title> --project <project> --situation <text>
 #   fm-card.sh backfill
 #   fm-card.sh drafts
+#   fm-card.sh calls
 #   fm-card.sh stale
 #   fm-card.sh clear <task-id> --why <text>
 #   fm-card.sh restore <task-id>
@@ -38,8 +39,13 @@
 # `drafts` is read-only and prints "<task-id>\t<title>" for every open captain
 # call in this home whose card is still a draft or missing: the calls whose
 # owning mate still has to write a full card.
-# Both refuse (exit 2) when this home's backlog cannot be listed, rather than
-# reading an unreadable backlog as "no captain calls".
+# `calls` is read-only and prints "<task-id>\t<title>" for every open captain
+# call in this home, full card or not: the startup list a mate checks for calls
+# the captain already answered, which it records instead of asking again.
+# Discovery uses `fm-captain-hold.sh open` (its header owns the predicate);
+# stale reports any leftover card without an open call as an orphan.
+# All three refuse (exit 2) when this home's backlog cannot be listed or read,
+# rather than reading an unreadable backlog as "no captain calls".
 # `stale` is read-only and prints "<task-id>\t<kind>\t<why>" per candidate:
 # `orphan` (a card with no open captain hold), `pr-merged` (the task's
 # recorded PR has a matching merge notification), or `idle` (held 3+ days,
@@ -224,14 +230,19 @@ cmd_draft() {
 }
 
 # Match fm-captain-hold.sh open, not tasks-axi's live date gate: an expired
-# deferral still carries an open captain call. The last column is hold kind,
+# dated deferral still carries an open captain call. The last column is hold kind,
 # and an id is a slug, so neither needs CSV decoding.
 captain_held_ids() {
-  local listed
+  local listed ids id
   listed=$(tasks list --fields hold_kind 2>/dev/null) \
     || die "cannot list this home's captain calls; refusing to read that as none"
-  printf '%s\n' "$listed" \
-    | sed -n '/^  [^,]*,done,/d; s/^  \([A-Za-z0-9._-][A-Za-z0-9._-]*\),.*,captain$/\1/p'
+  ids=$(printf '%s\n' "$listed" \
+    | sed -n '/^  [^,]*,done,/d; s/^  \([A-Za-z0-9._-][A-Za-z0-9._-]*\),.*,captain$/\1/p')
+  for id in $ids; do
+    if held_state "$id"; then
+      printf '%s\n' "$id"
+    fi
+  done
 }
 
 cmd_backfill() {
@@ -261,6 +272,19 @@ cmd_drafts() {
     title=$(jq -r '.title // empty' "$p" 2>/dev/null) || title=''
     [ -n "$title" ] || title=$id
     printf '%s\t%s\n' "$id" "$title"
+  done
+}
+
+cmd_calls() {
+  local id ids show title
+  [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+  ids=$(captain_held_ids) || exit 2
+  for id in $ids; do
+    title=''
+    if show=$(tasks show "$id" --full 2>/dev/null); then
+      title=$(shown_value "$show" title)
+    fi
+    printf '%s\t%s\n' "$id" "${title:-$id}"
   done
 }
 
@@ -414,6 +438,7 @@ case "${1:-}" in
   draft) shift; cmd_draft "$@" ;;
   backfill) shift; cmd_backfill "$@" ;;
   drafts) shift; cmd_drafts "$@" ;;
+  calls) shift; cmd_calls "$@" ;;
   stale) shift; cmd_stale "$@" ;;
   clear) shift; cmd_clear "$@" ;;
   restore) shift; cmd_restore "$@" ;;

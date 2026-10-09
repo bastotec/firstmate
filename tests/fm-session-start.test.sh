@@ -1891,6 +1891,15 @@ cards_section() {  # <digest>
   printf '%s\n' "$1" | awk '/^DECISION CARDS$/{on=1;next} on && /^[A-Z][A-Z -]+$/{exit} on'
 }
 
+# The drafts list ends where the open-calls list begins.
+cards_drafts_part() {  # <section>
+  printf '%s\n' "$1" | awk '/^Open captain calls/{exit} {print}'
+}
+
+cards_calls_part() {  # <section>
+  printf '%s\n' "$1" | awk '/^Open captain calls/{on=1} on'
+}
+
 cards_tools_present() {
   command -v tasks-axi >/dev/null 2>&1 && command -v node >/dev/null 2>&1
 }
@@ -1913,7 +1922,9 @@ EOF
   assert_equals "$full" "$(cat "$home/state/cards/carded-call.json")" "a full card is left untouched"
   assert_contains "$section" "old-call" "the digest lists the draft for the owning mate to finish"
   assert_contains "$section" "idle second mate" "the digest says an idle second mate must finish it too"
-  assert_not_contains "$section" "carded-call" "a call with a full card is not listed"
+  assert_not_contains "$(cards_drafts_part "$section")" "carded-call" "a call with a full card is not listed as a draft"
+  assert_contains "$(cards_calls_part "$section")" "carded-call" "every open call, full card or not, is listed for answers already on file"
+  assert_contains "$(cards_calls_part "$section")" "--defer" "the digest names the deferral path"
   assert_not_contains "$section" "ci-wait" "a non-captain hold is not listed"
 
   before=$(cat "$home/state/cards/old-call.json")
@@ -1924,6 +1935,17 @@ EOF
     || fail "could not write the full card"
   out=$(run_session_start "$home" "$root" "$path")
   assert_contains "$(cards_section "$out")" "every captain call has a full card" "a finished home reports no drafts"
+
+  # Migration: the mate records a standing "wait until needed" answer; the
+  # call leaves the list and no restart cards it again.
+  printf 'wait until needed\n' > "$home/answer.txt"
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" PATH="$path" "$ROOT/bin/fm-captain-hold.sh" answer carded-call \
+    --decision-file "$home/answer.txt" --defer "Raise again when a routed task needs it" >/dev/null \
+    || fail "could not defer carded-call"
+  [ ! -e "$home/state/cards/carded-call.json" ] || fail "the deferred call kept its card"
+  out=$(run_session_start "$home" "$root" "$path")
+  assert_not_contains "$(cards_section "$out")" "carded-call" "a deferred call is not listed after a restart"
+  [ ! -e "$home/state/cards/carded-call.json" ] || fail "startup backfill re-carded a deferred call"
   pass "session start drafts a card for every uncarded captain call, lists drafts until finished, and stays idempotent"
 }
 

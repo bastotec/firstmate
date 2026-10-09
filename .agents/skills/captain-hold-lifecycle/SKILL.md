@@ -2,7 +2,7 @@
 name: captain-hold-lifecycle
 description: >-
   Agent-only policy for completing investigations and visual reviews without losing unresolved captain calls, and for closing what the captain owns with his actual words.
-  Load before treating an investigation, scout report, structured review, or Lavish review as complete, before ending a visual review that exposed a captain decision, when recording or routing the captain's answer, on every heartbeat for the decision-card sweep, when the session-start digest lists draft decision cards, on a "card <id>: option <key>" or "undo clear <id>" message, on an "order <id>: ...", "order <id> replacing <old-id>: ...", "launch <id>" or "cancel <id>" message, and on any RECORD DIVERGENCE line the wake drain prints.
+  Load before treating an investigation, scout report, structured review, or Lavish review as complete, before ending a visual review that exposed a captain decision, when recording or routing the captain's answer, on every heartbeat for the decision-card sweep, when the session-start digest lists draft decision cards or open captain calls, on a "card <id>: option <key>" or "undo clear <id>" message, on an "order <id>: ...", "order <id> replacing <old-id>: ...", "launch <id>" or "cancel <id>" message, and on any RECORD DIVERGENCE line the wake drain prints.
 user-invocable: false
 metadata:
   internal: true
@@ -31,7 +31,10 @@ Record captain answers without paraphrasing: `bin/fm-captain-hold.sh answer` wri
 A merge approval uses that existing release path because approval permits the merge to proceed; cleanup closes the work only after it lands and records what shipped.
 Closing a held row at merge approval instead records completion before landing, so the backlog claims completion before the work actually ships.
 When the answer changes what a task must build, follow `AGENTS.md` section 7's Validate contract to preserve the captain's words in the brief and steer the worker.
-When the captain says "later", that is an answer too: re-hold with `bin/fm-captain-hold.sh hold <id> --reason "<reason>" --until <date>` so the item leaves the live Captain's Call and resurfaces on its date, instead of leaving a live-looking card or fabricating a closure.
+When the captain defers to a date, that is an answer too: re-hold with `bin/fm-captain-hold.sh hold <id> --reason "<reason>" --until <date>` so the item leaves the live Captain's Call and resurfaces on its date, instead of leaving a live-looking card or fabricating a closure.
+When his answer waits on a condition instead of a date ("wait until needed", "pay when I need it", "keep waiting"), record his exact words through the conditional-deferral path in the `bin/fm-captain-hold.sh` header, never by re-holding with his words in the reason.
+The call is settled and becomes this home's own wait; watch the condition yourself and ask a fresh call only when it actually fires and he must choose again.
+A restated or replayed standing answer is never a new call; use the header's exact retry to finish an interrupted deferral, not to record a new answer.
 "A keyed answer resolves its matching captain-held task" is one capability with one owner, `bin/fm-captain-hold.sh answers`, and every channel that carries a captain answer feeds it the same task id and answer; a channel never maps keys to tasks, records a decision, or resolves anything itself.
 Chat already feeds it through `bin/fm-send.sh --resolve-key`, and a captured-answer source feeds it once bound with `bin/fm-captain-hold.sh bind <source-id>`; bind before arming the source, and key each structured question by the held task's id.
 An unbound source and a key that names no captain-held task both simply feed nothing: the answer is still captured and firstmate is still woken, and closing falls back to the direct command above.
@@ -61,8 +64,8 @@ The absence of a routed work item is not a divergence and the guard never requir
 3. Hold that task - or create one captain-held task for the review's open questions - with a concise reason carrying the question and options, and its decision card (below).
 4. Run `complete` with the full captain-held inventory for that review pass.
 5. Relay the choices to the captain as decisions from Bearings' Captain's Call section under `AGENTS.md` section 9; do not use the word hold in captain chat.
-6. Record captain answers through `answer` (or a channel that feeds `answers`), close a board-requested moot call through evidence-backed `reconcile close`, handle stale candidates through the decision-card sweep below, record a still-active reconciliation through `reconcile note`, use `--until` when the captain defers it, or confirm a channel already closed it.
-7. Confirm Bearings reflects the outcome: resolved calls leave Captain's Call, released work resumes, active reconciliations remain held, and deferred calls sit in Charted Next with their date.
+6. Record captain answers through `answer` (or a channel that feeds `answers`), close a board-requested moot call through evidence-backed `reconcile close`, handle stale candidates through the decision-card sweep below, record a still-active reconciliation through `reconcile note`, apply the dated or conditional deferral policy above, or confirm a channel already closed it.
+7. Confirm Bearings reflects the outcome: resolved calls leave Captain's Call, released work resumes, active reconciliations remain held, and deferred work sits in Charted Next with its date or condition.
 
 ## Decision cards
 
@@ -73,6 +76,7 @@ A script that holds on its own leaves a draft card, which is not a judgment.
 The mate whose home holds the call owns its card, a second mate included, and writes its situation and options for the captain in plain words.
 To replace a draft without touching the hold, run `bin/fm-card.sh write <id> --file <path>`.
 When the session-start digest's `DECISION CARDS` subsection lists calls without a full card, write one for each before going idle, once this session has verified lock ownership.
+It also lists every open captain call: before going idle, check each one's hold reason, body, and the captain's recorded preferences, and record any answer he already gave instead of leaving it in front of him, with `--defer` when that answer waits on a condition.
 This reconciles calls the home already holds and so binds an idle second mate too; `bin/fm-session-start.sh`'s header owns startup backfill and listing mechanics.
 On every heartbeat, run `bin/fm-card.sh backfill` first, then replace each draft with a full card, then run `bin/fm-card.sh stale`.
 Under the captain's standing ruling of 2026-10-07, check each candidate's evidence yourself, clear the ones it confirms with `bin/fm-card.sh clear <id> --why "<one line of evidence>"`, keep any call the captain still needs, and tell the captain how many you cleared and why in your next natural reply.

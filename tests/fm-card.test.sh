@@ -654,6 +654,261 @@ test_stale_with_gnu_coreutils() {
   pass "fm-card: stale reads file times correctly with GNU coreutils"
 }
 
+full_card_for() {  # <path>
+  printf '%s' '{"project":"cadia","title":"Banco plan","situation":"Trial used up.","options":[{"key":"1","label":"Show plans now","instruction":"Show the plans."},{"key":"2","label":"Pay when needed","instruction":"Wait until needed."}],"recommended":"2"}' > "$1"
+}
+
+test_deferred_answer_parks_the_call_and_never_cards_it() {
+  local home dec show out rc=0
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home defer-park)
+  full_card_for "$home/card.json"
+  run_captain "$home" hold banco --title "Banco plan" --repo cadia --reason "Pay now or later?" \
+    --card-file "$home/card.json" >/dev/null || fail "hold failed"
+  dec="$home/dec.txt"
+  printf "I don't need banco right now so I'll pay when I need it.\n" > "$dec"
+  out=$(run_captain "$home" answer banco --decision-file "$dec" --defer "Ask before paying once a routed task needs Banco") \
+    || fail "deferred answer failed"
+  assert_contains "$out" "deferred: banco" "the answer reports the deferral"
+  assert_absent "$home/state/cards/banco.json" "the deferral removed the card"
+  show=$(tasks_in "$home" show banco --full)
+  assert_contains "$show" "hold_kind: parked" "the call became this home's parked wait"
+  assert_contains "$show" "hold_reason: Ask before paying once a routed task needs Banco" "the condition is the hold reason"
+  assert_contains "$show" "state: queued" "the work item stays open"
+  assert_contains "$show" "Resolution mode: deferred" "the record names the deferral"
+  assert_contains "$show" "pay when I need it" "the captain's words are recorded"
+  assert_not_contains "$show" "Captain hold set:" "the hold-set stamp is gone with the captain hold"
+  run_captain "$home" open banco || rc=$?
+  assert_equals 1 "$rc" "a deferred call is not an open captain call"
+  assert_equals "" "$(run_card "$home" backfill)" "backfill does not card a deferred call"
+  assert_absent "$home/state/cards/banco.json" "backfill wrote no card"
+  assert_equals "" "$(run_card "$home" drafts)" "drafts does not list a deferred call"
+  assert_equals "" "$(run_card "$home" calls)" "calls does not list a deferred call"
+  assert_equals "" "$(run_card "$home" stale)" "stale has nothing to say about a deferred call"
+  pass "fm-captain-hold: a deferred answer parks the call, removes its card, and nothing cards it again"
+}
+
+test_replayed_answers_never_reopen_a_deferred_call() {
+  local home dec other before out rc
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home defer-replay)
+  dec="$home/dec.txt"
+  other="$home/other.txt"
+  printf 'wait until needed\n' > "$dec"
+  printf 'keep waiting, restated\n' > "$other"
+  run_captain "$home" hold oauth --title "Cumbuca login" --reason "Log in now or later?" >/dev/null || fail "hold failed"
+  run_captain "$home" answer oauth --decision-file "$dec" --defer "Raise the login when a routed task needs Cumbuca" >/dev/null \
+    || fail "deferral failed"
+  before=$(tasks_in "$home" show oauth --full)
+
+  rc=0; out=$(run_captain "$home" hold oauth --reason "Standing answer restated: wait until needed" 2>&1) || rc=$?
+  assert_not_equals 0 "$rc" "a plain re-hold of a deferred call is refused"
+  assert_contains "$out" "--reopen-deferred" "the refusal names the reopen path"
+  rc=0; run_captain "$home" answer oauth --decision-file "$other" >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "a different answer does not reopen or close a deferred call"
+  rc=0; run_captain "$home" answer oauth --decision-file "$other" --defer "Something else" >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "a different deferral is refused"
+  rc=0; run_captain "$home" answer oauth --decision-file "$dec" --defer "Raise the login when a routed task needs Banco" >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "the same words with a changed condition are refused"
+  assert_equals "$before" "$(tasks_in "$home" show oauth --full)" "a changed-condition retry leaves the parked reason unchanged"
+  rc=0; run_captain "$home" answer oauth --decision-file "$dec" >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "the same words without --defer are refused"
+  rc=0; run_captain "$home" answer oauth --decision-file "$dec" --release >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "a release cannot undo a settled deferral"
+  rc=0; printf 'oauth\tyes\tLog in now\n' | run_captain "$home" answers --source test >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "a keyed answer on a deferred call is skipped"
+  assert_equals "$before" "$(tasks_in "$home" show oauth --full)" "no replay changed the task"
+  assert_absent "$home/state/cards/oauth.json" "no replay re-carded the call"
+
+  out=$(run_captain "$home" answer oauth --decision-file "$dec" --defer "Raise the login when a routed task needs Cumbuca") \
+    || fail "an exact deferral retry failed"
+  assert_contains "$out" "deferred: oauth" "an exact retry is an idempotent no-op"
+  assert_equals "$before" "$(tasks_in "$home" show oauth --full)" "an exact retry writes nothing new"
+
+  run_captain "$home" hold oauth --reason "A task needs Cumbuca now - log in?" --reopen-deferred >/dev/null \
+    || fail "reopening a deferred call once its condition fired failed"
+  run_captain "$home" open oauth || fail "a reopened call is an open captain call again"
+  assert_equals true "$(jq -r .draft "$home/state/cards/oauth.json")" "the fresh call gets a fresh draft card"
+  assert_equals "A task needs Cumbuca now - log in?" "$(jq -r .situation "$home/state/cards/oauth.json")" "the fresh card carries the new question"
+  assert_contains "$(run_card "$home" calls)" "oauth" "the fresh call is listed"
+
+  run_captain "$home" hold plain --title "Plain call" --reason r >/dev/null || fail "hold failed"
+  rc=0; run_captain "$home" hold plain --reason r --reopen-deferred >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "--reopen-deferred is refused on a call that was never deferred"
+  pass "fm-captain-hold: replayed answers never reopen or re-card a deferred call; only --reopen-deferred does"
+}
+
+test_reopened_deferral_records_repeated_words_as_a_fresh_answer() {
+  local home parent dec show body before channel open rc=0
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  parent=$(make_home defer-parent)
+  home=$(make_home defer-reopened)
+  printf 'defer-mate\n' > "$home/.fm-secondmate-home"
+  printf 'schema=fm-secondmate-parent.v1\nroute=local\nparent_home=%s\n' "$parent" > "$home/.fm-secondmate-parent"
+  channel="$parent/state/defer-mate.status"
+  dec="$home/dec.txt"
+  printf 'keep waiting\n' > "$dec"
+  FM_CAPTAIN_HOLD_NOW=2026-10-01T12:00:00Z run_captain "$home" hold retry --title Call --reason "Pay now?" >/dev/null \
+    || fail "hold failed"
+  run_captain "$home" answer retry --decision-file "$dec" --defer "When Banco is needed" >/dev/null \
+    || fail "first deferral failed"
+  FM_CAPTAIN_HOLD_NOW=2026-10-07T12:00:00Z run_captain "$home" hold retry --reason "Banco is needed - pay?" --reopen-deferred >/dev/null \
+    || fail "reopening failed"
+  show=$(tasks_in "$home" show retry --full)
+  body=$(printf '%s\n' "$show" | sed -n 's/^  body: //p' | jq -r .)
+  assert_equals $'Captain hold set: 2026-10-07T12:00:00Z\nDeferral reopened: 2026-10-07T12:00:00Z' \
+    "$(printf '%s\n' "$body" | head -2)" "reopening preserves the leading stamp and marks the fresh lifecycle"
+  assert_grep 'needs-decision [key=captain-hold-retry-2]' "$channel" "the parent receives a fresh call"
+  rc=0; run_captain "$home" hold retry --reason "Banco is needed - pay?" --reopen-deferred >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "an already reopened call cannot reopen the old deferral twice"
+  run_captain "$home" hold retry --reason "Banco is needed - pay?" >/dev/null || fail "repeating the fresh active hold failed"
+  run_captain "$home" answer retry --decision-file "$dec" --defer "When Banco is needed again" >/dev/null \
+    || fail "the repeated words must answer the fresh call"
+  show=$(tasks_in "$home" show retry --full)
+  assert_equals 2 "$(printf '%s' "$show" | grep -o 'Resolution mode: deferred' | wc -l | tr -d ' ')" "each fresh call gets its own resolution"
+  assert_contains "$show" "hold_kind: parked" "the fresh answer parks the task"
+  assert_contains "$show" "hold_reason: When Banco is needed again" "the fresh answer sets its own condition"
+  assert_not_contains "$show" "Captain hold set:" "the fresh answer removes its hold stamp"
+  assert_absent "$home/state/cards/retry.json" "the fresh answer removes its card"
+  assert_grep 'resolved [key=captain-hold-retry-2]' "$channel" "the answer resolves the current parent occurrence"
+  open=$(bash -c '. "$1"; status_open_decisions "$2"' _ "$ROOT/bin/fm-classify-lib.sh" "$channel")
+  assert_equals "" "$open" "the parent has no unanswered decision after the fresh deferral"
+  before=$show
+  run_captain "$home" answer retry --decision-file "$dec" --defer "When Banco is needed again" >/dev/null \
+    || fail "retry after the fresh deferral failed"
+  assert_equals "$before" "$(tasks_in "$home" show retry --full)" "the fresh resolution supersedes the reopening marker for retries"
+  pass "fm-captain-hold: repeated words after reopening settle the fresh call and its parent occurrence"
+}
+
+test_interrupted_deferral_remains_settled_until_finalized() {
+  local home dec other real rc=0 before show out flag action evidence
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home defer-interrupted)
+  dec="$home/dec.txt"
+  other="$home/other.txt"
+  printf 'keep waiting\n' > "$dec"
+  printf 'pay now\n' > "$other"
+  FM_CAPTAIN_HOLD_NOW=2026-10-01T12:00:00Z run_captain "$home" hold waiting --title Call --reason "Pay now?" >/dev/null || fail "hold failed"
+  run_captain "$home" bind pending-deferral >/dev/null || fail "binding failed"
+  printf 'waiting\n' | run_captain "$home" reconcile-requests --source-id pending-deferral --source test >/dev/null \
+    || fail "reconcile request failed"
+  real=$(command -v tasks-axi)
+  cat > "$home/fakebin/tasks-axi" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = hold ]; then
+  case " \$* " in *" --kind parked "*) exit 93 ;; esac
+fi
+exec "$real" "\$@"
+EOF
+  chmod +x "$home/fakebin/tasks-axi"
+  run_captain "$home" answer waiting --decision-file "$dec" --defer "When Banco is needed" >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "the parked transition is interrupted after recording the answer"
+  before=$(tasks_in "$home" show waiting --full)
+  assert_contains "$before" "Resolution mode: deferred" "the interrupted deferral durably records the answer"
+  assert_contains "$before" "hold_kind: captain" "the interrupted transition leaves the old hold kind"
+  assert_contains "$before" "Captain hold set:" "the interrupted transition retains the stamp for finalization"
+  assert_present "$home/state/cards/waiting.json" "the interrupted transition leaves the card for finalization"
+  for flag in '' --identity; do
+    rc=0; out=$(run_captain "$home" open waiting ${flag:+"$flag"} 2>&1) || rc=$?
+    assert_equals 1 "$rc" "an interrupted deferral is not an open captain call"
+    assert_equals "" "$out" "a settled deferral emits no open-call identity"
+  done
+  for action in backfill drafts calls; do
+    out=$(run_card "$home" "$action") || fail "$action failed on an interrupted deferral"
+    assert_equals "" "$out" "$action does not surface an interrupted deferral"
+  done
+  out=$(run_card "$home" stale) || fail "stale failed on an interrupted deferral"
+  assert_equals $'waiting\torphan\tcard has no open captain hold' "$out" "stale classifies the leftover card as orphan, not idle"
+  evidence="$home/evidence.txt"
+  printf 'The old premise no longer applies.\n' > "$evidence"
+  rc=0; out=$(run_captain "$home" stale-clear waiting --evidence-file "$evidence" 2>&1) || rc=$?
+  assert_not_equals 0 "$rc" "stale-clear refuses a settled interrupted deferral"
+  assert_contains "$out" "exact answer --defer retry" "stale-clear points to deferral finalization"
+  assert_equals "$before" "$(tasks_in "$home" show waiting --full)" "refused stale-clear leaves the waiting task open and unchanged"
+  for action in close note; do
+    flag=--evidence-file
+    [ "$action" != note ] || flag=--note-file
+    rc=0; out=$(run_captain "$home" reconcile "$action" waiting "$flag" "$evidence" 2>&1) || rc=$?
+    assert_not_equals 0 "$rc" "reconcile $action refuses a settled interrupted deferral"
+    assert_contains "$out" "exact answer --defer retry" "reconcile $action points to deferral finalization"
+  done
+  assert_present "$home/state/reconcile-requests/waiting.request" "refused reconciliation retains its pending request"
+  run_card "$home" remove waiting || fail "card removal failed"
+  out=$(run_card "$home" backfill) || fail "backfill failed after removing the leftover card"
+  assert_equals "" "$out" "backfill never recreates the interrupted deferral's card"
+  assert_absent "$home/state/cards/waiting.json" "an interrupted deferral remains uncarded after backfill"
+  run_card "$home" draft waiting --title Call --project firstmate --situation "Pay now?" >/dev/null \
+    || fail "could not restore the leftover card fixture"
+  rc=0; run_captain "$home" hold waiting --reason "Restating keep waiting" >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "an interrupted deferral refuses a plain re-hold"
+  rc=0; run_captain "$home" answer waiting --decision-file "$other" >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "an interrupted deferral refuses different words"
+  rc=0; run_captain "$home" answer waiting --decision-file "$other" --defer "Something else" >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "an interrupted deferral refuses a different deferred answer"
+  rc=0; run_captain "$home" answer waiting --decision-file "$dec" >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "an interrupted deferral refuses the same words without --defer"
+  rc=0; run_captain "$home" answer waiting --decision-file "$dec" --release >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "an interrupted deferral refuses release"
+  rc=0; out=$(printf 'waiting\tyes\tPay now\n' | run_captain "$home" answers --source test 2>&1) || rc=$?
+  assert_not_equals 0 "$rc" "an interrupted deferral skips a keyed answer"
+  assert_contains "$out" "skipped: waiting" "keyed intake reports the refused answer"
+  assert_equals "$before" "$(tasks_in "$home" show waiting --full)" "refused inputs leave the settled record and hold unchanged"
+  rm "$home/fakebin/tasks-axi"
+  run_captain "$home" answer waiting --decision-file "$dec" --defer "When Banco is needed" >/dev/null \
+    || fail "an exact retry must finish the interrupted deferral"
+  show=$(tasks_in "$home" show waiting --full)
+  assert_contains "$show" "hold_kind: parked" "an exact retry finishes parking"
+  assert_contains "$show" "hold_reason: When Banco is needed" "an exact retry installs the condition"
+  assert_not_contains "$show" "Captain hold set:" "an exact retry removes the stamp"
+  assert_absent "$home/state/cards/waiting.json" "an exact retry removes the card"
+  assert_absent "$home/state/reconcile-requests/waiting.request" "an exact retry retires the pending reconcile request"
+  assert_equals 1 "$(printf '%s' "$show" | grep -o 'Resolution mode: deferred' | wc -l | tr -d ' ')" "finalization keeps one resolution"
+  run_captain "$home" answer waiting --decision-file "$dec" --defer "When Banco is needed" >/dev/null || fail "finalized replay failed"
+  assert_equals "$show" "$(tasks_in "$home" show waiting --full)" "the finalized deferral replays without changes"
+  pass "fm-captain-hold: interrupted deferrals stay out of discovery, refuse evidence changes and finalize on an exact retry"
+}
+
+test_rehold_with_a_new_reason_refreshes_the_card() {
+  local home
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home rehold-refresh)
+  full_card_for "$home/card.json"
+  run_captain "$home" hold banco --title "Banco plan" --repo cadia --reason "Pay now or later?" \
+    --card-file "$home/card.json" >/dev/null || fail "hold failed"
+  run_captain "$home" hold banco --reason "Pay now or later?" >/dev/null || fail "same-reason re-hold failed"
+  assert_equals false "$(jq -r .draft "$home/state/cards/banco.json")" "a same-reason re-hold keeps the full card"
+  run_captain "$home" hold banco --reason "Captain said pay when needed - confirm the plan tier" >/dev/null \
+    || fail "new-reason re-hold failed"
+  assert_equals true "$(jq -r .draft "$home/state/cards/banco.json")" "a new reason replaces the old options with a draft"
+  assert_equals "Captain said pay when needed - confirm the plan tier" "$(jq -r .situation "$home/state/cards/banco.json")" \
+    "the refreshed card carries the new reason"
+  assert_contains "$(run_card "$home" drafts)" "banco" "the refreshed draft is listed for a full card"
+  pass "fm-captain-hold: re-holding with a new reason refreshes the card instead of keeping old options"
+}
+
+test_interrupted_reopening_can_be_retried() {
+  local home dec body staged show
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home defer-reopen-retry)
+  dec="$home/dec.txt"
+  printf 'wait until needed\n' > "$dec"
+  run_captain "$home" hold again --title Call --reason "Log in now?" >/dev/null || fail "hold failed"
+  run_captain "$home" answer again --decision-file "$dec" --defer "When Cumbuca is needed" >/dev/null || fail "deferral failed"
+  # The reopening wrote its stamp and marker, then stopped before the captain hold landed.
+  body=$(tasks_in "$home" show again --full | sed -n 's/^  body: //p' | jq -r .)
+  staged="$home/body.txt"
+  printf 'Captain hold set: 2026-10-07T12:00:00Z\nDeferral reopened: 2026-10-07T12:00:00Z\n\n%s\n' "$body" > "$staged"
+  tasks_in "$home" update again --body-file "$staged" >/dev/null || fail "could not stage the interrupted reopening"
+  assert_contains "$(tasks_in "$home" show again --full)" "hold_kind: parked" "the interrupted reopening left the task parked"
+  run_captain "$home" hold again --reason "A task needs Cumbuca - log in?" --reopen-deferred >/dev/null \
+    || fail "an interrupted reopening must be retryable"
+  run_captain "$home" open again || fail "the retried reopening is an open captain call"
+  show=$(tasks_in "$home" show again --full)
+  assert_equals 1 "$(printf '%s' "$show" | grep -o 'Deferral reopened:' | wc -l | tr -d ' ')" "the retry adds no second marker"
+  assert_present "$home/state/cards/again.json" "the fresh call has a card"
+  pass "fm-captain-hold: a reopening interrupted before its captain hold landed can be retried"
+}
+
 test_write_and_show_round_trip
 test_validate_names_the_broken_field
 test_card_requires_exactly_one_json_object
@@ -686,3 +941,9 @@ test_new_hold_replaces_a_leftover_card
 test_stale_clear_retires_a_pending_reconcile_request
 test_idle_skips_deferred_and_worker_tracked_holds
 test_stale_with_gnu_coreutils
+test_deferred_answer_parks_the_call_and_never_cards_it
+test_replayed_answers_never_reopen_a_deferred_call
+test_reopened_deferral_records_repeated_words_as_a_fresh_answer
+test_interrupted_deferral_remains_settled_until_finalized
+test_rehold_with_a_new_reason_refreshes_the_card
+test_interrupted_reopening_can_be_retried

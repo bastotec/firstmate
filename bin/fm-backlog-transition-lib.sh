@@ -17,8 +17,8 @@
 #                        preserve an eligible existing In-flight row on relaunch
 #   bin/fm-teardown.sh   meta removed => `tasks-axi done`, or `tasks-axi reopen`
 #                        with the deliverable recorded when the row is still an
-#                        open captain call (bin/fm-captain-hold.sh `open`), so
-#                        cleanup never retires the captain's own question
+#                        open captain call or conditional wait (predicates in
+#                        bin/fm-captain-hold.sh), so cleanup preserves the wait
 #   bin/fm-bootstrap.sh  replays whatever a crash left behind, THIS HOME ONLY.
 # bin/fm-fleet-snapshot.sh's classifier and bin/fm-secondmate-reconcile.sh's
 # cross-home nudge stay defense in depth, not the primary mechanism.
@@ -53,9 +53,9 @@
 # without moving the close date, so replay is idempotent. Spawn needs no marker:
 # it publishes the meta first, so a crash
 # leaves the meta itself as the evidence that the row is owed a start.
-# A captain-held row uses the same record with a `mode=retain` line: replay then
+# A retained row uses the same record with a `mode=retain` line: replay then
 # records the deliverable and reopens the row instead of closing it, and never
-# closes a row that reads as an open captain call. An answer that closes the row
+# closes an open captain call or conditional wait. An answer that closes the row
 # first applies any supported retained artifact from the validated record, then
 # replay simply retires the record.
 
@@ -1261,7 +1261,7 @@ fm_backlog_close_marker_clear() {  # <state-dir> <id>
 fm_backlog_close_marker_replay() {  # <state-dir> <marker-path> <authorized-data-dir>
   local state=$1 marker=$2 marker_name expected_id
   local id data marker_spawn_gen meta meta_spawn_gen row_state cleanup_incomplete mode
-  local endpoint_unconfirmed
+  local endpoint_unconfirmed deferred_status
   local args=() mode_flags=()
   FM_BACKLOG_CLOSE_REPLAY_RESULT=noop
   fm_backlog_directory_present "$state" "state directory" || return 1
@@ -1321,8 +1321,23 @@ fm_backlog_close_marker_replay() {  # <state-dir> <marker-path> <authorized-data
   fi
   if fm_backlog_row_probe "$data" "$id"; then
     row_state=$FM_BACKLOG_ROW_STATE
-    if [ "${row_state%% *}" != "done" ] && [ "$FM_BACKLOG_ROW_HOLD_KIND" = captain ]; then
-      mode=retain
+    if [ "${row_state%% *}" != "done" ]; then
+      if [ "$FM_BACKLOG_ROW_HOLD_KIND" = captain ]; then
+        mode=retain
+      else
+        deferred_status=0
+        FM_DATA_OVERRIDE="$data" FM_STATE_OVERRIDE="$state" \
+          "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-captain-hold.sh" deferred "$id" \
+          || deferred_status=$?
+        case "$deferred_status" in
+          0) mode=retain ;;
+          1) ;;
+          *)
+            FM_BACKLOG_TRANSITION_ERROR="could not determine whether the captain deferred task $id; refusing close replay"
+            return 1
+            ;;
+        esac
+      fi
     fi
   else
     if [ "$FM_BACKLOG_ROW_RESULT" != not_found ]; then
