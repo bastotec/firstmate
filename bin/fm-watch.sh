@@ -123,8 +123,10 @@
 #                          external-wait pause rows do not feed this escalation,
 #                          observation is read-only, and one parent notification
 #                          covers each no-progress episode
-#   check: secondmate revival failed: ...
-#                          queued by bin/fm-secondmate-revive.sh, which this
+#   check: secondmate revival failed: <id>...
+#                          surfaced once from a durable queue row keyed
+#                          secondmate-revive:<id>:<episode>, queued by
+#                          bin/fm-secondmate-revive.sh, which this
 #                          watcher runs detached every
 #                          FM_SECONDMATE_REVIVE_INTERVAL seconds (30) while the
 #                          home records a second mate; that script owns the
@@ -1660,7 +1662,7 @@ procevent_surface_after_output() {
 }
 
 procevent_surface_queued() {
-  local key reason captured="" stranded="" unstarted="" notes=""
+  local key reason captured="" stranded="" unstarted="" notes="" revive=""
   PROCEVENT_SURFACED=
   [ -s "$FM_WAKE_QUEUE" ] || return 0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
@@ -1672,7 +1674,7 @@ procevent_surface_queued() {
         notes="$notes ${key#inbox:}"
         continue
         ;;
-      procevent:*) ;;
+      procevent:*|secondmate-revive:*) ;;
       *) continue ;;
     esac
     [ -e "$(procevent_surfaced_marker "$key")" ] && continue
@@ -1682,6 +1684,10 @@ procevent_surface_queued() {
     # a capture would present it as healthy, which is the shape of defect
     # these wakes exist to surface.
     case "$key" in
+      secondmate-revive:*)
+        key=${key#secondmate-revive:}
+        revive="$revive ${key%%:*}"
+        ;;
       procevent:*:stranded:*) stranded="$stranded $key" ;;
       procevent:*:launch-failed:*) unstarted="$unstarted $key" ;;
       *) captured="$captured $key" ;;
@@ -1693,6 +1699,10 @@ procevent_surface_queued() {
   fi
   reason="check:"
   [ -z "$notes" ] || reason="$reason captain inbox note:$notes"
+  if [ -n "$revive" ]; then
+    [ "$reason" = "check:" ] || reason="$reason;"
+    reason="$reason secondmate revival failed:$revive"
+  fi
   if [ -n "$captured" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
     reason="$reason process-event result captured:$captured"

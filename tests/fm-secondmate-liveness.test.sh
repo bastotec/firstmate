@@ -285,6 +285,24 @@ test_sweep_respawns_confirmed_dead_secondmate() {
 # started beside a first one that may still be running. The sweep kills the
 # endpoint first for exactly that reason, so a kill its agent never
 # acknowledged has to stop the relaunch rather than be discarded.
+# A mate stopped on purpose (bin/fm-control.sh <id> exit, for example before a
+# migration) carries state/<id>.held-stopped; session start must leave it down.
+test_sweep_leaves_a_deliberately_stopped_secondmate_down() {
+  local w fb out
+  w=$(new_world sweep-held)
+  add_sm_home "$w" sm1
+  endpoint_mode "$w" sm1 zsh
+  printf 'stopped_at=1\n' > "$w/home/state/sm1.held-stopped"
+  fb=$(make_toolchain "$w")
+
+  out=$(run_bootstrap "$fb" "$w/home")
+
+  untouched "$w" sm1 || fail "session start relaunched a secondmate stopped on purpose: $out"
+  assert_contains "$out" "secondmate sm1: skipped: stopped on purpose" \
+    "a deliberately stopped secondmate should be reported as skipped: $out"
+  pass "sweep: a secondmate stopped on purpose is left down and reported"
+}
+
 test_sweep_skips_relaunch_when_the_endpoint_kill_is_unconfirmed() {
   local w fb out
   w=$(new_world sweep-kill-unconfirmed)
@@ -507,6 +525,7 @@ test_sweep_noop_with_no_secondmate_meta() {
 test_stream_agent_state_classifies
 test_agent_state_dispatcher_and_compatibility
 test_sweep_respawns_confirmed_dead_secondmate
+test_sweep_leaves_a_deliberately_stopped_secondmate_down
 test_sweep_skips_relaunch_when_the_endpoint_kill_is_unconfirmed
 test_sweep_leaves_alive_secondmate_untouched
 test_sweep_never_relaunches_a_registry_absent_secondmate

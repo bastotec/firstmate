@@ -38,6 +38,7 @@ new_case() {
   cat > "$dir/bin/fm-control.sh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_HOME/control-calls"
+[ ! -f "$FM_HOME/control-sleep" ] || sleep "$(cat "$FM_HOME/control-sleep")"
 if [ -f "$FM_HOME/control-busy" ]; then
   echo "error: another lifecycle action is already running for task $1" >&2
   exit 1
@@ -214,6 +215,58 @@ test_remote_mate_is_probed_and_relaunched_on_its_host() {
   pass "a remote mate is probed and relaunched on its host, and a gone remote endpoint escalates once"
 }
 
+test_a_spent_budget_retries_only_the_escalation() {
+  local dir
+  dir=$(new_case unwritable)
+  add_local_mate "$dir" sm1 zsh >/dev/null
+  : > "$dir/home/control-fails"
+  mkdir "$dir/home/state/.wake-queue"
+  scan "$dir"; scan "$dir"; scan "$dir"
+  [ "$(calls "$dir" | wc -l | tr -d ' ')" = 2 ] || fail "the budget did not stop at two attempts: $(calls "$dir")"
+  scan "$dir"; scan "$dir"; scan "$dir"
+  [ "$(calls "$dir" | wc -l | tr -d ' ')" = 2 ] \
+    || fail "an unpublished escalation let the scan keep relaunching: $(calls "$dir")"
+  rmdir "$dir/home/state/.wake-queue"
+  scan "$dir"
+  [ "$(queued_revive_wakes "$dir")" = 1 ] || fail "the escalation was not published once the queue was writable"
+  [ "$(calls "$dir" | wc -l | tr -d ' ')" = 2 ] || fail "publishing the escalation relaunched the mate again"
+  pass "a spent budget retries only its escalation, never another revival"
+}
+
+test_one_slow_revival_does_not_delay_another_mate() {
+  local dir started elapsed
+  dir=$(new_case parallel)
+  add_local_mate "$dir" sm1 zsh >/dev/null
+  add_local_mate "$dir" sm2 zsh >/dev/null
+  printf '3\n' > "$dir/home/control-sleep"
+  scan "$dir"
+  started=$(date +%s)
+  scan "$dir"
+  elapsed=$(( $(date +%s) - started ))
+  [ "$(calls "$dir" | wc -l | tr -d ' ')" = 2 ] || fail "both dead mates were not revived: $(calls "$dir")"
+  [ "$elapsed" -lt 6 ] || fail "the mates were revived one after another (${elapsed}s)"
+  pass "each mate is revived on its own, so one slow relaunch does not delay another"
+}
+
+test_watcher_surfaces_a_failed_revival_on_its_own() {
+  local dir watcher i
+  dir=$(new_case surface)
+  add_local_mate "$dir" sm1 zsh >/dev/null
+  : > "$dir/home/control-fails"
+  scan "$dir"; scan "$dir"; scan "$dir"
+  [ "$(queued_revive_wakes "$dir")" = 1 ] || fail "the failed revival was not queued"
+  FM_HOME="$dir/home" FM_POLL=1 FM_HOME_SUMMARY_INTERVAL=999999 FM_SECONDMATE_REVIVE_INTERVAL=999999 \
+    "$dir/bin/fm-watch.sh" > "$dir/watch.out" 2> "$dir/watch.err" &
+  watcher=$!
+  i=0
+  while kill -0 "$watcher" 2>/dev/null && [ "$i" -lt 300 ]; do sleep 0.05; i=$((i + 1)); done
+  kill "$watcher" 2>/dev/null || true
+  wait "$watcher" 2>/dev/null || true
+  grep -q 'check: secondmate revival failed: sm1' "$dir/watch.out" \
+    || fail "the watcher did not wake the first mate for the failed revival: $(cat "$dir/watch.out") $(cat "$dir/watch.err")"
+  pass "the watcher wakes the first mate for a failed revival with nothing else happening"
+}
+
 test_watcher_revives_a_dead_mate_without_a_turn() {
   local dir watcher i beat_before beat_after advanced=0
   dir=$(new_case watcher)
@@ -258,5 +311,8 @@ test_live_unknown_held_and_non_secondmate_records_are_left_alone
 test_two_failed_revivals_escalate_once_and_stop
 test_a_mate_owned_by_another_lifecycle_action_is_not_a_failure
 test_remote_mate_is_probed_and_relaunched_on_its_host
+test_a_spent_budget_retries_only_the_escalation
+test_one_slow_revival_does_not_delay_another_mate
+test_watcher_surfaces_a_failed_revival_on_its_own
 test_watcher_revives_a_dead_mate_without_a_turn
 echo "# all fm-secondmate-revive tests passed"

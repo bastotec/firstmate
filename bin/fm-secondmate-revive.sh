@@ -39,10 +39,14 @@
 #
 # Budget and escalation. Each failed revival is counted in state/<id>.revive.
 # After FM_SECONDMATE_REVIVE_ATTEMPTS failures (2) the scan appends ONE
-# `check:` wake to this home's durable wake queue, keyed `secondmate-revive:<id>`,
-# and stops trying until the mate is seen alive again, so a broken mate costs
-# a bounded number of relaunches and exactly one notification. A successful
-# revival notifies nobody; it is appended to state/secondmate-revive.log.
+# `check:` wake to this home's durable wake queue, keyed
+# `secondmate-revive:<id>:<episode>`, which the watcher surfaces on its own, and
+# stops trying until the mate is seen alive again, so a broken mate costs a
+# bounded number of relaunches and exactly one notification; a spent budget
+# whose escalation could not be queued retries only the escalation. A
+# successful revival notifies nobody; it is appended to
+# state/secondmate-revive.log. Each mate is handled by its own worker, so one
+# slow relaunch never delays another.
 #
 # Environment knobs:
 #   FM_HOME                            required
@@ -110,15 +114,15 @@ record_read() {  # <id>
   case "$REC_ESCALATED" in 1) ;; *) REC_ESCALATED=0 ;; esac
 }
 
-record_write() {  # <id> <down-state> <first-seen> <failures> <escalated>
+record_write() {  # <id> <down-state> <first-seen> <failures> <escalated> [<last-failure>]
   local rec="$STATE/$1.revive"
-  printf 'down_state=%s\nfirst_seen=%s\nfailures=%s\nescalated=%s\n' "$2" "$3" "$4" "$5" \
+  printf 'down_state=%s\nfirst_seen=%s\nfailures=%s\nescalated=%s\nlast=%s\n' "$2" "$3" "$4" "$5" "${6:-}" \
     > "$rec.tmp" && mv -f "$rec.tmp" "$rec"
 }
 
 escalate() {  # <id> <reason>
   local id=$1 reason=$2
-  if fm_wake_append check "secondmate-revive:$id" \
+  if fm_wake_append check "secondmate-revive:$id:$(date +%s)" \
     "check: secondmate revival failed: second mate $id is down and $ATTEMPTS automatic revivals did not bring it back: $reason"; then
     log "escalated $id: $reason"
     return 0
@@ -155,7 +159,7 @@ probe() {  # <meta> <id>  -> prints alive|dead|missing|unknown
 }
 
 revive_one() {  # <meta> <id>
-  local meta=$1 id=$2 state now verb out rc remote failures
+  local meta=$1 id=$2 state now verb out rc remote failures reason
   remote=$(fm_meta_get "$meta" remote_host)
   state=$(probe "$meta" "$id")
   now=$(date +%s)
@@ -174,6 +178,13 @@ revive_one() {  # <meta> <id>
   esac
   [ ! -e "$STATE/$id.held-stopped" ] || return 0
   [ "$REC_ESCALATED" = 0 ] || return 0
+  # A spent budget only retries publishing its one escalation, never another
+  # revival.
+  if [ "$REC_FAILURES" -ge "$ATTEMPTS" ]; then
+    escalate "$id" "$(sed -n 's/^last=//p' "$STATE/$id.revive" | tail -1)" \
+      && record_write "$id" "$REC_STATE" "$REC_SEEN" "$REC_FAILURES" 1 "$(sed -n 's/^last=//p' "$STATE/$id.revive" | tail -1)"
+    return 0
+  fi
   if [ "$REC_STATE" != "$state" ] || [ "$REC_SEEN" -eq 0 ]; then
     record_write "$id" "$state" "$now" "$REC_FAILURES" 0
     return 0
@@ -204,21 +215,29 @@ revive_one() {  # <meta> <id>
       ;;
   esac
   failures=$((REC_FAILURES + 1))
-  log "revival of $id failed ($failures/$ATTEMPTS): $(one_line "$out")"
+  reason=$(one_line "$out")
+  log "revival of $id failed ($failures/$ATTEMPTS): $reason"
   if [ "$failures" -ge "$ATTEMPTS" ]; then
-    if escalate "$id" "$(one_line "$out")"; then
-      record_write "$id" "$state" "$now" "$failures" 1
+    if escalate "$id" "$reason"; then
+      record_write "$id" "$state" "$now" "$failures" 1 "$reason"
       return 0
     fi
   fi
   # Wait another confirmation window before the next attempt.
-  record_write "$id" "$state" "$now" "$failures" 0
+  record_write "$id" "$state" "$now" "$failures" 0 "$reason"
 }
 
+# Each mate is probed and revived on its own, so one slow relaunch or remote
+# probe never delays another mate; the scan lock is held until all finish.
+pids=
 for meta in "$STATE"/*.meta; do
   [ -f "$meta" ] || continue
   grep -q '^kind=secondmate$' "$meta" 2>/dev/null || continue
   [ -n "$(fm_meta_get "$meta" window)" ] || continue
-  revive_one "$meta" "$(basename "$meta" .meta)"
+  revive_one "$meta" "$(basename "$meta" .meta)" &
+  pids="$pids $!"
+done
+for pid in $pids; do
+  wait "$pid" || true
 done
 exit 0

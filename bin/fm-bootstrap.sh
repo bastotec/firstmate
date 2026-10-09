@@ -734,6 +734,13 @@ secondmate_liveness_one_timed() {  # <meta> <id> <label>
   fm_timing_record secondmate liveness "$__fm_timing_stamp" "$label"
 }
 
+# A mate stopped on purpose with bin/fm-control.sh <id> exit stays down until it
+# is relaunched explicitly (bin/fm-secondmate-revive.sh honors the same record).
+held_stopped_skip() {  # <id>
+  [ -e "$STATE/$1.held-stopped" ] || return 1
+  echo "SECONDMATE_LIVENESS: secondmate $1: skipped: stopped on purpose with fm-control exit; relaunch it explicitly to bring it back"
+}
+
 # One secondmate's liveness check. Split out of the sweep so each is individually
 # timed; every `return` here was a `continue` in the loop and means exactly the
 # same thing - move on to the next secondmate. Respawned ids are recorded through
@@ -806,6 +813,7 @@ secondmate_liveness_one() {  # <meta> <id>
         return 0
         ;;
       dead)
+        held_stopped_skip "$id" && return 0
         cause="remote endpoint $agent_state on its configured host"
         if out=$(FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate 2>&1); then
           secondmate_note_respawned "$id"
@@ -846,6 +854,7 @@ secondmate_liveness_one() {  # <meta> <id>
       fi
       ;;
     dead|missing)
+      held_stopped_skip "$id" && return 0
       if [ "$agent_state" = dead ]; then
         cause="confirmed agent absence on existing endpoint"
         # A relaunch onto an endpoint that was not proved gone is how a second
