@@ -414,12 +414,12 @@ In every case the worker itself is left running and untouched.
 Cleanup removes a task's durable records only once a backend has proved the worker stopped, and `--force` does not lift that: it authorizes discarding unlanded WORK, never asserting a stop nobody observed.
 A hub restart can leave records in exactly that state, where the hub has never heard of the endpoint and no later read can change the unconfirmed answer, so cleanup refuses every time.
 
-`bin/fm-retire-endpoint.sh <task-id> [<task-id>...]` is the one way such a record is retired, and only a human runs it.
-Nothing in firstmate invokes it; it names each id exactly, refuses wildcards and all-records forms, and asks you to type those ids back before anything is written.
+`bin/fm-retire-endpoint.sh <task-id> [<task-id>...]` is the one way such a record is retired.
+No daemon invokes it; in operator mode it names each id exactly, refuses wildcards and all-records forms, and asks you to type those ids back before anything is written.
 By naming a record you assert, from your own inspection of the machine that ran it, that no worker is still running behind it.
 Every run first appends one line to `state/endpoint-retirements.log` with your username, the time, and the ids; a run whose line cannot be appended retires nothing, and the line records the assertion, not an outcome.
 
-What it touches, and what it does not:
+What operator mode touches, and what it does not:
 
 - It retires RECORDS: the durable task record and, where firstmate owns the transition, the task's backlog row.
   A manually kept backlog, or a home with no backlog file, is left exactly as the operator keeps it.
@@ -433,6 +433,9 @@ What it touches, and what it does not:
 
 Records left on the removed tmux and herdr backends, including any record with no `backend=` field, read as `unverified` to recovery and as gone to presence checks, cannot be relaunched, and reach cleanup as an unconfirmed kill.
 Stop any process still behind one by hand, then retire it with this command.
+
+The owning mate retires its own finished work on those backends under the captain's standing instruction through [`task-delivery`'s finished-work sweep](../.agents/skills/task-delivery/SKILL.md#finished-work-sweep); [`fm-retire-endpoint.sh`'s header and `--help`](../bin/fm-retire-endpoint.sh) own the narrower `--finished` checks and assertion basis.
+When tmux is installed, that mode accepts a tmux record only when a local tmux server can be read and does not list its window, or tmux definitively reports that no server is running; any other inventory failure goes to the captain rather than authorizing cleanup.
 
 ## When the hub is down
 

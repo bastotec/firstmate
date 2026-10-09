@@ -2712,13 +2712,12 @@ require_task_endpoint_gone() {  # <kill-status>
   return 1
 }
 
-# The operator retirement: one record, written only by
-# bin/fm-retire-endpoint.sh, which a human runs after naming a task and typing
-# its id back. Nothing in firstmate writes one, so no automatic path reaches
-# any of this. Every endpoint gate below consults it through the same two
-# functions, and it is consumed on first use rather than left behind, so it
-# authorizes exactly the cleanup the operator asked for and never a later
-# automatic run.
+# The endpoint retirement: one record, written only by
+# bin/fm-retire-endpoint.sh, whose header owns the operator and --finished
+# authorization paths. No daemon writes one. Every endpoint gate below consults
+# it through the same two functions, and it is consumed on first use rather
+# than left behind, so it authorizes exactly the named cleanup and never a
+# later automatic run.
 #
 # A retirement asserts what no backend could: that no worker is still running
 # behind this record.
@@ -2732,15 +2731,14 @@ require_task_endpoint_gone() {  # <kill-status>
 # hand.
 #
 # The work-protection refusal, raised before anything on disk has been touched,
-# gets its own status - but only when this run is an operator retirement, which
-# is the only caller that can tell the statuses apart. Every ordinary teardown
-# keeps refusing with its plain status, so the refusal an operator reads and
-# every existing caller sees is unchanged.
+# gets its own status - but only when this run has a retirement assertion from
+# bin/fm-retire-endpoint.sh, which is the only caller that distinguishes it.
+# Every ordinary teardown keeps refusing with its plain status.
 #
-# It is the ONE refusal a retirement may proceed past, because work on disk is
-# not the record it retires. Every other refusal protects something a
-# retirement has no say over - an undelivered outcome, an unreplayable backlog
-# - and keeps its plain status so the retirement stops there.
+# Operator retirement may proceed past this refusal because work on disk is
+# not the record it retires; --finished must stop on it. Every other refusal
+# protects something a retirement has no say over - an undelivered outcome,
+# an unreplayable backlog - and keeps its plain status so retirement stops.
 FM_TEARDOWN_WORK_GATE_EXIT=72
 
 work_gate_refusal_exit() {
@@ -2781,7 +2779,8 @@ task_operator_retirement() {
 # clears it once - and only once - this task's endpoint gate has passed and the
 # worker is proved stopped. An interrupted close after that point still replays
 # at the next session start, exactly as it always did; one interrupted before
-# it is left for a human, because nothing had proved the worker stopped yet.
+# it stays for endpoint reconciliation, because nothing had proved the worker
+# stopped yet.
 #
 # A failed clear stops the run before any record is removed, because that is
 # the only way it genuinely leaves the close for a rerun: carrying on would

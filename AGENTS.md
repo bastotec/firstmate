@@ -80,7 +80,7 @@ Firstmate alone resolves a matched profile array, keeps malformed profile config
 Absent `config/backend` means stream, and a leftover `tmux` or `herdr` value is refused.
 Pass a per-spawn `--backend` only under that task's own authority, never as precedent ([`docs/configuration.md`](docs/configuration.md) "Runtime backend").
 A missing dependency, authentication failure, unsupported backend, or version refusal is a blocker; never silently retry around it.
-A task record left on a retired backend cannot be relaunched; only the operator retires it, by running `bin/fm-retire-endpoint.sh` themselves ([`docs/configuration.md`](docs/configuration.md#runtime-backend-configbackend--fm_backend) owns retired-record classification).
+A task record left on a retired backend cannot be relaunched; load `task-delivery` for this home's finished-work sweep (section 7), and consult [`docs/configuration.md`](docs/configuration.md#runtime-backend-configbackend--fm_backend) for retired-record classification and the retirement owner.
 
 ## 5. Recovery
 
@@ -182,6 +182,7 @@ When a worker reports a PR or a ready local-only branch, load `task-delivery`.
 For PR-based tasks, record the PR with `bin/fm-pr-check.sh` and give the captain its full URL.
 Bind any custom `state/<id>.check.sh` you write with `bin/fm-check-register.sh` before the watcher runs it, and retire it only through `bin/fm-check-unregister.sh` or teardown, never a hand-composed `rm`.
 Tear down a ship task only after landing is confirmed; a refusal for uncommitted or unlanded work means stop and investigate.
+It is the captain's standing instruction that the mate who created a worker cleans it up once its work is done, so he never has to remember to: at completion and at every heartbeat, each home cleans up only its own finished direct reports through `task-delivery`'s finished-work sweep, never forces, and sends anything not provably finished to the captain as a one-line decision.
 Retire a secondmate only on an explicit captain or main-firstmate decision, with no work under way in its home; its empty queue is healthy.
 
 ### Scout outcome and promotion
@@ -212,7 +213,7 @@ A status line is a wake event, not current state; use `bin/fm-crew-state.sh` whe
 1. For `signal:`, read the listed event lines first, then reconcile current state only where action depends on it; a status annotation never replaces the raw record.
 2. For `stale:`, inspect the recorded endpoint and load `stuck-crewmate-recovery` for a stopped, looping, confused, or unresponsive worker; a deep-inspection reason also requires current-state and validation-log inspection.
 3. For `check:`, act on the named result, including merges, Relay events, process-to-event results, and captain inbox notes; acknowledge a handled inbox note with `bin/fm-inbox.sh drain --ack <id>` before the wake acknowledgement, or it surfaces again.
-4. For `heartbeat:`, review the whole fleet from the structured fleet view, reconcile suspicious tasks and PR state, sweep decision cards (`captain-hold-lifecycle`), update the backlog, and never report an unchanged fleet as progress.
+4. For `heartbeat:`, review the whole fleet from the structured fleet view, reconcile suspicious tasks and PR state, clean up finished workers (`task-delivery`), sweep decision cards (`captain-hold-lifecycle`), update the backlog, and never report an unchanged fleet as progress.
 
 When a wake reports a merged PR for a project cloned in this home, refresh that clone through guarded fleet sync.
 A secondmate's idle endpoint is healthy, and waiting on a healthy cycle is silent: empty polls, elapsed time, and no-change updates are not progress.
@@ -295,7 +296,7 @@ These skills are not captain-invocable; load them only at their triggers.
 - `bootstrap-diagnostics` - load when the digest's bootstrap or network-checks section prints any diagnostic line other than `BOOTSTRAP_INFO:`, or a `BOOTSTRAP_INFO:` line saying an interrupted backlog cleanup may have left an endpoint or local copy.
 - `diagnostic-reasoning` - load before scoping a reported bug and before acting on a diagnostic report.
 - `ask-user-authority` - load before deciding any ask-user finding.
-- `task-delivery` - load before every spawn; when judging an active validation run, when the captain changes the ask of a task under validation, or when its worker hand-edits, commits, aborts, or restarts during the run; when a worker reports a PR or ready branch; before writing a custom check; after a teardown; and when a scout completes.
+- `task-delivery` - load before every spawn; when judging an active validation run, when the captain changes the ask of a task under validation, or when its worker hand-edits, commits, aborts, or restarts during the run; when a worker reports a PR or ready branch; before writing a custom check; after a teardown; when a scout completes; and on every heartbeat for the finished-work sweep.
 - `harness-adapters` - load before spawning or recovering a crewmate or secondmate, choosing among a matched dispatch profile array, handling a trust dialog, sending a harness-specific skill invocation, interrupting, exiting, or resuming an agent, or verifying an adapter.
 - `project-management` - load before adding (including cloning or registering), creating, removing, or initializing a project.
 - `stuck-crewmate-recovery` - load when the digest reports a direct report's endpoint dead or its metadata without a window, after a stale wake, looping, repeated confusion, an answered-by-brief question, an unresponsive crewmate, or a failed steer, and when a live worker reports its no-mistakes pipeline dead, unreachable, or timed out.

@@ -751,6 +751,39 @@ stage_retired_herdr_task() {  # <case-dir> <id>
   printf 'findings\n' > "$home/data/$id/report.md"
 }
 
+# stage_retired_tmux_ship: a ship recorded on the retired tmux backend - the
+# shape of a worker spawned before stream - whose worktree is clean, so
+# cleanup's landed-work gate passes and only the unanswerable endpoint stands
+# between this record and cleanup. [draft-text] adds uncommitted work.
+stage_retired_tmux_ship() {  # <case-dir> <id> [draft-text]
+  local case_dir=$1 id=$2 home
+  home=$(home_of "$case_dir")
+  fm_fake_exit0 "$case_dir/fakebin" tmux
+  add_item "$case_dir" "$id"
+  start_item "$case_dir" "$id"
+  git init -q "$case_dir/project-$id"
+  git -C "$case_dir/project-$id" -c user.name=test -c user.email=test@example.invalid \
+    commit --allow-empty -qm base
+  git -C "$case_dir/project-$id" worktree add -q --detach "$case_dir/wt-$id" >/dev/null 2>&1
+  [ -z "${3:-}" ] || printf '%s\n' "$3" > "$case_dir/wt-$id/draft.txt"
+  fm_write_meta "$home/state/$id.meta" \
+    "window=fm:fm-$id" \
+    "worktree=$case_dir/wt-$id" \
+    "project=$case_dir/project-$id" \
+    "harness=deck" "kind=ship" "mode=" "yolo=off" "backend=tmux" \
+    "spawn_gen=spawn-retired-tmux" "decisions_reviewed=1" "decision_keys="
+}
+
+# run_finished_retire: the owning mate's non-interactive path. stdin is closed
+# so a prompt it should not ask could never be answered.
+run_finished_retire() {  # <case-dir> <args...>
+  local case_dir=$1
+  shift
+  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$(home_of "$case_dir")" \
+    PATH="$case_dir/fakebin:$PATH" \
+    "$ROOT/bin/fm-retire-endpoint.sh" --finished "$@" </dev/null 2>&1
+}
+
 run_bootstrap() {  # <case-dir>
   local case_dir=$1
   FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$(home_of "$case_dir")" \
@@ -2821,6 +2854,143 @@ SH
   pass "a retirement leaves a close session start can finish"
 }
 
+# The captain's standing instruction: the mate that created a worker cleans it
+# up once its work is done. A finished scout stranded on a retired backend is
+# retired by its owner with no typed confirmation, and the log says on what
+# basis.
+test_the_owner_retires_its_finished_scout_on_a_retired_backend() {
+  local case_dir home id out
+  id=atomic-finished-scout-d1
+  case_dir=$(make_home finished-scout)
+  home=$(home_of "$case_dir")
+  stage_retired_herdr_task "$case_dir" "$id"
+
+  out=$(run_finished_retire "$case_dir" "$id") \
+    || fail "the owner could not retire its finished scout: $out"
+  assert_absent "$home/state/$id.meta" "the finished scout's record was not retired: $out"
+  [ "$(row_state "$case_dir" "$id")" = "done" ] \
+    || fail "the finished scout's row is $(row_state "$case_dir" "$id"), not done: $out"
+  assert_grep "	$id	" "$home/state/endpoint-retirements.log" \
+    "the owner's retirement did not record its assertion"
+  assert_grep "	basis=finished-work" "$home/state/endpoint-retirements.log" \
+    "the owner's retirement did not record its basis"
+  assert_present "$home/data/$id/report.md" "retiring the record removed the scout's report"
+  pass "the owner retires its finished scout on a retired backend without a typed confirmation"
+}
+
+# A landed ship on a retired backend: cleanup's own landed-work gate passes, the
+# worktree goes back, and the record is retired.
+test_the_owner_retires_its_landed_ship_on_a_retired_backend() {
+  local case_dir home id out inventory_case
+  for inventory_case in readable no-server missing-socket; do
+    id=atomic-finished-ship-$inventory_case-d1
+    case_dir=$(make_home "finished-ship-$inventory_case")
+    home=$(home_of "$case_dir")
+    stage_retired_tmux_ship "$case_dir" "$id"
+    case "$inventory_case" in
+      readable)
+        printf '#!/usr/bin/env bash\necho "fm:another-window"\n' > "$case_dir/fakebin/tmux"
+        ;;
+      no-server)
+        printf '#!/usr/bin/env bash\necho "no server running on /tmp/tmux-501/default" >&2\nexit 1\n' > "$case_dir/fakebin/tmux"
+        ;;
+      missing-socket)
+        printf '#!/usr/bin/env bash\necho "error connecting to /tmp/tmux-501/default (No such file or directory)" >&2\nexit 1\n' > "$case_dir/fakebin/tmux"
+        ;;
+    esac
+
+    out=$(run_finished_retire "$case_dir" "$id") \
+      || fail "the owner could not retire its landed ship ($inventory_case): $out"
+    assert_absent "$home/state/$id.meta" "the landed ship's record was not retired ($inventory_case): $out"
+    [ "$(row_state "$case_dir" "$id")" = "done" ] \
+      || fail "the landed ship's row is $(row_state "$case_dir" "$id"), not done ($inventory_case): $out"
+  done
+  pass "the owner retires its landed ship on a retired backend"
+}
+
+# Unlanded work is never the owner's to retire: the work gate the operator path
+# proceeds past stops this one, with every record and byte of work in place.
+test_the_owner_never_retires_unlanded_work() {
+  local case_dir home id out rc=0
+  id=atomic-finished-unlanded-d1
+  case_dir=$(make_home finished-unlanded)
+  home=$(home_of "$case_dir")
+  stage_retired_tmux_ship "$case_dir" "$id" "uncommitted draft"
+
+  out=$(run_finished_retire "$case_dir" "$id") || rc=$?
+  [ "$rc" -ne 0 ] || fail "the owner retired a ship with uncommitted work: $out"
+  assert_present "$home/state/$id.meta" "the record of unlanded work was retired: $out"
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "the row of unlanded work moved to $(row_state "$case_dir" "$id"): $out"
+  [ "$(cat "$case_dir/wt-$id/draft.txt")" = "uncommitted draft" ] \
+    || fail "the uncommitted work was touched"
+  assert_contains "$out" "captain" "the refusal did not send the call to the captain: $out"
+  assert_absent "$home/state/$id.endpoint-retired" "a refused owner retirement left its authorization behind"
+  pass "the owner never retires a record whose work has not landed"
+}
+
+# Everything outside the narrow finished-work shape refuses before a single
+# byte is written: a stream record a hub can still answer for, a ship whose
+# worktree is gone, a tmux window a local server still lists, and a caller that
+# did not name its own home.
+test_the_owner_path_refuses_what_it_cannot_prove_finished() {
+  local case_dir home id out rc
+  case_dir=$(make_home finished-refusals)
+  home=$(home_of "$case_dir")
+
+  id=atomic-finished-stream-d1
+  stage_live_task "$case_dir" "$id"
+  rc=0; out=$(run_finished_retire "$case_dir" "$id") || rc=$?
+  [ "$rc" -ne 0 ] || fail "the owner retired a stream record: $out"
+  assert_present "$home/state/$id.meta" "a refused stream record was retired: $out"
+
+  id=atomic-finished-noworktree-d1
+  stage_retired_tmux_ship "$case_dir" "$id"
+  rm -rf "$case_dir/wt-$id"
+  rc=0; out=$(run_finished_retire "$case_dir" "$id") || rc=$?
+  [ "$rc" -ne 0 ] || fail "the owner retired a ship nothing could prove landed: $out"
+  assert_present "$home/state/$id.meta" "a ship with no worktree was retired: $out"
+
+  id=atomic-finished-livewindow-d1
+  stage_retired_tmux_ship "$case_dir" "$id"
+  printf '#!/usr/bin/env bash\necho "fm:fm-%s"\n' "$id" > "$case_dir/fakebin/tmux"
+  chmod +x "$case_dir/fakebin/tmux"
+  rc=0; out=$(run_finished_retire "$case_dir" "$id") || rc=$?
+  rm -f "$case_dir/fakebin/tmux"
+  [ "$rc" -ne 0 ] || fail "the owner retired a record whose tmux window is still listed: $out"
+  assert_contains "$out" "still lists" "the refusal did not name the live window: $out"
+  assert_present "$home/state/$id.meta" "a record with a live tmux window was retired: $out"
+
+  id=atomic-finished-unreadable-d1
+  stage_retired_herdr_task "$case_dir" "$id"
+  fm_write_meta "$home/state/$id.meta" \
+    "backend=tmux" "kind=scout" "window=fm:fm-$id" \
+    "worktree=$case_dir/absent-worktree" "project=$case_dir/absent-project" \
+    "decisions_reviewed=1" "decision_keys="
+  printf '#!/usr/bin/env bash\necho "protocol version mismatch" >&2\nexit 1\n' > "$case_dir/fakebin/tmux"
+  chmod +x "$case_dir/fakebin/tmux"
+  rc=0; out=$(run_finished_retire "$case_dir" "$id") || rc=$?
+  rm -f "$case_dir/fakebin/tmux"
+  [ "$rc" -ne 0 ] || fail "the owner retired a record with unreadable tmux inventory: $out"
+  assert_contains "$out" "tmux inventory could not be read" "the refusal did not name the inventory failure: $out"
+  assert_contains "$out" "captain" "the unreadable inventory was not sent to the captain: $out"
+  assert_present "$home/state/$id.meta" "a record with unreadable tmux inventory was retired: $out"
+  assert_absent "$home/state/$id.endpoint-retired" "unreadable inventory left a retirement authorization"
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "the row with unreadable inventory moved to $(row_state "$case_dir" "$id"): $out"
+
+  rc=0
+  out=$(FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_CONFIG_OVERRIDE="$home/config" PATH="$case_dir/fakebin:$PATH" \
+    env -u FM_HOME "$ROOT/bin/fm-retire-endpoint.sh" --finished "$id" </dev/null 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "the owner path ran without naming its own home: $out"
+  assert_contains "$out" "explicit FM_HOME" "the refusal did not ask for the owning home: $out"
+
+  [ ! -e "$home/state/endpoint-retirements.log" ] \
+    || fail "a refused owner retirement wrote an assertion: $(cat "$home/state/endpoint-retirements.log")"
+  pass "the owner path refuses anything it cannot prove finished, before writing anything"
+}
+
 test_retirement_help_states_what_the_operator_is_asserting() {
   local case_dir out
   case_dir=$(make_home retire-help)
@@ -3924,6 +4094,10 @@ test_a_retirement_records_its_author_durably
 test_a_retirement_that_cannot_record_its_author_retires_nothing
 test_a_retirement_keeps_its_record_when_the_pending_close_cannot_be_cleared
 test_a_retirement_leaves_a_close_session_start_can_finish
+test_the_owner_retires_its_finished_scout_on_a_retired_backend
+test_the_owner_retires_its_landed_ship_on_a_retired_backend
+test_the_owner_never_retires_unlanded_work
+test_the_owner_path_refuses_what_it_cannot_prove_finished
 test_retirement_help_states_what_the_operator_is_asserting
 test_recovery_refuses_a_close_whose_worker_was_never_proved_stopped
 test_recovery_replays_the_same_close_without_the_unconfirmed_endpoint_line

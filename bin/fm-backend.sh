@@ -459,7 +459,7 @@ fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sl
 #
 # Only 0 licenses removing the task's durable records. Both nonzero returns
 # mean the endpoint's identity must be retained so a later rerun can retry;
-# bin/fm-retire-endpoint.sh is the operator's way past an UNCONFIRMED one.
+# bin/fm-retire-endpoint.sh's header owns retirement of an UNCONFIRMED one.
 # A caller that needs to tell them apart should use fm_backend_kill_verdict
 # rather than re-deriving the numbers.
 fm_backend_kill() {  # <backend> <target> [tab-id] [expected-label]
