@@ -10,6 +10,8 @@ No projection is ever carried into the next turn. Only Deck's handled file
 confirms application; inbox publication, run liveness and PTY writes do not.
 Driver CLI: fm_stream_deck.py start|end STATE ID ENDPOINT [TURN SUPPORTED].
 start prints the turn projection path; end retires the active descriptor.
+fm_stream_deck.py captain STATE ID attempts captain-direct publication and
+prints the count; project_captain owns eligibility and acknowledgement rules.
 """
 import contextlib
 import fcntl
@@ -17,6 +19,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -281,7 +284,80 @@ class Receiver:
         return None, 'Deck application pending'
 
 
+CAPTAIN_DIRECT = re.compile(
+    '\\A(?:\\[fm-from-firstmate\\]⁣(?:corr=\\S+ )?)?\\[fm-captain-direct\\]⁣')
+
+
+def project_captain(state, task):
+    """Best-effort publication of eligible captain records into live Deck turns.
+
+    The ring and driver turn-start call this independently of terminal input.
+    Only active, supported turn descriptors with an existing projection qualify;
+    ordinary firstmate steers are not projected. Deck consumes published records
+    at its next safe point (run start, after a tool batch, before finishing).
+    The ordinary source stays durable: only the model's move of that source into
+    the task inbox's handled/ acknowledges it, not publication or movement of the
+    native projection. The doorbell remains the fallback for unhandled sources.
+
+    A sequence is never made visible below one already visible in that turn, nor
+    above an unprojected stream order bound to it, because Deck silently drops a
+    late lower sequence. Such records remain in the ordinary inbox; this helper
+    does not wait for a predecessor or schedule a retry. The guidance, including
+    source paths, must fit Deck's 64 KiB ceiling or publication is skipped.
+    Prints the count published. tests/fm-stream-deck.test.sh pins eligibility
+    and ordering.
+    """
+    inbox = Path(state) / (task + '.inbox')
+    published = 0
+    for root in sorted(inbox.glob('deck-*')):
+        endpoint = root.name[len('deck-'):]
+        receiver = Receiver(state, task, endpoint)
+        with receiver.locked():
+            active = receiver.active()
+            if not active or not active.get('active') or not active.get('supported'):
+                continue
+            projection = receiver.root / active['turn']
+            if not projection.is_dir():
+                continue
+            visible = [int(p.stem) for sub in ('', 'handled', 'rejected')
+                       for p in (projection / sub).glob('*.msg') if p.stem.isdigit()]
+            floor = max(visible, default=0)
+            ceiling = None
+            candidates = []
+            for source in inbox.glob('*.msg'):
+                if not source.stem.isdigit():
+                    continue
+                try:
+                    body = source.read_bytes().decode('utf-8').split('\n--\n', 1)[1]
+                except (FileNotFoundError, IndexError, UnicodeDecodeError):
+                    continue
+                number = int(source.stem)
+                if body.startswith('[stream-order '):
+                    try:
+                        binding = json.loads(body.split('\n', 1)[0][14:-1])
+                    except ValueError:
+                        continue
+                    if binding.get('turn') == active['turn'] and number > floor:
+                        ceiling = number if ceiling is None else min(ceiling, number)
+                elif CAPTAIN_DIRECT.match(body):
+                    candidates.append((number, source, body))
+            for number, source, body in sorted(candidates):
+                if number <= floor or (ceiling is not None and number > ceiling):
+                    continue
+                guidance = body + '\n\nAfter handling this native steer, acknowledge its ordinary task-inbox source by moving ' + str(source) + ' to ' + str(inbox / 'handled' / source.name) + '. Do not apply the same source record twice.'
+                if not body.strip() or len(guidance.encode('utf-8')) > 65536:
+                    continue
+                atomic_write(projection / (str(number) + '.msg'), guidance)
+                floor = number
+                published += 1
+    return published
+
+
 def main():
+    if sys.argv[1:2] == ['captain']:
+        _, state, task = sys.argv[1:4]
+        print(project_captain(state, task))
+        return
     action, state, task, endpoint, *args = sys.argv[1:]
     receiver = Receiver(state, task, endpoint)
     if action == 'start':
@@ -289,7 +365,7 @@ def main():
     elif action == 'end':
         receiver.end()
     else:
-        raise SystemExit('expected start or end')
+        raise SystemExit('expected start, end or captain')
 
 
 if __name__ == '__main__':

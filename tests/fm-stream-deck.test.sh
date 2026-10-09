@@ -493,3 +493,43 @@ for kind, payload in (('input', {'text':'legacy input'}), ('status', {'state':'w
 assert not old.closed_at
 print('PASS executable entry points, per-endpoint negotiation, retained-agent compatibility, and native-only text limits')
 PY
+python3 - "$ROOT" "$LAB/captain" <<'PY'
+import json, pathlib, subprocess, sys
+root, lab = map(pathlib.Path, sys.argv[1:])
+lab.mkdir()
+cli = [sys.executable, str(root/'bin/fm_stream_deck.py')]
+inbox = lab/'task.inbox'; (inbox/'handled').mkdir(parents=True)
+def record(n, body):
+    (inbox/('%03d.msg' % n)).write_text('schema=fm-task-inbox.v1\nat=x\n--\n' + body)
+def captain():
+    return int(subprocess.check_output(cli + ['captain', str(lab), 'task']).decode())
+mark = '⁣'
+record(1, '[fm-captain-direct]' + mark + 'note\n\nfirst words')
+record(2, 'an ordinary firstmate steer')
+record(3, '[fm-from-firstmate]' + mark + 'corr=abc [fm-captain-direct]' + mark + 'note\n\nsecond words')
+assert captain() == 0, 'no live turn: nothing is published'
+idle = pathlib.Path(subprocess.check_output(cli + ['start', str(lab), 'task', 'a'*32, 'idle', '0']).decode().strip())
+assert captain() == 0 and not list(idle.glob('*.msg')), 'a turn without --steer-dir gets nothing'
+subprocess.check_call(cli + ['end', str(lab), 'task', 'a'*32])
+turn = pathlib.Path(subprocess.check_output(cli + ['start', str(lab), 'task', 'b'*32, 'live', '1']).decode().strip())
+assert captain() == 2
+names = sorted(p.name for p in turn.glob('*.msg'))
+assert names == ['1.msg', '3.msg'], names
+first = (turn/'1.msg').read_text()
+assert first.startswith('[fm-captain-direct]' + mark + 'note\n\nfirst words\n\nAfter handling this native steer')
+assert str(inbox/'001.msg') in first and str(inbox/'handled'/'001.msg') in first
+assert captain() == 0, 'publishing is idempotent'
+(turn/'handled').mkdir(); (turn/'3.msg').rename(turn/'handled'/'3.msg')
+record(4, json.dumps({}) and '[stream-order ' + json.dumps({'order_id': 'o', 'execution': 'b'*32, 'turn': 'live'}) + ']\nnative\nfix it')
+record(5, '[fm-captain-direct]' + mark + 'note\n\nthird words')
+assert captain() == 0, 'never above an unprojected stream order bound to the turn'
+(turn/'4.msg').write_text('fix it')
+assert captain() == 1 and (turn/'5.msg').exists()
+record(6, '[fm-captain-direct]' + mark + 'note\n\nlate')
+(turn/'7.msg').write_text('newer order')
+record(2, '[fm-captain-direct]' + mark + 'note\n\nlower')
+assert captain() == 0, 'never below a sequence already visible'
+subprocess.check_call(cli + ['end', str(lab), 'task', 'b'*32])
+assert captain() == 0, 'an ended turn gets nothing'
+print('PASS captain-direct records reach live steerable turns in sequence order only')
+PY
