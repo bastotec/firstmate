@@ -42,9 +42,8 @@
 # `calls` is read-only and prints "<task-id>\t<title>" for every open captain
 # call in this home, full card or not: the startup list a mate checks for calls
 # the captain already answered, which it records instead of asking again.
-# A call settled with `fm-captain-hold.sh answer --defer` is a parked wait, not
-# a captain call, even if parking is unfinished. Discovery skips it; stale
-# reports any leftover card as an orphan.
+# Discovery uses `fm-captain-hold.sh open` (its header owns the predicate);
+# stale reports any leftover card without an open call as an orphan.
 # All three refuse (exit 2) when this home's backlog cannot be listed or read,
 # rather than reading an unreadable backlog as "no captain calls".
 # `stale` is read-only and prints "<task-id>\t<kind>\t<why>" per candidate:
@@ -231,7 +230,7 @@ cmd_draft() {
 }
 
 # Match fm-captain-hold.sh open, not tasks-axi's live date gate: an expired
-# deferral still carries an open captain call. The last column is hold kind,
+# dated deferral still carries an open captain call. The last column is hold kind,
 # and an id is a slug, so neither needs CSV decoding.
 captain_held_ids() {
   local listed ids id

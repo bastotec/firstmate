@@ -79,22 +79,19 @@
 # still answerable: the surviving hold annotations, not tasks-axi's live
 # `held:` bit, prove the captain owned it.
 #
-# `--defer <condition>` records an answer that waits on a condition rather
-# than a date ("wait until needed", "keep waiting", "do it when X happens").
-# The call is settled, so it stops being a captain hold: the record carries
-# mode `deferred` and the captain's words, the hold becomes a `parked` hold
-# owned by this home with the condition as its one-line reason (no
-# parentheses), and the card goes. Backfill, drafts and the stale sweep only
-# read captain holds, so a deferred task is never carded or listed again.
+# `--defer <condition>` records a conditional answer with mode `deferred`,
+# parks the task in this home with the one-line condition as its hold reason
+# (no parentheses), and removes its card and hold-set stamp. The deferral is
+# settled when the newest resolution block has mode `deferred` and no
+# `Deferral reopened:` marker precedes it, even if parking is unfinished.
 # An exact retry matches the words and parked condition, or finishes an
-# interrupted deferral; other answers and close modes are refused.
-# Open-call reads exclude settled deferrals even before parking finishes;
-# stale-clear and reconcile close/note refuse them until that exact retry.
-# When the condition fires and the captain must choose again, `hold
-# --reopen-deferred` starts a fresh call with a new stamp and card; a plain
-# `hold` on a deferred task is refused, so restating a standing answer can
-# never put it back in front of the captain. `--reopen-deferred` is refused
-# unless the task has a settled deferral.
+# interrupted deferral; other answers (including keyed answers), stale-clear,
+# and reconcile close/note are refused. `open` excludes settled deferrals,
+# so card discovery skips them; stale reports any leftover card as an orphan.
+# Only `hold --reopen-deferred` starts a fresh call from a settled deferral;
+# plain re-holds are refused. Reopening writes `Deferral reopened: <stamp>`
+# immediately below the new leading hold-set stamp. The next answer prepends
+# a new resolution above that marker, even if its words repeat the old answer.
 #
 # ONE KEYED-ANSWER INTAKE, FED BY EVERY CHANNEL.
 # "A keyed answer resolves its matching captain-held task" is a single
