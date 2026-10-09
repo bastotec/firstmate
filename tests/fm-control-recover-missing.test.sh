@@ -945,7 +945,7 @@ test_profile_switch_flags_are_rejected_on_other_verbs() {
     # shellcheck disable=SC2086 # the flag pair is deliberately split.
     out=$(run_control "$dir" rm9 exit $flag); rc=$?
     expect_code 1 "$rc" "exit must reject '$flag'"$'\n'"$out"
-    assert_contains "$out" "apply to 'relaunch' and 'recover-missing' only" \
+    assert_contains "$out" "apply to 'relaunch', 'recover-missing', or 'reincarnate' only" \
       "the refusal should scope the flags to the verbs that own them"
   done
   [ "$(created_endpoint_count "$dir" rm9)" = 0 ] || fail "a rejected flag must not create a terminal"
@@ -1087,8 +1087,119 @@ test_recover_missing_records_the_dirty_state_it_found() {
 test_recover_missing_freezes_the_recorded_profile_for_a_secondmate
 test_recover_missing_preserves_uncommitted_work
 test_recover_missing_records_the_dirty_state_it_found
+test_reincarnate() {
+  local dir out rc case_name before
+  for case_name in success legacy dirty absent live shared unsupported current handoff-fail; do
+    dir=$(new_case "reincarnate-$case_name" rc1)
+    add_ship_task "$dir" rc1
+    printf 'working: preserved history\n' > "$dir/home/state/rc1.status"
+    if command -v tasks-axi >/dev/null 2>&1; then
+      printf '# Backlog\n\n## In flight\n\n## Queued\n\n## Done\n' > "$dir/home/data/backlog.md"
+      tasks-axi add rc1 'preserved task row' --kind ship --file "$dir/home/data/backlog.md" >/dev/null
+      tasks-axi start rc1 --file "$dir/home/data/backlog.md" >/dev/null
+      cp "$dir/home/data/backlog.md" "$dir/backlog-before"
+    fi
+    make_endpoint_missing "$dir"
+    # Preserve the remainder of the record, while giving it a retired identity.
+    cp "$dir/home/state/rc1.meta" "$dir/original-meta"
+    record_without_binding "$dir/home/state/rc1.meta" > "$dir/meta"
+    printf 'backend=tmux\nwindow=old:fm-rc1\n' >> "$dir/meta"
+    mv "$dir/meta" "$dir/home/state/rc1.meta"
+    case "$case_name" in
+      current) cp "$dir/original-meta" "$dir/home/state/rc1.meta" ;;
+      handoff-fail) printf '%s' "$dir/proj" > "$dir/fake/cwd" ;;
+      legacy) sed '/^backend=/d; /^endpoint_task_id=/d' "$dir/home/state/rc1.meta" > "$dir/meta"; mv "$dir/meta" "$dir/home/state/rc1.meta" ;;
+      dirty) echo preserved > "$dir/wt/untracked" ;;
+      absent) rm -rf "$dir/wt" ;;
+      live)
+        # Shim only the read-only proof; every other Python call is real.
+        cat > "$dir/fakebin/python3" <<SH
+#!/usr/bin/env bash
+case "\${4:-}" in --prove-stopped) echo 'task-bound driver is running' >&2; exit 1 ;; esac
+exec '$(command -v python3)' "\$@"
+SH
+        chmod +x "$dir/fakebin/python3"
+        ;;
+      shared)
+        {
+          fm_test_fake_dir_task "$dir/fake" "$dir/home/state" other
+          echo "worktree=$dir/wt"
+          echo "project=$dir/proj"
+          echo 'harness=deck'
+        } > "$dir/home/state/other.meta"
+        printf 'fm-other\n' > "$dir/fake/windows"
+        ;;
+      unsupported) sed 's/harness=deck/harness=pi/' "$dir/home/state/rc1.meta" > "$dir/meta"; mv "$dir/meta" "$dir/home/state/rc1.meta" ;;
+    esac
+    before=$(cat "$dir/home/state/rc1.meta")
+    if out=$(run_control "$dir" rc1 reincarnate --note 'Continue preserved work'); then rc=0; else rc=$?; fi
+    assert_contains "$(cat "$dir/home/state/rc1.status")" 'working: preserved history' 'continuation must preserve task history'
+    if [ -f "$dir/backlog-before" ]; then
+      cmp -s "$dir/backlog-before" "$dir/home/data/backlog.md" || fail 'continuation must preserve the in-flight row'
+    fi
+    case "$case_name" in
+      success|legacy)
+        [ "$rc" = 0 ] || fail "reincarnate $case_name failed: $out"
+        assert_bound_to_created "$dir" rc1
+        assert_contains "$out" 'backend=stream' 'reincarnate must report its new backend'
+        [ "$(meta_field "$dir" rc1 endpoint_task_id)" = rc1 ] || fail 'legacy record must gain an exact binding'
+        assert_contains "$(cat "$dir/home/data/rc1/brief.md")" 'Continue preserved work' 'progress note must survive'
+        ;;
+      handoff-fail)
+        [ "$rc" != 0 ] || fail 'handoff failure must refuse'
+        assert_bound_to_created "$dir" rc1
+        assert_contains "$out" 'no agent was ever stopped' 'reincarnate must never claim it stopped an agent'
+        assert_contains "$out" "retry with 'relaunch'" 'failed handoff must name its retry path'
+        ;;
+      *)
+        [ "$rc" != 0 ] || fail "reincarnate $case_name should refuse"
+        [ "$(cat "$dir/home/state/rc1.meta")" = "$before" ] || fail "$case_name refusal changed metadata"
+        [ "$(created_endpoint_count "$dir" rc1)" = 0 ] || fail "$case_name refusal created an endpoint"
+        ;;
+    esac
+  done
+  pass 'reincarnate: retired and legacy records continue, unsafe copies and unproven stops refuse'
+}
+
+test_retired_driver_stop_proof() {
+  local dir
+  dir=$(new_case driver-proof)
+  mkdir -p "$dir/old code"
+  printf '#!/usr/bin/env bash\necho ready > "%s"\nwhile :; do sleep 1; done\n' "$dir/ready" > "$dir/old code/fm-deck-worker.sh"
+  python3 - "$ROOT" "$dir" <<'PY' || fail 'read-only driver proof must be scoped and preserve the live fixture'
+import pathlib, subprocess, sys
+root, case = map(pathlib.Path, sys.argv[1:])
+probe = [sys.executable, str(root/'bin/fm-deck-stop.py'), str(case/'home/state')]
+# This is an inert shell fixture, not a harness. It uses an old code-root and
+# a spaced path, and never submits a prompt or invokes Deck.
+p = subprocess.Popen(['bash', str(case/'old code/fm-deck-worker.sh'),
+                      '--id', 'rc1', '--state', str(case/'home/state'),
+                      '--gen', 'fixture', '--deck', '/fixture/deck', '--', 'brief'],
+                     start_new_session=True)
+try:
+    import time
+    for _ in range(100):
+        if (case/'ready').exists():
+            break
+        time.sleep(.1)
+    assert (case/'ready').exists(), 'fixture driver did not start'
+    assert subprocess.run(probe + ['rc1', '--prove-stopped']).returncode != 0
+    assert subprocess.run(probe + ['other', '--prove-stopped']).returncode == 0
+    assert p.poll() is None, 'proof must never signal a live driver'
+finally:
+    import os, signal
+    os.killpg(p.pid, signal.SIGTERM)
+    p.wait(timeout=10)
+assert subprocess.run(probe + ['rc1', '--prove-stopped']).returncode == 0
+PY
+  pass 'retired driver proof: exact task identity across old code roots, no signals'
+}
+
+test_retired_driver_stop_proof
+test_reincarnate
 test_recover_missing_recreates_the_terminal_and_launches_the_replacement
 test_recover_missing_on_stream_rebinds_a_new_endpoint
+
 test_recover_missing_on_stream_refuses_while_its_agent_still_runs
 test_stream_agent_probe_finds_an_agent_under_a_spaced_home
 test_recover_missing_on_stream_ignores_unowned_agents

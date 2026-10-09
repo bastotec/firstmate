@@ -7,6 +7,10 @@
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
 #                                         [--effort <level>] [--unless-held-stopped]
 #                                         (--note <text> | --note-file <path>)
+#        fm-control.sh <task-id> reincarnate
+#                                         [--harness <name>] [--model <name>]
+#                                         [--effort <level>]
+#                                         (--note <text> | --note-file <path>)
 #        fm-control.sh <task-id> recover-missing
 #                                         [--harness <name>] [--model <name>]
 #                                         [--effort <level>] [--unless-held-stopped]
@@ -114,6 +118,18 @@
 #              change resets the effort axis to default unless it is named too,
 #              and naming it for such a harness still refuses with "deck has no
 #              effort control".
+#
+#   reincarnate Continue a retired-backend task on a fresh stream endpoint in
+#              the SAME clean worktree, using recover-missing's transaction and
+#              fm-spawn --relaunch. Requires a supported recorded harness and
+#              read-only proof of zero task-anchored Deck drivers, even if the
+#              old window is gone. Refuses an absent or dirty copy, an unproven
+#              stop, or a copy shared by another live or unproven record.
+#              The task id, backlog row, history, and non-endpoint metadata
+#              survive. No old endpoint is driven or stopped. The replacement
+#              profile and required progress note follow recover-missing.
+#              After rebind, a failed handoff retains the new stream binding
+#              for reconciliation, exactly as recover-missing does.
 #
 # Teardown and discard are NOT verbs here and never will be. `exit` stops an
 # agent and preserves everything else; removing a worktree, killing an
@@ -336,11 +352,11 @@ if [ -n "$control_want_value" ]; then
 fi
 
 case "$VERB" in
-  relaunch|recover-missing) ;;
+  relaunch|recover-missing|reincarnate) ;;
   *)
     [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
       && [ "$UNLESS_HELD_STOPPED" = 0 ] \
-      || die "--harness, --model, and --effort apply to 'relaunch' and 'recover-missing' only, and --note to 'relaunch' or 'recover-missing' only"
+      || die "--harness, --model, --effort, and --note apply to 'relaunch', 'recover-missing', or 'reincarnate' only"
     ;;
 esac
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
@@ -433,7 +449,12 @@ HARNESS=$(fm_control_harness_family "$RECORDED_HARNESS") \
 fm_control_harness_supported "$HARNESS" \
   || die "task $ID records harness '${RECORDED_HARNESS:-none}', which has no verified control mechanics; fm-control refuses to guess an interrupt key or exit command"
 
-fm_backend_validate "$BACKEND" || exit 1
+if [ "$VERB" = reincarnate ]; then
+  fm_backend_is_retired "$BACKEND" \
+    || die "reincarnate requires a retired backend record; use relaunch for $BACKEND"
+else
+  fm_backend_validate "$BACKEND" || exit 1
+fi
 
 # --- shared helpers ---------------------------------------------------------
 
@@ -779,7 +800,7 @@ RELAUNCH_TX=
 RELAUNCH_BRIEF=
 RELAUNCH_PAST_TENSE=relaunched
 RELAUNCH_NOUN=relaunch
-if [ "$VERB" = recover-missing ]; then
+if [ "$VERB" = recover-missing ] || [ "$VERB" = reincarnate ]; then
   RELAUNCH_NOUN=recovery
 fi
 PRIOR_HARNESS=$HARNESS
@@ -835,8 +856,8 @@ relaunch_rollback() {
         cp -p "$BRIEF_PRIOR" "$RELAUNCH_BRIEF" 2>/dev/null || true
       fi
       journal_write "failed:$RELAUNCH_PHASE" "rollback=instructions-restored" || true
-      if [ "$VERB" = recover-missing ]; then
-        echo "error: $ID's missing-endpoint recovery was refused before its terminal was recreated; its agent was already gone, so nothing was touched and nothing changed" >&2
+      if [ "$RELAUNCH_NOUN" = recovery ]; then
+        echo "error: $ID's endpoint recovery was refused before its terminal was recreated; its agent was already gone, so nothing was touched and nothing changed" >&2
       else
         echo "error: relaunch of $ID was refused before its agent was touched; nothing changed" >&2
       fi
@@ -899,7 +920,7 @@ relaunch_rollback() {
         # worse inaccuracy.
         journal_write "failed:$RELAUNCH_PHASE" "rollback=none-new-record-kept" || true
         echo "error: $ID was ${RELAUNCH_PAST_TENSE} on $TARGET_HARNESS but no running agent could be confirmed; its work is preserved at $WT" >&2
-      elif [ "$VERB" = recover-missing ]; then
+      elif [ "$RELAUNCH_NOUN" = recovery ]; then
         # Recovery never stops anything, so saying so would be a false account.
         # The terminal it recreated is still there holding a bare shell, which
         # reads 'dead' rather than 'missing' - so the verb that retries this is
@@ -929,7 +950,7 @@ resolve_relaunch_profile() {
   CONFIG_HARNESS=
   CONFIG_MODEL=
   CONFIG_EFFORT=
-  if [ "$KIND" = secondmate ] && [ "$VERB" != recover-missing ] \
+  if [ "$KIND" = secondmate ] && [ "$VERB" = relaunch ] \
      && [ "$HARNESS_SET" = 0 ]; then
     # A secondmate's harness, model, and effort are a durable configured pin
     # that every respawn re-resolves (the secondmate-provisioning contract), so
@@ -972,8 +993,8 @@ resolve_relaunch_profile() {
   # capability table here keeps that refusal on the pre-stop side of the
   # transaction, where nothing has changed yet.
   if ! fm_control_harness_supports_kind "$TARGET_HARNESS" "$KIND"; then
-    if [ "$VERB" = recover-missing ]; then
-      die "'$TARGET_HARNESS' is not verified to run a $KIND task, so recovering $ID would recreate its terminal for a launch that must be refused; its endpoint is missing and nothing was touched, so its work is preserved at $WT until this adapter is verified for this kind"
+    if [ "$RELAUNCH_NOUN" = recovery ]; then
+      die "'$TARGET_HARNESS' is not verified to run a $KIND task, so recovering $ID would recreate its terminal for a launch that must be refused; its endpoint is unavailable and nothing was touched, so its work is preserved at $WT until this adapter is verified for this kind"
     fi
     die "'$TARGET_HARNESS' is not verified to run a $KIND task, so relaunching $ID onto it would stop the running agent for a launch that must be refused; choose an adapter verified for this kind"
   fi  # A model or effort chosen for the previous harness does not transfer to a
@@ -1206,6 +1227,7 @@ do_relaunch() {
 # step fails; relaunch can adopt it once it is positively agent-free.
 recover_stream_endpoint() {  # <label> <cwd>
   local label=$1 cwd=$2 pair new_target hub_url
+  fm_backend_source stream || die "could not load backend stream"
   hub_url=$(fm_backend_stream_hub_url) || die "this home's stream hub URL is not configured; refusing to recover"
   fm_backend_stream_container_ensure >/dev/null \
     || die "this home's stream hub at $hub_url is not usable; refusing to recover $ID"
@@ -1220,13 +1242,61 @@ recover_stream_endpoint() {  # <label> <cwd>
     die "task $ID's record could not be rebound to its new stream endpoint ($FM_ENDPOINT_REBIND_ERROR); the close was not confirmed; reconcile the new endpoint $new_target"
   fi
   T=$new_target
+  BACKEND=stream
+}
+
+# Read-only retirement proof: never signal an old driver or drive its backend.
+prove_retired_task_stopped() {  # <id>
+  python3 "$SCRIPT_DIR/fm-deck-stop.py" "$STATE" "$1" --prove-stopped \
+    || die "task $1's stop is not proven; refusing reincarnate"
+}
+
+reincarnate_preflight() {
+  local other other_id other_wt other_backend other_target other_state wt_real
+  prove_retired_task_stopped "$ID"
+  fm_backend_source stream || die "could not load backend stream"
+  if fm_backend_stream_local_agent_pid "$LABEL" "$STATE/$ID.status" >/dev/null; then
+    die "task $ID still has a live stream agent; refusing reincarnate"
+  fi
+  safe_checkpoint
+  [ "$(git -C "$WT" status --porcelain)" = '' ] \
+    || die "task $ID's worktree is dirty; refusing reincarnate without touching its work"
+  wt_real=$(cd "$WT" && pwd -P)
+  for other in "$STATE"/*.meta; do
+    [ -f "$other" ] && [ "$other" != "$META" ] || continue
+    other_wt=$(fm_meta_get "$other" worktree)
+    [ -d "$other_wt" ] || continue
+    [ "$(cd "$other_wt" && pwd -P)" = "$wt_real" ] || continue
+    other_id=${other##*/}; other_id=${other_id%.meta}
+    fm_backend_validate_task_endpoint "$other" "$other_id" \
+      || die "worktree ownership cannot be proven for task $other_id"
+    other_backend=$FM_BACKEND_VALIDATED_BACKEND
+    other_target=$FM_BACKEND_VALIDATED_TARGET
+    if fm_backend_stream_local_agent_pid "fm-$other_id" "$STATE/$other_id.status" >/dev/null; then
+      die "worktree is shared by live task $other_id; refusing reincarnate"
+    fi
+    if fm_backend_is_retired "$other_backend"; then
+      [ "$(fm_meta_get "$other" harness)" = deck ] \
+        || die "worktree is shared by task $other_id whose stop cannot be proven"
+      prove_retired_task_stopped "$other_id"
+    else
+      other_state=$(fm_backend_agent_state "$other_backend" "$other_target")
+      case "$other_state" in
+        dead|missing) ;;
+        *) die "worktree is shared by live or unproven task $other_id; refusing reincarnate" ;;
+      esac
+      prove_retired_task_stopped "$other_id"
+    fi
+  done
 }
 
 do_recover_missing() {
   local state note_line wt wname proj_abs
   local -a spawn_args
 
-  require_state_verified_backend recover-missing "the endpoint is actually missing"
+  if [ "$VERB" != reincarnate ]; then
+    require_state_verified_backend recover-missing "the endpoint is actually missing"
+  fi
   resolve_relaunch_profile
   RELAUNCH_PAST_TENSE=recovered
 
@@ -1247,16 +1317,20 @@ do_recover_missing() {
   esac
 
   relaunch_backlog_preflight
-  state=$(agent_state)
-  case "$state" in
-    missing) ;;
-    dead|alive|ambiguous) die "task $ID's endpoint reads '$state'; recover-missing requires a positively missing endpoint and no agent owning the task" ;;
-    *) die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to recover" ;;
-  esac
-  local agent_pid
-  fm_backend_source stream || die "could not load backend stream"
-  if agent_pid=$(fm_backend_stream_local_agent_pid "$LABEL" "$STATE/$ID.status"); then
-    die "task $ID's stream endpoint is missing from the hub, but its agent process (pid $agent_pid) is still running on this machine - a restarted hub forgets endpoints until their agents re-register; wait for it to come back, or stop that agent first, then retry"
+  if [ "$VERB" = reincarnate ]; then
+    reincarnate_preflight
+  else
+    state=$(agent_state)
+    case "$state" in
+      missing) ;;
+      dead|alive|ambiguous) die "task $ID's endpoint reads '$state'; recover-missing requires a positively missing endpoint and no agent owning the task" ;;
+      *) die "task $ID's endpoint reads '$state' rather than a positively classified state; refusing to recover" ;;
+    esac
+    local agent_pid
+    fm_backend_source stream || die "could not load backend stream"
+    if agent_pid=$(fm_backend_stream_local_agent_pid "$LABEL" "$STATE/$ID.status"); then
+      die "task $ID's stream endpoint is missing from the hub, but its agent process (pid $agent_pid) is still running on this machine - a restarted hub forgets endpoints until their agents re-register; wait for it to come back, or stop that agent first, then retry"
+    fi
   fi
 
   wt=$(fm_meta_get "$META" worktree)
@@ -1363,7 +1437,7 @@ case "$VERB" in
     do_relaunch
     held_stop_record relaunch
     ;;
-  recover-missing)
+  recover-missing|reincarnate)
     do_recover_missing
     held_stop_record recover-missing
     ;;
