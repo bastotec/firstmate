@@ -300,7 +300,51 @@ test_sweep_leaves_a_deliberately_stopped_secondmate_down() {
   untouched "$w" sm1 || fail "session start relaunched a secondmate stopped on purpose: $out"
   assert_contains "$out" "secondmate sm1: skipped: stopped on purpose" \
     "a deliberately stopped secondmate should be reported as skipped: $out"
+  [ ! -e "$w/home/state/.control-sm1.lock" ] && [ ! -L "$w/home/state/.control-sm1.lock" ] \
+    || fail "startup recovery kept its lifecycle lock after honoring a deliberate stop"
   pass "sweep: a secondmate stopped on purpose is left down and reported"
+}
+
+test_sweep_skips_a_secondmate_with_a_live_control_lock() {
+  local w fb out holder
+  w=$(new_world sweep-control-held)
+  add_sm_home "$w" sm1
+  endpoint_mode "$w" sm1 zsh
+  fb=$(make_toolchain "$w")
+
+  FM_HOME="$w/home" bash -c '
+    . "$1/bin/fm-wake-lib.sh"
+    lock="$STATE/.control-sm1.lock"
+    fm_lock_try_acquire "$lock" || exit 1
+    trap '\''fm_lock_release "$lock"'\'' EXIT
+    : > "$2/control-ready"
+    while [ ! -e "$2/control-release" ]; do sleep 0.1; done
+  ' _ "$ROOT" "$w" &
+  holder=$!
+  fm_test_track_helper_pid "$holder"
+  for _ in $(seq 100); do
+    [ ! -e "$w/control-ready" ] || break
+    sleep 0.1
+  done
+  [ -e "$w/control-ready" ] || fail "the lifecycle lock holder did not start"
+
+  out=$(run_bootstrap "$fb" "$w/home")
+
+  untouched "$w" sm1 || fail "session start touched a secondmate under lifecycle control: $out"
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: skipped: another lifecycle action is already running" \
+    "an active lifecycle action should make startup recovery skip the mate: $out"
+  [ "$(cat "$w/home/state/.control-sm1.lock/pid")" = "$holder" ] \
+    || fail "startup recovery changed the live lifecycle lock"
+  kill -0 "$holder" 2>/dev/null || fail "startup recovery stopped the lifecycle lock holder"
+
+  touch "$w/control-release"
+  wait "$holder" || fail "the lifecycle lock holder did not exit cleanly"
+  out=$(run_bootstrap "$fb" "$w/home")
+  endpoint_closed "$w" sm1 || fail "startup recovery did not close the dead endpoint after control released it: $out"
+  relaunched "$w" sm1 || fail "startup recovery did not relaunch the mate after control released it: $out"
+  [ ! -e "$w/home/state/.control-sm1.lock" ] && [ ! -L "$w/home/state/.control-sm1.lock" ] \
+    || fail "startup recovery left its lifecycle lock held after relaunch"
+  pass "sweep: a live lifecycle lock prevents recovery until its owner releases it"
 }
 
 test_sweep_skips_relaunch_when_the_endpoint_kill_is_unconfirmed() {
@@ -316,6 +360,8 @@ test_sweep_skips_relaunch_when_the_endpoint_kill_is_unconfirmed() {
     "an unconfirmed kill must be reported rather than discarded: $out"
   relaunched "$w" sm1 && fail "the sweep relaunched onto an endpoint nothing proved gone"
   assert_present "$w/home/state/sm1.meta" "the skipped secondmate lost its record"
+  [ ! -e "$w/home/state/.control-sm1.lock" ] && [ ! -L "$w/home/state/.control-sm1.lock" ] \
+    || fail "startup recovery kept its lifecycle lock after an unconfirmed kill"
   pass "sweep: an endpoint whose kill nothing confirmed is reported and not relaunched onto"
 }
 
@@ -402,6 +448,8 @@ test_sweep_reports_dead_endpoint_relaunch_failure() {
 
   assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: respawn failed after confirmed agent absence on existing endpoint" \
     "a failed relaunch should retain its authorizing cause: $out"
+  [ ! -e "$w/home/state/.control-sm1.lock" ] && [ ! -L "$w/home/state/.control-sm1.lock" ] \
+    || fail "startup recovery kept its lifecycle lock after a failed relaunch"
   pass "sweep: failed relaunch diagnostics name the confirmed absence that authorized it"
 }
 
@@ -526,6 +574,7 @@ test_stream_agent_state_classifies
 test_agent_state_dispatcher_and_compatibility
 test_sweep_respawns_confirmed_dead_secondmate
 test_sweep_leaves_a_deliberately_stopped_secondmate_down
+test_sweep_skips_a_secondmate_with_a_live_control_lock
 test_sweep_skips_relaunch_when_the_endpoint_kill_is_unconfirmed
 test_sweep_leaves_alive_secondmate_untouched
 test_sweep_never_relaunches_a_registry_absent_secondmate

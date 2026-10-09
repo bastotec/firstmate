@@ -1426,9 +1426,12 @@ with (root/'pane').open('w') as output:
         inbox = root/'parent/host.inbox'
         (inbox/'handled').mkdir(parents=True, exist_ok=True)
         bell = ": Firstmate instruction waiting: list '%s'/*.msg and, in numeric order, read and act on each, then mv each handled file to '%s'/handled/." % (inbox, inbox)
-        p.stdin.write(bell+'\n\x15\n\x15\n\x15\n/quit\n'); p.stdin.flush()
+        p.stdin.write(bell+'\n\x15\n\x15\n\x15\n'); p.stdin.flush()
         time.sleep(.3)
         (home/'release').touch()
+        time.sleep(1.5)
+        assert len(rows()) == turns_before_exit, 'the host ran a watcher turn while the lifecycle exit was still being delivered'
+        p.stdin.write('/quit\n'); p.stdin.flush()
         assert p.wait(timeout=15) == 0, 'the host did not stop on the queued exit'
         assert len(rows()) == turns_before_exit, 'the host ran a watcher turn before the exit queued behind its composer clears'
     finally:

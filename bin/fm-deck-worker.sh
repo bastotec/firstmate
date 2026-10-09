@@ -761,7 +761,13 @@ while :; do
     # watcher wake starts another turn; otherwise the exit postcondition times
     # out, rolls back as "agent alive", and the stale /quit stops the mate
     # later with nothing left to relaunch it.
-    while [ -f "$WORK/input.$input_seq" ]; do
+    composer_grace_until=0
+    while :; do
+      if [ ! -f "$WORK/input.$input_seq" ]; then
+        [ "$composer_grace_until" -gt "$(date +%s)" ] || break
+        sleep 0.1
+        continue
+      fi
       if ! line=$(cat "$WORK/input.$input_seq"); then
         host_failure 'could not read queued input'; exit 1
       fi
@@ -771,6 +777,9 @@ while :; do
       esac
       rm "$WORK/input.$input_seq" || { host_failure 'could not consume queued composer clear'; exit 1; }
       input_seq=$((input_seq + 1))
+      if [ "$composer_grace_until" -eq 0 ]; then
+        composer_grace_until=$(( $(date +%s) + 5 ))
+      fi
       show_prompt=1
     done
     if [ -f "$WORK/input.$input_seq" ]; then
