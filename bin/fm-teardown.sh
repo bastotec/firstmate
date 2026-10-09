@@ -2804,7 +2804,7 @@ work_gate_refusal_exit() {
 }
 
 # Read once and consumed on first use, because a retirement authorizes exactly
-# one cleanup.
+# one cleanup, including later gates in this run.
 OPERATOR_RETIREMENT_STATE=unread
 OPERATOR_RETIREMENT_BY=
 OPERATOR_RETIREMENT_AT=
