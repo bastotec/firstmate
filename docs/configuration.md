@@ -53,7 +53,7 @@ data/
 state/
   <id>.meta               task metadata; bin/fm-spawn.sh owns base fields, "Runtime backend" the backend fields
   <id>.status             crewmate "<state>: <note>" wake events, not current state (bin/fm-crew-state.sh owns that)
-  <id>.agent-diagnostics  stream agent's own failures, one line per event, rotated 3x256KiB; written best-effort by the agent itself (bin/fm-stream-agent.py, crates/fm-stream-agent), removed by teardown
+  <id>.agent-diagnostics  stream agent's own failures (`primary-chat.agent-diagnostics` for the statusless primary), one line per event, rotated 3x256KiB; written best-effort by the agent itself (bin/fm-stream-agent.py, crates/fm-stream-agent); task-owned copies are removed by teardown
   <id>.turn-ended         touched by bin/fm-deck-worker.sh at turn end
   <id>.progress           in-turn native activity, read for the busy-age bound only (bin/fm-busy-event.sh)
   <id>.crew-state         local ship task's validation record for file watchers; bin/fm-crew-state.sh "PUBLISHED RECORD" owns fields, refreshes, and cleanup

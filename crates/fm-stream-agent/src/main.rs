@@ -7,14 +7,14 @@ mod local;
 mod pty;
 mod receiver;
 use base64::Engine;
-use fm_stream_wire::{is_machine_name, protocol_of_health, HUB_PROTOCOL};
+use fm_stream_wire::{is_label, is_machine_name, protocol_of_health, HUB_PROTOCOL};
 use pty::Pty;
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -35,20 +35,34 @@ const FRAME_BYTES: usize = 65536;
 /// Output queued for the hub before the reader stops reading the pty. A hub
 /// that stops taking output back-pressures the endpoint, as it always has.
 const OUTBOX_BYTES: usize = 1 << 20;
-/// The agent's own diagnostics destination: state/<task>.agent-diagnostics
-/// beside the status path, one line per failure the agent detects about
-/// itself. Bounded by rotation, not by size alone - a count cap holds even
-/// when the only writer is the one appending.
+/// The agent's own diagnostics destination in the task's home-owned state
+/// directory, one line per failure the agent detects about itself. Bounded by
+/// rotation, not by size alone - a count cap holds even when the only writer
+/// is the one appending.
 const DIAGNOSTICS_MAX_BYTES: u64 = 256 * 1024;
 const DIAGNOSTICS_FILES: u32 = 3;
 
-/// The diagnostics path for this task: the status path with its .status
-/// suffix swapped for .agent-diagnostics, or "" when there is no status path.
+/// The diagnostics path for this task, derived from its status record when it
+/// has one and otherwise from the home-owned state directory.
 fn diagnostics_path(options: &Options) -> String {
-    options
-        .status_path
-        .strip_suffix(".status")
-        .map(|stem| format!("{stem}.agent-diagnostics"))
+    if let Some(stem) = options.status_path.strip_suffix(".status") {
+        return format!("{stem}.agent-diagnostics");
+    }
+    let state = std::env::var_os("FM_STATE_OVERRIDE")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("FM_HOME")
+                .filter(|path| !path.is_empty())
+                .map(|home| PathBuf::from(home).join("state"))
+        });
+    state
+        .map(|state| {
+            state
+                .join(format!("{}.agent-diagnostics", options.label))
+                .to_string_lossy()
+                .into_owned()
+        })
         .unwrap_or_default()
 }
 
@@ -58,9 +72,26 @@ fn diag_write(path: &str, event: &str, reason: impl std::fmt::Display) {
     if path.is_empty() {
         return;
     }
-    let line = format!("{} {event} {reason}\n", timestamp());
+    let reason = reason
+        .to_string()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut line = format!("{} {event} {reason}\n", timestamp());
+    if line.len() > DIAGNOSTICS_MAX_BYTES as usize {
+        let mut end = DIAGNOSTICS_MAX_BYTES as usize - 1;
+        while !line.is_char_boundary(end) {
+            end -= 1;
+        }
+        line.truncate(end);
+        line.push('\n');
+    }
     let result = (|| -> std::io::Result<()> {
-        if fs::metadata(path).map(|m| m.len()).unwrap_or(0) >= DIAGNOSTICS_MAX_BYTES {
+        if fs::metadata(path)
+            .map(|metadata| metadata.len().saturating_add(line.len() as u64))
+            .unwrap_or(0)
+            > DIAGNOSTICS_MAX_BYTES
+        {
             let _ = fs::remove_file(format!("{path}.{}", DIAGNOSTICS_FILES - 1));
             for index in (1..DIAGNOSTICS_FILES - 1).rev() {
                 let _ = fs::rename(format!("{path}.{index}"), format!("{path}.{}", index + 1));
@@ -306,6 +337,11 @@ impl Options {
         }
         if o.label.is_empty() {
             return Err(Error::Other("--label is required".into()));
+        }
+        if !is_label(&o.label) {
+            return Err(Error::Other(
+                "--label must be 1-128 characters of [A-Za-z0-9._@%+-]".into(),
+            ));
         }
         if !Path::new(&o.cwd).is_absolute() || !Path::new(&o.cwd).is_dir() {
             return Err(Error::Other("--cwd must be an absolute directory".into()));
@@ -868,25 +904,36 @@ impl Agent {
         *self.hub.deadline.lock().unwrap() = None;
         let _ = self.hub.call("POST", "/v1/agent/frames", Some(&json!({"machine":self.options.machine,"frames":[{"endpoint_id":self.id,"closed":true,"exit_code":null}]})), Duration::from_secs(2));
     }
+    fn spawn_worker<F>(self: &Arc<Self>, name: &'static str, work: F) -> std::thread::JoinHandle<()>
+    where
+        F: FnOnce(&Agent) + Send + 'static,
+    {
+        let agent = self.clone();
+        std::thread::spawn(move || {
+            if let Err(payload) =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(&agent)))
+            {
+                let reason = payload
+                    .downcast_ref::<&str>()
+                    .copied()
+                    .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                    .unwrap_or("unknown panic");
+                diag(
+                    &agent.options,
+                    "thread-panicked",
+                    format_args!("{name}: {reason}"),
+                );
+                agent.halt();
+            }
+        })
+    }
     fn run(self: Arc<Self>) -> Result<(), Error> {
         signal_hook::flag::register(signal_hook::consts::SIGTERM, self.stop.clone())?;
         signal_hook::flag::register(signal_hook::consts::SIGINT, self.stop.clone())?;
-        let reader = {
-            let a = self.clone();
-            std::thread::spawn(move || a.reader())
-        };
-        let heartbeat = {
-            let a = self.clone();
-            std::thread::spawn(move || a.heartbeat())
-        };
-        let commands = {
-            let a = self.clone();
-            std::thread::spawn(move || a.commands())
-        };
-        let publisher = {
-            let a = self.clone();
-            std::thread::spawn(move || a.publisher())
-        };
+        let reader = self.spawn_worker("pty-reader", |agent| agent.reader());
+        let heartbeat = self.spawn_worker("heartbeat", |agent| agent.heartbeat());
+        let commands = self.spawn_worker("commands", |agent| agent.commands());
+        let publisher = self.spawn_worker("publisher", |agent| agent.publisher());
         if let Some(listener) = self.local.listen(&self.id) {
             let a = self.clone();
             std::thread::spawn(move || local::serve(a, listener));
@@ -1117,7 +1164,7 @@ mod tests {
             hub: String::new(),
             token_file: String::new(),
             machine: String::new(),
-            label: String::new(),
+            label: "task".into(),
             cwd: String::new(),
             status_path: status_path.into(),
             ready_file: String::new(),
@@ -1136,7 +1183,6 @@ mod tests {
             diagnostics_path(&options),
             "/home/state/task.agent-diagnostics"
         );
-        assert_eq!(diagnostics_path(&test_options("")), "");
     }
 
     #[test]
@@ -1176,15 +1222,26 @@ mod tests {
         let mut sorted = numbers.clone();
         sorted.sort();
         assert_eq!(numbers, sorted, "rotation must not reorder events");
-        // No rotated file exceeds the cap by more than one line.
         for text in [&two, &one, &live] {
-            assert!(text.len() as u64 <= DIAGNOSTICS_MAX_BYTES + 512);
+            assert!(text.len() as u64 <= DIAGNOSTICS_MAX_BYTES);
             assert!(text.ends_with('\n'));
         }
         // One line per event, timestamp first, event second.
         let first = all.first().unwrap();
         assert!(first.starts_with("20"), "{first}");
         assert_eq!(first.split(' ').nth(1), Some("publish-failed"));
+        let oversized = test_options(&dir.join("oversized.status").display().to_string());
+        diag(
+            &oversized,
+            "publish-failed",
+            "x".repeat(DIAGNOSTICS_MAX_BYTES as usize * 2),
+        );
+        assert!(
+            fs::metadata(dir.join("oversized.agent-diagnostics"))
+                .unwrap()
+                .len()
+                <= DIAGNOSTICS_MAX_BYTES
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1296,6 +1353,10 @@ mod tests {
             .to_str()
             .unwrap()
             .to_owned();
+        let status_path = std::env::temp_dir().join(format!(
+            "fm-agent-worker-panic-{}.status",
+            std::process::id()
+        ));
         let options = Options::parse(&[
             "--hub".into(),
             "http://127.0.0.1:1".into(),
@@ -1303,6 +1364,8 @@ mod tests {
             "resize-test".into(),
             "--cwd".into(),
             cwd.clone(),
+            "--status-path".into(),
+            status_path.display().to_string(),
             "--rows".into(),
             "24".into(),
             "--cols".into(),
@@ -1337,6 +1400,21 @@ mod tests {
             geometry: Mutex::new((24, 80)),
             output: Mutex::new(Vec::new()),
         })
+    }
+
+    #[test]
+    fn worker_panic_is_durable_and_halts_agent() {
+        let agent = resize_test_agent();
+        let path = diagnostics_path(&agent.options);
+        let _ = fs::remove_file(&path);
+        let worker = agent.spawn_worker("test-worker", |_| panic!("worker failed"));
+        worker.join().unwrap();
+        assert!(agent.stop.load(Ordering::SeqCst));
+        assert!(fs::read_to_string(&path)
+            .unwrap()
+            .contains("thread-panicked test-worker: worker failed"));
+        agent.pty.close(true).unwrap();
+        let _ = fs::remove_file(path);
     }
 
     #[test]

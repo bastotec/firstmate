@@ -6,14 +6,15 @@
 # agent's life, so every failure the agent detects about itself after startup -
 # a hub it cannot reach, a re-registration that failed, a stand-down - was
 # unreportable: a worker that stopped working for a reason nobody could read.
-# The diagnostics file beside the task's status path is the fix, and this file
-# pins its three properties.
+# The diagnostics file in the task's home-owned state directory is the fix,
+# and this file pins its properties.
 #
-# 1. Rotation is bounded: at most DIAGNOSTICS_FILES files exist, the oldest
-#    content leaves first, and the bound holds on the append path alone - no
-#    timer, no second process.
-# 2. Failure routing: the same conditions that used to write one stderr line
-#    now append one diagnostics line with a timestamp, an event, and a reason.
+# 1. Rotation is bounded: at most DIAGNOSTICS_FILES files exist, every record
+#    and file stays within DIAGNOSTICS_MAX_BYTES, and oldest content leaves
+#    first on the append path alone.
+# 2. Failure routing: detected failures append one diagnostics line with a
+#    timestamp, an event, and a reason, including statusless and thread-failure
+#    paths.
 # 3. Silence on failure: a diagnostics write that cannot happen is swallowed,
 #    never raised into the agent's main path.
 set -u
@@ -71,7 +72,14 @@ finally:
     agent.DIAGNOSTICS_MAX_BYTES = original_max
     agent.DIAGNOSTICS_FILES = original_files
 
-# 2. Line shape: one line per event, timestamp, event, single-line reason.
+# 2. A single oversized event is truncated before it can exceed the cap.
+oversized = os.path.join(work, "oversized")
+agent._diag_write(oversized, "publish-failed", "x" * (agent.DIAGNOSTICS_MAX_BYTES * 2))
+report("oversized-event-bounded",
+       os.path.getsize(oversized) <= agent.DIAGNOSTICS_MAX_BYTES,
+       "size=%d" % os.path.getsize(oversized))
+
+# 3. Line shape: one line per event, timestamp, event, single-line reason.
 agent._diag_write(small, "stood-down", "endpoint superseded\nby another\nworker")
 lines = open(small).read().splitlines()
 report("line-is-single-line",
@@ -80,8 +88,8 @@ report("line-is-single-line",
        and lines[-1].endswith("endpoint superseded by another worker"),
        repr(lines[-1]))
 
-# 3. Routing: the failure sites call the helper with the home's options shape.
-options = SimpleNamespace(status_path=os.path.join(work, "task.status"))
+# 4. Routing: the failure sites call the helper with the home's options shape.
+options = SimpleNamespace(status_path=os.path.join(work, "task.status"), label="task")
 path = agent._diagnostics_path(options)
 report("path-beside-status",
        path == os.path.join(work, "task.agent-diagnostics"),
@@ -92,11 +100,68 @@ report("agent-diag-writes",
        and open(path).read().splitlines()[-1].endswith("cannot reach the hub at http://x"),
        open(path).read() if os.path.exists(path) else "absent")
 
-# A missing status path means no diagnostics destination, not an error.
-agent._agent_diag(SimpleNamespace(status_path=""), "publish-failed", "x")
-report("no-status-path-is-silent", True)
+# A statusless endpoint uses its home-owned state directory.
+home = os.path.join(work, "home")
+state = os.path.join(home, "state")
+os.makedirs(state)
+old_home = os.environ.get("FM_HOME")
+old_state = os.environ.pop("FM_STATE_OVERRIDE", None)
+os.environ["FM_HOME"] = home
+try:
+    statusless = SimpleNamespace(status_path="", label="primary-chat")
+    statusless_path = agent._diagnostics_path(statusless)
+    agent._agent_diag(statusless, "publish-failed", "statusless endpoint failure")
+finally:
+    if old_home is None:
+        os.environ.pop("FM_HOME", None)
+    else:
+        os.environ["FM_HOME"] = old_home
+    if old_state is not None:
+        os.environ["FM_STATE_OVERRIDE"] = old_state
+report("statusless-path-is-home-owned",
+       statusless_path == os.path.join(state, "primary-chat.agent-diagnostics")
+       and os.path.exists(statusless_path),
+       statusless_path)
 
-# 4. Silence: an unwritable destination never raises into the main path.
+# 5. An uncaught worker-thread failure is durable and halts the agent.
+class FakeHub:
+    deadline = None
+
+    def call(self, *_args, **_kwargs):
+        return {}
+
+
+class FakePty:
+    exit_code = 1
+
+    def close(self, *_args):
+        pass
+
+    def release(self):
+        pass
+
+
+thread_options = SimpleNamespace(
+    machine="test", status_path=os.path.join(work, "thread.status"), label="thread",
+    state_interval=5.0, poll_secs=1.0)
+subject = agent.Agent(thread_options, FakeHub(), FakePty(), "0" * 32)
+
+
+def reader():
+    subject.stop.wait()
+    subject.reader_done.set()
+
+
+subject.read_loop = reader
+subject.state_loop = lambda: (_ for _ in ()).throw(OverflowError("timer overflow"))
+subject.command_loop = subject.stop.wait
+thread_result = subject.run(install_signals=False)
+thread_diagnostics = open(agent._diagnostics_path(thread_options)).read()
+report("thread-failure-is-durable",
+       thread_result == 1 and "thread-crashed state: OverflowError: timer overflow" in thread_diagnostics,
+       thread_diagnostics)
+
+# 6. Silence: an unwritable destination never raises into the main path.
 denied = os.path.join(work, "denied.agent-diagnostics")
 open(denied, "w").close()
 os.chmod(denied, 0o000)

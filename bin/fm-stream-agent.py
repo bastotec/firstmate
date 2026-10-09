@@ -22,9 +22,9 @@ What it owns, and why each stays here rather than at the hub:
     another machine work at all.
   * The agent's own diagnostics.  Failures the agent detects about itself after
     startup (a hub it cannot reach, a failed re-registration, a stand-down) go
-    to state/<id>.agent-diagnostics beside the status path, one line per event,
-    rotated under DIAGNOSTICS_FILES/ DIAGNOSTICS_MAX_BYTES.  Startup refusals
-    still go to stderr, where the spawn reads them.
+    to state/<id-or-label>.agent-diagnostics in the home-owned state directory,
+    one line per event, rotated under DIAGNOSTICS_FILES/DIAGNOSTICS_MAX_BYTES.
+    Startup refusals still go to stderr, where the spawn reads them.
   * The endpoint's identity.  The hub's registry is in memory, so a hub that
     restarted has forgotten every endpoint it served.  The agent holds the id
     and registers it again when the hub says it does not know it, which is why
@@ -87,6 +87,7 @@ NATIVE_STEERING_CAPABILITY = "native_steering_receiver"
 STATUS_STATES = ("working", "needs-decision", "blocked", "paused", "done",
                  "failed", "resolved")
 MACHINE_RE = re.compile(r"\A[A-Za-z0-9._-]{1,128}\Z")
+LABEL_RE = re.compile(r"\A[A-Za-z0-9._@%+-]{1,128}\Z")
 _TCGETSID = ctypes.CDLL(None).tcgetsid
 _TCGETSID.argtypes = [ctypes.c_int]
 _TCGETSID.restype = ctypes.c_int
@@ -186,32 +187,34 @@ STARTUP_BUDGET = 12.0
 # previously written to stderr, which _silence_diagnostics() points at
 # /dev/null for the rest of the process's life: a worker that stopped working
 # for a reason nobody could read. The diagnostics file is the durable answer,
-# written next to the task's status path in the same home-owned state
-# directory so no local path leaves the machine.
+# written in the task's home-owned state directory so no local path leaves the
+# machine.
 #
 # The bound is a FILE-COUNT cap, not a size cap: at most DIAGNOSTICS_FILES
 # files exist at once, the live one plus rotated .1 .. .(N-1) copies, each
-# rotated only after exceeding DIAGNOSTICS_MAX_BYTES. A size cap alone needs
-# someone to check it; a count cap holds even when the only writer is the one
-# appending. Rotation runs on the append path, so the bound is enforced
-# exactly where growth happens and never needs a timer or a second process.
+# rotated before its next append would exceed DIAGNOSTICS_MAX_BYTES. A size cap
+# alone needs someone to check it; a count cap holds even when the only writer
+# is the one appending. Rotation runs on the append path, so the bound is
+# enforced exactly where growth happens and never needs a timer or a second
+# process.
 DIAGNOSTICS_MAX_BYTES = 256 * 1024
 DIAGNOSTICS_FILES = 3
 
 
 def _diagnostics_path(options) -> str:
-    """state/<task>.agent-diagnostics beside the task's status path, or ''.
-
-    Derived the same way deck_receiver derives its record directory - strip the
-    .status suffix, extend - so the two always name the same task.
-    """
-    if not options.status_path:
+    """Return this task's home-owned diagnostics path, or ''."""
+    if options.status_path:
+        return options.status_path.removesuffix(".status") + ".agent-diagnostics"
+    state = os.environ.get("FM_STATE_OVERRIDE", "")
+    if not state and os.environ.get("FM_HOME"):
+        state = os.path.join(os.environ["FM_HOME"], "state")
+    if not state:
         return ""
-    return options.status_path.removesuffix(".status") + ".agent-diagnostics"
+    return os.path.join(state, options.label + ".agent-diagnostics")
 
 
-def _rotate_diagnostics(path: str) -> None:
-    """Roll the diagnostics file once it exceeds the size cap.
+def _rotate_diagnostics(path: str, incoming: int) -> None:
+    """Roll the diagnostics file before its next append would exceed the cap.
 
     .2 is unlinked, .1 becomes .2, the live file becomes .1 - so the oldest
     content always leaves first and the total across all files is bounded by
@@ -219,7 +222,7 @@ def _rotate_diagnostics(path: str) -> None:
     by the caller: a diagnostics write must never take the agent down.
     """
     try:
-        if os.path.getsize(path) < DIAGNOSTICS_MAX_BYTES:
+        if os.path.getsize(path) + incoming <= DIAGNOSTICS_MAX_BYTES:
             return
         try:
             os.unlink("%s.%d" % (path, DIAGNOSTICS_FILES - 1))
@@ -252,10 +255,14 @@ def _diag_write(path: str, event: str, reason) -> None:
         event,
         " ".join(str(reason).split()),
     )
+    encoded = line.encode("utf-8")
+    if len(encoded) > DIAGNOSTICS_MAX_BYTES:
+        encoded = (encoded[:DIAGNOSTICS_MAX_BYTES - 1]
+                   .decode("utf-8", "ignore").encode("utf-8") + b"\n")
     try:
-        _rotate_diagnostics(path)
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write(line)
+        _rotate_diagnostics(path, len(encoded))
+        with open(path, "ab") as fh:
+            fh.write(encoded)
     except OSError:
         pass
 
@@ -1356,10 +1363,24 @@ class Agent:
         # That owner keeps the signal handlers and controls only this Pty child.
         reader = state = commands = None
         started = []
+        failures = []
+
+        def guarded(name, target):
+            try:
+                target()
+            except BaseException as exc:  # noqa: BLE001
+                failures.append(exc)
+                _agent_diag(self.options, "thread-crashed",
+                            "%s: %s: %s" % (name, type(exc).__name__, exc))
+                self.halt()
+
         try:
-            reader = threading.Thread(target=self.read_loop, name="pty-reader", daemon=True)
-            state = threading.Thread(target=self.state_loop, name="state", daemon=True)
-            commands = threading.Thread(target=self.command_loop, name="commands", daemon=True)
+            reader = threading.Thread(target=guarded, args=("pty-reader", self.read_loop),
+                                      name="pty-reader", daemon=True)
+            state = threading.Thread(target=guarded, args=("state", self.state_loop),
+                                     name="state", daemon=True)
+            commands = threading.Thread(target=guarded, args=("commands", self.command_loop),
+                                        name="commands", daemon=True)
             for thread in (reader, state, commands):
                 thread.start()
                 started.append(thread)
@@ -1403,7 +1424,7 @@ class Agent:
                 "state": {"alive": False, "foreground": [], "cwd": "",
                           "published_at": _now()},
             }])
-        return 0
+        return 1 if failures else 0
 
 
 # The key vocabulary firstmate's control plane actually permits, and nothing
@@ -1510,6 +1531,9 @@ def main(argv: list) -> int:
         raise SystemExit("fm-stream-agent: --machine must be 1-128 characters of [A-Za-z0-9._-]")
     if not options.label:
         raise SystemExit("fm-stream-agent: --label is required")
+    if not LABEL_RE.match(options.label):
+        raise SystemExit("fm-stream-agent: --label must be 1-128 characters of "
+                         "[A-Za-z0-9._@%+-]")
     if not options.cwd or not os.path.isabs(options.cwd):
         raise SystemExit("fm-stream-agent: --cwd must be an absolute path")
     if not os.path.isdir(options.cwd):
