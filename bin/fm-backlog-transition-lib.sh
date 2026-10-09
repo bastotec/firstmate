@@ -1194,22 +1194,17 @@ fm_backlog_close_marker_stage() {  # <temporary-path> <id> <data-dir> <spawn-gen
 #
 # The endpoint state is the caller's to state, because only the caller knows
 # what has been proved by the time it publishes. Teardown publishes UNCONFIRMED
-# and re-stages to confirmed once its endpoint gate passes: at publish time
-# nothing has proved this task's worker stopped, and a refusal between here and
-# that gate - a failed worktree return - would
-# otherwise leave a record replay reads as an ordinary interrupted close and
-# finishes, removing the task record and closing the row for a worker nobody
-# even asked to stop. bin/fm-retire-endpoint.sh publishes CONFIRMED, because
-# the operator's recorded assertion is the proof on that path and a marker it
-# left behind must stay replayable rather than become a hold with no record.
+# and re-stages to confirmed only after its endpoint gate and every later
+# cleanup refusal have passed: a marker left by any partial cleanup must retain
+# the task identity for a teardown rerun instead of letting replay retire it.
+# bin/fm-retire-endpoint.sh publishes CONFIRMED, because the operator's recorded
+# assertion is the proof on that path and a marker it left behind must stay
+# replayable rather than become a hold with no record.
 #
-# Teardown's delivery gate (fm-inactive-reconcile.sh report) sits deliberately
-# OUTSIDE this window: it runs after the endpoint gate, where the worker really
-# is proved stopped, so the stamp is already cleared by then. The consequence
-# is worth stating plainly: a run that refuses there leaves a confirmed marker,
-# so the next session start replays it and closes the row even though the
-# refusal speaks of retaining records for a delivery retry. That mismatch
-# predates this contract and is follow-up work, not something this changes.
+# Teardown settles the stamp immediately before its final task/backlog
+# transition. An interruption inside that transition is therefore replayable,
+# while every earlier interruption or refusal preserves the task record and
+# backlog row for a rerun.
 fm_backlog_close_marker_write() {  # <state-dir> <id> <data-dir> <spawn-gen> <endpoint-unconfirmed: 0|1> [flag...]
   local state=$1 id=$2 data=$3 spawn_gen=$4 endpoint_unconfirmed=$5 marker tmp
   fm_backlog_directory_present "$state" "state directory" || return 1
@@ -1231,9 +1226,9 @@ fm_backlog_close_marker_write() {  # <state-dir> <id> <data-dir> <spawn-gen> <en
 #
 # The endpoint state itself is decided at publish time, by
 # fm_backlog_close_marker_write above, which owns why. Re-stamping only ever
-# settles it afterwards: teardown clears it to confirmed once its endpoint gate
-# has proved the worker stopped, and replay carries the published value through
-# unchanged when it marks a close cleanup-incomplete.
+# settles it afterwards: teardown clears it at the final task/backlog
+# transition after every cleanup refusal has passed, and replay carries the
+# published value through unchanged when it marks a close cleanup-incomplete.
 fm_backlog_close_marker_restage() {  # <state-dir> <marker-path> <id> <data-dir> <spawn-gen> <cleanup-incomplete: 0|1> <endpoint-unconfirmed: 0|1> [flag...]
   local state=$1 marker=$2 id=$3 data=$4 spawn_gen=$5 cleanup_incomplete=$6 endpoint_unconfirmed=$7 tmp
   shift 7

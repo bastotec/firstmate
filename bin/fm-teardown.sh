@@ -185,14 +185,16 @@
 # Pre-teardown cleanup sequence (runs once every landed/discard-work safety
 # refusal above has already passed, and BEFORE any worktree return or branch
 # delete below - a still-active run or a leaked process may own live work in
-# that worktree). The endpoint close runs first, ahead of every step below,
-# because the endpoint's own pane machinery - its interactive shell, which
-# ignores SIGTERM by design, and the idle pane-resident worker driver - is
-# owned by bin/fm-backend.sh's close path, not by the cwd-based reaper: run in
-# the old order, the reaper counted that machinery as leaked and forced its
-# kill (observed 2026-10-09, data/teardown-leaks-worktree-processes). The
-# close path itself may still need KILL for that shell; that is expected and
-# is not a leak finding.
+# that worktree). An ordinary task's endpoint close runs first, ahead of every
+# step below, because the endpoint's own pane machinery - its interactive
+# shell, which ignores SIGTERM by design, and the idle pane-resident worker
+# driver - is owned by bin/fm-backend.sh's close path, not by the cwd-based
+# reaper: run in the old order, the reaper counted that machinery as leaked and
+# forced its kill (observed 2026-10-09,
+# data/teardown-leaks-worktree-processes). The close path itself may still need
+# KILL for that shell; that is expected and is not a leak finding. A secondmate
+# endpoint instead closes at its dedicated retirement point immediately before
+# its home is removed and never enters this worktree-reaper sequence.
 #   Fix 1 - conclude the task's own no-mistakes run. A ship task's worktree can
 #     be torn down while its no-mistakes pipeline run is still PARKED at a gate
 #     (awaiting_approval/fix_review/any awaiting_agent field), with no worker
@@ -2798,14 +2800,13 @@ task_operator_retirement() {
 # mark_pending_close_endpoint_confirmed: the other half of the publish-time
 # stamp. A pending close is published carrying endpoint=unconfirmed
 # (bin/fm-backlog-transition-lib.sh's fm_backlog_close_marker_write), so this
-# clears it once - and only once - this task's endpoint gate has passed and the
-# worker is proved stopped. An interrupted close after that point still replays
-# at the next session start, exactly as it always did; one interrupted before
-# it stays for endpoint reconciliation, because nothing had proved the worker
-# stopped yet.
+# clears it only after the endpoint gate and every cleanup step that can still
+# refuse have passed, immediately before the final task/backlog transition.
+# An earlier interruption stays for a teardown rerun; an interruption during
+# the final transition replays at the next session start.
 #
-# A failed clear stops the run before any record is removed, because that is
-# the only way it genuinely leaves the close for a rerun: carrying on would
+# A failed clear stops the run before the task record is removed, because that
+# is the only way it genuinely leaves the close for a rerun: carrying on would
 # remove the task record under a marker still carrying the refusal, and a
 # stamped marker outliving its own record is one no replay and no rerun can
 # resolve.
@@ -2818,7 +2819,7 @@ mark_pending_close_endpoint_confirmed() {
       "$META_SPAWN_GEN" 0 0 \
       "${BACKLOG_TRANSITION_FLAGS[@]+"${BACKLOG_TRANSITION_FLAGS[@]}"}" \
       "${BACKLOG_DONE_ARGS[@]+"${BACKLOG_DONE_ARGS[@]}"}"; then
-    echo "error: the pending backlog close for $ID could not be marked endpoint-confirmed ($FM_BACKLOG_TRANSITION_ERROR); retaining every durable task record so a rerun can finish this close" >&2
+    echo "error: the pending backlog close for $ID could not be marked endpoint-confirmed ($FM_BACKLOG_TRANSITION_ERROR); retaining its task record and pending close so a rerun can finish cleanup" >&2
     return 1
   fi
 }
@@ -3155,23 +3156,11 @@ else
   BACKLOG_SKIP_REASON=$TEARDOWN_BACKLOG_SKIP_REASON
 fi
 
-# Every landed/discard-work refusal above has now passed (or --force skipped
-# them). The owning endpoint closes FIRST, before any worktree read or removal
-# step below, so the endpoint's own live machinery - its interactive shell and
-# the idle pane-resident worker driver - is taken down by the close path that
-# owns it rather than counted by the residual reaper as leaked processes (the
-# interactive shell ignores SIGTERM by design, so a reaper that reaches it
-# always ends in a forced kill and a false leak report; observed 2026-10-09 -
-# data/teardown-leaks-worktree-processes/report.md). The close path itself may
-# still need KILL for that shell, which is expected and is not a leak finding.
-# Not for kind=secondmate: a secondmate home's own runtime lifecycle is owned
-# by the dedicated process-event and firstmate-home removal machinery further
-# below, not by task-worktree cleanup.
+# Apply the pre-teardown cleanup sequence owned by the script header.
 if [ "$KIND" != secondmate ]; then
   fm_backend_kill "$BACKEND" "$T" "" "fm-$ID" \
     && TASK_KILL_RC=0 || TASK_KILL_RC=$?
   require_task_endpoint_gone "$TASK_KILL_RC" || exit 1
-  mark_pending_close_endpoint_confirmed || exit 1
 fi
 
 # Fix 1 and Fix 2 (see script header) run next, unconditionally on --force,
@@ -3226,6 +3215,9 @@ if [ "$KIND" != secondmate ]; then
 fi
 if [ "$KIND" = secondmate ]; then
   [ -n "$HOME_PATH" ] || HOME_PATH=$WT
+  fm_backend_kill "$BACKEND" "$T" "" "fm-$ID" \
+    && TASK_KILL_RC=0 || TASK_KILL_RC=$?
+  require_task_endpoint_gone "$TASK_KILL_RC" || exit 1
   handoff_wake_retire_stage \
     || { echo "error: receiver wake cleanup could not be staged; preserving the secondmate home and route" >&2; exit 1; }
   if remove_firstmate_home "$HOME_PATH" "secondmate home" "$ID"; then
@@ -3260,6 +3252,7 @@ fm_lock_remove_path "$STATE/.$ID.crew-state.lock" || true
 # retired endpoint; teardown only runs after landing is confirmed, so any
 # leftover unhandled steer here is moot rather than unlanded work.
 rm -rf "$STATE/$ID.inbox"
+mark_pending_close_endpoint_confirmed || exit 1
 # The record is gone, so the backlog must not still show this task in flight
 # when teardown reports success. Still under this task's meta lock, so a steer
 # racing the same id stays serialized exactly as it was before. A captain-held
