@@ -20,7 +20,9 @@
 #     exact disclosed remainder
 #   - orphan status logs whose task meta has already disappeared
 #   - per-task endpoint-liveness lines for a live and a dead recorded stream
-#     endpoint, and for a record left on a retired backend
+#     endpoint, for one rejoining (briefly 404) and reading alive, for a 404
+#     that persists through every retry and still reads dead, and for a record
+#     left on a retired backend
 #   - composition: the script invokes the real fm-lock.sh/fm-bootstrap.sh/
 #     fm-wake-drain.sh (their real, distinctive output appears verbatim), it
 #     does not reimplement their logic
@@ -1033,6 +1035,56 @@ EOF
   pass "stream endpoint liveness is reported per task: alive for a live endpoint, dead for a gone one"
 }
 
+# A worker re-registering with its hub after a restart answers the presence
+# probe 404 for a few seconds while being alive the whole time. The digest is
+# read once, at session open, so it cannot ask again later the way the cheap
+# probe's mid-session callers can: a rejoin reported dead there is a die-off
+# that never happened. The stub's miss_first knob holds the probe inside that
+# window deterministically, with no real restart to race.
+test_endpoint_liveness_stream_rejoin() {
+  local rec root home fakebin out rejoining
+  rec=$(new_world liveness-rejoin)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_deck "$fakebin"
+
+  { live_task_lines "$home/state" task-rejoin; printf 'kind=ship\n'; } > "$home/state/task-rejoin.meta"
+  rejoining=$(fm_test_stream_target_of "$home/state" task-rejoin)
+  # One 404, then the endpoint answers: the rejoin lands inside the ladder.
+  fm_test_fake_stream_set "$rejoining" '{"miss_first": 1}'
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "endpoint: alive (backend=stream window=$rejoining)" \
+    "a rejoining stream endpoint must not be reported dead at session start"
+
+  pass "stream endpoint liveness waits out a rejoin: a 404 that starts answering again reads alive"
+}
+
+# The same ladder must not stretch a real absence into a false alive: a 404
+# that persists through every retry is a dead endpoint, and the digest still
+# says so. forget makes the endpoint genuinely gone, so every probe 404s.
+test_endpoint_liveness_stream_rejoin_exhausted() {
+  local rec root home fakebin out gone
+  rec=$(new_world liveness-rejoin-exhausted)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_deck "$fakebin"
+
+  { live_task_lines "$home/state" task-gone; printf 'kind=ship\n'; } > "$home/state/task-gone.meta"
+  gone=$(fm_test_stream_target_of "$home/state" task-gone)
+  fm_test_fake_stream_set "$gone" '{"forget": true}'
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "endpoint: dead (backend=stream window=$gone)" \
+    "a 404 that persists through every retry must still be reported dead"
+
+  pass "stream endpoint liveness reports dead only once the retries are exhausted"
+}
+
 test_endpoint_liveness_retired_backend() {
   local rec root home fakebin out
   rec=$(new_world liveness-retired)
@@ -1974,6 +2026,8 @@ test_status_tail_bounding
 test_status_tail_line_cap
 test_orphan_status_logs_are_printed
 test_endpoint_liveness_stream
+test_endpoint_liveness_stream_rejoin
+test_endpoint_liveness_stream_rejoin_exhausted
 test_endpoint_liveness_retired_backend
 test_composition_invokes_real_scripts
 test_backlog_compact_tasks_axi_omits_bodies_and_keeps_metadata

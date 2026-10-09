@@ -93,6 +93,41 @@ FM_BACKEND_STREAM_AGENT_BIN="${FM_STREAM_AGENT_BIN:-$(dirname -- "${BASH_SOURCE[
 # caller bound above - so that cost is real and stands.
 FM_BACKEND_STREAM_MISSING_GRACE_SECS=6
 
+# How long a PRESENCE read may keep retrying a 404 before it reports the
+# endpoint dead: the digest ladder below. Derived from the same re-registration
+# window as FM_BACKEND_STREAM_MISSING_GRACE_SECS - a hub that restarted has
+# forgotten every endpoint until each agent registers itself again, so a 404
+# inside that window is a rejoin in progress, not a verdict. Deliberately
+# shorter than the grace window: a digest presence read has no whole-crew
+# budget to spend (FM_SESSION_START_TIMEOUT bounds the whole digest, and every
+# dead endpoint pays the full ladder), so it covers the same FIRST-attempt
+# rejoin the grace window covers and gives up sooner rather than spending the
+# session's startup bound.
+FM_BACKEND_STREAM_PRESENCE_RETRY_SECS=2
+
+# fm_backend_stream_target_settled: the endpoint-existence read that waits out
+# a rejoining worker. Same probe, same routes, same label check as
+# fm_backend_stream_target_ready - this is that helper retried, not a second
+# probe - but a 404 keeps being retried within the bounded ladder above before
+# it is allowed to mean "absent". Any other refusal (an unreachable hub, a
+# malformed or foreign-hub target, a label mismatch, an auth failure) is
+# answered from the first reply, exactly as fm_backend_stream_target_ready
+# answers it: only the 404 is ever ambiguous between "gone" and
+# "re-registering right now". The code is reset before each probe so a
+# refusal that never reached HTTP cannot inherit an earlier call's 404.
+# Exit status and stdout are fm_backend_stream_target_ready's, unchanged.
+fm_backend_stream_target_settled() {  # <target> [expected-label]
+  local target=$1 expected=${2:-} waited=0
+  while :; do
+    FM_BACKEND_STREAM_HTTP_CODE=000
+    fm_backend_stream_target_ready "$target" "$expected" && return 0
+    [ "$FM_BACKEND_STREAM_HTTP_CODE" = 404 ] || return 1
+    [ "$waited" -lt "$FM_BACKEND_STREAM_PRESENCE_RETRY_SECS" ] || return 1
+    sleep 1
+    waited=$((waited + 1))
+  done
+}
+
 # The last HTTP status fm_backend_stream_api saw. Initialised at source time so
 # an error path that runs before any request - a missing token, an unreachable
 # hub - can report it without tripping `set -u` in a caller.
