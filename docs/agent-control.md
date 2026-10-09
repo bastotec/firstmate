@@ -47,8 +47,10 @@ Interrupt never rewrites busy state as proof of its own success.
 No supported adapter puts the cancelled prompt back into its composer, so no clear follows the interrupt key; the interrupt postcondition is endpoint survival, not a proven composer reading.
 
 `exit` runs a verify-then-clear composer gate before typing the exit command.
-A proven `empty` verdict passes immediately and a proven `pending` verdict refuses by naming the pending text, so real typed input is preserved instead of being concatenated.
-The one exception is the task's own steering-inbox doorbell line left unsubmitted: pending text that is nothing but copies of that line gets the clear below instead of a refusal, so the fleet never deadlocks on its own line.
+A proven `empty` verdict passes immediately; a proven `pending` verdict normally refuses with a diagnostic, preserving real typed input instead of concatenating the exit command onto it.
+The one exception is the task's own steering-inbox doorbell line left unsubmitted: it gets the verified clear instead of an immediate refusal, so the fleet does not deadlock on its own line.
+[`bin/fm-composer-lib.sh`](../bin/fm-composer-lib.sh)'s `fm_composer_holds_only_text` owns the strict own-text matching rule; text that does not qualify stays protected.
+If the doorbell still reads `pending` after the clear budget, the gate refuses rather than typing the exit command onto it.
 Any state the fleet cannot prove (`unknown`, `pending-unproven`, or an unreadable read) never refuses structurally: the gate delivers the harness's verified composer clear (`bin/fm-control-lib.sh`'s `fm_control_composer_clear_keys`), re-reads the state, and retries on a bounded budget before typing the exit command anyway, because restart and relaunch must never stay blocked on a composer state the fleet cannot prove.
 An agent found gone during that gate is reported stopped instead, since a dead endpoint is a respawn question for `relaunch` or `recover-missing`, not a composer question.
 
@@ -144,7 +146,7 @@ It differs from the steps above in exactly three places.
   [Stream's lifecycle guide](stream-backend.md#secondmate-lifecycle) owns its new-endpoint recovery and local-agent ownership guard; [Failure and rollback](#failure-and-rollback) above owns failed rebind and handover handling.
 - An ambiguous or unreadable endpoint state refuses.
   Only a positively classified state acts.
-- `exit`'s composer gate, above, is a fail-closed boundary exactly where the fleet can prove text (`pending` refuses), and `relaunch` inherits it by stopping the old agent through `exit`.
+- `relaunch` inherits the [exit composer gate](#verbs) by stopping the old agent through `exit`.
 - `fm-spawn --relaunch` independently refuses unless the recorded endpoint is positively agent-free, so a replacement can never join a live agent.
   When the recorded prior harness is Deck, it also requires the adapter's residual-driver proof before arming the new incarnation, including when an operator invokes the already-stopped relaunch boundary directly.
   It also requires the endpoint's shell to be in the recorded worktree and refuses immediately when it is not.
@@ -162,7 +164,7 @@ The empirical basis for each adapter's value is the `harness-adapters` skill's v
 
 ## Verification
 
-- `tests/fm-control.test.sh` - the supported-worker adapter contract, the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, the exit composer gate's verify-then-clear shapes, and marker non-regression, all against a stubbed session provider.
+- `tests/fm-control.test.sh` - the supported-worker adapter contract, the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, the exit composer gate's verify-then-clear shapes and own-doorbell exception with appended-text protection, and marker non-regression, all against a stubbed session provider.
 - `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, backlog recovery that preserves a dependency-blocked In-flight row while refusing blocked Queued and held In-flight rows before stopping the existing worker, rollback after a failed launch, and an already-armed merge poll still authenticating after the record rewrite.
 - `tests/fm-control-recover-missing.test.sh` - the missing-terminal recovery on fake stream endpoints: the live, ambiguous, absent-copy, and pool-slot-ownership refusals leaving the record and instructions byte-identical, a rescue succeeding on a copy full of uncommitted work and leaving every one of those changes byte-identical, a failed endpoint creation, the recorded profile surviving a differing configured secondmate pin, the explicit replacement-profile recoveries and their refusals (axis resets, deck from a recorded effort, an explicit deck effort, an unverified harness, a held backlog row, and the failed-handoff rollback that keeps the recorded runtime), removed-adapter records refusing without mutation, a still-starting shell being waited out rather than handed over and the refusal when it never settles, a failed recreation rolling the progress note back while leaving a concurrent write to the durable record in place, and the message after a failed launch handoff.
 - [Portable stream-parity regressions](verification/runtime-backends.md#portable-stream-parity-regressions) - stream endpoint rebinding, owning-home agent refusal, and confirmed versus unconfirmed cleanup after a failed rebind.

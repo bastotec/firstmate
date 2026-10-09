@@ -145,15 +145,8 @@
 #     proving a stop that never happened.
 #   - An ambiguous or unreadable endpoint state refuses; only a positively
 #     classified state acts.
-#   - A composer that VISIBLY holds pending text refuses before an exit command
-#     is typed, so proven existing text is preserved instead of being
-#     concatenated. A composer state the fleet cannot prove (`unknown`,
-#     `pending-unproven`, or an unreadable read) never refuses structurally:
-#     the exit path runs a bounded verify-then-clear sequence - deliver the
-#     harness's verified composer clear (bin/fm-control-lib.sh's
-#     fm_control_composer_clear_keys), re-read the state, retry - and an agent
-#     that is simply gone is reported stopped instead, because a dead endpoint
-#     is a respawn question, not a composer question.
+#   - The exit composer gate preserves proven human text; gate_exit_composer
+#     below owns its verify-then-clear sequence and own-doorbell exception.
 #
 # Environment knobs (all bounded waits, seconds):
 #   FM_CONTROL_POLL              poll interval for postcondition waits (0.5)
@@ -163,7 +156,7 @@
 #   FM_CONTROL_LAUNCH_WAIT       dead->alive wait after a relaunch (90)
 #   FM_CONTROL_EXIT_RETRIES      Enter retries for the exit command (3)
 #   FM_CONTROL_CLEAR_RETRIES     composer clear/re-read attempts in the exit
-#                                gate when the composer state is not proven (3)
+#                                gate for unproven input or an own doorbell (3)
 #   FM_CONTROL_CLEAR_WAIT        settle between one clear delivery and its
 #                                state re-read (1)
 set -eu
@@ -581,7 +574,8 @@ composer_holds_own_doorbell() {
 
 # gate_exit_composer: the composer gate in front of the exit command - the
 # verify-then-clear sequence. A proven `empty` composer passes immediately, and
-# proven `pending` text still refuses, so real typed input is never destroyed.
+# proven `pending` text refuses except for the own-doorbell case below, so real
+# typed input is never destroyed.
 # Every state the fleet cannot prove (`unknown`, `pending-unproven`, and any
 # future verdict) is cleared instead of structurally refused: deliver the
 # harness's verified composer clear (bin/fm-control-lib.sh's
@@ -600,8 +594,11 @@ composer_holds_own_doorbell() {
 # steering-inbox doorbell line left unsubmitted: it gets the same clear
 # sequence, because refusing on it deadlocks the fleet on its own line, while
 # pending text that is anything more than copies of that line still refuses.
+# bin/fm-composer-lib.sh's fm_composer_holds_only_text owns the strict match.
+# A doorbell still proven pending after the clear budget refuses too, so the
+# exit command is never concatenated onto a doorbell the clear did not remove.
 # Sets EXIT_COMPOSER_OUTCOME=proceed (type the exit command) or `agent-gone`,
-# or dies on proven pending text or an undeliverable clear key.
+# or dies on protected or uncleared pending text or an undeliverable clear key.
 gate_exit_composer() {
   local cmd=$1 composer_state clear_keys state attempt=0 key
   EXIT_COMPOSER_OUTCOME=proceed

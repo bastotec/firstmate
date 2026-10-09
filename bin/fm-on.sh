@@ -23,7 +23,9 @@
 # The SSH alias keeps normal public-key and strict host-key policy in ~/.ssh.
 # BatchMode makes an unknown host key or a password prompt fail at once instead
 # of asking on the controlling terminal, which inside a pane is an agent's
-# composer: a prompt there swallows the next typed line. This command explicitly disables agent forwarding, forwarding setup, and
+# composer: a prompt there swallows the next typed line.
+# It neither relaxes the host-key policy nor adds known_hosts entries.
+# This command explicitly disables agent forwarding, forwarding setup, and
 # configured SendEnv patterns. The remote entrypoint executes the selected
 # command under an empty environment with only its fixed runtime values.
 #
