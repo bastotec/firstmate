@@ -75,6 +75,7 @@ import sys
 import termios
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1601,13 +1602,21 @@ def main(argv: list) -> int:
     # per failed publish, re-registration or stand-down, for the worker's whole
     # life - go to the durable diagnostics file instead, which is rotated and
     # bounded where stderr was neither.
-    _agent_diag(options, "started",
-                "agent %s endpoint %s on %s -> %s"
-                % (AGENT_VERSION, endpoint_id, options.machine, options.hub))
     _silence_diagnostics()
     hub.end_startup()
 
-    return agent.run()
+    # The last durable account of an agent that died mid-life: everything past
+    # _silence_diagnostics() cannot reach stderr any more, and a crash with no
+    # trace is the quiet end of the same failure class this file exists to
+    # close. Format the traceback before the record grows, so a long one is
+    # collapsed to its message rather than truncated mid-frame.
+    try:
+        return agent.run()
+    except BaseException as exc:  # noqa: BLE001
+        _agent_diag(options, "agent-crashed",
+                    " ".join(traceback.format_exception_only(type(exc), exc)).strip()
+                    or repr(exc))
+        raise
 
 
 if __name__ == "__main__":

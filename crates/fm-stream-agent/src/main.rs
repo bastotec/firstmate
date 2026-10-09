@@ -213,6 +213,7 @@ impl Hub {
     }
 }
 
+#[derive(Clone)]
 struct Options {
     hub: String,
     token_file: String,
@@ -580,7 +581,17 @@ impl Agent {
         }
         drop(registration);
         self.wake.notify();
-        let _ = self.initial_state();
+        if let Err(error) = self.initial_state() {
+            // The heartbeat publishes the next frame within seconds, so a
+            // state frame lost here costs a moment of unreadability, not the
+            // recovery - same best-effort contract as the Python sibling,
+            // recorded rather than dropped.
+            diag(
+                &self.options,
+                "state-publish-failed",
+                format_args!("re-registered but could not publish state: {error}"),
+            );
+        }
         diag(
             &self.options,
             "re-registered",
@@ -1056,17 +1067,6 @@ fn serve(args: &[String]) -> Result<(), Error> {
         agent.options.machine,
         agent.options.hub
     );
-    diag(
-        &agent.options,
-        "started",
-        format_args!(
-            "agent {} endpoint {} on {} -> {}",
-            env!("CARGO_PKG_VERSION"),
-            agent.id,
-            agent.options.machine,
-            agent.options.hub
-        ),
-    );
     // Like Python, unlinkable startup diagnostic captures must not grow for
     // life. The durable diagnostics file carries the agent's own failures from
     // here, rotated and bounded where this capture was neither.
@@ -1078,7 +1078,14 @@ fn serve(args: &[String]) -> Result<(), Error> {
         libc::dup2(null.as_raw_fd(), 2);
     }
     *agent.hub.deadline.lock().unwrap() = None;
-    agent.run()
+    // The last durable account of an agent that died mid-life: stderr is gone
+    // from here on, so an Err that reaches this point would otherwise vanish
+    // with no trace at all.
+    let options = agent.options.clone();
+    let agent = agent;
+    agent.run().inspect_err(|error| {
+        diag(&options, "agent-crashed", error);
+    })
 }
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
