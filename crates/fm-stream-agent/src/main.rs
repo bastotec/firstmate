@@ -35,6 +35,72 @@ const FRAME_BYTES: usize = 65536;
 /// Output queued for the hub before the reader stops reading the pty. A hub
 /// that stops taking output back-pressures the endpoint, as it always has.
 const OUTBOX_BYTES: usize = 1 << 20;
+/// The agent's own diagnostics destination: state/<task>.agent-diagnostics
+/// beside the status path, one line per failure the agent detects about
+/// itself. Bounded by rotation, not by size alone - a count cap holds even
+/// when the only writer is the one appending.
+const DIAGNOSTICS_MAX_BYTES: u64 = 256 * 1024;
+const DIAGNOSTICS_FILES: u32 = 3;
+
+/// The diagnostics path for this task: the status path with its .status
+/// suffix swapped for .agent-diagnostics, or "" when there is no status path.
+fn diagnostics_path(options: &Options) -> String {
+    options
+        .status_path
+        .strip_suffix(".status")
+        .map(|stem| format!("{stem}.agent-diagnostics"))
+        .unwrap_or_default()
+}
+
+/// Append one diagnostics line, best-effort. A write failure is swallowed:
+/// diagnostics must never break the agent's main path.
+fn diag(options: &Options, event: &str, reason: impl std::fmt::Display) {
+    let path = diagnostics_path(options);
+    if path.is_empty() {
+        return;
+    }
+    let line = format!("{} {event} {reason}\n", timestamp());
+    let result = (|| -> std::io::Result<()> {
+        if fs::metadata(&path).map(|m| m.len()).unwrap_or(0) >= DIAGNOSTICS_MAX_BYTES {
+            let _ = fs::remove_file(format!("{path}.{}", DIAGNOSTICS_FILES - 1));
+            for index in (1..DIAGNOSTICS_FILES - 1).rev() {
+                let _ = fs::rename(
+                    format!("{path}.{index}"),
+                    format!("{path}.{}", index + 1),
+                );
+            }
+            let _ = fs::rename(&path, format!("{path}.1"));
+        }
+        let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+        file.write_all(line.as_bytes())
+    })();
+    let _ = result;
+}
+
+/// UTC ISO-8601 second-resolution timestamp, the shape of every other durable
+/// record in the home.
+fn timestamp() -> String {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let days = secs / 86_400;
+    let rem = secs % 86_400;
+    let (hour, min, sec) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    // Civil-from-days (Howard Hinnant's algorithm), so the line is readable
+    // without dragging a datetime crate into the agent.
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}T{hour:02}:{min:02}:{sec:02}Z")
+}
 
 #[derive(Debug)]
 enum Error {
@@ -459,6 +525,7 @@ impl Agent {
     }
     fn stand_down(&self) {
         self.stood_down.store(true, Ordering::SeqCst);
+        diag(&self.options, "stood-down", "endpoint identity superseded");
         self.wake.notify();
         self.tick.notify();
     }
@@ -501,7 +568,12 @@ impl Agent {
                 self.stand_down();
                 return false;
             }
-            Err(_) => {
+            Err(error) => {
+                diag(
+                    &self.options,
+                    "re-register-failed",
+                    format_args!("could not re-register endpoint {}: {error}", self.id),
+                );
                 registration.backoff = (registration.backoff * 2.0).min(60.0);
                 return false;
             }
@@ -509,6 +581,11 @@ impl Agent {
         drop(registration);
         self.wake.notify();
         let _ = self.initial_state();
+        diag(
+            &self.options,
+            "re-registered",
+            format_args!("endpoint {} back after: hub forgot it", self.id),
+        );
         true
     }
     fn frames(&self, frame: Value) {
@@ -531,7 +608,7 @@ impl Agent {
                 Ok(_) => return,
                 Err(Error::Forgotten) if attempt == 0 && self.recover(closing) => continue,
                 Err(Error::Superseded) => self.stand_down(),
-                Err(_) => (),
+                Err(error) => diag(&self.options, "publish-failed", error),
             }
             return;
         }
@@ -979,7 +1056,20 @@ fn serve(args: &[String]) -> Result<(), Error> {
         agent.options.machine,
         agent.options.hub
     );
-    // Like Python, unlinkable startup diagnostic captures must not grow for life.
+    diag(
+        &agent.options,
+        "started",
+        format_args!(
+            "agent {} endpoint {} on {} -> {}",
+            env!("CARGO_PKG_VERSION"),
+            agent.id,
+            agent.options.machine,
+            agent.options.hub
+        ),
+    );
+    // Like Python, unlinkable startup diagnostic captures must not grow for
+    // life. The durable diagnostics file carries the agent's own failures from
+    // here, rotated and bounded where this capture was neither.
     let null = OpenOptions::new().write(true).open("/dev/null")?;
     use std::os::fd::AsRawFd;
     // SAFETY: null is live through both dup2 calls; only this agent's output changes.
@@ -1023,6 +1113,121 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_options(status_path: &str) -> Options {
+        Options {
+            hub: String::new(),
+            token_file: String::new(),
+            machine: String::new(),
+            label: String::new(),
+            cwd: String::new(),
+            status_path: status_path.into(),
+            ready_file: String::new(),
+            rows: 40,
+            cols: 200,
+            state_interval: 5.0,
+            state_explicit: false,
+            poll_secs: 25.0,
+        }
+    }
+
+    #[test]
+    fn diagnostics_path_sits_beside_the_status_path() {
+        let options = test_options("/home/state/task.status");
+        assert_eq!(
+            diagnostics_path(&options),
+            "/home/state/task.agent-diagnostics"
+        );
+        assert_eq!(diagnostics_path(&test_options("")), "");
+    }
+
+    #[test]
+    fn diag_appends_one_line_per_event_and_rotates_under_a_file_count_cap() {
+        let dir = std::env::temp_dir().join(format!(
+            "fm-agent-diag-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let options = test_options(&dir.join("task.status").display().to_string());
+        // Enough volume to cross the shipped 256 KiB cap through the public
+        // path, so the case exercises the real constants rather than a
+        // test-only shrink.
+        for index in 0..6000 {
+            diag(
+                &options,
+                "publish-failed",
+                format_args!("{index} {}", "x".repeat(200)),
+            );
+        }
+        let live = fs::read_to_string(dir.join("task.agent-diagnostics")).unwrap();
+        let one = fs::read_to_string(dir.join("task.agent-diagnostics.1")).unwrap();
+        let two = fs::read_to_string(dir.join("task.agent-diagnostics.2")).unwrap();
+        // The count cap: exactly the live file and its two rotations.
+        let files: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains("agent-diagnostics"))
+            .collect();
+        assert_eq!(files.len(), 3, "rotation left {files:?}");
+        // Order: the oldest content is in .2, the newest in the live file.
+        let number = |line: &str| line.split(' ').nth(2).unwrap().parse::<u32>().unwrap();
+        let all: Vec<_> = two.lines().chain(one.lines()).chain(live.lines()).collect();
+        let numbers: Vec<_> = all.iter().map(|l| number(l)).collect();
+        let mut sorted = numbers.clone();
+        sorted.sort();
+        assert_eq!(numbers, sorted, "rotation must not reorder events");
+        // No rotated file exceeds the cap by more than one line.
+        for text in [&two, &one, &live] {
+            assert!(text.len() as u64 <= DIAGNOSTICS_MAX_BYTES + 512);
+            assert!(text.ends_with('\n'));
+        }
+        // One line per event, timestamp first, event second.
+        let first = all.first().unwrap();
+        assert!(first.starts_with("20"), "{first}");
+        assert_eq!(first.split(' ').nth(1), Some("publish-failed"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn diag_swallows_an_unwritable_destination() {
+        let dir = std::env::temp_dir().join(format!(
+            "fm-agent-diag-denied-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let denied = dir.join("task.agent-diagnostics");
+        fs::write(&denied, b"").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&denied).unwrap().permissions();
+        perms.set_mode(0o000);
+        fs::set_permissions(&denied, perms).unwrap();
+        // Must not panic: the write failure is diagnostics, not an agent error.
+        diag(
+            &test_options(&dir.join("task.status").display().to_string()),
+            "publish-failed",
+            "must not raise",
+        );
+        // A directory standing in for the file is refused the same way.
+        fs::create_dir(dir.join("blocked/task.status").parent().unwrap()).unwrap();
+        diag(
+            &test_options(&dir.join("blocked/task.status").display().to_string()),
+            "publish-failed",
+            "must not raise",
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn timestamp_is_utc_iso8601() {
+        let stamp = timestamp();
+        // 2026-10-09T20:58:40Z shape: 20 chars, T at index 10, Z at 19.
+        assert_eq!(stamp.len(), 20);
+        assert_eq!(stamp.as_bytes()[10], b'T');
+        assert_eq!(stamp.as_bytes()[19], b'Z');
+        assert!(stamp.starts_with("20"));
+    }
 
     fn decoded(frame: &Value) -> Vec<u8> {
         base64::engine::general_purpose::STANDARD
