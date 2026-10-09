@@ -795,8 +795,9 @@ do_exit() {
 #
 # $BRIEF_PRIOR is a rollback source, because this script appends the progress
 # note to the brief and so has something of its own to put back. $META_PRIOR is
-# not, and nothing reads it: this script never writes $META at all. It stays as
-# the operator-facing copy beside the journal, and fm-teardown.sh removes both.
+# not, and nothing reads it: record publication belongs to fm-spawn and the
+# atomic endpoint-rebind helper, never rollback. It stays as the operator-facing
+# copy beside the journal, and fm-teardown.sh removes both.
 
 JOURNAL="$STATE/$ID.control-relaunch"
 META_PRIOR="$JOURNAL.meta-prior"
@@ -1360,8 +1361,9 @@ do_recover_missing() {
   else
     note_line="note=none"
   fi
-  # No dirty-copy refusal here on purpose. The task this verb rescues is
-  # mid-work by definition, so uncommitted changes are its normal state, and
+  # recover-missing has no dirty-copy refusal; reincarnate checked cleanliness
+  # in its preflight. A missing-endpoint rescue is mid-work by definition,
+  # so uncommitted changes are its normal state, and
   # recovery only recreates the terminal beside that work - safe_checkpoint
   # records what it found (worktree_dirty=) as evidence, and nothing below
   # cleans, resets, or stashes any of it.

@@ -451,8 +451,8 @@ What operator mode touches, and what it does not:
 - Every other cleanup refusal stands and nothing is retired, such as an outcome that has not reached the parent channel or a backlog transition that cannot be replayed.
   A cleanup that fails only after it has already removed the durable task record reports that partial state instead of claiming nothing was retired.
 
-Records left on the removed tmux and herdr backends, including any record with no `backend=` field, read as `unverified` to recovery and as gone to presence checks, cannot be relaunched, and reach cleanup as an unconfirmed kill.
-Stop any process still behind one by hand, then retire it with this command.
+[Runtime backend](configuration.md#runtime-backend-configbackend--fm_backend) owns retired-record classification and supported continuation for unfinished work.
+To retire a retired-backend record instead, stop any process still behind it by hand, then use this command.
 
 The owning mate retires its own finished work on those backends under the captain's standing instruction through [`task-delivery`'s finished-work sweep](../.agents/skills/task-delivery/SKILL.md#finished-work-sweep); [`fm-retire-endpoint.sh`'s header and `--help`](../bin/fm-retire-endpoint.sh) own the narrower `--finished` checks and assertion basis.
 When tmux is installed, that mode accepts a tmux record only when a local tmux server can be read and does not list its window, or tmux definitively reports that no server is running; any other inventory failure goes to the captain rather than authorizing cleanup.

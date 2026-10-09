@@ -21,8 +21,9 @@
 #   called while the caller already holds that lock. The replace is atomic (a
 #   temporary file in the same directory, then mv). Refuses, with
 #   FM_ENDPOINT_REBIND_ERROR set and the record untouched: a record that is not
-#   a regular file, one whose endpoint_task_id= is not exactly <task-id>, a
-#   backend bin/fm-backend.sh does not know, an empty or multi-line window, and
+#   a regular file, one whose endpoint_task_id= is not exactly <task-id> (except
+#   the validated unbound retired record above), a backend bin/fm-backend.sh
+#   does not know, an empty or multi-line window, and
 #   any extra line that is not key=value for an endpoint-identity key.
 #
 # Requires bin/fm-backend.sh and bin/fm-wake-lib.sh to be sourced.

@@ -33,7 +33,7 @@ On `unknown`, ask the captain instead of guessing.
 A current captain override beats detection, while a per-task override governs only that dispatch.
 For recovery and control, use the exact `harness=` in `state/<id>.meta`; never infer it from a model or provider.
 
-Deliver task lifecycle actions only through `../../../bin/fm-control.sh <task-id> interrupt|exit|relaunch|recover-missing`.
+Deliver task lifecycle actions only through the allowlisted verbs in [`../../../bin/fm-control.sh`](../../../bin/fm-control.sh); [`agent-control.md`](../../../docs/agent-control.md#verbs) owns their effects.
 Never type an interrupt key or exit command through `fm-send`, where routing-marked lifecycle text becomes chat.
 Trust handling is complete only when inspection proves the target started processing its instructions; delivery success alone is not proof.
 

@@ -15,7 +15,7 @@ A workaround that lives only in agent prose, such as remembering to send lifecyc
 
 `bin/fm-control-lib.sh` is the single executable owner of three capability tables, with no side effects, so it can be read as a contract:
 
-- The **verb allowlist**: `interrupt`, `exit`, `relaunch`, `recover-missing`, `reincarnate`.
+- The **verb allowlist**, exposed by `fm_control_verbs`; [Verbs](#verbs) describes each effect.
   There is no arbitrary-text and no generic raw-key entry point.
   A caller either names an allowlisted verb or is refused.
 - **Per-harness mechanics**: the key that cancels a running turn, how many times it must be delivered, whether the composer needs clearing afterwards, the command that exits the agent, and which task kinds the adapter is verified to run.
@@ -69,6 +69,7 @@ Deck's driver starts a new session from the brief on disk.
 `relaunch`, `recover-missing`, and `reincarnate` replace task metadata and each runs as a transaction with a journal at `state/<id>.control-relaunch`, a best-effort copy of the prior record kept beside it for the operator, and a ship or scout's prior instructions preserved when a progress note is appended.
 The [`fm-control.sh` header](../bin/fm-control.sh) owns the separate deliberate-stop marker written by secondmate exit and the locked automatic-admission guard.
 Only the instructions are ever rolled back from those copies; the record copy is never written back over the live record, because every other writer takes the per-task record lock this plane does not hold.
+The steps below describe `relaunch`; [missing-terminal recovery](#recovering-a-missing-terminal) replaces its stop step, and `reincarnate` uses that recovery transaction after the preflight owned by the script header.
 
 1. **Resolve the profile.**
    An explicit `--harness`, `--model`, or `--effort` wins, and `recover-missing` accepts exactly the same three flags with exactly this precedence - a rescue that names a replacement runtime is one transaction, not a failed recovery followed by a relaunch.
@@ -123,11 +124,11 @@ It differs from the steps above in exactly three places.
 - A launch failure **after** the agent is stopped but before replacement-record publication keeps the prior durable record, keeps the progress note so a later recovery still has it, marks the journal `failed:launching`, and reports plainly that no agent is running and where the work is preserved.
 - If the launch owner already published the new record but no running agent can be confirmed, the new record is kept: the task is recorded on the new harness with no agent confirmed, which is exactly what recovery reconciles.
   Rewriting it back to the old harness would be a second, worse inaccuracy.
-- A `recover-missing` failure while the terminal is being recreated restores the prior instructions byte-exact, because no replacement harness has been launched in that phase.
+- A `recover-missing` or `reincarnate` failure while the terminal is being recreated restores the prior instructions byte-exact, because no replacement harness has been launched in that phase.
   A successful endpoint rebind is retained even if settling or handover later fails; the new endpoint's state must be reconciled before retrying with `relaunch`.
   If the rebind itself fails, recovery attempts to close the new endpoint and reports either a confirmed close or an unconfirmed close with the new target for reconciliation; the old metadata binding remains intact.
-- A `recover-missing` failure because the new shell never settles to agent-free never claims an agent was stopped: the terminal was recreated, the handover could not be completed, and the pane was just measured as not agent-free, so no bare shell, `dead` endpoint, or ready-to-`relaunch` state is claimed for it.
-- A `recover-missing` failure at the launch itself never claims an agent was stopped either, and names the state the operator is now in: the recreated terminal holds a bare shell, so the endpoint reads `dead` rather than `missing` and the verb that retries it is `relaunch`.
+- A `recover-missing` or `reincarnate` failure because the new shell never settles to agent-free never claims an agent was stopped: the terminal was recreated, the handover could not be completed, and the pane was just measured as not agent-free, so no bare shell, `dead` endpoint, or ready-to-`relaunch` state is claimed for it.
+- A `recover-missing` or `reincarnate` failure at the launch itself never claims an agent was stopped either, and names the state the operator is now in: the recreated terminal holds a bare shell, so the endpoint reads `dead` rather than `missing` and the verb that retries it is `relaunch`.
   That holds because the durable record is published before the launch command is sent, so reaching this failure means nothing was ever typed into the pane.
 
 ## Fail-closed boundaries

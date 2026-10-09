@@ -80,7 +80,7 @@ Firstmate alone resolves a matched profile array, keeps malformed profile config
 Absent `config/backend` means stream, and a leftover `tmux` or `herdr` value is refused.
 Pass a per-spawn `--backend` only under that task's own authority, never as precedent ([`docs/configuration.md`](docs/configuration.md) "Runtime backend").
 A missing dependency, authentication failure, unsupported backend, or version refusal is a blocker; never silently retry around it.
-A task record left on a retired backend cannot be relaunched, and a live endpoint whose record is gone is a leftover; load `task-delivery` for this home's finished-work sweep (section 7), which cleans up both, and consult [`docs/configuration.md`](docs/configuration.md#runtime-backend-configbackend--fm_backend) for retired-record classification and the retirement owner.
+Consult [`docs/configuration.md`](docs/configuration.md#runtime-backend-configbackend--fm_backend) for retired-record classification, supported continuation, and the retirement owner; a live endpoint whose record is gone is a leftover, and `task-delivery` owns this home's finished-work sweep (section 7), which cleans up both.
 
 ## 5. Recovery
 
@@ -150,7 +150,7 @@ After spawning, confirm the worker is processing the brief.
 Steer a worker with ordinary text through fail-closed `fm-send`, which records it in the task's durable steering inbox (`bin/fm-send.sh` owns the typed-plane carve-outs).
 After an unconfirmed remote secondmate delivery, only the exact `FM_PENDING_REPLY_EXISTING_CORR=<id>` resend command `fm-send` prints is safe.
 When a steer answers an open keyed decision or blocker, pass `--resolve-key` so the answer closes that record.
-Never use `fm-send` for interrupt, exit, or other lifecycle control, because that text becomes chat; use `bin/fm-control.sh <task-id> interrupt|exit|relaunch|recover-missing`, which never tears down or discards anything ([`docs/agent-control.md`](docs/agent-control.md)).
+Never use `fm-send` for interrupt, exit, or other lifecycle control, because that text becomes chat; use `bin/fm-control.sh`'s allowlisted task verbs, which never tear down or discard anything ([`docs/agent-control.md`](docs/agent-control.md)).
 `bin/fm-pending-reply-lib.sh` owns correlation, recovery, and escalation for marked secondmate requests.
 
 ### Selected delivery path and merge authority
