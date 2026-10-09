@@ -48,6 +48,7 @@ No supported adapter puts the cancelled prompt back into its composer, so no cle
 
 `exit` runs a verify-then-clear composer gate before typing the exit command.
 A proven `empty` verdict passes immediately and a proven `pending` verdict refuses by naming the pending text, so real typed input is preserved instead of being concatenated.
+The one exception is the task's own steering-inbox doorbell line left unsubmitted: pending text that is nothing but copies of that line gets the clear below instead of a refusal, so the fleet never deadlocks on its own line.
 Any state the fleet cannot prove (`unknown`, `pending-unproven`, or an unreadable read) never refuses structurally: the gate delivers the harness's verified composer clear (`bin/fm-control-lib.sh`'s `fm_control_composer_clear_keys`), re-reads the state, and retries on a bounded budget before typing the exit command anyway, because restart and relaunch must never stay blocked on a composer state the fleet cannot prove.
 An agent found gone during that gate is reported stopped instead, since a dead endpoint is a respawn question for `relaunch` or `recover-missing`, not a composer question.
 

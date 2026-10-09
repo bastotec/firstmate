@@ -21,7 +21,9 @@
 # blindly repeated by this layer.
 #
 # The SSH alias keeps normal public-key and strict host-key policy in ~/.ssh.
-# This command explicitly disables agent forwarding, forwarding setup, and
+# BatchMode makes an unknown host key or a password prompt fail at once instead
+# of asking on the controlling terminal, which inside a pane is an agent's
+# composer: a prompt there swallows the next typed line. This command explicitly disables agent forwarding, forwarding setup, and
 # configured SendEnv patterns. The remote entrypoint executes the selected
 # command under an empty environment with only its fixed runtime values.
 #
@@ -112,6 +114,7 @@ case "$ALIVE_COUNT_MAX" in ''|*[!0-9]*) die "FM_SSH_ALIVE_COUNT_MAX must be a po
 [ "$ALIVE_COUNT_MAX" -gt 0 ] || die "FM_SSH_ALIVE_COUNT_MAX must be a positive integer: $ALIVE_COUNT_MAX"
 
 SSH_ARGS=(
+  -o BatchMode=yes
   -o ForwardAgent=no
   -o ClearAllForwardings=yes
   -o 'SendEnv=-*'

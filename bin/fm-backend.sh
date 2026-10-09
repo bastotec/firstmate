@@ -504,6 +504,14 @@ fm_backend_composer_state() {  # <backend> <target> [expected-label] -> empty|pe
   fm_backend_stream_composer_state "$@"
 }
 
+# fm_backend_composer_holds_only: 0 when the composer visibly holds nothing but
+# copies of <text>, firstmate's own constant line; 1 otherwise or unreadable.
+fm_backend_composer_holds_only() {  # <backend> <target> <expected-label> <text>
+  fm_backend_source "$1" 2>/dev/null || return 1
+  shift
+  fm_backend_stream_composer_holds_only "$@"
+}
+
 # fm_backend_target_exists: cheap, READ-ONLY existence check - does the
 # recorded TARGET endpoint still exist? A record on a retired backend never
 # does, as far as firstmate can tell. Exists as one shared primitive so callers

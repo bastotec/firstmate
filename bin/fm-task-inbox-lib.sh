@@ -282,6 +282,10 @@ fm_task_inbox_doorbell_line() {  # <record-path>
 # CONSTANT line the worker recovers semantically, while skipping on ambiguous
 # verdicts would starve a harness whose idle screen the classifier cannot
 # positively identify (that classifier is advisory here by design).
+# The one `pending` that is not someone's text is this same doorbell line left
+# unsubmitted (a swallowed Enter): it is submitted with Enter and counted as
+# rung, because deferring to it would skip every later ring forever. Pending
+# text that is anything more than copies of the line still defers.
 fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label] [harness] [state-dir] [task-id]
   local backend=$1 target=$2 rec=$3 label=${4:-} harness=${5:-} state=${6:-} task=${7:-} line cstate verdict
   # The liveness read must resolve task metadata in the SAME state directory
@@ -302,7 +306,11 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label] [har
   fi
   cstate=$(fm_backend_composer_state "$backend" "$target" "$label" 2>/dev/null) || cstate=unknown
   case "$cstate" in
-    pending) return 1 ;;
+    pending)
+      fm_backend_composer_holds_only "$backend" "$target" "$label" "$line" 2>/dev/null || return 1
+      fm_backend_send_key "$backend" "$target" Enter "$label" >/dev/null 2>&1 || return 2
+      return 0
+      ;;
   esac
   # Accepted residual race: terminal input and Enter are separate delivery
   # steps, so an agent exiting after the liveness check could leave a bare

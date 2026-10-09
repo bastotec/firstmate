@@ -743,6 +743,45 @@ test_exit_reports_a_gone_agent_instead_of_a_composer_refusal() {
   pass "fm-control exit: a gone agent is distinguished from an unknown composer - respawn, not composer clear"
 }
 
+# The one proven-pending reading that is not someone's text: the task's own
+# steering-inbox doorbell left unsubmitted. Refusing on it deadlocked a whole
+# home (every later ring deferred to the same line), so the gate clears it and
+# exits; the doorbell with anything appended still refuses untouched.
+test_exit_clears_its_own_pending_doorbell() {
+  local dir out rc doorbell
+  dir=$(new_case gate-own-doorbell)
+  add_task "$dir" t1 deck
+  alive_as "$dir" deck
+  mkdir -p "$dir/home/state/t1.inbox"
+  doorbell=$(bash -c '. "$1"; fm_task_inbox_doorbell_line "$2"' _ \
+    "$ROOT/bin/fm-task-inbox-lib.sh" "$dir/home/state/t1.inbox/001.msg")
+  printf 'idle since earlier\n❯ %s\n%s\n' "${doorbell:0:50}" "${doorbell:50}" > "$dir/fake/pane"
+  printf '2\n' > "$dir/fake/cursor"
+  out=$(FM_FAKE_CLEAR_REPAINTS=1 run_control "$dir" t1 exit); rc=$?
+  expect_code 0 "$rc" "a composer holding only its own doorbell must not refuse the exit"$'\n'"$out"
+  assert_not_contains "$out" "visibly holds pending text" \
+    "the task's own doorbell is not pending text to protect"
+  [ "$(keys_sent "$dir")" = C-u ] \
+    || fail "the own doorbell should get the verified clear: $(cat "$dir/fake/keys")"
+  [ "$(literals "$dir")" = /quit ] \
+    || fail "the exit command should follow the clear, got: $(literals "$dir")"
+
+  dir=$(new_case gate-own-doorbell-plus)
+  add_task "$dir" t1 deck
+  alive_as "$dir" deck
+  mkdir -p "$dir/home/state/t1.inbox"
+  doorbell=$(bash -c '. "$1"; fm_task_inbox_doorbell_line "$2"' _ \
+    "$ROOT/bin/fm-task-inbox-lib.sh" "$dir/home/state/t1.inbox/001.msg")
+  printf 'idle since earlier\n❯ %s and a captain note\n' "$doorbell" > "$dir/fake/pane"
+  printf '1\n' > "$dir/fake/cursor"
+  out=$(FM_FAKE_CLEAR_REPAINTS=1 run_control "$dir" t1 exit); rc=$?
+  [ "$rc" -ne 0 ] || fail "text appended to the doorbell must still refuse the exit"$'\n'"$out"
+  assert_contains "$out" "visibly holds pending text" "appended text is pending text to protect"
+  [ -z "$(keys_sent "$dir")" ] && [ -z "$(literals "$dir")" ] \
+    || fail "protected pending text was touched: keys=$(keys_sent "$dir") literals=$(literals "$dir")"
+  pass "fm-control exit: its own unsubmitted doorbell is cleared, while anything more still refuses"
+}
+
 test_host_route_reaches_guarded_worker_owners() {
   local dir out rc
   dir=$(new_case host-owner)
@@ -854,3 +893,4 @@ test_fm_send_still_marks_the_same_secondmate_task
 test_exit_proves_an_idle_deck_driver_prompt_empty
 test_exit_verify_then_clear_changes_an_unproven_composer
 test_exit_reports_a_gone_agent_instead_of_a_composer_refusal
+test_exit_clears_its_own_pending_doorbell

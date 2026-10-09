@@ -567,6 +567,18 @@ stop_deck_residual_drivers() {
     || die "the prior Deck driver has not been proved stopped; refusing replacement"
 }
 
+# composer_holds_own_doorbell: 0 when the composer visibly holds nothing but
+# copies of this task's own steering-inbox doorbell line.
+composer_holds_own_doorbell() {
+  local line
+  line=$(
+    # shellcheck source=bin/fm-task-inbox-lib.sh
+    . "$SCRIPT_DIR/fm-task-inbox-lib.sh" \
+      && fm_task_inbox_doorbell_line "$(fm_task_inbox_dir "$STATE" "$ID")/0.msg"
+  ) || return 1
+  fm_backend_composer_holds_only "$BACKEND" "$T" "$LABEL" "$line" 2>/dev/null
+}
+
 # gate_exit_composer: the composer gate in front of the exit command - the
 # verify-then-clear sequence. A proven `empty` composer passes immediately, and
 # proven `pending` text still refuses, so real typed input is never destroyed.
@@ -584,6 +596,10 @@ stop_deck_residual_drivers() {
 # authoritative postcondition is do_exit's agent-state wait, and a restart that
 # stays blocked on a reading the fleet cannot prove is the defect this gate
 # replaces.
+# The one proven `pending` that is not someone's text is the task's own
+# steering-inbox doorbell line left unsubmitted: it gets the same clear
+# sequence, because refusing on it deadlocks the fleet on its own line, while
+# pending text that is anything more than copies of that line still refuses.
 # Sets EXIT_COMPOSER_OUTCOME=proceed (type the exit command) or `agent-gone`,
 # or dies on proven pending text or an undeliverable clear key.
 gate_exit_composer() {
@@ -596,7 +612,8 @@ gate_exit_composer() {
     case "$composer_state" in
       empty) return 0 ;;
       pending)
-        die "task $ID's composer visibly holds pending text; refusing to type the $cmd exit command because it would concatenate onto that text. Clear or submit the pending text, then retry '$VERB'"
+        composer_holds_own_doorbell \
+          || die "task $ID's composer visibly holds pending text; refusing to type the $cmd exit command because it would concatenate onto that text. Clear or submit the pending text, then retry '$VERB'"
         ;;
     esac
     state=$(agent_state 2>/dev/null) || state=unknown
@@ -622,6 +639,8 @@ EOF
   case "$state" in
     dead) EXIT_COMPOSER_OUTCOME=agent-gone; return 0 ;;
   esac
+  [ "$composer_state" != pending ] \
+    || die "task $ID's composer still holds its own unsubmitted doorbell line after $attempt clear attempt(s); refusing to type the $cmd exit command onto it"
   echo "warning: task $ID's composer state stayed '$composer_state' after $attempt clear attempt(s); typing the $cmd exit command anyway, because restart must never be refused on a composer state the fleet cannot prove, and the agent-state wait below is the authoritative postcondition" >&2
   return 0
 }

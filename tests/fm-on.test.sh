@@ -184,6 +184,11 @@ DEFAULT_WINDOW=$((DEFAULT_INTERVAL * DEFAULT_COUNT))
   || fail "the default dead-peer detection window is not bounded to a sane ceiling (got ${DEFAULT_WINDOW}s = ${DEFAULT_INTERVAL}s x $DEFAULT_COUNT)"
 pass "fm-on arms a bounded SSH dead-peer detection window by default (${DEFAULT_INTERVAL}s x $DEFAULT_COUNT = ${DEFAULT_WINDOW}s)"
 
+# An unknown host key or a password prompt must fail instead of asking on the
+# controlling terminal, which inside a pane is an agent's composer.
+assert_contains "$LAST_SSH_ARGV" 'BatchMode=yes' "the ssh transport can still prompt on the controlling terminal"
+pass "fm-on never lets ssh prompt on the caller's terminal"
+
 : > "$SSH_LOG"
 FM_SSH_ALIVE_INTERVAL=7 FM_SSH_ALIVE_COUNT_MAX=2 fm_on ios fm-probe-two.sh >/dev/null
 OVERRIDE_ARGV=$(tail -n 1 "$SSH_LOG")

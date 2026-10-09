@@ -1438,6 +1438,65 @@ EOF
   esac
 }
 
+# fm_composer_holds_only_text: 0 when the screen's composer reads `pending` and
+# its typed content is nothing but one or more copies of <text>. It answers
+# "is the pending text our own constant line?" so a caller can submit or clear
+# firstmate's own unsubmitted doorbell instead of deferring to it forever,
+# while any other pending text, including our line with anything appended,
+# stays protected. Only a cursor-anchored bare agent-glyph composer (and its
+# wrap region) qualifies; every other shape returns 1. Whitespace is removed
+# from both sides before comparing, because the wrap region splits rows at
+# the terminal width, mid-word.
+fm_composer_holds_only_text() {  # <caps> <screen> <cursor-row> <text>
+  local caps=$1 screen=$2 cy=$3 text=$4 styled=0 kv plain g row raw content glyph joined='' want
+  [ -n "$text" ] || return 1
+  case "$cy" in ''|*[!0-9]*) return 1 ;; esac
+  while IFS= read -r kv; do
+    [ "$kv" = styled=1 ] && styled=1
+  done <<EOF
+$caps
+EOF
+  [ "$styled" = 1 ] || return 1
+  [ "$(fm_composer_classify_screen "$caps" "$screen" "$cy")" = pending ] || return 1
+  plain=$(printf '%s\n' "$screen" | fm_composer_strip_ansi)
+  _fm_composer_scan_screen "$plain" "$cy"
+  [ "$FM_COMPOSER_SCAN_UNSAFE" != 1 ] && [ "$FM_COMPOSER_SCAN_BOX_TOP" -lt 0 ] || return 1
+  if [ "$FM_COMPOSER_SCAN_LEFTBAR_START" -ge 0 ] \
+     && [ "$cy" -ge "$FM_COMPOSER_SCAN_LEFTBAR_START" ] \
+     && [ "$cy" -le "$FM_COMPOSER_SCAN_LEFTBAR_END" ]; then
+    return 1
+  fi
+  g=$FM_COMPOSER_SCAN_BARE_ROW
+  [ "$g" -ge 0 ] && [ "$cy" -ge "$g" ] || return 1
+  if [ "$cy" -gt "$g" ]; then
+    _fm_composer_wrap_region_ok "$plain" "$g" "$cy" || return 1
+  fi
+  row=$g
+  while [ "$row" -le "$cy" ]; do
+    raw=$(_fm_composer_screen_row "$row" "$screen")
+    content=$(_fm_composer_row_content "$raw" "$styled")
+    if [ "$row" -eq "$g" ]; then
+      fm_composer_leading_agent_glyph_var glyph "$content" || return 1
+      content=${content#*"$glyph"}
+    fi
+    joined=$joined$content
+    row=$((row + 1))
+  done
+  fm_composer_normalize_spaces_var joined
+  want=$text
+  fm_composer_normalize_spaces_var want
+  joined=${joined//[[:space:]]/}
+  want=${want//[[:space:]]/}
+  [ -n "$want" ] && [ -n "$joined" ] || return 1
+  while [ -n "$joined" ]; do
+    case "$joined" in
+      "$want"*) joined=${joined#"$want"} ;;
+      *) return 1 ;;
+    esac
+  done
+  return 0
+}
+
 # fm_composer_submit_retry_core: the ONE verify-and-retry-Enter submit loop
 # for stream, parameterised by the adapter's send-key and composer-state
 # functions. The caller has already typed the text ONCE (send_literal) and

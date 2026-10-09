@@ -279,6 +279,48 @@ test_ring_skips_dead_agent() {
   pass "inbox: the ring skips dead or missing endpoints and still rings live or unclassifiable endpoints"
 }
 
+# A composer holding nothing but the doorbell itself (a swallowed Enter, here
+# wrapped mid-word at the terminal width) is firstmate's own text: the ring
+# submits it instead of deferring to it forever. The doorbell with anything
+# after it, or other text, is still protected and skipped.
+test_ring_submits_own_unsubmitted_doorbell() {
+  local dir state rec log target doorbell head tail rc rows
+  dir="$TMP_ROOT/ring-own-doorbell"
+  state="$dir/state"
+  mkdir -p "$state"
+  make_watch_stubs "$dir" >/dev/null
+  rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
+  doorbell=$(inbox_lib "$state" fm_task_inbox_doorbell_line "$rec")
+  head=${doorbell:0:60}
+  tail=${doorbell:60}
+  log="$dir/send.log"
+  ring_composer() {  # <rows-json>
+    : > "$log"; : > "$log.keys"
+    target=$(t1_endpoint "$state" "$log" fm-deck-worker) || return 9
+    fm_test_fake_stream_set "$target" "$(jq -nc --argjson r "$1" '{screen_rows: $r, cursor_row: ($r | length - 1)}')"
+    rc=0
+    inbox_lib "$state" fm_task_inbox_ring stream "$target" "$rec" fm-t1 || rc=$?
+  }
+  rows=$(jq -nc --arg h "❯ $head" --arg t "$tail" '["idle since earlier", $h, $t]')
+  ring_composer "$rows"
+  [ "$rc" = 0 ] || fail "a composer holding only its own doorbell should count as rung, got $rc"
+  grep -qx '\[key\] Enter' "$log.keys" || fail "the pending doorbell was not submitted with Enter"
+  [ ! -s "$log" ] || fail "the doorbell was retyped onto its own pending copy:"$'\n'"$(cat "$log")"
+  rows=$(jq -nc --arg h "❯ $doorbell$doorbell" '["idle since earlier", $h]')
+  ring_composer "$rows"
+  [ "$rc" = 0 ] || fail "repeated copies of the doorbell should still count as rung, got $rc"
+  grep -qx '\[key\] Enter' "$log.keys" || fail "repeated pending doorbells were not submitted"
+  rows=$(jq -nc --arg h "❯ $head" --arg t "$tail" '["idle since earlier", $h, $t, "Please type yes, no or the fingerprint:"]')
+  ring_composer "$rows"
+  [ "$rc" = 1 ] || fail "the doorbell followed by other text must stay protected, got $rc"
+  [ ! -s "$log.keys" ] && [ ! -s "$log" ] || fail "text after the doorbell was touched"
+  rows=$(jq -nc '["idle since earlier", "❯ a half-typed captain note"]')
+  ring_composer "$rows"
+  [ "$rc" = 1 ] || fail "other pending text must still skip the ring, got $rc"
+  [ ! -s "$log.keys" ] && [ ! -s "$log" ] || fail "other pending text was touched"
+  pass "inbox: the ring submits its own unsubmitted doorbell and still protects any other pending text"
+}
+
 test_idempotent_write_dedups_exact_body() {
   local state r1 r2 r3 r4 count text
   state="$TMP_ROOT/idem/state"; mkdir -p "$state"
@@ -705,6 +747,7 @@ test_write_is_durable_and_exact
 test_doorbell_is_a_shell_noop
 test_doorbell_rejects_terminal_controls
 test_ring_skips_dead_agent
+test_ring_submits_own_unsubmitted_doorbell
 test_idempotent_write_dedups_exact_body
 test_idempotent_write_follows_concurrent_ack
 test_handled_mv_dedups_by_sequence
