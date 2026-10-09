@@ -333,16 +333,22 @@ struct Outbox {
     changed: Condvar,
 }
 impl Outbox {
+    fn wait_capacity(&self) {
+        let mut state = self.state.lock().unwrap();
+        while state.1 + FRAME_BYTES > OUTBOX_BYTES && !state.2 {
+            state = self
+                .changed
+                .wait_timeout(state, Duration::from_millis(100))
+                .unwrap()
+                .0;
+        }
+    }
+    fn has_capacity(&self, bytes: usize) -> bool {
+        bytes <= OUTBOX_BYTES.saturating_sub(self.state.lock().unwrap().1)
+    }
     fn push(&self, item: Item) {
         let mut state = self.state.lock().unwrap();
         if let Item::Bytes(bytes) = &item {
-            while state.1 >= OUTBOX_BYTES && !state.2 {
-                state = self
-                    .changed
-                    .wait_timeout(state, Duration::from_millis(100))
-                    .unwrap()
-                    .0;
-            }
             state.1 += bytes.len();
         }
         state.0.push_back(item);
@@ -532,12 +538,15 @@ impl Agent {
     }
     /// Read the pty as fast as it produces, and hand each burst on at once:
     /// to local attach clients directly, and to the publisher for the hub.
-    /// Only a full outbox back-pressures reading; individual kernel reads do
-    /// not wait for a network round trip.
+    /// Publication capacity back-pressures reading outside the output lock;
+    /// individual kernel reads do not wait for a network round trip.
     fn reader(&self) {
         let mut buffer = vec![0u8; FRAME_BYTES];
         let mut since = Instant::now();
         while !self.reader_stop.load(Ordering::SeqCst) {
+            // Backpressure belongs outside the output lock: a local resize
+            // must not wait for the hub to make room.
+            self.outbox.wait_capacity();
             let wait = if self.output.lock().unwrap().is_empty() {
                 100
             } else {
@@ -545,9 +554,13 @@ impl Agent {
             };
             let ready = self.pty.wait_readable(wait);
             let mut batch = self.output.lock().unwrap();
+            if !self.outbox.has_capacity(FRAME_BYTES) {
+                continue;
+            }
+            let room = FRAME_BYTES - batch.len();
             let ended = match ready.and_then(|ready| {
                 if ready {
-                    self.pty.read_within(&mut buffer, 0)
+                    self.pty.read_within(&mut buffer[..room], 0)
                 } else {
                     Ok(None)
                 }
@@ -592,15 +605,28 @@ impl Agent {
         if *self.geometry.lock().unwrap() == (rows, cols) {
             return Ok(());
         }
+        if !self.outbox.has_capacity(batch.len() + FRAME_BYTES) {
+            return Err(Error::Other(
+                "resize refused: hub output backlog full".into(),
+            ));
+        }
         if !batch.is_empty() {
             self.publish(std::mem::take(&mut *batch));
         }
         let mut buffer = vec![0; FRAME_BYTES];
-        while let Some(n) = self.pty.read_within(&mut buffer, 0)? {
+        // Bound the old-size drain to one publication budget so a child
+        // producing continuously cannot delay a local resize indefinitely.
+        let mut pending = FRAME_BYTES;
+        while pending > 0 {
+            let limit = pending.min(buffer.len());
+            let Some(n) = self.pty.read_within(&mut buffer[..limit], 0)? else {
+                break;
+            };
             if n == 0 {
                 break;
             }
             self.publish(buffer[..n].to_vec());
+            pending -= n;
         }
         self.pty.resize(rows, cols)?;
         self.local.resize(rows, cols);
@@ -615,7 +641,16 @@ impl Agent {
     }
     /// Post queued output in order, capped at FRAME_BYTES across each request.
     fn publisher(&self) {
-        while let Some(frames) = self.outbox.take(&self.id) {
+        let mut geometry = None;
+        while let Some(mut frames) = self.outbox.take(&self.id) {
+            if let Some(size) = &geometry {
+                frames.insert(0, json!({"endpoint_id":self.id,"geometry":size}));
+            }
+            for frame in &frames {
+                if let Some(size) = frame.get("geometry") {
+                    geometry = Some(size.clone());
+                }
+            }
             self.post_frames(frames, &self.hub.output);
         }
     }
@@ -823,8 +858,8 @@ impl local::Endpoint for Agent {
         }
         self.pty.write(bytes).map_err(|error| error.to_string())
     }
-    /// The local twin of the hub's `resize` command. The hub's screen follows
-    /// through the outbox, in order with the output, and never blocks it.
+    /// The local twin of the hub's `resize` command. Saturation must refuse
+    /// rather than wait for hub progress while holding the output lock.
     fn resize(&self, rows: u16, cols: u16) -> Result<(), String> {
         self.resize_output(rows, cols)
             .map_err(|error| error.to_string())
@@ -1186,6 +1221,44 @@ mod tests {
     }
 
     #[test]
+    fn saturated_resize_refuses_without_publishing_or_changing_geometry() {
+        for hub_command in [false, true] {
+            let agent = resize_test_agent();
+            agent
+                .outbox
+                .push(Item::Bytes(vec![b'x'; OUTBOX_BYTES - FRAME_BYTES]));
+            *agent.output.lock().unwrap() = b"pending".to_vec();
+            let started = Instant::now();
+            for rows in 30..130 {
+                let error = if hub_command {
+                    agent
+                        .apply(
+                            &json!({"kind":"resize", "payload":{"rows":rows,"cols":80}}),
+                            &hub_json::decode(b"{}", false).unwrap(),
+                        )
+                        .unwrap_err()
+                        .to_string()
+                } else {
+                    local::Endpoint::resize(&*agent, rows, 80).unwrap_err()
+                };
+                assert!(error.contains("backlog full"));
+            }
+            assert!(started.elapsed() < Duration::from_secs(1));
+            assert_eq!(agent.registration()["rows"], 24);
+            assert_eq!(agent.local.lines().len(), 24);
+            assert_eq!(*agent.output.lock().unwrap(), b"pending");
+            assert_eq!(
+                agent.outbox.state.lock().unwrap().1,
+                OUTBOX_BYTES - FRAME_BYTES
+            );
+            agent.outbox.take(&agent.id).unwrap();
+            agent.resize_output(40, 80).unwrap();
+            assert_eq!(agent.registration()["rows"], 40);
+            agent.pty.close(true).unwrap();
+        }
+    }
+
+    #[test]
     fn a_full_outbox_holds_the_reader_until_the_publisher_drains() {
         let outbox = Arc::new(Outbox::default());
         outbox.push(Item::Bytes(vec![0; OUTBOX_BYTES]));
@@ -1193,6 +1266,7 @@ mod tests {
         let reader = {
             let (outbox, pushed) = (outbox.clone(), pushed.clone());
             std::thread::spawn(move || {
+                outbox.wait_capacity();
                 outbox.push(Item::Bytes(b"next".to_vec()));
                 pushed.store(true, Ordering::SeqCst);
             })

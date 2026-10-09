@@ -141,7 +141,9 @@ Over the hub it paints the endpoint's current screen and cursor, then streams ou
 Paint restores cells and cursor only, so a full-screen TUI should repaint on its own, as most do on `SIGWINCH` or their next frame.
 If output overruns the ring buffer during the session, the client reports a continuity error and exits non-zero rather than rendering discontinuous bytes; read-only `--replay` remains best-effort from the oldest retained byte.
 Any failed input or resize delivery ends the session with an explicit failed or uncertain delivery message, without retrying input.
-The native agent publishes buffered old-size output before it resizes the pseudoterminal, then queues the new geometry ahead of any new-size output, so the hub's screen resizes in order.
+The native agent publishes its buffered output and drains at most 64 KiB of immediately readable PTY output before resizing, then queues the new geometry ahead of subsequent output.
+After the first resize transition, each output POST repeats the geometry applicable at the start of that batch before its bytes and any later transitions, so losing a geometry publication cannot leave subsequent delivered output parsed at the old size.
+Failed output batches are not replayed; repeating geometry restores size, not missing terminal content.
 A hub or endpoint that does not support resize (an older hub, or a Python-backed endpoint) disables further resizes and keeps the session open.
 Ctrl-] (or `--detach-key`, written `C-<key>`) detaches and leaves the endpoint running after draining preceding input for at most two seconds; external `SIGINT`, `SIGTERM`, and `SIGHUP` detach the same way, while typed Ctrl-C is forwarded to the endpoint.
 A failed or timed-out drain reports unsuccessful or uncertain delivery instead of a clean detach.
@@ -153,7 +155,10 @@ When the endpoint's native agent runs on the same machine as the client, the int
   Set an override identically for the agent and client; the fixed default lets a launchd agent and a terminal client find each other.
   It must be a directory this user owns with no group or other permissions (the agent creates it 0700), the socket is 0600, and both sides check the peer uid.
   An unsafe directory or a failed peer check disables the fast path rather than trusting it.
-- The agent keeps its own copy of the hub's screen model fed with the same bytes it publishes, so the session has the same shape: resize first, then a snapshot and the output that continues exactly after it, every keystroke written straight to the pseudoterminal, resizes forwarded, Ctrl-] and the signals detaching after an explicit input-drain acknowledgement from the agent, at most two seconds, and the endpoint's exit status propagated.
+- The agent keeps its own screen model fed with the same bytes it queues for the hub: resize first, then a snapshot and the output that continues exactly after it, with resizes forwarded and the endpoint's exit status propagated.
+  Local input is admitted to a bounded queue of 256 chunks of up to 4096 bytes; a full or closed queue ends attach with an uncertain-delivery message, without retrying input.
+  Detach closes admission without waiting on the socket writer, which drains admitted chunks in order before shutting down its write half; the detach deadline above remains independent of that writer, and a clean local detach requires the agent's explicit input-drain acknowledgement.
+  The native agent serializes each complete local or hub PTY input write so their bytes cannot interleave; concurrent writes have no promised ordering between transports.
   A client that falls far enough behind to queue 4096 output chunks is disconnected rather than stalling the endpoint.
 - Output is still queued for hub watchers, with local resizes ordered as described above.
 - No socket, a stale one, a Python agent, or an endpoint on another machine falls back to the hub path above.
@@ -162,7 +167,9 @@ When the endpoint's native agent runs on the same machine as the client, the int
 - A long `FM_STREAM_LOCAL_DIR` can push the socket path past the 104-byte limit macOS puts on it, which also just disables the fast path.
 
 The native agent coalesces PTY reads with a 1 ms continuation wait, publishing when the burst reaches 64 KiB or 8 ms instead of waiting for an HTTP round trip after each kernel read.
-Output enters a bounded 1 MiB hub outbox before local delivery; a full outbox blocks the reader, preserving endpoint backpressure.
+Output enters a bounded 1 MiB hub outbox before local delivery; the reader waits outside the output lock when less than a 64 KiB publication budget remains, preserving endpoint backpressure without making local resize wait for hub progress.
+Both local and hub resize paths refuse a size change with `resize refused: hub output backlog full` when the outbox cannot fit the buffered output plus a 64 KiB drain budget, leaving buffered output and geometry unchanged rather than waiting or exceeding the bound.
+A resize to the existing size needs no publication budget, and size changes can succeed again once the outbox drains.
 A separate publisher drains queued output over a dedicated kept-alive client, limiting each POST to 64 KiB of output across all geometry boundaries to stay inside the hub's 256 KiB replay ring.
 Other agent calls deliberately retain their unpooled client.
 The command loop wakes as soon as a take or result post completes, while empty polls retain a 100 ms start-to-start floor even with `--poll-secs 0`, and the native hub sends with `TCP_NODELAY`.

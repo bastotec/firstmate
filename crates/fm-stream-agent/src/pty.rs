@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 pub struct Pty {
     pub master: File,
     child: Mutex<Child>,
+    input: Mutex<()>,
     pub pid: i32,
     pgid: i32,
     tty: String,
@@ -99,6 +100,7 @@ impl Pty {
         Ok(Self {
             master,
             child: Mutex::new(child),
+            input: Mutex::new(()),
             pid,
             pgid: pid,
             tty,
@@ -246,6 +248,7 @@ impl Pty {
         Ok(())
     }
     pub fn write(&self, bytes: &[u8]) -> io::Result<()> {
+        let _input = self.input.lock().unwrap();
         (&self.master).write_all(bytes)
     }
     pub fn foreground(&self, until: Option<Instant>) -> Vec<Value> {
