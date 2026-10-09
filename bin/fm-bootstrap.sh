@@ -886,7 +886,7 @@ secondmate_liveness_one() {  # <meta> <id>
       [ -n "$target" ] || target=$(fm_meta_get "$meta" window)
       agent_state=$(fm_backend_agent_state "$backend" "$target" 2>/dev/null) || agent_state=unreadable
       if [ "$backend" = stream ] && [ "$agent_state" = missing ]; then
-        agent_state=registry-absent
+        agent_state="registry-absent"
       fi
       case "$agent_state" in
         dead|missing) ;;

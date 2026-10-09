@@ -1325,10 +1325,21 @@ PY
   pass "stream: idle Deck exits; genuine pending text refuses without stopping the host"
   assert_equals "$(with_stream_env fm_backend_agent_state stream "$target")" dead "exit must leave no agent"
   assert_present "$CASE_DIR/home/state/$id.inbox/001.msg" "exit discarded an unacknowledged steer"
+  out=$(FM_BOOTSTRAP_NETWORK=only host_command fm-bootstrap.sh 2>&1) \
+    || fail "deliberate-stop sweep failed: $out"
+  assert_contains "$out" 'stopped on purpose with fm-control exit' "the sweep must respect a deliberate stop"
+  assert_equals "$(with_stream_env fm_backend_agent_state stream "$target")" dead "the sweep revived a deliberately stopped host"
+  assert_equals "$(sed -n 's/^window=//p' "$CASE_DIR/home/state/$id.meta")" "$target" "the sweep replaced a deliberately stopped endpoint"
   out=$(host_command fm-control.sh "$id" relaunch 2>&1) || fail "relaunch failed: $out"
   assert_equals "$(sed -n 's/^window=//p' "$CASE_DIR/home/state/$id.meta")" "$target" "relaunch changed endpoints"
   assert_equals "$(with_stream_env fm_backend_agent_state stream "$target")" alive "relaunch did not restore the host"
-  host_command fm-control.sh "$id" exit >/dev/null 2>&1 || fail "host exit before recovery failed"
+  assert_absent "$CASE_DIR/home/state/$id.held-stopped" "explicit relaunch must withdraw the deliberate-stop record"
+  # An unexpected /quit reaching the host (as in the late queued-exit defect)
+  # stops it without fm-control recording a deliberate stop.
+  with_stream_env fm_backend_send_text_submit stream "$target" '/quit' 3 0.2 0.2 >/dev/null \
+    || fail "could not submit the unexpected host quit"
+  wait_for_agent_state "$target" dead
+  assert_absent "$CASE_DIR/home/state/$id.held-stopped" "an unexpected host quit must remain eligible for automatic recovery"
   # Recovery uses the existing secondmate sweep, not a stream-specific rule.
   out=$(FM_BOOTSTRAP_NETWORK=only host_command fm-bootstrap.sh 2>&1) \
     || fail "recovery sweep failed: $out"
