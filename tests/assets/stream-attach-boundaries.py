@@ -141,12 +141,13 @@ try:
     URL = "http://127.0.0.1:%d" % proxy.server_port
     agent = spawn([NATIVE / "fm-stream-agent", "serve", "--hub", URL,
                    "--token-file", LAB / "token", "--machine", "boundaries", "--label", "boundaries",
-                   "--cwd", LAB, "--ready-file", LAB / "agent.ready", "--poll-secs", "1"], env)
+                   "--cwd", LAB, "--ready-file", LAB / "agent.ready", "--poll-secs", "1",
+                   "--rows", "1001", "--cols", "80"], env)
     assert Proxy.registered.wait(15), "registration did not answer 201"
     wait(lambda: (LAB / "agent.ready").exists(), "agent readiness")
     endpoint = (LAB / "agent.ready").read_text().split()[1]
 
-    def connect(rows=None):
+    def connect(rows=None, refused=False):
         peer = socket.socket(socket.AF_UNIX)
         peer.settimeout(5)
         peer.connect(LOCAL + "/" + endpoint + ".sock")
@@ -155,10 +156,19 @@ try:
             hello.update(rows=rows, cols=80)
         frame(peer, b'H', hello)
         tag, raw = receive(peer)
-        assert tag == b'S', (tag, raw)
+        if tag != (b'E' if refused else b'S'):
+            peer.close()
+            raise AssertionError((tag, raw))
         return peer, json.loads(raw)
 
     peer, _ = connect()
+    frame(peer, b'I', b"printf 'large-startup-output\\n'\r")
+    def startup_output():
+        code, raw = request(HUB, "/v1/tasks/%s/snapshot" % endpoint)
+        value = json.loads(raw)
+        return code == 200 and value.get("rows") == 1001 and "large-startup-output" in value.get("screen", "")
+    wait(startup_output, "hub output lost at supported startup geometry")
+    print("ok: supported large startup geometry preserves hub output")
     Proxy.fail_geometry = True
     frame(peer, b'Z', {"rows": 37, "cols": 80})
     frame(peer, b'I', b"printf '\\033[37;1Hlost-geometry'\r")
@@ -172,27 +182,48 @@ try:
     peer.close()
     print("ok: attach geometry survives publication failure")
 
-    # The default case proves network-independent resizing with small writes.
-    # Filling the 1 MiB hub queue is deliberately opt-in, not a throughput test.
-    long_timeout = os.environ.get("FM_STREAM_ATTACH_LONG_TIMEOUT") == "1"
-    flood_writes = 288 if long_timeout else 4
+    flood = LAB / "flood.py"
+    flood.write_text("import os\nfrom pathlib import Path\nwritten=0\n"
+        "for _ in range(1024):\n written+=os.write(1,b'\\rx'*2048)\n"
+        " Path('flood-progress').write_text(str(written))\n"
+        "Path('flood-finished').touch()\n")
     peer, _ = connect()
     Proxy.stall = True
-    command = ("python3 -c 'import os; [os.write(1,b\"x\\n\"*2048) "
-               "for _ in range(%d)]'; touch flood-finished\r" % flood_writes)
-    frame(peer, b'I', command.encode())
+    frame(peer, b'I', ("python3 %s\r" % shlex.quote(str(flood))).encode())
     assert Proxy.stalled.wait(10), "output POST was not stalled"
-    time.sleep(1)
+    last_progress, unchanged_since = 0, time.monotonic()
+    def saturated():
+        global last_progress, unchanged_since
+        try:
+            progress = int((LAB / "flood-progress").read_text())
+        except (FileNotFoundError, ValueError):
+            return False
+        if progress != last_progress:
+            last_progress, unchanged_since = progress, time.monotonic()
+        return progress >= 1048576 - 65536 and time.monotonic() - unchanged_since >= 1
+    wait(saturated, "stalled hub did not backpressure the output flood")
+    assert not (LAB / "flood-finished").exists(), "flood did not saturate the outbox"
     started = time.monotonic()
-    resized, snapshot = connect(38)
+    resized, refusal = connect(38, refused=True)
     assert time.monotonic() - started < 4, "local resize waited for the hub"
-    assert len(snapshot["screen"].split("\n")) == 38, snapshot
+    assert "backlog full" in refusal["message"], refusal
     resized.close()
+    unchanged, snapshot = connect()
+    assert len(snapshot["screen"].split("\n")) == 37, snapshot
+    unchanged.close()
     Proxy.stall = False
     Proxy.release.set()
     peer.close()
-    wait(lambda: (LAB / "flood-finished").exists(), "output flood completion", 120 if long_timeout else 5)
-    print("ok: local resize does not wait for network progress")
+    wait(lambda: (LAB / "flood-finished").exists(), "output flood completion", 120)
+    def resize_after_drain():
+        try:
+            resized, snapshot = connect(38)
+        except AssertionError:
+            return False
+        resized.close()
+        return len(snapshot["screen"].split("\n")) == 38
+    wait(resize_after_drain, "resize did not recover after output drained")
+    print("ok: saturated local resize refuses promptly and recovers after drain")
 
     # A raw child deliberately leaves both large input writes backpressured,
     # then records their byte order. Exercise local input and hub input together.
@@ -293,6 +324,8 @@ finally:
             print("hub registration count: %s" % json.loads(raw).get("endpoints"), file=sys.stderr)
         for log in sorted(LAB.glob("log-*")):
             print("%s: %s" % (log.name, log.read_text(errors="replace")[-2000:]), file=sys.stderr)
+    if (LAB / "flood-progress").exists() and not (LAB / "flood-finished").exists():
+        print("output flood progress: " + (LAB / "flood-progress").read_text(), file=sys.stderr)
     if (LAB / "input-progress").exists() and not (LAB / "input-result").exists():
         print("raw child input progress: " + (LAB / "input-progress").read_text(), file=sys.stderr)
     Proxy.release.set()

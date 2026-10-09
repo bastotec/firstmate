@@ -335,13 +335,16 @@ struct Outbox {
 impl Outbox {
     fn wait_capacity(&self) {
         let mut state = self.state.lock().unwrap();
-        while state.1 >= OUTBOX_BYTES && !state.2 {
+        while state.1 + FRAME_BYTES > OUTBOX_BYTES && !state.2 {
             state = self
                 .changed
                 .wait_timeout(state, Duration::from_millis(100))
                 .unwrap()
                 .0;
         }
+    }
+    fn has_capacity(&self, bytes: usize) -> bool {
+        bytes <= OUTBOX_BYTES.saturating_sub(self.state.lock().unwrap().1)
     }
     fn push(&self, item: Item) {
         let mut state = self.state.lock().unwrap();
@@ -551,9 +554,13 @@ impl Agent {
             };
             let ready = self.pty.wait_readable(wait);
             let mut batch = self.output.lock().unwrap();
+            if !self.outbox.has_capacity(FRAME_BYTES) {
+                continue;
+            }
+            let room = FRAME_BYTES - batch.len();
             let ended = match ready.and_then(|ready| {
                 if ready {
-                    self.pty.read_within(&mut buffer, 0)
+                    self.pty.read_within(&mut buffer[..room], 0)
                 } else {
                     Ok(None)
                 }
@@ -598,6 +605,11 @@ impl Agent {
         if *self.geometry.lock().unwrap() == (rows, cols) {
             return Ok(());
         }
+        if !self.outbox.has_capacity(batch.len() + FRAME_BYTES) {
+            return Err(Error::Other(
+                "resize refused: hub output backlog full".into(),
+            ));
+        }
         if !batch.is_empty() {
             self.publish(std::mem::take(&mut *batch));
         }
@@ -629,14 +641,14 @@ impl Agent {
     }
     /// Post queued output in order, capped at FRAME_BYTES across each request.
     fn publisher(&self) {
-        let mut geometry = json!({"rows":self.options.rows,"cols":self.options.cols});
+        let mut geometry = None;
         while let Some(mut frames) = self.outbox.take(&self.id) {
-            // Each batch carries its starting geometry, even if the previous
-            // POST was lost. Never retry output whose delivery is uncertain.
-            frames.insert(0, json!({"endpoint_id":self.id,"geometry":geometry}));
+            if let Some(size) = &geometry {
+                frames.insert(0, json!({"endpoint_id":self.id,"geometry":size}));
+            }
             for frame in &frames {
                 if let Some(size) = frame.get("geometry") {
-                    geometry = size.clone();
+                    geometry = Some(size.clone());
                 }
             }
             self.post_frames(frames, &self.hub.output);
@@ -1204,6 +1216,44 @@ mod tests {
             assert!(String::from_utf8_lossy(&before).contains("old-batch"));
             assert!(String::from_utf8_lossy(&before).contains("old-kernel"));
             assert!(String::from_utf8_lossy(&after).contains("new-bottom"));
+            agent.pty.close(true).unwrap();
+        }
+    }
+
+    #[test]
+    fn saturated_resize_refuses_without_publishing_or_changing_geometry() {
+        for hub_command in [false, true] {
+            let agent = resize_test_agent();
+            agent
+                .outbox
+                .push(Item::Bytes(vec![b'x'; OUTBOX_BYTES - FRAME_BYTES]));
+            *agent.output.lock().unwrap() = b"pending".to_vec();
+            let started = Instant::now();
+            for rows in 30..130 {
+                let error = if hub_command {
+                    agent
+                        .apply(
+                            &json!({"kind":"resize", "payload":{"rows":rows,"cols":80}}),
+                            &hub_json::decode(b"{}", false).unwrap(),
+                        )
+                        .unwrap_err()
+                        .to_string()
+                } else {
+                    local::Endpoint::resize(&*agent, rows, 80).unwrap_err()
+                };
+                assert!(error.contains("backlog full"));
+            }
+            assert!(started.elapsed() < Duration::from_secs(1));
+            assert_eq!(agent.registration()["rows"], 24);
+            assert_eq!(agent.local.lines().len(), 24);
+            assert_eq!(*agent.output.lock().unwrap(), b"pending");
+            assert_eq!(
+                agent.outbox.state.lock().unwrap().1,
+                OUTBOX_BYTES - FRAME_BYTES
+            );
+            agent.outbox.take(&agent.id).unwrap();
+            agent.resize_output(40, 80).unwrap();
+            assert_eq!(agent.registration()["rows"], 40);
             agent.pty.close(true).unwrap();
         }
     }
