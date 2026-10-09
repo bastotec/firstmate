@@ -88,6 +88,8 @@
 # read captain holds, so a deferred task is never carded or listed again.
 # An exact retry matches the words and parked condition, or finishes an
 # interrupted deferral; other answers and close modes are refused.
+# Open-call reads exclude settled deferrals even before parking finishes;
+# stale-clear and reconcile close/note refuse them until that exact retry.
 # When the condition fires and the captain must choose again, `hold
 # --reopen-deferred` starts a fresh call with a new stamp and card; a plain
 # `hold` on a deferred task is refused, so restating a standing answer can
@@ -192,7 +194,8 @@
 #
 # `open` is the read-only predicate a mechanical closer asks before it may
 # retire a task's row: is this task still an open captain call? Exit 0 means it
-# is (not Done, hold kind captain), 1 means it is not, and 2 means the answer
+# is (not Done, hold kind captain, no settled deferral), 1 means it is not,
+# and 2 means the answer
 # could not be established, so a caller that must never close a live call can
 # treat "cannot tell" as its own case instead of as a no. With
 # `--distinguish-absent`, an absent local task returns 3 instead of 1; a home
@@ -554,6 +557,11 @@ body_deferral_state() {
       exit
     }
   '
+}
+
+refuse_settled_deferral() {
+  [ "$(body_deferral_state "$2")" != settled ] \
+    || fail "task $1 records a settled deferred answer; finish it with an exact answer --defer retry"
 }
 
 closed_answer_replay_mode_compatible() {  # <mode> <task-body>
@@ -1668,6 +1676,7 @@ reconcile_close() {
   state=$(show_field "$show" state)
   hold_kind=$(show_field_value "$show" hold_kind)
   body=$(show_field "$show" body)
+  refuse_settled_deferral "$id" "$(show_field_value "$show" body)"
   occurrence=$(( $(resolution_record_count "$body") + 1 ))
   if [ "$state" = "done" ]; then
     # An exact retry finishes an interrupted close and stays idempotent; a
@@ -1733,6 +1742,7 @@ command_stale_clear() {
   state=$(show_field "$show" state)
   hold_kind=$(show_field_value "$show" hold_kind)
   body=$(show_field "$show" body)
+  refuse_settled_deferral "$id" "$(show_field_value "$show" body)"
   # Mirrors reconcile_close: an exact retry finishes an interrupted clear, and
   # a record already written is never written twice.
   if [ "$state" = "done" ]; then
@@ -1785,11 +1795,12 @@ reconcile_note() {
   reconcile_request_read "$id" \
     || fail "task $id has no pending board-created reconcile request"
   require_tasks_axi
-  command_open "$id" \
-    || fail "task $id is not an open captain call; a note cannot keep a closed call open"
   task_show_or_fail "$id" "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
   body=$(decode_shown_value "$(show_field "$show" body)") \
     || fail "could not decode the existing body for $id"
+  refuse_settled_deferral "$id" "$body"
+  command_open "$id" \
+    || fail "task $id is not an open captain call; a note cannot keep a closed call open"
   note_digest=$(sha256_text "$note")
   marker="Reconcile request: $RECONCILE_REQUESTED | $RECONCILE_SOURCE | note digest: $note_digest"
   case "$body" in
@@ -2098,15 +2109,19 @@ command_open() {  # <task-id> [--identity] [--distinguish-absent]
   if fm_backlog_row_probe "$data" "$id"; then
     state=${FM_BACKLOG_ROW_STATE%% *}
     if [ "$state" != "done" ] && [ "$FM_BACKLOG_ROW_HOLD_KIND" = captain ]; then
+      task_show "$id" || {
+        printf 'fm-captain-hold: captain call %s is annotated but its record could not be read\n' "$id" >&2
+        exit 2
+      }
+      show=$TASK_SHOW_OUTPUT
+      shown_body=$(decode_shown_value "$(show_field "$show" body)") || {
+        printf 'fm-captain-hold: could not decode the body for %s\n' "$id" >&2
+        exit 2
+      }
+      [ "$(body_deferral_state "$shown_body")" != settled ] || return 1
       if [ "$identity" -eq 1 ]; then
-        task_show "$id" || {
-          printf 'fm-captain-hold: captain call %s is open but its record could not be read\n' "$id" >&2
-          exit 2
-        }
-        show=$TASK_SHOW_OUTPUT
-        shown_body=$(show_field "$show" body)
         printf '%s#%s\n' \
-          "$(body_hold_set_timestamp "$(decode_shown_value "$shown_body")")" \
+          "$(body_hold_set_timestamp "$shown_body")" \
           "$(resolution_record_count "$shown_body")"
       fi
       return 0

@@ -781,14 +781,17 @@ test_reopened_deferral_records_repeated_words_as_a_fresh_answer() {
 }
 
 test_interrupted_deferral_remains_settled_until_finalized() {
-  local home dec other real rc=0 before show out
+  local home dec other real rc=0 before show out flag action evidence
   command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
   home=$(make_home defer-interrupted)
   dec="$home/dec.txt"
   other="$home/other.txt"
   printf 'keep waiting\n' > "$dec"
   printf 'pay now\n' > "$other"
-  run_captain "$home" hold waiting --title Call --reason "Pay now?" >/dev/null || fail "hold failed"
+  FM_CAPTAIN_HOLD_NOW=2026-10-01T12:00:00Z run_captain "$home" hold waiting --title Call --reason "Pay now?" >/dev/null || fail "hold failed"
+  run_captain "$home" bind pending-deferral >/dev/null || fail "binding failed"
+  printf 'waiting\n' | run_captain "$home" reconcile-requests --source-id pending-deferral --source test >/dev/null \
+    || fail "reconcile request failed"
   real=$(command -v tasks-axi)
   cat > "$home/fakebin/tasks-axi" <<EOF
 #!/usr/bin/env bash
@@ -805,6 +808,37 @@ EOF
   assert_contains "$before" "hold_kind: captain" "the interrupted transition leaves the old hold kind"
   assert_contains "$before" "Captain hold set:" "the interrupted transition retains the stamp for finalization"
   assert_present "$home/state/cards/waiting.json" "the interrupted transition leaves the card for finalization"
+  for flag in '' --identity; do
+    rc=0; out=$(run_captain "$home" open waiting ${flag:+"$flag"} 2>&1) || rc=$?
+    assert_equals 1 "$rc" "an interrupted deferral is not an open captain call"
+    assert_equals "" "$out" "a settled deferral emits no open-call identity"
+  done
+  for action in backfill drafts calls; do
+    out=$(run_card "$home" "$action") || fail "$action failed on an interrupted deferral"
+    assert_equals "" "$out" "$action does not surface an interrupted deferral"
+  done
+  out=$(run_card "$home" stale) || fail "stale failed on an interrupted deferral"
+  assert_equals $'waiting\torphan\tcard has no open captain hold' "$out" "stale classifies the leftover card as orphan, not idle"
+  evidence="$home/evidence.txt"
+  printf 'The old premise no longer applies.\n' > "$evidence"
+  rc=0; out=$(run_captain "$home" stale-clear waiting --evidence-file "$evidence" 2>&1) || rc=$?
+  assert_not_equals 0 "$rc" "stale-clear refuses a settled interrupted deferral"
+  assert_contains "$out" "exact answer --defer retry" "stale-clear points to deferral finalization"
+  assert_equals "$before" "$(tasks_in "$home" show waiting --full)" "refused stale-clear leaves the waiting task open and unchanged"
+  for action in close note; do
+    flag=--evidence-file
+    [ "$action" != note ] || flag=--note-file
+    rc=0; out=$(run_captain "$home" reconcile "$action" waiting "$flag" "$evidence" 2>&1) || rc=$?
+    assert_not_equals 0 "$rc" "reconcile $action refuses a settled interrupted deferral"
+    assert_contains "$out" "exact answer --defer retry" "reconcile $action points to deferral finalization"
+  done
+  assert_present "$home/state/reconcile-requests/waiting.request" "refused reconciliation retains its pending request"
+  run_card "$home" remove waiting || fail "card removal failed"
+  out=$(run_card "$home" backfill) || fail "backfill failed after removing the leftover card"
+  assert_equals "" "$out" "backfill never recreates the interrupted deferral's card"
+  assert_absent "$home/state/cards/waiting.json" "an interrupted deferral remains uncarded after backfill"
+  run_card "$home" draft waiting --title Call --project firstmate --situation "Pay now?" >/dev/null \
+    || fail "could not restore the leftover card fixture"
   rc=0; run_captain "$home" hold waiting --reason "Restating keep waiting" >/dev/null 2>&1 || rc=$?
   assert_not_equals 0 "$rc" "an interrupted deferral refuses a plain re-hold"
   rc=0; run_captain "$home" answer waiting --decision-file "$other" >/dev/null 2>&1 || rc=$?
@@ -827,10 +861,11 @@ EOF
   assert_contains "$show" "hold_reason: When Banco is needed" "an exact retry installs the condition"
   assert_not_contains "$show" "Captain hold set:" "an exact retry removes the stamp"
   assert_absent "$home/state/cards/waiting.json" "an exact retry removes the card"
+  assert_absent "$home/state/reconcile-requests/waiting.request" "an exact retry retires the pending reconcile request"
   assert_equals 1 "$(printf '%s' "$show" | grep -o 'Resolution mode: deferred' | wc -l | tr -d ' ')" "finalization keeps one resolution"
   run_captain "$home" answer waiting --decision-file "$dec" --defer "When Banco is needed" >/dev/null || fail "finalized replay failed"
   assert_equals "$show" "$(tasks_in "$home" show waiting --full)" "the finalized deferral replays without changes"
-  pass "fm-captain-hold: interrupted deferrals reject new inputs and finalize only on an exact retry"
+  pass "fm-captain-hold: interrupted deferrals stay out of discovery, refuse evidence changes and finalize on an exact retry"
 }
 
 test_rehold_with_a_new_reason_refreshes_the_card() {

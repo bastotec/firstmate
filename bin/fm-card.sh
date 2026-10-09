@@ -43,9 +43,10 @@
 # call in this home, full card or not: the startup list a mate checks for calls
 # the captain already answered, which it records instead of asking again.
 # A call settled with `fm-captain-hold.sh answer --defer` is a parked wait, not
-# a captain call, so backfill, drafts, calls and stale never see it.
-# All three refuse (exit 2) when this home's backlog cannot be listed, rather than
-# reading an unreadable backlog as "no captain calls".
+# a captain call, even if parking is unfinished. Discovery skips it; stale
+# reports any leftover card as an orphan.
+# All three refuse (exit 2) when this home's backlog cannot be listed or read,
+# rather than reading an unreadable backlog as "no captain calls".
 # `stale` is read-only and prints "<task-id>\t<kind>\t<why>" per candidate:
 # `orphan` (a card with no open captain hold), `pr-merged` (the task's
 # recorded PR has a matching merge notification), or `idle` (held 3+ days,
@@ -233,11 +234,16 @@ cmd_draft() {
 # deferral still carries an open captain call. The last column is hold kind,
 # and an id is a slug, so neither needs CSV decoding.
 captain_held_ids() {
-  local listed
+  local listed ids id
   listed=$(tasks list --fields hold_kind 2>/dev/null) \
     || die "cannot list this home's captain calls; refusing to read that as none"
-  printf '%s\n' "$listed" \
-    | sed -n '/^  [^,]*,done,/d; s/^  \([A-Za-z0-9._-][A-Za-z0-9._-]*\),.*,captain$/\1/p'
+  ids=$(printf '%s\n' "$listed" \
+    | sed -n '/^  [^,]*,done,/d; s/^  \([A-Za-z0-9._-][A-Za-z0-9._-]*\),.*,captain$/\1/p')
+  for id in $ids; do
+    if held_state "$id"; then
+      printf '%s\n' "$id"
+    fi
+  done
 }
 
 cmd_backfill() {
