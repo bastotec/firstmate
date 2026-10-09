@@ -761,22 +761,34 @@ _fm_open_decisions_cursor_path() {  # <status-file>
 # discarded and rebuilt from byte 0 under the new reading.
 FM_OPEN_DECISIONS_FOLD_VERSION=5
 
+# The kernel name, read once per process: the identity, size and mtime readers
+# below run several times per status file on every drain, and a `uname` fork
+# each time was a large share of a drain on a loaded machine.
+_fm_classify_is_darwin() {
+  [ -n "${_FM_CLASSIFY_UNAME+x}" ] || _FM_CLASSIFY_UNAME=$(uname -s 2>/dev/null)
+  [ "$_FM_CLASSIFY_UNAME" = Darwin ]
+}
+
 # Portable device:inode identity for the rotation/recreation check below.
+# One stat call reads the identity, the birth epoch and the precise birth time.
 _fm_open_decisions_file_ident() {  # <file> -> strongest available identity
-  local f=$1 epoch birth ident
+  local f=$1 epoch birth ident fields
   if [ -n "${FM_STATUS_IDENTITY_READER:-}" ]; then
     "$FM_STATUS_IDENTITY_READER" "$f"
     return
   fi
-  if [ "$(uname -s 2>/dev/null)" = Darwin ]; then
-    ident=$(LC_ALL=C /usr/bin/stat -f '%d:%i' "$f" 2>/dev/null) || return 1
-    epoch=$(LC_ALL=C /usr/bin/stat -f '%B' "$f" 2>/dev/null) || epoch=0
-    if [ "$epoch" != 0 ]; then birth=$(LC_ALL=C /usr/bin/stat -f '%FB' "$f" 2>/dev/null) || birth=''; else birth=''; fi
+  if _fm_classify_is_darwin; then
+    fields=$(LC_ALL=C /usr/bin/stat -f $'%d:%i\t%B\t%FB' "$f" 2>/dev/null) || return 1
   else
-    ident=$(LC_ALL=C stat -c '%d:%i' "$f" 2>/dev/null) || return 1
-    epoch=$(LC_ALL=C stat -c '%W' "$f" 2>/dev/null) || epoch=0
-    if [ "$epoch" != 0 ]; then birth=$(LC_ALL=C stat -c '%w' "$f" 2>/dev/null) || birth=''; else birth=''; fi
+    fields=$(LC_ALL=C stat -c $'%d:%i\t%W\t%w' "$f" 2>/dev/null) || return 1
   fi
+  case "$fields" in *$'\n'*) return 1 ;; esac
+  ident=${fields%%$'\t'*}
+  fields=${fields#*$'\t'}
+  epoch=${fields%%$'\t'*}
+  birth=${fields#*$'\t'}
+  case "$epoch" in ''|0|-) birth='' ;; esac
+  case "$birth" in -) birth='' ;; esac
   case "$ident$birth" in *$'\t'*|*$'\n'*|'') return 1 ;; esac
   if [ -n "$birth" ]; then printf 'strong:%s:%s' "$ident" "$birth"; else printf 'weak:%s' "$ident"; fi
 }
@@ -787,7 +799,7 @@ _fm_status_file_size() {  # <status-file>
     "$FM_STATUS_SIZE_READER" "$f"
     return
   fi
-  if [ "$(uname -s 2>/dev/null)" = Darwin ]; then
+  if _fm_classify_is_darwin; then
     LC_ALL=C /usr/bin/stat -f '%z' "$f" 2>/dev/null
   else
     LC_ALL=C stat -c '%s' "$f" 2>/dev/null
@@ -796,7 +808,7 @@ _fm_status_file_size() {  # <status-file>
 
 _fm_status_file_mtime() {  # <status-file>
   local f=$1
-  if [ "$(uname -s 2>/dev/null)" = Darwin ]; then
+  if _fm_classify_is_darwin; then
     LC_ALL=C /usr/bin/stat -f '%m' "$f" 2>/dev/null
   else
     LC_ALL=C stat -c '%Y' "$f" 2>/dev/null
@@ -1187,7 +1199,7 @@ status_presentation_marker_parse() {
 }
 
 _status_observed_path_state() {
-  if [ "$(uname -s 2>/dev/null)" = Darwin ]; then
+  if _fm_classify_is_darwin; then
     LC_ALL=C /usr/bin/stat -f '%HT:%p' "$1" 2>/dev/null
   else
     LC_ALL=C stat -c '%F:%f' "$1" 2>/dev/null
@@ -1546,23 +1558,26 @@ status_new_lines_since_cursor() {  # <status-file> [<captured-end-offset>]
 # 0 when a status line is an informational `note:` or a reserved-key
 # pending-reply resolution. Those lines never fold into OPEN DECISIONS, so the
 # drain's unread-status surface is their only guaranteed presentation.
+# Runs once per unread line on every drain, so it uses the in-process `_into`
+# parsers: a command substitution per line forks, and a backlog of unread lines
+# then cost the drain minutes on a loaded machine.
 status_line_is_unread_surface() {  # <status-line>
-  local line=$1 verb key note resolve held prefix
+  local line=$1 resolve held prefix _FM_VERB _FM_KEY _FM_NOTE
   [ -n "$line" ] || return 1
-  verb=$(status_line_verb "$line")
-  [ "$verb" = note ] && return 0
+  _fm_status_line_verb_into "$line"
+  [ "$_FM_VERB" = note ] && return 0
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
   held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
-  case "$verb" in
+  case "$_FM_VERB" in
     "$resolve"|"$held") ;;
     *) return 1 ;;
   esac
-  key=$(_fm_decision_key "$line") || return 1
-  note=$(status_line_note "$line")
+  _fm_decision_key_into "$line" || return 1
+  _fm_status_line_note_into "$line"
   for prefix in ${FM_CLASSIFY_RESERVED_KEY_PREFIXES:-$FM_CLASSIFY_RESERVED_KEY_PREFIXES_DEFAULT}; do
-    case "$key" in
+    case "$_FM_KEY" in
       "$prefix"*)
-        _fm_decision_key_transition_allowed "$key" "$note"
+        _fm_decision_key_transition_allowed "$_FM_KEY" "$_FM_NOTE"
         return
         ;;
     esac
