@@ -2,7 +2,7 @@
 name: task-delivery
 description: >-
   Agent-only procedures for the dispatch, validation, ready, landing, and scout-outcome steps of a task's delivery.
-  Use before every spawn, when judging an active no-mistakes validation run's state, when the captain adds or changes the ask of a task under validation, when a worker hand-edits, commits, aborts, or restarts during its run, when a worker reports a PR or a ready local-only branch, before writing a custom watcher check, after a teardown, and when a scout completes.
+  Use before every spawn, when judging an active no-mistakes validation run's state, when the captain adds or changes the ask of a task under validation, when a worker hand-edits, commits, aborts, or restarts during its run, when a worker reports a PR or a ready local-only branch, before writing a custom watcher check, after a teardown, when a scout completes, and on every heartbeat for the finished-work sweep.
 user-invocable: false
 metadata:
   internal: true
@@ -58,6 +58,23 @@ An auto-land `check:` wake from `bin/fm-autoland.sh` reports merges, deploy outc
 
 For any custom `state/<id>.check.sh` you write yourself, keep it an ordinary single-link mode-`0700` file, print one line only when firstmate should wake, print nothing otherwise, finish before `FM_CHECK_TIMEOUT`, then bind its current bytes with `bin/fm-check-register.sh <id>` before the watcher may execute it.
 Retire a custom check only through `bin/fm-check-unregister.sh <id>` (or `bin/fm-teardown.sh` for a spawned task); never hand-compose an `rm` with `$STATE`/`$ID`.
+
+## Finished-work sweep
+
+`AGENTS.md` section 7 records the captain's standing instruction that the mate who created a worker cleans it up once its work is done.
+Run this sweep when a ship lands, when a scout completes, and on every heartbeat, over this home's own direct reports only - its own `state/<id>.meta` records, never another home's, and never a secondmate, which retires only on an explicit decision.
+
+A worker is finished when its PR merged or its local-only branch landed, or when it is a scout whose report exists and whose `captain-hold-lifecycle` completion gate passes.
+A scout kept alive to host the captain's Lavish loop, or any worker whose work is still under way, is not finished.
+
+For each finished worker:
+
+1. Run `bin/fm-teardown.sh <id>`, never with `--force`.
+2. If cleanup refuses only because the endpoint is on a retired backend and could never be confirmed gone, retire the record with `FM_HOME=<this home> bin/fm-retire-endpoint.sh --finished <id>`; its help owns what it accepts, and it never proceeds past unlanded work.
+3. Treat any other refusal - unlanded or uncommitted work, a missing report, an open captain decision, a stream endpoint that would not confirm its stop, a window still listed - as not provably finished: stop, never retry around it, and hold one plain decision for the captain through `bin/fm-captain-hold.sh` naming the worker, the evidence, and the choice between cleaning it up and keeping it.
+
+Once a worker's decision is held, later sweeps leave it to that decision rather than raising it again.
+In a secondmate home that decision reaches the captain through the parent channel, as every escalation there does.
 
 ## After teardown
 

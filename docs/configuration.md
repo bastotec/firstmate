@@ -66,7 +66,7 @@ state/
   <id>.check.sh <id>.check-trust  authenticated slow poll and custom-check binding (bin/fm-check-register.sh)
   <id>.pr-poll <id>.pr-poll-registration <id>.pr-poll-retirement <id>.pr-poll-merge-notified  PR merge poll records (bin/fm-pr-lib.sh)
   <id>.merge-authority    accepted merge authority (bin/fm-merge-authority-lib.sh)
-  endpoint-retirements.log  operator endpoint retirements; written only by bin/fm-retire-endpoint.sh
+  endpoint-retirements.log  endpoint retirement assertions (operator or owning mate); written only by bin/fm-retire-endpoint.sh
   terminal-outcomes/      inactive terminal-outcome receipts (bin/fm-inactive-reconcile.sh)
   model-chain/            per-lane model cooldowns ("Model fallback chains")
   pending-replies/        parent-owned secondmate pending replies (bin/fm-pending-reply-lib.sh)
@@ -148,7 +148,7 @@ New local spawns select an explicitly authorized per-task `--backend` first, the
 A per-task override requires a current captain instruction or the task's accepted brief and never establishes precedent for later tasks.
 Any selection other than `stream` is refused, and the earlier `zellij`, `orca`, and `cmux` adapters remain unsupported.
 A task record on the retired `tmux` or `herdr` backend, including a record with no `backend=` field, stays readable only for reconciliation and retirement: the recovery classifier reports `unverified`, its kill is unconfirmed, and relaunch is refused.
-[Endpoint retirement](stream-backend.md#retiring-a-record-no-backend-can-answer-for) owns the operator assertion required to retire such a record with [`bin/fm-retire-endpoint.sh`](../bin/fm-retire-endpoint.sh).
+[Endpoint retirement](stream-backend.md#retiring-a-record-no-backend-can-answer-for) owns the operator assertion required to retire such a record with [`bin/fm-retire-endpoint.sh`](../bin/fm-retire-endpoint.sh), and the owning mate's `--finished` path for its own finished work.
 `fm-spawn.sh` spawns local ship, scout, and `--secondmate` tasks on stream, and [remote placement](remote-secondmates.md#normal-operation) owns remote secondmates.
 A spawn refusal from a missing dependency, version gate, or unreachable hub is terminal, and firstmate surfaces it as a blocker.
 Every spawn records `backend=stream`, `endpoint_task_id=` (the cleanup binding between the metadata filename and the opaque endpoint), `stream_hub=`, and `stream_endpoint_id=` in task meta.

@@ -1,13 +1,28 @@
 #!/usr/bin/env bash
 # Retire the durable records of a task whose endpoint no backend can answer
-# for, on an operator's explicit say-so.
+# for, on an operator's explicit say-so or, with --finished, on the owning
+# mate's proof that the work is finished.
 #
-# Operator-only by construction: nothing in firstmate runs this script, and no
-# automatic path can produce what it writes. Cleanup itself never retires such
-# a record - bin/fm-teardown.sh's endpoint gates refuse on a stop nothing
-# proved, and --force does not lift them - so the records of a task whose
-# backend cannot answer would otherwise stay forever. This is the one way they
-# are ever retired, and it runs only when a human names them.
+# No automatic path runs this script or produces what it writes. Cleanup itself
+# never retires such a record - bin/fm-teardown.sh's endpoint gates refuse on a
+# stop nothing proved, and --force does not lift them - so the records of a
+# task whose backend cannot answer would otherwise stay forever. This is the
+# one way they are ever retired, and it runs only when someone names them.
+#
+# --finished is the owning mate's path, under the captain's standing
+# instruction that whoever created a worker cleans it up once its work is done.
+# It is narrower than the operator path in every direction: it takes only
+# records on a retired backend (tmux, herdr, or no backend= field), never a
+# stream record a hub might still answer for and never a secondmate; it takes a
+# ship only while its worktree is still this task's own, so cleanup's
+# landed-work gate actually runs; it refuses a tmux record whose window a local
+# tmux server still lists; and it never proceeds past cleanup's work-protection
+# gate, so unlanded or uncommitted work, a scout without its report, or an
+# unresolved captain decision retires nothing. Its basis is that cleanup, once
+# those gates pass, has already stopped every process under the worktree before
+# it reaches the endpoint. It skips the type-back prompt because an agent runs
+# it, and records basis=finished-work in the assertion log instead. Anything it
+# refuses goes to the captain as a decision.
 #
 # Absence from the hub is never proof that a worker stopped: a same-protocol
 # restart clears the registry while live agents rejoin on their own schedule,
@@ -38,6 +53,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+FM_HOME_EXPLICIT=${FM_HOME:-}
 FM_HOME="${FM_HOME:-$FM_ROOT}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
@@ -50,10 +66,13 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-backlog-transition-lib.sh
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
+# shellcheck source=bin/fm-wake-lib.sh
+. "$SCRIPT_DIR/fm-wake-lib.sh"
 
 usage() {
   cat <<'EOF'
 usage: fm-retire-endpoint.sh <task-id> [<task-id>...]
+       FM_HOME=<owning-home> fm-retire-endpoint.sh --finished <task-id> [<task-id>...]
 
 Retires the durable records - the task record and its backlog row - of tasks
 whose runtime endpoint no backend can answer for, after you confirm the ids by
@@ -110,6 +129,23 @@ What this reaches, exactly:
   that sweep to read.
 
 Every id must be named exactly; wildcards and all-records forms are refused.
+
+--finished: the owning mate's cleanup of its own finished work, under the
+captain's standing instruction. It needs an explicit FM_HOME naming the home
+that owns the records, asks for no typed confirmation, and takes only:
+
+  - a ship or scout record on a retired backend (tmux, herdr, or no backend=
+    field); a stream record or a secondmate is refused;
+  - for a ship, a worktree that still exists and is still this task's own
+    slot, so cleanup's landed-work check runs against it;
+  - for a tmux record, a window no local tmux server still lists.
+
+Cleanup's work-protection refusal is NOT proceeded past: unlanded or
+uncommitted work, a scout whose report is missing, or a captain decision the
+report still leaves open retires nothing. Cleanup stops every process under
+the worktree before it reaches the endpoint, which is what stands behind the
+stop this asserts. The log line carries basis=finished-work. Anything refused
+here is the captain's decision.
 EOF
 }
 
@@ -119,11 +155,15 @@ refuse() {
 }
 
 IDS=()
+FINISHED=0
 for arg in "$@"; do
   case "$arg" in
     -h|--help)
       usage
       exit 0
+      ;;
+    --finished)
+      FINISHED=1
       ;;
     *[][*?]*)
       refuse "refusing '$arg': name each task id exactly - a wildcard or all-records form cannot say which workers you inspected"
@@ -148,6 +188,47 @@ for id in "${IDS[@]}"; do
     || refuse "no durable task record at $STATE/$id.meta, so there is nothing to retire for '$id'"
 done
 
+# The owning mate's preconditions, checked for every id before anything is
+# written, so a refusal for one id leaves every record exactly as it was.
+finished_work_precheck() {  # <id>
+  local id=$1 meta="$STATE/$1.meta" backend kind wt proj window
+  backend=$(fm_backend_of_meta "$meta")
+  fm_backend_is_retired "$backend" \
+    || refuse "'$id' is recorded on the '$backend' backend, which can still answer for its endpoint; tear it down with bin/fm-teardown.sh, or take it to the captain - --finished retires only records on a retired backend"
+  kind=$(fm_meta_get "$meta" kind)
+  case "${kind:-ship}" in
+    ship)
+      wt=$(fm_meta_get "$meta" worktree)
+      proj=$(fm_meta_get "$meta" project)
+      [ -n "$wt" ] && [ -d "$wt" ] \
+        || refuse "ship '$id' has no worktree left at '${wt:-(none recorded)}', so nothing can prove its work landed; take it to the captain"
+      if fm_treehouse_pool_slot "$proj" "$wt"; then
+        fm_treehouse_slot_owner_state "$wt" "$id"
+        case "$FM_TREEHOUSE_SLOT_OWNER" in
+          mine|absent) ;;
+          *) refuse "ship $id's worktree $wt is no longer provably its own (slot owner: $FM_TREEHOUSE_SLOT_OWNER${FM_TREEHOUSE_SLOT_OWNER_ID:+ $FM_TREEHOUSE_SLOT_OWNER_ID}), so nothing can prove its work landed; take it to the captain" ;;
+        esac
+      fi
+      ;;
+    scout) ;;
+    *) refuse "'$id' is a $kind record; --finished retires only ship and scout records" ;;
+  esac
+  if [ "$backend" = tmux ] && command -v tmux >/dev/null 2>&1; then
+    window=$(fm_meta_get "$meta" window)
+    if tmux list-windows -a -F '#{session_name}:#{window_name}' 2>/dev/null | grep -Fxq -- "$window"; then
+      refuse "a local tmux server still lists $id's window $window, so a worker may still be running behind it; take it to the captain"
+    fi
+  fi
+}
+
+if [ "$FINISHED" = 1 ]; then
+  [ -n "$FM_HOME_EXPLICIT" ] \
+    || refuse "--finished needs an explicit FM_HOME naming the home that owns these records"
+  for id in "${IDS[@]}"; do
+    finished_work_precheck "$id"
+  done
+fi
+
 NOTE=
 cleanup_note() {
   [ -z "$NOTE" ] || rm -f "$NOTE"
@@ -165,19 +246,21 @@ abort_on_signal() {
 trap cleanup_note EXIT
 trap abort_on_signal INT TERM
 
-echo "About to retire the durable records of:" >&2
-for id in "${IDS[@]}"; do
-  printf '  %s (endpoint %s)\n' "$id" "$(fm_backend_target_of_meta "$STATE/$id.meta")" >&2
-done
-printf 'Type those ids to confirm no worker is still running behind them: ' >&2
-typed=
-IFS= read -r typed || typed=
-set -f
-# shellcheck disable=SC2086 # deliberate: collapse the operator's spacing before comparing.
-set -- $typed
-set +f
-[ "$*" = "${IDS[*]}" ] \
-  || refuse "the ids typed back do not match the ids named; nothing was retired"
+if [ "$FINISHED" = 0 ]; then
+  echo "About to retire the durable records of:" >&2
+  for id in "${IDS[@]}"; do
+    printf '  %s (endpoint %s)\n' "$id" "$(fm_backend_target_of_meta "$STATE/$id.meta")" >&2
+  done
+  printf 'Type those ids to confirm no worker is still running behind them: ' >&2
+  typed=
+  IFS= read -r typed || typed=
+  set -f
+  # shellcheck disable=SC2086 # deliberate: collapse the operator's spacing before comparing.
+  set -- $typed
+  set +f
+  [ "$*" = "${IDS[*]}" ] \
+    || refuse "the ids typed back do not match the ids named; nothing was retired"
+fi
 
 # Record bookkeeping only: the task record and its backlog row, through the
 # same transition that owns that pairing for cleanup. Nothing here reads or
@@ -329,8 +412,10 @@ WORK_GATE_EXIT=72
 # not by firstmate.
 RETIREMENT_LOG="$STATE/endpoint-retirements.log"
 record_retirement_assertion() {  # <id>
-  printf '%s\tasserted\t%s\tby=%s\n' \
-    "$retired_at" "$1" "$retired_by" >> "$RETIREMENT_LOG"
+  local basis=
+  [ "$FINISHED" = 0 ] || basis=$'\tbasis=finished-work'
+  printf '%s\tasserted\t%s\tby=%s%s\n' \
+    "$retired_at" "$1" "$retired_by" "$basis" >> "$RETIREMENT_LOG"
 }
 
 retired_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -355,6 +440,9 @@ for id in "${IDS[@]}"; do
   "$SCRIPT_DIR/fm-teardown.sh" "$id" || teardown_rc=$?
   if [ "$teardown_rc" = 0 ]; then
     echo "note: $id retired; cleanup completed under the retirement recorded for $retired_by at $retired_at" >&2
+  elif [ "$teardown_rc" = "$WORK_GATE_EXIT" ] && [ "$FINISHED" = 1 ]; then
+    status=1
+    echo "error: cleanup for $id refused over unlanded or uncommitted work in its worktree, so it is not finished; nothing was retired, and this is the captain's decision" >&2
   elif [ "$teardown_rc" != "$WORK_GATE_EXIT" ]; then
     status=1
     if [ -e "$STATE/$id.meta" ] || [ -L "$STATE/$id.meta" ]; then

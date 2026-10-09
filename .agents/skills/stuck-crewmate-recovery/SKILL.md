@@ -33,7 +33,7 @@ A no-mistakes run matched to the crew's branch and current code remains authorit
 
 When no authoritative run accounts for the task, inspect only its recorded backend and worktree inventory.
 Use `treehouse status` for the recorded stream task's worktree.
-A retired-backend record cannot be recovered through lifecycle control; [Runtime backend](../../../docs/configuration.md#runtime-backend-configbackend--fm_backend) owns its reconciliation and retirement boundary.
+A retired-backend record cannot be recovered through lifecycle control; [Runtime backend](../../../docs/configuration.md#runtime-backend-configbackend--fm_backend) owns its reconciliation and retirement boundary, and one whose work is finished goes to `task-delivery`'s finished-work sweep instead.
 Do not sweep another home's endpoints or infer ownership from a matching window label.
 
 Before relaunch, prove that no live agent still owns the recorded task and that the existing worktree remains available.

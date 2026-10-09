@@ -2713,9 +2713,9 @@ require_task_endpoint_gone() {  # <kill-status>
 }
 
 # The operator retirement: one record, written only by
-# bin/fm-retire-endpoint.sh, which a human runs after naming a task and typing
-# its id back. Nothing in firstmate writes one, so no automatic path reaches
-# any of this. Every endpoint gate below consults it through the same two
+# bin/fm-retire-endpoint.sh, after an operator names a task and types its id
+# back, or after the owning mate's --finished prechecks pass. No automatic path
+# writes one, so no automatic path reaches any of this. Every endpoint gate below consults it through the same two
 # functions, and it is consumed on first use rather than left behind, so it
 # authorizes exactly the cleanup the operator asked for and never a later
 # automatic run.
