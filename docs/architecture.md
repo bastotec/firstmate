@@ -145,8 +145,7 @@ Each record is bound to an incarnation token minted when the task is armed, so a
 The runtime backend is the session-provider layer below firstmate's scripts: endpoint creation, bounded capture, text and key sends, current-path reads, agent-process probes, and teardown.
 Teardown carries one contract the layer above depends on: a kill reports whether the endpoint is gone, could not be proved gone, or could never be attempted, and only the first licenses removing the records that assert a worker stopped (`fm_backend_kill` in `bin/fm-backend.sh`).
 `bin/fm-backend.sh` centralizes selection, `state/<id>.meta` helpers, endpoint identity validation, and dispatch to the one adapter, `bin/backends/stream.sh`.
-Records left on the retired tmux and herdr backends read as undrivable rather than crashing, and `bin/fm-retire-endpoint.sh` retires them.
-[`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns selection, the refusal of other names, and legacy-record compatibility.
+[`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns selection, the refusal of other names, legacy-record compatibility, and retired-record continuation or retirement.
 stream's session host is the fleet's own hub, and each task's pseudoterminal is owned by a thin agent on the machine that runs it.
 Relaying that pty adds one state a local terminal lacks: a silent agent reads `unreadable`, never `dead`, because an unreachable worker and a stopped one look the same from the hub.
 [`stream-backend.md`](stream-backend.md) owns setup, security model, and limits, and [`verification/runtime-backends.md`](verification/runtime-backends.md#stream) owns live evidence.
