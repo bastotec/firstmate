@@ -2518,6 +2518,109 @@ test_a_leaf_that_is_still_rejoining_is_waited_for_rather_than_called_absent() {
   pass "hub: a leaf still rejoining is waited for rather than reported absent"
 }
 
+test_a_steer_that_arrives_inside_the_rejoin_window_is_requeued_not_lost() {
+  # The thin-margin case the whole window exists for. A healthy worker can
+  # rejoin just past the first membership window - the arithmetic that set the
+  # constant leaves only a few hundred milliseconds of slack, and load on the
+  # process reads or the registration POST spends it. Before the requeue the
+  # placement answered membership_unresolved there, the classifier called the
+  # worker missing, and the pending steer was escalated away rather than rung
+  # again: a healthy rejoining worker silently lost one instruction. The
+  # requeue holds the SAME order record through a second window of the same
+  # length, so delivery is still exactly once and in order, and the window
+  # constant itself is unchanged.
+  start_hub order-requeue
+  local endpoint agent leaf out first_pid resume_pid ledger waited=0 lines
+  endpoint=$(start_agent box-a requeued)
+  agent=$(agent_pid_for box-a requeued)
+  [ -n "$agent" ] || fail "the agent should be running"
+  leaf="box-a/requeued-$RUN"
+  kill -STOP "$agent" || fail "could not pause the agent"
+  restart_hub
+  # The registration the first window waits for never arrives: the agent is
+  # held past it, so the placement's only way to deliver is the requeue.
+  ( order "$leaf" "$endpoint" "printf 'requeued\\n' >> '$CASE_DIR/requeue-ledger'" requeued-once \
+      > "$CASE_DIR/requeue.out" 2>/dev/null ) &
+  first_pid=$!
+  fm_test_track_helper_pid "$first_pid"
+  sleep 7
+  # Past the first window, still inside the requeue: the worker registers now,
+  # a moment that lost the steer before the fix.
+  kill -CONT "$agent" || fail "could not resume the agent"
+  wait "$first_pid" 2>/dev/null || true
+  out=$(cat "$CASE_DIR/requeue.out")
+  assert_equals "$(printf '%s' "$out" | jq -r '.outcome')" accepted \
+    "a steer that arrived inside the rejoin window must be requeued and delivered, not lost"
+  assert_equals "$(printf '%s' "$out" | jq -r '.delivered')" true \
+    "the requeued steer was delivered once membership resolved"
+  while [ "$waited" -lt 150 ]; do
+    [ -s "$CASE_DIR/requeue-ledger" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$CASE_DIR/requeue-ledger" ] || fail "the requeued steer never reached the rejoined worker"
+  lines=$(wc -l < "$CASE_DIR/requeue-ledger" | tr -d '[:space:]')
+  assert_equals "$lines" 1 \
+    "the requeued steer must be delivered exactly once however the windows split"
+  # Order relative to other steers: a second order placed after the rejoin
+  # must not be delivered before the requeued one. Both append to the ledger,
+  # so the file's own order is the proof.
+  out=$(order "$leaf" "$endpoint" "printf 'after-requeue\\n' >> '$CASE_DIR/requeue-ledger'" after-the-requeue)
+  assert_equals "$(printf '%s' "$out" | jq -r '.outcome')" accepted \
+    "an order placed after the rejoin should deliver normally"
+  wait_for_capture "$endpoint" after-the-requeue || true
+  waited=0
+  while [ "$waited" -lt 150 ]; do
+    [ "$(wc -l < "$CASE_DIR/requeue-ledger" | tr -d '[:space:]')" -ge 2 ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_equals "$(sed -n '1p' "$CASE_DIR/requeue-ledger")" requeued \
+    "the requeued steer keeps its place ahead of a steer placed after the rejoin"
+  assert_equals "$(sed -n '2p' "$CASE_DIR/requeue-ledger")" after-requeue \
+    "a later steer is delivered after the requeued one, not before it"
+  pass "hub: a steer arriving inside the rejoin window is requeued, not lost"
+}
+
+test_a_requeued_steer_to_a_worker_that_never_rejoins_fails_cleanly() {
+  # The other leg of the same race. A requeue must not become a linger: if the
+  # worker is gone again - the agent never comes back - the requeued steer
+  # settles as the ordinary unresolved answer, keeps its id binding, and never
+  # holds the caller past its bounded windows.
+  start_hub order-requeue-gone
+  local endpoint agent leaf out first_pid waited=0
+  endpoint=$(start_agent box-a gone-again)
+  agent=$(agent_pid_for box-a gone-again)
+  [ -n "$agent" ] || fail "the agent should be running"
+  leaf="box-a/gone-again-$RUN"
+  kill -STOP "$agent" || fail "could not pause the agent"
+  restart_hub
+  ( order "$leaf" "$endpoint" "echo NEVER-REJOINED" gone-again-once \
+      > "$CASE_DIR/gone-again.out" 2>/dev/null ) &
+  first_pid=$!
+  fm_test_track_helper_pid "$first_pid"
+  # Both windows pass with the agent still held, so the placement settles.
+  wait "$first_pid" 2>/dev/null || true
+  out=$(cat "$CASE_DIR/gone-again.out")
+  assert_equals "$(printf '%s' "$out" | jq -r '.outcome')" unconfirmed \
+    "a requeued steer to a worker that never rejoins stays unconfirmed"
+  assert_equals "$(printf '%s' "$out" | jq -r '.reason')" membership_unresolved \
+    "the settled answer should still name unresolved membership, never death"
+  assert_equals "$(printf '%s' "$out" | jq -r '.delivered')" null \
+    "the hub cannot claim delivery or non-delivery for a leaf it cannot resolve"
+  assert_equals "$(printf '%s' "$out" | jq -r '.worker_gone')" false \
+    "a worker that never rejoined is never reported gone"
+  # Cleanly, not lingering: the order is answerable, and an identical resend
+  # after the agent returns is still idempotent against the same record.
+  out=$(order "$leaf" "$endpoint" "echo NEVER-REJOINED" gone-again-once)
+  assert_equals "$(printf '%s' "$out" | jq -r '.reason')" membership_unresolved \
+    "a resend of the settled requeued steer reads the same unresolved record"
+  assert_equals "$(printf '%s' "$out" | jq -r '.outcome')" unconfirmed \
+    "the requeued order stays honestly unconfirmed rather than refused"
+  kill -CONT "$agent" || fail "could not resume the agent"
+  pass "hub: a requeued steer to a worker that never rejoins fails cleanly"
+}
+
 test_ordering_needs_the_control_class_and_the_bridge_request_shape() {
   start_hub order-guards
   local endpoint leaf generation out
@@ -2723,6 +2826,8 @@ test_an_order_taken_without_an_answer_is_unconfirmed_and_reconciles_when_resent
 test_an_order_is_delivered_once_however_many_times_its_id_is_sent
 test_a_resend_that_overtakes_a_placement_in_flight_is_answered_not_retyped
 test_a_leaf_that_is_still_rejoining_is_waited_for_rather_than_called_absent
+test_a_steer_that_arrives_inside_the_rejoin_window_is_requeued_not_lost
+test_a_requeued_steer_to_a_worker_that_never_rejoins_fails_cleanly
 test_ordering_needs_the_control_class_and_the_bridge_request_shape
 test_fm_stream_start_status_stop_round_trip
 test_fm_stream_refuses_a_second_hub_for_one_home

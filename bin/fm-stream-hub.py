@@ -162,9 +162,9 @@ UNACKNOWLEDGED_COMMAND_RETENTION = 900.0
 RETIRED_COMMAND_MAX = ORDER_JOURNAL_MAX
 # How much longer than a placement's own worst case a resend of that order id
 # waits for the call still placing it to answer. Placing is bounded by the
-# fixed membership window plus the acknowledgement window, so this covers only
-# scheduling between those waits and the answer; past it, the live record is
-# the honest thing to return.
+# membership windows (the ordinary one plus the single requeue) and the
+# acknowledgement window, so this covers only scheduling between those waits
+# and the answer; past it, the live record is the honest thing to return.
 ORDER_ANSWER_SLACK_SECS = 5.0
 # How long an endpoint may say nothing before the hub presumes its agent is
 # gone. A presumption is not a close: the endpoint stays listed, stays
@@ -188,7 +188,16 @@ AGENT_SILENCE_PRESUMED_SECS = 10.0
 # agent registers again. A miss after this window is still not evidence the
 # worker is gone: the order remains unconfirmed, keeps its id binding, and an
 # identical resend may retry placement after the agent's backoff.
+# A steer that arrives inside this window is REQUEUED through exactly one more
+# window of the same length before the order is answered unresolved (see
+# place_order), so a healthy rejoin that lands just past the first window does
+# not lose the steer. Widening the window itself is not available - its callers
+# bound a whole crew-state read - so the requeue reuses this constant.
 MEMBERSHIP_GRACE_SECS = 6.0
+# How many bounded membership windows one placement may run: the ordinary
+# window, plus the single requeue a steer that arrived inside the rejoin
+# window gets. No placement holds its caller longer than this many windows.
+MEMBERSHIP_WAIT_PASSES = 2
 MAX_BODY = 4 * 1024 * 1024
 MAX_LABEL_LEN = 128
 MAX_MACHINE_LEN = 128
@@ -1652,6 +1661,7 @@ class Hub:
                 # and not a snapshot of its middle.
                 if not existing.answered.is_set():
                     existing.answered.wait(MEMBERSHIP_GRACE_SECS
+                                           * MEMBERSHIP_WAIT_PASSES
                                            + self.options.command_ack_secs
                                            + ORDER_ANSWER_SLACK_SECS)
                 return existing
@@ -1659,8 +1669,17 @@ class Hub:
             members = self.leaf_members(leaf)
             # A leaf that resolves to nothing may still be rejoining. The wait
             # gives an ordinary restart time to recover, but silence after it is
-            # still not evidence that the worker is gone.
-            if not members:
+            # still not evidence that the worker is gone. A steer that arrived
+            # inside the rejoin window is requeued through exactly one more
+            # window of the same length: the first window is spent waiting
+            # while the agent could still be pacing its return, so a healthy
+            # rejoin landing just past it must not lose the steer. The order
+            # record is held across both waits, which is what keeps delivery
+            # exactly once and in order - the journal still binds the id, and a
+            # resend still finds this record rather than typing again.
+            passes = 0
+            while not members and passes < MEMBERSHIP_WAIT_PASSES:
+                passes += 1
                 deadline = _now() + MEMBERSHIP_GRACE_SECS
                 while _now() < deadline:
                     time.sleep(0.25)
@@ -1675,8 +1694,9 @@ class Hub:
             if current is None:
                 order.uncertainty = (
                     "membership_unresolved",
-                    "this hub holds no endpoint for leaf %s, which is not evidence that "
-                    "its worker is gone" % leaf)
+                    "this hub holds no endpoint for leaf %s after the placement window "
+                    "and its one requeue, which is not evidence that its worker is gone"
+                    % leaf)
                 return order
 
             if current.endpoint_id != requested_execution:

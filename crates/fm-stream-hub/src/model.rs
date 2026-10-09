@@ -17,6 +17,12 @@ pub const CAPS: [&str; 6] = [
 ];
 /// Agent silence past which the hub presumes an endpoint's agent gone.
 pub const PRESUMED_SECS: f64 = 10.;
+/// How long a leaf that does not resolve gets one placement attempt to
+/// rejoin. The registry is in memory, so a hub that restarted holds nothing
+/// until each agent registers again. A steer that arrives inside this window
+/// is requeued through exactly one more window of the same length before the
+/// order is answered unresolved; see place_encoded.
+pub const MEMBERSHIP_GRACE_SECS: f64 = 6.;
 /// A task-events subscriber hears an endpoint's output growth at most this often.
 pub const EVENT_OUTPUT_SECS: f64 = 2.;
 pub fn now() -> f64 {
@@ -246,6 +252,12 @@ pub struct Order {
     pub uncertainty: Option<(String, String)>,
     pub status: u16,
     pub answered: bool,
+    /// How many bounded membership waits this placement has run. The live
+    /// system's one-window answer is the first; the requeue a steer that
+    /// arrived inside the rejoin window gets is the second, so an ordinary
+    /// placement and a requeued one differ only in how long they held the
+    /// order, never in their record shape or their idempotency.
+    pub membership_waits: u32,
 }
 pub struct State {
     pub endpoints: BTreeMap<String, Endpoint>,
@@ -950,7 +962,10 @@ impl Hub {
             }
             if old.uncertainty.is_none() {
                 drop(old);
-                let deadline = now() + 6. + self.ack + 5.;
+                // The requeue can hold a placement for a second membership
+                // window, so the resend's wait covers both windows plus the
+                // acknowledgement and answer slack it always did.
+                let deadline = now() + 2. * MEMBERSHIP_GRACE_SECS + self.ack + 5.;
                 while !existing.lock().unwrap().answered && now() < deadline {
                     s = self
                         .wake
@@ -979,6 +994,7 @@ impl Hub {
             uncertainty: None,
             status: 200,
             answered: false,
+            membership_waits: 0,
         }));
         if let Some(position) = replace_position {
             s.orders[position] = order.clone();
@@ -988,14 +1004,31 @@ impl Hub {
         while s.orders.len() > 512 {
             s.orders.pop_front();
         }
-        Self::reap(&mut s);
-        let deadline = now() + 6.;
-        while Self::members(&s, leaf).is_empty() && now() < deadline {
-            s = self
-                .wake
-                .wait_timeout(s, Duration::from_millis(250))
-                .unwrap()
-                .0;
+        // The membership wait a steer that arrived inside the rejoin window
+        // gets: the same one bounded window the live system has always run,
+        // then exactly one requeue of it. The requeue exists because the
+        // first window is spent waiting while an agent COULD still be pacing
+        // its return; a healthy rejoin that lands just past it must not lose
+        // the steer, and widening the window is not available (its callers
+        // bound a whole crew-state read). Holding the SAME order record
+        // through both waits is what keeps delivery exactly once and in
+        // order: the journal still binds the id, a resend still finds this
+        // record rather than typing again, and the deadline is still the
+        // window the system already uses, never a new constant.
+        loop {
+            order.lock().unwrap().membership_waits += 1;
+            Self::reap(&mut s);
+            let deadline = now() + MEMBERSHIP_GRACE_SECS;
+            while Self::members(&s, leaf).is_empty() && now() < deadline {
+                s = self
+                    .wake
+                    .wait_timeout(s, Duration::from_millis(250))
+                    .unwrap()
+                    .0;
+            }
+            if !Self::members(&s, leaf).is_empty() || order.lock().unwrap().membership_waits >= 2 {
+                break;
+            }
         }
         let current = Self::current(&Self::members(&s, leaf));
         let selected = current.map(|e| e.id.clone());
@@ -1034,7 +1067,7 @@ impl Hub {
                 o.answered = true;
             }
             if selected.is_none() {
-                o.uncertainty=Some(("membership_unresolved".into(),format!("this hub holds no endpoint for leaf {leaf}, which is not evidence that its worker is gone")));
+                o.uncertainty=Some(("membership_unresolved".into(),format!("this hub holds no endpoint for leaf {leaf} after the placement window and its one requeue, which is not evidence that its worker is gone")));
                 o.answered = true;
             }
             if o.answered {
