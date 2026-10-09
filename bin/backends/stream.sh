@@ -113,16 +113,18 @@ FM_BACKEND_STREAM_PRESENCE_RETRY_SECS=2
 # malformed or foreign-hub target, a label mismatch, an auth failure) is
 # answered from the first reply, exactly as fm_backend_stream_target_ready
 # answers it: only the 404 is ever ambiguous between "gone" and
-# "re-registering right now". The code is reset before each probe so a
-# refusal that never reached HTTP cannot inherit an earlier call's 404.
+# "re-registering right now".
 # Exit status and stdout are fm_backend_stream_target_ready's, unchanged.
 fm_backend_stream_target_settled() {  # <target> [expected-label]
-  local target=$1 expected=${2:-} waited=0
+  local target=$1 expected=${2:-} waited=0 status
   while :; do
-    FM_BACKEND_STREAM_HTTP_CODE=000
-    fm_backend_stream_target_ready "$target" "$expected" && return 0
-    [ "$FM_BACKEND_STREAM_HTTP_CODE" = 404 ] || return 1
-    [ "$waited" -lt "$FM_BACKEND_STREAM_PRESENCE_RETRY_SECS" ] || return 1
+    if fm_backend_stream_target_ready "$target" "$expected"; then
+      return 0
+    else
+      status=$?
+    fi
+    [ "$status" -eq 3 ] || return "$status"
+    [ "$waited" -lt "$FM_BACKEND_STREAM_PRESENCE_RETRY_SECS" ] || return "$status"
     sleep 1
     waited=$((waited + 1))
   done
@@ -514,7 +516,7 @@ fm_backend_stream_parse_target() {  # <target>
 fm_backend_stream_target_ready() {  # <target> [expected-label]
   local target=$1 expected=${2:-} out label
   fm_backend_stream_parse_target "$target" >/dev/null 2>&1 || return 1
-  out=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || return 1
+  out=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || return $?
   [ -n "$expected" ] || return 0
   label=$(printf '%s' "$out" | jq -r '.task.label // empty' 2>/dev/null)
   [ "$label" = "$expected" ]
