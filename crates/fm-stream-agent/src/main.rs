@@ -52,29 +52,29 @@ fn diagnostics_path(options: &Options) -> String {
         .unwrap_or_default()
 }
 
-/// Append one diagnostics line, best-effort. A write failure is swallowed:
-/// diagnostics must never break the agent's main path.
-fn diag(options: &Options, event: &str, reason: impl std::fmt::Display) {
-    let path = diagnostics_path(options);
+/// Append one diagnostics line at `path`, best-effort. A write failure is
+/// swallowed: diagnostics must never break the agent's main path.
+fn diag_write(path: &str, event: &str, reason: impl std::fmt::Display) {
     if path.is_empty() {
         return;
     }
     let line = format!("{} {event} {reason}\n", timestamp());
     let result = (|| -> std::io::Result<()> {
-        if fs::metadata(&path).map(|m| m.len()).unwrap_or(0) >= DIAGNOSTICS_MAX_BYTES {
+        if fs::metadata(path).map(|m| m.len()).unwrap_or(0) >= DIAGNOSTICS_MAX_BYTES {
             let _ = fs::remove_file(format!("{path}.{}", DIAGNOSTICS_FILES - 1));
             for index in (1..DIAGNOSTICS_FILES - 1).rev() {
-                let _ = fs::rename(
-                    format!("{path}.{index}"),
-                    format!("{path}.{}", index + 1),
-                );
+                let _ = fs::rename(format!("{path}.{index}"), format!("{path}.{}", index + 1));
             }
-            let _ = fs::rename(&path, format!("{path}.1"));
+            let _ = fs::rename(path, format!("{path}.1"));
         }
-        let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
         file.write_all(line.as_bytes())
     })();
     let _ = result;
+}
+
+fn diag(options: &Options, event: &str, reason: impl std::fmt::Display) {
+    diag_write(&diagnostics_path(options), event, reason);
 }
 
 /// UTC ISO-8601 second-resolution timestamp, the shape of every other durable
@@ -580,7 +580,13 @@ impl Agent {
         }
         drop(registration);
         self.wake.notify();
-        let _ = self.initial_state();
+        if let Err(error) = self.initial_state() {
+            diag(
+                &self.options,
+                "state-publish-failed",
+                format_args!("re-registered but could not publish state: {error}"),
+            );
+        }
         diag(
             &self.options,
             "re-registered",
@@ -997,7 +1003,8 @@ fn serve(args: &[String]) -> Result<(), Error> {
     let mut random = [0u8; 16];
     fs::File::open("/dev/urandom")?.read_exact(&mut random)?;
     let id: String = random.iter().map(|b| format!("{b:02x}")).collect();
-    let pty = Pty::spawn(&options.cwd, options.rows, options.cols, &id, &options.hub)?;
+    let mut pty = Pty::spawn(&options.cwd, options.rows, options.cols, &id, &options.hub)?;
+    pty.set_diagnostics_path(diagnostics_path(&options));
     let (options_rows, options_cols) = (options.rows, options.cols);
     if pty.wait(Duration::from_millis(400)) {
         let mut output = [0u8; 65536];
@@ -1056,17 +1063,6 @@ fn serve(args: &[String]) -> Result<(), Error> {
         agent.options.machine,
         agent.options.hub
     );
-    diag(
-        &agent.options,
-        "started",
-        format_args!(
-            "agent {} endpoint {} on {} -> {}",
-            env!("CARGO_PKG_VERSION"),
-            agent.id,
-            agent.options.machine,
-            agent.options.hub
-        ),
-    );
     // Like Python, unlinkable startup diagnostic captures must not grow for
     // life. The durable diagnostics file carries the agent's own failures from
     // here, rotated and bounded where this capture was neither.
@@ -1078,7 +1074,9 @@ fn serve(args: &[String]) -> Result<(), Error> {
         libc::dup2(null.as_raw_fd(), 2);
     }
     *agent.hub.deadline.lock().unwrap() = None;
-    agent.run()
+    agent.clone().run().inspect_err(|error| {
+        diag(&agent.options, "agent-crashed", error);
+    })
 }
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -1143,11 +1141,8 @@ mod tests {
 
     #[test]
     fn diag_appends_one_line_per_event_and_rotates_under_a_file_count_cap() {
-        let dir = std::env::temp_dir().join(format!(
-            "fm-agent-diag-{}-{}",
-            std::process::id(),
-            line!()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("fm-agent-diag-{}-{}", std::process::id(), line!()));
         fs::create_dir_all(&dir).unwrap();
         let options = test_options(&dir.join("task.status").display().to_string());
         // Enough volume to cross the shipped 256 KiB cap through the public
@@ -1167,7 +1162,11 @@ mod tests {
         let files: Vec<_> = fs::read_dir(&dir)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().contains("agent-diagnostics"))
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .contains("agent-diagnostics")
+            })
             .collect();
         assert_eq!(files.len(), 3, "rotation left {files:?}");
         // Order: the oldest content is in .2, the newest in the live file.

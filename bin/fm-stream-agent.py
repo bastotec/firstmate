@@ -1601,13 +1601,14 @@ def main(argv: list) -> int:
     # per failed publish, re-registration or stand-down, for the worker's whole
     # life - go to the durable diagnostics file instead, which is rotated and
     # bounded where stderr was neither.
-    _agent_diag(options, "started",
-                "agent %s endpoint %s on %s -> %s"
-                % (AGENT_VERSION, endpoint_id, options.machine, options.hub))
     _silence_diagnostics()
     hub.end_startup()
 
-    return agent.run()
+    try:
+        return agent.run()
+    except Exception as exc:  # noqa: BLE001
+        _agent_diag(options, "agent-crashed", exc)
+        raise
 
 
 if __name__ == "__main__":
