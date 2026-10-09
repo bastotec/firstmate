@@ -89,8 +89,9 @@
 # interrupted deferral; other answers (including keyed answers), stale-clear,
 # and reconcile close/note are refused. `open` excludes settled deferrals,
 # so card discovery skips them; stale reports any leftover card as an orphan.
-# `deferred` is read-only: 0 means a settled deferral, 1 means none, and 2
-# means unreadable; merge and cleanup guards use it to preserve the wait.
+# `deferred` is read-only: 0 means a settled deferral or a reopening whose
+# captain hold has not landed, 1 means neither, and 2 means unreadable;
+# merge and cleanup guards use it to preserve the wait.
 # Only `hold --reopen-deferred` starts a fresh call from a settled deferral;
 # plain re-holds are refused. Reopening writes `Deferral reopened: <stamp>`
 # immediately below the new leading hold-set stamp. The next answer prepends
@@ -2129,7 +2130,8 @@ command_probe() {
         exit 2
       }
       if [ "$predicate" = deferred ]; then
-        [ "$(body_deferral_state "$shown_body")" = settled ] || return 1
+        state=$(body_deferral_state "$shown_body")
+        [ "$state" = settled ] || { [ "$state" = reopened ] && [ "$FM_BACKLOG_ROW_HOLD_KIND" != captain ]; } || return 1
         return 0
       fi
       [ "$(body_deferral_state "$shown_body")" != settled ] || return 1

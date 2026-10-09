@@ -4141,6 +4141,96 @@ test_teardown_preserves_settled_deferrals() {
   pass "cleanup and pending-close replay retain conditional waits and their deliverables"
 }
 
+test_interrupted_reopening_still_blocks_landing_and_completion() {
+  local home id repo wt pr variant show rc
+  for variant in cleanup replay; do
+    home=$(make_home "pending-reopen-$variant")
+    configure_merged_github "$home"
+    id=sample-pending-reopen
+    repo="$home/projects/sample"
+    wt="$home/projects/$id"
+    pr=https://github.com/sample/sample/pull/73
+    fm_git_worktree "$repo" "$wt" "fm/$id"
+    tasks_in "$home" add "$id" "Investigate a conditional follow-up" --kind scout \
+      --repo sample --start >/dev/null || fail "could not create pending-reopen scout"
+    fm_write_meta "$home/state/$id.meta" \
+      $(fm_test_stream_task "$home/state" "$id") "project=$repo" "worktree=$wt" \
+      "kind=scout" "mode=scout" "harness=deck" "pr=$pr" "spawn_gen=fixture-$id"
+    mkdir -p "$home/data/$id"
+    printf '# Conditional follow-up\n' > "$home/data/$id/report.md"
+    printf 'done: report complete\n' > "$home/state/$id.status"
+    run_captain "$home" hold "$id" --reason "follow-up approval" >/dev/null \
+      || fail "could not hold pending-reopen scout"
+    run_captain "$home" complete "$id" "$id" >/dev/null || fail "could not attest scout"
+    printf 'keep waiting\n' > "$home/answer.txt"
+    run_captain "$home" answer "$id" --decision-file "$home/answer.txt" --defer "When needed" \
+      >/dev/null || fail "could not defer scout"
+    cat > "$home/fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = hold ] && [ "${2:-}" != --help ] && [ ! -e "$FM_HOME/reopen-interrupted" ]; then
+  : > "$FM_HOME/reopen-interrupted"
+  exit 1
+fi
+exec "$REAL_TASKS_AXI" "$@"
+SH
+    chmod +x "$home/fakebin/tasks-axi"
+    rc=0
+    run_captain "$home" hold "$id" --reopen-deferred --reason "condition fired" \
+      > "$home/reopen.out" 2> "$home/reopen.err" || rc=$?
+    [ "$rc" -ne 0 ] || fail "reopening succeeded despite the interrupted hold"
+    assert_present "$home/reopen-interrupted" "fixture did not interrupt the hold mutation"
+    show=$(tasks_in "$home" show "$id" --full) || fail "pending-reopen row disappeared"
+    assert_contains "$show" 'Deferral reopened:' "reopening did not persist its marker"
+    assert_contains "$show" 'hold_kind: parked' "interrupted reopening was not parked"
+    run_captain "$home" deferred "$id" || fail "pending reopening was treated as released"
+    rc=0
+    run_captain "$home" open "$id" || rc=$?
+    [ "$rc" = 1 ] || fail "pending reopening changed open-call discovery"
+    rc=0
+    REAL_TASKS_AXI="$TASKS_AXI_BIN" run_pr_merge "$home" "$id" "$pr" \
+      > "$home/pr.out" 2> "$home/pr.err" || rc=$?
+    [ "$rc" -ne 0 ] || fail "merge accepted an interrupted reopening"
+    assert_no_grep 'pr merge 73 ' "$home/gh.log" "pending reopening reached the forge merge"
+    assert_grep 'hold --reopen-deferred' "$home/pr.err" "merge refusal omitted the reopening retry"
+    if [ "$variant" = replay ]; then
+      FM_HOME="$home" FM_DATA_OVERRIDE="$home/data" FM_STATE_OVERRIDE="$home/state" \
+        bash -c '
+          . "$1/bin/fm-tasks-axi-lib.sh"
+          . "$1/bin/fm-backlog-transition-lib.sh"
+          fm_backlog_close_marker_write "$2/state" "$3" "$2/data" "fixture-$3" 0 \
+            --report "data/$3/report.md"
+        ' _ "$ROOT" "$home" "$id" || fail "could not stage pending close"
+      PATH="$home/fakebin:$PATH" REAL_TASKS_AXI="$TASKS_AXI_BIN" \
+        FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+        FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" FM_BOOTSTRAP_NETWORK=skip \
+        "$ROOT/bin/fm-bootstrap.sh" > "$home/replay.out" 2> "$home/replay.err" \
+        || fail "pending-reopen cleanup replay failed"
+    else
+      REAL_TASKS_AXI="$TASKS_AXI_BIN" run_teardown "$home" "$id" \
+        > "$home/teardown.out" 2> "$home/teardown.err" \
+        || fail "pending-reopen cleanup failed: $(cat "$home/teardown.err")"
+    fi
+    show=$(tasks_in "$home" show "$id" --full) || fail "cleanup lost the pending reopening"
+    assert_contains "$show" 'state: queued' "cleanup completed the pending reopening"
+    assert_contains "$show" 'hold_kind: parked' "cleanup removed the conditional wait"
+    assert_contains "$show" "Deliverable of the finished work:" "cleanup lost the deliverable"
+    assert_absent "$home/state/$id.meta" "cleanup retained the finished worker"
+    assert_absent "$home/state/$id.backlog-close" "cleanup left an unfinished transition"
+    run_captain "$home" deferred "$id" || fail "cleanup released the pending reopening"
+    run_captain "$home" hold "$id" --reopen-deferred --reason "condition fired" >/dev/null \
+      || fail "cleanup prevented the reopening retry"
+    run_captain "$home" open "$id" || fail "reopening retry did not create an open call"
+    rc=0
+    run_captain "$home" deferred "$id" || rc=$?
+    [ "$rc" = 1 ] || fail "active reopened call still classified as a conditional wait"
+    show=$(tasks_in "$home" show "$id" --full) || fail "reopening retry lost the task"
+    [ "$(printf '%s' "$show" | grep -o 'Deferral reopened:' | wc -l | tr -d ' ')" = 1 ] \
+      || fail "reopening retry duplicated the marker"
+  done
+  pass "interrupted reopenings block merging and survive cleanup and replay until retried"
+}
+
+test_interrupted_reopening_still_blocks_landing_and_completion
 test_deferred_merge_entrypoints_preserve_the_wait
 test_teardown_preserves_settled_deferrals
 test_uninventoried_report_decision_refuses_completion
