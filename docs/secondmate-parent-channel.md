@@ -6,8 +6,7 @@ This note records why a secondmate home's captain-facing outcomes are delivered 
 
 ## The problem
 
-A secondmate is a firstmate in its own home, and nobody reads its chat: the captain and the main firstmate see only what is appended to the parent channel.
-The one exception is a message the captain writes to the mate himself, covered under [Captain-direct messages](#captain-direct-messages).
+A secondmate is a firstmate in its own home, but its ordinary chat is not a delivery channel to the captain or main firstmate; [Captain-direct messages](#captain-direct-messages) points to the exception.
 Outcomes have been lost this way: the watcher delivered the parent's request, the mate did the work, and then the mate addressed "captain" in its own chat instead of appending to the channel.
 The cause is structural rather than a one-off lapse: the mate can satisfy the [address rule in `AGENTS.md`](../AGENTS.md#firstmate) in local chat while missing the charter's later return-channel instruction.
 A PR-ready report, a finding, a decision, a blocker, and a failure all fail the same way when each depends on the mate model remembering to write one line.
@@ -41,11 +40,7 @@ A missed-reply escalation includes the complete first sighting path and line num
 
 ## Captain-direct messages
 
-The captain can message any agent himself, and he then reads the answer in that agent's own conversation.
-`bin/fm-send.sh --from-captain` tags that text with the captain-direct carrier owned by `bin/fm-operational-input.sh`, and [`AGENTS.md` section 9](../AGENTS.md#9-escalation-and-captain-etiquette) owns the reply rule.
-For a secondmate the tag rides behind the usual from-firstmate mark and `corr=<id>` token, so the pending-reply record is created exactly as for a relayed request.
-The mate answers in its chat and also appends one short correlated line, which resolves that record and notifies the main firstmate; a mate that forgets the line gets the ordinary recovery request rather than a silent miss.
-The tag carries a fixed one-sentence note with the same rule, so a mate whose seeded charter predates the tag still reads it from the message.
+[`AGENTS.md` section 9](../AGENTS.md#9-escalation-and-captain-etiquette) owns the captain-direct reply rule, the [`fm-send.sh` header](../bin/fm-send.sh) owns its delivery and reply tracking, and [`fm-operational-input.sh`](../bin/fm-operational-input.sh) owns the carrier and its compatibility note.
 
 ## What is deliberately not built
 

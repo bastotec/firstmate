@@ -41,7 +41,7 @@ Launching the Deck chat host inside it for your primary session instantiates you
 
 ## Features
 
-- **One liaison** - you talk only to the first mate; it dispatches, supervises, escalates only real decisions, and reports plain outcomes.
+- **One liaison** - the first mate dispatches, supervises, escalates only real decisions, and reports plain outcomes; you can also message a second mate or worker directly and read its answer in its own conversation ([captain-direct sending](bin/fm-send.sh)).
 - **A visible crew** - every crewmate works in its own stream endpoint on the fleet's hub, which you can attach to, watch, or type into; the first mate reconciles.
 - **Disposable worktrees** - each task runs in a clean [treehouse](https://github.com/kunchenguid/treehouse) git worktree, so parallel work on one repo never collides.
 - **Two task shapes** - ship tasks deliver authorized changes; scout tasks leave standalone investigation reports when the intake contract warrants separate research.

@@ -108,7 +108,7 @@
 # marked - their behavior is unchanged.
 #
 # From-captain tag: --from-captain says the captain wrote this text to the
-# target himself (the Fleet Town message route). The text gets the
+# target himself. The text gets the
 # captain-direct tag owned by bin/fm-operational-input.sh, so the agent answers
 # him in its own conversation (AGENTS.md section 9). A secondmate target still
 # gets the from-firstmate mark, corr token and pending-reply expectation in
@@ -118,6 +118,8 @@
 # leading "/" reaches the agent as text, never as a harness command. The flag
 # is refused with --key, --decision-answer, --fire-and-forget, and an explicit
 # backend target, none of which is a captain message to a task.
+# The old "From the captain, directly:" prose prefix is not detected; Fleet Town
+# adopting this flag is a follow-up in its own repository.
 #
 # Parent-owned pending-reply expectation: every newly marked secondmate request
 # except an explicit --fire-and-forget delivery receives a privacy-safe
