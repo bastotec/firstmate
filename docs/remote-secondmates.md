@@ -12,6 +12,7 @@ The workers a remote second mate supervises inside its own home run on that home
 
 Configure an SSH alias in the primary account's normal OpenSSH configuration.
 Use ordinary public-key authentication, strict host-key verification, and a dedicated remote account where practical.
+Verify the host key and ensure authentication works without prompting before using the route; the [`fm-on.sh` transport contract](../bin/fm-on.sh) requires non-interactive SSH.
 Do not enable agent forwarding for Firstmate.
 `fm-on.sh` also disables agent forwarding, forwarding setup, and configured `SendEnv` patterns on every call, and arms bounded SSH dead-peer detection so a vanished host (a reboot, a dropped link) fails within a bounded window instead of hanging indefinitely; its [script header](../bin/fm-on.sh) owns the keepalive defaults and environment overrides.
 

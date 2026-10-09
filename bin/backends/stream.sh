@@ -600,6 +600,18 @@ fm_backend_stream_composer_state() {  # <target> [expected-label] -> empty|pendi
   printf '%s' "$verdict"
 }
 
+# fm_backend_stream_composer_holds_only: 0 when the composer's pending text is
+# nothing but copies of <text> (bin/fm-composer-lib.sh's
+# fm_composer_holds_only_text owns the rule); any unreadable capture is 1.
+fm_backend_stream_composer_holds_only() {  # <target> <expected-label> <text>
+  local raw cursor screen
+  raw=$(fm_backend_stream_composer_capture "$1" "${2:-}") || return 1
+  cursor=${raw%%$'\n'*}
+  screen=${raw#*$'\n'}
+  screen=${screen#|}
+  fm_composer_holds_only_text "$(fm_backend_stream_composer_caps)" "$screen" "$cursor" "$3"
+}
+
 # fm_backend_stream_send_text_submit: type <text> once, then drive the shared
 # verify-and-retry-Enter loop against the shared composer verdict, so a
 # slash-command popup placeholder fill gets its required second Enter without
