@@ -86,13 +86,13 @@
 # owned by this home with the condition as its one-line reason (no
 # parentheses), and the card goes. Backfill, drafts and the stale sweep only
 # read captain holds, so a deferred task is never carded or listed again.
-# An exact retry finishes an interrupted deferral; a different answer, or any
-# other close mode, on a deferred task is refused rather than re-opening it.
+# An exact retry matches the words and parked condition, or finishes an
+# interrupted deferral; other answers and close modes are refused.
 # When the condition fires and the captain must choose again, `hold
 # --reopen-deferred` starts a fresh call with a new stamp and card; a plain
 # `hold` on a deferred task is refused, so restating a standing answer can
 # never put it back in front of the captain. `--reopen-deferred` is refused
-# on a task whose newest record is not a deferral.
+# unless the task has a settled deferral.
 #
 # ONE KEYED-ANSWER INTAKE, FED BY EVERY CHANNEL.
 # "A keyed answer resolves its matching captain-held task" is a single
@@ -544,6 +544,18 @@ recorded_resolution_mode() {  # <task-body>
   printf '%s' "$rest"
 }
 
+body_deferral_state() {
+  printf '%s\n' "$1" | awk '
+    /^Resolution recorded by fm-captain-hold\.$/ { if (record) exit; record = 1; next }
+    !record && /^Deferral reopened: / { reopened = 1 }
+    record && /^Resolution mode: / {
+      if (reopened) print "reopened"
+      else if ($0 == "Resolution mode: deferred") print "settled"
+      exit
+    }
+  '
+}
+
 closed_answer_replay_mode_compatible() {  # <mode> <task-body>
   case "$1" in
     answered|repaired|routed) return 0 ;;
@@ -869,7 +881,7 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how>"
 command_hold() {
   local id=${1:-} title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence
   local existing_hold_kind='' existing_held='' preserve_hold_set=0 card_file=''
-  local reopen_deferred=0 existing_reason='' newest_mode=''
+  local reopen_deferred=0 existing_reason='' tmp
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -916,17 +928,13 @@ command_hold() {
     existing_hold_kind=$(show_field_value "$show" hold_kind)
     existing_held=$(show_field_value "$show" held)
     existing_reason=$(show_field_value "$show" hold_reason)
-    if body_has_resolution_record "$(show_field "$show" body)"; then
-      newest_mode=$(recorded_resolution_mode "$(show_field "$show" body)" || true)
-    fi
-    # A deferred answer settled this call; restating it must not re-ask it.
-    if [ "$existing_hold_kind" != captain ] && [ "$newest_mode" = deferred ]; then
+    if [ "$(body_deferral_state "$(show_field_value "$show" body)")" = settled ]; then
       [ "$reopen_deferred" = 1 ] \
         || fail "task $id records the captain's deferred answer; it stays parked until its condition fires, then re-ask with --reopen-deferred"
     elif [ "$reopen_deferred" = 1 ]; then
       fail "task $id does not record a deferred captain answer; --reopen-deferred does not apply"
     fi
-    if [ "$existing_hold_kind" = captain ] && [ "$existing_held" = yes ]; then
+    if [ "$existing_hold_kind" = captain ] && [ "$existing_held" = yes ] && [ "$reopen_deferred" = 0 ]; then
       preserve_hold_set=1
     fi
     if [ -n "$title" ]; then
@@ -961,6 +969,19 @@ command_hold() {
   task_show_or_fail "$id" "task $id disappeared while recording its hold-set stamp"
   [ -n "$(body_hold_set_timestamp "$(show_field_value "$show" body)")" ] \
     || fail "task $id did not retain its hold-set stamp"
+  if [ "$reopen_deferred" = 1 ]; then
+    body=$(show_field_value "$show" body)
+    tmp=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-captain-hold-reopen.XXXXXX") \
+      || fail "cannot stage the deferral reopening for $id"
+    if ! printf '%s\n' "$body" | awk -v stamp="$hold_set" '
+      { print }
+      NR == 1 { print "Deferral reopened: " stamp }
+    ' > "$tmp" || ! tasks_axi update "$id" --body-file "$tmp" >/dev/null; then
+      rm -f -- "$tmp"
+      fail "could not record the deferral reopening on $id"
+    fi
+    rm -f -- "$tmp"
+  fi
   if [ -n "$until" ]; then
     tasks_axi hold "$id" --reason "$reason" --kind captain --until "$until" >/dev/null \
       || fail "could not hold task $id for the captain"
@@ -1094,7 +1115,7 @@ close_deferred() {  # <task-id> <condition>
 
 command_answer() {
   local id=${1:-} decision_file='' release=0 show state hold_kind body outcome recorded_mode occurrence
-  local defer=0 condition=''
+  local defer=0 condition='' deferral_state
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -1165,6 +1186,23 @@ command_answer() {
     return 0
   fi
 
+  deferral_state=$(body_deferral_state "$(show_field_value "$show" body)")
+  if [ "$deferral_state" = settled ]; then
+    [ "$defer" = 1 ] && [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
+      || fail "task $id already records the captain's deferred answer; re-ask with hold --reopen-deferred only once its condition fires"
+    if [ "$hold_kind" = parked ]; then
+      [ "$(show_field_value "$show" hold_reason)" = "$condition" ] \
+        || fail "task $id records a different deferral condition; retry with its parked hold reason"
+      remove_decision_card "$id"
+    else
+      close_deferred "$id" "$condition" || fail "could not park deferred captain call $id"
+    fi
+    remove_interrupted_answer_stamp "$id"
+    publish_parent_resolution_then_retire "$id" $((occurrence - 1)) deferred
+    printf 'deferred: %s\n' "$id"
+    return 0
+  fi
+
   if [ "$hold_kind" = captain ]; then
     # Actively the captain's item (a date-expired hold keeps its annotations
     # and stays answerable). A matching record means an interrupted close to
@@ -1172,18 +1210,15 @@ command_answer() {
     # its own record on top. Either way the close mode is the caller's flag,
     # checked against an interrupted close's recorded mode so a retry cannot
     # silently flip a release into a close.
-    if body_has_resolution_record "$body" \
+    if [ "$deferral_state" != reopened ] && body_has_resolution_record "$body" \
       && [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ]; then
       recorded_mode=$(recorded_resolution_mode "$body" || true)
       case "$recorded_mode" in
         released) [ "$release" = 1 ] || fail "task $id records this answer as a release; retry with --release" ;;
         answered|routed) [ "$release" = 0 ] && [ "$defer" = 0 ] || fail "task $id records this answer as a close; retry without --release or --defer" ;;
-        deferred) [ "$defer" = 1 ] || fail "task $id records this answer as a deferral; retry with --defer" ;;
         *) fail "task $id records this resolution with mode ${recorded_mode:-unknown}; it is not a captain-answer replay" ;;
       esac
-      if [ "$defer" = 1 ]; then
-        close_deferred "$id" "$condition" || fail "could not park deferred captain call $id"
-      elif ! close_answered "$id" "$release"; then
+      if ! close_answered "$id" "$release"; then
         fail "could not close answered captain-held task $id"
       fi
       remove_interrupted_answer_stamp "$id"
@@ -1207,20 +1242,8 @@ command_answer() {
     return 0
   fi
 
-  # Not held and not closed: only an already-recorded release or deferral
-  # replays cleanly. A deferral is settled until its condition fires, so any
-  # other answer on it is refused rather than read as a fresh call.
   if body_has_resolution_record "$body"; then
     recorded_mode=$(recorded_resolution_mode "$body" || true)
-    if [ "$recorded_mode" = deferred ]; then
-      [ "$defer" = 1 ] && [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
-        || fail "task $id already records the captain's deferred answer; re-ask with hold --reopen-deferred only once its condition fires"
-      close_deferred "$id" "$condition" || fail "could not park deferred captain call $id"
-      remove_interrupted_answer_stamp "$id"
-      publish_parent_resolution_then_retire "$id" $((occurrence - 1)) deferred
-      printf 'deferred: %s\n' "$id"
-      return 0
-    fi
     [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
       || fail "task $id records a different captain decision with mode ${recorded_mode:-unknown}"
     [ "$recorded_mode" = released ] && [ "$release" = 1 ] \
