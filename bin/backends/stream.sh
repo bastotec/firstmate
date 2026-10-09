@@ -788,7 +788,7 @@ fm_backend_stream_agent_pids() {  # <target>
 # any hub, so no worker was ever addressed and there is no answer about one to
 # report.
 fm_backend_stream_kill() {  # <target> [unused] [expected-label]
-  local target=$1 expected=${3:-} task out label api_rc=0
+  local target=$1 expected=${3:-} task out label closed_by api_rc=0
   fm_backend_stream_parse_target "$target" >/dev/null 2>&1 || {
     if [ "$FM_BACKEND_STREAM_TARGET_FAULT" = malformed ]; then
       echo "error: '$target' is not a stream endpoint address (expected <hub-tag>:<endpoint-id>)," \
@@ -843,8 +843,17 @@ fm_backend_stream_kill() {  # <target> [unused] [expected-label]
   fi
   # An endpoint its own agent closed is the one confirmed stop there is: that
   # agent watched the worker exit and carried its exit code back. A record the
-  # hub closed by itself says nothing about the process.
-  [ "$(printf '%s' "$task" | jq -r '.task.closed_by // empty' 2>/dev/null)" = agent ] && return 0
+  # hub closed by itself says the previous kill reached the hub but not the
+  # agent, so it remains the same positive still-present answer on every retry.
+  closed_by=$(printf '%s' "$task" | jq -r '.task.closed_by // empty' 2>/dev/null) || closed_by=
+  case "$closed_by" in
+    agent) return 0 ;;
+    hub)
+      echo "error: the stream hub closed its record for $FM_BACKEND_STREAM_ENDPOINT," \
+           "but its agent never acknowledged the kill; the worker may still be running" >&2
+      return 3
+      ;;
+  esac
   out=$(fm_backend_stream_api DELETE "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || {
     echo "error: the stream hub refused or never answered the kill for" \
          "$FM_BACKEND_STREAM_ENDPOINT; the worker may still be running" >&2

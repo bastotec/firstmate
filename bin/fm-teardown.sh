@@ -2705,28 +2705,16 @@ require_task_endpoint_gone() {  # <kill-status>
   local verdict
   verdict=$(fm_backend_kill_verdict "$1")
   [ "$verdict" != gone ] || return 0
-  if task_operator_retirement runtime-refusal; then
-    case "$verdict" in
-      present)
-        echo "warning: the endpoint $T for $ID is still present after its kill - the backend itself reported it there - so its records are being retired on the retirement $OPERATOR_RETIREMENT_BY recorded at $OPERATOR_RETIREMENT_AT, which overrode that runtime's refusal, on that assertion alone" >&2
-        ;;
-      unconfirmed)
-        echo "warning: the endpoint $T for $ID was never confirmed gone and a worker may still be running behind it - so its records are being retired on the retirement $OPERATOR_RETIREMENT_BY recorded at $OPERATOR_RETIREMENT_AT, on that assertion alone" >&2
-        ;;
-      *)
-        echo "warning: the endpoint $T for $ID could not be killed at all and no backend ever answered for it - so its records are being retired on the retirement $OPERATOR_RETIREMENT_BY recorded at $OPERATOR_RETIREMENT_AT, on that assertion alone" >&2
-        ;;
-    esac
-    return 0
-  fi
   if task_operator_retirement; then
     case "$verdict" in
       present)
+        if [ "$OPERATOR_RETIREMENT_OVERRIDE" = 1 ]; then
+          echo "warning: the endpoint $T for $ID is still present after its kill - the backend itself reported it there - so its records are being retired on the retirement $OPERATOR_RETIREMENT_BY recorded at $OPERATOR_RETIREMENT_AT, which overrode that runtime's refusal, on that assertion alone" >&2
+          return 0
+        fi
         echo "error: the endpoint $T for $ID is still present after its kill, and the retirement recorded for $OPERATOR_RETIREMENT_BY did not override a runtime refusal; retaining every durable task record - rerun bin/fm-retire-endpoint.sh --override-runtime-refusal to retire this record, or stop the worker by hand" >&2
         exit "$FM_TEARDOWN_RUNTIME_REFUSAL_EXIT"
         ;;
-    esac
-    case "$verdict" in
       unconfirmed)
         echo "warning: the endpoint $T for $ID was never confirmed gone and a worker may still be running behind it - so its records are being retired on the retirement $OPERATOR_RETIREMENT_BY recorded at $OPERATOR_RETIREMENT_AT, on that assertion alone" >&2
         ;;
@@ -2800,7 +2788,7 @@ OPERATOR_RETIREMENT_STATE=unread
 OPERATOR_RETIREMENT_BY=
 OPERATOR_RETIREMENT_AT=
 OPERATOR_RETIREMENT_OVERRIDE=0
-task_operator_retirement() {  # [runtime-refusal]
+task_operator_retirement() {
   local note="$STATE/$ID.endpoint-retired" noted_id noted_gen
   if [ "$OPERATOR_RETIREMENT_STATE" = unread ]; then
     OPERATOR_RETIREMENT_STATE=absent
@@ -2818,8 +2806,7 @@ task_operator_retirement() {  # [runtime-refusal]
       fi
     fi
   fi
-  [ "$OPERATOR_RETIREMENT_STATE" = present ] || return 1
-  [ "${1:-}" != runtime-refusal ] || [ "$OPERATOR_RETIREMENT_OVERRIDE" = 1 ] || return 1
+  [ "$OPERATOR_RETIREMENT_STATE" = present ]
 }
 
 # mark_pending_close_endpoint_confirmed: the other half of the publish-time
