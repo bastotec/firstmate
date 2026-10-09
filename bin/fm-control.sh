@@ -122,8 +122,9 @@
 #              transaction and fm-spawn --relaunch. Requires a supported
 #              recorded harness, read-only proof that the exact retired
 #              endpoint is absent, and zero task-anchored Deck drivers.
-#              Missing tools or unreadable endpoint inventory refuse, as do an
-#              absent or dirty copy, an unproven stop, or a copy shared by
+#              Missing tools, unreadable endpoint inventory, or a local stream
+#              agent matching the task label and owning status path refuse,
+#              as do an absent or dirty copy, an unproven stop, or a copy shared by
 #              another live or unproven record. The task id, backlog row,
 #              history, and non-endpoint metadata survive. No old endpoint is
 #              driven or stopped. The recorded profile is preserved; only the

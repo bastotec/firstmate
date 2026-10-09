@@ -167,7 +167,7 @@ Otherwise an exact task id matching `state/<id>.meta` wins before the legacy `fm
 A metadata-routed selector returns the recorded target (`window=`) and carries secondmate-marker and recorded-harness context; explicit escape hatches do not.
 For explicit targets no metadata names, [`fm-send.sh`'s header](../bin/fm-send.sh) owns live-endpoint verification on this home's hub, and the constrained host-decision answer mode.
 `fm-teardown.sh <id>` validates the complete metadata-only endpoint identity before any runtime dispatch or cleanup, and preserves and refuses missing, duplicate, malformed, backend-inconsistent, or task-mismatched endpoint records.
-Retired tmux records still require the exact `fm-<id>` window shape, and retired Herdr records their task binding and consistent session, workspace, tab, and pane fields, so retirement cannot target a mismatched record.
+Retired tmux records still require the exact `fm-<id>` window shape, and retired Herdr records their task binding and consistent session, workspace, tab, and pane fields, so continuation and retirement cannot target a mismatched record.
 `config/backend` is inherited under the primary-authoritative contract owned by [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md).
 
 ## Away-mode supervisor backend (FM_SUPERVISOR_BACKEND / FM_SUPERVISOR_TARGET)

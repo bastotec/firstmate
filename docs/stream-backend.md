@@ -59,6 +59,7 @@ The scan uses control-plane relaunch for a dead endpoint and guarded missing-end
 Successful revivals are silent and logged; a spent revival budget produces one failure notification rather than repeated restarts.
 A secondmate deliberately stopped through control-plane exit stays down across scans and session start until explicitly relaunched or freshly observed alive; [`bin/fm-control.sh`'s header](../bin/fm-control.sh) owns the stop marker and automatic-admission guard.
 [`verification/supervision.md`](verification/supervision.md#secondmate-revival) lists the portable regression entry points.
+[Agent control](agent-control.md#verbs) owns the lifecycle verbs available through `bin/fm-control.sh`.
 
 A new stream agent generates a fresh endpoint id, so `recover-missing` starts a new endpoint on this home's configured hub (same `fm-<id>` label, the recorded worktree as its cwd) and rebinds the task's endpoint identity through [`bin/fm-endpoint-rebind-lib.sh`](../bin/fm-endpoint-rebind-lib.sh), keeping its worktree and non-endpoint fields.
 Because a stream `missing` alone does not prove the worker gone, recovery first looks for a local stream agent matching both the task label and this home's task status path.
