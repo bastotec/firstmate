@@ -428,6 +428,44 @@ SH
   pass "a done delivery with a recorded PR remains quiet and never wedge-escalates"
 }
 
+test_stable_declared_pause_working_reads_state_once() {
+  local dir state fakebin out capture_file calls window key pane_hash sig pid
+  dir=$(make_case stable-pause-working-single-read); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; calls="$dir/crew-state.calls"
+  cat > "$fakebin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> "$FM_TEST_CREW_STATE_CALLS"
+printf '%s\n' 'state: working · source: run-step · validation running'
+SH
+  chmod +x "$fakebin/fm-crew-state.sh"
+  window=$(stream_window "$state" validating)
+  printf 'idle validation pane' > "$capture_file"
+  printf 'window=%s\nbackend=stream\nkind=ship\n' "$window" > "$state/validating.meta"
+  printf 'paused: prior external wait\n' > "$state/validating.status"
+  sig=$(seen_sig "$state/validating.status"); printf '%s' "$sig" > "$state/.seen-validating_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle validation pane")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  printf '1\n' > "$state/.count-$key"
+  : > "$state/.paused-$key"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  : > "$calls"
+  stream_capture "$window" "$capture_file"
+  stream_foreground "$window" zsh
+  PATH="$fakebin:$PATH" FM_TEST_CREW_STATE_CALLS="$calls" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || { reap "$pid"; fail "the due working stale did not complete its evaluation"; }
+  [ "$(wc -l < "$calls" | tr -d ' ')" = 1 ] \
+    || fail "a stable declared-pause working stale read crew state more than once"
+  grep -F "possible wedge" "$out" >/dev/null \
+    || fail "the working stale did not retain its ordinary wedge outcome"
+  pass "a stable declared-pause working stale reads crew state once"
+}
+
 # The gate on the held-merge bound: a crew whose state reconciles done with NO
 # recorded PR - a worker that reported done but whose delivery was never
 # recorded, possibly wedged after its status append - keeps the ordinary
@@ -1430,6 +1468,7 @@ test_afk_busy_declared_pause_ticking_pane_hands_off_once
 test_nonterminal_stale_not_working_surfaced
 test_nonterminal_stale_paused_absorbed_then_resurfaced
 test_done_pr_held_for_merge_stale_absorbed_not_wedge_escalated
+test_stable_declared_pause_working_reads_state_once
 test_done_without_pr_record_is_still_surfaced
 test_exited_declared_pause_is_bounded_but_live_gate_surfaces
 test_absorbed_replacement_wait_does_not_inherit_the_old_throttle

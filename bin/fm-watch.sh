@@ -1019,9 +1019,8 @@ clear_write_tracking() {  # <window-key>
 # Repeat-poll wedge-timer bookkeeping for an already-classified stale hash
 # absorbed as provably-working - repairs a missing/corrupt timer (self-heals a
 # watcher restart between recording the hash and recording the timer), or
-# escalates once STALE_ESCALATE_SECS have elapsed. Never re-reads the crew
-# state (the costly check already ran once, at classification time). Shared by
-# both places a hash can be absorbed this way: the plain non-terminal path,
+# escalates once STALE_ESCALATE_SECS have elapsed. Shared by both places a hash
+# can be absorbed this way: the plain non-terminal path,
 # and the stale_is_terminal-overridden path (a captain-relevant status-log
 # line that an active run/busy pane outranked).
 # The worktree write probe runs ONLY here, inside the at-threshold branch that is
@@ -1040,8 +1039,8 @@ wedge_gate_verdict() {  # <task> <window> <idle-age>
   fi
 }
 
-wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task>
-  local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 since age n reason gate_result look_flags=''
+wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-file> <task> [absorb-class]
+  local win=$1 since_file=$2 label=$3 escalation_file=$4 task=$5 absorb_class=${6-} since age n reason gate_result look_flags=''
   since=$(cat "$since_file" 2>/dev/null || true)
   case "$since" in
     ''|*[!0-9]*)
@@ -1066,13 +1065,16 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
           # a wedge alarm while the declaration is live, and its expiry is what
           # hands the pane back to ordinary escalation.
           return 0
-        elif captain_call_stale_bound "$key" "$task"; then
+        fi
+        if captain_call_stale_bound "$key" "$task"; then
           date +%s > "$since_file"
           rm -f "$escalation_file"
           clear_write_tracking "$key"
           triage_log "absorbed $label (open captain call): $win"
           return 0
-        elif crew_is_held_for_merge "$task"; then
+        fi
+        [ -n "$absorb_class" ] || absorb_class=$(crew_absorb_class "$task")
+        if [ "$absorb_class" = done ]; then
           handle_held_merge_stale "$win" "$task"
           return 0
         elif [ -n "$STALE_WAIT_DECLARATION" ]; then
@@ -2811,11 +2813,12 @@ EOF
           else
             task=$(window_to_task "$w" "$STATE")
             if [ -e "$pf" ] || status_is_paused_or_captain_held "$(last_status_line "$STATE/$task.status")"; then
-              case "$(pause_state_class "$w" "$task")" in
+              class=$(pause_state_class "$w" "$task")
+              case "$class" in
                 paused)  handle_paused_stale "$w" "$task" "$h" ;;
                 working) clear_pause_state "$key"
                          printf '%s' "$h" > "$sf"
-                         wedge_timer_check "$w" "$ssf" "non-terminal stale (provably working after a declared pause)" "$ewf" "$task"
+                         wedge_timer_check "$w" "$ssf" "non-terminal stale (provably working after a declared pause)" "$ewf" "$task" "$class"
                          triage_log "absorbed non-terminal stale (provably working): $w" ;;
                 *)       handle_paused_stale "$w" "$task" "$h" ;;
               esac

@@ -1563,10 +1563,12 @@ handle_wake() {  # <reason> <state>
               case "${decision%%|*}" in
                 pause) : ;;
                 *) case "$stale_detail" in
-                     idle\ *s,\ possible\ wedge,\ escalation\ *)
-                       last=$(last_status_line "$state/$task.status")
-                       status_is_paused_or_captain_held "$last" \
-                         || decision="escalate|${reason#stale: }"
+                   idle\ *s,\ possible\ wedge,\ escalation\ *)
+                       if ! STATE="$state" FM_STATE_OVERRIDE="$state" crew_is_held_for_merge "$task"; then
+                         last=$(last_status_line "$state/$task.status")
+                         status_is_paused_or_captain_held "$last" \
+                           || decision="escalate|${reason#stale: }"
+                       fi
                        ;;
                    esac ;;
               esac ;;
