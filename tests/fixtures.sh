@@ -250,7 +250,8 @@ fm_test_fake_stream() {
   pid=$!
   disown "$pid" 2>/dev/null || true
   fm_test_track_helper_pid "$pid"
-  while [ "$waited" -lt 100 ]; do
+  # Allow up to a minute for the first Python launch on a fresh runner.
+  while [ "$waited" -lt 600 ]; do
     [ -s "$ready" ] && break
     sleep 0.1
     waited=$((waited + 1))

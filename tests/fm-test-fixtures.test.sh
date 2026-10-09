@@ -304,6 +304,40 @@ test_spawn_home_layout() {
   pass "spawn-home layout writes harness pin, beat, and brief"
 }
 
+# shellcheck disable=SC2030 # PATH shim is intentionally scoped to this test.
+test_fake_stream_slow_interpreter_startup() (
+  local dir="$TMP_ROOT/slow-interpreter" real_python real_sleep
+  real_python=$(command -v python3)
+  real_sleep=$(command -v sleep)
+  mkdir -p "$dir/fakebin"
+  export FM_STARTUP_PROBE="$dir" FM_STARTUP_PYTHON="$real_python" FM_STARTUP_SLEEP="$real_sleep"
+  cat > "$dir/fakebin/python3" <<'SH'
+#!/usr/bin/env bash
+set -eu
+# Release the interpreter only after the old 100-poll budget is exhausted.
+while [ ! -f "$FM_STARTUP_PROBE/release" ]; do "$FM_STARTUP_SLEEP" 0.01; done
+exec "$FM_STARTUP_PYTHON" "$@"
+SH
+  cat > "$dir/fakebin/sleep" <<'SH'
+#!/usr/bin/env bash
+set -eu
+if [ "${1:-}" = 0.1 ]; then
+  count=0
+  [ ! -f "$FM_STARTUP_PROBE/polls" ] || read -r count < "$FM_STARTUP_PROBE/polls"
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$FM_STARTUP_PROBE/polls"
+  [ "$count" -le 100 ] || : > "$FM_STARTUP_PROBE/release"
+fi
+exec "$FM_STARTUP_SLEEP" "$@"
+SH
+  chmod +x "$dir/fakebin/python3" "$dir/fakebin/sleep"
+  export PATH="$dir/fakebin:$PATH"
+  fm_test_fake_stream "$dir/hub" || fail 'slow interpreter exhausted fake hub startup budget'
+  assert_present "$dir/release" 'slow-start barrier was not exercised'
+  fm_test_stream_task "$dir/state" slow >/dev/null || fail 'slow-start hub rejected its fixture owner'
+  pass 'fake hub waits past the old startup budget and retains authenticated owner registration'
+)
+
 test_fake_stream_round_trip() {
   local dir="$TMP_ROOT/fake-stream" pair target out
   if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
@@ -348,6 +382,7 @@ test_fake_stream_round_trip() {
   pass "fake stream: the real adapter creates, sends, captures, classifies, reports and kills fake endpoints"
 }
 
+# shellcheck disable=SC2031 # This test installs its own PATH shim independently.
 test_fake_stream_owner_boundary() (
   local dir="$TMP_ROOT/owner-boundary" lines target eid route code auth
   fm_test_fake_stream "$dir" || fail 'owner fixture failed to start'
@@ -421,6 +456,7 @@ SH
   pass 'fake hub owner uses private descriptors for registration and privileged controls while public liveness remains available'
 )
 
+test_fake_stream_slow_interpreter_startup || fail 'slow fake hub startup'
 test_fake_stream_owner_boundary
 test_git_maintenance_is_owned_through_local_clone || fail 'Git fixture maintenance ownership'
 test_git_config_isolation || fail "Git fixture config isolation"
