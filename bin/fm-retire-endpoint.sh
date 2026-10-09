@@ -3,7 +3,7 @@
 # for, on an operator's explicit say-so or, with --finished, on the owning
 # mate's proof that the work is finished.
 #
-# No automatic path runs this script or produces what it writes. Cleanup itself
+# No daemon runs this script or produces what it writes. Cleanup itself
 # never retires such a record - bin/fm-teardown.sh's endpoint gates refuse on a
 # stop nothing proved, and --force does not lift them - so the records of a
 # task whose backend cannot answer would otherwise stay forever. This is the
@@ -16,8 +16,9 @@
 # stream record a hub might still answer for and never a secondmate; it takes a
 # ship only while its worktree is still this task's own, so cleanup's
 # landed-work gate actually runs; when tmux is installed, its inventory must
-# omit the window or definitively report no server; and it never proceeds past cleanup's work-protection
-# gate, so unlanded or uncommitted work, a scout without its report, or an
+# be readable and omit the window, or definitively report no server; and it
+# never proceeds past cleanup's work-protection gate, so unlanded or
+# uncommitted work, a scout without its report, or an
 # unresolved captain decision retires nothing. Its basis is that cleanup, once
 # those gates pass, has already stopped every process under the worktree before
 # it reaches the endpoint. It skips the type-back prompt because an agent runs
@@ -27,13 +28,15 @@
 # Absence from the hub is never proof that a worker stopped: a same-protocol
 # restart clears the registry while live agents rejoin on their own schedule,
 # and a partition can leave a worker running without an answer from its backend.
-# Only an operator inspecting that machine can assert it is stopped, which is
-# why this command records their name and the time before removing any record.
+# A stream record therefore still requires an operator inspecting that machine
+# to assert it is stopped; --finished never accepts a stream record.
+# This command records the assertion's author and time before removing any record.
 # docs/stream-backend.md owns the operator-facing retirement contract.
 #
 # Retiring a record is RECORD bookkeeping and nothing else. Cleanup runs first,
-# because when its own gates allow it, it does the whole job properly. Two of
-# its refusals are proceeded past: the work-protection gate, which runs before
+# because when its own gates allow it, it does the whole job properly. In
+# operator mode, two of its refusals are proceeded past: the work-protection
+# gate, which runs before
 # anything on disk has been touched, and the unconfirmed-kill gate, which is
 # the whole point of the command and its honest cost - the records go even when
 # the backend answered that the endpoint is still there after its kill, on the
@@ -409,8 +412,9 @@ report_partial_cleanup() {  # <id> <status>
   fi
 }
 
-# bin/fm-teardown.sh's work-protection refusal status - the only refusal this
-# retirement proceeds past, raised before anything on disk has been touched.
+# bin/fm-teardown.sh's work-protection refusal status, raised before anything
+# on disk has been touched. Only operator mode proceeds past this refusal;
+# --finished stops here.
 WORK_GATE_EXIT=72
 
 # The durable answer to "who asserted this stop, and when". The retirement note
