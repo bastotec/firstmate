@@ -276,10 +276,13 @@ test_status_is_paused_classifier() {
 # (surface it) - so the watcher's stale path gets both for one bounded call.
 # crew_is_paused delegates to it exactly as crew_is_provably_working does.
 test_crew_absorb_class_classifier() {
-  local dir fakebin
-  dir=$(make_case absorb-class); fakebin="$dir/fakebin"
+  local dir fakebin state
+  dir=$(make_case absorb-class); fakebin="$dir/fakebin"; state="$dir/state"
   export FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh"
   export FM_FAKE_CREW_STATE
+  # crew_done_pr_url reads the task's own meta from STATE, so the done cases
+  # below point that read at this case's state dir.
+  local STATE="$state"
   FM_FAKE_CREW_STATE='state: working · source: run-step · validating (running)'
   [ "$(crew_absorb_class a)" = working ] || fail "active run-step not classed working"
   FM_FAKE_CREW_STATE='state: working · source: pane · harness busy'
@@ -294,8 +297,23 @@ test_crew_absorb_class_classifier() {
   [ "$(crew_absorb_class a)" = none ] || fail "unknown crew classed absorbable"
   ! crew_is_paused a || fail "unknown crew classed paused"
   [ "$(crew_absorb_class "")" = none ] || fail "empty id not classed none"
+  # A done verdict is absorbable ONLY while a recorded PR makes the quiet pane
+  # a delivery awaiting its merge authority; without that record a crew merely
+  # reporting done keeps the ordinary surface-it alarm.
+  FM_FAKE_CREW_STATE='state: done · source: run-step · checks green: PR ready for review'
+  printf 'pr=https://github.com/acme/widget/pull/7\n' > "$state/a.meta"
+  [ "$(crew_absorb_class a)" = "done" ] || fail "done with a recorded PR not classed done"
+  crew_is_held_for_merge a || fail "crew_is_held_for_merge did not recognize a held-for-merge crew"
+  ! crew_is_provably_working a || fail "a held-for-merge crew was treated as provably working"
+  ! crew_is_paused a || fail "a held-for-merge crew was treated as paused"
+  printf 'pr=https://gitlab.example/acme/group/widget/-/merge_requests/9\n' > "$state/a.meta"
+  [ "$(crew_absorb_class a)" = "done" ] || fail "done with a recorded gitlab PR not classed done"
+  printf 'pr=not-a-url\n' > "$state/a.meta"
+  [ "$(crew_absorb_class a)" = none ] || fail "done with a malformed PR record classed absorbable"
+  rm -f "$state/a.meta"
+  [ "$(crew_absorb_class a)" = none ] || fail "done without a PR record classed absorbable"
   unset FM_FAKE_CREW_STATE
-  pass "crew_absorb_class: working/paused/none from one read; crew_is_paused and crew_is_provably_working agree"
+  pass "crew_absorb_class: working/paused/done/none from one read, done gated on a recorded PR"
 }
 
 # The wedge detector's third liveness input: writes inside the crew's own recorded
