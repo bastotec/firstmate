@@ -568,8 +568,14 @@ test_secondmate_no_projects_charter() {
     "project-less charter kept the with-projects operating-model line"
   assert_grep '# The captain and the parent channel' "$brief" \
     "secondmate charter lost the parent-channel section"
-  assert_grep 'Nobody reads this chat' "$brief" \
-    "secondmate charter no longer says the chat is unread"
+  assert_grep 'The main firstmate never reads this chat, and the captain reads it only when he messages you himself' "$brief" \
+    "secondmate charter no longer says the chat is unread outside captain-direct messages"
+  # shellcheck disable=SC2016 # Backticks are literal charter markup.
+  assert_grep 'followed by a `[fm-captain-direct]` tag, the captain wrote the message to you himself' "$brief" \
+    "secondmate charter lost the captain-direct reply rule"
+  # shellcheck disable=SC2016 # Backticks are literal charter markup.
+  assert_grep 'A message tagged `[fm-captain-direct]` followed by an invisible separator is the captain writing to you himself' "$brief" \
+    "secondmate charter inbox section lost the captain-direct line"
   assert_grep 'in this home it IS the captain' "$brief" \
     "secondmate charter no longer names the parent channel as the captain"
   assert_grep 'working [key=<work-slug>]' "$brief" \

@@ -7,6 +7,7 @@ This note records why a secondmate home's captain-facing outcomes are delivered 
 ## The problem
 
 A secondmate is a firstmate in its own home, and nobody reads its chat: the captain and the main firstmate see only what is appended to the parent channel.
+The one exception is a message the captain writes to the mate himself, covered under [Captain-direct messages](#captain-direct-messages).
 Outcomes have been lost this way: the watcher delivered the parent's request, the mate did the work, and then the mate addressed "captain" in its own chat instead of appending to the channel.
 The cause is structural rather than a one-off lapse: the mate can satisfy the [address rule in `AGENTS.md`](../AGENTS.md#firstmate) in local chat while missing the charter's later return-channel instruction.
 A PR-ready report, a finding, a decision, a blocker, and a failure all fail the same way when each depends on the mate model remembering to write one line.
@@ -38,6 +39,14 @@ The pending-reply guard may restate only the correlated line from a local mate's
 Other correlated mate-home status lines remain wrong-home evidence, while a remote home's routed `state/parent-replies.status` is already the parent channel and is not classified as wrong-home.
 A missed-reply escalation includes the complete first sighting path and line number in readable shell-escaped form.
 
+## Captain-direct messages
+
+The captain can message any agent himself, and he then reads the answer in that agent's own conversation.
+`bin/fm-send.sh --from-captain` tags that text with the captain-direct carrier owned by `bin/fm-operational-input.sh`, and [`AGENTS.md` section 9](../AGENTS.md#9-escalation-and-captain-etiquette) owns the reply rule.
+For a secondmate the tag rides behind the usual from-firstmate mark and `corr=<id>` token, so the pending-reply record is created exactly as for a relayed request.
+The mate answers in its chat and also appends one short correlated line, which resolves that record and notifies the main firstmate; a mate that forgets the line gets the ordinary recovery request rather than a silent miss.
+The tag carries a fixed one-sentence note with the same rule, so a mate whose seeded charter predates the tag still reads it from the message.
+
 ## What is deliberately not built
 
 - No mirror of the mate's chat: chat can mix outcomes with other conversation, so choosing which sentence is an outcome would itself be model behavior.
@@ -52,6 +61,7 @@ A missed-reply escalation includes the complete first sighting path and line num
 `tests/fm-pr-merge.test.sh` covers the PR-ready line at registration and the merge outcome's upward report.
 `tests/fm-teardown.test.sh` covers teardown delivering a child's final line and refusing when the channel cannot be written.
 `tests/fm-brief.test.sh` pins the charter's channel rule.
+`tests/fm-send-secondmate-marker.test.sh` covers the captain-direct tag for secondmate and worker targets, its refusals, and a correlated line resolving a captain message's pending reply.
 `tests/fm-pending-reply.test.sh` covers helper-selected local routing, remote-channel classification, same-basename restatement before false escalation, readable wrong-home diagnostics, and the rule that arbitrary mate-home sightings never acknowledge a reply.
 
 ## Live verification
