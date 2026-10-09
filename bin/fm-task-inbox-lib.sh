@@ -13,10 +13,12 @@
 #
 # Design (captain-adopted, data/fm-send-reliability-reframe-s1/report.md): the
 # payload moves to the filesystem, which is reliable; the terminal carries only
-# a short constant doorbell line. While the endpoint remains available, that
-# line does not need to be reliable because ringing it again is free. A
-# duplicated doorbell is a no-op by construction (the worker finds the inbox
-# empty or already handled), and a swallowed doorbell is detected by the
+# a short constant doorbell line. Captain-direct native publication is an
+# additional best-effort path owned by bin/fm_stream_deck.py project_captain;
+# it never replaces this inbox acknowledgement contract. While the endpoint
+# remains available, that line does not need to be reliable because ringing it
+# again is free. A duplicated doorbell is a no-op by construction (the worker
+# finds the inbox empty or already handled), and a swallowed doorbell is detected by the
 # absence of the worker's acknowledgement and re-rung on a bounded schedule.
 # A positively dead or missing endpoint bypasses that schedule without being
 # typed into, and its unhandled record surfaces through the ordinary stale wake
@@ -270,7 +272,9 @@ fm_task_inbox_doorbell_line() {  # <record-path>
 
 # Ring the doorbell, best-effort: one endpoint-liveness pre-check, one advisory
 # composer pre-check, then the backend's submit machinery with a minimal retry
-# budget, verdict discarded.
+# budget, verdict discarded. Before the composer check, attempt native captain
+# publication through bin/fm_stream_deck.py project_captain (its rules are owned
+# there); no terminal submission is needed for that path.
 # Returns 0 rang, 1 skipped to protect proven pending text
 # (the watcher re-rings later), 2 the backend send failed, 3 skipped because
 # the endpoint is positively dead or missing (nothing typed; recovery owns the
@@ -303,10 +307,8 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label] [har
   case "$verdict" in
     dead|missing) return 3 ;;
   esac
-  # A captain-direct record also goes straight into a live Deck turn, which
-  # takes it at its next safe point instead of after the turn ends. Best-effort
-  # and never delivery proof: the record and the doorbell below stay the
-  # contract (bin/fm_stream_deck.py project_captain owns the rules).
+  # Native publication is independent of whether the composer permits a ring;
+  # project_captain owns eligibility, and failure never fails the durable send.
   if [ -n "$state" ] && [ -n "$task" ] && [ -d "$state/$task.inbox" ]; then
     python3 "$_FM_TASK_INBOX_LIB_DIR/fm_stream_deck.py" captain "$state" "$task" >/dev/null 2>&1 || true
   fi

@@ -118,6 +118,9 @@
 # leading "/" reaches the agent as text, never as a harness command. The flag
 # is refused with --key, --decision-answer, --fire-and-forget, and an explicit
 # backend target, none of which is a captain message to a task.
+# docs/stream-backend.md "Command path" owns captain-direct native delivery
+# timing, compatibility, and fallback; durable send and reply tracking below
+# do not depend on native publication.
 # The old "From the captain, directly:" prose prefix is not detected; Fleet Town
 # adopting this flag is a follow-up in its own repository.
 #

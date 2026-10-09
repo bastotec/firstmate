@@ -11,11 +11,11 @@
 #     Deck session (`--session`), so context carries across steers;
 #   - stream Bridge orders bypass stdin through bin/fm_stream_deck.py's native
 #     receiver; docs/stream-backend.md "Command path" owns compatibility and limits;
-#   - the captain's own messages (fm-send --from-captain) reach the model without
-#     waiting for the turn to end: the ring publishes them into the live turn and
-#     each turn starts with any still pending (bin/fm_stream_deck.py
-#     project_captain), and a doorbell that finds this task's inbox empty
-#     starts no turn, so one already taken mid-turn is not answered twice;
+#   - captain-direct delivery and its fallback are documented in
+#     docs/stream-backend.md "Command path"; bin/fm_stream_deck.py project_captain
+#     owns native publication eligibility. A recognized stdin doorbell for this
+#     task's own empty inbox starts no turn (doorbell_without_work), so a record
+#     already taken mid-turn and acknowledged need not start another model turn;
 #   - each turn's events render as readable text in the pane (fm-peek reads it);
 #   - it is the semantic busy source for the task: turn start and turn end are
 #     written through bin/fm-busy-event.sh with source `deck-wrapper`, and each
@@ -483,7 +483,7 @@ run_turn() {  # <prompt>
     if steer_dir=$(python3 "$SCRIPT_DIR/fm_stream_deck.py" start "$STATE" "$ID" \
         "$FM_STREAM_ENDPOINT_ID" "$steer_turn" "$steer_supported"); then
       [ "$steer_supported" = 0 ] || args+=(--steer-dir "$steer_dir")
-      # Pending captain messages ride this turn's start (header bullet).
+      # Attempt native publication before Deck's first safe point.
       [ "$steer_supported" = 0 ] || python3 "$SCRIPT_DIR/fm_stream_deck.py" captain "$STATE" "$ID" >/dev/null 2>&1 || true
     else
       printf 'fm-deck-worker: stream steering interface unavailable; continuing turn without it\n' >&2

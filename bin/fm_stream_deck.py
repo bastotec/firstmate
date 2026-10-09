@@ -10,8 +10,8 @@ No projection is ever carried into the next turn. Only Deck's handled file
 confirms application; inbox publication, run liveness and PTY writes do not.
 Driver CLI: fm_stream_deck.py start|end STATE ID ENDPOINT [TURN SUPPORTED].
 start prints the turn projection path; end retires the active descriptor.
-fm_stream_deck.py captain STATE ID publishes pending captain-direct records
-into every live turn (project_captain owns the rules) and prints the count.
+fm_stream_deck.py captain STATE ID attempts captain-direct publication and
+prints the count; project_captain owns eligibility and acknowledgement rules.
 """
 import contextlib
 import fcntl
@@ -289,16 +289,23 @@ CAPTAIN_DIRECT = re.compile(
 
 
 def project_captain(state, task):
-    """Publish pending captain-direct task-inbox records into every live Deck turn.
+    """Best-effort publication of eligible captain records into live Deck turns.
 
-    Deck injects them at its next safe point (run start, after a tool batch,
-    before finishing), so a message the captain sends reaches a busy model
-    mid-turn and an idle one in the first call of its next turn. The record
-    stays the durable delivery: only the model's move into handled/ acknowledges
-    it, and the doorbell still rings, so a record Deck never takes keeps the
-    ordinary next-turn path. A sequence is never made visible below one already
-    visible in that turn, nor above an unprojected stream order bound to it,
-    because Deck silently drops a late lower sequence. Prints the count published.
+    The ring and driver turn-start call this independently of terminal input.
+    Only active, supported turn descriptors with an existing projection qualify;
+    ordinary firstmate steers are not projected. Deck consumes published records
+    at its next safe point (run start, after a tool batch, before finishing).
+    The ordinary source stays durable: only the model's move of that source into
+    the task inbox's handled/ acknowledges it, not publication or movement of the
+    native projection. The doorbell remains the fallback for unhandled sources.
+
+    A sequence is never made visible below one already visible in that turn, nor
+    above an unprojected stream order bound to it, because Deck silently drops a
+    late lower sequence. Such records remain in the ordinary inbox; this helper
+    does not wait for a predecessor or schedule a retry. The guidance, including
+    source paths, must fit Deck's 64 KiB ceiling or publication is skipped.
+    Prints the count published. tests/fm-stream-deck.test.sh pins eligibility
+    and ordering.
     """
     inbox = Path(state) / (task + '.inbox')
     published = 0

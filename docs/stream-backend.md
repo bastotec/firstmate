@@ -255,12 +255,18 @@ The [adapter's header and help](../bin/fm-stream-bridge.py) own the record shape
 
 Every order names both a worker by `leaf_worker_id` (`<machine>/<label>`, as the feed emits and `fm-stream.sh tasks` lists) and the exact execution the feed showed.
 That binding prevents an order composed for one run from being typed into its replacement.
-For Deck, a Bridge order corrects the already-running turn without ending, displacing, or restarting it; ordinary `fm-send` doorbells still use the next-turn path.
-The captain's own messages (`fm-send --from-captain`) also reach a live Deck turn at its next safe point, and a turn that starts with one pending takes it with its prompt; the durable record and doorbell stay the delivery contract, and `bin/fm_stream_deck.py`'s `project_captain` owns the sequencing rules.
+For Deck, a Bridge order corrects the already-running turn without ending, displacing, or restarting it; ordinary firstmate steers through `fm-send` still use the next-turn doorbell path.
 Native Deck acceptance is execution-bound through the durable receiver, never a PTY write (non-Deck endpoints keep PTY typing), and requires a Deck build supporting `deck run --steer-dir`; an unavailable interface is refused without changing the running turn or falling back to PTY input.
 Native text must be nonblank and fit below Deck's 64 KiB projection ceiling, with space reserved for source paths and acknowledgement guidance.
 `bin/fm_stream_deck.py` owns Deck's durable source, original-turn binding, idempotency, reconciliation, and refusal mechanics.
 In `command` mode, the owning agent's report that its worker ended produces an authoritative membership nack, while unresolved membership or application produces no record and remains pending.
+
+Captain-direct messages (`fm-send --from-captain`) use the durable task inbox rather than the Bridge order journal.
+With a stream-hosted driver and a Deck build supporting `--steer-dir`, ringing attempts native publication into a live turn, and each new turn also attempts publication of pending captain messages before its first model call.
+Published messages reach the model at its next safe point without interrupting or restarting the turn; [`project_captain`](../bin/fm_stream_deck.py) owns publication eligibility, sequencing limits, and acknowledgement rules.
+Native publication is best-effort: unsupported builds, skipped records, and publication failures retain the ordinary inbox path rather than refusing the durable send.
+An idle driver starts a turn on the doorbell when its composer is safe to submit; pending human text is never overwritten or submitted by that ring.
+The [`fm-send.sh` header](../bin/fm-send.sh) owns delivery status and reply tracking, and the [driver header](../bin/fm-deck-worker.sh) owns suppression of redundant empty-inbox doorbells.
 
 The hub places Bridge orders only to endpoints whose agent advertises reliable result acknowledgement and the native steering receiver.
 An agent requires the hub's `idempotent_command_results` capability before registering, so an older running hub is rejected with a restart-or-upgrade diagnostic.
