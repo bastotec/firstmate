@@ -367,6 +367,43 @@ test_routine_working_stays_silent_on_the_empty_queue() {
   pass "a routine working line prints nothing on an empty-queue drain"
 }
 
+test_metadata_readers_reuse_source_time_kernel_name() {
+  local dir state
+  dir=$(make_case cached-kernel-name)
+  state="$dir/state"
+  printf 'note: kernel cache\n' > "$state/task-cache.status"
+
+  bash -eu -c '
+    root=$1 state=$2 calls=$3
+    unset _FM_CLASSIFY_UNAME
+    uname() {
+      printf "call\n" >> "$calls"
+      command uname "$@"
+    }
+    . "$root/bin/fm-classify-lib.sh"
+    [ -s "$calls" ] || exit 1
+    . "$root/bin/fm-classify-lib.sh"
+    first=$(status_presentation_snapshot "$state")
+    second=$(status_presentation_snapshot "$state")
+    [ "$first" = "$second" ] && [ -n "$first" ] || exit 1
+    file="$state/task-cache.status"
+    size=$(_fm_status_file_size "$file")
+    [ "$size" = 19 ] || exit 1
+    ident=$(_fm_open_decisions_file_ident "$file")
+    [ "$first" = "$(printf "task-cache\t19\t%s" "$ident")" ] || exit 1
+    mtime=$(_fm_status_file_mtime "$file")
+    case "$mtime" in ""|*[!0-9]*) exit 1 ;; esac
+    observed=$(_status_observed_path_state "$file")
+    [ -n "$observed" ] || exit 1
+    count=0
+    while IFS= read -r line; do count=$((count + 1)); done < "$calls"
+    [ "$count" -eq 1 ] || exit 1
+  ' bash "$ROOT" "$state" "$dir/uname.calls" \
+    || fail "metadata readers did not reuse one source-time kernel-name read"
+  pass "repeated sourcing and subshell metadata readers reuse one kernel-name read"
+}
+
+test_metadata_readers_reuse_source_time_kernel_name
 test_incident_note_answer_buried_under_routine_note_surfaces_both
 test_already_presented_notes_are_not_replayed
 test_brand_new_note_after_presentation_is_surfaced

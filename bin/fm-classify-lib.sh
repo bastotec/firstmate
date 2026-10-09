@@ -764,8 +764,8 @@ FM_OPEN_DECISIONS_FOLD_VERSION=5
 # The kernel name, read once per process: the identity, size and mtime readers
 # below run several times per status file on every drain, and a `uname` fork
 # each time was a large share of a drain on a loaded machine.
+[ -n "${_FM_CLASSIFY_UNAME+x}" ] || _FM_CLASSIFY_UNAME=$(uname -s 2>/dev/null)
 _fm_classify_is_darwin() {
-  [ -n "${_FM_CLASSIFY_UNAME+x}" ] || _FM_CLASSIFY_UNAME=$(uname -s 2>/dev/null)
   [ "$_FM_CLASSIFY_UNAME" = Darwin ]
 }
 
