@@ -5,11 +5,11 @@
 # Usage: fm-control.sh <task-id> interrupt
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
-#                                         [--effort <level>]
+#                                         [--effort <level>] [--unless-held-stopped]
 #                                         (--note <text> | --note-file <path>)
 #        fm-control.sh <task-id> recover-missing
 #                                         [--harness <name>] [--model <name>]
-#                                         [--effort <level>]
+#                                         [--effort <level>] [--unless-held-stopped]
 #                                         (--note <text> | --note-file <path>)
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
@@ -39,6 +39,16 @@
 #              group stopped. Already-stopped is success (idempotent), including
 #              when the agent is found gone while the composer gate was
 #              re-reading a state it could not prove.
+#              A successful kind=secondmate exit (including already-stopped)
+#              records state/<id>.held-stopped so automatic recovery leaves it
+#              down. A primary exit of a remote mate also records it on SSH
+#              exit 255: an unknown response may hide a deliberate stop.
+#              Successful relaunch or recover-missing withdraws it.
+#              --unless-held-stopped on either recovery verb checks this marker
+#              and re-reads agent liveness under this home's per-task control
+#              lock, refusing an alive mate with 'is not down'. For a remote
+#              mate the fresh state comes from its configured host; the flag
+#              guards primary admission, not the host-local delegated call.
 #   relaunch   Transactionally replace the running agent with a new one, in the
 #              SAME endpoint and SAME worktree, on the same or a newly chosen
 #              harness/model/effort - so switching harness is one ordinary use
@@ -87,8 +97,9 @@
 #              It continues the SAME run, so the recorded harness, model, and
 #              effort carry through unchanged - nothing is re-resolved from
 #              configuration, including a secondmate's config/secondmate-harness
-#              pin - and only --note/--note-file apply. Picking up a changed pin
-#              is what `relaunch` is for.
+#              pin. --note/--note-file carry the progress note and
+#              --unless-held-stopped applies the automatic-admission guard
+#              above. Picking up a changed pin is what `relaunch` is for.
 #              The one deliberate exception is an explicit replacement profile:
 #              --harness/--model/--effort are accepted here too,
 #              with the identical precedence, axis-reset, and refusal semantics
@@ -127,8 +138,9 @@
 # postcondition where the agent runs. A relaunch then re-reads the host's route
 # and rewrites this record's remote_* binding, so the parent points at the
 # mate's new endpoint. recover-missing
-# stays refused for a remote mate; its recovery is the secondmate liveness
-# sweep (bin/fm-bootstrap.sh). bin/fm-remote-control-lib.sh owns that route.
+# stays refused for a remote mate; a gone remote endpoint needs recovery on
+# its host (docs/remote-secondmates.md "Lifecycle control").
+# bin/fm-remote-control-lib.sh owns that route.
 #
 # Fail-closed boundaries:
 #   - A recorded harness outside the exact supported set is refused before any
@@ -278,6 +290,7 @@ MODEL_SET=0
 EFFORT_SET=0
 NOTE=
 NOTE_SET=0
+UNLESS_HELD_STOPPED=0
 control_want_value=
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
@@ -308,6 +321,7 @@ for control_arg in "$@"; do
     --note) control_want_value=note ;;
     --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
     --note-file) control_want_value=note_file ;;
+    --unless-held-stopped) UNLESS_HELD_STOPPED=1 ;;
     --note-file=*)
       [ -f "${control_arg#--note-file=}" ] || die "--note-file '${control_arg#--note-file=}' is not a readable file"
       NOTE=$(cat "${control_arg#--note-file=}")
@@ -325,6 +339,7 @@ case "$VERB" in
   relaunch|recover-missing) ;;
   *)
     [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
+      && [ "$UNLESS_HELD_STOPPED" = 0 ] \
       || die "--harness, --model, and --effort apply to 'relaunch' and 'recover-missing' only, and --note to 'relaunch' or 'recover-missing' only"
     ;;
 esac
@@ -371,11 +386,37 @@ fi
 # cannot say is WHY, and "malformed metadata" is the wrong thing to tell an
 # operator about a correctly configured remote route. Name the placement
 # instead, using the same `remote_host` signal bin/fm-send.sh routes on.
+# The header owns deliberate-stop marker semantics; writes stay under the
+# control lock acquired above.
+held_stop_record() {  # <verb> - after success or an unknown remote exit
+  [ "$(fm_meta_get "$META" kind)" = secondmate ] || return 0
+  case "$1" in
+    exit) printf 'stopped_at=%s\n' "$(date +%s)" > "$STATE/$ID.held-stopped" ;;
+    relaunch|recover-missing) rm -f "$STATE/$ID.held-stopped" ;;
+  esac
+}
+
+# Automatic revival asks under this task's control lock, so an exit that lands
+# between its reading and its relaunch still keeps the mate down.
+if [ "$UNLESS_HELD_STOPPED" = 1 ] && [ -e "$STATE/$ID.held-stopped" ]; then
+  die "task $ID was stopped on purpose (state/$ID.held-stopped); relaunch it without --unless-held-stopped to bring it back"
+fi
+
 if [ -n "$(fm_meta_get "$META" remote_host)" ]; then
   # shellcheck source=bin/fm-remote-control-lib.sh
   . "$SCRIPT_DIR/fm-remote-control-lib.sh"
-  fm_remote_control_run
-  exit $?
+  if [ "$UNLESS_HELD_STOPPED" = 1 ]; then
+    if remote_state=$("$SCRIPT_DIR/fm-on.sh" "$ID" fm-remote-secondmate-control.sh state "$ID" < /dev/null 2>/dev/null); then
+      [ "$(printf '%s\n' "$remote_state" | tail -1)" != alive ] \
+        || die "task $ID is not down; automatic revival refused"
+    fi
+  fi
+  remote_rc=0
+  fm_remote_control_run || remote_rc=$?
+  if [ "$remote_rc" -eq 0 ] || { [ "$VERB" = exit ] && [ "$remote_rc" -eq 255 ]; }; then
+    held_stop_record "$VERB"
+  fi
+  exit "$remote_rc"
 fi
 
 fm_backend_validate_task_endpoint "$META" "$ID" || exit 1
@@ -399,6 +440,10 @@ fm_backend_validate "$BACKEND" || exit 1
 agent_state() {
   fm_backend_agent_state "$BACKEND" "$T"
 }
+
+if [ "$UNLESS_HELD_STOPPED" = 1 ] && [ "$(agent_state)" = alive ]; then
+  die "task $ID is not down; automatic revival refused"
+fi
 
 busy_verdict() {
   fm_busy_classify_meta "$META" "$ID" "$STATE"
@@ -1311,12 +1356,15 @@ case "$VERB" in
     ;;
   exit)
     result=$(do_exit)
+    held_stop_record exit
     echo "$result $ID harness=$HARNESS backend=$BACKEND endpoint=$T worktree=$WT"
     ;;
   relaunch)
     do_relaunch
+    held_stop_record relaunch
     ;;
   recover-missing)
     do_recover_missing
+    held_stop_record recover-missing
     ;;
 esac

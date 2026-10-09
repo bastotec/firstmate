@@ -67,6 +67,11 @@
 # doorbell, retained until acknowledged after a serialized next turn;
 # the durable wake queue is acknowledged only by the model after handling.
 # Exactly one Deck turn runs at a time, including stdin and watcher turns.
+# Before a pending watcher turn, consume queued composer clears and stale own
+# doorbells, waiting up to five seconds from the first such line for following
+# input. An exact /quit reached there stops the host before watcher work; real
+# steers retain watcher priority. The grace covers the control plane's delayed
+# /quit after clear/re-read retries (tests/fm-deck-harness.test.sh).
 # Supervision uses child processes and stdin, never backend-specific injection.
 # Startup, lock, watcher, and event-capture failures publish failure status and
 # stop the driver, except a refused handling-delivery confirmation: the driver
@@ -753,6 +758,29 @@ while :; do
   if [ "$SECONDMATE" = 1 ]; then
     watch_start || exit 1
     watch_maintain || exit 1
+    # Drain start-nothing input with the bounded lifecycle grace owned by the
+    # HOME HOST INVARIANTS above, before allowing automatic watcher dispatch.
+    composer_grace_until=0
+    while :; do
+      if [ ! -f "$WORK/input.$input_seq" ]; then
+        [ "$composer_grace_until" -gt "$(date +%s)" ] || break
+        sleep 0.1
+        continue
+      fi
+      if ! line=$(cat "$WORK/input.$input_seq"); then
+        host_failure 'could not read queued input'; exit 1
+      fi
+      case "$line" in
+        ''|*$'\025'*) ;;
+        *) doorbell_without_work "$line" || break ;;
+      esac
+      rm "$WORK/input.$input_seq" || { host_failure 'could not consume queued composer clear'; exit 1; }
+      input_seq=$((input_seq + 1))
+      if [ "$composer_grace_until" -eq 0 ]; then
+        composer_grace_until=$(( $(date +%s) + 5 ))
+      fi
+      show_prompt=1
+    done
     if [ -f "$WORK/input.$input_seq" ]; then
       if ! line=$(cat "$WORK/input.$input_seq"); then
         host_failure 'could not read queued input'; exit 1

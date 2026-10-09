@@ -64,7 +64,8 @@ Deck's driver starts a new session from the brief on disk.
 
 ## Transactional relaunch
 
-`relaunch` and `recover-missing` are the only verbs that change durable records, so each runs as a transaction with a journal at `state/<id>.control-relaunch`, a best-effort copy of the prior record kept beside it for the operator, and a ship or scout's prior instructions preserved when a progress note is appended.
+`relaunch` and `recover-missing` replace task metadata and each runs as a transaction with a journal at `state/<id>.control-relaunch`, a best-effort copy of the prior record kept beside it for the operator, and a ship or scout's prior instructions preserved when a progress note is appended.
+The [`fm-control.sh` header](../bin/fm-control.sh) owns the separate deliberate-stop marker written by secondmate exit and the locked automatic-admission guard.
 Only the instructions are ever rolled back from those copies; the record copy is never written back over the live record, because every other writer takes the per-task record lock this plane does not hold.
 
 1. **Resolve the profile.**
@@ -102,7 +103,7 @@ It differs from the steps above in exactly three places.
   An explicit `--harness`, `--model`, or `--effort` names a replacement profile instead, resolved with the same precedence, axis-reset, and refusal semantics step 1 owns - including the deck effort refusal and the reset of an effort recorded for the previous harness.
   This replacement route applies only when the recorded harness already has verified control mechanics; it cannot rescue a record naming a removed adapter.
   A named replacement is a deliberate choice, never a config re-read, so the same flag never silently picks up a changed secondmate pin.
-  Only `--note`/`--note-file` besides, and a ship or scout still requires one for the same reason a relaunch does.
+  A ship or scout still requires `--note`/`--note-file` for the same reason a relaunch does; the automatic-admission flag is owned by the [`fm-control.sh` header](../bin/fm-control.sh).
   A held backlog row, a missing local copy, or an ownership conflict refuses exactly as it does for an ordinary recovery, replacement profile or not.
 - Two extra preconditions around the checkpoint: the endpoint must read the positively `missing` state, and the recorded local copy must be present and - for a Treehouse pool slot - still claimed by this task.
   Each of those refuses rather than cleaning, reallocating, or repairing anything; no worktree and no pool slot is ever created here.

@@ -37,7 +37,8 @@ Its validation-record case exercises a run starting during a blocking tool call 
 The dispatch validator rejects Deck profiles with effort, spawn refuses a non-default `--effort` before launch or task metadata, and relaunch refuses it before stopping the current worker because Deck has no effort control.
 Those boundaries are pinned by `tests/fm-bootstrap.test.sh`, `tests/fm-deck-harness.test.sh`, and `tests/fm-control-relaunch.test.sh`.
 The host regression forces actionable watcher exits across long handling turns, accepts verified successors across recovery acknowledgement races, and proves Deck turns remain serialized with accumulated wakes delivered by the next turn.
-It also proves an exact queued `/quit` stops the host before pending watcher work while ordinary steers retain watcher priority.
+It also exercises an exact queued `/quit` ahead of pending watcher work after composer clears and a stale own doorbell, with the clears delivered 1.5 seconds before `/quit`; ordinary steers retain watcher priority.
+The driver header owns the bounded grace that admits the delayed exit.
 The `test_secondmate_survives_a_refused_handling_confirmation` case in that suite injects a refusal through a fake `fm-watch-arm.sh` while running the real driver.
 Its assertions cover stderr-only diagnostics, retirement of the refused watcher, a replacement with no predecessor claim, absence of `failed:` status, delivery of the original and replacement wakes in the same Deck session, and clean `/quit`; the driver header owns the recovery contract.
 The driver refuses to run Deck when it cannot record `turn-start`, and a failed closing busy-state write publishes failure evidence and makes the turn fail.

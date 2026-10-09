@@ -622,6 +622,72 @@ test_secondmate_control_command_carries_no_marker() {
   pass "fm-control: a lifecycle command to a secondmate is unmarked and opens no reply expectation"
 }
 
+# A second mate stopped on purpose must not be brought back by the mid-session
+# revival (bin/fm-secondmate-revive.sh), so its exit leaves a held-stopped
+# record; an ordinary crewmate's exit does not.
+test_secondmate_exit_records_a_deliberate_stop() {
+  local dir out rc
+  dir=$(new_case sm-held)
+  add_task "$dir" domain deck secondmate
+  printf '%s\n' domain > "$dir/wt-domain/.fm-secondmate-home"
+  alive_as "$dir" fm-deck-worker
+  out=$(run_control "$dir" domain exit); rc=$?
+  expect_code 0 "$rc" "exiting a secondmate's agent should succeed"$'\n'"$out"
+  [ -f "$dir/home/state/domain.held-stopped" ] \
+    || fail "a deliberate secondmate exit did not record that it was stopped on purpose"
+  dir=$(new_case crew-held)
+  add_task "$dir" crew deck
+  alive_as "$dir" fm-deck-worker
+  out=$(run_control "$dir" crew exit); rc=$?
+  expect_code 0 "$rc" "exiting a crewmate should succeed"$'\n'"$out"
+  [ ! -e "$dir/home/state/crew.held-stopped" ] || fail "a crewmate exit recorded a secondmate stop"
+  pass "fm-control: a secondmate exit records a deliberate stop the revival respects"
+}
+
+test_automatic_recovery_refuses_an_already_live_secondmate() {
+  local dir out rc verb
+  for verb in relaunch recover-missing; do
+    dir=$(new_case "automatic-alive-$verb")
+    add_task "$dir" domain deck secondmate
+    alive_as "$dir" fm-deck-worker
+    cp "$dir/home/state/domain.meta" "$dir/before.meta"
+    out=$(run_control "$dir" domain "$verb" --unless-held-stopped); rc=$?
+    expect_code 1 "$rc" "automatic $verb should refuse an already-live mate"$'\n'"$out"
+    assert_contains "$out" 'is not down' "the refusal did not identify the recovered mate"
+    [ -z "$(literals "$dir")" ] || fail "automatic $verb typed into an already-live mate"
+    [ -z "$(keys_sent "$dir")" ] || fail "automatic $verb interrupted an already-live mate"
+    [ ! -e "$dir/home/state/domain.control-relaunch" ] || fail "automatic $verb opened a transaction for a live mate"
+    cmp -s "$dir/home/state/domain.meta" "$dir/before.meta" || fail "automatic $verb changed a live mate's record"
+    [ "$(cat "$dir/fake/command")" = fm-deck-worker ] || fail "automatic $verb stopped the recovered mate"
+    [ ! -e "$dir/home/state/.control-domain.lock" ] && [ ! -L "$dir/home/state/.control-domain.lock" ] \
+      || fail "automatic $verb left the lifecycle lock held"
+  done
+  pass "fm-control: automatic admission refuses an already-live secondmate without touching it"
+}
+
+test_unless_held_stopped_refuses_before_touching_the_agent() {
+  local dir out rc verb
+  for verb in relaunch recover-missing; do
+    dir=$(new_case "held-admission-$verb")
+    add_task "$dir" domain deck secondmate
+    printf '%s\n' domain > "$dir/wt-domain/.fm-secondmate-home"
+    alive_as "$dir" zsh
+    printf 'stopped_at=1\n' > "$dir/home/state/domain.held-stopped"
+    out=$(run_control "$dir" domain "$verb" --unless-held-stopped); rc=$?
+    expect_code 1 "$rc" "$verb --unless-held-stopped should refuse a mate stopped on purpose"$'\n'"$out"
+    assert_contains "$out" "was stopped on purpose" "the refusal should name the deliberate stop"
+    [ -z "$(literals "$dir")" ] || fail "$verb --unless-held-stopped typed into the endpoint before refusing"
+    [ ! -e "$dir/home/state/domain.control-relaunch" ] || fail "$verb --unless-held-stopped opened a transaction"
+    [ -e "$dir/home/state/domain.held-stopped" ] || fail "the refusal withdrew the deliberate-stop record"
+  done
+  dir=$(new_case held-flag-exit)
+  add_task "$dir" t1 deck
+  alive_as "$dir" fm-deck-worker
+  out=$(run_control "$dir" t1 exit --unless-held-stopped); rc=$?
+  expect_code 1 "$rc" "--unless-held-stopped applies to relaunch and recover-missing only"$'\n'"$out"
+  pass "fm-control: --unless-held-stopped refuses a deliberately stopped mate before touching it"
+}
+
 test_fm_send_still_marks_the_same_secondmate_task() {
   local dir log out rc
   dir=$(new_case sm-send)
@@ -862,6 +928,9 @@ PY
 }
 
 test_host_route_reaches_guarded_worker_owners
+test_secondmate_exit_records_a_deliberate_stop
+test_automatic_recovery_refuses_an_already_live_secondmate
+test_unless_held_stopped_refuses_before_touching_the_agent
 test_exit_types_each_harness_verified_command
 test_interrupt_sends_each_harness_verified_key
 test_unverified_harness_is_refused

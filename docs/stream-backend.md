@@ -48,11 +48,17 @@ Secondmate spawns use the isolated-home launch path through Deck's persistent ho
 Deck's host invariants are documented in `bin/fm-deck-worker.sh`: a watcher wake is never lost between turns, turns never overlap, and failures are reported rather than swallowed.
 `tests/fm-deck-harness.test.sh` exercises those invariants, and `tests/fm-backend-stream.test.sh` exercises a Deck home through the real stream transport, including launch, steering, liveness, interrupt, exit, same-endpoint relaunch, and recovery.
 
-Recovery classification is `fm_backend_agent_state` in `bin/fm-backend.sh`, with one stream secondmate rule on top of it in `bin/fm-bootstrap.sh`.
-For a stream mate, `missing` means the hub's in-memory registry does not know that endpoint, which an agent still pacing its rejoin after a hub restart also produces, so it licenses no respawn and the sweep skips with an `absence from the hub registry` diagnostic.
-A stream mate whose own agent is gone therefore reads `unreadable` while the hub still holds its record, then `missing` once the hub reaps that record after an hour of agent silence, so it is never respawned automatically and that skip line is the only signal.
-A stream mate whose worker exited while its agent lived reads `dead` from the agent's own closing report, and the sweep respawns it only after endpoint closure is confirmed.
-`bin/fm-control.sh` owns interrupt, exit, same-endpoint relaunch, and `recover-missing`.
+Recovery classification is `fm_backend_agent_state` in `bin/fm-backend.sh`.
+At session start, `bin/fm-bootstrap.sh` respawns a confirmed-dead secondmate only after endpoint closure is confirmed, rechecking liveness and deliberate-stop protection under the mate's lifecycle lock.
+For a stream mate, `missing` means the hub's in-memory registry does not know that endpoint, which an agent still pacing its rejoin after a hub restart also produces, so the startup sweep skips it with an `absence from the hub registry` diagnostic.
+A stream mate whose own agent is gone reads `unreadable` while the hub still holds its record, then `missing` once the hub reaps that record after an hour of agent silence; an unreadable state never licenses automatic recovery.
+
+Between session starts, the owning home's watcher runs [`bin/fm-secondmate-revive.sh`](../bin/fm-secondmate-revive.sh) without waiting for a model turn; its header owns confirmation, per-mate concurrency, retry limits, escalation, and the environment knobs, with the scan cadence owned by [`bin/fm-watch.sh`](../bin/fm-watch.sh).
+With the watcher running and default settings, a consistently dead mate normally reaches a recovery attempt within a couple of minutes; completion depends on the control-plane postconditions, and unknown readings or a competing lifecycle action defer recovery.
+The scan uses control-plane relaunch for a dead endpoint and guarded missing-endpoint recovery below for a local registry gap; [remote lifecycle control](remote-secondmates.md#lifecycle-control) owns remote limits.
+Successful revivals are silent and logged; a spent revival budget produces one failure notification rather than repeated restarts.
+A secondmate deliberately stopped through control-plane exit stays down across scans and session start until explicitly relaunched or freshly observed alive; [`bin/fm-control.sh`'s header](../bin/fm-control.sh) owns the stop marker and automatic-admission guard.
+[`verification/supervision.md`](verification/supervision.md#secondmate-revival) lists the portable regression entry points.
 
 A new stream agent generates a fresh endpoint id, so `recover-missing` starts a new endpoint on this home's configured hub (same `fm-<id>` label, the recorded worktree as its cwd) and rebinds the task's endpoint identity through [`bin/fm-endpoint-rebind-lib.sh`](../bin/fm-endpoint-rebind-lib.sh), keeping its worktree and non-endpoint fields.
 Because a stream `missing` alone does not prove the worker gone, recovery first looks for a local stream agent matching both the task label and this home's task status path.

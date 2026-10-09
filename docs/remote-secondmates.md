@@ -217,7 +217,7 @@ Remote route seeding does not mint a stream credential or configure the hub URL:
 The token never travels on a command line or in the launch environment.
 The parent's endpoint binding is read back from the host's route; the [`bin/fm-remote-control-lib.sh` header](../bin/fm-remote-control-lib.sh) owns its exact `remote_*` fields.
 Steering, peek, crew-state, the parent channel, and liveness run through host verbs on the configured host.
-A stream `missing` read is the hub registry not knowing the endpoint, so the liveness sweep skips it with a diagnostic instead of relaunching, as it does for a local stream mate.
+[Secondmate lifecycle](stream-backend.md#secondmate-lifecycle) owns automatic recovery and registry-gap handling; the remote route never infers liveness from the primary's local endpoint view.
 
 ### Lifecycle control
 
@@ -225,13 +225,15 @@ A stream `missing` read is the hub registry not knowing the endpoint, so the liv
 Before relaunch reaches host lifecycle control, the primary checks readiness with the same check/repair/recheck sequence as launch; a remaining gap or SSH exit 255 refuses without stopping the mate.
 An ordinary primary `fm-control.sh` relaunch keeps the recorded profile unless flags replace it, resets unnamed model and effort axes when the harness changes, and rewrites the parent's binding and resolved harness, model, and effort from the host's route after success.
 If that route read or parent publication fails after host success, the primary reports failure with the old parent binding retained; reconcile on the same host rather than assuming no replacement launched.
-`recover-missing` remains unavailable through the primary for remote mates.
+`recover-missing` remains unavailable through the primary for remote mates; [`bin/fm-secondmate-revive.sh`](../bin/fm-secondmate-revive.sh) owns confirmed-missing escalation without claiming revival attempts.
+For deliberate-stop protection, use exit through the primary control plane; its [`fm-control.sh` header](../bin/fm-control.sh) owns the primary marker, including unknown SSH outcomes and the primary-only automatic-admission guard.
+A host-local control call does not establish that primary marker, so it is not a substitute for primary exit when automatic revival must stay suppressed.
 
 A remote route's endpoint records live in `state/parent-route`, which the launch creates private (`0700`) even under a permissive remote umask, because Deck's descriptor-bound status I/O refuses a group- or world-writable state root.
 The launch and the relaunch each reconcile a root an earlier launch left group-writable to the mode Deck accepts, so no home needs a hand chmod before a Deck mate can start.
 The reconcile touches only a real directory this host provably owns; a symlink, a non-directory, or a directory owned by another uid is refused loudly rather than chmod-ed, and the data root beside it is never tightened.
 
-Startup liveness recovery relaunches a positively dead remote second mate through the normal spawn command, so recovery passes the same readiness gate rather than a weaker one; a missing stream endpoint follows the skip rule above.
+Startup liveness recovery uses the [automatic-recovery admission rules](stream-backend.md#secondmate-lifecycle) before the normal spawn command, so a stopped-on-purpose mate stays down and recovery passes the same readiness gate rather than a weaker one; a missing stream endpoint follows the startup skip rule there.
 A dead remote endpoint is removed before that relaunch, and a removal the backend cannot confirm refuses the launch instead of risking a duplicate mate beside a worker that may still be running.
 A launch that starts an agent reports success only after the host proves, by process identity, that it replaced the previous one: the new endpoint hosts an agent process that did not exist before, and every previous agent process is gone.
 A previous agent still running after its endpoint was removed refuses the launch rather than gaining a twin, and a proof that cannot be made within the bound is reported as a failed launch; [`bin/fm-remote-secondmate-control.sh`](../bin/fm-remote-secondmate-control.sh) owns that contract.

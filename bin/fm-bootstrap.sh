@@ -700,10 +700,12 @@ secondmate_liveness_sweep() {
   # processes and every transiently unreadable target.
   # A meta with no window remains owned by secondmate-provisioning recovery.
   # Secondmate homes never contain kind=secondmate meta, so this is naturally a
-  # primary-only no-op there. Mid-session liveness remains explicitly out of
-  # scope and requires a separate periodic signal.
+  # primary-only no-op there. Mid-session liveness is the watcher-run
+  # bin/fm-secondmate-revive.sh.
   [ -d "$STATE" ] || return 0
   local meta id remote_host label __fm_timing_stamp parallel=0
+  # shellcheck source=bin/fm-wake-lib.sh disable=SC1091
+  . "$SCRIPT_DIR/fm-wake-lib.sh"
   SECONDMATE_RESPAWNED_IDS=""
   if bootstrap_parallel_begin; then
     parallel=1
@@ -734,12 +736,19 @@ secondmate_liveness_one_timed() {  # <meta> <id> <label>
   fm_timing_record secondmate liveness "$__fm_timing_stamp" "$label"
 }
 
+# Honor control-plane deliberate-stop protection at startup; bin/fm-control.sh's
+# header owns the marker and bin/fm-secondmate-revive.sh owns mid-session handling.
+held_stopped_skip() {  # <id>
+  [ -e "$STATE/$1.held-stopped" ] || return 1
+  echo "SECONDMATE_LIVENESS: secondmate $1: skipped: stopped on purpose with fm-control exit; relaunch it explicitly to bring it back"
+}
+
 # One secondmate's liveness check. Split out of the sweep so each is individually
 # timed; every `return` here was a `continue` in the loop and means exactly the
 # same thing - move on to the next secondmate. Respawned ids are recorded through
 # secondmate_note_respawned so a concurrent sweep can collect them after wait.
 secondmate_liveness_one() {  # <meta> <id>
-  local meta=$1 id=$2
+  local meta=$1 id=$2 control_lock="$STATE/.control-$2.lock"
   local window harness backend target agent_state out cause remote_host remote_rc readiness_reason route_out route_backend kill_out flag
   window=$(fm_meta_get "$meta" window)
   [ -n "$window" ] || return 0
@@ -806,6 +815,23 @@ secondmate_liveness_one() {  # <meta> <id>
         return 0
         ;;
       dead)
+        if ! fm_lock_try_acquire "$control_lock"; then
+          echo "SECONDMATE_LIVENESS: secondmate $id: skipped: another lifecycle action is already running"
+          return 0
+        fi
+        if held_stopped_skip "$id"; then
+          fm_lock_release "$control_lock"
+          return 0
+        fi
+        agent_state=unreadable
+        if out=$("$SCRIPT_DIR/fm-on.sh" "$id" fm-remote-secondmate-control.sh state "$id" < /dev/null 2>/dev/null); then
+          agent_state=$(printf '%s\n' "$out" | tail -1)
+        fi
+        if [ "$agent_state" != dead ]; then
+          [ "$agent_state" = alive ] || echo "SECONDMATE_LIVENESS: secondmate $id: skipped: fresh remote endpoint state is $agent_state on $remote_host"
+          fm_lock_release "$control_lock"
+          return 0
+        fi
         cause="remote endpoint $agent_state on its configured host"
         if out=$(FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate 2>&1); then
           secondmate_note_respawned "$id"
@@ -813,6 +839,7 @@ secondmate_liveness_one() {  # <meta> <id>
         else
           echo "SECONDMATE_LIVENESS: secondmate $id: respawn failed after $cause: $(first_line "$out")"
         fi
+        fm_lock_release "$control_lock"
         ;;
       ambiguous|unreadable|unverified)
         echo "SECONDMATE_LIVENESS: secondmate $id: skipped: remote endpoint state is $agent_state on $remote_host"
@@ -846,6 +873,29 @@ secondmate_liveness_one() {  # <meta> <id>
       fi
       ;;
     dead|missing)
+      if ! fm_lock_try_acquire "$control_lock"; then
+        echo "SECONDMATE_LIVENESS: secondmate $id: skipped: another lifecycle action is already running"
+        return 0
+      fi
+      if held_stopped_skip "$id"; then
+        fm_lock_release "$control_lock"
+        return 0
+      fi
+      backend=$(fm_backend_of_meta "$meta")
+      target=$(fm_backend_target_of_meta "$meta")
+      [ -n "$target" ] || target=$(fm_meta_get "$meta" window)
+      agent_state=$(fm_backend_agent_state "$backend" "$target" 2>/dev/null) || agent_state=unreadable
+      if [ "$backend" = stream ] && [ "$agent_state" = missing ]; then
+        agent_state="registry-absent"
+      fi
+      case "$agent_state" in
+        dead|missing) ;;
+        *)
+          [ "$agent_state" = alive ] || echo "SECONDMATE_LIVENESS: secondmate $id: skipped: fresh endpoint state is $agent_state (backend=$backend)"
+          fm_lock_release "$control_lock"
+          return 0
+          ;;
+      esac
       if [ "$agent_state" = dead ]; then
         cause="confirmed agent absence on existing endpoint"
         # A relaunch onto an endpoint that was not proved gone is how a second
@@ -855,6 +905,7 @@ secondmate_liveness_one() {  # <meta> <id>
         # captured and reported with the skip.
         if ! kill_out=$(fm_backend_kill "$backend" "$target" 2>&1); then
           echo "SECONDMATE_LIVENESS: secondmate $id: skipped: the existing endpoint was not confirmed gone, so no relaunch was attempted (backend=$backend): $(first_line "$kill_out")"
+          fm_lock_release "$control_lock"
           return 0
         fi
       else
@@ -866,6 +917,7 @@ secondmate_liveness_one() {  # <meta> <id>
       else
         echo "SECONDMATE_LIVENESS: secondmate $id: respawn failed after $cause: $(first_line "$out")"
       fi
+      fm_lock_release "$control_lock"
       ;;
     ambiguous)
       echo "SECONDMATE_LIVENESS: secondmate $id: skipped: existing endpoint has ambiguous agent process (backend=$backend)"

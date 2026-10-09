@@ -794,6 +794,28 @@ test_already_current_mate_restarts_end_to_end() {
   pass "T15 an already-current live mate is named by the update pass and genuinely restarted"
 }
 
+# --- T17: an agent that ignores its exit is reported by the failure itself ----
+# A composer the fleet cannot prove empty produces a warning before the exit
+# command is typed; when the agent then fails to stop, the report must carry the
+# failure that decided the outcome, not that earlier warning.
+test_exit_timeout_is_reported_over_composer_warning() {
+  local dir out rc
+  dir=$(new_case exit-timeout)
+  add_local_mate "$dir" sm1
+  arm_answer "$dir" sm1
+  # A pane mid-turn shows no prompt row, so its composer cannot be proven empty.
+  printf 'deck working - ctrl+c to stop\n' > "$dir/fake/pane"
+
+  out=$(FM_FAKE_NEVER_DIES=1 run_restart "$dir" sm1); rc=$?
+
+  expect_code 3 "$rc" "an agent that never stopped must remain accounted for"$'\n'"$out"
+  assert_contains "$(grep '^unreached: sm1:' <<<"$out")" "did not stop" \
+    "the unreached line must name the exit timeout"$'\n'"$out"
+  assert_not_contains "$(grep '^unreached: sm1:' <<<"$out")" "warning:" \
+    "the unreached line must not be a warning that preceded the failure"$'\n'"$out"
+  pass "T17 an exit timeout is reported by its failure rather than a preceding warning"
+}
+
 # --- T16: an already-current mate on a removed backend stays honest ----------
 # The update pass keeps it out of the restart set; the restart pass cannot
 # deliver the fallback to an unknown backend and reports it unreached instead.
@@ -835,6 +857,7 @@ test_persist_gates_and_asks_only_for_open_records
 test_persist_precedes_restart
 test_arrived_answer_precedes_deadline_check
 test_answer_between_resolution_and_timeout_wins
+test_exit_timeout_is_reported_over_composer_warning
 test_removed_backend_is_unreached
 test_unknown_mate_is_accounted_for
 test_refused_restart_falls_back_without_claiming_a_reload

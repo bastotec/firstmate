@@ -3218,6 +3218,7 @@ rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.progress" \
   "$STATE/$ID.control-relaunch" "$STATE/$ID.control-relaunch.meta-prior" \
   "$STATE/$ID.control-relaunch.brief-prior" "$STATE/$ID.control-relaunch.note" \
   "$STATE/$ID.reconcile-nudged" "$STATE/$ID.crew-state" \
+  "$STATE/$ID.revive" "$STATE/$ID.held-stopped" \
   "$STATE/.$ID.crew-state-follow.rearm"
 # bin/fm-crew-state.sh "PUBLISHED RECORD" owns follower shutdown and lock cleanup.
 fm_lock_remove_path "$STATE/.$ID.crew-state-follow" || true
