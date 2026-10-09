@@ -65,7 +65,6 @@ Deck's driver starts a new session from the brief on disk.
 
 ## Transactional relaunch
 
-`reincarnate` excludes secondmates and replacement-profile flags; its accepted options and read-only stop proof are owned by the [`fm-control.sh` header](../bin/fm-control.sh).
 `relaunch`, `recover-missing`, and `reincarnate` replace task metadata and each runs as a transaction with a journal at `state/<id>.control-relaunch`, a best-effort copy of the prior record kept beside it for the operator, and a ship or scout's prior instructions preserved when a progress note is appended.
 The [`fm-control.sh` header](../bin/fm-control.sh) owns the separate deliberate-stop marker written by secondmate exit and the locked automatic-admission guard.
 Only the instructions are ever rolled back from those copies; the record copy is never written back over the live record, because every other writer takes the per-task record lock this plane does not hold.
@@ -83,7 +82,7 @@ The steps below describe `relaunch`; [missing-terminal recovery](#recovering-a-m
 2. **Prove backlog recovery eligibility.**
    When the automatic backlog transition gate applies, an unheld In-flight row is recoverable whether it is unblocked or waiting on a dependency; relaunch preserves that lifecycle state and dependency blocker instead of rerunning `start`.
    An unblocked Queued row can still proceed and moves to In flight at the launch commit, while a dependency-blocked Queued row, any held row, a missing or Done row, and an unreadable row refuse before the old agent is stopped.
-   `recover-missing` uses the same predicate before it recreates a terminal.
+   Both recovery verbs use the same predicate before creating a terminal.
 3. **Safe checkpoint.**
    The recorded worktree must exist and be a worktree root; its head and dirty state are recorded.
    For a `kind=secondmate` task, the home's identity marker must match and its child records must be readable, so a relaunch can never strand child work behind an unreadable home.
