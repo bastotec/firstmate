@@ -303,6 +303,13 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label] [har
   case "$verdict" in
     dead|missing) return 3 ;;
   esac
+  # A captain-direct record also goes straight into a live Deck turn, which
+  # takes it at its next safe point instead of after the turn ends. Best-effort
+  # and never delivery proof: the record and the doorbell below stay the
+  # contract (bin/fm_stream_deck.py project_captain owns the rules).
+  if [ -n "$state" ] && [ -n "$task" ] && [ -d "$state/$task.inbox" ]; then
+    python3 "$_FM_TASK_INBOX_LIB_DIR/fm_stream_deck.py" captain "$state" "$task" >/dev/null 2>&1 || true
+  fi
   if ! line=$(fm_task_inbox_doorbell_line "$rec"); then
     return 2
   fi

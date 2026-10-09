@@ -256,6 +256,7 @@ The [adapter's header and help](../bin/fm-stream-bridge.py) own the record shape
 Every order names both a worker by `leaf_worker_id` (`<machine>/<label>`, as the feed emits and `fm-stream.sh tasks` lists) and the exact execution the feed showed.
 That binding prevents an order composed for one run from being typed into its replacement.
 For Deck, a Bridge order corrects the already-running turn without ending, displacing, or restarting it; ordinary `fm-send` doorbells still use the next-turn path.
+The captain's own messages (`fm-send --from-captain`) also reach a live Deck turn at its next safe point, and a turn that starts with one pending takes it with its prompt; the durable record and doorbell stay the delivery contract, and `bin/fm_stream_deck.py`'s `project_captain` owns the sequencing rules.
 Native Deck acceptance is execution-bound through the durable receiver, never a PTY write (non-Deck endpoints keep PTY typing), and requires a Deck build supporting `deck run --steer-dir`; an unavailable interface is refused without changing the running turn or falling back to PTY input.
 Native text must be nonblank and fit below Deck's 64 KiB projection ceiling, with space reserved for source paths and acknowledgement guidance.
 `bin/fm_stream_deck.py` owns Deck's durable source, original-turn binding, idempotency, reconciliation, and refusal mechanics.

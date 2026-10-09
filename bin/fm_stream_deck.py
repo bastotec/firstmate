@@ -10,6 +10,8 @@ No projection is ever carried into the next turn. Only Deck's handled file
 confirms application; inbox publication, run liveness and PTY writes do not.
 Driver CLI: fm_stream_deck.py start|end STATE ID ENDPOINT [TURN SUPPORTED].
 start prints the turn projection path; end retires the active descriptor.
+fm_stream_deck.py captain STATE ID publishes pending captain-direct records
+into every live turn (project_captain owns the rules) and prints the count.
 """
 import contextlib
 import fcntl
@@ -17,6 +19,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -281,7 +284,73 @@ class Receiver:
         return None, 'Deck application pending'
 
 
+CAPTAIN_DIRECT = re.compile(
+    '\\A(?:\\[fm-from-firstmate\\]⁣(?:corr=\\S+ )?)?\\[fm-captain-direct\\]⁣')
+
+
+def project_captain(state, task):
+    """Publish pending captain-direct task-inbox records into every live Deck turn.
+
+    Deck injects them at its next safe point (run start, after a tool batch,
+    before finishing), so a message the captain sends reaches a busy model
+    mid-turn and an idle one in the first call of its next turn. The record
+    stays the durable delivery: only the model's move into handled/ acknowledges
+    it, and the doorbell still rings, so a record Deck never takes keeps the
+    ordinary next-turn path. A sequence is never made visible below one already
+    visible in that turn, nor above an unprojected stream order bound to it,
+    because Deck silently drops a late lower sequence. Prints the count published.
+    """
+    inbox = Path(state) / (task + '.inbox')
+    published = 0
+    for root in sorted(inbox.glob('deck-*')):
+        endpoint = root.name[len('deck-'):]
+        receiver = Receiver(state, task, endpoint)
+        with receiver.locked():
+            active = receiver.active()
+            if not active or not active.get('active') or not active.get('supported'):
+                continue
+            projection = receiver.root / active['turn']
+            if not projection.is_dir():
+                continue
+            visible = [int(p.stem) for sub in ('', 'handled', 'rejected')
+                       for p in (projection / sub).glob('*.msg') if p.stem.isdigit()]
+            floor = max(visible, default=0)
+            ceiling = None
+            candidates = []
+            for source in inbox.glob('*.msg'):
+                if not source.stem.isdigit():
+                    continue
+                try:
+                    body = source.read_bytes().decode('utf-8').split('\n--\n', 1)[1]
+                except (FileNotFoundError, IndexError, UnicodeDecodeError):
+                    continue
+                number = int(source.stem)
+                if body.startswith('[stream-order '):
+                    try:
+                        binding = json.loads(body.split('\n', 1)[0][14:-1])
+                    except ValueError:
+                        continue
+                    if binding.get('turn') == active['turn'] and number > floor:
+                        ceiling = number if ceiling is None else min(ceiling, number)
+                elif CAPTAIN_DIRECT.match(body):
+                    candidates.append((number, source, body))
+            for number, source, body in sorted(candidates):
+                if number <= floor or (ceiling is not None and number > ceiling):
+                    continue
+                guidance = body + '\n\nAfter handling this native steer, acknowledge its ordinary task-inbox source by moving ' + str(source) + ' to ' + str(inbox / 'handled' / source.name) + '. Do not apply the same source record twice.'
+                if not body.strip() or len(guidance.encode('utf-8')) > 65536:
+                    continue
+                atomic_write(projection / (str(number) + '.msg'), guidance)
+                floor = number
+                published += 1
+    return published
+
+
 def main():
+    if sys.argv[1:2] == ['captain']:
+        _, state, task = sys.argv[1:4]
+        print(project_captain(state, task))
+        return
     action, state, task, endpoint, *args = sys.argv[1:]
     receiver = Receiver(state, task, endpoint)
     if action == 'start':
@@ -289,7 +358,7 @@ def main():
     elif action == 'end':
         receiver.end()
     else:
-        raise SystemExit('expected start or end')
+        raise SystemExit('expected start, end or captain')
 
 
 if __name__ == '__main__':

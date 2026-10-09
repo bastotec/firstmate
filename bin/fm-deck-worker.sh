@@ -11,6 +11,11 @@
 #     Deck session (`--session`), so context carries across steers;
 #   - stream Bridge orders bypass stdin through bin/fm_stream_deck.py's native
 #     receiver; docs/stream-backend.md "Command path" owns compatibility and limits;
+#   - the captain's own messages (fm-send --from-captain) reach the model without
+#     waiting for the turn to end: the ring publishes them into the live turn and
+#     each turn starts with any still pending (bin/fm_stream_deck.py
+#     project_captain), and a doorbell that finds this task's inbox empty
+#     starts no turn, so one already taken mid-turn is not answered twice;
 #   - each turn's events render as readable text in the pane (fm-peek reads it);
 #   - it is the semantic busy source for the task: turn start and turn end are
 #     written through bin/fm-busy-event.sh with source `deck-wrapper`, and each
@@ -478,6 +483,8 @@ run_turn() {  # <prompt>
     if steer_dir=$(python3 "$SCRIPT_DIR/fm_stream_deck.py" start "$STATE" "$ID" \
         "$FM_STREAM_ENDPOINT_ID" "$steer_turn" "$steer_supported"); then
       [ "$steer_supported" = 0 ] || args+=(--steer-dir "$steer_dir")
+      # Pending captain messages ride this turn's start (header bullet).
+      [ "$steer_supported" = 0 ] || python3 "$SCRIPT_DIR/fm_stream_deck.py" captain "$STATE" "$ID" >/dev/null 2>&1 || true
     else
       printf 'fm-deck-worker: stream steering interface unavailable; continuing turn without it\n' >&2
     fi
@@ -720,6 +727,25 @@ $1"
   printf '\n⛵ turn failed; waiting at the prompt for the next wake.\n'
 }
 
+# 0 when <line> is the steering doorbell for this task's own inbox and that
+# inbox holds no unacknowledged record (bin/fm-task-inbox-lib.sh owns the line).
+doorbell_without_work() {  # <line>
+  local line=$1 dir own f
+  case "$line" in
+    ": Firstmate instruction waiting: list '"*) ;;
+    *) return 1 ;;
+  esac
+  dir=${line#": Firstmate instruction waiting: list '"}
+  dir=${dir%%"'/*.msg"*}
+  case "$dir" in *"'"*) return 1 ;; esac
+  own=$(cd "$STATE/$ID.inbox" 2>/dev/null && pwd -P) || return 1
+  [ "$(cd "$dir" 2>/dev/null && pwd -P)" = "$own" ] || return 1
+  for f in "$own"/*.msg; do
+    [ -e "$f" ] && return 1
+  done
+  return 0
+}
+
 drive_turn "$PROMPT"
 input_seq=0
 show_prompt=1
@@ -802,6 +828,12 @@ while :; do
       exit 0
       ;;
   esac
+  if doorbell_without_work "$line"; then
+    # A doorbell for this task's own inbox with nothing left in it (its record
+    # was taken mid-turn and acknowledged) starts no turn.
+    show_prompt=1
+    continue
+  fi
   drive_turn "$line"
   show_prompt=1
 done

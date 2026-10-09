@@ -457,6 +457,28 @@ test_status_checks_and_fallbacks_refuse_unsafe_paths() {
   pass "fm-deck-worker: status evidence never follows symlinked or non-regular paths"
 }
 
+test_doorbell_for_an_empty_own_inbox_starts_no_turn() {
+  local dir="$TMP_ROOT/doorbell" bell other
+  make_fake_deck "$dir"
+  mkdir -p "$dir/state/t1.inbox/handled" "$dir/other.inbox"
+  bell=": Firstmate instruction waiting: list '$dir/state/t1.inbox'/*.msg and, in numeric order, read and act on each, then mv each handled file to '$dir/state/t1.inbox'/handled/."
+  other=": Firstmate instruction waiting: list '$dir/other.inbox'/*.msg and, in numeric order, read and act on each, then mv each handled file to '$dir/other.inbox'/handled/."
+  run_worker "$dir" "$bell"$'\n'"$other"$'\nwrite-status\n/quit\n' "write-status brief" \
+    || fail "the driver did not exit cleanly: $(cat "$dir/pane.out")"
+  [ "$(wc -l < "$dir/argv.log" | tr -d ' ')" = 3 ] \
+    || fail "an empty own-inbox doorbell must start no turn, while another inbox's doorbell and a steer do: $(cat "$dir/argv.log")"
+  assert_not_contains "$(cat "$dir/argv.log")" "$dir/state/t1.inbox'" "the empty own-inbox doorbell became a turn"
+  make_fake_deck "$dir/pending"
+  mkdir -p "$dir/pending/state/t1.inbox/handled"
+  printf 'schema=fm-task-inbox.v1\nat=x\n--\nhello\n' > "$dir/pending/state/t1.inbox/001.msg"
+  bell=": Firstmate instruction waiting: list '$dir/pending/state/t1.inbox'/*.msg and, in numeric order, read and act on each, then mv each handled file to '$dir/pending/state/t1.inbox'/handled/."
+  run_worker "$dir/pending" "$bell"$'\n/quit\n' "write-status brief" \
+    || fail "the driver did not exit cleanly with a pending record: $(cat "$dir/pending/pane.out")"
+  [ "$(wc -l < "$dir/pending/argv.log" | tr -d ' ')" = 2 ] \
+    || fail "a doorbell with a pending record must start a turn: $(cat "$dir/pending/argv.log")"
+  pass "fm-deck-worker: a doorbell for its own empty inbox starts no turn; any other doorbell still does"
+}
+
 test_driver_backstops_silent_and_failed_turns() {
   local silent="$TMP_ROOT/postcondition-silent" failed="$TMP_ROOT/postcondition-failed"
   make_fake_deck "$silent"
@@ -965,6 +987,18 @@ test_stream_deck_ring_rings_live_driver() {
     || fail "the doorbell text never reached the live driver's endpoint:"$'\n'"$(cat "$dir/typed.log")"
   grep -q "$route/t1.inbox" "$dir/typed.log" \
     || fail "the doorbell announced a path outside the parent-route root:"$'\n'"$(cat "$dir/typed.log")"
+  # A captain-direct record also reaches the driver's live, steerable Deck turn.
+  local turn number
+  turn=$(python3 "$ROOT/bin/fm_stream_deck.py" start "$route" t1 "$(printf '%032d' 0)" live 1) \
+    || fail "ring fixture: no live turn"
+  rec=$(bash -c '. "$1/bin/fm-task-inbox-lib.sh"
+    fm_task_inbox_write "$2" t1 "$(printf "[fm-captain-direct]\342\201\243note\n\nhello from the captain")"' _ "$ROOT" "$route") \
+    || fail "ring fixture: captain record could not be written"
+  ring; rc=$?
+  [ "$rc" = 0 ] || fail "a live Deck driver must still be rung for a captain record, got rc $rc"
+  number=$(basename "$rec" .msg); number=$((10#$number))
+  grep -q 'hello from the captain' "$turn/$number.msg" 2>/dev/null \
+    || fail "the captain's record did not reach the live Deck turn: $(ls "$turn")"
   pass "the steering doorbell rings a live remote Deck driver and skips an absent one"
 }
 
@@ -2040,6 +2074,7 @@ test_finished_turn_renders_the_utc_completion_time
 test_idle_prompt_notes_the_utc_idle_instant
 test_status_checks_and_fallbacks_refuse_unsafe_paths
 test_driver_backstops_silent_and_failed_turns
+test_doorbell_for_an_empty_own_inbox_starts_no_turn
 test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt
 test_completed_turn_removes_busy_ack_before_the_next_steer
 test_driver_stop_terminates_active_deck_and_resolves_spaced_paths
