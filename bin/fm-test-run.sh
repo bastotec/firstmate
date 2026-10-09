@@ -1486,7 +1486,7 @@ families_for_changed_path() {
     bin/fm-captain-hold.sh|bin/fm-decision-hold.sh|bin/fm-supervision*|\
     bin/fm-marker-lib.sh|bin/fm-operational-input.sh|bin/fm-tasks-axi-lib.sh|\
     bin/fm-project-mode.sh|bin/fm-promote.sh|\
-    bin/fm-ff-lib.sh|bin/fm-gotmp*|bin/*pretool*)
+    bin/fm-ff-lib.sh|bin/fm-gotmp*)
       printf '%s\n' pure-contract-unit
       ;;
     .agents/skills/harness-adapters/SKILL.md|.agents/skills/harness-adapters/references/*)

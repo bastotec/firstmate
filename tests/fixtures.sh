@@ -158,9 +158,9 @@ EOF
 
 # fm_test_make_spawn_fakebin <dir> [extra-exit0-tool...]
 # Creates <dir>/fakebin with a no-op treehouse and any extra exit-0 tools.
-# Echoes the fakebin path. It also starts the suite's shared fake stream hub
-# (fm_test_fake_stream_ensure), which the spawn's endpoint comes from: a spawn
-# reaches it through the FM_STREAM_* variables this file exports.
+# Echoes the fakebin path. It checks the suite's already-started shared fake
+# stream hub (fm_test_fake_stream_ensure), which the spawn's endpoint comes
+# from: a spawn reaches it through the FM_STREAM_* variables this file exports.
 fm_test_make_spawn_fakebin() {
   local dir=$1 fakebin
   shift
@@ -235,10 +235,12 @@ make_stubs() {
 # target starts with). Pass --backend stream (or FM_BACKEND=stream) to the
 # script under test. The stub is a tracked helper, so fm_test_cleanup and
 # fm_test_reap_helper_pids stop it. The stub's docstring owns the fake-shell
-# rules (what makes a harness the foreground, and how /quit returns).
+# rules and fixture-owner authorization boundary.
+# Keep the owner credential out of executable argv, including env assignments:
+# curl helpers use --config through a private descriptor, and cleaned child
+# environments must restore the credential from a private descriptor or file.
 fm_test_fake_stream() {
-  local dir=$1 ready pid waited=0 host port
-  FM_TEST_STREAM_SHARED=
+  local dir=$1 ready pid waited=0 host port token
   mkdir -p "$dir"
   ready="$dir/stream-hub.ready"
   rm -f "$ready"
@@ -248,65 +250,34 @@ fm_test_fake_stream() {
   pid=$!
   disown "$pid" 2>/dev/null || true
   fm_test_track_helper_pid "$pid"
-  while [ "$waited" -lt 100 ]; do
+  # Allow up to a minute for the first Python launch on a fresh runner.
+  while [ "$waited" -lt 600 ]; do
     [ -s "$ready" ] && break
     sleep 0.1
     waited=$((waited + 1))
   done
   [ -s "$ready" ] || { echo "fm_test_fake_stream: the stub hub never became ready: $(cat "$dir/stream-hub.log" 2>/dev/null)" >&2; return 1; }
-  read -r host port < "$ready"
+  read -r host port token < "$ready"
   FM_TEST_STREAM_URL="http://$host:$port"
   FM_TEST_STREAM_TAG="$host-$port"
-  export FM_STREAM_HUB="$FM_TEST_STREAM_URL" FM_STREAM_TOKEN=fake-stream-token \
+  export FM_STREAM_HUB="$FM_TEST_STREAM_URL" FM_STREAM_TOKEN="$token" \
     FM_STREAM_MACHINE=fake-box FM_STREAM_AGENT_BIN="$ROOT/tests/assets/stream-agent-stub.py" \
     FM_TEST_STREAM_URL FM_TEST_STREAM_TAG
 }
 
-# fm_test_fake_stream_ensure
-# One shared fake hub per suite. Sourcing this file reserves a loopback port
-# for it and exports what bin/backends/stream.sh reads (FM_STREAM_HUB,
-# FM_STREAM_TOKEN, FM_STREAM_MACHINE, FM_STREAM_AGENT_BIN, plus
-# FM_TEST_STREAM_URL and FM_TEST_STREAM_TAG), so every shell of the suite -
-# command substitutions included - addresses the same hub, and no suite can
-# reach a developer's real hub by accident. The hub itself starts on first use
-# here (fm_test_run_spawn and fm_test_stream_task call this). A suite that
-# calls fm_test_fake_stream itself gets its own hub instead.
+# One shared fake hub per suite, started while sourcing so every subshell
+# inherits the same startup-generated owner token as the real adapter.
+# A suite calling fm_test_fake_stream explicitly gets its own hub instead.
 fm_test_fake_stream_reserve() {
-  local port
+  local dir
   command -v python3 >/dev/null 2>&1 || return 0
-  port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()') || return 0
-  FM_TEST_STREAM_URL="http://127.0.0.1:$port"
-  FM_TEST_STREAM_TAG="127.0.0.1-$port"
-  FM_TEST_STREAM_SHARED=$port
-  export FM_STREAM_HUB="$FM_TEST_STREAM_URL" FM_STREAM_TOKEN=fake-stream-token \
-    FM_STREAM_MACHINE=fake-box FM_STREAM_AGENT_BIN="$ROOT/tests/assets/stream-agent-stub.py" \
-    FM_TEST_STREAM_URL FM_TEST_STREAM_TAG FM_TEST_STREAM_SHARED
+  dir=$(fm_test_tmproot fm-test-stream) || return 1
+  fm_test_fake_stream "$dir"
 }
 
 fm_test_fake_stream_ensure() {
-  local dir lock waited=0 ready pid
-  [ -n "${FM_TEST_STREAM_URL:-}" ] || { echo "fm_test_fake_stream_ensure: no fake hub reserved (python3 missing?)" >&2; return 1; }
-  curl -sS -m 5 -o /dev/null "$FM_TEST_STREAM_URL/v1/health" 2>/dev/null && return 0
-  [ -n "${FM_TEST_STREAM_SHARED:-}" ] || return 1
-  lock="${TMPDIR:-/tmp}/.fm-test-stream.$$.lock"
-  if mkdir "$lock" 2>/dev/null; then
-    printf '%s\n' "$lock" >> "$FM_TEST_CLEANUP_REGISTRY"
-    dir=$(fm_test_tmproot fm-test-stream) || return 1
-    ready="$dir/stream-hub.ready"
-    python3 "$ROOT/tests/assets/stream-hub-stub.py" --fleet --port "$FM_TEST_STREAM_SHARED" \
-      --ready-file "$ready" --journal "$dir/stream-hub.journal" \
-      > "$dir/stream-hub.log" 2>&1 &
-    pid=$!
-    disown "$pid" 2>/dev/null || true
-    fm_test_track_helper_pid "$pid"
-  fi
-  while [ "$waited" -lt 100 ]; do
-    curl -sS -m 5 -o /dev/null "$FM_TEST_STREAM_URL/v1/health" 2>/dev/null && return 0
-    sleep 0.1
-    waited=$((waited + 1))
-  done
-  echo "fm_test_fake_stream_ensure: the shared fake hub never answered at $FM_TEST_STREAM_URL" >&2
-  return 1
+  [ -n "${FM_TEST_STREAM_URL:-}" ] || { echo 'fm_test_fake_stream_ensure: no fake hub (python3 missing?)' >&2; return 1; }
+  curl -fsS -m 5 -o /dev/null "$FM_TEST_STREAM_URL/v1/health" 2>/dev/null
 }
 
 fm_test_fake_stream_reserve
@@ -332,7 +303,7 @@ fm_test_stream_task() {  # <state-dir> <task-id> [launch-log] [capture-file]
   body=$(jq -nc --arg e "$eid" --arg l "fm-$id" --arg c "$state" \
     --arg s "$state/$id.status" --arg log "$log" --arg cap "$capture" \
     '{endpoint_id:$e, machine:"fake-box", label:$l, cwd:$c, status_path:$s, replace_label:true, foreground:[], launch_log:$log, capture_file:$cap}')
-  curl -fsS -m 10 -X POST -H 'Content-Type: application/json' --data-binary "$body" \
+  curl -fsS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") -X POST -H 'Content-Type: application/json' --data-binary "$body" \
     "$FM_TEST_STREAM_URL/v1/agent/endpoints" >/dev/null || return 1
   FM_TEST_STREAM_TARGET="$FM_TEST_STREAM_TAG:$eid"
   printf 'window=%s\nbackend=stream\nstream_hub=%s\nstream_endpoint_id=%s\nendpoint_task_id=%s\n' \
@@ -456,7 +427,7 @@ fm_test_fake_stream_foreground() {  # <target> <name>
 # cwd, foreground, alive, stale, closed_by, composer, and submitted (each line
 # the endpoint received with Enter, oldest first).
 fm_test_fake_stream_endpoints() {
-  curl -sS -m 10 "$FM_TEST_STREAM_URL/v1/test/endpoints"
+  curl -fsS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") "$FM_TEST_STREAM_URL/v1/test/endpoints"
 }
 
 # fm_test_fake_stream_submitted <target-or-endpoint-id>
@@ -473,7 +444,7 @@ fm_test_fake_stream_submitted() {
 # {"forget": true} (the hub then answers 404 for it).
 fm_test_fake_stream_set() {
   local id=${1##*:}
-  curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
+  curl -fsS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") -X POST -H 'Content-Type: application/json' \
     --data-binary "$2" "$FM_TEST_STREAM_URL/v1/test/endpoints/$id" >/dev/null
 }
 
@@ -488,7 +459,7 @@ fm_test_close_task_endpoint() {  # <meta-file>
 # Endpoint knobs (fm_test_fake_stream_set's) applied to every endpoint
 # registered from now on, such as the one a spawn creates; '{}' clears them.
 fm_test_fake_stream_defaults() {
-  curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
+  curl -fsS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") -X POST -H 'Content-Type: application/json' \
     --data-binary "$(jq -nc --argjson d "$1" '{endpoint_defaults: $d}')" \
     "$FM_TEST_STREAM_URL/v1/test/config" >/dev/null
 }
@@ -497,7 +468,7 @@ fm_test_fake_stream_defaults() {
 # Where a `treehouse get` typed into any fake endpoint moves its cwd - the
 # worktree a stream spawn then discovers through the endpoint's cwd.
 fm_test_fake_stream_treehouse() {
-  curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
+  curl -fsS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") -X POST -H 'Content-Type: application/json' \
     --data-binary "$(jq -nc --arg d "$1" '{treehouse_cwd: $d}')" \
     "$FM_TEST_STREAM_URL/v1/test/config" >/dev/null
 }

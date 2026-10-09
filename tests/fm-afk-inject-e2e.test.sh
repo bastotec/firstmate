@@ -91,7 +91,7 @@ submitted_log() {
 # human_types <text> / human_submits: the captain at the keyboard, through the
 # hub's own input route, so the text lands in the same composer the daemon reads.
 endpoint_input() {  # <json>
-  curl -fsS -m 10 -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $FM_STREAM_TOKEN" \
+  curl -fsS -m 10 -X POST -H 'Content-Type: application/json' --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") \
     --data-binary "$1" "$FM_TEST_STREAM_URL/v1/tasks/${SUPERVISOR##*:}/input" >/dev/null
 }
 human_types() { endpoint_input "$(jq -nc --arg t "$1" '{text: $t}')"; }

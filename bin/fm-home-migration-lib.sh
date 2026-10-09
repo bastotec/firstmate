@@ -52,14 +52,14 @@ sub safe {
 }
 sub secret {
     my ($p) = @_;
-    return $p eq 'config/stream-token'
+    return $p eq 'config/stream-token' || $p eq 'config/stream-hub-tokens'
         || $p =~ m{(?:\A|/)(?:\.env(?:\..*)?|\.ssh|\.aws|\.gnupg|\.azure|\.pi|\.claude|\.codex|\.config|credentials?(?:\..*)?|secrets?(?:\..*)?|auth\.json|cmux-socket-password)(?:/|\z)}i
         || $p =~ /\.(?:pem|key|p12|pfx|keychain(?:-db)?)\z/i;
 }
 my %config = map { $_ => 1 } qw(crew-harness crew-dispatch.json secondmate-harness
     backlog-backend backend startup-memory-budget trace-context
     launch-env-allowlist stow-pass-horizon turnend-churn-absorb wedge-alarm watched-tools.json);
-my %host_config = map { $_ => 1 } qw(stream-hub stream-impl);
+my %host_config = map { $_ => 1 } qw(stream-hub stream-impl stream-machine stream-native-dir);
 sub allowed {
     my ($p, $who) = @_;
     return 0 unless safe($p) && !secret($p);

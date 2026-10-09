@@ -304,6 +304,40 @@ test_spawn_home_layout() {
   pass "spawn-home layout writes harness pin, beat, and brief"
 }
 
+# shellcheck disable=SC2030 # PATH shim is intentionally scoped to this test.
+test_fake_stream_slow_interpreter_startup() (
+  local dir="$TMP_ROOT/slow-interpreter" real_python real_sleep
+  real_python=$(command -v python3)
+  real_sleep=$(command -v sleep)
+  mkdir -p "$dir/fakebin"
+  export FM_STARTUP_PROBE="$dir" FM_STARTUP_PYTHON="$real_python" FM_STARTUP_SLEEP="$real_sleep"
+  cat > "$dir/fakebin/python3" <<'SH'
+#!/usr/bin/env bash
+set -eu
+# Release the interpreter only after the old 100-poll budget is exhausted.
+while [ ! -f "$FM_STARTUP_PROBE/release" ]; do "$FM_STARTUP_SLEEP" 0.01; done
+exec "$FM_STARTUP_PYTHON" "$@"
+SH
+  cat > "$dir/fakebin/sleep" <<'SH'
+#!/usr/bin/env bash
+set -eu
+if [ "${1:-}" = 0.1 ]; then
+  count=0
+  [ ! -f "$FM_STARTUP_PROBE/polls" ] || read -r count < "$FM_STARTUP_PROBE/polls"
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$FM_STARTUP_PROBE/polls"
+  [ "$count" -le 100 ] || : > "$FM_STARTUP_PROBE/release"
+fi
+exec "$FM_STARTUP_SLEEP" "$@"
+SH
+  chmod +x "$dir/fakebin/python3" "$dir/fakebin/sleep"
+  export PATH="$dir/fakebin:$PATH"
+  fm_test_fake_stream "$dir/hub" || fail 'slow interpreter exhausted fake hub startup budget'
+  assert_present "$dir/release" 'slow-start barrier was not exercised'
+  fm_test_stream_task "$dir/state" slow >/dev/null || fail 'slow-start hub rejected its fixture owner'
+  pass 'fake hub waits past the old startup budget and retains authenticated owner registration'
+)
+
 test_fake_stream_round_trip() {
   local dir="$TMP_ROOT/fake-stream" pair target out
   if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
@@ -348,6 +382,82 @@ test_fake_stream_round_trip() {
   pass "fake stream: the real adapter creates, sends, captures, classifies, reports and kills fake endpoints"
 }
 
+# shellcheck disable=SC2031 # This test installs its own PATH shim independently.
+test_fake_stream_owner_boundary() (
+  local dir="$TMP_ROOT/owner-boundary" lines target eid route code auth
+  fm_test_fake_stream "$dir" || fail 'owner fixture failed to start'
+  mkdir -p "$dir/state" "$dir/fakebin"
+  OWNER_REAL_CURL="$(command -v curl)"
+  export OWNER_REAL_CURL OWNER_CURL_PROBE="$dir/curl-calls"
+  cat > "$dir/fakebin/curl" <<'SH'
+#!/usr/bin/env bash
+set -eu
+config=0
+for arg in "$@"; do
+  case "$arg" in
+    *"$FM_STREAM_TOKEN"*) printf 'owner credential exposed in argv\n' >&2; exit 91 ;;
+  esac
+  if [ "$config" = 1 ]; then
+    case "$arg" in
+      /dev/fd/*) [ -r "$arg" ] || exit 92 ;;
+      *) printf 'owner config is not a private descriptor\n' >&2; exit 92 ;;
+    esac
+  fi
+  config=0
+  [ "$arg" != --config ] || config=1
+done
+printf 'request\n' >> "$OWNER_CURL_PROBE"
+exec "$OWNER_REAL_CURL" "$@"
+SH
+  chmod +x "$dir/fakebin/curl"
+  export PATH="$dir/fakebin:$PATH"
+  printf 'private capture contents\n' > "$dir/capture"
+  printf '#!/usr/bin/env bash\nprintf invoked >> "%s"\n' "$dir/invoked" > "$dir/hook"
+  chmod +x "$dir/hook"
+  lines=$(fm_test_stream_task "$dir/state" owned) || fail 'owner registration failed'
+  target=$(printf '%s\n' "$lines" | sed -n 's/^window=//p')
+  eid=${target##*:}
+  for auth in '' 'Bearer wrong-token'; do
+    for route in test/config "test/endpoints/$eid" agent/endpoints; do
+      code=$(curl -sS -o "$dir/refused" -w '%{http_code}' -H "Authorization: $auth" \
+        -H 'Content-Type: application/json' --data-binary \
+        "$(jq -nc --arg f "$dir/capture" --arg h "$dir/hook" \
+          '{capture_file:$f, on_text:$h, endpoint_defaults:{capture_file:$f, on_text:$h}}')" \
+        "$FM_TEST_STREAM_URL/v1/$route")
+      assert_equals 403 "$code" 'non-owner installed privileged knobs'
+    done
+  done
+  fm_test_fake_stream_set "$target" "$(jq -nc --arg f "$dir/capture" --arg h "$dir/hook" \
+    '{capture_file:$f, on_text:$h, on_request:$h}')" || fail 'owner patch failed'
+  for route in "tasks/$eid/capture" "tasks/$eid/screen" test/endpoints; do
+    code=$(curl -sS -o "$dir/refused" -w '%{http_code}' "$FM_TEST_STREAM_URL/v1/$route")
+    assert_equals 403 "$code" 'non-owner read privileged capture or configuration'
+    assert_no_grep 'private capture contents' "$dir/refused" 'refusal leaked file bytes'
+  done
+  code=$(curl -sS -o "$dir/refused" -w '%{http_code}' -H 'Content-Type: application/json' \
+    --data-binary '{"text":"trigger", "keys":["Enter"]}' "$FM_TEST_STREAM_URL/v1/tasks/$eid/input")
+  assert_equals 403 "$code" 'non-owner invoked a configured helper'
+  for route in health tasks "tasks/$eid" "tasks/$eid/processes" "tasks/$eid/cwd"; do
+    curl -fsS "$FM_TEST_STREAM_URL/v1/$route" >/dev/null || fail 'public liveness route refused'
+  done
+  assert_absent "$dir/invoked" 'public reads or refused writes invoked helpers'
+  curl -fsS --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") \
+    "$FM_TEST_STREAM_URL/v1/tasks/$eid/capture" > "$dir/owner-capture" || fail 'owner capture refused'
+  assert_grep 'private capture contents' "$dir/owner-capture" 'owner capture lost file contents'
+  curl -fsS --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") -H 'Content-Type: application/json' \
+    --data-binary '{"text":"trigger", "keys":["Enter"]}' \
+    "$FM_TEST_STREAM_URL/v1/tasks/$eid/input" >/dev/null || fail 'owner helper invocation refused'
+  assert_present "$dir/invoked" 'owner helper was not invoked'
+  fm_test_fake_stream_defaults '{}' || fail 'owner defaults refused'
+  fm_test_fake_stream_treehouse "$dir" || fail 'owner treehouse configuration refused'
+  fm_test_fake_stream_endpoints | jq -e --arg eid "$eid" \
+    '.endpoints[] | select(.endpoint_id == $eid)' >/dev/null || fail 'owner listing lost registration'
+  assert_present "$dir/curl-calls" 'credential transport probe did not execute'
+  pass 'fake hub owner uses private descriptors for registration and privileged controls while public liveness remains available'
+)
+
+test_fake_stream_slow_interpreter_startup || fail 'slow fake hub startup'
+test_fake_stream_owner_boundary
 test_git_maintenance_is_owned_through_local_clone || fail 'Git fixture maintenance ownership'
 test_git_config_isolation || fail "Git fixture config isolation"
 test_touch_epoch_preserves_repeated_dst_hour

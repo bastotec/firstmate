@@ -14,7 +14,7 @@ line per request - which is what turns "the agent backs off" into something a
 test can measure rather than infer.
 
   --port N                 loopback port to bind (0 for an ephemeral one)
-  --ready-file PATH        "<host> <port>" written there once bound
+  --ready-file PATH        "<host> <port>" in agent mode; fleet format below
   --journal PATH           one line per request, appended
   --frames-ok-first N      let the first N frame posts through, forgetting the
                            endpoint on every frame after those
@@ -63,9 +63,9 @@ transport that failed after the endpoint already acted; {"fail_text_and_exit":
 (the foreground returns to the shell), a stop whose own delivery reported
 failure; {"on_request": path}
 runs that executable with "<METHOD> <route-tail>" (tail empty for the task
-itself) before every request to the endpoint's task routes, for a suite to
-observe or stall reads; {"busy_reads": n} makes the next n process reads
-report an unattributable non-shell foreground ("node"), as a just-created
+itself) before every owner-authenticated request to the endpoint's task routes,
+for a suite to observe or stall reads; {"busy_reads": n} makes the next n process
+reads report an unattributable non-shell foreground ("node"), as a just-created
 shell still running its rc files, before the real one; POST /v1/test/config
 {"task_routes_unavailable": true} makes every task route answer 503 from then
 on, a hub that stopped answering;
@@ -91,6 +91,11 @@ capture and screen read that file instead). A suite can also register an
 endpoint itself (POST /v1/agent/endpoints with the agent's fields plus any of
 launch_log, treehouse_cwd, capture_file). Status posts append the
 ordinary "<state>: <note>" line to the status path the stub agent registered.
+Fleet-mode startup generates a private owner token in the mode-0600 ready file
+(third field after host and port).
+Only GET health, task descriptions, processes, and cwd are public; they never
+invoke configured helpers without that token.
+All control, file capture, and fixture inspection routes require its bearer header.
 """
 
 import argparse
@@ -99,6 +104,7 @@ import json
 import os
 import re
 import socketserver
+import secrets
 import subprocess
 import threading
 import time
@@ -424,6 +430,13 @@ class Stub(http.server.BaseHTTPRequestHandler):
         """Serve one fleet-mode route; False leaves it to the agent routes."""
         state = self.server.state
         endpoints = state["endpoints"]
+        # Only liveness reads are public: every route that can install, expose,
+        # or invoke file/helper knobs belongs to the process starting this hub.
+        public = method == "GET" and (path == "/v1/health" or path == "/v1/tasks"
+                   or re.fullmatch(r"/v1/tasks/[0-9a-f]+(?:/(?:processes|cwd))?", path))
+        if not public and self.headers.get("Authorization") != "Bearer " + state["owner_token"]:
+            self._refuse(403, "fixture_owner_required", "fixture owner token required")
+            return True
         with state["lock"]:
             if method == "POST" and path == "/v1/agent/endpoints":
                 machine = str(payload.get("machine") or "")
@@ -514,7 +527,8 @@ class Stub(http.server.BaseHTTPRequestHandler):
             if endpoint is None:
                 self._refuse(404, "no_such_endpoint", "no endpoint %s" % endpoint_id)
                 return True
-            if endpoint.get("on_request"):
+            if (endpoint.get("on_request") and self.headers.get("Authorization")
+                    == "Bearer " + state["owner_token"]):
                 # A suite observing (or stalling) the reads and writes made of
                 # this endpoint, before the hub answers them.
                 subprocess.run([endpoint["on_request"], method, tail], timeout=30, check=False,
@@ -658,6 +672,7 @@ def main() -> int:
         "closed_file": options.closed_file,
         "omit_result_capability": options.omit_result_capability,
         "fleet": options.fleet,
+        "owner_token": secrets.token_urlsafe(32),
         "endpoints": {},
         "treehouse_cwd": "",
         "endpoint_defaults": {},
@@ -665,8 +680,10 @@ def main() -> int:
     open(options.journal, "a", encoding="utf-8").close()
     if options.ready_file:
         host, port = server.server_address[0], server.server_address[1]
-        with open(options.ready_file, "w", encoding="utf-8") as fh:
-            fh.write("%s %s\n" % (host, port))
+        with os.fdopen(os.open(options.ready_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600),
+                       "w", encoding="utf-8") as fh:
+            fh.write("%s %s%s\n" % (host, port,
+                     " " + server.state["owner_token"] if options.fleet else ""))
     watch_owner(server, os.environ.get("FM_TEST_OWNER_PID", ""))
     server.serve_forever(poll_interval=0.2)
     return 0

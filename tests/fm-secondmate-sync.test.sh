@@ -627,7 +627,7 @@ grep -v -E '^(window|stream_endpoint_id)=' "\$meta" > "\$meta.new"
 grep -E '^(window|stream_endpoint_id)=' '$w/fresh.lines' >> "\$meta.new"
 mv -f "\$meta.new" "\$meta"
 # A respawn closes the endpoint it replaces.
-curl -sS -m 5 -X POST -H 'Content-Type: application/json' --data-binary '{"closed_by": "agent"}' \
+curl -fsS -m 5 --config <(printf 'header = "Authorization: Bearer %s"\\n' "\$FM_STREAM_TOKEN") -X POST -H 'Content-Type: application/json' --data-binary '{"closed_by": "agent"}' \
   '$FM_TEST_STREAM_URL/v1/test/endpoints/${stale##*:}' >/dev/null
 exit 0
 SH

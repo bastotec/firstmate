@@ -59,7 +59,8 @@ def stream_identity(task_id):
                            cwd=str(home), status_path=str(home / 'state' / (task_id + '.status')),
                            replace_label=True, foreground=[], launch_log=str(typed_log)))
     request = urllib.request.Request(url + '/v1/agent/endpoints', data=body.encode(), method='POST',
-                                     headers={'Content-Type': 'application/json'})
+                                     headers={'Content-Type': 'application/json',
+                                              'Authorization': 'Bearer ' + os.environ['FM_STREAM_TOKEN']})
     urllib.request.urlopen(request, timeout=10).read()
     return ('window=%s:%s\nbackend=stream\nstream_hub=%s\nstream_endpoint_id=%s\nendpoint_task_id=%s\n'
             % (tag, endpoint_id, url, endpoint_id, task_id))

@@ -422,6 +422,9 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
     printf 'source-only-token\n' > "$source/config/stream-token"
     printf 'http://source-only.invalid:7717\n' > "$source/config/stream-hub"
     printf 'rust\n' > "$source/config/stream-impl"
+    printf 'source-machine\n' > "$source/config/stream-machine"
+    printf '/source/native\n' > "$source/config/stream-native-dir"
+    printf '{"http://source.invalid": "secret-value-never-transfer"}\n' > "$source/config/stream-hub-tokens"
     printf 'secret-value-never-transfer\n' > "$source/config/cmux-socket-password"
     printf 'secret-value-never-transfer\n' > "$source/.env"
     mkdir "$source/data/credentials"
@@ -530,7 +533,7 @@ if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
     assert_absent "$TMP_ROOT/migrated-move-work/$path" 'credential transferred'
     assert_present "$TMP_ROOT/source-move-work/$path" 'excluded credential removed locally'
   done
-  for name in stream-token stream-hub stream-impl; do
+  for name in stream-token stream-hub stream-impl stream-machine stream-native-dir stream-hub-tokens; do
     assert_present "$TMP_ROOT/source-move-work/config/$name" 'host-local stream config removed locally'
     jq -e --arg p "config/$name" \
       '(.excluded | index($p)) != null and all(.records[]; .path != $p)' \
@@ -1400,7 +1403,7 @@ unconfirmed_target=$(fm_test_stream_target_of "$REMOTE_HOME/state/parent-route" 
 fm_test_fake_stream_foreground "$unconfirmed_target" bash
 fm_test_fake_stream_set "$unconfirmed_target" '{"kill_undelivered": true}'
 printf '%s\n' "$FM_TEST_STREAM_URL" > "$REMOTE_HOME/config/stream-hub"
-printf 'fake-stream-token\n' > "$REMOTE_HOME/config/stream-token"
+printf '%s\n' "$FM_STREAM_TOKEN" > "$REMOTE_HOME/config/stream-token"
 [ "$(remote_env "$ROOT/bin/fm-on.sh" ios fm-remote-secondmate-control.sh state ios)" = dead ] \
   || fail 'the unconfirmed-kill fixture is not an agent-less endpoint'
 cp "$remote_route_meta" "$TMP_ROOT/remote-ios-unconfirmed-kill.meta"

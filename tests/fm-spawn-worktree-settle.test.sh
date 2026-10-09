@@ -81,7 +81,7 @@ EOF
 run_settle_spawn() {
   local id=$1 rc
   fm_test_fake_stream_ensure || return 1
-  curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
+  curl -fsS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") -X POST -H 'Content-Type: application/json' \
     --data-binary "$(jq -nc --arg t "$WT_DIR" --arg s "$STALE_DIR" --argjson n "$STALE_READS" \
       '{treehouse_cwd: $t, stale_cwd: $s, stale_cwd_reads: $n}')" \
     "$FM_TEST_STREAM_URL/v1/test/config" >/dev/null || return 1

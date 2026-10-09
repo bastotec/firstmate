@@ -92,10 +92,11 @@ run_cascade() { # <primary-home> [env assignments...]
     TMPDIR="${TMPDIR:-/tmp}" \
     FM_HOME="$home" \
     FM_SSH_BIN="$FAKEBIN/fake-ssh" \
-    FM_STREAM_HUB="$FM_STREAM_HUB" FM_STREAM_TOKEN="$FM_STREAM_TOKEN" \
+    FM_STREAM_HUB="$FM_STREAM_HUB" \
     FM_STREAM_MACHINE="$FM_STREAM_MACHINE" FM_STREAM_IMPL="${FM_STREAM_IMPL:-python}" \
     "$@" \
-    "$CASCADE"
+    bash -c 'IFS= read -r FM_STREAM_TOKEN <&3 || exit 1; exec 3<&-; export FM_STREAM_TOKEN; exec "$@"' \
+    _ "$CASCADE" 3< <(printf '%s\n' "$FM_STREAM_TOKEN")
 }
 
 # stanza <output> <id>: the block of key=value lines for one secondmate.
@@ -110,6 +111,40 @@ stanza() {
 value_in() { # <stanza> <key>
   printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1
 }
+
+test_owner_credential_survives_isolation_without_argv_exposure() (
+  local dir="$TMP_ROOT/credential-transport" primary out
+  mkdir -p "$dir"
+  primary=$(new_primary credential-transport)
+  FM_ENV_REAL=$(command -v env)
+  export FM_ENV_REAL FM_ENV_PROBE="$dir/checked" FM_ENV_SENTINEL=must-not-inherit
+  cat > "$dir/env" <<'SH'
+#!/usr/bin/env bash
+set -eu
+for arg in "$@"; do
+  case "$arg" in
+    *"$FM_STREAM_TOKEN"*) printf 'owner credential exposed in env argv\n' >&2; exit 91 ;;
+  esac
+done
+printf 'checked\n' > "$FM_ENV_PROBE"
+exec "$FM_ENV_REAL" "$@"
+SH
+  cat > "$dir/cascade" <<'SH'
+#!/usr/bin/env bash
+set -eu
+[ "${FM_ENV_SENTINEL+x}" != x ] || exit 92
+curl -fsS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") \
+  "$FM_STREAM_HUB/v1/test/endpoints" >/dev/null
+printf 'authenticated\n'
+SH
+  chmod +x "$dir/env" "$dir/cascade"
+  export PATH="$dir:$PATH"
+  local CASCADE="$dir/cascade"
+  out=$(run_cascade "$primary") || fail 'isolated owner credential handoff failed'
+  assert_equals authenticated "$out" 'isolated child could not authenticate to owner controls'
+  assert_present "$dir/checked" 'executed env arguments were not checked'
+  pass 'stow fixture isolates its environment and hands off owner authentication without credential-bearing argv'
+)
 
 test_budget_is_enforced_per_home_and_never_summed() {
   local primary a b out sa sb
@@ -350,6 +385,7 @@ test_no_cascade_without_secondmates_or_from_a_secondmate_home() {
   pass "the cascade stays silent with no secondmates and never runs from a secondmate home"
 }
 
+test_owner_credential_survives_isolation_without_argv_exposure
 test_budget_is_enforced_per_home_and_never_summed
 test_every_registered_home_is_enumerated_exactly_once
 test_transport_routes_by_placement_and_liveness

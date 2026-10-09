@@ -38,12 +38,15 @@ def main() -> int:
     if options.command != "serve":
         print("stream-agent-stub: only 'serve' is supported", file=sys.stderr)
         return 2
+    with open(options.token_file, encoding="utf-8") as fh:
+        headers = {"Content-Type": "application/json",
+                   "Authorization": "Bearer " + fh.read().strip()}
     if os.environ.get("FM_FAKE_AGENT_REGISTER_FAIL"):
         if os.environ.get("FM_FAKE_AGENT_BREAK_HUB"):
             broken = urllib.request.Request(
                 options.hub.rstrip("/") + "/v1/test/config",
                 data=json.dumps({"task_routes_unavailable": True}).encode("utf-8"),
-                method="POST", headers={"Content-Type": "application/json"})
+                method="POST", headers=headers)
             try:
                 with urllib.request.urlopen(broken, timeout=10) as response:
                     response.read()
@@ -63,7 +66,7 @@ def main() -> int:
     }).encode("utf-8")
     request = urllib.request.Request(
         options.hub.rstrip("/") + "/v1/agent/endpoints", data=body, method="POST",
-        headers={"Content-Type": "application/json"})
+        headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
             response.read()
