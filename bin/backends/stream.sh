@@ -93,18 +93,6 @@ FM_BACKEND_STREAM_AGENT_BIN="${FM_STREAM_AGENT_BIN:-$(dirname -- "${BASH_SOURCE[
 # caller bound above - so that cost is real and stands.
 FM_BACKEND_STREAM_MISSING_GRACE_SECS=6
 
-# How long a PRESENCE read may keep retrying a 404 before it reports the
-# endpoint dead: the digest ladder below. Derived from the same re-registration
-# window as FM_BACKEND_STREAM_MISSING_GRACE_SECS - a hub that restarted has
-# forgotten every endpoint until each agent registers itself again, so a 404
-# inside that window is a rejoin in progress, not a verdict. Deliberately
-# shorter than the grace window: a digest presence read has no whole-crew
-# budget to spend (FM_SESSION_START_TIMEOUT bounds the whole digest, and every
-# dead endpoint pays the full ladder), so it covers the same FIRST-attempt
-# rejoin the grace window covers and gives up sooner rather than spending the
-# session's startup bound.
-FM_BACKEND_STREAM_PRESENCE_RETRY_SECS=2
-
 # fm_backend_stream_target_settled: the endpoint-existence read that waits out
 # a rejoining worker. Same probe, same routes, same label check as
 # fm_backend_stream_target_ready - this is that helper retried, not a second
@@ -124,7 +112,7 @@ fm_backend_stream_target_settled() {  # <target> [expected-label]
       status=$?
     fi
     [ "$status" -eq 3 ] || return "$status"
-    [ "$waited" -lt "$FM_BACKEND_STREAM_PRESENCE_RETRY_SECS" ] || return "$status"
+    [ "$waited" -lt "$FM_BACKEND_STREAM_MISSING_GRACE_SECS" ] || return "$status"
     sleep 1
     waited=$((waited + 1))
   done
