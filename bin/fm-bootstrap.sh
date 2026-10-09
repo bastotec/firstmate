@@ -1349,13 +1349,12 @@ backlog_record_reconcile() {
           echo "BOOTSTRAP_INFO: finished the interrupted cleanup for $label; the captain had already answered its call"
           ;;
         endpoint_unconfirmed)
-          # Not BOOTSTRAP_INFO: the record still carries an unproved stop and
-          # replay deliberately changed nothing, so this needs a person rather
-          # than reporting a finished fact. The record says only that the stop
-          # is unproved, not why - a cleanup that could not prove the worker
-          # stopped and one that proved it but could not clear the stamp both
-          # land here - so this reports what the record shows and leaves the
-          # endpoint for the rerun to re-check.
+          # Not BOOTSTRAP_INFO: the record still carries the conservative
+          # unfinished-teardown hold, so replay deliberately changed nothing
+          # and this needs a person rather than a finished-fact report. The
+          # stamp does not establish endpoint state: the endpoint may still be
+          # unproved, or a later cleanup gate may have refused after it was
+          # proved gone. Leave every record intact for teardown to re-check.
           echo "BACKLOG_RECONCILE: $label: its pending close still records an unproved stop, so nothing was replayed and its records and backlog item are intact; re-run cleanup, which re-checks the endpoint"
           ;;
       esac
