@@ -2055,6 +2055,13 @@ endpoint_closed() {  # <state-dir> <task-id>
     '.endpoints[] | select(.endpoint_id == $e) | .closed_at // empty')" ]
 }
 
+endpoint_closed_by() {  # <state-dir> <task-id>
+  local target
+  target=$(fm_test_stream_target_of "$1" "$2")
+  fm_test_fake_stream_endpoints | jq -r --arg e "${target##*:}" \
+    '.endpoints[] | select(.endpoint_id == $e) | .closed_by // empty'
+}
+
 configure_secondmate_with_children() {  # <case-dir>
   local case_dir=$1 home="$1/secondmate-home" child child_wt
   mkdir -p "$home/state" "$home/data" "$home/config" "$home/projects"
@@ -2152,7 +2159,8 @@ test_forced_secondmate_child_retains_records_when_close_unconfirmed() {
   rc=0
   run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
   [ "$rc" -ne 0 ] || fail "child-unconfirmed-close: teardown erased records after an unconfirmed close"
-  ! endpoint_closed "$home/state" child || fail "child-unconfirmed-close: the fixture's child endpoint actually closed"
+  [ "$(endpoint_closed_by "$home/state" child)" = hub ] \
+    || fail "child-unconfirmed-close: the hub did not record its unacknowledged close"
   [ -e "$home/state/child.meta" ] || fail "child-unconfirmed-close: the unconfirmed close erased child metadata"
   [ -e "$home/state/child.status" ] || fail "child-unconfirmed-close: the unconfirmed close erased child status"
   [ -e "$case_dir/state/task-x1.meta" ] || fail "child-unconfirmed-close: failed child cleanup erased parent metadata"

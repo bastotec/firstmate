@@ -1420,8 +1420,18 @@ cmp -s "$TMP_ROOT/remote-ios-unconfirmed-kill.meta" "$remote_route_meta" \
 cmp -s "$TMP_ROOT/parent-ios-before-nonstream.meta" "$PARENT/state/ios.meta" \
   || fail 'unconfirmed kill changed the parent endpoint metadata'
 fm_test_fake_stream_endpoints | jq -S '.endpoints | sort_by(.endpoint_id)' > "$TMP_ROOT/endpoints-after-unconfirmed-kill.json"
-cmp -s "$TMP_ROOT/endpoints-before-unconfirmed-kill.json" "$TMP_ROOT/endpoints-after-unconfirmed-kill.json" \
-  || fail 'unconfirmed kill stopped, replaced, or steered a fake endpoint'
+[ "$(jq -r --arg e "${unconfirmed_target##*:}" \
+  '.[] | select(.endpoint_id == $e) | .closed_by // empty' \
+  "$TMP_ROOT/endpoints-after-unconfirmed-kill.json")" = hub ] \
+  || fail 'unconfirmed kill was not recorded as closed by the hub'
+cmp -s \
+  <(jq -S --arg e "${unconfirmed_target##*:}" \
+    'map(if .endpoint_id == $e then del(.closed_at, .closed_by) else . end)' \
+    "$TMP_ROOT/endpoints-before-unconfirmed-kill.json") \
+  <(jq -S --arg e "${unconfirmed_target##*:}" \
+    'map(if .endpoint_id == $e then del(.closed_at, .closed_by) else . end)' \
+    "$TMP_ROOT/endpoints-after-unconfirmed-kill.json") \
+  || fail 'unconfirmed kill changed worker state or endpoint inventory beyond closing the hub record'
 [ "$(remote_agent_count ios)" = 1 ] || fail 'unconfirmed kill started or stopped a real agent'
 [ "$(wc -l < "$TURNS" | tr -d ' ')" = "$turns_before_unconfirmed_kill" ] \
   || fail 'unconfirmed kill launched a replacement turn'
