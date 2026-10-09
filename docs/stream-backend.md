@@ -437,7 +437,8 @@ A hub restart can leave records in exactly that state, where the hub has never h
 `bin/fm-retire-endpoint.sh [--override-runtime-refusal] <task-id> [<task-id>...]` is the one way such a record is retired.
 No daemon invokes it; in operator mode it names each id exactly, refuses wildcards and all-records forms, and asks you to type those ids back before anything is written.
 By naming a record you assert, from your own inspection of the machine that ran it, that no worker is still running behind it.
-Every record-retirement attempt first appends one line to `state/endpoint-retirements.log` with your username, the time, the id, and whether you asserted the runtime-refusal override; an attempt whose line cannot be appended retires nothing, and the line records the assertion, not an outcome.
+Before cleanup for each named task, the command appends one line to `state/endpoint-retirements.log` with your username, the time, the id, and whether you asserted the runtime-refusal override.
+If that line cannot be appended, that task is not retired; the line records the assertion, not an outcome.
 
 What operator mode touches, and what it does not:
 
@@ -446,7 +447,7 @@ What operator mode touches, and what it does not:
 - Cleanup runs first and finishes the job properly whenever its own gates allow.
   When cleanup's work-protection gate refuses, the worktree, any uncommitted work in it, the task branch and the task's data are left byte-untouched and named in the output, for you to deal with under your own authority.
   It never discards work and never passes `--force` to anything.
-- When cleanup's unconfirmed-kill gate refuses, the records are retired anyway on your assertion alone, for an endpoint no backend could answer for.
+- When cleanup's unconfirmed-kill gate refuses, the records are retired anyway on your assertion alone, for an endpoint whose backend could not say whether it stopped.
   The backend answering positively that the endpoint is still present after its kill is the separate runtime refusal `--override-runtime-refusal` proceeds past; without that flag it stands and nothing is retired.
   Cleanup cannot tell which case you are in on the unconfirmed path, so a worker may still be running behind a record retired that way, and stopping it is yours to do.
 - Every other cleanup refusal stands and nothing is retired, such as an outcome that has not reached the parent channel or a backlog transition that cannot be replayed.
