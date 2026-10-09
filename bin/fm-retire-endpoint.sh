@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Retire the durable records of a task whose endpoint no backend can answer
-# for, on an operator's explicit say-so or, with --finished, on the owning
+# Retire the durable records of a task whose endpoint has no backend-confirmed
+# stop, on an operator's explicit say-so or, with --finished, on the owning
 # mate's proof that the work is finished.
 #
-# No daemon runs this script or produces what it writes. Cleanup itself
+# No daemon runs this script or produces what it writes. Cleanup on its own
 # never retires such a record - bin/fm-teardown.sh's endpoint gates refuse on a
-# stop nothing proved, and --force does not lift them - so the records of a
-# task whose backend cannot answer would otherwise stay forever. This is the
-# one way they are ever retired, and it runs only when someone names them.
+# stop nothing proved, and --force does not lift them - so these records would
+# otherwise stay forever. This is the one way they are ever retired, and it
+# runs only when someone names them.
 #
 # --finished is the owning mate's path, under the captain's standing
 # instruction that whoever created a worker cleans it up once its work is done.
@@ -91,14 +91,16 @@ usage: fm-retire-endpoint.sh [--override-runtime-refusal] <task-id> [<task-id>..
        FM_HOME=<owning-home> fm-retire-endpoint.sh --list-orphans
 
 Retires the durable records - the task record and its backlog row - of tasks
-whose runtime endpoint no backend can answer for, after you confirm the ids by
-typing them back.
+whose runtime endpoint has no backend-confirmed stop, after you confirm the ids
+by typing them back.
 
-Use it only when the endpoint is unanswerable: the backend that owned the
-worker can no longer say anything about it - a stream hub that was restarted or
-rebuilt and no longer has the endpoint, or a record left on the retired tmux or
-herdr backends - so cleanup can never prove the worker stopped and keeps
-refusing.
+Use it only after inspecting the machine that ran the worker and verifying that
+no worker is still running behind the record. Without
+--override-runtime-refusal, it accepts an endpoint whose backend can no longer
+say whether the worker stopped - a stream hub that was restarted or rebuilt and
+no longer has the endpoint, or a record left on the retired tmux or herdr
+backends. When the backend positively reports that the endpoint is still
+present after its kill, --override-runtime-refusal is additionally required.
 
 By naming a record here you assert, from your own inspection of the machine
 that ran it, that no worker is still running behind it. Cleanup will not make
@@ -140,9 +142,10 @@ What this reaches, exactly:
 
   Every run appends one line to state/endpoint-retirements.log recording your
   ASSERTION - that you, at that time, asserted the named record should be
-  retired. It is written before anything is
-  removed, so nothing is ever removed without it; cleanup may still refuse
-  afterwards and retire nothing, and no outcome is written back to the line.
+  retired - and whether you asserted the runtime-refusal override. It is
+  written before anything is removed, so nothing is ever removed without it;
+  cleanup may still refuse afterwards and retire nothing, and no outcome is
+  written back to the line.
 
   Out of reach: a record in another home - a secondmate's own state directory -
   must be retired by running this command against that home. A child endpoint
@@ -407,12 +410,13 @@ retirement_done_args() {  # <id>
 # cannot apply.
 #
 # The pending close this path publishes is stamped CONFIRMED, not inherited
-# from teardown's publish-unconfirmed default: the operator has asserted this
-# endpoint is unanswerable, and that assertion is already recorded. A marker
-# left behind here - the close transition removes the task record before it
-# writes the row, so a failure or a kill between the two leaves one - must stay
-# something session-start replay can finish. An unconfirmed one would instead
-# hold a row in flight forever with no record left to retire.
+# from teardown's publish-unconfirmed default: the operator has asserted that
+# no worker is still running behind this endpoint, and that assertion is
+# already recorded. A marker left behind here - the close transition removes
+# the task record before it writes the row, so a failure or a kill between the
+# two leaves one - must stay something session-start replay can finish. An
+# unconfirmed one would instead hold a row in flight forever with no record
+# left to retire.
 #
 # Both record-only paths clear any pending close this task left behind, the way
 # the transition below consumes it, and they clear it BEFORE the record goes.
