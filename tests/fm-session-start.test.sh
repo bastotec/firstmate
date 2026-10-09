@@ -1843,6 +1843,111 @@ EOF
   pass "session start emits exactly one detected harness block for a deck primary"
 }
 
+# --- decision cards: every captain call gains a card at session start --------
+
+# cards_world <name>: a second-mate-shaped scratch home on the REAL tasks-axi
+# (its own node, not the toolchain's fake one) holding two captain calls - one
+# that predates cards, one that already has a full card - plus a non-captain
+# hold. Echoes "<root>|<home>|<path>".
+cards_world() {
+  local name=$1 rec root home fakebin realbin path
+  rec=$(new_world "$name")
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_deck "$fakebin"
+  rm -f "$fakebin/node"
+  realbin="${fakebin%/*}/realbin"
+  mkdir -p "$realbin"
+  ln -s "$(command -v tasks-axi)" "$realbin/tasks-axi"
+  ln -s "$(command -v node)" "$realbin/node"
+  path="$fakebin:$realbin:$BASE_PATH"
+  printf 'cadia\n' > "$home/.fm-secondmate-home"
+  printf 'Second mate charter.\n' > "$home/data/charter.md"
+  cp "$ROOT/.tasks.toml" "$home/.tasks.toml"
+  printf '# Backlog\n\n## In flight\n\n## Queued\n\n## Done\n' > "$home/data/backlog.md"
+  cards_tasks "$home" "$path" add old-call "Merge the site language PR?" --kind ship --repo cadia-site >/dev/null
+  cards_tasks "$home" "$path" hold old-call --reason "Medium-risk merge held for the captain" --kind captain >/dev/null
+  cards_tasks "$home" "$path" add carded-call "Continue the multilingual ships?" --kind ship --repo cadia-web >/dev/null
+  cards_tasks "$home" "$path" hold carded-call --reason "Continue or stop" --kind captain >/dev/null
+  cards_tasks "$home" "$path" add ci-wait "Waiting on CI" --kind ship --repo cadia-web >/dev/null
+  cards_tasks "$home" "$path" hold ci-wait --reason "CI is slow" >/dev/null
+  cat > "$home/full-card.json" <<'JSON'
+{"project":"cadia-web","title":"Keep going with the multilingual work?","situation":"Two language changes are paused waiting on you.","options":[{"key":"1","label":"Continue","instruction":"Continue both multilingual ships."},{"key":"2","label":"Stop","instruction":"Stop the multilingual ships."}],"recommended":"1"}
+JSON
+  FM_HOME="$home" PATH="$path" "$ROOT/bin/fm-card.sh" write carded-call --file "$home/full-card.json" >/dev/null \
+    || return 1
+  printf '%s|%s|%s\n' "$root" "$home" "$path"
+}
+
+cards_tasks() {  # <home> <path> <tasks-axi args...>
+  local home=$1 path=$2
+  shift 2
+  FM_HOME="$home" PATH="$path" "$ROOT/bin/fm-tasks-axi.sh" "$@"
+}
+
+cards_section() {  # <digest>
+  printf '%s\n' "$1" | awk '/^DECISION CARDS$/{on=1;next} on && /^[A-Z][A-Z -]+$/{exit} on'
+}
+
+cards_tools_present() {
+  command -v tasks-axi >/dev/null 2>&1 && command -v node >/dev/null 2>&1
+}
+
+test_session_start_gives_every_captain_call_a_card() {
+  local rec root home path out section full before
+  cards_tools_present || { echo "skip: tasks-axi or node not found"; return 0; }
+  rec=$(cards_world cards-locked) || fail "could not build the cards world"
+  IFS='|' read -r root home path <<EOF
+$rec
+EOF
+  full=$(cat "$home/state/cards/carded-call.json")
+
+  out=$(run_session_start "$home" "$root" "$path")
+  section=$(cards_section "$out")
+  [ -f "$home/state/cards/old-call.json" ] || fail "the pre-card captain call got no card: $section"
+  assert_equals true "$(jq -r .draft "$home/state/cards/old-call.json")" "a backfilled card is a draft"
+  assert_equals cadia-site "$(jq -r .project "$home/state/cards/old-call.json")" "the draft names the call's project"
+  [ ! -e "$home/state/cards/ci-wait.json" ] || fail "a non-captain hold got a card"
+  assert_equals "$full" "$(cat "$home/state/cards/carded-call.json")" "a full card is left untouched"
+  assert_contains "$section" "old-call" "the digest lists the draft for the owning mate to finish"
+  assert_contains "$section" "idle second mate" "the digest says an idle second mate must finish it too"
+  assert_not_contains "$section" "carded-call" "a call with a full card is not listed"
+  assert_not_contains "$section" "ci-wait" "a non-captain hold is not listed"
+
+  before=$(cat "$home/state/cards/old-call.json")
+  run_session_start "$home" "$root" "$path" >/dev/null
+  assert_equals "$before" "$(cat "$home/state/cards/old-call.json")" "a restart leaves the draft as it was"
+
+  FM_HOME="$home" PATH="$path" "$ROOT/bin/fm-card.sh" write old-call --file "$home/full-card.json" >/dev/null \
+    || fail "could not write the full card"
+  out=$(run_session_start "$home" "$root" "$path")
+  assert_contains "$(cards_section "$out")" "every captain call has a full card" "a finished home reports no drafts"
+  pass "session start drafts a card for every uncarded captain call, lists drafts until finished, and stays idempotent"
+}
+
+test_read_only_session_start_lists_drafts_without_writing() {
+  local rec root home path out holder_pid
+  cards_tools_present || { echo "skip: tasks-axi or node not found"; return 0; }
+  rec=$(cards_world cards-read-only) || fail "could not build the cards world"
+  IFS='|' read -r root home path <<EOF
+$rec
+EOF
+  rm -f "$home/state/cards/carded-call.json"
+  FM_HOME="$home" PATH="$path" "$ROOT/bin/fm-card.sh" draft carded-call --title "Continue?" --project cadia-web --situation s >/dev/null
+  sleep 300 &
+  holder_pid=$!
+  printf '%s\n' "$holder_pid" > "$home/state/.lock"
+  out=$(run_session_start "$home" "$root" "$path")
+  kill "$holder_pid" 2>/dev/null || true
+  wait "$holder_pid" 2>/dev/null || true
+  assert_contains "$out" "READ-ONLY SESSION" "the lock was not refused"
+  [ ! -e "$home/state/cards/old-call.json" ] || fail "a read-only session wrote a card"
+  assert_contains "$(cards_section "$out")" "carded-call" "a read-only session still lists existing drafts"
+  pass "a read-only session start lists draft cards and writes none"
+}
+
 test_context_digest_absent_empty_present
 test_lock_refusal_read_only_path
 test_lock_write_failure_read_only_path
@@ -1859,6 +1964,8 @@ test_unreachable_network_never_blocks_the_digest
 test_deferred_result_reaches_the_agent_when_the_digest_cannot_print_it
 test_read_only_session_declares_skipped_network_checks
 test_tasks_axi_compatibility_is_probed_once
+test_session_start_gives_every_captain_call_a_card
+test_read_only_session_start_lists_drafts_without_writing
 test_session_start_preserves_ambiguous_pi_process
 test_session_start_preserves_transiently_unreadable_endpoint
 test_session_start_preserves_proven_bare_shell_recovery

@@ -186,6 +186,37 @@ test_backfill_drafts_every_uncarded_captain_hold() {
   pass "fm-card: backfill drafts a card for every uncarded captain hold, once"
 }
 
+test_expired_deferral_is_backfilled_and_listed_by_drafts() {
+  local home out show
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home expired-backfill)
+  tasks_in "$home" add past-a "Deferred call, now due" --repo cadia >/dev/null
+  tasks_in "$home" hold past-a --reason "Pick the language rule" --kind captain --until 2000-01-01 >/dev/null
+  show=$(tasks_in "$home" show past-a --full)
+  assert_contains "$show" "held: no" "the date gate has expired"
+  assert_contains "$show" "hold_kind: captain" "the captain call remains annotated"
+  run_captain "$home" open past-a || fail "expired deferral must remain an open captain call"
+  tasks_in "$home" add closed-b "Already closed" --repo cadia >/dev/null
+  tasks_in "$home" hold closed-b --reason "An old call" --kind captain >/dev/null
+  tasks_in "$home" 'done' closed-b >/dev/null
+  out=$(run_card "$home" drafts) || fail "drafts failed before backfill"
+  assert_contains "$out" "past-a" "an expired call without a card is listed"
+  assert_not_contains "$out" "closed-b" "a closed captain call is not listed"
+  assert_absent "$home/state/cards/past-a.json" "drafts remains read-only"
+  out=$(run_card "$home" backfill) || fail "backfill failed"
+  assert_contains "$out" "drafted: past-a" "the expired call is backfilled"
+  assert_absent "$home/state/cards/closed-b.json" "a closed captain call is not backfilled"
+  show=$(run_card "$home" show past-a) || fail "backfilled card is absent"
+  assert_equals true "$(printf '%s' "$show" | jq -r .draft)" "backfill writes a draft"
+  assert_equals "Pick the language rule" "$(printf '%s' "$show" | jq -r .situation)" "the hold reason is preserved"
+  out=$(run_card "$home" drafts) || fail "drafts failed after backfill"
+  assert_contains "$out" "past-a"$'\t'"Deferred call, now due" "the expired call's draft is listed with its title"
+  assert_not_contains "$out" "closed-b" "a closed captain call stays excluded"
+  out=$(run_card "$home" backfill) || fail "repeated backfill failed"
+  assert_equals "" "$out" "expired-call backfill is idempotent"
+  pass "fm-card: expired captain deferrals remain backfilled and listed while closed calls stay excluded"
+}
+
 run_captain() {  # <home> <command args...>
   local home=$1
   shift
@@ -488,6 +519,40 @@ test_restore_refuses_after_the_captain_answered() {
   pass "fm-card: restore never reopens a call the captain answered after the clear"
 }
 
+test_drafts_lists_captain_calls_without_a_full_card() {
+  local home in out rc=0
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home drafts)
+  tasks_in "$home" add draft-a "Needs a real card" --repo cadia >/dev/null
+  tasks_in "$home" hold draft-a --reason "why a" --kind captain >/dev/null
+  tasks_in "$home" add full-b "Already carded" --repo cadia >/dev/null
+  tasks_in "$home" hold full-b --reason "why b" --kind captain >/dev/null
+  tasks_in "$home" add bare-c "No card at all" --repo cadia >/dev/null
+  tasks_in "$home" hold bare-c --reason "why c" --kind captain >/dev/null
+  tasks_in "$home" add other-d "Not the captain's" --repo cadia >/dev/null
+  tasks_in "$home" hold other-d --reason "waiting on CI" >/dev/null
+  run_card "$home" draft draft-a --title "Needs a real card" --project cadia --situation "why a" >/dev/null
+  in="$home/in.json"
+  good_card "$in"
+  run_card "$home" write full-b --file "$in" >/dev/null
+  out=$(run_card "$home" drafts) || fail "drafts failed"
+  assert_contains "$out" "draft-a"$'\t'"Needs a real card" "a draft card is listed with its title"
+  assert_contains "$out" "bare-c" "a captain call with no card is listed"
+  assert_not_contains "$out" "full-b" "a full card is not listed"
+  assert_not_contains "$out" "other-d" "a non-captain hold is not listed"
+  assert_absent "$home/state/cards/bare-c.json" "drafts writes nothing"
+  chmod 000 "$home/data/backlog.md"
+  out=$(run_card "$home" drafts 2>&1) || rc=$?
+  chmod 600 "$home/data/backlog.md"
+  assert_equals 2 "$rc" "drafts refuses when the backlog cannot be listed"
+  rc=0
+  chmod 000 "$home/data/backlog.md"
+  run_card "$home" backfill >/dev/null 2>&1 || rc=$?
+  chmod 600 "$home/data/backlog.md"
+  assert_equals 2 "$rc" "backfill refuses when the backlog cannot be listed"
+  pass "fm-card: drafts lists every captain call still lacking a full card, read-only, and refuses an unreadable backlog"
+}
+
 test_unreadable_backlog_never_reads_as_orphan() {
   local home rc=0 out
   command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
@@ -597,6 +662,7 @@ test_rejects_unsafe_task_ids
 test_remove_is_idempotent
 test_draft_never_overwrites_a_full_card
 test_backfill_drafts_every_uncarded_captain_hold
+test_expired_deferral_is_backfilled_and_listed_by_drafts
 test_hold_without_card_writes_a_draft
 test_hold_with_card_file_writes_the_full_card
 test_hold_refuses_an_invalid_card_before_holding
@@ -614,6 +680,7 @@ test_clear_refuses_a_task_that_is_not_a_captain_call
 test_restore_refuses_when_held_again
 test_restore_refuses_after_the_captain_answered
 test_unreadable_backlog_never_reads_as_orphan
+test_drafts_lists_captain_calls_without_a_full_card
 test_hold_on_a_task_without_repo_still_gets_a_card
 test_new_hold_replaces_a_leftover_card
 test_stale_clear_retires_a_pending_reconcile_request
