@@ -123,6 +123,12 @@
 #                          external-wait pause rows do not feed this escalation,
 #                          observation is read-only, and one parent notification
 #                          covers each no-progress episode
+#   check: secondmate revival failed: ...
+#                          queued by bin/fm-secondmate-revive.sh, which this
+#                          watcher runs detached every
+#                          FM_SECONDMATE_REVIVE_INTERVAL seconds (30) while the
+#                          home records a second mate; that script owns the
+#                          revival, its budget, and this one escalation
 # For normal supervision, resume the session-start primary-harness protocol
 # after each printed reason. Direct duplicate invocations of this script still
 # no-op through the watcher singleton lock.
@@ -267,6 +273,8 @@ AUTOLAND_INTERVAL=${FM_AUTOLAND_INTERVAL:-90}
 case "$AUTOLAND_INTERVAL" in
   ''|*[!0-9]*|0) AUTOLAND_INTERVAL=90 ;;
 esac
+SECONDMATE_REVIVE_INTERVAL=${FM_SECONDMATE_REVIVE_INTERVAL:-30}
+case "$SECONDMATE_REVIVE_INTERVAL" in ''|*[!0-9]*|0) SECONDMATE_REVIVE_INTERVAL=30 ;; esac
 HOME_SUMMARY_INTERVAL=${FM_HOME_SUMMARY_INTERVAL:-300}
 case "$HOME_SUMMARY_INTERVAL" in
   ''|*[!0-9]*|0) HOME_SUMMARY_INTERVAL=300 ;;
@@ -2098,6 +2106,25 @@ reconcile_requests_detached() {
   RECONCILE_REQUEST_PID=$!
 }
 
+# Mid-session second-mate revival. The scan relaunches through bin/fm-control.sh,
+# which can take minutes, so it runs detached on its own cadence and never
+# delays this cycle; the script's own lock keeps scans from overlapping across
+# watcher restarts. Cheap when the home records no second mate.
+SECONDMATE_REVIVE_PID=
+secondmate_revive_detached() {
+  if [ -n "$SECONDMATE_REVIVE_PID" ]; then
+    kill -0 "$SECONDMATE_REVIVE_PID" 2>/dev/null && return 0
+    wait "$SECONDMATE_REVIVE_PID" 2>/dev/null || true
+    SECONDMATE_REVIVE_PID=
+  fi
+  [ "$(age_of "$STATE/.last-secondmate-revive")" -ge "$SECONDMATE_REVIVE_INTERVAL" ] || return 0
+  grep -lq '^kind=secondmate$' "$STATE"/*.meta 2>/dev/null || return 0
+  touch "$STATE/.last-secondmate-revive"
+  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+    "$SCRIPT_DIR/fm-secondmate-revive.sh" scan </dev/null >/dev/null 2>&1 &
+  SECONDMATE_REVIVE_PID=$!
+}
+
 PR_POLL_CONTROL_LOCK=
 
 pr_poll_control_release() {
@@ -2258,6 +2285,10 @@ while :; do
   # repost after grace, and escalate once if the recovery turn is also missed.
   # No conversation scraping; unresolved records are never silently expired.
   fm_pending_reply_tick "$STATE" || true
+
+  # A dead second mate is revived here, between first-mate turns, rather than
+  # waiting for the next session start (bin/fm-secondmate-revive.sh).
+  secondmate_revive_detached
 
   # A live secondmate endpoint does not prove that its own wake loop is alive.
   # Observe the foreign queue before the rest of this cycle so an aged row wakes

@@ -753,6 +753,25 @@ while :; do
   if [ "$SECONDMATE" = 1 ]; then
     watch_start || exit 1
     watch_maintain || exit 1
+    # The control plane's composer clear (a Ctrl+U line, a bare Enter) is
+    # typed ahead of its /quit whenever it cannot prove the composer empty,
+    # which is always the case mid-turn. Consume those submit-nothing lines
+    # here so a /quit queued behind them still stops the host before a pending
+    # watcher wake starts another turn; otherwise the exit postcondition times
+    # out, rolls back as "agent alive", and the stale /quit stops the mate
+    # later with nothing left to relaunch it.
+    while [ -f "$WORK/input.$input_seq" ]; do
+      if ! line=$(cat "$WORK/input.$input_seq"); then
+        host_failure 'could not read queued input'; exit 1
+      fi
+      case "$line" in
+        ''|*$'\025'*) ;;
+        *) break ;;
+      esac
+      rm "$WORK/input.$input_seq" || { host_failure 'could not consume queued composer clear'; exit 1; }
+      input_seq=$((input_seq + 1))
+      show_prompt=1
+    done
     if [ -f "$WORK/input.$input_seq" ]; then
       if ! line=$(cat "$WORK/input.$input_seq"); then
         host_failure 'could not read queued input'; exit 1

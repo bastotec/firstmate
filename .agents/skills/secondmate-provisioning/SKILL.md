@@ -242,6 +242,9 @@ For a REMOTE mate, the same primary `fm-control.sh` entry point routes interrupt
 [`docs/remote-secondmates.md`](../../../docs/remote-secondmates.md#lifecycle-control) owns remote lifecycle routing, readiness, and profile selection.
 A successful update restarts every live mate of both placements on its own, including one already on the target commit; the `/updatefirstmate` skill owns that pass, and `bin/fm-secondmate-restart.sh` owns its persist gate and failure vocabulary.
 
+Between session starts, the home's watcher runs [`bin/fm-secondmate-revive.sh`](../../../bin/fm-secondmate-revive.sh), which revives a dead mate through the same `fm-control.sh` verbs within a couple of minutes, skips a mate stopped on purpose with `fm-control.sh <id> exit`, and owns the retry budget.
+On its `check: secondmate revival failed` wake, the automatic path is spent: tell the captain in one plain line which mate is down and why, then recover it by hand through this section or report it failed.
+
 Do not reconstruct a secondmate's whole tree from the main home.
 The main firstmate reconciles only direct reports.
 Each secondmate is a firstmate in its own home, so it runs recovery on startup and reconciles its own crewmates.

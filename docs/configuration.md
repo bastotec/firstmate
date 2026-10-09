@@ -63,6 +63,7 @@ state/
   <id>.backlog-close      pending backlog transition for an interrupted cleanup (bin/fm-backlog-transition-lib.sh)
   <id>.external-wait      declared bounded external wait; written only by bin/fm-external-wait.sh, archived in external-waits/
   <id>.reconcile-nudged   last inventory-reconcile nudge time (bin/fm-secondmate-reconcile.sh)
+  <id>.revive <id>.held-stopped  mid-session second-mate revival record and deliberate-stop marker; secondmate-revive.log  its log (bin/fm-secondmate-revive.sh)
   <id>.check.sh <id>.check-trust  authenticated slow poll and custom-check binding (bin/fm-check-register.sh)
   <id>.pr-poll <id>.pr-poll-registration <id>.pr-poll-retirement <id>.pr-poll-merge-notified  PR merge poll records (bin/fm-pr-lib.sh)
   <id>.merge-authority    accepted merge authority (bin/fm-merge-authority-lib.sh)

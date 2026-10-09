@@ -135,8 +135,14 @@ unreached_count=0
 # The first line of a command's output that carries anything, flattened to one
 # readable line with its "error: " prefix dropped. A refusal's own words are the
 # most useful thing this report can carry, and its first line is often blank.
+# The first line that decided the outcome. A `warning:` line is advisory output
+# printed on the way to the failure (the composer gate's is the usual one), so
+# it is reported only when nothing else was said.
 first_reported_line() {  # <text>
-  printf '%s\n' "$1" | sed -n '/./{s/^error: //;s/[[:space:]]\{1,\}/ /g;p;q;}'
+  local line
+  line=$(printf '%s\n' "$1" | sed -n '/^warning: /d;/./{s/^error: //;s/[[:space:]]\{1,\}/ /g;p;q;}')
+  [ -n "$line" ] || line=$(printf '%s\n' "$1" | sed -n '/./{s/[[:space:]]\{1,\}/ /g;p;q;}')
+  printf '%s\n' "$line"
 }
 
 # Send the ordinary re-read steer to a mate this pass will not restart, and say

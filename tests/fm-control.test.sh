@@ -622,6 +622,28 @@ test_secondmate_control_command_carries_no_marker() {
   pass "fm-control: a lifecycle command to a secondmate is unmarked and opens no reply expectation"
 }
 
+# A second mate stopped on purpose must not be brought back by the mid-session
+# revival (bin/fm-secondmate-revive.sh), so its exit leaves a held-stopped
+# record; an ordinary crewmate's exit does not.
+test_secondmate_exit_records_a_deliberate_stop() {
+  local dir out rc
+  dir=$(new_case sm-held)
+  add_task "$dir" domain deck secondmate
+  printf '%s\n' domain > "$dir/wt-domain/.fm-secondmate-home"
+  alive_as "$dir" fm-deck-worker
+  out=$(run_control "$dir" domain exit); rc=$?
+  expect_code 0 "$rc" "exiting a secondmate's agent should succeed"$'\n'"$out"
+  [ -f "$dir/home/state/domain.held-stopped" ] \
+    || fail "a deliberate secondmate exit did not record that it was stopped on purpose"
+  dir=$(new_case crew-held)
+  add_task "$dir" crew deck
+  alive_as "$dir" fm-deck-worker
+  out=$(run_control "$dir" crew exit); rc=$?
+  expect_code 0 "$rc" "exiting a crewmate should succeed"$'\n'"$out"
+  [ ! -e "$dir/home/state/crew.held-stopped" ] || fail "a crewmate exit recorded a secondmate stop"
+  pass "fm-control: a secondmate exit records a deliberate stop the revival respects"
+}
+
 test_fm_send_still_marks_the_same_secondmate_task() {
   local dir log out rc
   dir=$(new_case sm-send)
@@ -862,6 +884,7 @@ PY
 }
 
 test_host_route_reaches_guarded_worker_owners
+test_secondmate_exit_records_a_deliberate_stop
 test_exit_types_each_harness_verified_command
 test_interrupt_sends_each_harness_verified_key
 test_unverified_harness_is_refused

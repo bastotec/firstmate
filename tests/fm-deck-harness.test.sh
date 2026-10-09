@@ -1383,6 +1383,60 @@ PYTHON
   pass "Deck host preserves handling-successor supervision without parent turn-end wakes"
 }
 
+# The control plane's exit types its composer clear (Ctrl+U, Enter) before
+# /quit whenever it cannot prove the composer empty, which is always the case
+# mid-turn. Those clear lines queue ahead of the /quit, so the queued exit must
+# still win over a pending watcher wake; otherwise the host runs more turns, the
+# exit postcondition times out and rolls back as "agent alive", and the stale
+# /quit stops the mate minutes later with nobody left to relaunch it.
+test_secondmate_queued_exit_behind_composer_clears_beats_watcher_turn() {
+  local dir="$TMP_ROOT/host-exit-behind-clears"
+  make_secondmate_host_fixture "$dir"
+  python3 - "$dir" <<'PYTHON' || fail "a queued exit behind composer clears ran a watcher turn first"
+import json, os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+home = root / 'home'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker', str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'), '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+def rows():
+    path = home/'turns'
+    return [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+def watcher_starts():
+    path = home/'watch-starts'
+    return path.read_text().splitlines() if path.exists() else []
+def wait_for(check, label):
+    for _ in range(200):
+        if check(): return
+        if p.poll() is not None: raise AssertionError(label+' - host exited: '+(root/'pane').read_text())
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text())
+with (root/'pane').open('w') as output:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, env=env, text=True, start_new_session=True)
+    try:
+        wait_for(lambda: len(rows()) == 1, 'first turn')
+        p.stdin.write('slow-steer\n'); p.stdin.flush()
+        wait_for(lambda: (home/'in-turn').exists(), 'slow turn start')
+        turns_before_exit = len(rows())
+        starts = len(watcher_starts())
+        (home/'trigger').touch()
+        wait_for(lambda: len(watcher_starts()) > starts, 'pending watcher wake')
+        p.stdin.write('\x15\n\x15\n\x15\n/quit\n'); p.stdin.flush()
+        time.sleep(.3)
+        (home/'release').touch()
+        assert p.wait(timeout=15) == 0, 'the host did not stop on the queued exit'
+        assert len(rows()) == turns_before_exit, 'the host ran a watcher turn before the exit queued behind its composer clears'
+    finally:
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGTERM)
+            try:
+                p.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                os.killpg(p.pid, signal.SIGKILL); p.wait()
+PYTHON
+  pass "Deck host takes a queued exit behind composer clears before a pending watcher turn"
+}
+
 test_secondmate_survives_a_failed_turn() {
   local dir="$TMP_ROOT/host-failed-turn"
   make_secondmate_host_fixture "$dir"
@@ -2055,6 +2109,7 @@ test_stream_deck_ring_rings_live_driver
 test_idle_interrupt_does_not_echo_fake_input
 test_secondmate_host_serializes_wakes_and_steering
 test_secondmate_mcp_config_on_startup_steer_and_wake
+test_secondmate_queued_exit_behind_composer_clears_beats_watcher_turn
 test_secondmate_survives_a_failed_turn
 test_secondmate_survives_a_refused_handling_confirmation
 test_secondmate_repeats_its_launch_brief_after_a_session_less_failure

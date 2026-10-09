@@ -39,6 +39,9 @@
 #              group stopped. Already-stopped is success (idempotent), including
 #              when the agent is found gone while the composer gate was
 #              re-reading a state it could not prove.
+#              A kind=secondmate exit also records state/<id>.held-stopped so
+#              bin/fm-secondmate-revive.sh leaves the stopped mate alone; a
+#              successful relaunch or recover-missing withdraws it.
 #   relaunch   Transactionally replace the running agent with a new one, in the
 #              SAME endpoint and SAME worktree, on the same or a newly chosen
 #              harness/model/effort - so switching harness is one ordinary use
@@ -371,11 +374,24 @@ fi
 # cannot say is WHY, and "malformed metadata" is the wrong thing to tell an
 # operator about a correctly configured remote route. Name the placement
 # instead, using the same `remote_host` signal bin/fm-send.sh routes on.
+# A second mate stopped on purpose stays stopped: its exit leaves
+# state/<id>.held-stopped, which bin/fm-secondmate-revive.sh respects, and a
+# successful relaunch or recovery withdraws it.
+held_stop_record() {  # <verb> - after that verb succeeded
+  [ "$(fm_meta_get "$META" kind)" = secondmate ] || return 0
+  case "$1" in
+    exit) printf 'stopped_at=%s\n' "$(date +%s)" > "$STATE/$ID.held-stopped" ;;
+    relaunch|recover-missing) rm -f "$STATE/$ID.held-stopped" ;;
+  esac
+}
+
 if [ -n "$(fm_meta_get "$META" remote_host)" ]; then
   # shellcheck source=bin/fm-remote-control-lib.sh
   . "$SCRIPT_DIR/fm-remote-control-lib.sh"
-  fm_remote_control_run
-  exit $?
+  remote_rc=0
+  fm_remote_control_run || remote_rc=$?
+  [ "$remote_rc" -ne 0 ] || held_stop_record "$VERB"
+  exit "$remote_rc"
 fi
 
 fm_backend_validate_task_endpoint "$META" "$ID" || exit 1
@@ -1311,12 +1327,15 @@ case "$VERB" in
     ;;
   exit)
     result=$(do_exit)
+    held_stop_record exit
     echo "$result $ID harness=$HARNESS backend=$BACKEND endpoint=$T worktree=$WT"
     ;;
   relaunch)
     do_relaunch
+    held_stop_record relaunch
     ;;
   recover-missing)
     do_recover_missing
+    held_stop_record recover-missing
     ;;
 esac

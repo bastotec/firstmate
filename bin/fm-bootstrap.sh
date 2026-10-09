@@ -700,8 +700,8 @@ secondmate_liveness_sweep() {
   # processes and every transiently unreadable target.
   # A meta with no window remains owned by secondmate-provisioning recovery.
   # Secondmate homes never contain kind=secondmate meta, so this is naturally a
-  # primary-only no-op there. Mid-session liveness remains explicitly out of
-  # scope and requires a separate periodic signal.
+  # primary-only no-op there. Mid-session liveness is the watcher-run
+  # bin/fm-secondmate-revive.sh.
   [ -d "$STATE" ] || return 0
   local meta id remote_host label __fm_timing_stamp parallel=0
   SECONDMATE_RESPAWNED_IDS=""
