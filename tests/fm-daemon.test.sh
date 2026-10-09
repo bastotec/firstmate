@@ -1244,6 +1244,28 @@ test_housekeeping_captain_held_stale_marker_transitions_to_pause() {
   pass "housekeeping moves a captain hold's existing stale marker to pause before wedge escalation"
 }
 
+test_housekeeping_held_merge_stale_marker_clears_without_escalation() {
+  local dir state fakebin task key
+  dir=$(make_supercase stale-to-held-merge)
+  state="$dir/state"; fakebin="$dir/fakebin"; task=delivered-w14m
+  cat > "$fakebin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' 'state: done · source: run-step · checks green: PR ready for review'
+SH
+  chmod +x "$fakebin/fm-crew-state.sh"
+  daemon_task "$state" "$task" >/dev/null
+  printf 'pr=https://github.com/acme/widget/pull/7\n' >> "$state/$task.meta"
+  printf 'done: PR https://github.com/acme/widget/pull/7 checks green\n' > "$state/$task.status"
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  echo $(( $(date +%s) - 5000 )) > "$state/.subsuper-stale-$key"
+  date +%s > "$state/.subsuper-last-scan"
+  FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" STATE="$state" FM_STATE_OVERRIDE="$state" \
+    FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
+  [ ! -e "$state/.subsuper-stale-$key" ] || fail "a held-for-merge delivery retained its daemon stale marker"
+  [ ! -s "$state/.subsuper-escalations" ] || fail "a held-for-merge delivery escalated as a possible wedge"
+  pass "housekeeping clears a held-for-merge stale marker without escalating"
+}
+
 test_housekeeping_pause_marker_transitions_to_clear() {
   local dir state fakebin win pane key
   dir=$(make_supercase paused-to-stale)
@@ -3199,6 +3221,7 @@ test_housekeeping_paused_unpaused_cleared
 test_housekeeping_captain_held_resolved_cleared
 test_housekeeping_stale_marker_transitions_to_pause
 test_housekeeping_captain_held_stale_marker_transitions_to_pause
+test_housekeeping_held_merge_stale_marker_clears_without_escalation
 test_housekeeping_pause_marker_transitions_to_clear
 test_housekeeping_stream_persistent_stale_resolves_meta
 test_housekeeping_stream_idle_screen_busy_record_clears_stale

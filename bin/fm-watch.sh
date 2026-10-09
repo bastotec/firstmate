@@ -46,11 +46,10 @@
 #                          closer look instead of another routine supervision
 #                          resume. Unless afk is active. A task already
 #                          reconciled as done with a recorded PR (held for its
-#                          merge) is exempt from every wedge alarm and
-#                          re-surfaces only on the long held-merge cadence
-#                          (handle_held_merge_stale): a finished worker's pane
-#                          is supposed to be quiet, and each false alarm trains
-#                          the supervisor to dismiss the real one. A pane whose own task
+#                          merge) is exempt from every wedge alarm: a finished
+#                          worker's pane is supposed to be quiet, and each false
+#                          alarm trains the supervisor to dismiss the real one.
+#                          A pane whose own task
 #                          worktree was written during the quiet window is
 #                          deferred rather than escalated (wedge_defer_writing),
 #                          because files appearing there are liveness the pane and
@@ -1074,14 +1073,6 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
           triage_log "absorbed $label (open captain call): $win"
           return 0
         elif crew_is_held_for_merge "$task"; then
-          # A reconciled done delivery with a recorded PR is waiting on the
-          # merge authority, not wedged: the worker's pane is supposed to sit
-          # quiet for that whole wait, so each escalation was a false alarm the
-          # supervisor had to dismiss (nine consecutive ones on one finished
-          # worker before this bound). Absorbed here, never wedge-escalated,
-          # rechecked on the held-merge cadence handle_held_merge_stale owns;
-          # the absorber resets this timer like every absorbing branch, so the
-          # state read runs once per escalation window at most.
           handle_held_merge_stale "$win" "$task"
           return 0
         elif [ -n "$STALE_WAIT_DECLARATION" ]; then
@@ -1222,49 +1213,18 @@ handle_paused_stale() {  # <window> <task> <hash>
   triage_log "absorbed stale ($detail, age ${age}s): $win"
 }
 
-# Absorb a stale pane on a task whose delivery is already reconciled done with
-# a recorded PR, held for the merge authority (crew_is_held_for_merge). A
-# finished worker's pane is supposed to sit quiet for that whole wait, so an
-# idle pane is not evidence of a wedge: before this absorber, every rung of
-# the wedge ladder re-alarmed on the same pane (nine consecutive possible-wedge
-# escalations on one finished worker), training the supervisor to dismiss the
-# alarm that will one day be real. Not liveness and not a declared wait: the
-# task's own reconciled state already names the outcome, so no status-line
-# predicate or pane read can add anything.
-# Never re-reads crew state, so it is safe on every path that reaches it; the
-# callers own the read's cadence (first sight of a stale hash on each branch,
-# and the ladder-due rung of wedge_timer_check). A pane hash, when passed, advances
-# the stale suppressor so the sighting counts as classified; the ladder call
-# passes none and leaves the recorded hash alone, or every later poll would
-# read as a first sight again. The wedge timer is RESET rather than dropped so
-# the ladder - not pane churn - owns the next bounded reconsult, and the
-# escalation counter and write-deferral chain are cleared so an undeclared
-# episode's count cannot outlive the delivery. The recheck itself is bounded
-# by the shared resurface_absorbed cadence on this window's own
-# .held-merge-resurfaced-<key> marker, bound to the recorded PR so a
-# replacement PR starts its own window. The .paused-* flag is deliberately
-# not written (no status line declares this wait), exactly as the backlog-hold
-# path keeps its bookkeeping out of the pause chain. The recheck reason carries
-# the PR URL so the supervisor can act on it directly: merge it, or clean up
-# the finished task.
+# Absorb a stale pane whose delivery is already reconciled done with a
+# recorded PR and held for the merge authority.
+# The callers own the crew-state read, and a pane hash advances the stale
+# suppressor so the finished worker stays quiet while its PR awaits merge.
 handle_held_merge_stale() {  # <window> <task> [pane-hash]
-  local win=$1 task=$2 h=${3-} key statusf mtime age pr scope
+  local win=$1 h=${3-} key
   key=$(window_key "$win")
-  statusf="$STATE/$task.status"
-  pr=$(crew_done_pr_url "$STATE" "$task" 2>/dev/null || true)
-  [ -n "$pr" ] || pr=unrecorded
-  scope="held-merge:$pr"
   [ -n "$h" ] && printf '%s' "$h" > "$STATE/.stale-$key"
   date +%s > "$STATE/.stale-since-$key"
   rm -f "$STATE/.wedge-escalations-$key"
   clear_write_tracking "$key"
-  mtime=$(stat_mtime "$statusf")
-  case "$mtime" in ''|*[!0-9]*) mtime=$(date +%s) ;; esac
-  age=$(( $(date +%s) - mtime ))
-  resurface_absorbed "$win" "$STATE/.held-merge-resurfaced-$key" "$age" \
-    "stale: $win (done ${age}s, PR $pr awaiting merge - finished delivery, rechecked on a long cadence not a wedge; merge the PR or clean up the finished task)" \
-    "$scope"
-  triage_log "absorbed stale (done, PR $pr awaiting merge, age ${age}s): $win"
+  triage_log "absorbed stale (done with recorded PR awaiting merge): $win"
 }
 
 # Apply the busy-pane completed-turn bound to a window whose bound has already
@@ -1280,8 +1240,7 @@ handle_held_merge_stale() {  # <window> <task> [pane-hash]
 # alter the separate non-busy classification. handle_paused_stale keeps the
 # exception bounded by re-surfacing it once per PAUSE_RESURFACE_SECS, and the
 # held-for-merge bound inside the shared wedge_timer_check keeps a finished
-# delivery's final blocking call - routinely the ci monitor still watching a
-# green PR - on that same bounded recheck instead of the wedge ladder. Away mode
+# delivery's final blocking call from entering the wedge ladder. Away mode
 # remains daemon-owned and receives the undecorated wake identity for its own
 # classification, which is why the declaration is read before the afk branch
 # rather than after it.
@@ -2720,7 +2679,8 @@ EOF
               # status lines and pane state, neither of which names this wait,
               # so the handoff would dress a finished worker's expected quiet up
               # as an undeclared wedge. First sight of a hash only, like every
-              # other crew-state read; the held-merge cadence owns the recheck.
+              # other crew-state read; a finished worker stays quiet while its
+              # recorded PR awaits merge.
               handle_held_merge_stale "$w" "$task" "$h"
             else
               fm_wake_append stale "$w" "stale: $w" || exit 1
@@ -2757,44 +2717,48 @@ EOF
               rm -f "$ewf"
               clear_write_tracking "$key"
               external_wait_resurface "$w" "$key" "stale (terminal status under a supervisor-declared external wait)"
-            elif crew_is_held_for_merge "$task"; then
-              # The terminal line is the delivery's own done: report and the
-              # reconciled state agrees, so the pane is a finished worker
-              # waiting on the merge authority, not an inconclusive state to
-              # inspect. The delivery already woke firstmate once through its
-              # status signal; the held-merge cadence owns every later recheck.
-              handle_held_merge_stale "$w" "$task" "$h"
-            elif crew_is_provably_working "$(window_to_task "$w" "$STATE")"; then
-              printf '%s' "$h" > "$sf"
-              date +%s > "$ssf"
-              clear_write_tracking "$key"
-              triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
-            elif captain_call_stale_bound "$key" "$task"; then
-              # The line is captain-relevant and stays so, but the backlog says
-              # the captain already holds this work: further NEW pane hashes with
-              # the same status-log state have nothing to add while they are
-              # deciding. Only that new-hash repetition is bounded - the first
-              # sight already alarmed, a new hash inside the window is absorbed,
-              # and a new hash after it alarms again. A stable hash stays as inert
-              # here as it already was after a first terminal alarm.
-              printf '%s' "$h" > "$sf"
-              rm -f "$ssf"
-              clear_write_tracking "$key"
-              triage_log "absorbed stale (open captain call already surfaced for this status): $w"
             else
-              fm_wake_append stale "$w" "stale: $w" || exit 1
-              stale_wait_record "$key"
-              printf '%s' "$h" > "$sf"
-              rm -f "$ssf"
-              clear_write_tracking "$key"
-              stale_status="$STATE/$(window_to_task "$w" "$STATE").status"
-              stale_record=$(status_span_first_actionable_record "$stale_status" 0)
-              case $? in
-                0|1) stale_end=${stale_record%%$'\t'*}; stale_rest=${stale_record#*$'\t'}; stale_ident=${stale_rest%%$'\t'*} ;;
-                *) stale_end=''; stale_ident='' ;;
+              class=$(crew_absorb_class "$task")
+              case "$class" in
+                done)
+                  handle_held_merge_stale "$w" "$task" "$h"
+                  ;;
+                working)
+                  printf '%s' "$h" > "$sf"
+                  date +%s > "$ssf"
+                  clear_write_tracking "$key"
+                  triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
+                  ;;
+                *)
+                  if captain_call_stale_bound "$key" "$task"; then
+                    # The line is captain-relevant and stays so, but the backlog says
+                    # the captain already holds this work: further NEW pane hashes with
+                    # the same status-log state have nothing to add while they are
+                    # deciding. Only that new-hash repetition is bounded - the first
+                    # sight already alarmed, a new hash inside the window is absorbed,
+                    # and a new hash after it alarms again. A stable hash stays as inert
+                    # here as it already was after a first terminal alarm.
+                    printf '%s' "$h" > "$sf"
+                    rm -f "$ssf"
+                    clear_write_tracking "$key"
+                    triage_log "absorbed stale (open captain call already surfaced for this status): $w"
+                  else
+                    fm_wake_append stale "$w" "stale: $w" || exit 1
+                    stale_wait_record "$key"
+                    printf '%s' "$h" > "$sf"
+                    rm -f "$ssf"
+                    clear_write_tracking "$key"
+                    stale_status="$STATE/$(window_to_task "$w" "$STATE").status"
+                    stale_record=$(status_span_first_actionable_record "$stale_status" 0)
+                    case $? in
+                      0|1) stale_end=${stale_record%%$'\t'*}; stale_rest=${stale_record#*$'\t'}; stale_ident=${stale_rest%%$'\t'*} ;;
+                      *) stale_end=''; stale_ident='' ;;
+                    esac
+                    mark_surfaced "$stale_status" "$stale_end" "$stale_ident"
+                    wake "stale: $w"
+                  fi
+                  ;;
               esac
-              mark_surfaced "$stale_status" "$stale_end" "$stale_ident"
-              wake "stale: $w"
             fi
           elif [ -e "$ssf" ]; then
             # This exact hash was already overridden as provably-working (a
@@ -2817,9 +2781,9 @@ EOF
           #     liveness evidence each kind of crew must supply), so absorb on the long
           #     PAUSE_RESURFACE_SECS cadence instead of wedge-escalating;
           #   - done: a reconciled done delivery with a recorded PR (crew_absorb_class
-          #     passes it through when no declared wait is on the line), so absorb on
-          #     the held-merge cadence for the same reason - a finished worker's pane
-          #     is supposed to be quiet while the merge authority decides;
+          #     passes it through when no declared wait is on the line), so absorb it
+          #     because a finished worker's pane is supposed to be quiet while the
+          #     merge authority decides;
           #   - none: no running pipeline, no exact busy verdict, no admitted declared wait.
           #     Surface immediately so firstmate inspects the inconclusive state
           #     (it may be done via an interactive menu that wrote no done: status,

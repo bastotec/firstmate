@@ -32,8 +32,8 @@
 # read: it reuses bin/fm-crew-state.sh, which may make a bounded no-mistakes call,
 # to decide whether a crew that just stopped its turn or went stale is working,
 # deliberately paused, done awaiting its merge, or none of those. Callers run it
-# ONLY on no-verb signal handling
-# and first sighting of a stale hash, never on every wake, so the per-wake triage
+# ONLY on no-verb signal handling, first sighting of a stale hash, or a due
+# stale-escalation boundary, never on every wake, so the per-wake triage
 # stays cheap. status_open_decisions_incremental (see "incremental (cursor-backed)
 # open-decisions fold" below) also writes: it persists a per-status-file byte
 # cursor and folded open-set as a side effect, so a per-drain fleet-wide scan
@@ -1875,8 +1875,8 @@ status_span_has_actionable() {  # <status-file> <start-offset>
 #             pause (paused:), which is EXPECTED to idle;
 #   done    - a reconciled done crew with a recorded PR, waiting on the merge
 #             authority. This is a completed delivery, not liveness: it is never
-#             "provably working", and the caller's own bounded held-merge cadence
-#             owns its recheck, so a stale pane alarms nothing while it waits;
+#             "provably working", and stale handling suppresses wedge alarms
+#             while it waits;
 #   none    - neither, so the wake must surface (a stopped/finished/parked/failed/
 #             torn-down/unknown crew, or an unreadable verdict).
 # One fm-crew-state.sh read serves ALL absorb reasons at once. Reading the state
@@ -1888,7 +1888,8 @@ status_span_has_actionable() {  # <status-file> <start-offset>
 # worker wedged after a status append, or waiting on an unrecorded outcome -
 # keeps the ordinary surface-it alarm.
 # NOT a pure read: fm-crew-state.sh may make a bounded no-mistakes call, so callers
-# run it only on no-verb signal and first-sighting stale paths, never every wake.
+# run it only on no-verb signals, first-sighting stale paths, and due stale
+# escalation boundaries, never every wake.
 # FM_CREW_STATE_BIN lets tests stub the verdict.
 crew_absorb_class() {  # <id>
   local id=$1 line state src
@@ -1958,9 +1959,8 @@ crew_is_paused() {  # <id>
 }
 
 # 0 if crew <id> is a reconciled done delivery with a recorded PR, awaiting the
-# merge authority. The stale path rechecks such a crew on the shared long
-# cadence instead of escalating a possible wedge, because the pane of a finished
-# worker is expected to be quiet for the whole merge wait.
+# merge authority. The stale path suppresses possible-wedge alarms because the
+# pane of a finished worker is expected to be quiet for the whole merge wait.
 crew_is_held_for_merge() {  # <id>
   [ "$(crew_absorb_class "$1")" = "done" ]
 }
