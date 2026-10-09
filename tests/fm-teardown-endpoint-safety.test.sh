@@ -332,7 +332,10 @@ test_unconfirmed_endpoint_kill_refuses_record_removal() {
   set -e
   [ "$rc" -ne 0 ] || fail "cleanup reported success for a kill nothing proved landed"
   endpoint_closed "$target" \
-    && fail "the still-present case is vacuous: the endpoint was actually closed"
+    || fail "the fake hub did not reproduce the real hub's close after an undelivered kill"
+  [ "$(fm_test_fake_stream_endpoints | jq -r --arg e "${target##*:}" \
+    '.endpoints[] | select(.endpoint_id == $e) | .closed_by // empty')" = hub ] \
+    || fail "the fake hub did not record its own close after an undelivered kill"
   assert_present "$dir/home/state/$id.meta" \
     "cleanup removed the durable endpoint record while its worker was still running"
   assert_contains "$(cat "$dir/unconfirmed.err")" "still present after its kill" \
@@ -340,8 +343,9 @@ test_unconfirmed_endpoint_kill_refuses_record_removal() {
   assert_contains "$(cat "$dir/unconfirmed.err")" "override-runtime-refusal" \
     "cleanup did not name the override that answers a still-present endpoint: $(cat "$dir/unconfirmed.err")"
 
-  # The same cleanup, once the close is performed for real, removes the record.
-  fm_test_fake_stream_set "$target" '{"kill_undelivered": false}'
+  # The endpoint's later authoritative close supersedes the hub's close, after
+  # which the same cleanup can remove the record.
+  fm_test_fake_stream_set "$target" '{"kill_undelivered": false, "closed_by": "agent", "alive": false}'
   FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
     FM_RUNTIME_LOG="$dir/runtime.log" PATH="$dir/fakebin:$PATH" \
     "$TEARDOWN" "$id" --force > "$dir/confirmed.out" 2> "$dir/confirmed.err" \
@@ -382,6 +386,24 @@ test_a_plain_retirement_stops_on_a_still_present_endpoint() {
     "a plain retirement removed a record the backend says is alive"
   assert_contains "$(cat "$dir/retire.err")" "did not override a runtime refusal" \
     "the refusal did not say the retirement lacked the override: $(cat "$dir/retire.err")"
+  [ "$(fm_test_fake_stream_endpoints | jq -r --arg e "${target##*:}" \
+    '.endpoints[] | select(.endpoint_id == $e) | .closed_by // empty')" = hub ] \
+    || fail "the undelivered kill did not leave the fake hub's record closed by the hub"
+
+  # Retrying a plain retirement sees that durable hub-close verdict before it
+  # can issue another DELETE, so the same override remains mandatory.
+  printf 'id=%s\nspawn_gen=spawn-retire-present\nretired_by=op\nretired_at=2026-01-01T00:00:00Z\nruntime_refusal_override=0\n' \
+    "$id" > "$dir/home/state/$id.endpoint-retired"
+  set +e
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_RUNTIME_LOG="$dir/runtime.log" PATH="$dir/fakebin:$PATH" \
+    "$TEARDOWN" "$id" --force > "$dir/retry.out" 2> "$dir/retry.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 71 ] \
+    || fail "a retried plain retirement must preserve the runtime-refusal status, got $rc: $(cat "$dir/retry.err")"
+  assert_present "$dir/home/state/$id.meta" \
+    "a retried plain retirement removed the hub-closed endpoint record"
 
   # The same retirement with the override field set proceeds past it.
   printf 'id=%s\nspawn_gen=spawn-retire-present\nretired_by=op\nretired_at=2026-01-01T00:00:00Z\nruntime_refusal_override=1\n' \
