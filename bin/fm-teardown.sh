@@ -183,9 +183,16 @@
 # removal so the operator can see what happened.
 #
 # Pre-teardown cleanup sequence (runs once every landed/discard-work safety
-# refusal above has already passed, and BEFORE any worktree return, branch
-# delete, or backend kill below - a still-active run or a leaked process may
-# own live work in that worktree):
+# refusal above has already passed, and BEFORE any worktree return or branch
+# delete below - a still-active run or a leaked process may own live work in
+# that worktree). The endpoint close runs first, ahead of every step below,
+# because the endpoint's own pane machinery - its interactive shell, which
+# ignores SIGTERM by design, and the idle pane-resident worker driver - is
+# owned by bin/fm-backend.sh's close path, not by the cwd-based reaper: run in
+# the old order, the reaper counted that machinery as leaked and forced its
+# kill (observed 2026-10-09, data/teardown-leaks-worktree-processes). The
+# close path itself may still need KILL for that shell; that is expected and
+# is not a leak finding.
 #   Fix 1 - conclude the task's own no-mistakes run. A ship task's worktree can
 #     be torn down while its no-mistakes pipeline run is still PARKED at a gate
 #     (awaiting_approval/fix_review/any awaiting_agent field), with no worker
@@ -3149,12 +3156,27 @@ else
 fi
 
 # Every landed/discard-work refusal above has now passed (or --force skipped
-# them). Fix 1 and Fix 2 (see script header) run here, unconditionally on
-# --force, and before ANY destructive step below - a still-parked run or a
-# leaked process can own live work in this exact worktree. Not for
-# kind=secondmate: a secondmate home's own runtime lifecycle is owned by the
-# dedicated process-event and firstmate-home removal machinery further below,
-# not by task-worktree cleanup.
+# them). The owning endpoint closes FIRST, before any worktree read or removal
+# step below, so the endpoint's own live machinery - its interactive shell and
+# the idle pane-resident worker driver - is taken down by the close path that
+# owns it rather than counted by the residual reaper as leaked processes (the
+# interactive shell ignores SIGTERM by design, so a reaper that reaches it
+# always ends in a forced kill and a false leak report; observed 2026-10-09 -
+# data/teardown-leaks-worktree-processes/report.md). The close path itself may
+# still need KILL for that shell, which is expected and is not a leak finding.
+# Not for kind=secondmate: a secondmate home's own runtime lifecycle is owned
+# by the dedicated process-event and firstmate-home removal machinery further
+# below, not by task-worktree cleanup.
+if [ "$KIND" != secondmate ]; then
+  fm_backend_kill "$BACKEND" "$T" "" "fm-$ID" \
+    && TASK_KILL_RC=0 || TASK_KILL_RC=$?
+  require_task_endpoint_gone "$TASK_KILL_RC" || exit 1
+  mark_pending_close_endpoint_confirmed || exit 1
+fi
+
+# Fix 1 and Fix 2 (see script header) run next, unconditionally on --force,
+# while the worktree and tasktmp still exist - a still-parked run or a leaked
+# process can own live work in this exact worktree.
 if [ "$KIND" != secondmate ] && teardown_owns_worktree; then
   conclude_task_no_mistakes_run "$WT"
   reap_task_worktree_processes worktree "$WT" "$TASK_TMP"
@@ -3195,10 +3217,6 @@ elif [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
   fm_treehouse_slot_owner_release "$WT" "$ID"
 fi
 
-fm_backend_kill "$BACKEND" "$T" "" "fm-$ID" \
-  && TASK_KILL_RC=0 || TASK_KILL_RC=$?
-require_task_endpoint_gone "$TASK_KILL_RC" || exit 1
-mark_pending_close_endpoint_confirmed || exit 1
 if [ "$KIND" != secondmate ]; then
   if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
       "$SCRIPT_DIR/fm-inactive-reconcile.sh" report "$ID"; then
