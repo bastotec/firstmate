@@ -190,13 +190,12 @@ STARTUP_BUDGET = 12.0
 # written in the task's home-owned state directory so no local path leaves the
 # machine.
 #
-# The bound is a FILE-COUNT cap, not a size cap: at most DIAGNOSTICS_FILES
-# files exist at once, the live one plus rotated .1 .. .(N-1) copies, each
-# rotated before its next append would exceed DIAGNOSTICS_MAX_BYTES. A size cap
-# alone needs someone to check it; a count cap holds even when the only writer
-# is the one appending. Rotation runs on the append path, so the bound is
-# enforced exactly where growth happens and never needs a timer or a second
-# process.
+# Retention combines a per-file size cap with a FILE-COUNT cap: at most
+# DIAGNOSTICS_FILES files exist at once, the live one plus rotated .1 ..
+# .(N-1) copies, each rotated before its next append would exceed
+# DIAGNOSTICS_MAX_BYTES. The count cap holds even when the only writer is the
+# one appending. Rotation runs on the append path, so the bound is enforced
+# exactly where growth happens and never needs a timer or a second process.
 DIAGNOSTICS_MAX_BYTES = 256 * 1024
 DIAGNOSTICS_FILES = 3
 
@@ -1621,10 +1620,9 @@ def main(argv: list) -> int:
     # The caller's capture of this agent's output exists to carry a refusal out
     # of a spawn that never registered. Registration succeeded, so the caller
     # has already unlinked it, and everything written from here would only grow
-    # a file nobody reads. The agent's own failures from this point - one line
-    # per failed publish, re-registration or stand-down, for the worker's whole
-    # life - go to the durable diagnostics file instead, which is rotated and
-    # bounded where stderr was neither.
+    # a file nobody reads. The agent's own post-start diagnostic events go to
+    # the durable diagnostics file instead, which is rotated and bounded where
+    # stderr was neither.
     _silence_diagnostics()
     hub.end_startup()
 
