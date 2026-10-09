@@ -676,12 +676,15 @@ test_a_kill_the_hub_cannot_answer_is_never_a_confirmed_stop() {
   # is not evidence the worker stopped, and a kill against one must read the
   # same as any other kill the hub could not deliver.
   start_case_hub unknownkill
-  local target out
+  local target out rc=0
   # A target the hub has never had, shaped exactly like a real one.
   target="$(with_stream_env fm_backend_stream_hub_tag):$(python3 -c 'import os; print(os.urandom(16).hex())')"
   # With the expected label, exactly as fm-teardown and fm-spawn call it.
-  out=$(with_stream_env fm_backend_kill stream "$target" "" "fm-gone-$$" 2>&1) \
-    && fail "a kill the hub could not answer must not report a confirmed stop"
+  rc=0
+  out=$(with_stream_env fm_backend_kill stream "$target" "" "fm-gone-$$" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "a kill the hub could not answer must not report a confirmed stop"
+  [ "$(with_stream_env fm_backend_kill_verdict "$rc")" = unconfirmed ] \
+    || fail "a hub with no record of the endpoint must read unconfirmed, got $(with_stream_env fm_backend_kill_verdict "$rc")"
   assert_contains "$out" "may still be running" \
     "an unanswerable kill should say the worker may still be running"
   # The reason matters as much as the verdict here. A restarted hub serves this
@@ -693,6 +696,38 @@ test_a_kill_the_hub_cannot_answer_is_never_a_confirmed_stop() {
   assert_contains "$out" "re-register" \
     "an unknown endpoint should name the re-registration window that produces it"
   pass "stream: a kill the hub cannot answer is reported as unconfirmed"
+}
+
+test_a_kill_the_hub_answered_but_its_agent_never_took_is_present() {
+  # The one answer that positively says the worker is still there: the hub
+  # answered the kill and reported that the endpoint's own agent never
+  # acknowledged it. Cleanup's retirement gates treat that differently from a
+  # backend that cannot answer, so it is the contract's still-present verdict
+  # (3), never the unconfirmed one. A partitioned agent - paused, so it cannot
+  # acknowledge - is the real shape that produces a delivered: false answer
+  # from a healthy hub.
+  start_case_hub killpresent
+  local label target endpoint agent out rc=0
+  label="fm-present-$$"
+  target=$(create_endpoint "$label")
+  endpoint=${target##*:}
+  agent=$(agent_pid_for "$label")
+  [ -n "$agent" ] || fail "the publishing agent should be running"
+  kill -STOP "$agent" || fail "could not pause the agent"
+  out=$(with_stream_env fm_backend_kill stream "$target" "" "$label" 2>&1) || rc=$?
+  kill -CONT "$agent" || fail "could not resume the agent"
+  [ "$rc" -eq 3 ] \
+    || fail "a kill the hub answered with its agent never taking it must be the still-present verdict (3), got $rc: $out"
+  [ "$(with_stream_env fm_backend_kill_verdict "$rc")" = present ] \
+    || fail "the delivered: false answer must read present"
+  assert_contains "$out" "never acknowledged the kill" \
+    "the still-present answer should say the agent never acknowledged it"
+  assert_contains "$out" "may still be running" \
+    "the still-present answer should say the worker may still be running"
+  # Cleanup: the paused agent could not take the kill, so close the endpoint
+  # for real now that it can answer again.
+  with_stream_env fm_backend_kill stream "$target" "" "$label" >/dev/null 2>&1 || true
+  pass "stream: a kill the hub answered but its agent never took reports the endpoint still present"
 }
 
 test_a_404_stays_unconfirmed_however_long_the_hub_has_been_up() {
@@ -1479,6 +1514,7 @@ test_an_agent_reported_exit_still_reads_dead_once_the_state_is_stale
 test_a_forced_close_gives_way_to_the_agents_own_later_report
 test_kill_closes_the_exact_endpoint_and_leaves_its_sibling
 test_only_a_close_the_agent_reported_counts_as_a_stop
+test_a_kill_the_hub_answered_but_its_agent_never_took_is_present
 test_a_kill_the_hub_cannot_answer_is_never_a_confirmed_stop
 test_a_404_stays_unconfirmed_however_long_the_hub_has_been_up
 test_an_answer_the_adapter_cannot_read_is_never_a_stop

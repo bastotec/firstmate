@@ -43,8 +43,11 @@
 # gate, which runs before
 # anything on disk has been touched, and the unconfirmed-kill gate, which is
 # the whole point of the command and its honest cost - the records go even when
-# the backend answered that the endpoint is still there after its kill, on the
-# operator's assertion alone. Work on disk is not the record this retires, so
+# the backend could not say whether the endpoint stopped, on the operator's
+# assertion alone. The backend answering POSITIVELY that the endpoint is still
+# there after its kill is the separate, louder refusal only
+# --override-runtime-refusal proceeds past, exactly as cleanup's own gates
+# treat it. Work on disk is not the record this retires, so
 # the records are retired and the worktree, its uncommitted work, the task
 # branch and the task's data are all left exactly as they were, and
 # named in the output - an operator who retires a record must never thereby
@@ -55,7 +58,7 @@
 # Every OTHER refusal stands and stops the retirement, because each protects
 # something no retirement has a say over: an outcome that never reached the
 # parent channel and must stay retryable, a backlog transition that cannot be
-# replayed.
+# replayed, a runtime refusal only --override-runtime-refusal proceeds past.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -82,7 +85,7 @@ fi
 
 usage() {
   cat <<'EOF'
-usage: fm-retire-endpoint.sh <task-id> [<task-id>...]
+usage: fm-retire-endpoint.sh [--override-runtime-refusal] <task-id> [<task-id>...]
        FM_HOME=<owning-home> fm-retire-endpoint.sh --finished <task-id> [<task-id>...]
        FM_HOME=<owning-home> fm-retire-endpoint.sh --orphan <task-id> [--endpoint <endpoint-id>]
        FM_HOME=<owning-home> fm-retire-endpoint.sh --list-orphans
@@ -114,13 +117,19 @@ What this reaches, exactly:
 
   The second is cleanup's unconfirmed-kill gate, and it is this command's
   honest cost: the task record and its backlog row are retired even when the
-  backend answered that the endpoint is STILL THERE after its kill - no further
-  flag is required, and your assertion is the only thing standing behind the
-  removal. Cleanup cannot tell you which it is: a backend that answers "still
-  there" and a backend that cannot answer at all reach cleanup as the same
+  backend could not say whether the endpoint stopped - no further flag is
+  required, and your assertion is the only thing standing behind the removal.
+  Cleanup cannot tell you which it is: a backend that cannot answer at all and
+  one that answered but said nothing readable reach cleanup as the same
   unconfirmed verdict, so its warning claims neither and says only that the
   endpoint was never confirmed gone. A worker may still be running behind the
   record you are removing, and stopping it is then yours to do.
+
+  --override-runtime-refusal additionally overrides a RUNTIME's own refusal to
+  answer for this task's endpoint: the backend answering that the endpoint is
+  still present after its kill. Without the flag that refusal stands and
+  nothing is retired. The override is recorded with your name and the time,
+  exactly like the retirement itself.
 
   Every other refusal stands and nothing is retired - an outcome that has not
   reached the parent channel, a backlog transition that cannot be replayed.
@@ -190,6 +199,7 @@ refuse() {
 
 IDS=()
 FINISHED=0
+OVERRIDE_RUNTIME_REFUSAL=0
 ORPHAN=0
 LIST_ORPHANS=0
 ORPHAN_ENDPOINT=
@@ -203,6 +213,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     --finished)
       FINISHED=1
+      ;;
+    --override-runtime-refusal)
+      OVERRIDE_RUNTIME_REFUSAL=1
       ;;
     --orphan)
       ORPHAN=1
@@ -233,6 +246,7 @@ done
 
 if [ "$ORPHAN" = 1 ] || [ "$LIST_ORPHANS" = 1 ]; then
   [ "$FINISHED" = 0 ] || refuse "--finished retires task records; --orphan and --list-orphans close endpoints that have none - use one mode"
+  [ "$OVERRIDE_RUNTIME_REFUSAL" = 0 ] || refuse "--override-runtime-refusal retires task records; --orphan and --list-orphans close endpoints that have none - use one mode"
   [ "$ORPHAN" = 0 ] || [ "$LIST_ORPHANS" = 0 ] || refuse "use --orphan or --list-orphans, not both"
   [ -n "$FM_HOME_EXPLICIT" ] \
     || refuse "--orphan and --list-orphans need an explicit FM_HOME naming the home whose leftover endpoints these are"
@@ -257,6 +271,12 @@ fi
   usage >&2
   refuse "name at least one task id to retire"
 }
+
+# The finished-work sweep is firstmate's own automatic path, and the runtime
+# override is an operator's verified assertion: combining them would let an
+# automatic retirement carry a louder assertion than its evidence supports.
+[ "$OVERRIDE_RUNTIME_REFUSAL" = 0 ] || [ "$FINISHED" = 0 ] \
+  || refuse "--override-runtime-refusal is an operator's assertion and cannot ride the automatic --finished sweep"
 
 for id in "${IDS[@]}"; do
   [ -f "$STATE/$id.meta" ] && [ ! -L "$STATE/$id.meta" ] \
@@ -482,9 +502,12 @@ report_partial_cleanup() {  # <id> <status>
   fi
 }
 
-# bin/fm-teardown.sh's work-protection refusal status, raised before anything
-# on disk has been touched. Only operator mode proceeds past this refusal;
-# --finished stops here.
+# bin/fm-teardown.sh's own statuses: the runtime refusal this retirement did
+# not override, and the work-protection refusal - the only one it proceeds
+# past, raised before anything on disk has been touched. Only operator mode
+# proceeds past the work gate; --finished stops there and never carries the
+# runtime-refusal override, which the argument guard refuses up front.
+RUNTIME_REFUSAL_EXIT=71
 WORK_GATE_EXIT=72
 
 # The durable answer to "who asserted this stop, and when". The retirement note
@@ -503,8 +526,8 @@ RETIREMENT_LOG="$STATE/endpoint-retirements.log"
 record_retirement_assertion() {  # <id>
   local basis=
   [ "$FINISHED" = 0 ] || basis=$'\tbasis=finished-work'
-  printf '%s\tasserted\t%s\tby=%s%s\n' \
-    "$retired_at" "$1" "$retired_by" "$basis" >> "$RETIREMENT_LOG"
+  printf '%s\tasserted\t%s\tby=%s\toverride_runtime_refusal=%s%s\n' \
+    "$retired_at" "$1" "$retired_by" "$OVERRIDE_RUNTIME_REFUSAL" "$basis" >> "$RETIREMENT_LOG"
 }
 
 retired_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -524,11 +547,18 @@ for id in "${IDS[@]}"; do
     printf 'spawn_gen=%s\n' "$(fm_meta_get "$STATE/$id.meta" spawn_gen)"
     printf 'retired_by=%s\n' "$retired_by"
     printf 'retired_at=%s\n' "$retired_at"
+    printf 'runtime_refusal_override=%s\n' "$OVERRIDE_RUNTIME_REFUSAL"
   } > "$NOTE"
+  if [ "$OVERRIDE_RUNTIME_REFUSAL" = 1 ]; then
+    echo "note: $id is being retired with a runtime refusal overridden by $retired_by at $retired_at" >&2
+  fi
   teardown_rc=0
   "$SCRIPT_DIR/fm-teardown.sh" "$id" || teardown_rc=$?
   if [ "$teardown_rc" = 0 ]; then
     echo "note: $id retired; cleanup completed under the retirement recorded for $retired_by at $retired_at" >&2
+  elif [ "$teardown_rc" = "$RUNTIME_REFUSAL_EXIT" ]; then
+    status=1
+    echo "error: $id's runtime reported the endpoint still present and this retirement did not override that; nothing was retired - rerun with --override-runtime-refusal if you have verified no worker is still running behind it" >&2
   elif [ "$teardown_rc" = "$WORK_GATE_EXIT" ] && [ "$FINISHED" = 1 ]; then
     status=1
     echo "error: cleanup for $id refused over unlanded or uncommitted work in its worktree, so it is not finished; nothing was retired, and this is the captain's decision" >&2

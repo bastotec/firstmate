@@ -778,7 +778,9 @@ fm_backend_stream_agent_pids() {  # <target>
 # Return contract: bin/fm-backend.sh's fm_backend_kill header owns it. This is
 # the adapter the contract was written from: the hub already distinguishes a
 # kill the endpoint's own agent acknowledged from one it only presumed, and
-# every unacknowledged answer here is the contract's unconfirmed result.
+# the kill the hub answered and its agent never acknowledged is the contract's
+# still-present result, while every other unacknowledged answer here is the
+# contract's unconfirmed result.
 # A target tagged for a hub other than the configured one is unconfirmed rather
 # than gone: a worker on a hub that cannot be reached is a worker nothing has
 # proved stopped. A malformed string is the contract's unsupported result
@@ -855,9 +857,16 @@ fm_backend_stream_kill() {  # <target> [unused] [expected-label]
   case "$(printf '%s' "$out" | jq -r '.delivered' 2>/dev/null)" in
     true) return 0 ;;
     false)
+      # A delivered: false answer is the backend speaking positively: the hub
+      # answered the kill and the endpoint's own agent never acknowledged it,
+      # so the kill is still undelivered with the worker it named still there
+      # behind the record. That positive answer is what the still-present
+      # verdict exists to carry, because a plain retirement may not remove a
+      # record a backend says is alive; an unreadable answer is the one that
+      # stays unconfirmed.
       echo "error: the stream hub closed its record for $FM_BACKEND_STREAM_ENDPOINT," \
            "but its agent never acknowledged the kill; the worker may still be running" >&2
-      return 2
+      return 3
       ;;
     *)
       echo "error: the stream hub's answer to the kill for $FM_BACKEND_STREAM_ENDPOINT could not be" \
