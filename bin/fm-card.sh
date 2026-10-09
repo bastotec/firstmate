@@ -228,10 +228,10 @@ cmd_draft() {
 # its hold kind, and an id is a slug, so neither needs CSV decoding.
 captain_held_ids() {
   local listed
-  listed=$(tasks list --state held --fields hold_kind 2>/dev/null) \
+  listed=$(tasks list --fields hold_kind 2>/dev/null) \
     || die "cannot list this home's captain calls; refusing to read that as none"
   printf '%s\n' "$listed" \
-    | sed -n 's/^  \([A-Za-z0-9._-][A-Za-z0-9._-]*\),.*,captain$/\1/p'
+    | sed -n '/^  [^,]*,done,/d; s/^  \([A-Za-z0-9._-][A-Za-z0-9._-]*\),.*,captain$/\1/p'
 }
 
 cmd_backfill() {

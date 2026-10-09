@@ -186,6 +186,37 @@ test_backfill_drafts_every_uncarded_captain_hold() {
   pass "fm-card: backfill drafts a card for every uncarded captain hold, once"
 }
 
+test_expired_deferral_is_backfilled_and_listed_by_drafts() {
+  local home out show
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home expired-backfill)
+  tasks_in "$home" add past-a "Deferred call, now due" --repo cadia >/dev/null
+  tasks_in "$home" hold past-a --reason "Pick the language rule" --kind captain --until 2000-01-01 >/dev/null
+  show=$(tasks_in "$home" show past-a --full)
+  assert_contains "$show" "held: no" "the date gate has expired"
+  assert_contains "$show" "hold_kind: captain" "the captain call remains annotated"
+  run_captain "$home" open past-a || fail "expired deferral must remain an open captain call"
+  tasks_in "$home" add closed-b "Already closed" --repo cadia >/dev/null
+  tasks_in "$home" hold closed-b --reason "An old call" --kind captain >/dev/null
+  tasks_in "$home" done closed-b >/dev/null
+  out=$(run_card "$home" drafts) || fail "drafts failed before backfill"
+  assert_contains "$out" "past-a" "an expired call without a card is listed"
+  assert_not_contains "$out" "closed-b" "a closed captain call is not listed"
+  assert_absent "$home/state/cards/past-a.json" "drafts remains read-only"
+  out=$(run_card "$home" backfill) || fail "backfill failed"
+  assert_contains "$out" "drafted: past-a" "the expired call is backfilled"
+  assert_absent "$home/state/cards/closed-b.json" "a closed captain call is not backfilled"
+  show=$(run_card "$home" show past-a) || fail "backfilled card is absent"
+  assert_equals true "$(printf '%s' "$show" | jq -r .draft)" "backfill writes a draft"
+  assert_equals "Pick the language rule" "$(printf '%s' "$show" | jq -r .situation)" "the hold reason is preserved"
+  out=$(run_card "$home" drafts) || fail "drafts failed after backfill"
+  assert_contains "$out" "past-a"$'\t'"Deferred call, now due" "the expired call's draft is listed with its title"
+  assert_not_contains "$out" "closed-b" "a closed captain call stays excluded"
+  out=$(run_card "$home" backfill) || fail "repeated backfill failed"
+  assert_equals "" "$out" "expired-call backfill is idempotent"
+  pass "fm-card: expired captain deferrals remain backfilled and listed while closed calls stay excluded"
+}
+
 run_captain() {  # <home> <command args...>
   local home=$1
   shift
@@ -631,6 +662,7 @@ test_rejects_unsafe_task_ids
 test_remove_is_idempotent
 test_draft_never_overwrites_a_full_card
 test_backfill_drafts_every_uncarded_captain_hold
+test_expired_deferral_is_backfilled_and_listed_by_drafts
 test_hold_without_card_writes_a_draft
 test_hold_with_card_file_writes_the_full_card
 test_hold_refuses_an_invalid_card_before_holding
