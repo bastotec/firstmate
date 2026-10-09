@@ -66,7 +66,10 @@ runs that executable with "<METHOD> <route-tail>" (tail empty for the task
 itself) before every owner-authenticated request to the endpoint's task routes,
 for a suite to observe or stall reads; {"busy_reads": n} makes the next n process
 reads report an unattributable non-shell foreground ("node"), as a just-created
-shell still running its rc files, before the real one; POST /v1/test/config
+shell still running its rc files, before the real one; {"miss_first": n} makes
+the next n task-description reads answer 404, an endpoint whose re-registration
+after a hub restart has not landed yet, before the endpoint answers normally;
+POST /v1/test/config
 {"task_routes_unavailable": true} makes every task route answer 503 from then
 on, a hub that stopped answering;
 {"fail_text": "substring"} refuses only a text containing it;
@@ -119,7 +122,7 @@ KNOBS = ("foreground", "alive", "stale", "closed_by", "composer", "history",
          "clear_repaints", "dead_on_clear", "cursor_row", "screen_rows", "cwd", "on_text", "fail_input",
          "kill_undelivered", "fail_text", "fail_capture", "capture_fail_after", "swallow_keys",
          "fail_submit_text", "on_request", "busy_reads", "fail_text_and_exit",
-         "tick_format", "tick_base", "tick_file", "on_kill")
+         "tick_format", "tick_base", "tick_file", "on_kill", "miss_first")
 STATUS_STATES = ("working", "needs-decision", "blocked", "paused", "done",
                  "failed", "resolved")
 
@@ -535,6 +538,15 @@ class Stub(http.server.BaseHTTPRequestHandler):
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL)
             if method == "GET" and tail == "":
+                # A rejoining worker, from the hub's side: the registry lost
+                # the endpoint to a restart and answers 404 until its agent
+                # registers again. miss_first makes the next n task reads do
+                # exactly that, so a suite can hold a probe inside the window
+                # deterministically rather than racing a real re-registration.
+                if int(endpoint.get("miss_first") or 0) > 0:
+                    endpoint["miss_first"] = int(endpoint["miss_first"]) - 1
+                    self._refuse(404, "no_such_endpoint", "no endpoint %s" % endpoint_id)
+                    return
                 self._json(200, {"ok": True, "task": self._describe(endpoint)})
             elif method == "GET" and tail in ("capture", "screen") and self._capture_refused(endpoint):
                 self._refuse(502, "capture_failed", "the screen of %s could not be read" % endpoint_id)
