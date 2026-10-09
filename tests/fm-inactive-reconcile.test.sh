@@ -32,7 +32,7 @@ make_tools() { # <world>
   mkdir -p "$fake"
   cat > "$fake/fm-crew-state.sh" <<'SH'
 #!/usr/bin/env bash
-printf 'state: %s · source: fake\n' "${FM_FAKE_CREW_STATE:-unknown}"
+printf 'state: %s · source: fake%s\n' "${FM_FAKE_CREW_STATE:-unknown}" "${FM_FAKE_CREW_STATE_DETAIL:+ · ${FM_FAKE_CREW_STATE_DETAIL}}"
 SH
   cat > "$fake/tmux" <<'SH'
 #!/usr/bin/env bash
@@ -399,6 +399,39 @@ test_secondmate_remote_route_ledger_delivery() {
   [ "$(grep -c 'child-outcome-child-done' "$MATE/state/parent-replies.status")" = 1 ] \
     || fail "remote ledger delivery was not once-only: $(cat "$MATE/state/parent-replies.status" 2>/dev/null)"
   pass "the remote route carries a child's ledger line once"
+}
+
+# The 2026-10-09 incident, publication side: a child whose current-state reader
+# reports a terminal verdict with a recorded cause (the run record's
+# `error: daemon shutting down`, surfaced by bin/fm-crew-state.sh's detail)
+# must publish that cause on the parent line, so an infrastructure kill is
+# self-evident to any reader instead of reading as an unexplained failure.
+test_inactive_delivery_carries_the_run_recorded_error() {
+  make_world inactive-error; bind_secondmate local
+  write_child "$MATE" child 'working: mid-validation'
+  FM_FAKE_CREW_STATE='failed' FM_FAKE_CREW_STATE_DETAIL='run failed - daemon shutting down' \
+    run_reconcile "$MATE" --startup
+  grep -Fq "failed [key=inactive-outcome-mate-child-failed]: inactive terminal child=child fingerprint=" \
+    "$MAIN/state/mate.status" \
+    || fail "the inactive path did not deliver its terminal line: $(cat "$MAIN/state/mate.status" 2>/dev/null)"
+  grep -Fq "error=run failed - daemon shutting down" "$MAIN/state/mate.status" \
+    || fail "the parent line dropped the run's recorded cause: $(cat "$MAIN/state/mate.status" 2>/dev/null)"
+  [ "$(outcome_count "$MATE" reported)" = 1 ] || fail "the inactive delivery left no durable receipt"
+  pass "an inactive terminal delivery carries the run's recorded error"
+}
+
+# A reader detail that names no cause adds nothing: the parent line stays in
+# its bare shape so the error field means "recorded cause", not "any detail".
+test_inactive_delivery_without_detail_keeps_the_bare_line() {
+  make_world inactive-bare; bind_secondmate local
+  write_child "$MATE" child 'working: mid-validation'
+  FM_FAKE_CREW_STATE='failed' run_reconcile "$MATE" --startup
+  grep -Fq "failed [key=inactive-outcome-mate-child-failed]: inactive terminal child=child fingerprint=" \
+    "$MAIN/state/mate.status" \
+    || fail "the inactive path did not deliver its terminal line: $(cat "$MAIN/state/mate.status" 2>/dev/null)"
+  ! grep -Fq 'error=' "$MAIN/state/mate.status" \
+    || fail "a detail-less read fabricated an error field: $(cat "$MAIN/state/mate.status" 2>/dev/null)"
+  pass "an inactive terminal delivery without a recorded cause stays bare"
 }
 
 # `report <child>` is the teardown-side delivery: it delivers or says nothing
@@ -831,6 +864,8 @@ test_progress_after_inactive_delivery_starts_a_new_event
 test_long_terminal_lines_have_distinct_receipts
 test_secondmate_partial_ledger_line_waits_for_newline
 test_secondmate_remote_route_ledger_delivery
+test_inactive_delivery_carries_the_run_recorded_error
+test_inactive_delivery_without_detail_keeps_the_bare_line
 test_report_subcommand_delivers_and_refuses
 test_report_avoids_scan_meta_lock_inversion
 test_local_secondmate_rejects_relative_parent_home
