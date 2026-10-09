@@ -1896,8 +1896,9 @@ $dir_pids"
 # - both unique per task and never shared - before either is removed. TERM
 # first, then KILL after a short grace period for anything still alive; a
 # process that exits on its own between the two passes is simply absent from
-# the recheck. A missing lsof skips the reap with a warning (the endpoint kill
-# below still runs); an lsof scan error refuses before destructive teardown.
+# the recheck. A missing lsof skips the reap with a warning. An lsof scan error
+# refuses further cleanup; on ordinary teardown the endpoint is already closed,
+# so the stopped worker and unfinished teardown marker remain for retry.
 reap_task_worktree_processes() {  # <label> <dir>...
   local label=$1 pids pid identity current_pids i pass=1 max_passes=3
   local -a tracked_pids tracked_identities remaining_pids remaining_identities
