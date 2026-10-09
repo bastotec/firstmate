@@ -8,8 +8,6 @@
 #                                         [--effort <level>] [--unless-held-stopped]
 #                                         (--note <text> | --note-file <path>)
 #        fm-control.sh <task-id> reincarnate
-#                                         [--harness <name>] [--model <name>]
-#                                         [--effort <level>]
 #                                         (--note <text> | --note-file <path>)
 #        fm-control.sh <task-id> recover-missing
 #                                         [--harness <name>] [--model <name>]
@@ -119,15 +117,17 @@
 #              and naming it for such a harness still refuses with "deck has no
 #              effort control".
 #
-#   reincarnate Continue a retired-backend task on a fresh stream endpoint in
-#              the SAME clean worktree, using recover-missing's transaction and
-#              fm-spawn --relaunch. Requires a supported recorded harness and
-#              read-only proof of zero task-anchored Deck drivers, even if the
-#              old window is gone. Refuses an absent or dirty copy, an unproven
-#              stop, or a copy shared by another live or unproven record.
-#              The task id, backlog row, history, and non-endpoint metadata
-#              survive. No old endpoint is driven or stopped. The replacement
-#              profile and required progress note follow recover-missing.
+#   reincarnate Continue a retired-backend ship or scout on a fresh stream
+#              endpoint in the SAME clean worktree, using recover-missing's
+#              transaction and fm-spawn --relaunch. Requires a supported
+#              recorded harness, read-only proof that the exact retired
+#              endpoint is absent, and zero task-anchored Deck drivers.
+#              Missing tools or unreadable endpoint inventory refuse, as do an
+#              absent or dirty copy, an unproven stop, or a copy shared by
+#              another live or unproven record. The task id, backlog row,
+#              history, and non-endpoint metadata survive. No old endpoint is
+#              driven or stopped. The recorded profile is preserved; only the
+#              required progress note follows recover-missing.
 #              After rebind, a failed handoff retains the new stream binding
 #              for reconciliation, exactly as recover-missing does.
 #
@@ -352,12 +352,16 @@ if [ -n "$control_want_value" ]; then
 fi
 
 case "$VERB" in
-  relaunch|recover-missing|reincarnate) ;;
+  relaunch|recover-missing) ;;
   *)
-    [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
+    [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] \
       && [ "$UNLESS_HELD_STOPPED" = 0 ] \
-      || die "--harness, --model, --effort, and --note apply to 'relaunch', 'recover-missing', or 'reincarnate' only"
+      || die "--harness, --model, and --effort apply to 'relaunch' and 'recover-missing' only"
     ;;
+esac
+case "$VERB" in
+  relaunch|recover-missing|reincarnate) ;;
+  *) [ "$NOTE_SET" = 0 ] || die "--note applies to 'relaunch', 'recover-missing', or 'reincarnate' only" ;;
 esac
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
@@ -450,6 +454,10 @@ fm_control_harness_supported "$HARNESS" \
   || die "task $ID records harness '${RECORDED_HARNESS:-none}', which has no verified control mechanics; fm-control refuses to guess an interrupt key or exit command"
 
 if [ "$VERB" = reincarnate ]; then
+  case "$KIND" in
+    ship|scout) ;;
+    *) die "reincarnate supports ship and scout work items only, not '$KIND'" ;;
+  esac
   fm_backend_is_retired "$BACKEND" \
     || die "reincarnate requires a retired backend record; use relaunch for $BACKEND"
 else
@@ -1247,7 +1255,10 @@ recover_stream_endpoint() {  # <label> <cwd>
 
 # Read-only retirement proof: never signal an old driver or drive its backend.
 prove_retired_task_stopped() {  # <id>
+  local meta="$STATE/$1.meta"
   python3 "$SCRIPT_DIR/fm-deck-stop.py" "$STATE" "$1" --prove-stopped \
+    "$(fm_backend_of_meta "$meta")" "$(fm_meta_get "$meta" window)" \
+    "$(fm_meta_get "$meta" herdr_workspace_id)" \
     || die "task $1's stop is not proven; refusing reincarnate"
 }
 

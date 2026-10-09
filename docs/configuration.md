@@ -152,7 +152,7 @@ New local spawns select an explicitly authorized per-task `--backend` first, the
 A per-task override requires a current captain instruction or the task's accepted brief and never establishes precedent for later tasks.
 Any selection other than `stream` is refused, and the earlier `zellij`, `orca`, and `cmux` adapters remain unsupported.
 A task record on the retired `tmux` or `herdr` backend, including a record with no `backend=` field, stays readable for reconciliation and retirement: the recovery classifier reports `unverified`, its kill is unconfirmed, and ordinary relaunch is refused.
-[`reincarnate`](agent-control.md#verbs) is the supported owner continuation for proven-stopped retired records; the [`fm-control.sh` header](../bin/fm-control.sh) owns its proof, clean-copy, ownership, and refusal contract.
+[`reincarnate`](agent-control.md#verbs) is the supported owner continuation for proven-stopped retired ship/scout records; the [`fm-control.sh` header](../bin/fm-control.sh) owns its proof, clean-copy, ownership, and refusal contract.
 [Endpoint retirement](stream-backend.md#retiring-a-record-no-backend-can-answer-for) owns the operator assertion required to retire such a record with [`bin/fm-retire-endpoint.sh`](../bin/fm-retire-endpoint.sh), and the owning mate's `--finished` path for its own finished work.
 A stream endpoint the hub still lists live after its task record is gone is closed only by `bin/fm-retire-endpoint.sh --orphan`, which [the same section](stream-backend.md#retiring-a-record-no-backend-can-answer-for) points to.
 `fm-spawn.sh` spawns local ship, scout, and `--secondmate` tasks on stream, and [remote placement](remote-secondmates.md#normal-operation) owns remote secondmates.

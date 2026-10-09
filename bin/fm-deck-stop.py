@@ -2,9 +2,11 @@
 """Stop local Deck drivers for one exact task at a lifecycle boundary.
 
 Usage: fm-deck-stop.py STATE TASK TIMEOUT
-       fm-deck-stop.py STATE TASK --prove-stopped
+       fm-deck-stop.py STATE TASK --prove-stopped [BACKEND TARGET WORKSPACE]
 The read-only --prove-stopped mode refuses any anchored non-zombie driver,
-including non-process-group leaders, without sending a signal.
+including non-process-group leaders, without sending a signal. When supplied,
+a retired BACKEND requires independent endpoint absence from its inventory;
+missing tools, unreadable inventory, and present endpoints all refuse.
 Matches the driver's launch arguments, never brief text, generation, or pane
 output. Only a driver leading its own process group may be stopped. TERM stops
 the driver and its active Deck child; Deck 0.1.0 exits immediately and may
@@ -15,6 +17,7 @@ backend endpoint proof.
 """
 import ctypes
 import errno
+import json
 import math
 import os
 import signal
@@ -256,6 +259,55 @@ def stop(state, task, timeout):
         time.sleep(0.05)
 
 
+def prove_endpoint_absent(backend, target, workspace):
+    if backend == "stream":
+        return
+    environment = dict(os.environ, LC_ALL="C")
+    if backend == "tmux":
+        result = subprocess.run(
+            ["tmux", "list-windows", "-a", "-F", "#{session_name}:#{window_name}"],
+            capture_output=True, text=True, timeout=5, env=environment,
+        )
+        if result.returncode == 0:
+            if target in result.stdout.splitlines():
+                raise RuntimeError(f"retired endpoint {target} is still present")
+            return
+        error = result.stderr.strip()
+        if result.returncode == 1 and (
+            error.startswith("no server running on ")
+            or (error.startswith("error connecting to ")
+                and error.endswith(" (No such file or directory)"))
+        ):
+            return
+        raise RuntimeError(f"retired endpoint inventory is unreadable: {error}")
+    if backend == "herdr":
+        session, pane = target.split(":", 1)
+        environment["HERDR_SESSION"] = session
+        status = json.loads(subprocess.check_output(
+            ["herdr", "status", "--json", "--session", session],
+            text=True, timeout=5, env=environment,
+        ))
+        running = status.get("server", {}).get("running")
+        if running is False:
+            return
+        if running is True:
+            inventory = json.loads(subprocess.check_output(
+                ["herdr", "pane", "list", "--workspace", workspace,
+                 "--session", session],
+                text=True, timeout=5, env=environment,
+            ))
+            panes = inventory.get("result", {}).get("panes")
+            if isinstance(panes, list) and all(
+                isinstance(row, dict) and isinstance(row.get("pane_id"), str)
+                and row["pane_id"] for row in panes
+            ):
+                if any(row["pane_id"] == pane for row in panes):
+                    raise RuntimeError(f"retired endpoint {target} is still present")
+                return
+        raise RuntimeError(f"retired endpoint inventory is unreadable: {target}")
+    raise RuntimeError(f"unsupported endpoint proof backend: {backend}")
+
+
 def prove_stopped(state, task):
     """Read-only proof, including drivers that do not lead a process group."""
     state = os.path.realpath(state)
@@ -274,11 +326,14 @@ if __name__ == "__main__":
     try:
         if sys.argv[3] == "--prove-stopped":
             prove_stopped(sys.argv[1], sys.argv[2])
+            if len(sys.argv) > 4:
+                prove_endpoint_absent(sys.argv[4], sys.argv[5], sys.argv[6])
         else:
             stop(sys.argv[1], sys.argv[2], float(sys.argv[3]))
     except (
         IndexError,
         ValueError,
+        AttributeError,
         OSError,
         subprocess.SubprocessError,
         RuntimeError,
