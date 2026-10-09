@@ -28,9 +28,10 @@
 # NOTE: this uses the silent `open` and `deferred` predicates and their
 # 0/1/2 exit-code contracts. The optional `--identity` output that bin/fm-watch.sh
 # asks for prints only on an exit 0 and changes nothing read here.
-# The same pending-close record carries that intent as
-# `mode=retain`, so an interrupted cleanup replays the retention rather than a
-# close. "Cannot tell" refuses before any destructive step, --force does not
+# The same pending-close record carries that intent as `mode=retain`;
+# bin/fm-backlog-transition-lib.sh owns when an interrupted cleanup is held for
+# a teardown rerun or becomes replayable as a retention rather than a close.
+# "Cannot tell" refuses before any destructive step, --force does not
 # lift the deferral (it authorizes discarding unlanded WORK, never the
 # captain's question), and bin/fm-captain-hold.sh answer stays the only act
 # that closes the call.
