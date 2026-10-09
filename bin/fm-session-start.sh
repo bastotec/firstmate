@@ -39,7 +39,10 @@
 #                       available, idempotently drafts a card for every
 #                       uncarded open captain call when locked (bin/fm-card.sh
 #                       backfill) and, in either mode, lists calls whose card
-#                       is still a draft or missing for this home to finish.
+#                       is still a draft or missing for this home to finish,
+#                       then every open captain call (bin/fm-card.sh calls) so
+#                       a call the captain already answered is recorded
+#                       rather than asked again.
 #   3. wake-drain     - presents durable wakes and advances recovery handling
 #                       state, so it only runs when locked. The local bounded
 #                       inactive-outcome startup scan runs in the deferred worker.
@@ -564,6 +567,16 @@ else
     fi
   else
     printf 'actionable: listing draft decision cards failed: %s\n' "$CARD_DRAFTS_OUT"
+  fi
+  if CARD_CALLS_OUT=$("$SCRIPT_DIR/fm-card.sh" calls 2>&1); then
+    if [ -n "$CARD_CALLS_OUT" ]; then
+      printf 'Open captain calls. If the captain already answered one, record his words instead of asking again;\n'
+      printf 'an answer to wait until something happens settles it with bin/fm-captain-hold.sh answer <id>\n'
+      printf -- '--decision-file <file> --defer <condition> (captain-hold-lifecycle owns how):\n'
+      printf '%s\n' "$CARD_CALLS_OUT"
+    fi
+  else
+    printf 'actionable: listing open captain calls failed: %s\n' "$CARD_CALLS_OUT"
   fi
 fi
 

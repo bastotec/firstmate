@@ -22,8 +22,8 @@
 # Usage:
 #   fm-captain-hold.sh hold <task-id> --reason <reason> \
 #     [--title <title>] [--repo <repo>] [--origin <origin-id>] [--until YYYY-MM-DD] \
-#     [--card-file <path>]
-#   fm-captain-hold.sh answer <task-id> --decision-file <path> [--release]
+#     [--card-file <path>] [--reopen-deferred]
+#   fm-captain-hold.sh answer <task-id> --decision-file <path> [--release | --defer <condition>]
 #   fm-captain-hold.sh answers [<legacy-origin> | --any-origin] --source <provenance>   (keyed answers on stdin)
 #   fm-captain-hold.sh reconcile-requests --source-id <source-id> --source <provenance>   (task ids on stdin)
 #   fm-captain-hold.sh bind <source-id> [<legacy-origin> | --any-origin]
@@ -53,7 +53,9 @@
 # With --card-file the card is validated before any backlog change and written
 # once the hold is durable; without it a draft card is written from the title,
 # repo and reason. Repeating an active hold without --card-file keeps an existing
-# card, while a new hold replaces any leftover card.
+# card only while the reason is unchanged; a changed reason replaces it with a
+# draft from the new reason, so options written for the old reason never stay
+# in front of the captain. A new hold replaces any leftover card.
 # Card-write failures after a durable hold only warn; successful closes and
 # releases remove the card, including answer repairs and matching replays.
 # A removal failure warns without reversing the durable resolution; replay
@@ -76,6 +78,21 @@
 # answered captain call. A hold that expired by date (`--until` in the past) is
 # still answerable: the surviving hold annotations, not tasks-axi's live
 # `held:` bit, prove the captain owned it.
+#
+# `--defer <condition>` records an answer that waits on a condition rather
+# than a date ("wait until needed", "keep waiting", "do it when X happens").
+# The call is settled, so it stops being a captain hold: the record carries
+# mode `deferred` and the captain's words, the hold becomes a `parked` hold
+# owned by this home with the condition as its one-line reason (no
+# parentheses), and the card goes. Backfill, drafts and the stale sweep only
+# read captain holds, so a deferred task is never carded or listed again.
+# An exact retry finishes an interrupted deferral; a different answer, or any
+# other close mode, on a deferred task is refused rather than re-opening it.
+# When the condition fires and the captain must choose again, `hold
+# --reopen-deferred` starts a fresh call with a new stamp and card; a plain
+# `hold` on a deferred task is refused, so restating a standing answer can
+# never put it back in front of the captain. `--reopen-deferred` is refused
+# on a task whose newest record is not a deferral.
 #
 # ONE KEYED-ANSWER INTAKE, FED BY EVERY CHANNEL.
 # "A keyed answer resolves its matching captain-held task" is a single
@@ -201,8 +218,8 @@
 # one captain call. See "record divergence" beside command_diverged below.
 #
 # Resolution records: the block written into the body names this script, the
-# decision digest, and a `Resolution mode:` of answered, released, repaired,
-# reconciled, or stale-cleared. Records written by the retired fm-decision-hold.sh (routed,
+# decision digest, and a `Resolution mode:` of answered, released, deferred,
+# repaired, reconciled, or stale-cleared. Records written by the retired fm-decision-hold.sh (routed,
 # declined, answered, repaired) are recognized everywhere a record is read, so
 # nothing already closed needs rewriting.
 #
@@ -852,6 +869,7 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how>"
 command_hold() {
   local id=${1:-} title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence
   local existing_hold_kind='' existing_held='' preserve_hold_set=0 card_file=''
+  local reopen_deferred=0 existing_reason='' newest_mode=''
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -862,6 +880,7 @@ command_hold() {
       --origin) shift; origin=${1:-} ;;
       --until) shift; until=${1:-} ;;
       --card-file) shift; card_file=${1:-} ;;
+      --reopen-deferred) reopen_deferred=1 ;;
       *) usage >&2; exit 2 ;;
     esac
     shift
@@ -896,6 +915,17 @@ command_hold() {
       || fail "task $id is already closed; a new captain call needs its own task"
     existing_hold_kind=$(show_field_value "$show" hold_kind)
     existing_held=$(show_field_value "$show" held)
+    existing_reason=$(show_field_value "$show" hold_reason)
+    if body_has_resolution_record "$(show_field "$show" body)"; then
+      newest_mode=$(recorded_resolution_mode "$(show_field "$show" body)" || true)
+    fi
+    # A deferred answer settled this call; restating it must not re-ask it.
+    if [ "$existing_hold_kind" != captain ] && [ "$newest_mode" = deferred ]; then
+      [ "$reopen_deferred" = 1 ] \
+        || fail "task $id records the captain's deferred answer; it stays parked until its condition fires, then re-ask with --reopen-deferred"
+    elif [ "$reopen_deferred" = 1 ]; then
+      fail "task $id does not record a deferred captain answer; --reopen-deferred does not apply"
+    fi
     if [ "$existing_hold_kind" = captain ] && [ "$existing_held" = yes ]; then
       preserve_hold_set=1
     fi
@@ -904,6 +934,7 @@ command_hold() {
       [ "$existing_title" = "$title" ] || fail "existing task $id has a different title"
     fi
   else
+    [ "$reopen_deferred" = 0 ] || fail "task $id does not exist; --reopen-deferred does not apply"
     [ -n "$title" ] || fail "--title is required to create task $id"
     validate_one_line title "$title"
     if [ -z "$repo" ] && [ -n "$origin" ] && [ -f "$STATE/$origin.meta" ]; then
@@ -951,7 +982,8 @@ command_hold() {
   if [ -n "$card_file" ]; then
     "$CARD_TOOL" write "$id" --file "$card_file" >/dev/null \
       || printf 'actionable: task %s is held but its decision card could not be written\n' "$id" >&2
-  elif [ "$preserve_hold_set" = 0 ] || [ ! -f "$STATE/cards/$id.json" ]; then
+  elif [ "$preserve_hold_set" = 0 ] || [ ! -f "$STATE/cards/$id.json" ] \
+    || [ "$existing_reason" != "$reason" ]; then
     "$CARD_TOOL" remove "$id" 2>/dev/null || true
     "$CARD_TOOL" draft "$id" --title "$(show_field_value "$show" title)" \
       --project "$(show_field_value "$show" repo)" --situation "$reason" >/dev/null \
@@ -1053,19 +1085,33 @@ remove_interrupted_answer_stamp() {  # <task-id>
   rm -f -- "$tmp"
 }
 
+# Settle a call whose answer waits on a condition: the captain no longer owes
+# anything, so the captain hold becomes this home's parked wait and the card goes.
+close_deferred() {  # <task-id> <condition>
+  tasks_axi hold "$1" --reason "$2" --kind parked >/dev/null || return 1
+  remove_decision_card "$1"
+}
+
 command_answer() {
   local id=${1:-} decision_file='' release=0 show state hold_kind body outcome recorded_mode occurrence
+  local defer=0 condition=''
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --decision-file) shift; decision_file=${1:-} ;;
       --release) release=1 ;;
+      --defer) shift; defer=1; condition=${1:-} ;;
       *) usage >&2; exit 2 ;;
     esac
     shift
   done
   validate_slug task-id "$id"
+  if [ "$defer" = 1 ]; then
+    [ "$release" = 0 ] || fail "--defer and --release are exclusive"
+    validate_one_line condition "$condition"
+    case "$condition" in *'('*|*')'*) fail "condition must not contain parentheses (tasks-axi hold contract)" ;; esac
+  fi
   load_decision "$decision_file"
   acquire_task_control_lock "$id"
   require_tasks_axi
@@ -1074,12 +1120,15 @@ command_answer() {
   state=$(show_field "$show" state)
   hold_kind=$(show_field_value "$show" hold_kind)
   body=$(show_field "$show" body)
-  if [ "$release" = 1 ]; then outcome=released; else outcome=answered; fi
+  if [ "$defer" = 1 ]; then outcome=deferred
+  elif [ "$release" = 1 ]; then outcome=released
+  else outcome=answered; fi
   # The occurrence the parent line names: the record about to be written is
   # one past those already in the body, and a retry names the newest one.
   occurrence=$(( $(resolution_record_count "$body") + 1 ))
 
   if [ "$state" = "done" ]; then
+    [ "$defer" = 0 ] || fail "task $id is already closed; there is nothing left to defer"
     if body_has_resolution_record "$body"; then
       # An exact compatible retry is an idempotent no-op; drift is rejected.
       [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
@@ -1128,10 +1177,13 @@ command_answer() {
       recorded_mode=$(recorded_resolution_mode "$body" || true)
       case "$recorded_mode" in
         released) [ "$release" = 1 ] || fail "task $id records this answer as a release; retry with --release" ;;
-        answered|routed) [ "$release" = 0 ] || fail "task $id records this answer as a close; retry without --release" ;;
+        answered|routed) [ "$release" = 0 ] && [ "$defer" = 0 ] || fail "task $id records this answer as a close; retry without --release or --defer" ;;
+        deferred) [ "$defer" = 1 ] || fail "task $id records this answer as a deferral; retry with --defer" ;;
         *) fail "task $id records this resolution with mode ${recorded_mode:-unknown}; it is not a captain-answer replay" ;;
       esac
-      if ! close_answered "$id" "$release"; then
+      if [ "$defer" = 1 ]; then
+        close_deferred "$id" "$condition" || fail "could not park deferred captain call $id"
+      elif ! close_answered "$id" "$release"; then
         fail "could not close answered captain-held task $id"
       fi
       remove_interrupted_answer_stamp "$id"
@@ -1140,7 +1192,9 @@ command_answer() {
       return 0
     fi
     write_resolution_record "$id" "$outcome" "$body"
-    if ! close_answered "$id" "$release"; then
+    if [ "$defer" = 1 ]; then
+      close_deferred "$id" "$condition" || fail "could not park deferred captain call $id"
+    elif ! close_answered "$id" "$release"; then
       fail "could not close answered captain-held task $id"
     fi
     remove_interrupted_answer_stamp "$id"
@@ -1153,9 +1207,20 @@ command_answer() {
     return 0
   fi
 
-  # Not held and not closed: only an already-recorded release replays cleanly.
+  # Not held and not closed: only an already-recorded release or deferral
+  # replays cleanly. A deferral is settled until its condition fires, so any
+  # other answer on it is refused rather than read as a fresh call.
   if body_has_resolution_record "$body"; then
     recorded_mode=$(recorded_resolution_mode "$body" || true)
+    if [ "$recorded_mode" = deferred ]; then
+      [ "$defer" = 1 ] && [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
+        || fail "task $id already records the captain's deferred answer; re-ask with hold --reopen-deferred only once its condition fires"
+      close_deferred "$id" "$condition" || fail "could not park deferred captain call $id"
+      remove_interrupted_answer_stamp "$id"
+      publish_parent_resolution_then_retire "$id" $((occurrence - 1)) deferred
+      printf 'deferred: %s\n' "$id"
+      return 0
+    fi
     [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
       || fail "task $id records a different captain decision with mode ${recorded_mode:-unknown}"
     [ "$recorded_mode" = released ] && [ "$release" = 1 ] \

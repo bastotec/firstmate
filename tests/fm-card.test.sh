@@ -654,6 +654,101 @@ test_stale_with_gnu_coreutils() {
   pass "fm-card: stale reads file times correctly with GNU coreutils"
 }
 
+full_card_for() {  # <path>
+  printf '%s' '{"project":"cadia","title":"Banco plan","situation":"Trial used up.","options":[{"key":"1","label":"Show plans now","instruction":"Show the plans."},{"key":"2","label":"Pay when needed","instruction":"Wait until needed."}],"recommended":"2"}' > "$1"
+}
+
+test_deferred_answer_parks_the_call_and_never_cards_it() {
+  local home dec show out rc=0
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home defer-park)
+  full_card_for "$home/card.json"
+  run_captain "$home" hold banco --title "Banco plan" --repo cadia --reason "Pay now or later?" \
+    --card-file "$home/card.json" >/dev/null || fail "hold failed"
+  dec="$home/dec.txt"
+  printf "I don't need banco right now so I'll pay when I need it.\n" > "$dec"
+  out=$(run_captain "$home" answer banco --decision-file "$dec" --defer "Ask before paying once a routed task needs Banco") \
+    || fail "deferred answer failed"
+  assert_contains "$out" "deferred: banco" "the answer reports the deferral"
+  assert_absent "$home/state/cards/banco.json" "the deferral removed the card"
+  show=$(tasks_in "$home" show banco --full)
+  assert_contains "$show" "hold_kind: parked" "the call became this home's parked wait"
+  assert_contains "$show" "hold_reason: Ask before paying once a routed task needs Banco" "the condition is the hold reason"
+  assert_contains "$show" "state: queued" "the work item stays open"
+  assert_contains "$show" "Resolution mode: deferred" "the record names the deferral"
+  assert_contains "$show" "pay when I need it" "the captain's words are recorded"
+  assert_not_contains "$show" "Captain hold set:" "the hold-set stamp is gone with the captain hold"
+  run_captain "$home" open banco || rc=$?
+  assert_equals 1 "$rc" "a deferred call is not an open captain call"
+  assert_equals "" "$(run_card "$home" backfill)" "backfill does not card a deferred call"
+  assert_absent "$home/state/cards/banco.json" "backfill wrote no card"
+  assert_equals "" "$(run_card "$home" drafts)" "drafts does not list a deferred call"
+  assert_equals "" "$(run_card "$home" calls)" "calls does not list a deferred call"
+  assert_equals "" "$(run_card "$home" stale)" "stale has nothing to say about a deferred call"
+  pass "fm-captain-hold: a deferred answer parks the call, removes its card, and nothing cards it again"
+}
+
+test_replayed_answers_never_reopen_a_deferred_call() {
+  local home dec other before out rc
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home defer-replay)
+  dec="$home/dec.txt"
+  other="$home/other.txt"
+  printf 'wait until needed\n' > "$dec"
+  printf 'keep waiting, restated\n' > "$other"
+  run_captain "$home" hold oauth --title "Cumbuca login" --reason "Log in now or later?" >/dev/null || fail "hold failed"
+  run_captain "$home" answer oauth --decision-file "$dec" --defer "Raise the login when a routed task needs Cumbuca" >/dev/null \
+    || fail "deferral failed"
+  before=$(tasks_in "$home" show oauth --full)
+
+  rc=0; out=$(run_captain "$home" hold oauth --reason "Standing answer restated: wait until needed" 2>&1) || rc=$?
+  assert_not_equals 0 "$rc" "a plain re-hold of a deferred call is refused"
+  assert_contains "$out" "--reopen-deferred" "the refusal names the reopen path"
+  rc=0; run_captain "$home" answer oauth --decision-file "$other" >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "a different answer does not reopen or close a deferred call"
+  rc=0; run_captain "$home" answer oauth --decision-file "$other" --defer "Something else" >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "a different deferral is refused"
+  rc=0; printf 'oauth\tyes\tLog in now\n' | run_captain "$home" answers --source test >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "a keyed answer on a deferred call is skipped"
+  assert_equals "$before" "$(tasks_in "$home" show oauth --full)" "no replay changed the task"
+  assert_absent "$home/state/cards/oauth.json" "no replay re-carded the call"
+
+  out=$(run_captain "$home" answer oauth --decision-file "$dec" --defer "Raise the login when a routed task needs Cumbuca") \
+    || fail "an exact deferral retry failed"
+  assert_contains "$out" "deferred: oauth" "an exact retry is an idempotent no-op"
+  assert_equals "$before" "$(tasks_in "$home" show oauth --full)" "an exact retry writes nothing new"
+
+  run_captain "$home" hold oauth --reason "A task needs Cumbuca now - log in?" --reopen-deferred >/dev/null \
+    || fail "reopening a deferred call once its condition fired failed"
+  run_captain "$home" open oauth || fail "a reopened call is an open captain call again"
+  assert_equals true "$(jq -r .draft "$home/state/cards/oauth.json")" "the fresh call gets a fresh draft card"
+  assert_equals "A task needs Cumbuca now - log in?" "$(jq -r .situation "$home/state/cards/oauth.json")" "the fresh card carries the new question"
+  assert_contains "$(run_card "$home" calls)" "oauth" "the fresh call is listed"
+
+  run_captain "$home" hold plain --title "Plain call" --reason r >/dev/null || fail "hold failed"
+  rc=0; run_captain "$home" hold plain --reason r --reopen-deferred >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "--reopen-deferred is refused on a call that was never deferred"
+  pass "fm-captain-hold: replayed answers never reopen or re-card a deferred call; only --reopen-deferred does"
+}
+
+test_rehold_with_a_new_reason_refreshes_the_card() {
+  local home
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home rehold-refresh)
+  full_card_for "$home/card.json"
+  run_captain "$home" hold banco --title "Banco plan" --repo cadia --reason "Pay now or later?" \
+    --card-file "$home/card.json" >/dev/null || fail "hold failed"
+  run_captain "$home" hold banco --reason "Pay now or later?" >/dev/null || fail "same-reason re-hold failed"
+  assert_equals false "$(jq -r .draft "$home/state/cards/banco.json")" "a same-reason re-hold keeps the full card"
+  run_captain "$home" hold banco --reason "Captain said pay when needed - confirm the plan tier" >/dev/null \
+    || fail "new-reason re-hold failed"
+  assert_equals true "$(jq -r .draft "$home/state/cards/banco.json")" "a new reason replaces the old options with a draft"
+  assert_equals "Captain said pay when needed - confirm the plan tier" "$(jq -r .situation "$home/state/cards/banco.json")" \
+    "the refreshed card carries the new reason"
+  assert_contains "$(run_card "$home" drafts)" "banco" "the refreshed draft is listed for a full card"
+  pass "fm-captain-hold: re-holding with a new reason refreshes the card instead of keeping old options"
+}
+
 test_write_and_show_round_trip
 test_validate_names_the_broken_field
 test_card_requires_exactly_one_json_object
@@ -686,3 +781,6 @@ test_new_hold_replaces_a_leftover_card
 test_stale_clear_retires_a_pending_reconcile_request
 test_idle_skips_deferred_and_worker_tracked_holds
 test_stale_with_gnu_coreutils
+test_deferred_answer_parks_the_call_and_never_cards_it
+test_replayed_answers_never_reopen_a_deferred_call
+test_rehold_with_a_new_reason_refreshes_the_card

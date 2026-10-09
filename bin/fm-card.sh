@@ -17,6 +17,7 @@
 #   fm-card.sh draft <task-id> --title <title> --project <project> --situation <text>
 #   fm-card.sh backfill
 #   fm-card.sh drafts
+#   fm-card.sh calls
 #   fm-card.sh stale
 #   fm-card.sh clear <task-id> --why <text>
 #   fm-card.sh restore <task-id>
@@ -38,7 +39,12 @@
 # `drafts` is read-only and prints "<task-id>\t<title>" for every open captain
 # call in this home whose card is still a draft or missing: the calls whose
 # owning mate still has to write a full card.
-# Both refuse (exit 2) when this home's backlog cannot be listed, rather than
+# `calls` is read-only and prints "<task-id>\t<title>" for every open captain
+# call in this home, full card or not: the startup list a mate checks for calls
+# the captain already answered, which it records instead of asking again.
+# A call settled with `fm-captain-hold.sh answer --defer` is a parked wait, not
+# a captain call, so backfill, drafts, calls and stale never see it.
+# All three refuse (exit 2) when this home's backlog cannot be listed, rather than
 # reading an unreadable backlog as "no captain calls".
 # `stale` is read-only and prints "<task-id>\t<kind>\t<why>" per candidate:
 # `orphan` (a card with no open captain hold), `pr-merged` (the task's
@@ -264,6 +270,19 @@ cmd_drafts() {
   done
 }
 
+cmd_calls() {
+  local id ids show title
+  [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+  ids=$(captain_held_ids) || exit 2
+  for id in $ids; do
+    title=''
+    if show=$(tasks show "$id" --full 2>/dev/null); then
+      title=$(shown_value "$show" title)
+    fi
+    printf '%s\t%s\n' "$id" "${title:-$id}"
+  done
+}
+
 hold_tool() { FM_HOME="$FM_HOME" "$HOLD" "$@"; }
 
 # 0 when the task is an open captain call, 1 when it is not; anything else
@@ -414,6 +433,7 @@ case "${1:-}" in
   draft) shift; cmd_draft "$@" ;;
   backfill) shift; cmd_backfill "$@" ;;
   drafts) shift; cmd_drafts "$@" ;;
+  calls) shift; cmd_calls "$@" ;;
   stale) shift; cmd_stale "$@" ;;
   clear) shift; cmd_clear "$@" ;;
   restore) shift; cmd_restore "$@" ;;
