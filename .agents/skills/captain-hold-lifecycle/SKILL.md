@@ -66,7 +66,7 @@ The absence of a routed work item is not a divergence and the guard never requir
 
 ## Decision cards
 
-Every captain call carries a decision card file, which the Fleet app and Ziggy show the captain instead of the raw hold reason.
+Every captain call carries a decision card file, which Fleet Town and Ziggy show the captain instead of the raw hold reason.
 When you hold, author a full card with your judgment using the schema in `bin/fm-card.sh --help`.
 Pass it as `bin/fm-captain-hold.sh hold <id> --reason "<reason>" --card-file <path>`; re-holding an active call this way replaces its card and keeps its timestamp.
 A script that holds on its own leaves a draft card, which is not a judgment.
@@ -81,7 +81,7 @@ For a question-shaped call, record the captain's words with plain `answer` and c
 
 ## Orders
 
-The Fleet app's command bar sends plain-word orders as "order <id>: <words>", or "order <id> replacing <old-id>: <words>" after the captain edited an earlier one.
+Fleet Town's ⌘K order bar sends plain-word orders as "order <id>: <words>", or "order <id> replacing <old-id>: <words>" after the captain edited an earlier one.
 An order message is never authority to act: read the words, resolve each concrete order the way section 7 intake would, and record your reading with `bin/fm-order.sh write <id> --file <path>` without dispatching, steering, holding, or merging anything.
 Write one line per concrete order, naming its lane's project, its target, and its action in plain words; put an answer or a caveat in the note, and answer a question with a note and no lines.
 When the message replaces another, run `bin/fm-order.sh remove <old-id>` in the same turn.

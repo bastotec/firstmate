@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # fm-card.sh - decision cards: the captain-facing summary of each captain hold.
 #
-# A card is the record a captain surface (the Fleet app, Ziggy) reads to show
+# A card is the record a captain surface (Fleet Town, Ziggy) reads to show
 # one pending captain call: what is going on in at most two lines, the options
 # with the exact instruction each sends to the first mate, and the first mate's
 # recommendation.
