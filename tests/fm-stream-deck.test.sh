@@ -533,4 +533,3 @@ subprocess.check_call(cli + ['end', str(lab), 'task', 'b'*32])
 assert captain() == 0, 'an ended turn gets nothing'
 print('PASS captain-direct records reach live steerable turns in sequence order only')
 PY
-FM_LIVE=0 bin/fm-test-run.sh tests/fm-stream-deck.test.sh 2>&1 | tail -5
