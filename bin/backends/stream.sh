@@ -51,8 +51,7 @@ FM_BACKEND_STREAM_DEFAULT_URL="http://127.0.0.1:7717"
 # tests/assets/stream-agent-stub.py (tests/fixtures.sh's fm_test_fake_stream).
 FM_BACKEND_STREAM_AGENT_BIN="${FM_STREAM_AGENT_BIN:-$(dirname -- "${BASH_SOURCE[0]}")/../fm-stream-agent.py}"
 
-# The rejoin grace window; docs/stream-backend.md "When the hub restarts"
-# owns its full record, including the known-incomplete coverage.
+# docs/stream-backend.md "When the hub restarts" owns this rejoin grace window's full known-incomplete record.
 FM_BACKEND_STREAM_MISSING_GRACE_SECS=6
 
 # The last HTTP status fm_backend_stream_api saw. Initialised at source time so
