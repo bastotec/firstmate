@@ -437,7 +437,10 @@ impl Agent {
                                 diag(
                                     options,
                                     "result-ack-failed",
-                                    format_args!("result could not be posted: {}", answer.err().unwrap()),
+                                    format_args!(
+                                        "result could not be posted: {}",
+                                        answer.err().unwrap()
+                                    ),
                                 );
                             }
                             let _ = done.send(settled);
