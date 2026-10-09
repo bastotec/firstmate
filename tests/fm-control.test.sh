@@ -644,6 +644,29 @@ test_secondmate_exit_records_a_deliberate_stop() {
   pass "fm-control: a secondmate exit records a deliberate stop the revival respects"
 }
 
+test_unless_held_stopped_refuses_before_touching_the_agent() {
+  local dir out rc verb
+  for verb in relaunch recover-missing; do
+    dir=$(new_case "held-admission-$verb")
+    add_task "$dir" domain deck secondmate
+    printf '%s\n' domain > "$dir/wt-domain/.fm-secondmate-home"
+    alive_as "$dir" zsh
+    printf 'stopped_at=1\n' > "$dir/home/state/domain.held-stopped"
+    out=$(run_control "$dir" domain "$verb" --unless-held-stopped); rc=$?
+    expect_code 1 "$rc" "$verb --unless-held-stopped should refuse a mate stopped on purpose"$'\n'"$out"
+    assert_contains "$out" "was stopped on purpose" "the refusal should name the deliberate stop"
+    [ -z "$(literals "$dir")" ] || fail "$verb --unless-held-stopped typed into the endpoint before refusing"
+    [ ! -e "$dir/home/state/domain.control-relaunch" ] || fail "$verb --unless-held-stopped opened a transaction"
+    [ -e "$dir/home/state/domain.held-stopped" ] || fail "the refusal withdrew the deliberate-stop record"
+  done
+  dir=$(new_case held-flag-exit)
+  add_task "$dir" t1 deck
+  alive_as "$dir" fm-deck-worker
+  out=$(run_control "$dir" t1 exit --unless-held-stopped); rc=$?
+  expect_code 1 "$rc" "--unless-held-stopped applies to relaunch and recover-missing only"$'\n'"$out"
+  pass "fm-control: --unless-held-stopped refuses a deliberately stopped mate before touching it"
+}
+
 test_fm_send_still_marks_the_same_secondmate_task() {
   local dir log out rc
   dir=$(new_case sm-send)
@@ -885,6 +908,7 @@ PY
 
 test_host_route_reaches_guarded_worker_owners
 test_secondmate_exit_records_a_deliberate_stop
+test_unless_held_stopped_refuses_before_touching_the_agent
 test_exit_types_each_harness_verified_command
 test_interrupt_sends_each_harness_verified_key
 test_unverified_harness_is_refused

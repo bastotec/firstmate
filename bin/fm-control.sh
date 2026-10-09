@@ -5,11 +5,11 @@
 # Usage: fm-control.sh <task-id> interrupt
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
-#                                         [--effort <level>]
+#                                         [--effort <level>] [--unless-held-stopped]
 #                                         (--note <text> | --note-file <path>)
 #        fm-control.sh <task-id> recover-missing
 #                                         [--harness <name>] [--model <name>]
-#                                         [--effort <level>]
+#                                         [--effort <level>] [--unless-held-stopped]
 #                                         (--note <text> | --note-file <path>)
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
@@ -41,7 +41,8 @@
 #              re-reading a state it could not prove.
 #              A kind=secondmate exit also records state/<id>.held-stopped so
 #              bin/fm-secondmate-revive.sh leaves the stopped mate alone; a
-#              successful relaunch or recover-missing withdraws it.
+#              successful relaunch or recover-missing withdraws it, and either
+#              verb given --unless-held-stopped refuses while it exists.
 #   relaunch   Transactionally replace the running agent with a new one, in the
 #              SAME endpoint and SAME worktree, on the same or a newly chosen
 #              harness/model/effort - so switching harness is one ordinary use
@@ -281,6 +282,7 @@ MODEL_SET=0
 EFFORT_SET=0
 NOTE=
 NOTE_SET=0
+UNLESS_HELD_STOPPED=0
 control_want_value=
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
@@ -311,6 +313,7 @@ for control_arg in "$@"; do
     --note) control_want_value=note ;;
     --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
     --note-file) control_want_value=note_file ;;
+    --unless-held-stopped) UNLESS_HELD_STOPPED=1 ;;
     --note-file=*)
       [ -f "${control_arg#--note-file=}" ] || die "--note-file '${control_arg#--note-file=}' is not a readable file"
       NOTE=$(cat "${control_arg#--note-file=}")
@@ -328,6 +331,7 @@ case "$VERB" in
   relaunch|recover-missing) ;;
   *)
     [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
+      && [ "$UNLESS_HELD_STOPPED" = 0 ] \
       || die "--harness, --model, and --effort apply to 'relaunch' and 'recover-missing' only, and --note to 'relaunch' or 'recover-missing' only"
     ;;
 esac
@@ -384,6 +388,12 @@ held_stop_record() {  # <verb> - after that verb succeeded
     relaunch|recover-missing) rm -f "$STATE/$ID.held-stopped" ;;
   esac
 }
+
+# Automatic revival asks under this task's control lock, so an exit that lands
+# between its reading and its relaunch still keeps the mate down.
+if [ "$UNLESS_HELD_STOPPED" = 1 ] && [ -e "$STATE/$ID.held-stopped" ]; then
+  die "task $ID was stopped on purpose (state/$ID.held-stopped); relaunch it without --unless-held-stopped to bring it back"
+fi
 
 if [ -n "$(fm_meta_get "$META" remote_host)" ]; then
   # shellcheck source=bin/fm-remote-control-lib.sh

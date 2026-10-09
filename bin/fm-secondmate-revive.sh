@@ -45,16 +45,19 @@
 # bounded number of relaunches and exactly one notification; a spent budget
 # whose escalation could not be queued retries only the escalation. A
 # successful revival notifies nobody; it is appended to
-# state/secondmate-revive.log. Each mate is handled by its own worker, so one
-# slow relaunch never delays another.
+# state/secondmate-revive.log. Each mate is handled by its own worker under
+# state/.secondmate-revive-<id>.lock, so one slow relaunch never delays another.
+#
+# The automatic relaunch passes --unless-held-stopped, so fm-control re-checks
+# the deliberate-stop record under the mate's control lock, and that record is
+# withdrawn here only under the same lock after a fresh alive reading.
 #
 # Environment knobs:
 #   FM_HOME                            required
 #   FM_SECONDMATE_REVIVE_CONFIRM_SECS  down-reading confirmation window (45)
 #   FM_SECONDMATE_REVIVE_ATTEMPTS      failed revivals before escalation (2)
 #
-# Exit: 0 after a scan (including one skipped because another scan holds the
-# home's revive lock); 2 on invalid use.
+# Exit: 0 after a scan; 2 on invalid use.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -88,10 +91,6 @@ case "$ATTEMPTS" in ''|*[!0-9]*|0) ATTEMPTS=2 ;; esac
 LOG="$STATE/secondmate-revive.log"
 NOTE="Restarted automatically after this second mate was found down. Read your inbox in order and answer anything the captain is waiting on."
 
-SCAN_LOCK="$STATE/.secondmate-revive.lock"
-fm_lock_try_acquire "$SCAN_LOCK" || exit 0
-trap 'fm_lock_release "$SCAN_LOCK" >/dev/null 2>&1 || true' EXIT
-
 log() {  # <line>
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "$LOG" 2>/dev/null || true
 }
@@ -120,15 +119,19 @@ record_write() {  # <id> <down-state> <first-seen> <failures> <escalated> [<last
     > "$rec.tmp" && mv -f "$rec.tmp" "$rec"
 }
 
-escalate() {  # <id> <reason>
+escalate() {  # <id> <what-happened>
   local id=$1 reason=$2
   if fm_wake_append check "secondmate-revive:$id:$(date +%s)" \
-    "check: secondmate revival failed: second mate $id is down and $ATTEMPTS automatic revivals did not bring it back: $reason"; then
+    "check: secondmate revival failed: second mate $id is down and $reason"; then
     log "escalated $id: $reason"
     return 0
   fi
   log "escalation for $id could not be queued: $reason"
   return 1
+}
+
+budget_spent() {  # <last-failure>
+  printf '%s automatic revivals did not bring it back: %s' "$ATTEMPTS" "$1"
 }
 
 probe() {  # <meta> <id>  -> prints alive|dead|missing|unknown
@@ -170,7 +173,13 @@ revive_one() {  # <meta> <id>
         rm -f "$STATE/$id.revive"
         log "$id is alive again"
       fi
-      rm -f "$STATE/$id.held-stopped"
+      # Withdraw a stale deliberate-stop record only under the mate's control
+      # lock and on a fresh alive reading, so an exit that completes after the
+      # first reading keeps its record.
+      if [ -e "$STATE/$id.held-stopped" ] && fm_lock_try_acquire "$STATE/.control-$id.lock"; then
+        [ "$(probe "$meta" "$id")" != alive ] || rm -f "$STATE/$id.held-stopped"
+        fm_lock_release "$STATE/.control-$id.lock" >/dev/null 2>&1 || true
+      fi
       return 0
       ;;
     dead|missing) ;;
@@ -181,8 +190,9 @@ revive_one() {  # <meta> <id>
   # A spent budget only retries publishing its one escalation, never another
   # revival.
   if [ "$REC_FAILURES" -ge "$ATTEMPTS" ]; then
-    escalate "$id" "$(sed -n 's/^last=//p' "$STATE/$id.revive" | tail -1)" \
-      && record_write "$id" "$REC_STATE" "$REC_SEEN" "$REC_FAILURES" 1 "$(sed -n 's/^last=//p' "$STATE/$id.revive" | tail -1)"
+    reason=$(sed -n 's/^last=//p' "$STATE/$id.revive" | tail -1)
+    escalate "$id" "$(budget_spent "$reason")" \
+      && record_write "$id" "$REC_STATE" "$REC_SEEN" "$REC_FAILURES" 1 "$reason"
     return 0
   fi
   if [ "$REC_STATE" != "$state" ] || [ "$REC_SEEN" -eq 0 ]; then
@@ -192,7 +202,7 @@ revive_one() {  # <meta> <id>
   [ $((now - REC_SEEN)) -ge "$CONFIRM_SECS" ] || return 0
 
   if [ "$state" = missing ] && [ -n "$remote" ]; then
-    escalate "$id" "its endpoint on $remote is gone, and a remote endpoint can only be recovered on that host" \
+    escalate "$id" "its endpoint on $remote is gone; no automatic revival was tried, because only that host can recover a remote endpoint" \
       && record_write "$id" "$state" "$REC_SEEN" "$REC_FAILURES" 1
     return 0
   fi
@@ -200,13 +210,19 @@ revive_one() {  # <meta> <id>
   [ "$state" = dead ] || verb=recover-missing
   log "reviving $id ($state endpoint) with $verb"
   rc=0
-  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" "$verb" --note "$NOTE" < /dev/null 2>&1) || rc=$?
+  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" "$verb" --unless-held-stopped \
+    --note "$NOTE" < /dev/null 2>&1) || rc=$?
   if [ "$rc" -eq 0 ]; then
     rm -f "$STATE/$id.revive"
     log "revived $id: $(printf '%s\n' "$out" | grep -E '^(relaunched|recovered) ' | tail -1)"
     return 0
   fi
   case "$out" in
+    *"was stopped on purpose"*)
+      rm -f "$STATE/$id.revive"
+      log "$id was stopped on purpose; leaving it down"
+      return 0
+      ;;
     *"another lifecycle action is already running"*)
       # An update restart, a teardown, or an operator owns the mate right now;
       # that is not a failed revival. Look again after a fresh confirmation.
@@ -218,7 +234,7 @@ revive_one() {  # <meta> <id>
   reason=$(one_line "$out")
   log "revival of $id failed ($failures/$ATTEMPTS): $reason"
   if [ "$failures" -ge "$ATTEMPTS" ]; then
-    if escalate "$id" "$reason"; then
+    if escalate "$id" "$(budget_spent "$reason")"; then
       record_write "$id" "$state" "$now" "$failures" 1 "$reason"
       return 0
     fi
@@ -227,17 +243,21 @@ revive_one() {  # <meta> <id>
   record_write "$id" "$state" "$now" "$failures" 0 "$reason"
 }
 
-# Each mate is probed and revived on its own, so one slow relaunch or remote
-# probe never delays another mate; the scan lock is held until all finish.
-pids=
+# Each mate gets its own worker under its own lock, so a mate whose probe or
+# relaunch is slow skips only its own later scans, never another mate's. The
+# scan waits for the workers it started; overlapping scans are expected.
+revive_worker() {  # <meta> <id>
+  local lock="$STATE/.secondmate-revive-$2.lock"
+  fm_lock_try_acquire "$lock" || return 0
+  revive_one "$1" "$2"
+  fm_lock_release "$lock" >/dev/null 2>&1 || true
+}
+
 for meta in "$STATE"/*.meta; do
   [ -f "$meta" ] || continue
   grep -q '^kind=secondmate$' "$meta" 2>/dev/null || continue
   [ -n "$(fm_meta_get "$meta" window)" ] || continue
-  revive_one "$meta" "$(basename "$meta" .meta)" &
-  pids="$pids $!"
+  revive_worker "$meta" "$(basename "$meta" .meta)" </dev/null >/dev/null 2>&1 &
 done
-for pid in $pids; do
-  wait "$pid" || true
-done
+wait
 exit 0

@@ -2118,21 +2118,15 @@ reconcile_requests_detached() {
 
 # Mid-session second-mate revival. The scan relaunches through bin/fm-control.sh,
 # which can take minutes, so it runs detached on its own cadence and never
-# delays this cycle; the script's own lock keeps scans from overlapping across
-# watcher restarts. Cheap when the home records no second mate.
-SECONDMATE_REVIVE_PID=
+# delays this cycle. A new scan starts every interval even while an older one
+# still runs: the script's per-mate locks keep one slow mate from holding back
+# the others. Cheap when the home records no second mate.
 secondmate_revive_detached() {
-  if [ -n "$SECONDMATE_REVIVE_PID" ]; then
-    kill -0 "$SECONDMATE_REVIVE_PID" 2>/dev/null && return 0
-    wait "$SECONDMATE_REVIVE_PID" 2>/dev/null || true
-    SECONDMATE_REVIVE_PID=
-  fi
   [ "$(age_of "$STATE/.last-secondmate-revive")" -ge "$SECONDMATE_REVIVE_INTERVAL" ] || return 0
   grep -lq '^kind=secondmate$' "$STATE"/*.meta 2>/dev/null || return 0
   touch "$STATE/.last-secondmate-revive"
   FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
     "$SCRIPT_DIR/fm-secondmate-revive.sh" scan </dev/null >/dev/null 2>&1 &
-  SECONDMATE_REVIVE_PID=$!
 }
 
 PR_POLL_CONTROL_LOCK=

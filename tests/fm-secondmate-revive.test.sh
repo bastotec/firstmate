@@ -39,6 +39,15 @@ new_case() {
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_HOME/control-calls"
 [ ! -f "$FM_HOME/control-sleep" ] || sleep "$(cat "$FM_HOME/control-sleep")"
+[ ! -f "$FM_HOME/control-sleep-$1" ] || sleep "$(cat "$FM_HOME/control-sleep-$1")"
+case " $* " in
+  *" --unless-held-stopped "*)
+    if [ -e "$FM_HOME/state/$1.held-stopped" ]; then
+      echo "error: task $1 was stopped on purpose (state/$1.held-stopped); relaunch it without --unless-held-stopped to bring it back" >&2
+      exit 1
+    fi
+    ;;
+esac
 if [ -f "$FM_HOME/control-busy" ]; then
   echo "error: another lifecycle action is already running for task $1" >&2
   exit 1
@@ -100,7 +109,7 @@ test_dead_local_mate_is_relaunched_after_a_confirmed_reading() {
   [ -z "$(calls "$dir")" ] || fail "a single down reading relaunched the mate: $(calls "$dir")"
   scan "$dir" || fail "the second scan failed"
   case "$(calls "$dir")" in
-    "sm1 relaunch --note "*) ;;
+    "sm1 relaunch --unless-held-stopped --note "*) ;;
     *) fail "a confirmed dead mate was not relaunched through fm-control: $(calls "$dir")" ;;
   esac
   [ ! -e "$dir/home/state/sm1.revive" ] || fail "a successful revival left its revive record behind"
@@ -117,7 +126,7 @@ test_missing_local_mate_is_recovered() {
   fm_test_fake_stream_set "$target" '{"forget": true}'
   scan "$dir"; scan "$dir"
   case "$(calls "$dir")" in
-    "sm1 recover-missing --note "*) ;;
+    "sm1 recover-missing --unless-held-stopped --note "*) ;;
     *) fail "a confirmed missing mate was not recovered through fm-control: $(calls "$dir")" ;;
   esac
   pass "a missing local second mate is recovered through fm-control recover-missing"
@@ -198,7 +207,7 @@ test_remote_mate_is_probed_and_relaunched_on_its_host() {
   grep -q 'rm1 fm-remote-secondmate-control.sh state rm1' "$dir/home/on-calls" \
     || fail "the remote mate was not probed on its host"
   case "$(calls "$dir")" in
-    "rm1 relaunch --note "*) ;;
+    "rm1 relaunch --unless-held-stopped --note "*) ;;
     *) fail "a confirmed dead remote mate was not relaunched through fm-control: $(calls "$dir")" ;;
   esac
   : > "$dir/home/control-calls"
@@ -267,6 +276,83 @@ test_watcher_surfaces_a_failed_revival_on_its_own() {
   pass "the watcher wakes the first mate for a failed revival with nothing else happening"
 }
 
+test_a_slow_mate_does_not_hold_back_later_scans_of_another() {
+  local dir slow i
+  dir=$(new_case slow-scan)
+  add_local_mate "$dir" sm1 zsh >/dev/null
+  printf '8\n' > "$dir/home/control-sleep-sm1"
+  scan "$dir"
+  scan "$dir" &
+  slow=$!
+  i=0
+  while ! grep -q 'reviving sm1' "$dir/home/state/secondmate-revive.log" 2>/dev/null && [ "$i" -lt 100 ]; do
+    sleep 0.05; i=$((i + 1))
+  done
+  add_local_mate "$dir" sm2 zsh >/dev/null
+  scan "$dir"; scan "$dir"
+  grep -q '^sm2 relaunch ' "$dir/home/control-calls" 2>/dev/null \
+    || fail "a slow revival of one mate held back another mate's revival"
+  kill -0 "$slow" 2>/dev/null || fail "the slow revival finished too early to prove anything"
+  wait "$slow"
+  [ "$(grep -c '^sm1 relaunch ' "$dir/home/control-calls")" = 1 ] \
+    || fail "an overlapping scan relaunched the slow mate twice: $(calls "$dir")"
+  pass "a slow revival of one mate never holds back later scans of another"
+}
+
+test_a_fresh_exit_keeps_its_record_while_the_control_lock_is_held() {
+  local dir holder
+  dir=$(new_case held-lock)
+  add_local_mate "$dir" sm1 fm-deck-worker >/dev/null
+  printf 'stopped_at=1\n' > "$dir/home/state/sm1.held-stopped"
+  sleep 30 &
+  holder=$!
+  mkdir "$dir/home/state/.control-sm1.lock"
+  printf '%s\n' "$holder" > "$dir/home/state/.control-sm1.lock/pid"
+  scan "$dir"
+  [ -e "$dir/home/state/sm1.held-stopped" ] \
+    || fail "a deliberate-stop record was withdrawn while a lifecycle action held the mate's control lock"
+  kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+  rm -rf "$dir/home/state/.control-sm1.lock"
+  scan "$dir"
+  [ ! -e "$dir/home/state/sm1.held-stopped" ] || fail "a live mate kept a stale deliberate-stop record"
+  pass "a deliberate-stop record is withdrawn only under the mate's control lock"
+}
+
+test_a_refused_held_relaunch_is_not_a_failure() {
+  local dir
+  dir=$(new_case held-refused)
+  add_local_mate "$dir" sm1 zsh >/dev/null
+  scan "$dir"
+  # The deliberate exit lands after the scan's own record check: model it by
+  # writing the record only once fm-control is invoked, so the refusal comes
+  # from fm-control's check under the mate's control lock.
+  mv "$dir/bin/fm-control.sh" "$dir/bin/fm-control.real"
+  cat > "$dir/bin/fm-control.sh" <<'SH'
+#!/usr/bin/env bash
+: > "$FM_HOME/state/$1.held-stopped"
+exec bash "$(dirname "$0")/fm-control.real" "$@"
+SH
+  chmod +x "$dir/bin/fm-control.sh"
+  scan "$dir"; scan "$dir"; scan "$dir"
+  [ "$(calls "$dir" | wc -l | tr -d ' ')" = 1 ] || fail "a deliberately stopped mate was relaunched again: $(calls "$dir")"
+  [ "$(queued_revive_wakes "$dir")" = 0 ] || fail "a deliberate stop was escalated as a failed revival"
+  [ -e "$dir/home/state/sm1.held-stopped" ] || fail "the deliberate-stop record was lost"
+  pass "a relaunch refused because the mate was stopped on purpose is not a failure"
+}
+
+test_a_gone_remote_endpoint_is_reported_without_claiming_attempts() {
+  local dir
+  dir=$(new_case remote-gone)
+  add_remote_mate "$dir" rm1
+  printf 'missing\n' > "$dir/home/remote-state"
+  scan "$dir"; scan "$dir"
+  grep 'secondmate-revive:rm1' "$dir/home/state/.wake-queue" | grep -q 'no automatic revival was tried' \
+    || fail "a gone remote endpoint did not say no revival was tried: $(cat "$dir/home/state/.wake-queue")"
+  grep 'secondmate-revive:rm1' "$dir/home/state/.wake-queue" | grep -q 'automatic revivals did not' \
+    && fail "a gone remote endpoint claimed revival attempts that never ran"
+  pass "a gone remote endpoint is reported without claiming revival attempts"
+}
+
 test_watcher_revives_a_dead_mate_without_a_turn() {
   local dir watcher i beat_before beat_after advanced=0
   dir=$(new_case watcher)
@@ -298,7 +384,7 @@ SH
   kill "$watcher" 2>/dev/null || true
   wait "$watcher" 2>/dev/null || true
   case "$(calls "$dir")" in
-    "sm1 relaunch --note "*) ;;
+    "sm1 relaunch --unless-held-stopped --note "*) ;;
     *) fail "the watcher did not revive the dead mate: $(calls "$dir") $(cat "$dir/watch.err")" ;;
   esac
   [ "$advanced" = 1 ] || fail "the watcher beacon stalled behind the revival"
@@ -314,5 +400,9 @@ test_remote_mate_is_probed_and_relaunched_on_its_host
 test_a_spent_budget_retries_only_the_escalation
 test_one_slow_revival_does_not_delay_another_mate
 test_watcher_surfaces_a_failed_revival_on_its_own
+test_a_slow_mate_does_not_hold_back_later_scans_of_another
+test_a_fresh_exit_keeps_its_record_while_the_control_lock_is_held
+test_a_refused_held_relaunch_is_not_a_failure
+test_a_gone_remote_endpoint_is_reported_without_claiming_attempts
 test_watcher_revives_a_dead_mate_without_a_turn
 echo "# all fm-secondmate-revive tests passed"
