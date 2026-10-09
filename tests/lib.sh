@@ -78,13 +78,12 @@ unset TASKS_AXI_FILE TASKS_AXI_BACKEND
 # makes cases resolve, authenticate and spawn against the wrong endpoint - a
 # worker running this suite from inside that fleet reproduces exactly that.
 # Every case exports its own values or starts its own hub; FM_STREAM_IMPL and
-# the native-binary pins stay owned by the FM_TEST_STREAM_* block above, and
-# FM_STREAM_CODE_ROOT stays owned by the adapter, which derives it from its own
-# checkout. A case that verifies resolution against an ambient variable sets it
-# itself (tests/fm-backend-stream.test.sh does, per tier).
+# the native-binary pins stay owned by the FM_TEST_STREAM_* block above. A case
+# that verifies resolution against an ambient variable sets it itself
+# (tests/fm-backend-stream.test.sh does, per tier).
 unset FM_STREAM_HUB FM_STREAM_TOKEN FM_STREAM_MACHINE FM_STREAM_ENDPOINT_ID \
   FM_STREAM_AGENT_BIN FM_STREAM_HTTP_TIMEOUT FM_STREAM_TOKEN_FILE \
-  FM_STREAM_ATTACH_LOCAL FM_STREAM_LOCAL_DIR
+  FM_STREAM_ATTACH_LOCAL FM_STREAM_LOCAL_DIR FM_STREAM_CODE_ROOT
 
 # Pin the stream implementation. Production defaults to the Rust binaries
 # (bin/fm-stream-native-lib.sh), which a test runner has not built, so suites

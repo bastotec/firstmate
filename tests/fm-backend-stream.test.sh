@@ -917,12 +917,14 @@ test_hub_url_prefers_configuration_then_a_locally_started_hub() {
   # no-op, so this is a fresh bash sourcing it the way a test file does.
   for hostile in FM_STREAM_HUB FM_STREAM_TOKEN FM_STREAM_MACHINE \
       FM_STREAM_ENDPOINT_ID FM_STREAM_AGENT_BIN FM_STREAM_HTTP_TIMEOUT \
-      FM_STREAM_TOKEN_FILE FM_STREAM_ATTACH_LOCAL FM_STREAM_LOCAL_DIR; do
+      FM_STREAM_TOKEN_FILE FM_STREAM_ATTACH_LOCAL FM_STREAM_LOCAL_DIR \
+      FM_STREAM_CODE_ROOT; do
     scrubbed=$(FM_STREAM_HUB="http://hostile.example:7717" \
       FM_STREAM_TOKEN="hostile-token" FM_STREAM_MACHINE="hostile-box" \
       FM_STREAM_ENDPOINT_ID="hostile-endpoint" FM_STREAM_AGENT_BIN="/hostile/agent" \
       FM_STREAM_HTTP_TIMEOUT="1" FM_STREAM_TOKEN_FILE="/hostile/token" \
       FM_STREAM_ATTACH_LOCAL="0" FM_STREAM_LOCAL_DIR="/hostile/local" \
+      FM_STREAM_CODE_ROOT="/hostile/code-root" \
       bash -c '. "$1/lib.sh" >/dev/null 2>&1; printf %s "${'"$hostile"':-}"' \
       _ "$ROOT/tests" 2>/dev/null) || scrubbed=""
     assert_equals "" "$scrubbed" "a hostile ambient $hostile must be scrubbed when the suite starts"
