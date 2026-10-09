@@ -2883,9 +2883,9 @@ test_retained_row_artifacts_survive_captain_answers() {
 }
 
 # Retention happens after destructive cleanup, through the same pending record
-# an ordinary close stages first. A cleanup that fails part-way therefore leaves
-# the row exactly as it was, and the next session start finishes the retention
-# instead of closing the captain's question.
+# an ordinary close stages first. A failure inside the final retention
+# transition therefore leaves the row exactly as it was, and the next session
+# start finishes the retention instead of closing the captain's question.
 # The interruption is staged inside the retain transition, after the endpoint
 # and every refusal-capable cleanup gate have passed and the marker has become
 # replayable. An interruption at any earlier gate keeps the conservative
