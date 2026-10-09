@@ -15,8 +15,8 @@
 # records on a retired backend (tmux, herdr, or no backend= field), never a
 # stream record a hub might still answer for and never a secondmate; it takes a
 # ship only while its worktree is still this task's own, so cleanup's
-# landed-work gate actually runs; it refuses a tmux record whose window a local
-# tmux server still lists; and it never proceeds past cleanup's work-protection
+# landed-work gate actually runs; when tmux is installed, its inventory must
+# omit the window or definitively report no server; and it never proceeds past cleanup's work-protection
 # gate, so unlanded or uncommitted work, a scout without its report, or an
 # unresolved captain decision retires nothing. Its basis is that cleanup, once
 # those gates pass, has already stopped every process under the worktree before
@@ -138,7 +138,9 @@ that owns the records, asks for no typed confirmation, and takes only:
     field); a stream record or a secondmate is refused;
   - for a ship, a worktree that still exists and is still this task's own
     slot, so cleanup's landed-work check runs against it;
-  - for a tmux record, a window no local tmux server still lists.
+  - for a tmux record, when tmux is installed, only when a local tmux server
+    can be read and does not list its window, or tmux definitively reports
+    that no server is running.
 
 Cleanup's work-protection refusal is NOT proceeded past: unlanded or
 uncommitted work, a scout whose report is missing, or a captain decision the
@@ -188,10 +190,27 @@ for id in "${IDS[@]}"; do
     || refuse "no durable task record at $STATE/$id.meta, so there is nothing to retire for '$id'"
 done
 
+NOTE=
+cleanup_note() {
+  [ -z "$NOTE" ] || rm -f "$NOTE"
+  NOTE=
+}
+# An interrupt must ABORT the retirement, not just tidy up after it: without
+# the exit, bash runs the handler and carries on into the record removal, so
+# the operator's own Ctrl-C would be what retires the records.
+# shellcheck disable=SC2329 # Registered by the INT/TERM trap two lines below.
+abort_on_signal() {
+  cleanup_note
+  echo "error: interrupted; nothing further was retired" >&2
+  exit 130
+}
+trap cleanup_note EXIT
+trap abort_on_signal INT TERM
+
 # The owning mate's preconditions, checked for every id before anything is
 # written, so a refusal for one id leaves every record exactly as it was.
 finished_work_precheck() {  # <id>
-  local id=$1 meta="$STATE/$1.meta" backend kind wt proj window
+  local id=$1 meta="$STATE/$1.meta" backend kind wt proj window inventory inventory_rc inventory_error
   backend=$(fm_backend_of_meta "$meta")
   fm_backend_is_retired "$backend" \
     || refuse "'$id' is recorded on the '$backend' backend, which can still answer for its endpoint; tear it down with bin/fm-teardown.sh, or take it to the captain - --finished retires only records on a retired backend"
@@ -215,8 +234,21 @@ finished_work_precheck() {  # <id>
   esac
   if [ "$backend" = tmux ] && command -v tmux >/dev/null 2>&1; then
     window=$(fm_meta_get "$meta" window)
-    if tmux list-windows -a -F '#{session_name}:#{window_name}' 2>/dev/null | grep -Fxq -- "$window"; then
-      refuse "a local tmux server still lists $id's window $window, so a worker may still be running behind it; take it to the captain"
+    NOTE=$(mktemp "${TMPDIR:-/tmp}/fm-retire-tmux.XXXXXX") \
+      || refuse "the tmux inventory could not be read for '$id'; take it to the captain"
+    inventory_rc=0
+    inventory=$(LC_ALL=C tmux list-windows -a -F '#{session_name}:#{window_name}' 2>"$NOTE") || inventory_rc=$?
+    inventory_error=$(<"$NOTE")
+    cleanup_note
+    if [ "$inventory_rc" = 0 ]; then
+      if printf '%s\n' "$inventory" | grep -Fxq -- "$window"; then
+        refuse "a local tmux server still lists $id's window $window, so a worker may still be running behind it; take it to the captain"
+      fi
+    else
+      case "$inventory_error" in
+        'no server running on '*|'error connecting to '*' (No such file or directory)') ;;
+        *) refuse "the tmux inventory could not be read for '$id': $inventory_error; take it to the captain" ;;
+      esac
     fi
   fi
 }
@@ -228,23 +260,6 @@ if [ "$FINISHED" = 1 ]; then
     finished_work_precheck "$id"
   done
 fi
-
-NOTE=
-cleanup_note() {
-  [ -z "$NOTE" ] || rm -f "$NOTE"
-  NOTE=
-}
-# An interrupt must ABORT the retirement, not just tidy up after it: without
-# the exit, bash runs the handler and carries on into the record removal, so
-# the operator's own Ctrl-C would be what retires the records.
-# shellcheck disable=SC2329 # Registered by the INT/TERM trap two lines below.
-abort_on_signal() {
-  cleanup_note
-  echo "error: interrupted; nothing further was retired" >&2
-  exit 130
-}
-trap cleanup_note EXIT
-trap abort_on_signal INT TERM
 
 if [ "$FINISHED" = 0 ]; then
   echo "About to retire the durable records of:" >&2

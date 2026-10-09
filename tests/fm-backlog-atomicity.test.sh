@@ -758,6 +758,7 @@ stage_retired_herdr_task() {  # <case-dir> <id>
 stage_retired_tmux_ship() {  # <case-dir> <id> [draft-text]
   local case_dir=$1 id=$2 home
   home=$(home_of "$case_dir")
+  fm_fake_exit0 "$case_dir/fakebin" tmux
   add_item "$case_dir" "$id"
   start_item "$case_dir" "$id"
   git init -q "$case_dir/project-$id"
@@ -2880,17 +2881,30 @@ test_the_owner_retires_its_finished_scout_on_a_retired_backend() {
 # A landed ship on a retired backend: cleanup's own landed-work gate passes, the
 # worktree goes back, and the record is retired.
 test_the_owner_retires_its_landed_ship_on_a_retired_backend() {
-  local case_dir home id out
-  id=atomic-finished-ship-d1
-  case_dir=$(make_home finished-ship)
-  home=$(home_of "$case_dir")
-  stage_retired_tmux_ship "$case_dir" "$id"
+  local case_dir home id out inventory_case
+  for inventory_case in readable no-server missing-socket; do
+    id=atomic-finished-ship-$inventory_case-d1
+    case_dir=$(make_home "finished-ship-$inventory_case")
+    home=$(home_of "$case_dir")
+    stage_retired_tmux_ship "$case_dir" "$id"
+    case "$inventory_case" in
+      readable)
+        printf '#!/usr/bin/env bash\necho "fm:another-window"\n' > "$case_dir/fakebin/tmux"
+        ;;
+      no-server)
+        printf '#!/usr/bin/env bash\necho "no server running on /tmp/tmux-501/default" >&2\nexit 1\n' > "$case_dir/fakebin/tmux"
+        ;;
+      missing-socket)
+        printf '#!/usr/bin/env bash\necho "error connecting to /tmp/tmux-501/default (No such file or directory)" >&2\nexit 1\n' > "$case_dir/fakebin/tmux"
+        ;;
+    esac
 
-  out=$(run_finished_retire "$case_dir" "$id") \
-    || fail "the owner could not retire its landed ship: $out"
-  assert_absent "$home/state/$id.meta" "the landed ship's record was not retired: $out"
-  [ "$(row_state "$case_dir" "$id")" = "done" ] \
-    || fail "the landed ship's row is $(row_state "$case_dir" "$id"), not done: $out"
+    out=$(run_finished_retire "$case_dir" "$id") \
+      || fail "the owner could not retire its landed ship ($inventory_case): $out"
+    assert_absent "$home/state/$id.meta" "the landed ship's record was not retired ($inventory_case): $out"
+    [ "$(row_state "$case_dir" "$id")" = "done" ] \
+      || fail "the landed ship's row is $(row_state "$case_dir" "$id"), not done ($inventory_case): $out"
+  done
   pass "the owner retires its landed ship on a retired backend"
 }
 
@@ -2946,6 +2960,24 @@ test_the_owner_path_refuses_what_it_cannot_prove_finished() {
   [ "$rc" -ne 0 ] || fail "the owner retired a record whose tmux window is still listed: $out"
   assert_contains "$out" "still lists" "the refusal did not name the live window: $out"
   assert_present "$home/state/$id.meta" "a record with a live tmux window was retired: $out"
+
+  id=atomic-finished-unreadable-d1
+  stage_retired_herdr_task "$case_dir" "$id"
+  fm_write_meta "$home/state/$id.meta" \
+    "backend=tmux" "kind=scout" "window=fm:fm-$id" \
+    "worktree=$case_dir/absent-worktree" "project=$case_dir/absent-project" \
+    "decisions_reviewed=1" "decision_keys="
+  printf '#!/usr/bin/env bash\necho "protocol version mismatch" >&2\nexit 1\n' > "$case_dir/fakebin/tmux"
+  chmod +x "$case_dir/fakebin/tmux"
+  rc=0; out=$(run_finished_retire "$case_dir" "$id") || rc=$?
+  rm -f "$case_dir/fakebin/tmux"
+  [ "$rc" -ne 0 ] || fail "the owner retired a record with unreadable tmux inventory: $out"
+  assert_contains "$out" "tmux inventory could not be read" "the refusal did not name the inventory failure: $out"
+  assert_contains "$out" "captain" "the unreadable inventory was not sent to the captain: $out"
+  assert_present "$home/state/$id.meta" "a record with unreadable tmux inventory was retired: $out"
+  assert_absent "$home/state/$id.endpoint-retired" "unreadable inventory left a retirement authorization"
+  [ "$(row_state "$case_dir" "$id")" = in_flight ] \
+    || fail "the row with unreadable inventory moved to $(row_state "$case_dir" "$id"): $out"
 
   rc=0
   out=$(FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \

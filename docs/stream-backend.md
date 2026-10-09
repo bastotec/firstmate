@@ -435,7 +435,7 @@ Records left on the removed tmux and herdr backends, including any record with n
 Stop any process still behind one by hand, then retire it with this command.
 
 The owning mate retires its own finished work on those backends itself, under the captain's standing instruction that whoever created a worker cleans it up, with `FM_HOME=<owning home> bin/fm-retire-endpoint.sh --finished <task-id>`.
-That path asks for no typed confirmation and is narrower than yours: it takes only ship and scout records on a retired backend, a ship only while its worktree is still its own, and a tmux record only when no local tmux server still lists its window.
+That path asks for no typed confirmation and is narrower than yours: it takes only ship and scout records on a retired backend, a ship only while its worktree is still its own, and, when tmux is installed, a tmux record only when a local tmux server can be read and does not list its window, or tmux definitively reports that no server is running.
 It never proceeds past cleanup's work-protection gate, so unlanded or uncommitted work, a missing scout report, or an open captain decision retires nothing and goes to the captain.
 Its log line carries `basis=finished-work`, and its stop rests on cleanup having already stopped every process under the worktree before it reached the endpoint.
 
