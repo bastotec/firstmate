@@ -902,6 +902,32 @@ test_hub_url_prefers_configuration_then_a_locally_started_hub() {
   url=$(resolve) || fail "resolution failed with a partial ready file"
   assert_equals "http://127.0.0.1:7717" "$url" "a ready file with no port should be ignored rather than built into a broken URL"
 
+  # Hermeticity: a suite launched from inside a stream-backed worker inherits
+  # that worker's live hub endpoint, which outranks every file below it. The
+  # suite scrubs that environment at source time (tests/lib.sh), so with every
+  # configured source removed resolution must fall back to the documented
+  # default instead of the inherited fleet hub.
+  rm -f "$home/state/.stream-hub.ready"
+  url=$(resolve) || fail "resolution failed with a hostile hub environment inherited"
+  assert_equals "http://127.0.0.1:7717" "$url" "an inherited live hub must not outrank the fixture's own resolution tiers"
+
+  # Prove the scrub itself under a hostile launch: a child shell given the
+  # exact environment a stream-backed worker exports must come up scrubbed.
+  # lib.sh's FM_TEST_LIB_SOURCED guard would make a subshell re-source a
+  # no-op, so this is a fresh bash sourcing it the way a test file does.
+  for hostile in FM_STREAM_HUB FM_STREAM_TOKEN FM_STREAM_MACHINE \
+      FM_STREAM_ENDPOINT_ID FM_STREAM_AGENT_BIN FM_STREAM_HTTP_TIMEOUT \
+      FM_STREAM_TOKEN_FILE FM_STREAM_ATTACH_LOCAL FM_STREAM_LOCAL_DIR; do
+    scrubbed=$(FM_STREAM_HUB="http://hostile.example:7717" \
+      FM_STREAM_TOKEN="hostile-token" FM_STREAM_MACHINE="hostile-box" \
+      FM_STREAM_ENDPOINT_ID="hostile-endpoint" FM_STREAM_AGENT_BIN="/hostile/agent" \
+      FM_STREAM_HTTP_TIMEOUT="1" FM_STREAM_TOKEN_FILE="/hostile/token" \
+      FM_STREAM_ATTACH_LOCAL="0" FM_STREAM_LOCAL_DIR="/hostile/local" \
+      bash -c '. "$1/lib.sh" >/dev/null 2>&1; printf %s "${'"$hostile"':-}"' \
+      _ "$ROOT/tests" 2>/dev/null) || scrubbed=""
+    assert_equals "" "$scrubbed" "a hostile ambient $hostile must be scrubbed when the suite starts"
+  done
+
   unset -f resolve
   pass "stream: the hub URL prefers configuration, then a hub this home started, then the default"
 }
