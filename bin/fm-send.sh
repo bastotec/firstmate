@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Steer a task by durable record: write the message into the task's steering
 # inbox and ring a constant doorbell line into its terminal, best-effort.
-# Usage: fm-send.sh [--decision-answer] <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] <text...>
+# Usage: fm-send.sh [--decision-answer] <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] [--from-captain] <text...>
 #   --decision-answer requires an exact task id and keyed answer, resolves
 #   regular metadata under the supervision lease and metadata lock, and refuses
 #   harness-native text rather than leaving the durable inbox plane.
@@ -106,6 +106,20 @@
 # marker travels verbatim inside the recorded body. A crewmate/scout target,
 # an explicit backend-target escape-hatch target, and the --key path are never
 # marked - their behavior is unchanged.
+#
+# From-captain tag: --from-captain says the captain wrote this text to the
+# target himself. The text gets the
+# captain-direct tag owned by bin/fm-operational-input.sh, so the agent answers
+# him in its own conversation (AGENTS.md section 9). A secondmate target still
+# gets the from-firstmate mark, corr token and pending-reply expectation in
+# front of the tag, so the mate also appends one correlated line to its parent
+# channel and the first mate is notified. A worker target gets the tag alone
+# and no expectation. The tagged text always rides the inbox plane, so a
+# leading "/" reaches the agent as text, never as a harness command. The flag
+# is refused with --key, --decision-answer, --fire-and-forget, and an explicit
+# backend target, none of which is a captain message to a task.
+# The old "From the captain, directly:" prose prefix is not detected; Fleet Town
+# adopting this flag is a follow-up in its own repository.
 #
 # Parent-owned pending-reply expectation: every newly marked secondmate request
 # except an explicit --fire-and-forget delivery receives a privacy-safe
@@ -418,6 +432,7 @@ shift
 # message exactly as before, so ordinary sends are byte-identical.
 RESOLVE_KEYS=
 FIRE_AND_FORGET_ID=
+FROM_CAPTAIN=0
 fm_send_add_resolve_key() {  # <key>
   local k=$1
   case "$k" in
@@ -456,12 +471,26 @@ while :; do
       FIRE_AND_FORGET_ID=${1#--fire-and-forget=}
       shift
       ;;
+    --from-captain)
+      FROM_CAPTAIN=1
+      shift
+      ;;
     *) break ;;
   esac
 done
 
 if [ "$TARGET_BACKEND" != remote ]; then
   fm_backend_validate "$TARGET_BACKEND" || exit 1
+fi
+if [ "$FROM_CAPTAIN" = 1 ]; then
+  if [ "$DECISION_ANSWER" = 1 ] || [ -n "$FIRE_AND_FORGET_ID" ] || [ -z "$TARGET_SELECTOR" ]; then
+    echo "error: --from-captain needs a task target and cannot accompany --decision-answer or --fire-and-forget; nothing was sent" >&2
+    exit 1
+  fi
+  case "${1:-}" in
+    --key) echo "error: --from-captain needs message text, not --key; nothing was sent" >&2; exit 1 ;;
+    '') echo "error: --from-captain needs message text; nothing was sent" >&2; exit 1 ;;
+  esac
 fi
 if [ "$DECISION_ANSWER" = 1 ]; then
   if [ -z "$RESOLVE_KEYS" ] || [ -n "$FIRE_AND_FORGET_ID" ] || [ "$#" -ne 1 ]; then
@@ -706,7 +735,7 @@ else
   RESOLVE_ANSWER_TEXT=$MESSAGE
   INBOX_PLANE=0
   if [ -n "$TARGET_SELECTOR" ]; then
-    if [ -n "$FIRE_AND_FORGET_ID" ] || [ "$TARGET_BACKEND" = remote ]; then
+    if [ -n "$FIRE_AND_FORGET_ID" ] || [ "$TARGET_BACKEND" = remote ] || [ "$FROM_CAPTAIN" = 1 ]; then
       INBOX_PLANE=1
     else
       case "$RESOLVE_ANSWER_TEXT" in
@@ -718,6 +747,11 @@ else
   if [ "$DECISION_ANSWER" = 1 ] && [ "$INBOX_PLANE" != 1 ]; then
     echo "error: decision answer cannot be a harness invocation; nothing was sent" >&2
     exit 1
+  fi
+  PENDING_REPLY_REQUEST=$MESSAGE
+  if [ "$FROM_CAPTAIN" = 1 ]; then
+    PENDING_REPLY_REQUEST="from the captain: $MESSAGE"
+    fm_message_mark_captain_direct "$MESSAGE" MESSAGE
   fi
   if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ -n "$FIRE_AND_FORGET_ID" ]; then
     fm_message_mark_from_firstmate "$MESSAGE" MESSAGE
@@ -746,7 +780,7 @@ else
         echo "error: cannot create pending-reply expectation without a resolvable secondmate task id" >&2
         exit 1
       fi
-      PENDING_REPLY_CORR=$(fm_pending_reply_create "$FM_HOME" "$STATE" "$TARGET_TASK_ID" "$MESSAGE") \
+      PENDING_REPLY_CORR=$(fm_pending_reply_create "$FM_HOME" "$STATE" "$TARGET_TASK_ID" "$PENDING_REPLY_REQUEST") \
         || { echo "error: failed to create parent pending-reply expectation for $TARGET_TASK_ID" >&2; exit 1; }
       PENDING_REPLY_CREATED=1
     fi

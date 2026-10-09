@@ -204,6 +204,7 @@ IFS= read -r -d '' INBOX_SECTION <<EOF || true
 Firstmate steers you through durable message files in $INBOX_DIR.
 When a terminal message says an instruction is waiting there - and at any natural checkpoint when you are unsure - list $INBOX_DIR/*.msg, read and act on each message in numeric order, then acknowledge each handled message by moving it: \`mv $INBOX_DIR/NNN.msg $INBOX_DIR/handled/\`.
 The move IS the acknowledgement: without it firstmate rings again and eventually treats you as stuck. An empty or absent inbox needs no action.
+A message tagged \`$FM_CAPTAIN_DIRECT_LABEL\` followed by an invisible separator is the captain writing to you himself, and he reads your conversation: answer him there, addressed to him, and keep status lines for the events they already cover.
 EOF
 INBOX_SECTION=${INBOX_SECTION%$'\n'}
 
@@ -255,8 +256,9 @@ Act only on tasks the main firstmate routes to you.
 Never start a survey, audit, or "find improvements" sweep on your own initiative; that is not your job and it is unwanted.
 
 # The captain and the parent channel
-Nobody reads this chat: the captain and the main firstmate see only what is appended to $STATUS_FILE, and a captain-facing sentence that is not appended there has not been sent.
+The main firstmate never reads this chat, and the captain reads it only when he messages you himself: otherwise both see only what is appended to $STATUS_FILE, and a captain-facing sentence that is not appended there has not been sent.
 That file is your parent channel, and in this home it IS the captain: every sentence you would say to the captain, and every outcome the local AGENTS.md tells a firstmate to bring to the captain, is one appended line there, never chat.
+The one exception is a captain-direct message (below): answer him in this chat, and also append one short correlated line to the parent channel so the main firstmate is notified.
 Your own machinery publishes the durable facts about your crew's work for you (\`bin/fm-parent-channel-lib.sh\`): a child's terminal done or failed line with its note and PR on every supervision poll, a PR-ready line when you register a PR, a task you hold for the captain and its answer, a merge, and a child's final line at cleanup all reach the parent channel from the scripts that record them, whether or not you append anything.
 What only you can append is judgement: the answer to a marked request below, a recommendation or caveat on a delivered outcome, a blocker or failure of your own, and anything else you would otherwise say to the captain.
 
@@ -271,6 +273,7 @@ A plain \`echo\` that includes the same \`corr=<id>\` on this parent channel is 
 For a terse result, a status line is the whole answer.
 For a detailed answer (an investigation, a plan, an audit), write it to a doc under your home's \`data/\` and append a status line that points to that doc - the scout-report pattern - so the main firstmate is woken and can read it.
 Before treating an investigation or visual review as complete, load \`captain-hold-lifecycle\` from this home's \`.agents/skills/\` and pass its shared completion gate.
+When the marker and \`corr=<id>\` token are followed by a \`$FM_CAPTAIN_DIRECT_LABEL\` tag, the captain wrote the message to you himself and reads this chat: answer him here, addressed to him and readable on its own, then append one short line with that \`corr=<id>\` to the parent channel, such as \`done corr=<id>: answered the captain directly: {gist}\`.
 A message with NO marker is the captain typing directly into your pane: treat it as authoritative captain intervention and stay conversational exactly as you would for any captain message; do not force it onto the status path.
 A request arriving through the instruction inbox below follows the same marker and reply rules.
 

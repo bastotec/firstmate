@@ -29,6 +29,9 @@
 #      slash) keeps its exit-3 delivered-unconfirmed contract, never closes a
 #      --resolve-key decision unconfirmed, and keeps a marked expectation
 #      armed.
+#   9. Shell-active captain text (dollar amounts, substitutions, backticks,
+#      both quote kinds) lands in the remote record byte-exact, tagged as a
+#      captain-direct message.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -772,6 +775,29 @@ test_local_pending_does_not_close_resolve_key() {
   pass "fm-send local: an unconfirmed submit still never closes a --resolve-key decision"
 }
 
+test_remote_captain_text_is_byte_exact() {
+  local dir fb ssh_log home rhome rc rec body text
+  dir="$TMP_ROOT/remote-shell-text"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); ssh_log="$dir/ssh.log"; : > "$ssh_log"
+  rhome=$(setup_remote_secondmate_home remote-shell-text)
+  home=$(setup_remote_parent_home remote-shell-text "$rhome")
+  text="ceiling US\$25, per call US\$0.32, \$(touch $dir/pwned) \`touch $dir/pwned2\` \"double\" 'single' \$2"
+  rc=0
+  send_env "$fb" "$home" "$ssh_log" \
+    "$SEND" rsm --from-captain "$text" >"$dir/out" 2>"$dir/err" || rc=$?
+  expect_code 0 "$rc" "a captain message with shell-active text must be recorded: $(cat "$dir/err")"
+  rec=$(remote_inbox_records "$rhome" | head -1)
+  [ -n "$rec" ] || fail "the captain message must land in the remote inbox"
+  body=$(cat "$rec")
+  case "$body" in
+    *"$FM_CAPTAIN_DIRECT_MARK"*$'\n\n'"$text") : ;;
+    *) fail "the remote record must end with the captain's exact text: $body" ;;
+  esac
+  assert_absent "$dir/pwned" "the captain's text ran a command substitution"
+  assert_absent "$dir/pwned2" "the captain's text ran a backtick substitution"
+  pass "fm-send remote: shell-active captain text reaches the remote record byte-exact"
+}
+
 test_remote_steer_lands_in_remote_inbox
 test_remote_rerun_is_idempotent
 test_remote_retry_failure_preserves_ambiguous_expectation
@@ -790,3 +816,4 @@ test_local_pending_does_not_close_resolve_key
 test_local_secondmate_pending_keeps_expectation_armed
 
 echo "all fm-send-remote-delivery tests passed"
+test_remote_captain_text_is_byte_exact

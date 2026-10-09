@@ -17,6 +17,11 @@
 #   4. The --key path never carries the marker and never enqueues a record.
 #   5. Direct captain text stays unmarked, and already-marked text is idempotent.
 #   6. The marker is the label plus terminal-safe U+2063 INVISIBLE SEPARATOR.
+#   7. --from-captain tags a secondmate's steer behind its mark and corr, and
+#      its pending-reply record still resolves from one correlated parent line.
+#   8. --from-captain tags a worker's steer alone, rides the inbox even for a
+#      leading "/", and creates no pending-reply record.
+#   9. --from-captain is refused where it is not a captain message to a task.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -241,6 +246,87 @@ test_marked_send_preserves_trailing_newlines() {
   pass "fm-send: marked secondmate payload preserves trailing newline bytes in its record"
 }
 
+test_from_captain_to_secondmate_keeps_reply_tracking() {
+  local dir fb log home rc got corr rec
+  dir="$TMP_ROOT/cap-sm"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home cap-sm)
+  fm_test_stream_secondmate_meta "$home/state/domain.meta" "$home" alpha echo "$log"
+  run_send "$fb" "$home" "$log" "domain" --from-captain "What are we doing?"; rc=$?
+  expect_code 0 "$rc" "a captain message to a secondmate should be sent"
+  got=$(record_body "$home/state/domain.inbox/001.msg")
+  case "$got" in
+    "$FM_FROMFIRST_MARK"corr=[a-f0-9]*" $FM_CAPTAIN_DIRECT_MARK$FM_CAPTAIN_DIRECT_NOTE"$'\n\n'"What are we doing?") : ;;
+    *) fail "captain message to a secondmate: expected mark, corr, captain tag, note, then text"$'\n'"$got" ;;
+  esac
+  fm_message_from_firstmate "$got" || fail "the secondmate steer must keep the from-firstmate mark"
+  fm_message_captain_direct "$got" || fail "the secondmate steer must carry the captain-direct tag"
+  # shellcheck source=/dev/null
+  . "$ROOT/bin/fm-pending-reply-lib.sh"
+  corr=$(fm_pending_reply_extract_corr "$got")
+  rec=$(fm_pending_reply_path "$home/state" "$corr")
+  [ -f "$rec" ] || fail "a captain message to a secondmate must still create a pending-reply record"
+  assert_contains "$(cat "$rec")" "request_summary=from the captain: What are we doing?" \
+    "the pending-reply summary should name the captain and keep his text readable"
+  printf 'done corr=%s: answered the captain directly; nothing in flight\n' "$corr" >> "$home/state/domain.status"
+  fm_pending_reply_try_resolve "$home/state" "$corr" >/dev/null 2>&1 || true
+  assert_contains "$(cat "$rec")" "phase=resolved" \
+    "one correlated parent line must resolve the captain message's pending reply"
+  pass "fm-send: --from-captain to a secondmate tags the steer and keeps reply tracking"
+}
+
+test_from_captain_to_worker_is_tagged_only() {
+  local dir fb log home rc got
+  dir="$TMP_ROOT/cap-crew"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home cap-crew)
+  { fm_test_stream_task "$home/state" build "$log"
+    printf '%s\n' "worktree=$home/wt" "project=$home/p" \
+      "harness=echo" "kind=ship" "mode=no-mistakes" "yolo=off"; } > "$home/state/build.meta"
+  run_send "$fb" "$home" "$log" "build" --from-captain "/why is CI red?"; rc=$?
+  expect_code 0 "$rc" "a captain message to a worker should be sent"
+  got=$(record_body "$home/state/build.inbox/001.msg")
+  [ "$got" = "$FM_CAPTAIN_DIRECT_MARK$FM_CAPTAIN_DIRECT_NOTE"$'\n\n'"/why is CI red?" ] \
+    || fail "captain message to a worker: expected tag, note, then text"$'\n'"$got"
+  fm_message_from_firstmate "$got" && fail "a worker steer must not carry the from-firstmate mark"
+  case "$(cat "$log")" in
+    *"why is CI red"*) fail "a captain message starting with / must ride the inbox, never be typed" ;;
+  esac
+  [ ! -d "$home/state/pending-replies" ] || [ -z "$(ls -A "$home/state/pending-replies")" ] \
+    || fail "a captain message to a worker must not create a pending-reply record"
+  pass "fm-send: --from-captain to a worker tags the inbox record only"
+}
+
+test_from_captain_refusals() {
+  local dir fb log home rc target
+  dir="$TMP_ROOT/cap-refuse"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); log="$dir/send.log"
+  home=$(setup_home cap-refuse)
+  fm_test_stream_secondmate_meta "$home/state/domain.meta" "$home" alpha echo "$log"
+  run_send "$fb" "$home" "$log" "domain" --from-captain --key Enter; rc=$?
+  [ "$rc" -ne 0 ] || fail "--from-captain with --key must be refused"
+  run_send "$fb" "$home" "$log" "domain" --fire-and-forget 0123456789abcdef --from-captain "hi"; rc=$?
+  [ "$rc" -ne 0 ] || fail "--from-captain with --fire-and-forget must be refused"
+  run_send "$fb" "$home" "$log" "domain" --from-captain; rc=$?
+  [ "$rc" -ne 0 ] || fail "--from-captain without text must be refused"
+  target=$(fm_test_stream_target_of "$home/state" domain)
+  run_send "$fb" "$home" "$log" "$target" --from-captain "hi"; rc=$?
+  [ "$rc" -ne 0 ] || fail "--from-captain to an explicit endpoint must be refused"
+  [ ! -d "$home/state/domain.inbox" ] || fail "a refused captain message must enqueue nothing"
+  [ ! -s "$log" ] || fail "a refused captain message must type nothing"
+  pass "fm-send: --from-captain is refused unless it is captain text to a task"
+}
+
+test_captain_direct_tag_is_idempotent() {
+  local once twice
+  fm_message_mark_captain_direct "status?" once
+  fm_message_mark_captain_direct "$once" twice
+  [ "$once" = "$twice" ] || fail "captain-direct tagging must be idempotent"
+  fm_message_captain_direct "status?" && fail "plain text must not read as captain-direct"
+  fm_message_captain_direct "[fm-captain-direct]status?" && fail "the label without U+2063 must not read as captain-direct"
+  pass "fm-marker: captain-direct tagging is idempotent and needs the invisible separator"
+}
+
 test_secondmate_target_is_marked
 test_exact_secondmate_task_id_is_marked
 test_crewmate_target_is_not_marked
@@ -249,3 +335,7 @@ test_key_path_is_not_marked
 test_marker_is_label_plus_invisible_separator
 test_marker_transformation_is_idempotent
 test_marked_send_preserves_trailing_newlines
+test_from_captain_to_secondmate_keeps_reply_tracking
+test_from_captain_to_worker_is_tagged_only
+test_from_captain_refusals
+test_captain_direct_tag_is_idempotent

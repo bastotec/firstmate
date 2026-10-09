@@ -192,7 +192,7 @@ A home seeded with `-` is a durable treehouse lease under the secondmate id, and
 `local-only` projects stay with the main first mate because they merge into the main local checkout.
 
 Secondmates are idle by default: after startup recovery of their own home, an empty queue waits silently, and they never self-initiate surveys or audits.
-Marked `fm-send.sh` requests use the `from-firstmate` carrier owned by `bin/fm-operational-input.sh`, so answers come back through status lines rather than a chat nobody reads, and `bin/fm-pending-reply-lib.sh` guards each reply-bearing request against a missing report.
+[`AGENTS.md` section 9](../AGENTS.md#9-escalation-and-captain-etiquette) owns secondmate reply routing, including captain-direct replies; `bin/fm-pending-reply-lib.sh` guards each reply-bearing request against a missing report.
 Direct human typing stays unmarked, so captain intervention in a secondmate remains conversational.
 `fm-backlog-handoff.sh` moves already-judged in-scope queued items to a secondmate and wakes it; its header owns delivery outcomes.
 An unreachable remote host is unknown rather than dead, keeps its route and durable work, and is never failed over or relaunched locally.

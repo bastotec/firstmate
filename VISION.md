@@ -11,7 +11,7 @@ It owns exactly one thing: the layer between the captain's intent and the agents
 
 Without a first mate, parallel agent sessions force constant context-switching: the captain juggles a long list of sessions, relearns what each one was about and what the right next step should be, and watches coding's focus, flow, and peace replaced by non-stop tab-juggling.
 Most harnesses and orchestrator apps make it easier to see those sessions and jump between them, but the context switch remains the captain's burden.
-The captain talks to the first mate and to nobody else; every worker reports through the first mate and never addresses the captain directly.
+The first mate is the captain's default interface, not a barrier to direct intervention; [`AGENTS.md` section 9](AGENTS.md#9-escalation-and-captain-etiquette) owns the captain-direct reply exception.
 Captain-facing language is outcomes, consequences, and decisions; the machinery that produced them stays below deck.
 An escalation exists for a decision only a human can make; progress, retries, and internal mechanics are never news.
 The interface must stay honest under load: batching and silence are presentation choices, and never hide a failure, a decision, or a risk.

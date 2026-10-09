@@ -40,6 +40,16 @@ FM_FROMFIRST_LABEL='[fm-from-firstmate]'
 FM_FROMFIRST_SEPARATOR=$FM_OPERATIONAL_MARK
 FM_FROMFIRST_MARK="${FM_FROMFIRST_LABEL}${FM_FROMFIRST_SEPARATOR}"
 
+# The captain-direct carrier tags text the captain wrote to one agent himself
+# (bin/fm-send.sh --from-captain). It is not an operational-input kind: it is a
+# provenance tag on ordinary text. It leads a worker's message, and follows the
+# from-firstmate mark and corr token on a secondmate's. Its fixed note makes the
+# reply rule readable to an agent whose charter predates the tag; AGENTS.md
+# section 9 owns that rule.
+FM_CAPTAIN_DIRECT_LABEL='[fm-captain-direct]'
+FM_CAPTAIN_DIRECT_MARK="${FM_CAPTAIN_DIRECT_LABEL}${FM_OPERATIONAL_MARK}"
+FM_CAPTAIN_DIRECT_NOTE='The captain wrote this to you himself and reads your conversation, so answer him there, and if this message carries a corr= token also append one short line with that token to your parent channel.'
+
 fm_operational_kind_is_current() {  # <kind>
   case " $FM_OPERATIONAL_KINDS " in
     *" $1 "*) return 0 ;;
@@ -184,6 +194,37 @@ fm_message_mark_from_firstmate() {  # <message> <result-var>
     transformed="${FM_FROMFIRST_MARK}${message}"
   fi
   printf -v "$result_var" '%s' "$transformed"
+}
+
+# 0 if <message> carries the captain-direct tag, alone or behind the
+# from-firstmate mark and its optional corr token.
+fm_message_captain_direct() {  # <message>
+  local message=${1-} rest
+  case "$message" in
+    "$FM_CAPTAIN_DIRECT_MARK"*) return 0 ;;
+    "$FM_FROMFIRST_MARK"*) ;;
+    *) return 1 ;;
+  esac
+  rest=${message#"$FM_FROMFIRST_MARK"}
+  case "$rest" in
+    corr=*' '*) rest=${rest#* } ;;
+  esac
+  case "$rest" in
+    "$FM_CAPTAIN_DIRECT_MARK"*) return 0 ;;
+  esac
+  return 1
+}
+
+# Tag captain-written text once: the mark, the fixed note, a blank line, then
+# the captain's text unchanged. Already-tagged text is returned unchanged.
+fm_message_mark_captain_direct() {  # <message> <result-var>
+  local message=${1-} result_var=${2-}
+  [ -n "$result_var" ] && [ -n "$message" ] || return 2
+  if fm_message_captain_direct "$message"; then
+    printf -v "$result_var" '%s' "$message"
+  else
+    printf -v "$result_var" '%s%s\n\n%s' "$FM_CAPTAIN_DIRECT_MARK" "$FM_CAPTAIN_DIRECT_NOTE" "$message"
+  fi
 }
 
 fm_operational_read_stdin() {  # <result-var>
