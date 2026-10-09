@@ -11,9 +11,10 @@
 #   harness, kind, spawn_gen, endpoint_task_id, ...) is kept in order, so the
 #   task keeps its worktree, session, and identity and only its endpoint moves.
 #
-#   Caller: bin/fm-control.sh recover-missing, which has to record the NEW
-#   agent-generated endpoint for a task whose old one is gone. Identity keys of
-#   retired backends are still dropped so no stale binding survives.
+#   Caller: bin/fm-control.sh recover-missing or reincarnate, which records the
+#   NEW agent-generated endpoint. A validated retired record without an
+#   endpoint_task_id gains that exact task binding during this atomic rebind.
+#   Identity keys of retired backends are dropped so no stale binding survives.
 #
 #   Runs under the record's own meta lock (bin/fm-wake-lib.sh's
 #   fm_meta_lock_path, the lock fm-spawn.sh publishes under), so it must not be
@@ -67,7 +68,14 @@ fm_endpoint_rebind_meta() {  # <meta> <task-id> <backend> <window> [key=value...
   if [ -L "$meta" ] || [ ! -f "$meta" ]; then
     FM_ENDPOINT_REBIND_ERROR="$meta is not a regular task record"
   elif [ "$(fm_meta_get "$meta" endpoint_task_id)" != "$id" ]; then
-    FM_ENDPOINT_REBIND_ERROR="$meta is not bound to task $id (endpoint_task_id differs)"
+    # Validated legacy tmux records predate the explicit task binding.
+    if [ -z "$(fm_meta_get "$meta" endpoint_task_id)" ] \
+       && fm_backend_is_retired "$(fm_backend_of_meta "$meta")" \
+       && fm_backend_validate_task_endpoint "$meta" "$id"; then
+      set -- "endpoint_task_id=$id" "$@"
+    else
+      FM_ENDPOINT_REBIND_ERROR="$meta is not bound to task $id (endpoint_task_id differs)"
+    fi
   fi
   if [ -z "$FM_ENDPOINT_REBIND_ERROR" ]; then
     tmp="$meta.rebind.$$"
