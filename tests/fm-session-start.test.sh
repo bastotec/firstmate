@@ -1052,8 +1052,9 @@ EOF
 
   { live_task_lines "$home/state" task-rejoin; printf 'kind=ship\n'; } > "$home/state/task-rejoin.meta"
   rejoining=$(fm_test_stream_target_of "$home/state" task-rejoin)
-  # One 404, then the endpoint answers: the rejoin lands inside the ladder.
-  fm_test_fake_stream_set "$rejoining" '{"miss_first": 1}'
+  # Five 404s, then the endpoint answers: the rejoin lands inside the same
+  # first-attempt window as the agent's idle heartbeat.
+  fm_test_fake_stream_set "$rejoining" '{"miss_first": 5}'
 
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   assert_contains "$out" "endpoint: alive (backend=stream window=$rejoining)" \
