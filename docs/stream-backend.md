@@ -420,7 +420,10 @@ That protection covers only the gap between a replacement's registration and its
 
 Readers wait one ordinary rejoin window before answering an unresolved Bridge order; if no endpoint appears, the order remains pending without a membership nack, and an identical resend can try placement again.
 The cheap presence probe behind capture, current-path and endpoint-addressed input answers from the first reply and pays no rejoin wait.
+The session-start fleet digest uses a settled form of that probe: it retries only a 404 (`no_such_endpoint`) once per second through the bounded six-second first-attempt rejoin window, prints the endpoint alive if it returns, and on that 404 path prints it dead only after every retry remains 404.
+Other probe refusals still render dead from the first reply; they are not rejoin evidence and get no retry.
 The recovery-grade worker classifier waits its own bounded six-second window, after which it can report `missing` while a live agent remains in a longer backoff; that verdict produces no Bridge membership nack.
+`tests/fm-session-start.test.sh` pins both a worker returning during the window and an absence lasting through it.
 
 Only `no_such_endpoint` from the hub triggers re-registration; a failed connection never does, because a hub on its way back up may still hold the record.
 An idle endpoint finds out on its state heartbeat rather than waiting for its worker to print something.
