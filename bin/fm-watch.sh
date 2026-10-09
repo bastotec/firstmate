@@ -1074,7 +1074,7 @@ wedge_timer_check() {  # <window> <since-file> <triage-label> <escalation-count-
           return 0
         fi
         [ -n "$absorb_class" ] || absorb_class=$(crew_absorb_class "$task")
-        if [ "$absorb_class" = done ]; then
+        if [ "$absorb_class" = "done" ]; then
           handle_held_merge_stale "$win" "$task"
           return 0
         elif [ -n "$STALE_WAIT_DECLARATION" ]; then
