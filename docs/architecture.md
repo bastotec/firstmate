@@ -143,7 +143,7 @@ Each record is bound to an incarnation token minted when the task is armed, so a
 ## Runtime session backends
 
 The runtime backend is the session-provider layer below firstmate's scripts: endpoint creation, bounded capture, text and key sends, current-path reads, agent-process probes, and teardown.
-Teardown carries one contract the layer above depends on: a kill reports whether the endpoint is gone, is positively still present, could not be answered for, or could never be attempted, and only the first licenses removing the records that assert a worker stopped (`fm_backend_kill` in `bin/fm-backend.sh`).
+Teardown carries one contract the layer above depends on: a kill reports whether the endpoint is gone, is positively still present, could not be answered for, or could never be attempted, and only the first lets ordinary cleanup remove the records that assert a worker stopped (`fm_backend_kill` in `bin/fm-backend.sh`).
 `bin/fm-backend.sh` centralizes selection, `state/<id>.meta` helpers, endpoint identity validation, and dispatch to the one adapter, `bin/backends/stream.sh`.
 Records left on the retired tmux and herdr backends read as undrivable rather than crashing, and `bin/fm-retire-endpoint.sh` retires them.
 [`configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns selection, the refusal of other names, and legacy-record compatibility.
