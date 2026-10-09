@@ -35,6 +35,10 @@
 #                       handoff retry, X-mode artifact writes, fleet sync) also run only when
 #                       locked; the four network sweeps run in the deferred
 #                       stage rather than this synchronous bootstrap section.
+#                       Its DECISION CARDS tail drafts a card for every
+#                       uncarded captain hold when locked (bin/fm-card.sh
+#                       backfill) and, in either mode, lists the captain calls
+#                       whose card is still a draft for this home to finish.
 #   3. wake-drain     - presents durable wakes and advances recovery handling
 #                       state, so it only runs when locked. The local bounded
 #                       inactive-outcome startup scan runs in the deferred worker.
@@ -535,6 +539,34 @@ if [ -n "$BOOT_OUT" ]; then
   printf '%s\n' "$BOOT_OUT"
 else
   printf '(silent - all good)\n'
+fi
+
+# Decision cards, still inside the bootstrap stage: every captain call this
+# home holds must carry a card, and the heartbeat that upgrades drafts never
+# reaches an idle second mate, so session start is the one boundary every home
+# crosses - including the restart /updatefirstmate performs. A locked session
+# drafts a card for every uncarded captain hold (bin/fm-card.sh backfill,
+# idempotent); any session then lists the calls whose card is still a draft.
+subsection "DECISION CARDS"
+if [ "$TASKS_AXI_COMPATIBLE" -ne 1 ]; then
+  printf 'skipped - compatible tasks-axi is unavailable, so captain calls could not be listed.\n'
+else
+  if [ "$READ_ONLY" -eq 0 ]; then
+    CARD_BACKFILL_OUT=$("$SCRIPT_DIR/fm-card.sh" backfill 2>&1) \
+      || printf 'actionable: drafting missing decision cards failed: %s\n' "$CARD_BACKFILL_OUT"
+  fi
+  if CARD_DRAFTS_OUT=$("$SCRIPT_DIR/fm-card.sh" drafts 2>&1); then
+    if [ -n "$CARD_DRAFTS_OUT" ]; then
+      printf 'These captain calls have only a draft card. Before going idle, write a full card for each\n'
+      printf '(bin/fm-card.sh write <id> --file <card.json>; captain-hold-lifecycle owns how).\n'
+      printf 'This reconciles calls this home already holds, so it is required in an idle second mate too:\n'
+      printf '%s\n' "$CARD_DRAFTS_OUT"
+    else
+      printf '(every captain call has a full card)\n'
+    fi
+  else
+    printf 'actionable: listing draft decision cards failed: %s\n' "$CARD_DRAFTS_OUT"
+  fi
 fi
 
 # --- 3. wake-drain ---------------------------------------------------------

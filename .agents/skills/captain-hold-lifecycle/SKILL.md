@@ -2,7 +2,7 @@
 name: captain-hold-lifecycle
 description: >-
   Agent-only policy for completing investigations and visual reviews without losing unresolved captain calls, and for closing what the captain owns with his actual words.
-  Load before treating an investigation, scout report, structured review, or Lavish review as complete, before ending a visual review that exposed a captain decision, when recording or routing the captain's answer, on every heartbeat for the decision-card sweep, on a "card <id>: option <key>" or "undo clear <id>" message, on an "order <id>: ...", "order <id> replacing <old-id>: ...", "launch <id>" or "cancel <id>" message, and on any RECORD DIVERGENCE line the wake drain prints.
+  Load before treating an investigation, scout report, structured review, or Lavish review as complete, before ending a visual review that exposed a captain decision, when recording or routing the captain's answer, on every heartbeat for the decision-card sweep, when the session-start digest lists draft decision cards, on a "card <id>: option <key>" or "undo clear <id>" message, on an "order <id>: ...", "order <id> replacing <old-id>: ...", "launch <id>" or "cancel <id>" message, and on any RECORD DIVERGENCE line the wake drain prints.
 user-invocable: false
 metadata:
   internal: true
@@ -70,9 +70,13 @@ Every captain call carries a decision card file, which Fleet Town and Ziggy show
 When you hold, author a full card with your judgment using the schema in `bin/fm-card.sh --help`.
 Pass it as `bin/fm-captain-hold.sh hold <id> --reason "<reason>" --card-file <path>`; re-holding an active call this way replaces its card and keeps its timestamp.
 A script that holds on its own leaves a draft card, which is not a judgment.
+The mate whose home holds the call owns its card, a second mate included, and writes its situation and options for the captain in plain words.
+To replace a draft without touching the hold, run `bin/fm-card.sh write <id> --file <path>`.
+Every locked session start drafts a card for each uncarded captain call and lists the calls whose card is still a draft under `DECISION CARDS`; write a full card for each before going idle, which reconciles calls the home already holds and so binds an idle second mate too.
 On every heartbeat, run `bin/fm-card.sh backfill` first, then replace each draft with a full card, then run `bin/fm-card.sh stale`.
 Under the captain's standing ruling of 2026-10-07, check each candidate's evidence yourself, clear the ones it confirms with `bin/fm-card.sh clear <id> --why "<one line of evidence>"`, keep any call the captain still needs, and tell the captain how many you cleared and why in your next natural reply.
 A message "card <id>: option <key>" is the captain choosing that option; a redirect text is the captain's words too.
+The home that holds the call resolves it: a second mate answers a call in its own backlog through the steps below, and a home that does not hold the call forwards the captain's exact words to the second mate that does through `bin/fm-send.sh`.
 If that call was already cleared, run `bin/fm-card.sh restore <id>` first so the captain's answer is recorded rather than refused.
 For a work-gating approval such as a merge, record the captain's words with `answer --release` before carrying out the selected instruction through the gated work path.
 For a question-shaped call, record the captain's words with plain `answer` and carry out the selected instruction.

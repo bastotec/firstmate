@@ -16,6 +16,7 @@
 #   fm-card.sh remove <task-id>
 #   fm-card.sh draft <task-id> --title <title> --project <project> --situation <text>
 #   fm-card.sh backfill
+#   fm-card.sh drafts
 #   fm-card.sh stale
 #   fm-card.sh clear <task-id> --why <text>
 #   fm-card.sh restore <task-id>
@@ -31,7 +32,15 @@
 # hold whose holder could not write a judgment; `draft` never replaces a full
 # card, and the first mate replaces drafts with full cards at its next review.
 # `backfill` drafts a card for every captain-held task in this home that has
-# none, using its title, repo and hold reason.
+# none, using its title, repo and hold reason; it is idempotent, and
+# bin/fm-session-start.sh runs it at every locked session start, so holds made
+# before cards existed, or outside bin/fm-captain-hold.sh, gain a card in every
+# home, idle second mates included.
+# `drafts` is read-only and prints "<task-id>\t<title>" for every captain-held
+# task in this home whose card is still a draft or missing: the calls whose
+# owning mate still has to write a full card.
+# Both refuse (exit 2) when this home's backlog cannot be listed, rather than
+# reading an unreadable backlog as "no captain calls".
 # `stale` is read-only and prints "<task-id>\t<kind>\t<why>" per candidate:
 # `orphan` (a card with no open captain hold), `pr-merged` (the task's
 # recorded PR has a matching merge notification), or `idle` (held 3+ days,
@@ -218,13 +227,18 @@ cmd_draft() {
 # Ids of tasks held for the captain: the last column of each listed row is
 # its hold kind, and an id is a slug, so neither needs CSV decoding.
 captain_held_ids() {
-  tasks list --state held --fields hold_kind 2>/dev/null \
+  local listed
+  listed=$(tasks list --state held --fields hold_kind 2>/dev/null) \
+    || die "cannot list this home's captain calls; refusing to read that as none"
+  printf '%s\n' "$listed" \
     | sed -n 's/^  \([A-Za-z0-9._-][A-Za-z0-9._-]*\),.*,captain$/\1/p'
 }
 
 cmd_backfill() {
-  local id show title repo reason
-  for id in $(captain_held_ids); do
+  local id ids show title repo reason
+  [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+  ids=$(captain_held_ids) || exit 2
+  for id in $ids; do
     [ -f "$(card_path "$id")" ] && continue
     show=$(tasks show "$id" --full 2>/dev/null) || continue
     title=$(shown_value "$show" title)
@@ -232,6 +246,21 @@ cmd_backfill() {
     reason=$(shown_value "$show" hold_reason)
     cmd_draft "$id" --title "${title:-$id}" --project "${repo:-firstmate}" --situation "${reason:-${title:-$id}}" >/dev/null
     printf 'drafted: %s\n' "$id"
+  done
+}
+
+cmd_drafts() {
+  local id ids p title
+  [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+  ids=$(captain_held_ids) || exit 2
+  for id in $ids; do
+    p=$(card_path "$id")
+    if [ -f "$p" ] && [ "$(jq -r '.draft == false' "$p" 2>/dev/null)" = true ]; then
+      continue
+    fi
+    title=$(jq -r '.title // empty' "$p" 2>/dev/null) || title=''
+    [ -n "$title" ] || title=$id
+    printf '%s\t%s\n' "$id" "$title"
   done
 }
 
@@ -384,6 +413,7 @@ case "${1:-}" in
   remove) shift; cmd_remove "$@" ;;
   draft) shift; cmd_draft "$@" ;;
   backfill) shift; cmd_backfill "$@" ;;
+  drafts) shift; cmd_drafts "$@" ;;
   stale) shift; cmd_stale "$@" ;;
   clear) shift; cmd_clear "$@" ;;
   restore) shift; cmd_restore "$@" ;;
