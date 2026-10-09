@@ -2907,6 +2907,36 @@ test_the_owner_retires_its_landed_ship_on_a_retired_backend() {
   pass "the owner retires its landed ship on a retired backend"
 }
 
+# Finished-work retirement rests on process cleanup completing before its
+# one-shot endpoint assertion is consumed. A reaper refusal must still observe
+# that authorization on disk and retain the task identity for a retry.
+test_finished_retirement_keeps_authorization_through_process_cleanup() {
+  local case_dir home id note witness out rc=0
+  id=atomic-finished-reaper-refusal-d1
+  case_dir=$(make_home finished-reaper-refusal)
+  home=$(home_of "$case_dir")
+  stage_retired_tmux_ship "$case_dir" "$id"
+  note="$home/state/$id.endpoint-retired"
+  witness="$case_dir/retirement-present-during-reap"
+  printf '#!/usr/bin/env bash\necho "fm:another-window"\n' > "$case_dir/fakebin/tmux"
+  cat > "$case_dir/fakebin/lsof" <<SH
+#!/usr/bin/env bash
+[ ! -f "$note" ] || : > "$witness"
+exit 1
+SH
+  chmod +x "$case_dir/fakebin/tmux" "$case_dir/fakebin/lsof"
+
+  out=$(run_finished_retire "$case_dir" "$id") || rc=$?
+  [ "$rc" -ne 0 ] || fail "finished retirement ignored a reaper refusal: $out"
+  assert_present "$witness" \
+    "finished retirement consumed its endpoint assertion before process cleanup"
+  assert_present "$home/state/$id.meta" \
+    "finished retirement removed task identity after a reaper refusal: $out"
+  assert_present "$case_dir/wt-$id" \
+    "finished retirement removed the worktree after a reaper refusal: $out"
+  pass "finished retirement preserves its endpoint assertion through process cleanup"
+}
+
 # Unlanded work is never the owner's to retire: the work gate the operator path
 # proceeds past stops this one, with every record and byte of work in place.
 test_the_owner_never_retires_unlanded_work() {
@@ -4095,6 +4125,7 @@ test_a_retirement_keeps_its_record_when_the_pending_close_cannot_be_cleared
 test_a_retirement_leaves_a_close_session_start_can_finish
 test_the_owner_retires_its_finished_scout_on_a_retired_backend
 test_the_owner_retires_its_landed_ship_on_a_retired_backend
+test_finished_retirement_keeps_authorization_through_process_cleanup
 test_the_owner_never_retires_unlanded_work
 test_the_owner_path_refuses_what_it_cannot_prove_finished
 test_retirement_help_states_what_the_operator_is_asserting

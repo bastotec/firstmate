@@ -185,16 +185,18 @@
 # Pre-teardown cleanup sequence (runs once every landed/discard-work safety
 # refusal above has already passed, and BEFORE any worktree return or branch
 # delete below - a still-active run or a leaked process may own live work in
-# that worktree). An ordinary task's endpoint close runs first, ahead of every
-# step below, because the endpoint's own pane machinery - its interactive
+# that worktree). A normal finished task's endpoint close runs first, ahead of
+# every step below, because the endpoint's own pane machinery - its interactive
 # shell, which ignores SIGTERM by design, and the idle pane-resident worker
 # driver - is owned by bin/fm-backend.sh's close path, not by the cwd-based
 # reaper: run in the old order, the reaper counted that machinery as leaked and
 # forced its kill (observed 2026-10-09,
 # data/teardown-leaks-worktree-processes). The close path itself may still need
-# KILL for that shell; that is expected and is not a leak finding. A secondmate
-# endpoint instead closes at its dedicated retirement point immediately before
-# its home is removed and never enters this worktree-reaper sequence.
+# KILL for that shell; that is expected and is not a leak finding. An
+# endpoint-retirement task keeps its retirement-owned gate after process cleanup,
+# while a secondmate endpoint closes at its dedicated retirement point
+# immediately before its home is removed; neither enters the ordinary early
+# close path.
 #   Fix 1 - conclude the task's own no-mistakes run. A ship task's worktree can
 #     be torn down while its no-mistakes pipeline run is still PARKED at a gate
 #     (awaiting_approval/fix_review/any awaiting_agent field), with no worker
@@ -2738,10 +2740,10 @@ require_task_endpoint_gone() {  # <kill-status>
 
 # The endpoint retirement: one record, written only by
 # bin/fm-retire-endpoint.sh, whose header owns the operator and --finished
-# authorization paths. No daemon writes one. Every endpoint gate below consults
-# it through the same two functions, and it is consumed on first use rather
-# than left behind, so it authorizes exactly the named cleanup and never a
-# later automatic run.
+# authorization paths. No daemon writes one. The route selector inspects it
+# without consuming it, and the retirement-owned endpoint gate revalidates and
+# consumes it, so it authorizes exactly the named cleanup and never a later
+# automatic run.
 #
 # A retirement asserts what no backend could: that no worker is still running
 # behind this record.
@@ -2772,29 +2774,30 @@ work_gate_refusal_exit() {
   exit 1
 }
 
-# Read once and consumed on first use, because a retirement authorizes exactly
-# one cleanup.
-OPERATOR_RETIREMENT_STATE=unread
 OPERATOR_RETIREMENT_BY=
 OPERATOR_RETIREMENT_AT=
-task_operator_retirement() {
+task_operator_retirement_note_valid() {
   local note="$STATE/$ID.endpoint-retired" noted_id noted_gen
-  if [ "$OPERATOR_RETIREMENT_STATE" = unread ]; then
-    OPERATOR_RETIREMENT_STATE=absent
-    if [ -f "$note" ] && [ ! -L "$note" ]; then
-      noted_id=$(fm_meta_get "$note" id)
-      noted_gen=$(fm_meta_get "$note" spawn_gen)
-      OPERATOR_RETIREMENT_BY=$(fm_meta_get "$note" retired_by)
-      OPERATOR_RETIREMENT_AT=$(fm_meta_get "$note" retired_at)
-      if [ "$noted_id" = "$ID" ] \
-        && [ "$noted_gen" = "$(fm_meta_get "$META" spawn_gen)" ] \
-        && [ -n "$OPERATOR_RETIREMENT_BY" ] && [ -n "$OPERATOR_RETIREMENT_AT" ] \
-        && rm -f "$note"; then
-        OPERATOR_RETIREMENT_STATE=present
-      fi
-    fi
-  fi
-  [ "$OPERATOR_RETIREMENT_STATE" = present ]
+  OPERATOR_RETIREMENT_BY=
+  OPERATOR_RETIREMENT_AT=
+  [ -f "$note" ] && [ ! -L "$note" ] || return 1
+  noted_id=$(fm_meta_get "$note" id)
+  noted_gen=$(fm_meta_get "$note" spawn_gen)
+  OPERATOR_RETIREMENT_BY=$(fm_meta_get "$note" retired_by)
+  OPERATOR_RETIREMENT_AT=$(fm_meta_get "$note" retired_at)
+  [ "$noted_id" = "$ID" ] \
+    && [ "$noted_gen" = "$(fm_meta_get "$META" spawn_gen)" ] \
+    && [ -n "$OPERATOR_RETIREMENT_BY" ] && [ -n "$OPERATOR_RETIREMENT_AT" ]
+}
+
+task_operator_retirement_pending() {
+  task_operator_retirement_note_valid
+}
+
+task_operator_retirement() {
+  local note="$STATE/$ID.endpoint-retired"
+  task_operator_retirement_note_valid || return 1
+  rm -f "$note"
 }
 
 # mark_pending_close_endpoint_confirmed: the other half of the publish-time
@@ -3157,7 +3160,11 @@ else
 fi
 
 # Apply the pre-teardown cleanup sequence owned by the script header.
-if [ "$KIND" != secondmate ]; then
+TASK_ENDPOINT_RETIREMENT_PENDING=0
+if [ "$KIND" != secondmate ] && task_operator_retirement_pending; then
+  TASK_ENDPOINT_RETIREMENT_PENDING=1
+fi
+if [ "$KIND" != secondmate ] && [ "$TASK_ENDPOINT_RETIREMENT_PENDING" = 0 ]; then
   fm_backend_kill "$BACKEND" "$T" "" "fm-$ID" \
     && TASK_KILL_RC=0 || TASK_KILL_RC=$?
   require_task_endpoint_gone "$TASK_KILL_RC" || exit 1
@@ -3206,6 +3213,11 @@ elif [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
   fm_treehouse_slot_owner_release "$WT" "$ID"
 fi
 
+if [ "$TASK_ENDPOINT_RETIREMENT_PENDING" = 1 ]; then
+  fm_backend_kill "$BACKEND" "$T" "" "fm-$ID" \
+    && TASK_KILL_RC=0 || TASK_KILL_RC=$?
+  require_task_endpoint_gone "$TASK_KILL_RC" || exit 1
+fi
 if [ "$KIND" != secondmate ]; then
   if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
       "$SCRIPT_DIR/fm-inactive-reconcile.sh" report "$ID"; then
