@@ -17,7 +17,7 @@
 #                        preserve an eligible existing In-flight row on relaunch
 #   bin/fm-teardown.sh   meta removed => `tasks-axi done`, or `tasks-axi reopen`
 #                        with the deliverable recorded when the row is still an
-#                        open captain call or settled deferral (predicates in
+#                        open captain call or conditional wait (predicates in
 #                        bin/fm-captain-hold.sh), so cleanup preserves the wait
 #   bin/fm-bootstrap.sh  replays whatever a crash left behind, THIS HOME ONLY.
 # bin/fm-fleet-snapshot.sh's classifier and bin/fm-secondmate-reconcile.sh's
@@ -53,9 +53,9 @@
 # without moving the close date, so replay is idempotent. Spawn needs no marker:
 # it publishes the meta first, so a crash
 # leaves the meta itself as the evidence that the row is owed a start.
-# A captain-held row uses the same record with a `mode=retain` line: replay then
+# A retained row uses the same record with a `mode=retain` line: replay then
 # records the deliverable and reopens the row instead of closing it, and never
-# closes an open captain call or settled deferral. An answer that closes the row
+# closes an open captain call or conditional wait. An answer that closes the row
 # first applies any supported retained artifact from the validated record, then
 # replay simply retires the record.
 

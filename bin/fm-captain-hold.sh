@@ -171,7 +171,7 @@
 # `--none` is an explicit semantic attestation that the just-reviewed surface
 # has no unresolved captain call, and is refused while the origin still has an
 # open keyed status decision. With a non-empty inventory, every listed task is
-# verified durable (actively captain-held, or closed with a recorded answer),
+# verified durable (actively captain-held, or carrying a recorded resolution),
 # the inventory is unioned idempotently into the metadata, and every still-open
 # keyed status decision is transferred to its durable owner with a
 # `captain-held [key=...]` status close naming the inventory. Later review
@@ -195,11 +195,11 @@
 # attest, and `complete` names each prefix-resolved row beside its attested
 # legacy id so the guess stays auditable.
 #
-# `open` is the read-only predicate a mechanical closer asks before it may
-# retire a task's row: is this task still an open captain call? Exit 0 means it
-# is (not Done, hold kind captain, no settled deferral), 1 means it is not,
-# and 2 means the answer
-# could not be established, so a caller that must never close a live call can
+# `open` is the read-only predicate for an open captain call; a mechanical
+# closer must also consult `deferred` above before retiring a task's row.
+# Exit 0 means open (not Done, hold kind captain, no settled deferral), 1 means
+# not open, and 2 means the answer could not be established, so a caller that
+# must never close a live call can
 # treat "cannot tell" as its own case instead of as a no. With
 # `--distinguish-absent`, an absent local task returns 3 instead of 1; a home
 # with no backlog file counts as absent, because it records no captain calls.

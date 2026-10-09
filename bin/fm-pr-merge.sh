@@ -71,9 +71,11 @@
 # absent stops the merge before any state is recorded.
 #
 # Before either forge merge, the task's existing per-task control lock
-# serializes the captain-hold check through the forge command. A still-held or
-# unreadable row refuses before that command, so a captain approval must be
-# recorded as an `answer --release` before this entrypoint is invoked. While
+# serializes the lifecycle checks through the forge command. An open captain
+# call, conditional wait, or unreadable row refuses before that command;
+# bin/fm-captain-hold.sh owns the `open` and `deferred` predicates. A captain
+# approval must be recorded as an `answer --release` before this entrypoint is
+# invoked. While
 # state/.afk-contract exists, a merge for this task also proceeds only if its
 # meta yolo=on or its id is in that record's merge-grant list; otherwise it is
 # held for the captain return. An unreadable record refuses rather than being

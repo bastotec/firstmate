@@ -21,8 +21,8 @@
 # None of this loosens the landed-work gates below: the transition runs only on
 # the paths that already proceed to remove the record.
 # The close - and only the close - is replaced by `tasks-axi reopen` with the
-# deliverable recorded while the backlog item is an open captain call or settled
-# deferral (bin/fm-captain-hold.sh owns both predicates), because the policy holds
+# deliverable recorded while the backlog item is an open captain call or
+# conditional wait (bin/fm-captain-hold.sh owns both predicates), because the policy holds
 # the very work item a question gates and cleanup must never retire the
 # captain's own question.
 # NOTE: this uses the silent `open` and `deferred` predicates and their
