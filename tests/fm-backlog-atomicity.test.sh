@@ -3001,11 +3001,15 @@ test_retirement_help_states_what_the_operator_is_asserting() {
   local case_dir out
   case_dir=$(make_home retire-help)
   out=$(run_retire "$case_dir" --help </dev/null) || fail "--help should succeed: $out"
-  assert_contains "$out" "the endpoint is unanswerable" \
-    "the help does not name the condition this command is for"
+  assert_contains "$out" "backend can no longer" \
+    "the help does not name the unanswerable-endpoint condition"
+  assert_contains "$out" "positively reports that the endpoint is still" \
+    "the help does not distinguish a positive still-present answer"
+  assert_contains "$out" "--override-runtime-refusal is additionally required" \
+    "the help does not name the override required for a still-present endpoint"
   assert_contains "$out" "no worker is still running" \
     "the help does not say what the operator is asserting"
-  pass "the retirement command's help states the condition it is for"
+  pass "the retirement command's help states both endpoint conditions and the operator's assertion"
 }
 
 test_recovery_refuses_a_close_whose_worker_was_never_proved_stopped() {

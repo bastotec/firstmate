@@ -608,10 +608,18 @@ test_nudge_retry_uses_fresh_endpoint_after_respawn() {
 
   meta="$w/home/state/sm-instr.meta"
   stale=$(fm_test_stream_target_of "$w/home/state" sm-instr)
-  # The respawned endpoint: a live deck on another fake endpoint.
+  # The respawned endpoint is registered by the spawn stub, after the old
+  # endpoint has been killed. Pre-registering the same label would make the fake
+  # hub close the old endpoint as a replacement before liveness can kill it.
   mkdir -p "$w/fresh-state"
-  live_endpoint "$w/fresh-state" sm-instr > "$w/fresh.lines"
   fresh=$(fm_test_stream_target_of "$w/fresh-state" sm-instr)
+  {
+    printf 'window=%s\n' "$fresh"
+    printf 'backend=stream\n'
+    printf 'stream_hub=%s\n' "$FM_TEST_STREAM_URL"
+    printf 'stream_endpoint_id=%s\n' "${fresh##*:}"
+    printf 'endpoint_task_id=sm-instr\n'
+  } > "$w/fresh.lines"
   # The recorded endpoint's agent is gone, leaving only its shell: the dead
   # endpoint the liveness sweep respawns.
   fm_test_fake_stream_foreground "$stale" bash
@@ -623,6 +631,10 @@ set -u
 id=\${1:-}
 meta="\$FM_HOME/state/\$id.meta"
 [ -f "\$meta" ] || exit 1
+fresh_body=\$(jq -nc --arg e '${fresh##*:}' --arg c '$w/fresh-state' \
+  '{endpoint_id:\$e, machine:"fake-box", label:"fm-sm-instr", cwd:\$c, status_path:(\$c + "/sm-instr.status"), replace_label:true, foreground:[{pid:"", name:"deck", argv0:"deck", args:"deck"}], launch_log:"", capture_file:""}')
+curl -fsS -m 5 --config <(printf 'header = "Authorization: Bearer %s"\\n' "\$FM_STREAM_TOKEN") -X POST -H 'Content-Type: application/json' --data-binary "\$fresh_body" \
+  "\$FM_TEST_STREAM_URL/v1/agent/endpoints" >/dev/null || exit 1
 grep -v -E '^(window|stream_endpoint_id)=' "\$meta" > "\$meta.new"
 grep -E '^(window|stream_endpoint_id)=' '$w/fresh.lines' >> "\$meta.new"
 mv -f "\$meta.new" "\$meta"
