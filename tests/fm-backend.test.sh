@@ -196,6 +196,25 @@ test_retired_records_are_never_driven() {
   pass "retired tmux/herdr records: kill unconfirmed, agent unverified, no target, no capture"
 }
 
+# The kill contract's fourth verdict: a backend that POSITIVELY answers that
+# the endpoint is still there is a different fact from one that cannot answer,
+# and cleanup's retirement gates treat them differently, so the verdict names
+# must keep them apart. The empty-target refusal stays unsupported: it names no
+# worker at all, so it is never a report that one is present.
+test_kill_verdict_distinguishes_present_from_unconfirmed() {
+  local out rc
+  [ "$(fm_backend_kill_verdict 0)" = gone ] || fail "status 0 must read gone"
+  [ "$(fm_backend_kill_verdict 3)" = present ] \
+    || fail "status 3 is the still-present verdict and must read present"
+  [ "$(fm_backend_kill_verdict 2)" = unconfirmed ] || fail "status 2 must read unconfirmed"
+  [ "$(fm_backend_kill_verdict 1)" = unsupported ] || fail "status 1 must read unsupported"
+  out=$(fm_backend_kill stream '' 2>&1); rc=$?
+  [ "$rc" -eq 1 ] || fail "an empty target must stay unsupported (1), got $rc"
+  [ "$(fm_backend_kill_verdict "$rc")" = unsupported ] \
+    || fail "an empty target must never read as a backend that answered"
+  pass "fm_backend_kill_verdict: gone, present, unconfirmed, unsupported stay four distinct answers"
+}
+
 # --- fm-spawn.sh backend selection --------------------------------------------
 
 test_spawn_refuses_unknown_backend_flag() {
@@ -326,6 +345,7 @@ test_backend_source_shell_portable
 test_meta_get_and_backend_of_meta
 test_resolve_selector_forms
 test_backend_of_selector_reads_the_record
+test_kill_verdict_distinguishes_present_from_unconfirmed
 test_retired_records_are_never_driven
 test_spawn_refuses_unknown_backend_flag
 test_spawn_refuses_codex_app_backend_flag

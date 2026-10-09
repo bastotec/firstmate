@@ -382,7 +382,7 @@ The signal ownership boundary is documented beside `foreground_group_locked` in 
 The answer carries `delivered`: true when that agent took the kill, and false when it never answered and the hub closed only its own record.
 A `delivered: false` close is not proof the worker stopped, because its process lives on the worker's machine, which the hub cannot reach.
 `fm_backend_stream_kill` refuses such a close, exits nonzero, and says the worker may still be running.
-It answers the same way to every other refusal, including `no_such_endpoint`: a hub that has forgotten an endpoint says nothing about whether that worker is still running.
+A `delivered: false` answer is the kill contract's still-present verdict, because the backend positively reported the endpoint's agent never took the kill; every other refusal, including `no_such_endpoint`, is the unconfirmed verdict instead: a hub that has forgotten an endpoint says nothing about whether that worker is still running.
 
 An endpoint carries `closed_by`: `agent` when its own agent reported the worker gone and brought its exit code back, and `hub` when the hub closed a record it could no longer steer.
 Only `closed_by: agent` is a confirmed stop; a kill against such an endpoint reports success without asking again, while every other outcome, `closed_by: hub` included, reports an unconfirmed stop.
@@ -446,8 +446,9 @@ What operator mode touches, and what it does not:
 - Cleanup runs first and finishes the job properly whenever its own gates allow.
   When cleanup's work-protection gate refuses, the worktree, any uncommitted work in it, the task branch and the task's data are left byte-untouched and named in the output, for you to deal with under your own authority.
   It never discards work and never passes `--force` to anything.
-- When cleanup's unconfirmed-kill gate refuses, the records are retired anyway on your assertion alone, even for an endpoint the backend still reports present after its kill.
-  Cleanup cannot tell which case you are in, so a worker may still be running behind a record retired that way, and stopping it is yours to do.
+- When cleanup's unconfirmed-kill gate refuses, the records are retired anyway on your assertion alone, for an endpoint no backend could answer for.
+  The backend answering positively that the endpoint is still present after its kill is the separate runtime refusal `--override-runtime-refusal` proceeds past; without that flag it stands and nothing is retired.
+  Cleanup cannot tell which case you are in on the unconfirmed path, so a worker may still be running behind a record retired that way, and stopping it is yours to do.
 - Every other cleanup refusal stands and nothing is retired, such as an outcome that has not reached the parent channel or a backlog transition that cannot be replayed.
   A cleanup that fails only after it has already removed the durable task record reports that partial state instead of claiming nothing was retired.
 
