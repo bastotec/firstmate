@@ -70,17 +70,13 @@ unset FM_TASK_ID
 # against an ambient override sets TASKS_AXI_FILE itself.
 unset TASKS_AXI_FILE TASKS_AXI_BACKEND
 
-# Scrub the live stream-hub environment a stream-backed worker passes to the
-# suite it runs. The adapter reads FM_STREAM_HUB and FM_STREAM_TOKEN ahead of
-# any fixture configuration (bin/backends/stream.sh), and FM_STREAM_ENDPOINT_ID
-# / FM_STREAM_MACHINE / FM_STREAM_AGENT_BIN / FM_STREAM_HTTP_TIMEOUT steer
-# endpoint identity, launch and timing the same way, so an inherited fleet hub
-# makes cases resolve, authenticate and spawn against the wrong endpoint - a
-# worker running this suite from inside that fleet reproduces exactly that.
-# Every case exports its own values or starts its own hub; FM_STREAM_IMPL and
-# the native-binary pins stay owned by the FM_TEST_STREAM_* block above. A case
-# that verifies resolution against an ambient variable sets it itself
-# (tests/fm-backend-stream.test.sh does, per tier).
+# Scrub ambient stream settings before fixtures establish their isolated hubs.
+# A suite launched inside a stream-backed worker can inherit its live hub and
+# related settings; these inputs can redirect authentication, endpoint identity,
+# agent launch, receiver helpers, request timing, or the local attach transport
+# away from the fixture. Cases that need an environment value set it after
+# sourcing this helper. FM_STREAM_IMPL and the native-binary inputs are instead
+# normalized by the FM_TEST_STREAM_* block immediately below.
 unset FM_STREAM_HUB FM_STREAM_TOKEN FM_STREAM_MACHINE FM_STREAM_ENDPOINT_ID \
   FM_STREAM_AGENT_BIN FM_STREAM_HTTP_TIMEOUT FM_STREAM_TOKEN_FILE \
   FM_STREAM_ATTACH_LOCAL FM_STREAM_LOCAL_DIR FM_STREAM_CODE_ROOT

@@ -911,8 +911,8 @@ test_hub_url_prefers_configuration_then_a_locally_started_hub() {
   url=$(resolve) || fail "resolution failed with a hostile hub environment inherited"
   assert_equals "http://127.0.0.1:7717" "$url" "an inherited live hub must not outrank the fixture's own resolution tiers"
 
-  # Prove the scrub itself under a hostile launch: a child shell given the
-  # exact environment a stream-backed worker exports must come up scrubbed.
+  # Prove the scrub itself under a hostile launch: a child shell given every
+  # setting in the ambient scrub list must come up with each one unset.
   # lib.sh's FM_TEST_LIB_SOURCED guard would make a subshell re-source a
   # no-op, so this is a fresh bash sourcing it the way a test file does.
   for hostile in FM_STREAM_HUB FM_STREAM_TOKEN FM_STREAM_MACHINE \
