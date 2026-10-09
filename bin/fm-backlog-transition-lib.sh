@@ -1139,9 +1139,11 @@ fm_backlog_close_marker_validate() {  # <marker-path> <authorized-data-dir> <exp
 # instead of a close; the remaining flags are the same completion links either
 # transition records.
 #
-# `endpoint-unconfirmed` records that teardown could not prove this task's
-# worker stopped. It is written as `endpoint=unconfirmed`, and its ABSENCE
-# means 0, so every marker written before this field existed stays valid.
+# `endpoint-unconfirmed` is the conservative hold stamp written before
+# teardown closes the endpoint or performs refusal-capable cleanup. It remains
+# `endpoint=unconfirmed` until all those gates pass, so its presence does not
+# by itself say whether the endpoint was later proved gone. Its ABSENCE means
+# 0, so every marker written before this field existed stays valid.
 fm_backlog_close_marker_stage() {  # <temporary-path> <id> <data-dir> <spawn-gen> <state-dir> <cleanup-incomplete: 0|1> <endpoint-unconfirmed: 0|1> [--retain] [flag...]
   local tmp=$1 id=$2 data spawn_gen=$4 state=$5 cleanup_incomplete=$6 endpoint_unconfirmed=$7
   local arg previous_arg='' mode=close serialized_args=()
@@ -1192,14 +1194,15 @@ fm_backlog_close_marker_stage() {  # <temporary-path> <id> <data-dir> <spawn-gen
 
 # Record the exact close a caller is about to perform.
 #
-# The endpoint state is the caller's to state, because only the caller knows
-# what has been proved by the time it publishes. Teardown publishes UNCONFIRMED
-# and re-stages to confirmed only after its endpoint gate and every later
-# cleanup refusal have passed: a marker left by any partial cleanup must retain
-# the task identity for a teardown rerun instead of letting replay retire it.
-# bin/fm-retire-endpoint.sh publishes CONFIRMED, because the operator's recorded
-# assertion is the proof on that path and a marker it left behind must stay
-# replayable rather than become a hold with no record.
+# The conservative hold is the caller's to state, because only the caller knows
+# which refusal-capable work remains when it publishes. Teardown publishes the
+# legacy-named UNCONFIRMED state and re-stages to confirmed only after its
+# endpoint gate and every later cleanup refusal have passed: a marker left by
+# any partial cleanup must retain the task identity for a teardown rerun instead
+# of letting replay retire it. bin/fm-retire-endpoint.sh publishes CONFIRMED,
+# because the operator's recorded assertion is the proof on that path and a
+# marker it left behind must stay replayable rather than become a hold with no
+# record.
 #
 # Teardown settles the stamp immediately before its final task/backlog
 # transition. An interruption inside that transition is therefore replayable,
@@ -1221,10 +1224,10 @@ fm_backlog_close_marker_write() {  # <state-dir> <id> <data-dir> <spawn-gen> <en
 # record with a new set of flags. Every flag is a parameter rather than a
 # literal, because a re-stamp rewrites the WHOLE record: a caller that knew
 # only its own flag would silently clear the other one, and endpoint=unconfirmed
-# - the line replay reads to keep a record for a worker nothing proved stopped -
+# - the conservative hold that keeps a partial cleanup from becoming replayable -
 # is exactly the line that must not go missing that way.
 #
-# The endpoint state itself is decided at publish time, by
+# The hold's initial state is decided at publish time by
 # fm_backlog_close_marker_write above, which owns why. Re-stamping only ever
 # settles it afterwards: teardown clears it at the final task/backlog
 # transition after every cleanup refusal has passed, and replay carries the
@@ -1291,11 +1294,11 @@ fm_backlog_close_marker_replay() {  # <state-dir> <marker-path> <authorized-data
       FM_BACKLOG_CLOSE_REPLAY_RESULT=stale
       return 0
     fi
-    # A teardown that could not prove this task's worker stopped kept every
-    # durable record on purpose. Replay must not undo that: removing the meta
-    # and closing the row here is exactly the quiet cleanup the refusal
-    # promised would not happen, and nothing has learned anything about the
-    # worker since. The record stays for a rerun, which re-runs the kill.
+    # A teardown that has not passed every refusal-capable cleanup step keeps
+    # every durable record on purpose. Replay must not undo that: the endpoint
+    # may be unproved or a later process-cleanup gate may have refused after it
+    # was proved gone. The record stays for a teardown rerun, which rechecks
+    # both the endpoint and the remaining cleanup.
     if [ "$endpoint_unconfirmed" = 1 ]; then
       FM_BACKLOG_CLOSE_REPLAY_RESULT=endpoint_unconfirmed
       return 0
@@ -1308,9 +1311,9 @@ fm_backlog_close_marker_replay() {  # <state-dir> <marker-path> <authorized-data
     fm_backlog_atomic_transition remove "$meta" "the interrupted task record" "$state" \
       || return 1
   elif [ "$endpoint_unconfirmed" = 1 ]; then
-    # Same refusal, with the task record already gone: the row is the last
-    # record still saying this work is in flight, so replay leaves it alone
-    # rather than reporting a worker stopped that nothing stopped.
+    # Same conservative hold, with the task record already gone: the row is
+    # the last record still saying this work is in flight, so replay leaves it
+    # alone rather than claiming an unfinished teardown completed.
     FM_BACKLOG_CLOSE_REPLAY_RESULT=endpoint_unconfirmed
     return 0
   fi
