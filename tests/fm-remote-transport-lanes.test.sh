@@ -80,6 +80,11 @@ printf 'started\n' > "$1"
 sleep "$3"
 printf 'finished\n' > "$2"
 SH
+# Writes its first argument byte-exact: the observable remote argv.
+cat > "$REMOTE_ROOT/bin/fm-argv-probe.sh" <<'SH'
+#!/bin/bash
+printf '%s' "$1" > "$2"
+SH
 cat > "$REMOTE_ROOT/bin/fm-stdin-probe.sh" <<'SH'
 #!/bin/bash
 while IFS= read -r line || [ -n "$line" ]; do printf 'stdin=%s\n' "$line"; done
@@ -408,6 +413,36 @@ fm_on --stdin ios fm-stdin-probe.sh < "$TMP_ROOT/payload" > "$TMP_ROOT/payload-o
 assert_grep 'stdin=payload byte one' "$TMP_ROOT/payload-out" "--stdin did not deliver the payload"
 assert_grep 'stdin=payload byte two' "$TMP_ROOT/payload-out" "--stdin lost part of the payload"
 pass "--stdin still delivers a payload caller's bytes"
+
+# Shell-active text: a message with dollar amounts, command substitution,
+# backticks and both quote kinds reaches the remote command byte-exact, and
+# every word ssh hands the remote login shell is inert there.
+cat > "$FAKEBIN/argv-ssh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$FM_FAKE_SSH_WORDS"
+exec "$FAKEBIN_DIR/fake-ssh" "$@"
+SH
+chmod +x "$FAKEBIN/argv-ssh"
+PWNED="$TMP_ROOT/pwned"
+SHELL_TEXT="ceiling US\$25, per call US\$0.32, \$(touch $PWNED-dollar) \`touch $PWNED-tick\` \"double\" 'single' \$HOME \\\$2"
+# shellcheck disable=SC2016 # The dollar signs and backticks are the payload.
+case "$SHELL_TEXT" in *'US$25'*'$(touch '*'`touch '*) : ;; *) fail "the shell-active fixture lost its payload: $SHELL_TEXT" ;; esac
+FM_HOME="$LOCAL_HOME" FM_ROOT_OVERRIDE="$REMOTE_ROOT" FM_SSH_BIN="$FAKEBIN/argv-ssh" \
+  FAKEBIN_DIR="$FAKEBIN" FM_FAKE_SSH_WORDS="$TMP_ROOT/ssh-words" \
+  FM_FAKE_REMOTE_ENTRYPOINT="$REMOTE_ROOT/bin/fm-remote-entrypoint.sh" \
+  "$ROOT/bin/fm-on.sh" ios fm-argv-probe.sh "$SHELL_TEXT" "$TMP_ROOT/argv-out" 2>/dev/null \
+  || fail "the shell-active argv call failed"
+[ "$(cat "$TMP_ROOT/argv-out")" = "$SHELL_TEXT" ] \
+  || fail "remote argv was re-evaluated by a shell: $(cat "$TMP_ROOT/argv-out")"
+assert_absent "$PWNED-dollar" "remote argv ran a command substitution"
+assert_absent "$PWNED-tick" "remote argv ran a backtick substitution"
+assert_grep 'fm-remote-entrypoint.sh' "$TMP_ROOT/ssh-words" "the probe did not capture the ssh words"
+[ "$(sed -n '/^remote-mac$/,$p' "$TMP_ROOT/ssh-words" | wc -l | tr -d ' ')" -eq 6 ] \
+  || fail "the ssh words after the host were not the fixed entrypoint call: $(cat "$TMP_ROOT/ssh-words")"
+sed -n '/^remote-mac$/,$p' "$TMP_ROOT/ssh-words" | grep -v '^[A-Za-z0-9+/=._-]*$' > "$TMP_ROOT/unsafe-words" || true
+[ ! -s "$TMP_ROOT/unsafe-words" ] \
+  || fail "ssh handed the remote shell a word it would expand: $(cat "$TMP_ROOT/unsafe-words")"
+pass "fm-on carries dollar signs, substitutions and quotes to the remote command byte-exact"
 
 # Stage litter: an abandoned .stage.* older than the reap age does not survive
 # a worker pass, while staging owned by this live process is left alone even if

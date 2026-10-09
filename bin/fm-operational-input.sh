@@ -48,7 +48,7 @@ FM_FROMFIRST_MARK="${FM_FROMFIRST_LABEL}${FM_FROMFIRST_SEPARATOR}"
 # section 9 owns that rule.
 FM_CAPTAIN_DIRECT_LABEL='[fm-captain-direct]'
 FM_CAPTAIN_DIRECT_MARK="${FM_CAPTAIN_DIRECT_LABEL}${FM_OPERATIONAL_MARK}"
-FM_CAPTAIN_DIRECT_NOTE='The captain wrote this to you himself and reads your conversation: answer him there. If this message carries a corr= token, also append one short line with that token to your parent channel.'
+FM_CAPTAIN_DIRECT_NOTE='The captain wrote this to you himself and reads your conversation, so answer him there, and if this message carries a corr= token also append one short line with that token to your parent channel.'
 
 fm_operational_kind_is_current() {  # <kind>
   case " $FM_OPERATIONAL_KINDS " in
@@ -197,7 +197,7 @@ fm_message_mark_from_firstmate() {  # <message> <result-var>
 }
 
 # 0 if <message> carries the captain-direct tag, alone or behind the
-# from-firstmate mark and its optional corr or delivery token.
+# from-firstmate mark and its optional corr token.
 fm_message_captain_direct() {  # <message>
   local message=${1-} rest
   case "$message" in
@@ -207,7 +207,7 @@ fm_message_captain_direct() {  # <message>
   esac
   rest=${message#"$FM_FROMFIRST_MARK"}
   case "$rest" in
-    corr=*' '*|delivery=*' '*) rest=${rest#* } ;;
+    corr=*' '*) rest=${rest#* } ;;
   esac
   case "$rest" in
     "$FM_CAPTAIN_DIRECT_MARK"*) return 0 ;;
