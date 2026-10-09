@@ -2745,8 +2745,8 @@ require_task_endpoint_gone() {  # <kill-status>
 # than left behind, so it authorizes exactly the named cleanup and never a
 # later automatic run.
 #
-# A retirement asserts what no backend could: that no worker is still running
-# behind this record. Overriding a RUNTIME's own refusal - the backend
+# A retirement asserts from operator inspection that no worker is still
+# running behind this record. Overriding a RUNTIME's own refusal - the backend
 # answering that the endpoint is still present after its kill - is the
 # separate, louder assertion the operator makes with
 # --override-runtime-refusal, so this gate requires the override field while
