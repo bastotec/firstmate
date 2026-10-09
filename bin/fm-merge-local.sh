@@ -119,6 +119,20 @@ case "$hold_status" in
     exit 1
     ;;
 esac
+hold_status=0
+FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+  "$SCRIPT_DIR/fm-captain-hold.sh" deferred "$ID" || hold_status=$?
+case "$hold_status" in
+  0)
+    echo "error: the captain deferred task $ID; start a fresh call with hold --reopen-deferred before merging" >&2
+    exit 1
+    ;;
+  1) ;;
+  *)
+    echo "error: could not determine whether the captain deferred task $ID; refusing to merge" >&2
+    exit 1
+    ;;
+esac
 merge_status=0
 git -C "$PROJ" merge --ff-only "$BRANCH" >/dev/null || merge_status=$?
 fm_lock_release "$MERGE_CONTROL_LOCK" || true

@@ -32,6 +32,7 @@
 #   fm-captain-hold.sh complete <origin-id> (--none | <task-id>...)
 #   fm-captain-hold.sh verify <origin-id>
 #   fm-captain-hold.sh open <task-id> [--identity] [--distinguish-absent]
+#   fm-captain-hold.sh deferred <task-id>
 #   fm-captain-hold.sh diverged
 #   fm-captain-hold.sh reconcile list
 #   fm-captain-hold.sh stale-clear <task-id> --evidence-file <path>
@@ -88,6 +89,8 @@
 # interrupted deferral; other answers (including keyed answers), stale-clear,
 # and reconcile close/note are refused. `open` excludes settled deferrals,
 # so card discovery skips them; stale reports any leftover card as an orphan.
+# `deferred` is read-only: 0 means a settled deferral, 1 means none, and 2
+# means unreadable; merge and cleanup guards use it to preserve the wait.
 # Only `hold --reopen-deferred` starts a fresh call from a settled deferral;
 # plain re-holds are refused. Reopening writes `Deferral reopened: <stamp>`
 # immediately below the new leading hold-set stamp. The next answer prepends
@@ -2069,11 +2072,17 @@ EOF
 # printed to stderr, because a mechanical closer must never read "cannot tell"
 # as permission to close.
 command_open() {  # <task-id> [--identity] [--distinguish-absent]
+  command_probe open "$@"
+}
+
+command_probe() {
+  local predicate=$1
+  shift
   local id='' identity=0 distinguish_absent=0 data state root file backend show shown_body
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --identity) identity=1 ;;
-      --distinguish-absent) distinguish_absent=1 ;;
+      --identity) [ "$predicate" = open ] || { usage >&2; exit 2; }; identity=1 ;;
+      --distinguish-absent) [ "$predicate" = open ] || { usage >&2; exit 2; }; distinguish_absent=1 ;;
       -*) usage >&2; exit 2 ;;
       *)
         [ -z "$id" ] || { usage >&2; exit 2; }
@@ -2110,16 +2119,19 @@ command_open() {  # <task-id> [--identity] [--distinguish-absent]
   fm_tasks_axi_compatible || { printf 'fm-captain-hold: compatible tasks-axi is required\n' >&2; exit 2; }
   if fm_backlog_row_probe "$data" "$id"; then
     state=${FM_BACKLOG_ROW_STATE%% *}
-    if [ "$state" != "done" ] && [ "$FM_BACKLOG_ROW_HOLD_KIND" = captain ]; then
-      task_show "$id" || {
-        printf 'fm-captain-hold: captain call %s is annotated but its record could not be read\n' "$id" >&2
+    if [ "$predicate" = deferred ] || { [ "$state" != "done" ] && [ "$FM_BACKLOG_ROW_HOLD_KIND" = captain ]; }; then
+      show=$(fm_backlog_row_show "$data" "$id" --full) || {
+        printf 'fm-captain-hold: task %s exists but its record could not be read\n' "$id" >&2
         exit 2
       }
-      show=$TASK_SHOW_OUTPUT
       shown_body=$(decode_shown_value "$(show_field "$show" body)") || {
         printf 'fm-captain-hold: could not decode the body for %s\n' "$id" >&2
         exit 2
       }
+      if [ "$predicate" = deferred ]; then
+        [ "$(body_deferral_state "$shown_body")" = settled ] || return 1
+        return 0
+      fi
       [ "$(body_deferral_state "$shown_body")" != settled ] || return 1
       if [ "$identity" -eq 1 ]; then
         printf '%s#%s\n' \
@@ -2149,6 +2161,7 @@ case "${1:-}" in
   complete) shift; command_complete "$@" ;;
   verify) shift; command_verify "$@" ;;
   open) shift; command_open "$@" ;;
+  deferred) shift; command_probe deferred "$@" ;;
   diverged) shift; command_diverged "$@" ;;
   reconcile) shift; command_reconcile "$@" ;;
   stale-clear) shift; command_stale_clear "$@" ;;
