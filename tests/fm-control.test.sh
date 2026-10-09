@@ -430,8 +430,8 @@ test_relaunch_only_flags_are_rejected_on_other_verbs() {
   alive_as "$dir" fm-deck-worker
   out=$(run_control "$dir" t1 exit --harness deck); rc=$?
   expect_code 1 "$rc" "--harness should not apply to exit"
-  assert_contains "$out" "apply to 'relaunch' and 'recover-missing' only" "the refusal should scope the flags"
-  pass "fm-control: profile and note flags belong to relaunch and recover-missing only"
+  assert_contains "$out" "apply to 'relaunch', 'recover-missing', or 'reincarnate' only" "the refusal should scope the flags"
+  pass "fm-control: profile and note flags belong to continuation verbs only"
 }
 
 # --- 5. lifecycle states ----------------------------------------------------
