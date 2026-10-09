@@ -761,9 +761,10 @@ _fm_open_decisions_cursor_path() {  # <status-file>
 # discarded and rebuilt from byte 0 under the new reading.
 FM_OPEN_DECISIONS_FOLD_VERSION=5
 
-# The kernel name, read once per process: the identity, size and mtime readers
-# below run several times per status file on every drain, and a `uname` fork
-# each time was a large share of a drain on a loaded machine.
+# Cache the classifier's kernel name at source time so metadata readers called
+# in command substitutions inherit it; a lazy assignment in those subshells
+# would not persist in the parent. The guard also avoids rereading on re-source.
+# tests/fm-wake-drain-unread-status.test.sh pins both reuse paths.
 [ -n "${_FM_CLASSIFY_UNAME+x}" ] || _FM_CLASSIFY_UNAME=$(uname -s 2>/dev/null)
 _fm_classify_is_darwin() {
   [ "$_FM_CLASSIFY_UNAME" = Darwin ]
@@ -1558,9 +1559,8 @@ status_new_lines_since_cursor() {  # <status-file> [<captured-end-offset>]
 # 0 when a status line is an informational `note:` or a reserved-key
 # pending-reply resolution. Those lines never fold into OPEN DECISIONS, so the
 # drain's unread-status surface is their only guaranteed presentation.
-# Runs once per unread line on every drain, so it uses the in-process `_into`
-# parsers: a command substitution per line forks, and a backlog of unread lines
-# then cost the drain minutes on a loaded machine.
+# Both unread selection and presentation acknowledgement call this per line;
+# use the in-process `_into` parsers to avoid forks proportional to the backlog.
 status_line_is_unread_surface() {  # <status-line>
   local line=$1 resolve held prefix _FM_VERB _FM_KEY _FM_NOTE
   [ -n "$line" ] || return 1
