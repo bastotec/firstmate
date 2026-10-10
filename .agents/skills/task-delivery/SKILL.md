@@ -73,6 +73,10 @@ For each finished worker:
 2. If cleanup refuses only because the endpoint is on a retired backend and could never be confirmed gone, retire the record with `FM_HOME=<this home> bin/fm-retire-endpoint.sh --finished <id>`; its help owns what it accepts, and it never proceeds past unlanded work.
 3. Treat any other refusal - unlanded or uncommitted work, a missing report, an open captain decision, a stream endpoint that would not confirm its stop, a window still listed - as not provably finished: stop, never retry around it, and hold one plain decision for the captain through `bin/fm-captain-hold.sh` naming the worker, the evidence, and the choice between cleaning it up and keeping it.
 
+Then close this home's record-less leftovers: endpoints the hub still lists live for a task whose record here is already gone.
+Run `FM_HOME=<this home> bin/fm-retire-endpoint.sh --list-orphans`, and for each `<id>` it prints run `FM_HOME=<this home> bin/fm-retire-endpoint.sh --orphan <id>`; its help owns the ownership, idle and unlanded-work checks.
+Treat its refusal like step 3: never retry around it, and hold one plain decision for the captain naming the endpoint and the reason.
+
 Once a worker's decision is held, later sweeps leave it to that decision rather than raising it again.
 In a secondmate home that decision reaches the captain through the parent channel, as every escalation there does.
 

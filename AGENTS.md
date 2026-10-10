@@ -80,7 +80,7 @@ Firstmate alone resolves a matched profile array, keeps malformed profile config
 Absent `config/backend` means stream, and a leftover `tmux` or `herdr` value is refused.
 Pass a per-spawn `--backend` only under that task's own authority, never as precedent ([`docs/configuration.md`](docs/configuration.md) "Runtime backend").
 A missing dependency, authentication failure, unsupported backend, or version refusal is a blocker; never silently retry around it.
-A task record left on a retired backend cannot be relaunched; load `task-delivery` for this home's finished-work sweep (section 7), and consult [`docs/configuration.md`](docs/configuration.md#runtime-backend-configbackend--fm_backend) for retired-record classification and the retirement owner.
+A task record left on a retired backend cannot be relaunched, and a live endpoint whose record is gone is a leftover; load `task-delivery` for this home's finished-work sweep (section 7), which cleans up both, and consult [`docs/configuration.md`](docs/configuration.md#runtime-backend-configbackend--fm_backend) for retired-record classification and the retirement owner.
 
 ## 5. Recovery
 

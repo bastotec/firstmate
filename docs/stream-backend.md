@@ -457,6 +457,11 @@ Stop any process still behind one by hand, then retire it with this command.
 The owning mate retires its own finished work on those backends under the captain's standing instruction through [`task-delivery`'s finished-work sweep](../.agents/skills/task-delivery/SKILL.md#finished-work-sweep); [`fm-retire-endpoint.sh`'s header and `--help`](../bin/fm-retire-endpoint.sh) own the narrower `--finished` checks and assertion basis.
 When tmux is installed, that mode accepts a tmux record only when a local tmux server can be read and does not list its window, or tmux definitively reports that no server is running; any other inventory failure goes to the captain rather than authorizing cleanup.
 
+The opposite leftover is a stream endpoint the hub still lists live after its task record is gone, for example when a captain decision removed the record.
+`FM_HOME=<home> bin/fm-retire-endpoint.sh --orphan <task-id> [--endpoint <endpoint-id>]` closes it, and `--list-orphans` lists that home's candidates read-only; for a remote home, run it through `bin/fm-on.sh <secondmate> fm-retire-endpoint.sh --orphan <task-id>`.
+It closes the endpoint only when the endpoint is provably that home's by evidence bound to its endpoint id, never by its label alone, nothing runs or is pending behind it, and no unlanded work is tied to it; it touches no file, worktree, branch or backlog row, and logs `basis=orphan-endpoint` with its evidence.
+[`fm-retire-orphan-lib.sh`'s header](../bin/fm-retire-orphan-lib.sh) owns the exact checks.
+
 ## When the hub is down
 
 One hub means one blast radius.

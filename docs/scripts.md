@@ -127,7 +127,8 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-parent-channel-lib.sh` | Resolve a secondmate home's parent channel and append a captain-facing outcome line to it at most once |
 | `fm-promote.sh`          | Promote a scout task in place to a protected ship task with an explicit delivery mode, write the ship instructions carrying that mode's definition of done, and supersede the task's brief so a later relaunch cannot revive stale scout delivery text |
 | `fm-teardown.sh`         | Fail-closed teardown: return landed ship worktrees, require completed scout deliverables, retire secondmate homes |
-| `fm-retire-endpoint.sh`  | Retire the durable records of named tasks whose endpoint no backend can answer for, recording who asserted it and when first: an operator by typed confirmation, or the owning mate with `--finished` for its own finished work on a retired backend |
+| `fm-retire-endpoint.sh`  | Retire the durable records of named tasks whose endpoint no backend can answer for, recording who asserted it and when first: an operator by typed confirmation, or the owning mate with `--finished` for its own finished work on a retired backend; `--orphan` closes a live stream endpoint whose task record is gone |
+| `fm-retire-orphan-lib.sh` | Single owner of the `--orphan` checks that close a record-less stream endpoint: ownership bound to the endpoint id, idle or stopped harness, and no unlanded work |
 | `fm-harness.sh`          | Detect Deck ancestry and resolve the supported crew or secondmate harness, model, and effort tokens |
 | `fm-lock.sh`             | Per-home firstmate session lock                                                      |
 | `fm-x-lib.sh`            | Shared Relay config, relay, and reply-threading helpers                              |
