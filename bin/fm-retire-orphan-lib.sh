@@ -7,11 +7,14 @@
 #
 # A leftover is an endpoint the hub still lists live for task <id> after this
 # home's state/<id>.meta is gone, for example when a captain decision removed
-# the record. Nothing else can close it: cleanup, control and retirement all
-# start from that record. This closes one, and only when every check holds:
+# the record. Record-based cleanup, control and retirement cannot close it
+# because they start from that record. This closes one, and only when every
+# check holds:
 #
 #   1. No task record: state/<id>.meta does not exist, and <id> is not a
 #      registered secondmate (a persistent home is never closed from here).
+#      An absent data/secondmates.md or a successful read with no match proves
+#      it is not registered; an existing registry that cannot be read refuses.
 #   2. Ownership: the endpoint is proved to be THIS home's by evidence bound to
 #      its exact endpoint id, never by its label alone:
 #      state/<id>.inbox/deck-<endpoint-id>/ is a non-symlink directory in this
@@ -56,6 +59,14 @@
 # state/<id>.inbox/deck-* directories - for ids with no task record, and
 # prints "<id>\t<endpoint-id>"
 # for each endpoint the hub still lists live and the ownership check proves.
+# A home with no state directory returns an empty inventory without creating
+# it or contacting the hub. Failure to read the initial hub inventory or a
+# candidate endpoint, or to inspect an existing registry while checking a
+# candidate, exits nonzero with a plain reason; any rows already printed are
+# an incomplete inventory. Listing does not check idle state or worktrees and
+# never authorizes a close.
+# tests/fm-retire-orphan-endpoint.test.sh pins these checks with scratch homes
+# and a stub hub, including the remote route; it is not live-harness evidence.
 
 # shellcheck disable=SC2153 # STATE and DATA are set by the sourcing script.
 ORPHAN_EVIDENCE=
