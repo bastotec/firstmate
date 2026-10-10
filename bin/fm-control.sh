@@ -109,8 +109,8 @@
 #              is a rescue onto a chosen runtime, never a config re-resolve:
 #              every axis still comes from
 #              the task's own durable record unless the caller names it.
-#              A recorded effort does not carry onto a replacement harness that
-#              has no effort control (deck), exactly as on `relaunch`: a harness
+#              A recorded effort does not carry onto a replacement harness with
+#              no Firstmate spawn-side effort axis (deck), as on `relaunch`: a harness
 #              change resets the effort axis to default unless it is named too,
 #              and naming it for such a harness still refuses with "deck has no
 #              effort control".

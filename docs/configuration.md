@@ -222,20 +222,23 @@ Both files are home-local and not inherited, and environment variables cannot op
 A Deck primary or second mate answers routine operational input at a lower reasoning effort, so those turns finish sooner, and keeps the model's default effort for everything else.
 The choice is made in code from the turn's source, never by a model: only a watcher wake whose every reason is provably routine thinks less, meaning a status signal with nothing captain-facing the drain has not shown, a heartbeat with no fleet change since the last one, or an auto-land merge or nothing-to-deploy notice.
 The captain's own messages, card answers and orders, decisions, blockers, failures, stuck work, other checks, and launch and startup turns always keep the default.
-When a lowered turn's drain turns up new work, the next routine-looking turn runs at the default again, and steering that arrives during a lowered turn raises it to the default for the rest of that turn.
+When a lowered turn's tool output turns up new work, the next classified turn runs at the default once.
+Unmarked steering arriving during a lowered turn raises it to the default; marked routine input cannot lower an already-running turn.
 The file is optional and per home:
 
 ```json
 {"classifier": "on", "low": "low"}
 ```
 
-Absent means on with `low`.
+An absent file or omitted fields mean `classifier: on` and `low: low`.
+When present, the file must contain one JSON object; any supplied `classifier` or `low` field must be a string with an accepted value.
 `"classifier": "off"` is the kill switch: every turn keeps the default.
 `low` may be `none`, `minimal`, `low`, or `medium`; check that the model route accepts the level, because `codex/gpt-6.1-sol` refuses `minimal` and proxai sends `none` to codex as no effort at all, which is the default.
-An unreadable file or unknown value turns the classifier off and logs why.
+An unreadable or invalid file, including a dangling symlink or a field with the wrong type or value, turns the classifier off with a warning on stderr.
 It needs a Deck that takes `--effort`; with an older Deck nothing changes.
 Running hosts pick up a change to the code only after a restart, and a change to the file at the next wake.
-`bin/fm-effort-policy.sh`'s header owns the exact rules and its state files.
+`bin/fm-effort-policy.sh`'s header owns the exact rules, including checks of outstanding durable wakes and open decisions, escalation triggers, and state files.
+[`tests/fm-effort-policy.test.sh`](../tests/fm-effort-policy.test.sh), [`tests/fm-deck-chat.test.sh`](../tests/fm-deck-chat.test.sh), and [`tests/fm-deck-harness.test.sh`](../tests/fm-deck-harness.test.sh) exercise classification and host integration without model calls.
 
 ## Possible-ask ranking (config/ask-triage-key-var)
 
@@ -325,7 +328,8 @@ Its model token may be a fallback chain ("Model fallback chains" above), and cha
 An explicit harness, `--model`, or `--effort` on `fm-spawn.sh` overrides the config for that spawn, and for a local route an explicit harness or raw command starts with clean model and effort defaults.
 A raw launch command has no verified adapter contract, so [task control's fail-closed boundaries](agent-control.md#fail-closed-boundaries) apply, and remote secondmate routes reject raw commands.
 A task record naming a removed harness (for example `pi` or `claude`) is reported unsupported by task control and never relaunched on it.
-Deck has no effort control, so a dispatch profile with effort or a relaunch with non-default effort is refused before any worker is created or stopped.
+Firstmate does not expose a spawn or relaunch effort axis for Deck: a dispatch profile with effort or a relaunch with non-default effort is refused before any worker is created or stopped.
+Supervisor watcher turns use the separate [turn-effort policy](#turn-effort-configeffort-policyjson).
 A Deck spawn needs `deck`, `jq`, and Python 3 on the worker's `PATH`, plus a worker-readable credential for Deck's proxai endpoint.
 Deck runs tools without approval prompts and Firstmate adds no pre-tool guard, so use it only where that autonomy is acceptable.
 Workers load gitignored `deck-mcp.json` from the driver's effective config directory, and the chat host loads `<home>/config/deck-mcp.json`; `FM_DECK_MCP_CONFIG` overrides the path as-is and an empty value disables MCP.
@@ -397,7 +401,7 @@ This section owns the schema; `AGENTS.md` section 4 owns the intake boundary, an
 
 Each rule needs `when` and `use`; `use` and the optional `default` take one profile object or a non-empty array, and every profile needs `harness`.
 `model`, `effort`, and `why` are optional, and an omitted model means the harness default.
-Deck has no effort control, so any `effort` value makes the profile invalid ("Harness support").
+[Harness support](#harness-support) owns Deck's dispatch-profile effort restriction.
 A `model` may be a fallback chain ("Model fallback chains"), passed through `--model` unchanged, so no dispatch-side judgment substitutes a model outside the captain-approved order.
 Choosing among an array is a quota-aware intake decision, and if no rule fits firstmate resolves `default` the same way before falling back to `config/crew-harness`.
 Bootstrap validates the file with `jq`: valid files stay silent unless `FM_BOOTSTRAP_VERBOSE_FACTS=1`, problems print `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`, and a missing `jq` goes through the normal `MISSING: jq` consent flow instead.

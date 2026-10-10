@@ -12,26 +12,28 @@
 #       Prints the lowered level (e.g. `low`) when the input is routine, and
 #       nothing when the turn keeps the default. Always exits 0 for a decision.
 #       Only a watcher wake (the text the hosts publish after "The home watcher
-#       has an actionable wake.") can be routine, and only when every wake
-#       reason in it is:
+#       has an actionable wake.") can be routine. Every current reason and
+#       outstanding state/.wake-queue row payload must meet the same rules:
 #         signal: <files>   each named .status file has no captain-relevant
-#                           line past the drain's presentation cursor and no
-#                           captain-held transfer (bin/fm-classify-lib.sh's
-#                           status_span_first_actionable_record, the classifier
-#                           the away daemon self-handles signals with); other
-#                           named files use their task's .status log
+#                           line past the drain's presentation cursor, no open
+#                           decision, and no captain-held transfer (the shared
+#                           bin/fm-classify-lib.sh status_open_decisions and
+#                           status_span_first_actionable_record classifiers);
+#                           other named files use their task's .status log
 #         heartbeat         the fleet fingerprint (status logs, backlog, cards,
 #                           orders) is unchanged since the previous heartbeat
-#                           and no status log has an unpresented actionable line
+#                           and every status log meets the signal rules above
 #         check: .../autoland.check.sh: autoland: <items>
 #                           every item is `merged <url> (deploy follows)` or
 #                           `deployed <x> <sha>: <x>: nothing to deploy...` /
 #                           `nothing deployed automatically...`
 #       Captain messages, card answers, orders, stale, needs-decision, other
-#       checks and anything unrecognized keep the default. A pending
-#       escalation (see observe) also keeps the default once, and is consumed.
+#       checks and anything unrecognized keep the default. An unreadable or
+#       malformed wake queue also keeps the default; classification never
+#       mutates the queue. A pending escalation (see observe) keeps the default
+#       once, and is consumed.
 #   fm-effort-policy.sh observe < turn-events.ndjson
-#       After a turn: when it ran at a lowered effort (`run_started.effort`) and
+#       During or after a turn: when `run_started.effort` marks lowered effort and
 #       its tool output shows new work - a drain section that only prints news
 #       (UNREAD STATUS, STATUS OUTCOME BACKSTOP, POSSIBLE ASKS, RECORD
 #       DIVERGENCE) or a drained wake row for a decision or stuck work - records
@@ -41,12 +43,9 @@
 #   fm-effort-policy.sh supported <deck-binary>
 #       Exit 0 when that Deck takes `--effort` and the `deck-effort:` header.
 #
-# Configuration: config/effort-policy.json (captain-private, per home),
-#   {"classifier": "on" | "off", "low": "low"}
-# Absent means on with `low`. "off" is the kill switch: every turn keeps the
-# default. "low" is the level routine turns use: none, minimal, low or medium.
-# An unreadable file or an unknown value turns the classifier off, with a
-# warning on stderr. docs/configuration.md "Turn effort" owns the operator view.
+# Configuration and operator behavior: docs/configuration.md "Turn effort"
+# owns config/effort-policy.json, its defaults, accepted values, and refusals.
+# Primary: observe before successor classification. Secondmate: after the turn.
 #
 # State (written only here): state/effort-policy/escalate (pending escalation)
 # and state/effort-policy/heartbeat (last heartbeat fingerprint).

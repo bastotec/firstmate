@@ -17,7 +17,7 @@ Choose intermediate levels as complexity, uncertainty, blast radius, or open-end
 If an adapter lacks `xhigh`, cap at its highest supported non-`max` level rather than silently omitting the intent.
 Never select `max` through this fallback; only an explicit per-task or standing captain preference permits it.
 
-Deck's no-effort refusal is owned by `../../../bin/fm-spawn.sh` and `references/harness/deck.md`; never silently omit a requested effort.
+[Harness support](../../../../../docs/configuration.md#harness-support) owns Deck's spawn-side effort restriction; never silently omit a requested effort.
 
 ## Harness and provider identity
 
