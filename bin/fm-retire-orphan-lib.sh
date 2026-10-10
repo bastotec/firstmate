@@ -14,22 +14,30 @@
 #      registered secondmate (a persistent home is never closed from here).
 #   2. Ownership: the endpoint is proved to be THIS home's by evidence bound to
 #      its exact endpoint id, never by its label alone:
-#      state/<id>.inbox/deck-<endpoint-id>/ exists in this home, created by the
-#      endpoint's own agent from the --status-path this home gave it.
+#      state/<id>.inbox/deck-<endpoint-id>/ is a non-symlink directory in this
+#      home, created by the endpoint's own agent from the --status-path this
+#      home gave it.
 #      The hub's label must also be fm-<id>. A label match with no such
 #      evidence, or evidence from another home's state directory, is refused.
-#   3. Nothing running or pending: the hub's process reading says the harness
-#      is gone (only a shell, or the agent reported the exit), or the harness
-#      is alive but its Deck turn record says no turn is active and the task
-#      inbox holds no unhandled message. A stale, unreadable or ambiguous
-#      reading is refused. The final reading holds the Deck lifecycle lock,
-#      but releases it immediately before the kill so the agent can persist
-#      and acknowledge the result. A turn can still start in that narrow
-#      unlocked window; this check and close are not an atomic transition.
+#   3. Nothing running or pending: the task inbox holds no unhandled message,
+#      and the hub's process reading says the harness is gone (only a shell,
+#      or the agent reported the exit), or alive with a Deck turn record saying
+#      no turn is active. An active turn refuses even if the hub reports dead;
+#      an unreadable turn record is accepted only when the hub reports dead.
+#      A stale or ambiguous hub reading is refused. The final reading holds
+#      the Deck lifecycle lock, but releases it immediately before the kill so
+#      the agent can persist and acknowledge the result. A turn can still
+#      start in that narrow unlocked window; this check and close are not an
+#      atomic transition. The inbox publication lock stays held through kill.
 #   4. No unlanded work: the endpoint's live working directory must be
 #      readable. If it is a linked worktree, and for every worktree of the
 #      registered project whose Treehouse slot claim names <id>, there must be
 #      no uncommitted change and no commit missing from every remote branch.
+#      Both live and registered directories must be inspectable; Git discovery
+#      or classification failures refuse rather than imply no worktree exists.
+#      A proven non-repository directory is allowed. An unreadable or unsafe
+#      slot claim on any registered-project worktree refuses; only absent or
+#      other-task claims are skipped, and this task's claims are judged.
 #      A project's own primary clone is not a task worktree and is not judged.
 #      As in cleanup, a finished scout's worktree is scratch: when this home's
 #      backlog row for <id> is a done scout and data/<id>/report.md exists, a
@@ -39,9 +47,10 @@
 # evidence, to state/endpoint-retirements.log; a line that cannot be written
 # closes nothing. Closing is the backend's own kill (bin/backends/stream.sh's
 # fm_backend_stream_kill) with the expected label, and only a close its agent
-# acknowledged reports success. No file, worktree, branch or backlog row is
-# touched. Any check that cannot be proved refuses with a plain reason, which
-# is the captain's decision.
+# acknowledged reports success. Apart from the assertion log and locking
+# records, no task file, worktree, branch or backlog row is touched.
+# Any check that cannot be proved refuses with a plain reason, which is the
+# captain's decision.
 #
 # --list-orphans is read-only. It looks only at this home's own records - its
 # state/<id>.inbox/deck-* directories - for ids with no task record, and

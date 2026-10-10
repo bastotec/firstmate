@@ -62,7 +62,7 @@ Retire a custom check only through `bin/fm-check-unregister.sh <id>` (or `bin/fm
 ## Finished-work sweep
 
 `AGENTS.md` section 7 records the captain's standing instruction that the mate who created a worker cleans it up once its work is done.
-Run this sweep when a ship lands, when a scout completes, and on every heartbeat, over this home's own direct reports only - its own `state/<id>.meta` records, never another home's, and never a secondmate, which retires only on an explicit decision.
+Run this sweep when a ship lands, when a scout completes, and on every heartbeat, over this home's own direct reports and endpoint-bound leftover records only, never another home's, and never a secondmate, which retires only on an explicit decision.
 
 A worker is finished when its PR merged or its local-only branch landed, or when it is a scout whose report exists and whose `captain-hold-lifecycle` completion gate passes.
 A scout kept alive to host the captain's Lavish loop, or any worker whose work is still under way, is not finished.
@@ -74,7 +74,7 @@ For each finished worker:
 3. Treat any other refusal - unlanded or uncommitted work, a missing report, an open captain decision, a stream endpoint that would not confirm its stop, a window still listed - as not provably finished: stop, never retry around it, and hold one plain decision for the captain through `bin/fm-captain-hold.sh` naming the worker, the evidence, and the choice between cleaning it up and keeping it.
 
 Then close this home's record-less leftovers: endpoints the hub still lists live for a task whose record here is already gone.
-Run `FM_HOME=<this home> bin/fm-retire-endpoint.sh --list-orphans`, and for each `<id>` it prints run `FM_HOME=<this home> bin/fm-retire-endpoint.sh --orphan <id>`; its help owns the ownership, idle and unlanded-work checks.
+Use `fm-retire-endpoint.sh`'s read-only orphan listing, then close each listed task/endpoint pair with its orphan mode and endpoint pin; its help owns invocation mechanics and listing limits, and [`fm-retire-orphan-lib.sh`'s header](../../../bin/fm-retire-orphan-lib.sh) owns eligibility and timing limits.
 Treat its refusal like step 3: never retry around it, and hold one plain decision for the captain naming the endpoint and the reason.
 
 Once a worker's decision is held, later sweeps leave it to that decision rather than raising it again.

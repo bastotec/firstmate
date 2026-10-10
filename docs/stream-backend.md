@@ -437,7 +437,7 @@ A hub restart can leave records in exactly that state, where the hub has never h
 `bin/fm-retire-endpoint.sh <task-id> [<task-id>...]` is the one way such a record is retired.
 No daemon invokes it; in operator mode it names each id exactly, refuses wildcards and all-records forms, and asks you to type those ids back before anything is written.
 By naming a record you assert, from your own inspection of the machine that ran it, that no worker is still running behind it.
-Every run first appends one line to `state/endpoint-retirements.log` with your username, the time, and the ids; a run whose line cannot be appended retires nothing, and the line records the assertion, not an outcome.
+Every record-retirement attempt first appends one line to `state/endpoint-retirements.log` with your username, the time, and the id; an attempt whose line cannot be appended retires nothing, and the line records the assertion, not an outcome.
 
 What operator mode touches, and what it does not:
 
@@ -459,9 +459,8 @@ When tmux is installed, that mode accepts a tmux record only when a local tmux s
 
 The opposite leftover is a stream endpoint the hub still lists live after its task record is gone, for example when a captain decision removed the record.
 `FM_HOME=<home> bin/fm-retire-endpoint.sh --orphan <task-id> [--endpoint <endpoint-id>]` closes it, and `--list-orphans` lists that home's candidates read-only; for a remote home, run it through `bin/fm-on.sh <secondmate> fm-retire-endpoint.sh --orphan <task-id>`.
-It closes the endpoint only when that home's `state/<id>.inbox/deck-<endpoint-id>/` record proves ownership of the exact endpoint with label `fm-<id>`, nothing runs or is pending behind it, and no unlanded work is tied to it; a matching label or local process alone is refused.
-It leaves task files, worktrees, branches and backlog rows untouched, and logs `basis=orphan-endpoint` with its evidence.
-[`fm-retire-orphan-lib.sh`'s header](../bin/fm-retire-orphan-lib.sh) owns the exact checks.
+[`fm-retire-orphan-lib.sh`'s header](../bin/fm-retire-orphan-lib.sh) owns the endpoint-bound ownership proof, stopped-or-idle and work-protection checks, assertion logging, and the remaining check-to-kill race; [`fm-retire-endpoint.sh --help`](../bin/fm-retire-endpoint.sh) owns invocation mechanics and the read-only listing's limits.
+Closing leaves task files, worktrees, branches and backlog rows untouched; only the assertion log and locking records are written.
 
 ## When the hub is down
 

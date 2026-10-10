@@ -158,33 +158,24 @@ the worktree before it reaches the endpoint, which is what stands behind the
 stop this asserts. The log line carries basis=finished-work. Anything refused
 here is the captain's decision.
 
---orphan: close the stream endpoint the hub still lists live for a task whose
-record in this home is already gone. It needs an explicit FM_HOME, asks for no
-typed confirmation, closes one endpoint, and touches no file, worktree, branch
-or backlog row. It refuses unless:
+--orphan: close one live stream endpoint whose task record in this home is
+already gone. It needs an explicit FM_HOME and asks for no typed confirmation.
+Ownership needs this home's state/<id>.inbox/deck-<endpoint-id>/ record plus
+label fm-<id>; a label or local process match alone is never enough.
+bin/fm-retire-orphan-lib.sh's header owns the full eligibility checks and the
+remaining check-to-kill race. Refusals are the captain's decision.
+Task files, worktrees, branches and backlog rows remain untouched; the command
+writes its assertion log and locking records.
 
-  - the task has no record here and is not a registered secondmate;
-  - this home owns the endpoint, proved by evidence bound to its endpoint id:
-    state/<id>.inbox/deck-<endpoint-id>/ (written by the endpoint's own agent
-    from the status path this home gave it), plus the label fm-<id>;
-    a label or local process match alone is never enough;
-  - its harness has exited, or is alive with no active turn and no unhandled
-    inbox message;
-  - its live working directory can be read, and that worktree (when linked)
-    and any worktree whose slot claim names the task have no uncommitted
-    change and no commit missing from every remote branch; as in cleanup, a
-    finished scout's own worktree (a done scout row with its report) is
-    scratch and is logged rather than judged.
-
---endpoint pins the hub endpoint id when the caller already knows it. The log
-line carries basis=orphan-endpoint and the evidence. Anything refused here is
-the captain's decision. From another machine's home, run it through
+--endpoint pins the hub endpoint id when the caller already knows it.
+From another machine's home, run it through
 bin/fm-on.sh <secondmate> fm-retire-endpoint.sh --orphan <task-id>, which sets
 that home's FM_HOME.
 
 --list-orphans: read-only. Prints "<task-id><TAB><endpoint-id>" for each
-leftover the checks above prove this home's and the hub still lists live.
-bin/fm-retire-orphan-lib.sh's header owns the full contract.
+record-less endpoint proved this home's and still live on the hub.
+This checks ownership, not idle state or worktrees; listing is not permission
+to close. --orphan performs the full eligibility checks.
 EOF
 }
 
