@@ -108,6 +108,9 @@ FM_REMOTE_JOB_STDERR=
 FM_REMOTE_JOB_EXIT=
 FM_REMOTE_JOB_ERROR=
 FM_REMOTE_JOB_REPAIRED=0
+FM_REMOTE_JOB_ENSURE_SCOPE=
+FM_REMOTE_JOB_ENSURE_PREPARED=
+FM_REMOTE_JOB_IDENTITY_EXPECTED=
 
 fm_remote_job_die() {
   printf 'error: %s\n' "$1" >&2
@@ -410,6 +413,12 @@ fm_remote_job_safe_child_dir() { # <canonical-parent> <single child basename>
 
 fm_remote_job_prepare_state() { # <account-home>
   local account_home=$1 root parent base firstmate
+  # Within one ensure the same state was already validated and created.
+  if [ -n "$FM_REMOTE_JOB_ENSURE_SCOPE" ] &&
+    [ "$FM_REMOTE_JOB_ENSURE_PREPARED" = "$account_home:${FM_REMOTE_JOB_STATE_ROOT:-}" ] &&
+    [ -n "$FM_REMOTE_JOB_STATE" ] && [ -d "$FM_REMOTE_JOB_JOBS" ]; then
+    return 0
+  fi
   fm_remote_job_validate_settings || {
     FM_REMOTE_JOB_ERROR="remote job bounds or timeout are invalid"
     return 1
@@ -457,6 +466,7 @@ fm_remote_job_prepare_state() { # <account-home>
     FM_REMOTE_JOB_ERROR="remote job log directory is unsafe"
     return 1
   }
+  [ -z "$FM_REMOTE_JOB_ENSURE_SCOPE" ] || FM_REMOTE_JOB_ENSURE_PREPARED="$1:${FM_REMOTE_JOB_STATE_ROOT:-}"
 }
 
 fm_remote_job_job_dir() { # <id>
@@ -1090,7 +1100,13 @@ fm_remote_job_worker_identity_matches() { # <remote-root> <account-home>
     : "$extra"
     return 1
   fi
-  expected=$(fm_remote_job_code_identity "$root" "$account_home") || return 1
+  if [ -n "$FM_REMOTE_JOB_ENSURE_SCOPE" ] && [ "$FM_REMOTE_JOB_ENSURE_SCOPE" = "$root:$account_home" ] &&
+    [ -n "$FM_REMOTE_JOB_IDENTITY_EXPECTED" ]; then
+    expected=$FM_REMOTE_JOB_IDENTITY_EXPECTED
+  else
+    expected=$(fm_remote_job_code_identity "$root" "$account_home") || return 1
+    [ "$FM_REMOTE_JOB_ENSURE_SCOPE" != "$root:$account_home" ] || FM_REMOTE_JOB_IDENTITY_EXPECTED=$expected
+  fi
   [ "$actual" = "$expected" ]
 }
 
@@ -1201,7 +1217,24 @@ fm_remote_job_start_linux_worker() { # <remote-root> <account-home>
   FM_REMOTE_JOB_REPAIRED=1
 }
 
+# Every fm-on call runs one ensure, and one ensure re-checks the worker several
+# times (before deciding to replace it, inside the Linux start, and on every
+# readiness probe). Within that one call the expected code identity is hashed
+# once and the state directories are validated and created once; the worker's
+# published identity, pid, and heartbeat are still re-read on every check.
 fm_remote_job_ensure_worker() { # <remote-root> <account-home>
+  local rc=0
+  FM_REMOTE_JOB_ENSURE_SCOPE=
+  FM_REMOTE_JOB_ENSURE_PREPARED=
+  FM_REMOTE_JOB_IDENTITY_EXPECTED=
+  _fm_remote_job_ensure_worker "$@" || rc=$?
+  FM_REMOTE_JOB_ENSURE_SCOPE=
+  FM_REMOTE_JOB_ENSURE_PREPARED=
+  FM_REMOTE_JOB_IDENTITY_EXPECTED=
+  return "$rc"
+}
+
+_fm_remote_job_ensure_worker() { # <remote-root> <account-home>
   local root=$1 account_home=$2 platform uid identity_matches=0
   FM_REMOTE_JOB_ERROR=
   FM_REMOTE_JOB_REPAIRED=0
@@ -1213,6 +1246,7 @@ fm_remote_job_ensure_worker() { # <remote-root> <account-home>
     FM_REMOTE_JOB_ERROR="remote account home is unavailable or unsafe"
     return 1
   }
+  FM_REMOTE_JOB_ENSURE_SCOPE="$root:$account_home"
   [ -f "$root/bin/fm-remote-job-worker.sh" ] && [ ! -L "$root/bin/fm-remote-job-worker.sh" ] &&
     [ -x "$root/bin/fm-remote-job-worker.sh" ] || {
     FM_REMOTE_JOB_ERROR="configured remote root has no safe executable remote job worker"
