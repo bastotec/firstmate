@@ -1286,11 +1286,12 @@ $unpushed
 EOF
 }
 
-# Is the worktree's PR merged for local work contained in that PR? Resolves the
-# PR from the recorded pr= URL first, then from the branch name, and asks GitHub
-# for both the PR state and head. Returns non-zero when the PR is not merged, the
-# current work is not contained in the PR head, no PR is found, or any gh error
-# occurs - the caller then falls back to the content check.
+# Is the worktree's PR merged for local work contained in that PR? Uses PR_URL
+# resolved from metadata or the backlog row, else discovers the PR by branch
+# name, and asks GitHub for both state and head. Returns non-zero when the PR
+# is not merged, the current work is not contained in the PR head, no PR is
+# found, or any gh error occurs. The caller's content-check fallback proves
+# only content safety; it never replaces the completion-claim gate above.
 pr_is_merged() {
   local branch=$1 target view state remainder head resolved_url current landed=0
   if [ -n "$PR_URL" ]; then
@@ -1362,9 +1363,9 @@ work_is_landed() {
   content_in_default
 }
 
-# The completion links this teardown already holds locally. A scout's
-# deliverable is its report, a local-only ship lands on local main, and every
-# other ship carries the PR recorded on its own record.
+# Stage only the completion arguments permitted by the header's content and
+# completion-claim gates, so offline replay cannot add evidence that cleanup
+# did not authorize.
 BACKLOG_DONE_ARGS=()
 backlog_done_args() {
   local data_relative
