@@ -437,7 +437,7 @@ fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sl
 # fm_backend_kill: remove the task's session endpoint.
 #
 # This header is the single owner of the kill return contract. Every caller
-# must distinguish all three, because a durable record that says a worker is
+# must distinguish all four, because a durable record that says a worker is
 # gone while that worker may still be running is the exact failure this
 # contract exists to prevent:
 #
@@ -446,20 +446,28 @@ fm_backend_send_text_submit() {  # <backend> <target> <text> <retries> <enter-sl
 #      follow-up read confirmed the removal, or the endpoint was already
 #      absent before the call. An already-absent endpoint is ordinary
 #      idempotent cleanup and stays a success, never a refusal.
+#   3  STILL-PRESENT. The backend answered, and its answer positively says the
+#      endpoint is still there: the kill was attempted and the backend
+#      reported that the worker was not stopped - the hub answered the kill
+#      with the endpoint's own agent never acknowledging it. Exactly one
+#      explanatory line is written to stderr; callers relay it rather than
+#      inventing their own.
 #   2  UNCONFIRMED. The kill was attempted, or deliberately skipped, and
 #      nothing proved the endpoint gone - the backend refused it, never
-#      answered, or answered without acknowledging it. A record on a retired
-#      backend lands here too: firstmate can no longer close it, and nothing
-#      proves it closed. The worker may still be running. Exactly one
+#      answered, or answered with nothing that could be read. A record on a
+#      retired backend lands here too: firstmate can no longer close it, and
+#      nothing proves it closed. The worker may still be running. Exactly one
 #      explanatory line is written to stderr; callers relay it rather than
 #      inventing their own.
 #   1  UNSUPPORTED. The kill could never be attempted at all: an empty or
 #      malformed target, an unknown backend, or an adapter that could not be
 #      sourced.
 #
-# Only 0 licenses removing the task's durable records. Both nonzero returns
-# mean the endpoint's identity must be retained so a later rerun can retry;
-# bin/fm-retire-endpoint.sh's header owns retirement of an UNCONFIRMED one.
+# Only 0 licenses removing the task's durable records. Every nonzero return
+# means the endpoint's identity must be retained so a later rerun can retry;
+# bin/fm-retire-endpoint.sh's header owns retirement of an UNCONFIRMED one on
+# a plain assertion, and of a STILL-PRESENT one only with
+# --override-runtime-refusal.
 # A caller that needs to tell them apart should use fm_backend_kill_verdict
 # rather than re-deriving the numbers.
 fm_backend_kill() {  # <backend> <target> [tab-id] [expected-label]
@@ -476,9 +484,10 @@ fm_backend_kill() {  # <backend> <target> [tab-id] [expected-label]
 
 # fm_backend_kill_verdict: name one fm_backend_kill status, so callers that
 # need the reason read the contract's words rather than re-deriving its numbers.
-fm_backend_kill_verdict() {  # <status> -> gone|unconfirmed|unsupported
+fm_backend_kill_verdict() {  # <status> -> gone|present|unconfirmed|unsupported
   case "$1" in
     0) printf 'gone' ;;
+    3) printf 'present' ;;
     2) printf 'unconfirmed' ;;
     *) printf 'unsupported' ;;
   esac

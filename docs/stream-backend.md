@@ -382,12 +382,12 @@ The signal ownership boundary is documented beside `foreground_group_locked` in 
 The answer carries `delivered`: true when that agent took the kill, and false when it never answered and the hub closed only its own record.
 A `delivered: false` close is not proof the worker stopped, because its process lives on the worker's machine, which the hub cannot reach.
 `fm_backend_stream_kill` refuses such a close, exits nonzero, and says the worker may still be running.
-It answers the same way to every other refusal, including `no_such_endpoint`: a hub that has forgotten an endpoint says nothing about whether that worker is still running.
+A `delivered: false` answer is the kill contract's still-present verdict, because the backend positively reported the endpoint's agent never took the kill; every other refusal, including `no_such_endpoint`, is the unconfirmed verdict instead: a hub that has forgotten an endpoint says nothing about whether that worker is still running.
 
 An endpoint carries `closed_by`: `agent` when its own agent reported the worker gone and brought its exit code back, and `hub` when the hub closed a record it could no longer steer.
-Only `closed_by: agent` is a confirmed stop; a kill against such an endpoint reports success without asking again, while every other outcome, `closed_by: hub` included, reports an unconfirmed stop.
+Only `closed_by: agent` is a confirmed stop; a kill against such an endpoint reports success without asking again, while `closed_by: hub` preserves the same still-present verdict on every retry because the endpoint's agent never acknowledged the original kill.
 When an agent comes back and reports its own worker's exit, its report takes over a `hub` close, attribution and exit code together; a hub close never takes over an agent's and never overwrites the exit code an agent recorded.
-`fm_backend_kill` in `bin/fm-backend.sh` owns that unconfirmed result, and cleanup keeps the task's durable records rather than recording a worker as gone that nothing has stopped.
+`fm_backend_kill` in `bin/fm-backend.sh` owns these verdicts, and cleanup keeps the task's durable records rather than recording a worker as gone that nothing has stopped.
 
 ## When the hub has not heard from an agent
 
@@ -429,15 +429,16 @@ A worker whose process ended while the hub was down is recovered the same way, s
 A refusal other than a lost name, including a refused credential after a hub came back with the wrong token file, is waited out on the same backoff as an unreachable hub rather than treated as settled.
 In every case the worker itself is left running and untouched.
 
-## Retiring a record no backend can answer for
+## Retiring an endpoint record without a confirmed stop
 
-Cleanup removes a task's durable records only once a backend has proved the worker stopped, and `--force` does not lift that: it authorizes discarding unlanded WORK, never asserting a stop nobody observed.
+Ordinary cleanup removes a task's durable records only once a backend has proved the worker stopped, and `--force` does not lift that: it authorizes discarding unlanded WORK, never asserting a stop nobody observed.
 A hub restart can leave records in exactly that state, where the hub has never heard of the endpoint and no later read can change the unconfirmed answer, so cleanup refuses every time.
 
-`bin/fm-retire-endpoint.sh <task-id> [<task-id>...]` is the one way such a record is retired.
+`bin/fm-retire-endpoint.sh [--override-runtime-refusal] <task-id> [<task-id>...]` is the one way such a record is retired.
 No daemon invokes it; in operator mode it names each id exactly, refuses wildcards and all-records forms, and asks you to type those ids back before anything is written.
 By naming a record you assert, from your own inspection of the machine that ran it, that no worker is still running behind it.
-Every record-retirement attempt first appends one line to `state/endpoint-retirements.log` with your username, the time, and the id; an attempt whose line cannot be appended retires nothing, and the line records the assertion, not an outcome.
+Before cleanup for each named task, the command appends one line to `state/endpoint-retirements.log` with your username, the time, the id, and whether you asserted the runtime-refusal override.
+If that line cannot be appended, that task is not retired; the line records the assertion, not an outcome.
 
 What operator mode touches, and what it does not:
 
@@ -446,8 +447,9 @@ What operator mode touches, and what it does not:
 - Cleanup runs first and finishes the job properly whenever its own gates allow.
   When cleanup's work-protection gate refuses, the worktree, any uncommitted work in it, the task branch and the task's data are left byte-untouched and named in the output, for you to deal with under your own authority.
   It never discards work and never passes `--force` to anything.
-- When cleanup's unconfirmed-kill gate refuses, the records are retired anyway on your assertion alone, even for an endpoint the backend still reports present after its kill.
-  Cleanup cannot tell which case you are in, so a worker may still be running behind a record retired that way, and stopping it is yours to do.
+- When cleanup's unconfirmed-kill gate refuses, the records are retired anyway on your assertion alone, for an endpoint whose backend could not say whether it stopped.
+  The backend answering positively that the endpoint is still present after its kill is the separate runtime refusal `--override-runtime-refusal` proceeds past; without that flag it stands and nothing is retired.
+  Cleanup cannot tell which case you are in on the unconfirmed path, so a worker may still be running behind a record retired that way, and stopping it is yours to do.
 - Every other cleanup refusal stands and nothing is retired, such as an outcome that has not reached the parent channel or a backlog transition that cannot be replayed.
   A cleanup that fails only after it has already removed the durable task record reports that partial state instead of claiming nothing was retired.
 

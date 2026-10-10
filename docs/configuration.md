@@ -152,8 +152,8 @@ New local spawns select an explicitly authorized per-task `--backend` first, the
 A per-task override requires a current captain instruction or the task's accepted brief and never establishes precedent for later tasks.
 Any selection other than `stream` is refused, and the earlier `zellij`, `orca`, and `cmux` adapters remain unsupported.
 A task record on the retired `tmux` or `herdr` backend, including a record with no `backend=` field, stays readable only for reconciliation and retirement: the recovery classifier reports `unverified`, its kill is unconfirmed, and relaunch is refused.
-[Endpoint retirement](stream-backend.md#retiring-a-record-no-backend-can-answer-for) owns the operator assertion required to retire such a record with [`bin/fm-retire-endpoint.sh`](../bin/fm-retire-endpoint.sh), and the owning mate's `--finished` path for its own finished work.
-A stream endpoint the hub still lists live after its task record is gone is closed only by `bin/fm-retire-endpoint.sh --orphan`, which [the same section](stream-backend.md#retiring-a-record-no-backend-can-answer-for) points to.
+[Endpoint retirement](stream-backend.md#retiring-an-endpoint-record-without-a-confirmed-stop) owns the operator assertion required to retire such a record with [`bin/fm-retire-endpoint.sh`](../bin/fm-retire-endpoint.sh), and the owning mate's `--finished` path for its own finished work.
+A stream endpoint the hub still lists live after its task record is gone is closed only by `bin/fm-retire-endpoint.sh --orphan`, which [the same section](stream-backend.md#retiring-an-endpoint-record-without-a-confirmed-stop) points to.
 `fm-spawn.sh` spawns local ship, scout, and `--secondmate` tasks on stream, and [remote placement](remote-secondmates.md#normal-operation) owns remote secondmates.
 A spawn refusal from a missing dependency, version gate, or unreachable hub is terminal, and firstmate surfaces it as a blocker.
 Every spawn records `backend=stream`, `endpoint_task_id=` (the cleanup binding between the metadata filename and the opaque endpoint), `stream_hub=`, and `stream_endpoint_id=` in task meta.

@@ -684,10 +684,10 @@ run_retire() {  # <case-dir> <args...>
 }
 
 # stage_unanswerable_task_with_work: the real shape an operator meets. The
-# endpoint's kill is accepted and closes nothing, so no read can ever prove its
-# worker stopped; and the task's worktree holds uncommitted work, so cleanup
-# refuses before it ever reaches the endpoint. Retiring the record must not
-# depend on, or disturb, either.
+# endpoint's kill would stop no worker and close only the hub's record, so no
+# read can ever prove its worker stopped; and the task's worktree holds
+# uncommitted work, so cleanup refuses before it ever reaches the endpoint.
+# Retiring the record must not depend on, or disturb, either.
 stage_unanswerable_task_with_work() {  # <case-dir> <id>
   local case_dir=$1 id=$2 home
   home=$(home_of "$case_dir")
@@ -708,9 +708,9 @@ stage_unanswerable_task_with_work() {  # <case-dir> <id>
 }
 
 # stage_live_task: a task whose worktree is clean, so cleanup reaches the
-# kill, and whose endpoint stays live after every kill the hub accepts - its
-# agent never acknowledges one. Nothing but that read stands between
-# this record and retirement.
+# kill, and whose worker stays live when the hub closes its endpoint record -
+# its agent never acknowledges the kill. The hub's positive answer and retained
+# hub-close verdict are all that stand between this record and retirement.
 stage_live_task() {  # <case-dir> <id>
   local case_dir=$1 id=$2 home
   home=$(home_of "$case_dir")
@@ -2155,7 +2155,7 @@ test_completion_marks_its_pending_close_when_the_worker_cannot_be_proved_stopped
 
   out=$(run_teardown "$case_dir" "$id") || rc=$?
   [ "$rc" -ne 0 ] || fail "cleanup reported success for a kill nothing proved landed: $out"
-  assert_contains "$out" "not confirmed gone" "cleanup did not report the unproven result: $out"
+  assert_contains "$out" "still present after its kill" "cleanup did not report the still-present result: $out"
   assert_present "$meta" "cleanup removed the task record it refused to finish"
   assert_present "$marker" "cleanup discarded the pending close it had already staged"
   assert_grep 'endpoint=unconfirmed' "$marker" \
@@ -2427,35 +2427,41 @@ test_retiring_records_who_asserted_it_and_when() {
   pass "a retirement carries who asserted it and when, and is consumed by the cleanup it authorizes"
 }
 
-# A retirement proceeds past a kill nothing proved landed - here the window is
-# still listed after its kill, so a worker may well still be running - and the
-# records go anyway on the operator's assertion alone. What must hold is what
-# cleanup SAYS before it removes anything. The kill contract gives it one
-# unconfirmed verdict for both "the backend says it is still there" and "the
-# backend could not say", so its warning must claim neither and must name the
-# assertion the removal rests on, before the removal is reported.
-test_retiring_past_an_unconfirmed_kill_names_what_cleanup_cannot_tell() {
-  local case_dir home id out warn_line retired_line
+# A retirement proceeds past a kill nothing proved landed - here the hub
+# answered and its agent never acknowledged, so the backend POSITIVELY says the
+# endpoint is still there - and that positive answer is a runtime's own
+# refusal, so it takes --override-runtime-refusal, never a plain retirement.
+# The records go on the operator's overridden assertion alone. What must hold
+# is what cleanup SAYS before it removes anything, and that a plain retirement
+# stops rather than removing a record the backend says is alive.
+test_retiring_past_a_still_present_endpoint_demands_the_override() {
+  local case_dir home id out rc=0
   id=atomic-retire-present-c4
   case_dir=$(make_home retire-present)
   home=$(home_of "$case_dir")
   stage_live_task "$case_dir" "$id"
 
-  out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") \
-    || fail "a confirmed retirement should complete past an unconfirmed kill: $out"
-  assert_contains "$out" \
-    "cannot tell whether the backend reported it still there or could not answer for it at all" \
-    "cleanup did not say which of the two answers it cannot tell apart: $out"
+  rc=0
+  out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") || rc=$?
+  [ "$rc" -ne 0 ] \
+    || fail "a plain retirement removed a record the backend says is alive: $out"
+  assert_contains "$out" "override-runtime-refusal" \
+    "the refusal did not name the override that answers a still-present endpoint: $out"
+  assert_present "$home/state/$id.meta" \
+    "a plain retirement retired a record whose endpoint is still present: $out"
+
+  out=$(printf '%s\n' "$id" | run_retire "$case_dir" --override-runtime-refusal "$id") \
+    || fail "an overriding retirement should complete past a still-present endpoint: $out"
+  assert_contains "$out" "overrode that runtime's refusal" \
+    "cleanup did not name the override the removal rests on: $out"
   assert_contains "$out" "on that assertion alone" \
     "cleanup did not name the operator assertion the removal rests on: $out"
-  warn_line=$(printf '%s\n' "$out" | grep -n "on that assertion alone" | head -1 | cut -d: -f1)
-  retired_line=$(printf '%s\n' "$out" | grep -n "retired; cleanup completed" | head -1 | cut -d: -f1)
-  [ -n "$warn_line" ] && [ -n "$retired_line" ] && [ "$warn_line" -lt "$retired_line" ] \
-    || fail "cleanup reported the removal before saying what it rests on: $out"
-  assert_absent "$home/state/$id.meta" "the retirement left the record it retired"
+  assert_absent "$home/state/$id.meta" "the overriding retirement left the record it retired"
   [ "$(row_state "$case_dir" "$id")" = "done" ] \
-    || fail "the retirement left the backlog row at $(row_state "$case_dir" "$id"): $out"
-  pass "a retirement past an unconfirmed kill names what cleanup cannot tell apart"
+    || fail "the overriding retirement left the backlog row at $(row_state "$case_dir" "$id"): $out"
+  assert_grep "override_runtime_refusal=1" "$home/state/endpoint-retirements.log" \
+    "the assertion log did not record the override"
+  pass "retiring past a still-present endpoint demands --override-runtime-refusal"
 }
 
 # Retiring a record is bookkeeping about the record, and work on disk is not
@@ -2995,11 +3001,15 @@ test_retirement_help_states_what_the_operator_is_asserting() {
   local case_dir out
   case_dir=$(make_home retire-help)
   out=$(run_retire "$case_dir" --help </dev/null) || fail "--help should succeed: $out"
-  assert_contains "$out" "the endpoint is unanswerable" \
-    "the help does not name the condition this command is for"
+  assert_contains "$out" "backend can no longer" \
+    "the help does not name the unanswerable-endpoint condition"
+  assert_contains "$out" "positively reports that the endpoint is still" \
+    "the help does not distinguish a positive still-present answer"
+  assert_contains "$out" "--override-runtime-refusal is additionally required" \
+    "the help does not name the override required for a still-present endpoint"
   assert_contains "$out" "no worker is still running" \
     "the help does not say what the operator is asserting"
-  pass "the retirement command's help states the condition it is for"
+  pass "the retirement command's help states both endpoint conditions and the operator's assertion"
 }
 
 test_recovery_refuses_a_close_whose_worker_was_never_proved_stopped() {
@@ -4081,7 +4091,7 @@ test_a_failed_confirm_stamp_keeps_every_record_for_a_rerun
 test_no_automatic_path_retires_an_unanswerable_record
 test_retiring_refuses_wildcards_and_unconfirmed_ids
 test_retiring_records_who_asserted_it_and_when
-test_retiring_past_an_unconfirmed_kill_names_what_cleanup_cannot_tell
+test_retiring_past_a_still_present_endpoint_demands_the_override
 test_retiring_leaves_work_on_disk_byte_untouched
 test_an_interrupt_mid_retirement_retires_nothing
 test_a_refusal_that_is_not_the_work_gate_retires_nothing

@@ -832,7 +832,7 @@ fm_afk_contract_cmd_propose() {
   local entered entered_epoch proposal rc=0 refused
   fm_afk_contract_parse_inputs "$@" || return 2
   entered=$(fm_afk_contract_now_iso)
-  entered_epoch=$(date +%s)
+  entered_epoch=$(fm_utc_iso_to_epoch "$entered") || return 1
   proposal=$(fm_afk_contract_proposal_path)
   fm_afk_contract_render_body "$entered" "$entered_epoch" | fm_afk_contract_write_atomic "$proposal" || {
     fm_afk_contract_log "failed to write the proposal at $proposal"
@@ -865,7 +865,7 @@ fm_afk_contract_cmd_confirm() {
   record=$(fm_afk_contract_path)
   proposal=$(fm_afk_contract_proposal_path)
   confirmed=$(fm_afk_contract_now_iso)
-  confirmed_epoch=$(date +%s)
+  confirmed_epoch=$(fm_utc_iso_to_epoch "$confirmed") || return 1
   if [ -f "$proposal" ]; then
     fm_afk_contract_validate "$proposal" 0 || return 1
     body=$(cat "$proposal")

@@ -206,7 +206,7 @@ bin/fm-spawn.sh <id> --secondmate
 The primary resolves the verified secondmate harness and optional model and effort, runs the same readiness gate the seed runs, transfers the inherited-material allowlist, and asks the remote host to launch on stream.
 An explicit request for any other backend is refused, and the remote host refuses one too.
 A parent record that still names a retired backend (tmux or herdr) is refused; stop any agent left on that endpoint by hand, then use the host-local retirement command printed by `fm-remote-secondmate-control.sh`.
-That command selects the remote home's parent-route record, not its ordinary task state; [Endpoint retirement](stream-backend.md#retiring-a-record-no-backend-can-answer-for) owns the assertion and preservation guarantees.
+That command selects the remote home's parent-route record, not its ordinary task state; [Endpoint retirement](stream-backend.md#retiring-an-endpoint-record-without-a-confirmed-stop) owns the assertion and preservation guarantees.
 A launch after a host has drifted out of readiness fails with the doctor's own gap text instead of leaving a half-created endpoint.
 Raw launch commands are not accepted for remote secondmates.
 
