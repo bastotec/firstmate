@@ -1099,8 +1099,8 @@ fm_pr_github_checks_not_green() {
 }
 
 # Completion-claim gate for a task whose record names a PR or MR.
-# Supplying --pr on a close makes the task read as merged. A task naming a PR
-# requires a read-only forge check even when the close omits --pr:
+# A task naming a PR requires a read-only forge check (GitHub via gh, GitLab
+# via glab) even when the close omits --pr:
 #   merged            -> may close as merged;
 #   closed, unmerged  -> may close only as superseded, and only when the decoded
 #                        task body carries a line beginning "Superseded:" with
@@ -1109,9 +1109,12 @@ fm_pr_github_checks_not_green() {
 #   unreadable        -> refused (forge CLI missing, unauthenticated, offline,
 #                        or an unsupported URL), never guessed.
 # The gate applies regardless of delivery mode, including local-only records
-# that name a PR. Superseded closes omit --pr so they read as done, not merged.
+# that name a PR. Superseded closes omit --pr.
 # bin/fm-teardown.sh checks before destructive cleanup; its --force discard path
 # never supplies --pr to the close, even when the live verdict is merged.
+# Omitting --pr avoids adding merge evidence but does not remove an existing
+# row link: tasks-axi still renders a PR-bearing Done row as "(merged DATE)".
+# That upstream rendering is not proof of a merge; use the live-state audit.
 # bin/fm-tasks-axi.sh gates done/close, and bin/fm-captain-hold.sh gates its
 # answer and evidence-backed closes. Release is not a close. Session-start
 # replay of an already-staged backlog close and matching retries of an already
@@ -1176,8 +1179,8 @@ fm_pr_superseded_recorded() {
 # Decide whether a task naming <url> may close as finished. Sets
 # FM_PR_CLOSE_STATE to the live state (empty when unreadable) and
 # FM_PR_CLOSE_VERDICT to merged or superseded on success; on refusal sets
-# FM_PR_CLOSE_REFUSAL to one plain sentence and returns 1. <task-text> is only
-# consulted for a closed, unmerged PR.
+# FM_PR_CLOSE_REFUSAL to one plain sentence and returns 1. <task-text> must be
+# the decoded task body, consulted only for a closed, unmerged PR.
 # The results are read by the sourcing callers named above.
 # shellcheck disable=SC2034
 FM_PR_CLOSE_STATE=

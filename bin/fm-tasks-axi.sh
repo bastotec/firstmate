@@ -6,8 +6,10 @@
 #
 # Every routine firstmate backlog read or mutation goes through this command
 # rather than a bare `tasks-axi`; `fm-tasks-axi.sh <command> --help` prints
-# tasks-axi's own help. Arguments reach tasks-axi as given, apart from one
-# rewrite that keeps file arguments meaning what the caller meant: a relative
+# tasks-axi's own help. The optional leading `task` noun is stripped before
+# selecting the command, including its done/close gate. Other arguments reach
+# tasks-axi as given, apart from path rewriting that keeps file arguments
+# meaning what the caller meant: a relative
 # value of `--to` or any `--*-file` flag (`--body-file`, `--relation-file`, ...)
 # is made absolute against the caller's working directory, because tasks-axi
 # starts from the backlog root instead. `--report` stays as given: tasks-axi
@@ -41,8 +43,10 @@
 #   - a markdown `<data>/backlog.md` that is itself a symlink, because the
 #     first write would replace the link with a private copy, exactly the fork
 #     this command exists to prevent. Lifecycle transitions refuse the same file.
-#   - `done`/`close` when the row cannot be read, its body cannot be decoded,
-#     or bin/fm-pr-lib.sh's fm_pr_close_verdict refuses the completion claim.
+#   - `done`/`close` when the row cannot be read, or a resolved PR's task body
+#     cannot be decoded or bin/fm-pr-lib.sh's fm_pr_close_verdict refuses the
+#     completion claim. The row lookup uses the last explicit --backend value,
+#     if supplied, so it checks the same backend as the mutation.
 #     PR resolution uses --pr first, else fm_pr_task_url (row link, then pr=
 #     in ${FM_STATE_OVERRIDE:-$FM_HOME/state}/<id>.meta). A superseded verdict
 #     requires dropping --pr. Confirmed NOT_FOUND passes through so tasks-axi

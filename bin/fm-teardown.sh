@@ -7,9 +7,9 @@
 # clone for PR-based ship tasks.
 # Removing state/<id>.meta and landing the backlog transition are one step, not
 # two: bin/fm-backlog-transition-lib.sh owns that invariant, and both halves run
-# under the task's own meta lock before this script reports success. Because the
-# completion links (the PR, the report path, a local-main note) live only in the
-# record being removed, the intended transition is recorded in
+# under the task's own meta lock before this script reports success. The
+# intended completion arguments (the PR, report path, or local-main note)
+# must survive removal of the record, so the transition is recorded in
 # state/<id>.backlog-close first, so a process killed between the halves leaves
 # the next session start enough to finish it; a landed close removes that record.
 # A close that fails is fatal and loud, preserves its pending-close record, and
@@ -51,17 +51,17 @@
 # accepting unlanded edits to the same paths. Teardown still accepts a merged PR
 # whose head contains the current local work (ancestor or equivalent patch ids),
 # or a clean content-in-default tree match. Anything else refuses.
-# The PR itself is resolved from the task's recorded pr= when present, or - when
-# no pr= was ever recorded (e.g. a yolo-authorized merge on a repo with no PR CI,
-# where the usual "checks green" fm-pr-check.sh trigger never fires) - by looking
-# up a merged PR whose head branch matches the worktree's branch, fetching its head
-# via refs/pull/<n>/head when the branch itself was deleted. So a missing pr= never
-# by itself causes a false refusal of landed work.
+# The PR itself is resolved from the task's recorded pr= when present, else its
+# backlog row's PR link through bin/fm-pr-lib.sh's fm_pr_task_url. Without either
+# record (e.g. a yolo-authorized merge where no PR was registered), merged-head
+# discovery looks up a merged PR whose head branch matches the worktree's branch,
+# fetching its head via refs/pull/<n>/head when the branch itself was deleted.
+# Missing recorded PR evidence alone never causes a false refusal of landed work.
 # A gh lookup error during this merged-head discovery falls back to the
 # content-in-default check; if that is also inconclusive, teardown refuses.
 # This fallback never substitutes for the recorded-PR completion-claim gate.
 # Uncommitted changes are never landed.
-# Recorded pr= on any non-secondmate record also requires the completion-claim
+# A recorded PR on any non-secondmate task also requires the completion-claim
 # gate in bin/fm-pr-lib.sh's fm_pr_close_verdict, before destructive cleanup;
 # that comment owns the live-state, supersession, force, and replay rules.
 # local-only projects additionally accept work merged into the local default
