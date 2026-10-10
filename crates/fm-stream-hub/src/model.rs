@@ -252,18 +252,13 @@ pub struct Order {
     pub uncertainty: Option<(String, String)>,
     pub status: u16,
     pub answered: bool,
-    /// How many bounded membership waits this placement has run. The live
-    /// system's one-window answer is the first; the requeue a steer that
-    /// arrived inside the rejoin window gets is the second, so an ordinary
-    /// placement and a requeued one differ only in how long they held the
-    /// order, never in their record shape or their idempotency.
-    pub membership_waits: u32,
 }
 pub struct State {
     pub endpoints: BTreeMap<String, Endpoint>,
     pub machines: BTreeMap<String, Machine>,
     pub commands: BTreeMap<String, Arc<Mutex<Command>>>,
     pub orders: VecDeque<Arc<Mutex<Order>>>,
+    pub placements: BTreeMap<String, VecDeque<Arc<Mutex<Order>>>>,
 }
 pub struct Hub {
     pub state: Mutex<State>,
@@ -282,6 +277,7 @@ impl Hub {
                 machines: BTreeMap::new(),
                 commands: BTreeMap::new(),
                 orders: VecDeque::new(),
+                placements: BTreeMap::new(),
             }),
             wake: Condvar::new(),
             tokens,
@@ -960,6 +956,20 @@ impl Hub {
     pub fn place(&self, leaf: &str, execution: &str, text: &str, oid: &str) -> Result<Value> {
         self.place_encoded(leaf, execution, &crate::encode(&json!(text)), oid)
     }
+    fn finish_placement(&self, s: &mut State, leaf: &str, order: &Arc<Mutex<Order>>) {
+        let empty = {
+            let placements = s.placements.get_mut(leaf).unwrap();
+            debug_assert!(placements
+                .front()
+                .is_some_and(|candidate| Arc::ptr_eq(candidate, order)));
+            placements.pop_front();
+            placements.is_empty()
+        };
+        if empty {
+            s.placements.remove(leaf);
+        }
+        self.wake.notify_all();
+    }
     pub fn place_encoded(
         &self,
         leaf: &str,
@@ -973,6 +983,7 @@ impl Hub {
         if let Some(existing) = s
             .orders
             .iter()
+            .chain(s.placements.values().flatten())
             .find(|o| o.lock().unwrap().id == oid)
             .cloned()
         {
@@ -1018,22 +1029,24 @@ impl Hub {
             uncertainty: None,
             status: 200,
             answered: false,
-            membership_waits: 0,
         }));
         if let Some(position) = replace_position {
             s.orders[position] = order.clone();
         } else {
             s.orders.push_back(order.clone());
         }
+        s.placements
+            .entry(leaf.into())
+            .or_default()
+            .push_back(order.clone());
         while s.orders.len() > 512 {
             s.orders.pop_front();
         }
         // A steer that arrives inside the rejoin window gets the same bounded
-        // membership wait once more. The journal retains the same order record
+        // membership wait once more. The same order record remains active
         // through both waits, so a resend still finds it rather than typing
         // again.
-        loop {
-            order.lock().unwrap().membership_waits += 1;
+        for _ in 0..2 {
             Self::reap(&mut s);
             let deadline = now() + MEMBERSHIP_GRACE_SECS;
             while Self::members(&s, leaf).is_empty() && now() < deadline {
@@ -1043,18 +1056,15 @@ impl Hub {
                     .unwrap()
                     .0;
             }
-            if !Self::members(&s, leaf).is_empty() || order.lock().unwrap().membership_waits >= 2 {
+            if !Self::members(&s, leaf).is_empty() {
                 break;
             }
         }
-        while s
-            .orders
-            .iter()
-            .take_while(|candidate| !Arc::ptr_eq(candidate, &order))
-            .any(|candidate| {
-                let candidate = candidate.lock().unwrap();
-                candidate.leaf == leaf && !candidate.answered && candidate.command.is_none()
-            })
+        while !s
+            .placements
+            .get(leaf)
+            .and_then(VecDeque::front)
+            .is_some_and(|candidate| Arc::ptr_eq(candidate, &order))
         {
             s = self.wake.wait(s).unwrap();
         }
@@ -1100,7 +1110,7 @@ impl Hub {
             }
             if o.answered {
                 let o = o.clone();
-                self.wake.notify_all();
+                self.finish_placement(&mut s, leaf, &order);
                 return Self::order_answer(&s, &o);
             }
         }
@@ -1118,6 +1128,7 @@ impl Hub {
             Some(&order),
             None,
         );
+        self.finish_placement(&mut s, leaf, &order);
         drop(s);
         let result = match queued {
             Ok((command, machine, cid)) => self.await_command(command, &machine, "steer", &cid),
@@ -1748,5 +1759,87 @@ mod tests {
         )
         .unwrap();
         assert_eq!(request.join().unwrap().unwrap()["outcome"], "accepted");
+    }
+    #[test]
+    fn active_placement_order_survives_journal_eviction() {
+        let hub = Hub::new(vec![], 30., 5.);
+        let eid = "a".repeat(32);
+        let legacy = "b".repeat(32);
+        hub.register(
+            &json!({"protocol":3,"endpoint_id":legacy,"machine":"box","label":"legacy"}),
+            "",
+        )
+        .unwrap();
+        let first_hub = hub.clone();
+        let first_execution = eid.clone();
+        let first = std::thread::spawn(move || {
+            first_hub.place("box/worker", &first_execution, "first", "waiting-first")
+        });
+        for _ in 0..100 {
+            if hub
+                .state
+                .lock()
+                .unwrap()
+                .placements
+                .get("box/worker")
+                .is_some_and(|placements| placements.len() == 1)
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        std::thread::sleep(Duration::from_millis(6100));
+        for i in 0..511 {
+            assert_eq!(
+                hub.place("box/legacy", &legacy, "volume", &format!("volume-{i}"))
+                    .unwrap_err()
+                    .code,
+                "endpoint_not_orderable"
+            );
+        }
+        let second_hub = hub.clone();
+        let second_execution = eid.clone();
+        let second = std::thread::spawn(move || {
+            second_hub.place("box/worker", &second_execution, "second", "waiting-second")
+        });
+        for _ in 0..100 {
+            if hub
+                .state
+                .lock()
+                .unwrap()
+                .placements
+                .get("box/worker")
+                .is_some_and(|placements| placements.len() == 2)
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        {
+            let s = hub.state.lock().unwrap();
+            assert_eq!(s.orders.len(), 512);
+            assert!(!s
+                .orders
+                .iter()
+                .any(|order| order.lock().unwrap().id == "waiting-first"));
+        }
+        let response=hub.register(&json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"worker","capabilities":["idempotent_command_results","native_steering_receiver"]}),"").unwrap();
+        let cap = response["command_capability"].as_str().unwrap();
+        for expected in ["waiting-first", "waiting-second"] {
+            let commands = hub.take("box", &eid, 5., cap).unwrap();
+            assert_eq!(commands.len(), 1);
+            let command: Value = serde_json::from_str(&commands[0]).unwrap();
+            assert_eq!(command["payload"]["order_id"], expected);
+            hub.complete(
+                "box",
+                command["command_id"].as_str().unwrap(),
+                true,
+                "",
+                cap,
+            )
+            .unwrap();
+        }
+        assert_eq!(first.join().unwrap().unwrap()["outcome"], "accepted");
+        assert_eq!(second.join().unwrap().unwrap()["outcome"], "accepted");
     }
 }

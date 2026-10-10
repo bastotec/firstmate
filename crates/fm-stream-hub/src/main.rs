@@ -1318,6 +1318,90 @@ mod tests {
             .to_owned()
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unresolved_orders_leave_capacity_for_reregistration() {
+        let h = Hub::new(
+            vec![(
+                "test".into(),
+                vec!["publish".into(), "subscribe".into(), "control".into()],
+            )],
+            30.,
+            2.,
+        );
+        let (address, server) = server(h.clone()).await;
+        let eid = "c".repeat(32);
+        let generation = h.generation.clone();
+        let mut placements = vec![];
+        for i in 0..8 {
+            let execution = eid.clone();
+            let payload = json!({"leaf_worker_id":"box/rejoining","execution_id":execution,
+                "hub_generation":generation,"order_id":format!("loaded-{i}"),"text":format!("load-{i}"),"submit":true});
+            placements.push(tokio::spawn(async move {
+                json_response(request(address, "POST", "/v1/orders", payload, "").await).await
+            }));
+        }
+        for _ in 0..100 {
+            if h.state
+                .lock()
+                .unwrap()
+                .placements
+                .get("box/rejoining")
+                .is_some_and(|queue| queue.len() == 8)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let expected = {
+            let s = h.state.lock().unwrap();
+            assert_eq!(s.placements["box/rejoining"].len(), 8);
+            s.placements["box/rejoining"]
+                .iter()
+                .map(|order| order.lock().unwrap().id.clone())
+                .collect::<Vec<_>>()
+        };
+        let registration = tokio::time::timeout(Duration::from_secs(2), async {
+            json_response(
+                request(
+                    address,
+                    "POST",
+                    "/v1/agent/endpoints",
+                    json!({"protocol":3,"endpoint_id":eid,"machine":"box","label":"rejoining","rows":24,"cols":80,
+                        "capabilities":["idempotent_command_results","native_steering_receiver"]}),
+                    "",
+                )
+                .await,
+            )
+            .await
+        })
+        .await
+        .unwrap();
+        assert_eq!(registration.0, 201);
+        let cap = registration.1["command_capability"].as_str().unwrap();
+        let take = format!("/v1/agent/commands?machine=box&endpoint={eid}&wait=2");
+        for expected in expected {
+            let (status, commands) =
+                json_response(request(address, "GET", &take, json!({}), cap).await).await;
+            assert_eq!(status, 200);
+            let command = &commands["commands"][0];
+            assert_eq!(command["payload"]["order_id"], expected);
+            let result =
+                json!({"machine":"box","command_id":command["command_id"],"ok":true,"error":""});
+            assert_eq!(
+                request(address, "POST", "/v1/agent/results", result, cap)
+                    .await
+                    .status(),
+                200
+            );
+        }
+        for placement in placements {
+            let (status, record) = placement.await.unwrap();
+            assert_eq!(status, 200, "{record}");
+            assert_eq!(record["outcome"], "accepted");
+        }
+        server.abort();
+    }
+
     #[tokio::test]
     async fn interactive_resize_and_raw_input_reach_the_agent_over_http() {
         let h = Hub::new(

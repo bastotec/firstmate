@@ -2527,7 +2527,7 @@ test_a_steer_that_arrives_inside_the_rejoin_window_is_requeued_not_lost() {
   # worker missing, and the pending steer was escalated away rather than rung
   # again: a healthy rejoining worker silently lost one instruction. The
   # requeue holds the same order record through a second window for
-  # idempotency, while journal order keeps it ahead of later steers.
+  # idempotency, while active placement order keeps it ahead of later steers.
   start_hub order-requeue
   local endpoint agent leaf out first_pid second_pid waited=0 lines
   endpoint=$(start_agent box-a requeued)
@@ -2544,7 +2544,7 @@ test_a_steer_that_arrives_inside_the_rejoin_window_is_requeued_not_lost() {
   fm_test_track_helper_pid "$first_pid"
   sleep 7
   # While the first steer is in its second wait, submit the later steer too.
-  # Registration wakes both placements, so the journal order rather than wake
+  # Registration wakes both placements, so placement order rather than wake
   # scheduling must put the requeued steer onto the worker's queue first.
   ( order "$leaf" "$endpoint" "printf 'after-requeue\\n' >> '$CASE_DIR/requeue-ledger'" after-the-requeue \
       > "$CASE_DIR/after-requeue.out" 2>/dev/null ) &
