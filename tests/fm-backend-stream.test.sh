@@ -1235,7 +1235,7 @@ test_a_missing_token_reports_it_without_crashing() {
 }
 
 test_spawn_hosts_a_deck_secondmate() {
-  local id="host-$$" home code fakebin target out pid
+  local id="host-$$" home code fakebin target out pid composer_state
   start_case_hub secondmate
   home="$CASE_DIR/isolated-home"
   code="$CASE_DIR/code"
@@ -1318,7 +1318,17 @@ PY
   with_stream_env fm_backend_stream_send_literal "$target" 'fixture pending input' || fail "could not type pending input"
   wait_for_capture "$target" 'fixture pending input' || fail "pending input was not rendered"
   out=$(host_command fm-control.sh "$id" interrupt 2>&1) || fail "pending-input interrupt failed: $out"
-  assert_equals "$(with_stream_env fm_backend_composer_state stream "$target")" pending "interrupt concealed partial input"
+  # The native agent can briefly report its screen unreadable while the
+  # interrupt settles. Wait through that unreadable transition only; an empty
+  # or otherwise wrong readable composer must still fail immediately.
+  waited=0
+  while :; do
+    composer_state=$(with_stream_env fm_backend_composer_state stream "$target")
+    [ "$composer_state" = unknown ] && [ "$waited" -lt 100 ] || break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  assert_equals pending "$composer_state" "interrupt concealed partial input"
   out=$(host_command fm-control.sh "$id" exit 2>&1) && fail "exit accepted genuine pending input"
   assert_contains "$out" 'composer visibly holds pending text' "exit did not preserve its pending-input guard"
   assert_equals "$(with_stream_env fm_backend_agent_state stream "$target")" alive "refused exit stopped the host"
