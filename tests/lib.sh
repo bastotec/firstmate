@@ -70,6 +70,17 @@ unset FM_TASK_ID
 # against an ambient override sets TASKS_AXI_FILE itself.
 unset TASKS_AXI_FILE TASKS_AXI_BACKEND
 
+# Scrub ambient stream settings before fixtures establish their isolated hubs.
+# A suite launched inside a stream-backed worker can inherit its live hub and
+# related settings; these inputs can redirect authentication, endpoint identity,
+# agent launch, receiver helpers, request timing, or the local attach transport
+# away from the fixture. Cases that need an environment value set it after
+# sourcing this helper. FM_STREAM_IMPL and the native-binary inputs are instead
+# normalized by the FM_TEST_STREAM_* block immediately below.
+unset FM_STREAM_HUB FM_STREAM_TOKEN FM_STREAM_MACHINE FM_STREAM_ENDPOINT_ID \
+  FM_STREAM_AGENT_BIN FM_STREAM_HTTP_TIMEOUT FM_STREAM_TOKEN_FILE \
+  FM_STREAM_ATTACH_LOCAL FM_STREAM_LOCAL_DIR FM_STREAM_CODE_ROOT
+
 # Pin the stream implementation. Production defaults to the Rust binaries
 # (bin/fm-stream-native-lib.sh), which a test runner has not built, so suites
 # that launch stream hubs and agents through firstmate's scripts run the Python
