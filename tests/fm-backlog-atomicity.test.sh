@@ -94,7 +94,8 @@ Delivery contract: mode=no-mistakes
 EOF
   done
 
-  fm_fake_exit0 "$fakebin" treehouse gh gh-axi no-mistakes deck
+  fm_fake_exit0 "$fakebin" treehouse gh-axi no-mistakes deck
+  fm_fake_gh_merged "$fakebin"
   # A spawn's endpoint starts from the hub's plain defaults in every case.
   fm_test_fake_stream_defaults '{}'
 

@@ -41,6 +41,11 @@
 #   - a markdown `<data>/backlog.md` that is itself a symlink, because the
 #     first write would replace the link with a private copy, exactly the fork
 #     this command exists to prevent. Lifecycle transitions refuse the same file.
+#   - `done`/`close` of a row whose PR (its --pr, else the row's own PR
+#     link) has not merged, because closing it renders the row as merged:
+#     bin/fm-pr-lib.sh's fm_pr_close_verdict owns the rule, and a closed,
+#     unmerged PR passes only without --pr and with a "Superseded: <reason>"
+#     line already on the row.
 # Otherwise the exit status is tasks-axi's own.
 set -u
 
@@ -52,6 +57,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-backlog-transition-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
+# shellcheck source=bin/fm-pr-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-pr-lib.sh"
 
 usage() {
   awk '
@@ -124,4 +131,36 @@ else
 fi
 
 cd "$FM_BACKLOG_AXI_ROOT" || fail "cannot enter the backlog root $FM_BACKLOG_AXI_ROOT"
+
+# Refuse a close that would claim a PR merged when it has not.
+done_pr_gate() {
+  local id='' pr_flag='' previous='' arg row url
+  for arg in "${ARGS[@]:1}"; do
+    case "$previous" in
+      --pr) pr_flag=$arg; previous=''; continue ;;
+      --report|--note|--keep) previous=''; continue ;;
+    esac
+    case "$arg" in
+      --pr=*) pr_flag=${arg#--pr=} ;;
+      --pr|--report|--note|--keep) previous=$arg ;;
+      -*) ;;
+      *) [ -n "$id" ] || id=$arg ;;
+    esac
+  done
+  [ -n "$id" ] || return 0
+  row=$(tasks-axi show "$id" --full 2>/dev/null) || row=
+  url=$pr_flag
+  if [ -z "$url" ]; then
+    url=$(printf '%s\n' "$row" | sed -n 's/^  links: .*pr:\(https:\/\/[^",; ]*\).*/\1/p' | head -1)
+  fi
+  [ -n "$url" ] || return 0
+  if fm_pr_close_verdict "$url" "$row"; then
+    [ "$FM_PR_CLOSE_VERDICT" = superseded ] && [ -n "$pr_flag" ] || return 0
+    FM_PR_CLOSE_REFUSAL="$url closed without merging, and --pr would record it as merged; drop --pr"
+  fi
+  fail "refusing to close $id: $FM_PR_CLOSE_REFUSAL"
+}
+case "${ARGS[0]:-}" in
+  done|close) done_pr_gate ;;
+esac
 exec tasks-axi ${ARGS[@]+"${ARGS[@]}"}

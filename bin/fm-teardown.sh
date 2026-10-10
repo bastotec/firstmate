@@ -59,6 +59,11 @@
 # A gh lookup error falls back to the content check; if that is also inconclusive,
 # teardown refuses rather than risk discarding unlanded work.
 # Uncommitted changes are never landed.
+# Pushed work is not merged work: a task with a recorded pr= is torn down only
+# once bin/fm-pr-lib.sh's fm_pr_close_verdict confirms the PR merged, or that it
+# closed unmerged and the task's row records "Superseded: <reason>". An open or
+# unreadable PR refuses before anything changes; --force closes the row without
+# the PR link instead, so it never reads as merged.
 # local-only projects additionally accept work merged into the local default
 # branch (firstmate performs that merge after configured approval) as a fallback
 # for the common case where there is no remote at all.
@@ -1372,7 +1377,7 @@ backlog_done_args() {
     *)
       if [ "$MODE" = local-only ]; then
         BACKLOG_DONE_ARGS=(--note "local main")
-      elif [ -n "$PR_URL" ]; then
+      elif [ -n "$PR_URL" ] && { [ -z "$PR_CLOSE_VERDICT" ] || [ "$PR_CLOSE_VERDICT" = merged ]; }; then
         BACKLOG_DONE_ARGS=(--pr "$PR_URL")
       fi
       ;;
@@ -3018,6 +3023,29 @@ if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
       FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-captain-hold.sh" verify "$ID" >/dev/null; then
     echo "REFUSED: scout task $ID has not passed the captain-call completion gate." >&2
     echo "Inventory its report and any visual review through bin/fm-captain-hold.sh before teardown." >&2
+    exit 1
+  fi
+fi
+
+# A recorded PR is the completion claim the backlog close carries: closing with
+# it renders the row as merged. Pushed commits pass the landed-work check below
+# while the PR is still open, so the PR's live state is asked first, read-only,
+# before anything is changed (bin/fm-pr-lib.sh's fm_pr_close_verdict owns the
+# rule). --force still authorizes discarding the work, but the row then closes
+# without the PR link, so it never claims a merge that did not happen.
+PR_CLOSE_VERDICT=
+if [ "$KIND" != secondmate ] && [ -n "$PR_URL" ] && [ "$MODE" != local-only ]; then
+  if fm_pr_close_verdict "$PR_URL"; then
+    PR_CLOSE_VERDICT=$FM_PR_CLOSE_VERDICT
+  elif [ "$FM_PR_CLOSE_STATE" = closed ] \
+    && fm_pr_superseded_recorded "$(fm_backlog_row_show "$DATA" "$ID" --full 2>/dev/null || true)"; then
+    PR_CLOSE_VERDICT=superseded
+  elif [ "$FORCE" = "--force" ]; then
+    PR_CLOSE_VERDICT=unmerged
+    echo "warning: $FM_PR_CLOSE_REFUSAL; --force discards the work and closes $ID without claiming the PR merged." >&2
+  else
+    echo "REFUSED: task $ID is not finished: $FM_PR_CLOSE_REFUSAL." >&2
+    echo "Nothing was changed. Land the PR, or record why it was superseded once it is closed, then retry." >&2
     exit 1
   fi
 fi

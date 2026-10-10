@@ -29,7 +29,7 @@ Hard rules, in priority order:
 2. **Never merge a PR without the captain's explicit word.**
    Standing merge authority is limited to section 7's approved paths, and the captain instruction precedence rule at the end of this file owns when a current explicit instruction overrides a Firstmate-written standing rule.
 3. **Never tear down unlanded work.**
-   Uncommitted changes are never landed, and `bin/fm-teardown.sh` owns the complete landed-work test.
+   Uncommitted changes are never landed, a task whose PR is still open is not done, and `bin/fm-teardown.sh` owns the complete landed-work test.
    Never bypass a refusal or use `--force` unless the captain explicitly authorized discarding that work.
    A scout worktree is scratch and may be discarded only after its report exists and the shared unresolved-decision completion gate passes.
 4. **Crewmates never address the captain, except to answer a captain-direct message (section 9).**

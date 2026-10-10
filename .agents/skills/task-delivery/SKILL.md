@@ -80,6 +80,9 @@ Treat its refusal like step 3: never retry around it, and hold one plain decisio
 Once a worker's decision is held, later sweeps leave it to that decision rather than raising it again.
 In a secondmate home that decision reaches the captain through the parent channel, as every escalation there does.
 
+On every heartbeat sweep, also run `bin/fm-pr-record-audit.sh` for this home, plus `FM_HOME=<home> bin/fm-pr-record-audit.sh` for each local secondmate home in the main home.
+Each line it prints names a Done row whose PR has not merged: reconcile your own row, and send a secondmate's line to that mate unchanged through `bin/fm-send.sh`; the helper never rewrites a record, and neither does the sweep for another home.
+
 ## After teardown
 
 After successful teardown, record completion, retain only the configured recent Done history, and re-evaluate queued work whose blockers and time gates have cleared.

@@ -638,6 +638,19 @@ SH
   done
 }
 
+# fm_fake_gh_merged <fakebin>: a gh that exits 0 silently like fm_fake_exit0,
+# except that a recorded PR's live-state read (bin/fm-pr-lib.sh's
+# fm_pr_live_state, `gh pr view <url> --json state ...`) answers MERGED, so a
+# fixture whose task records pr= tears down as a merged PR.
+fm_fake_gh_merged() {
+  cat > "$1/gh" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-} ${2:-} ${4:-} ${5:-}" = "pr view --json state" ] && printf '%s\n' MERGED
+exit 0
+SH
+  chmod +x "$1/gh"
+}
+
 # fm_fake_crash_injector <fakebin>
 # Drops an `fm-crash-inject <pid>` shim that a PATH fake calls to simulate a
 # hard crash of the process under test. It SIGKILLs <pid> and then returns only
