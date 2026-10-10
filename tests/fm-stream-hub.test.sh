@@ -2526,11 +2526,10 @@ test_a_steer_that_arrives_inside_the_rejoin_window_is_requeued_not_lost() {
   # placement answered membership_unresolved there, the classifier called the
   # worker missing, and the pending steer was escalated away rather than rung
   # again: a healthy rejoining worker silently lost one instruction. The
-  # requeue holds the SAME order record through a second window of the same
-  # length, so delivery is still exactly once and in order, and the window
-  # constant itself is unchanged.
+  # requeue holds the same order record through a second window for
+  # idempotency, while journal order keeps it ahead of later steers.
   start_hub order-requeue
-  local endpoint agent leaf out first_pid resume_pid ledger waited=0 lines
+  local endpoint agent leaf out first_pid second_pid waited=0 lines
   endpoint=$(start_agent box-a requeued)
   agent=$(agent_pid_for box-a requeued)
   [ -n "$agent" ] || fail "the agent should be running"
@@ -2544,10 +2543,17 @@ test_a_steer_that_arrives_inside_the_rejoin_window_is_requeued_not_lost() {
   first_pid=$!
   fm_test_track_helper_pid "$first_pid"
   sleep 7
-  # Past the first window, still inside the requeue: the worker registers now,
-  # a moment that lost the steer before the fix.
+  # While the first steer is in its second wait, submit the later steer too.
+  # Registration wakes both placements, so the journal order rather than wake
+  # scheduling must put the requeued steer onto the worker's queue first.
+  ( order "$leaf" "$endpoint" "printf 'after-requeue\\n' >> '$CASE_DIR/requeue-ledger'" after-the-requeue \
+      > "$CASE_DIR/after-requeue.out" 2>/dev/null ) &
+  second_pid=$!
+  fm_test_track_helper_pid "$second_pid"
+  sleep 1
   kill -CONT "$agent" || fail "could not resume the agent"
   wait "$first_pid" 2>/dev/null || true
+  wait "$second_pid" 2>/dev/null || true
   out=$(cat "$CASE_DIR/requeue.out")
   assert_equals "$(printf '%s' "$out" | jq -r '.outcome')" accepted \
     "a steer that arrived inside the rejoin window must be requeued and delivered, not lost"
@@ -2559,16 +2565,12 @@ test_a_steer_that_arrives_inside_the_rejoin_window_is_requeued_not_lost() {
     waited=$((waited + 1))
   done
   [ -s "$CASE_DIR/requeue-ledger" ] || fail "the requeued steer never reached the rejoined worker"
-  lines=$(wc -l < "$CASE_DIR/requeue-ledger" | tr -d '[:space:]')
+  lines=$(grep -c '^requeued$' "$CASE_DIR/requeue-ledger")
   assert_equals "$lines" 1 \
     "the requeued steer must be delivered exactly once however the windows split"
-  # Order relative to other steers: a second order placed after the rejoin
-  # must not be delivered before the requeued one. Both append to the ledger,
-  # so the file's own order is the proof.
-  out=$(order "$leaf" "$endpoint" "printf 'after-requeue\\n' >> '$CASE_DIR/requeue-ledger'" after-the-requeue)
+  out=$(cat "$CASE_DIR/after-requeue.out")
   assert_equals "$(printf '%s' "$out" | jq -r '.outcome')" accepted \
-    "an order placed after the rejoin should deliver normally"
-  wait_for_capture "$endpoint" after-the-requeue || true
+    "a concurrently placed later steer should deliver normally"
   waited=0
   while [ "$waited" -lt 150 ]; do
     [ "$(wc -l < "$CASE_DIR/requeue-ledger" | tr -d '[:space:]')" -ge 2 ] && break

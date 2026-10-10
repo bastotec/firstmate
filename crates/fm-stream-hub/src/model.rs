@@ -627,16 +627,16 @@ impl Hub {
     pub fn submit_encoded(&self, eid: &str, kind: &str, payload: String) -> Result<()> {
         self.submit_to(eid, kind, payload, None, None)
     }
-    fn submit_to(
+    fn enqueue_to(
         &self,
+        s: &mut State,
         eid: &str,
         kind: &str,
         payload: String,
         order: Option<&Arc<Mutex<Order>>>,
         expected: Option<f64>,
-    ) -> Result<()> {
-        let mut s = self.state.lock().unwrap();
-        let e = Self::get(&s, eid)?;
+    ) -> Result<(Arc<Mutex<Command>>, String, String)> {
+        let e = Self::get(s, eid)?;
         if expected.is_some_and(|created| created != e.created) {
             return Err(Error::new(
                 409,
@@ -683,6 +683,16 @@ impl Hub {
             .queue
             .push_back(cid.clone());
         self.wake.notify_all();
+        Ok((command, machine, cid))
+    }
+    fn await_command(
+        &self,
+        command: Arc<Mutex<Command>>,
+        machine: &str,
+        kind: &str,
+        cid: &str,
+    ) -> Result<()> {
+        let mut s = self.state.lock().unwrap();
         let deadline = now() + self.ack;
         while !command.lock().unwrap().done && now() < deadline {
             let remaining = (deadline - now()).max(0.);
@@ -693,14 +703,14 @@ impl Hub {
                 .0;
         }
         if !command.lock().unwrap().done {
-            let m = s.machines.get_mut(&machine).unwrap();
-            let pos = m.queue.iter().position(|id| id == &cid);
+            let m = s.machines.get_mut(machine).unwrap();
+            let pos = m.queue.iter().position(|id| id == cid);
             if let Some(pos) = pos {
                 m.queue.remove(pos);
                 command.lock().unwrap().withdrawn = true;
-                s.commands.remove(&cid);
+                s.commands.remove(cid);
             }
-            let silent = (now() - s.machines[&machine].seen).max(0.);
+            let silent = (now() - s.machines[machine].seen).max(0.);
             let taken = !command.lock().unwrap().withdrawn;
             let message = if taken {
                 format!("the agent on machine {machine} took the {kind} but did not acknowledge it within {}s (last heard from {silent:.1}s ago); whether it reached the worker is NOT known",self.ack)
@@ -726,6 +736,20 @@ impl Hub {
             return Err(error);
         }
         Ok(())
+    }
+    fn submit_to(
+        &self,
+        eid: &str,
+        kind: &str,
+        payload: String,
+        order: Option<&Arc<Mutex<Order>>>,
+        expected: Option<f64>,
+    ) -> Result<()> {
+        let queued = {
+            let mut s = self.state.lock().unwrap();
+            self.enqueue_to(&mut s, eid, kind, payload, order, expected)?
+        };
+        self.await_command(queued.0, &queued.1, kind, &queued.2)
     }
     pub fn take(&self, machine: &str, eid: &str, wait: f64, cap: &str) -> Result<Vec<String>> {
         let deadline = now() + wait;
@@ -1004,17 +1028,10 @@ impl Hub {
         while s.orders.len() > 512 {
             s.orders.pop_front();
         }
-        // The membership wait a steer that arrived inside the rejoin window
-        // gets: the same one bounded window the live system has always run,
-        // then exactly one requeue of it. The requeue exists because the
-        // first window is spent waiting while an agent COULD still be pacing
-        // its return; a healthy rejoin that lands just past it must not lose
-        // the steer, and widening the window is not available (its callers
-        // bound a whole crew-state read). Holding the SAME order record
-        // through both waits is what keeps delivery exactly once and in
-        // order: the journal still binds the id, a resend still finds this
-        // record rather than typing again, and the deadline is still the
-        // window the system already uses, never a new constant.
+        // A steer that arrives inside the rejoin window gets the same bounded
+        // membership wait once more. The journal retains the same order record
+        // through both waits, so a resend still finds it rather than typing
+        // again.
         loop {
             order.lock().unwrap().membership_waits += 1;
             Self::reap(&mut s);
@@ -1029,6 +1046,17 @@ impl Hub {
             if !Self::members(&s, leaf).is_empty() || order.lock().unwrap().membership_waits >= 2 {
                 break;
             }
+        }
+        while s
+            .orders
+            .iter()
+            .take_while(|candidate| !Arc::ptr_eq(candidate, &order))
+            .any(|candidate| {
+                let candidate = candidate.lock().unwrap();
+                candidate.leaf == leaf && !candidate.answered && candidate.command.is_none()
+            })
+        {
+            s = self.wake.wait(s).unwrap();
         }
         let current = Self::current(&Self::members(&s, leaf));
         let selected = current.map(|e| e.id.clone());
@@ -1076,8 +1104,8 @@ impl Hub {
                 return Self::order_answer(&s, &o);
             }
         }
-        drop(s);
-        let result = self.submit_to(
+        let queued = self.enqueue_to(
+            &mut s,
             selected.as_deref().unwrap(),
             "steer",
             crate::payload::object(&[
@@ -1090,6 +1118,11 @@ impl Hub {
             Some(&order),
             None,
         );
+        drop(s);
+        let result = match queued {
+            Ok((command, machine, cid)) => self.await_command(command, &machine, "steer", &cid),
+            Err(error) => Err(error),
+        };
         let s = self.state.lock().unwrap();
         let mut o = order.lock().unwrap();
         let taken = o
