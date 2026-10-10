@@ -239,6 +239,7 @@ The adapter binds `FM_STREAM_CODE_ROOT` to its checkout so cached native binarie
 `crates/fm-stream-agent/src/receiver.rs` implements the native Deck receiver described under [Command path](#command-path), and `crates/fm-stream-agent/src/commands.rs` owns the Rust scheduler and durable result reconciliation.
 The receiver leaves ordinary steering and unparseable stream-order sources in the task inbox untouched rather than letting them block other orders or recovery.
 HTTP redirects are refused rather than forwarding endpoint credentials to a redirect target, so point it directly at the final HTTP or HTTPS hub URL.
+Both PTY agents require `--label` to contain 1-128 ASCII letters, digits, dots, underscores, at signs, percent signs, plus signs, or hyphens, keeping a statusless endpoint's derived diagnostics filename inside the state directory.
 Option names must be given in full, geometry is bounded to the kernel's unsigned 16-bit values, and heartbeat and poll intervals must be finite and nonnegative.
 
 `tests/fm-stream-agent-rust.test.sh` compares both agents against disposable Python hubs, and `cargo test -p fm-stream-agent` covers durable reservation and result recovery and the process-group signal boundary.
@@ -488,6 +489,13 @@ Losing the hub costs centralized observation across the whole fleet at once, but
   Only one of those two states authorizes recovery, and reporting silence as death is how a healthy worker gets torn down.
 - The hub is a single point of observation, not of execution; [When the hub is down](#when-the-hub-is-down) owns that contract.
 - The hub token file is read only at start, so adding or revoking a credential costs a hub restart.
+- The agent's post-start diagnostic events are durable and bounded, not streamed.
+  After startup an agent's stderr is `/dev/null`, so the only durable record of a condition it detected about itself - a hub it could not reach, a failed re-registration, a stand-down, a refused signal, or an internal thread failure - is `state/<task>.agent-diagnostics`, or `state/<label>.agent-diagnostics` for an endpoint without a status channel.
+  A healthy startup creates no diagnostics file; the file appears lazily when the agent records its first post-start event.
+  Each event is one line (`<UTC ISO-8601> <event> <reason>`), each line and file is bounded at 256 KiB, and rotation retains at most three files.
+  Writes are best-effort so a diagnostics failure never touches the agent's main path.
+  Startup refusals still go to the spawn's capture, which is where the adapter reads them.
 - Experimental; CI's Rust agent parity step exercises disposable Python hubs and real PTYs, not installed harnesses.
   Native Deck steering has its own live guard, recorded in the [Deck native mid-turn verification record](verification/runtime-backends.md#deck-native-mid-turn-steering-over-stream).
   The portable regressions are `tests/fm-stream-hub.test.sh`, `tests/fm-backend-stream.test.sh`, `tests/fm-stream-agent-kill-safety.test.sh`, and `tests/fm-stream-bridge.test.sh`; `tests/fm-ui-host-control.test.sh` and `tests/fm-control.test.sh` cover the private host route.
+  The diagnostics destination and its rotation bound are pinned by `tests/fm-stream-agent-diagnostics.test.sh` and the `fm-stream-agent` crate's unit tests.

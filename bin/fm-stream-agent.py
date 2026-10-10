@@ -20,6 +20,11 @@ What it owns, and why each stays here rather than at the hub:
     state/<id>.status directly.  That record and its path are local, so no local
     path is ever sent to a remote process - which is also what makes a worker on
     another machine work at all.
+  * The agent's own diagnostics.  Failures the agent detects about itself after
+    startup (a hub it cannot reach, a failed re-registration, a stand-down) go
+    to state/<id-or-label>.agent-diagnostics in the home-owned state directory,
+    one line per event, rotated under DIAGNOSTICS_FILES/DIAGNOSTICS_MAX_BYTES.
+    Startup refusals still go to stderr, where the spawn reads them.
   * The endpoint's identity.  The hub's registry is in memory, so a hub that
     restarted has forgotten every endpoint it served.  The agent holds the id
     and registers it again when the hub says it does not know it, which is why
@@ -82,6 +87,7 @@ NATIVE_STEERING_CAPABILITY = "native_steering_receiver"
 STATUS_STATES = ("working", "needs-decision", "blocked", "paused", "done",
                  "failed", "resolved")
 MACHINE_RE = re.compile(r"\A[A-Za-z0-9._-]{1,128}\Z")
+LABEL_RE = re.compile(r"\A[A-Za-z0-9._@%+-]{1,128}\Z")
 _TCGETSID = ctypes.CDLL(None).tcgetsid
 _TCGETSID.argtypes = [ctypes.c_int]
 _TCGETSID.restype = ctypes.c_int
@@ -174,6 +180,96 @@ def _ps_args(pid: str, until=None) -> str:
 # ordinary timeout, so an abandonment still finishes inside the window.
 STARTUP_BUDGET = 12.0
 
+# The agent's own diagnostics destination, and its rotation bound.
+#
+# Every failure this agent detects about itself after startup - a hub that
+# cannot be reached, a re-registration that failed, a stand-down - was
+# previously written to stderr, which _silence_diagnostics() points at
+# /dev/null for the rest of the process's life: a worker that stopped working
+# for a reason nobody could read. The diagnostics file is the durable answer,
+# written in the task's home-owned state directory so no local path leaves the
+# machine.
+#
+# Retention combines a per-file size cap with a FILE-COUNT cap: at most
+# DIAGNOSTICS_FILES files exist at once, the live one plus rotated .1 ..
+# .(N-1) copies, each rotated before its next append would exceed
+# DIAGNOSTICS_MAX_BYTES. The count cap holds even when the only writer is the
+# one appending. Rotation runs on the append path, so the bound is enforced
+# exactly where growth happens and never needs a timer or a second process.
+DIAGNOSTICS_MAX_BYTES = 256 * 1024
+DIAGNOSTICS_FILES = 3
+
+
+def _diagnostics_path(options) -> str:
+    """Return this task's home-owned diagnostics path, or ''."""
+    if options.status_path:
+        return options.status_path.removesuffix(".status") + ".agent-diagnostics"
+    state = os.environ.get("FM_STATE_OVERRIDE", "")
+    if not state and os.environ.get("FM_HOME"):
+        state = os.path.join(os.environ["FM_HOME"], "state")
+    if not state:
+        return ""
+    return os.path.join(state, options.label + ".agent-diagnostics")
+
+
+def _rotate_diagnostics(path: str, incoming: int) -> None:
+    """Roll the diagnostics file before its next append would exceed the cap.
+
+    .2 is unlinked, .1 becomes .2, the live file becomes .1 - so the oldest
+    content always leaves first and the total across all files is bounded by
+    DIAGNOSTICS_FILES * DIAGNOSTICS_MAX_BYTES. Every failure here is swallowed
+    by the caller: a diagnostics write must never take the agent down.
+    """
+    try:
+        if os.path.getsize(path) + incoming <= DIAGNOSTICS_MAX_BYTES:
+            return
+        try:
+            os.unlink("%s.%d" % (path, DIAGNOSTICS_FILES - 1))
+        except OSError:
+            pass
+        for index in range(DIAGNOSTICS_FILES - 2, 0, -1):
+            try:
+                os.rename("%s.%d" % (path, index), "%s.%d" % (path, index + 1))
+            except OSError:
+                pass
+        os.rename(path, "%s.1" % path)
+    except OSError:
+        pass
+
+
+def _diag_write(path: str, event: str, reason) -> None:
+    """Append one diagnostics line at <path>, best-effort.
+
+    One line per event: an ISO-8601 UTC timestamp, the event name, and a
+    single-line reason (newlines collapsed), matching the single-line-append
+    shape of every other durable record in the home. A diagnostics write
+    failure is swallowed silently - including the whole destination being
+    unwritable or absent - because diagnostics must never break the agent's
+    main path.
+    """
+    if not path:
+        return
+    line = "%s %s %s\n" % (
+        time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        event,
+        " ".join(str(reason).split()),
+    )
+    encoded = line.encode("utf-8")
+    if len(encoded) > DIAGNOSTICS_MAX_BYTES:
+        encoded = (encoded[:DIAGNOSTICS_MAX_BYTES - 1]
+                   .decode("utf-8", "ignore").encode("utf-8") + b"\n")
+    try:
+        _rotate_diagnostics(path, len(encoded))
+        with open(path, "ab") as fh:
+            fh.write(encoded)
+    except OSError:
+        pass
+
+
+def _agent_diag(options, event: str, reason) -> None:
+    """Route one diagnostics line to this task's diagnostics file."""
+    _diag_write(_diagnostics_path(options), event, reason)
+
 
 def _silence_diagnostics() -> None:
     """Send this process's own output to os.devnull for the rest of its life."""
@@ -203,9 +299,11 @@ def _default_shell_command() -> list:
 class Pty:
     """The task's pseudoterminal, owned here on the machine that runs it."""
 
-    def __init__(self, cwd: str, command: list, rows: int, cols: int, env: dict) -> None:
+    def __init__(self, cwd: str, command: list, rows: int, cols: int, env: dict,
+                 diagnostics_path: str = "") -> None:
         self.rows = rows
         self.cols = cols
+        self.diagnostics_path = diagnostics_path
         self._closed = threading.Event()
         # Every reap and every signal is taken under this lock, because holding
         # an unreaped child is the only thing that makes its pid safe to name.
@@ -351,12 +449,11 @@ class Pty:
                 # it is ever reached, that isolation failed and signalling this
                 # group would take down this agent and whatever launched it, so
                 # refuse and say so rather than deliver it.
-                sys.stderr.write(
-                    "fm-stream-agent: REFUSING to signal process group %d - it is this "
-                    "agent's own process group (%d) or session (%d), so the endpoint's "
-                    "setsid did not take effect; the endpoint is not isolated\n"
-                    % (self.pgid, own_pgrp, own_sid))
-                sys.stderr.flush()
+                _diag_write(self.diagnostics_path, "signal-refused",
+                            "REFUSING to signal process group %d - it is this "
+                            "agent's own process group (%d) or session (%d), so the "
+                            "endpoint's setsid did not take effect; the endpoint is "
+                            "not isolated" % (self.pgid, own_pgrp, own_sid))
                 return False
             try:
                 os.killpg(self.pgid, sig)
@@ -729,8 +826,9 @@ class Agent:
                     # A second refusal after a registration that just succeeded
                     # is a race with another agent, not a hub to keep arguing
                     # with. One retry, never a loop.
-                    sys.stderr.write("fm-stream-agent: the hub forgot endpoint %s again: "
-                                     "%s\n" % (self.endpoint_id, exc))
+                    _agent_diag(self.options, "hub-forgot-again",
+                                "the hub forgot endpoint %s again: %s"
+                                % (self.endpoint_id, exc))
                     return
                 if not self.recover_registration(exc, final=closing):
                     return
@@ -743,7 +841,7 @@ class Agent:
                 # output that could not be published is lost from the hub's
                 # ring, which is a bounded history by design, not a transcript
                 # of record.
-                sys.stderr.write("fm-stream-agent: publish failed: %s\n" % exc)
+                _agent_diag(self.options, "publish-failed", exc)
                 return
 
     def recover_registration(self, reason: Exception, final: bool = False) -> bool:
@@ -799,8 +897,9 @@ class Agent:
                 self.give_up(exc)
                 return False
             except RuntimeError as exc:
-                sys.stderr.write("fm-stream-agent: could not re-register endpoint %s: %s\n"
-                                 % (self.endpoint_id, exc))
+                _agent_diag(self.options, "re-register-failed",
+                            "could not re-register endpoint %s: %s"
+                            % (self.endpoint_id, exc))
                 self._register_backoff = min(self._register_backoff * 2,
                                              REREGISTER_BACKOFF_MAX)
                 return False
@@ -827,10 +926,11 @@ class Agent:
         except RuntimeError as exc:
             # The heartbeat publishes the next one within seconds, so a state
             # frame lost here costs a moment of unreadability, not the recovery.
-            sys.stderr.write("fm-stream-agent: re-registered but could not publish "
-                             "state: %s\n" % exc)
-        sys.stderr.write("fm-stream-agent: re-registered endpoint %s with the hub at %s "
-                         "after: %s\n" % (self.endpoint_id, self.hub.base_url, reason))
+            _agent_diag(self.options, "state-publish-failed",
+                        "re-registered but could not publish state: %s" % exc)
+        _agent_diag(self.options, "re-registered",
+                    "endpoint %s with the hub at %s after: %s"
+                    % (self.endpoint_id, self.hub.base_url, reason))
         return True
 
     def read_loop(self) -> None:
@@ -998,8 +1098,7 @@ class Agent:
         if self.stood_down.is_set():
             return
         self.stood_down.set()
-        sys.stderr.write("fm-stream-agent: %s\n" % reason)
-        sys.stderr.flush()
+        _agent_diag(self.options, "stood-down", reason)
 
     def reserve_command(self, command: dict) -> bool:
         if command.get('kind') != 'steer' or command.get('endpoint_id') != self.endpoint_id:
@@ -1043,10 +1142,10 @@ class Agent:
         except ResultRejected as exc:
             # An unmatched id is not a verdict on the result body; do not mark
             # the durable outcome settled merely because routing is unknown.
-            sys.stderr.write("fm-stream-agent: could not acknowledge: %s\n" % exc)
+            _agent_diag(self.options, "result-ack-failed", exc)
             return not isinstance(exc, ResultUnknown)
         except RuntimeError as exc:
-            sys.stderr.write("fm-stream-agent: could not acknowledge: %s\n" % exc)
+            _agent_diag(self.options, "result-ack-failed", exc)
             return False
 
     def command_loop(self) -> None:
@@ -1084,7 +1183,7 @@ class Agent:
                 if receiver is not None:
                     receiver.save_result(record['order_id'], record['result']['command_id'], record)
             except Exception as exc:  # noqa: BLE001
-                sys.stderr.write("fm-stream-agent: result persistence pending: %s\n" % exc)
+                _agent_diag(self.options, "result-persist-failed", exc)
                 record['_persist_at'] = time.monotonic() + STEERING_RECONCILE_SECS
                 return False
             record['_dirty'] = False
@@ -1115,7 +1214,7 @@ class Agent:
                     ok, error = self.apply_command(
                         command, reconcile_only=not fresh or command.get('_native_prepared', False))
             except Exception as exc:  # noqa: BLE001
-                sys.stderr.write("fm-stream-agent: command application unconfirmed: %s\n" % exc)
+                _agent_diag(self.options, "command-apply-failed", exc)
                 if not fresh or command.get('_native_prepared'):
                     pending[command['command_id']] = (
                         command, time.monotonic() + STEERING_RECONCILE_SECS)
@@ -1155,7 +1254,7 @@ class Agent:
                     except Superseded as exc:
                         self.give_up(exc)
                     except RuntimeError as exc:
-                        sys.stderr.write("fm-stream-agent: command poll failed: %s\n" % exc)
+                        _agent_diag(self.options, "command-poll-failed", exc)
                         poll_due = now + self._backoff
                         self._backoff = min(self._backoff * 2, POLL_BACKOFF_MAX)
                     else:
@@ -1182,7 +1281,7 @@ class Agent:
                     try:
                         commands, saved = receiver.recover()
                     except Exception as exc:  # noqa: BLE001
-                        sys.stderr.write("fm-stream-agent: command recovery pending: %s\n" % exc)
+                        _agent_diag(self.options, "command-recovery-failed", exc)
                         load_due = now + STEERING_RECONCILE_SECS
                     else:
                         for record in saved.values():
@@ -1263,10 +1362,24 @@ class Agent:
         # That owner keeps the signal handlers and controls only this Pty child.
         reader = state = commands = None
         started = []
+        failures = []
+
+        def guarded(name, target):
+            try:
+                target()
+            except BaseException as exc:  # noqa: BLE001
+                failures.append(exc)
+                _agent_diag(self.options, "thread-crashed",
+                            "%s: %s: %s" % (name, type(exc).__name__, exc))
+                self.halt()
+
         try:
-            reader = threading.Thread(target=self.read_loop, name="pty-reader", daemon=True)
-            state = threading.Thread(target=self.state_loop, name="state", daemon=True)
-            commands = threading.Thread(target=self.command_loop, name="commands", daemon=True)
+            reader = threading.Thread(target=guarded, args=("pty-reader", self.read_loop),
+                                      name="pty-reader", daemon=True)
+            state = threading.Thread(target=guarded, args=("state", self.state_loop),
+                                     name="state", daemon=True)
+            commands = threading.Thread(target=guarded, args=("commands", self.command_loop),
+                                        name="commands", daemon=True)
             for thread in (reader, state, commands):
                 thread.start()
                 started.append(thread)
@@ -1310,7 +1423,7 @@ class Agent:
                 "state": {"alive": False, "foreground": [], "cwd": "",
                           "published_at": _now()},
             }])
-        return 0
+        return 1 if failures else 0
 
 
 # The key vocabulary firstmate's control plane actually permits, and nothing
@@ -1417,6 +1530,9 @@ def main(argv: list) -> int:
         raise SystemExit("fm-stream-agent: --machine must be 1-128 characters of [A-Za-z0-9._-]")
     if not options.label:
         raise SystemExit("fm-stream-agent: --label is required")
+    if not LABEL_RE.match(options.label):
+        raise SystemExit("fm-stream-agent: --label must be 1-128 characters of "
+                         "[A-Za-z0-9._@%+-]")
     if not options.cwd or not os.path.isabs(options.cwd):
         raise SystemExit("fm-stream-agent: --cwd must be an absolute path")
     if not os.path.isdir(options.cwd):
@@ -1463,7 +1579,8 @@ def main(argv: list) -> int:
     env.pop("FM_STREAM_TOKEN", None)
     env.setdefault("TERM", "xterm-256color")
 
-    pty = Pty(options.cwd, command, options.rows, options.cols, env)
+    pty = Pty(options.cwd, command, options.rows, options.cols, env,
+              diagnostics_path=_diagnostics_path(options))
     # An endpoint whose process is already gone must never be registered: the
     # spawn would record a task against a corpse and every later steer would
     # address nothing. The command's own output is the reason it failed.
@@ -1502,13 +1619,18 @@ def main(argv: list) -> int:
     sys.stderr.flush()
     # The caller's capture of this agent's output exists to carry a refusal out
     # of a spawn that never registered. Registration succeeded, so the caller
-    # has already unlinked it, and everything written from here - one line per
-    # failed publish, for the worker's whole life - would only grow a file
-    # nobody can read.
+    # has already unlinked it, and everything written from here would only grow
+    # a file nobody reads. The agent's own post-start diagnostic events go to
+    # the durable diagnostics file instead, which is rotated and bounded where
+    # stderr was neither.
     _silence_diagnostics()
     hub.end_startup()
 
-    return agent.run()
+    try:
+        return agent.run()
+    except Exception as exc:  # noqa: BLE001
+        _agent_diag(options, "agent-crashed", exc)
+        raise
 
 
 if __name__ == "__main__":

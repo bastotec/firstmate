@@ -75,7 +75,8 @@ def alive(pid):
 
 
 def make_pty(command):
-    return agent.Pty(os.getcwd(), command, 40, 200, dict(os.environ))
+    return agent.Pty(os.getcwd(), command, 40, 200, dict(os.environ),
+                     diagnostics_path=os.path.join(os.getcwd(), "kill-guard.agent-diagnostics"))
 
 
 real_write = os.write
@@ -456,7 +457,7 @@ for name, ok, detail in RESULTS:
     print("%s %s %s" % ("OK" if ok else "FAIL", name, detail))
 PY
 
-out=$(python3 "$CASE_DIR/drive.py" "$ROOT/bin/fm-stream-agent.py" 2>"$CASE_DIR/drive.err")
+out=$(cd "$CASE_DIR" && python3 "$CASE_DIR/drive.py" "$ROOT/bin/fm-stream-agent.py" 2>"$CASE_DIR/drive.err")
 rc=$?
 [ "$rc" -eq 0 ] || fail "the kill-safety driver did not finish: $(head -5 "$CASE_DIR/drive.err" 2>/dev/null)"
 
@@ -482,10 +483,14 @@ for case_name in partial-write-completes \
   esac
 done
 
-# The refusal has to be loud, or an endpoint whose isolation broke would be
-# silently left running with no sign that cleanup declined to touch it.
-grep -q "REFUSING to signal process group" "$CASE_DIR/drive.err" \
-  || fail "the agent refused to signal its own group but said nothing about it on stderr"
+# The refusal has to be durable, or an endpoint whose isolation broke would be
+# silently left running with no sign that cleanup declined to touch it. The
+# agent's stderr is /dev/null for the rest of its life, so the durable
+# diagnostics file beside the task's records is where the refusal must land.
+[ -s "$CASE_DIR/kill-guard.agent-diagnostics" ] \
+  || fail "the agent's diagnostics file was never created beside its records"
+grep -q "signal-refused REFUSING to signal process group" "$CASE_DIR/kill-guard.agent-diagnostics" \
+  || fail "the agent refused to signal its own group but said nothing about it durably"
 pass "stream agent kill safety: the refusal names the group it would not signal"
 
 # --- the suite's own kill guard ---------------------------------------------
