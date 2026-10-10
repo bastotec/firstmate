@@ -2028,6 +2028,59 @@ test_teardown_missing_busy_sidecar_completes() {
   pass "teardown completes when an exact busy-state sidecar is already absent"
 }
 
+# A landed retired-backend ship in a secondmate home whose parent channel cannot
+# be written: teardown refuses at its delivery gate after the retirement note is
+# consumed and the worktree is returned. The pending close must already be
+# replayable there, so the next session start finishes the close instead of
+# stranding the finished-work sweep on a consumed one-shot authorization.
+test_refused_delivery_makes_its_pending_close_replayable() {
+  local case_dir channel note marker out rc
+  case_dir=$(make_case refused-delivery-replayable)
+  configure_secondmate_home "$case_dir" local "$case_dir/parent"
+  mkdir -p "$case_dir/parent/state"
+  # The channel path is occupied by a directory, so no line can be appended.
+  channel="$case_dir/parent/state/mate-x.status"
+  mkdir -p "$channel"
+  write_meta "$case_dir" local-only ship
+  printf 'done: PR https://github.com/example/repo/pull/9 checks green\n' \
+    > "$case_dir/state/task-x1.status"
+  seed_backlog_in_flight "$case_dir"
+  wt_commit "$case_dir" "merged work"
+  git -C "$case_dir/project" update-ref refs/heads/main \
+    "$(git -C "$case_dir/wt" rev-parse HEAD)"
+  # The retirement note: what bin/fm-retire-endpoint.sh --finished writes for a
+  # record on a backend no script can answer for anymore.
+  note="$case_dir/state/task-x1.endpoint-retired"
+  printf 'id=task-x1\nspawn_gen=teardown-test-task-x1\nretired_by=operator\nretired_at=2026-10-09T00:00:00Z\n' \
+    > "$note"
+  marker="$case_dir/state/task-x1.backlog-close"
+
+  rc=0
+  FM_HOME="$case_dir/home" run_teardown "$case_dir" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  [ "$rc" -ne 0 ] || fail "refused-delivery: teardown succeeded with an undeliverable parent channel"
+  grep -q 'has not reached the parent channel' "$case_dir/stderr" \
+    || fail "refused-delivery: refusal did not name the parent channel: $(cat "$case_dir/stderr")"
+  assert_present "$marker" "the refused delivery discarded its pending close"
+  assert_no_grep 'endpoint=unconfirmed' "$marker" \
+    "the refused delivery left its pending close unreplayable with the authorization already consumed"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "the refused delivery removed the record the close still needs"
+
+  rmdir "$channel"
+  out=$(FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_BOOTSTRAP_NETWORK=skip PATH="$case_dir/fakebin:$PATH" \
+    FM_STATE_OVERRIDE="$case_dir/state" FM_DATA_OVERRIDE="$case_dir/data" \
+    FM_CONFIG_OVERRIDE="$case_dir/config" \
+    "$ROOT/bin/fm-bootstrap.sh" 2>&1) \
+    || fail "refused-delivery: session start failed to replay the close: $out"
+  [ "$(backlog_row_state "$case_dir")" = "done" ] \
+    || fail "refused-delivery: replay left the row $(backlog_row_state "$case_dir") instead of done: $out"
+  assert_absent "$marker" "replay left the close it finished"
+  assert_absent "$case_dir/state/task-x1.meta" "replay left the task record"
+  pass "a refused parent delivery leaves a replayable close, not a stranded authorization"
+}
+
 # A secondmate home with one child task on a fake stream endpoint whose kill the
 # hub answers but its agent never acknowledges (an unconfirmed close).
 configure_secondmate_with_unconfirmed_child() {  # <case-dir>
@@ -3258,6 +3311,7 @@ test_no_mistakes_truly_unpushed_refuses
 test_local_only_force_overrides_unpushed
 test_secondmate_pr_registration_publishes_ready_line
 test_secondmate_home_teardown_delivers_final_line_or_refuses
+test_refused_delivery_makes_its_pending_close_replayable
 test_teardown_missing_busy_sidecar_completes
 test_forced_secondmate_teardown_holds_descendant_lifecycle_locks
 test_forced_secondmate_child_retains_records_when_close_unconfirmed

@@ -197,7 +197,12 @@
 # endpoint-retirement task keeps its retirement-owned gate after process cleanup,
 # while a secondmate endpoint closes at its dedicated retirement point
 # immediately before its home is removed; neither enters the ordinary early
-# close path.
+# close path. The retirement-owned gate settles its pending close immediately
+# after consuming the note (see mark_pending_close_endpoint_confirmed below),
+# so a later refusal leaves a close the next session start can replay rather
+# than one still stamped unconfirmed whose one-shot authorization is already
+# spent; the ordinary path keeps its late settle, because a live backend can
+# always retry a partial cleanup held for a rerun.
 #   Fix 1 - conclude the task's own no-mistakes run. A ship task's worktree can
 #     be torn down while its no-mistakes pipeline run is still PARKED at a gate
 #     (awaiting_approval/fix_review/any awaiting_agent field), with no worker
@@ -2804,11 +2809,16 @@ task_operator_retirement() {
 
 # mark_pending_close_endpoint_confirmed: the other half of the publish-time
 # stamp. A pending close is published carrying endpoint=unconfirmed
-# (bin/fm-backlog-transition-lib.sh's fm_backlog_close_marker_write), so this
-# clears it only after the endpoint gate and every cleanup step that can still
-# refuse have passed, immediately before the final task/backlog transition.
-# An earlier interruption stays for a teardown rerun; an interruption during
-# the final transition replays at the next session start.
+# (bin/fm-backlog-transition-lib.sh's fm_backlog_close_marker_write), and this
+# clears it at one of two points. The ordinary path keeps the late settle from
+# before the final task/backlog transition: every cleanup step that can still
+# refuse has passed, so an interruption inside that transition replays at the
+# next session start while an earlier one stays stamped for a teardown rerun a
+# live backend can always retry. The retirement-owned path settles immediately
+# after its gate consumes the one-shot retirement note, because that
+# authorization cannot be reissued: a later refusal there must leave a close
+# the next session start replays rather than one still stamped unconfirmed
+# whose authorization is already spent.
 #
 # A failed clear stops the run before the task record is removed, because that
 # is the only way it genuinely leaves the close for a rerun: carrying on would
@@ -3219,6 +3229,16 @@ if [ "$TASK_ENDPOINT_RETIREMENT_PENDING" = 1 ]; then
   fm_backend_kill "$BACKEND" "$T" "" "fm-$ID" \
     && TASK_KILL_RC=0 || TASK_KILL_RC=$?
   require_task_endpoint_gone "$TASK_KILL_RC" || exit 1
+  # The retirement-owned path settles its pending close right here, after the
+  # gate that consumed the one-shot retirement note: a later refusal - an
+  # undeliverable parent outcome, a record-retire failure, a failed final
+  # transition - must leave a close the next session start can replay, because
+  # that authorization cannot be reissued and nothing automatic may write a new
+  # one. Every refusal before this gate (process cleanup, the worktree return)
+  # still exits with the note unconsumed, so a rerun keeps its authorization.
+  # The ordinary path keeps its late settle instead: a partial cleanup there
+  # stays held for a teardown rerun, which a live backend can always retry.
+  mark_pending_close_endpoint_confirmed || exit 1
 fi
 if [ "$KIND" != secondmate ]; then
   if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
@@ -3266,7 +3286,12 @@ fm_lock_remove_path "$STATE/.$ID.crew-state.lock" || true
 # retired endpoint; teardown only runs after landing is confirmed, so any
 # leftover unhandled steer here is moot rather than unlanded work.
 rm -rf "$STATE/$ID.inbox"
-mark_pending_close_endpoint_confirmed || exit 1
+# The ordinary path settles here, immediately before the final transition;
+# the retirement-owned path already settled right after its gate consumed the
+# one-shot note (mark_pending_close_endpoint_confirmed's header owns why).
+if [ "$TASK_ENDPOINT_RETIREMENT_PENDING" = 0 ]; then
+  mark_pending_close_endpoint_confirmed || exit 1
+fi
 # The record is gone, so the backlog must not still show this task in flight
 # when teardown reports success. Still under this task's meta lock, so a steer
 # racing the same id stays serialized exactly as it was before. A captain-held
