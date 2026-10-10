@@ -38,6 +38,11 @@ A busy pane is exempt from staleness only until its last completed turn or expli
 Past that bound, and for provably-working stale panes past `FM_STALE_ESCALATE_SECS`, the pane takes the wedge escalation: an escalation count in the reason and, at `FM_WEDGE_DEMAND_INSPECT_COUNT`, a `demand-deep-inspection` marker.
 Escalation is for inspection only, never an automatic interrupt, signal, or restart of the worker or its tool process.
 
+A task whose current-state read has reconciled `done` and whose metadata records its PR or MR is already a completed delivery held for merge, not working liveness.
+Its expected quiet pane is absorbed instead of entering the wedge ladder in both attended and away supervision.
+The daemon also clears stale markers left from earlier work and refuses to turn an enriched-wedge wake queued before reconciliation into a wedge escalation.
+A `done` read without a recorded PR or MR keeps the ordinary stale alarm path, while new status events and the eventual merge remain independent actionable wake sources.
+
 A pane whose recorded task worktree holds a file newer than its quiet window is deferred instead of escalated, because a crew writing files behind a static pane is liveness that neither pane quietness nor the run step can show.
 That deferral re-surfaces on the `FM_PAUSE_RESURFACE_SECS` cadence and costs one pruned, depth-bounded, wall-clock-bounded walk taken only when about to escalate, never on every poll.
 Every absence of write evidence, including a missing worktree, a walk that outlives its bound on a hung mount, and a failed walk, leaves the escalation schedule untouched.
@@ -118,7 +123,7 @@ Both share `bin/fm-classify-lib.sh` and classify every byte appended since they 
 The daemon escalates as one batched digest with the canonical `away-supervisor` kind from `bin/fm-operational-input.sh`, so firstmate can tell it from a real message.
 For typed-input delivery, it types only into a composer `bin/fm-composer-lib.sh` classifies as affirmatively `empty`, so every other or future verdict defers.
 Stalled delivery writes `state/.subsuper-inject-wedged` and attempts an active alert after `FM_MAX_DEFER_SECS` instead of deferring forever.
-Away housekeeping has no worktree-write deferral, so a quiet crew still escalates as a possible wedge.
+Away housekeeping has no worktree-write deferral, so a quiet crew that is not a completed delivery held for merge still escalates as a possible wedge.
 [`configuration.md`](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target) owns the supervisor transport, delivery routing, and fallback, and the [`afk` skill](../.agents/skills/afk/SKILL.md#busy-guard-and-composer-guard) owns the typed-injection guards.
 
 ### Data plane and control plane

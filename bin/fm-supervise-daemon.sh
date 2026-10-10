@@ -1027,6 +1027,10 @@ housekeeping() {  # <state>
     fi
     age=$(( now - $(cat "$marker" 2>/dev/null || echo "$now") ))
     [ "$age" -ge "${FM_STALE_ESCALATE_SECS:-$STALE_ESCALATE_SECS_DEFAULT}" ] || continue
+    if STATE="$state" FM_STATE_OVERRIDE="$state" crew_is_held_for_merge "$task"; then
+      rm -f "$marker"
+      continue
+    fi
     stale_window_is_busy "$win" "$state"
     case "$?" in
       0) rm -f "$marker" ;;
@@ -1559,10 +1563,12 @@ handle_wake() {  # <reason> <state>
               case "${decision%%|*}" in
                 pause) : ;;
                 *) case "$stale_detail" in
-                     idle\ *s,\ possible\ wedge,\ escalation\ *)
-                       last=$(last_status_line "$state/$task.status")
-                       status_is_paused_or_captain_held "$last" \
-                         || decision="escalate|${reason#stale: }"
+                   idle\ *s,\ possible\ wedge,\ escalation\ *)
+                       if ! STATE="$state" FM_STATE_OVERRIDE="$state" crew_is_held_for_merge "$task"; then
+                         last=$(last_status_line "$state/$task.status")
+                         status_is_paused_or_captain_held "$last" \
+                           || decision="escalate|${reason#stale: }"
+                       fi
                        ;;
                    esac ;;
               esac ;;
