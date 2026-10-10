@@ -365,14 +365,31 @@ watch_start() {
 # Use exactly the ordinary durable steering record and doorbell contract. The
 # local host consumes the doorbell directly as a next turn; backend transports
 # need no keystroke injection, pane scrape, or special wake implementation.
+WAKE_PREAMBLE='The home watcher has an actionable wake. Drain bin/fm-wake-drain.sh first, handle every emitted wake and open decision, and acknowledge only after handling. Watcher output:'
 watch_doorbell() (
   local record
   # shellcheck source=bin/fm-task-inbox-lib.sh
   . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
-  record=$(fm_task_inbox_write "$STATE" "$ID" "The home watcher has an actionable wake. Drain bin/fm-wake-drain.sh first, handle every emitted wake and open decision, and acknowledge only after handling. Watcher output:
+  record=$(fm_task_inbox_write "$STATE" "$ID" "$WAKE_PREAMBLE
 $(cat "$WATCH_PENDING")") || exit 1
   fm_task_inbox_doorbell_line "$record"
 )
+
+# Per-turn reasoning effort for a home host's watcher turns: the level
+# bin/fm-effort-policy.sh classify picks, sent as the prompt's `deck-effort:`
+# header; empty keeps the default. Every other turn keeps the default.
+# Whether this deck takes the header is checked once, at the first watcher turn.
+TURN_EFFORT=''
+EFFORT_SUPPORTED=''
+watch_effort() {
+  local f
+  [ "$EFFORT_SUPPORTED" = 1 ] || return 0
+  for f in "$STATE/$ID.inbox"/*.msg; do
+    if [ -e "$f" ] || [ -L "$f" ]; then return 0; fi
+  done
+  printf '%s\n%s' "$WAKE_PREAMBLE" "$(cat "$WATCH_PENDING")" \
+    | "$SCRIPT_DIR/fm-effort-policy.sh" classify --home "$FM_HOME" 2>/dev/null
+}
 
 watch_result() {
   local rc predecessor=$WATCH_PID
@@ -472,9 +489,14 @@ LAUNCH_UNDELIVERED=0
 run_turn() {  # <prompt>
   local prompt=$1 rc event status_before monitor_failed=0 deck_rc tee_rc jq_rc published=0
   local -a turn_pipeline
+  # The effort applies to this turn only, whatever path it ends by.
+  local effort=$TURN_EFFORT
+  TURN_EFFORT=''
   [ "$SECONDMATE" != 1 ] || host_lock_owned || return 1
   [ "$SECONDMATE" != 1 ] || watch_start || return 1
   [ "$SECONDMATE" != 1 ] || watch_confirm_handling_delivery || return 1
+  [ -z "$effort" ] || prompt="deck-effort: $effort
+$prompt"
   local -a args=(run "$prompt" --max-turns "$MAX_TURNS" --deadline-secs "$DEADLINE" --hook "pre_complete=$EVIDENCE_HOOK")
   [ -z "$PRE_TOOL_HOOK" ] || args+=(--hook "pre_tool_use=$PRE_TOOL_HOOK")
   [ -z "$PROGRESS_HOOK" ] || args+=(--hook "post_tool_use=$PROGRESS_HOOK")
@@ -556,6 +578,7 @@ run_turn() {  # <prompt>
     turn_pipeline=("${PIPESTATUS[@]}")
   fi
   deck_stream_end
+  [ -z "$effort" ] || "$SCRIPT_DIR/fm-effort-policy.sh" observe --home "$FM_HOME" < "$EVENTS" 2>/dev/null || true
   rc=${turn_pipeline[0]}
   if [ "$SECONDMATE" = 1 ] && [ "$INTERRUPTED" != 1 ] && { [ "${turn_pipeline[1]}" -ne 0 ] || [ "${turn_pipeline[2]}" -ne 0 ]; }; then
     host_failure 'event capture or rendering failed' || true
@@ -710,6 +733,7 @@ drive_turn() {  # <prompt>
   if [ "$LAUNCH_UNDELIVERED" = 1 ]; then
     LAUNCH_UNDELIVERED=0
     relaunch=1
+    TURN_EFFORT=''
     prompt="$PROMPT
 
 The host repeated this launch brief because the previous turn failed before Deck opened a session. The digest above is this session's startup; handle the wake below as its first work.
@@ -792,6 +816,11 @@ while :; do
       fi
     fi
     if [ -s "$WATCH_PENDING" ]; then
+      if [ -z "$EFFORT_SUPPORTED" ]; then
+        EFFORT_SUPPORTED=0
+        "$SCRIPT_DIR/fm-effort-policy.sh" supported "$DECK" && EFFORT_SUPPORTED=1
+      fi
+      TURN_EFFORT=$(watch_effort)
       if ! doorbell=$(watch_doorbell); then
         host_failure 'could not publish watcher steering doorbell'; exit 1
       fi

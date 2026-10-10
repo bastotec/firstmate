@@ -44,6 +44,9 @@ argv = sys.argv[1:]
 if argv[:1] == ['chat'] and '--help' in argv:
     print('--steer-dir <DIR>\n--events <FILE>\n--session <SESSION>')
     sys.exit(0)
+if argv[:2] == ['run', '--help']:
+    print('--effort <LEVEL>' if os.environ.get('FAKE_DECK_EFFORT') == '1' else '--steer-dir <DIR>')
+    sys.exit(0)
 assert argv[0] == 'chat', argv
 def opt(name):
     return argv[argv.index(name) + 1]
@@ -61,8 +64,13 @@ while not stop:
     for seq in sorted(int(p.name[:-4]) for p in steer.iterdir() if re.fullmatch(r'[1-9][0-9]*\.msg', p.name)):
         source = steer / ('%d.msg' % seq)
         text = source.read_text()
-        emit(type='run_started', session=opt('--session'), model='fake')
+        effort = text.split('\n', 1)[0][len('deck-effort: '):] if text.startswith('deck-effort: ') else None
+        emit(type='run_started', session=opt('--session'), model='fake',
+             **({'effort': effort} if effort else {}))
         emit(type='steer_received', seq=seq, safe_point='run_start')
+        if 'FAKE-UNREAD' in text:
+            emit(type='tool_result', id='c1', name='run_command', duration_ms=1,
+                 output='UNREAD STATUS (new since last drain):\ntask-1 note: answer')
         if 'fixture session digest' in text and os.environ.get('FM_TEST_STARTUP_SLOW') == '1':
             while not (pathlib.Path(os.environ['FM_HOME']) / 'startup.release').exists() and not stop:
                 time.sleep(0.05)
@@ -366,6 +374,127 @@ PY
   wait_for 10 "oversized-wake host exits" dead "$host"
   wait "$host" 2>/dev/null || true
   pass "fm-deck-chat.sh: oversized ASCII and multibyte wakes retain instructions within the byte limit"
+}
+
+test_routine_wakes_think_less() {
+  local home host merged
+  home=$(new_home effort)
+  merged="check: $home/state/autoland.check.sh: autoland: merged https://github.com/o/r/pull"
+  FAKE_DECK_EFFORT=1 FAKE_DECK_LOG="$LAB/deck-effort.log" "$BIN/fm-deck-chat.sh" --home "$home" \
+    < /dev/null > "$LAB/host-effort.out" 2>&1 &
+  host=$!
+  fm_test_track_helper_pid "$host"
+  wait_for 10 "effort startup" turns_with "$LAB/deck-effort.log" 'fixture session digest'
+  assert_not_contains "$(turns_with "$LAB/deck-effort.log" 'fixture session digest')" 'deck-effort' \
+    "the startup turn keeps the default effort"
+  wait_for 10 "effort watcher" watch_count "$home" 1
+  echo "$merged/1 (deploy follows) FAKE-UNREAD" > "$home/wake.trigger"
+  wait_for 10 "non-routine wake" turns_with "$LAB/deck-effort.log" 'pull/1 '
+  assert_not_contains "$(turns_with "$LAB/deck-effort.log" 'pull/1 ')" 'deck-effort' \
+    "a wake the policy cannot prove routine keeps the default"
+  wait_for 10 "effort watcher re-arms" watch_count "$home" 2
+  echo "$merged/2 (deploy follows)" > "$home/wake.trigger"
+  wait_for 10 "routine wake" turns_with "$LAB/deck-effort.log" 'pull/2 '
+  assert_contains "$(turns_with "$LAB/deck-effort.log" 'pull/2 ')" '"text": "deck-effort: low\nThe home watcher' \
+    "a routine wake asks for the low effort first"
+  "$BIN/fm-primary-steer.sh" publish --home "$home" --text "$merged/9 (deploy follows) FAKE-UNREAD" >/dev/null
+  wait_for 10 "captain-path turn" turns_with "$LAB/deck-effort.log" 'pull/9 '
+  assert_not_contains "$(turns_with "$LAB/deck-effort.log" 'pull/9 ')" 'deck-effort' \
+    "a direct steer keeps the default"
+  wait_for 10 "effort watcher re-arms again" watch_count "$home" 3
+  # The fake turn for this routine wake reports unread status: the next wake escalates.
+  echo "$merged/3-FAKE-UNREAD (deploy follows)" > "$home/wake.trigger"
+  wait_for 10 "lowered turn that finds news" turns_with "$LAB/deck-effort.log" 'pull/3-'
+  assert_contains "$(turns_with "$LAB/deck-effort.log" 'pull/3-')" '"text": "deck-effort: low' \
+    "that wake was routine"
+  wait_for 10 "the escalation is recorded" test -e "$home/state/effort-policy/escalate"
+  wait_for 10 "effort watcher re-arms a third time" watch_count "$home" 4
+  echo "$merged/4 (deploy follows)" > "$home/wake.trigger"
+  wait_for 10 "escalated wake" turns_with "$LAB/deck-effort.log" 'pull/4 '
+  assert_not_contains "$(turns_with "$LAB/deck-effort.log" 'pull/4 ')" 'deck-effort' \
+    "the wake after a lowered turn found news keeps the default"
+  kill -TERM "$host"
+  wait_for 10 "effort host exits" dead "$host"
+  wait "$host" 2>/dev/null || true
+  pass "fm-deck-chat.sh: routine wakes ask deck for a lower effort, and news found at low effort restores the default"
+}
+
+test_effort_observes_events_before_successor() {
+  local home
+  home=$(new_home effort-ordering)
+  cat > "$home/capture-steer" <<'PY'
+#!/usr/bin/env python3
+import json, pathlib, sys
+args = sys.argv[1:]
+home = pathlib.Path(args[args.index('--home') + 1])
+body = pathlib.Path(args[args.index('--file') + 1]).read_text()
+with (home / 'published.ndjson').open('a') as output:
+    output.write(json.dumps(body) + '\n')
+print('seq=1')
+PY
+  chmod +x "$home/capture-steer"
+  python3 - "$BIN" "$home" <<'PY' || fail "successor effort event ordering failed"
+import argparse, importlib.util, json, os, pathlib, subprocess, sys, threading
+bin_dir, home = map(pathlib.Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location('primary_chat', bin_dir / 'fm_primary_chat.py')
+primary = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(primary)
+primary.prepare(argparse.Namespace(home=str(home), session='ordering'))
+primary.record_write(argparse.Namespace(home=str(home), session='ordering',
+                                       host_pid=os.getpid(), endpoint='', startup_file=None))
+events = home / 'state/primary-chat/ordering/events.ndjson'
+def append(*rows):
+    with events.open('ab') as output:
+        for row in rows:
+            output.write(json.dumps(row).encode() + b'\n')
+started = {'type': 'run_started', 'effort': 'low'}
+news = {'type': 'tool_result', 'output': 'UNREAD STATUS (new since last drain):\nworker-1 note: answer'}
+finished = {'type': 'run_finished'}
+append(started, news, finished)
+gen = subprocess.check_output([str(bin_dir / 'fm-busy-event.sh'), 'arm',
+                               str(home / 'state'), 'primary'], text=True).strip()
+supervisor = primary.Supervisor(argparse.Namespace(home=str(home), host_pid=os.getpid(), gen=gen,
+                                                  events_offset=events.stat().st_size, effort_headers=True))
+supervisor.steer_bin = str(home / 'capture-steer')
+reason = 'check: %s/state/autoland.check.sh: autoland: merged https://github.com/o/r/pull/7 (deploy follows)\n' % home
+def publish(lowered):
+    assert supervisor.publish(reason)
+    messages = [json.loads(row) for row in (home / 'published.ndjson').read_text().splitlines()]
+    body = messages[-1]
+    assert body.startswith('deck-effort: low\n') == lowered, body
+    assert primary.WAKE_PREAMBLE in body, body
+
+publish(True)
+append(started, news, finished)
+publish(False)
+assert 'state=idle' in (home / 'state/primary.busy-state').read_text()
+publish(True)
+append(started)
+partial = json.dumps(news).encode() + b'\n'
+split = len(partial) // 2
+with events.open('ab') as output:
+    output.write(partial[:split])
+publish(True)
+with events.open('ab') as output:
+    output.write(partial[split:])
+publish(False)
+assert 'state=busy' in (home / 'state/primary.busy-state').read_text()
+append(finished)
+publish(True)
+append({'type': 'run_started'}, news, finished)
+publish(True)
+append(started, news, finished)
+follower = threading.Thread(target=supervisor.follow_events)
+follower.start()
+try:
+    publish(False)
+    publish(True)
+finally:
+    supervisor.stop.set()
+    follower.join(10)
+    assert not follower.is_alive(), 'event follower did not stop'
+PY
+  pass "primary supervisor: buffered and streamed news escalate the immediate successor exactly once"
 }
 
 test_task_named_primary_blocks_the_host() {
@@ -1043,6 +1172,15 @@ test_service_keeper_alerts() {
   pass "fm-deck-chat.sh service-run: a primary that stays down raises one alert and clears it on recovery"
 }
 
+if [ -n "${FM_TEST_DECK_CHAT_CASES:-}" ]; then
+  for test_case in $FM_TEST_DECK_CHAT_CASES; do
+    case "$test_case" in test_*) ;; *) fail "invalid test case: $test_case" ;; esac
+    declare -F "$test_case" >/dev/null || fail "unknown test case: $test_case"
+    "$test_case"
+  done
+  exit 0
+fi
+
 test_steer_contract_without_a_host
 test_stop_marker
 test_service_install
@@ -1057,6 +1195,8 @@ test_startup_completion_required
 test_startup_handoff
 test_host_lifecycle
 test_oversized_watcher_output
+test_routine_wakes_think_less
+test_effort_observes_events_before_successor
 test_stream_endpoint_host
 test_task_named_primary_blocks_the_host
 test_away_mode_pauses_the_watcher

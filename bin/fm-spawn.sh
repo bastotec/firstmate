@@ -54,8 +54,8 @@
 #   axes chosen by firstmate at intake. --model may be a fallback chain
 #   (comma-separated <provider>/<model-id> labels; docs/configuration.md "Model
 #   fallback chains"); a single label stays an exact pin. Deck accepts the
-#   model axis but has no effort control, so a non-default effort is refused
-#   before launch rather than silently omitted.
+#   model axis but Firstmate does not expose its spawn-side effort axis, so a
+#   non-default effort is refused before launch rather than silently omitted.
 #   --backend <name> is the explicit runtime session-provider backend for this
 #   exact task only; stream is the only one. For a new local spawn without it,
 #   the script resolves FM_BACKEND, then config/backend, then stream
@@ -1183,8 +1183,8 @@ launch_template() {
     # turn of the same Deck session, and it is the task's busy/turn-end source
     # and evidence gate (its header owns all of that). It runs under bash with
     # argv[0] `fm-deck-worker`, so pane liveness reads it as an agent rather
-    # than an idle shell (bin/fm-agent-process-lib.sh). Deck has no effort
-    # control, so a non-default effort is refused during spawn validation.
+    # than an idle shell (bin/fm-agent-process-lib.sh). Spawn-side effort
+    # restrictions are owned by this script's header.
     deck) printf '%s' 'bash -c '\''exec -a fm-deck-worker bash "$@"'\'' fm-deck-worker __DECKWORKER__ --id __DECKID__ --state __DECKSTATE__ --gen __DECKGEN__ --deck __DECKBIN__ __MODELFLAG__-- "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     *) return 1 ;;
   esac

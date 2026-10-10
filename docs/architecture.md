@@ -181,7 +181,7 @@ Crewmate and scout dispatch uses either `config/crew-harness` or the natural-lan
 The dispatch file is judgment-based: firstmate reads its rules at intake, resolves profile arrays from current quota output under the `AGENTS.md` section 4 boundary, and passes concrete axes to `fm-spawn.sh`.
 The scripts validate shape and harness and effort combinations but never parse task intent or select from arrays.
 When the file exists, `fm-spawn.sh` refuses crewmate and scout launches without an explicit harness, so the rules cannot be silently skipped.
-Deck is the only harness and has no effort control, so validation rejects profiles with effort and spawn or relaunch refuses a non-default effort before creating metadata or stopping a worker.
+[Harness support](configuration.md#harness-support) owns Deck's spawn-side effort restrictions; [Turn effort](configuration.md#turn-effort-configeffort-policyjson) owns the separate supervisor watcher-turn policy.
 
 ## Optional secondmates
 

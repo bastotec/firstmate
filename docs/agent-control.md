@@ -74,7 +74,8 @@ Only the instructions are ever rolled back from those copies; the record copy is
    Invalid static harness configuration refuses with the resolver's diagnostic before the existing worker is stopped; only a successful empty resolution may fall back to its recorded harness, and an explicit supported `--harness` bypasses the configured pin.
    A ship or scout keeps the harness already recorded for it, because that harness comes from firstmate's dispatch-profile judgment at intake and must not be silently re-read from configuration.
    A harness change resets model and effort unless they are named too, because a model chosen for one adapter does not transfer to another.
-   A harness that has no effort control refuses a named effort: `deck` rejects `--effort` with "deck has no effort control", while an effort recorded for the previous harness is reset to `default` by the harness change and so never makes the rescue refuse itself.
+   [Harness support](configuration.md#harness-support) owns the spawn-side effort restriction; the Deck refusal still says "deck has no effort control".
+   An effort recorded for the previous harness is reset to `default` by the harness change and so never makes the rescue refuse itself.
    [Remote placement](remote-secondmates.md#lifecycle-control) owns the primary's remote-profile selection before the host-local transaction begins.
 2. **Prove backlog recovery eligibility.**
    When the automatic backlog transition gate applies, an unheld In-flight row is recoverable whether it is unblocked or waiting on a dependency; relaunch preserves that lifecycle state and dependency blocker instead of rerunning `start`.
