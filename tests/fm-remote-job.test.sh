@@ -257,6 +257,31 @@ assert_present "$ACTIVE_SIDE_EFFECT" "the active job was interrupted by the conc
 fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the active readiness job could not be reaped"
 pass "active jobs keep the worker ready for concurrent requests"
 
+# Each non-doctor fm-on target pays ensure's cost before staging, even against
+# an already-healthy worker. Its code-identity snapshot hashes the root path and
+# the library and worker files through git; internal re-checks should reuse that
+# snapshot rather than hash it again.
+GIT_COUNT_LOG="$TMP_ROOT/git-hash-object.log"
+cat > "$ACCOUNT_HOME/.local/bin/git" <<SH
+#!/bin/bash
+[ "\${1:-}" != hash-object ] || printf 'hash-object\n' >> "$GIT_COUNT_LOG"
+exec "$REAL_GIT" "\$@"
+SH
+chmod +x "$ACCOUNT_HOME/.local/bin/git"
+HEALTHY_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
+: > "$GIT_COUNT_LOG"
+# Drop the shell's cached git path so the operator PATH lookup finds the wrapper.
+hash -r
+fm_remote_job_ensure_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" || fail "$FM_REMOTE_JOB_ERROR"
+[ "$(cat "$STATE_ROOT/worker.pid")" = "$HEALTHY_WORKER_PID" ] \
+  || fail "ensure replaced a healthy worker during the identity-cost check"
+HASH_CALLS=$(grep -c hash-object "$GIT_COUNT_LOG" || true)
+[ "$HASH_CALLS" -le 3 ] \
+  || fail "ensure on a healthy worker hashed the code identity more than once ($HASH_CALLS git hash-object calls)"
+rm -f "$ACCOUNT_HOME/.local/bin/git"
+hash -r
+pass "ensure on a healthy worker computes the code identity once"
+
 OLD_WORKER_PID=$(cat "$STATE_ROOT/worker.pid")
 printf '\n' >> "$REMOTE_ROOT/bin/fm-remote-job-worker.sh"
 fm_remote_job_ensure_worker "$REMOTE_ROOT" "$ACCOUNT_HOME" \
