@@ -3033,8 +3033,12 @@ fi
 PR_CLOSE_VERDICT=
 pr_task_row=
 if [ "$KIND" != secondmate ]; then
-  if ! pr_task_row=$(fm_backlog_row_show "$DATA" "$ID" --full 2>/dev/null); then
-    if [ -z "$PR_URL" ] && [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ] \
+  if fm_backlog_tasks_axi_addressing "$DATA" \
+      && [ -n "$FM_BACKLOG_AXI_FILE" ] \
+      && [ ! -e "$FM_BACKLOG_AXI_FILE" ] && [ ! -L "$FM_BACKLOG_AXI_FILE" ]; then
+    pr_task_row=
+  elif ! pr_task_row=$(fm_backlog_row_show "$DATA" "$ID" --full 2>/dev/null); then
+    if [ "$FORCE" != "--force" ] \
         && ! printf '%s\n' "$pr_task_row" | grep -qx 'code: NOT_FOUND'; then
       echo "REFUSED: task $ID is not finished: cannot read the task row to resolve its PR." >&2
       exit 1

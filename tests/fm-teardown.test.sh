@@ -861,6 +861,85 @@ test_teardown_backlog_only_pr_gate() {
   pass 'teardown gates backlog-only PRs before cleanup despite remote reachability'
 }
 
+test_teardown_manual_backlog_read_gate() {
+  local case_dir scenario rc before after
+  for scenario in error timeout meta-error open merged not-found no-backlog no-backlog-meta-open; do
+    case_dir=$(make_case "manual-row-$scenario")
+    write_meta "$case_dir" no-mistakes ship
+    wt_commit_file "$case_dir" feature.txt 'pushed work'
+    add_fork_with_pushed_branch "$case_dir"
+    printf '%s\n' manual > "$case_dir/config/backlog-backend"
+    case "$scenario" in
+      no-backlog*) ;;
+      *)
+        seed_backlog_in_flight "$case_dir"
+        tasks-axi update task-x1 --pr https://github.com/example/repo/pull/7 \
+          --file "$case_dir/data/backlog.md" >/dev/null || fail 'could not seed manual row PR'
+        ;;
+    esac
+    case "$scenario" in
+      meta-error|no-backlog-meta-open)
+        printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+        ;;
+    esac
+    case "$scenario" in
+      error|timeout|meta-error|not-found)
+        cat > "$case_dir/fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = show ]; then
+  case "$FM_FAKE_ROW_SCENARIO" in
+    timeout) sleep 5 ;;
+    not-found) printf '%s\n' 'code: NOT_FOUND' ;;
+    *) printf '%s\n' 'error: backend unavailable' ;;
+  esac
+  exit 1
+fi
+exit 0
+SH
+        chmod +x "$case_dir/fakebin/tasks-axi"
+        ;;
+    esac
+    add_logging_treehouse "$case_dir"
+    before=$(cksum "$case_dir/state/task-x1.meta" "$case_dir/wt/feature.txt")
+    if [ -f "$case_dir/data/backlog.md" ]; then
+      before="$before $(cksum "$case_dir/data/backlog.md")"
+    fi
+    rc=0
+    FM_FAKE_ROW_SCENARIO=$scenario FM_BACKLOG_ROW_TIMEOUT_SECS=1 \
+      FM_FAKE_GH_PR_STATE=$({ [ "$scenario" = merged ] || [ "$scenario" = meta-error ]; } && printf MERGED || printf OPEN) \
+      run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    case "$scenario" in
+      merged|not-found|no-backlog)
+        expect_code 0 "$rc" "manual $scenario"
+        assert_absent "$case_dir/state/task-x1.meta" "manual $scenario retained metadata"
+        assert_present "$case_dir/treehouse.log" "manual $scenario did not return the worktree"
+        ;;
+      *)
+        expect_code 1 "$rc" "manual $scenario"
+        case "$scenario" in
+          open|no-backlog-meta-open)
+            assert_grep 'is still open' "$case_dir/stderr" "manual $scenario ignored the PR"
+            ;;
+          *)
+            assert_grep 'cannot read the task row' "$case_dir/stderr" "manual $scenario did not refuse the read failure"
+            ;;
+        esac
+        assert_absent "$case_dir/treehouse.log" "manual $scenario returned the worktree"
+        assert_present "$case_dir/state/task-x1.meta" "manual $scenario removed metadata"
+        after=$(cksum "$case_dir/state/task-x1.meta" "$case_dir/wt/feature.txt")
+        if [ -f "$case_dir/data/backlog.md" ]; then
+          after="$after $(cksum "$case_dir/data/backlog.md")"
+        fi
+        assert_equals "$before" "$after" "manual $scenario changed records or work"
+        ;;
+    esac
+    if [ -f "$case_dir/data/backlog.md" ]; then
+      [ "$(backlog_row_state "$case_dir")" = in_flight ] || fail "manual $scenario mutated the backlog"
+    fi
+  done
+  pass 'manual cleanup refuses unreadable rows but accepts missing rows and backlogs while gating metadata PRs'
+}
+
 test_teardown_local_only_recorded_pr_gate() {
   local case_dir rc
   case_dir=$(make_case local-only-pr-open)
@@ -3355,6 +3434,7 @@ test_wake_gate_retirement_requires_python_only_for_existing_state
 test_teardown_closes_the_backlog_item_itself
 test_teardown_refuses_unmerged_recorded_pr
 test_teardown_backlog_only_pr_gate
+test_teardown_manual_backlog_read_gate
 test_teardown_local_only_recorded_pr_gate
 test_teardown_title_is_not_supersession
 test_teardown_closes_superseded_pr_without_merged_claim
