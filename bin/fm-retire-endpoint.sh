@@ -65,6 +65,10 @@ FM_HOME="${FM_HOME:-$FM_ROOT}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+if [ "$#" -eq 1 ] && [ "$1" = --list-orphans ] \
+  && [ -n "$FM_HOME_EXPLICIT" ] && [ ! -d "$STATE" ]; then
+  exit 0
+fi
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-pr-lib.sh
@@ -241,6 +245,9 @@ if [ "$ORPHAN" = 1 ] || [ "$LIST_ORPHANS" = 1 ]; then
     exit $?
   fi
   [ "${#IDS[@]}" -eq 1 ] || refuse "--orphan closes one task's leftover endpoint at a time; name exactly one task id"
+  # shellcheck source=bin/fm-gate-refuse-lib.sh
+  . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
+  fm_refuse_if_gate_agent
   orphan_close "${IDS[0]}" "$ORPHAN_ENDPOINT"
   exit $?
 fi

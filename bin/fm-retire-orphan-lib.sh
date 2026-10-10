@@ -74,11 +74,15 @@ orphan_record_exists() {  # <id>
 }
 
 orphan_is_secondmate() {  # <id>
-  local line
-  [ -f "$DATA/secondmates.md" ] || return 1
+  local line registry path="$DATA/secondmates.md"
+  [ -e "$path" ] || [ -L "$path" ] || return 1
+  [ -f "$path" ] && [ -r "$path" ] \
+    || refuse "the secondmate registry $path cannot be read; nothing proves '$1' is not registered"
+  registry=$(cat "$path" 2>/dev/null) \
+    || refuse "the secondmate registry $path cannot be read; nothing proves '$1' is not registered"
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in "- $1 - "*) return 0 ;; esac
-  done < "$DATA/secondmates.md"
+  done <<< "$registry"
   return 1
 }
 
@@ -407,7 +411,10 @@ orphan_list() {
       [ -n "$eid" ] || continue
       rc=0
       orphan_prove "$id" "$eid" || rc=$?
-      [ "$rc" -eq 0 ] && printf '%s\t%s\n' "$id" "$eid"
+      case "$rc" in
+        0) printf '%s\t%s\n' "$id" "$eid" ;;
+        2) refuse "$ORPHAN_REASON; leftover endpoint listing is incomplete" ;;
+      esac
     done < <(orphan_candidate_endpoints "$id")
   done <<< "$candidates"
   return 0

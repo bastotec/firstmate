@@ -74,6 +74,8 @@ class H(BaseHTTPRequestHandler):
             return self.reply(404, {"error": "no_such_endpoint"})
         eid, tail, e = m.group(1), m.group(2), data[m.group(1)]
         if not tail:
+            if e.get("fail_read"):
+                return self.reply(503, {"error": "endpoint_read_unavailable"})
             return self.reply(200, {"task": describe(eid, e)})
         body = {"ok": True, "endpoint_id": eid, "machine": e["machine"], "stale": False,
                 "closed": bool(e.get("closed_at")), "closed_by": e.get("closed_by"), "alive": True}
@@ -187,6 +189,93 @@ CLEAN_WT="$TMP_ROOT/wt-clean"
 
 HOME_A=$(new_home home-a)
 HOME_B=$(new_home home-b)
+
+GATE_HOME=$(new_home gate-home)
+EGATE=$(new_eid)
+add_endpoint "$EGATE" fm-gateguard "$PROJECT" "$CLEAN_WT" /bin/zsh
+deck_record "$GATE_HOME" gateguard "$EGATE" false
+rc=0
+out=$(FM_GATE_REFUSE_BYPASS=0 NO_MISTAKES_GATE=review \
+  orphan "$GATE_HOME" --orphan gateguard --endpoint "$EGATE" 2>&1) || rc=$?
+expect_code 3 "$rc" "a gate agent closing an orphan"
+assert_contains "$out" "gate agent must not drive the fleet" "the existing authority refusal fires"
+was_closed "$EGATE" && fail "a gate agent closed an endpoint"
+assert_absent "$GATE_HOME/state/endpoint-retirements.log" "gate refusal precedes assertion logging"
+assert_absent "$GATE_HOME/state/gateguard.inbox/deck-$EGATE/.lifecycle.lock" "gate refusal precedes lifecycle locking"
+listed=$(FM_GATE_REFUSE_BYPASS=0 NO_MISTAKES_GATE=review \
+  orphan "$GATE_HOME" --list-orphans) || fail "gate agents cannot list orphans"
+assert_contains "$listed" "gateguard	$EGATE" "listing remains available to gate agents"
+pass "gate agents may list but cannot close orphan endpoints"
+
+STATELESS_HOME=$(new_home stateless-home)
+rmdir "$STATELESS_HOME/state"
+rc=0
+out=$(FM_HOME="$STATELESS_HOME" FM_STREAM_HUB=http://127.0.0.1:1 FM_STREAM_TOKEN="$TOKEN" \
+  "$ROOT/bin/fm-retire-endpoint.sh" --list-orphans 2>&1) || rc=$?
+expect_code 0 "$rc" "listing a home with no state"
+assert_equals "" "$out" "a stateless home has no orphan inventory"
+assert_absent "$STATELESS_HOME/state" "read-only listing creates no state directory"
+pass "listing without state is empty and leaves the home unchanged"
+
+READ_HOME=$(new_home read-home)
+EREAD=$(new_eid)
+add_endpoint "$EREAD" fm-readfailure "$PROJECT" "$CLEAN_WT" /bin/zsh
+deck_record "$READ_HOME" readfailure "$EREAD" false
+endpoint_option "$EREAD" fail_read true
+rc=0
+out=$(orphan "$READ_HOME" --list-orphans 2>&1) || rc=$?
+expect_code 1 "$rc" "an endpoint read failing after a successful hub inventory"
+assert_contains "$out" "the hub could not be read about endpoint $EREAD" "the inventory failure has a plain reason"
+assert_absent "$READ_HOME/state/endpoint-retirements.log" "failed listing writes no assertion"
+was_closed "$EREAD" && fail "failed listing closed an endpoint"
+pass "listing propagates endpoint-read failures"
+
+REG_HOME=$(new_home registry-home)
+EREG=$(new_eid)
+add_endpoint "$EREG" fm-persistent "$PROJECT" "$PROJECT" /bin/zsh
+deck_record "$REG_HOME" persistent "$EREG" false
+printf -- '- persistent - Persistent home\n' > "$REG_HOME/data/secondmates.md"
+rc=0
+out=$(orphan "$REG_HOME" --orphan persistent --endpoint "$EREG" 2>&1) || rc=$?
+expect_code 1 "$rc" "a registered secondmate without metadata"
+assert_contains "$out" "registered secondmate" "a registered home is excluded"
+listed=$(orphan "$REG_HOME" --list-orphans) || fail "listing with a readable registry failed"
+assert_equals "" "$listed" "registered secondmates are not listed"
+chmod 000 "$REG_HOME/data/secondmates.md"
+if [ ! -r "$REG_HOME/data/secondmates.md" ]; then
+  rc=0
+  out=$(orphan "$REG_HOME" --orphan persistent --endpoint "$EREG" 2>&1) || rc=$?
+  expect_code 1 "$rc" "an unreadable secondmate registry"
+  assert_contains "$out" "secondmate registry" "unreadable registry refusal has a plain reason"
+fi
+chmod 600 "$REG_HOME/data/secondmates.md"
+rm "$REG_HOME/data/secondmates.md"
+mkdir "$REG_HOME/data/secondmates.md"
+for mode in close list; do
+  rc=0
+  if [ "$mode" = close ]; then
+    out=$(orphan "$REG_HOME" --orphan persistent --endpoint "$EREG" 2>&1) || rc=$?
+  else
+    out=$(orphan "$REG_HOME" --list-orphans 2>&1) || rc=$?
+  fi
+  expect_code 1 "$rc" "a non-file secondmate registry during $mode"
+  assert_contains "$out" "secondmate registry" "the inspection failure names the registry"
+done
+rmdir "$REG_HOME/data/secondmates.md"
+endpoint_option "$EREG" cwd_hook python3 -c \
+  'import os, sys; os.mkdir(sys.argv[1])' "$REG_HOME/data/secondmates.md"
+rc=0
+out=$(orphan "$REG_HOME" --orphan persistent --endpoint "$EREG" 2>&1) || rc=$?
+expect_code 1 "$rc" "a registry becoming unreadable before the final close check"
+assert_contains "$out" "secondmate registry" "the final check refuses failed registry inspection"
+assert_absent "$REG_HOME/state/endpoint-retirements.log" "registry failures precede assertion logging"
+was_closed "$EREG" && fail "registry inspection failure closed a secondmate"
+rmdir "$REG_HOME/data/secondmates.md"
+printf -- '- another - Another home\n' > "$REG_HOME/data/secondmates.md"
+out=$(orphan "$REG_HOME" --orphan persistent --endpoint "$EREG" 2>&1) \
+  || fail "a successful registry non-match was refused: $out"
+was_closed "$EREG" || fail "a successful registry non-match did not allow retirement"
+pass "registry inspection failures refuse initially and at the final check"
 
 # --- 1. the owned leftover closes -------------------------------------------
 E1=$(new_eid)
@@ -559,6 +648,7 @@ done
 [ "$1" = remote-box ] || exit 91
 [ "$2" = fm-remote-entrypoint.sh ] || exit 92
 shift 2
+cd "$(dirname "$FM_FAKE_REMOTE_ENTRYPOINT")/.." || exit 93
 exec "$FM_FAKE_REMOTE_ENTRYPOINT" "$@"
 SH
 chmod +x "$FAKEBIN/fake-ssh"
