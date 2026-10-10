@@ -1217,11 +1217,12 @@ fm_remote_job_start_linux_worker() { # <remote-root> <account-home>
   FM_REMOTE_JOB_REPAIRED=1
 }
 
-# Every fm-on call runs one ensure, and one ensure re-checks the worker several
-# times (before deciding to replace it, inside the Linux start, and on every
-# readiness probe). Within that one call the expected code identity is hashed
-# once and the state directories are validated and created once; the worker's
-# published identity, pid, and heartbeat are still re-read on every check.
+# Each non-doctor fm-on target runs ensure before staging; its repeated worker
+# checks share one expected code-identity snapshot and one state preparation.
+# Only those inputs are cached: worker identity, pid, and heartbeat reads remain
+# live. Clear the cache on entry and every return, including failure, so later
+# ensures and callers outside ensure (doctor checks, worker, staging) validate
+# afresh. tests/fm-remote-job.test.sh pins the healthy-ensure hash-call bound.
 fm_remote_job_ensure_worker() { # <remote-root> <account-home>
   local rc=0
   FM_REMOTE_JOB_ENSURE_SCOPE=

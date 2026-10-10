@@ -257,10 +257,10 @@ assert_present "$ACTIVE_SIDE_EFFECT" "the active job was interrupted by the conc
 fm_remote_job_reap "$ACCOUNT_HOME" "$JOB_ID" || fail "the active readiness job could not be reaped"
 pass "active jobs keep the worker ready for concurrent requests"
 
-# Every fm-on call runs ensure against an already-healthy worker, so ensure's
-# cost is paid on every remote command. The code identity it compares hashes
-# three files through git; it cannot change during one ensure, so a healthy
-# check should hash it once rather than once per internal re-check.
+# Each non-doctor fm-on target pays ensure's cost before staging, even against
+# an already-healthy worker. Its code-identity snapshot hashes the root path and
+# the library and worker files through git; internal re-checks should reuse that
+# snapshot rather than hash it again.
 GIT_COUNT_LOG="$TMP_ROOT/git-hash-object.log"
 cat > "$ACCOUNT_HOME/.local/bin/git" <<SH
 #!/bin/bash
