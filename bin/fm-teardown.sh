@@ -35,11 +35,12 @@
 # captain's question), and bin/fm-captain-hold.sh answer stays the only act
 # that closes the call.
 # REFUSES if the worktree holds work that has not LANDED, because cleanup
-# hard-resets/removes the worktree and kills its processes. Work has landed when it is
-# reachable from any remote-tracking branch (a fork counts as a remote, so
-# upstream-contribution PRs pushed to a fork satisfy this in any mode), OR - for a
-# normal ship task whose commits are not so reachable - when its PR is merged and
-# GitHub reports a PR head that contains the current local work, or its content is
+# hard-resets/removes the worktree and kills its processes. The committed-content
+# safety check accepts work reachable from any remote-tracking branch (including
+# a fork or gate remote), but that alone does not prove a recorded PR merged:
+# the separate completion-claim gate below must also pass. For a normal ship task
+# whose commits are not so reachable, the content check instead accepts a merged
+# PR whose GitHub-reported head contains the current local work, or content
 # already present in the up-to-date default branch. This recognizes the common
 # squash-merge-then-delete-branch flow, where the branch's own commits live nowhere
 # on a remote yet the change is fully in main.
@@ -56,19 +57,18 @@
 # up a merged PR whose head branch matches the worktree's branch, fetching its head
 # via refs/pull/<n>/head when the branch itself was deleted. So a missing pr= never
 # by itself causes a false refusal of landed work.
-# A gh lookup error falls back to the content check; if that is also inconclusive,
-# teardown refuses rather than risk discarding unlanded work.
+# A gh lookup error during this merged-head discovery falls back to the
+# content-in-default check; if that is also inconclusive, teardown refuses.
+# This fallback never substitutes for the recorded-PR completion-claim gate.
 # Uncommitted changes are never landed.
-# Pushed work is not merged work: a task with a recorded pr= is torn down only
-# once bin/fm-pr-lib.sh's fm_pr_close_verdict confirms the PR merged, or that it
-# closed unmerged and the task's row records "Superseded: <reason>". An open or
-# unreadable PR refuses before anything changes; --force closes the row without
-# the PR link instead, so it never reads as merged.
+# Recorded pr= on any non-secondmate record also requires the completion-claim
+# gate in bin/fm-pr-lib.sh's fm_pr_close_verdict, before destructive cleanup;
+# that comment owns the live-state, supersession, force, and replay rules.
 # local-only projects additionally accept work merged into the local default
 # branch (firstmate performs that merge after configured approval) as a fallback
 # for the common case where there is no remote at all.
-# Scout tasks (kind=scout in meta) carve out of that check: their worktree is
-# declared scratch and the report at data/<task-id>/report.md is the work
+# Scout tasks (kind=scout in meta) carve out of the committed-content check:
+# their worktree is scratch and the report at data/<task-id>/report.md is the work
 # product. Teardown proceeds only once the report exists and the shared
 # unresolved-decision completion gate verifies its captain-held inventory.
 # Before destructive cleanup, teardown validates task check artifacts as
@@ -3027,12 +3027,8 @@ if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
   fi
 fi
 
-# A recorded PR is the completion claim the backlog close carries: closing with
-# it renders the row as merged. Pushed commits pass the landed-work check below
-# while the PR is still open, so the PR's live state is asked first, read-only,
-# before anything is changed (bin/fm-pr-lib.sh's fm_pr_close_verdict owns the
-# rule). --force still authorizes discarding the work, but the row then closes
-# without the PR link, so it never claims a merge that did not happen.
+# Apply bin/fm-pr-lib.sh's completion-claim gate before destructive cleanup:
+# remote reachability in the worktree check below cannot prove a PR merged.
 PR_CLOSE_VERDICT=
 if [ "$KIND" != secondmate ] && [ -n "$PR_URL" ]; then
   pr_task_row=$(fm_backlog_row_show "$DATA" "$ID" --full 2>/dev/null) || pr_task_row=

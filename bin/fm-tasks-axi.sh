@@ -41,11 +41,12 @@
 #   - a markdown `<data>/backlog.md` that is itself a symlink, because the
 #     first write would replace the link with a private copy, exactly the fork
 #     this command exists to prevent. Lifecycle transitions refuse the same file.
-#   - `done`/`close` of a row whose PR (its --pr, else the row's own PR
-#     link) has not merged, because closing it renders the row as merged:
-#     bin/fm-pr-lib.sh's fm_pr_close_verdict owns the rule, and a closed,
-#     unmerged PR passes only without --pr and with a "Superseded: <reason>"
-#     line already on the row.
+#   - `done`/`close` when the row cannot be read, its body cannot be decoded,
+#     or bin/fm-pr-lib.sh's fm_pr_close_verdict refuses the completion claim.
+#     PR resolution uses --pr first, else fm_pr_task_url (row link, then pr=
+#     in ${FM_STATE_OVERRIDE:-$FM_HOME/state}/<id>.meta). A superseded verdict
+#     requires dropping --pr. Confirmed NOT_FOUND passes through so tasks-axi
+#     reports its own missing-task error.
 # Otherwise the exit status is tasks-axi's own.
 set -u
 

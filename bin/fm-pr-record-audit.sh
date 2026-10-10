@@ -10,8 +10,8 @@
 # stdout and never rewrites a record; the owning mate reconciles it:
 #   task <id> is recorded done but PR <url> is open - reconcile
 #   task <id> is recorded done but PR <url> was closed without merging - reconcile
-# A closed, unmerged PR is not flagged when the row records
-# "Superseded: <reason>", the same rule bin/fm-teardown.sh closes by.
+# Mismatch selection uses bin/fm-pr-lib.sh's completion-claim gate, including
+# its decoded-body supersession rule; merged and superseded rows stay silent.
 # A PR whose state cannot be read prints
 #   task <id>: cannot check PR <url> - reconcile by hand
 # on stderr and makes the exit status 2. Otherwise the exit status is 0 with or

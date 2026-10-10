@@ -1099,16 +1099,26 @@ fm_pr_github_checks_not_green() {
 }
 
 # Completion-claim gate for a task whose record names a PR or MR.
-# A recorded PR is what makes a closed task read as merged, so every path that
-# closes such a task as finished asks the forge first, read-only:
+# Supplying --pr on a close makes the task read as merged. A task naming a PR
+# requires a read-only forge check even when the close omits --pr:
 #   merged            -> may close as merged;
-#   closed, unmerged  -> may close only as superseded, and only when the task's
-#                        own text carries a "Superseded: <reason>" line;
+#   closed, unmerged  -> may close only as superseded, and only when the decoded
+#                        task body carries a line beginning "Superseded:" with
+#                        a non-blank reason (titles and inline mentions do not count);
 #   open              -> refused, the task stays in review;
 #   unreadable        -> refused (forge CLI missing, unauthenticated, offline,
 #                        or an unsupported URL), never guessed.
-# bin/fm-teardown.sh and bin/fm-tasks-axi.sh's done gate are the callers, and
+# The gate applies regardless of delivery mode, including local-only records
+# that name a PR. Superseded closes omit --pr so they read as done, not merged.
+# bin/fm-teardown.sh checks before destructive cleanup; its --force discard path
+# never supplies --pr to the close, even when the live verdict is merged.
+# bin/fm-tasks-axi.sh gates done/close, and bin/fm-captain-hold.sh gates its
+# answer and evidence-backed closes. Release is not a close. Session-start
+# replay of an already-staged backlog close and matching retries of an already
+# closed captain answer are not re-gated, so they can finish offline.
 # bin/fm-pr-record-audit.sh reports Done rows that already disagree.
+# Regression coverage: tests/fm-teardown.test.sh and
+# tests/fm-pr-record-audit.test.sh use scratch homes and stubbed forge reads.
 
 # Print merged, open, or closed for <url>; return 1 when the forge cannot say.
 fm_pr_live_state() {  # <url>
@@ -1148,6 +1158,7 @@ fm_pr_task_body() {
     '
 }
 
+# Resolve a row's PR link, else pr= from the supplied owning-home metadata file.
 fm_pr_task_url() {
   local url
   url=$(printf '%s\n' "${1-}" | sed -n 's/^  links: .*pr:\(https:\/\/[^",; ]*\).*/\1/p' | head -1)
@@ -1157,8 +1168,7 @@ fm_pr_task_url() {
   printf '%s' "$url"
 }
 
-# Does <text> record a supersession reason? The line is "Superseded: <reason>"
-# with a non-blank reason, anywhere in the task's own text.
+# Apply the completion-claim gate's marker rule to the decoded task body.
 fm_pr_superseded_recorded() {
   printf '%s\n' "${1-}" | grep -Eq '^Superseded:[[:blank:]]*[^[:space:]]'
 }

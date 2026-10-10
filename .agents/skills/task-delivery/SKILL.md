@@ -64,7 +64,8 @@ Retire a custom check only through `bin/fm-check-unregister.sh <id>` (or `bin/fm
 `AGENTS.md` section 7 records the captain's standing instruction that the mate who created a worker cleans it up once its work is done.
 Run this sweep when a ship lands, when a scout completes, and on every heartbeat, over this home's own direct reports and endpoint-bound leftover records only, never another home's, and never a secondmate, which retires only on an explicit decision.
 
-A worker is finished when its PR merged or its local-only branch landed, or when it is a scout whose report exists and whose `captain-hold-lifecycle` completion gate passes.
+Use [`bin/fm-pr-lib.sh`'s completion-claim gate](../../../bin/fm-pr-lib.sh) to judge a worker with a recorded PR, regardless of delivery mode.
+Without a recorded PR, a worker is finished when its branch landed, or when it is a scout whose report exists and whose `captain-hold-lifecycle` completion gate passes.
 A scout kept alive to host the captain's Lavish loop, or any worker whose work is still under way, is not finished.
 
 For each finished worker:
@@ -81,7 +82,8 @@ Once a worker's decision is held, later sweeps leave it to that decision rather 
 In a secondmate home that decision reaches the captain through the parent channel, as every escalation there does.
 
 On every heartbeat sweep, also run `bin/fm-pr-record-audit.sh` for this home, plus `FM_HOME=<home> bin/fm-pr-record-audit.sh` for each local secondmate home in the main home.
-Each line it prints names a Done row whose PR has not merged: reconcile your own row, and send a secondmate's line to that mate unchanged through `bin/fm-send.sh`; the helper never rewrites a record, and neither does the sweep for another home.
+Its [header](../../../bin/fm-pr-record-audit.sh) owns mismatch selection, diagnostics, and exit status.
+Reconcile your own mismatches, and send a secondmate's mismatch line to that mate unchanged through `bin/fm-send.sh`; neither the helper nor the sweep rewrites another home's records.
 
 ## After teardown
 

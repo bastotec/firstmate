@@ -79,6 +79,11 @@
 # answered captain call. A hold that expired by date (`--until` in the past) is
 # still answerable: the surviving hold annotations, not tasks-axi's live
 # `held:` bit, prove the captain owned it.
+# Before a new close, the shared close_answered path applies bin/fm-pr-lib.sh's
+# completion-claim gate to a PR resolved from the row link or this home's
+# metadata pr=. A refusal preserves the recorded answer for retry without
+# closing the task or removing its card; --release does not close the task.
+# Matching retries of an already-closed answer remain offline finalization.
 #
 # `--defer <condition>` records a conditional answer with mode `deferred`,
 # parks the task in this home with the one-line condition as its hold reason
