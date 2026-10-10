@@ -99,6 +99,53 @@ test_done_gate() {
   pass "fm-tasks-axi.sh done refuses an open, unexplained closed, or unreadable PR and passes merged or superseded"
 }
 
+test_completion_command_forms() {
+  local home out rc verb
+  home=$(make_home completion-noun)
+  printf 'OPEN\n' > "$home/states/1"
+  for verb in "done" close; do
+    add_row "$home" "noun-$verb" in_flight
+    out=$(in_home "$home" "$WRAPPER" task "$verb" "noun-$verb" \
+      --pr https://github.com/example/repo/pull/1 2>&1); rc=$?
+    expect_code 2 "$rc" "task $verb with an open PR"
+    assert_contains "$out" 'is still open' "task $verb bypassed the live-state check"
+    [ "$(row_state "$home" "noun-$verb")" = in_flight ] || fail "task $verb closed an open PR"
+    printf 'MERGED\n' > "$home/states/1"
+    in_home "$home" "$WRAPPER" task "$verb" "noun-$verb" \
+      --pr https://github.com/example/repo/pull/1 >/dev/null 2>&1 || fail "task $verb refused a merged PR"
+    [ "$(row_state "$home" "noun-$verb")" = "done" ] || fail "task $verb did not close a merged PR"
+    printf 'OPEN\n' > "$home/states/1"
+  done
+  pass "optional task noun gates both completion verbs"
+}
+
+test_completion_backend_flags() {
+  local home out rc form id
+  local -a args
+  home=$(make_home completion-backend)
+  printf 'OPEN\n' > "$home/states/1"
+  for form in separated equals after-id repeated; do
+    id="backend-$form"
+    add_row "$home" "$id" in_flight 1
+    case "$form" in
+      separated) args=("done" --backend markdown "$id" --pr https://github.com/example/repo/pull/1) ;;
+      equals) args=(close --backend=markdown "$id") ;;
+      after-id) args=(task "done" "$id" --backend markdown) ;;
+      repeated) args=(task close --backend=unused "$id" --backend markdown) ;;
+    esac
+    out=$(TASKS_AXI_BACKEND=unused in_home "$home" "$WRAPPER" "${args[@]}" 2>&1); rc=$?
+    expect_code 2 "$rc" "$form backend flag with an open PR"
+    assert_contains "$out" 'is still open' "$form backend flag checked the wrong task or backend"
+    [ "$(row_state "$home" "$id")" = in_flight ] || fail "$form backend flag closed an open PR"
+    printf 'MERGED\n' > "$home/states/1"
+    TASKS_AXI_BACKEND=unused in_home "$home" "$WRAPPER" "${args[@]}" >/dev/null 2>&1 \
+      || fail "$form backend flag refused a merged PR"
+    [ "$(row_state "$home" "$id")" = "done" ] || fail "$form backend flag did not close a merged PR"
+    printf 'OPEN\n' > "$home/states/1"
+  done
+  pass "completion reads and mutations use the same effective backend and task ID"
+}
+
 test_metadata_and_read_failure_gates() {
   local home out rc real_tasks state_dir
   home=$(make_home metadata-gate)
@@ -284,6 +331,8 @@ task done-open is recorded done but PR https://github.com/example/repo/pull/1 is
 
 if command -v tasks-axi >/dev/null 2>&1; then
   test_done_gate
+  test_completion_command_forms
+  test_completion_backend_flags
   test_metadata_and_read_failure_gates
   test_supersession_body_boundary
   test_captain_answer_pr_gate

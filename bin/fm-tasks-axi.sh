@@ -115,6 +115,10 @@ for arg in "$@"; do
   esac
 done
 
+if [ "${ARGS[0]:-}" = task ]; then
+  ARGS=("${ARGS[@]:1}")
+fi
+
 command -v tasks-axi >/dev/null 2>&1 || fail "tasks-axi is not on PATH; run bin/fm-bootstrap.sh for the install command"
 
 FM_BACKLOG_TRANSITION_ERROR=
@@ -136,20 +140,24 @@ cd "$FM_BACKLOG_AXI_ROOT" || fail "cannot enter the backlog root $FM_BACKLOG_AXI
 # Refuse a close that would claim a PR merged when it has not.
 done_pr_gate() {
   local id='' pr_flag='' previous='' arg row url body
+  local -a backend_args
+  backend_args=()
   for arg in "${ARGS[@]:1}"; do
     case "$previous" in
       --pr) pr_flag=$arg; previous=''; continue ;;
+      --backend) backend_args=(--backend "$arg"); previous=''; continue ;;
       --report|--note|--keep) previous=''; continue ;;
     esac
     case "$arg" in
       --pr=*) pr_flag=${arg#--pr=} ;;
-      --pr|--report|--note|--keep) previous=$arg ;;
+      --backend=*) backend_args=(--backend "${arg#--backend=}") ;;
+      --pr|--report|--note|--keep|--backend) previous=$arg ;;
       -*) ;;
       *) [ -n "$id" ] || id=$arg ;;
     esac
   done
   [ -n "$id" ] || return 0
-  if ! row=$(tasks-axi show "$id" --full 2>&1); then
+  if ! row=$(tasks-axi show "$id" --full ${backend_args[@]+"${backend_args[@]}"} 2>&1); then
     printf '%s\n' "$row" | grep -qx 'code: NOT_FOUND' && return 0
     fail "refusing to close $id: cannot read the task row"
   fi
