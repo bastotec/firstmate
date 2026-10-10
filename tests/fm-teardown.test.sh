@@ -104,10 +104,19 @@ case "${1:-} ${2:-}" in
 esac
 exit 0
 SH
+  # The recorded PR's live state (fm_pr_live_state's `--json state` read)
+  # answers FM_FAKE_GH_PR_STATE, MERGED by default, so a recorded pr= reads
+  # as merged unless a case says otherwise; an empty value fails the read.
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 case "${1:-} ${2:-}" in
-  "pr view") echo "error: pull request not found" >&2 ; exit 1 ;;
+  "pr view")
+    if [ "${4:-} ${5:-}" = "--json state" ]; then
+      [ -n "${FM_FAKE_GH_PR_STATE-MERGED}" ] || { echo "error: offline" >&2; exit 1; }
+      printf '%s\n' "${FM_FAKE_GH_PR_STATE-MERGED}"
+      exit 0
+    fi
+    echo "error: pull request not found" >&2 ; exit 1 ;;
 esac
 exit 0
 SH
@@ -262,6 +271,7 @@ case "\${1:-} \${2:-}" in
   "pr view")
     case " \$* " in
       *"state,headRefOid,url"*) printf '%s\t%s\t%s\n' 'MERGED' '$head' 'https://github.com/example/repo/pull/7' ; exit 0 ;;
+      *"--json state "*) printf '%s\n' MERGED ; exit 0 ;;
       *"headRefOid"*) printf '%s\n' '$head' ; exit 0 ;;
     esac
     ;;
@@ -633,11 +643,11 @@ run_teardown() {
 # has a row to close. Uses the real tasks-axi (the fixture's default fakebin has
 # no tasks-axi stub, so PATH resolves the installed one).
 seed_backlog_in_flight() {
-  local case_dir=$1 kind=${2:-ship}
+  local case_dir=$1 kind=${2:-ship} title=${3:-teardown fixture task}
   mkdir -p "$case_dir/data"
   printf '%s\n' '# Backlog' '' '## In flight' '' '## Queued' '' '## Done' \
     > "$case_dir/data/backlog.md"
-  tasks-axi add task-x1 "teardown fixture task" --kind "$kind" \
+  tasks-axi add task-x1 "$title" --kind "$kind" \
     --file "$case_dir/data/backlog.md" >/dev/null
   tasks-axi start task-x1 --file "$case_dir/data/backlog.md" >/dev/null
 }
@@ -778,6 +788,224 @@ test_teardown_closes_the_backlog_item_itself() {
   printf '%s\n' "$out" | grep -F 'Run tasks-axi done' >/dev/null \
     && fail "teardown still asked a later turn to close the item it already closed: $out"
   pass "teardown closes its own backlog item before reporting success"
+}
+
+# Pushed work with a recorded PR still open is not finished: the close would
+# render the row as merged. The PR's live state decides before anything changes.
+test_teardown_refuses_unmerged_recorded_pr() {
+  local case_dir rc state
+  for state in OPEN CLOSED ''; do
+    case_dir=$(make_case "pr-gate-${state:-offline}")
+    write_meta "$case_dir" no-mistakes ship
+    printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+    seed_backlog_in_flight "$case_dir"
+    add_logging_treehouse "$case_dir"
+    rc=0
+    FM_FAKE_GH_PR_STATE=$state run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    expect_code 1 "$rc" "pr-gate-${state:-offline}: teardown should refuse a PR that is not merged"
+    assert_grep "REFUSED: task task-x1 is not finished" "$case_dir/stderr" \
+      "pr-gate-${state:-offline}: teardown did not explain the refusal"
+    assert_present "$case_dir/state/task-x1.meta" \
+      "pr-gate-${state:-offline}: teardown removed the task record"
+    assert_absent "$case_dir/treehouse.log" \
+      "pr-gate-${state:-offline}: teardown returned the worktree"
+    [ "$(backlog_row_state "$case_dir")" = in_flight ] \
+      || fail "pr-gate-${state:-offline}: the backlog row left review: $(backlog_row_state "$case_dir")"
+  done
+  assert_grep 'is still open' "$(dirname "$case_dir")/pr-gate-OPEN/stderr" \
+    "pr-gate-OPEN: the refusal did not say the PR is open"
+  assert_grep 'Superseded: <reason>' "$(dirname "$case_dir")/pr-gate-CLOSED/stderr" \
+    "pr-gate-CLOSED: the refusal did not name the supersession line"
+  assert_grep 'cannot read the live state' "$(dirname "$case_dir")/pr-gate-offline/stderr" \
+    "pr-gate-offline: the refusal did not say the state was unreadable"
+  pass "teardown refuses a recorded PR that is open, closed without a reason, or unreadable"
+}
+
+test_teardown_backlog_only_pr_gate() {
+  local case_dir rc state before
+  for state in OPEN CLOSED '' MERGED; do
+    case_dir=$(make_case "row-pr-gate-${state:-offline}")
+    write_meta "$case_dir" no-mistakes ship
+    wt_commit_file "$case_dir" feature.txt 'pushed but not necessarily merged'
+    add_fork_with_pushed_branch "$case_dir"
+    seed_backlog_in_flight "$case_dir"
+    FM_HOME="$case_dir" "$ROOT/bin/fm-tasks-axi.sh" update task-x1 \
+      --pr https://github.com/example/repo/pull/7 >/dev/null \
+      || fail 'could not record the backlog-only PR'
+    assert_no_grep '^pr=' "$case_dir/state/task-x1.meta" 'row-only fixture recorded a metadata PR'
+    add_logging_treehouse "$case_dir"
+    before=$(cksum "$case_dir/state/task-x1.meta" "$case_dir/data/backlog.md" "$case_dir/wt/feature.txt")
+    rc=0
+    FM_FAKE_GH_PR_STATE=$state run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    if [ "$state" = MERGED ]; then
+      expect_code 0 "$rc" 'backlog-only merged PR'
+      assert_absent "$case_dir/state/task-x1.meta" 'merged row-only PR retained metadata'
+      assert_present "$case_dir/treehouse.log" 'merged row-only PR did not return the worktree'
+      [ "$(backlog_row_state "$case_dir")" = "done" ] || fail 'merged row-only PR left the backlog open'
+    else
+      expect_code 1 "$rc" "backlog-only ${state:-offline} PR"
+      assert_grep 'REFUSED: task task-x1 is not finished' "$case_dir/stderr" 'row-only PR refusal was not explained'
+      case "$state" in
+        OPEN) assert_grep 'is still open' "$case_dir/stderr" 'row-only open PR was not checked' ;;
+        CLOSED) assert_grep 'Superseded: <reason>' "$case_dir/stderr" 'row-only closed PR was not checked' ;;
+        '') assert_grep 'cannot read the live state' "$case_dir/stderr" 'row-only offline PR was not checked' ;;
+      esac
+      assert_present "$case_dir/state/task-x1.meta" 'row-only PR refusal removed metadata'
+      assert_absent "$case_dir/treehouse.log" 'row-only PR refusal returned the worktree'
+      assert_equals "$before" \
+        "$(cksum "$case_dir/state/task-x1.meta" "$case_dir/data/backlog.md" "$case_dir/wt/feature.txt")" \
+        'row-only PR refusal changed the records or work'
+      [ "$(backlog_row_state "$case_dir")" = in_flight ] || fail 'row-only PR refusal closed the backlog'
+    fi
+  done
+  pass 'teardown gates backlog-only PRs before cleanup despite remote reachability'
+}
+
+test_teardown_manual_backlog_read_gate() {
+  local case_dir scenario rc before after
+  for scenario in error timeout meta-error open merged not-found no-backlog no-backlog-meta-open; do
+    case_dir=$(make_case "manual-row-$scenario")
+    write_meta "$case_dir" no-mistakes ship
+    wt_commit_file "$case_dir" feature.txt 'pushed work'
+    add_fork_with_pushed_branch "$case_dir"
+    printf '%s\n' manual > "$case_dir/config/backlog-backend"
+    case "$scenario" in
+      no-backlog*) ;;
+      *)
+        seed_backlog_in_flight "$case_dir"
+        tasks-axi update task-x1 --pr https://github.com/example/repo/pull/7 \
+          --file "$case_dir/data/backlog.md" >/dev/null || fail 'could not seed manual row PR'
+        ;;
+    esac
+    case "$scenario" in
+      meta-error|no-backlog-meta-open)
+        printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+        ;;
+    esac
+    case "$scenario" in
+      error|timeout|meta-error|not-found)
+        cat > "$case_dir/fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = show ]; then
+  case "$FM_FAKE_ROW_SCENARIO" in
+    timeout) sleep 5 ;;
+    not-found) printf '%s\n' 'code: NOT_FOUND' ;;
+    *) printf '%s\n' 'error: backend unavailable' ;;
+  esac
+  exit 1
+fi
+exit 0
+SH
+        chmod +x "$case_dir/fakebin/tasks-axi"
+        ;;
+    esac
+    add_logging_treehouse "$case_dir"
+    before=$(cksum "$case_dir/state/task-x1.meta" "$case_dir/wt/feature.txt")
+    if [ -f "$case_dir/data/backlog.md" ]; then
+      before="$before $(cksum "$case_dir/data/backlog.md")"
+    fi
+    rc=0
+    FM_FAKE_ROW_SCENARIO=$scenario FM_BACKLOG_ROW_TIMEOUT_SECS=1 \
+      FM_FAKE_GH_PR_STATE=$({ [ "$scenario" = merged ] || [ "$scenario" = meta-error ]; } && printf MERGED || printf OPEN) \
+      run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    case "$scenario" in
+      merged|not-found|no-backlog)
+        expect_code 0 "$rc" "manual $scenario"
+        assert_absent "$case_dir/state/task-x1.meta" "manual $scenario retained metadata"
+        assert_present "$case_dir/treehouse.log" "manual $scenario did not return the worktree"
+        ;;
+      *)
+        expect_code 1 "$rc" "manual $scenario"
+        case "$scenario" in
+          open|no-backlog-meta-open)
+            assert_grep 'is still open' "$case_dir/stderr" "manual $scenario ignored the PR"
+            ;;
+          *)
+            assert_grep 'cannot read the task row' "$case_dir/stderr" "manual $scenario did not refuse the read failure"
+            ;;
+        esac
+        assert_absent "$case_dir/treehouse.log" "manual $scenario returned the worktree"
+        assert_present "$case_dir/state/task-x1.meta" "manual $scenario removed metadata"
+        after=$(cksum "$case_dir/state/task-x1.meta" "$case_dir/wt/feature.txt")
+        if [ -f "$case_dir/data/backlog.md" ]; then
+          after="$after $(cksum "$case_dir/data/backlog.md")"
+        fi
+        assert_equals "$before" "$after" "manual $scenario changed records or work"
+        ;;
+    esac
+    if [ -f "$case_dir/data/backlog.md" ]; then
+      [ "$(backlog_row_state "$case_dir")" = in_flight ] || fail "manual $scenario mutated the backlog"
+    fi
+  done
+  pass 'manual cleanup refuses unreadable rows but accepts missing rows and backlogs while gating metadata PRs'
+}
+
+test_teardown_local_only_recorded_pr_gate() {
+  local case_dir rc
+  case_dir=$(make_case local-only-pr-open)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" 'landed locally'
+  git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
+  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  seed_backlog_in_flight "$case_dir"
+  add_logging_treehouse "$case_dir"
+  rc=0
+  FM_FAKE_GH_PR_STATE=OPEN run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" 'local-only with a recorded open PR'
+  assert_grep 'is still open' "$case_dir/stderr" 'local-only refusal did not name the open PR'
+  assert_present "$case_dir/state/task-x1.meta" 'local-only PR refusal removed metadata'
+  assert_absent "$case_dir/treehouse.log" 'local-only PR refusal returned the worktree'
+  [ "$(backlog_row_state "$case_dir")" = in_flight ] || fail 'local-only open PR row was closed'
+  pass 'local-only landed branches still require their recorded PR to merge'
+}
+
+test_teardown_title_is_not_supersession() {
+  local case_dir rc
+  case_dir=$(make_case pr-gate-title)
+  write_meta "$case_dir" no-mistakes ship
+  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  seed_backlog_in_flight "$case_dir" ship 'Superseded: require reasons before closing PRs'
+  rc=0
+  FM_FAKE_GH_PR_STATE=CLOSED run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" 'supersession only in the title'
+  assert_present "$case_dir/state/task-x1.meta" 'title-only supersession removed metadata'
+  [ "$(backlog_row_state "$case_dir")" = in_flight ] || fail 'title-only supersession closed the row'
+  pass 'teardown does not treat task titles as supersession declarations'
+}
+
+test_teardown_closes_superseded_pr_without_merged_claim() {
+  local case_dir
+  case_dir=$(make_case pr-gate-superseded)
+  write_meta "$case_dir" no-mistakes ship
+  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  seed_backlog_in_flight "$case_dir"
+  tasks-axi update task-x1 --body "Superseded: replaced by the follow-up PR" \
+    --file "$case_dir/data/backlog.md" >/dev/null
+  FM_FAKE_GH_PR_STATE=CLOSED run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "teardown refused a closed PR the task records as superseded: $(cat "$case_dir/stderr")"
+  [ "$(backlog_row_state "$case_dir")" = "done" ] \
+    || fail "superseded close left the row open: $(backlog_row_state "$case_dir")"
+  assert_grep '(done ' "$case_dir/data/backlog.md" "superseded close did not read as done"
+  assert_no_grep '(merged ' "$case_dir/data/backlog.md" "superseded close claimed a merge"
+  pass "teardown closes a superseded PR as done, never merged"
+}
+
+test_teardown_force_never_claims_unmerged_pr() {
+  local case_dir state
+  for state in OPEN MERGED; do
+    case_dir=$(make_case "pr-gate-force-$state")
+    write_meta "$case_dir" no-mistakes ship
+    printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+    seed_backlog_in_flight "$case_dir"
+    FM_FAKE_GH_PR_STATE=$state run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" \
+      || fail "forced teardown failed: $(cat "$case_dir/stderr")"
+    if [ "$state" = OPEN ]; then
+      assert_grep 'without claiming the PR merged' "$case_dir/stderr" "forced teardown did not warn about the open PR"
+    fi
+    assert_no_grep '(merged ' "$case_dir/data/backlog.md" "forced teardown recorded a $state PR as merged"
+    assert_no_grep 'pull/7' "$case_dir/data/backlog.md" "forced teardown attached the $state PR link"
+  done
+  pass "forced teardown never claims a merge, even when the recorded PR merged"
 }
 
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator() {
@@ -1373,8 +1601,10 @@ test_legacy_record_rolls_the_stamp_back_when_the_marker_write_fails() {
   local case_dir rc before
   case_dir=$(make_case legacy-stamp-rollback)
   write_legacy_meta "$case_dir" no-mistakes ship
-  printf '%s\n' 'pr=not-a-valid-url' >> "$case_dir/state/task-x1.meta"
+  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
   seed_backlog_in_flight "$case_dir"
+  # A directory where the pending-close record goes makes its publication fail.
+  mkdir "$case_dir/state/task-x1.backlog-close"
   wt_commit "$case_dir" "landed legacy work"
   add_fork_with_pushed_branch "$case_dir"
   before=$(cksum "$case_dir/state/task-x1.meta" | awk '{print $1, $2}')
@@ -1426,8 +1656,10 @@ test_retained_legacy_stamp_still_faces_the_endpoint_gate() {
   local case_dir rc stamped
   case_dir=$(make_case legacy-stamp-retained)
   write_legacy_meta "$case_dir" no-mistakes ship
-  printf '%s\n' 'pr=not-a-valid-url' >> "$case_dir/state/task-x1.meta"
+  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
   seed_backlog_in_flight "$case_dir"
+  # A directory where the pending-close record goes makes its publication fail.
+  mkdir "$case_dir/state/task-x1.backlog-close"
   wt_commit "$case_dir" "landed legacy work"
   add_fork_with_pushed_branch "$case_dir"
   add_failing_truncate_perl "$case_dir"
@@ -3200,6 +3432,13 @@ test_local_only_fork_remote_allows
 test_wake_gate_retirement_refuses_a_symlinked_parent
 test_wake_gate_retirement_requires_python_only_for_existing_state
 test_teardown_closes_the_backlog_item_itself
+test_teardown_refuses_unmerged_recorded_pr
+test_teardown_backlog_only_pr_gate
+test_teardown_manual_backlog_read_gate
+test_teardown_local_only_recorded_pr_gate
+test_teardown_title_is_not_supersession
+test_teardown_closes_superseded_pr_without_merged_claim
+test_teardown_force_never_claims_unmerged_pr
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator
 test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows

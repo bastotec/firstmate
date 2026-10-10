@@ -41,9 +41,9 @@
 # with no `.tasks.toml` gets tasks-axi's built-in defaults.
 # bin/fm-tasks-axi-lib.sh owns backend precedence and configuration failures.
 #
-# CRASH RECOVERY. Only teardown needs a durable record: it removes the meta and
-# with it the completion links, so a process killed between the two halves would
-# leave nothing to reconstruct the close from. It writes
+# CRASH RECOVERY. Only teardown needs a durable record: it removes the meta,
+# and surviving row links alone cannot reconstruct the completion arguments
+# permitted by bin/fm-pr-lib.sh's completion-claim gate. It writes
 # `state/<id>.backlog-close` first, and removes it once the close lands.
 # The writer and replay share one complete-record validator, and teardown stages
 # that record before destructive cleanup, so it never publishes or acts on a close

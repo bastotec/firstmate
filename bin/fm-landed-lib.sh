@@ -17,12 +17,13 @@
 # Done captain-hold row is not a delivery. A scout's recorded report is its
 # delivery regardless of release state or other links in its title.
 #
-# The distinction that decides the section is delivery: Recently Landed is
-# merged PRs, completed scouts, and finished local-only merges. A closed row
-# whose artifact matches its merged or done completion verb is a delivery only
-# when it retains no captain-question provenance. A retained scout is identified
-# by its kind and recorded report because its title links do not change what it
-# delivers. A captain question remains kind captain when it closes, so it is
+# The selector uses recorded delivery artifacts and completion verbs, not a
+# live forge check. bin/fm-pr-lib.sh's completion-claim gate owns the PR-link
+# rendering limitation; Recently Landed alone is not proof that a PR merged.
+# A closed row whose artifact matches its merged or done completion verb is
+# selected only when it retains no captain-question provenance. A retained scout
+# is identified by its kind and recorded report because its title links do not
+# change what it delivers. A captain question remains kind captain when it closes, so it is
 # never rendered as shipped work even when its text names an artifact.
 # A local-only completion is a delivery whether or not its row carries a kind.
 # The retained hold-kind alone keeps answered calls out of the section.

@@ -7,9 +7,9 @@
 # clone for PR-based ship tasks.
 # Removing state/<id>.meta and landing the backlog transition are one step, not
 # two: bin/fm-backlog-transition-lib.sh owns that invariant, and both halves run
-# under the task's own meta lock before this script reports success. Because the
-# completion links (the PR, the report path, a local-main note) live only in the
-# record being removed, the intended transition is recorded in
+# under the task's own meta lock before this script reports success. The
+# intended completion arguments (the PR, report path, or local-main note)
+# must survive removal of the record, so the transition is recorded in
 # state/<id>.backlog-close first, so a process killed between the halves leaves
 # the next session start enough to finish it; a landed close removes that record.
 # A close that fails is fatal and loud, preserves its pending-close record, and
@@ -35,11 +35,12 @@
 # captain's question), and bin/fm-captain-hold.sh answer stays the only act
 # that closes the call.
 # REFUSES if the worktree holds work that has not LANDED, because cleanup
-# hard-resets/removes the worktree and kills its processes. Work has landed when it is
-# reachable from any remote-tracking branch (a fork counts as a remote, so
-# upstream-contribution PRs pushed to a fork satisfy this in any mode), OR - for a
-# normal ship task whose commits are not so reachable - when its PR is merged and
-# GitHub reports a PR head that contains the current local work, or its content is
+# hard-resets/removes the worktree and kills its processes. The committed-content
+# safety check accepts work reachable from any remote-tracking branch (including
+# a fork or gate remote), but that alone does not prove a recorded PR merged:
+# the separate completion-claim gate below must also pass. For a normal ship task
+# whose commits are not so reachable, the content check instead accepts a merged
+# PR whose GitHub-reported head contains the current local work, or content
 # already present in the up-to-date default branch. This recognizes the common
 # squash-merge-then-delete-branch flow, where the branch's own commits live nowhere
 # on a remote yet the change is fully in main.
@@ -50,20 +51,30 @@
 # accepting unlanded edits to the same paths. Teardown still accepts a merged PR
 # whose head contains the current local work (ancestor or equivalent patch ids),
 # or a clean content-in-default tree match. Anything else refuses.
-# The PR itself is resolved from the task's recorded pr= when present, or - when
-# no pr= was ever recorded (e.g. a yolo-authorized merge on a repo with no PR CI,
-# where the usual "checks green" fm-pr-check.sh trigger never fires) - by looking
-# up a merged PR whose head branch matches the worktree's branch, fetching its head
-# via refs/pull/<n>/head when the branch itself was deleted. So a missing pr= never
-# by itself causes a false refusal of landed work.
-# A gh lookup error falls back to the content check; if that is also inconclusive,
-# teardown refuses rather than risk discarding unlanded work.
+# The PR itself is resolved from the task's recorded pr= when present, else its
+# backlog row's PR link through bin/fm-pr-lib.sh's fm_pr_task_url. For every
+# non-secondmate task, a row read that errors or times out refuses non-forced
+# cleanup, including on manual-backend homes and when metadata already names
+# a PR. A confirmed NOT_FOUND or an absent configured markdown backlog permits
+# proceeding on metadata pr= alone; neither bypasses the gate for that PR.
+# Regression coverage: tests/fm-teardown.test.sh's manual-backlog read cases.
+# Without either PR record (e.g. a yolo-authorized merge where no PR was
+# registered), merged-head discovery looks up a merged PR whose head branch
+# matches the worktree's branch,
+# fetching its head via refs/pull/<n>/head when the branch itself was deleted.
+# Missing recorded PR evidence alone never causes a false refusal of landed work.
+# A gh lookup error during this merged-head discovery falls back to the
+# content-in-default check; if that is also inconclusive, teardown refuses.
+# This fallback never substitutes for the recorded-PR completion-claim gate.
 # Uncommitted changes are never landed.
+# A recorded PR on any non-secondmate task also requires the completion-claim
+# gate in bin/fm-pr-lib.sh's fm_pr_close_verdict, before destructive cleanup;
+# that comment owns the live-state, supersession, force, and replay rules.
 # local-only projects additionally accept work merged into the local default
 # branch (firstmate performs that merge after configured approval) as a fallback
 # for the common case where there is no remote at all.
-# Scout tasks (kind=scout in meta) carve out of that check: their worktree is
-# declared scratch and the report at data/<task-id>/report.md is the work
+# Scout tasks (kind=scout in meta) carve out of the committed-content check:
+# their worktree is scratch and the report at data/<task-id>/report.md is the work
 # product. Teardown proceeds only once the report exists and the shared
 # unresolved-decision completion gate verifies its captain-held inventory.
 # Before destructive cleanup, teardown validates task check artifacts as
@@ -1281,11 +1292,12 @@ $unpushed
 EOF
 }
 
-# Is the worktree's PR merged for local work contained in that PR? Resolves the
-# PR from the recorded pr= URL first, then from the branch name, and asks GitHub
-# for both the PR state and head. Returns non-zero when the PR is not merged, the
-# current work is not contained in the PR head, no PR is found, or any gh error
-# occurs - the caller then falls back to the content check.
+# Is the worktree's PR merged for local work contained in that PR? Uses PR_URL
+# resolved from metadata or the backlog row, else discovers the PR by branch
+# name, and asks GitHub for both state and head. Returns non-zero when the PR
+# is not merged, the current work is not contained in the PR head, no PR is
+# found, or any gh error occurs. The caller's content-check fallback proves
+# only content safety; it never replaces the completion-claim gate above.
 pr_is_merged() {
   local branch=$1 target view state remainder head resolved_url current landed=0
   if [ -n "$PR_URL" ]; then
@@ -1357,9 +1369,9 @@ work_is_landed() {
   content_in_default
 }
 
-# The completion links this teardown already holds locally. A scout's
-# deliverable is its report, a local-only ship lands on local main, and every
-# other ship carries the PR recorded on its own record.
+# Stage only the completion arguments permitted by the header's content and
+# completion-claim gates, so offline replay cannot add evidence that cleanup
+# did not authorize.
 BACKLOG_DONE_ARGS=()
 backlog_done_args() {
   local data_relative
@@ -1372,7 +1384,7 @@ backlog_done_args() {
     *)
       if [ "$MODE" = local-only ]; then
         BACKLOG_DONE_ARGS=(--note "local main")
-      elif [ -n "$PR_URL" ]; then
+      elif [ "$FORCE" != --force ] && [ -n "$PR_URL" ] && { [ -z "$PR_CLOSE_VERDICT" ] || [ "$PR_CLOSE_VERDICT" = merged ]; }; then
         BACKLOG_DONE_ARGS=(--pr "$PR_URL")
       fi
       ;;
@@ -3018,6 +3030,39 @@ if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
       FM_CONFIG_OVERRIDE="$CONFIG" "$SCRIPT_DIR/fm-captain-hold.sh" verify "$ID" >/dev/null; then
     echo "REFUSED: scout task $ID has not passed the captain-call completion gate." >&2
     echo "Inventory its report and any visual review through bin/fm-captain-hold.sh before teardown." >&2
+    exit 1
+  fi
+fi
+
+# Apply bin/fm-pr-lib.sh's completion-claim gate before destructive cleanup:
+# remote reachability in the worktree check below cannot prove a PR merged.
+PR_CLOSE_VERDICT=
+pr_task_row=
+if [ "$KIND" != secondmate ]; then
+  if fm_backlog_tasks_axi_addressing "$DATA" \
+      && [ -n "$FM_BACKLOG_AXI_FILE" ] \
+      && [ ! -e "$FM_BACKLOG_AXI_FILE" ] && [ ! -L "$FM_BACKLOG_AXI_FILE" ]; then
+    pr_task_row=
+  elif ! pr_task_row=$(fm_backlog_row_show "$DATA" "$ID" --full 2>/dev/null); then
+    if [ "$FORCE" != "--force" ] \
+        && ! printf '%s\n' "$pr_task_row" | grep -qx 'code: NOT_FOUND'; then
+      echo "REFUSED: task $ID is not finished: cannot read the task row to resolve its PR." >&2
+      exit 1
+    fi
+    pr_task_row=
+  fi
+  [ -n "$PR_URL" ] || PR_URL=$(fm_pr_task_url "$pr_task_row" "$META")
+fi
+if [ "$KIND" != secondmate ] && [ -n "$PR_URL" ]; then
+  pr_task_body=$(fm_pr_task_body "$pr_task_row" 2>/dev/null) || pr_task_body=
+  if fm_pr_close_verdict "$PR_URL" "$pr_task_body"; then
+    PR_CLOSE_VERDICT=$FM_PR_CLOSE_VERDICT
+  elif [ "$FORCE" = "--force" ]; then
+    PR_CLOSE_VERDICT=unmerged
+    echo "warning: $FM_PR_CLOSE_REFUSAL; --force discards the work and closes $ID without claiming the PR merged." >&2
+  else
+    echo "REFUSED: task $ID is not finished: $FM_PR_CLOSE_REFUSAL." >&2
+    echo "Nothing was changed. Land the PR, or record why it was superseded once it is closed, then retry." >&2
     exit 1
   fi
 fi

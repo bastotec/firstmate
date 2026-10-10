@@ -1086,6 +1086,8 @@ test_secondmate_teardown_rejects_nul_bearing_durable_parent_record() {
 test_relay_disabled_unmarked_teardown_skips_public_path() {
   local home tasks_log out rc
   home=$(make_home teardown-disabled-unmarked relay-off)
+  # No backlog means no PR-row lookup; the disabled relay must add no work.
+  rm "$home/data/backlog.md"
   fm_git_init_commit "$home/projects/worktree"
   tasks_log="$home/tasks-axi.log"; : > "$tasks_log"
   printf 'manual\n' > "$home/config/backlog-backend"
@@ -1118,6 +1120,8 @@ test_relay_disabled_parent_allows_marked_child_teardown() {
   local parent child tasks_log out rc
   parent=$(make_home teardown-disabled-parent relay-off)
   child=$(make_home teardown-disabled-child relay-off)
+  # Keep this no-public-work fixture free of the independent PR-row lookup.
+  rm "$child/data/backlog.md"
   fm_git_init_commit "$child/projects/worktree"
   printf '%s\n' disabled-mate > "$child/.fm-secondmate-home"
   printf -- '- disabled-mate - synthetic (home: %s; scope: synthetic; projects: ; added 2026-07-30)\n' \

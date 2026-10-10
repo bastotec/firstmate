@@ -1097,3 +1097,123 @@ fm_pr_github_checks_not_green() {
     | if . == "" then "(unnamed check)" else . end
   ' 2>/dev/null || return 1
 }
+
+# Completion-claim gate for a task whose record names a PR or MR.
+# A task naming a PR requires a read-only forge check (GitHub via gh, GitLab
+# via glab) even when the close omits --pr:
+#   merged            -> may close as merged;
+#   closed, unmerged  -> may close only as superseded, and only when the decoded
+#                        task body carries a line beginning "Superseded:" with
+#                        a non-blank reason (titles and inline mentions do not count);
+#   open              -> refused, the task stays in review;
+#   unreadable        -> refused (forge CLI missing, unauthenticated, offline,
+#                        or an unsupported URL), never guessed.
+# The gate applies regardless of delivery mode, including local-only records
+# that name a PR. Superseded closes omit --pr.
+# bin/fm-teardown.sh checks before destructive cleanup; its --force discard path
+# never supplies --pr to the close, even when the live verdict is merged.
+# Omitting --pr avoids adding merge evidence but does not remove an existing
+# row link: tasks-axi still renders a PR-bearing Done row as "(merged DATE)".
+# That upstream rendering is not proof of a merge; use the live-state audit.
+# bin/fm-tasks-axi.sh gates done/close, and bin/fm-captain-hold.sh gates its
+# answer and evidence-backed closes. Release is not a close. Session-start
+# replay of an already-staged backlog close and matching retries of an already
+# closed captain answer are not re-gated, so they can finish offline.
+# bin/fm-pr-record-audit.sh reports Done rows that already disagree.
+# Regression coverage: tests/fm-teardown.test.sh and
+# tests/fm-pr-record-audit.test.sh use scratch homes and stubbed forge reads.
+
+# Print merged, open, or closed for <url>; return 1 when the forge cannot say.
+fm_pr_live_state() {  # <url>
+  local raw state=
+  fm_pr_url_parse "${1-}" || return 1
+  case "$FM_PR_PROVIDER" in
+    github)
+      command -v gh >/dev/null 2>&1 || return 1
+      state=$(gh pr view "$FM_PR_URL" --json state -q .state 2>/dev/null) || return 1
+      ;;
+    gitlab)
+      command -v glab >/dev/null 2>&1 || return 1
+      raw=$(glab mr view "$FM_PR_NUMBER" -R "https://$FM_PR_HOST/$FM_PR_PATH" 2>/dev/null) || return 1
+      state=$(printf '%s\n' "$raw" | sed -n 's/^state:[[:space:]]*//p' | head -1)
+      ;;
+    *) return 1 ;;
+  esac
+  case "$state" in
+    MERGED|merged) printf '%s\n' merged ;;
+    OPEN|open|opened|locked) printf '%s\n' open ;;
+    CLOSED|closed) printf '%s\n' closed ;;
+    *) return 1 ;;
+  esac
+}
+
+fm_pr_task_body() {
+  printf '%s\n' "${1-}" | sed -n 's/^  body: //p' | head -1 \
+    | perl -MJSON::PP -e '
+      local $/;
+      my $shown = <STDIN> // "";
+      chomp $shown;
+      my $body = $shown =~ /^"/
+        ? JSON::PP->new->utf8->allow_nonref->decode($shown) : $shown;
+      binmode STDOUT, ":raw";
+      utf8::encode($body) if utf8::is_utf8($body);
+      print $body;
+    '
+}
+
+# Resolve a row's PR link, else pr= from the supplied owning-home metadata file.
+fm_pr_task_url() {
+  local url
+  url=$(printf '%s\n' "${1-}" | sed -n 's/^  links: .*pr:\(https:\/\/[^",; ]*\).*/\1/p' | head -1)
+  if [ -z "$url" ] && [ -f "${2-}" ]; then
+    url=$(grep '^pr=' "$2" | tail -1 | cut -d= -f2-)
+  fi
+  printf '%s' "$url"
+}
+
+# Apply the completion-claim gate's marker rule to the decoded task body.
+fm_pr_superseded_recorded() {
+  printf '%s\n' "${1-}" | grep -Eq '^Superseded:[[:blank:]]*[^[:space:]]'
+}
+
+# Decide whether a task naming <url> may close as finished. Sets
+# FM_PR_CLOSE_STATE to the live state (empty when unreadable) and
+# FM_PR_CLOSE_VERDICT to merged or superseded on success; on refusal sets
+# FM_PR_CLOSE_REFUSAL to one plain sentence and returns 1. <task-text> must be
+# the decoded task body, consulted only for a closed, unmerged PR.
+# The results are read by the sourcing callers named above.
+# shellcheck disable=SC2034
+FM_PR_CLOSE_STATE=
+# shellcheck disable=SC2034
+FM_PR_CLOSE_VERDICT=
+# shellcheck disable=SC2034
+FM_PR_CLOSE_REFUSAL=
+# shellcheck disable=SC2034
+fm_pr_close_verdict() {  # <url> [task-text]
+  local url=${1-} text=${2-} state
+  FM_PR_CLOSE_STATE=
+  FM_PR_CLOSE_VERDICT=
+  FM_PR_CLOSE_REFUSAL=
+  if ! state=$(fm_pr_live_state "$url"); then
+    FM_PR_CLOSE_REFUSAL="cannot read the live state of $url (forge CLI missing, not authenticated, unreachable, or an unsupported URL), so whether it merged is unknown"
+    return 1
+  fi
+  FM_PR_CLOSE_STATE=$state
+  case "$state" in
+    merged)
+      FM_PR_CLOSE_VERDICT=merged
+      ;;
+    open)
+      FM_PR_CLOSE_REFUSAL="$url is still open; the task stays in review until it merges"
+      return 1
+      ;;
+    closed)
+      if fm_pr_superseded_recorded "$text"; then
+        FM_PR_CLOSE_VERDICT=superseded
+      else
+        FM_PR_CLOSE_REFUSAL="$url was closed without merging; record a \"Superseded: <reason>\" line on the task before closing it as superseded"
+        return 1
+      fi
+      ;;
+  esac
+}
