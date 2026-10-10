@@ -197,6 +197,60 @@ test_captain_answer_pr_gate() {
   pass "captain answers gate metadata and row PRs while closed replays remain offline"
 }
 
+test_audit_metadata_only_prs() {
+  local home out rc before real_tasks id mode state_dir
+  home=$(make_home audit-metadata)
+  printf 'OPEN\n' > "$home/states/1"
+  printf 'MERGED\n' > "$home/states/2"
+  printf 'CLOSED\n' > "$home/states/3"
+  add_row "$home" metadata-open done
+  add_row "$home" metadata-merged done
+  add_row "$home" metadata-superseded done '' 'Superseded: replaced by another change'
+  add_row "$home" row-first done 2
+  add_row "$home" review-metadata in_flight
+  add_row "$home" no-pr done
+  for id in metadata-open row-first review-metadata; do
+    printf 'pr=https://github.com/example/repo/pull/1\n' > "$home/state/$id.meta"
+  done
+  printf 'pr=https://github.com/example/repo/pull/2\n' > "$home/state/metadata-merged.meta"
+  printf 'pr=https://github.com/example/repo/pull/3\n' > "$home/state/metadata-superseded.meta"
+  real_tasks=$(command -v tasks-axi)
+  cat > "$home/fakebin/tasks-axi" <<SH
+#!/usr/bin/env bash
+case "\${1:-}" in
+  list) echo list >> "$home/reads" ;;
+  show) echo "show:\${2:-}" >> "$home/reads" ;;
+  add|update|start|done|close) echo mutation >> "$home/reads" ;;
+esac
+exec "$real_tasks" "\$@"
+SH
+  chmod +x "$home/fakebin/tasks-axi"
+  for mode in default override; do
+    state_dir="$home/state"
+    if [ "$mode" = override ]; then
+      state_dir="$home/alternate-state"
+      mkdir -p "$state_dir"
+      mv "$home/state/"*.meta "$state_dir/"
+    fi
+    before=$(cksum "$home/data/backlog.md" "$state_dir/"*.meta)
+    : > "$home/reads"
+    if [ "$mode" = override ]; then
+      out=$(FM_STATE_OVERRIDE="$state_dir" in_home "$home" "$AUDIT" 2>"$home/stderr"); rc=$?
+    else
+      out=$(in_home "$home" "$AUDIT" 2>"$home/stderr"); rc=$?
+    fi
+    expect_code 0 "$rc" "audit metadata-only PRs ($mode)"
+    assert_equals 'task metadata-open is recorded done but PR https://github.com/example/repo/pull/1 is open - reconcile' \
+      "$out" "audit missed a metadata-only PR or ignored row-link precedence ($mode)"
+    assert_equals 'list
+show:metadata-superseded' "$(cat "$home/reads")" \
+      "audit read more than one listing or showed a row not needing supersession evidence ($mode)"
+    assert_equals "$before" "$(cksum "$home/data/backlog.md" "$state_dir/"*.meta)" \
+      "audit rewrote backlog or metadata records ($mode)"
+  done
+  pass "audit finds metadata-only Done PRs with one listing and only necessary body reads"
+}
+
 test_audit_flags_mismatches_read_only() {
   local home out rc before
   home=$(make_home audit)
@@ -233,6 +287,7 @@ if command -v tasks-axi >/dev/null 2>&1; then
   test_metadata_and_read_failure_gates
   test_supersession_body_boundary
   test_captain_answer_pr_gate
+  test_audit_metadata_only_prs
   test_audit_flags_mismatches_read_only
 else
   echo "skip: tasks-axi not found; PR completion-claim cases not run"
