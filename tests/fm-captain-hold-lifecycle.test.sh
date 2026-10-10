@@ -85,11 +85,11 @@ tasks_in() {  # <home> <tasks-axi args...>
 
 # interrupt_cleanup_after_the_endpoint_gate <home>
 # Fail the retain transition's first row mutation exactly once, leaving
-# "<home>/retain-interrupted" behind as proof it fired. Cleanup then stops AFTER
-# its endpoint gate has proved the worker stopped, which is the interruption
-# session start replays: a cleanup that fails BEFORE that gate keeps its pending
-# close stamped with the unproved stop and is held for a rerun instead
-# (docs/captain-hold-lifecycle.md).
+# "<home>/retain-interrupted" behind as proof it fired. Cleanup then stops
+# inside the final transition, after its endpoint and every refusal-capable
+# cleanup gate have passed and the marker has become replayable. An
+# interruption at any earlier gate keeps the conservative unfinished-teardown
+# hold for a rerun instead (docs/captain-hold-lifecycle.md).
 interrupt_cleanup_after_the_endpoint_gate() {  # <home>
   local home=$1
   [ -n "$TASKS_AXI_BIN" ] || fail "the interrupted-cleanup fixture needs tasks-axi"
@@ -2883,13 +2883,14 @@ test_retained_row_artifacts_survive_captain_answers() {
 }
 
 # Retention happens after destructive cleanup, through the same pending record
-# an ordinary close stages first. A cleanup that fails part-way therefore leaves
-# the row exactly as it was, and the next session start finishes the retention
-# instead of closing the captain's question.
-# The interruption is staged AFTER the endpoint gate, at the retain transition's
-# own first row mutation: that is the interruption session start replays. A
-# cleanup that fails BEFORE that gate keeps its pending close stamped with the
-# unproved stop and is held for a rerun instead (docs/captain-hold-lifecycle.md).
+# an ordinary close stages first. A failure inside the final retention
+# transition therefore leaves the row exactly as it was, and the next session
+# start finishes the retention instead of closing the captain's question.
+# The interruption is staged inside the retain transition, after the endpoint
+# and every refusal-capable cleanup gate have passed and the marker has become
+# replayable. An interruption at any earlier gate keeps the conservative
+# unfinished-teardown hold for a rerun instead
+# (docs/captain-hold-lifecycle.md).
 test_interrupted_cleanup_keeps_the_captain_call_recoverable() {
   local home id wt show rc bootstrap
   home=$(make_home teardown-held-interrupted)
