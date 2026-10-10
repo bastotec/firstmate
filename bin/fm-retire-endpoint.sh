@@ -31,6 +31,10 @@
 # A stream record therefore still requires an operator inspecting that machine
 # to assert it is stopped; --finished never accepts a stream record.
 # This command records the assertion's author and time before removing any record.
+#
+# --orphan and --list-orphans handle the opposite leftover: a live stream
+# endpoint whose task record is already gone. bin/fm-retire-orphan-lib.sh's
+# header owns that contract.
 # docs/stream-backend.md owns the operator-facing retirement contract.
 #
 # Retiring a record is RECORD bookkeeping and nothing else. Cleanup runs first,
@@ -61,6 +65,10 @@ FM_HOME="${FM_HOME:-$FM_ROOT}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+if [ "$#" -eq 1 ] && [ "$1" = --list-orphans ] \
+  && [ -n "$FM_HOME_EXPLICIT" ] && [ ! -d "$STATE" ]; then
+  exit 0
+fi
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-pr-lib.sh
@@ -76,6 +84,8 @@ usage() {
   cat <<'EOF'
 usage: fm-retire-endpoint.sh <task-id> [<task-id>...]
        FM_HOME=<owning-home> fm-retire-endpoint.sh --finished <task-id> [<task-id>...]
+       FM_HOME=<owning-home> fm-retire-endpoint.sh --orphan <task-id> [--endpoint <endpoint-id>]
+       FM_HOME=<owning-home> fm-retire-endpoint.sh --list-orphans
 
 Retires the durable records - the task record and its backlog row - of tasks
 whose runtime endpoint no backend can answer for, after you confirm the ids by
@@ -151,6 +161,25 @@ report still leaves open retires nothing. Cleanup stops every process under
 the worktree before it reaches the endpoint, which is what stands behind the
 stop this asserts. The log line carries basis=finished-work. Anything refused
 here is the captain's decision.
+
+--orphan: close one live stream endpoint whose task record in this home is
+already gone. It needs an explicit FM_HOME and asks for no typed confirmation.
+Ownership needs this home's state/<id>.inbox/deck-<endpoint-id>/ record plus
+label fm-<id>; a label or local process match alone is never enough.
+bin/fm-retire-orphan-lib.sh's header owns the full eligibility checks and the
+remaining check-to-kill race. Refusals are the captain's decision.
+Task files, worktrees, branches and backlog rows remain untouched; the command
+writes its assertion log and locking records.
+
+--endpoint pins the hub endpoint id when the caller already knows it.
+From another machine's home, run it through
+bin/fm-on.sh <secondmate> fm-retire-endpoint.sh --orphan <task-id>, which sets
+that home's FM_HOME.
+
+--list-orphans: read-only. Prints "<task-id><TAB><endpoint-id>" for each
+record-less endpoint proved this home's and still live on the hub.
+This checks ownership, not idle state or worktrees; listing is not permission
+to close. --orphan performs the full eligibility checks.
 EOF
 }
 
@@ -161,7 +190,12 @@ refuse() {
 
 IDS=()
 FINISHED=0
-for arg in "$@"; do
+ORPHAN=0
+LIST_ORPHANS=0
+ORPHAN_ENDPOINT=
+while [ "$#" -gt 0 ]; do
+  arg=$1
+  shift
   case "$arg" in
     -h|--help)
       usage
@@ -169,6 +203,20 @@ for arg in "$@"; do
       ;;
     --finished)
       FINISHED=1
+      ;;
+    --orphan)
+      ORPHAN=1
+      ;;
+    --list-orphans)
+      LIST_ORPHANS=1
+      ;;
+    --endpoint)
+      [ "$#" -gt 0 ] || refuse "--endpoint needs a hub endpoint id"
+      ORPHAN_ENDPOINT=$1
+      shift
+      case "$ORPHAN_ENDPOINT" in
+        ''|*[!0-9a-f]*) refuse "invalid endpoint id '$ORPHAN_ENDPOINT' (expected the hub's lowercase hex id)" ;;
+      esac
       ;;
     *[][*?]*)
       refuse "refusing '$arg': name each task id exactly - a wildcard or all-records form cannot say which workers you inspected"
@@ -182,6 +230,28 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+if [ "$ORPHAN" = 1 ] || [ "$LIST_ORPHANS" = 1 ]; then
+  [ "$FINISHED" = 0 ] || refuse "--finished retires task records; --orphan and --list-orphans close endpoints that have none - use one mode"
+  [ "$ORPHAN" = 0 ] || [ "$LIST_ORPHANS" = 0 ] || refuse "use --orphan or --list-orphans, not both"
+  [ -n "$FM_HOME_EXPLICIT" ] \
+    || refuse "--orphan and --list-orphans need an explicit FM_HOME naming the home whose leftover endpoints these are"
+  # shellcheck source=bin/fm-retire-orphan-lib.sh
+  . "$SCRIPT_DIR/fm-retire-orphan-lib.sh"
+  if [ "$LIST_ORPHANS" = 1 ]; then
+    [ "${#IDS[@]}" -eq 0 ] && [ -z "$ORPHAN_ENDPOINT" ] \
+      || refuse "--list-orphans takes no task id or endpoint"
+    orphan_list
+    exit $?
+  fi
+  [ "${#IDS[@]}" -eq 1 ] || refuse "--orphan closes one task's leftover endpoint at a time; name exactly one task id"
+  # shellcheck source=bin/fm-gate-refuse-lib.sh
+  . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
+  fm_refuse_if_gate_agent
+  orphan_close "${IDS[0]}" "$ORPHAN_ENDPOINT"
+  exit $?
+fi
+[ -z "$ORPHAN_ENDPOINT" ] || refuse "--endpoint is only for --orphan"
 
 [ "${#IDS[@]}" -gt 0 ] || {
   usage >&2
