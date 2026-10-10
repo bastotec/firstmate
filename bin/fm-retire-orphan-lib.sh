@@ -22,7 +22,10 @@
 #      is gone (only a shell, or the agent reported the exit), or the harness
 #      is alive but its Deck turn record says no turn is active and the task
 #      inbox holds no unhandled message. A stale, unreadable or ambiguous
-#      reading is refused.
+#      reading is refused. The final reading holds the Deck lifecycle lock,
+#      but releases it immediately before the kill so the agent can persist
+#      and acknowledge the result. A turn can still start in that narrow
+#      unlocked window; this check and close are not an atomic transition.
 #   4. No unlanded work: the endpoint's live working directory must be
 #      readable. If it is a linked worktree, and for every worktree of the
 #      registered project whose Treehouse slot claim names <id>, there must be
@@ -302,7 +305,11 @@ orphan_check_worktrees() {  # <id> <target>
       [ -d "$wt" ] && [ -r "$wt" ] && [ -x "$wt" ] \
         || refuse "associated worktree $wt cannot be inspected for slot claims; nothing was closed"
       fm_treehouse_slot_owner_state "$wt" "$id"
-      [ "$FM_TREEHOUSE_SLOT_OWNER" = mine ] || continue
+      case "$FM_TREEHOUSE_SLOT_OWNER" in
+        mine) ;;
+        absent|other) continue ;;
+        *) refuse "the slot ownership claim for worktree $wt cannot be read safely, so its association with $id is unprovable; nothing was closed" ;;
+      esac
       case ",$ORPHAN_WORKTREES," in *",$wt,"*|*",$wt(finished-scout-scratch),"*) continue ;; esac
       orphan_judge_worktree "$id" "$wt" "its slot claim names $id"
     done <<< "$inventory"
@@ -337,10 +344,10 @@ try:
 ''' + sys.argv[3] + '''
 fm_backend_source stream || exit 1
 refuse() { echo "error: $1" >&2; exit 1; }
-orphan_close_locked "$1" "$2"
+orphan_close_locked "$1" "$2" "$3"
 '''
         result = subprocess.run(['bash', '-euo', 'pipefail', '-c', command,
-                                 'orphan-close', *sys.argv[4:]],
+                                 'orphan-close', *sys.argv[4:], str(lock.fileno())],
                                 pass_fds=(lock.fileno(),))
         sys.exit(result.returncode if result.returncode >= 0 else 1)
 except OSError as error:
@@ -368,6 +375,7 @@ orphan_close_locked() {
     "$(printf '%s' "$ORPHAN_EVIDENCE" | orphan_clean)" "$ORPHAN_AGENT" \
     "$(printf '%s' "${ORPHAN_WORKTREES:-none}" | orphan_clean)" >> "$STATE/endpoint-retirements.log" \
     || refuse "the assertion for $id could not be recorded in $STATE/endpoint-retirements.log; nothing was closed - an endpoint is never closed without a durable author"
+  python3 -c 'import fcntl, sys; fcntl.flock(int(sys.argv[1]), fcntl.LOCK_UN)' "$3"
   fm_backend_stream_kill "$target" "" "fm-$id" || rc=$?
   if [ "$rc" -ne 0 ]; then
     echo "error: the hub did not confirm that $id's endpoint $ORPHAN_ENDPOINT_ID closed; it may still be running" >&2

@@ -28,7 +28,7 @@ printf '{}\n' > "$HUB_DIR/endpoints.json"
 : > "$HUB_DIR/deletes.log"
 
 cat > "$HUB_DIR/stub.py" <<'PY'
-import fcntl, json, os, re, subprocess, sys
+import json, os, re, subprocess, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 root, token = sys.argv[1], sys.argv[2]
@@ -93,14 +93,12 @@ class H(BaseHTTPRequestHandler):
         m = re.fullmatch(r"/v1/tasks/([0-9a-f]+)", self.path)
         if not m or m.group(1) not in data:
             return self.reply(404, {"error": "no_such_endpoint"})
-        if data[m.group(1)].get("lifecycle_lock"):
-            with open(data[m.group(1)]["lifecycle_lock"], "a") as lock:
-                try:
-                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except BlockingIOError:
-                    pass
-                else:
-                    return self.reply(409, {"error": "close_without_lifecycle_lock"})
+        if data[m.group(1)].get("result_writer"):
+            try:
+                subprocess.run(data[m.group(1)]["result_writer"], check=True,
+                               capture_output=True, text=True, timeout=5)
+            except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
+                return self.reply(409, {"error": "kill_result_not_persisted"})
         if data[m.group(1)].get("inbox_writer"):
             result = subprocess.run(data[m.group(1)]["inbox_writer"],
                 env=dict(os.environ, FM_TASK_INBOX_LOCK_WAIT_SECS='0'),
@@ -152,7 +150,7 @@ endpoint_option() {
 import json, sys
 path, eid, key, *values = sys.argv[1:]
 data = json.load(open(path))
-data[eid][key] = values if key in ('cwd_hook', 'inbox_writer') else values[0]
+data[eid][key] = values if key in ('cwd_hook', 'inbox_writer', 'result_writer') else values[0]
 json.dump(data, open(path, 'w'))
 PY
 }
@@ -295,6 +293,43 @@ for e in "$E4" "$E4B" "$E4C"; do
 done
 pass "an endpoint with unlanded or uncommitted work is refused"
 
+mkdir -p "$POOL/8"
+git -C "$PROJECT" worktree add -q -b task-unsafe "$POOL/8/project"
+printf 'edit\n' > "$POOL/8/project/scratch.txt"
+ESLOT=$(new_eid)
+add_endpoint "$ESLOT" fm-slotproof "$PROJECT" "$PROJECT" /bin/zsh
+deck_record "$HOME_A" slotproof "$ESLOT" false
+for claim in directory symlink malformed; do
+  case "$claim" in
+    directory) mkdir "$POOL/8/.fm-slot-owner" ;;
+    symlink) ln -s "$POOL/7/.fm-slot-owner" "$POOL/8/.fm-slot-owner" ;;
+    malformed) printf 'unreadable ownership\n' > "$POOL/8/.fm-slot-owner" ;;
+  esac
+  rc=0
+  out=$(orphan "$HOME_A" --orphan slotproof 2>&1) || rc=$?
+  expect_code 1 "$rc" "an unsafe $claim slot claim"
+  assert_contains "$out" "slot ownership claim" "the refusal names the unsafe ownership claim"
+  assert_contains "$out" "$POOL/8/project" "the refusal names the associated worktree"
+  was_closed "$ESLOT" && fail "an endpoint with an unsafe slot claim was closed"
+  if [ "$claim" = directory ]; then
+    rmdir "$POOL/8/.fm-slot-owner"
+  else
+    rm "$POOL/8/.fm-slot-owner"
+  fi
+done
+assert_not_contains "$(<"$HOME_A/state/endpoint-retirements.log")" "$ESLOT" \
+  "unsafe ownership refuses before recording a close assertion"
+out=$(orphan "$HOME_A" --orphan slotproof 2>&1) || fail "an absent sibling slot claim was refused: $out"
+was_closed "$ESLOT" || fail "an endpoint with a proven absent sibling claim was not closed"
+printf 'task=another-task\nhome=%s\n' "$HOME_B" > "$POOL/8/.fm-slot-owner"
+EOTHER=$(new_eid)
+add_endpoint "$EOTHER" fm-otherclaim "$PROJECT" "$PROJECT" /bin/zsh
+deck_record "$HOME_A" otherclaim "$EOTHER" false
+out=$(orphan "$HOME_A" --orphan otherclaim 2>&1) || fail "a proven other-task slot claim was refused: $out"
+was_closed "$EOTHER" || fail "an endpoint with another task's sibling claim was not closed"
+assert_present "$POOL/8/project/scratch.txt" "retirement preserves the sibling's uncommitted work"
+pass "unsafe sibling slot claims refuse; proven absent and other-task claims are skipped"
+
 BROKEN_PROJECT="$TMP_ROOT/broken-project"
 BROKEN_WT="$TMP_ROOT/broken-wt"
 fm_git_worktree "$BROKEN_PROJECT" "$BROKEN_WT" task-broken
@@ -406,7 +441,14 @@ was_closed "$E5B" && fail "an agent with pending work was closed"
 E5C=$(new_eid)
 add_endpoint "$E5C" fm-idle "$PROJECT" "$CLEAN_WT" claude
 deck_record "$HOME_A" idle "$E5C" false
-endpoint_option "$E5C" lifecycle_lock "$HOME_A/state/idle.inbox/deck-$E5C/.lifecycle.lock"
+endpoint_option "$E5C" result_writer python3 -c '
+import sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+from fm_stream_deck import Receiver
+receiver = Receiver(*sys.argv[2:])
+receiver.save_result("kill", "kill", {"result": {"command_id": "kill", "ok": True}})
+' "$ROOT/bin" "$HOME_A/state" idle "$E5C"
 endpoint_option "$E5C" inbox_writer bash -c \
   'STATE=$2; . "$1"; fm_task_inbox_write "$2" "$3" "new work"' inbox-writer \
   "$ROOT/bin/fm-task-inbox-lib.sh" "$HOME_A/state" idle
@@ -414,7 +456,11 @@ out=$(orphan "$HOME_A" --orphan idle 2>&1) || fail "an idle agent with nothing p
 was_closed "$E5C" || fail "an idle agent's leftover was not closed"
 assert_grep "agent=alive-idle" "$HOME_A/state/endpoint-retirements.log" "the log records the idle agent"
 assert_absent "$HOME_A/state/idle.inbox/001.msg" "inbox publication was blocked across the close"
-pass "a live busy agent is refused, an idle one with nothing pending closes"
+RESULT_KEY=$(python3 -c 'import hashlib; print(hashlib.sha256(b"kill").hexdigest())')
+assert_equals "true" "$(jq -r '.results.kill.result.ok' \
+  "$HOME_A/state/idle.inbox/deck-$E5C/order-$RESULT_KEY.json")" \
+  "the real Deck receiver persists the kill result before the hub acknowledges closure"
+pass "a live busy agent is refused, an idle one closes with its result persisted"
 
 ERACE=$(new_eid)
 add_endpoint "$ERACE" fm-turnrace "$PROJECT" "$CLEAN_WT" /bin/zsh
