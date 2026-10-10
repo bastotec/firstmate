@@ -28,7 +28,7 @@ printf '{}\n' > "$HUB_DIR/endpoints.json"
 : > "$HUB_DIR/deletes.log"
 
 cat > "$HUB_DIR/stub.py" <<'PY'
-import json, os, re, sys
+import fcntl, json, os, re, subprocess, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 root, token = sys.argv[1], sys.argv[2]
@@ -80,6 +80,10 @@ class H(BaseHTTPRequestHandler):
         if tail == "/processes":
             body["foreground"] = [{"pid": 1, "name": n, "argv0": n, "args": n} for n in e["foreground"]]
         else:
+            if e.get("cwd_hook"):
+                hook = e.pop("cwd_hook")
+                save(data)
+                subprocess.run(hook, check=True, stdout=subprocess.DEVNULL)
             body["cwd"] = e["live_cwd"]
         return self.reply(200, body)
     def do_DELETE(self):
@@ -89,6 +93,20 @@ class H(BaseHTTPRequestHandler):
         m = re.fullmatch(r"/v1/tasks/([0-9a-f]+)", self.path)
         if not m or m.group(1) not in data:
             return self.reply(404, {"error": "no_such_endpoint"})
+        if data[m.group(1)].get("lifecycle_lock"):
+            with open(data[m.group(1)]["lifecycle_lock"], "a") as lock:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    pass
+                else:
+                    return self.reply(409, {"error": "close_without_lifecycle_lock"})
+        if data[m.group(1)].get("inbox_writer"):
+            result = subprocess.run(data[m.group(1)]["inbox_writer"],
+                env=dict(os.environ, FM_TASK_INBOX_LOCK_WAIT_SECS='0'),
+                capture_output=True, text=True)
+            if result.returncode != 1:
+                return self.reply(409, {"error": "close_without_inbox_lock"})
         data[m.group(1)]["closed_at"] = 1.0
         data[m.group(1)]["closed_by"] = "agent"
         save(data)
@@ -126,6 +144,16 @@ path, eid, label, machine, cwd, live, *fg = sys.argv[1:]
 data = json.load(open(path))
 data[eid] = {"label": label, "machine": machine, "cwd": cwd, "live_cwd": live, "foreground": fg}
 json.dump(data, open(path, "w"))
+PY
+}
+
+endpoint_option() {
+  python3 - "$HUB_DIR/endpoints.json" "$1" "$2" "${@:3}" <<'PY'
+import json, sys
+path, eid, key, *values = sys.argv[1:]
+data = json.load(open(path))
+data[eid][key] = values if key in ('cwd_hook', 'inbox_writer') else values[0]
+json.dump(data, open(path, 'w'))
 PY
 }
 
@@ -178,7 +206,6 @@ listed=$(orphan "$HOME_A" --list-orphans) || fail "--list-orphans failed after t
 assert_not_contains "$listed" "$E1" "a closed endpoint is no longer listed"
 pass "the owned leftover closes, logged with its evidence"
 
-# A local agent carrying this home's status path also proves ownership.
 E1B=$(new_eid)
 add_endpoint "$E1B" fm-agentproof "$PROJECT" "$CLEAN_WT" /bin/zsh
 python3 -c 'import time; time.sleep(120)' fm-stream-agent serve --hub "$URL" --token-file /dev/null \
@@ -186,11 +213,13 @@ python3 -c 'import time; time.sleep(120)' fm-stream-agent serve --hub "$URL" --t
   --status-path "$HOME_A/state/agentproof.status" --ready-file /dev/null &
 fm_test_track_helper_pid "$!"
 listed=$(orphan "$HOME_A" --list-orphans) || fail "--list-orphans failed"
-assert_contains "$listed" "agentproof	$E1B" "--list-orphans finds a leftover through its local agent"
-out=$(orphan "$HOME_A" --orphan agentproof 2>&1) || fail "the agent-proved leftover was refused: $out"
-was_closed "$E1B" || fail "the agent-proved leftover was not closed"
-assert_grep "evidence=local-agent:" "$HOME_A/state/endpoint-retirements.log" "the log names the agent evidence"
-pass "a local agent carrying this home's status path proves ownership"
+assert_not_contains "$listed" "$E1B" "a local process without an endpoint record is not listed"
+rc=0
+out=$(orphan "$HOME_A" --orphan agentproof --endpoint "$E1B" 2>&1) || rc=$?
+expect_code 1 "$rc" "a local process without an endpoint record"
+assert_contains "$out" "a matching label alone is not ownership" "the unbound process cannot prove ownership"
+was_closed "$E1B" && fail "an endpoint proved only by launch arguments was closed"
+pass "a local agent carrying this home's status path without a deck record is refused"
 
 # --- 2. another home's endpoint is refused ----------------------------------
 E2=$(new_eid)
@@ -266,6 +295,60 @@ for e in "$E4" "$E4B" "$E4C"; do
 done
 pass "an endpoint with unlanded or uncommitted work is refused"
 
+BROKEN_PROJECT="$TMP_ROOT/broken-project"
+BROKEN_WT="$TMP_ROOT/broken-wt"
+fm_git_worktree "$BROKEN_PROJECT" "$BROKEN_WT" task-broken
+printf 'edit\n' > "$BROKEN_WT/scratch.txt"
+mv "$BROKEN_PROJECT" "$TMP_ROOT/moved-project"
+EBROKEN=$(new_eid)
+add_endpoint "$EBROKEN" fm-broken "$BROKEN_PROJECT" "$BROKEN_WT" /bin/zsh
+deck_record "$HOME_A" broken "$EBROKEN" false
+rc=0
+out=$(orphan "$HOME_A" --orphan broken 2>&1) || rc=$?
+expect_code 1 "$rc" "a worktree with a broken Git pointer"
+assert_contains "$out" "Git cannot classify" "the broken worktree is not treated as a non-repository"
+was_closed "$EBROKEN" && fail "a broken worktree's endpoint was closed"
+
+GITBIN=$(fm_fakebin "$TMP_ROOT/gitbin")
+REAL_GIT=$(command -v git)
+cat > "$GITBIN/git" <<'SH'
+#!/usr/bin/env bash
+case " $* " in
+  *" ${FM_TEST_GIT_FAIL_STAGE:-no-failure} "*) exit 1 ;;
+esac
+exec "$FM_TEST_REAL_GIT" "$@"
+SH
+chmod +x "$GITBIN/git"
+for stage in 'worktree list' '--is-inside-work-tree' '--show-toplevel' '--git-dir' '--git-common-dir'; do
+  EDISCOVERY=$(new_eid)
+  add_endpoint "$EDISCOVERY" fm-discovery "$PROJECT" "$CLEAN_WT" /bin/zsh
+  deck_record "$HOME_A" discovery "$EDISCOVERY" false
+  rc=0
+  out=$(PATH="$GITBIN:$PATH" FM_TEST_REAL_GIT="$REAL_GIT" FM_TEST_GIT_FAIL_STAGE="$stage" \
+    orphan "$HOME_A" --orphan discovery --endpoint "$EDISCOVERY" 2>&1) || rc=$?
+  expect_code 1 "$rc" "Git discovery failure: $stage"
+  assert_contains "$out" "Git cannot" "the discovery failure has a plain reason"
+  was_closed "$EDISCOVERY" && fail "an endpoint was closed despite Git failure: $stage"
+done
+
+EMISSING=$(new_eid)
+add_endpoint "$EMISSING" fm-missingcwd "$TMP_ROOT/missing-project" "$CLEAN_WT" /bin/zsh
+deck_record "$HOME_A" missingcwd "$EMISSING" false
+rc=0
+out=$(orphan "$HOME_A" --orphan missingcwd 2>&1) || rc=$?
+expect_code 1 "$rc" "an unavailable registered directory"
+assert_contains "$out" "cannot be inspected" "the unavailable registered directory is refused"
+was_closed "$EMISSING" && fail "an unavailable registered directory's endpoint was closed"
+
+NONREPO="$TMP_ROOT/nonrepo"
+mkdir -p "$NONREPO"
+ENONREPO=$(new_eid)
+add_endpoint "$ENONREPO" fm-nonrepo "$NONREPO" "$NONREPO" /bin/zsh
+deck_record "$HOME_A" nonrepo "$ENONREPO" false
+out=$(orphan "$HOME_A" --orphan nonrepo 2>&1) || fail "a plain non-repository directory was refused: $out"
+was_closed "$ENONREPO" || fail "a plain non-repository endpoint was not closed"
+pass "worktree discovery refuses broken, missing and failed Git reads but permits a non-repository"
+
 # A finished scout's own worktree is scratch, as cleanup treats it: a done
 # scout row with its report closes over scratch files, and the same scratch
 # without the report is still refused.
@@ -323,10 +406,61 @@ was_closed "$E5B" && fail "an agent with pending work was closed"
 E5C=$(new_eid)
 add_endpoint "$E5C" fm-idle "$PROJECT" "$CLEAN_WT" claude
 deck_record "$HOME_A" idle "$E5C" false
+endpoint_option "$E5C" lifecycle_lock "$HOME_A/state/idle.inbox/deck-$E5C/.lifecycle.lock"
+endpoint_option "$E5C" inbox_writer bash -c \
+  'STATE=$2; . "$1"; fm_task_inbox_write "$2" "$3" "new work"' inbox-writer \
+  "$ROOT/bin/fm-task-inbox-lib.sh" "$HOME_A/state" idle
 out=$(orphan "$HOME_A" --orphan idle 2>&1) || fail "an idle agent with nothing pending was refused: $out"
 was_closed "$E5C" || fail "an idle agent's leftover was not closed"
 assert_grep "agent=alive-idle" "$HOME_A/state/endpoint-retirements.log" "the log records the idle agent"
+assert_absent "$HOME_A/state/idle.inbox/001.msg" "inbox publication was blocked across the close"
 pass "a live busy agent is refused, an idle one with nothing pending closes"
+
+ERACE=$(new_eid)
+add_endpoint "$ERACE" fm-turnrace "$PROJECT" "$CLEAN_WT" /bin/zsh
+deck_record "$HOME_A" turnrace "$ERACE" false
+endpoint_option "$ERACE" cwd_hook python3 "$ROOT/bin/fm_stream_deck.py" start \
+  "$HOME_A/state" turnrace "$ERACE" racing-turn true
+rc=0
+out=$(orphan "$HOME_A" --orphan turnrace 2>&1) || rc=$?
+expect_code 1 "$rc" "a turn starting during worktree discovery"
+assert_contains "$out" "busy" "the final check observes the new turn"
+was_closed "$ERACE" && fail "a worker starting a turn after the initial check was closed"
+assert_equals "true" "$(jq -r .active "$HOME_A/state/turnrace.inbox/deck-$ERACE/active.json")" \
+  "the real Deck driver started the competing turn"
+
+EMSGRACE=$(new_eid)
+add_endpoint "$EMSGRACE" fm-msgrace "$PROJECT" "$CLEAN_WT" claude
+deck_record "$HOME_A" msgrace "$EMSGRACE" false
+endpoint_option "$EMSGRACE" cwd_hook bash -c \
+  'STATE=$2; . "$1"; fm_task_inbox_write "$2" "$3" "new work"' inbox-writer \
+  "$ROOT/bin/fm-task-inbox-lib.sh" "$HOME_A/state" msgrace
+rc=0
+out=$(orphan "$HOME_A" --orphan msgrace 2>&1) || rc=$?
+expect_code 1 "$rc" "a message arriving during worktree discovery"
+assert_contains "$out" "unhandled message" "the final check observes the new message"
+was_closed "$EMSGRACE" && fail "an endpoint receiving new work after the initial check was closed"
+assert_present "$HOME_A/state/msgrace.inbox/001.msg" "the real inbox writer published the message"
+
+ELOCKED=$(new_eid)
+add_endpoint "$ELOCKED" fm-locked "$PROJECT" "$CLEAN_WT" claude
+deck_record "$HOME_A" locked "$ELOCKED" false
+python3 - "$HOME_A/state/locked.inbox/deck-$ELOCKED/.lifecycle.lock" \
+  "$ROOT/bin/fm-retire-endpoint.sh" "$URL" "$TOKEN" "$MACHINE" "$HOME_A" <<'PY'
+import fcntl, os, subprocess, sys
+path, script, url, token, machine, home = sys.argv[1:]
+with open(path, 'a') as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    env = dict(os.environ, FM_HOME=home, FM_STREAM_HUB=url,
+               FM_STREAM_TOKEN=token, FM_STREAM_MACHINE=machine)
+    result = subprocess.run([script, '--orphan', 'locked'], env=env,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 1, result.stderr
+    assert 'lifecycle could not be locked' in result.stderr, result.stderr
+PY
+[ "$?" -eq 0 ] || fail "retirement did not refuse a lifecycle lock held by another process"
+was_closed "$ELOCKED" && fail "an endpoint with a competing lifecycle owner was closed"
+pass "final checks refuse a new turn, new message and competing lifecycle lock"
 
 # --- 6. a task that still has a record is not a leftover --------------------
 E6=$(new_eid)

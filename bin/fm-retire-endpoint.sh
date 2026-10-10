@@ -166,9 +166,8 @@ or backlog row. It refuses unless:
   - the task has no record here and is not a registered secondmate;
   - this home owns the endpoint, proved by evidence bound to its endpoint id:
     state/<id>.inbox/deck-<endpoint-id>/ (written by the endpoint's own agent
-    from the status path this home gave it), or a local agent process carrying
-    this home's state/<id>.status with the hub's machine, label and cwd for it;
-    a label match alone is never enough;
+    from the status path this home gave it), plus the label fm-<id>;
+    a label or local process match alone is never enough;
   - its harness has exited, or is alive with no active turn and no unhandled
     inbox message;
   - its live working directory can be read, and that worktree (when linked)
