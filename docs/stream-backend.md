@@ -418,8 +418,11 @@ Absence from a restarted hub's task table is a statement about the hub's own mem
 Inside the restart window something may start a fresh worker for the same task under the same name; a record the hub has never heard from takes no name from the agent that is publishing under it.
 That protection covers only the gap between a replacement's registration and its first state frame; past it the recovering agent is refused, because two workers then really do answer to one name.
 
-Readers wait one ordinary rejoin window before answering an unresolved Bridge order; if no endpoint appears, the order remains pending without a membership nack, and an identical resend can try placement again.
-A steer that arrives inside the rejoin window is requeued through exactly one more window of the same length before the order is answered unresolved, so a healthy rejoin landing just past the first window does not lose the steer; the placement holds the same order record across both windows for idempotency, and a separate per-leaf placement queue prevents a newer steer from submitting until every earlier active steer for that leaf is either queued or settled. The requeue is bounded by the window the system already uses, never by a new constant, and a worker that never rejoins still settles as the ordinary unresolved answer rather than lingering.
+The Rust hub gives an unresolved Bridge steer one ordinary six-second rejoin window and exactly one automatic requeue window of the same length before answering `membership_unresolved`.
+If the matching orderable worker registers during either window, the Rust hub queues the steer exactly once and ahead of every later steer for the same leaf.
+The Rust placement keeps the same order record active across both windows, so an identical resend cannot duplicate an in-flight steer even if the bounded order journal turns over.
+If the worker never rejoins, the order settles with the ordinary unresolved answer instead of lingering, and an identical resend can try placement again.
+The Python rollback keeps the single ordinary rejoin window and starts another placement attempt only on an identical resend.
 The cheap presence probe behind capture, current-path and endpoint-addressed input answers from the first reply and pays no rejoin wait.
 The recovery-grade worker classifier waits its own bounded six-second window, after which it can report `missing` while a live agent remains in a longer backoff; that verdict produces no Bridge membership nack.
 
