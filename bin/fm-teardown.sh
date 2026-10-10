@@ -191,13 +191,12 @@
 # shell, which ignores SIGTERM by design, and the idle pane-resident worker
 # driver - is owned by bin/fm-backend.sh's close path, not by the cwd-based
 # reaper: run in the old order, the reaper counted that machinery as leaked and
-# forced its kill (observed 2026-10-09,
-# data/teardown-leaks-worktree-processes). The close path itself may still need
-# KILL for that shell; that is expected and is not a leak finding. An
-# endpoint-retirement task keeps its retirement-owned gate after process cleanup,
-# while a secondmate endpoint closes at its dedicated retirement point
-# immediately before its home is removed; neither enters the ordinary early
-# close path.
+# forced its kill. tests/fm-teardown.test.sh pins this endpoint-first ordering.
+# The close path itself may still need KILL for that shell; that is expected and
+# is not a leak finding. An endpoint-retirement task keeps its retirement-owned
+# gate after process cleanup, while a secondmate endpoint closes at its dedicated
+# retirement point immediately before its home is removed; neither enters the
+# ordinary early close path.
 #   Fix 1 - conclude the task's own no-mistakes run. A ship task's worktree can
 #     be torn down while its no-mistakes pipeline run is still PARKED at a gate
 #     (awaiting_approval/fix_review/any awaiting_agent field), with no worker
