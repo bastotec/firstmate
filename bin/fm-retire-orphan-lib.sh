@@ -369,7 +369,8 @@ orphan_close_locked() {
   local id=$1 target=$2 at by rc=0 inbox_lock="$STATE/$1.inbox/.seq.lock"
   fm_task_inbox_lock_acquire "$inbox_lock" \
     || refuse "$id's inbox publication could not be locked; nothing was closed"
-  trap "$(printf 'fm_lock_release %q' "$inbox_lock")" EXIT
+  ORPHAN_INBOX_LOCK=$inbox_lock
+  trap 'fm_lock_release "$ORPHAN_INBOX_LOCK"' EXIT
   orphan_record_exists "$id" \
     && refuse "'$id' now has a task record; nothing was closed"
   orphan_is_secondmate "$id" \

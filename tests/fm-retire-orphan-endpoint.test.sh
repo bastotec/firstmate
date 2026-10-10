@@ -449,6 +449,7 @@ from fm_stream_deck import Receiver
 receiver = Receiver(*sys.argv[2:])
 receiver.save_result("kill", "kill", {"result": {"command_id": "kill", "ok": True}})
 ' "$ROOT/bin" "$HOME_A/state" idle "$E5C"
+# shellcheck disable=SC2016 # Positional parameters expand in the child shell.
 endpoint_option "$E5C" inbox_writer bash -c \
   'STATE=$2; . "$1"; fm_task_inbox_write "$2" "$3" "new work"' inbox-writer \
   "$ROOT/bin/fm-task-inbox-lib.sh" "$HOME_A/state" idle
@@ -478,6 +479,7 @@ assert_equals "true" "$(jq -r .active "$HOME_A/state/turnrace.inbox/deck-$ERACE/
 EMSGRACE=$(new_eid)
 add_endpoint "$EMSGRACE" fm-msgrace "$PROJECT" "$CLEAN_WT" claude
 deck_record "$HOME_A" msgrace "$EMSGRACE" false
+# shellcheck disable=SC2016 # Positional parameters expand in the child shell.
 endpoint_option "$EMSGRACE" cwd_hook bash -c \
   'STATE=$2; . "$1"; fm_task_inbox_write "$2" "$3" "new work"' inbox-writer \
   "$ROOT/bin/fm-task-inbox-lib.sh" "$HOME_A/state" msgrace
@@ -491,7 +493,7 @@ assert_present "$HOME_A/state/msgrace.inbox/001.msg" "the real inbox writer publ
 ELOCKED=$(new_eid)
 add_endpoint "$ELOCKED" fm-locked "$PROJECT" "$CLEAN_WT" claude
 deck_record "$HOME_A" locked "$ELOCKED" false
-python3 - "$HOME_A/state/locked.inbox/deck-$ELOCKED/.lifecycle.lock" \
+if ! python3 - "$HOME_A/state/locked.inbox/deck-$ELOCKED/.lifecycle.lock" \
   "$ROOT/bin/fm-retire-endpoint.sh" "$URL" "$TOKEN" "$MACHINE" "$HOME_A" <<'PY'
 import fcntl, os, subprocess, sys
 path, script, url, token, machine, home = sys.argv[1:]
@@ -504,7 +506,9 @@ with open(path, 'a') as lock:
     assert result.returncode == 1, result.stderr
     assert 'lifecycle could not be locked' in result.stderr, result.stderr
 PY
-[ "$?" -eq 0 ] || fail "retirement did not refuse a lifecycle lock held by another process"
+then
+  fail "retirement did not refuse a lifecycle lock held by another process"
+fi
 was_closed "$ELOCKED" && fail "an endpoint with a competing lifecycle owner was closed"
 pass "final checks refuse a new turn, new message and competing lifecycle lock"
 
