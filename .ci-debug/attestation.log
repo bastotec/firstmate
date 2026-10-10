@@ -1,0 +1,63 @@
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	﻿2026-10-10T21:39:44.2155071Z ##[group]Run kunchenguid/no-mistakes/.github/actions/require-no-mistakes@32d396ac0f29135daf7fcb9964aba9d5f4e796d6
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2155365Z with:
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2157508Z   pr-body: A second mate's task was recorded done and merged while its PR was still open. Teardown counted pushed commits as landed and closed the backlog row with the PR link, which renders as merged.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	Teardown, `fm-tasks-axi.sh done` and the captain-hold answer close now ask the forge for the PR's live state first. Merged passes, closed passes only with a `Superseded: <reason>` line on the task, open or unreadable refuses. `bin/fm-pr-record-audit.sh` flags Done rows that already disagree and runs from the heartbeat sweep.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	The no-mistakes pipeline fills in the rest of this description.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	🤖 Generated with [Claude Code](https://claude.com/claude-code)
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	<!-- no-mistakes-pr-appendix:v1 sha256=9f711b209cbf66788ad1b854816c06facc55eb84ca451719d16fbfed389a7c85 -->
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	<!-- no-mistakes-pipeline-attestation:v1 {"head_sha":"0b7ccf061ada25769f8739661f0510b5b92e7065","steps":[{"step":"intent","status":"completed"},{"step":"rebase","status":"completed"},{"step":"review","status":"completed"},{"step":"jev","status":"skipped"},{"step":"test","status":"skipped"},{"step":"document","status":"completed"},{"step":"lint","status":"completed"},{"step":"push","status":"completed"},{"step":"pr","status":"running"},{"step":"ci","status":"pending"}]} -->
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	<!-- /no-mistakes-pr-appendix:v1 -->
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2159865Z   exempt-bot-authors: false
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2159998Z ##[endgroup]
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2196375Z ##[start-action display=Verify no-mistakes signature and pipeline attestation;id=__kunchenguid_no-mistakes.verify]
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2233643Z ##[group]Run set -eu
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2233812Z ^[[36;1mset -eu^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2233950Z ^[[36;1mif command -v python3 >/dev/null 2>&1; then^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2234115Z ^[[36;1m  PY=python3^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2234261Z ^[[36;1melif command -v python >/dev/null 2>&1; then^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2234416Z ^[[36;1m  PY=python^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2234523Z ^[[36;1melse^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2234725Z ^[[36;1m  echo "::error::python interpreter not found; cannot parse pipeline attestation." >&2^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2234946Z ^[[36;1m  exit 1^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2235047Z ^[[36;1mfi^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2235167Z ^[[36;1m"$PY" "${GITHUB_ACTION_PATH}/verify.py"^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2286930Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2287114Z env:
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2289250Z   PR_BODY: A second mate's task was recorded done and merged while its PR was still open. Teardown counted pushed commits as landed and closed the backlog row with the PR link, which renders as merged.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	Teardown, `fm-tasks-axi.sh done` and the captain-hold answer close now ask the forge for the PR's live state first. Merged passes, closed passes only with a `Superseded: <reason>` line on the task, open or unreadable refuses. `bin/fm-pr-record-audit.sh` flags Done rows that already disagree and runs from the heartbeat sweep.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	The no-mistakes pipeline fills in the rest of this description.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	🤖 Generated with [Claude Code](https://claude.com/claude-code)
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	<!-- no-mistakes-pr-appendix:v1 sha256=9f711b209cbf66788ad1b854816c06facc55eb84ca451719d16fbfed389a7c85 -->
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	<!-- no-mistakes-pipeline-attestation:v1 {"head_sha":"0b7ccf061ada25769f8739661f0510b5b92e7065","steps":[{"step":"intent","status":"completed"},{"step":"rebase","status":"completed"},{"step":"review","status":"completed"},{"step":"jev","status":"skipped"},{"step":"test","status":"skipped"},{"step":"document","status":"completed"},{"step":"lint","status":"completed"},{"step":"push","status":"completed"},{"step":"pr","status":"running"},{"step":"ci","status":"pending"}]} -->
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	<!-- /no-mistakes-pr-appendix:v1 -->
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2291832Z   PR_HEAD_SHA: 
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2291942Z   PR_HEAD_REF: 
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2292181Z   PR_AUTHOR: 
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2292283Z   PR_NUMBER: 
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2292386Z   NM_EXEMPT_AUTHORS: 
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2292506Z   NM_EXEMPT_BOT_AUTHORS: false
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2292640Z   NM_EXEMPT_HEAD_BRANCHES: 
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2292766Z ##[endgroup]
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2507514Z ##[error]Required no-mistakes pipeline steps are not completed: test (status=skipped).
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2507982Z 
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2508300Z This repository requires review, test, document to have status=completed. Quota skips and agent skips are not compliant.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2508667Z 
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2508853Z Contributions to this repository must be submitted via 'git push no-mistakes'.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2509232Z See CONTRIBUTING.md for setup and the full workflow.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2509423Z 
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2509526Z PR author: bastotec
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2509733Z Found no-mistakes signature in PR #132 body.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2525736Z ##[error]Process completed with exit code 1.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2533977Z ##[end-action id=__kunchenguid_no-mistakes.verify;outcome=failure;conclusion=failure;duration_ms=31]

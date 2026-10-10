@@ -3829,7 +3829,8 @@ test_released_merge_passes_the_entrypoint_and_lands() {
     || fail "the released merge was refused: $(cat "$home/merge.err")"
   PATH="$home/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
-    FM_CONFIG_OVERRIDE="$home/config" "$TEARDOWN" "$id" --force \
+    FM_CONFIG_OVERRIDE="$home/config" FM_TEST_GH_LOG="$home/gh.log" \
+    FM_TEST_GH_AXI_LOG="$home/gh-axi.log" "$TEARDOWN" "$id" \
     > "$home/teardown.out" 2> "$home/teardown.err" \
     || fail "the released merge cleanup failed: $(cat "$home/teardown.err")"
   json=$(run_bearings "$home") || fail "Bearings failed after the released merge lifecycle"

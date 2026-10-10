@@ -1,0 +1,414 @@
+PR must be raised via no-mistakes	Set up job	﻿2026-10-10T21:39:38.5695270Z Current runner version: '2.337.0'
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5713633Z ##[group]Runner Image Provisioner
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5714202Z Hosted Compute Agent
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5714598Z Version: 20261002.596
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5714984Z Commit: c3d12f3313a95f25162a1503be624f3b0617f8c0
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5715417Z Build Date: 2026-10-02T22:28:27Z
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5715851Z Worker ID: {86aa1f7e-a8c9-4fbb-a47a-fc5d6455f72c}
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5716259Z Region: centralus
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5716649Z Cloud: Azure
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5716962Z ##[endgroup]
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5717675Z ##[group]Operating System
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5718071Z Ubuntu
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5718402Z 24.04.5
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5718721Z LTS
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5719058Z ##[endgroup]
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5719365Z ##[group]Runner Image
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5719768Z Image: ubuntu-24.04
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5720096Z Version: 20261004.327.1
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5720711Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261004.327/images/ubuntu/Ubuntu2404-Readme.md
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5721854Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261004.327
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5722464Z ##[endgroup]
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5723079Z ##[group]GITHUB_TOKEN Permissions
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5724268Z Contents: read
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5724597Z Metadata: read
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5724953Z ##[endgroup]
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5726248Z Secret source: Actions
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5726823Z Cache mode: write
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5727235Z Prepare workflow directory
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5926279Z Prepare all required actions
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.5956930Z Getting action download info
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:38.8435752Z Download action repository 'actions/checkout@v6' (SHA:d23441a48e516b6c34aea4fa41551a30e30af803)
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:39.0398569Z Download action repository 'kunchenguid/no-mistakes@32d396ac0f29135daf7fcb9964aba9d5f4e796d6' (SHA:32d396ac0f29135daf7fcb9964aba9d5f4e796d6)
+PR must be raised via no-mistakes	Set up job	2026-10-10T21:39:40.6102653Z Complete job name: PR must be raised via no-mistakes
+PR must be raised via no-mistakes	Run actions/checkout@v6	﻿2026-10-10T21:39:40.6676115Z ##[group]Run actions/checkout@v6
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.6676988Z with:
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.6677558Z   persist-credentials: false
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.6678184Z   repository: bastotec/firstmate
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.6683360Z   token: ***
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.6683874Z   ssh-strict: true
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.6684428Z   ssh-user: git
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.6684978Z   clean: true
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.6685515Z   sparse-checkout-cone-mode: true
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.6686172Z   fetch-depth: 1
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.6686692Z   fetch-tags: false
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.6687217Z   show-progress: true
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.6687828Z   lfs: false
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.6688326Z   submodules: false
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.6689136Z   set-safe-directory: true
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.6689742Z   allow-unsafe-pr-checkout: false
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.6690454Z ##[endgroup]
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7367982Z Syncing repository: bastotec/firstmate
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7370512Z ##[group]Getting Git version info
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7372193Z Working directory is '/home/runner/work/firstmate/firstmate'
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7374173Z [command]/usr/bin/git version
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7434168Z git version 2.55.0
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7449831Z ##[endgroup]
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7459358Z Temporarily overriding HOME='/home/runner/work/_temp/5b8fd94f-bfc8-4b93-a11a-4bdbf2a8d2cf' before making global git config changes
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7462563Z Adding repository directory to the temporary git global config as a safe directory
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7464867Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/firstmate/firstmate
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7510535Z Deleting the contents of '/home/runner/work/firstmate/firstmate'
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7514549Z ##[group]Determining repository object format
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7516223Z ##[endgroup]
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7517176Z ##[group]Initializing the repository
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7519582Z [command]/usr/bin/git init /home/runner/work/firstmate/firstmate
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7691293Z hint: Using 'master' as the name for the initial branch. This default branch name
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7693950Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7695388Z hint: to use in all of your new repositories, which will suppress this warning,
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7696361Z hint: call:
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7696879Z hint:
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7697515Z hint: 	git config --global init.defaultBranch <name>
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7698250Z hint:
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7698928Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7700220Z hint: 'development'. The just-created branch can be renamed via this command:
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7701342Z hint:
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7701881Z hint: 	git branch -m <name>
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7702466Z hint:
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7703209Z hint: Disable this message with "git config set advice.defaultBranchName false"
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7704451Z Initialized empty Git repository in /home/runner/work/firstmate/firstmate/.git/
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7706694Z [command]/usr/bin/git remote add origin https://github.com/bastotec/firstmate
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7790109Z ##[endgroup]
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7791987Z ##[group]Disabling automatic garbage collection
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7793361Z [command]/usr/bin/git config --local gc.auto 0
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7884405Z ##[endgroup]
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7886033Z ##[group]Setting up auth
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7887212Z Removing SSH command configuration
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7888725Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.7921396Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.8235233Z Removing HTTP extra header
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.8239527Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.8268053Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.8435808Z Removing includeIf entries pointing to credentials config files
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.8440403Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.8468949Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.8643506Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-f9e7385c-6c14-4d9c-b767-a47554d8b547.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.8679078Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/firstmate/firstmate/.git.path /home/runner/work/_temp/git-credentials-f9e7385c-6c14-4d9c-b767-a47554d8b547.config
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.8762055Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/firstmate/firstmate/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-f9e7385c-6c14-4d9c-b767-a47554d8b547.config
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.8886067Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-f9e7385c-6c14-4d9c-b767-a47554d8b547.config
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.9087742Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-f9e7385c-6c14-4d9c-b767-a47554d8b547.config
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.9279974Z ##[endgroup]
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.9280774Z ##[group]Fetching the repository
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:40.9286883Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +4e8656c4c20f0f25f8f07cdaa996251f140e54b8:refs/remotes/pull/132/merge
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.1705696Z From https://github.com/bastotec/firstmate
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.1706578Z  * [new ref]         4e8656c4c20f0f25f8f07cdaa996251f140e54b8 -> pull/132/merge
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.1711798Z ##[endgroup]
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.1712226Z ##[group]Determining the checkout info
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.1712689Z ##[endgroup]
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.1717504Z [command]/usr/bin/git sparse-checkout disable
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2125273Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2321083Z ##[group]Checking out the ref
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2323745Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/132/merge
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2968185Z Note: switching to 'refs/remotes/pull/132/merge'.
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2968877Z 
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2969320Z You are in 'detached HEAD' state. You can look around, make experimental
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2969980Z changes and commit them, and you can discard any commits you make in this
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2970635Z state without impacting any branches by switching back to a branch.
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2971054Z 
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2971885Z If you want to create a new branch to retain commits you create, you may
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2972509Z do so (now or later) by using -c with the switch command. Example:
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2972892Z 
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2973148Z   git switch -c <new-branch-name>
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2973604Z 
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2973852Z Or undo this operation with:
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2974159Z 
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2974399Z   git switch -
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2974866Z 
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2975261Z Turn off this advice by setting config variable advice.detachedHead to false
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2975697Z 
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2976308Z HEAD is now at 4e8656c Merge 0b7ccf061ada25769f8739661f0510b5b92e7065 into 6e0abd33dee3b4353a4e72fa7e54e17cbe562a58
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.2978108Z ##[endgroup]
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3019084Z [command]/usr/bin/git log -1 --format=%H
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3042479Z 4e8656c4c20f0f25f8f07cdaa996251f140e54b8
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3053232Z ##[group]Removing auth
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3053644Z Removing SSH command configuration
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3054344Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3079807Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3257542Z Removing HTTP extra header
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3260344Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3288572Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3464251Z Removing includeIf entries pointing to credentials config files
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3466847Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3493251Z includeif.gitdir:/home/runner/work/firstmate/firstmate/.git.path
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3493833Z includeif.gitdir:/home/runner/work/firstmate/firstmate/.git/worktrees/*.path
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3494190Z includeif.gitdir:/github/workspace/.git.path
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3494437Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3500704Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/firstmate/firstmate/.git.path
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3522417Z /home/runner/work/_temp/git-credentials-f9e7385c-6c14-4d9c-b767-a47554d8b547.config
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3529939Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/firstmate/firstmate/.git.path /home/runner/work/_temp/git-credentials-f9e7385c-6c14-4d9c-b767-a47554d8b547.config
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3731814Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/firstmate/firstmate/.git/worktrees/*.path
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3751793Z /home/runner/work/_temp/git-credentials-f9e7385c-6c14-4d9c-b767-a47554d8b547.config
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3757827Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/firstmate/firstmate/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-f9e7385c-6c14-4d9c-b767-a47554d8b547.config
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3839285Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3859491Z /github/runner_temp/git-credentials-f9e7385c-6c14-4d9c-b767-a47554d8b547.config
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.3874481Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-f9e7385c-6c14-4d9c-b767-a47554d8b547.config
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.4039249Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.4054083Z /github/runner_temp/git-credentials-f9e7385c-6c14-4d9c-b767-a47554d8b547.config
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.4064102Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-f9e7385c-6c14-4d9c-b767-a47554d8b547.config
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.4131795Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.4299489Z Removing credentials config '/home/runner/work/_temp/git-credentials-f9e7385c-6c14-4d9c-b767-a47554d8b547.config'
+PR must be raised via no-mistakes	Run actions/checkout@v6	2026-10-10T21:39:42.4306482Z ##[endgroup]
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	﻿2026-10-10T21:39:42.4543020Z ##[group]Run actions/checkout@v6
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.4543217Z with:
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.4543384Z   ref: 6e0abd33dee3b4353a4e72fa7e54e17cbe562a58
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.4543581Z   path: .fm-trusted-base
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.4543746Z   sparse-checkout: .no-mistakes.yaml
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.4543929Z   sparse-checkout-cone-mode: false
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.4544108Z   persist-credentials: false
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.4544272Z   repository: bastotec/firstmate
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.4545625Z   token: ***
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.4545768Z   ssh-strict: true
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.4545919Z   ssh-user: git
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.4546062Z   clean: true
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.4546198Z   fetch-depth: 1
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.4546337Z   fetch-tags: false
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.4546479Z   show-progress: true
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.4546847Z   lfs: false
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.4547080Z   submodules: false
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.4547357Z   set-safe-directory: true
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.4547522Z   allow-unsafe-pr-checkout: false
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.4547708Z ##[endgroup]
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.5067330Z Syncing repository: bastotec/firstmate
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.5068015Z ##[group]Getting Git version info
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.5068430Z Working directory is '/home/runner/work/firstmate/firstmate/.fm-trusted-base'
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.5084812Z [command]/usr/bin/git version
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.5115220Z git version 2.55.0
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.5129282Z ##[endgroup]
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.5138158Z Temporarily overriding HOME='/home/runner/work/_temp/5dfbeaa7-67d7-4559-b217-f2eba235d76d' before making global git config changes
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.5138741Z Adding repository directory to the temporary git global config as a safe directory
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.5141522Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/firstmate/firstmate/.fm-trusted-base
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.5882362Z ##[group]Determining repository object format
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.5884935Z ##[endgroup]
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.5885358Z ##[group]Initializing the repository
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.5888680Z [command]/usr/bin/git init /home/runner/work/firstmate/firstmate/.fm-trusted-base
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.8358487Z hint: Using 'master' as the name for the initial branch. This default branch name
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.8359199Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.8359962Z hint: to use in all of your new repositories, which will suppress this warning,
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.8360449Z hint: call:
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.8360746Z hint:
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.8361230Z hint: 	git config --global init.defaultBranch <name>
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.8361880Z hint:
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.8362250Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.8362758Z hint: 'development'. The just-created branch can be renamed via this command:
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.8363199Z hint:
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.8363490Z hint: 	git branch -m <name>
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.8363824Z hint:
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.8364195Z hint: Disable this message with "git config set advice.defaultBranchName false"
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.8364860Z Initialized empty Git repository in /home/runner/work/firstmate/firstmate/.fm-trusted-base/.git/
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.8370925Z [command]/usr/bin/git remote add origin https://github.com/bastotec/firstmate
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.9572517Z ##[endgroup]
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.9572917Z ##[group]Disabling automatic garbage collection
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:42.9577016Z [command]/usr/bin/git config --local gc.auto 0
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.0217764Z ##[endgroup]
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.0218080Z ##[group]Setting up auth
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.0219170Z Removing SSH command configuration
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.0223750Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.0251683Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.0420974Z Removing HTTP extra header
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.0425563Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.0453408Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.0622984Z Removing includeIf entries pointing to credentials config files
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.0628090Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.0655978Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.0841299Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-58d2d030-83a6-4361-8c86-0d2deaf822a9.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.1006986Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/firstmate/firstmate/.fm-trusted-base/.git.path /home/runner/work/_temp/git-credentials-58d2d030-83a6-4361-8c86-0d2deaf822a9.config
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.1038054Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/firstmate/firstmate/.fm-trusted-base/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-58d2d030-83a6-4361-8c86-0d2deaf822a9.config
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.1164019Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.fm-trusted-base/.git.path /github/runner_temp/git-credentials-58d2d030-83a6-4361-8c86-0d2deaf822a9.config
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.1192811Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.fm-trusted-base/.git/worktrees/*.path /github/runner_temp/git-credentials-58d2d030-83a6-4361-8c86-0d2deaf822a9.config
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.1219209Z ##[endgroup]
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.1219553Z ##[group]Fetching the repository
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.1224986Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --filter=blob:none --depth=1 origin 6e0abd33dee3b4353a4e72fa7e54e17cbe562a58
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.3991528Z From https://github.com/bastotec/firstmate
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.3991844Z  * branch            6e0abd33dee3b4353a4e72fa7e54e17cbe562a58 -> FETCH_HEAD
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.4000253Z [command]/usr/bin/git rev-parse --verify --quiet 6e0abd33dee3b4353a4e72fa7e54e17cbe562a58^{object}
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.4024403Z 6e0abd33dee3b4353a4e72fa7e54e17cbe562a58
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.4027710Z ##[endgroup]
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.4027995Z ##[group]Determining the checkout info
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.4028423Z ##[endgroup]
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.4028630Z ##[group]Setting up sparse checkout
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.4031906Z [command]/usr/bin/git config core.sparseCheckout true
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.4166587Z [command]/usr/bin/git rev-parse --git-path info/sparse-checkout
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.4186535Z .git/info/sparse-checkout
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.4191822Z ##[endgroup]
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.4192108Z ##[group]Checking out the ref
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.4194561Z [command]/usr/bin/git checkout --progress --force 6e0abd33dee3b4353a4e72fa7e54e17cbe562a58
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9241272Z Note: switching to '6e0abd33dee3b4353a4e72fa7e54e17cbe562a58'.
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9241687Z 
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9241911Z You are in 'detached HEAD' state. You can look around, make experimental
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9242294Z changes and commit them, and you can discard any commits you make in this
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9242727Z state without impacting any branches by switching back to a branch.
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9242979Z 
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9243169Z If you want to create a new branch to retain commits you create, you may
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9243630Z do so (now or later) by using -c with the switch command. Example:
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9243844Z 
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9243933Z   git switch -c <new-branch-name>
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9244140Z 
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9244270Z Or undo this operation with:
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9244399Z 
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9244450Z   git switch -
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9244755Z 
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9245025Z Turn off this advice by setting config variable advice.detachedHead to false
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9245204Z 
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9245415Z HEAD is now at 6e0abd3 Merge pull request #131 from bastotec/fm/orphan-endpoint-retire
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9246350Z ##[endgroup]
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9283691Z [command]/usr/bin/git log -1 --format=%H
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9306591Z 6e0abd33dee3b4353a4e72fa7e54e17cbe562a58
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9313022Z ##[group]Removing auth
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9313235Z Removing SSH command configuration
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9315177Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9340817Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9507300Z Removing HTTP extra header
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9509794Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9538730Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9699001Z Removing includeIf entries pointing to credentials config files
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9702033Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9722570Z includeif.gitdir:/home/runner/work/firstmate/firstmate/.fm-trusted-base/.git.path
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9723068Z includeif.gitdir:/home/runner/work/firstmate/firstmate/.fm-trusted-base/.git/worktrees/*.path
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9723516Z includeif.gitdir:/github/workspace/.fm-trusted-base/.git.path
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9723915Z includeif.gitdir:/github/workspace/.fm-trusted-base/.git/worktrees/*.path
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9730124Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/firstmate/firstmate/.fm-trusted-base/.git.path
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9749874Z /home/runner/work/_temp/git-credentials-58d2d030-83a6-4361-8c86-0d2deaf822a9.config
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9756473Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/firstmate/firstmate/.fm-trusted-base/.git.path /home/runner/work/_temp/git-credentials-58d2d030-83a6-4361-8c86-0d2deaf822a9.config
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9784469Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/firstmate/firstmate/.fm-trusted-base/.git/worktrees/*.path
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9803968Z /home/runner/work/_temp/git-credentials-58d2d030-83a6-4361-8c86-0d2deaf822a9.config
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9810018Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/firstmate/firstmate/.fm-trusted-base/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-58d2d030-83a6-4361-8c86-0d2deaf822a9.config
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9836923Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.fm-trusted-base/.git.path
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9890117Z /github/runner_temp/git-credentials-58d2d030-83a6-4361-8c86-0d2deaf822a9.config
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9894922Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.fm-trusted-base/.git.path /github/runner_temp/git-credentials-58d2d030-83a6-4361-8c86-0d2deaf822a9.config
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9924692Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.fm-trusted-base/.git/worktrees/*.path
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9944143Z /github/runner_temp/git-credentials-58d2d030-83a6-4361-8c86-0d2deaf822a9.config
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:43.9949045Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.fm-trusted-base/.git/worktrees/*.path /github/runner_temp/git-credentials-58d2d030-83a6-4361-8c86-0d2deaf822a9.config
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:44.0188071Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:44.0348834Z Removing credentials config '/home/runner/work/_temp/git-credentials-58d2d030-83a6-4361-8c86-0d2deaf822a9.config'
+PR must be raised via no-mistakes	Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:44.0355641Z ##[endgroup]
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	﻿2026-10-10T21:39:44.0462255Z ##[group]Run set -eu
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	2026-10-10T21:39:44.0462437Z ^[[36;1mset -eu^[[0m
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	2026-10-10T21:39:44.0462598Z ^[[36;1mprintf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"^[[0m
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	2026-10-10T21:39:44.0462848Z ^[[36;1mbin/fm-nm-trusted-test-skip.sh .fm-trusted-base/.no-mistakes.yaml \^[[0m
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	2026-10-10T21:39:44.0463103Z ^[[36;1m  "$RUNNER_TEMP/pr-body.md" "$RUNNER_TEMP/pr-body-checked.md"^[[0m
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	2026-10-10T21:39:44.0463361Z ^[[36;1mdelimiter="FM_PR_BODY_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"^[[0m
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	2026-10-10T21:39:44.0463552Z ^[[36;1m{^[[0m
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	2026-10-10T21:39:44.0463672Z ^[[36;1m  printf 'body<<%s\n' "$delimiter"^[[0m
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	2026-10-10T21:39:44.0463837Z ^[[36;1m  cat "$RUNNER_TEMP/pr-body-checked.md"^[[0m
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	2026-10-10T21:39:44.0463996Z ^[[36;1m  printf '\n%s\n' "$delimiter"^[[0m
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	2026-10-10T21:39:44.0464137Z ^[[36;1m} >> "$GITHUB_OUTPUT"^[[0m
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	2026-10-10T21:39:44.0675499Z shell: /usr/bin/bash -e {0}
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	2026-10-10T21:39:44.0675647Z env:
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	2026-10-10T21:39:44.0677807Z   PR_BODY: A second mate's task was recorded done and merged while its PR was still open. Teardown counted pushed commits as landed and closed the backlog row with the PR link, which renders as merged.
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	Teardown, `fm-tasks-axi.sh done` and the captain-hold answer close now ask the forge for the PR's live state first. Merged passes, closed passes only with a `Superseded: <reason>` line on the task, open or unreadable refuses. `bin/fm-pr-record-audit.sh` flags Done rows that already disagree and runs from the heartbeat sweep.
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	The no-mistakes pipeline fills in the rest of this description.
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	🤖 Generated with [Claude Code](https://claude.com/claude-code)
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	<!-- no-mistakes-pr-appendix:v1 sha256=9f711b209cbf66788ad1b854816c06facc55eb84ca451719d16fbfed389a7c85 -->
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	<!-- no-mistakes-pipeline-attestation:v1 {"head_sha":"0b7ccf061ada25769f8739661f0510b5b92e7065","steps":[{"step":"intent","status":"completed"},{"step":"rebase","status":"completed"},{"step":"review","status":"completed"},{"step":"jev","status":"skipped"},{"step":"test","status":"skipped"},{"step":"document","status":"completed"},{"step":"lint","status":"completed"},{"step":"push","status":"completed"},{"step":"pr","status":"running"},{"step":"ci","status":"pending"}]} -->
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	<!-- /no-mistakes-pr-appendix:v1 -->
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	2026-10-10T21:39:44.0680134Z ##[endgroup]
+PR must be raised via no-mistakes	Accept a Test step skipped by trusted repo config	2026-10-10T21:39:44.2023164Z trusted-test-skip: refused: Test was skipped, but not by the trusted test.skip reason; body unchanged
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	﻿2026-10-10T21:39:44.2155071Z ##[group]Run kunchenguid/no-mistakes/.github/actions/require-no-mistakes@32d396ac0f29135daf7fcb9964aba9d5f4e796d6
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2155365Z with:
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2157508Z   pr-body: A second mate's task was recorded done and merged while its PR was still open. Teardown counted pushed commits as landed and closed the backlog row with the PR link, which renders as merged.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	Teardown, `fm-tasks-axi.sh done` and the captain-hold answer close now ask the forge for the PR's live state first. Merged passes, closed passes only with a `Superseded: <reason>` line on the task, open or unreadable refuses. `bin/fm-pr-record-audit.sh` flags Done rows that already disagree and runs from the heartbeat sweep.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	The no-mistakes pipeline fills in the rest of this description.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	🤖 Generated with [Claude Code](https://claude.com/claude-code)
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	<!-- no-mistakes-pr-appendix:v1 sha256=9f711b209cbf66788ad1b854816c06facc55eb84ca451719d16fbfed389a7c85 -->
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	<!-- no-mistakes-pipeline-attestation:v1 {"head_sha":"0b7ccf061ada25769f8739661f0510b5b92e7065","steps":[{"step":"intent","status":"completed"},{"step":"rebase","status":"completed"},{"step":"review","status":"completed"},{"step":"jev","status":"skipped"},{"step":"test","status":"skipped"},{"step":"document","status":"completed"},{"step":"lint","status":"completed"},{"step":"push","status":"completed"},{"step":"pr","status":"running"},{"step":"ci","status":"pending"}]} -->
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	<!-- /no-mistakes-pr-appendix:v1 -->
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2159865Z   exempt-bot-authors: false
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2159998Z ##[endgroup]
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2196375Z ##[start-action display=Verify no-mistakes signature and pipeline attestation;id=__kunchenguid_no-mistakes.verify]
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2233643Z ##[group]Run set -eu
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2233812Z ^[[36;1mset -eu^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2233950Z ^[[36;1mif command -v python3 >/dev/null 2>&1; then^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2234115Z ^[[36;1m  PY=python3^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2234261Z ^[[36;1melif command -v python >/dev/null 2>&1; then^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2234416Z ^[[36;1m  PY=python^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2234523Z ^[[36;1melse^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2234725Z ^[[36;1m  echo "::error::python interpreter not found; cannot parse pipeline attestation." >&2^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2234946Z ^[[36;1m  exit 1^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2235047Z ^[[36;1mfi^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2235167Z ^[[36;1m"$PY" "${GITHUB_ACTION_PATH}/verify.py"^[[0m
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2286930Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2287114Z env:
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2289250Z   PR_BODY: A second mate's task was recorded done and merged while its PR was still open. Teardown counted pushed commits as landed and closed the backlog row with the PR link, which renders as merged.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	Teardown, `fm-tasks-axi.sh done` and the captain-hold answer close now ask the forge for the PR's live state first. Merged passes, closed passes only with a `Superseded: <reason>` line on the task, open or unreadable refuses. `bin/fm-pr-record-audit.sh` flags Done rows that already disagree and runs from the heartbeat sweep.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	The no-mistakes pipeline fills in the rest of this description.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	🤖 Generated with [Claude Code](https://claude.com/claude-code)
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	<!-- no-mistakes-pr-appendix:v1 sha256=9f711b209cbf66788ad1b854816c06facc55eb84ca451719d16fbfed389a7c85 -->
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	Updates from [git push no-mistakes](https://github.com/kunchenguid/no-mistakes)
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	<!-- no-mistakes-pipeline-attestation:v1 {"head_sha":"0b7ccf061ada25769f8739661f0510b5b92e7065","steps":[{"step":"intent","status":"completed"},{"step":"rebase","status":"completed"},{"step":"review","status":"completed"},{"step":"jev","status":"skipped"},{"step":"test","status":"skipped"},{"step":"document","status":"completed"},{"step":"lint","status":"completed"},{"step":"push","status":"completed"},{"step":"pr","status":"running"},{"step":"ci","status":"pending"}]} -->
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	<!-- /no-mistakes-pr-appendix:v1 -->
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2291832Z   PR_HEAD_SHA: 
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2291942Z   PR_HEAD_REF: 
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2292181Z   PR_AUTHOR: 
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2292283Z   PR_NUMBER: 
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2292386Z   NM_EXEMPT_AUTHORS: 
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2292506Z   NM_EXEMPT_BOT_AUTHORS: false
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2292640Z   NM_EXEMPT_HEAD_BRANCHES: 
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2292766Z ##[endgroup]
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2507514Z ##[error]Required no-mistakes pipeline steps are not completed: test (status=skipped).
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2507982Z 
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2508300Z This repository requires review, test, document to have status=completed. Quota skips and agent skips are not compliant.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2508667Z 
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2508853Z Contributions to this repository must be submitted via 'git push no-mistakes'.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2509232Z See CONTRIBUTING.md for setup and the full workflow.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2509423Z 
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2509526Z PR author: bastotec
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2509733Z Found no-mistakes signature in PR #132 body.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2525736Z ##[error]Process completed with exit code 1.
+PR must be raised via no-mistakes	Verify no-mistakes signature and pipeline attestation	2026-10-10T21:39:44.2533977Z ##[end-action id=__kunchenguid_no-mistakes.verify;outcome=failure;conclusion=failure;duration_ms=31]
+PR must be raised via no-mistakes	Post Read the trusted default-branch .no-mistakes.yaml	﻿2026-10-10T21:39:44.2626077Z Post job cleanup.
+PR must be raised via no-mistakes	Post Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:44.3185534Z [command]/usr/bin/git version
+PR must be raised via no-mistakes	Post Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:44.3217796Z git version 2.55.0
+PR must be raised via no-mistakes	Post Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:44.3245106Z Temporarily overriding HOME='/home/runner/work/_temp/52373aea-4fa8-49e0-9db3-284f6be6994e' before making global git config changes
+PR must be raised via no-mistakes	Post Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:44.3245674Z Adding repository directory to the temporary git global config as a safe directory
+PR must be raised via no-mistakes	Post Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:44.3250545Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/firstmate/firstmate/.fm-trusted-base
+PR must be raised via no-mistakes	Post Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:44.3276193Z Removing SSH command configuration
+PR must be raised via no-mistakes	Post Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:44.3280785Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+PR must be raised via no-mistakes	Post Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:44.3307173Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+PR must be raised via no-mistakes	Post Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:44.3493155Z Removing HTTP extra header
+PR must be raised via no-mistakes	Post Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:44.3497190Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+PR must be raised via no-mistakes	Post Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:44.3523602Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+PR must be raised via no-mistakes	Post Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:44.3699649Z Removing includeIf entries pointing to credentials config files
+PR must be raised via no-mistakes	Post Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:44.3707552Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+PR must be raised via no-mistakes	Post Read the trusted default-branch .no-mistakes.yaml	2026-10-10T21:39:44.3749162Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+PR must be raised via no-mistakes	Post Run actions/checkout@v6	﻿2026-10-10T21:39:44.4038597Z Post job cleanup.
+PR must be raised via no-mistakes	Post Run actions/checkout@v6	2026-10-10T21:39:44.4610084Z [command]/usr/bin/git version
+PR must be raised via no-mistakes	Post Run actions/checkout@v6	2026-10-10T21:39:44.4647755Z git version 2.55.0
+PR must be raised via no-mistakes	Post Run actions/checkout@v6	2026-10-10T21:39:44.4679349Z Temporarily overriding HOME='/home/runner/work/_temp/1a5aa3b3-c08c-456f-8e73-306f9cb50eb6' before making global git config changes
+PR must be raised via no-mistakes	Post Run actions/checkout@v6	2026-10-10T21:39:44.4680123Z Adding repository directory to the temporary git global config as a safe directory
+PR must be raised via no-mistakes	Post Run actions/checkout@v6	2026-10-10T21:39:44.4684731Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/firstmate/firstmate
+PR must be raised via no-mistakes	Post Run actions/checkout@v6	2026-10-10T21:39:44.4716692Z Removing SSH command configuration
+PR must be raised via no-mistakes	Post Run actions/checkout@v6	2026-10-10T21:39:44.4722648Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+PR must be raised via no-mistakes	Post Run actions/checkout@v6	2026-10-10T21:39:44.4757149Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+PR must be raised via no-mistakes	Post Run actions/checkout@v6	2026-10-10T21:39:44.5037483Z Removing HTTP extra header
+PR must be raised via no-mistakes	Post Run actions/checkout@v6	2026-10-10T21:39:44.5038557Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+PR must be raised via no-mistakes	Post Run actions/checkout@v6	2026-10-10T21:39:44.5069174Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+PR must be raised via no-mistakes	Post Run actions/checkout@v6	2026-10-10T21:39:44.5265635Z Removing includeIf entries pointing to credentials config files
+PR must be raised via no-mistakes	Post Run actions/checkout@v6	2026-10-10T21:39:44.5273863Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+PR must be raised via no-mistakes	Post Run actions/checkout@v6	2026-10-10T21:39:44.5309459Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+PR must be raised via no-mistakes	Complete job	﻿2026-10-10T21:39:44.5606363Z Cleaning up orphan processes
