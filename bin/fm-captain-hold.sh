@@ -258,6 +258,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 # shellcheck source=bin/fm-backlog-transition-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
+# shellcheck source=bin/fm-pr-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-wake-lib.sh"
@@ -1084,10 +1086,18 @@ apply_pending_retained_artifact() {  # <task-id>
 }
 
 close_answered() {  # <task-id> <release-0-or-1>
+  local row url body
   if [ "$2" = 1 ]; then
     tasks_axi unhold "$1" >/dev/null || return 1
   else
     apply_pending_retained_artifact "$1" || return 1
+    task_show "$1" || fail "refusing to close $1: cannot read the task row"
+    row=$TASK_SHOW_OUTPUT
+    url=$(fm_pr_task_url "$row" "$STATE/$1.meta")
+    if [ -n "$url" ]; then
+      body=$(fm_pr_task_body "$row") || fail "refusing to close $1: cannot decode the task body"
+      fm_pr_close_verdict "$url" "$body" || fail "refusing to close $1: $FM_PR_CLOSE_REFUSAL"
+    fi
     tasks_axi "done" "$1" >/dev/null || return 1
   fi
   remove_decision_card "$1"

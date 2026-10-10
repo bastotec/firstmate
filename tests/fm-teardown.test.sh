@@ -643,11 +643,11 @@ run_teardown() {
 # has a row to close. Uses the real tasks-axi (the fixture's default fakebin has
 # no tasks-axi stub, so PATH resolves the installed one).
 seed_backlog_in_flight() {
-  local case_dir=$1 kind=${2:-ship}
+  local case_dir=$1 kind=${2:-ship} title=${3:-teardown fixture task}
   mkdir -p "$case_dir/data"
   printf '%s\n' '# Backlog' '' '## In flight' '' '## Queued' '' '## Done' \
     > "$case_dir/data/backlog.md"
-  tasks-axi add task-x1 "teardown fixture task" --kind "$kind" \
+  tasks-axi add task-x1 "$title" --kind "$kind" \
     --file "$case_dir/data/backlog.md" >/dev/null
   tasks-axi start task-x1 --file "$case_dir/data/backlog.md" >/dev/null
 }
@@ -821,6 +821,39 @@ test_teardown_refuses_unmerged_recorded_pr() {
   pass "teardown refuses a recorded PR that is open, closed without a reason, or unreadable"
 }
 
+test_teardown_local_only_recorded_pr_gate() {
+  local case_dir rc
+  case_dir=$(make_case local-only-pr-open)
+  write_meta "$case_dir" local-only ship
+  wt_commit "$case_dir" 'landed locally'
+  git -C "$case_dir/project" update-ref refs/heads/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
+  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  seed_backlog_in_flight "$case_dir"
+  add_logging_treehouse "$case_dir"
+  rc=0
+  FM_FAKE_GH_PR_STATE=OPEN run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" 'local-only with a recorded open PR'
+  assert_grep 'is still open' "$case_dir/stderr" 'local-only refusal did not name the open PR'
+  assert_present "$case_dir/state/task-x1.meta" 'local-only PR refusal removed metadata'
+  assert_absent "$case_dir/treehouse.log" 'local-only PR refusal returned the worktree'
+  [ "$(backlog_row_state "$case_dir")" = in_flight ] || fail 'local-only open PR row was closed'
+  pass 'local-only landed branches still require their recorded PR to merge'
+}
+
+test_teardown_title_is_not_supersession() {
+  local case_dir rc
+  case_dir=$(make_case pr-gate-title)
+  write_meta "$case_dir" no-mistakes ship
+  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  seed_backlog_in_flight "$case_dir" ship 'Superseded: require reasons before closing PRs'
+  rc=0
+  FM_FAKE_GH_PR_STATE=CLOSED run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" 'supersession only in the title'
+  assert_present "$case_dir/state/task-x1.meta" 'title-only supersession removed metadata'
+  [ "$(backlog_row_state "$case_dir")" = in_flight ] || fail 'title-only supersession closed the row'
+  pass 'teardown does not treat task titles as supersession declarations'
+}
+
 test_teardown_closes_superseded_pr_without_merged_claim() {
   local case_dir
   case_dir=$(make_case pr-gate-superseded)
@@ -839,17 +872,21 @@ test_teardown_closes_superseded_pr_without_merged_claim() {
 }
 
 test_teardown_force_never_claims_unmerged_pr() {
-  local case_dir
-  case_dir=$(make_case pr-gate-force)
-  write_meta "$case_dir" no-mistakes ship
-  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
-  seed_backlog_in_flight "$case_dir"
-  FM_FAKE_GH_PR_STATE=OPEN run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" \
-    || fail "forced teardown failed: $(cat "$case_dir/stderr")"
-  assert_grep 'without claiming the PR merged' "$case_dir/stderr" "forced teardown did not warn about the open PR"
-  assert_no_grep '(merged ' "$case_dir/data/backlog.md" "forced teardown recorded an open PR as merged"
-  assert_no_grep 'pull/7' "$case_dir/data/backlog.md" "forced teardown attached the unmerged PR link"
-  pass "forced teardown of an unmerged PR closes the row without the PR link"
+  local case_dir state
+  for state in OPEN MERGED; do
+    case_dir=$(make_case "pr-gate-force-$state")
+    write_meta "$case_dir" no-mistakes ship
+    printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+    seed_backlog_in_flight "$case_dir"
+    FM_FAKE_GH_PR_STATE=$state run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" \
+      || fail "forced teardown failed: $(cat "$case_dir/stderr")"
+    if [ "$state" = OPEN ]; then
+      assert_grep 'without claiming the PR merged' "$case_dir/stderr" "forced teardown did not warn about the open PR"
+    fi
+    assert_no_grep '(merged ' "$case_dir/data/backlog.md" "forced teardown recorded a $state PR as merged"
+    assert_no_grep 'pull/7' "$case_dir/data/backlog.md" "forced teardown attached the $state PR link"
+  done
+  pass "forced teardown never claims a merge, even when the recorded PR merged"
 }
 
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator() {
@@ -3277,6 +3314,8 @@ test_wake_gate_retirement_refuses_a_symlinked_parent
 test_wake_gate_retirement_requires_python_only_for_existing_state
 test_teardown_closes_the_backlog_item_itself
 test_teardown_refuses_unmerged_recorded_pr
+test_teardown_local_only_recorded_pr_gate
+test_teardown_title_is_not_supersession
 test_teardown_closes_superseded_pr_without_merged_claim
 test_teardown_force_never_claims_unmerged_pr
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator

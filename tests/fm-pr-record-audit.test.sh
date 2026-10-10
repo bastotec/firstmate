@@ -43,8 +43,8 @@ in_home() {  # <home> <command...>
 }
 
 add_row() {  # <home> <id> <state: in_flight|done> [pr-number] [body]
-  local home=$1 id=$2 state=$3 pr=${4:-} body=${5:-}
-  tasks-axi add "$id" "fixture $id" --kind ship --file "$home/data/backlog.md" >/dev/null
+  local home=$1 id=$2 state=$3 pr=${4:-} body=${5:-} title=${6:-fixture $2}
+  tasks-axi add "$id" "$title" --kind ship --file "$home/data/backlog.md" >/dev/null
   [ -z "$body" ] || tasks-axi update "$id" --body "$body" --file "$home/data/backlog.md" >/dev/null
   [ -z "$pr" ] || tasks-axi update "$id" --pr "https://github.com/example/repo/pull/$pr" \
     --file "$home/data/backlog.md" >/dev/null
@@ -99,6 +99,104 @@ test_done_gate() {
   pass "fm-tasks-axi.sh done refuses an open, unexplained closed, or unreadable PR and passes merged or superseded"
 }
 
+test_metadata_and_read_failure_gates() {
+  local home out rc real_tasks state_dir
+  home=$(make_home metadata-gate)
+  printf 'OPEN\n' > "$home/states/1"
+  add_row "$home" meta-pr in_flight
+  printf 'pr=https://github.com/example/repo/pull/1\n' > "$home/state/meta-pr.meta"
+  out=$(in_home "$home" "$WRAPPER" close meta-pr 2>&1); rc=$?
+  expect_code 2 "$rc" "close with a metadata-only PR"
+  assert_contains "$out" "is still open" "metadata-only PR was not checked"
+  [ "$(row_state "$home" meta-pr)" = in_flight ] || fail "metadata-only PR row was closed"
+
+  state_dir="$home/alternate-state"
+  mkdir -p "$state_dir"
+  mv "$home/state/meta-pr.meta" "$state_dir/meta-pr.meta"
+  out=$(FM_STATE_OVERRIDE="$state_dir" in_home "$home" "$WRAPPER" done meta-pr 2>&1); rc=$?
+  expect_code 2 "$rc" "done with an overridden state directory"
+  assert_contains "$out" "is still open" "overridden metadata was not checked"
+
+  real_tasks=$(command -v tasks-axi)
+  cat > "$home/fakebin/tasks-axi" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = show ] && [ "\${2:-}" = meta-pr ]; then
+  echo 'code: BACKEND_UNAVAILABLE' >&2
+  exit 1
+fi
+case "\${1:-}" in done|close) echo called >> "$home/mutations" ;; esac
+exec "$real_tasks" "\$@"
+SH
+  chmod +x "$home/fakebin/tasks-axi"
+  out=$(in_home "$home" "$WRAPPER" done meta-pr 2>&1); rc=$?
+  expect_code 2 "$rc" "done when reading the row fails"
+  assert_contains "$out" "cannot read the task row" "failed read did not explain the refusal"
+  assert_absent "$home/mutations" "a failed read reached the close mutation"
+  [ "$(row_state "$home" meta-pr)" = in_flight ] || fail "unreadable row was closed"
+
+  out=$(in_home "$home" "$WRAPPER" done missing-row 2>&1); rc=$?
+  [ "$rc" -ne 0 ] || fail "missing row was reported closed"
+  assert_contains "$out" "code: NOT_FOUND" "missing row did not report tasks-axi's error"
+  assert_present "$home/mutations" "a confirmed absent row did not pass through to tasks-axi"
+  pass "metadata-only PRs and unreadable rows cannot bypass the hand-close gate"
+}
+
+test_supersession_body_boundary() {
+  local home out rc id body
+  home=$(make_home supersession-boundary)
+  printf 'CLOSED\n' > "$home/states/1"
+  add_row "$home" title-only in_flight 1 '' 'Superseded: title is not a declaration'
+  add_row "$home" inline-only in_flight 1 'Require Superseded: reasons before closing PRs'
+  add_row "$home" blank-only in_flight 1 $'Superseded: \t\nUnrelated next line'
+  for id in title-only inline-only blank-only; do
+    out=$(in_home "$home" "$WRAPPER" done "$id" 2>&1); rc=$?
+    expect_code 2 "$rc" "$id supersession false positive"
+    [ "$(row_state "$home" "$id")" = in_flight ] || fail "$id was closed as superseded"
+    tasks-axi done "$id" --file "$home/data/backlog.md" >/dev/null
+  done
+  body=$'Prior context\nSuperseded: "substituído" by a smaller change\nOther context'
+  add_row "$home" body-line in_flight 1 "$body"
+  in_home "$home" "$WRAPPER" done body-line >/dev/null 2>&1 || fail "decoded supersession line was refused"
+  out=$(in_home "$home" "$AUDIT" 2>&1); rc=$?
+  expect_code 0 "$rc" "audit supersession boundary"
+  for id in title-only inline-only blank-only; do
+    assert_contains "$out" "task $id is recorded done" "audit suppressed $id's mismatch"
+  done
+  assert_not_contains "$out" 'task body-line' "audit flagged a valid decoded supersession line"
+  pass "supersession requires a nonblank marker line in the decoded body"
+}
+
+test_captain_answer_pr_gate() {
+  local home out rc source id
+  home=$(make_home captain-pr-gate)
+  printf 'OPEN\n' > "$home/states/1"
+  printf 'Leave it for later.\n' > "$home/answer.txt"
+  for source in meta row; do
+    id="held-$source"
+    add_row "$home" "$id" in_flight
+    if [ "$source" = meta ]; then
+      printf 'pr=https://github.com/example/repo/pull/1\n' > "$home/state/$id.meta"
+    else
+      tasks-axi update "$id" --pr https://github.com/example/repo/pull/1 --file "$home/data/backlog.md" >/dev/null
+    fi
+    in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold "$id" --reason 'Decide whether to merge' >/dev/null \
+      || fail "could not hold $id"
+    out=$(in_home "$home" "$ROOT/bin/fm-captain-hold.sh" answer "$id" --decision-file "$home/answer.txt" 2>&1); rc=$?
+    expect_code 1 "$rc" "captain answer with an open $source PR"
+    assert_contains "$out" 'is still open' "captain answer did not explain PR refusal"
+    [ "$(row_state "$home" "$id")" != done ] || fail "captain answer closed an open $source PR"
+    assert_present "$home/state/cards/$id.json" "refused answer removed its card"
+  done
+  printf 'MERGED\n' > "$home/states/1"
+  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" answer held-meta --decision-file "$home/answer.txt" >/dev/null \
+    || fail "merged PR did not permit the interrupted answer to finish"
+  [ "$(row_state "$home" held-meta)" = done ] || fail "merged captain answer did not close"
+  rm "$home/states/1"
+  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" answer held-meta --decision-file "$home/answer.txt" >/dev/null \
+    || fail "closed answer replay required forge access"
+  pass "captain answers gate metadata and row PRs while closed replays remain offline"
+}
+
 test_audit_flags_mismatches_read_only() {
   local home out rc before
   home=$(make_home audit)
@@ -132,6 +230,9 @@ task done-open is recorded done but PR https://github.com/example/repo/pull/1 is
 
 if command -v tasks-axi >/dev/null 2>&1; then
   test_done_gate
+  test_metadata_and_read_failure_gates
+  test_supersession_body_boundary
+  test_captain_answer_pr_gate
   test_audit_flags_mismatches_read_only
 else
   echo "skip: tasks-axi not found; PR completion-claim cases not run"

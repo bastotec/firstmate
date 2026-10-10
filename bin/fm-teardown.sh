@@ -1377,7 +1377,7 @@ backlog_done_args() {
     *)
       if [ "$MODE" = local-only ]; then
         BACKLOG_DONE_ARGS=(--note "local main")
-      elif [ -n "$PR_URL" ] && { [ -z "$PR_CLOSE_VERDICT" ] || [ "$PR_CLOSE_VERDICT" = merged ]; }; then
+      elif [ "$FORCE" != --force ] && [ -n "$PR_URL" ] && { [ -z "$PR_CLOSE_VERDICT" ] || [ "$PR_CLOSE_VERDICT" = merged ]; }; then
         BACKLOG_DONE_ARGS=(--pr "$PR_URL")
       fi
       ;;
@@ -3034,12 +3034,11 @@ fi
 # rule). --force still authorizes discarding the work, but the row then closes
 # without the PR link, so it never claims a merge that did not happen.
 PR_CLOSE_VERDICT=
-if [ "$KIND" != secondmate ] && [ -n "$PR_URL" ] && [ "$MODE" != local-only ]; then
-  if fm_pr_close_verdict "$PR_URL"; then
+if [ "$KIND" != secondmate ] && [ -n "$PR_URL" ]; then
+  pr_task_row=$(fm_backlog_row_show "$DATA" "$ID" --full 2>/dev/null) || pr_task_row=
+  pr_task_body=$(fm_pr_task_body "$pr_task_row" 2>/dev/null) || pr_task_body=
+  if fm_pr_close_verdict "$PR_URL" "$pr_task_body"; then
     PR_CLOSE_VERDICT=$FM_PR_CLOSE_VERDICT
-  elif [ "$FM_PR_CLOSE_STATE" = closed ] \
-    && fm_pr_superseded_recorded "$(fm_backlog_row_show "$DATA" "$ID" --full 2>/dev/null || true)"; then
-    PR_CLOSE_VERDICT=superseded
   elif [ "$FORCE" = "--force" ]; then
     PR_CLOSE_VERDICT=unmerged
     echo "warning: $FM_PR_CLOSE_REFUSAL; --force discards the work and closes $ID without claiming the PR merged." >&2

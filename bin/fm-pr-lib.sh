@@ -1134,10 +1134,33 @@ fm_pr_live_state() {  # <url>
   esac
 }
 
+fm_pr_task_body() {
+  printf '%s\n' "${1-}" | sed -n 's/^  body: //p' | head -1 \
+    | perl -MJSON::PP -e '
+      local $/;
+      my $shown = <STDIN> // "";
+      chomp $shown;
+      my $body = $shown =~ /^"/
+        ? JSON::PP->new->utf8->allow_nonref->decode($shown) : $shown;
+      binmode STDOUT, ":raw";
+      utf8::encode($body) if utf8::is_utf8($body);
+      print $body;
+    '
+}
+
+fm_pr_task_url() {
+  local url
+  url=$(printf '%s\n' "${1-}" | sed -n 's/^  links: .*pr:\(https:\/\/[^",; ]*\).*/\1/p' | head -1)
+  if [ -z "$url" ] && [ -f "${2-}" ]; then
+    url=$(grep '^pr=' "$2" | tail -1 | cut -d= -f2-)
+  fi
+  printf '%s' "$url"
+}
+
 # Does <text> record a supersession reason? The line is "Superseded: <reason>"
 # with a non-blank reason, anywhere in the task's own text.
-fm_pr_superseded_recorded() {  # <text>
-  printf '%s\n' "${1-}" | grep -Eq 'Superseded:[[:space:]]*[^[:space:]"\\]'
+fm_pr_superseded_recorded() {
+  printf '%s\n' "${1-}" | grep -Eq '^Superseded:[[:blank:]]*[^[:space:]]'
 }
 
 # Decide whether a task naming <url> may close as finished. Sets

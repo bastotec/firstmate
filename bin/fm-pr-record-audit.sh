@@ -54,7 +54,8 @@ while read -r id url; do
       ;;
     closed)
       row=$("$SCRIPT_DIR/fm-tasks-axi.sh" show "$id" --full 2>/dev/null) || row=
-      fm_pr_superseded_recorded "$row" \
+      body=$(fm_pr_task_body "$row" 2>/dev/null) || body=
+      fm_pr_superseded_recorded "$body" \
         || printf 'task %s is recorded done but PR %s was closed without merging - reconcile\n' "$id" "$url"
       ;;
   esac

@@ -134,7 +134,7 @@ cd "$FM_BACKLOG_AXI_ROOT" || fail "cannot enter the backlog root $FM_BACKLOG_AXI
 
 # Refuse a close that would claim a PR merged when it has not.
 done_pr_gate() {
-  local id='' pr_flag='' previous='' arg row url
+  local id='' pr_flag='' previous='' arg row url body
   for arg in "${ARGS[@]:1}"; do
     case "$previous" in
       --pr) pr_flag=$arg; previous=''; continue ;;
@@ -148,13 +148,17 @@ done_pr_gate() {
     esac
   done
   [ -n "$id" ] || return 0
-  row=$(tasks-axi show "$id" --full 2>/dev/null) || row=
+  if ! row=$(tasks-axi show "$id" --full 2>&1); then
+    printf '%s\n' "$row" | grep -qx 'code: NOT_FOUND' && return 0
+    fail "refusing to close $id: cannot read the task row"
+  fi
   url=$pr_flag
   if [ -z "$url" ]; then
-    url=$(printf '%s\n' "$row" | sed -n 's/^  links: .*pr:\(https:\/\/[^",; ]*\).*/\1/p' | head -1)
+    url=$(fm_pr_task_url "$row" "${FM_STATE_OVERRIDE:-$FM_HOME/state}/$id.meta")
   fi
   [ -n "$url" ] || return 0
-  if fm_pr_close_verdict "$url" "$row"; then
+  body=$(fm_pr_task_body "$row") || fail "refusing to close $id: cannot decode the task body"
+  if fm_pr_close_verdict "$url" "$body"; then
     [ "$FM_PR_CLOSE_VERDICT" = superseded ] && [ -n "$pr_flag" ] || return 0
     FM_PR_CLOSE_REFUSAL="$url closed without merging, and --pr would record it as merged; drop --pr"
   fi
