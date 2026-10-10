@@ -39,9 +39,9 @@
 #   validated state/<id>.meta, so --scout, --secondmate, --backend, a project
 #   positional, and batch pairs are all refused alongside it; harness, model,
 #   and effort may change, making a harness switch one ordinary relaunch. A
-#   task recorded on a retired backend (tmux or herdr) cannot be relaunched:
-#   nothing can prove its old agent stopped. A missing stream registry entry
-#   never authorizes a replacement either.
+#   task recorded on a retired backend (tmux or herdr) refuses this flag:
+#   bin/fm-control.sh reincarnate owns its stop proof and stream rebind.
+#   A missing stream registry entry never authorizes a replacement either.
 #   It clears the previous harness's per-task wiring before arming the new
 #   incarnation. A relaunch whose recorded prior harness is Deck also
 #   proves every task-bound residual Deck driver stopped before that new

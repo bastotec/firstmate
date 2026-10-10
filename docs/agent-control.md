@@ -15,7 +15,7 @@ A workaround that lives only in agent prose, such as remembering to send lifecyc
 
 `bin/fm-control-lib.sh` is the single executable owner of three capability tables, with no side effects, so it can be read as a contract:
 
-- The **verb allowlist**: `interrupt`, `exit`, `relaunch`, `recover-missing`.
+- The **verb allowlist**, exposed by `fm_control_verbs`; [Verbs](#verbs) describes each effect.
   There is no arbitrary-text and no generic raw-key entry point.
   A caller either names an allowlisted verb or is refused.
 - **Per-harness mechanics**: the key that cancels a running turn, how many times it must be delivered, whether the composer needs clearing afterwards, the command that exits the agent, and which task kinds the adapter is verified to run.
@@ -40,6 +40,7 @@ The remaining sections describe task control through `fm-control.sh`.
 | `exit` | Stop the agent, preserving the endpoint, the worktree, and every uncommitted change. | The backend's recovery-grade classifier reports the agent gone. Deck additionally requires the task-bound residual-driver proof owned by its [adapter reference](../.agents/skills/harness-adapters/references/harness/deck.md). Already-stopped is idempotent success. |
 | `relaunch` | Replace the running agent with a new one in the same endpoint and worktree, on the exact recorded adapter or an explicitly chosen harness, model, and effort. | The new agent is alive on the recorded endpoint, and the durable record names the harness that is actually running. |
 | `recover-missing` | Restore a terminal for a task whose endpoint reads `missing` using the backend-specific recovery below, then hand the launch to `fm-spawn.sh --relaunch` on the recorded profile or an explicitly named replacement with the same precedence and axis-reset semantics as `relaunch`. | The endpoint reads `missing`, the backend-specific ownership guard passes, the recorded local copy remains available and task-owned, and the new agent is alive on the endpoint now named by the record. |
+| `reincarnate` | Continue a proven-stopped retired-backend ship or scout on stream with its recorded profile using the same recovery transaction; the [`fm-control.sh` header](../bin/fm-control.sh) owns the proof and refusal contract. | A fresh stream endpoint runs the same task in its preserved clean local copy, without retiring its backlog row or losing history. |
 
 An exit that delivers lifecycle input but cannot prove the agent stopped fails with `exit=unconfirmed`, reports the observed agent state and any interrupt cancellation claim, and never claims that nothing changed.
 Interrupt never rewrites busy state as proof of its own success.
@@ -64,9 +65,10 @@ Deck's driver starts a new session from the brief on disk.
 
 ## Transactional relaunch
 
-`relaunch` and `recover-missing` replace task metadata and each runs as a transaction with a journal at `state/<id>.control-relaunch`, a best-effort copy of the prior record kept beside it for the operator, and a ship or scout's prior instructions preserved when a progress note is appended.
+`relaunch`, `recover-missing`, and `reincarnate` replace task metadata and each runs as a transaction with a journal at `state/<id>.control-relaunch`, a best-effort copy of the prior record kept beside it for the operator, and a ship or scout's prior instructions preserved when a progress note is appended.
 The [`fm-control.sh` header](../bin/fm-control.sh) owns the separate deliberate-stop marker written by secondmate exit and the locked automatic-admission guard.
 Only the instructions are ever rolled back from those copies; the record copy is never written back over the live record, because every other writer takes the per-task record lock this plane does not hold.
+The steps below describe `relaunch`; [missing-terminal recovery](#recovering-a-missing-terminal) replaces its stop step, and `reincarnate` uses that recovery transaction after the preflight owned by the script header.
 
 1. **Resolve the profile.**
    An explicit `--harness`, `--model`, or `--effort` wins, and `recover-missing` accepts exactly the same three flags with exactly this precedence - a rescue that names a replacement runtime is one transaction, not a failed recovery followed by a relaunch.
@@ -80,7 +82,7 @@ Only the instructions are ever rolled back from those copies; the record copy is
 2. **Prove backlog recovery eligibility.**
    When the automatic backlog transition gate applies, an unheld In-flight row is recoverable whether it is unblocked or waiting on a dependency; relaunch preserves that lifecycle state and dependency blocker instead of rerunning `start`.
    An unblocked Queued row can still proceed and moves to In flight at the launch commit, while a dependency-blocked Queued row, any held row, a missing or Done row, and an unreadable row refuse before the old agent is stopped.
-   `recover-missing` uses the same predicate before it recreates a terminal.
+   Both recovery verbs use the same predicate before creating a terminal.
 3. **Safe checkpoint.**
    The recorded worktree must exist and be a worktree root; its head and dirty state are recorded.
    For a `kind=secondmate` task, the home's identity marker must match and its child records must be readable, so a relaunch can never strand child work behind an unreadable home.
@@ -121,11 +123,11 @@ It differs from the steps above in exactly three places.
 - A launch failure **after** the agent is stopped but before replacement-record publication keeps the prior durable record, keeps the progress note so a later recovery still has it, marks the journal `failed:launching`, and reports plainly that no agent is running and where the work is preserved.
 - If the launch owner already published the new record but no running agent can be confirmed, the new record is kept: the task is recorded on the new harness with no agent confirmed, which is exactly what recovery reconciles.
   Rewriting it back to the old harness would be a second, worse inaccuracy.
-- A `recover-missing` failure while the terminal is being recreated restores the prior instructions byte-exact, because no replacement harness has been launched in that phase.
+- A `recover-missing` or `reincarnate` failure while the terminal is being recreated restores the prior instructions byte-exact, because no replacement harness has been launched in that phase.
   A successful endpoint rebind is retained even if settling or handover later fails; the new endpoint's state must be reconciled before retrying with `relaunch`.
   If the rebind itself fails, recovery attempts to close the new endpoint and reports either a confirmed close or an unconfirmed close with the new target for reconciliation; the old metadata binding remains intact.
-- A `recover-missing` failure because the new shell never settles to agent-free never claims an agent was stopped: the terminal was recreated, the handover could not be completed, and the pane was just measured as not agent-free, so no bare shell, `dead` endpoint, or ready-to-`relaunch` state is claimed for it.
-- A `recover-missing` failure at the launch itself never claims an agent was stopped either, and names the state the operator is now in: the recreated terminal holds a bare shell, so the endpoint reads `dead` rather than `missing` and the verb that retries it is `relaunch`.
+- A `recover-missing` or `reincarnate` failure because the new shell never settles to agent-free never claims an agent was stopped: the terminal was recreated, the handover could not be completed, and the pane was just measured as not agent-free, so no bare shell, `dead` endpoint, or ready-to-`relaunch` state is claimed for it.
+- A `recover-missing` or `reincarnate` failure at the launch itself never claims an agent was stopped either, and names the state the operator is now in: the recreated terminal holds a bare shell, so the endpoint reads `dead` rather than `missing` and the verb that retries it is `relaunch`.
   That holds because the durable record is published before the launch command is sent, so reaching this failure means nothing was ever typed into the pane.
 
 ## Fail-closed boundaries
@@ -169,4 +171,5 @@ The empirical basis for each adapter's value is the `harness-adapters` skill's v
 - `tests/fm-control.test.sh` - the supported-worker adapter contract, the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, the exit composer gate's verify-then-clear shapes and own-doorbell exception with appended-text protection, and marker non-regression, all against a stubbed session provider.
 - `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, backlog recovery that preserves a dependency-blocked In-flight row while refusing blocked Queued and held In-flight rows before stopping the existing worker, rollback after a failed launch, and an already-armed merge poll still authenticating after the record rewrite.
 - `tests/fm-control-recover-missing.test.sh` - the missing-terminal recovery on fake stream endpoints: the live, ambiguous, absent-copy, and pool-slot-ownership refusals leaving the record and instructions byte-identical, a rescue succeeding on a copy full of uncommitted work and leaving every one of those changes byte-identical, a failed endpoint creation, the recorded profile surviving a differing configured secondmate pin, the explicit replacement-profile recoveries and their refusals (axis resets, deck from a recorded effort, an explicit deck effort, an unverified harness, a held backlog row, and the failed-handoff rollback that keeps the recorded runtime), removed-adapter records refusing without mutation, a still-starting shell being waited out rather than handed over and the refusal when it never settles, a failed recreation rolling the progress note back while leaving a concurrent write to the durable record in place, and the message after a failed launch handoff.
+- `tests/fm-control-recover-missing.test.sh` also exercises `reincarnate` on retired and legacy ship/scout records, preserving the recorded profile, history, and the In-flight row, plus secondmate and replacement-profile refusals, fake-provider endpoint absence checks, and read-only inert-process proofs across old code roots, including a surviving worker whose driver has exited.
 - [Portable stream-parity regressions](verification/runtime-backends.md#portable-stream-parity-regressions) - stream endpoint rebinding, owning-home agent refusal, and confirmed versus unconfirmed cleanup after a failed rebind.

@@ -59,6 +59,7 @@ The scan uses control-plane relaunch for a dead endpoint and guarded missing-end
 Successful revivals are silent and logged; a spent revival budget produces one failure notification rather than repeated restarts.
 A secondmate deliberately stopped through control-plane exit stays down across scans and session start until explicitly relaunched or freshly observed alive; [`bin/fm-control.sh`'s header](../bin/fm-control.sh) owns the stop marker and automatic-admission guard.
 [`verification/supervision.md`](verification/supervision.md#secondmate-revival) lists the portable regression entry points.
+[Agent control](agent-control.md#verbs) owns the lifecycle verbs available through `bin/fm-control.sh`.
 
 A new stream agent generates a fresh endpoint id, so `recover-missing` starts a new endpoint on this home's configured hub (same `fm-<id>` label, the recorded worktree as its cwd) and rebinds the task's endpoint identity through [`bin/fm-endpoint-rebind-lib.sh`](../bin/fm-endpoint-rebind-lib.sh), keeping its worktree and non-endpoint fields.
 Because a stream `missing` alone does not prove the worker gone, recovery first looks for a local stream agent matching both the task label and this home's task status path.
@@ -451,8 +452,8 @@ What operator mode touches, and what it does not:
 - Every other cleanup refusal stands and nothing is retired, such as an outcome that has not reached the parent channel or a backlog transition that cannot be replayed.
   A cleanup that fails only after it has already removed the durable task record reports that partial state instead of claiming nothing was retired.
 
-Records left on the removed tmux and herdr backends, including any record with no `backend=` field, read as `unverified` to recovery and as gone to presence checks, cannot be relaunched, and reach cleanup as an unconfirmed kill.
-Stop any process still behind one by hand, then retire it with this command.
+[Runtime backend](configuration.md#runtime-backend-configbackend--fm_backend) owns retired-record classification and supported continuation for unfinished work.
+To retire a retired-backend record instead, stop any process still behind it by hand, then use this command.
 
 The owning mate retires its own finished work on those backends under the captain's standing instruction through [`task-delivery`'s finished-work sweep](../.agents/skills/task-delivery/SKILL.md#finished-work-sweep); [`fm-retire-endpoint.sh`'s header and `--help`](../bin/fm-retire-endpoint.sh) own the narrower `--finished` checks and assertion basis.
 When tmux is installed, that mode accepts a tmux record only when a local tmux server can be read and does not list its window, or tmux definitively reports that no server is running; any other inventory failure goes to the captain rather than authorizing cleanup.

@@ -151,7 +151,8 @@ Treehouse remains the worktree provider, since stream is a session provider only
 New local spawns select an explicitly authorized per-task `--backend` first, then `FM_BACKEND`, then the first non-empty line of `config/backend`, then `stream`.
 A per-task override requires a current captain instruction or the task's accepted brief and never establishes precedent for later tasks.
 Any selection other than `stream` is refused, and the earlier `zellij`, `orca`, and `cmux` adapters remain unsupported.
-A task record on the retired `tmux` or `herdr` backend, including a record with no `backend=` field, stays readable only for reconciliation and retirement: the recovery classifier reports `unverified`, its kill is unconfirmed, and relaunch is refused.
+A task record on the retired `tmux` or `herdr` backend, including a record with no `backend=` field, stays readable for reconciliation and retirement: the recovery classifier reports `unverified`, presence checks report it gone without proving a stop, its kill is unconfirmed, and ordinary relaunch is refused.
+[`reincarnate`](agent-control.md#verbs) is the supported owner continuation for proven-stopped retired ship/scout records; the [`fm-control.sh` header](../bin/fm-control.sh) owns its proof, clean-copy, ownership, and refusal contract.
 [Endpoint retirement](stream-backend.md#retiring-a-record-no-backend-can-answer-for) owns the operator assertion required to retire such a record with [`bin/fm-retire-endpoint.sh`](../bin/fm-retire-endpoint.sh), and the owning mate's `--finished` path for its own finished work.
 A stream endpoint the hub still lists live after its task record is gone is closed only by `bin/fm-retire-endpoint.sh --orphan`, which [the same section](stream-backend.md#retiring-a-record-no-backend-can-answer-for) points to.
 `fm-spawn.sh` spawns local ship, scout, and `--secondmate` tasks on stream, and [remote placement](remote-secondmates.md#normal-operation) owns remote secondmates.
@@ -166,7 +167,7 @@ Otherwise an exact task id matching `state/<id>.meta` wins before the legacy `fm
 A metadata-routed selector returns the recorded target (`window=`) and carries secondmate-marker and recorded-harness context; explicit escape hatches do not.
 For explicit targets no metadata names, [`fm-send.sh`'s header](../bin/fm-send.sh) owns live-endpoint verification on this home's hub, and the constrained host-decision answer mode.
 `fm-teardown.sh <id>` validates the complete metadata-only endpoint identity before any runtime dispatch or cleanup, and preserves and refuses missing, duplicate, malformed, backend-inconsistent, or task-mismatched endpoint records.
-Retired tmux records still require the exact `fm-<id>` window shape, and retired Herdr records their task binding and consistent session, workspace, tab, and pane fields, so retirement cannot target a mismatched record.
+Retired tmux records still require the exact `fm-<id>` window shape, and retired Herdr records their task binding and consistent session, workspace, tab, and pane fields, so continuation and retirement cannot target a mismatched record.
 `config/backend` is inherited under the primary-authoritative contract owned by [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md).
 
 ## Away-mode supervisor backend (FM_SUPERVISOR_BACKEND / FM_SUPERVISOR_TARGET)
