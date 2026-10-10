@@ -419,6 +419,84 @@ test_routine_wakes_think_less() {
   pass "fm-deck-chat.sh: routine wakes ask deck for a lower effort, and news found at low effort restores the default"
 }
 
+test_effort_observes_events_before_successor() {
+  local home
+  home=$(new_home effort-ordering)
+  cat > "$home/capture-steer" <<'PY'
+#!/usr/bin/env python3
+import json, pathlib, sys
+args = sys.argv[1:]
+home = pathlib.Path(args[args.index('--home') + 1])
+body = pathlib.Path(args[args.index('--file') + 1]).read_text()
+with (home / 'published.ndjson').open('a') as output:
+    output.write(json.dumps(body) + '\n')
+print('seq=1')
+PY
+  chmod +x "$home/capture-steer"
+  python3 - "$BIN" "$home" <<'PY' || fail "successor effort event ordering failed"
+import argparse, importlib.util, json, os, pathlib, subprocess, sys, threading
+bin_dir, home = map(pathlib.Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location('primary_chat', bin_dir / 'fm_primary_chat.py')
+primary = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(primary)
+primary.prepare(argparse.Namespace(home=str(home), session='ordering'))
+primary.record_write(argparse.Namespace(home=str(home), session='ordering',
+                                       host_pid=os.getpid(), endpoint='', startup_file=None))
+events = home / 'state/primary-chat/ordering/events.ndjson'
+def append(*rows):
+    with events.open('ab') as output:
+        for row in rows:
+            output.write(json.dumps(row).encode() + b'\n')
+started = {'type': 'run_started', 'effort': 'low'}
+news = {'type': 'tool_result', 'output': 'UNREAD STATUS (new since last drain):\nworker-1 note: answer'}
+finished = {'type': 'run_finished'}
+append(started, news, finished)
+gen = subprocess.check_output([str(bin_dir / 'fm-busy-event.sh'), 'arm',
+                               str(home / 'state'), 'primary'], text=True).strip()
+supervisor = primary.Supervisor(argparse.Namespace(home=str(home), host_pid=os.getpid(), gen=gen,
+                                                  events_offset=events.stat().st_size, effort_headers=True))
+supervisor.steer_bin = str(home / 'capture-steer')
+reason = 'check: %s/state/autoland.check.sh: autoland: merged https://github.com/o/r/pull/7 (deploy follows)\n' % home
+def publish(lowered):
+    assert supervisor.publish(reason)
+    messages = [json.loads(row) for row in (home / 'published.ndjson').read_text().splitlines()]
+    body = messages[-1]
+    assert body.startswith('deck-effort: low\n') == lowered, body
+    assert primary.WAKE_PREAMBLE in body, body
+
+publish(True)
+append(started, news, finished)
+publish(False)
+assert 'state=idle' in (home / 'state/primary.busy-state').read_text()
+publish(True)
+append(started)
+partial = json.dumps(news).encode() + b'\n'
+split = len(partial) // 2
+with events.open('ab') as output:
+    output.write(partial[:split])
+publish(True)
+with events.open('ab') as output:
+    output.write(partial[split:])
+publish(False)
+assert 'state=busy' in (home / 'state/primary.busy-state').read_text()
+append(finished)
+publish(True)
+append({'type': 'run_started'}, news, finished)
+publish(True)
+append(started, news, finished)
+follower = threading.Thread(target=supervisor.follow_events)
+follower.start()
+try:
+    publish(False)
+    publish(True)
+finally:
+    supervisor.stop.set()
+    follower.join(10)
+    assert not follower.is_alive(), 'event follower did not stop'
+PY
+  pass "primary supervisor: buffered and streamed news escalate the immediate successor exactly once"
+}
+
 test_task_named_primary_blocks_the_host() {
   local home rc=0
   home=$(new_home primary-task)
@@ -1094,6 +1172,15 @@ test_service_keeper_alerts() {
   pass "fm-deck-chat.sh service-run: a primary that stays down raises one alert and clears it on recovery"
 }
 
+if [ -n "${FM_TEST_DECK_CHAT_CASES:-}" ]; then
+  for test_case in $FM_TEST_DECK_CHAT_CASES; do
+    case "$test_case" in test_*) ;; *) fail "invalid test case: $test_case" ;; esac
+    declare -F "$test_case" >/dev/null || fail "unknown test case: $test_case"
+    "$test_case"
+  done
+  exit 0
+fi
+
 test_steer_contract_without_a_host
 test_stop_marker
 test_service_install
@@ -1109,6 +1196,7 @@ test_startup_handoff
 test_host_lifecycle
 test_oversized_watcher_output
 test_routine_wakes_think_less
+test_effort_observes_events_before_successor
 test_stream_endpoint_host
 test_task_named_primary_blocks_the_host
 test_away_mode_pauses_the_watcher

@@ -178,8 +178,37 @@ autoland_routine() {  # <text after "autoland: ">
   done
 }
 
+reason_routine() {
+  local line=$1 autoland='^check: [^ ]*/autoland\.check\.sh: autoland: (.+)$'
+  case "$line" in
+    'signal: '*) [ -n "${line#signal: }" ] && signal_routine "${line#signal: }" ;;
+    heartbeat|heartbeat:*) heartbeat_routine ;;
+    *)
+      [[ $line =~ $autoland ]] || return 1
+      autoland_routine "${BASH_REMATCH[1]}"
+      ;;
+  esac
+}
+
+queued_reasons_routine() {
+  local queue=$STATE/.wake-queue payloads payload
+  [ -e "$queue" ] || { [ ! -L "$queue" ]; return; }
+  [ -f "$queue" ] && [ -r "$queue" ] && [ ! -L "$queue" ] || return 1
+  payloads=$(awk -F '\t' '
+    NF != 5 || $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ ||
+      $3 !~ /^(signal|stale|check|heartbeat)$/ || $4 == "" || $5 == "" { exit 1 }
+    { print $5 }
+  ' "$queue" 2>/dev/null) || return 1
+  [ -n "$payloads" ] || return 0
+  while IFS= read -r payload; do
+    reason_routine "$payload" || return 1
+  done <<EOF
+$payloads
+EOF
+}
+
 classify() {
-  local level body line reasons=0 autoland='^check: [^ ]*/autoland\.check\.sh: autoland: (.+)$'
+  local level body line reasons=0
   level=$(low_level)
   [ -n "$level" ] || return 0
   body=$(cat)
@@ -197,18 +226,12 @@ classify() {
       'The home watcher has an actionable wake.'*) continue ;;
     esac
     reasons=$((reasons + 1))
-    case "$line" in
-      'signal: '*) signal_routine "${line#signal: }" || return 0 ;;
-      heartbeat|heartbeat:*) heartbeat_routine || return 0 ;;
-      *)
-        [[ $line =~ $autoland ]] || return 0
-        autoland_routine "${BASH_REMATCH[1]}" || return 0
-        ;;
-    esac
+    reason_routine "$line" || return 0
   done <<EOF
 $body
 EOF
   [ "$reasons" -gt 0 ] || return 0
+  queued_reasons_routine || return 0
   printf '%s\n' "$level"
 }
 

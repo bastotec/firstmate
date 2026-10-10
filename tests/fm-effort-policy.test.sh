@@ -182,6 +182,52 @@ test_a_lowered_turn_that_finds_work_escalates_the_next() {
   pass "observe: a lowered turn whose drain surfaced real work sends the next turn back to the default"
 }
 
+test_outstanding_wakes_must_also_be_routine() {
+  local home current merged queue before row
+  home=$(new_home pending-wakes)
+  current="signal: $home/state/task-1.turn-ended"
+  merged="check: $home/state/autoland.check.sh: autoland: merged https://github.com/o/r/pull/7 (deploy follows)"
+  printf 'working: started\n' > "$home/state/task-1.status"
+  assert_equals low "$(classify "$home" "$current")" "the current quiet signal is routine alone"
+  assert_equals '' "$(classify "$home" heartbeat)" "seed the heartbeat comparison"
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_WAKE_QUEUE="$home/state/.wake-queue" \
+    FM_WAKE_QUEUE_LOCK="$home/state/.wake-queue.lock" bash -c '
+      . "$1/bin/fm-wake-lib.sh"
+      fm_wake_append signal task-1 "$2" && fm_wake_append check autoland "$3" &&
+        fm_wake_append heartbeat heartbeat heartbeat
+    ' _ "$ROOT" "$current" "$merged" || fail "could not queue routine wakes"
+  queue="$home/state/.wake-queue"
+  before=$(cksum < "$queue")
+  assert_equals low "$(classify "$home" "$current")" "all outstanding routine reasons allow low effort"
+  assert_equals "$before" "$(cksum < "$queue")" "classification never changes the durable queue"
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_WAKE_QUEUE="$queue" \
+    FM_WAKE_QUEUE_LOCK="$home/state/.wake-queue.lock" bash -c '
+      . "$1/bin/fm-wake-lib.sh"
+      fm_wake_append stale task-2 "stale: task-2"
+    ' _ "$ROOT" || fail "could not queue stale work"
+  before=$(cksum < "$queue")
+  assert_equals '' "$(classify "$home" "$current")" "outstanding stale work keeps a current routine wake at default"
+  assert_equals "$before" "$(cksum < "$queue")" "a non-routine queue is left unacknowledged"
+
+  home=$(new_home invalid-queue)
+  queue="$home/state/.wake-queue"
+  current="signal: $home/state/task-1.turn-ended"
+  for row in 'malformed' $'1\t2\tcheck\tk\t' $'1\t2\tunknown\tk\theartbeat' \
+    $'1\t2\tcheck\tk\tcheck: captain inbox note: 1' $'1\t2\tsignal\tk\tsignal: '; do
+    printf '%s\n' "$row" > "$queue"
+    assert_equals '' "$(classify "$home" "$current")" "unclassifiable queue rows keep the default"
+  done
+  : > "$queue"
+  assert_equals low "$(classify "$home" "$current")" "an empty queue adds no important work"
+  rm "$queue"
+  mkdir "$queue"
+  assert_equals '' "$(classify "$home" "$current")" "an unreadable queue keeps the default"
+  rmdir "$queue"
+  ln -s "$home/state/missing-queue" "$queue"
+  assert_equals '' "$(classify "$home" "$current")" "a dangling queue is not mistaken for an absent queue"
+  pass "classify: every outstanding durable wake must be routine, without changing the queue"
+}
+
 test_support_follows_the_deck_binary() {
   local dir="$TMP_ROOT/decks"
   mkdir -p "$dir"
@@ -198,4 +244,5 @@ test_signals_follow_the_status_classifier
 test_heartbeat_is_routine_only_without_change
 test_config_sets_the_level_and_kills_the_switch
 test_a_lowered_turn_that_finds_work_escalates_the_next
+test_outstanding_wakes_must_also_be_routine
 test_support_follows_the_deck_binary

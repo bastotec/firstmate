@@ -53,7 +53,7 @@ Subcommands:
       Paused while state/.afk exists (the away daemon owns the watcher then).
       With --effort-headers, each wake gets the lowered `deck-effort:` header
       bin/fm-effort-policy.sh classify picks, and a lowered turn's tool output
-      goes to its observe check when the turn ends.
+      goes to its observe check as each tool result is processed.
   service --home H --deck-chat PATH [--model ROUTE]
       the keeper a launchd agent runs (bin/fm-deck-chat.sh install-service):
       adopts a live host and waits while any live harness holds the session lock.
@@ -391,6 +391,10 @@ class Supervisor:
         record = read_record(self.home)
         self.events_file = record['events_file']
         self.events_offset = args.events_offset
+        self.events_lock = threading.RLock()
+        self.events_partial = b''
+        self.events_current = 'idle'
+        self.effort_start = None
         self.stop = threading.Event()
         self.watch = None
         self.log_lock = threading.Lock()
@@ -425,24 +429,16 @@ class Supervisor:
         if result.returncode != 0:
             self.log('busy-state %s/%s refused: %s' % (state, event, result.stderr.strip()))
 
-    def follow_events(self):
+    def process_events(self):
         names = {'run_started': ('busy', 'turn-start'), 'steer_received': ('busy', 'turn-start'),
                  'run_finished': ('idle', 'turn-end'), 'run_stopped': ('idle', 'interrupted'),
                  'run_failed': ('idle', 'turn-failed'), 'idle': ('idle', 'idle')}
-        current = 'idle'
-        # The running turn's lowered effort and tool output, for the policy's
-        # escalation check once it ends.
-        lowered, turn = False, []
-        handle = open(self.events_file, 'rb')
-        handle.seek(self.events_offset)
-        partial = b''
-        while not self.stop.is_set():
-            chunk = handle.read()
-            if not chunk:
-                self.stop.wait(0.1)
-                continue
-            partial += chunk
-            *lines, partial = partial.split(b'\n')
+        with self.events_lock:
+            with open(self.events_file, 'rb') as handle:
+                handle.seek(self.events_offset)
+                self.events_partial += handle.read()
+                self.events_offset = handle.tell()
+            *lines, self.events_partial = self.events_partial.split(b'\n')
             for line in lines:
                 try:
                     event = json.loads(line)
@@ -450,27 +446,33 @@ class Supervisor:
                 except (ValueError, AttributeError):
                     continue
                 if kind == 'run_started':
-                    lowered, turn = bool(event.get('effort')) and self.effort_headers, []
-                if lowered and kind in ('run_started', 'tool_result'):
-                    turn.append(line)
-                if lowered and kind in ('run_finished', 'run_stopped', 'run_failed'):
-                    self.observe_effort(b'\n'.join(turn) + b'\n')
-                    lowered, turn = False, []
-                if kind in names and names[kind][0] != current:
-                    current = names[kind][0]
+                    self.effort_start = line if event.get('effort') and self.effort_headers else None
+                elif kind == 'tool_result' and self.effort_start is not None:
+                    self.observe_effort(self.effort_start + b'\n' + line + b'\n')
+                elif kind in IDLE_EVENTS:
+                    self.effort_start = None
+                if kind in names and names[kind][0] != self.events_current:
+                    self.events_current = names[kind][0]
                     self.busy(*names[kind])
+
+    def follow_events(self):
+        while not self.stop.is_set():
+            self.process_events()
+            self.stop.wait(0.1)
 
     # -- per-turn effort
     def effort_for(self, text):
         """The lowered level for a wake, or '' to keep the default effort."""
         if not self.effort_headers:
             return ''
-        result = subprocess.run([str(BIN / 'fm-effort-policy.sh'), 'classify', '--home', str(self.home)],
-                                input=text, capture_output=True, text=True)
-        if result.stderr.strip():
-            self.log('effort policy: %s' % result.stderr.strip())
-        level = result.stdout.strip() if result.returncode == 0 else ''
-        return level if re.fullmatch(r'[a-z]+', level) else ''
+        with self.events_lock:
+            self.process_events()
+            result = subprocess.run([str(BIN / 'fm-effort-policy.sh'), 'classify', '--home', str(self.home)],
+                                    input=text, capture_output=True, text=True)
+            if result.stderr.strip():
+                self.log('effort policy: %s' % result.stderr.strip())
+            level = result.stdout.strip() if result.returncode == 0 else ''
+            return level if re.fullmatch(r'[a-z]+', level) else ''
 
     def observe_effort(self, events):
         result = subprocess.run([str(BIN / 'fm-effort-policy.sh'), 'observe', '--home', str(self.home)],
