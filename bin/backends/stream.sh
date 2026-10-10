@@ -51,7 +51,8 @@ FM_BACKEND_STREAM_DEFAULT_URL="http://127.0.0.1:7717"
 # tests/assets/stream-agent-stub.py (tests/fixtures.sh's fm_test_fake_stream).
 FM_BACKEND_STREAM_AGENT_BIN="${FM_STREAM_AGENT_BIN:-$(dirname -- "${BASH_SOURCE[0]}")/../fm-stream-agent.py}"
 
-# How long a 404 has to keep being the answer before it counts as `missing`.
+# How long a 404 has to keep being the answer before it counts as persistent
+# absence (`missing` in the recovery-grade classifier).
 # A hub that restarted has forgotten every endpoint until each agent registers
 # itself again, so a verdict taken inside that window is about the hub rather
 # than the worker.
@@ -92,6 +93,31 @@ FM_BACKEND_STREAM_AGENT_BIN="${FM_STREAM_AGENT_BIN:-$(dirname -- "${BASH_SOURCE[
 # to cover the backoff ladder is not available here - it would blow the 10s
 # caller bound above - so that cost is real and stands.
 FM_BACKEND_STREAM_MISSING_GRACE_SECS=6
+
+# fm_backend_stream_target_settled: the endpoint-existence read that waits out
+# a rejoining worker. Same probe, same routes, same label check as
+# fm_backend_stream_target_ready - this is that helper retried, not a second
+# probe - but a 404 keeps being retried within the bounded ladder above before
+# it is allowed to mean "absent". Any other refusal (an unreachable hub, a
+# malformed or foreign-hub target, a label mismatch, an auth failure) is
+# answered from the first reply, exactly as fm_backend_stream_target_ready
+# answers it: only the 404 is ever ambiguous between "gone" and
+# "re-registering right now".
+# Exit status and stdout are fm_backend_stream_target_ready's, unchanged.
+fm_backend_stream_target_settled() {  # <target> [expected-label]
+  local target=$1 expected=${2:-} waited=0 status
+  while :; do
+    if fm_backend_stream_target_ready "$target" "$expected"; then
+      return 0
+    else
+      status=$?
+    fi
+    [ "$status" -eq 3 ] || return "$status"
+    [ "$waited" -lt "$FM_BACKEND_STREAM_MISSING_GRACE_SECS" ] || return "$status"
+    sleep 1
+    waited=$((waited + 1))
+  done
+}
 
 # The last HTTP status fm_backend_stream_api saw. Initialised at source time so
 # an error path that runs before any request - a missing token, an unreachable
@@ -473,13 +499,14 @@ fm_backend_stream_parse_target() {  # <target>
 # its callers - capture, current-path, input - need an answer now and ask again
 # when refused. So its 404 can be transient: the hub's registry is in memory,
 # and after a hub restart every endpoint is unknown until its agent registers
-# again seconds later. Never treat a 404 here as authoritative absence; the
-# settled answer to that question is fm_backend_stream_agent_state's `missing`,
-# which is the verdict that outlasts the re-registration window.
+# again seconds later. Never treat a 404 here as authoritative absence;
+# callers that need a settled presence answer use
+# fm_backend_stream_target_settled, while fm_backend_stream_agent_state owns
+# the recovery-grade `missing` verdict.
 fm_backend_stream_target_ready() {  # <target> [expected-label]
   local target=$1 expected=${2:-} out label
   fm_backend_stream_parse_target "$target" >/dev/null 2>&1 || return 1
-  out=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || return 1
+  out=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || return $?
   [ -n "$expected" ] || return 0
   label=$(printf '%s' "$out" | jq -r '.task.label // empty' 2>/dev/null)
   [ "$label" = "$expected" ]

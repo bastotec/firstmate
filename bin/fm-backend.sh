@@ -515,11 +515,23 @@ fm_backend_composer_holds_only() {  # <backend> <target> <expected-label> <text>
 # fm_backend_target_exists: cheap, READ-ONLY existence check - does the
 # recorded TARGET endpoint still exist? A record on a retired backend never
 # does, as far as firstmate can tell. Exists as one shared primitive so callers
-# that only need a fast alive/dead read (recovery digests, the session-start
-# fleet digest) do not re-derive it inline.
+# that need an immediate endpoint-presence read do not re-derive it inline.
 fm_backend_target_exists() {  # <backend> <target> [expected-label]
   fm_backend_source "$1" 2>/dev/null || return 1
   fm_backend_stream_target_ready "$2" "${3:-}"
+}
+
+# fm_backend_target_settled_exists: fm_backend_target_exists waited out over a
+# rejoin. A stream hub keeps its endpoint registry in memory, so a worker
+# re-registering after a hub restart answers this probe 404 for a few seconds
+# while being alive the whole time; the settled read retries that 404 briefly
+# (bin/backends/stream.sh owns the ladder) so only an absence that persists
+# reads as absent. The session-start fleet digest is the caller: its verdict is
+# reported once, at session open, and cannot ask again later the way the cheap
+# probe's other callers do. A retired backend stays unreachable, as ever.
+fm_backend_target_settled_exists() {  # <backend> <target> [expected-label]
+  fm_backend_source "$1" 2>/dev/null || return 1
+  fm_backend_stream_target_settled "$2" "${3:-}"
 }
 
 # fm_backend_agent_state: the single recovery-grade agent/endpoint state
