@@ -724,8 +724,8 @@ test_a_kill_the_hub_answered_but_its_agent_never_took_is_present() {
     "the still-present answer should say the agent never acknowledged it"
   assert_contains "$out" "may still be running" \
     "the still-present answer should say the worker may still be running"
-  # Cleanup: the paused agent could not take the kill, so close the endpoint
-  # for real now that it can answer again.
+  # The hub has now closed its own record without proving the worker stopped;
+  # this retry must preserve that refusal rather than issue another DELETE.
   with_stream_env fm_backend_kill stream "$target" "" "$label" >/dev/null 2>&1 || true
   pass "stream: a kill the hub answered but its agent never took reports the endpoint still present"
 }

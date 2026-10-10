@@ -684,10 +684,10 @@ run_retire() {  # <case-dir> <args...>
 }
 
 # stage_unanswerable_task_with_work: the real shape an operator meets. The
-# endpoint's kill is accepted and closes nothing, so no read can ever prove its
-# worker stopped; and the task's worktree holds uncommitted work, so cleanup
-# refuses before it ever reaches the endpoint. Retiring the record must not
-# depend on, or disturb, either.
+# endpoint's kill would stop no worker and close only the hub's record, so no
+# read can ever prove its worker stopped; and the task's worktree holds
+# uncommitted work, so cleanup refuses before it ever reaches the endpoint.
+# Retiring the record must not depend on, or disturb, either.
 stage_unanswerable_task_with_work() {  # <case-dir> <id>
   local case_dir=$1 id=$2 home
   home=$(home_of "$case_dir")
@@ -708,9 +708,9 @@ stage_unanswerable_task_with_work() {  # <case-dir> <id>
 }
 
 # stage_live_task: a task whose worktree is clean, so cleanup reaches the
-# kill, and whose endpoint stays live after every kill the hub accepts - its
-# agent never acknowledges one. Nothing but that read stands between
-# this record and retirement.
+# kill, and whose worker stays live when the hub closes its endpoint record -
+# its agent never acknowledges the kill. The hub's positive answer and retained
+# hub-close verdict are all that stand between this record and retirement.
 stage_live_task() {  # <case-dir> <id>
   local case_dir=$1 id=$2 home
   home=$(home_of "$case_dir")

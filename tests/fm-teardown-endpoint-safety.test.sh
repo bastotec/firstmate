@@ -309,11 +309,11 @@ test_recorded_process_identity_cleanup_is_exact() {
 # not a hypothetical: the former cmux adapter's `close-workspace` answered OK
 # and left the last workspace in its window standing. The fake stream hub
 # reproduces exactly that class with kill_undelivered - the hub answers the
-# kill, its agent never acknowledges it, and the endpoint stays live - so the
-# assertions below are about what cleanup does with a worker that is provably
-# still there. That positive answer is the kill contract's still-present
-# verdict, so the refusal names it rather than the unconfirmed one, and names
-# the override that answers it.
+# kill, its agent never acknowledges it, and its worker stays live while the hub
+# closes only the endpoint record - so the assertions below are about what
+# cleanup does with a worker that is provably still there. That positive answer
+# is the kill contract's still-present verdict, so the refusal names it rather
+# than the unconfirmed one, and names the override that answers it.
 test_unconfirmed_endpoint_kill_refuses_record_removal() {
   local dir id=unconfirmed target rc
   dir=$(make_case unconfirmed-kill)
