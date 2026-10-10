@@ -821,6 +821,46 @@ test_teardown_refuses_unmerged_recorded_pr() {
   pass "teardown refuses a recorded PR that is open, closed without a reason, or unreadable"
 }
 
+test_teardown_backlog_only_pr_gate() {
+  local case_dir rc state before
+  for state in OPEN CLOSED '' MERGED; do
+    case_dir=$(make_case "row-pr-gate-${state:-offline}")
+    write_meta "$case_dir" no-mistakes ship
+    wt_commit_file "$case_dir" feature.txt 'pushed but not necessarily merged'
+    add_fork_with_pushed_branch "$case_dir"
+    seed_backlog_in_flight "$case_dir"
+    FM_HOME="$case_dir" "$ROOT/bin/fm-tasks-axi.sh" update task-x1 \
+      --pr https://github.com/example/repo/pull/7 >/dev/null \
+      || fail 'could not record the backlog-only PR'
+    assert_no_grep '^pr=' "$case_dir/state/task-x1.meta" 'row-only fixture recorded a metadata PR'
+    add_logging_treehouse "$case_dir"
+    before=$(cksum "$case_dir/state/task-x1.meta" "$case_dir/data/backlog.md" "$case_dir/wt/feature.txt")
+    rc=0
+    FM_FAKE_GH_PR_STATE=$state run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    if [ "$state" = MERGED ]; then
+      expect_code 0 "$rc" 'backlog-only merged PR'
+      assert_absent "$case_dir/state/task-x1.meta" 'merged row-only PR retained metadata'
+      assert_present "$case_dir/treehouse.log" 'merged row-only PR did not return the worktree'
+      [ "$(backlog_row_state "$case_dir")" = "done" ] || fail 'merged row-only PR left the backlog open'
+    else
+      expect_code 1 "$rc" "backlog-only ${state:-offline} PR"
+      assert_grep 'REFUSED: task task-x1 is not finished' "$case_dir/stderr" 'row-only PR refusal was not explained'
+      case "$state" in
+        OPEN) assert_grep 'is still open' "$case_dir/stderr" 'row-only open PR was not checked' ;;
+        CLOSED) assert_grep 'Superseded: <reason>' "$case_dir/stderr" 'row-only closed PR was not checked' ;;
+        '') assert_grep 'cannot read the live state' "$case_dir/stderr" 'row-only offline PR was not checked' ;;
+      esac
+      assert_present "$case_dir/state/task-x1.meta" 'row-only PR refusal removed metadata'
+      assert_absent "$case_dir/treehouse.log" 'row-only PR refusal returned the worktree'
+      assert_equals "$before" \
+        "$(cksum "$case_dir/state/task-x1.meta" "$case_dir/data/backlog.md" "$case_dir/wt/feature.txt")" \
+        'row-only PR refusal changed the records or work'
+      [ "$(backlog_row_state "$case_dir")" = in_flight ] || fail 'row-only PR refusal closed the backlog'
+    fi
+  done
+  pass 'teardown gates backlog-only PRs before cleanup despite remote reachability'
+}
+
 test_teardown_local_only_recorded_pr_gate() {
   local case_dir rc
   case_dir=$(make_case local-only-pr-open)
@@ -3314,6 +3354,7 @@ test_wake_gate_retirement_refuses_a_symlinked_parent
 test_wake_gate_retirement_requires_python_only_for_existing_state
 test_teardown_closes_the_backlog_item_itself
 test_teardown_refuses_unmerged_recorded_pr
+test_teardown_backlog_only_pr_gate
 test_teardown_local_only_recorded_pr_gate
 test_teardown_title_is_not_supersession
 test_teardown_closes_superseded_pr_without_merged_claim

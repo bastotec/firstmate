@@ -3030,8 +3030,19 @@ fi
 # Apply bin/fm-pr-lib.sh's completion-claim gate before destructive cleanup:
 # remote reachability in the worktree check below cannot prove a PR merged.
 PR_CLOSE_VERDICT=
+pr_task_row=
+if [ "$KIND" != secondmate ]; then
+  if ! pr_task_row=$(fm_backlog_row_show "$DATA" "$ID" --full 2>/dev/null); then
+    if [ -z "$PR_URL" ] && [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ] \
+        && ! printf '%s\n' "$pr_task_row" | grep -qx 'code: NOT_FOUND'; then
+      echo "REFUSED: task $ID is not finished: cannot read the task row to resolve its PR." >&2
+      exit 1
+    fi
+    pr_task_row=
+  fi
+  [ -n "$PR_URL" ] || PR_URL=$(fm_pr_task_url "$pr_task_row" "$META")
+fi
 if [ "$KIND" != secondmate ] && [ -n "$PR_URL" ]; then
-  pr_task_row=$(fm_backlog_row_show "$DATA" "$ID" --full 2>/dev/null) || pr_task_row=
   pr_task_body=$(fm_pr_task_body "$pr_task_row" 2>/dev/null) || pr_task_body=
   if fm_pr_close_verdict "$PR_URL" "$pr_task_body"; then
     PR_CLOSE_VERDICT=$FM_PR_CLOSE_VERDICT
