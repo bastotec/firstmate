@@ -549,8 +549,10 @@ python3 "$PRIMARY_CHAT" record write --home "$FM_HOME" --session "$SESSION" --ho
   --endpoint "$ENDPOINT" --startup-file "$WORK/first" || die 'could not publish startup and write state/primary-chat.json'
 RECORDED=1
 
-python3 "$PRIMARY_CHAT" supervise --home "$FM_HOME" --host-pid $$ --gen "$GEN" \
-  --events-offset "$EVENTS_OFFSET" </dev/null >>"$LOG" 2>&1 &
+sup_args=(supervise --home "$FM_HOME" --host-pid $$ --gen "$GEN" --events-offset "$EVENTS_OFFSET")
+# Routine wakes think less when this deck takes per-turn effort (bin/fm-effort-policy.sh).
+"$SCRIPT_DIR/fm-effort-policy.sh" supported "$DECK" && sup_args+=(--effort-headers)
+python3 "$PRIMARY_CHAT" "${sup_args[@]}" </dev/null >>"$LOG" 2>&1 &
 SUP_PID=$!
 
 LOCK_HOOK="bash -c $(q ". $(q "$SCRIPT_DIR/fm-session-lock-lib.sh"); fm_session_lock_owned_by_self $(q "$STATE") || { echo 'Home session lock lost; report the failure and stop.' >&2; exit 2; }")"

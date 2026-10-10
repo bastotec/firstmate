@@ -46,11 +46,14 @@ Subcommands:
       publishes startup before making the host visible, retaining pending messages
   record stop --home H --host-pid N
   record pid --home H        print the live host pid; exit 3 when none
-  supervise --home H --host-pid N --gen G --events-offset N
+  supervise --home H --host-pid N --gen G --events-offset N [--effort-headers]
       events -> busy-state (state/primary.busy-state, source deck-wrapper) and
       the watcher child (bin/fm-watch-arm.sh) whose wakes become steer
       publishes; a failed watcher is restarted with backoff, never fatal.
       Paused while state/.afk exists (the away daemon owns the watcher then).
+      With --effort-headers, each wake gets the lowered `deck-effort:` header
+      bin/fm-effort-policy.sh classify picks, and a lowered turn's tool output
+      goes to its observe check when the turn ends.
   service --home H --deck-chat PATH [--model ROUTE]
       the keeper a launchd agent runs (bin/fm-deck-chat.sh install-service):
       adopts a live host and waits while any live harness holds the session lock.
@@ -394,6 +397,9 @@ class Supervisor:
         self.steer_bin = os.environ.get('FM_PRIMARY_STEER_BIN') or str(BIN / 'fm-primary-steer.sh')
         self.backoff = float(os.environ.get('FM_DECK_CHAT_WATCH_BACKOFF', '2'))
         self.backoff_max = float(os.environ.get('FM_DECK_CHAT_WATCH_BACKOFF_MAX', '60'))
+        # Per-turn reasoning effort (bin/fm-effort-policy.sh owns the policy):
+        # on only when the host's deck takes the `deck-effort:` header.
+        self.effort_headers = args.effort_headers
 
     def log(self, message):
         line = '%s %s\n' % (time.strftime('%Y-%m-%dT%H:%M:%S'), message)
@@ -424,6 +430,9 @@ class Supervisor:
                  'run_finished': ('idle', 'turn-end'), 'run_stopped': ('idle', 'interrupted'),
                  'run_failed': ('idle', 'turn-failed'), 'idle': ('idle', 'idle')}
         current = 'idle'
+        # The running turn's lowered effort and tool output, for the policy's
+        # escalation check once it ends.
+        lowered, turn = False, []
         handle = open(self.events_file, 'rb')
         handle.seek(self.events_offset)
         partial = b''
@@ -436,12 +445,38 @@ class Supervisor:
             *lines, partial = partial.split(b'\n')
             for line in lines:
                 try:
-                    kind = json.loads(line).get('type')
+                    event = json.loads(line)
+                    kind = event.get('type')
                 except (ValueError, AttributeError):
                     continue
+                if kind == 'run_started':
+                    lowered, turn = bool(event.get('effort')) and self.effort_headers, []
+                if lowered and kind in ('run_started', 'tool_result'):
+                    turn.append(line)
+                if lowered and kind in ('run_finished', 'run_stopped', 'run_failed'):
+                    self.observe_effort(b'\n'.join(turn) + b'\n')
+                    lowered, turn = False, []
                 if kind in names and names[kind][0] != current:
                     current = names[kind][0]
                     self.busy(*names[kind])
+
+    # -- per-turn effort
+    def effort_for(self, text):
+        """The lowered level for a wake, or '' to keep the default effort."""
+        if not self.effort_headers:
+            return ''
+        result = subprocess.run([str(BIN / 'fm-effort-policy.sh'), 'classify', '--home', str(self.home)],
+                                input=text, capture_output=True, text=True)
+        if result.stderr.strip():
+            self.log('effort policy: %s' % result.stderr.strip())
+        level = result.stdout.strip() if result.returncode == 0 else ''
+        return level if re.fullmatch(r'[a-z]+', level) else ''
+
+    def observe_effort(self, events):
+        result = subprocess.run([str(BIN / 'fm-effort-policy.sh'), 'observe', '--home', str(self.home)],
+                                input=events, capture_output=True)
+        if result.returncode != 0:
+            self.log('effort policy observe failed: %s' % result.stderr.decode('utf-8', 'replace').strip())
 
     # -- watcher
     def start_watch(self, predecessor=None):
@@ -480,6 +515,10 @@ class Supervisor:
         # Reports can exceed Deck's byte limit; the handling instructions must
         # survive because the durable wake queue, not this preview, owns the work.
         preamble = WAKE_PREAMBLE.encode('utf-8')
+        level = self.effort_for(WAKE_PREAMBLE + output)
+        if level:
+            preamble = ('deck-effort: %s\n' % level).encode('utf-8') + preamble
+            self.log('wake classified routine; effort %s' % level)
         data = output.encode('utf-8')
         budget = MAX_BODY - len(preamble)
         if len(data) > budget:
@@ -829,6 +868,8 @@ def main(argv):
     supervise.add_argument('--host-pid', type=int, required=True)
     supervise.add_argument('--gen', required=True)
     supervise.add_argument('--events-offset', type=int, required=True)
+    supervise.add_argument('--effort-headers', action='store_true',
+                           help='mark routine wakes for a lower reasoning effort (bin/fm-effort-policy.sh)')
     service = sub.add_parser('service')
     service.add_argument('--home', required=True)
     service.add_argument('--deck-chat', required=True)

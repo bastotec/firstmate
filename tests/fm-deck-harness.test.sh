@@ -1132,7 +1132,7 @@ else
 fi
 while [ ! -f "$FM_HOME/trigger" ]; do sleep 0.1; done
 rm "$FM_HOME/trigger"
-printf 'check: example\n'
+if [ -f "$FM_HOME/wake-reason" ]; then cat "$FM_HOME/wake-reason"; else printf 'check: example\n'; fi
 [ "${FM_TEST_WATCH_FAIL:-0}" = 0 ]
 SH
   cat > "$dir/home/config/x-mode.env" <<'SH'
@@ -1147,6 +1147,9 @@ SH
 import json, os, pathlib, subprocess, sys, time
 home = pathlib.Path(os.environ['FM_HOME'])
 args = sys.argv[1:]
+if args[:2] == ['run', '--help']:
+    print('--steer-dir <DIR>\n--effort <LEVEL>' if (home / 'effort-support').exists() else '--steer-dir <DIR>')
+    sys.exit(0)
 prompt = args[1]
 session = args[args.index('--session') + 1] if '--session' in args else 'host-session'
 inbox = pathlib.Path(__file__).parent / 'parent/host.inbox'
@@ -1175,7 +1178,13 @@ with (home / 'turns').open('a') as f:
 for record in records:
     record.rename(inbox / 'handled' / record.name)
 if not (home / 'no-session').exists():
-    print(json.dumps({'type': 'run_started', 'session': session}), flush=True)
+    started = {'type': 'run_started', 'session': session}
+    if prompt.startswith('deck-effort: '):
+        started['effort'] = prompt.split('\n', 1)[0][len('deck-effort: '):]
+    print(json.dumps(started), flush=True)
+if 'FAKE-UNREAD' in body:
+    print(json.dumps({'type': 'tool_result', 'id': 'c1', 'name': 'run_command', 'duration_ms': 1,
+                      'output': 'UNREAD STATUS (new since last drain):\ntask-1 note: answer'}), flush=True)
 if (home / 'fail-turn').exists():
     if (home / 'unsafe-status').exists():
         status = pathlib.Path(__file__).parent / 'parent/host.status'
@@ -1248,6 +1257,65 @@ with (root/'pane').open('w') as output:
                 os.killpg(p.pid, signal.SIGKILL); p.wait()
 PYTHON
   pass "Deck secondmate uses its own MCP config on startup, ordinary steering, and watcher turns"
+}
+
+test_secondmate_routine_wakes_think_less() {
+  local dir="$TMP_ROOT/host-effort"
+  make_secondmate_host_fixture "$dir"
+  : > "$dir/home/effort-support"
+  python3 - "$dir" <<'PYTHON' || fail "Deck secondmate turn effort integration failed"
+import json, os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+home = root / 'home'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+       str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'),
+       '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+merged = 'check: %s/state/autoland.check.sh: autoland: merged https://github.com/o/r/pull/%s (deploy follows)\n'
+def rows():
+    path = home/'turns'
+    return [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+def idle():
+    path = root/'parent/host.busy-state'
+    return path.exists() and 'state=idle' in path.read_text()
+def wait_for(check, label):
+    deadline = time.monotonic() + 240
+    while time.monotonic() < deadline:
+        if check(): return
+        if p.poll() is not None: raise AssertionError(label+': '+(root/'pane').read_text())
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text())
+def wake(reason, count, label):
+    (home/'wake-reason').write_text(reason)
+    (home/'trigger').touch()
+    wait_for(lambda: len(rows()) == count and idle(), label)
+    return rows()[-1]['prompt']
+with (root/'pane').open('w') as output:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+                         env=env, text=True, start_new_session=True)
+    try:
+        wait_for(lambda: len(rows()) == 1 and idle(), 'startup turn')
+        assert not rows()[0]['prompt'].startswith('deck-effort'), 'the launch turn keeps the default'
+        prompt = wake(merged % (home, 1), 2, 'routine wake')
+        assert prompt.startswith('deck-effort: low\n') and 'Firstmate instruction waiting:' in prompt, prompt
+        p.stdin.write('ordinary-steer\n'); p.stdin.flush()
+        wait_for(lambda: len(rows()) == 3 and idle(), 'steer turn')
+        assert rows()[2]['prompt'] == 'ordinary-steer', 'a steer keeps the default'
+        prompt = wake('stale: worker-1\n', 4, 'stale wake')
+        assert not prompt.startswith('deck-effort'), 'stuck work keeps the default'
+        prompt = wake(merged % (home, '2-FAKE-UNREAD'), 5, 'routine wake that finds news')
+        assert prompt.startswith('deck-effort: low\n'), prompt
+        assert (home/'state/effort-policy/escalate').exists(), 'news found at low effort was not recorded'
+        prompt = wake(merged % (home, 3), 6, 'escalated wake')
+        assert not prompt.startswith('deck-effort'), 'the wake after news keeps the default'
+        prompt = wake(merged % (home, 4), 7, 'routine again')
+        assert prompt.startswith('deck-effort: low\n'), prompt
+    finally:
+        os.killpg(p.pid, signal.SIGTERM)
+        p.wait(10)
+PYTHON
+  pass "Deck secondmate host: routine watcher turns ask for a lower effort; steers, stuck work and the turn after news keep the default"
 }
 
 test_secondmate_host_serializes_wakes_and_steering() {
@@ -2116,6 +2184,7 @@ test_stream_deck_recovery
 test_stream_deck_ring_rings_live_driver
 test_idle_interrupt_does_not_echo_fake_input
 test_secondmate_host_serializes_wakes_and_steering
+test_secondmate_routine_wakes_think_less
 test_secondmate_mcp_config_on_startup_steer_and_wake
 test_secondmate_queued_exit_behind_composer_clears_beats_watcher_turn
 test_secondmate_survives_a_failed_turn

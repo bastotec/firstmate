@@ -35,6 +35,7 @@ config/
   watched-tools.json      optional tool update watch list ("Watched tool updates")
   ask-triage-key-var      optional possible-ask opt-in ("Possible-ask ranking")
   wake-gate-key-var wake-gate-mode  optional wake-gate opt-in and mode ("Wake gate")
+  effort-policy.json      optional per-turn reasoning effort switch and level ("Turn effort")
   deck-mcp.json           optional Deck MCP servers ("Harness support")
   inbox-* voice-read-*    inbox model and voice-read settings ("Inbox and voice records")
   extensions.d/           mode-0700 explicit extension bindings (docs/process-event-sources.md)
@@ -81,6 +82,7 @@ state/
   decision-bindings/ reconcile-requests/  captain-answer bindings and reconcile obligations; written only by bin/fm-captain-hold.sh
   ask-triage/             possible-ask state; written only by bin/fm-ask-triage.sh
   wake-gate/              wake-gate decisions; written only by bin/fm-wake-gate.sh
+  effort-policy/          turn-effort escalation and heartbeat fingerprint; written only by bin/fm-effort-policy.sh
   inbox/                  captain notes ("Inbox and voice records")
   x-watch.check.sh x-inbox/ x-context/ x-outbox/ x-poll.error x-poll.claim-error  generated Relay state (docs/relay.md)
   public-followup/        promised public replies (docs/relay.md)
@@ -214,6 +216,26 @@ With the key-variable file absent the gate is inert, while a missing key, runtim
 Any `config/wake-gate-mode` other than exactly `enforce` selects shadow mode, which changes no wake; use `enforce` only after reviewing shadow results.
 Both files are home-local and not inherited, and environment variables cannot opt in or enable enforcement.
 `bin/fm-wake-gate.sh`'s header owns the evidence, thresholds, state files, reporting commands, and fail-open mechanics.
+
+## Turn effort (config/effort-policy.json)
+
+A Deck primary or second mate answers routine operational input at a lower reasoning effort, so those turns finish sooner, and keeps the model's default effort for everything else.
+The choice is made in code from the turn's source, never by a model: only a watcher wake whose every reason is provably routine thinks less, meaning a status signal with nothing captain-facing the drain has not shown, a heartbeat with no fleet change since the last one, or an auto-land merge or nothing-to-deploy notice.
+The captain's own messages, card answers and orders, decisions, blockers, failures, stuck work, other checks, and launch and startup turns always keep the default.
+When a lowered turn's drain turns up new work, the next routine-looking turn runs at the default again, and steering that arrives during a lowered turn raises it to the default for the rest of that turn.
+The file is optional and per home:
+
+```json
+{"classifier": "on", "low": "low"}
+```
+
+Absent means on with `low`.
+`"classifier": "off"` is the kill switch: every turn keeps the default.
+`low` may be `none`, `minimal`, `low`, or `medium`; check that the model route accepts the level, because `codex/gpt-6.1-sol` refuses `minimal` and proxai sends `none` to codex as no effort at all, which is the default.
+An unreadable file or unknown value turns the classifier off and logs why.
+It needs a Deck that takes `--effort`; with an older Deck nothing changes.
+Running hosts pick up a change to the code only after a restart, and a change to the file at the next wake.
+`bin/fm-effort-policy.sh`'s header owns the exact rules and its state files.
 
 ## Possible-ask ranking (config/ask-triage-key-var)
 

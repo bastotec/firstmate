@@ -44,6 +44,9 @@ argv = sys.argv[1:]
 if argv[:1] == ['chat'] and '--help' in argv:
     print('--steer-dir <DIR>\n--events <FILE>\n--session <SESSION>')
     sys.exit(0)
+if argv[:2] == ['run', '--help']:
+    print('--effort <LEVEL>' if os.environ.get('FAKE_DECK_EFFORT') == '1' else '--steer-dir <DIR>')
+    sys.exit(0)
 assert argv[0] == 'chat', argv
 def opt(name):
     return argv[argv.index(name) + 1]
@@ -61,8 +64,13 @@ while not stop:
     for seq in sorted(int(p.name[:-4]) for p in steer.iterdir() if re.fullmatch(r'[1-9][0-9]*\.msg', p.name)):
         source = steer / ('%d.msg' % seq)
         text = source.read_text()
-        emit(type='run_started', session=opt('--session'), model='fake')
+        effort = text.split('\n', 1)[0][len('deck-effort: '):] if text.startswith('deck-effort: ') else None
+        emit(type='run_started', session=opt('--session'), model='fake',
+             **({'effort': effort} if effort else {}))
         emit(type='steer_received', seq=seq, safe_point='run_start')
+        if 'FAKE-UNREAD' in text:
+            emit(type='tool_result', id='c1', name='run_command', duration_ms=1,
+                 output='UNREAD STATUS (new since last drain):\ntask-1 note: answer')
         if 'fixture session digest' in text and os.environ.get('FM_TEST_STARTUP_SLOW') == '1':
             while not (pathlib.Path(os.environ['FM_HOME']) / 'startup.release').exists() and not stop:
                 time.sleep(0.05)
@@ -366,6 +374,49 @@ PY
   wait_for 10 "oversized-wake host exits" dead "$host"
   wait "$host" 2>/dev/null || true
   pass "fm-deck-chat.sh: oversized ASCII and multibyte wakes retain instructions within the byte limit"
+}
+
+test_routine_wakes_think_less() {
+  local home host merged
+  home=$(new_home effort)
+  merged="check: $home/state/autoland.check.sh: autoland: merged https://github.com/o/r/pull"
+  FAKE_DECK_EFFORT=1 FAKE_DECK_LOG="$LAB/deck-effort.log" "$BIN/fm-deck-chat.sh" --home "$home" \
+    < /dev/null > "$LAB/host-effort.out" 2>&1 &
+  host=$!
+  fm_test_track_helper_pid "$host"
+  wait_for 10 "effort startup" turns_with "$LAB/deck-effort.log" 'fixture session digest'
+  assert_not_contains "$(turns_with "$LAB/deck-effort.log" 'fixture session digest')" 'deck-effort' \
+    "the startup turn keeps the default effort"
+  wait_for 10 "effort watcher" watch_count "$home" 1
+  echo "$merged/1 (deploy follows) FAKE-UNREAD" > "$home/wake.trigger"
+  wait_for 10 "non-routine wake" turns_with "$LAB/deck-effort.log" 'pull/1 '
+  assert_not_contains "$(turns_with "$LAB/deck-effort.log" 'pull/1 ')" 'deck-effort' \
+    "a wake the policy cannot prove routine keeps the default"
+  wait_for 10 "effort watcher re-arms" watch_count "$home" 2
+  echo "$merged/2 (deploy follows)" > "$home/wake.trigger"
+  wait_for 10 "routine wake" turns_with "$LAB/deck-effort.log" 'pull/2 '
+  assert_contains "$(turns_with "$LAB/deck-effort.log" 'pull/2 ')" '"text": "deck-effort: low\nThe home watcher' \
+    "a routine wake asks for the low effort first"
+  "$BIN/fm-primary-steer.sh" publish --home "$home" --text "$merged/9 (deploy follows) FAKE-UNREAD" >/dev/null
+  wait_for 10 "captain-path turn" turns_with "$LAB/deck-effort.log" 'pull/9 '
+  assert_not_contains "$(turns_with "$LAB/deck-effort.log" 'pull/9 ')" 'deck-effort' \
+    "a direct steer keeps the default"
+  wait_for 10 "effort watcher re-arms again" watch_count "$home" 3
+  # The fake turn for this routine wake reports unread status: the next wake escalates.
+  echo "$merged/3-FAKE-UNREAD (deploy follows)" > "$home/wake.trigger"
+  wait_for 10 "lowered turn that finds news" turns_with "$LAB/deck-effort.log" 'pull/3-'
+  assert_contains "$(turns_with "$LAB/deck-effort.log" 'pull/3-')" '"text": "deck-effort: low' \
+    "that wake was routine"
+  wait_for 10 "the escalation is recorded" test -e "$home/state/effort-policy/escalate"
+  wait_for 10 "effort watcher re-arms a third time" watch_count "$home" 4
+  echo "$merged/4 (deploy follows)" > "$home/wake.trigger"
+  wait_for 10 "escalated wake" turns_with "$LAB/deck-effort.log" 'pull/4 '
+  assert_not_contains "$(turns_with "$LAB/deck-effort.log" 'pull/4 ')" 'deck-effort' \
+    "the wake after a lowered turn found news keeps the default"
+  kill -TERM "$host"
+  wait_for 10 "effort host exits" dead "$host"
+  wait "$host" 2>/dev/null || true
+  pass "fm-deck-chat.sh: routine wakes ask deck for a lower effort, and news found at low effort restores the default"
 }
 
 test_task_named_primary_blocks_the_host() {
@@ -1057,6 +1108,7 @@ test_startup_completion_required
 test_startup_handoff
 test_host_lifecycle
 test_oversized_watcher_output
+test_routine_wakes_think_less
 test_stream_endpoint_host
 test_task_named_primary_blocks_the_host
 test_away_mode_pauses_the_watcher
