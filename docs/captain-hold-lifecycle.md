@@ -18,7 +18,7 @@ The `answer` subcommand records the captain's exact words and resolves the call 
 It requires a non-empty captain decision file of at most 8192 bytes, durably writes a resolution block carrying the decision digest and a `Resolution mode:` while retaining the leading hold-set stamp until the selected completion, release, or parking transition succeeds, then restores the successful record's resolution-first body ordering (the previous body remains preserved below the block and archived through tasks-axi `--archive-body`).
 If the close is interrupted, the still-held task therefore keeps its original age basis.
 A matching retry also completes any resolution-first normalization left unfinished after the close itself succeeded.
-The [`fm-captain-hold.sh` header](../bin/fm-captain-hold.sh) owns mode-matched retries, conditional-deferral finalization, and fresh answers after reopening.
+The [`fm-captain-hold.sh` header](../bin/fm-captain-hold.sh) owns mode-matched retries, conditional-deferral finalization, fresh answers after reopening, and the PR completion gate that can refuse a new close while preserving its recorded resolution for retry.
 On a task closed outside the script, `answer` records the missing block only when the captain-hold annotations tasks-axi preserves through a close prove the captain owned it, and it verifies the task stays closed.
 A hold whose `--until` date has passed keeps those annotations while tasks-axi reports it no longer held, so an expired deferral remains answerable.
 

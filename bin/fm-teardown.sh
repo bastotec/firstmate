@@ -52,9 +52,15 @@
 # whose head contains the current local work (ancestor or equivalent patch ids),
 # or a clean content-in-default tree match. Anything else refuses.
 # The PR itself is resolved from the task's recorded pr= when present, else its
-# backlog row's PR link through bin/fm-pr-lib.sh's fm_pr_task_url. Without either
-# record (e.g. a yolo-authorized merge where no PR was registered), merged-head
-# discovery looks up a merged PR whose head branch matches the worktree's branch,
+# backlog row's PR link through bin/fm-pr-lib.sh's fm_pr_task_url. For every
+# non-secondmate task, a row read that errors or times out refuses non-forced
+# cleanup, including on manual-backend homes and when metadata already names
+# a PR. A confirmed NOT_FOUND or an absent configured markdown backlog permits
+# proceeding on metadata pr= alone; neither bypasses the gate for that PR.
+# Regression coverage: tests/fm-teardown.test.sh's manual-backlog read cases.
+# Without either PR record (e.g. a yolo-authorized merge where no PR was
+# registered), merged-head discovery looks up a merged PR whose head branch
+# matches the worktree's branch,
 # fetching its head via refs/pull/<n>/head when the branch itself was deleted.
 # Missing recorded PR evidence alone never causes a false refusal of landed work.
 # A gh lookup error during this merged-head discovery falls back to the
