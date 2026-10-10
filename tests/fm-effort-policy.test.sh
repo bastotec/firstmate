@@ -75,7 +75,22 @@ test_signals_follow_the_status_classifier() {
   printf 'working: carrying on\n' >> "$status"
   assert_equals low "$(classify "$home" "signal: $status")" \
     "progress after the decision was resolved and drained is routine"
+  printf 'needs-decision [key=x]: which database?\ndone [key=y]: other work finished\n' >> "$status"
+  drain "$home"
+  printf 'working: carrying on\n' >> "$status"
+  assert_equals '' "$(classify "$home" "signal: $status")" \
+    "a drained unrelated completion does not close a keyed decision"
+  assert_equals '' "$(classify "$home" "signal: $home/state/task-1.turn-ended")" \
+    "a bare turn-ended signal checks the task's open decisions"
+  assert_equals '' "$(classify "$home" "signal: $home/state/task-1.note")" \
+    "other task signal suffixes also check the task's open decisions"
+  printf 'resolved [key=x]: use postgres\n' >> "$status"
+  drain "$home"
+  assert_equals low "$(classify "$home" "signal: $home/state/task-1.turn-ended")" \
+    "a bare turn-ended signal becomes routine after resolution"
   printf 'failed: tests red\n' >> "$status"
+  assert_equals '' "$(classify "$home" "signal: $home/state/task-1.turn-ended")" \
+    "a bare turn-ended signal checks unpresented outcomes"
   assert_equals '' "$(classify "$home" "signal: $status")" "a failure keeps the default"
   drain "$home"
   printf 'blocked: need a credential\n' >> "$status"
@@ -84,7 +99,7 @@ test_signals_follow_the_status_classifier() {
 }
 
 test_heartbeat_is_routine_only_without_change() {
-  local home
+  local home f
   home=$(new_home heartbeat)
   printf 'working: started\n' > "$home/state/task-1.status"
   drain "$home"
@@ -93,11 +108,22 @@ test_heartbeat_is_routine_only_without_change() {
   printf 'working: next step\n' >> "$home/state/task-1.status"
   assert_equals '' "$(classify "$home" heartbeat)" "a changed fleet keeps the default"
   assert_equals low "$(classify "$home" heartbeat)" "the fleet is unchanged again"
+  for f in "$home/data/backlog.md" "$home/state/cards/card.json" "$home/state/orders/order.json"; do
+    mkdir -p "$(dirname "$f")"
+    printf '{"option":1}\n' > "$f"
+    assert_equals '' "$(classify "$home" heartbeat)" "a new fleet record keeps the default"
+    assert_equals low "$(classify "$home" heartbeat)" "an unchanged fleet record is routine"
+    cp -p "$f" "$home/mtime-reference"
+    printf '{"option":2}\n' > "$f"
+    touch -r "$home/mtime-reference" "$f"
+    assert_equals '' "$(classify "$home" heartbeat)" "same-size, same-mtime record changes keep the default"
+    assert_equals low "$(classify "$home" heartbeat)" "the rewritten record is unchanged again"
+  done
   pass "classify: a heartbeat is routine only when nothing changed since the previous one"
 }
 
 test_config_sets_the_level_and_kills_the_switch() {
-  local home merged err
+  local home merged err invalid
   home=$(new_home config)
   merged="check: $home/state/autoland.check.sh: autoland: merged https://github.com/o/r/pull/7 (deploy follows)"
   printf '{"classifier": "on", "low": "medium"}\n' > "$home/config/effort-policy.json"
@@ -110,6 +136,21 @@ test_config_sets_the_level_and_kills_the_switch() {
   assert_contains "$err" 'every turn keeps the default effort' "the refusal is reported"
   printf 'not json' > "$home/config/effort-policy.json"
   assert_equals '' "$(classify "$home" "$merged" 2>/dev/null)" "an unreadable config keeps the default"
+  printf '{}\n' > "$home/config/effort-policy.json"
+  assert_equals low "$(classify "$home" "$merged")" "omitted fields use defaults"
+  for invalid in '{"classifier":false}' '{"low":false}' '{"classifier":false,"low":false}' \
+    '{"classifier":null}' '{"low":null}' '{"classifier":1}' '{"low":["low"]}' \
+    '[]' '"on"' 'null' '{} {}'; do
+    printf '%s\n' "$invalid" > "$home/config/effort-policy.json"
+    err=$(classify "$home" "$merged" 2>&1 >/dev/null)
+    assert_equals '' "$(classify "$home" "$merged" 2>/dev/null)" "present invalid config $invalid keeps the default"
+    assert_contains "$err" 'every turn keeps the default effort' "invalid config $invalid reports refusal"
+  done
+  rm "$home/config/effort-policy.json"
+  ln -s "$home/config/missing-policy.json" "$home/config/effort-policy.json"
+  err=$(classify "$home" "$merged" 2>&1 >/dev/null)
+  assert_equals '' "$(classify "$home" "$merged" 2>/dev/null)" "a dangling configuration symlink keeps the default"
+  assert_contains "$err" 'every turn keeps the default effort' "a dangling config reports refusal"
   pass "config/effort-policy.json picks the level, and off or a bad value keeps every turn at the default"
 }
 

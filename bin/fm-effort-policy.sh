@@ -19,7 +19,7 @@
 #                           captain-held transfer (bin/fm-classify-lib.sh's
 #                           status_span_first_actionable_record, the classifier
 #                           the away daemon self-handles signals with); other
-#                           named files are ignored, as there
+#                           named files use their task's .status log
 #         heartbeat         the fleet fingerprint (status logs, backlog, cards,
 #                           orders) is unchanged since the previous heartbeat
 #                           and no status log has an unpresented actionable line
@@ -58,7 +58,6 @@ args=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --home) HOME_DIR=${2-}; shift 2 || { echo "error: --home needs a value" >&2; exit 2; } ;;
-    --home=*) HOME_DIR=${1#--home=}; shift ;;
     *) args+=("$1"); shift ;;
   esac
 done
@@ -86,32 +85,36 @@ CONFIG=$HOME_DIR/config/effort-policy.json
 
 # The lowered level, or empty when the classifier is off.
 low_level() {
-  local mode level
-  if [ ! -e "$CONFIG" ]; then
+  local settings mode level
+  if [ ! -e "$CONFIG" ] && [ ! -L "$CONFIG" ]; then
     printf 'low'
     return
   fi
-  if ! mode=$(jq -er '.classifier // "on"' "$CONFIG" 2>/dev/null) \
-    || ! level=$(jq -er '.low // "low"' "$CONFIG" 2>/dev/null); then
-    echo "fm-effort-policy: config/effort-policy.json is unreadable; every turn keeps the default effort" >&2
+  if [ ! -f "$CONFIG" ] || [ ! -r "$CONFIG" ] || ! settings=$(jq -ers '
+    if length != 1 then error("expected one object") else .[0] end
+    | if type != "object" then error("expected object") else . end
+    | (if has("classifier") then .classifier else "on" end) as $mode
+    | (if has("low") then .low else "low" end) as $level
+    | if ($mode == "on" or $mode == "off") and
+         ($level == "none" or $level == "minimal" or $level == "low" or $level == "medium")
+      then [$mode, $level] | @tsv else error("invalid effort policy") end
+  ' "$CONFIG" 2>/dev/null); then
+    echo "fm-effort-policy: config/effort-policy.json is unreadable or invalid; every turn keeps the default effort" >&2
     return
   fi
-  case "$mode" in
-    off) return ;;
-    on) ;;
-    *) echo "fm-effort-policy: classifier must be on or off, not '$mode'; every turn keeps the default effort" >&2; return ;;
-  esac
-  case "$level" in
-    none|minimal|low|medium) printf '%s' "$level" ;;
-    *) echo "fm-effort-policy: low must be none, minimal, low or medium, not '$level'; every turn keeps the default effort" >&2 ;;
-  esac
+  IFS=$'\t' read -r mode level <<< "$settings"
+  [ "$mode" = on ] || return
+  printf '%s' "$level"
 }
 
 # 0 when the status log has nothing captain-facing the drain has not shown.
 status_quiet() {  # <status-file>
-  local f=$1 offset record needs=0 rc
+  local f=$1 offset record needs=0 rc open
   case "$f" in /*) ;; *) f=$HOME_DIR/$f ;; esac
-  [ -e "$f" ] || return 0
+  [ -e "$f" ] || { [ ! -L "$f" ]; return; }
+  [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 1
+  open=$(status_open_decisions "$f") || return 1
+  [ -z "$open" ] || return 1
   offset=$(status_outcome_backstop_cursor_offset "$f") || return 1
   status_span_first_actionable_record "$f" "$offset" record needs
   rc=$?
@@ -121,21 +124,34 @@ status_quiet() {  # <status-file>
 signal_routine() {  # <files>
   local f
   for f in $1; do
-    case "$f" in *.status) status_quiet "$f" || return 1 ;; esac
+    case "$f" in
+      *.status) ;;
+      *.*) f=${f%.*}.status ;;
+      *) return 1 ;;
+    esac
+    status_quiet "$f" || return 1
   done
 }
 
 fleet_fingerprint() {
-  local f
-  for f in "$STATE"/*.status "$HOME_DIR/data/backlog.md" "$STATE"/cards/*.json "$STATE"/orders/*.json; do
-    [ -e "$f" ] || continue
-    printf '%s %s %s\n' "${f#"$HOME_DIR"/}" "$(_fm_status_file_size "$f")" "$(_fm_status_file_mtime "$f")"
-  done | cksum
+  local f records identity
+  records=$(
+    for f in "$STATE"/*.status "$HOME_DIR/data/backlog.md" "$STATE"/cards/*.json "$STATE"/orders/*.json; do
+      [ -e "$f" ] || continue
+      if [[ $f = "$STATE"/*.status ]]; then
+        identity="$(_fm_status_file_size "$f") $(_fm_status_file_mtime "$f")"
+      else
+        identity=$(cksum < "$f") || exit 1
+      fi
+      printf '%s %s\n' "${f#"$HOME_DIR"/}" "$identity"
+    done
+  ) || return 1
+  printf '%s\n' "$records" | cksum
 }
 
 heartbeat_routine() {
   local now before='' f quiet=0
-  now=$(fleet_fingerprint)
+  now=$(fleet_fingerprint) || return 1
   [ -f "$POLICY_DIR/heartbeat" ] && before=$(cat "$POLICY_DIR/heartbeat" 2>/dev/null)
   mkdir -p "$POLICY_DIR" && printf '%s\n' "$now" > "$POLICY_DIR/heartbeat.tmp" \
     && mv -f "$POLICY_DIR/heartbeat.tmp" "$POLICY_DIR/heartbeat"

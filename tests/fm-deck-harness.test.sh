@@ -1311,6 +1311,25 @@ with (root/'pane').open('w') as output:
         assert not prompt.startswith('deck-effort'), 'the wake after news keeps the default'
         prompt = wake(merged % (home, 4), 7, 'routine again')
         assert prompt.startswith('deck-effort: low\n'), prompt
+        p.stdin.write('slow-steer\n'); p.stdin.flush()
+        wait_for(lambda: (home/'in-turn').exists(), 'busy ordinary turn')
+        record = subprocess.check_output(
+            ['bash', '-c', '. "$1/bin/fm-task-inbox-lib.sh"; fm_task_inbox_write "$2" host "$3"',
+             '_', str(root), str(root/'parent'), 'ordinary task request'], text=True).strip()
+        assert pathlib.Path(record).exists(), 'ordinary steering was not persisted'
+        starts = len((home/'watch-starts').read_text().splitlines())
+        (home/'wake-reason').write_text(merged % (home, 5))
+        (home/'trigger').touch()
+        wait_for(lambda: len((home/'watch-starts').read_text().splitlines()) > starts,
+                 'routine wake buffered during busy turn')
+        (home/'release').touch()
+        wait_for(lambda: len(rows()) == 9 and idle(), 'combined steering and watcher turn')
+        row = rows()[-1]
+        assert 'Firstmate instruction waiting:' in row['prompt'], row
+        assert 'ordinary task request' in row['inbox'] and 'merged https://' in row['inbox'], row
+        assert not row['prompt'].startswith('deck-effort'), 'pending ordinary steering keeps the default'
+        prompt = wake(merged % (home, 6), 10, 'routine after combined turn')
+        assert prompt.startswith('deck-effort: low\n'), prompt
     finally:
         os.killpg(p.pid, signal.SIGTERM)
         p.wait(10)

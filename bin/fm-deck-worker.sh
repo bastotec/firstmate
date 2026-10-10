@@ -382,7 +382,11 @@ $(cat "$WATCH_PENDING")") || exit 1
 TURN_EFFORT=''
 EFFORT_SUPPORTED=''
 watch_effort() {
+  local f
   [ "$EFFORT_SUPPORTED" = 1 ] || return 0
+  for f in "$STATE/$ID.inbox"/*.msg; do
+    if [ -e "$f" ] || [ -L "$f" ]; then return 0; fi
+  done
   printf '%s\n%s' "$WAKE_PREAMBLE" "$(cat "$WATCH_PENDING")" \
     | "$SCRIPT_DIR/fm-effort-policy.sh" classify --home "$FM_HOME" 2>/dev/null
 }
