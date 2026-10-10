@@ -113,7 +113,7 @@ test_metadata_and_read_failure_gates() {
   state_dir="$home/alternate-state"
   mkdir -p "$state_dir"
   mv "$home/state/meta-pr.meta" "$state_dir/meta-pr.meta"
-  out=$(FM_STATE_OVERRIDE="$state_dir" in_home "$home" "$WRAPPER" done meta-pr 2>&1); rc=$?
+  out=$(FM_STATE_OVERRIDE="$state_dir" in_home "$home" "$WRAPPER" "done" meta-pr 2>&1); rc=$?
   expect_code 2 "$rc" "done with an overridden state directory"
   assert_contains "$out" "is still open" "overridden metadata was not checked"
 
@@ -128,13 +128,13 @@ case "\${1:-}" in done|close) echo called >> "$home/mutations" ;; esac
 exec "$real_tasks" "\$@"
 SH
   chmod +x "$home/fakebin/tasks-axi"
-  out=$(in_home "$home" "$WRAPPER" done meta-pr 2>&1); rc=$?
+  out=$(in_home "$home" "$WRAPPER" "done" meta-pr 2>&1); rc=$?
   expect_code 2 "$rc" "done when reading the row fails"
   assert_contains "$out" "cannot read the task row" "failed read did not explain the refusal"
   assert_absent "$home/mutations" "a failed read reached the close mutation"
   [ "$(row_state "$home" meta-pr)" = in_flight ] || fail "unreadable row was closed"
 
-  out=$(in_home "$home" "$WRAPPER" done missing-row 2>&1); rc=$?
+  out=$(in_home "$home" "$WRAPPER" "done" missing-row 2>&1); rc=$?
   [ "$rc" -ne 0 ] || fail "missing row was reported closed"
   assert_contains "$out" "code: NOT_FOUND" "missing row did not report tasks-axi's error"
   assert_present "$home/mutations" "a confirmed absent row did not pass through to tasks-axi"
@@ -149,14 +149,14 @@ test_supersession_body_boundary() {
   add_row "$home" inline-only in_flight 1 'Require Superseded: reasons before closing PRs'
   add_row "$home" blank-only in_flight 1 $'Superseded: \t\nUnrelated next line'
   for id in title-only inline-only blank-only; do
-    out=$(in_home "$home" "$WRAPPER" done "$id" 2>&1); rc=$?
+    out=$(in_home "$home" "$WRAPPER" "done" "$id" 2>&1); rc=$?
     expect_code 2 "$rc" "$id supersession false positive"
     [ "$(row_state "$home" "$id")" = in_flight ] || fail "$id was closed as superseded"
-    tasks-axi done "$id" --file "$home/data/backlog.md" >/dev/null
+    tasks-axi "done" "$id" --file "$home/data/backlog.md" >/dev/null
   done
   body=$'Prior context\nSuperseded: "substituído" by a smaller change\nOther context'
   add_row "$home" body-line in_flight 1 "$body"
-  in_home "$home" "$WRAPPER" done body-line >/dev/null 2>&1 || fail "decoded supersession line was refused"
+  in_home "$home" "$WRAPPER" "done" body-line >/dev/null 2>&1 || fail "decoded supersession line was refused"
   out=$(in_home "$home" "$AUDIT" 2>&1); rc=$?
   expect_code 0 "$rc" "audit supersession boundary"
   for id in title-only inline-only blank-only; do
@@ -184,13 +184,13 @@ test_captain_answer_pr_gate() {
     out=$(in_home "$home" "$ROOT/bin/fm-captain-hold.sh" answer "$id" --decision-file "$home/answer.txt" 2>&1); rc=$?
     expect_code 1 "$rc" "captain answer with an open $source PR"
     assert_contains "$out" 'is still open' "captain answer did not explain PR refusal"
-    [ "$(row_state "$home" "$id")" != done ] || fail "captain answer closed an open $source PR"
+    [ "$(row_state "$home" "$id")" != "done" ] || fail "captain answer closed an open $source PR"
     assert_present "$home/state/cards/$id.json" "refused answer removed its card"
   done
   printf 'MERGED\n' > "$home/states/1"
   in_home "$home" "$ROOT/bin/fm-captain-hold.sh" answer held-meta --decision-file "$home/answer.txt" >/dev/null \
     || fail "merged PR did not permit the interrupted answer to finish"
-  [ "$(row_state "$home" held-meta)" = done ] || fail "merged captain answer did not close"
+  [ "$(row_state "$home" held-meta)" = "done" ] || fail "merged captain answer did not close"
   rm "$home/states/1"
   in_home "$home" "$ROOT/bin/fm-captain-hold.sh" answer held-meta --decision-file "$home/answer.txt" >/dev/null \
     || fail "closed answer replay required forge access"
@@ -203,12 +203,12 @@ test_audit_metadata_only_prs() {
   printf 'OPEN\n' > "$home/states/1"
   printf 'MERGED\n' > "$home/states/2"
   printf 'CLOSED\n' > "$home/states/3"
-  add_row "$home" metadata-open done
-  add_row "$home" metadata-merged done
-  add_row "$home" metadata-superseded done '' 'Superseded: replaced by another change'
-  add_row "$home" row-first done 2
+  add_row "$home" metadata-open "done"
+  add_row "$home" metadata-merged "done"
+  add_row "$home" metadata-superseded "done" '' 'Superseded: replaced by another change'
+  add_row "$home" row-first "done" 2
   add_row "$home" review-metadata in_flight
-  add_row "$home" no-pr done
+  add_row "$home" no-pr "done"
   for id in metadata-open row-first review-metadata; do
     printf 'pr=https://github.com/example/repo/pull/1\n' > "$home/state/$id.meta"
   done
