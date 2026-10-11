@@ -15,7 +15,7 @@
 # fixed mapping logic, no heuristics and no LLM. Output is one stable, parseable,
 # token-tight line firstmate can read every heartbeat:
 #
-#   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|remote-endpoint|none> · <detail> [· run-pr: <url>] [· run-error: <error>]
+#   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|remote-endpoint|none> [· <detail>] [· run-pr: <url>] [· run-error: <error>] · declared-wait: <active|inactive> · evidence: <references>; observed=<UTC>
 #
 # Logic, in order:
 #   1. Resolve worktree + backend target + kind from state/<id>.meta. A meta
@@ -76,6 +76,8 @@
 #      terminal FAILED record whose daemon an explicit probe proves down reads
 #      unknown, never failed: an instrument failure must not read as work
 #      failure (nm_daemon_probe_down).
+#      An attributed response with no recognized status or outcome and no gate
+#      evidence reports unknown, not inferred execution.
 #   3. Reconcile the status log: if its last line says needs-decision/blocked but
 #      the run-step shows the run moved on, the log is deterministically stale and
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
@@ -87,8 +89,9 @@
 #      call is not daemon death, so that claim is answered by steering the crew
 #      to reattach, not by escalating.
 #   4. A failed or timed-out validation query reports unknown with run-step
-#      evidence, not stopped or pane activity: a busy worker cannot establish an
-#      unavailable validation outcome and can mask a dead run.
+#      evidence. This intentionally replaces the former pane fallback: a busy
+#      worker cannot establish an unavailable validation outcome and can mask a
+#      dead run; unavailability is not proof the task stopped.
 #      No run for this crew (pre-validation, or kind=scout): fall back to the
 #      recorded backend's pane busy state, then the status log's last line only
 #      when its verb maps to a recognized run-state. Decision-only events such as
@@ -104,8 +107,8 @@
 #      classified by step 4. Backends with no classifier keep reading a failed
 #      capture as gone. The fallback's own comment owns the per-verdict rules.
 #
-# A plain read is read-only and side-effect free. Always exits 0 on a successful
-# read regardless of state; exit 2 only on a usage error (no id).
+# A plain read is read-only and side-effect free, and exits 0 regardless of state.
+# bin/fm-crew-state.sh owns argument validation and usage errors.
 #
 # PUBLISHED RECORD (--publish, --follow, --follow-detached)
 #   `fm-crew-state.sh --publish <id>` does the same read, then keeps
@@ -157,7 +160,13 @@
 # PUBLIC INTERFACE
 #   fm_task_state_read <id> [read|publish|follow|follow-detached|wait]
 # Prints the same attributed current-state line as fm-crew-state.sh.
-# Evidence names the input records, run identity when available, and read time.
+# Evidence always names the metadata and external-wait paths plus read time.
+# It adds source-specific references: run and worktree for run-step, busy-state
+# and busy-gen for pane, status log for status-log, host for remote-endpoint,
+# or endpoint for none. A run ID is emitted only from a full attributed response;
+# run=ledger denotes no attributed ID (coarse ledger or unavailable primary read),
+# never the ID of a foreign or superseded response. A reference names a candidate
+# input, not proof that it exists or that the read succeeded.
 # Declared waits are an independent observation, not a replacement run outcome.
 # The wait projection prints the existing declaration facts one field per line:
 # scope, age, reason, declarer, until; exits 1 unless the declaration is active.
@@ -1069,7 +1078,8 @@ if [ "$HAVE_RUN" = 1 ]; then
       CI_LOG_STATE=not-ready
     fi
     if [ "$CI_LOG_STATE" != not-ready ]; then
-      emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR"
+      RUN_PR=$(strip_quotes "$(nm_field pr)")
+      emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR" "" "$RUN_PR"
     fi
   fi
 

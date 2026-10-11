@@ -87,12 +87,7 @@ A secondmate home's terminal outcomes, PR registrations, holds, and merges reach
 ### Current-state reads
 
 `bin/fm-crew-state.sh <id>` is the current-state adapter, and [`bin/fm-task-state-lib.sh`](../bin/fm-task-state-lib.sh)'s `fm_task_state_read` owns the derivation, attributed evidence, and declared-wait projection consumed by monitoring.
-An attributed no-mistakes run step is authoritative even if the pane has closed, under [`bin/fm-nm-run-lib.sh`](../bin/fm-nm-run-lib.sh)'s attribution rules, and a live run outranks a terminal one so a crashed run never reports a healthy task as failed.
-A run whose only failure is the ci monitor after checks read green reports done, because a monitor observing a human merge decision must not turn its absence into failure.
-Outside that held-green case, an infrastructure-killed full run is superseded by a current-incarnation busy or idle record only when the recovery-grade endpoint probe reports exactly alive and the worker's spawn generation postdates the attributed run.
-An alive incarnation without that ordering proof reads unknown, so neither the original worker surviving the daemon, a dead predecessor, nor a cached screen can be mistaken for a live replacement.
-A coarse terminal ledger record whose daemon probe reports down reads unknown, because an instrument failure must never read as work failure.
-Without a matching run, exact busy reports working, exact idle permits the status-log fallback, and unknown or dead stays unknown rather than trusting a stale log.
+This interface derives observations from existing record owners rather than introducing a second authoritative task store; [`tests/fm-crew-state.test.sh`](../tests/fm-crew-state.test.sh) pins its precedence, independent wait evidence, attribution, and unavailable-read behavior.
 
 `bin/fm-fleet-snapshot.sh --json` emits the `fm-fleet-snapshot.v1` contract that `bin/fm-fleet-view.sh` and `bin/fm-bearings-snapshot.sh` render, and its header owns the schema and remote-home collection.
 

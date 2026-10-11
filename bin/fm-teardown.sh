@@ -3344,7 +3344,7 @@ rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.progress" \
   "$STATE/$ID.revive" "$STATE/$ID.held-stopped" \
   "$STATE/$ID.agent-diagnostics" "$STATE/$ID.agent-diagnostics".[1-9] \
   "$STATE/.$ID.crew-state-follow.rearm"
-# bin/fm-crew-state.sh "PUBLISHED RECORD" owns follower shutdown and lock cleanup.
+# bin/fm-task-state-lib.sh "PUBLISHED RECORD" owns follower shutdown and lock cleanup.
 fm_lock_remove_path "$STATE/.$ID.crew-state-follow" || true
 fm_lock_remove_path "$STATE/.$ID.crew-state.lock" || true
 # The steering inbox (bin/fm-task-inbox-lib.sh) is runtime state for the

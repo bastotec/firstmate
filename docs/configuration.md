@@ -57,11 +57,11 @@ data/
   extensions/packages/    read-only content-addressed extension packages (bin/fm-extension.sh)
 state/
   <id>.meta               task metadata; bin/fm-spawn.sh owns base fields, "Runtime backend" the backend fields
-  <id>.status             crewmate "<state>: <note>" wake events, not current state (bin/fm-crew-state.sh owns that)
+  <id>.status             crewmate "<state>: <note>" wake events, not current state (bin/fm-task-state-lib.sh owns derivation)
   <id>.agent-diagnostics{,.1,.2}  stream-agent diagnostic records (`primary-chat.agent-diagnostics` for the statusless primary); format and limits are owned by docs/stream-backend.md; task-owned files are removed by teardown
   <id>.turn-ended         touched by bin/fm-deck-worker.sh at turn end
   <id>.progress           in-turn native activity, read for the busy-age bound only (bin/fm-busy-event.sh)
-  <id>.crew-state         local ship task's validation record for file watchers; bin/fm-crew-state.sh "PUBLISHED RECORD" owns fields, refreshes, and cleanup
+  <id>.crew-state         local ship task's validation record for file watchers; bin/fm-task-state-lib.sh "PUBLISHED RECORD" owns fields, refreshes, and cleanup
   cards/<task-id>.json    captain-facing decision card; bin/fm-card.sh owns schema and storage, bin/fm-captain-hold.sh owns hold and resolution hooks
   cards-cleared.log       stale-card clear and restore log; bin/fm-card.sh owns fields and undo guards
   orders/<id>.json        order proposal waiting for the captain's launch or cancel; bin/fm-order.sh owns schema and storage
@@ -109,7 +109,7 @@ state/
   .afk-contract afk-contracts/  away-posture record and archive; written only by bin/fm-afk-contract.sh
   .afk                    away or quiet mode flag (fm_afk_mode in bin/fm-wake-lib.sh)
   .afk-daemon.out .afk-launch.lock .afk-daemon-terminal  away daemon launch records (bin/fm-afk-launch.sh)
-  .<id>.crew-state.lock .<id>.crew-state-follow .<id>.crew-state-follow.rearm  validation publication, follower ownership, and re-arm internals (bin/fm-crew-state.sh); never touch
+  .<id>.crew-state.lock .<id>.crew-state-follow .<id>.crew-state-follow.rearm  validation publication, follower ownership, and re-arm internals (bin/fm-task-state-lib.sh); never touch
   .watch.lock .wake-queue.lock  watcher singleton and queue locks
   .hash-* .count-* .stale-* .stale-since-* .churn-since-* .paused-* .ext-wait-resurfaced-* .wedge-escalations-* .writing-* .seen-* .hb-surfaced-* .last-* .heartbeat-streak  watcher internals; never touch
   .watch-triage.log       absorbed-wake debug log; safe to delete

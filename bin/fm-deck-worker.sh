@@ -43,7 +43,7 @@
 #     prompt and, when the reader reports a run-step state other than working
 #     or unknown (such as parked at a gate, done, failed), starts ONE next turn
 #     of the same session with that state line and a run id when safely available.
-#     bin/fm-crew-state.sh "PUBLISHED RECORD" owns validation-record publication
+#     bin/fm-task-state-lib.sh "PUBLISHED RECORD" owns validation-record publication
 #     and follower activation from these reads and the ship-worker tool hooks.
 #     Only a working -> other transition observed after a turn wakes, so a run
 #     that stays parked or done never re-wakes; typed input (a steer, the doorbell,
@@ -422,7 +422,7 @@ watch_maintain() {
 # to the model and fails the run after its own bounded number of refusals.
 EVIDENCE_HOOK="python3 $(q "$STATE_IO") root-worker-status-after $(q "$STATE") $(q "$ID.status") \"\$(cat $(q "$TURN_MARK") 2>/dev/null || echo 0)\" 2>/dev/null || { echo $(q "Before you finish, append one line to $STATUS_FILE as your instructions' status protocol describes (done:, needs-decision:, blocked:, failed:, or working:), stating what you did and the evidence. Then finish.") >&2; exit 2; }"
 PROGRESS_HOOK="diagnostic=\$($(q "$BUSY_EVENT") progress $(q "$STATE") $(q "$ID") --gen $(q "$GEN") 2>&1 >/dev/null) || { printf '%s\\n' \"\$diagnostic\" >&2; diagnostic=\$(printf '%s' \"\$diagnostic\" | tr '\\n\\r' '  '); printf 'failed: deck wrapper could not refresh progress: %s\\n' \"\$diagnostic\" | python3 $(q "$STATE_IO") root-append $(q "$STATE") $(q "$ID.status"); exit 1; }"
-# bin/fm-crew-state.sh "PUBLISHED RECORD" owns the ship-worker validation hooks.
+# bin/fm-task-state-lib.sh "PUBLISHED RECORD" owns the ship-worker validation hooks.
 CREW_STATE_FOLLOW="FM_STATE_OVERRIDE=$(q "$STATE") $(q "$SCRIPT_DIR/fm-crew-state.sh") --follow-detached $(q "$ID")"
 # The machine's approval gate (bin/fm-approval.py), when ~/.agents/deck.hooks.json
 # runs it, files this agent's blocked calls in the home that supervises it: its

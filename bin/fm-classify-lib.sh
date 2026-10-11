@@ -29,7 +29,8 @@
 #
 # There are three documented exceptions. The absorb classification
 # (crew_absorb_class and its working/paused/done wrappers) is NOT a pure status-file
-# read: it reuses bin/fm-crew-state.sh, which may make a bounded no-mistakes call,
+# read: it uses bin/fm-task-state-lib.sh's fm_task_state_read by default (or
+# FM_CREW_STATE_BIN when overridden), which may make a bounded no-mistakes call,
 # to decide whether a crew that just stopped its turn or went stale is working,
 # deliberately paused, done awaiting its merge, or none of those. Callers run it
 # ONLY on no-verb signal handling, first sighting of a stale hash, or a due
@@ -1881,8 +1882,8 @@ status_span_has_actionable() {  # <status-file> <start-offset>
 }
 
 # Classify WHY an idle/stale crew MIGHT be safely absorbed instead of surfaced,
-# from bin/fm-crew-state.sh's one authoritative current-state line
-# ("state: <s> · source: <src> · <detail>"). Prints exactly one token:
+# from the current-state interface owned by bin/fm-task-state-lib.sh.
+# Prints exactly one token:
 #   working - an actively-running no-mistakes step (running/fixing/ci) or a busy
 #             pane; the crew is legitimately mid-work on a static-looking pane
 #             (e.g. waiting on CI);
@@ -1894,7 +1895,7 @@ status_span_has_actionable() {  # <status-file> <start-offset>
 #             handling suppresses wedge alarms while it waits;
 #   none    - neither, so the wake must surface (a stopped/finished/parked/failed/
 #             torn-down/unknown crew, or an unreadable verdict).
-# One fm-crew-state.sh read serves ALL absorb reasons at once. Reading the state
+# One current-state read serves ALL absorb reasons at once. Reading the state
 # authoritatively (not the status log) is what keeps run-step precedence: a crew
 # that appended paused: but then STARTED a run reports working, never paused.
 # A done verdict is gated on a recorded PR or an authoritative checks-green
@@ -1903,7 +1904,7 @@ status_span_has_actionable() {  # <status-file> <start-offset>
 # a crew merely reporting done with no PR - possibly a worker wedged after a
 # status append, or waiting on an unrecorded outcome - keeps the ordinary
 # surface-it alarm.
-# NOT a pure read: fm-crew-state.sh may make a bounded no-mistakes call, so callers
+# NOT a pure read: fm_task_state_read may make a bounded no-mistakes call, so callers
 # run it only on no-verb signals, first-sighting stale paths, and due stale
 # escalation boundaries, never every wake.
 # FM_CREW_STATE_BIN lets tests stub the verdict.

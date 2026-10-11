@@ -32,7 +32,7 @@ bin/fm-test-run.sh tests/fm-deck-harness.test.sh
 
 The suite prints one `ok - ...` line per case; its case names are the current coverage list.
 Its validation-record case exercises a run starting during a blocking tool call after the pre-tool hook fired.
-[`tests/fm-crew-state.test.sh`](../../tests/fm-crew-state.test.sh) covers publication, serialized observations, follower ownership, grace expiry and re-arming, and detached publication with polling disabled; [`bin/fm-crew-state.sh`'s header](../../bin/fm-crew-state.sh) owns those contracts.
+[`tests/fm-crew-state.test.sh`](../../tests/fm-crew-state.test.sh) covers publication, serialized observations, follower ownership, grace expiry and re-arming, and detached publication with polling disabled; [`bin/fm-task-state-lib.sh`'s header](../../bin/fm-task-state-lib.sh) owns those contracts.
 
 The spawn-side effort restrictions owned by [Harness support](../configuration.md#harness-support) are pinned by `tests/fm-bootstrap.test.sh`, `tests/fm-deck-harness.test.sh`, and `tests/fm-control-relaunch.test.sh`.
 The host regression forces actionable watcher exits across long handling turns, accepts verified successors across recovery acknowledgement races, and proves Deck turns remain serialized with accumulated wakes delivered by the next turn.
