@@ -504,6 +504,7 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
              reported:metadata_word($rest; "reported"),
              done:metadata_word($rest; "done"),
              completion:completion($rest),
+             outcome:null,
              links:links($rest),
              pr_url:((links($rest) | map(select(test("/pull/[0-9]+"))) | .[0]) // null),
              report_path:cap($rest; ".*(?<v>data/[^[:space:])]+/report\\.md).*"),
@@ -539,6 +540,17 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
                   else cap(.body_lines[-1]; "^(?<v>local main)$")
                   end))
           | .body_excerpt = ((.body_lines | join(" "))[:240])
+          # A recorded Outcome line (fm_backlog_record_pr_outcome in
+          # bin/fm-backlog-transition-lib.sh) is the PR outcome of the row,
+          # never the "(merged DATE)" label tasks-axi derives from any PR link.
+          | ([.body_lines[]
+              | capture("^Outcome:[[:space:]]*(?<o>merged|superseded|closed-unmerged)[[:space:]]+(?<u>https://[^[:space:]]+)")?]
+             | last) as $outcome
+          | if $outcome == null then .
+            else .outcome = $outcome.o
+              | .pr_url = (if $outcome.o == "merged" then (.pr_url // $outcome.u) else $outcome.u end)
+              | .completion = {verb:$outcome.o, date:(.completion.date // .merged // .done)}
+            end
         else . end)
     | .records as $records
     | (reduce ($records[] | select(.structured)) as $record ({};

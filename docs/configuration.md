@@ -142,6 +142,7 @@ The tracked `.tasks.toml` paths resolve against the directory tasks-axi runs in,
 tasks-axi writes by renaming over its target, so symlinking the code-root copy into a home forks the queue on the first write.
 Every routine backlog command therefore runs through [`bin/fm-tasks-axi.sh`](../bin/fm-tasks-axi.sh), which addresses this home's backlog and archive from any working directory.
 PR-bearing completion follows the [completion-claim gate in `bin/fm-pr-lib.sh`](../bin/fm-pr-lib.sh); the wrapper's header owns PR resolution and hand-close refusals, and [`bin/fm-pr-record-audit.sh`](../bin/fm-pr-record-audit.sh) provides the read-only check for existing Done records.
+Every gated close records the PR's real outcome (merged, superseded, or closed-unmerged) as an `Outcome:` line on the task, because tasks-axi labels any Done row with a PR link as merged; the audit's `--migrate` records it on rows closed before that, and [`bin/fm-backlog-transition-lib.sh`](../bin/fm-backlog-transition-lib.sh)'s `fm_backlog_record_pr_outcome` owns the format.
 For a home whose `FM_HOME` is the code root, bootstrap reports a code-root backlog file that is not this home's own as `BACKLOG_RECONCILE: code-root ...`, and a home elsewhere is never pointed at the code root's data files.
 
 ## Runtime backend (config/backend / FM_BACKEND)

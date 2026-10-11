@@ -51,6 +51,9 @@
 #     in ${FM_STATE_OVERRIDE:-$FM_HOME/state}/<id>.meta). A superseded verdict
 #     requires dropping --pr. Confirmed NOT_FOUND passes through so tasks-axi
 #     reports its own missing-task error.
+#   - `done`/`close` when the gate's verdict cannot be recorded as the task's
+#     explicit PR outcome first (fm_backlog_record_pr_outcome in
+#     bin/fm-backlog-transition-lib.sh), so a superseded row never reads as merged.
 # Otherwise the exit status is tasks-axi's own.
 set -u
 
@@ -139,6 +142,7 @@ else
   unset TASKS_AXI_FILE
 fi
 
+DATA_ABSOLUTE=$(fm_backlog_data_absolute "$DATA") || fail "data directory cannot be resolved: $DATA"
 cd "$FM_BACKLOG_AXI_ROOT" || fail "cannot enter the backlog root $FM_BACKLOG_AXI_ROOT"
 
 # Refuse a close that would claim a PR merged when it has not.
@@ -172,7 +176,12 @@ done_pr_gate() {
   [ -n "$url" ] || return 0
   body=$(fm_pr_task_body "$row") || fail "refusing to close $id: cannot decode the task body"
   if fm_pr_close_verdict "$url" "$body"; then
-    [ "$FM_PR_CLOSE_VERDICT" = superseded ] && [ -n "$pr_flag" ] || return 0
+    if [ "$FM_PR_CLOSE_VERDICT" != superseded ] || [ -z "$pr_flag" ]; then
+      [ "${#backend_args[@]}" -eq 0 ] || export TASKS_AXI_BACKEND="${backend_args[1]}"
+      fm_backlog_record_pr_outcome "$DATA_ABSOLUTE" "$id" "$FM_PR_CLOSE_VERDICT" "$url" \
+        || fail "refusing to close $id: cannot record its PR outcome: $FM_BACKLOG_TRANSITION_ERROR"
+      return 0
+    fi
     FM_PR_CLOSE_REFUSAL="$url closed without merging, and --pr would record it as merged; drop --pr"
   fi
   fail "refusing to close $id: $FM_PR_CLOSE_REFUSAL"

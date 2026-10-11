@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Behavior tests for the PR completion-claim gate outside teardown:
+# Behavior tests for the PR completion-claim gate and recorded outcomes outside teardown:
 #   - bin/fm-tasks-axi.sh done refuses to close a row whose PR (its --pr, else
 #     the row's own PR link) is open, closed without a recorded supersession,
 #     or unreadable, and lets a merged or superseded one through;
-#   - bin/fm-pr-record-audit.sh flags Done rows whose PR is open or closed
-#     unmerged without a supersession reason, read-only.
+#   - a gated close records the PR's real outcome, so a superseded row reads
+#     as done rather than merged;
+#   - bin/fm-pr-record-audit.sh flags Done rows whose PR is open, closed
+#     unmerged without a supersession reason, or superseded but still shown as
+#     merged, read-only unless --migrate records the real outcome.
 # Each case runs in a scratch home with a stubbed gh that answers a PR's
 # state from a per-case file; tests/fm-teardown.test.sh covers teardown's gate.
 set -u
@@ -290,12 +293,16 @@ SH
     assert_equals 'task metadata-open is recorded done but PR https://github.com/example/repo/pull/1 is open - reconcile' \
       "$out" "audit missed a metadata-only PR or ignored row-link precedence ($mode)"
     assert_equals 'list
-show:metadata-superseded' "$(cat "$home/reads")" \
-      "audit read more than one listing or showed a row not needing supersession evidence ($mode)"
+show:metadata-merged
+show:metadata-open
+show:metadata-superseded
+show:no-pr
+show:row-first' "$(head -1 "$home/reads"; sed 1d "$home/reads" | sort)" \
+      "audit read more than one listing or did not read exactly the Done rows ($mode)"
     assert_equals "$before" "$(cksum "$home/data/backlog.md" "$state_dir/"*.meta)" \
       "audit rewrote backlog or metadata records ($mode)"
   done
-  pass "audit finds metadata-only Done PRs with one listing and only necessary body reads"
+  pass "audit finds metadata-only Done PRs with one listing and one read per Done row"
 }
 
 test_audit_flags_mismatches_read_only() {
@@ -316,7 +323,8 @@ test_audit_flags_mismatches_read_only() {
   out=$(in_home "$home" "$AUDIT" 2>"$home/stderr"); rc=$?
   expect_code 0 "$rc" "audit with readable PRs"
   assert_equals "task done-closed is recorded done but PR https://github.com/example/repo/pull/3 was closed without merging - reconcile
-task done-open is recorded done but PR https://github.com/example/repo/pull/1 is open - reconcile" \
+task done-open is recorded done but PR https://github.com/example/repo/pull/1 is open - reconcile
+task done-superseded shows as merged but PR https://github.com/example/repo/pull/4 was superseded - run with --migrate" \
     "$(printf '%s\n' "$out" | sort)" "the audit did not flag exactly the mismatched Done rows"
   assert_equals "$before" "$(cat "$home/data/backlog.md")" "the audit changed the backlog"
 
@@ -329,6 +337,110 @@ task done-open is recorded done but PR https://github.com/example/repo/pull/1 is
   pass "fm-pr-record-audit.sh flags Done rows with an open or unexplained closed PR and changes nothing"
 }
 
+done_line() {  # <home> <id>
+  grep -E "^- \[x\] $2 - " "$1/data/backlog.md"
+}
+
+body_of() {  # <home> <id>
+  tasks-axi show "$2" --full --file "$1/data/backlog.md" | sed -n 's/^  body: //p'
+}
+
+test_close_records_explicit_outcome() {
+  local home merged superseded out rc
+  home=$(make_home close-outcome)
+  printf 'MERGED\n' > "$home/states/3"
+  printf 'CLOSED\n' > "$home/states/4"
+  add_row "$home" merged-pr in_flight 3
+  add_row "$home" superseded-pr in_flight 4 "Superseded: replaced by a smaller change"
+  add_row "$home" plain in_flight
+  in_home "$home" "$WRAPPER" "done" merged-pr >/dev/null 2>&1 || fail "done refused a merged PR"
+  in_home "$home" "$WRAPPER" "done" superseded-pr >/dev/null 2>&1 || fail "done refused a superseded PR"
+  in_home "$home" "$WRAPPER" "done" plain >/dev/null 2>&1 || fail "done refused a row with no PR"
+
+  merged=$(done_line "$home" merged-pr)
+  assert_contains "$merged" "(merged " "a merged close did not read as merged"
+  assert_contains "$(body_of "$home" merged-pr)" "Outcome: merged https://github.com/example/repo/pull/3" \
+    "a merged close did not record its outcome"
+
+  superseded=$(done_line "$home" superseded-pr)
+  assert_contains "$superseded" "(done " "a superseded close did not read as done"
+  assert_not_contains "$superseded" "(merged " "a superseded close still reads as merged"
+  assert_not_contains "$superseded" "/pull/4" "a superseded close left its PR link on the row"
+  assert_contains "$(body_of "$home" superseded-pr)" "Outcome: superseded https://github.com/example/repo/pull/4" \
+    "a superseded close did not keep its PR as the recorded outcome"
+  assert_not_contains "$(body_of "$home" plain)" "Outcome:" "a close with no PR recorded an outcome"
+
+  out=$(in_home "$home" "$AUDIT" 2>&1); rc=$?
+  expect_code 0 "$rc" "audit after outcome-recording closes"
+  assert_equals '' "$out" "the audit flagged rows whose outcome is recorded and true"
+  pass "closes record merged or superseded explicitly, and a superseded row no longer reads as merged"
+}
+
+test_audit_flags_and_migrates_legacy_rows() {
+  local home out rc before
+  home=$(make_home audit-legacy)
+  printf 'MERGED\n' > "$home/states/2"
+  printf 'CLOSED\n' > "$home/states/3"
+  printf 'CLOSED\n' > "$home/states/4"
+  printf 'OPEN\n' > "$home/states/1"
+  add_row "$home" legacy-merged "done" 2
+  add_row "$home" legacy-closed "done" 3
+  add_row "$home" legacy-superseded "done" 4 "Superseded: folded into legacy-merged"
+  add_row "$home" legacy-open "done" 1
+  before=$(cat "$home/data/backlog.md")
+
+  out=$(in_home "$home" "$AUDIT" 2>&1); rc=$?
+  expect_code 0 "$rc" "audit of legacy rows"
+  assert_contains "$out" "task legacy-superseded shows as merged but PR https://github.com/example/repo/pull/4 was superseded - run with --migrate" \
+    "the audit did not flag a superseded row that reads as merged"
+  assert_contains "$out" "task legacy-closed is recorded done but PR https://github.com/example/repo/pull/3 was closed without merging" \
+    "the audit lost the unexplained closed-PR mismatch"
+  assert_not_contains "$out" "legacy-merged" "the audit flagged a row whose PR merged"
+  assert_equals "$before" "$(cat "$home/data/backlog.md")" "the audit without --migrate changed the backlog"
+
+  out=$(in_home "$home" "$AUDIT" --migrate 2>&1); rc=$?
+  expect_code 0 "$rc" "audit --migrate"
+  assert_contains "$(done_line "$home" legacy-merged)" "(merged " "migration changed a merged row's label"
+  assert_contains "$(body_of "$home" legacy-merged)" "Outcome: merged https://github.com/example/repo/pull/2" \
+    "migration did not record a merged outcome"
+  assert_contains "$(done_line "$home" legacy-superseded)" "(done " "migration left a superseded row reading as merged"
+  assert_contains "$(body_of "$home" legacy-superseded)" "Outcome: superseded https://github.com/example/repo/pull/4" \
+    "migration did not record a superseded outcome"
+  assert_contains "$(done_line "$home" legacy-closed)" "(done " "migration left an unmerged row reading as merged"
+  assert_contains "$(body_of "$home" legacy-closed)" "Outcome: closed-unmerged https://github.com/example/repo/pull/3" \
+    "migration did not record a closed-unmerged outcome"
+  assert_contains "$(done_line "$home" legacy-open)" "/pull/1" "migration rewrote a row whose PR is still open"
+  assert_not_contains "$(body_of "$home" legacy-open)" "Outcome:" "migration recorded an outcome for an open PR"
+  assert_contains "$out" "task legacy-open is recorded done but PR https://github.com/example/repo/pull/1 is open - reconcile" \
+    "migration hid the open-PR mismatch"
+
+  out=$(in_home "$home" "$AUDIT" 2>&1); rc=$?
+  assert_equals 'task legacy-open is recorded done but PR https://github.com/example/repo/pull/1 is open - reconcile' \
+    "$out" "after migration only the open PR should still need a hand"
+  printf 'MERGED\n' > "$home/states/3"
+  out=$(in_home "$home" "$AUDIT" 2>&1)
+  assert_contains "$out" "task legacy-closed records closed-unmerged but PR https://github.com/example/repo/pull/3 merged - reconcile" \
+    "the audit did not check a recorded outcome against the forge"
+  pass "the audit flags legacy rows that read as merged and --migrate records their real outcome"
+}
+
+test_captain_answer_records_outcome() {
+  local home line
+  home=$(make_home captain-outcome)
+  printf 'CLOSED\n' > "$home/states/4"
+  printf 'Drop it, the smaller change replaced it.\n' > "$home/answer.txt"
+  add_row "$home" held-superseded in_flight 4 "Superseded: replaced by a smaller change"
+  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold held-superseded --reason 'Decide whether to drop it' >/dev/null \
+    || fail "could not hold held-superseded"
+  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" answer held-superseded --decision-file "$home/answer.txt" >/dev/null \
+    || fail "a superseded PR did not let the answer close the task"
+  line=$(done_line "$home" held-superseded)
+  assert_not_contains "$line" "(merged " "an answered superseded call reads as merged"
+  assert_contains "$(body_of "$home" held-superseded)" "Outcome: superseded https://github.com/example/repo/pull/4" \
+    "an answered superseded call did not record its outcome"
+  pass "a captain answer that closes a superseded PR records it as superseded"
+}
+
 if command -v tasks-axi >/dev/null 2>&1; then
   test_done_gate
   test_completion_command_forms
@@ -338,6 +450,9 @@ if command -v tasks-axi >/dev/null 2>&1; then
   test_captain_answer_pr_gate
   test_audit_metadata_only_prs
   test_audit_flags_mismatches_read_only
+  test_close_records_explicit_outcome
+  test_audit_flags_and_migrates_legacy_rows
+  test_captain_answer_records_outcome
 else
   echo "skip: tasks-axi not found; PR completion-claim cases not run"
 fi

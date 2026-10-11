@@ -1187,6 +1187,13 @@ test_collapsed_captain_call_deferral_and_landed() {
 ## Done
 - [x] answered-call - Answered captain question (repo: firstmate) (kind: captain) (done 2026-07-10) (hold: captain choice pending) (hold-kind: captain)
 - [x] shipped-work - Ordinary landed work (repo: firstmate) (kind: ship) (merged 2026-07-10)
+- [x] verified-work - Verified landed work https://github.com/o/r/pull/8 (repo: firstmate) (kind: ship) (merged 2026-07-10)
+  Outcome: merged https://github.com/o/r/pull/8
+- [x] superseded-work - Replaced work (repo: firstmate) (kind: ship) (done 2026-07-10)
+  Superseded: folded into verified-work
+  Outcome: superseded https://github.com/o/r/pull/7
+- [x] mislabeled-work - Abandoned work https://github.com/o/r/pull/6 (repo: firstmate) (kind: ship) (merged 2026-07-10)
+  Outcome: closed-unmerged https://github.com/o/r/pull/6
 EOF
   fakebin=$(make_fakebin "$home")
   json=$(run "$home" "$fakebin" --json)
@@ -1202,6 +1209,9 @@ EOF
       and (.gates | any(.[]; .id == "external-gate"))
       and (.landed | any(.[]; .id == "shipped-work"))
       and (.landed | any(.[]; .id == "answered-call") | not)
+      and (.landed | any(.[]; .id == "verified-work"))
+      and (.landed | any(.[]; .id == "superseded-work") | not)
+      and (.landed | any(.[]; .id == "mislabeled-work") | not)
       and (.omitted | any(.[]; .surface | startswith("captain holds bucketed blocked, dated, or aged")))
   ' >/dev/null || fail "the collapsed captain-call projection is wrong: $json"
   json=$(run "$home" "$fakebin" --json --all-decisions --all-queued)
@@ -1209,7 +1219,7 @@ EOF
     (.decisions_open | any(.[]; .id == "parked-call"))
       and (.gates | any(.[]; .id == "parked-call") | not)
   ' >/dev/null || fail "--all-decisions must reveal the prose-deferred call: $json"
-  pass "captain-held tasks of any kind reach Captain's Call, deferral is honored, and landed excludes answered calls"
+  pass "captain-held tasks of any kind reach Captain's Call, deferral is honored, and landed excludes answered calls and unmerged PR outcomes"
 }
 
 test_undated_hold_phrasing_and_aging_projection() {

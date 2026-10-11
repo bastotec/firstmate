@@ -70,6 +70,9 @@
 # A recorded PR on any non-secondmate task also requires the completion-claim
 # gate in bin/fm-pr-lib.sh's fm_pr_close_verdict, before destructive cleanup;
 # that comment owns the live-state, supersession, force, and replay rules.
+# Before a close is staged, the verdict is recorded as the row's PR outcome
+# (merged, superseded, or closed-unmerged for a forced unmerged PR; a forced
+# merged PR records none), and a failure to record it refuses cleanup.
 # local-only projects additionally accept work merged into the local default
 # branch (firstmate performs that merge after configured approval) as a fallback
 # for the common case where there is no remote at all.
@@ -3129,6 +3132,22 @@ if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ]; then
     echo "error: the pending backlog $BACKLOG_TRANSITION for $ID is not replayable; refusing destructive teardown" >&2
     exit 1
   }
+  # Record the gate's verdict as the row's explicit PR outcome before the close
+  # is staged, so neither the close nor its replay can render it as merged.
+  PR_OUTCOME=
+  if [ "$BACKLOG_TRANSITION" = close ] && [ -n "$PR_URL" ]; then
+    case "$FORCE:$PR_CLOSE_VERDICT" in
+      --force:merged) ;;
+      *:merged) PR_OUTCOME=merged ;;
+      *:superseded) PR_OUTCOME=superseded ;;
+      *:unmerged) PR_OUTCOME="closed-unmerged" ;;
+    esac
+  fi
+  if [ -n "$PR_OUTCOME" ] \
+      && ! fm_backlog_record_pr_outcome "$DATA" "$ID" "$PR_OUTCOME" "$PR_URL"; then
+    echo "error: could not record $ID's PR outcome ($FM_BACKLOG_TRANSITION_ERROR); refusing destructive teardown" >&2
+    exit 1
+  fi
 # Roll the accepted legacy incarnation's stamp back to the record's exact
 # pre-stamp bytes. Uses perl - already in the teardown lifecycle's curated PATH
 # (truncate is not, and is absent on stock macOS) - and verifies the restored

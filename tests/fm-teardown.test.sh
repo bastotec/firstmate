@@ -987,7 +987,32 @@ test_teardown_closes_superseded_pr_without_merged_claim() {
     || fail "superseded close left the row open: $(backlog_row_state "$case_dir")"
   assert_grep '(done ' "$case_dir/data/backlog.md" "superseded close did not read as done"
   assert_no_grep '(merged ' "$case_dir/data/backlog.md" "superseded close claimed a merge"
-  pass "teardown closes a superseded PR as done, never merged"
+  assert_grep '  Outcome: superseded https://github.com/example/repo/pull/7' "$case_dir/data/backlog.md" \
+    "superseded close did not record its outcome"
+
+  case_dir=$(make_case pr-gate-superseded-linked)
+  write_meta "$case_dir" no-mistakes ship
+  seed_backlog_in_flight "$case_dir"
+  tasks-axi update task-x1 --pr https://github.com/example/repo/pull/7 \
+    --body "Superseded: replaced by the follow-up PR" --file "$case_dir/data/backlog.md" >/dev/null
+  FM_FAKE_GH_PR_STATE=CLOSED run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "teardown refused a row-linked superseded PR: $(cat "$case_dir/stderr")"
+  assert_no_grep '(merged ' "$case_dir/data/backlog.md" "a row-linked superseded close still reads as merged"
+  grep -E '^- \[x\] task-x1 - .*pull/7' "$case_dir/data/backlog.md" >/dev/null \
+    && fail "a superseded close kept the PR link on the row"
+  assert_grep '  Outcome: superseded https://github.com/example/repo/pull/7' "$case_dir/data/backlog.md" \
+    "a row-linked superseded close did not keep its PR as the outcome"
+
+  case_dir=$(make_case pr-gate-merged-outcome)
+  write_meta "$case_dir" no-mistakes ship
+  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  seed_backlog_in_flight "$case_dir"
+  FM_FAKE_GH_PR_STATE=MERGED run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "teardown refused a merged PR: $(cat "$case_dir/stderr")"
+  assert_grep '(merged ' "$case_dir/data/backlog.md" "a merged close did not read as merged"
+  assert_grep '  Outcome: merged https://github.com/example/repo/pull/7' "$case_dir/data/backlog.md" \
+    "a merged close did not record its outcome"
+  pass "teardown records each PR's real outcome, so a superseded PR reads as done, never merged"
 }
 
 test_teardown_force_never_claims_unmerged_pr() {
@@ -1003,7 +1028,14 @@ test_teardown_force_never_claims_unmerged_pr() {
       assert_grep 'without claiming the PR merged' "$case_dir/stderr" "forced teardown did not warn about the open PR"
     fi
     assert_no_grep '(merged ' "$case_dir/data/backlog.md" "forced teardown recorded a $state PR as merged"
-    assert_no_grep 'pull/7' "$case_dir/data/backlog.md" "forced teardown attached the $state PR link"
+    grep -E '^- \[x\] task-x1 - .*pull/7' "$case_dir/data/backlog.md" >/dev/null \
+      && fail "forced teardown attached the $state PR link"
+    if [ "$state" = OPEN ]; then
+      assert_grep '  Outcome: closed-unmerged https://github.com/example/repo/pull/7' "$case_dir/data/backlog.md" \
+        "forced teardown of an open PR did not record it as closed unmerged"
+    else
+      assert_no_grep 'Outcome:' "$case_dir/data/backlog.md" "forced teardown recorded an outcome it does not claim"
+    fi
   done
   pass "forced teardown never claims a merge, even when the recorded PR merged"
 }
