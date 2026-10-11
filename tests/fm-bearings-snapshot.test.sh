@@ -137,6 +137,7 @@ write_fixture() {  # <home>
 
 ## Done
 - [x] done-a - Landed thing https://github.com/kunchenguid/firstmate/pull/7 (repo: firstmate) (kind: ship) (merged 2026-07-10)
+  Outcome: merged https://github.com/kunchenguid/firstmate/pull/7
 EOF
   printf '# Scout X\n' > "$home/data/scout-x/report.md"
   fm_write_meta "$home/state/ship-task.meta" \
@@ -190,6 +191,7 @@ EOF
 
 ## Done
 - [x] mate-landed - Secondmate-managed fix https://github.com/kunchenguid/firstmate/pull/50 (repo: firstmate) (kind: ship) (merged 2026-07-11)
+  Outcome: merged https://github.com/kunchenguid/firstmate/pull/50
 EOF
   mkdir -p "$mate/projects/mate"
   fm_write_meta "$mate/state/mate.meta" \
@@ -1187,6 +1189,7 @@ test_collapsed_captain_call_deferral_and_landed() {
 ## Done
 - [x] answered-call - Answered captain question (repo: firstmate) (kind: captain) (done 2026-07-10) (hold: captain choice pending) (hold-kind: captain)
 - [x] shipped-work - Ordinary landed work (repo: firstmate) (kind: ship) (merged 2026-07-10)
+- [x] legacy-pr - Legacy merge label https://github.com/o/r/pull/9 (repo: firstmate) (kind: ship) (merged 2026-07-10)
 - [x] verified-work - Verified landed work https://github.com/o/r/pull/8 (repo: firstmate) (kind: ship) (merged 2026-07-10)
   Outcome: merged https://github.com/o/r/pull/8
 - [x] superseded-work - Replaced work (repo: firstmate) (kind: ship) (done 2026-07-10)
@@ -1210,6 +1213,7 @@ EOF
       and (.landed | any(.[]; .id == "shipped-work"))
       and (.landed | any(.[]; .id == "answered-call") | not)
       and (.landed | any(.[]; .id == "verified-work"))
+      and (.landed | any(.[]; .id == "legacy-pr") | not)
       and (.landed | any(.[]; .id == "superseded-work") | not)
       and (.landed | any(.[]; .id == "mislabeled-work") | not)
       and (.omitted | any(.[]; .surface | startswith("captain holds bucketed blocked, dated, or aged")))
@@ -3215,6 +3219,7 @@ test_remote_ledgers_share_one_concurrent_budget_and_fall_back_to_cache() {
 
 ## Done
 - [x] remote-approved - Captain-approved delivery $approved_pr (repo: firstmate) (kind: ship) (hold-kind: captain) (merged 2026-09-03)
+  Outcome: merged $approved_pr
 EOF
   write_remote_home_summary "$remote_home" 1000
   tmp="$cache_file.tmp"

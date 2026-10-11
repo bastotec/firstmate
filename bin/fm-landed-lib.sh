@@ -18,8 +18,9 @@
 # delivery regardless of release state or other links in its title.
 #
 # The selector uses recorded delivery artifacts and completion verbs, not a
-# live forge check. bin/fm-pr-lib.sh's completion-claim gate owns the PR-link
-# rendering limitation; Recently Landed alone is not proof that a PR merged.
+# live forge check. PR deliveries require an explicit merged outcome; a legacy
+# "(merged DATE)" label alone is never merge evidence.
+# bin/fm-pr-lib.sh's completion-claim gate owns the PR-link rendering limitation.
 # A row whose recorded PR outcome is superseded or closed-unmerged is never a
 # delivery, whatever its label says.
 # A closed row whose artifact matches its merged or done completion verb is
@@ -64,6 +65,7 @@ FM_LANDED_JQ_DEFS='
       and .kind != "captain"
       and .hold_kind != "captain"
       and .completion.verb == "merged"
+      and .outcome == "merged"
       and (.pr_url // null) != null)
     or (.kind != "scout"
       and .kind != "captain"
@@ -72,7 +74,7 @@ FM_LANDED_JQ_DEFS='
       and (.local_note // null) != null);
   def landed_record:
     .state == "done" and .structured
-    and ((.outcome // "merged") == "merged")
+    and (.outcome == null or .outcome == "merged")
     and (landed_delivery
       or (.kind != "scout"
         and .kind != "captain"

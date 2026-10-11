@@ -424,6 +424,107 @@ test_audit_flags_and_migrates_legacy_rows() {
   pass "the audit flags legacy rows that read as merged and --migrate records their real outcome"
 }
 
+test_embedded_pr_links_are_removed() {
+  local home form mode id title line detail
+  home=$(make_home embedded-pr-links)
+  printf 'CLOSED\n' > "$home/states/4"
+  printf 'CLOSED\n' > "$home/states/5"
+  for mode in close migrate; do
+    for form in markdown parentheses multiple; do
+      id="$mode-$form"
+      case "$form" in
+        markdown) title='Fix [PR](https://github.com/example/repo/pull/4)' ;;
+        parentheses) title='Fix (https://github.com/example/repo/pull/4)' ;;
+        multiple) title='Fix [PR](https://github.com/example/repo/pull/4),[old](https://github.com/example/repo/pull/5)' ;;
+      esac
+      add_row "$home" "$id" in_flight '' 'Superseded: replaced by a smaller change' "$title"
+      detail=$(tasks-axi show "$id" --full --file "$home/data/backlog.md" | sed -n 's/^  links: //p')
+      assert_contains "$detail" 'pr:https://' "tasks-axi did not recognize the $form PR fixture"
+      if [ "$mode" = close ]; then
+        in_home "$home" "$WRAPPER" "done" "$id" >/dev/null 2>&1 \
+          || fail "$form PR close failed"
+      else
+        tasks-axi "done" "$id" --file "$home/data/backlog.md" >/dev/null
+        in_home "$home" "$AUDIT" --migrate >/dev/null 2>&1 || fail "$form PR migration failed"
+      fi
+      line=$(done_line "$home" "$id")
+      assert_contains "$line" '(done ' "$mode left the $form PR fixture labeled merged"
+      detail=$(tasks-axi show "$id" --full --file "$home/data/backlog.md" | sed -n 's/^  links: //p')
+      assert_not_contains "$detail" 'pr:https://' "$mode left a $form PR link on the title"
+      assert_contains "$(body_of "$home" "$id")" 'Outcome: superseded' "$mode lost the $form PR outcome"
+      assert_contains "$(body_of "$home" "$id")" 'https://github.com/example/repo/pull/4' "$mode lost the $form PR reference"
+      if [ "$form" = multiple ]; then
+        assert_contains "$(body_of "$home" "$id")" 'https://github.com/example/repo/pull/5' "$mode lost the other embedded PR"
+      fi
+    done
+  done
+  pass "close and migration remove embedded PR links recognized by tasks-axi and preserve them in the body"
+}
+
+test_merged_outcome_owns_pr_identity() {
+  local home out
+  home=$(make_home replacement-pr)
+  printf 'CLOSED\n' > "$home/states/1"
+  printf 'MERGED\n' > "$home/states/2"
+  add_row "$home" replacement in_flight 1
+  in_home "$home" "$WRAPPER" update replacement --pr https://github.com/example/repo/pull/2 >/dev/null \
+    || fail "could not record the replacement PR"
+  in_home "$home" "$WRAPPER" "done" replacement --pr https://github.com/example/repo/pull/2 >/dev/null \
+    || fail "could not close the replacement PR"
+  assert_contains "$(done_line "$home" replacement)" '/pull/1' "fixture lost its original title PR"
+  assert_contains "$(body_of "$home" replacement)" 'Outcome: merged https://github.com/example/repo/pull/2' \
+    "replacement PR close recorded the wrong outcome"
+  out=$(in_home "$home" "$ROOT/bin/fm-fleet-snapshot.sh" --json) || fail "replacement snapshot failed"
+  printf '%s' "$out" | jq -e '
+    .backlog.records | any(.id == "replacement" and .outcome == "merged"
+      and .pr_url == "https://github.com/example/repo/pull/2" and .completion.verb == "merged")
+  ' >/dev/null || fail "snapshot paired the merged verdict with the original PR"
+  out=$(in_home "$home" "$ROOT/bin/fm-bearings-snapshot.sh" --json --all-landed) || fail "replacement bearings failed"
+  printf '%s' "$out" | jq -e '
+    .landed | any(.id == "replacement" and .artifact == "https://github.com/example/repo/pull/2")
+  ' >/dev/null || fail "Recently Landed delivered the original unmerged PR"
+  pass "the recorded merged outcome owns PR identity in the snapshot and Recently Landed"
+}
+
+test_reopened_outcome_pr_is_gated() {
+  local home mode id out rc
+  home=$(make_home reopened-outcome)
+  printf 'Drop the superseded work.\n' > "$home/answer.txt"
+  for mode in done answer; do
+    id="reopened-$mode"
+    printf 'CLOSED\n' > "$home/states/4"
+    add_row "$home" "$id" in_flight 4 'Superseded: replaced by a smaller change'
+    in_home "$home" "$WRAPPER" "done" "$id" >/dev/null || fail "initial superseded close failed"
+    in_home "$home" "$WRAPPER" reopen "$id" >/dev/null || fail "could not reopen the superseded row"
+    in_home "$home" "$WRAPPER" start "$id" >/dev/null || fail "could not restart the superseded row"
+    assert_absent "$home/state/$id.meta" "outcome-only fixture unexpectedly has metadata"
+    assert_contains "$(body_of "$home" "$id")" 'Outcome: superseded' "reopen did not preserve the outcome"
+    printf 'OPEN\n' > "$home/states/4"
+    if [ "$mode" = done ]; then
+      out=$(in_home "$home" "$WRAPPER" "done" "$id" 2>&1); rc=$?
+      expect_code 2 "$rc" "done on a reopened outcome-only PR"
+    else
+      in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold "$id" --reason 'Decide whether to drop it' >/dev/null \
+        || fail "could not hold the reopened row"
+      out=$(in_home "$home" "$ROOT/bin/fm-captain-hold.sh" answer "$id" --decision-file "$home/answer.txt" 2>&1); rc=$?
+      expect_code 1 "$rc" "captain answer on a reopened outcome-only PR"
+    fi
+    assert_contains "$out" 'is still open' "$mode bypassed the preserved PR's live-state check"
+    [ "$(row_state "$home" "$id")" != "done" ] || fail "$mode closed a reopened open PR"
+    printf 'MERGED\n' > "$home/states/4"
+    if [ "$mode" = done ]; then
+      in_home "$home" "$WRAPPER" "done" "$id" >/dev/null || fail "reopened merged PR could not close"
+    else
+      in_home "$home" "$ROOT/bin/fm-captain-hold.sh" answer "$id" --decision-file "$home/answer.txt" >/dev/null \
+        || fail "reopened merged PR could not finish its answer"
+    fi
+    [ "$(row_state "$home" "$id")" = "done" ] || fail "$mode did not close after the PR merged"
+    assert_contains "$(body_of "$home" "$id")" 'Outcome: merged https://github.com/example/repo/pull/4' \
+      "$mode kept the stale superseded outcome"
+  done
+  pass "reopened outcome-only PRs pass the live completion gate for done and captain answer"
+}
+
 test_captain_answer_records_outcome() {
   local home line
   home=$(make_home captain-outcome)
@@ -452,6 +553,9 @@ if command -v tasks-axi >/dev/null 2>&1; then
   test_audit_flags_mismatches_read_only
   test_close_records_explicit_outcome
   test_audit_flags_and_migrates_legacy_rows
+  test_embedded_pr_links_are_removed
+  test_merged_outcome_owns_pr_identity
+  test_reopened_outcome_pr_is_gated
   test_captain_answer_records_outcome
 else
   echo "skip: tasks-axi not found; PR completion-claim cases not run"

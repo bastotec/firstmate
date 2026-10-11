@@ -1164,12 +1164,16 @@ fm_pr_task_body() {
     '
 }
 
-# Resolve a row's PR link, else pr= from the supplied owning-home metadata file.
+# Resolve a row's PR link, else owning-home pr= metadata, else its Outcome URL.
 fm_pr_task_url() {
   local url
   url=$(printf '%s\n' "${1-}" | sed -n 's/^  links: .*pr:\(https:\/\/[^",; ]*\).*/\1/p' | head -1)
   if [ -z "$url" ] && [ -f "${2-}" ]; then
     url=$(grep '^pr=' "$2" | tail -1 | cut -d= -f2-)
+  fi
+  if [ -z "$url" ]; then
+    url=$(fm_pr_task_outcome "$(fm_pr_task_body "${1-}")") || return 1
+    url=${url#* }
   fi
   printf '%s' "$url"
 }

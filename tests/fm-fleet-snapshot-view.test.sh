@@ -76,6 +76,7 @@ handoff note without canonical syntax
 
 ## Done
 - [x] done-task - Done Task https://github.com/kunchenguid/firstmate/pull/7 (repo: alpha) (kind: ship) (merged 2026-07-06)
+  Outcome: merged https://github.com/kunchenguid/firstmate/pull/7
 EOF
   mkdir -p "$home/data/scout-task"
   printf '# Scout\n' > "$home/data/scout-task/report.md"
@@ -511,7 +512,9 @@ test_backlog_tasks_axi_forms_and_overrides() {
 
 ## Done
 - [x] done-comma - Done Comma Task https://github.com/kunchenguid/firstmate/pull/42 (repo: gamma, merged 2026-07-09) (kind: ship)
+  Outcome: merged https://github.com/kunchenguid/firstmate/pull/42
 - [x] done-bracket-pr - Done Bracket PR - <https://github.com/kunchenguid/firstmate/pull/43> (repo: gamma, merged 2026-07-12) (kind: ship)
+  Outcome: merged https://github.com/kunchenguid/firstmate/pull/43
 - [x] reported-comma - Reported Scout data/reported-comma/report.md (repo: gamma, reported 2026-07-10) (kind: scout)
 - [x] done-note - Done Note local main (repo: delta, done 2026-07-11) (kind: ship)
 EOF

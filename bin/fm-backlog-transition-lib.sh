@@ -648,9 +648,10 @@ fm_backlog_record_pr_outcome() {  # <data-dir> <id> <outcome> <url>
     if ($outcome ne "merged") {
       my $kept = "";
       for my $word (split /(\s+)/, $title) {
-        if ($word =~ m{\A<?(https?://\S+?/pull/\d+)}) {
-          my $link = $1;
-          push @others, $link unless $link eq $url || grep { $_ eq $link } @others;
+        if (my @links = $word =~ m{(https?://\S+?/pull/\d+)}g) {
+          for my $link (@links) {
+            push @others, $link unless $link eq $url || grep { $_ eq $link } @others;
+          }
           next;
         }
         $kept .= $word;

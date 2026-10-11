@@ -47,10 +47,9 @@
 #     cannot be decoded or bin/fm-pr-lib.sh's fm_pr_close_verdict refuses the
 #     completion claim. The row lookup uses the last explicit --backend value,
 #     if supplied, so it checks the same backend as the mutation.
-#     PR resolution uses --pr first, else fm_pr_task_url (row link, then pr=
-#     in ${FM_STATE_OVERRIDE:-$FM_HOME/state}/<id>.meta). A superseded verdict
-#     requires dropping --pr. Confirmed NOT_FOUND passes through so tasks-axi
-#     reports its own missing-task error.
+#     PR resolution uses --pr first, else fm_pr_task_url in bin/fm-pr-lib.sh.
+#     A superseded verdict requires dropping --pr. Confirmed NOT_FOUND passes
+#     through so tasks-axi reports its own missing-task error.
 #   - `done`/`close` when the gate's verdict cannot be recorded as the task's
 #     explicit PR outcome first (fm_backlog_record_pr_outcome in
 #     bin/fm-backlog-transition-lib.sh), so a superseded row never reads as merged.

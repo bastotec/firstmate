@@ -71,8 +71,9 @@
 # gate in bin/fm-pr-lib.sh's fm_pr_close_verdict, before destructive cleanup;
 # that comment owns the live-state, supersession, force, and replay rules.
 # Before a close is staged, the verdict is recorded as the row's PR outcome
-# (merged, superseded, or closed-unmerged for a forced unmerged PR; a forced
-# merged PR records none), and a failure to record it refuses cleanup.
+# (merged, superseded, or closed-unmerged for a forced PR confirmed open or
+# closed; an unreadable forge state records none), and a failure to record it
+# refuses cleanup.
 # local-only projects additionally accept work merged into the local default
 # branch (firstmate performs that merge after configured approval) as a fallback
 # for the common case where there is no remote at all.
@@ -3136,11 +3137,14 @@ if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ]; then
   # is staged, so neither the close nor its replay can render it as merged.
   PR_OUTCOME=
   if [ "$BACKLOG_TRANSITION" = close ] && [ -n "$PR_URL" ]; then
-    case "$FORCE:$PR_CLOSE_VERDICT" in
-      --force:merged) ;;
-      *:merged) PR_OUTCOME=merged ;;
-      *:superseded) PR_OUTCOME=superseded ;;
-      *:unmerged) PR_OUTCOME="closed-unmerged" ;;
+    case "$PR_CLOSE_VERDICT" in
+      merged) PR_OUTCOME=merged ;;
+      superseded) PR_OUTCOME=superseded ;;
+      unmerged)
+        case "$FM_PR_CLOSE_STATE" in
+          open|closed) PR_OUTCOME=closed-unmerged ;;
+        esac
+        ;;
     esac
   fi
   if [ -n "$PR_OUTCOME" ] \

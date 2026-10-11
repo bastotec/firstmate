@@ -1016,28 +1016,50 @@ test_teardown_closes_superseded_pr_without_merged_claim() {
 }
 
 test_teardown_force_never_claims_unmerged_pr() {
-  local case_dir state
-  for state in OPEN MERGED; do
-    case_dir=$(make_case "pr-gate-force-$state")
-    write_meta "$case_dir" no-mistakes ship
-    printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
-    seed_backlog_in_flight "$case_dir"
-    FM_FAKE_GH_PR_STATE=$state run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" \
-      || fail "forced teardown failed: $(cat "$case_dir/stderr")"
-    if [ "$state" = OPEN ]; then
-      assert_grep 'without claiming the PR merged' "$case_dir/stderr" "forced teardown did not warn about the open PR"
-    fi
-    assert_no_grep '(merged ' "$case_dir/data/backlog.md" "forced teardown recorded a $state PR as merged"
-    grep -E '^- \[x\] task-x1 - .*pull/7' "$case_dir/data/backlog.md" >/dev/null \
-      && fail "forced teardown attached the $state PR link"
-    if [ "$state" = OPEN ]; then
-      assert_grep '  Outcome: closed-unmerged https://github.com/example/repo/pull/7' "$case_dir/data/backlog.md" \
-        "forced teardown of an open PR did not record it as closed unmerged"
-    else
-      assert_no_grep 'Outcome:' "$case_dir/data/backlog.md" "forced teardown recorded an outcome it does not claim"
-    fi
+  local case_dir state source
+  for source in meta row; do
+    for state in OPEN CLOSED MERGED ''; do
+      case_dir=$(make_case "pr-gate-force-$source-${state:-offline}")
+      write_meta "$case_dir" no-mistakes ship
+      seed_backlog_in_flight "$case_dir"
+      if [ "$source" = meta ]; then
+        printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+      else
+        tasks-axi update task-x1 --pr https://github.com/example/repo/pull/7 \
+          --file "$case_dir/data/backlog.md" >/dev/null
+      fi
+      FM_FAKE_GH_PR_STATE=$state run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" \
+        || fail "forced teardown failed: $(cat "$case_dir/stderr")"
+      [ "$(backlog_row_state "$case_dir")" = "done" ] || fail "forced teardown left the row open"
+      assert_absent "$case_dir/state/task-x1.meta" "forced teardown retained metadata"
+      case "$state" in
+        OPEN|CLOSED)
+          assert_grep 'without claiming the PR merged' "$case_dir/stderr" "forced teardown did not warn about the unmerged PR"
+          assert_no_grep '(merged ' "$case_dir/data/backlog.md" "forced teardown recorded a $state PR as merged"
+          assert_grep '  Outcome: closed-unmerged https://github.com/example/repo/pull/7' "$case_dir/data/backlog.md" \
+            "forced teardown did not record a confirmed unmerged PR"
+          grep -E '^- \[x\] task-x1 - .*pull/7' "$case_dir/data/backlog.md" >/dev/null \
+            && fail "forced teardown retained the unmerged PR link"
+          ;;
+        MERGED)
+          assert_grep '  Outcome: merged https://github.com/example/repo/pull/7' "$case_dir/data/backlog.md" \
+            "forced teardown did not record a confirmed merge"
+          ;;
+        '')
+          assert_grep 'cannot read the live state' "$case_dir/stderr" "forced teardown did not report the unreadable forge"
+          assert_no_grep 'Outcome:' "$case_dir/data/backlog.md" "forced teardown invented an unreadable PR outcome"
+          ;;
+      esac
+      if [ "$source" = meta ]; then
+        grep -E '^- \[x\] task-x1 - .*pull/7' "$case_dir/data/backlog.md" >/dev/null \
+          && fail "forced teardown attached a PR link through the close"
+      elif [ -z "$state" ]; then
+        assert_grep 'https://github.com/example/repo/pull/7' "$case_dir/data/backlog.md" \
+          "forced offline teardown lost the existing PR reference"
+      fi
+    done
   done
-  pass "forced teardown never claims a merge, even when the recorded PR merged"
+  pass "forced teardown records confirmed PR outcomes without inventing offline outcomes or passing --pr"
 }
 
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator() {

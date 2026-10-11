@@ -548,7 +548,7 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
              | last) as $outcome
           | if $outcome == null then .
             else .outcome = $outcome.o
-              | .pr_url = (if $outcome.o == "merged" then (.pr_url // $outcome.u) else $outcome.u end)
+              | .pr_url = $outcome.u
               | .completion = {verb:$outcome.o, date:(.completion.date // .merged // .done)}
             end
         else . end)
