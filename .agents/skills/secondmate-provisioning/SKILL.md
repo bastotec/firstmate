@@ -59,6 +59,9 @@ Keep custom charter text focused on the persistent responsibility, available pro
 The scaffolded charter, later copied to `data/charter.md`, owns the standard lifecycle and escalation wording.
 Preserve the generated charter sections unless the domain genuinely needs a hard rule.
 
+For an order that names a new second mate end to end (for example one the captain confirmed from a UI), `bin/fm-secondmate-create.sh plan|apply` composes these same charter, seed, and launch steps; run `plan`, show the captain its steps, and `apply` only after the captain confirms.
+Its header owns the order's validation and line protocol.
+
 Provision a local persistent home and registry entry after the charter is filled:
 
 ```sh
