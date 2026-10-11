@@ -53,11 +53,8 @@ FM_STREAM_AGENT_LIVE_BINARY="$PWD/target/debug/fm-stream-agent" FM_DECK_LIVE=1 b
 
 On 2026-10-11, Rust agent 2.1.0 built locally with Rust 1.96.0 passed the portable Rust/Python lifecycle parity guard and all 47 agent unit tests.
 The corrected driver and native receiver also passed all eight real Deck scenarios on that date, including idle human-draft preservation, ordered F/G/H/I safe-point application and no extra apostrophe-path acknowledgement turn.
-A disposable task-local response capture confirmed 30 model requests on the unchanged `codex/gpt-6.1-sol` route, all HTTP200, with no conversation conflict or authentication rejection.
-This is delivery proof, not a capture/cleanup latency measurement.
-No diagnostic proxy or snapshot instrumentation is part of the shipped guard.
-
-The portable application regressions run with `bin/fm-test-run.sh tests/fm-stream-deck.test.sh`.
+The portable application regressions run with `bin/fm-test-run.sh tests/fm-stream-deck.test.sh`, including oversized captain fallback followed by eligible native sources through both publication paths.
+The native receiver's corresponding regression is `newer_bridge_order_skips_native_ineligible_captain_sources` in [`crates/fm-stream-agent/src/receiver.rs`](../../crates/fm-stream-agent/src/receiver.rs).
 Current operator behavior and supported limits are owned by [`../stream-backend.md`](../stream-backend.md#command-path).
 
 ### Interactive attach latency

@@ -10,8 +10,8 @@ No projection is ever carried into the next turn. Only Deck's handled file
 confirms application; inbox publication, run liveness and PTY writes do not.
 Driver CLI: fm_stream_deck.py start|end STATE ID ENDPOINT [TURN SUPPORTED].
 start prints the turn projection path; end retires the active descriptor.
-fm_stream_deck.py captain STATE ID attempts captain-direct publication and
-prints the count; project_captain owns eligibility and acknowledgement rules.
+fm_stream_deck.py captain STATE ID flushes eligible captain-direct records and
+bound Bridge orders; project_captain owns eligibility and acknowledgement rules.
 """
 import contextlib
 import fcntl
@@ -311,7 +311,7 @@ CAPTAIN_DIRECT = re.compile(
 
 
 def project_captain(state, task):
-    """Best-effort publication of eligible captain records into live Deck turns.
+    """Best-effort ordered publication of native sources into live Deck turns.
 
     The ring and driver turn-start call this independently of terminal input.
     Only active, supported turn descriptors with an existing projection qualify;
@@ -321,13 +321,15 @@ def project_captain(state, task):
     the task inbox's handled/ acknowledges it, not publication or movement of the
     native projection. The doorbell remains the fallback for unhandled sources.
 
-    A sequence is never made visible below one already visible in that turn or
-    without flushing earlier bound Bridge orders and captain records first,
-    because Deck silently drops a late lower sequence. Both publication paths
-    flush the same ordered sources under the lifecycle lock. The guidance, including
-    source paths, must fit Deck's 64 KiB ceiling or publication is skipped.
-    Prints the count published. tests/fm-stream-deck.test.sh pins eligibility
-    and ordering.
+    Both publication paths flush eligible captain records and Bridge orders
+    bound to the active execution and turn in sequence under the lifecycle lock.
+    No sequence is published below one already visible in that turn, because
+    Deck silently drops a late lower sequence. Guidance, including source paths,
+    must fit Deck's 64 KiB UTF-8 byte ceiling. Native-ineligible captain records
+    retain their ordinary inbox fallback without blocking later eligible sources;
+    an ineligible bound Bridge order stops the flush rather than being overtaken.
+    Prints the total number of native projections published, including Bridge
+    orders. tests/fm-stream-deck.test.sh pins eligibility and ordering.
     """
     inbox = Path(state) / (task + '.inbox')
     published = 0

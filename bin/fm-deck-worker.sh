@@ -709,7 +709,8 @@ pipeline_arm() {
   printf '\n⛵ no-mistakes run %s still working; the next turn starts when it changes state.\n' "${run:-(id unavailable)}"
 }
 
-# 0 when stdin has input within <secs>, 1 on timeout, 3 when interrupted.
+# 0 when queued stdin, EOF or a new captain source arrives within <secs>,
+# 1 on timeout, 3 when interrupted.
 stdin_ready_within() {  # <secs>
   python3 -c '
 import pathlib, signal, sys, time
