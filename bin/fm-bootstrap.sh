@@ -202,6 +202,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-x-lib.sh"
 # shellcheck source=bin/fm-backend.sh disable=SC1091
 . "$SCRIPT_DIR/fm-backend.sh"
+# shellcheck source=bin/fm-home-tools-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-home-tools-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
 # fm-timing-lib.sh is inert unless FM_TIMING_LOG names a file, which only the
@@ -960,25 +962,19 @@ secondmate_handoff_detect() {
 }
 
 install_cmd() {
-  case "$1" in
-    node|git|gh|curl|jq|python3) echo "brew install $1  # or the platform's package manager" ;;
-    treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
-    no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
-    gh-axi|chrome-devtools-axi|lavish-axi) echo "npm install -g $1 && $1 setup hooks" ;;
-    tasks-axi|quota-axi) echo "npm install -g $1" ;;
-    *) return 1 ;;
-  esac
+  fm_home_tool_install_cmd "$1"
 }
 
 missing_tool_diagnostic() {
   echo "MISSING: $1 (install: $(install_cmd "$1"))"
 }
 
-# Required-tool detection: a universal toolchain every home needs plus the
+# Required-tool detection: a universal toolchain every home needs (owned by
+# bin/fm-home-tools-lib.sh) plus the
 # backend-specific delta owned by fm_backend_required_tools (bin/fm-backend.sh).
 # A backend value with no verified dependency set (a leftover tmux or herdr
 # config/backend) is reported before the universal checks continue.
-COMMON_TOOLS="node git gh no-mistakes gh-axi chrome-devtools-axi tasks-axi quota-axi"
+COMMON_TOOLS=$(fm_home_common_tools)
 BACKEND=$(fm_backend_name)
 BACKEND_VALID=1
 if ! BACKEND_TOOLS=$(fm_backend_required_tools "$BACKEND"); then
