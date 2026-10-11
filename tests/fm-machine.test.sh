@@ -88,7 +88,17 @@ case "$1" in
   fm-remote-entrypoint.sh)
     printf 'entrypoint root=%s home=%s argv=%s\n' "$(printf '%s' "$3" | base64 -d)" "$(printf '%s' "$4" | base64 -d)" \
       "$(printf '%s' "$5" | base64 -d | tr '\0' ' ')" >> "$FAKE_SSH_LOG"
-    printf 'mode=fix\ncheck stream-tools=ok: fake\n'
+    if [ "${FAKE_DOCTOR_UNAVAILABLE:-0}" = 1 ]; then
+      echo 'ssh: doctor transport failed' >&2
+      exit 255
+    fi
+    mode=check
+    case "$(printf '%s' "$5" | base64 -d | tr '\0' ' ')" in *--fix*) mode=fix ;; esac
+    printf 'mode=%s\ncheck stream-tools=ok: fake\n' "$mode"
+    [ -z "${FAKE_DOCTOR_REQUIRED:-}" ] || printf 'required tasks-axi=%s\n' "$FAKE_DOCTOR_REQUIRED"
+    if [ "${FAKE_DOCTOR_FIXABLE:-0}" = 1 ]; then
+      printf 'check remote-job-worker=fixable: worker is not running\naction: remote-job-worker: repair the worker on the machine\n'
+    fi
     if [ "${FAKE_DOCTOR_GAP:-0}" = 1 ]; then
       printf 'check gui-session=human: no GUI login session\naction: gui-session: log in on the console once\n'
     fi
@@ -138,13 +148,22 @@ new_account() {
 #!/bin/sh
 case "$1" in
   clone)
+    if [ "${FAKE_CLONE_FAIL:-0}" = 1 ]; then
+      printf 'fatal: cannot clone %s\n' "$4" >&2
+      exit 1
+    fi
     for dest; do :; done
     mkdir -p "$dest/.git" "$dest/bin"
+    printf '%s\n' "$4" > "$dest/.git/origin"
     case "$*" in
       *deck*) ;;
       *) printf 'fixture\n' > "$dest/AGENTS.md"; : > "$dest/bin/fm-remote-entrypoint.sh" ;;
     esac ;;
-  -C) [ "$3" = rev-parse ] && echo abc1234 ;;
+  -C)
+    case "$3" in
+      rev-parse) echo abc1234 ;;
+      config) cat "$2/.git/origin" ;;
+    esac ;;
 esac
 exit 0
 TOOL
@@ -486,6 +505,73 @@ assert_not_contains "$out" "step gateway-key-mode" "key mode rerun"
 assert_contains "$out" "setup=complete" "complete rerun"
 pass "setup is idempotent and reports complete once nothing is left"
 
+for required in 'MISSING (incompatible)' 'VERSION_UNREADABLE (requires semantic version >=0.21.0)'; do
+  set +e
+  out=$(FAKE_DOCTOR_REQUIRED="$required" FAKE_DOCTOR_RC=1 machine check box "$RROOT")
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "check with a doctor-required tool gap"
+  assert_contains "$out" "item doctor-required-tasks-axi=human: npm install -g tasks-axi; doctor reports $required" "doctor-required item"
+  set +e
+  out=$(FAKE_DOCTOR_REQUIRED="$required" FAKE_DOCTOR_RC=1 machine setup box "$RROOT")
+  rc=$?
+  set -e
+  expect_code 3 "$rc" "setup with a doctor-required human step"
+  assert_contains "$out" "step doctor=done:" "human-only doctor gap failed setup"
+  assert_contains "$out" "human doctor-required-tasks-axi: npm install -g tasks-axi" "missing tool upgrade step"
+  assert_contains "$out" "setup=incomplete: 1 human steps" "required tool gap was lost"
+done
+pass "doctor-required missing and unreadable versions remain human steps"
+
+set +e
+out=$(FAKE_DOCTOR_FIXABLE=1 FAKE_DOCTOR_RC=1 machine check box "$RROOT")
+rc=$?
+set -e
+expect_code 1 "$rc" "check with a fixable gap"
+assert_contains "$out" "item doctor-remote-job-worker=will-install: repair the worker on the machine" "read-only doctor repair item"
+set +e
+out=$(FAKE_DOCTOR_FIXABLE=1 FAKE_DOCTOR_RC=1 machine setup box "$RROOT")
+rc=$?
+set -e
+expect_code 1 "$rc" "setup with a fixable gap after repair"
+assert_contains "$out" "step doctor=failed: fixable gaps remain after --fix: remote-job-worker: worker is not running" "failed repair was marked done"
+assert_contains "$out" "human doctor-remote-job-worker: repair the worker on the machine" "failed repair was not counted as human"
+assert_contains "$out" "setup=failed" "failed repair verdict"
+assert_not_contains "$out" "step doctor=done:" "failed doctor also reported done"
+pass "setup fails and retains human repair steps when doctor fixes do not converge"
+
+for transport in unavailable partial; do
+  set +e
+  if [ "$transport" = unavailable ]; then
+    out=$(FAKE_DOCTOR_UNAVAILABLE=1 machine setup box "$RROOT")
+  else
+    out=$(FAKE_DOCTOR_RC=255 machine setup box "$RROOT")
+  fi
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "setup with doctor transport failure"
+  assert_contains "$out" "step doctor=failed:" "doctor transport failure was hidden"
+  assert_contains "$out" "setup=failed" "transport failure verdict"
+done
+pass "setup rejects absent and partial doctor transport results"
+
+chmod 200 "$FAKE_ACCOUNT/.config/proxai/client.key"
+set +e
+out=$(machine setup box "$RROOT")
+rc=$?
+set -e
+expect_code 3 "$rc" "setup with an owner-unreadable key"
+assert_contains "$out" "human gateway-key: grant owner read access" "owner access needs a person"
+assert_not_contains "$out" "step gateway-key-mode=" "setup expanded key permissions"
+assert_equals 200 "$(stat -f %Lp "$FAKE_ACCOUNT/.config/proxai/client.key" 2>/dev/null || stat -c %a "$FAKE_ACCOUNT/.config/proxai/client.key")" "setup expanded owner permissions"
+for mode in 400 600 700; do
+  chmod "$mode" "$FAKE_ACCOUNT/.config/proxai/client.key"
+  out=$(machine setup box "$RROOT")
+  assert_contains "$out" "setup=complete" "owner-readable restrictive key rejected"
+  assert_not_contains "$out" "step gateway-key-mode=" "restrictive key was changed"
+done
+pass "setup tightens only loose keys and leaves permission expansion to a person"
+
 new_account
 : > "$SSH_LOG"
 set +e
@@ -500,6 +586,15 @@ assert_no_grep "fm-remote-doctor.sh" "$SSH_LOG" "doctor ran after a failed step"
 pass "setup stops safely at the first failed step"
 
 set +e
+out=$(FM_DECK_REPO_URL=https://example.com/other/deck.git machine setup box "$RROOT")
+rc=$?
+set -e
+expect_code 1 "$rc" "Deck cache origin mismatch"
+assert_contains "$out" "step deck=failed: cached Deck clone at $FAKE_ACCOUNT/.cache/firstmate/deck has a different origin" "wrong Deck cache was reused"
+assert_absent "$FAKE_ACCOUNT/.local/bin/deck" "wrong repository's binary was installed"
+pass "Deck retries refuse a cache belonging to another repository"
+
+set +e
 out=$(FAKE_SSH_REACH=auth machine setup box "$RROOT")
 rc=$?
 set -e
@@ -507,5 +602,70 @@ expect_code 1 "$rc" "setup without ssh login"
 assert_contains "$out" "step ssh=failed: captain@box.lan: Permission denied (publickey)." "ssh failure"
 assert_contains "$out" "human ssh-login: ssh-copy-id box" "ssh human step"
 pass "setup refuses to start without a working ssh login"
+
+new_account
+out=$(machine prepare box "$RROOT")
+cp "$ROOT/bin/fm-remote-job-lib.sh" "$RROOT/bin/"
+cp "$FAKE_RBIN"/* "$FAKE_ACCOUNT/.local/bin/"
+mkdir -p "$FAKE_ACCOUNT/.cargo/bin"
+mv "$FAKE_ACCOUNT/.local/bin/cargo" "$FAKE_ACCOUNT/.cargo/bin/"
+rm "$FAKE_RBIN/cargo"
+printf '#!/bin/sh\nexit 0\n' > "$FAKE_ACCOUNT/.cargo/bin/cargo-only-runtime"
+chmod +x "$FAKE_ACCOUNT/.cargo/bin/cargo-only-runtime"
+remote() { HOME="$FAKE_ACCOUNT" PATH="$FAKE_RBIN:/usr/bin:/bin" "$ROOT/bin/fm-machine-remote.sh" "$@"; }
+out=$(remote probe "$RROOT" http://127.0.0.1:8329/v1 - cargo-only-runtime)
+assert_contains "$out" "path-source=worker" "worker PATH not used"
+assert_contains "$out" "tool cargo=$FAKE_ACCOUNT/.cargo/bin/cargo" "rustup cargo not found for builds"
+assert_contains "$out" "tool cargo-only-runtime=missing" "cargo directory leaked into runtime PATH"
+out=$(machine setup box "$RROOT")
+assert_contains "$out" "step deck=done:" "setup skipped rustup Deck build"
+out=$(remote install-deck "$RROOT" https://github.com/bastotec/deck.git)
+assert_contains "$out" "result=done:" "same-origin Deck cache was refused"
+assert_equals 'deck 0.1' "$("$FAKE_ACCOUNT/.local/bin/deck" --version)" "replacement Deck does not run"
+assert_equals '' "$(find "$FAKE_ACCOUNT/.local/bin" -name 'deck.prev-*' -o -name '.deck.new.*')" "Deck replacement left persistent backups or staging files"
+pass "rustup builds resolve cargo without changing worker runtime lookups or leaving backups"
+
+new_account
+git -C "$NETFM" remote set-url origin https://user:ORIGIN-TOKEN@example.com/acme/firstmate.git
+printf 'http://HUB-TOKEN@127.0.0.1:7717\n' > "$FMH/config/stream-hub"
+set +e
+out=$(FM_MACHINE_GATEWAY_URL=http://user:GATEWAY-TOKEN@127.0.0.1:8329/v1 FM_DECK_REPO_URL=https://DECK-TOKEN@example.com/deck.git machine check box "$RROOT" 2>&1)
+rc=$?
+set -e
+expect_code 1 "$rc" "credential-bearing checklist"
+assert_contains "$out" 'setup clones https://[redacted]@example.com/acme/firstmate.git' "clone URL presentation"
+assert_contains "$out" 'http://[redacted]@127.0.0.1:8329/v1 answers' "gateway URL presentation"
+assert_contains "$out" 'http://[redacted]@127.0.0.1:7717 answers' "hub URL presentation"
+assert_contains "$out" 'setup builds https://[redacted]@example.com/deck.git' "Deck URL presentation"
+for secret in ORIGIN-TOKEN HUB-TOKEN GATEWAY-TOKEN DECK-TOKEN; do
+  assert_not_contains "$out" "$secret" "check exposed URL credentials"
+done
+out=$(machine setup box "$RROOT" 2>&1)
+assert_contains "$out" 'step firstmate-clone=done: cloned https://[redacted]@example.com/acme/firstmate.git' "setup clone presentation"
+assert_not_contains "$out" ORIGIN-TOKEN "setup exposed origin credentials"
+new_account
+set +e
+out=$(FAKE_CLONE_FAIL=1 machine setup box "$RROOT" 2>&1)
+rc=$?
+set -e
+expect_code 1 "$rc" "credential-bearing clone failure"
+assert_contains "$out" 'fatal: cannot clone https://[redacted]@example.com/acme/firstmate.git' "clone diagnostic presentation"
+assert_not_contains "$out" ORIGIN-TOKEN "clone diagnostic exposed origin credentials"
+set +e
+out=$(FAKE_CLONE_FAIL=1 remote install-deck "$RROOT" https://DECK-TOKEN@example.com/deck.git 2>&1)
+rc=$?
+set -e
+expect_code 1 "$rc" "credential-bearing direct Deck failure"
+assert_contains "$out" 'git clone of https://[redacted]@example.com/deck.git failed' "Deck failure presentation"
+assert_not_contains "$out" DECK-TOKEN "direct Deck failure exposed credentials"
+git -C "$NETFM" remote set-url origin 'https://user:REFUSAL-TOKEN@example.com/invalid!'
+set +e
+out=$(machine prepare box "$RROOT" 2>&1)
+rc=$?
+set -e
+expect_code 1 "$rc" "credential-bearing URL refusal"
+assert_contains "$out" 'refuse:' "unsafe URL was not refused"
+assert_not_contains "$out" REFUSAL-TOKEN "refusal exposed credentials"
+pass "machine output redacts URL userinfo in facts, success, failure, diagnostics and refusals"
 
 echo "ALL TESTS PASSED"

@@ -2,7 +2,7 @@
 # The machine-side half of bin/fm-machine.sh: facts and narrow installs that run
 # as the remote account itself.
 #
-# Usage (bin/fm-machine.sh sends bin/fm-home-tools-lib.sh followed by this file
+# Usage (bin/fm-machine.sh sends the tools and output libraries followed by this file
 # as the script of `ssh <alias> bash -s -- ...`; run directly, it sources that
 # library from beside itself):
 #   fm-machine-remote.sh probe <remote-root> <gateway-url> <hub-url|-> <tool>...
@@ -10,9 +10,10 @@
 #   fm-machine-remote.sh install-deck <remote-root> <deck-repo-url>
 #
 # It needs no Firstmate checkout on the machine, so it works before prepare.
-# Every lookup and install check uses the remote job worker's PATH, composed by
+# Runtime lookups and install checks use the remote job worker's PATH, composed by
 # that checkout's bin/fm-remote-job-lib.sh when <remote-root> already holds
 # one; before that it uses the ssh PATH with ~/.local/bin in front, and says so.
+# The build-only cargo lookup prepends ~/.cargo/bin in both probe and install.
 #
 # probe is read-only and prints one fact per line:
 #   account-home=<the account's home directory>
@@ -23,7 +24,7 @@
 #   npm-global=writable|not-writable|unknown
 #   gh-auth=ok|missing|unknown         (only the exit status of `gh auth status`)
 #   gateway=reachable|unreachable      (any HTTP answer from <gateway-url>/models)
-#   gateway-key=present|missing|unsafe path=<file> [mode=<octal>]
+#   gateway-key=present|missing|unsafe|unreadable path=<file> [mode=<octal>]
 #   stream-hub=reachable|unreachable|unknown
 # The gateway key file is $PROXAI_API_KEY_FILE when the ssh environment sets it,
 # else ~/.config/proxai/client.key, where Deck looks by default. Only its
@@ -34,8 +35,9 @@
 # to resolve on the worker PATH.
 # install-deck clones or fetches <deck-repo-url> into ~/.cache/firstmate/deck,
 # builds it with `cargo build --release --locked`, the build the Deck repo
-# documents, and installs the binary atomically at ~/.local/bin/deck, keeping
-# the previous one beside it. Both print one `result=done|failed: <reason>` line.
+# documents, and installs the binary atomically at ~/.local/bin/deck. It refuses
+# to reuse a cached clone with a different origin. Both print one
+# `result=done|failed: <reason>` line, with URL userinfo redacted in all output.
 set -u
 
 if ! declare -F fm_home_tool_install_cmd >/dev/null; then
@@ -43,7 +45,14 @@ if ! declare -F fm_home_tool_install_cmd >/dev/null; then
   . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-home-tools-lib.sh"
 fi
 
+if ! declare -F fm_machine_redact_urls >/dev/null; then
+  # shellcheck source=bin/fm-machine-output-lib.sh
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-machine-output-lib.sh"
+fi
+
 die() { printf 'result=failed: %s\n' "$1"; exit 1; }
+
+build_cargo() { (PATH="$HOME/.cargo/bin:$PATH"; command -v cargo); }
 
 use_worker_path() { # <remote-root>
   local root=$1
@@ -84,7 +93,11 @@ cmd_probe() { # <root> <gateway-url> <hub-url|-> <tool>...
     printf 'entrypoint-link=absent\n'
   fi
   for tool in "$@" deck cargo npm; do
-    p=$(command -v "$tool" 2>/dev/null) || p=
+    if [ "$tool" = cargo ]; then
+      p=$(build_cargo 2>/dev/null) || p=
+    else
+      p=$(command -v "$tool" 2>/dev/null) || p=
+    fi
     printf 'tool %s=%s\n' "$tool" "${p:-missing}"
   done
   if command -v npm >/dev/null 2>&1; then
@@ -112,10 +125,13 @@ cmd_probe() { # <root> <gateway-url> <hub-url|-> <tool>...
   key=${PROXAI_API_KEY_FILE:-$HOME/.config/proxai/client.key}
   if [ -f "$key" ] && [ ! -L "$key" ]; then
     mode=$(file_mode "$key")
-    case "$mode" in
-      600|400) printf 'gateway-key=present path=%s mode=%s\n' "$key" "$mode" ;;
-      *) printf 'gateway-key=unsafe path=%s mode=%s\n' "$key" "$mode" ;;
-    esac
+    if [ "$((8#$mode & 0400))" -eq 0 ]; then
+      printf 'gateway-key=unreadable path=%s mode=%s\n' "$key" "$mode"
+    elif [ "$((8#$mode & 0077))" -ne 0 ]; then
+      printf 'gateway-key=unsafe path=%s mode=%s\n' "$key" "$mode"
+    else
+      printf 'gateway-key=present path=%s mode=%s\n' "$key" "$mode"
+    fi
   else
     printf 'gateway-key=missing path=%s\n' "$key"
   fi
@@ -138,41 +154,47 @@ cmd_install_tool() { # <tool> <root>
 }
 
 cmd_install_deck() { # <root> <repo-url>
-  local root=$1 url=$2 src dest stamp tmp
+  local root=$1 url=$2 src dest tmp cargo origin
   use_worker_path "$root"
-  PATH="$HOME/.cargo/bin:$PATH"
   command -v git >/dev/null 2>&1 || die "git is missing"
-  command -v cargo >/dev/null 2>&1 || die "cargo is missing"
+  cargo=$(build_cargo) || die "cargo is missing"
+  PATH="$HOME/.cargo/bin:$PATH"
   src="$HOME/.cache/firstmate/deck"
   mkdir -p "$(dirname "$src")" || die "cannot create $(dirname "$src")"
-  if [ ! -d "$src/.git" ]; then
+  if [ -d "$src/.git" ]; then
+    origin=$(git -C "$src" config --get remote.origin.url) || die "cannot read the origin of $src"
+    [ "$origin" = "$url" ] || die "cached Deck clone at $src has a different origin"
+  else
     git clone --quiet -- "$url" "$src" < /dev/null >&2 \
       || die "git clone of $url failed; the machine needs read access to it (gh auth login, then gh auth setup-git)"
   fi
   git -C "$src" fetch --quiet origin < /dev/null >&2 || die "git fetch of $url failed"
   git -C "$src" -c advice.detachedHead=false checkout --quiet --force --detach origin/HEAD < /dev/null >&2 \
     || die "cannot check out the default branch of $url"
-  (cd "$src" && cargo build --release --locked --quiet < /dev/null >&2) || die "cargo build --release --locked failed"
+  (cd "$src" && "$cargo" build --release --locked --quiet < /dev/null >&2) || die "cargo build --release --locked failed"
   "$src/target/release/deck" --version >/dev/null 2>&1 < /dev/null || die "the built deck does not run"
   dest="$HOME/.local/bin/deck"
   mkdir -p "$HOME/.local/bin" || die "cannot create ~/.local/bin"
-  stamp=$(date -u +%Y%m%dT%H%M%SZ)
   tmp="$HOME/.local/bin/.deck.new.$$"
   if ! { cp "$src/target/release/deck" "$tmp" && chmod 0755 "$tmp"; }; then
     rm -f "$tmp"
     die "cannot stage the deck binary"
   fi
-  if [ -e "$dest" ] && [ ! -L "$dest" ]; then cp -p "$dest" "$dest.prev-$stamp" || { rm -f "$tmp"; die "cannot keep the previous deck"; }; fi
   mv -f "$tmp" "$dest" || { rm -f "$tmp"; die "cannot install deck"; }
   printf 'result=done: %s at %s\n' "$dest" "$(git -C "$src" rev-parse --short HEAD)"
 }
 
-[ "$#" -ge 1 ] || { echo "usage: fm-machine-remote.sh probe|install-tool|install-deck ..." >&2; exit 2; }
-SUB=$1
-shift
-case "$SUB" in
-  probe) [ "$#" -ge 3 ] || exit 2; cmd_probe "$@" ;;
-  install-tool) [ "$#" -eq 2 ] || exit 2; cmd_install_tool "$@" ;;
-  install-deck) [ "$#" -eq 2 ] || exit 2; cmd_install_deck "$@" ;;
-  *) exit 2 ;;
-esac
+main() {
+  [ "$#" -ge 1 ] || { echo "usage: fm-machine-remote.sh probe|install-tool|install-deck ..." >&2; exit 2; }
+  local sub=$1
+  shift
+  case "$sub" in
+    probe) [ "$#" -ge 3 ] || exit 2; cmd_probe "$@" ;;
+    install-tool) [ "$#" -eq 2 ] || exit 2; cmd_install_tool "$@" ;;
+    install-deck) [ "$#" -eq 2 ] || exit 2; cmd_install_deck "$@" ;;
+    *) exit 2 ;;
+  esac
+}
+
+main "$@" 2>&1 | fm_machine_redact_urls
+exit "${PIPESTATUS[0]}"

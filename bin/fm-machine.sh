@@ -40,7 +40,8 @@
 # gateway at FM_MACHINE_GATEWAY_URL (default Deck's http://127.0.0.1:8329/v1)
 # and its client key file (presence and mode only, never read); and whether
 # this home's config/stream-hub answers from the machine. Exit 0 only when every
-# check and item is ok or present.
+# check and item is ok or present. Required-tool doctor gaps are human items;
+# fixable checks remaining after --fix are human items and fail setup.
 #
 # setup <alias> <remote-root> performs only the automatable items, in order,
 # printing one `step` line as each completes and stopping at the first failure:
@@ -51,7 +52,10 @@
 # cargo build --release --locked into ~/.local/bin/deck when git and cargo are
 # there), mode 600 on a gateway key file that is looser, then the doctor's
 # --fix. It then prints a `human` line for each remaining human item and the
-# verdict. Rerunning skips whatever is already present.
+# verdict. A doctor that did not run, a transport failure, or a fixable gap left
+# after --fix fails the doctor step; human gaps alone do not. Rerunning skips
+# whatever is already present. URL userinfo is redacted from all output;
+# command diagnostics are merged into stdout through the same output filter.
 #
 # add <alias> <address> <user> appends a marked Host block (HostName, User,
 # StrictHostKeyChecking yes, ConnectTimeout 8, ForwardAgent no) to the ssh
@@ -101,7 +105,7 @@
 #   item <name>=present|will-install|human: <evidence, what setup does, or the exact step>
 #                                                (check; names: ssh-alias, ssh-hostkey, ssh-login,
 #                                                machine, firstmate-clone, entrypoint-link, doctor,
-#                                                doctor-<check>, tool-<tool>, deck, gh-auth,
+#                                                doctor-<check>, doctor-required-<tool>, tool-<tool>, deck, gh-auth,
 #                                                model-gateway, gateway-key, stream-hub)
 #   step <name>=done|skipped|failed: <evidence or plain reason>   (setup; names: ssh,
 #                                                firstmate-clone, entrypoint-link, probe, tool-<tool>,
@@ -133,6 +137,8 @@ trap '[ -z "$TMP" ] || rm -rf -- "$TMP"' EXIT
 . "$SCRIPT_DIR/fm-home-route-lib.sh"
 # shellcheck source=bin/fm-home-tools-lib.sh
 . "$SCRIPT_DIR/fm-home-tools-lib.sh"
+# shellcheck source=bin/fm-machine-output-lib.sh
+. "$SCRIPT_DIR/fm-machine-output-lib.sh"
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
 
@@ -310,13 +316,14 @@ cmd_check() { # <alias> [<remote-root>] [--address <host> --user <user>]
   esac
 
   DOCTOR_OUT=
+  DOCTOR_ATTEMPTED=0
+  DOCTOR_FIXED=0
   PROBE_OUT=
   CLONE_URL=$(fm_home_route_url "$FM_ROOT")
   if [ "$class" = ok ]; then
     probe_machine "$alias" "$root"
     if [ "$root" != - ] && [ "$(fact clone)" = present ] && [ -n "$ACCOUNT_HOME" ]; then
       run_doctor "$alias" "$root" "$ACCOUNT_HOME"
-      printf '%s\n' "$DOCTOR_OUT" | grep -q '^check ' || DOCTOR_OUT=
     fi
     printf '%s\n' "$PROBE_OUT" | grep '^tool ' || true
   fi
@@ -448,6 +455,9 @@ SH
 run_doctor() { # <alias> <root> <account-home> [--fix]
   local alias=$1 root=$2 account_home=$3 scratch
   shift 3
+  DOCTOR_ATTEMPTED=1
+  DOCTOR_FIXED=0
+  [ "${1:-}" != --fix ] || DOCTOR_FIXED=1
   scratch=$(mktemp -d "${TMPDIR:-/tmp}/fm-machine.XXXXXX")
   TMP=$scratch
   {
@@ -513,13 +523,13 @@ hub_url() {
 }
 
 # Run bin/fm-machine-remote.sh on the machine as `bash -s`, with the tools
-# library in front of it. Prints its stdout; returns its status.
+# and output libraries in front of it. Prints its stdout; returns its status.
 remote_machine() { # <alias> <args...>
   local alias=$1 cmd='bash -s --' arg
   shift
   for arg in "$@"; do cmd="$cmd $(sq "$arg")"; done
   # shellcheck disable=SC2029 # quoted for the remote shell on purpose.
-  cat "$SCRIPT_DIR/fm-home-tools-lib.sh" "$SCRIPT_DIR/fm-machine-remote.sh" \
+  cat "$SCRIPT_DIR/fm-home-tools-lib.sh" "$SCRIPT_DIR/fm-machine-output-lib.sh" "$SCRIPT_DIR/fm-machine-remote.sh" \
     | ssh "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "${PROBE_OPTS[@]}" "$alias" "$cmd" 2>/dev/null
 }
 
@@ -536,10 +546,63 @@ fact() { # <key> -> value of the first "<key>=" line in PROBE_OUT
   printf '%s\n' "$PROBE_OUT" | awk -v k="$1=" 'index($0, k) == 1 { print substr($0, length(k) + 1); exit }'
 }
 
+interpret_doctor() {
+  local line name state text action command checks=0 gaps=0 fixable=
+  DOCTOR_ITEMS=
+  DOCTOR_FAILURE=
+  while IFS= read -r line; do
+    case "$line" in
+      required\ *=*)
+        name=${line#required }
+        state=${name#*=}
+        name=${name%%=*}
+        case "$state" in MISSING*|VERSION_UNREADABLE*) ;; *) continue ;; esac
+        command=$(fm_home_tool_install_cmd "$name" 2>/dev/null || printf 'install %s on the remote runtime PATH' "$name")
+        [ "$name" != harness ] || command='install Deck on the remote runtime PATH'
+        DOCTOR_ITEMS="${DOCTOR_ITEMS}item doctor-required-$name=human: $command; doctor reports $state"$'\n'
+        gaps=$((gaps + 1))
+        ;;
+      check\ *=*)
+        name=${line#check }
+        name=${name%%=*}
+        state=${line#check "$name"=}
+        text=${state#*: }
+        state=${state%%:*}
+        action=$(printf '%s\n' "$DOCTOR_OUT" | awk -v p="action: $name: " 'index($0, p) == 1 { print substr($0, length(p) + 1); exit }')
+        checks=$((checks + 1))
+        case "$state" in
+          ok) state=present ;;
+          skip) state=present; text="not needed yet: $text" ;;
+          fixable)
+            fixable="${fixable:+$fixable; }$name: $text"
+            state=will-install
+            [ "${DOCTOR_FIXED:-0}" -eq 0 ] || state=human
+            text=${action:-$text}
+            gaps=$((gaps + 1))
+            ;;
+          *) state=human; text=${action:-$text}; gaps=$((gaps + 1)) ;;
+        esac
+        DOCTOR_ITEMS="${DOCTOR_ITEMS}item doctor-$name=$state: $text"$'\n'
+        ;;
+    esac
+  done <<EOF
+$DOCTOR_OUT
+EOF
+  if [ "$checks" -eq 0 ]; then
+    DOCTOR_FAILURE="doctor did not run: $(printf '%s\n' "$DOCTOR_OUT" | grep -v '^[[:space:]]*$' | tail -n 1)"
+  elif [ "${DOCTOR_RC:-0}" -gt 1 ]; then
+    DOCTOR_FAILURE="doctor transport or execution failed (exit $DOCTOR_RC)"
+  elif [ "${DOCTOR_FIXED:-0}" -eq 1 ] && [ -n "$fixable" ]; then
+    DOCTOR_FAILURE="fixable gaps remain after --fix: $fixable"
+  elif [ "${DOCTOR_RC:-0}" -ne 0 ] && [ "$gaps" -eq 0 ]; then
+    DOCTOR_FAILURE="doctor failed without reporting a gap (exit $DOCTOR_RC)"
+  fi
+}
+
 # Build the checklist into ITEMS, one "item <name>=present|will-install|human: <text>"
 # line each, from the ssh facts, PROBE_OUT and DOCTOR_OUT.
 build_items() { # <alias> <root|-> <reach-class> <known-fingerprints>
-  local alias=$1 root=$2 class=$3 known=$4 tool path cmd npm_global line check state text action key_state
+  local alias=$1 root=$2 class=$3 known=$4 tool path cmd npm_global key_state
   ITEMS=
   item() { ITEMS="${ITEMS}item $1=$2: $3"$'\n'; }
   if [ "$ALIAS_CONFIGURED" -eq 1 ]; then
@@ -576,24 +639,10 @@ build_items() { # <alias> <root|-> <reach-class> <known-fingerprints>
     *) item entrypoint-link will-install "setup links ~/.local/bin/fm-remote-entrypoint.sh to $root/bin/fm-remote-entrypoint.sh" ;;
   esac
 
-  if [ -n "$DOCTOR_OUT" ]; then
-    while IFS= read -r line; do
-      case "$line" in check\ *=*) ;; *) continue ;; esac
-      check=${line#check }
-      check=${check%%=*}
-      state=${line#check "$check"=}
-      text=${state#*: }
-      state=${state%%:*}
-      action=$(printf '%s\n' "$DOCTOR_OUT" | awk -v p="action: $check: " 'index($0, p) == 1 { print substr($0, length(p) + 1); exit }')
-      case "$state" in
-        ok) item "doctor-$check" present "$text" ;;
-        skip) item "doctor-$check" present "not needed yet: $text" ;;
-        fixable) item "doctor-$check" will-install "${action:-$text}" ;;
-        *) item "doctor-$check" human "${action:-$text}" ;;
-      esac
-    done <<EOF
-$DOCTOR_OUT
-EOF
+  if [ "${DOCTOR_ATTEMPTED:-0}" -eq 1 ]; then
+    interpret_doctor
+    ITEMS="$ITEMS$DOCTOR_ITEMS"
+    [ -z "$DOCTOR_FAILURE" ] || item doctor human "$DOCTOR_FAILURE; run bin/fm-on.sh $alias fm-remote-doctor.sh --backend stream --fix"
   else
     item doctor will-install "setup runs fm-remote-doctor.sh --fix (remote job worker, entrypoint, tool wrappers) once the clone exists"
   fi
@@ -646,6 +695,7 @@ EOF
   case "$key_state" in
     present\ *) item gateway-key present "${key_state#present }" ;;
     unsafe\ *) item gateway-key will-install "setup restricts ${key_state#unsafe } to mode 600" ;;
+    unreadable\ *) item gateway-key human "grant owner read access to ${key_state#unreadable } on the machine, then rerun setup" ;;
     *) item gateway-key human "put the gateway client key at ${key_state#missing path=} with mode 600, copied over a private channel; never paste it into chat" ;;
   esac
 
@@ -667,6 +717,8 @@ cmd_setup() { # <alias> <remote-root>
   resolve_alias "$alias" || refuse "ssh -G could not evaluate the alias $alias"
   known=$(known_fingerprints)
   DOCTOR_OUT=
+  DOCTOR_ATTEMPTED=0
+  DOCTOR_FIXED=0
   PROBE_OUT=
 
   set +e
@@ -751,14 +803,13 @@ cmd_setup() { # <alias> <remote-root>
   esac
 
   run_doctor "$alias" "$root" "$ACCOUNT_HOME" --fix
-  if printf '%s\n' "$DOCTOR_OUT" | grep -q '^check '; then
-    printf 'step doctor=done: fm-remote-doctor.sh --fix ran (exit %s)\n' "$DOCTOR_RC"
-  else
-    printf 'step doctor=failed: %s\n' "$(printf '%s\n' "$DOCTOR_OUT" | grep -v '^[[:space:]]*$' | tail -n 1)"
+  interpret_doctor
+  if [ -n "$DOCTOR_FAILURE" ]; then
+    printf 'step doctor=failed: %s\n' "$DOCTOR_FAILURE"
     probe_machine "$alias" "$root"
-    DOCTOR_OUT=
     setup_finish "$alias" "$root" "$class" "$known" 1
   fi
+  printf 'step doctor=done: fm-remote-doctor.sh --fix ran (exit %s)\n' "$DOCTOR_RC"
   probe_machine "$alias" "$root"
   setup_finish "$alias" "$root" "$class" "$known" 0
 }
@@ -819,15 +870,21 @@ cmd_register() { # <alias> <remote-root>
   printf 'registered=%s root=%s\n' "$alias" "$root"
 }
 
-[ "$#" -ge 1 ] || usage
-SUB=$1
-shift
-case "$SUB" in
-  check) [ "$#" -ge 1 ] || usage; cmd_check "$@" ;;
-  setup) [ "$#" -eq 2 ] || usage; cmd_setup "$1" "$2" ;;
-  add) [ "$#" -eq 3 ] || usage; cmd_add "$1" "$2" "$3" ;;
-  trust) [ "$#" -eq 2 ] || usage; cmd_trust "$1" "$2" ;;
-  prepare) [ "$#" -eq 2 ] || usage; cmd_prepare "$1" "$2" ;;
-  register) [ "$#" -eq 2 ] || usage; cmd_register "$1" "$2" ;;
-  *) usage ;;
-esac
+main() {
+  trap '[ -z "$TMP" ] || rm -rf -- "$TMP"' EXIT
+  [ "$#" -ge 1 ] || usage
+  local sub=$1
+  shift
+  case "$sub" in
+    check) [ "$#" -ge 1 ] || usage; cmd_check "$@" ;;
+    setup) [ "$#" -eq 2 ] || usage; cmd_setup "$1" "$2" ;;
+    add) [ "$#" -eq 3 ] || usage; cmd_add "$1" "$2" "$3" ;;
+    trust) [ "$#" -eq 2 ] || usage; cmd_trust "$1" "$2" ;;
+    prepare) [ "$#" -eq 2 ] || usage; cmd_prepare "$1" "$2" ;;
+    register) [ "$#" -eq 2 ] || usage; cmd_register "$1" "$2" ;;
+    *) usage ;;
+  esac
+}
+
+main "$@" 2>&1 | fm_machine_redact_urls
+exit "${PIPESTATUS[0]}"
