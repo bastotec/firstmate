@@ -80,8 +80,10 @@
 # still answerable: the surviving hold annotations, not tasks-axi's live
 # `held:` bit, prove the captain owned it.
 # Before a new close, the shared close_answered path applies bin/fm-pr-lib.sh's
-# completion-claim gate to a PR resolved from the row link or this home's
-# metadata pr=. A refusal preserves the recorded answer for retry without
+# completion-claim gate to a PR resolved by bin/fm-pr-lib.sh's fm_pr_task_url,
+# then records the verdict as the task's explicit PR outcome
+# (bin/fm-backlog-transition-lib.sh's fm_backlog_record_pr_outcome).
+# A refusal preserves the recorded answer for retry without
 # closing the task or removing its card; --release does not close the task.
 # Matching retries of an already-closed answer remain offline finalization.
 #
@@ -1102,6 +1104,8 @@ close_answered() {  # <task-id> <release-0-or-1>
     if [ -n "$url" ]; then
       body=$(fm_pr_task_body "$row") || fail "refusing to close $1: cannot decode the task body"
       fm_pr_close_verdict "$url" "$body" || fail "refusing to close $1: $FM_PR_CLOSE_REFUSAL"
+      fm_backlog_record_pr_outcome "$DATA" "$1" "$FM_PR_CLOSE_VERDICT" "$url" \
+        || fail "refusing to close $1: cannot record its PR outcome: $FM_BACKLOG_TRANSITION_ERROR"
     fi
     tasks_axi "done" "$1" >/dev/null || return 1
   fi

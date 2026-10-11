@@ -2407,6 +2407,62 @@ test_retiring_refuses_wildcards_and_unconfirmed_ids() {
   pass "retirement requires exact record identities and refuses wildcards"
 }
 
+test_record_only_retirement_records_confirmed_pr_outcomes() {
+  local case_dir home id out state outcome first real_tasks url=https://github.com/example/repo/pull/7
+  for state in merged superseded open closed unreadable; do
+    id=retire-pr-$state
+    case_dir=$(make_home "$id")
+    home=$(home_of "$case_dir")
+    stage_unanswerable_task_with_work "$case_dir" "$id"
+    printf 'pr=%s\n' "$url" >> "$home/state/$id.meta"
+    tasks-axi update "$id" --pr "$url" --body 'Superseded: replacement shipped' \
+      --file "$home/data/backlog.md" >/dev/null || fail "could not prepare $id"
+    first=CLOSED
+    [ "$state" != merged ] || first=MERGED
+    real_tasks=$(command -v tasks-axi)
+    cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+if [ ! -e "$case_dir/forge-read" ]; then
+  : > "$case_dir/forge-read"
+  if [ '$state' = closed ]; then
+    "$real_tasks" update '$id' --body 'Previous reason: replacement shipped' \
+      --file "$home/data/backlog.md" >/dev/null || exit 1
+  fi
+  printf '%s\n' '$first'
+else
+  case '$state' in
+    merged) echo MERGED ;;
+    superseded|closed) echo CLOSED ;;
+    open) echo OPEN ;;
+    unreadable) exit 1 ;;
+  esac
+fi
+SH
+    chmod +x "$case_dir/fakebin/gh"
+    out=$(printf '%s\n' "$id" | run_retire "$case_dir" "$id") \
+      || fail "record-only retirement failed for $state: $out"
+    assert_absent "$home/state/$id.meta" "$state retirement retained metadata"
+    assert_grep 'uncommitted draft' "$case_dir/wt-$id/draft.txt" "$state retirement changed work"
+    [ "$(row_state "$case_dir" "$id")" = "done" ] || fail "$state retirement left the row open"
+    if [ "$state" = unreadable ]; then
+      assert_no_grep 'Outcome:' "$home/data/backlog.md" "retirement invented an unreadable outcome"
+    else
+      case "$state" in
+        merged|superseded) outcome=$state ;;
+        *) outcome=closed-unmerged ;;
+      esac
+      assert_grep "  Outcome: $outcome $url" "$home/data/backlog.md" "$state retirement lost its confirmed outcome"
+      if [ "$state" = merged ]; then
+        assert_grep '(merged ' "$home/data/backlog.md" "confirmed merge lost its delivery link"
+      else
+        assert_grep '(done ' "$home/data/backlog.md" "$state retirement did not render as done"
+        assert_no_grep '(merged ' "$home/data/backlog.md" "$state retirement falsely claimed a merge"
+      fi
+    fi
+  done
+  pass "record-only retirement preserves work and records only confirmed PR outcomes"
+}
+
 test_retiring_records_who_asserted_it_and_when() {
   local case_dir home id out
   id=atomic-retire-attested-b9
@@ -2824,6 +2880,10 @@ test_a_retirement_leaves_a_close_session_start_can_finish() {
   case_dir=$(make_home retire-row-write-fails)
   home=$(home_of "$case_dir")
   stage_unanswerable_task_with_work "$case_dir" "$id"
+  printf 'pr=https://github.com/example/repo/pull/7\n' >> "$home/state/$id.meta"
+  tasks-axi update "$id" --pr https://github.com/example/repo/pull/7 \
+    --body 'Superseded: replacement shipped' --file "$home/data/backlog.md" >/dev/null
+  printf '#!/usr/bin/env bash\necho CLOSED\n' > "$case_dir/fakebin/gh"
   marker="$home/state/$id.backlog-close"
   # The row write fails while the retirement is mid-transition; everything else
   # answers normally, and the failure is lifted before session start runs.
@@ -2847,10 +2907,17 @@ SH
   assert_no_grep 'endpoint=unconfirmed' "$marker" \
     "the retirement left a close that reads as an unproved kill, which nothing can ever finish"
 
+  assert_grep '  Outcome: superseded https://github.com/example/repo/pull/7' "$home/data/backlog.md" \
+    "retirement did not preserve the outcome before staging its close"
+  assert_no_grep '^pr=' "$marker" "superseded retirement staged a merged delivery link"
   rm -f "$case_dir/fail-done"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$case_dir/fakebin/gh"
   out=$(run_bootstrap "$case_dir")
   [ "$(row_state "$case_dir" "$id")" = "done" ] \
-    || fail "session start could not finish the retirement's own close: $out"
+    || fail "session start could not finish the retirement's own close offline: $out"
+  assert_grep '  Outcome: superseded https://github.com/example/repo/pull/7' "$home/data/backlog.md" \
+    "offline replay lost the confirmed outcome"
+  assert_no_grep '(merged ' "$home/data/backlog.md" "offline replay falsely claimed a merge"
   assert_absent "$marker" "session start left the close it finished"
   pass "a retirement leaves a close session start can finish"
 }
@@ -4081,6 +4148,7 @@ test_an_interrupt_after_a_proven_kill_still_replays_its_close
 test_a_failed_confirm_stamp_keeps_every_record_for_a_rerun
 test_no_automatic_path_retires_an_unanswerable_record
 test_retiring_refuses_wildcards_and_unconfirmed_ids
+test_record_only_retirement_records_confirmed_pr_outcomes
 test_retiring_records_who_asserted_it_and_when
 test_retiring_past_an_unconfirmed_kill_names_what_cleanup_cannot_tell
 test_retiring_leaves_work_on_disk_byte_untouched

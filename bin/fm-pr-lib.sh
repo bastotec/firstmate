@@ -1112,9 +1112,12 @@ fm_pr_github_checks_not_green() {
 # that name a PR. Superseded closes omit --pr.
 # bin/fm-teardown.sh checks before destructive cleanup; its --force discard path
 # never supplies --pr to the close, even when the live verdict is merged.
-# Omitting --pr avoids adding merge evidence but does not remove an existing
-# row link: tasks-axi still renders a PR-bearing Done row as "(merged DATE)".
-# That upstream rendering is not proof of a merge; use the live-state audit.
+# bin/fm-backlog-transition-lib.sh's fm_backlog_record_pr_outcome owns the
+# recorded outcome format and title-link handling needed for tasks-axi rendering.
+# Readers trust that explicit outcome (fm_pr_task_outcome), never the rendered
+# completion label, as merge evidence.
+# bin/fm-teardown.sh's header owns outcome recording on authorized forced cleanup,
+# including the unreadable-forge exception.
 # bin/fm-tasks-axi.sh gates done/close, and bin/fm-captain-hold.sh gates its
 # answer and evidence-backed closes. Release is not a close. Session-start
 # replay of an already-staged backlog close and matching retries of an already
@@ -1161,14 +1164,26 @@ fm_pr_task_body() {
     '
 }
 
-# Resolve a row's PR link, else pr= from the supplied owning-home metadata file.
+# Resolve a row's PR link, else owning-home pr= metadata, else its Outcome URL.
 fm_pr_task_url() {
   local url
   url=$(printf '%s\n' "${1-}" | sed -n 's/^  links: .*pr:\(https:\/\/[^",; ]*\).*/\1/p' | head -1)
   if [ -z "$url" ] && [ -f "${2-}" ]; then
     url=$(grep '^pr=' "$2" | tail -1 | cut -d= -f2-)
   fi
+  if [ -z "$url" ]; then
+    url=$(fm_pr_task_outcome "$(fm_pr_task_body "${1-}")") || return 1
+    url=${url#* }
+  fi
   printf '%s' "$url"
+}
+
+# Print "<outcome> <url>" from the decoded task body's last `Outcome:` line
+# (merged, superseded, or closed-unmerged); print nothing when none is recorded.
+fm_pr_task_outcome() {
+  printf '%s\n' "${1-}" \
+    | sed -En 's/^Outcome:[[:blank:]]*(merged|superseded|closed-unmerged)[[:blank:]]+(https:\/\/[^[:space:]]+).*/\1 \2/p' \
+    | tail -1
 }
 
 # Apply the completion-claim gate's marker rule to the decoded task body.

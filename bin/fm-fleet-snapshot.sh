@@ -23,6 +23,11 @@
 #     normalized current_role, requires_child_metadata, blocked_by_ids,
 #     unresolved_blocker_ids, captain_actionable, hold_set, hold_age_days,
 #     and hold_bucket fields.
+#     outcome is the recorded PR verdict, or null when absent; its format is
+#     owned by fm_backlog_record_pr_outcome in bin/fm-backlog-transition-lib.sh.
+#     A recorded outcome supplies pr_url for Done rows, and is a fallback for
+#     open rows without a title PR. Done-row completion verbs are
+#     normalized by bin/fm-landed-lib.sh's landed_completion.
 #     Repeated blocker tokens remain ordered; a blocker resolves only when its
 #     structured record is Done, and missing ids stay open.
 #     There is no separate decision type: any captain-held task is the same
@@ -103,7 +108,9 @@
 #     Structured-home input must declare the current home-summary and hold-classifier
 #     schemas; a live ledger or cached copy missing either declaration or declaring
 #     an unsupported version is unavailable even when it contains no captain holds.
-#     These schemas also accept v1 summaries from older producers.
+#     These schemas also accept v1 summaries from older producers; landed rows
+#     carry outcome when available and are re-filtered on read through
+#     bin/fm-landed-lib.sh's landed_summary_record, including cached copies.
 #   secondmate_landed: {records[],truncated[],unreadable[],partial[]} - the
 #     compatibility landed-work roll-up derived from secondmate_current. Readable
 #     structured homes are partial, not unreadable, when an unavailable child state
@@ -389,7 +396,7 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
 
   # shellcheck disable=SC2094
   jq -Rn --arg path "$backlog" --arg today "$SNAPSHOT_TODAY" --arg now "$SNAPSHOT_NOW" \
-    --argjson age_days "$FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS" '
+    --argjson age_days "$FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS" "$FM_LANDED_JQ_DEFS"'
     def trim: gsub("^[[:space:]]+|[[:space:]]+$"; "");
     def timestamp_epoch($d):
       if ($d | type) != "string" then null
@@ -504,6 +511,7 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
              reported:metadata_word($rest; "reported"),
              done:metadata_word($rest; "done"),
              completion:completion($rest),
+             outcome:null,
              links:links($rest),
              pr_url:((links($rest) | map(select(test("/pull/[0-9]+"))) | .[0]) // null),
              report_path:cap($rest; ".*(?<v>data/[^[:space:])]+/report\\.md).*"),
@@ -536,10 +544,22 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
               // (if any(.body_lines[];
                     test("^Resolution recorded by fm-(captain|decision)-hold\\.$"))
                   then null
-                  else cap(.body_lines[-1]; "^(?<v>local main)$")
+                  else ([.body_lines[] | select(. == "local main")] | last)
                   end))
           | .body_excerpt = ((.body_lines | join(" "))[:240])
-        else . end)
+          # A recorded Outcome line (fm_backlog_record_pr_outcome in
+          # bin/fm-backlog-transition-lib.sh) is the PR outcome of the row,
+          # never the "(merged DATE)" label tasks-axi derives from any PR link.
+          | ([.body_lines[]
+              | capture("^Outcome:[[:space:]]*(?<o>merged|superseded|closed-unmerged)[[:space:]]+(?<u>https://[^[:space:]]+)")?]
+             | last) as $outcome
+          | if $outcome == null then .
+            else .outcome = $outcome.o
+              | .pr_url = (if .state == "done" then $outcome.u
+                           else .pr_url // $outcome.u end)
+            end
+        else . end
+        | if .structured and .state == "done" then landed_completion else . end)
     | .records as $records
     | (reduce ($records[] | select(.structured)) as $record ({};
          .[$record.id] = ((.[$record.id] // true) and ($record.state == "done")))) as $resolved_ids
@@ -1041,7 +1061,7 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
             hold_kind:((.hold_kind // null) | if . == null then null else trunc(40) end),
             pr_url:((.pr_url // null) | if . == null then null else trunc(500) end),
             report_path:((.report_path // null) | if . == null then null else trunc(500) end),
-            local_note:((.local_note // null) | if . == null then null else trunc(120) end),completion} ]
+            local_note:((.local_note // null) | if . == null then null else trunc(120) end),outcome,completion} ]
        | sort_by([(.completion.date // ""), .id]) | reverse) as $landed_all
     | ([ $tasks[] | select(.current_state.state == "unknown") ]) as $unknown_children
     | ([ $owned_in_flight[]
@@ -1331,7 +1351,12 @@ summary_file_read() {  # <file> <expected-home> <output-file>
     rm -f -- "$captured"
     return 1
   fi
-  jq -c -s '.[0]' "$captured" > "$output"
+  jq -c -s "$FM_LANDED_JQ_DEFS"'
+    .[0]
+    | (.landed | length) as $shown
+    | .landed |= map(landed_completion | select(landed_summary_record))
+    | .counts.landed -= ($shown - (.landed | length))
+  ' "$captured" > "$output"
   rc=$?
   rm -f -- "$captured"
   if [ "$rc" -ne 0 ]; then

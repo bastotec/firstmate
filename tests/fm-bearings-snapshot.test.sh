@@ -137,6 +137,7 @@ write_fixture() {  # <home>
 
 ## Done
 - [x] done-a - Landed thing https://github.com/kunchenguid/firstmate/pull/7 (repo: firstmate) (kind: ship) (merged 2026-07-10)
+  Outcome: merged https://github.com/kunchenguid/firstmate/pull/7
 EOF
   printf '# Scout X\n' > "$home/data/scout-x/report.md"
   fm_write_meta "$home/state/ship-task.meta" \
@@ -190,6 +191,7 @@ EOF
 
 ## Done
 - [x] mate-landed - Secondmate-managed fix https://github.com/kunchenguid/firstmate/pull/50 (repo: firstmate) (kind: ship) (merged 2026-07-11)
+  Outcome: merged https://github.com/kunchenguid/firstmate/pull/50
 EOF
   mkdir -p "$mate/projects/mate"
   fm_write_meta "$mate/state/mate.meta" \
@@ -1187,6 +1189,14 @@ test_collapsed_captain_call_deferral_and_landed() {
 ## Done
 - [x] answered-call - Answered captain question (repo: firstmate) (kind: captain) (done 2026-07-10) (hold: captain choice pending) (hold-kind: captain)
 - [x] shipped-work - Ordinary landed work (repo: firstmate) (kind: ship) (merged 2026-07-10)
+- [x] legacy-pr - Legacy merge label https://github.com/o/r/pull/9 (repo: firstmate) (kind: ship) (merged 2026-07-10)
+- [x] verified-work - Verified landed work https://github.com/o/r/pull/8 (repo: firstmate) (kind: ship) (merged 2026-07-10)
+  Outcome: merged https://github.com/o/r/pull/8
+- [x] superseded-work - Replaced work (repo: firstmate) (kind: ship) (done 2026-07-10)
+  Superseded: folded into verified-work
+  Outcome: superseded https://github.com/o/r/pull/7
+- [x] mislabeled-work - Abandoned work https://github.com/o/r/pull/6 (repo: firstmate) (kind: ship) (merged 2026-07-10)
+  Outcome: closed-unmerged https://github.com/o/r/pull/6
 EOF
   fakebin=$(make_fakebin "$home")
   json=$(run "$home" "$fakebin" --json)
@@ -1202,6 +1212,10 @@ EOF
       and (.gates | any(.[]; .id == "external-gate"))
       and (.landed | any(.[]; .id == "shipped-work"))
       and (.landed | any(.[]; .id == "answered-call") | not)
+      and (.landed | any(.[]; .id == "verified-work"))
+      and (.landed | any(.[]; .id == "legacy-pr") | not)
+      and (.landed | any(.[]; .id == "superseded-work") | not)
+      and (.landed | any(.[]; .id == "mislabeled-work") | not)
       and (.omitted | any(.[]; .surface | startswith("captain holds bucketed blocked, dated, or aged")))
   ' >/dev/null || fail "the collapsed captain-call projection is wrong: $json"
   json=$(run "$home" "$fakebin" --json --all-decisions --all-queued)
@@ -1209,7 +1223,7 @@ EOF
     (.decisions_open | any(.[]; .id == "parked-call"))
       and (.gates | any(.[]; .id == "parked-call") | not)
   ' >/dev/null || fail "--all-decisions must reveal the prose-deferred call: $json"
-  pass "captain-held tasks of any kind reach Captain's Call, deferral is honored, and landed excludes answered calls"
+  pass "captain-held tasks of any kind reach Captain's Call, deferral is honored, and landed excludes answered calls and unmerged PR outcomes"
 }
 
 test_undated_hold_phrasing_and_aging_projection() {
@@ -1630,7 +1644,7 @@ test_completed_scout_report_not_pending() {
 # live in the secondmate home's OWN backlog, not the main one, so the projection must
 # roll them up. Local, deterministic, no GitHub call.
 test_landed_includes_secondmate_home_merges() {
-  local home fakebin json
+  local home fakebin json mate
   home=$(make_home mate-landed); write_fixture "$home"
   fakebin=$(make_fakebin "$home"); : > "$home/net.log"
   json=$(run "$home" "$fakebin" --json)
@@ -1638,6 +1652,9 @@ test_landed_includes_secondmate_home_merges() {
     (.landed | any(.[]; .id == "mate-landed" and (.artifact | test("/pull/50"))))
       and (.landed | any(.[]; .id == "done-a"))
   ' >/dev/null || fail "landed must merge secondmate-home Done with main-home Done: $json"
+  mate=$(fixture_mate_home "$home")
+  jq -e '.landed | any(.id == "mate-landed" and .outcome == "merged")' "$mate/state/home-summary.json" >/dev/null \
+    || fail "the published secondmate ledger dropped merged outcome evidence"
   # Still zero network on this default path.
   [ ! -s "$home/net.log" ] || fail "landed roll-up must make no gh/gh-axi call, got: $(cat "$home/net.log")"
   pass "landed includes secondmate-managed merges alongside main-home merges"
@@ -1852,9 +1869,14 @@ test_landed_preserves_kindless_v1_summary_reports() {
   fakebin=$(make_remote_ledger_ssh "$parent/remote-ssh")
   jq '
     .landed = [
-      {id:"legacy-report",title:"Scout report",report_path:"data/scout/report.md",completion:{verb:"reported",date:"2026-09-01"}},
+      {id:"legacy-report",title:"Scout report",report_path:"data/scout/report.md",outcome:"closed-unmerged",completion:{verb:"reported",date:"2026-09-01"}},
       {id:"legacy-pr",title:"Merged change",report_path:"data/scout/report.md",pr_url:"https://github.com/o/r/pull/1",completion:{verb:"merged",date:"2026-09-01"}},
-      {id:"legacy-local",title:"Local delivery",report_path:"data/scout/report.md",local_note:"local main",completion:{verb:"done",date:"2026-09-01"}}
+      {id:"legacy-local",title:"Local delivery",report_path:"data/scout/report.md",local_note:"local main",completion:{verb:"done",date:"2026-09-01"}},
+      {id:"verified-pr",title:"Verified merge",outcome:"merged",pr_url:"https://github.com/o/r/pull/2",completion:{verb:"merged",date:"2026-09-01"}},
+      {id:"superseded-pr",title:"Superseded change",outcome:"superseded",pr_url:"https://github.com/o/r/pull/3",completion:{verb:"merged",date:"2026-09-01"}},
+      {id:"closed-pr",title:"Closed change",outcome:"closed-unmerged",pr_url:"https://github.com/o/r/pull/4",completion:{verb:"merged",date:"2026-09-01"}},
+      {id:"contextual-report",title:"Scout with PR context",kind:"scout",report_path:"data/context/report.md",outcome:"superseded",pr_url:"https://github.com/o/r/pull/3",completion:{verb:"merged",date:"2026-09-01"}},
+      {id:"contextual-local",title:"Local work with PR context",kind:"ship",local_note:"local main",outcome:"superseded",pr_url:"https://github.com/o/r/pull/3",completion:{verb:"merged",date:"2026-09-01"}}
     ] | .counts.landed = (.landed | length)
   ' "$remote_home/state/home-summary.json" > "$remote_home/state/legacy-summary.json"
   mv "$remote_home/state/legacy-summary.json" "$remote_home/state/home-summary.json"
@@ -1864,11 +1886,22 @@ test_landed_preserves_kindless_v1_summary_reports() {
     printf '%s' "$json" | jq -e --arg freshness "$freshness" '
       (.secondmates | any(.id == "ledger-1" and .freshness == $freshness))
       and (.landed | map({id,artifact,owner}) | sort_by(.id)) == [
+        {id:"contextual-local",artifact:"local main",owner:"ledger-1"},
+        {id:"contextual-report",artifact:"data/context/report.md",owner:"ledger-1"},
         {id:"legacy-local",artifact:"local main",owner:"ledger-1"},
-        {id:"legacy-pr",artifact:"https://github.com/o/r/pull/1",owner:"ledger-1"},
-        {id:"legacy-report",artifact:"data/scout/report.md",owner:"ledger-1"}
+        {id:"legacy-report",artifact:"data/scout/report.md",owner:"ledger-1"},
+        {id:"verified-pr",artifact:"https://github.com/o/r/pull/2",owner:"ledger-1"}
       ]
-    ' >/dev/null || fail "kindless v1 $freshness artifacts were lost: $json"
+    ' >/dev/null || fail "kindless v1 $freshness artifacts or PR evidence were misclassified: $json"
+    json=$(BEARINGS="$ROOT/bin/fm-fleet-snapshot.sh" run_remote_ledger_bearings "$parent" "$fakebin" "$epoch") \
+      || fail "summary-boundary fleet snapshot failed"
+    printf '%s' "$json" | jq -e '
+      (.secondmate_current.records[0].landed | map(.id) | sort) ==
+        ["contextual-local","contextual-report","legacy-local","legacy-report","verified-pr"]
+      and .secondmate_current.records[0].counts.landed == 5
+      and (.secondmate_landed.records | any(.id == "verified-pr" and .outcome == "merged"))
+      and (.secondmate_landed.truncated | length) == 0
+    ' >/dev/null || fail "the shared summary-consumption boundary retained unproven PRs or phantom counts: $json"
     rm -f "$remote_home/state/home-summary.json"
     epoch=1200
   done
@@ -3205,6 +3238,7 @@ test_remote_ledgers_share_one_concurrent_budget_and_fall_back_to_cache() {
 
 ## Done
 - [x] remote-approved - Captain-approved delivery $approved_pr (repo: firstmate) (kind: ship) (hold-kind: captain) (merged 2026-09-03)
+  Outcome: merged $approved_pr
 EOF
   write_remote_home_summary "$remote_home" 1000
   tmp="$cache_file.tmp"

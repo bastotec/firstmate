@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Behavior tests for the PR completion-claim gate outside teardown:
+# Behavior tests for the PR completion-claim gate and recorded outcomes outside teardown:
 #   - bin/fm-tasks-axi.sh done refuses to close a row whose PR (its --pr, else
 #     the row's own PR link) is open, closed without a recorded supersession,
 #     or unreadable, and lets a merged or superseded one through;
-#   - bin/fm-pr-record-audit.sh flags Done rows whose PR is open or closed
-#     unmerged without a supersession reason, read-only.
+#   - a gated close records the PR's real outcome, so a superseded row reads
+#     as done rather than merged;
+#   - bin/fm-pr-record-audit.sh flags Done rows whose PR is open, closed
+#     unmerged without a supersession reason, or superseded but still shown as
+#     merged, read-only unless --migrate records the real outcome.
 # Each case runs in a scratch home with a stubbed gh that answers a PR's
 # state from a per-case file; tests/fm-teardown.test.sh covers teardown's gate.
 set -u
@@ -290,12 +293,16 @@ SH
     assert_equals 'task metadata-open is recorded done but PR https://github.com/example/repo/pull/1 is open - reconcile' \
       "$out" "audit missed a metadata-only PR or ignored row-link precedence ($mode)"
     assert_equals 'list
-show:metadata-superseded' "$(cat "$home/reads")" \
-      "audit read more than one listing or showed a row not needing supersession evidence ($mode)"
+show:metadata-merged
+show:metadata-open
+show:metadata-superseded
+show:no-pr
+show:row-first' "$(head -1 "$home/reads"; sed 1d "$home/reads" | sort)" \
+      "audit read more than one listing or did not read exactly the Done rows ($mode)"
     assert_equals "$before" "$(cksum "$home/data/backlog.md" "$state_dir/"*.meta)" \
       "audit rewrote backlog or metadata records ($mode)"
   done
-  pass "audit finds metadata-only Done PRs with one listing and only necessary body reads"
+  pass "audit finds metadata-only Done PRs with one listing and one read per Done row"
 }
 
 test_audit_flags_mismatches_read_only() {
@@ -316,7 +323,8 @@ test_audit_flags_mismatches_read_only() {
   out=$(in_home "$home" "$AUDIT" 2>"$home/stderr"); rc=$?
   expect_code 0 "$rc" "audit with readable PRs"
   assert_equals "task done-closed is recorded done but PR https://github.com/example/repo/pull/3 was closed without merging - reconcile
-task done-open is recorded done but PR https://github.com/example/repo/pull/1 is open - reconcile" \
+task done-open is recorded done but PR https://github.com/example/repo/pull/1 is open - reconcile
+task done-superseded shows as merged but PR https://github.com/example/repo/pull/4 was superseded - run with --migrate" \
     "$(printf '%s\n' "$out" | sort)" "the audit did not flag exactly the mismatched Done rows"
   assert_equals "$before" "$(cat "$home/data/backlog.md")" "the audit changed the backlog"
 
@@ -329,6 +337,243 @@ task done-open is recorded done but PR https://github.com/example/repo/pull/1 is
   pass "fm-pr-record-audit.sh flags Done rows with an open or unexplained closed PR and changes nothing"
 }
 
+done_line() {  # <home> <id>
+  grep -E "^- \[x\] $2 - " "$1/data/backlog.md"
+}
+
+body_of() {  # <home> <id>
+  tasks-axi show "$2" --full --file "$1/data/backlog.md" | sed -n 's/^  body: //p'
+}
+
+test_close_records_explicit_outcome() {
+  local home merged superseded out rc
+  home=$(make_home close-outcome)
+  printf 'MERGED\n' > "$home/states/3"
+  printf 'CLOSED\n' > "$home/states/4"
+  add_row "$home" merged-pr in_flight 3
+  add_row "$home" superseded-pr in_flight 4 "Superseded: replaced by a smaller change"
+  add_row "$home" plain in_flight
+  in_home "$home" "$WRAPPER" "done" merged-pr >/dev/null 2>&1 || fail "done refused a merged PR"
+  in_home "$home" "$WRAPPER" "done" superseded-pr >/dev/null 2>&1 || fail "done refused a superseded PR"
+  in_home "$home" "$WRAPPER" "done" plain >/dev/null 2>&1 || fail "done refused a row with no PR"
+
+  merged=$(done_line "$home" merged-pr)
+  assert_contains "$merged" "(merged " "a merged close did not read as merged"
+  assert_contains "$(body_of "$home" merged-pr)" "Outcome: merged https://github.com/example/repo/pull/3" \
+    "a merged close did not record its outcome"
+
+  superseded=$(done_line "$home" superseded-pr)
+  assert_contains "$superseded" "(done " "a superseded close did not read as done"
+  assert_not_contains "$superseded" "(merged " "a superseded close still reads as merged"
+  assert_not_contains "$superseded" "/pull/4" "a superseded close left its PR link on the row"
+  assert_contains "$(body_of "$home" superseded-pr)" "Outcome: superseded https://github.com/example/repo/pull/4" \
+    "a superseded close did not keep its PR as the recorded outcome"
+  assert_not_contains "$(body_of "$home" plain)" "Outcome:" "a close with no PR recorded an outcome"
+
+  out=$(in_home "$home" "$AUDIT" 2>&1); rc=$?
+  expect_code 0 "$rc" "audit after outcome-recording closes"
+  assert_equals '' "$out" "the audit flagged rows whose outcome is recorded and true"
+  pass "closes record merged or superseded explicitly, and a superseded row no longer reads as merged"
+}
+
+test_audit_flags_and_migrates_legacy_rows() {
+  local home out rc before
+  home=$(make_home audit-legacy)
+  printf 'MERGED\n' > "$home/states/2"
+  printf 'CLOSED\n' > "$home/states/3"
+  printf 'CLOSED\n' > "$home/states/4"
+  printf 'OPEN\n' > "$home/states/1"
+  add_row "$home" legacy-merged "done" 2
+  add_row "$home" legacy-closed "done" 3
+  add_row "$home" legacy-superseded "done" 4 "Superseded: folded into legacy-merged"
+  add_row "$home" legacy-open "done" 1
+  before=$(cat "$home/data/backlog.md")
+
+  out=$(in_home "$home" "$AUDIT" 2>&1); rc=$?
+  expect_code 0 "$rc" "audit of legacy rows"
+  assert_contains "$out" "task legacy-superseded shows as merged but PR https://github.com/example/repo/pull/4 was superseded - run with --migrate" \
+    "the audit did not flag a superseded row that reads as merged"
+  assert_contains "$out" "task legacy-closed is recorded done but PR https://github.com/example/repo/pull/3 was closed without merging" \
+    "the audit lost the unexplained closed-PR mismatch"
+  assert_not_contains "$out" "legacy-merged" "the audit flagged a row whose PR merged"
+  assert_equals "$before" "$(cat "$home/data/backlog.md")" "the audit without --migrate changed the backlog"
+
+  out=$(in_home "$home" "$AUDIT" --migrate 2>&1); rc=$?
+  expect_code 0 "$rc" "audit --migrate"
+  assert_contains "$(done_line "$home" legacy-merged)" "(merged " "migration changed a merged row's label"
+  assert_contains "$(body_of "$home" legacy-merged)" "Outcome: merged https://github.com/example/repo/pull/2" \
+    "migration did not record a merged outcome"
+  assert_contains "$(done_line "$home" legacy-superseded)" "(done " "migration left a superseded row reading as merged"
+  assert_contains "$(body_of "$home" legacy-superseded)" "Outcome: superseded https://github.com/example/repo/pull/4" \
+    "migration did not record a superseded outcome"
+  assert_contains "$(done_line "$home" legacy-closed)" "(done " "migration left an unmerged row reading as merged"
+  assert_contains "$(body_of "$home" legacy-closed)" "Outcome: closed-unmerged https://github.com/example/repo/pull/3" \
+    "migration did not record a closed-unmerged outcome"
+  assert_contains "$(done_line "$home" legacy-open)" "/pull/1" "migration rewrote a row whose PR is still open"
+  assert_not_contains "$(body_of "$home" legacy-open)" "Outcome:" "migration recorded an outcome for an open PR"
+  assert_contains "$out" "task legacy-open is recorded done but PR https://github.com/example/repo/pull/1 is open - reconcile" \
+    "migration hid the open-PR mismatch"
+
+  out=$(in_home "$home" "$AUDIT" 2>&1); rc=$?
+  assert_equals 'task legacy-open is recorded done but PR https://github.com/example/repo/pull/1 is open - reconcile' \
+    "$out" "after migration only the open PR should still need a hand"
+  printf 'MERGED\n' > "$home/states/3"
+  out=$(in_home "$home" "$AUDIT" 2>&1)
+  assert_contains "$out" "task legacy-closed records closed-unmerged but PR https://github.com/example/repo/pull/3 merged - reconcile" \
+    "the audit did not check a recorded outcome against the forge"
+  pass "the audit flags legacy rows that read as merged and --migrate records their real outcome"
+}
+
+test_embedded_pr_links_are_removed() {
+  local home form mode id title line detail expected_title
+  home=$(make_home embedded-pr-links)
+  printf 'CLOSED\n' > "$home/states/4"
+  printf 'CLOSED\n' > "$home/states/5"
+  for mode in close migrate; do
+    for form in markdown label surrounding parentheses multiple angle bare; do
+      id="$mode-$form"
+      case "$form" in
+        markdown) title='Fix [PR](https://github.com/example/repo/pull/4)'; expected_title='Fix PR' ;;
+        label) title='[Fix account deletion](https://github.com/example/repo/pull/4)'; expected_title='Fix account deletion' ;;
+        surrounding) title='Review [Fix account deletion](https://github.com/example/repo/pull/4) today'; expected_title='Review Fix account deletion today' ;;
+        parentheses) title='Fix (https://github.com/example/repo/pull/4)'; expected_title=Fix ;;
+        multiple) title='Fix [PR](https://github.com/example/repo/pull/4), [old](https://github.com/example/repo/pull/5)'; expected_title='Fix PR, old' ;;
+        # tasks-axi 0.2.6 classifies an angle link as doc, so pair it with a recognized bare PR.
+        angle) title='Fix <https://github.com/example/repo/pull/4> https://github.com/example/repo/pull/4'; expected_title=Fix ;;
+        bare) title='https://github.com/example/repo/pull/4'; expected_title='example/repo#4' ;;
+      esac
+      add_row "$home" "$id" in_flight '' 'Superseded: replaced by a smaller change' "$title"
+      detail=$(tasks-axi show "$id" --full --file "$home/data/backlog.md" | sed -n 's/^  links: //p')
+      assert_contains "$detail" 'pr:https://' "tasks-axi did not recognize the $form PR fixture"
+      if [ "$mode" = close ]; then
+        in_home "$home" "$WRAPPER" "done" "$id" >/dev/null 2>&1 \
+          || fail "$form PR close failed"
+      else
+        tasks-axi "done" "$id" --file "$home/data/backlog.md" >/dev/null
+        in_home "$home" "$AUDIT" --migrate >/dev/null 2>&1 || fail "$form PR migration failed"
+      fi
+      line=$(done_line "$home" "$id")
+      assert_contains "$line" '(done ' "$mode left the $form PR fixture labeled merged"
+      detail=$(tasks-axi show "$id" --full --file "$home/data/backlog.md" | sed -n 's/^  links: //p')
+      assert_not_contains "$detail" 'pr:https://' "$mode left a $form PR link on the title"
+      detail=$(tasks-axi show "$id" --full --file "$home/data/backlog.md" | sed -n 's/^  title: //p' | jq -Rr 'fromjson? // .')
+      assert_equals "$expected_title" "$detail" "$mode lost title words or retained $form link markup"
+      assert_contains "$(body_of "$home" "$id")" 'Outcome: superseded' "$mode lost the $form PR outcome"
+      assert_contains "$(body_of "$home" "$id")" 'https://github.com/example/repo/pull/4' "$mode lost the $form PR reference"
+      if [ "$form" = multiple ]; then
+        assert_contains "$(body_of "$home" "$id")" 'https://github.com/example/repo/pull/5' "$mode lost the other embedded PR"
+      fi
+    done
+  done
+  pass "close and migration remove embedded PR links recognized by tasks-axi and preserve them in the body"
+}
+
+test_merged_outcome_owns_pr_identity() {
+  local home out
+  home=$(make_home replacement-pr)
+  printf 'CLOSED\n' > "$home/states/1"
+  printf 'MERGED\n' > "$home/states/2"
+  add_row "$home" replacement in_flight 1
+  in_home "$home" "$WRAPPER" update replacement --pr https://github.com/example/repo/pull/2 >/dev/null \
+    || fail "could not record the replacement PR"
+  in_home "$home" "$WRAPPER" "done" replacement --pr https://github.com/example/repo/pull/2 >/dev/null \
+    || fail "could not close the replacement PR"
+  assert_contains "$(done_line "$home" replacement)" '/pull/1' "fixture lost its original title PR"
+  assert_contains "$(body_of "$home" replacement)" 'Outcome: merged https://github.com/example/repo/pull/2' \
+    "replacement PR close recorded the wrong outcome"
+  out=$(in_home "$home" "$ROOT/bin/fm-fleet-snapshot.sh" --json) || fail "replacement snapshot failed"
+  printf '%s' "$out" | jq -e '
+    .backlog.records | any(.id == "replacement" and .outcome == "merged"
+      and .pr_url == "https://github.com/example/repo/pull/2" and .completion.verb == "merged")
+  ' >/dev/null || fail "snapshot paired the merged verdict with the original PR"
+  out=$(in_home "$home" "$ROOT/bin/fm-bearings-snapshot.sh" --json --all-landed) || fail "replacement bearings failed"
+  printf '%s' "$out" | jq -e '
+    .landed | any(.id == "replacement" and .artifact == "https://github.com/example/repo/pull/2")
+  ' >/dev/null || fail "Recently Landed delivered the original unmerged PR"
+  pass "the recorded merged outcome owns PR identity in the snapshot and Recently Landed"
+}
+
+test_migration_preserves_non_pr_deliveries() {
+  local home out
+  home=$(make_home migrated-non-pr-deliveries)
+  printf 'CLOSED\n' > "$home/states/3"
+  add_row "$home" local-delivery in_flight 3
+  add_row "$home" scout-delivery in_flight 3
+  tasks-axi update scout-delivery --kind scout --file "$home/data/backlog.md" >/dev/null
+  tasks-axi "done" local-delivery --note 'local main' --file "$home/data/backlog.md" >/dev/null
+  tasks-axi "done" scout-delivery --report data/scout-delivery/report.md --file "$home/data/backlog.md" >/dev/null
+  in_home "$home" "$AUDIT" --migrate >/dev/null || fail "non-PR delivery migration failed"
+  out=$(in_home "$home" "$ROOT/bin/fm-fleet-snapshot.sh" --json) || fail "migrated delivery snapshot failed"
+  printf '%s' "$out" | jq -e '
+    (.backlog.records | any(.id == "local-delivery" and .outcome == "closed-unmerged"
+      and .local_note == "local main" and .completion.verb == "done"))
+    and (.backlog.records | any(.id == "scout-delivery" and .outcome == "closed-unmerged"
+      and .report_path == "data/scout-delivery/report.md" and .completion.verb == "reported"))
+  ' >/dev/null || fail "migration lost a non-PR completion or the local note preceding its Outcome line"
+  out=$(in_home "$home" "$ROOT/bin/fm-bearings-snapshot.sh" --json --all-landed) || fail "migrated delivery bearings failed"
+  printf '%s' "$out" | jq -e '
+    (.landed | any(.id == "local-delivery" and .artifact == "local main"))
+    and (.landed | any(.id == "scout-delivery" and .artifact == "data/scout-delivery/report.md"))
+  ' >/dev/null || fail "closed-unmerged contextual PRs hid delivered local work or a scout report"
+  pass "migration keeps local and report completions despite closed-unmerged contextual PRs"
+}
+
+test_reopened_outcome_pr_is_gated() {
+  local home mode id out rc
+  home=$(make_home reopened-outcome)
+  printf 'Drop the superseded work.\n' > "$home/answer.txt"
+  for mode in "done" answer; do
+    id="reopened-$mode"
+    printf 'CLOSED\n' > "$home/states/4"
+    add_row "$home" "$id" in_flight 4 'Superseded: replaced by a smaller change'
+    in_home "$home" "$WRAPPER" "done" "$id" >/dev/null || fail "initial superseded close failed"
+    in_home "$home" "$WRAPPER" reopen "$id" >/dev/null || fail "could not reopen the superseded row"
+    in_home "$home" "$WRAPPER" start "$id" >/dev/null || fail "could not restart the superseded row"
+    assert_absent "$home/state/$id.meta" "outcome-only fixture unexpectedly has metadata"
+    assert_contains "$(body_of "$home" "$id")" 'Outcome: superseded' "reopen did not preserve the outcome"
+    printf 'OPEN\n' > "$home/states/4"
+    if [ "$mode" = "done" ]; then
+      out=$(in_home "$home" "$WRAPPER" "done" "$id" 2>&1); rc=$?
+      expect_code 2 "$rc" "done on a reopened outcome-only PR"
+    else
+      in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold "$id" --reason 'Decide whether to drop it' >/dev/null \
+        || fail "could not hold the reopened row"
+      out=$(in_home "$home" "$ROOT/bin/fm-captain-hold.sh" answer "$id" --decision-file "$home/answer.txt" 2>&1); rc=$?
+      expect_code 1 "$rc" "captain answer on a reopened outcome-only PR"
+    fi
+    assert_contains "$out" 'is still open' "$mode bypassed the preserved PR's live-state check"
+    [ "$(row_state "$home" "$id")" != "done" ] || fail "$mode closed a reopened open PR"
+    printf 'MERGED\n' > "$home/states/4"
+    if [ "$mode" = "done" ]; then
+      in_home "$home" "$WRAPPER" "done" "$id" >/dev/null || fail "reopened merged PR could not close"
+    else
+      in_home "$home" "$ROOT/bin/fm-captain-hold.sh" answer "$id" --decision-file "$home/answer.txt" >/dev/null \
+        || fail "reopened merged PR could not finish its answer"
+    fi
+    [ "$(row_state "$home" "$id")" = "done" ] || fail "$mode did not close after the PR merged"
+    assert_contains "$(body_of "$home" "$id")" 'Outcome: merged https://github.com/example/repo/pull/4' \
+      "$mode kept the stale superseded outcome"
+  done
+  pass "reopened outcome-only PRs pass the live completion gate for done and captain answer"
+}
+
+test_captain_answer_records_outcome() {
+  local home line
+  home=$(make_home captain-outcome)
+  printf 'CLOSED\n' > "$home/states/4"
+  printf 'Drop it, the smaller change replaced it.\n' > "$home/answer.txt"
+  add_row "$home" held-superseded in_flight 4 "Superseded: replaced by a smaller change"
+  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" hold held-superseded --reason 'Decide whether to drop it' >/dev/null \
+    || fail "could not hold held-superseded"
+  in_home "$home" "$ROOT/bin/fm-captain-hold.sh" answer held-superseded --decision-file "$home/answer.txt" >/dev/null \
+    || fail "a superseded PR did not let the answer close the task"
+  line=$(done_line "$home" held-superseded)
+  assert_not_contains "$line" "(merged " "an answered superseded call reads as merged"
+  assert_contains "$(body_of "$home" held-superseded)" "Outcome: superseded https://github.com/example/repo/pull/4" \
+    "an answered superseded call did not record its outcome"
+  pass "a captain answer that closes a superseded PR records it as superseded"
+}
+
 if command -v tasks-axi >/dev/null 2>&1; then
   test_done_gate
   test_completion_command_forms
@@ -338,6 +583,13 @@ if command -v tasks-axi >/dev/null 2>&1; then
   test_captain_answer_pr_gate
   test_audit_metadata_only_prs
   test_audit_flags_mismatches_read_only
+  test_close_records_explicit_outcome
+  test_audit_flags_and_migrates_legacy_rows
+  test_embedded_pr_links_are_removed
+  test_merged_outcome_owns_pr_identity
+  test_migration_preserves_non_pr_deliveries
+  test_reopened_outcome_pr_is_gated
+  test_captain_answer_records_outcome
 else
   echo "skip: tasks-axi not found; PR completion-claim cases not run"
 fi

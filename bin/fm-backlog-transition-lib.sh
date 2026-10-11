@@ -41,10 +41,10 @@
 # with no `.tasks.toml` gets tasks-axi's built-in defaults.
 # bin/fm-tasks-axi-lib.sh owns backend precedence and configuration failures.
 #
-# CRASH RECOVERY. Only teardown needs a durable record: it removes the meta,
-# and surviving row links alone cannot reconstruct the completion arguments
-# permitted by bin/fm-pr-lib.sh's completion-claim gate. It writes
-# `state/<id>.backlog-close` first, and removes it once the close lands.
+# CRASH RECOVERY. Teardown and record-only endpoint retirement use a durable
+# record: they remove the meta, and surviving row links alone cannot reconstruct
+# the completion arguments permitted by bin/fm-pr-lib.sh's completion-claim gate.
+# Each writes `state/<id>.backlog-close` first, and removes it once the close lands.
 # The writer and replay share one complete-record validator, and teardown stages
 # that record before destructive cleanup, so it never publishes or acts on a close
 # replay would reject. The validator pins the data path to this home's configured
@@ -583,6 +583,123 @@ fm_backlog_row_artifact_supported() {
     --report) [ "$value" = "data/$id/report.md" ] ;;
     *) return 1 ;;
   esac
+}
+
+fm_backlog_record_pr_close_outcome() {
+  local data=$1 id=$2 url=$3 verdict=$4 state=$5 outcome=
+  [ -n "$url" ] || return 0
+  case "$verdict" in
+    merged|superseded) outcome=$verdict ;;
+    unmerged)
+      case "$state" in open|closed) outcome=closed-unmerged ;; esac
+      ;;
+  esac
+  [ -n "$outcome" ] || return 0
+  fm_backlog_record_pr_outcome "$data" "$id" "$outcome" "$url"
+}
+
+# Record how a PR-bearing task really ended, before or after it closes.
+# <outcome> is merged, superseded, or closed-unmerged, and <url> is the task's PR.
+# The body gets exactly one `Outcome: <outcome> <url>` line (an older Outcome
+# line is replaced), which tasks-axi keeps verbatim through close, prune, and mv.
+# tasks-axi renders any Done row whose title carries a PR link as
+# "(merged DATE)", so for superseded and closed-unmerged every PR link is also
+# moved out of the title: the PR stays on the Outcome line, other PR links go to
+# one `Other PR links:` line, and the row then renders as "(done DATE)".
+# Only URLs and their link markup are removed; link labels and surrounding
+# title words stay. A title left empty names the PR as owner/repo#N instead.
+# Idempotent; a missing row is left alone.
+# bin/fm-pr-lib.sh's fm_pr_task_outcome reads the line back.
+fm_backlog_record_pr_outcome() {  # <data-dir> <id> <outcome> <url>
+  local data authorized_data=$1 id=$2 outcome=$3 url=$4 out command_status dir changes
+  local -a update_args=()
+  case "$outcome" in
+    merged|superseded|closed-unmerged) ;;
+    *) FM_BACKLOG_TRANSITION_ERROR="unknown PR outcome: $outcome"; return 1 ;;
+  esac
+  case "$url" in
+    https://*) ;;
+    *) FM_BACKLOG_TRANSITION_ERROR="PR outcome for $id needs an https URL"; return 1 ;;
+  esac
+  if ! data=$(fm_backlog_data_absolute "$authorized_data"); then
+    FM_BACKLOG_TRANSITION_ERROR="data directory cannot be resolved: $authorized_data"
+    return 1
+  fi
+  FM_BACKLOG_TRANSITION_ERROR=
+  out=$(fm_backlog_row_show "$data" "$id" --full)
+  command_status=$?
+  [ "$command_status" -ne 124 ] || FM_BACKLOG_ROW_SHOW_WEDGED=1
+  if [ "$command_status" -ne 0 ]; then
+    printf '%s\n' "$out" | grep -qx 'code: NOT_FOUND' && return 0
+    FM_BACKLOG_TRANSITION_ERROR=$(printf '%s\n' "$out" | sed -n '1p')
+    [ -n "$FM_BACKLOG_TRANSITION_ERROR" ] \
+      || FM_BACKLOG_TRANSITION_ERROR="tasks-axi show $id failed with no output"
+    return "$command_status"
+  fi
+  dir=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/fm-backlog-outcome.XXXXXX") || {
+    FM_BACKLOG_TRANSITION_ERROR="cannot stage the PR outcome for $id"
+    return 1
+  }
+  # Decoding mirrors fm_backlog_retain: JSON-encoded scalars decode with
+  # allow_nonref and are written back as raw bytes.
+  changes=$(printf '%s\n' "$out" | LC_ALL=C perl -MJSON::PP -e '
+    my ($dir, $outcome, $url) = @ARGV;
+    my %f;
+    while (my $line = <STDIN>) {
+      $f{$1} = $2 if $line =~ /^  (title|body): (.*?)\s*\z/;
+    }
+    sub value {
+      my $shown = shift // "";
+      return "" if $shown eq "" || $shown eq "-" || $shown eq q("-");
+      my $v = $shown =~ /\A"/ ? JSON::PP->new->utf8->allow_nonref->decode($shown) : $shown;
+      utf8::encode($v) if utf8::is_utf8($v);
+      return $v;
+    }
+    my $title = value($f{title});
+    my $body = value($f{body});
+    my $new_title = $title;
+    my @others;
+    if ($outcome ne "merged") {
+      my $pr = qr{https?://\S+?/pull/\d+};
+      for my $link ($title =~ /($pr)/g) {
+        push @others, $link unless $link eq $url || grep { $_ eq $link } @others;
+      }
+      my $kept = $title;
+      $kept =~ s{\[([^\]]*)\]\(($pr)\)}{$1}g;
+      $kept =~ s{<($pr)>|\(($pr)\)|($pr)}{}g;
+      $kept =~ s/\s+/ /g;
+      $kept =~ s/\A[\s-]+|[\s-]+\z//g;
+      if ($kept eq "") {
+        my ($path, $n) = $url =~ m{\Ahttps://[^/]+/(.+)/(?:pull|-/merge_requests)/(\d+)};
+        $kept = defined $n ? "$path#$n" : "closed PR";
+      }
+      $new_title = $kept;
+    }
+    my @lines = grep { !/\AOutcome:/ } split /\n/, $body, -1;
+    pop @lines while @lines && $lines[-1] eq "";
+    if (@others) {
+      my $other = "Other PR links: " . join(" ", @others);
+      push @lines, $other unless grep { $_ eq $other } @lines;
+    }
+    push @lines, "Outcome: $outcome $url";
+    my $new_body = join("\n", @lines);
+    open my $t, ">:raw", "$dir/title" or exit 2; print $t $new_title; close $t;
+    open my $b, ">:raw", "$dir/body" or exit 2; print $b "$new_body\n"; close $b;
+    print "title\n" if $new_title ne $title;
+    print "body\n" if $new_body ne $body;
+  ' "$dir" "$outcome" "$url") || {
+    rm -rf -- "$dir"
+    FM_BACKLOG_TRANSITION_ERROR="could not decode the task row of $id"
+    return 1
+  }
+  case "$changes" in *title*) update_args+=(--title "$(cat "$dir/title")") ;; esac
+  case "$changes" in *body*) update_args+=(--body-file "$dir/body") ;; esac
+  command_status=0
+  if [ "${#update_args[@]}" -gt 0 ]; then
+    fm_backlog_mutate "$authorized_data" update "$id" "${update_args[@]}" || command_status=$?
+  fi
+  rm -rf -- "$dir"
+  return "$command_status"
 }
 
 # Keep a captain-held row open across the removal of the work record that

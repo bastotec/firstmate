@@ -18,8 +18,12 @@
 # delivery regardless of release state or other links in its title.
 #
 # The selector uses recorded delivery artifacts and completion verbs, not a
-# live forge check. bin/fm-pr-lib.sh's completion-claim gate owns the PR-link
-# rendering limitation; Recently Landed alone is not proof that a PR merged.
+# live forge check. PR deliveries require an explicit merged outcome; a legacy
+# "(merged DATE)" label alone is never merge evidence.
+# bin/fm-backlog-transition-lib.sh's fm_backlog_record_pr_outcome owns the
+# PR-link rendering limitation and recorded outcome format.
+# Report and local-only deliveries keep their own completion verbs and artifacts
+# independently of any contextual PR outcome.
 # A closed row whose artifact matches its merged or done completion verb is
 # selected only when it retains no captain-question provenance. A retained scout
 # is identified by its kind and recorded report because its title links do not
@@ -34,9 +38,11 @@
 # hold-kind captain.
 # That preserves kindless rows closed before artifact-aware selection without
 # admitting answered captain calls or explicit reportless scouts.
-# Already-selected v1 secondmate landed rows may omit kind. For those rows,
-# landed_artifact preserves a report_path with a reported completion; this
-# display compatibility does not admit kindless reports from raw backlog rows.
+# Incoming v1 secondmate landed rows may omit kind. landed_summary_record
+# treats a kindless reported completion as a scout for selection and display;
+# this compatibility does not admit kindless reports from raw backlog rows.
+# Fresh and cached summaries are re-filtered with the same PR evidence rule,
+# so an older producer's PR entry without a merged outcome is not a delivery.
 # tests/fm-bearings-snapshot.test.sh covers both fresh and cached v1 summaries.
 
 # shellcheck disable=SC2034 # Output global, read by the sourcing caller.
@@ -44,10 +50,16 @@ FM_LANDED_JQ_DEFS='
   def scout_report:
     .kind == "scout"
     and (.report_path // null) != null;
+  def landed_completion:
+    if scout_report or (.kind == null and .completion.verb == "reported") then .completion.verb = "reported"
+    elif (.local_note // null) != null then .completion.verb = "done"
+    elif (.outcome // null) != null then .completion.verb = .outcome
+    else .
+    end;
   def landed_artifact:
     if scout_report or (.kind == null and .completion.verb == "reported") then (.report_path // null)
-    elif .completion.verb == "merged" then (.pr_url // null)
     elif .completion.verb == "done" then (.local_note // null)
+    elif .completion.verb == "merged" then (.pr_url // null)
     else null
     end;
   # The kind-is-not-scout guards below and in the fallback are LOAD-BEARING:
@@ -62,6 +74,7 @@ FM_LANDED_JQ_DEFS='
       and .kind != "captain"
       and .hold_kind != "captain"
       and .completion.verb == "merged"
+      and .outcome == "merged"
       and (.pr_url // null) != null)
     or (.kind != "scout"
       and .kind != "captain"
@@ -77,4 +90,8 @@ FM_LANDED_JQ_DEFS='
         and (.pr_url // null) == null
         and (.report_path // null) == null
         and (.local_note // null) == null));
+  def landed_summary_record:
+    . + {state:"done",structured:true}
+    | if .kind == null and .completion.verb == "reported" then .kind = "scout" else . end
+    | landed_record;
 '

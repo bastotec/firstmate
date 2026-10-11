@@ -84,6 +84,7 @@ In a secondmate home that decision reaches the captain through the parent channe
 On every heartbeat sweep, also run `bin/fm-pr-record-audit.sh` for this home, plus `FM_HOME=<home> bin/fm-pr-record-audit.sh` for each local secondmate home in the main home.
 Its [header](../../../bin/fm-pr-record-audit.sh) owns mismatch selection, diagnostics, and exit status.
 Reconcile your own mismatches, and send a secondmate's mismatch line to that mate unchanged through `bin/fm-send.sh`; neither the helper nor the sweep rewrites another home's records.
+For a `run with --migrate` diagnostic, follow the audit header's migration contract in the home that owns the row.
 
 ## After teardown
 

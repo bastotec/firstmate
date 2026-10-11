@@ -51,14 +51,14 @@
 # accepting unlanded edits to the same paths. Teardown still accepts a merged PR
 # whose head contains the current local work (ancestor or equivalent patch ids),
 # or a clean content-in-default tree match. Anything else refuses.
-# The PR itself is resolved from the task's recorded pr= when present, else its
-# backlog row's PR link through bin/fm-pr-lib.sh's fm_pr_task_url. For every
+# The PR itself is resolved from the task's recorded pr= when present, else by
+# bin/fm-pr-lib.sh's fm_pr_task_url resolver for the backlog row. For every
 # non-secondmate task, a row read that errors or times out refuses non-forced
 # cleanup, including on manual-backend homes and when metadata already names
 # a PR. A confirmed NOT_FOUND or an absent configured markdown backlog permits
 # proceeding on metadata pr= alone; neither bypasses the gate for that PR.
 # Regression coverage: tests/fm-teardown.test.sh's manual-backlog read cases.
-# Without either PR record (e.g. a yolo-authorized merge where no PR was
+# Without a resolved PR (e.g. a yolo-authorized merge where no PR was
 # registered), merged-head discovery looks up a merged PR whose head branch
 # matches the worktree's branch,
 # fetching its head via refs/pull/<n>/head when the branch itself was deleted.
@@ -70,6 +70,10 @@
 # A recorded PR on any non-secondmate task also requires the completion-claim
 # gate in bin/fm-pr-lib.sh's fm_pr_close_verdict, before destructive cleanup;
 # that comment owns the live-state, supersession, force, and replay rules.
+# Before a close is staged, the verdict is recorded as the row's PR outcome
+# (merged, superseded, or closed-unmerged for a forced PR confirmed open or
+# closed; an unreadable forge state records none), and a failure to record it
+# refuses cleanup.
 # local-only projects additionally accept work merged into the local default
 # branch (firstmate performs that merge after configured approval) as a fallback
 # for the common case where there is no remote at all.
@@ -1330,6 +1334,7 @@ pr_is_merged() {
     [ -n "$resolved_url" ] || return 1
     PR_URL=$resolved_url
   fi
+  PR_CLOSE_VERDICT=merged
   return 0
 }
 
@@ -1384,7 +1389,7 @@ backlog_done_args() {
     *)
       if [ "$MODE" = local-only ]; then
         BACKLOG_DONE_ARGS=(--note "local main")
-      elif [ "$FORCE" != --force ] && [ -n "$PR_URL" ] && { [ -z "$PR_CLOSE_VERDICT" ] || [ "$PR_CLOSE_VERDICT" = merged ]; }; then
+      elif [ "$FORCE" != --force ] && [ -n "$PR_URL" ] && [ "$PR_CLOSE_VERDICT" = merged ]; then
         BACKLOG_DONE_ARGS=(--pr "$PR_URL")
       fi
       ;;
@@ -3129,6 +3134,14 @@ if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ]; then
     echo "error: the pending backlog $BACKLOG_TRANSITION for $ID is not replayable; refusing destructive teardown" >&2
     exit 1
   }
+  # Record the gate's verdict as the row's explicit PR outcome before the close
+  # is staged, so neither the close nor its replay mislabels unmerged work.
+  if [ "$BACKLOG_TRANSITION" = close ] \
+      && ! fm_backlog_record_pr_close_outcome "$DATA" "$ID" "$PR_URL" \
+        "$PR_CLOSE_VERDICT" "$FM_PR_CLOSE_STATE"; then
+    echo "error: could not record $ID's PR outcome ($FM_BACKLOG_TRANSITION_ERROR); refusing destructive teardown" >&2
+    exit 1
+  fi
 # Roll the accepted legacy incarnation's stamp back to the record's exact
 # pre-stamp bytes. Uses perl - already in the teardown lifecycle's curated PATH
 # (truncate is not, and is absent on stock macOS) - and verifies the restored
