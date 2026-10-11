@@ -46,6 +46,8 @@
 # check and item is ok or present; gaps exit 1.
 # An absent clone is will-install only when prepare's clone-route guard passes;
 # otherwise the clone item is human with the same refusal reason.
+# With no known remote root, the clone and entrypoint-link items request it;
+# the probe does not judge the entrypoint link.
 # Required-tool doctor gaps are human items; read-only fixable checks are
 # will-install, while fixable checks remaining after setup's --fix are human
 # items and fail setup.
@@ -680,11 +682,15 @@ build_items() { # <alias> <root|-> <reach-class> <known-fingerprints>
   else
     item firstmate-clone human "$CLONE_REASON"
   fi
-  case "$(fact entrypoint-link)" in
-    present) item entrypoint-link present "the account's ~/.local/bin/fm-remote-entrypoint.sh points at $root" ;;
-    conflict) item entrypoint-link human "the account's ~/.local/bin/fm-remote-entrypoint.sh on the machine is not a link to $root/bin/fm-remote-entrypoint.sh; inspect and move it" ;;
-    *) item entrypoint-link will-install "setup links ~/.local/bin/fm-remote-entrypoint.sh to $root/bin/fm-remote-entrypoint.sh" ;;
-  esac
+  if [ "$root" = - ]; then
+    item entrypoint-link human "name the remote code root first: bin/fm-machine.sh check $alias <remote-root>"
+  else
+    case "$(fact entrypoint-link)" in
+      present) item entrypoint-link present "the account's ~/.local/bin/fm-remote-entrypoint.sh points at $root" ;;
+      conflict) item entrypoint-link human "the account's ~/.local/bin/fm-remote-entrypoint.sh on the machine is not a link to $root/bin/fm-remote-entrypoint.sh; inspect and move it" ;;
+      *) item entrypoint-link will-install "setup links ~/.local/bin/fm-remote-entrypoint.sh to $root/bin/fm-remote-entrypoint.sh" ;;
+    esac
+  fi
 
   if [ "${DOCTOR_ATTEMPTED:-0}" -eq 1 ]; then
     interpret_doctor

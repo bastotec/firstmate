@@ -19,7 +19,7 @@
 #   account-home=<the account's home directory>
 #   path-source=worker|ssh
 #   clone=present|absent
-#   entrypoint-link=present|absent|conflict
+#   entrypoint-link=present|absent|conflict|unknown (unknown when remote-root is -)
 #   tool <name>=<path>|missing         (each named tool, then deck, cargo and npm)
 #   npm-global=writable|not-writable|unknown
 #   gh-auth=ok|missing|unknown         (only the exit status of `gh auth status`)
@@ -88,7 +88,9 @@ cmd_probe() { # <root> <gateway-url> <hub-url|-> <tool>...
     printf 'clone=absent\n'
   fi
   link="$HOME/.local/bin/fm-remote-entrypoint.sh"
-  if [ -L "$link" ] && [ "$(readlink "$link")" = "$root/bin/fm-remote-entrypoint.sh" ]; then
+  if [ "$root" = - ]; then
+    printf 'entrypoint-link=unknown\n'
+  elif [ -L "$link" ] && [ "$(readlink "$link")" = "$root/bin/fm-remote-entrypoint.sh" ]; then
     printf 'entrypoint-link=present\n'
   elif [ -e "$link" ] || [ -L "$link" ]; then
     printf 'entrypoint-link=conflict\n'

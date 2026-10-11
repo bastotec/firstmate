@@ -532,6 +532,49 @@ out=$(cluster prepare cluster "$RROOT")
 assert_contains "$out" "doctor: check stream-tools=ok: fake" "doctor lost configured trust selection"
 pass "prepare clones, links and relays the doctor's --fix verdict"
 
+ROOTLESS_DATA="$T/rootless-data"
+mkdir -p "$ROOTLESS_DATA"
+link="$FAKE_ACCOUNT/.local/bin/fm-remote-entrypoint.sh"
+for link_state in present absent conflict; do
+  rm -f "$link"
+  case "$link_state" in
+    present) ln -s "$RROOT/bin/fm-remote-entrypoint.sh" "$link" ;;
+    conflict) ln -s /other/firstmate/bin/fm-remote-entrypoint.sh "$link" ;;
+  esac
+  : > "$SSH_LOG"
+  set +e
+  out=$(FM_DATA_OVERRIDE="$ROOTLESS_DATA" machine check box)
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "rootless check with $link_state entrypoint"
+  assert_contains "$out" 'root=-' "rootless fixture unexpectedly knew the root"
+  assert_contains "$out" 'item firstmate-clone=human: name the remote code root:' "rootless clone guidance"
+  assert_contains "$out" 'item entrypoint-link=human: name the remote code root first: bin/fm-machine.sh check box <remote-root>' "rootless link guidance"
+  assert_not_contains "$out" 'inspect and move it' "rootless check recommended moving the link"
+  assert_not_contains "$out" 'item entrypoint-link=will-install:' "rootless check promised an invalid link"
+  assert_no_grep 'fm-remote-doctor.sh' "$SSH_LOG" "rootless check ran the doctor"
+  probe=$(HOME="$FAKE_ACCOUNT" PATH="$FAKE_RBIN:/usr/bin:/bin" "$ROOT/bin/fm-machine-remote.sh" probe - http://127.0.0.1:8329/v1 -)
+  assert_contains "$probe" 'entrypoint-link=unknown' "rootless probe judged a $link_state link"
+  out=$(FM_DATA_OVERRIDE="$ROOTLESS_DATA" machine check box "$RROOT") || true
+  case "$link_state" in
+    present)
+      assert_contains "$out" "item entrypoint-link=present: the account's ~/.local/bin/fm-remote-entrypoint.sh points at $RROOT" "explicit root did not recognize the valid link"
+      assert_equals "$RROOT/bin/fm-remote-entrypoint.sh" "$(readlink "$link")" "check changed the valid link"
+      ;;
+    absent)
+      assert_contains "$out" "item entrypoint-link=will-install: setup links ~/.local/bin/fm-remote-entrypoint.sh to $RROOT/bin/fm-remote-entrypoint.sh" "explicit root did not recommend the missing link"
+      assert_absent "$link" "check created the missing link"
+      ;;
+    conflict)
+      assert_contains "$out" "item entrypoint-link=human: the account's ~/.local/bin/fm-remote-entrypoint.sh on the machine is not a link to $RROOT/bin/fm-remote-entrypoint.sh; inspect and move it" "explicit root did not recognize a conflicting link"
+      assert_equals /other/firstmate/bin/fm-remote-entrypoint.sh "$(readlink "$link")" "check changed the conflicting link"
+      ;;
+  esac
+done
+rm -f "$link"
+ln -s "$RROOT/bin/fm-remote-entrypoint.sh" "$link"
+pass "rootless check requests the root without judging absent, valid or conflicting links"
+
 out=$(FM_ROOT_OVERRIDE="$ROUTEFM" machine check box "$RROOT") || true
 assert_contains "$out" "item firstmate-clone=present: $RROOT" "unusable local origin hid an existing remote clone"
 
