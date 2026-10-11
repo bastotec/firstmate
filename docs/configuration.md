@@ -415,10 +415,10 @@ Bootstrap validates the file with `jq`: valid files stay silent unless `FM_BOOTS
 ## Toolchain
 
 On session start firstmate lists each missing or too-old required tool with an exact install command or manual instructions, and installs supported tools only after you say go.
-This section is the single owner of the universal toolchain every home needs: node, git, gh with `gh auth login`, no-mistakes v1.46.0 or newer, compatible gh-axi, chrome-devtools-axi, compatible tasks-axi, and compatible quota-axi.
+[`bin/fm-home-tools-lib.sh`](../bin/fm-home-tools-lib.sh) owns the universal toolchain and install commands shared by bootstrap and remote machine setup; [`bin/fm-bootstrap.sh`](../bin/fm-bootstrap.sh) owns compatibility detection, including the no-mistakes version floor.
 no-mistakes runs the validation pipeline, gh-axi and chrome-devtools-axi cover GitHub and browser work, and tasks-axi and quota-axi back backlog mutations and quota-aware dispatch.
 [`bin/fm-bootstrap.sh`](../bin/fm-bootstrap.sh) owns the axi floor policy and the gh-axi and lavish-axi floors, while [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh) and [`bin/fm-quota-axi-lib.sh`](../bin/fm-quota-axi-lib.sh) hold their own floors.
-The stream backend adds `python3`, `curl`, `jq`, and `treehouse`, owned by `fm_backend_required_tools` in `bin/fm-backend.sh`, and any other resolved backend emits `BACKEND_INVALID` and blocks dispatch.
+`fm_backend_required_tools` in [`bin/fm-backend.sh`](../bin/fm-backend.sh) owns the stream backend's additional tool set, and any other resolved backend emits `BACKEND_INVALID` and blocks dispatch.
 `config/crew-dispatch.json` adds `jq`, and Relay adds `curl` and `jq` before arming its poll.
 A missing tool prints a `MISSING:` line with its install command; without compatible `tasks-axi`, a non-manual home with a backlog refuses lifecycle mutation, and without compatible `quota-axi` firstmate cannot resolve a profile array.
 Lavish is presentation-only: a missing `lavish-axi` reports `PRESENTATION_UNAVAILABLE` and work continues in text ([`bootstrap-diagnostics`](../.agents/skills/bootstrap-diagnostics/SKILL.md) owns the response).

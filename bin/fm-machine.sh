@@ -2,7 +2,8 @@
 # Connect a new machine for remote second mates in scripted, reviewable steps.
 #
 # Usage:
-#   fm-machine.sh check <alias>
+#   fm-machine.sh check <alias> [<remote-root>] [--address <host-or-ip> --user <user>]
+#   fm-machine.sh setup <alias> <remote-root>
 #   fm-machine.sh add <alias> <address> <user>
 #   fm-machine.sh trust <alias> <SHA256:fingerprint>
 #   fm-machine.sh prepare <alias> <remote-root>
@@ -10,9 +11,12 @@
 #
 # This is the deterministic entry point for an order that connects a machine
 # (for example one sent from a UI and confirmed by the captain). It never
-# handles private keys, never accepts a host key it was not given, and never
-# installs packages. docs/remote-secondmates.md owns what a ready host needs and
-# bin/fm-remote-doctor.sh owns the readiness verdict.
+# handles private keys or prints secrets, never accepts a host key it was not
+# given, and never invokes a system package manager, sudo or a login.
+# docs/remote-secondmates.md owns what a ready host needs,
+# bin/fm-remote-doctor.sh owns the readiness verdict, bin/fm-home-tools-lib.sh
+# owns the CLI toolchain a home needs, and bin/fm-machine-remote.sh is the half
+# that runs on the machine.
 #
 # check <alias> is read-only. An alias is configured when a Host line names it
 # literally or ssh -G resolves it to a different hostname. It reports that
@@ -20,9 +24,52 @@
 # and when it is not, the scanned key fingerprints (ssh-keyscan piped to
 # ssh-keygen -lf -, never written anywhere). It then tries
 #   ssh -o UpdateHostKeys=no -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=8 <alias> true
-# and, when that connects, runs read-only `command -v` probes over one more such
-# call for fm-remote-entrypoint.sh, deck and proxai on the account's
-# non-interactive PATH. Exit 0 only when every check is ok.
+# and, when that connects, probes the machine read-only (bin/fm-machine-remote.sh
+# probe) and, when a Firstmate clone is at <remote-root>, runs the doctor
+# read-only through fm-on.sh using prepare's scratch route (described below).
+# Home-specific checks therefore normally report skip; machine setup does not
+# establish an actual home's authenticated stream readiness.
+# <remote-root> defaults to the one data/machines.md records for the alias.
+# With --address and --user, an alias no ssh config block resolves yet is
+# probed as if `add` had written it, with
+# -o HostName= and -o User= on every connection; nothing is written, and
+# `check alias=missing` still names the `add` that closes it. It then prints the checklist: one
+# `item` line per thing a home on that machine needs, each present,
+# will-install (setup does it) or human (with the exact step). Items: the ssh
+# alias, host key and login; the Firstmate clone and entrypoint link; every
+# doctor check (the remote job worker, stream tools, stream token and hub for a
+# home, logout survival, GUI session); every tool in the stream backend's and
+# bin/fm-home-tools-lib.sh's lists; Deck; gh auth (exit status only); the model
+# gateway at FM_MACHINE_GATEWAY_URL (default Deck's http://127.0.0.1:8329/v1)
+# and its client key file (presence and mode only, never read); and whether
+# this home's config/stream-hub answers from the machine. Exit 0 only when every
+# check and item is ok or present; gaps exit 1.
+# An absent clone is will-install only when prepare's clone-route guard passes;
+# otherwise the clone item is human with the same refusal reason.
+# With no known remote root, the clone and entrypoint-link items request it;
+# the probe does not judge the entrypoint link.
+# Required-tool doctor gaps are human items; read-only fixable checks are
+# will-install, while fixable checks remaining after setup's --fix are human
+# items and fail setup.
+#
+# setup <alias> <remote-root> performs only the automatable items, in order,
+# printing one `step` line as each completes and stopping at the first failure:
+# ssh login, the Firstmate clone and entrypoint link (as prepare), each missing
+# tool whose bin/fm-home-tools-lib.sh install command is user-level (an
+# installer script, or npm install -g when npm's global prefix is writable),
+# Deck (FM_DECK_REPO_URL defaults to https://github.com/bastotec/deck.git;
+# bin/fm-machine-remote.sh owns the build and atomic install mechanics,
+# attempted when git and cargo are there), mode 600 on an owner-readable
+# gateway key with group or other permission bits set, then the doctor's --fix
+# through the same scratch route.
+# It then prints a `human` line for each remaining human item and the verdict.
+# A doctor that did not run, a transport failure, or a fixable gap left after
+# --fix fails the doctor step; human gaps alone do not. Rerunning skips
+# whatever is already present. URL userinfo is redacted from all output;
+# command diagnostics are merged into stdout through the same output filter.
+# SSH login, clone/link, probe and install calls must exit successfully before
+# their facts can advance setup; the doctor's reported gaps are handled above.
+# A failed probe makes all probe-dependent checklist items human steps.
 #
 # add <alias> <address> <user> appends a marked Host block (HostName, User,
 # StrictHostKeyChecking yes, ConnectTimeout 8, ForwardAgent no) to the ssh
@@ -45,8 +92,8 @@
 # recorded remote homes, so a machine with no second mate yet is reached through
 # a scratch single-route registry naming <remote-root> and an absent probe home
 # under the remote account's home directory; the doctor reports home-specific
-# checks as skip for an absent home and creates nothing there. Deck, proxai and
-# every other missing tool stay the doctor's human steps.
+# checks as skip for an absent home and creates nothing there. Tool installation
+# remains manual with prepare; use setup for supported automatic installs.
 #
 # register <alias> <remote-root> records the machine in this home's
 # data/machines.md as `- <alias> (root: <remote-root>; added YYYY-MM-DD)`. It is
@@ -60,14 +107,27 @@
 # Every connection disables UpdateHostKeys. Tests use scratch selections.
 #
 # Line protocol on stdout, one fact per line, stable for script consumers:
-#   action=check|add|trust|prepare|register
+# The checklist replaces the former check entrypoint/deck/proxai lines; a local
+# proxai executable is not required when the configured gateway answers.
+#   action=check|setup|add|trust|prepare|register
 #   alias=<alias>
+#   root=<remote-root>|-                         (check, setup)
 #   hostname=<name> user=<user> port=<port>     (check)
 #   hostkey-fingerprint=<SHA256:...> type=<TYPE> (check, when the key is unknown)
 #   reach=ok|auth|hostkey|timeout|refused|unresolved|error   (check)
-#   tool <name>=<path>|missing|unknown           (check, when reachable)
-#   check <name>=ok|missing|unknown: <evidence>  (check: alias, hostkey, reach, entrypoint, deck, proxai)
+#   tool <name>=<path>|missing                   (check, after a successful probe)
+#   check <name>=ok|missing|unknown: <evidence>  (check: alias, hostkey, reach)
 #   action: <exact step for the captain>         (after each gap)
+#   item <name>=present|will-install|human: <evidence, what setup does, or the exact step>
+#                                                (check; names: ssh-alias, ssh-hostkey, ssh-login,
+#                                                machine, firstmate-clone, entrypoint-link, doctor,
+#                                                doctor-<check>, doctor-required-<tool>, tool-<tool>, deck, gh-auth,
+#                                                model-gateway, gateway-key, stream-hub)
+#   step <name>=done|skipped|failed: <evidence or plain reason>   (setup; names: ssh,
+#                                                firstmate-clone, entrypoint-link, probe, tool-<tool>,
+#                                                deck, gateway-key-mode, doctor)
+#   human <item-name>: <exact step for a person> (setup, after the steps)
+#   setup=complete|incomplete: <n> human steps|failed   (setup; exit 0, 3, 1)
 #   added=<ssh-config-path>                      (add)
 #   trusted=<SHA256:...> file=<known-hosts-path> (trust)
 #   trust=already-known                          (trust, idempotent)
@@ -91,8 +151,19 @@ trap '[ -z "$TMP" ] || rm -rf -- "$TMP"' EXIT
 
 # shellcheck source=bin/fm-home-route-lib.sh
 . "$SCRIPT_DIR/fm-home-route-lib.sh"
+# shellcheck source=bin/fm-home-tools-lib.sh
+. "$SCRIPT_DIR/fm-home-tools-lib.sh"
+# shellcheck source=bin/fm-machine-output-lib.sh
+. "$SCRIPT_DIR/fm-machine-output-lib.sh"
+# shellcheck source=bin/fm-backend.sh
+. "$SCRIPT_DIR/fm-backend.sh"
 
-usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+CHECK_ADDRESS=
+CHECK_USER=
+GATEWAY_URL=${FM_MACHINE_GATEWAY_URL:-http://127.0.0.1:8329/v1}
+DECK_REPO_URL=${FM_DECK_REPO_URL:-https://github.com/bastotec/deck.git}
+
+usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 refuse() { printf 'refuse: %s\n' "$1"; exit 1; }
 
 SSH_OPTS=(-o UpdateHostKeys=no)
@@ -170,18 +241,45 @@ classify_reach() { # <stderr text> -> class
   esac
 }
 
-cmd_check() { # <alias>
-  local alias=$1 gaps=0 known scanned err rc class first probe
+cmd_check() { # <alias> [<remote-root>] [--address <host> --user <user>]
+  local alias=$1 root='' address='' user='' gaps=0 known scanned err rc class first configured
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --address) [ "$#" -ge 2 ] || usage; address=$2; shift 2 ;;
+      --user) [ "$#" -ge 2 ] || usage; user=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$root" ] || usage; root=$1; shift ;;
+    esac
+  done
+  if [ -n "$address$user" ]; then
+    [ -n "$address" ] && [ -n "$user" ] || refuse "--address and --user go together"
+    case "$address" in -*|*[!A-Za-z0-9.:_-]*) refuse "address must be a host name or IP address: $address" ;; esac
+    case "$user" in -*|*[!A-Za-z0-9._-]*) refuse "user must be a plain account name: $user" ;; esac
+  fi
   valid_alias "$alias" || refuse "alias must be a plain ssh config name of A-Z, a-z, 0-9, ., _ and -, not starting with -: $alias"
-  printf 'action=check\nalias=%s\n' "$alias"
+  if [ -z "$root" ] && [ -f "$DATA/machines.md" ]; then
+    root=$(awk -v a="$alias" '$1 == "-" && $2 == a { r = $0; sub(/^.*\(root: /, "", r); sub(/;.*$/, "", r); print r; exit }' "$DATA/machines.md")
+  fi
+  [ -n "$root" ] || root=-
+  [ "$root" = - ] || valid_root "$root" || refuse "remote root must be an absolute path of A-Z, a-z, 0-9, ., _, - and /: $root"
+  printf 'action=check\nalias=%s\nroot=%s\n' "$alias" "$root"
   resolve_alias "$alias" || refuse "ssh -G could not evaluate the alias $alias"
+  configured=$ALIAS_CONFIGURED
+  if [ "$configured" -eq 0 ] && [ -n "$address" ]; then
+    SSH_OPTS+=(-o "HostName=$address" -o "User=$user")
+    resolve_alias "$alias" || refuse "ssh -G could not evaluate $alias at $address"
+  fi
+  ALIAS_CONFIGURED=$configured
+  CHECK_ADDRESS=$address
+  CHECK_USER=$user
   printf 'hostname=%s user=%s port=%s\n' "$SSH_HOSTNAME" "$SSH_USER" "$SSH_PORT"
   if [ "$ALIAS_CONFIGURED" -eq 1 ]; then
     printf 'check alias=ok: %s resolves to %s as %s on port %s\n' "$alias" "$SSH_HOSTNAME" "$SSH_USER" "$SSH_PORT"
   else
     gaps=1
     printf 'check alias=missing: no ssh config block names or resolves %s\n' "$alias"
-    printf 'action: bin/fm-machine.sh add %s <address> <user>\n' "$alias"
+    printf 'action: bin/fm-machine.sh add %s %s %s\n' "$alias" "${address:-<address>}" "${user:-<user>}"
   fi
 
   known=$(known_fingerprints)
@@ -233,42 +331,21 @@ cmd_check() { # <alias>
       ;;
   esac
 
+  DOCTOR_OUT=
+  DOCTOR_ATTEMPTED=0
+  DOCTOR_FIXED=0
+  PROBE_OUT=
+  PROBE_RC=0
   if [ "$class" = ok ]; then
-    set +e
-    probe=$(ssh "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "${PROBE_OPTS[@]}" "$alias" sh -s 2>/dev/null <<'SH'
-for t in fm-remote-entrypoint.sh deck proxai; do
-  p=$(command -v "$t" 2>/dev/null) || p=
-  printf 'tool %s=%s\n' "$t" "${p:-missing}"
-done
-SH
-)
-    rc=$?
-    set -e
-    for tool in fm-remote-entrypoint.sh deck proxai; do
-      path=$(printf '%s\n' "$probe" | awk -v t="tool $tool=" 'index($0, t) == 1 { print substr($0, length(t) + 1); exit }')
-      name=${tool%.sh}
-      name=${name#fm-remote-}
-      if [ "$rc" -ne 0 ] || [ -z "$path" ]; then
-        gaps=1
-        printf 'tool %s=unknown\n' "$tool"
-        printf 'check %s=unknown: the PATH probe over ssh failed (exit %s)\n' "$name" "$rc"
-        printf 'action: rerun bin/fm-machine.sh check %s\n' "$alias"
-        continue
-      fi
-      printf 'tool %s=%s\n' "$tool" "$path"
-      if [ "$path" != missing ]; then
-        printf 'check %s=ok: %s\n' "$name" "$path"
-        continue
-      fi
-      gaps=1
-      printf 'check %s=missing: %s is not on the non-interactive ssh PATH\n' "$name" "$tool"
-      case "$tool" in
-        fm-remote-entrypoint.sh) printf 'action: bin/fm-machine.sh prepare %s <remote-root>\n' "$alias" ;;
-        deck) printf 'action: install Deck on the machine for %s and expose it on the non-interactive PATH (docs/remote-secondmates.md "Non-interactive tool contract")\n' "$SSH_USER" ;;
-        proxai) printf 'action: install proxai on the machine for %s and set its client key there (docs/remote-secondmates.md "Readiness, repair, and the human steps")\n' "$SSH_USER" ;;
-      esac
-    done
+    probe_machine "$alias" "$root"
+    if [ "$root" != - ] && [ "$(fact clone)" = present ] && [ -n "$ACCOUNT_HOME" ]; then
+      run_doctor "$alias" "$root" "$ACCOUNT_HOME"
+    fi
+    printf '%s\n' "$PROBE_OUT" | grep '^tool ' || true
   fi
+  build_items "$alias" "$root" "$class" "$known"
+  printf '%s' "$ITEMS"
+  [ "$(items_not_present)" -eq 0 ] || gaps=1
   return "$gaps"
 }
 
@@ -347,19 +424,25 @@ cmd_trust() { # <alias> <SHA256:fingerprint>
   printf 'trusted=%s file=%s\n' "$wanted" "$KNOWN_HOSTS"
 }
 
-cmd_prepare() { # <alias> <remote-root>
-  local alias=$1 root=$2 url out rc account_home line scratch status=0 doctor_out
-  valid_alias "$alias" || refuse "alias must be a plain ssh config name of A-Z, a-z, 0-9, ., _ and -, not starting with -: $alias"
-  valid_root "$root" || refuse "remote root must be an absolute path of A-Z, a-z, 0-9, ., _, - and /: $root"
-  printf 'action=prepare\nalias=%s\n' "$alias"
-  url=$(fm_home_route_url "$FM_ROOT")
-  [ -n "$url" ] || refuse "this Firstmate checkout has no origin to clone from"
-  fm_home_route_is_remote "$url" || refuse "this Firstmate checkout's origin is $url, a local path the machine cannot clone from; point origin at the fork's network URL first"
-  fm_project_url_plain "$url" || refuse "this Firstmate checkout's origin contains characters this command will not pass to a remote shell: $url"
-  resolve_alias "$alias" || refuse "ssh -G could not evaluate the alias $alias"
+# Resolve this checkout's clone URL into CLONE_URL, or set CLONE_REASON and return 1.
+resolve_clone_url() {
+  CLONE_URL=$(fm_home_route_url "$FM_ROOT")
+  CLONE_REASON=
+  if [ -z "$CLONE_URL" ]; then
+    CLONE_REASON="this Firstmate checkout has no origin to clone from"
+  elif ! fm_home_route_is_remote "$CLONE_URL"; then
+    CLONE_REASON="this Firstmate checkout's origin is $CLONE_URL, a local path the machine cannot clone from; point origin at the fork's network URL first"
+  elif ! fm_project_url_plain "$CLONE_URL"; then
+    CLONE_REASON="this Firstmate checkout's origin contains characters this command will not pass to a remote shell: $CLONE_URL"
+  fi
+  [ -z "$CLONE_REASON" ]
+}
 
+# Clone Firstmate at <root> when absent and link the entrypoint. Sets
+# CLONE_OUT (the remote's fact lines) and CLONE_RC.
+remote_clone_and_link() { # <alias> <root> <url>
   set +e
-  out=$(ssh "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "${PROBE_OPTS[@]}" "$alias" sh -s -- "$root" "$url" <<'SH'
+  CLONE_OUT=$(ssh "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "${PROBE_OPTS[@]}" "$1" sh -s -- "$2" "$3" <<'SH'
 root=$1
 url=$2
 printf 'account-home=%s\n' "$HOME"
@@ -370,7 +453,7 @@ elif [ -e "$root" ] && [ -n "$(ls -A "$root" 2>/dev/null)" ]; then
   exit 3
 else
   command -v git >/dev/null 2>&1 || { printf 'refuse: git is not on the non-interactive PATH of the machine\n'; exit 3; }
-  git clone --quiet -- "$url" "$root" >&2 || { printf 'refuse: git clone of %s into %s failed\n' "$url" "$root"; exit 3; }
+  git clone --quiet -- "$url" "$root" < /dev/null >&2 || { printf 'refuse: git clone of %s into %s failed\n' "$url" "$root"; exit 3; }
   printf 'clone=created\n'
 fi
 link="$HOME/.local/bin/fm-remote-entrypoint.sh"
@@ -384,25 +467,19 @@ else
 fi
 SH
 )
-  rc=$?
+  CLONE_RC=$?
   set -e
-  account_home=
-  while IFS= read -r line; do
-    case "$line" in
-      account-home=*) account_home=${line#account-home=} ;;
-      clone=*) printf '%s root=%s\n' "$line" "$root" ;;
-      *) printf '%s\n' "$line" ;;
-    esac
-  done <<EOF
-$out
-EOF
-  [ "$rc" -ne 255 ] || refuse "ssh to $alias failed; run bin/fm-machine.sh check $alias"
-  [ "$rc" -eq 0 ] || exit 1
-  case "$out" in *'entrypoint-link=conflict'*) refuse "the ~/.local/bin/fm-remote-entrypoint.sh link on $alias is not Firstmate's link to $root; inspect it on the machine" ;; esac
-  case "$account_home" in /?*) ;; *) refuse "could not read the remote account's home directory" ;; esac
+}
 
-  # fm-on.sh routes only to recorded homes, so reach this machine through a
-  # scratch registry with one route and an absent probe home.
+# Run the remote doctor through fm-on.sh. fm-on.sh routes only to recorded
+# homes, so reach this machine through a scratch registry with one route and
+# an absent probe home. Sets DOCTOR_OUT and DOCTOR_RC.
+run_doctor() { # <alias> <root> <account-home> [--fix]
+  local alias=$1 root=$2 account_home=$3 scratch
+  shift 3
+  DOCTOR_ATTEMPTED=1
+  DOCTOR_FIXED=0
+  [ "${1:-}" != --fix ] || DOCTOR_FIXED=1
   scratch=$(mktemp -d "${TMPDIR:-/tmp}/fm-machine.XXXXXX")
   TMP=$scratch
   {
@@ -414,13 +491,436 @@ EOF
   printf -- '- fm-machine-probe - machine readiness probe (host: %s; root: %s; home: %s/.firstmate-machine-probe; scope: readiness probe; projects: ; added %s)\n' \
     "$alias" "$root" "$account_home" "$(date +%F)" > "$scratch/secondmates.md"
   set +e
-  doctor_out=$(FM_DATA_OVERRIDE="$scratch" FM_SSH_BIN="$scratch/ssh" "$SCRIPT_DIR/fm-on.sh" fm-machine-probe fm-remote-doctor.sh --backend stream --fix < /dev/null 2>&1)
-  status=$?
+  DOCTOR_OUT=$(FM_DATA_OVERRIDE="$scratch" FM_SSH_BIN="$scratch/ssh" "$SCRIPT_DIR/fm-on.sh" fm-machine-probe fm-remote-doctor.sh --backend stream "$@" < /dev/null 2>&1)
+  DOCTOR_RC=$?
   set -e
   rm -rf -- "$scratch"
   TMP=
-  printf '%s\n' "$doctor_out" | sed 's/^/doctor: /'
-  return "$status"
+}
+
+cmd_prepare() { # <alias> <remote-root>
+  local alias=$1 root=$2 account_home line
+  valid_alias "$alias" || refuse "alias must be a plain ssh config name of A-Z, a-z, 0-9, ., _ and -, not starting with -: $alias"
+  valid_root "$root" || refuse "remote root must be an absolute path of A-Z, a-z, 0-9, ., _, - and /: $root"
+  printf 'action=prepare\nalias=%s\n' "$alias"
+  resolve_clone_url || refuse "$CLONE_REASON"
+  resolve_alias "$alias" || refuse "ssh -G could not evaluate the alias $alias"
+  remote_clone_and_link "$alias" "$root" "$CLONE_URL"
+  account_home=
+  while IFS= read -r line; do
+    case "$line" in
+      account-home=*) account_home=${line#account-home=} ;;
+      clone=*) printf '%s root=%s\n' "$line" "$root" ;;
+      *) printf '%s\n' "$line" ;;
+    esac
+  done <<EOF
+$CLONE_OUT
+EOF
+  [ "$CLONE_RC" -ne 255 ] || refuse "ssh to $alias failed; run bin/fm-machine.sh check $alias"
+  [ "$CLONE_RC" -eq 0 ] || exit 1
+  case "$CLONE_OUT" in *'entrypoint-link=conflict'*) refuse "the ~/.local/bin/fm-remote-entrypoint.sh link on $alias is not Firstmate's link to $root; inspect it on the machine" ;; esac
+  case "$account_home" in /?*) ;; *) refuse "could not read the remote account's home directory" ;; esac
+  run_doctor "$alias" "$root" "$account_home" --fix
+  printf '%s\n' "$DOCTOR_OUT" | sed 's/^/doctor: /'
+  return "$DOCTOR_RC"
+}
+
+sq() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+
+# The tools a home on the machine needs, in bin/fm-bootstrap.sh's order: the
+# stream backend's tools, then the common toolchain.
+machine_tools() {
+  local seen=' ' tool
+  for tool in $(fm_backend_required_tools stream) $(fm_home_common_tools); do
+    case "$seen" in *" $tool "*) continue ;; esac
+    seen="$seen$tool "
+    printf '%s\n' "$tool"
+  done
+}
+
+hub_url() {
+  local hub=
+  [ ! -f "$FM_HOME/config/stream-hub" ] || hub=$(head -n 1 "$FM_HOME/config/stream-hub" | tr -d '[:space:]')
+  if [ -n "$hub" ] && fm_project_url_plain "$hub"; then printf '%s\n' "$hub"; else printf -- '-\n'; fi
+}
+
+# Run bin/fm-machine-remote.sh on the machine as `bash -s`, with the tools
+# and output libraries in front of it. Sets REMOTE_OUT and REMOTE_RC (ssh's status).
+remote_machine() { # <alias> <args...>
+  local alias=$1 cmd='bash -s --' arg
+  shift
+  for arg in "$@"; do cmd="$cmd $(sq "$arg")"; done
+  set +e
+  REMOTE_OUT=$(
+    # shellcheck disable=SC2029 # quoted for the remote shell on purpose.
+    cat "$SCRIPT_DIR/fm-home-tools-lib.sh" "$SCRIPT_DIR/fm-machine-output-lib.sh" "$SCRIPT_DIR/fm-machine-remote.sh" \
+      | ssh "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "${PROBE_OPTS[@]}" "$alias" "$cmd" 2>/dev/null
+    exit "${PIPESTATUS[1]}"
+  )
+  REMOTE_RC=$?
+  set -e
+}
+
+# Probe the machine into PROBE_OUT, PROBE_RC and ACCOUNT_HOME.
+probe_machine() { # <alias> <root|->
+  local -a tools=()
+  local tool
+  while IFS= read -r tool; do tools+=("$tool"); done < <(machine_tools)
+  remote_machine "$1" probe "$2" "$GATEWAY_URL" "$(hub_url)" "${tools[@]}"
+  PROBE_RC=$REMOTE_RC
+  PROBE_OUT=
+  ACCOUNT_HOME=
+  if [ "$PROBE_RC" -eq 0 ]; then
+    PROBE_OUT=$REMOTE_OUT
+    ACCOUNT_HOME=$(fact account-home)
+  fi
+}
+
+fact() { # <key> -> value of the first "<key>=" line in PROBE_OUT
+  printf '%s\n' "$PROBE_OUT" | awk -v k="$1=" 'index($0, k) == 1 { print substr($0, length(k) + 1); exit }'
+}
+
+interpret_doctor() {
+  local line name state text action command checks=0 gaps=0 fixable=
+  DOCTOR_ITEMS=
+  DOCTOR_FAILURE=
+  while IFS= read -r line; do
+    case "$line" in
+      required\ *=*)
+        name=${line#required }
+        state=${name#*=}
+        name=${name%%=*}
+        case "$state" in MISSING*|VERSION_UNREADABLE*) ;; *) continue ;; esac
+        command=$(fm_home_tool_install_cmd "$name" 2>/dev/null || printf 'install %s on the remote runtime PATH' "$name")
+        [ "$name" != harness ] || command='install Deck on the remote runtime PATH'
+        DOCTOR_ITEMS="${DOCTOR_ITEMS}item doctor-required-$name=human: $command; doctor reports $state"$'\n'
+        gaps=$((gaps + 1))
+        ;;
+      check\ *=*)
+        name=${line#check }
+        name=${name%%=*}
+        state=${line#check "$name"=}
+        text=${state#*: }
+        state=${state%%:*}
+        action=$(printf '%s\n' "$DOCTOR_OUT" | awk -v p="action: $name: " 'index($0, p) == 1 { print substr($0, length(p) + 1); exit }')
+        checks=$((checks + 1))
+        case "$state" in
+          ok) state=present ;;
+          skip) state=present; text="not needed yet: $text" ;;
+          fixable)
+            fixable="${fixable:+$fixable; }$name: $text"
+            state=will-install
+            [ "${DOCTOR_FIXED:-0}" -eq 0 ] || state=human
+            text=${action:-$text}
+            gaps=$((gaps + 1))
+            ;;
+          *) state=human; text=${action:-$text}; gaps=$((gaps + 1)) ;;
+        esac
+        DOCTOR_ITEMS="${DOCTOR_ITEMS}item doctor-$name=$state: $text"$'\n'
+        ;;
+    esac
+  done <<EOF
+$DOCTOR_OUT
+EOF
+  if [ "$checks" -eq 0 ]; then
+    DOCTOR_FAILURE="doctor did not run: $(printf '%s\n' "$DOCTOR_OUT" | grep -v '^[[:space:]]*$' | tail -n 1)"
+  elif [ "${DOCTOR_RC:-0}" -gt 1 ]; then
+    DOCTOR_FAILURE="doctor transport or execution failed (exit $DOCTOR_RC)"
+  elif [ "${DOCTOR_FIXED:-0}" -eq 1 ] && [ -n "$fixable" ]; then
+    DOCTOR_FAILURE="fixable gaps remain after --fix: $fixable"
+  elif [ "${DOCTOR_RC:-0}" -ne 0 ] && [ "$gaps" -eq 0 ]; then
+    DOCTOR_FAILURE="doctor failed without reporting a gap (exit $DOCTOR_RC)"
+  fi
+}
+
+# Build the checklist into ITEMS, one "item <name>=present|will-install|human: <text>"
+# line each, from the ssh facts, PROBE_OUT and DOCTOR_OUT.
+build_items() { # <alias> <root|-> <reach-class> <known-fingerprints>
+  local alias=$1 root=$2 class=$3 known=$4 tool path cmd npm_global key_state
+  ITEMS=
+  item() { ITEMS="${ITEMS}item $1=$2: $3"$'\n'; }
+  if [ "$ALIAS_CONFIGURED" -eq 1 ]; then
+    item ssh-alias present "$alias resolves to $SSH_HOSTNAME as $SSH_USER"
+  else
+    item ssh-alias human "bin/fm-machine.sh add $alias ${CHECK_ADDRESS:-<address>} ${CHECK_USER:-<user>}"
+  fi
+  if [ -n "$known" ]; then
+    item ssh-hostkey present "$KNOWN_NAME is in $KNOWN_HOSTS"
+  else
+    item ssh-hostkey human "verify the fingerprint bin/fm-machine.sh check $alias prints against the machine, then bin/fm-machine.sh trust $alias <SHA256:fingerprint>"
+  fi
+  case "$class" in
+    ok) item ssh-login present "key login as $SSH_USER works without a prompt" ;;
+    auth) item ssh-login human "ssh-copy-id $alias (or add the 1Password SSH agent public key to ~$SSH_USER/.ssh/authorized_keys on the machine)" ;;
+    hostkey) item ssh-login human "trust the host key first (see ssh-hostkey)" ;;
+    *) item ssh-login human "make $SSH_HOSTNAME reachable on port $SSH_PORT with its ssh server running ($class)" ;;
+  esac
+  if [ "$class" != ok ]; then
+    item machine human "everything else is checked once ssh login works"
+    return 0
+  fi
+
+  if [ "${PROBE_RC:-0}" -ne 0 ]; then
+    for tool in firstmate-clone entrypoint-link doctor; do
+      item "$tool" human "the probe over ssh failed (exit $PROBE_RC); rerun check"
+    done
+    while IFS= read -r tool; do
+      item "tool-$tool" human "the probe over ssh failed (exit $PROBE_RC); rerun check"
+    done < <(machine_tools)
+    for tool in deck gh-auth model-gateway gateway-key stream-hub; do
+      item "$tool" human "the probe over ssh failed (exit $PROBE_RC); rerun check"
+    done
+    return 0
+  fi
+
+  if [ "$root" = - ]; then
+    item firstmate-clone human "name the remote code root: bin/fm-machine.sh check $alias <remote-root>"
+  elif [ "$(fact clone)" = present ]; then
+    item firstmate-clone present "$root"
+  elif resolve_clone_url; then
+    item firstmate-clone will-install "setup clones $CLONE_URL at $root"
+  else
+    item firstmate-clone human "$CLONE_REASON"
+  fi
+  if [ "$root" = - ]; then
+    item entrypoint-link human "name the remote code root first: bin/fm-machine.sh check $alias <remote-root>"
+  else
+    case "$(fact entrypoint-link)" in
+      present) item entrypoint-link present "the account's ~/.local/bin/fm-remote-entrypoint.sh points at $root" ;;
+      conflict) item entrypoint-link human "the account's ~/.local/bin/fm-remote-entrypoint.sh on the machine is not a link to $root/bin/fm-remote-entrypoint.sh; inspect and move it" ;;
+      *) item entrypoint-link will-install "setup links ~/.local/bin/fm-remote-entrypoint.sh to $root/bin/fm-remote-entrypoint.sh" ;;
+    esac
+  fi
+
+  if [ "${DOCTOR_ATTEMPTED:-0}" -eq 1 ]; then
+    interpret_doctor
+    ITEMS="$ITEMS$DOCTOR_ITEMS"
+    [ -z "$DOCTOR_FAILURE" ] || item doctor human "$DOCTOR_FAILURE; run bin/fm-machine.sh setup $alias $root"
+  else
+    item doctor will-install "setup runs fm-remote-doctor.sh --fix (remote job worker, entrypoint, tool wrappers) once the clone exists"
+  fi
+
+  npm_global=$(fact npm-global)
+  while IFS= read -r tool; do
+    path=$(fact "tool $tool")
+    cmd=$(fm_home_tool_install_cmd "$tool" 2>/dev/null || printf 'install %s' "$tool")
+    if [ -n "$path" ] && [ "$path" != missing ]; then
+      item "tool-$tool" present "$path"
+    elif ! fm_home_tool_user_installable "$tool"; then
+      item "tool-$tool" human "$cmd"
+    else
+      case "$cmd" in
+        'npm install -g '*)
+          if [ "$(fact 'tool npm')" = missing ]; then
+            item "tool-$tool" human "install node and npm first, then $cmd"
+          elif [ "$npm_global" != writable ]; then
+            item "tool-$tool" human "npm's global prefix is not writable by $SSH_USER; npm config set prefix ~/.local (or use a node version manager), then $cmd"
+          else
+            item "tool-$tool" will-install "$cmd"
+          fi
+          ;;
+        *) item "tool-$tool" will-install "$cmd" ;;
+      esac
+    fi
+  done < <(machine_tools)
+
+  path=$(fact 'tool deck')
+  if [ -n "$path" ] && [ "$path" != missing ]; then
+    item deck present "$path"
+  elif [ "$(fact 'tool cargo')" != missing ] && [ "$(fact 'tool git')" != missing ]; then
+    item deck will-install "setup builds $DECK_REPO_URL with cargo build --release --locked into ~/.local/bin/deck"
+  else
+    item deck human "install Rust with rustup (https://rustup.rs) on the machine, then rerun setup to build Deck"
+  fi
+
+  case "$(fact gh-auth)" in
+    ok) item gh-auth present "gh auth status succeeds" ;;
+    missing) item gh-auth human "run gh auth login, then gh auth setup-git, on the machine" ;;
+    *) item gh-auth human "install gh on the machine, then gh auth login and gh auth setup-git" ;;
+  esac
+
+  if [ "$(fact gateway)" = reachable ]; then
+    item model-gateway present "$GATEWAY_URL answers"
+  else
+    item model-gateway human "make $GATEWAY_URL answer on the machine: run proxai there, or forward its port from the gateway host with a user service running ssh -N -L <port>:127.0.0.1:<port> <gateway-host>"
+  fi
+  key_state=$(fact gateway-key)
+  case "$key_state" in
+    present\ *) item gateway-key present "${key_state#present }" ;;
+    unsafe\ *) item gateway-key will-install "setup restricts ${key_state#unsafe } to mode 600" ;;
+    unreadable\ *) item gateway-key human "grant owner read access to ${key_state#unreadable } on the machine, then rerun setup" ;;
+    *) item gateway-key human "put the gateway client key at ${key_state#missing path=} with mode 600, copied over a private channel; never paste it into chat" ;;
+  esac
+
+  case "$(fact stream-hub)" in
+    reachable) item stream-hub present "$(hub_url) answers from the machine" ;;
+    unreachable) item stream-hub human "make $(hub_url) reachable from the machine (docs/stream-backend.md owns encrypted cross-machine access), and give each home there its own config/stream-hub and config/stream-token" ;;
+    *) item stream-hub human "this home has no config/stream-hub to check against; set it, then rerun" ;;
+  esac
+}
+
+items_not_present() { printf '%s' "$ITEMS" | grep -c -v -E '^item [^=]+=present:' || true; }
+
+cmd_setup() { # <alias> <remote-root>
+  local alias=$1 root=$2 err rc class known line tool path result npm_global
+  valid_alias "$alias" || refuse "alias must be a plain ssh config name of A-Z, a-z, 0-9, ., _ and -, not starting with -: $alias"
+  valid_root "$root" || refuse "remote root must be an absolute path of A-Z, a-z, 0-9, ., _, - and /: $root"
+  printf 'action=setup\nalias=%s\nroot=%s\n' "$alias" "$root"
+  resolve_clone_url || refuse "$CLONE_REASON"
+  resolve_alias "$alias" || refuse "ssh -G could not evaluate the alias $alias"
+  known=$(known_fingerprints)
+  DOCTOR_OUT=
+  DOCTOR_ATTEMPTED=0
+  DOCTOR_FIXED=0
+  PROBE_OUT=
+  PROBE_RC=0
+
+  set +e
+  err=$(ssh "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "${PROBE_OPTS[@]}" "$alias" true < /dev/null 2>&1 >/dev/null)
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ]; then class=ok; else class=$(classify_reach "$err"); fi
+  if [ "$class" != ok ]; then
+    printf 'step ssh=failed: %s\n' "$(printf '%s' "$err" | grep -v '^[[:space:]]*$' | tail -n 1 | tr -d '\r')"
+    setup_finish "$alias" "$root" "$class" "$known" 1
+  fi
+  printf 'step ssh=done: key login as %s works\n' "$SSH_USER"
+
+  remote_clone_and_link "$alias" "$root" "$CLONE_URL"
+  if [ "$CLONE_RC" -ne 0 ]; then
+    line=$(printf '%s\n' "$CLONE_OUT" | awk '/^refuse: / { sub(/^refuse: /, ""); print; exit }')
+    printf 'step firstmate-clone=failed: %s (exit %s)\n' "${line:-clone/link over ssh failed}" "$CLONE_RC"
+    setup_finish "$alias" "$root" "$class" "$known" 1
+  fi
+  case "$CLONE_OUT" in
+    *clone=present*) printf 'step firstmate-clone=skipped: already at %s\n' "$root" ;;
+    *clone=created*) printf 'step firstmate-clone=done: cloned %s at %s\n' "$CLONE_URL" "$root" ;;
+    *)
+      printf 'step firstmate-clone=failed: %s\n' "$(printf '%s\n' "$CLONE_OUT" | awk '/^refuse: / { sub(/^refuse: /, ""); print; exit }')"
+      setup_finish "$alias" "$root" "$class" "$known" 1
+      ;;
+  esac
+  case "$CLONE_OUT" in
+    *entrypoint-link=present*) printf 'step entrypoint-link=skipped: already linked\n' ;;
+    *entrypoint-link=created*) printf 'step entrypoint-link=done: linked ~/.local/bin/fm-remote-entrypoint.sh\n' ;;
+    *)
+      printf 'step entrypoint-link=failed: ~/.local/bin/fm-remote-entrypoint.sh is something else; inspect it on the machine\n'
+      setup_finish "$alias" "$root" "$class" "$known" 1
+      ;;
+  esac
+
+  probe_machine "$alias" "$root"
+  if [ "$PROBE_RC" -ne 0 ]; then
+    printf 'step probe=failed: the probe over ssh failed (exit %s)\n' "$PROBE_RC"
+    setup_finish "$alias" "$root" "$class" "$known" 1
+  fi
+  case "$ACCOUNT_HOME" in /?*) ;; *) printf 'step probe=failed: could not read the machine'"'"'s facts over ssh\n'; setup_finish "$alias" "$root" "$class" "$known" 1 ;; esac
+  npm_global=$(fact npm-global)
+  while IFS= read -r tool; do
+    path=$(fact "tool $tool")
+    if [ -n "$path" ] && [ "$path" != missing ]; then
+      printf 'step tool-%s=skipped: present at %s\n' "$tool" "$path"
+      continue
+    fi
+    fm_home_tool_user_installable "$tool" || continue
+    case "$(fm_home_tool_install_cmd "$tool")" in
+      'npm install -g '*) [ "$(fact 'tool npm')" != missing ] && [ "$npm_global" = writable ] || continue ;;
+    esac
+    remote_machine "$alias" install-tool "$tool" "$root"
+    result=$(printf '%s\n' "$REMOTE_OUT" | awk '/^result=/ { sub(/^result=/, ""); print; exit }')
+    if [ "$REMOTE_RC" -ne 0 ]; then
+      case "$result" in
+        failed:*) line=${result#failed: } ;;
+        *) line='the install over ssh failed' ;;
+      esac
+      printf 'step tool-%s=failed: %s (exit %s)\n' "$tool" "$line" "$REMOTE_RC"
+      setup_finish "$alias" "$root" "$class" "$known" 1
+    fi
+    case "$result" in
+      done*) printf 'step tool-%s=%s\n' "$tool" "$result" ;;
+      *) printf 'step tool-%s=failed: %s\n' "$tool" "${result#failed: }"
+         setup_finish "$alias" "$root" "$class" "$known" 1 ;;
+    esac
+  done < <(machine_tools)
+
+  path=$(fact 'tool deck')
+  if [ -n "$path" ] && [ "$path" != missing ]; then
+    printf 'step deck=skipped: present at %s\n' "$path"
+  elif [ "$(fact 'tool cargo')" != missing ] && [ "$(fact 'tool git')" != missing ]; then
+    remote_machine "$alias" install-deck "$root" "$DECK_REPO_URL"
+    result=$(printf '%s\n' "$REMOTE_OUT" | awk '/^result=/ { sub(/^result=/, ""); print; exit }')
+    if [ "$REMOTE_RC" -ne 0 ]; then
+      case "$result" in
+        failed:*) line=${result#failed: } ;;
+        *) line='the install over ssh failed' ;;
+      esac
+      printf 'step deck=failed: %s (exit %s)\n' "$line" "$REMOTE_RC"
+      setup_finish "$alias" "$root" "$class" "$known" 1
+    fi
+    case "$result" in
+      done*) printf 'step deck=%s\n' "$result" ;;
+      *) printf 'step deck=failed: %s\n' "${result#failed: }"
+         setup_finish "$alias" "$root" "$class" "$known" 1 ;;
+    esac
+  fi
+
+  case "$(fact gateway-key)" in
+    unsafe\ *)
+      line=$(fact gateway-key)
+      line=${line#unsafe path=}
+      line=${line% mode=*}
+      # shellcheck disable=SC2029 # quoted for the remote shell on purpose.
+      if ssh "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "${PROBE_OPTS[@]}" "$alias" "chmod 600 $(sq "$line")" < /dev/null >/dev/null 2>&1; then
+        printf 'step gateway-key-mode=done: %s is now mode 600\n' "$line"
+      else
+        printf 'step gateway-key-mode=failed: could not restrict %s to mode 600\n' "$line"
+        setup_finish "$alias" "$root" "$class" "$known" 1
+      fi
+      ;;
+  esac
+
+  run_doctor "$alias" "$root" "$ACCOUNT_HOME" --fix
+  interpret_doctor
+  if [ -n "$DOCTOR_FAILURE" ]; then
+    printf 'step doctor=failed: %s\n' "$DOCTOR_FAILURE"
+    setup_finish "$alias" "$root" "$class" "$known" 1
+  fi
+  printf 'step doctor=done: fm-remote-doctor.sh --fix ran (exit %s)\n' "$DOCTOR_RC"
+  probe_machine "$alias" "$root"
+  if [ "$PROBE_RC" -ne 0 ]; then
+    printf 'step probe=failed: the probe over ssh failed (exit %s)\n' "$PROBE_RC"
+    setup_finish "$alias" "$root" "$class" "$known" 1
+  fi
+  setup_finish "$alias" "$root" "$class" "$known" 0
+}
+
+# Print the remaining human steps and the verdict, then exit.
+setup_finish() { # <alias> <root> <reach-class> <known> <failed 0|1>
+  local line name text count=0
+  build_items "$1" "$2" "$3" "$4"
+  while IFS= read -r line; do
+    case "$line" in
+      item\ *=human:*)
+        name=${line#item }
+        text=${name#*=human: }
+        name=${name%%=*}
+        printf 'human %s: %s\n' "$name" "$text"
+        count=$((count + 1))
+        ;;
+    esac
+  done <<EOF
+$ITEMS
+EOF
+  if [ "$5" -eq 1 ]; then
+    printf 'setup=failed\n'
+    exit 1
+  fi
+  if [ "$count" -gt 0 ]; then
+    printf 'setup=incomplete: %s human steps\n' "$count"
+    exit 3
+  fi
+  printf 'setup=complete\n'
+  exit 0
 }
 
 # 0 when a URL is safe to embed single-quoted in a remote command.
@@ -450,14 +950,21 @@ cmd_register() { # <alias> <remote-root>
   printf 'registered=%s root=%s\n' "$alias" "$root"
 }
 
-[ "$#" -ge 1 ] || usage
-SUB=$1
-shift
-case "$SUB" in
-  check) [ "$#" -eq 1 ] || usage; cmd_check "$1" ;;
-  add) [ "$#" -eq 3 ] || usage; cmd_add "$1" "$2" "$3" ;;
-  trust) [ "$#" -eq 2 ] || usage; cmd_trust "$1" "$2" ;;
-  prepare) [ "$#" -eq 2 ] || usage; cmd_prepare "$1" "$2" ;;
-  register) [ "$#" -eq 2 ] || usage; cmd_register "$1" "$2" ;;
-  *) usage ;;
-esac
+main() {
+  trap '[ -z "$TMP" ] || rm -rf -- "$TMP"' EXIT
+  [ "$#" -ge 1 ] || usage
+  local sub=$1
+  shift
+  case "$sub" in
+    check) [ "$#" -ge 1 ] || usage; cmd_check "$@" ;;
+    setup) [ "$#" -eq 2 ] || usage; cmd_setup "$1" "$2" ;;
+    add) [ "$#" -eq 3 ] || usage; cmd_add "$1" "$2" "$3" ;;
+    trust) [ "$#" -eq 2 ] || usage; cmd_trust "$1" "$2" ;;
+    prepare) [ "$#" -eq 2 ] || usage; cmd_prepare "$1" "$2" ;;
+    register) [ "$#" -eq 2 ] || usage; cmd_register "$1" "$2" ;;
+    *) usage ;;
+  esac
+}
+
+main "$@" 2>&1 | fm_machine_redact_urls
+exit "${PIPESTATUS[0]}"
