@@ -989,6 +989,57 @@ test_parked_scout_decision_stays_pending() {
   pass "a scout still parked at a decision stays pending (terminal clear does not over-fire)"
 }
 
+test_unavailable_run_preserves_open_ship_decision() {
+  local home fakebin out query head
+  home=$(make_home unavailable-run-decision)
+  mkdir -p "$home/projects/ship-wt"
+  fm_git_identity fmtest fmtest@example.invalid
+  git -C "$home/projects/ship-wt" init -q
+  git -C "$home/projects/ship-wt" commit -q --allow-empty -m init
+  git -C "$home/projects/ship-wt" checkout -q -b fm/unavailable-decision
+  head=$(git -C "$home/projects/ship-wt" rev-parse HEAD)
+  fm_write_meta "$home/state/ship-decision.meta" \
+    $(snap_identity "$home" ship-decision ship-decision) \
+    "worktree=$home/projects/ship-wt" "project=firstmate" \
+    "harness=deck" "kind=ship" "mode=no-mistakes"
+  record_deck_idle "$home/state" ship-decision
+  printf 'needs-decision [key=q1]: choose a validation finding response\n' > "$home/state/ship-decision.status"
+  fakebin=$(make_fakebin "$home")
+  cat > "$fakebin/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-} ${2:-}" = 'axi status' ] || exit 0
+case "$FM_FAKE_QUERY" in
+  failed) exit 1 ;;
+  timed-out) exec sleep 30 ;;
+esac
+printf 'run:\n  id: "DECISION-RUN"\n  branch: fm/unavailable-decision\n  head: "%s"\n' "$FM_FAKE_HEAD"
+[ "$FM_FAKE_QUERY" = partial ] || printf '  status: running\n'
+SH
+  for query in failed timed-out partial; do
+    out=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_CREW_STATE_NM_TIMEOUT=1 \
+      FM_FAKE_QUERY="$query" FM_FAKE_HEAD="$head" "$SNAPSHOT" --json)
+    printf '%s' "$out" | jq -e '
+      .tasks[] | select(.id == "ship-decision")
+      | .current_state.state == "unknown"
+        and .current_state.source == "run-step"
+        and .hints.pending_decision == true
+        and (.hints.open_decisions | length) == 1
+        and .hints.open_decisions[0].key == "q1"
+        and .hints.open_decisions[0].verb == "needs-decision"
+    ' >/dev/null || fail "$query validation observation must preserve the idle ship decision: $out"
+  done
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_QUERY=running \
+    FM_FAKE_HEAD="$head" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    .tasks[] | select(.id == "ship-decision")
+    | .current_state.state == "working"
+      and .current_state.source == "run-step"
+      and .hints.pending_decision == false
+      and .hints.open_decisions == []
+  ' >/dev/null || fail "positive resumed-run evidence must still clear the stale decision: $out"
+  pass "unknown validation preserves open decisions; a positively resumed run clears stale ones"
+}
+
 # Home-summary validity treats persistent secondmates as registered homes, not
 # in-flight children. They have no backlog rows, so they must not produce
 # unowned_current or terminal_in_flight. Ordinary crew/ship metas still do.
@@ -1101,6 +1152,7 @@ test_open_decision_transfers_to_captain_hold
 test_open_decision_clears_on_keyed_resolution
 test_completed_scout_report_is_pointer_not_pending
 test_parked_scout_decision_stays_pending
+test_unavailable_run_preserves_open_ship_decision
 test_scout_reports_include_teardown_reports
 test_backlog_tasks_axi_forms_and_overrides
 test_view_renders_snapshot

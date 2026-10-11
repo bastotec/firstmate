@@ -86,7 +86,10 @@
 #      running/fixing with recent reported activity: a killed or timed-out drive
 #      call is not daemon death, so that claim is answered by steering the crew
 #      to reattach, not by escalating.
-#   4. No run for this crew (pre-validation, or kind=scout): fall back to the
+#   4. A failed or timed-out validation query reports unknown with run-step
+#      evidence, not stopped or pane activity: a busy worker cannot establish an
+#      unavailable validation outcome and can mask a dead run.
+#      No run for this crew (pre-validation, or kind=scout): fall back to the
 #      recorded backend's pane busy state, then the status log's last line only
 #      when its verb maps to a recognized run-state. Decision-only events such as
 #      `resolved` never become current state or detail.
@@ -285,7 +288,9 @@ emit() {  # <state> <source> [detail] [run-error] [run-pr]
   [ -n "${5:-}" ] && line="$line${SEP}run-pr: $5"
   [ -n "${4:-}" ] && line="$line${SEP}run-error: $4"
   local run='' evidence="meta=$META"
-  [ "$HAVE_RUN" != 1 ] || run=$(strip_quotes "$(nm_field id)")
+  if [ "$HAVE_RUN" = 1 ] && [ "$RUN_SOURCE" = full ]; then
+    run=$(strip_quotes "$(nm_field id)")
+  fi
   case "$2" in
     run-step) evidence="$evidence; run=${run:-ledger}; worktree=$WT" ;;
     pane) evidence="$evidence; busy=$STATE/$ID.busy-state; generation=$STATE/$ID.busy-gen" ;;

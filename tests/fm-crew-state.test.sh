@@ -1511,6 +1511,8 @@ EOF
   local out; out=$(run_crew_state "$d" feat-f)
   assert_contains "$out" "state: working" "this branch's own run attributed via the runs list"
   assert_contains "$out" "source: run-step" "runs-list-resolved run -> run-step source"
+  assert_contains "$out" "run=ledger; worktree=$d/wt" "coarse evidence identifies the ledger and this task's copy"
+  assert_not_contains "$out" "run=01RUN" "another branch's run identity is not attributed to this task"
   pass "cross-branch run is attributed via the real runs list"
 }
 
@@ -1631,6 +1633,8 @@ EOF
   out=$(run_crew_state "$d" corpse)
   assert_contains "$out" "state: working" "the live run outranks the terminal corpse bound to the same worktree"
   assert_contains "$out" "source: run-step" "the live run is still an attributed run-step verdict"
+  assert_contains "$out" "run=ledger; worktree=$d/wt" "live sibling evidence identifies the ledger, not the superseded response"
+  assert_not_contains "$out" "run=01RUN" "the terminal run identity is not attributed to its live replacement"
   assert_not_contains "$out" "state: failed" "a dead run at the worktree commit must not report a healthy task as failed"
   pass "a live run outranks a terminal run bound to the same worktree"
 }
@@ -2059,11 +2063,13 @@ SH
   assert_contains "$out" "state: unknown" "timed-out run observation cannot establish working"
   assert_contains "$out" "source: run-step" "timeout retains the unavailable observation source"
   assert_contains "$out" "run unavailable or unreadable" "timeout names the unavailable evidence"
+  assert_not_contains "$out" "source: pane" "busy worker activity cannot establish an unavailable validation outcome"
+  assert_not_contains "$out" "state: working" "pane activity must not mask a dead validation run"
   assert_not_contains "$out" "state: stopped" "timeout is not proof the task stopped"
   [ "$elapsed" -lt 5 ] || fail "perl timeout did not bound no-mistakes calls (elapsed ${elapsed}s)"
   calls=$(awk 'END { print NR + 0 }' "$calls_file" 2>/dev/null || echo 0)
   [ "$calls" -eq 1 ] || fail "empty no-mistakes status triggered extra lookups ($calls calls)"
-  pass "no timeout command uses perl bound"
+  pass "bounded timeout intentionally reports unknown rather than inferring validation from pane activity"
 }
 
 # (i) kind=scout skips the run lookup entirely (its deliverable is a report).
