@@ -1072,7 +1072,7 @@ test_teardown_contextual_pr_keeps_non_pr_delivery() {
         seed_backlog_in_flight "$case_dir"
         wt_commit_file "$case_dir" feature.txt landed
         git -C "$case_dir/project" merge -q --ff-only fm/task-x1
-        verb=done
+        verb="done"
         artifact='local main'
       else
         write_meta "$case_dir" scout scout

@@ -521,7 +521,7 @@ test_reopened_outcome_pr_is_gated() {
   local home mode id out rc
   home=$(make_home reopened-outcome)
   printf 'Drop the superseded work.\n' > "$home/answer.txt"
-  for mode in done answer; do
+  for mode in "done" answer; do
     id="reopened-$mode"
     printf 'CLOSED\n' > "$home/states/4"
     add_row "$home" "$id" in_flight 4 'Superseded: replaced by a smaller change'
@@ -531,7 +531,7 @@ test_reopened_outcome_pr_is_gated() {
     assert_absent "$home/state/$id.meta" "outcome-only fixture unexpectedly has metadata"
     assert_contains "$(body_of "$home" "$id")" 'Outcome: superseded' "reopen did not preserve the outcome"
     printf 'OPEN\n' > "$home/states/4"
-    if [ "$mode" = done ]; then
+    if [ "$mode" = "done" ]; then
       out=$(in_home "$home" "$WRAPPER" "done" "$id" 2>&1); rc=$?
       expect_code 2 "$rc" "done on a reopened outcome-only PR"
     else
@@ -543,7 +543,7 @@ test_reopened_outcome_pr_is_gated() {
     assert_contains "$out" 'is still open' "$mode bypassed the preserved PR's live-state check"
     [ "$(row_state "$home" "$id")" != "done" ] || fail "$mode closed a reopened open PR"
     printf 'MERGED\n' > "$home/states/4"
-    if [ "$mode" = done ]; then
+    if [ "$mode" = "done" ]; then
       in_home "$home" "$WRAPPER" "done" "$id" >/dev/null || fail "reopened merged PR could not close"
     else
       in_home "$home" "$ROOT/bin/fm-captain-hold.sh" answer "$id" --decision-file "$home/answer.txt" >/dev/null \
