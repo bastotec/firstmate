@@ -806,6 +806,40 @@ set -e
 expect_code 1 "$rc" "credential-bearing URL refusal"
 assert_contains "$out" 'refuse:' "unsafe URL was not refused"
 assert_not_contains "$out" REFUSAL-TOKEN "refusal exposed credentials"
+
+for userinfo in "user:pa'ss" 'user:pa"ss<>' 'user:pa ss@extra'; do
+  url="https://$userinfo@example.com/firstmate.git"
+  git -C "$NETFM" remote set-url origin "$url"
+  for subcommand in check setup prepare; do
+    set +e
+    out=$(machine "$subcommand" box "$RROOT" 2>&1)
+    rc=$?
+    set -e
+    expect_code 1 "$rc" "$subcommand with rejected credential characters"
+    assert_contains "$out" 'https://[redacted]@example.com/firstmate.git' "$subcommand did not redact the entire userinfo"
+    assert_not_contains "$out" "$userinfo" "$subcommand exposed rejected URL credentials"
+    if [ "$subcommand" = check ]; then
+      assert_contains "$out" 'item firstmate-clone=human:' "check did not classify the unsafe clone URL"
+    else
+      assert_contains "$out" 'refuse:' "$subcommand accepted the unsafe clone URL"
+    fi
+  done
+  set +e
+  out=$(FAKE_CLONE_FAIL=1 remote install-deck "$RROOT" "$url" 2>&1)
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "remote Deck failure with credential punctuation"
+  assert_contains "$out" 'git clone of https://[redacted]@example.com/firstmate.git failed' "remote failure did not redact the entire userinfo"
+  assert_not_contains "$out" "$userinfo" "remote failure exposed URL credentials"
+done
+
+set +e
+out=$(FM_MACHINE_GATEWAY_URL='http://user:pa"ss@127.0.0.1:8329/v1' machine check box "$RROOT" 2>&1)
+rc=$?
+set -e
+expect_code 1 "$rc" "check with a quote in gateway credentials"
+assert_contains "$out" 'http://[redacted]@127.0.0.1:8329/v1 answers' "ordinary gateway output did not redact the quote"
+assert_not_contains "$out" 'pa"ss' "gateway output exposed the password"
 pass "machine output redacts URL userinfo in facts, success, failure, diagnostics and refusals"
 
 echo "ALL TESTS PASSED"
