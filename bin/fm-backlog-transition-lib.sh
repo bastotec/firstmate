@@ -593,8 +593,9 @@ fm_backlog_row_artifact_supported() {
 # "(merged DATE)", so for superseded and closed-unmerged every PR link is also
 # moved out of the title: the PR stays on the Outcome line, other PR links go to
 # one `Other PR links:` line, and the row then renders as "(done DATE)".
-# A title left empty names the PR as owner/repo#N instead. Idempotent, and a
-# missing row is left alone.
+# Only URLs and their link markup are removed; link labels and surrounding
+# title words stay. A title left empty names the PR as owner/repo#N instead.
+# Idempotent; a missing row is left alone.
 # bin/fm-pr-lib.sh's fm_pr_task_outcome reads the line back.
 fm_backlog_record_pr_outcome() {  # <data-dir> <id> <outcome> <url>
   local data authorized_data=$1 id=$2 outcome=$3 url=$4 out command_status dir changes

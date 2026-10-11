@@ -37,9 +37,11 @@
 # hold-kind captain.
 # That preserves kindless rows closed before artifact-aware selection without
 # admitting answered captain calls or explicit reportless scouts.
-# Already-selected v1 secondmate landed rows may omit kind. For those rows,
-# landed_artifact preserves a report_path with a reported completion; this
-# display compatibility does not admit kindless reports from raw backlog rows.
+# Incoming v1 secondmate landed rows may omit kind. landed_summary_record
+# treats a kindless reported completion as a scout for selection and display;
+# this compatibility does not admit kindless reports from raw backlog rows.
+# Fresh and cached summaries are re-filtered with the same PR evidence rule,
+# so an older producer's PR entry without a merged outcome is not a delivery.
 # tests/fm-bearings-snapshot.test.sh covers both fresh and cached v1 summaries.
 
 # shellcheck disable=SC2034 # Output global, read by the sourcing caller.

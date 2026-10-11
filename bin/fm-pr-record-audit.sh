@@ -20,8 +20,10 @@
 # closed before outcomes were recorded, through bin/fm-backlog-transition-lib.sh's
 # fm_backlog_record_pr_outcome: merged, superseded (a "Superseded:" line), or
 # closed-unmerged, and re-records a non-merged row that still shows as merged.
-# It prints `task <id>: recorded <outcome> for PR <url>` per row it changes,
-# never touches a row whose PR is open, and never changes a recorded outcome.
+# It prints `task <id>: recorded <outcome> for PR <url>` per row it changes
+# and never changes a recorded outcome. Open PRs with no outcome are left alone;
+# an already-recorded closed-unmerged outcome may have its title links repaired
+# even when the PR is still open.
 # Only the backlog is covered; rows already pruned to the archive keep their label.
 # A PR whose state cannot be read prints
 #   task <id>: cannot check PR <url> - reconcile by hand

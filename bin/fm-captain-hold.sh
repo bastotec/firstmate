@@ -80,8 +80,8 @@
 # still answerable: the surviving hold annotations, not tasks-axi's live
 # `held:` bit, prove the captain owned it.
 # Before a new close, the shared close_answered path applies bin/fm-pr-lib.sh's
-# completion-claim gate to a PR resolved from the row link or this home's
-# metadata pr=, then records the verdict as the task's explicit PR outcome
+# completion-claim gate to a PR resolved by bin/fm-pr-lib.sh's fm_pr_task_url,
+# then records the verdict as the task's explicit PR outcome
 # (bin/fm-backlog-transition-lib.sh's fm_backlog_record_pr_outcome).
 # A refusal preserves the recorded answer for retry without
 # closing the task or removing its card; --release does not close the task.

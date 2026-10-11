@@ -3135,7 +3135,7 @@ if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ]; then
     exit 1
   }
   # Record the gate's verdict as the row's explicit PR outcome before the close
-  # is staged, so neither the close nor its replay can render it as merged.
+  # is staged, so neither the close nor its replay mislabels unmerged work.
   PR_OUTCOME=
   if [ "$BACKLOG_TRANSITION" = close ] && [ -n "$PR_URL" ]; then
     case "$PR_CLOSE_VERDICT" in

@@ -23,6 +23,10 @@
 #     normalized current_role, requires_child_metadata, blocked_by_ids,
 #     unresolved_blocker_ids, captain_actionable, hold_set, hold_age_days,
 #     and hold_bucket fields.
+#     outcome is the recorded PR verdict, or null when absent; its format is
+#     owned by fm_backlog_record_pr_outcome in bin/fm-backlog-transition-lib.sh.
+#     A recorded outcome also supplies pr_url. Done-row completion verbs are
+#     normalized by bin/fm-landed-lib.sh's landed_completion.
 #     Repeated blocker tokens remain ordered; a blocker resolves only when its
 #     structured record is Done, and missing ids stay open.
 #     There is no separate decision type: any captain-held task is the same
@@ -103,7 +107,9 @@
 #     Structured-home input must declare the current home-summary and hold-classifier
 #     schemas; a live ledger or cached copy missing either declaration or declaring
 #     an unsupported version is unavailable even when it contains no captain holds.
-#     These schemas also accept v1 summaries from older producers.
+#     These schemas also accept v1 summaries from older producers; landed rows
+#     carry outcome when available and are re-filtered on read through
+#     bin/fm-landed-lib.sh's landed_summary_record, including cached copies.
 #   secondmate_landed: {records[],truncated[],unreadable[],partial[]} - the
 #     compatibility landed-work roll-up derived from secondmate_current. Readable
 #     structured homes are partial, not unreadable, when an unavailable child state
