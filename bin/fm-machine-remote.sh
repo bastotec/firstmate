@@ -3,8 +3,8 @@
 # as the remote account itself.
 #
 # Usage (bin/fm-machine.sh sends the tools and output libraries followed by this file
-# as the script of `ssh <alias> bash -s -- ...`; run directly, it sources that
-# library from beside itself):
+# as the script of `ssh <alias> bash -s -- ...`; run directly, it sources those
+# libraries from beside itself):
 #   fm-machine-remote.sh probe <remote-root> <gateway-url> <hub-url|-> <tool>...
 #   fm-machine-remote.sh install-tool <tool> <remote-root>
 #   fm-machine-remote.sh install-deck <remote-root> <deck-repo-url>
@@ -28,7 +28,10 @@
 #   stream-hub=reachable|unreachable|unknown
 # The gateway key file is $PROXAI_API_KEY_FILE when the ssh environment sets it,
 # else ~/.config/proxai/client.key, where Deck looks by default. Only its
-# presence and mode are read; its contents are never opened.
+# presence and mode are read; its contents are never opened. `unreadable` means
+# the owner-read bit is absent; `unsafe` means the owner can read but group or
+# other bits are set; `present` means owner-read with no group or other bits.
+# Missing files and symlinks report `missing`.
 #
 # install-tool runs the install command bin/fm-home-tools-lib.sh prints for
 # <tool>, only when that command is a user-level one, and then requires <tool>

@@ -50,9 +50,9 @@
 # installer script, or npm install -g when npm's global prefix is writable),
 # Deck (cloned from FM_DECK_REPO_URL, default bastotec/deck, and built with
 # cargo build --release --locked into ~/.local/bin/deck when git and cargo are
-# there), mode 600 on a gateway key file that is looser, then the doctor's
-# --fix. It then prints a `human` line for each remaining human item and the
-# verdict. A doctor that did not run, a transport failure, or a fixable gap left
+# there), mode 600 on an owner-readable gateway key with group or other
+# permission bits set, then the doctor's --fix. It then prints a `human` line
+# for each remaining human item and the verdict. A doctor that did not run, a transport failure, or a fixable gap left
 # after --fix fails the doctor step; human gaps alone do not. Rerunning skips
 # whatever is already present. URL userinfo is redacted from all output;
 # command diagnostics are merged into stdout through the same output filter.
@@ -80,8 +80,8 @@
 # recorded remote homes, so a machine with no second mate yet is reached through
 # a scratch single-route registry naming <remote-root> and an absent probe home
 # under the remote account's home directory; the doctor reports home-specific
-# checks as skip for an absent home and creates nothing there. Deck, proxai and
-# every other missing tool stay the doctor's human steps.
+# checks as skip for an absent home and creates nothing there. Tool installation
+# remains manual with prepare; use setup for supported automatic installs.
 #
 # register <alias> <remote-root> records the machine in this home's
 # data/machines.md as `- <alias> (root: <remote-root>; added YYYY-MM-DD)`. It is
@@ -95,6 +95,8 @@
 # Every connection disables UpdateHostKeys. Tests use scratch selections.
 #
 # Line protocol on stdout, one fact per line, stable for script consumers:
+# The checklist replaces the former check entrypoint/deck/proxai lines; a local
+# proxai executable is not required when the configured gateway answers.
 #   action=check|setup|add|trust|prepare|register
 #   alias=<alias>
 #   root=<remote-root>|-                         (check, setup)

@@ -17,9 +17,9 @@ Do not enable agent forwarding for Firstmate.
 `fm-on.sh` also disables agent forwarding, forwarding setup, and configured `SendEnv` patterns on every call, and arms bounded SSH dead-peer detection so a vanished host (a reboot, a dropped link) fails within a bounded window instead of hanging indefinitely; its [script header](../bin/fm-on.sh) owns the keepalive defaults and environment overrides.
 
 [`bin/fm-machine.sh`](../bin/fm-machine.sh) is the scripted entry point for connecting a new machine; its header owns the commands, trust safeguards, and line protocol.
-Its `check` prints a checklist of everything a home on that machine needs, and `setup` performs only the items that need no person, such as cloning Firstmate, user-level tool installs, building Deck, and the doctor's repair, then lists the remaining human steps.
+Use its read-only `check` before confirming `setup` to perform supported machine preparation and list the remaining human steps.
 
-Clone Firstmate on the remote host at an absolute code-root path, from the firstmate fork's network URL; provisioning refuses a copy whose `origin` is a local path or `file://` URL (see [Provision a route](#provision-a-route)).
+For manual preparation, clone Firstmate on the remote host at an absolute code-root path, from the firstmate fork's network URL; provisioning refuses a copy whose `origin` is a local path or `file://` URL (see [Provision a route](#provision-a-route)).
 Expose that clone's fixed entrypoint on the account's non-interactive SSH `PATH`, for example:
 
 ```sh
@@ -102,12 +102,12 @@ It starts the same workers directly on Linux, recreates the `~/.local/bin/fm-rem
 It never installs packages or overwrites a non-Firstmate file at a reserved wrapper path.
 It re-derives every check from the host afterwards, so what it prints is the state after the repair rather than the intent of one.
 
-These steps are never automated and are always reported rather than silently attempted, because SSH cannot create a GUI session from nothing:
+SSH cannot create a GUI session from nothing.
+These remain human steps after machine setup; the [`fm-machine.sh` header](../bin/fm-machine.sh) owns which tool installs can be automated:
 
 - The first console login on that Mac, and automatic login in System Settings > Users & Groups when the machine runs headless and must come back on its own after a reboot.
 - FileVault, which holds a reboot at pre-boot authentication before any login session exists.
-- Installing any missing required tool that no safe wrapper can resolve.
-- The doctor header and required-tool report own the remote tool set, including Deck and the stream adapter's tools.
+- Required-tool installs or upgrades that the machine checklist leaves as human steps; the doctor header and required-tool report own the readiness-specific tool set, while [Toolchain](configuration.md#toolchain) points to the broader home toolchain owner.
 - Deck's model endpoint credential on that host (its proxai client key, see [Deck's adapter reference](../.agents/skills/harness-adapters/references/harness/deck.md)), and any keychain password prompt reading it needs.
 
 Firstmate never writes an auto-login password, never changes FileVault, and never stores an account password.
@@ -332,6 +332,7 @@ The portable tests use the real entrypoint protocol, real git repositories, a de
 The lifecycle test covers seeding a registered project that this machine has never cloned, asserts that the local project tree is unchanged afterwards, and carries Bitbucket, self-hosted, and scp-like origins through to the remote clone:
 
 ```sh
+bin/fm-test-run.sh tests/fm-machine.test.sh
 bin/fm-test-run.sh tests/fm-on.test.sh
 bin/fm-test-run.sh tests/fm-send-remote-delivery.test.sh
 bin/fm-test-run.sh tests/fm-secondmate-reconcile.test.sh
