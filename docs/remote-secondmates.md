@@ -16,6 +16,8 @@ Verify the host key and ensure authentication works without prompting before usi
 Do not enable agent forwarding for Firstmate.
 `fm-on.sh` also disables agent forwarding, forwarding setup, and configured `SendEnv` patterns on every call, and arms bounded SSH dead-peer detection so a vanished host (a reboot, a dropped link) fails within a bounded window instead of hanging indefinitely; its [script header](../bin/fm-on.sh) owns the keepalive defaults and environment overrides.
 
+[`bin/fm-machine.sh`](../bin/fm-machine.sh) is the scripted entry point for connecting a new machine; its header owns the commands, trust safeguards, and line protocol.
+
 Clone Firstmate on the remote host at an absolute code-root path, from the firstmate fork's network URL; provisioning refuses a copy whose `origin` is a local path or `file://` URL (see [Provision a route](#provision-a-route)).
 Expose that clone's fixed entrypoint on the account's non-interactive SSH `PATH`, for example:
 
@@ -111,6 +113,8 @@ Firstmate never writes an auto-login password, never changes FileVault, and neve
 A file at `~/.local/bin/fm-remote-entrypoint.sh` that is not Firstmate's own symlink is reported for the operator to inspect and is never overwritten.
 
 ## Provision a route
+
+[`bin/fm-secondmate-create.sh`](../bin/fm-secondmate-create.sh) runs the charter, this seed, and the launch as one planned order.
 
 Create and fill the normal secondmate charter first, then run:
 
