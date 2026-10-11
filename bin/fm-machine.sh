@@ -324,7 +324,6 @@ cmd_check() { # <alias> [<remote-root>] [--address <host> --user <user>]
   DOCTOR_FIXED=0
   PROBE_OUT=
   PROBE_RC=0
-  CLONE_URL=$(fm_home_route_url "$FM_ROOT")
   if [ "$class" = ok ]; then
     probe_machine "$alias" "$root"
     if [ "$root" != - ] && [ "$(fact clone)" = present ] && [ -n "$ACCOUNT_HOME" ]; then
@@ -413,12 +412,18 @@ cmd_trust() { # <alias> <SHA256:fingerprint>
   printf 'trusted=%s file=%s\n' "$wanted" "$KNOWN_HOSTS"
 }
 
-# Resolve this checkout's clone URL for the machine into CLONE_URL, or refuse.
+# Resolve this checkout's clone URL into CLONE_URL, or set CLONE_REASON and return 1.
 resolve_clone_url() {
   CLONE_URL=$(fm_home_route_url "$FM_ROOT")
-  [ -n "$CLONE_URL" ] || refuse "this Firstmate checkout has no origin to clone from"
-  fm_home_route_is_remote "$CLONE_URL" || refuse "this Firstmate checkout's origin is $CLONE_URL, a local path the machine cannot clone from; point origin at the fork's network URL first"
-  fm_project_url_plain "$CLONE_URL" || refuse "this Firstmate checkout's origin contains characters this command will not pass to a remote shell: $CLONE_URL"
+  CLONE_REASON=
+  if [ -z "$CLONE_URL" ]; then
+    CLONE_REASON="this Firstmate checkout has no origin to clone from"
+  elif ! fm_home_route_is_remote "$CLONE_URL"; then
+    CLONE_REASON="this Firstmate checkout's origin is $CLONE_URL, a local path the machine cannot clone from; point origin at the fork's network URL first"
+  elif ! fm_project_url_plain "$CLONE_URL"; then
+    CLONE_REASON="this Firstmate checkout's origin contains characters this command will not pass to a remote shell: $CLONE_URL"
+  fi
+  [ -z "$CLONE_REASON" ]
 }
 
 # Clone Firstmate at <root> when absent and link the entrypoint. Sets
@@ -486,7 +491,7 @@ cmd_prepare() { # <alias> <remote-root>
   valid_alias "$alias" || refuse "alias must be a plain ssh config name of A-Z, a-z, 0-9, ., _ and -, not starting with -: $alias"
   valid_root "$root" || refuse "remote root must be an absolute path of A-Z, a-z, 0-9, ., _, - and /: $root"
   printf 'action=prepare\nalias=%s\n' "$alias"
-  resolve_clone_url
+  resolve_clone_url || refuse "$CLONE_REASON"
   resolve_alias "$alias" || refuse "ssh -G could not evaluate the alias $alias"
   remote_clone_and_link "$alias" "$root" "$CLONE_URL"
   account_home=
@@ -660,8 +665,10 @@ build_items() { # <alias> <root|-> <reach-class> <known-fingerprints>
     item firstmate-clone human "name the remote code root: bin/fm-machine.sh check $alias <remote-root>"
   elif [ "$(fact clone)" = present ]; then
     item firstmate-clone present "$root"
-  else
+  elif resolve_clone_url; then
     item firstmate-clone will-install "setup clones $CLONE_URL at $root"
+  else
+    item firstmate-clone human "$CLONE_REASON"
   fi
   case "$(fact entrypoint-link)" in
     present) item entrypoint-link present "the account's ~/.local/bin/fm-remote-entrypoint.sh points at $root" ;;
@@ -672,7 +679,7 @@ build_items() { # <alias> <root|-> <reach-class> <known-fingerprints>
   if [ "${DOCTOR_ATTEMPTED:-0}" -eq 1 ]; then
     interpret_doctor
     ITEMS="$ITEMS$DOCTOR_ITEMS"
-    [ -z "$DOCTOR_FAILURE" ] || item doctor human "$DOCTOR_FAILURE; run bin/fm-on.sh $alias fm-remote-doctor.sh --backend stream --fix"
+    [ -z "$DOCTOR_FAILURE" ] || item doctor human "$DOCTOR_FAILURE; run bin/fm-machine.sh setup $alias $root"
   else
     item doctor will-install "setup runs fm-remote-doctor.sh --fix (remote job worker, entrypoint, tool wrappers) once the clone exists"
   fi
@@ -743,7 +750,7 @@ cmd_setup() { # <alias> <remote-root>
   valid_alias "$alias" || refuse "alias must be a plain ssh config name of A-Z, a-z, 0-9, ., _ and -, not starting with -: $alias"
   valid_root "$root" || refuse "remote root must be an absolute path of A-Z, a-z, 0-9, ., _, - and /: $root"
   printf 'action=setup\nalias=%s\nroot=%s\n' "$alias" "$root"
-  resolve_clone_url
+  resolve_clone_url || refuse "$CLONE_REASON"
   resolve_alias "$alias" || refuse "ssh -G could not evaluate the alias $alias"
   known=$(known_fingerprints)
   DOCTOR_OUT=

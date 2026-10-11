@@ -274,6 +274,29 @@ assert_not_contains "$out" "SECRET-GATEWAY-KEY" "check printed the gateway key"
 assert_absent "$RROOT" "check created the clone"
 pass "check prints the machine checklist read-only"
 
+ROUTEFM="$T/clone-route-fm"
+fm_git_init_commit "$ROUTEFM"
+for origin in '' /some/local/path file:///repo 'https://example.com/invalid!'; do
+  git -C "$ROUTEFM" remote remove origin 2>/dev/null || true
+  [ -z "$origin" ] || git -C "$ROUTEFM" remote add origin "$origin"
+  : > "$SSH_LOG"
+  set +e
+  out=$(FM_ROOT_OVERRIDE="$ROUTEFM" machine check box "$RROOT")
+  rc=$?
+  refusal=$(FM_ROOT_OVERRIDE="$ROUTEFM" machine setup box "$RROOT")
+  setup_rc=$?
+  set -e
+  expect_code 1 "$rc" "check with unusable origin '$origin'"
+  expect_code 1 "$setup_rc" "setup with unusable origin '$origin'"
+  reason=$(printf '%s\n' "$refusal" | awk '/^refuse: / { sub(/^refuse: /, ""); print; exit }')
+  [ -n "$reason" ] || fail "setup did not explain the unusable clone route"
+  assert_contains "$out" "item firstmate-clone=human: $reason" "check disagreed with setup's clone route refusal"
+  assert_not_contains "$out" 'item firstmate-clone=will-install:' "check promised an unusable clone route"
+  assert_absent "$RROOT" "route check created the clone"
+  assert_no_grep 'ssh box sh -s --' "$SSH_LOG" "unusable route attempted a clone"
+done
+pass "check and setup share clone-route eligibility and refusal reasons"
+
 : > "$SSH_LOG"
 set +e
 out=$(FAKE_SSH_FAIL_AFTER=probe machine check box "$RROOT")
@@ -508,6 +531,29 @@ expect_code 1 "$rc" "prepare relays the doctor verdict"
 out=$(cluster prepare cluster "$RROOT")
 assert_contains "$out" "doctor: check stream-tools=ok: fake" "doctor lost configured trust selection"
 pass "prepare clones, links and relays the doctor's --fix verdict"
+
+out=$(FM_ROOT_OVERRIDE="$ROUTEFM" machine check box "$RROOT") || true
+assert_contains "$out" "item firstmate-clone=present: $RROOT" "unusable local origin hid an existing remote clone"
+
+rm "$FAKE_ACCOUNT/.local/bin/fm-remote-entrypoint.sh"
+set +e
+out=$(FAKE_DOCTOR_UNAVAILABLE=1 machine check box "$RROOT")
+rc=$?
+set -e
+expect_code 1 "$rc" "check with unavailable doctor on an unregistered machine"
+assert_contains "$out" "item doctor=human: doctor did not run:" "doctor failure was not surfaced"
+assert_contains "$out" "; run bin/fm-machine.sh setup box $RROOT" "doctor recovery did not use the machine route"
+assert_not_contains "$out" 'run bin/fm-on.sh box' "doctor recovery required a registered home"
+assert_absent "$FMH/data/secondmates.md" "recovery unexpectedly has a registered home"
+recovery=$(printf '%s\n' "$out" | awk '/^item doctor=human:/ { sub(/^.*; run /, ""); print; exit }')
+read -r -a recovery_args <<< "$recovery"
+out=$(FM_HOME="$FMH" FM_ROOT_OVERRIDE="$NETFM" "$ROOT/${recovery_args[0]}" "${recovery_args[@]:1}")
+assert_contains "$out" 'step entrypoint-link=done:' "emitted recovery did not repair the missing link"
+assert_contains "$out" 'step doctor=done:' "emitted recovery did not reach the scratch-routed doctor"
+assert_contains "$out" 'setup=complete' "emitted recovery did not finish setup"
+assert_equals "$RROOT/bin/fm-remote-entrypoint.sh" "$(readlink "$FAKE_ACCOUNT/.local/bin/fm-remote-entrypoint.sh")" "recovery linked the wrong entrypoint"
+assert_absent "$FMH/data/secondmates.md" "recovery left a real home registration"
+pass "doctor recovery repairs an unregistered machine through the emitted setup command"
 
 # --- setup ---
 for operation in clone probe install-tool install-deck; do
