@@ -683,7 +683,7 @@ pipeline_state() {
   FM_STATE_OVERRIDE=$STATE "$SCRIPT_DIR/fm-crew-state.sh" --publish "$ID" 2>/dev/null | tail -1
 }
 
-# State attribution stays with fm-crew-state.sh. This separate id query may see
+# State attribution stays with fm-task-state-lib.sh. This separate id query may see
 # an older terminal run while the reader selected a live successor, so withhold
 # the id unless shared branch/head-or-custody binding holds and a working or
 # parked state is accompanied by an active run.

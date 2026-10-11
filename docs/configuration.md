@@ -738,7 +738,7 @@ FM_SNAPSHOT_CACHE_DIR=$FM_HOME/state/secondmate-summary-cache   # parent-side re
 FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS=14   # age at which an undated captain hold projects as a Charted Next gate
 FM_RECONCILE_REQUEST_MAX_BYTES=1048576 # largest snapshot accepted for a reconcile-notify request
 # no-mistakes queries and teardown
-FM_CREW_STATE_NM_TIMEOUT=10    # per no-mistakes query in fm-crew-state.sh
+FM_CREW_STATE_NM_TIMEOUT=10    # per no-mistakes query in the shared bin/fm-task-state-lib.sh reader
 FM_CREW_STATE_RUNS_LIMIT=200   # recent no-mistakes runs scanned for attribution
 FM_CREW_STATE_FOLLOW_SECS=5         # validation-record follower poll during working state or start grace
 FM_CREW_STATE_FOLLOW_FULL_SECS=60   # follower's full re-read even when axi status looks unchanged

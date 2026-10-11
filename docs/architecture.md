@@ -15,7 +15,7 @@ The watcher header owns the printed reason vocabulary and every absorb and re-su
 ### Absorb only on positive evidence
 
 A no-verb wake, such as a `working:` note or a bare turn-ended signal, is benign only when every referenced task independently shows positive evidence that its crew is still working.
-That evidence is an attributed active no-mistakes step or an exact busy verdict, both read through `bin/fm-crew-state.sh`.
+That evidence comes from the shared [current-state interface](#current-state-reads), not an independent watcher classifier.
 Everything else surfaces, so a crew that finishes, or stops and waits, is never silently swallowed.
 Absorbed wakes advance their suppression markers, log to `state/.watch-triage.log`, and keep the watcher blocking without a queue record or model turn.
 Routine polling, supervision no-ops, elapsed waiting time, and absorbed benign wakes stay silent.
