@@ -2,7 +2,7 @@
 # Connect a new machine for remote second mates in scripted, reviewable steps.
 #
 # Usage:
-#   fm-machine.sh check <alias> [<remote-root>]
+#   fm-machine.sh check <alias> [<remote-root>] [--address <host-or-ip> --user <user>]
 #   fm-machine.sh setup <alias> <remote-root>
 #   fm-machine.sh add <alias> <address> <user>
 #   fm-machine.sh trust <alias> <SHA256:fingerprint>
@@ -27,7 +27,10 @@
 # and, when that connects, probes the machine read-only (bin/fm-machine-remote.sh
 # probe) and, when a Firstmate clone is at <remote-root>, runs the doctor
 # read-only through fm-on.sh as prepare does. <remote-root> defaults to the one
-# data/machines.md records for the alias. It then prints the checklist: one
+# data/machines.md records for the alias. With --address and --user, an alias
+# no ssh config block resolves yet is probed as if `add` had written it, with
+# -o HostName= and -o User= on every connection; nothing is written, and
+# `check alias=missing` still names the `add` that closes it. It then prints the checklist: one
 # `item` line per thing a home on that machine needs, each present,
 # will-install (setup does it) or human (with the exact step). Items: the ssh
 # alias, host key and login; the Firstmate clone and entrypoint link; every
@@ -133,6 +136,8 @@ trap '[ -z "$TMP" ] || rm -rf -- "$TMP"' EXIT
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
 
+CHECK_ADDRESS=
+CHECK_USER=
 GATEWAY_URL=${FM_MACHINE_GATEWAY_URL:-http://127.0.0.1:8329/v1}
 DECK_REPO_URL=${FM_DECK_REPO_URL:-https://github.com/bastotec/deck.git}
 
@@ -214,8 +219,22 @@ classify_reach() { # <stderr text> -> class
   esac
 }
 
-cmd_check() { # <alias> [<remote-root>]
-  local alias=$1 root=${2:-} gaps=0 known scanned err rc class first
+cmd_check() { # <alias> [<remote-root>] [--address <host> --user <user>]
+  local alias=$1 root='' address='' user='' gaps=0 known scanned err rc class first configured
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --address) [ "$#" -ge 2 ] || usage; address=$2; shift 2 ;;
+      --user) [ "$#" -ge 2 ] || usage; user=$2; shift 2 ;;
+      -*) usage ;;
+      *) [ -z "$root" ] || usage; root=$1; shift ;;
+    esac
+  done
+  if [ -n "$address$user" ]; then
+    [ -n "$address" ] && [ -n "$user" ] || refuse "--address and --user go together"
+    case "$address" in -*|*[!A-Za-z0-9.:_-]*) refuse "address must be a host name or IP address: $address" ;; esac
+    case "$user" in -*|*[!A-Za-z0-9._-]*) refuse "user must be a plain account name: $user" ;; esac
+  fi
   valid_alias "$alias" || refuse "alias must be a plain ssh config name of A-Z, a-z, 0-9, ., _ and -, not starting with -: $alias"
   if [ -z "$root" ] && [ -f "$DATA/machines.md" ]; then
     root=$(awk -v a="$alias" '$1 == "-" && $2 == a { r = $0; sub(/^.*\(root: /, "", r); sub(/;.*$/, "", r); print r; exit }' "$DATA/machines.md")
@@ -224,13 +243,21 @@ cmd_check() { # <alias> [<remote-root>]
   [ "$root" = - ] || valid_root "$root" || refuse "remote root must be an absolute path of A-Z, a-z, 0-9, ., _, - and /: $root"
   printf 'action=check\nalias=%s\nroot=%s\n' "$alias" "$root"
   resolve_alias "$alias" || refuse "ssh -G could not evaluate the alias $alias"
+  configured=$ALIAS_CONFIGURED
+  if [ "$configured" -eq 0 ] && [ -n "$address" ]; then
+    SSH_OPTS+=(-o "HostName=$address" -o "User=$user")
+    resolve_alias "$alias" || refuse "ssh -G could not evaluate $alias at $address"
+  fi
+  ALIAS_CONFIGURED=$configured
+  CHECK_ADDRESS=$address
+  CHECK_USER=$user
   printf 'hostname=%s user=%s port=%s\n' "$SSH_HOSTNAME" "$SSH_USER" "$SSH_PORT"
   if [ "$ALIAS_CONFIGURED" -eq 1 ]; then
     printf 'check alias=ok: %s resolves to %s as %s on port %s\n' "$alias" "$SSH_HOSTNAME" "$SSH_USER" "$SSH_PORT"
   else
     gaps=1
     printf 'check alias=missing: no ssh config block names or resolves %s\n' "$alias"
-    printf 'action: bin/fm-machine.sh add %s <address> <user>\n' "$alias"
+    printf 'action: bin/fm-machine.sh add %s %s %s\n' "$alias" "${address:-<address>}" "${user:-<user>}"
   fi
 
   known=$(known_fingerprints)
@@ -518,7 +545,7 @@ build_items() { # <alias> <root|-> <reach-class> <known-fingerprints>
   if [ "$ALIAS_CONFIGURED" -eq 1 ]; then
     item ssh-alias present "$alias resolves to $SSH_HOSTNAME as $SSH_USER"
   else
-    item ssh-alias human "bin/fm-machine.sh add $alias <address> <user>"
+    item ssh-alias human "bin/fm-machine.sh add $alias ${CHECK_ADDRESS:-<address>} ${CHECK_USER:-<user>}"
   fi
   if [ -n "$known" ]; then
     item ssh-hostkey present "$KNOWN_NAME is in $KNOWN_HOSTS"
@@ -796,7 +823,7 @@ cmd_register() { # <alias> <remote-root>
 SUB=$1
 shift
 case "$SUB" in
-  check) [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage; cmd_check "$@" ;;
+  check) [ "$#" -ge 1 ] || usage; cmd_check "$@" ;;
   setup) [ "$#" -eq 2 ] || usage; cmd_setup "$1" "$2" ;;
   add) [ "$#" -eq 3 ] || usage; cmd_add "$1" "$2" "$3" ;;
   trust) [ "$#" -eq 2 ] || usage; cmd_trust "$1" "$2" ;;

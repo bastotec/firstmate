@@ -39,6 +39,7 @@ cat > "$FAKEBIN/ssh" <<'SH'
 G=0
 CONFIG=
 TRUST=
+GOPTS=()
 UPDATE_KEYS=yes
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -48,6 +49,7 @@ while [ "$#" -gt 0 ]; do
       case "$2" in
         UserKnownHostsFile=*) TRUST=${2#UserKnownHostsFile=} ;;
         UpdateHostKeys=*) UPDATE_KEYS=${2#UpdateHostKeys=} ;;
+        HostName=*|User=*) GOPTS+=(-o "$2"); printf 'override %s\n' "$2" >> "$FAKE_SSH_LOG" ;;
       esac
       shift 2 ;;
     -p) shift 2 ;;
@@ -60,11 +62,11 @@ alias=$1
 shift
 if [ "$G" -eq 1 ]; then
   if [ -n "${FAKE_G_KNOWN_HOSTS:-}" ]; then
-    "$REAL_SSH" -F "$CONFIG" -G "$alias" | awk '$1 != "userknownhostsfile"'
+    "$REAL_SSH" -F "$CONFIG" "${GOPTS[@]+"${GOPTS[@]}"}" -G "$alias" | awk '$1 != "userknownhostsfile"'
     printf 'userknownhostsfile %s\n' "$FAKE_G_KNOWN_HOSTS"
     exit 0
   fi
-  exec "$REAL_SSH" -F "$CONFIG" -G "$alias"
+  exec "$REAL_SSH" -F "$CONFIG" "${GOPTS[@]+"${GOPTS[@]}"}" -G "$alias"
 fi
 if [ "$CONFIG" != "$FM_SSH_CONFIG" ] || [ "$TRUST" != "${FAKE_EXPECT_KNOWN_HOSTS:-$FM_KNOWN_HOSTS}" ]; then
   echo 'wrong ssh config or trust selection' >&2
@@ -258,6 +260,29 @@ assert_not_contains "$out" "tool deck=" "tool probe ran without a connection"
 assert_contains "$out" "item machine=human: everything else is checked once ssh login works" "checklist stops at ssh"
 assert_no_grep "newbox" "$FM_KNOWN_HOSTS" "check wrote a scanned key"
 pass "check classifies a missing alias, an unknown key and refused key login"
+
+: > "$SSH_LOG"
+before_cfg=$(cat "$FM_SSH_CONFIG")
+set +e
+out=$(machine check freshbox --address 10.0.0.42 --user captain)
+rc=$?
+set -e
+expect_code 1 "$rc" "check of an unconfigured alias with an address"
+assert_contains "$out" "hostname=10.0.0.42 user=captain port=22" "address override resolved"
+assert_contains "$out" "check alias=missing: no ssh config block names or resolves freshbox" "alias still missing"
+assert_contains "$out" "action: bin/fm-machine.sh add freshbox 10.0.0.42 captain" "add action with values"
+assert_contains "$out" "hostkey-fingerprint=SHA256:FPAAAAKEYNEW" "scanned the given address"
+assert_contains "$out" "check hostkey=missing: 10.0.0.42 is not in" "hostkey looked up by address"
+assert_grep "override HostName=10.0.0.42" "$SSH_LOG" "connections did not carry the address"
+assert_equals "$before_cfg" "$(cat "$FM_SSH_CONFIG")" "check wrote the ssh config"
+assert_no_grep "10.0.0.42" "$FM_KNOWN_HOSTS" "check wrote a host key"
+set +e
+out=$(machine check freshbox --address -oProxy=x --user captain)
+rc=$?
+set -e
+expect_code 1 "$rc" "unsafe address"
+assert_contains "$out" "refuse: address must be a host name or IP address" "address validation"
+pass "check probes an unconfigured alias at a given address and user without writing"
 
 set +e
 out=$(FAKE_SSH_REACH=hostkey machine check box)
