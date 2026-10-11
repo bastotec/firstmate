@@ -25,7 +25,8 @@
 #     and hold_bucket fields.
 #     outcome is the recorded PR verdict, or null when absent; its format is
 #     owned by fm_backlog_record_pr_outcome in bin/fm-backlog-transition-lib.sh.
-#     A recorded outcome also supplies pr_url. Done-row completion verbs are
+#     A recorded outcome supplies pr_url for Done rows, and is a fallback for
+#     open rows without a title PR. Done-row completion verbs are
 #     normalized by bin/fm-landed-lib.sh's landed_completion.
 #     Repeated blocker tokens remain ordered; a blocker resolves only when its
 #     structured record is Done, and missing ids stay open.
@@ -554,7 +555,8 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
              | last) as $outcome
           | if $outcome == null then .
             else .outcome = $outcome.o
-              | .pr_url = $outcome.u
+              | .pr_url = (if .state == "done" then $outcome.u
+                           else .pr_url // $outcome.u end)
             end
         else . end
         | if .structured and .state == "done" then landed_completion else . end)

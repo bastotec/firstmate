@@ -356,13 +356,12 @@ fi
 # The deliverable a closed or retained row carries, derived from this task's
 # own record exactly as cleanup derives it.
 RETIRE_DONE_ARGS=()
-retirement_done_args() {  # <id>
-  local id=$1 kind mode pr data_relative
+retirement_done_args() {  # <id> <pr> <verdict>
+  local id=$1 pr=$2 verdict=$3 kind mode data_relative
   local meta="$STATE/$id.meta"
   RETIRE_DONE_ARGS=()
   kind=$(fm_meta_get "$meta" kind)
   mode=$(fm_meta_get "$meta" mode)
-  pr=$(fm_meta_get "$meta" pr)
   case "$kind" in
     scout)
       data_relative=$(fm_backlog_data_relative "$DATA") || return 1
@@ -371,7 +370,7 @@ retirement_done_args() {  # <id>
     *)
       if [ "$mode" = local-only ]; then
         RETIRE_DONE_ARGS=(--note "local main")
-      elif [ -n "$pr" ]; then
+      elif [ -n "$pr" ] && [ "$verdict" = merged ]; then
         RETIRE_DONE_ARGS=(--pr "$pr")
       fi
       ;;
@@ -411,7 +410,7 @@ retirement_done_args() {  # <id>
 # with its deliverable, exactly as cleanup and the session-start replay do, so
 # a retirement never quietly answers the captain's own question.
 retire_records_only() {  # <id>
-  local id=$1 marker mode=close probe_rc=0 gate_rc=0 marker_flags=()
+  local id=$1 marker mode=close probe_rc=0 gate_rc=0 marker_flags=() row pr verdict=unmerged body
   local meta="$STATE/$id.meta"
   fm_backlog_transition_applies "$CONFIG" "$DATA" "$(fm_meta_get "$meta" kind)" || gate_rc=$?
   if [ "$gate_rc" -eq 2 ]; then
@@ -426,7 +425,6 @@ retire_records_only() {  # <id>
     return 0
   fi
   marker=$(fm_backlog_close_marker_path "$STATE" "$id") || return 1
-  retirement_done_args "$id" || return 1
   fm_backlog_row_probe "$DATA" "$id" || probe_rc=$?
   if [ "$probe_rc" -ne 0 ]; then
     if [ "$FM_BACKLOG_ROW_RESULT" != not_found ]; then
@@ -442,6 +440,22 @@ retire_records_only() {  # <id>
     mode=retain
     marker_flags=(--retain)
   fi
+  row=$(fm_backlog_row_show "$DATA" "$id" --full) || {
+    FM_BACKLOG_TRANSITION_ERROR="cannot read $id's task row to resolve its PR"
+    return 1
+  }
+  pr=$(fm_meta_get "$meta" pr)
+  [ -n "$pr" ] || pr=$(fm_pr_task_url "$row" "$meta") || return 1
+  body=$(fm_pr_task_body "$row") || return 1
+  if [ -n "$pr" ]; then
+    if fm_pr_close_verdict "$pr" "$body"; then
+      verdict=$FM_PR_CLOSE_VERDICT
+    fi
+    if [ "$mode" = close ]; then
+      fm_backlog_record_pr_close_outcome "$DATA" "$id" "$pr" "$verdict" "$FM_PR_CLOSE_STATE" || return 1
+    fi
+  fi
+  retirement_done_args "$id" "$pr" "$verdict" || return 1
   fm_backlog_close_marker_write "$STATE" "$id" "$DATA" "$(fm_meta_get "$meta" spawn_gen)" 0 \
     "${marker_flags[@]+"${marker_flags[@]}"}" \
     "${RETIRE_DONE_ARGS[@]+"${RETIRE_DONE_ARGS[@]}"}" || return 1

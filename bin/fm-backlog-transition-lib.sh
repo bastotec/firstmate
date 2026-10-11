@@ -585,6 +585,19 @@ fm_backlog_row_artifact_supported() {
   esac
 }
 
+fm_backlog_record_pr_close_outcome() {
+  local data=$1 id=$2 url=$3 verdict=$4 state=$5 outcome=
+  [ -n "$url" ] || return 0
+  case "$verdict" in
+    merged|superseded) outcome=$verdict ;;
+    unmerged)
+      case "$state" in open|closed) outcome=closed-unmerged ;; esac
+      ;;
+  esac
+  [ -n "$outcome" ] || return 0
+  fm_backlog_record_pr_outcome "$data" "$id" "$outcome" "$url"
+}
+
 # Record how a PR-bearing task really ended, before or after it closes.
 # <outcome> is merged, superseded, or closed-unmerged, and <url> is the task's PR.
 # The body gets exactly one `Outcome: <outcome> <url>` line (an older Outcome

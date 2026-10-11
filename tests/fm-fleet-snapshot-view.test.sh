@@ -144,6 +144,52 @@ test_empty_fleet_json() {
   pass "empty fleet snapshot and view use explicit absence markers"
 }
 
+test_reopened_task_keeps_its_current_pr_identity() {
+  local home fakebin out view old=https://github.com/example/repo/pull/7 new=https://github.com/example/repo/pull/8
+  command -v tasks-axi >/dev/null 2>&1 || { pass "reopened PR identity skipped without tasks-axi"; return; }
+  home=$(make_home reopened-pr)
+  fakebin=$(make_fakebin "$home")
+  printf 'backend = "markdown"\n' > "$home/.tasks.toml"
+  printf '# Backlog\n\n## In flight\n\n## Queued\n\n## Done\n' > "$home/data/backlog.md"
+  printf '#!/usr/bin/env bash\necho CLOSED\n' > "$fakebin/gh"
+  chmod +x "$fakebin/gh"
+  FM_HOME="$home" PATH="$fakebin:$PATH" "$ROOT/bin/fm-tasks-axi.sh" add replacement \
+    'Fix account deletion' --kind ship --pr "$old" --body 'Superseded: replacement required' >/dev/null \
+    || fail "could not create superseded task"
+  FM_HOME="$home" PATH="$fakebin:$PATH" "$ROOT/bin/fm-tasks-axi.sh" "done" replacement >/dev/null \
+    || fail "could not close superseded task"
+  out=$(FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e --arg old "$old" '
+    .backlog.records | any(.id == "replacement" and .state == "done" and .pr_url == $old and .outcome == "superseded")
+  ' >/dev/null || fail "completed task lost its outcome-owned PR"
+  FM_HOME="$home" "$ROOT/bin/fm-tasks-axi.sh" reopen replacement >/dev/null || fail "could not reopen task"
+  out=$(FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e --arg old "$old" '
+    .backlog.records | any(.id == "replacement" and .state == "queued" and .pr_url == $old)
+  ' >/dev/null || fail "reopened task without a title PR lost its outcome fallback"
+  FM_HOME="$home" "$ROOT/bin/fm-tasks-axi.sh" update replacement --pr "$new" >/dev/null || fail "could not record replacement PR"
+  out=$(FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e --arg new "$new" '
+    .backlog.records | any(.id == "replacement" and .state == "queued" and .pr_url == $new and .outcome == "superseded")
+  ' >/dev/null || fail "historical outcome replaced the current title PR"
+  view=$(FM_HOME="$home" "$VIEW")
+  assert_contains "$view" "$new" "fleet view lost the active replacement PR"
+  assert_not_contains "$view" "$old" "fleet view displays the historical superseded PR"
+  FM_HOME="$home" "$ROOT/bin/fm-tasks-axi.sh" start replacement >/dev/null || fail "could not start replacement"
+  out=$(FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e --arg new "$new" '
+    .backlog.records | any(.id == "replacement" and .state == "in_flight" and .pr_url == $new and .outcome == "superseded")
+  ' >/dev/null || fail "in-flight task lost its current PR"
+  printf '#!/usr/bin/env bash\necho MERGED\n' > "$fakebin/gh"
+  FM_HOME="$home" PATH="$fakebin:$PATH" "$ROOT/bin/fm-tasks-axi.sh" "done" replacement --pr "$new" >/dev/null \
+    || fail "could not close merged replacement"
+  out=$(FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e --arg new "$new" '
+    .backlog.records | any(.id == "replacement" and .state == "done" and .pr_url == $new and .outcome == "merged")
+  ' >/dev/null || fail "completed replacement lost its outcome-owned PR"
+  pass "reopened tasks prefer current PRs while completed tasks and linkless rows use outcomes"
+}
+
 test_fixture_snapshot_json() {
   local home fakebin out ids
   home=$(make_home fixture)
@@ -1041,6 +1087,7 @@ EOF
 }
 
 test_empty_fleet_json
+test_reopened_task_keeps_its_current_pr_identity
 test_fixture_snapshot_json
 test_home_summary_excludes_secondmate_from_child_inventory
 test_undated_captain_hold_phrasing_and_aging

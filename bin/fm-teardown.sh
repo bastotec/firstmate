@@ -3136,20 +3136,9 @@ if [ "$TEARDOWN_BACKLOG_APPLIES" = 1 ]; then
   }
   # Record the gate's verdict as the row's explicit PR outcome before the close
   # is staged, so neither the close nor its replay mislabels unmerged work.
-  PR_OUTCOME=
-  if [ "$BACKLOG_TRANSITION" = close ] && [ -n "$PR_URL" ]; then
-    case "$PR_CLOSE_VERDICT" in
-      merged) PR_OUTCOME=merged ;;
-      superseded) PR_OUTCOME=superseded ;;
-      unmerged)
-        case "$FM_PR_CLOSE_STATE" in
-          open|closed) PR_OUTCOME=closed-unmerged ;;
-        esac
-        ;;
-    esac
-  fi
-  if [ -n "$PR_OUTCOME" ] \
-      && ! fm_backlog_record_pr_outcome "$DATA" "$ID" "$PR_OUTCOME" "$PR_URL"; then
+  if [ "$BACKLOG_TRANSITION" = close ] \
+      && ! fm_backlog_record_pr_close_outcome "$DATA" "$ID" "$PR_URL" \
+        "$PR_CLOSE_VERDICT" "$FM_PR_CLOSE_STATE"; then
     echo "error: could not record $ID's PR outcome ($FM_BACKLOG_TRANSITION_ERROR); refusing destructive teardown" >&2
     exit 1
   fi
