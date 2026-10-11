@@ -610,7 +610,7 @@ for operation in clone probe install-tool install-deck; do
   assert_contains "$out" 'setup=failed' "failed $operation transport verdict"
   assert_not_contains "$out" 'setup=complete' "failed $operation transport certified setup"
   assert_no_grep 'fm-remote-doctor.sh' "$SSH_LOG" "doctor ran after failed $operation transport"
-  assert_equals 644 "$(stat -f %Lp "$FAKE_ACCOUNT/.config/proxai/client.key" 2>/dev/null || stat -c %a "$FAKE_ACCOUNT/.config/proxai/client.key")" "key was changed after failed $operation transport"
+  assert_equals 644 "$(stat -c %a "$FAKE_ACCOUNT/.config/proxai/client.key" 2>/dev/null || stat -f %Lp "$FAKE_ACCOUNT/.config/proxai/client.key")" "key was changed after failed $operation transport"
   case "$operation" in
     clone)
       assert_contains "$out" 'step firstmate-clone=failed: clone/link over ssh failed (exit 255)' "partial clone success overrode SSH failure"
@@ -674,7 +674,7 @@ assert_contains "$out" "human doctor-gui-session: log in on the console once" "d
 assert_contains "$out" "human gh-auth: run gh auth login" "gh human step"
 assert_contains "$out" "setup=incomplete: 2 human steps" "setup verdict"
 assert_not_contains "$out" "SECRET-GATEWAY-KEY" "setup printed the gateway key"
-[ "$(stat -f %Lp "$FAKE_ACCOUNT/.config/proxai/client.key" 2>/dev/null || stat -c %a "$FAKE_ACCOUNT/.config/proxai/client.key")" = 600 ] \
+[ "$(stat -c %a "$FAKE_ACCOUNT/.config/proxai/client.key" 2>/dev/null || stat -f %Lp "$FAKE_ACCOUNT/.config/proxai/client.key")" = 600 ] \
   || fail "setup did not restrict the gateway key"
 assert_grep "argv=fm-remote-doctor.sh --backend stream --fix" "$SSH_LOG" "setup did not run doctor --fix"
 pass "setup installs the automatable items in order and lists the human steps"
@@ -746,7 +746,7 @@ set -e
 expect_code 3 "$rc" "setup with an owner-unreadable key"
 assert_contains "$out" "human gateway-key: grant owner read access" "owner access needs a person"
 assert_not_contains "$out" "step gateway-key-mode=" "setup expanded key permissions"
-assert_equals 200 "$(stat -f %Lp "$FAKE_ACCOUNT/.config/proxai/client.key" 2>/dev/null || stat -c %a "$FAKE_ACCOUNT/.config/proxai/client.key")" "setup expanded owner permissions"
+assert_equals 200 "$(stat -c %a "$FAKE_ACCOUNT/.config/proxai/client.key" 2>/dev/null || stat -f %Lp "$FAKE_ACCOUNT/.config/proxai/client.key")" "setup expanded owner permissions"
 for mode in 400 600 700; do
   chmod "$mode" "$FAKE_ACCOUNT/.config/proxai/client.key"
   out=$(machine setup box "$RROOT")
