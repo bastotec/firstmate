@@ -47,7 +47,7 @@ data/
   learnings.md            curated fleet-local learnings, created lazily ("Operational learnings")
   projects.md             project registry and delivery posture (bin/fm-project-mode.sh)
   secondmates.md          secondmate routes ("Secondmate routes")
-  machines.md             machines connected for remote second mates, one "- <alias> (root: <remote-root>; added <date>)" line each (bin/fm-machine.sh register)
+  machines.md             home-local machine registry (bin/fm-machine.sh header owns format and registration)
   charter.md              a secondmate home's seeded charter (bin/fm-home-seed.sh)
   <id>/brief.md           task brief, or secondmate charter brief
   <id>/report.md          scout deliverable; survives teardown

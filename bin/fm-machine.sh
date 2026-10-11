@@ -65,7 +65,7 @@
 #   hostname=<name> user=<user> port=<port>     (check)
 #   hostkey-fingerprint=<SHA256:...> type=<TYPE> (check, when the key is unknown)
 #   reach=ok|auth|hostkey|timeout|refused|unresolved|error   (check)
-#   tool <name>=<path>|missing                   (check, when reachable)
+#   tool <name>=<path>|missing|unknown           (check, when reachable)
 #   check <name>=ok|missing|unknown: <evidence>  (check: alias, hostkey, reach, entrypoint, deck, proxai)
 #   action: <exact step for the captain>         (after each gap)
 #   added=<ssh-config-path>                      (add)
