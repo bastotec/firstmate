@@ -1930,7 +1930,14 @@ crew_state_run_pr_url() {  # <state-line>
 crew_absorb_class() {  # <id>
   local id=$1 line state src
   [ -n "$id" ] || { printf 'none'; return; }
-  line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
+  if [ "$FM_CREW_STATE_BIN" = "$_FM_CLASSIFY_LIB_DIR/fm-crew-state.sh" ]; then
+    # Load only for a current-state read, avoiding a source-time dependency cycle.
+    # shellcheck source=/dev/null
+    . "$_FM_CLASSIFY_LIB_DIR/fm-task-state-lib.sh"
+    line=$(fm_task_state_read "$id" 2>/dev/null) || true
+  else
+    line=$("$FM_CREW_STATE_BIN" "$id" 2>/dev/null) || true
+  fi
   case "$line" in state:*) ;; *) printf 'none'; return ;; esac
   state=${line#state: }; state=${state%% *}
   if [ "$state" = paused ]; then printf 'paused'; return; fi

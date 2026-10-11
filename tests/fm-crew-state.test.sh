@@ -86,6 +86,7 @@ case "${1:-}" in
     case "${1:-}" in
       status)
         shift
+        [ "${FM_FAKE_STATUS_FAIL:-0}" != 1 ] || exit 1
         [ -z "${FM_FAKE_STATUS_OBSERVED:-}" ] || : > "$FM_FAKE_STATUS_OBSERVED"
         if [ -n "${FM_FAKE_STATUS_HOLD:-}" ]; then
           snapshot=$(cat "$FM_FAKE_AXI_STATUS_FILE")
@@ -122,7 +123,7 @@ make_no_timeout_toolbin() {  # <dir> -> echoes toolbin path
   local dir=$1 tb="$1/notimeoutbin" tool real
   mkdir -p "$tb"
   # curl and jq reach the stream hub the pane read comes from.
-  for tool in bash git grep sed head cut tail dirname perl curl jq awk tr cat; do
+  for tool in bash git grep sed head cut tail dirname perl curl jq awk tr cat date; do
     real=$(command -v "$tool" || true)
     [ -n "$real" ] || fail "missing tool for no-timeout path: $tool"
     ln -s "$real" "$tb/$tool"
@@ -2055,8 +2056,10 @@ SH
   start=$SECONDS
   out=$(FM_FAKE_NM_CALLS="$calls_file" PATH="$d/fakebin:$toolbin" FM_STATE_OVERRIDE="$d/state" FM_CREW_STATE_NM_TIMEOUT=1 "$CREW_STATE" feat-timeout)
   elapsed=$((SECONDS - start))
-  assert_contains "$out" "state: working" "timed-out no-mistakes falls back to pane"
-  assert_contains "$out" "source: pane" "timed-out no-mistakes -> pane source"
+  assert_contains "$out" "state: unknown" "timed-out run observation cannot establish working"
+  assert_contains "$out" "source: run-step" "timeout retains the unavailable observation source"
+  assert_contains "$out" "run unavailable or unreadable" "timeout names the unavailable evidence"
+  assert_not_contains "$out" "state: stopped" "timeout is not proof the task stopped"
   [ "$elapsed" -lt 5 ] || fail "perl timeout did not bound no-mistakes calls (elapsed ${elapsed}s)"
   calls=$(awk 'END { print NR + 0 }' "$calls_file" 2>/dev/null || echo 0)
   [ "$calls" -eq 1 ] || fail "empty no-mistakes status triggered extra lookups ($calls calls)"
@@ -2833,5 +2836,55 @@ test_stream_crew_reads_busy_idle_missing_and_unreachable() {
 }
 
 test_stream_crew_reads_busy_idle_missing_and_unreachable
+
+test_consolidated_evidence_and_failures() {
+  reset_fakes
+  local d out now
+  d=$(new_case consolidated-evidence)
+  make_repo_on_branch "$d/wt" fm/consolidated
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/consolidated.meta" "worktree=$d/wt" "kind=ship" "harness=deck"
+  printf 'blocked: obsolete gate\n' > "$d/state/consolidated.status"
+  FM_FAKE_AXI_STATUS=$(run_running fm/consolidated)
+  now=$(date +%s)
+  cat > "$d/state/consolidated.external-wait" <<EOF
+version: 1
+task: consolidated
+declared_epoch: $now
+until_epoch: $((now + 600))
+until: future
+reason: provider delay
+declared_by: supervisor
+EOF
+  out=$(run_crew_state "$d" consolidated)
+  assert_contains "$out" 'state: working' 'run-step still outranks old blocked event and declaration'
+  assert_contains "$out" 'declared-wait: active' 'declaration is independent evidence'
+  assert_contains "$out" 'status-log superseded' 'old event is superseded'
+  assert_contains "$out" 'run=01RUN' 'evidence identifies the observed run'
+  assert_contains "$out" "meta=$d/state/consolidated.meta" 'evidence identifies metadata'
+  assert_contains "$out" "wait=$d/state/consolidated.external-wait" 'evidence identifies declaration'
+  assert_contains "$out" 'observed=' 'observation has a timestamp'
+  # An interrupted response contains attribution but not a state. Never infer working.
+  FM_FAKE_AXI_STATUS=$(printf 'run:\n  id: "PARTIAL"\n  branch: fm/consolidated\n  head: "%s"\n' "$FM_FAKE_RUN_HEAD")
+  out=$(run_crew_state "$d" consolidated)
+  assert_contains "$out" 'state: unknown' 'partial response is unknown, not working'
+  assert_contains "$out" 'partial record' 'unknown names the incomplete observation'
+  assert_contains "$out" 'run=PARTIAL' 'unknown retains run attribution'
+  FM_FAKE_STATUS_FAIL=1
+  export FM_FAKE_STATUS_FAIL
+  out=$(run_crew_state "$d" consolidated)
+  unset FM_FAKE_STATUS_FAIL
+  assert_contains "$out" 'state: unknown' 'failed run read cannot fall back to stale log'
+  assert_contains "$out" 'run unavailable or unreadable' 'failed read carries its reason'
+  assert_not_contains "$out" 'state: blocked' 'failed read never promotes old event'
+  assert_not_contains "$out" 'state: stopped' 'unavailable is not stopped'
+  rm "$d/state/consolidated.meta"
+  out=$(run_crew_state "$d" consolidated)
+  assert_contains "$out" 'state: unknown' 'missing metadata is unknown'
+  assert_contains "$out" "meta=$d/state/consolidated.meta" 'missing record carries reference'
+  pass 'consolidated state: precedence, independent wait evidence, interrupted response and unavailable run'
+}
+
+test_consolidated_evidence_and_failures
 
 echo "all fm-crew-state tests passed"

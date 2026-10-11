@@ -86,7 +86,7 @@ A secondmate home's terminal outcomes, PR registrations, holds, and merges reach
 
 ### Current-state reads
 
-`bin/fm-crew-state.sh <id>` is the cheap current-state read, and its header owns the precedence.
+`bin/fm-crew-state.sh <id>` is the current-state adapter, and [`bin/fm-task-state-lib.sh`](../bin/fm-task-state-lib.sh)'s `fm_task_state_read` owns the derivation, attributed evidence, and declared-wait projection consumed by monitoring.
 An attributed no-mistakes run step is authoritative even if the pane has closed, under [`bin/fm-nm-run-lib.sh`](../bin/fm-nm-run-lib.sh)'s attribution rules, and a live run outranks a terminal one so a crashed run never reports a healthy task as failed.
 A run whose only failure is the ci monitor after checks read green reports done, because a monitor observing a human merge decision must not turn its absence into failure.
 Outside that held-green case, an infrastructure-killed full run is superseded by a current-incarnation busy or idle record only when the recovery-grade endpoint probe reports exactly alive and the worker's spawn generation postdates the attributed run.

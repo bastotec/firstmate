@@ -398,12 +398,18 @@ captain_held_silenced() {  # <status-line>
 external_wait_declaration() {  # <task>
   EXT_WAIT_SCOPE='' EXT_WAIT_AGE='' EXT_WAIT_REASON='' EXT_WAIT_BY='' EXT_WAIT_UNTIL=''
   [ -n "${1:-}" ] || return 1
-  fm_external_wait_active "$1" "$STATE" || return 1
-  EXT_WAIT_SCOPE=$FM_EXTERNAL_WAIT_SCOPE
-  EXT_WAIT_AGE=$FM_EXTERNAL_WAIT_AGE
-  EXT_WAIT_REASON=$FM_EXTERNAL_WAIT_REASON
-  EXT_WAIT_BY=$FM_EXTERNAL_WAIT_BY
-  EXT_WAIT_UNTIL=$FM_EXTERNAL_WAIT_UNTIL
+  local facts
+  # The wait-only projection uses the same observation owner without probing a run.
+  # shellcheck source=/dev/null
+  . "$SCRIPT_DIR/fm-task-state-lib.sh"
+  facts=$(fm_task_state_read "$1" wait) || return 1
+  {
+    IFS= read -r EXT_WAIT_SCOPE
+    IFS= read -r EXT_WAIT_AGE
+    IFS= read -r EXT_WAIT_REASON
+    IFS= read -r EXT_WAIT_BY
+    IFS= read -r EXT_WAIT_UNTIL
+  } <<< "$facts"
   return 0
 }
 
