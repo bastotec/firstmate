@@ -541,4 +541,47 @@ assert captain() == 0, 'never below a sequence already visible'
 subprocess.check_call(cli + ['end', str(lab), 'task', 'b'*32])
 assert captain() == 0, 'an ended turn gets nothing'
 print('PASS captain-direct records reach live steerable turns in sequence order only')
+
+from fm_stream_deck import idle_captain_sequence
+for publisher in ('captain', 'bridge'):
+    for payload in ('x' * 70000, 'α' * 32730):
+        state = lab / ('%s-%s' % (publisher, len(payload)))
+        receiver = Receiver(str(state), 'task', 'c'*32)
+        projection = pathlib.Path(receiver.start('original', True))
+        def write_source(body):
+            output = subprocess.check_output(['bash', '-c',
+                '. "$1"; fm_task_inbox_write "$2" "$3" "$4" fire-and-forget',
+                'captain-test', str(root/'bin/fm-task-inbox-lib.sh'), str(state), 'task', body])
+            return pathlib.Path(output.decode().strip())
+        body = '[fm-captain-direct]' + mark + 'note\n\n' + payload
+        oversized = write_source(body)
+        before = oversized.read_bytes()
+        earlier = write_source('[fm-captain-direct]' + mark + 'note\n\nearlier eligible')
+        assert receiver.apply('bounded', 'c'*32, 'valid Bridge', lambda: True,
+                              reserve_only=True)[0] is None
+        bridge_source = receiver.find('bounded')[0]
+        later = write_source('[fm-captain-direct]' + mark + 'note\n\nlater eligible')
+        if publisher == 'captain':
+            assert int(subprocess.check_output(cli + ['captain', str(state), 'task'])) == 3
+        else:
+            assert receiver.apply('bounded', 'c'*32, 'valid Bridge', lambda: True)[0] is None
+        projected = sorted(projection.glob('*.msg'), key=lambda p: int(p.stem))
+        assert [int(p.stem) for p in projected] == [int(p.stem) for p in (earlier, bridge_source, later)]
+        assert projected[0].read_bytes().startswith(earlier.read_bytes().split(b'\n--\n', 1)[1])
+        assert projected[1].read_bytes().startswith(b'valid Bridge\n\nAfter handling')
+        assert projected[2].read_bytes().startswith(later.read_bytes().split(b'\n--\n', 1)[1])
+        assert all(len(p.read_bytes()) <= 65536 for p in projected)
+        assert oversized.read_bytes() == before
+        assert not (receiver.inbox/'handled'/oversized.name).exists()
+        assert not (projection/(str(int(oversized.stem))+'.msg')).exists()
+        assert idle_captain_sequence(state, 'task', 0) == int(later.stem)
+        assert int(subprocess.check_output(cli + ['captain', str(state), 'task'])) == 0
+        assert receiver.apply('bounded', 'c'*32, 'valid Bridge', lambda: True)[0] is None
+        (projection/'handled').mkdir()
+        projected[1].rename(projection/'handled'/projected[1].name)
+        assert receiver.apply('bounded', 'c'*32, 'valid Bridge', lambda: True) == (True, '')
+        assert receiver.apply('too-large', 'c'*32, 'x' * 70000, lambda: True)[0] is False
+        assert receiver.find('too-large') is None
+        assert oversized.read_bytes() == before
+print('PASS oversized captain fallback preserves eligible native ordering and Bridge confirmation through both publishers')
 PY

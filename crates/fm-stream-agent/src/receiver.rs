@@ -186,6 +186,17 @@ impl Receiver {
         }
         Ok(found)
     }
+    fn guidance(&self, source: &Path, text: &str) -> String {
+        let source = self.inbox.join(source.file_name().unwrap());
+        format!(
+            "{text}\n\nAfter handling this native steer, acknowledge its ordinary task-inbox source by moving {} to {}. Do not apply the same source record twice.",
+            source.display(),
+            self.inbox
+                .join("handled")
+                .join(source.file_name().unwrap())
+                .display()
+        )
+    }
     fn enqueue(&self, binding: &Value, text: &str) -> io::Result<PathBuf> {
         // Keep allocation/format/idempotency under the existing inbox owner.
         let library = std::env::var_os("FM_STREAM_CODE_ROOT")
@@ -504,6 +515,9 @@ impl Receiver {
                     Err(e) => return Err(e),
                 };
                 if let Some(body) = captain_source(&bytes) {
+                    if body.trim().is_empty() || self.guidance(&source, body).len() > 65536 {
+                        continue;
+                    }
                     sources.push((number, source, body.to_owned()));
                 }
             }
@@ -533,15 +547,7 @@ impl Receiver {
                     continue;
                 }
                 let name = format!("{number}.msg");
-                let source = self.inbox.join(source.file_name().unwrap());
-                let guidance = format!(
-                    "{text}\n\nAfter handling this native steer, acknowledge its ordinary task-inbox source by moving {} to {}. Do not apply the same source record twice.",
-                    source.display(),
-                    self.inbox
-                        .join("handled")
-                        .join(source.file_name().unwrap())
-                        .display()
-                );
+                let guidance = self.guidance(&source, &text);
                 if text.trim().is_empty() || guidance.len() > 65536 {
                     break;
                 }
@@ -736,6 +742,125 @@ mod tests {
             receiver.inbox.join("001.msg").is_file(),
             "publication acknowledged the ordinary source"
         );
+    }
+    #[test]
+    fn newer_bridge_order_skips_native_ineligible_captain_sources() {
+        for payload in ["x".repeat(70000), "α".repeat(32730)] {
+            let lab = Lab::new();
+            let receiver = lab.receiver();
+            start(&receiver, "original");
+            let body = format!("[fm-captain-direct]\u{2063}note\n\n{payload}");
+            let source = receiver.inbox.join("001.msg");
+            let before = format!("schema=fm-task-inbox.v1\nat=x\n--\n{body}").into_bytes();
+            fs::write(&source, &before).unwrap();
+            let earlier = "[fm-captain-direct]\u{2063}note\n\nearlier eligible";
+            fs::write(
+                receiver.inbox.join("002.msg"),
+                format!("schema=fm-task-inbox.v1\nat=x\n--\n{earlier}"),
+            )
+            .unwrap();
+            let mut reservation = json!({});
+            assert!(matches!(
+                receiver
+                    .apply(
+                        "bounded",
+                        &receiver.endpoint,
+                        "valid Bridge",
+                        || true,
+                        false,
+                        &mut reservation,
+                        "bounded-command",
+                        true
+                    )
+                    .unwrap(),
+                Decision::Pending(_)
+            ));
+            let later = "[fm-captain-direct]\u{2063}note\n\nlater eligible";
+            fs::write(
+                receiver.inbox.join("004.msg"),
+                format!("schema=fm-task-inbox.v1\nat=x\n--\n{later}"),
+            )
+            .unwrap();
+            for _ in 0..2 {
+                assert!(matches!(
+                    receiver
+                        .apply(
+                            "bounded",
+                            &receiver.endpoint,
+                            "valid Bridge",
+                            || true,
+                            true,
+                            &mut reservation,
+                            "bounded-command",
+                            false
+                        )
+                        .unwrap(),
+                    Decision::Pending(_)
+                ));
+                let projection = receiver.root.join("original");
+                let mut numbers: Vec<u64> = fs::read_dir(&projection)
+                    .unwrap()
+                    .map(|entry| {
+                        entry
+                            .unwrap()
+                            .path()
+                            .file_stem()
+                            .unwrap()
+                            .to_str()
+                            .unwrap()
+                            .parse()
+                            .unwrap()
+                    })
+                    .collect();
+                numbers.sort_unstable();
+                assert_eq!(numbers, [2, 3, 4]);
+                for (number, text) in [(2, earlier), (3, "valid Bridge"), (4, later)] {
+                    let bytes = fs::read(projection.join(format!("{number}.msg"))).unwrap();
+                    assert!(bytes.starts_with(format!("{text}\n\nAfter handling").as_bytes()));
+                    assert!(bytes.len() <= 65536);
+                }
+                assert_eq!(fs::read(&source).unwrap(), before);
+                assert!(!receiver.inbox.join("handled/001.msg").exists());
+            }
+            fs::create_dir_all(receiver.root.join("original/handled")).unwrap();
+            fs::rename(
+                receiver.root.join("original/3.msg"),
+                receiver.root.join("original/handled/3.msg"),
+            )
+            .unwrap();
+            assert!(matches!(
+                receiver
+                    .apply(
+                        "bounded",
+                        &receiver.endpoint,
+                        "valid Bridge",
+                        || true,
+                        true,
+                        &mut reservation,
+                        "bounded-command",
+                        false
+                    )
+                    .unwrap(),
+                Decision::Confirmed(true, _)
+            ));
+            assert!(matches!(
+                receiver
+                    .apply(
+                        "too-large",
+                        &receiver.endpoint,
+                        &"x".repeat(70000),
+                        || true,
+                        false,
+                        &mut json!({}),
+                        "too-large-command",
+                        false
+                    )
+                    .unwrap(),
+                Decision::Confirmed(false, _)
+            ));
+            assert_eq!(fs::read(source).unwrap(), before);
+            assert_eq!(receiver.sources().unwrap().len(), 1);
+        }
     }
     #[test]
     fn durable_reservation_recovery_never_borrows_a_successor() {

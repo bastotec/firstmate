@@ -12,8 +12,6 @@ Driver CLI: fm_stream_deck.py start|end STATE ID ENDPOINT [TURN SUPPORTED].
 start prints the turn projection path; end retires the active descriptor.
 fm_stream_deck.py captain STATE ID attempts captain-direct publication and
 prints the count; project_captain owns eligibility and acknowledgement rules.
-fm_stream_deck.py idle STATE ID FLOOR observes the newest pending captain
-sequence above FLOOR without publishing or acknowledging any source.
 """
 import contextlib
 import fcntl
@@ -133,7 +131,8 @@ class Receiver:
                     body = source.read_bytes().decode('utf-8').split('\n--\n', 1)[1]
                 except (FileNotFoundError, IndexError, UnicodeDecodeError):
                     continue
-                if body.startswith('[stream-order '):
+                bridge = body.startswith('[stream-order ')
+                if bridge:
                     try:
                         binding = json.loads(body.split('\n', 1)[0][14:-1])
                         if (binding['execution'] != self.endpoint
@@ -144,13 +143,15 @@ class Receiver:
                         continue
                 elif directory != self.inbox or not CAPTAIN_DIRECT.match(body):
                     continue
-                candidates.append((int(source.stem), source, body))
+                ordinary = self.inbox / source.name
+                guidance = body + '\n\nAfter handling this native steer, acknowledge its ordinary task-inbox source by moving ' + str(ordinary) + ' to ' + str(self.inbox / 'handled' / source.name) + '. Do not apply the same source record twice.'
+                if not bridge and (not body.strip() or len(guidance.encode('utf-8')) > 65536):
+                    continue
+                candidates.append((int(source.stem), body, guidance))
         published = 0
-        for number, source, body in sorted(candidates):
+        for number, body, guidance in sorted(candidates):
             if number <= floor:
                 continue
-            ordinary = self.inbox / source.name
-            guidance = body + '\n\nAfter handling this native steer, acknowledge its ordinary task-inbox source by moving ' + str(ordinary) + ' to ' + str(self.inbox / 'handled' / source.name) + '. Do not apply the same source record twice.'
             if not body.strip() or len(guidance.encode('utf-8')) > 65536:
                 # Do not let a larger sequence strand an eligible predecessor.
                 break
@@ -360,10 +361,6 @@ def idle_captain_sequence(state, task, floor):
 
 
 def main():
-    if sys.argv[1:2] == ['idle']:
-        _, state, task, floor = sys.argv[1:5]
-        print(idle_captain_sequence(state, task, floor))
-        return
     if sys.argv[1:2] == ['captain']:
         _, state, task = sys.argv[1:4]
         print(project_captain(state, task))
