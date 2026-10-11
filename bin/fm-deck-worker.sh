@@ -16,6 +16,8 @@
 #     owns native publication eligibility. A recognized stdin doorbell for this
 #     task's own empty inbox starts no turn (doorbell_without_work), so a record
 #     already taken mid-turn and acknowledged need not start another model turn;
+#     idle captain sources wake out of band while one stdin reader retains and
+#     repaints partial human input, without sending terminal keys;
 #   - each turn's events render as readable text in the pane (fm-peek reads it);
 #   - it is the semantic busy source for the task: turn start and turn end are
 #     written through bin/fm-busy-event.sh with source `deck-wrapper`, and each
@@ -125,6 +127,8 @@ WATCH_HANDLING_GENERATION='' WATCH_HANDLING_WATCHER_PID=''
 . "$SCRIPT_DIR/fm-session-lock-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
+# shellcheck source=bin/fm-task-inbox-lib.sh
+. "$SCRIPT_DIR/fm-task-inbox-lib.sh"
 while [ $# -gt 0 ]; do
   case "$1" in
     --secondmate) SECONDMATE=1; shift ;;
@@ -437,23 +441,51 @@ RENDER='
   elif .type == "run_failed" then "\n✗ turn failed: \(.error)\n"
   else empty end'
 
+# One stdin owner preserves complete and partial human lines across native
+# turns, watcher wakes and pipeline waits, including on stock Bash 3.2.
+# It observes captain sources too, avoiding a cold Python process in each
+# idle dispatch poll while leaving source acknowledgement to the model.
+python3 -c '
+import os, pathlib, select, signal, sys
+sys.path.insert(0, sys.argv[2])
+from fm_stream_deck import idle_captain_sequence
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+root = pathlib.Path(sys.argv[1])
+seq, partial, captain = 0, b"", None
+def publish(name, data):
+    tmp = root / (name + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, root / name)
+while True:
+    try:
+        newest = idle_captain_sequence(sys.argv[3], sys.argv[4], 0)
+    except OSError:
+        newest = 0
+    if newest != captain:
+        publish("input.captain", (str(newest) + "\n").encode())
+        captain = newest
+    ready, _, _ = select.select([0], [], [], 0.1)
+    if not ready:
+        continue
+    data = os.read(0, 4096)
+    if not data:
+        break
+    partial += data
+    while b"\n" in partial:
+        line, partial = partial.split(b"\n", 1)
+        publish("input." + str(seq), line + b"\n")
+        seq += 1
+    publish("input.partial", partial)
+if partial:
+    publish("input." + str(seq), partial)
+    publish("input.partial", b"")
+(root / "input.eof").touch()
+' "$WORK" "$SCRIPT_DIR" "$STATE" "$ID" <&0 &
+INPUT_PID=$!
+
 if [ "$SECONDMATE" = 1 ]; then
   [ -n "${FM_HOME:-}" ] && [ -d "$FM_HOME" ] || { host_failure 'requires an explicit home'; exit 2; }
   cd "$FM_HOME" || exit 2
-  # A persistent stdin reader preserves partial lines across watcher wakes on
-  # both Bash 3.2 (timeout and EOF share exit 1) and newer Bash. Atomic files in
-  # this private directory keep typed input pending while Deck owns the turn.
-  python3 -c '
-import os, pathlib, signal, sys
-signal.signal(signal.SIGINT, signal.SIG_IGN)
-root = pathlib.Path(sys.argv[1])
-for seq, line in enumerate(sys.stdin):
-    tmp = root / "input.tmp"
-    tmp.write_text(line)
-    os.replace(tmp, root / ("input." + str(seq)))
-(root / "input.eof").touch()
-' "$WORK" <&0 &
-  INPUT_PID=$!
   # Startup is executed exactly once by the stable host, not by a short-lived
   # Deck run. The complete digest is supplied to the first model turn.
   if ! "$SCRIPT_DIR/fm-session-start.sh" > "$WORK/startup" 2>&1; then
@@ -680,11 +712,21 @@ pipeline_arm() {
 # 0 when stdin has input within <secs>, 1 on timeout, 3 when interrupted.
 stdin_ready_within() {  # <secs>
   python3 -c '
-import select, signal, sys
+import pathlib, signal, sys, time
+sys.path.insert(0, sys.argv[1])
+from fm_stream_deck import idle_captain_sequence
 signal.signal(signal.SIGINT, lambda *_: sys.exit(3))
-ready, _, _ = select.select([0], [], [], float(sys.argv[1]))
-sys.exit(0 if ready else 1)
-' "$1"
+root = pathlib.Path(sys.argv[2])
+end = time.monotonic() + float(sys.argv[4])
+while True:
+    if ((root / ("input." + sys.argv[3])).exists() or (root / "input.eof").exists()
+            or idle_captain_sequence(sys.argv[5], sys.argv[6], sys.argv[7]) > int(sys.argv[7])):
+        sys.exit(0)
+    remaining = end - time.monotonic()
+    if remaining <= 0:
+        sys.exit(1)
+    time.sleep(min(0.1, remaining))
+' "$SCRIPT_DIR" "$WORK" "$input_seq" "$1" "$STATE" "$ID" "$IDLE_CAPTAIN_FLOOR"
 }
 
 # 0 with PIPELINE_WAKE_PROMPT set when the watched run left working; 1 when
@@ -759,20 +801,35 @@ $1"
 # 0 when <line> is the steering doorbell for this task's own inbox and that
 # inbox holds no unacknowledged record (bin/fm-task-inbox-lib.sh owns the line).
 doorbell_without_work() {  # <line>
-  local line=$1 dir own f
-  case "$line" in
-    ": Firstmate instruction waiting: list '"*) ;;
-    *) return 1 ;;
-  esac
-  dir=${line#": Firstmate instruction waiting: list '"}
-  dir=${dir%%"'/*.msg"*}
-  case "$dir" in *"'"*) return 1 ;; esac
+  local line=$1 own f canonical
   own=$(cd "$STATE/$ID.inbox" 2>/dev/null && pwd -P) || return 1
-  [ "$(cd "$dir" 2>/dev/null && pwd -P)" = "$own" ] || return 1
+  canonical=$(fm_task_inbox_doorbell_line "$own/0.msg") || return 1
+  [ "$line" = "$canonical" ] || return 1
   for f in "$own"/*.msg; do
     [ -e "$f" ] && return 1
   done
   return 0
+}
+
+# Observe new captain sources without reading or submitting the human composer.
+# Remember attempted idle sources so a missing model acknowledgement cannot spin.
+IDLE_CAPTAIN_FLOOR=0
+idle_captain_ready() {
+  local number source sequence
+  IFS= read -r number 2>/dev/null < "$WORK/input.captain" || return 1
+  case "$number" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$number" -gt "$IDLE_CAPTAIN_FLOOR" ] || return 1
+  # A mid-turn acknowledgement can outpace the advisory observer.
+  # The indicated immutable ordinary source must still be pending.
+  for source in "$STATE/$ID.inbox"/*.msg; do
+    sequence=${source##*/}; sequence=${sequence%.msg}
+    case "$sequence" in ''|*[!0-9]*) continue ;; esac
+    if [ "$sequence" -eq "$number" ] && [ -f "$source" ]; then
+      IDLE_CAPTAIN_NEXT=$number
+      return 0
+    fi
+  done
+  return 1
 }
 
 drive_turn "$PROMPT"
@@ -834,9 +891,19 @@ while :; do
     tty_ready
     [ -z "${IDLE_SINCE:-}" ] || printf '\nidle since %s' "$IDLE_SINCE"
     printf '\n❯ '
+    # Native delivery never submits this draft; keep it visible to the human
+    # and to the advisory composer guard after an out-of-band turn.
+    [ ! -f "$WORK/input.partial" ] || cat "$WORK/input.partial"
     show_prompt=0
   fi
   INTERRUPTED=0
+  if idle_captain_ready; then
+    IDLE_CAPTAIN_FLOOR=$IDLE_CAPTAIN_NEXT
+    doorbell=$(fm_task_inbox_doorbell_line "$STATE/$ID.inbox/0.msg") || exit 1
+    drive_turn "$doorbell"
+    show_prompt=1
+    continue
+  fi
   if [ "$SECONDMATE" = 1 ]; then
     if [ -f "$WORK/input.$input_seq" ]; then
       line=$(cat "$WORK/input.$input_seq")
@@ -856,10 +923,18 @@ while :; do
     PIPELINE_WAKE_PROMPT=''
     show_prompt=1
     continue
-  elif ! IFS= read -r line; then
-    [ "$INTERRUPTED" = 1 ] && continue
+  elif [ -f "$WORK/input.$input_seq" ]; then
+    line=$(cat "$WORK/input.$input_seq")
+    rm "$WORK/input.$input_seq"
+    input_seq=$((input_seq + 1))
+  elif [ -f "$WORK/input.eof" ]; then
     record_busy_event idle session-end || exit 1
     exit 0
+  elif ! kill -0 "$INPUT_PID" 2>/dev/null; then
+    host_failure 'stdin reader failed'; exit 1
+  else
+    sleep 0.1
+    continue
   fi
   case "$line" in
     *$'\025'*)

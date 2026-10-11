@@ -496,6 +496,7 @@ PY
 python3 - "$ROOT" "$LAB/captain" <<'PY'
 import json, pathlib, subprocess, sys
 root, lab = map(pathlib.Path, sys.argv[1:])
+sys.path.insert(0, str(root/'bin'))
 lab.mkdir()
 cli = [sys.executable, str(root/'bin/fm_stream_deck.py')]
 inbox = lab/'task.inbox'; (inbox/'handled').mkdir(parents=True)
@@ -522,11 +523,19 @@ assert captain() == 0, 'publishing is idempotent'
 (turn/'handled').mkdir(); (turn/'3.msg').rename(turn/'handled'/'3.msg')
 record(4, json.dumps({}) and '[stream-order ' + json.dumps({'order_id': 'o', 'execution': 'b'*32, 'turn': 'live'}) + ']\nnative\nfix it')
 record(5, '[fm-captain-direct]' + mark + 'note\n\nthird words')
-assert captain() == 0, 'never above an unprojected stream order bound to the turn'
-(turn/'4.msg').write_text('fix it')
-assert captain() == 1 and (turn/'5.msg').exists()
-record(6, '[fm-captain-direct]' + mark + 'note\n\nlate')
-(turn/'7.msg').write_text('newer order')
+assert captain() == 2, 'flush the earlier Bridge order and later captain message together'
+assert [p.name for p in sorted(turn.glob('*.msg'))] == ['1.msg', '4.msg', '5.msg']
+assert (turn/'4.msg').read_text().startswith('fix it\n\nAfter handling')
+assert captain() == 0
+# The opposite interleaving must not publish the newer order above a captain source.
+from fm_stream_deck import Receiver
+record(6, '[fm-captain-direct]' + mark + 'note\n\nearlier captain')
+r = Receiver(str(lab), 'task', 'b'*32)
+assert r.apply('new-order', 'b'*32, 'newer Bridge', lambda: True)[0] is None
+assert (turn/'6.msg').read_text().startswith('[fm-captain-direct]' + mark)
+assert (turn/'7.msg').read_text().startswith('newer Bridge\n\nAfter handling')
+record(8, '[fm-captain-direct]' + mark + 'note\n\nlate')
+(turn/'9.msg').write_text('newer order')
 record(2, '[fm-captain-direct]' + mark + 'note\n\nlower')
 assert captain() == 0, 'never below a sequence already visible'
 subprocess.check_call(cli + ['end', str(lab), 'task', 'b'*32])

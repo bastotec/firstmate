@@ -39,7 +39,7 @@ set -u
 # shellcheck source=tests/fixtures.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh" || exit 1
 
-unset FM_DECK_MCP_CONFIG FM_CONFIG_OVERRIDE
+unset FM_DECK_MCP_CONFIG FM_CONFIG_OVERRIDE FM_STREAM_ENDPOINT_ID
 
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-control-lib.sh"
@@ -47,6 +47,8 @@ unset FM_DECK_MCP_CONFIG FM_CONFIG_OVERRIDE
 . "$ROOT/bin/fm-busy-lib.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-composer-lib.sh"
+# shellcheck source=/dev/null
+. "$ROOT/bin/fm-task-inbox-lib.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-agent-process-lib.sh"
 # shellcheck source=/dev/null
@@ -458,11 +460,11 @@ test_status_checks_and_fallbacks_refuse_unsafe_paths() {
 }
 
 test_doorbell_for_an_empty_own_inbox_starts_no_turn() {
-  local dir="$TMP_ROOT/doorbell" bell other
+  local dir="$TMP_ROOT/doorbell's path" bell other
   make_fake_deck "$dir"
   mkdir -p "$dir/state/t1.inbox/handled" "$dir/other.inbox"
-  bell=": Firstmate instruction waiting: list '$dir/state/t1.inbox'/*.msg and, in numeric order, read and act on each, then mv each handled file to '$dir/state/t1.inbox'/handled/."
-  other=": Firstmate instruction waiting: list '$dir/other.inbox'/*.msg and, in numeric order, read and act on each, then mv each handled file to '$dir/other.inbox'/handled/."
+  bell=$(fm_task_inbox_doorbell_line "$dir/state/t1.inbox/0.msg")
+  other=$(fm_task_inbox_doorbell_line "$dir/other.inbox/0.msg")
   run_worker "$dir" "$bell"$'\n'"$other"$'\nwrite-status\n/quit\n' "write-status brief" \
     || fail "the driver did not exit cleanly: $(cat "$dir/pane.out")"
   [ "$(wc -l < "$dir/argv.log" | tr -d ' ')" = 3 ] \
@@ -471,12 +473,109 @@ test_doorbell_for_an_empty_own_inbox_starts_no_turn() {
   make_fake_deck "$dir/pending"
   mkdir -p "$dir/pending/state/t1.inbox/handled"
   printf 'schema=fm-task-inbox.v1\nat=x\n--\nhello\n' > "$dir/pending/state/t1.inbox/001.msg"
-  bell=": Firstmate instruction waiting: list '$dir/pending/state/t1.inbox'/*.msg and, in numeric order, read and act on each, then mv each handled file to '$dir/pending/state/t1.inbox'/handled/."
+  bell=$(fm_task_inbox_doorbell_line "$dir/pending/state/t1.inbox/0.msg")
   run_worker "$dir/pending" "$bell"$'\n/quit\n' "write-status brief" \
     || fail "the driver did not exit cleanly with a pending record: $(cat "$dir/pending/pane.out")"
   [ "$(wc -l < "$dir/pending/argv.log" | tr -d ' ')" = 2 ] \
     || fail "a doorbell with a pending record must start a turn: $(cat "$dir/pending/argv.log")"
   pass "fm-deck-worker: a doorbell for its own empty inbox starts no turn; any other doorbell still does"
+}
+
+test_idle_captain_preserves_partial_input() {
+  local dir="$TMP_ROOT/idle-captain" gen pid
+  make_fake_deck "$dir"
+  mkdir -p "$dir/state/t1.inbox/handled"
+  gen=$("$BUSY_EVENT" arm "$dir/state" t1)
+  mkfifo "$dir/in"
+  exec 3<>"$dir/in"
+  FM_TEST_STATUS="$dir/state/t1.status" FM_DECK_PIPELINE_WAIT_SECS=0 \
+    "$WORKER" --id t1 --state "$dir/state" --gen "$gen" --deck "$dir/deck" \
+    -- write-status < "$dir/in" > "$dir/pane.out" 2>&1 &
+  pid=$!
+  fm_test_track_helper_pid "$pid"
+  wait_pane_count "$dir" 'idle since' 1 || fail "worker never became idle"
+  printf 'human partial ' >&3
+  fm_task_inbox_write "$dir/state" t1 "$(printf '[fm-captain-direct]\342\201\243note\n\nwrite-status captain')" >/dev/null
+  wait_deck_runs "$dir" 2 || fail "idle captain delivery waited for human Enter"
+  wait_pane_count "$dir" 'idle since' 2 || fail "captain turn did not finish"
+  [ "$(deck_runs "$dir")" = 2 ] || fail "unacknowledged source spun an extra turn"
+  assert_contains "$(cat "$dir/pane.out")" "❯ human partial " "the human draft disappeared from the repainted composer"
+  printf 'write-status suffix\n' >&3
+  wait_deck_runs "$dir" 3 || fail "human text did not submit"
+  assert_contains "$(sed -n 3p "$dir/argv.log")" 'human partial write-status suffix' "captain delivery modified human input"
+  printf '/quit\n' >&3
+  wait "$pid" || fail "worker did not exit"
+  exec 3>&-
+  pass "idle captain delivery is out of band and preserves partial human input"
+}
+
+test_stale_captain_cue_does_not_dispatch_an_acknowledged_source() {
+  local dir variant gen pid reader
+  for variant in handled gone; do
+    dir="$TMP_ROOT/stale-captain-$variant"
+    make_fake_deck "$dir"
+    mkdir -p "$dir/state/t1.inbox/handled" "$dir/tmp"
+    cat > "$dir/tool" <<'SH'
+#!/usr/bin/env bash
+touch "$1/tool-ready"
+while [ ! -f "$1/tool-release" ]; do sleep 0.1; done
+SH
+    gen=$("$BUSY_EVENT" arm "$dir/state" t1)
+    mkfifo "$dir/in"
+    exec 3<>"$dir/in"
+    TMPDIR="$dir/tmp" FM_TEST_STATUS="$dir/state/t1.status" FM_DECK_PIPELINE_WAIT_SECS=0 \
+      FM_TEST_TOOL_COMMAND="bash '$dir/tool' '$dir'" \
+      "$WORKER" --id t1 --state "$dir/state" --gen "$gen" --deck "$dir/deck" \
+      -- write-status < "$dir/in" > "$dir/pane.out" 2>&1 &
+    pid=$!
+    fm_test_track_helper_pid "$pid"
+    wait_pane_count "$dir" 'echo: write-status' 1 || fail "fixture never started its first turn"
+    fm_task_inbox_write "$dir/state" t1 "$(printf '[fm-captain-direct]\342\201\243note\n\nwrite-status correction')" >/dev/null
+    printf 'human write-status probe\n' >&3
+    # Pin a real producer's already-observed cue across acknowledgement.
+    # Never forge it: only queued input, the ordinary source and turn argv
+    # are assertion surfaces; generated files synchronize the boundary.
+    reader=$(python3 - "$dir" "$pid" <<'PY'
+import pathlib, signal, subprocess, sys, time, os
+root, parent = pathlib.Path(sys.argv[1]), int(sys.argv[2])
+end = time.monotonic() + 6
+while time.monotonic() < end:
+    work = list((root/'tmp').glob('fm-deck-worker.*'))
+    if len(work) == 1:
+        cue, queued = work[0]/'input.captain', work[0]/'input.0'
+        if cue.exists() and cue.read_text().strip() == '1' and queued.exists():
+            rows = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,comm='], text=True)
+            readers = [int(parts[0]) for row in rows.splitlines()
+                       if len(parts := row.split(None, 2)) == 3
+                       and int(parts[1]) == parent
+                       and 'python' in pathlib.Path(parts[2]).name.lower()]
+            assert len(readers) == 1, readers
+            os.kill(readers[0], signal.SIGSTOP)
+            print(readers[0])
+            break
+    time.sleep(.05)
+else:
+    raise AssertionError('real source cue/input were never observed')
+PY
+) || fail "could not pin the producer boundary"
+    case "$variant" in
+      handled) mv "$dir/state/t1.inbox/001.msg" "$dir/state/t1.inbox/handled/" ;;
+      gone) rm "$dir/state/t1.inbox/001.msg" ;;
+    esac
+    touch "$dir/tool-release"
+    if ! wait_deck_runs "$dir" 2; then
+      kill -CONT "$reader"
+      fail "queued human input was not consumed"
+    fi
+    kill -CONT "$reader"
+    assert_contains "$(sed -n 2p "$dir/argv.log")" 'human write-status probe' \
+      "$variant source's stale cue dispatched an extra turn before queued human input"
+    printf '/quit\n' >&3
+    wait "$pid" || fail "fixture worker did not exit"
+    exec 3>&-
+    [ "$(deck_runs "$dir")" = 2 ] || fail "$variant source dispatched an extra turn"
+  done
+  pass "acknowledged and gone captain sources cannot dispatch from a stale advisory cue"
 }
 
 test_driver_backstops_silent_and_failed_turns() {
@@ -703,7 +802,8 @@ test_driver_stop_terminates_active_deck_and_resolves_spaced_paths() {
   mkdir -p "$install" "$physical"
   cp "$WORKER" "$BUSY_EVENT" "$ROOT/bin/fm-busy-lib.sh" \
     "$ROOT/bin/fm-session-lock-lib.sh" "$ROOT/bin/fm-cursor-lib.sh" "$ROOT/bin/fm-nm-run-lib.sh" \
-    "$ROOT/bin/fm-state-io.py" "$ROOT/bin/fm-deck-stop.py" "$install/"
+    "$ROOT/bin/fm-task-inbox-lib.sh" "$ROOT/bin/fm-wake-lib.sh" "$ROOT/bin/fm-backend.sh" \
+    "$ROOT/bin/fm_stream_deck.py" "$ROOT/bin/fm-state-io.py" "$ROOT/bin/fm-deck-stop.py" "$install/"
   ln -s "$physical" "$alias"
   cat > "$deck" <<'PY'
 #!/usr/bin/env python3
@@ -2226,6 +2326,8 @@ test_idle_prompt_notes_the_utc_idle_instant
 test_status_checks_and_fallbacks_refuse_unsafe_paths
 test_driver_backstops_silent_and_failed_turns
 test_doorbell_for_an_empty_own_inbox_starts_no_turn
+test_idle_captain_preserves_partial_input
+test_stale_captain_cue_does_not_dispatch_an_acknowledged_source
 test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt
 test_completed_turn_removes_busy_ack_before_the_next_steer
 test_driver_stop_terminates_active_deck_and_resolves_spaced_paths
