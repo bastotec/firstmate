@@ -17,7 +17,7 @@ Do not enable agent forwarding for Firstmate.
 `fm-on.sh` also disables agent forwarding, forwarding setup, and configured `SendEnv` patterns on every call, and arms bounded SSH dead-peer detection so a vanished host (a reboot, a dropped link) fails within a bounded window instead of hanging indefinitely; its [script header](../bin/fm-on.sh) owns the keepalive defaults and environment overrides.
 
 [`bin/fm-machine.sh`](../bin/fm-machine.sh) is the scripted entry point for connecting a new machine; its header owns the commands, trust safeguards, and line protocol.
-Use its read-only `check` before confirming `setup` to perform supported machine preparation and list the remaining human steps.
+Use its read-only `check` before confirming `setup` to perform supported machine preparation and list the remaining human steps; its header also explains the scratch route's home-readiness limits.
 
 For manual preparation, clone Firstmate on the remote host at an absolute code-root path, from the firstmate fork's network URL; provisioning refuses a copy whose `origin` is a local path or `file://` URL (see [Provision a route](#provision-a-route)).
 Expose that clone's fixed entrypoint on the account's non-interactive SSH `PATH`, for example:
@@ -74,14 +74,15 @@ The wrapper must execute that absolute target rather than resolving its own name
 ## Readiness, repair, and the human steps
 
 `bin/fm-remote-doctor.sh` is the single owner of what "ready for a remote second mate" means.
-Check any host against it directly:
+For a registered remote home, check its host and home readiness directly:
 
 ```sh
 bin/fm-on.sh <secondmate-id|ssh-alias> fm-remote-doctor.sh
 ```
 
 That run is read-only; route seeding and existing-home migration run the same check.
-It checks stream tools, Linux logout survival, the GUI login session on macOS, and the remote job worker (including its Aqua scope on macOS).
+For an unregistered machine, use the [machine entry point](../bin/fm-machine.sh) rather than `fm-on.sh`, which requires a recorded remote route.
+The doctor checks stream tools, Linux logout survival, the GUI login session on macOS, and the remote job worker (including its Aqua scope on macOS).
 For an absent destination home, the home-specific credential and hub checks report `skip`, allowing seeding and migration to provision it first.
 Once that home exists, the doctor also requires its stream credential and authenticated hub protocol check before launch or relaunch.
 `--backend stream` is still accepted, and stream is the only backend.

@@ -23,8 +23,8 @@ fm_home_tool_install_cmd() { # <tool>
   esac
 }
 
-# 0 when <tool>'s install command runs as the account itself with no package
-# manager or sudo: a user-level installer script or a global npm install.
+# 0 when <tool>'s install command runs as the account itself with no system
+# package manager or sudo: a user-level installer script or a global npm install.
 fm_home_tool_user_installable() { # <tool>
   case "$(fm_home_tool_install_cmd "$1" 2>/dev/null)" in
     'curl -fsSL '*|'npm install -g '*) return 0 ;;

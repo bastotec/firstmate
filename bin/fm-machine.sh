@@ -12,8 +12,8 @@
 # This is the deterministic entry point for an order that connects a machine
 # (for example one sent from a UI and confirmed by the captain). It never
 # handles private keys or prints secrets, never accepts a host key it was not
-# given, and never installs anything that needs a package manager, sudo or a
-# login. docs/remote-secondmates.md owns what a ready host needs,
+# given, and never invokes a system package manager, sudo or a login.
+# docs/remote-secondmates.md owns what a ready host needs,
 # bin/fm-remote-doctor.sh owns the readiness verdict, bin/fm-home-tools-lib.sh
 # owns the CLI toolchain a home needs, and bin/fm-machine-remote.sh is the half
 # that runs on the machine.
@@ -26,9 +26,12 @@
 #   ssh -o UpdateHostKeys=no -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=8 <alias> true
 # and, when that connects, probes the machine read-only (bin/fm-machine-remote.sh
 # probe) and, when a Firstmate clone is at <remote-root>, runs the doctor
-# read-only through fm-on.sh as prepare does. <remote-root> defaults to the one
-# data/machines.md records for the alias. With --address and --user, an alias
-# no ssh config block resolves yet is probed as if `add` had written it, with
+# read-only through fm-on.sh using prepare's scratch route (described below).
+# Home-specific checks therefore normally report skip; machine setup does not
+# establish an actual home's authenticated stream readiness.
+# <remote-root> defaults to the one data/machines.md records for the alias.
+# With --address and --user, an alias no ssh config block resolves yet is
+# probed as if `add` had written it, with
 # -o HostName= and -o User= on every connection; nothing is written, and
 # `check alias=missing` still names the `add` that closes it. It then prints the checklist: one
 # `item` line per thing a home on that machine needs, each present,
@@ -40,23 +43,30 @@
 # gateway at FM_MACHINE_GATEWAY_URL (default Deck's http://127.0.0.1:8329/v1)
 # and its client key file (presence and mode only, never read); and whether
 # this home's config/stream-hub answers from the machine. Exit 0 only when every
-# check and item is ok or present. Required-tool doctor gaps are human items;
-# fixable checks remaining after --fix are human items and fail setup.
+# check and item is ok or present; gaps exit 1.
+# An absent clone is will-install only when prepare's clone-route guard passes;
+# otherwise the clone item is human with the same refusal reason.
+# Required-tool doctor gaps are human items; read-only fixable checks are
+# will-install, while fixable checks remaining after setup's --fix are human
+# items and fail setup.
 #
 # setup <alias> <remote-root> performs only the automatable items, in order,
 # printing one `step` line as each completes and stopping at the first failure:
 # ssh login, the Firstmate clone and entrypoint link (as prepare), each missing
 # tool whose bin/fm-home-tools-lib.sh install command is user-level (an
 # installer script, or npm install -g when npm's global prefix is writable),
-# Deck (cloned from FM_DECK_REPO_URL, default bastotec/deck, and built with
-# cargo build --release --locked into ~/.local/bin/deck when git and cargo are
-# there), mode 600 on an owner-readable gateway key with group or other
-# permission bits set, then the doctor's --fix. It then prints a `human` line
-# for each remaining human item and the verdict. A doctor that did not run, a transport failure, or a fixable gap left
-# after --fix fails the doctor step; human gaps alone do not. Rerunning skips
+# Deck (FM_DECK_REPO_URL defaults to https://github.com/bastotec/deck.git;
+# bin/fm-machine-remote.sh owns the build and atomic install mechanics,
+# attempted when git and cargo are there), mode 600 on an owner-readable
+# gateway key with group or other permission bits set, then the doctor's --fix
+# through the same scratch route.
+# It then prints a `human` line for each remaining human item and the verdict.
+# A doctor that did not run, a transport failure, or a fixable gap left after
+# --fix fails the doctor step; human gaps alone do not. Rerunning skips
 # whatever is already present. URL userinfo is redacted from all output;
 # command diagnostics are merged into stdout through the same output filter.
-# Every remote call must exit successfully before its facts can advance setup.
+# SSH login, clone/link, probe and install calls must exit successfully before
+# their facts can advance setup; the doctor's reported gaps are handled above.
 # A failed probe makes all probe-dependent checklist items human steps.
 #
 # add <alias> <address> <user> appends a marked Host block (HostName, User,
@@ -103,7 +113,7 @@
 #   hostname=<name> user=<user> port=<port>     (check)
 #   hostkey-fingerprint=<SHA256:...> type=<TYPE> (check, when the key is unknown)
 #   reach=ok|auth|hostkey|timeout|refused|unresolved|error   (check)
-#   tool <name>=<path>|missing                   (check, when reachable)
+#   tool <name>=<path>|missing                   (check, after a successful probe)
 #   check <name>=ok|missing|unknown: <evidence>  (check: alias, hostkey, reach)
 #   action: <exact step for the captain>         (after each gap)
 #   item <name>=present|will-install|human: <evidence, what setup does, or the exact step>
