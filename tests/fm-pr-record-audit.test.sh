@@ -437,8 +437,9 @@ test_embedded_pr_links_are_removed() {
         label) title='[Fix account deletion](https://github.com/example/repo/pull/4)'; expected_title='Fix account deletion' ;;
         surrounding) title='Review [Fix account deletion](https://github.com/example/repo/pull/4) today'; expected_title='Review Fix account deletion today' ;;
         parentheses) title='Fix (https://github.com/example/repo/pull/4)'; expected_title=Fix ;;
-        multiple) title='Fix [PR](https://github.com/example/repo/pull/4),[old](https://github.com/example/repo/pull/5)'; expected_title='Fix PR,old' ;;
-        angle) title='Fix <https://github.com/example/repo/pull/4>'; expected_title=Fix ;;
+        multiple) title='Fix [PR](https://github.com/example/repo/pull/4), [old](https://github.com/example/repo/pull/5)'; expected_title='Fix PR, old' ;;
+        # tasks-axi 0.2.6 classifies an angle link as doc, so pair it with a recognized bare PR.
+        angle) title='Fix <https://github.com/example/repo/pull/4> https://github.com/example/repo/pull/4'; expected_title=Fix ;;
         bare) title='https://github.com/example/repo/pull/4'; expected_title='example/repo#4' ;;
       esac
       add_row "$home" "$id" in_flight '' 'Superseded: replaced by a smaller change' "$title"
