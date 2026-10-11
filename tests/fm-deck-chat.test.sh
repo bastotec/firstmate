@@ -163,9 +163,9 @@ test_steer_contract_without_a_host() {
   expect_code 2 "$rc" "oversized text is refused"
 
   mkdir "$steer/.published.log"
-  assert_equals 'seq=1' "$("$STEER" publish --home "$home" --text 'first')" "publish ignores the obsolete journal"
+  assert_equals "$(printf 'seq=1\nsession=s1')" "$("$STEER" publish --home "$home" --text 'first')" "publish ignores the obsolete journal"
   printf 'second\nline\n' > "$LAB/body"
-  assert_equals 'seq=2' "$("$STEER" publish --home "$home" --file "$LAB/body" --kind captain)" "second publish"
+  assert_equals "$(printf 'seq=2\nsession=s1')" "$("$STEER" publish --home "$home" --file "$LAB/body" --kind captain)" "second publish"
   assert_equals 'first' "$(cat "$steer/1.msg")" "message body is verbatim"
   assert_equals "$(printf 'second\nline')" "$(cat "$steer/2.msg")" "file body is verbatim"
   [ -z "$(find "$steer" -maxdepth 1 -name '*.tmp')" ] || fail "no temporary names are left visible"
@@ -187,18 +187,18 @@ test_steer_contract_without_a_host() {
   assert_contains "$out" '"acked_seq": 2' "status reports the acked watermark"
   assert_contains "$out" '"last_event": "run_finished"' "status reports the last event"
 
-  assert_equals 'seq=3' "$("$STEER" publish --home "$home" --text 'third')" "third publish"
+  assert_equals "$(printf 'seq=3\nsession=s1')" "$("$STEER" publish --home "$home" --text 'third')" "third publish"
   mkdir -p "$steer/rejected" && mv "$steer/3.msg" "$steer/rejected/"
   rc=0; "$STEER" delivered 3 --home "$home" || rc=$?
   expect_code 2 "$rc" "rejected/<seq>.msg is rejected"
-  assert_equals 'seq=4' "$("$STEER" publish --home "$home" --text 'fourth')" "fourth publish"
+  assert_equals "$(printf 'seq=4\nsession=s1')" "$("$STEER" publish --home "$home" --text 'fourth')" "fourth publish"
   printf '%s\n' '{"type":"steer_rejected","seq":4,"reason":"bad"}' >> "$events"
   rc=0; "$STEER" delivered 4 --home "$home" || rc=$?
   expect_code 2 "$rc" "a steer_rejected event is rejected"
 
   # The sequence never goes back, even when its counter file is lost.
   rm -f "$steer/.seq"
-  assert_equals 'seq=5' "$("$STEER" publish --home "$home" --text 'fifth')" "seq survives a lost counter"
+  assert_equals "$(printf 'seq=5\nsession=s1')" "$("$STEER" publish --home "$home" --text 'fifth')" "seq survives a lost counter"
   # Concurrent publishers get distinct, gap-free sequences.
   local i pids=''
   for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -206,7 +206,7 @@ test_steer_contract_without_a_host() {
     pids="$pids $!"
   done
   for i in $pids; do wait "$i"; done
-  assert_equals "$(seq 6 15)" "$(cat "$LAB"/par.* | sed 's/seq=//' | sort -n)" "parallel publishes are unique and ordered"
+  assert_equals "$(seq 6 15)" "$(cat "$LAB"/par.* | sed -n 's/^seq=//p' | sort -n)" "parallel publishes are unique and ordered"
 
   # A no-mistakes gate agent cannot steer or stop the primary; reads stay open.
   local before
@@ -218,6 +218,11 @@ test_steer_contract_without_a_host() {
   rc=0; FM_GATE_REFUSE_BYPASS='' NO_MISTAKES_GATE=1 "$STOP" stop --home "$home" 2>/dev/null || rc=$?
   expect_code 3 "$rc" "a gate agent cannot stop the primary"
   alive "$pid" || fail "a refused stop leaves the host running"
+
+  python3 "$BIN/fm_primary_chat.py" prepare --home "$home" --session s2 >/dev/null
+  python3 "$BIN/fm_primary_chat.py" record write --home "$home" --session s2 --host-pid "$pid"
+  assert_equals "$(printf 'seq=1\nsession=s2')" "$("$STEER" publish --home "$home" --text 'new session')" "a reused sequence belongs to its new session"
+  assert_equals 'new session' "$(cat "$home/state/primary-chat/s2/steer/1.msg")" "receipt identifies the inbox actually published to"
 
   kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
   rc=0; "$STEER" publish --home "$home" --text 'late' 2>/dev/null || rc=$?
