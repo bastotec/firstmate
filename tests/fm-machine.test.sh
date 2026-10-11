@@ -108,6 +108,33 @@ case "$1" in
     # Any other command runs here as the scratch remote account.
     cd "$FAKE_ACCOUNT" || exit 255
     unset PROXAI_API_KEY_FILE
+    operation=
+    case "$*" in
+      *" 'probe' "*) operation=probe ;;
+      *" 'install-tool' "*) operation=install-tool ;;
+      *" 'install-deck' "*) operation=install-deck ;;
+      "sh -s -- "*) operation=clone ;;
+    esac
+    fail=0
+    if [ -n "$operation" ] && [ "${FAKE_SSH_FAIL_AFTER:-}" = "$operation" ]; then
+      fail=1
+      if [ "$operation" = probe ]; then
+        probe_count=0
+        [ ! -f "$FAKE_ACCOUNT/probe-count" ] || read -r probe_count < "$FAKE_ACCOUNT/probe-count"
+        probe_count=$((probe_count + 1))
+        printf '%s\n' "$probe_count" > "$FAKE_ACCOUNT/probe-count"
+        [ "$probe_count" -eq "${FAKE_SSH_PROBE_FAIL_AT:-1}" ] || fail=0
+      fi
+    fi
+    if [ "$fail" -eq 1 ]; then
+      if [ "$operation" = probe ]; then
+        cat >/dev/null
+        printf 'account-home=%s\nclone=present\ntool treehouse=/partial/treehouse\n' "$FAKE_ACCOUNT"
+      else
+        HOME="$FAKE_ACCOUNT" PATH="$FAKE_RBIN:/usr/bin:/bin" sh -c "$*"
+      fi
+      exit 255
+    fi
     HOME="$FAKE_ACCOUNT" PATH="$FAKE_RBIN:/usr/bin:/bin" exec sh -c "$*"
     ;;
 esac
@@ -246,6 +273,20 @@ assert_contains "$out" "item stream-hub=present:" "hub item"
 assert_not_contains "$out" "SECRET-GATEWAY-KEY" "check printed the gateway key"
 assert_absent "$RROOT" "check created the clone"
 pass "check prints the machine checklist read-only"
+
+: > "$SSH_LOG"
+set +e
+out=$(FAKE_SSH_FAIL_AFTER=probe machine check box "$RROOT")
+rc=$?
+set -e
+expect_code 1 "$rc" "check with partial output from a failed probe"
+for item in firstmate-clone entrypoint-link doctor tool-treehouse tool-tasks-axi deck gh-auth model-gateway gateway-key stream-hub; do
+  assert_contains "$out" "item $item=human: the probe over ssh failed (exit 255); rerun check" "failed probe certified $item"
+done
+assert_not_contains "$out" 'tool treehouse=/partial/treehouse' "failed probe exposed untrusted tool facts"
+assert_not_contains "$out" '=will-install:' "failed probe scheduled installs"
+assert_no_grep 'fm-remote-doctor.sh' "$SSH_LOG" "doctor ran using a failed probe"
+pass "check marks probe-dependent items human after a partial SSH failure"
 
 set +e
 out=$(FAKE_GH_AUTH=1 FAKE_GATEWAY_CODE=000 FAKE_HUB_CODE=000 machine check box "$RROOT")
@@ -469,6 +510,59 @@ assert_contains "$out" "doctor: check stream-tools=ok: fake" "doctor lost config
 pass "prepare clones, links and relays the doctor's --fix verdict"
 
 # --- setup ---
+for operation in clone probe install-tool install-deck; do
+  new_account
+  : > "$SSH_LOG"
+  set +e
+  out=$(FAKE_SSH_FAIL_AFTER="$operation" machine setup box "$RROOT")
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "setup with failed $operation transport after output"
+  assert_contains "$out" 'setup=failed' "failed $operation transport verdict"
+  assert_not_contains "$out" 'setup=complete' "failed $operation transport certified setup"
+  assert_no_grep 'fm-remote-doctor.sh' "$SSH_LOG" "doctor ran after failed $operation transport"
+  assert_equals 644 "$(stat -f %Lp "$FAKE_ACCOUNT/.config/proxai/client.key" 2>/dev/null || stat -c %a "$FAKE_ACCOUNT/.config/proxai/client.key")" "key was changed after failed $operation transport"
+  case "$operation" in
+    clone)
+      assert_contains "$out" 'step firstmate-clone=failed: clone/link over ssh failed (exit 255)' "partial clone success overrode SSH failure"
+      assert_not_contains "$out" 'step firstmate-clone=done:' "failed clone reported done"
+      assert_not_contains "$out" 'step entrypoint-link=' "setup continued after failed clone call"
+      assert_no_grep "'probe'" "$SSH_LOG" "probe ran after failed clone call"
+      ;;
+    probe)
+      assert_contains "$out" 'step probe=failed: the probe over ssh failed (exit 255)' "partial account-home overrode probe failure"
+      assert_equals 1 "$(cat "$FAKE_ACCOUNT/probe-count")" "setup retried after probe failure"
+      assert_no_grep "'install-tool'" "$SSH_LOG" "installation ran after probe failure"
+      ;;
+    install-tool)
+      assert_contains "$out" 'step tool-treehouse=failed: the install over ssh failed (exit 255)' "success-looking tool result overrode SSH failure"
+      assert_not_contains "$out" 'step tool-treehouse=done:' "failed install reported done"
+      assert_absent "$FAKE_ACCOUNT/.local/bin/no-mistakes" "setup installed the next tool after SSH failure"
+      ;;
+    install-deck)
+      assert_contains "$out" 'step deck=failed: the install over ssh failed (exit 255)' "success-looking Deck result overrode SSH failure"
+      assert_not_contains "$out" 'step deck=done:' "failed Deck install reported done"
+      ;;
+  esac
+  if [ "$operation" != install-deck ]; then
+    assert_no_grep "'install-deck'" "$SSH_LOG" "Deck ran after failed $operation transport"
+  fi
+done
+pass "setup stops after clone, probe and install SSH failures despite success-looking output"
+
+new_account
+: > "$SSH_LOG"
+set +e
+out=$(FAKE_SSH_FAIL_AFTER=probe FAKE_SSH_PROBE_FAIL_AT=2 machine setup box "$RROOT")
+rc=$?
+set -e
+expect_code 1 "$rc" "setup with a failed final probe"
+assert_contains "$out" 'step doctor=done:' "final probe failure fixture did not reach doctor"
+assert_contains "$out" 'step probe=failed: the probe over ssh failed (exit 255)' "final probe failure was hidden"
+assert_contains "$out" 'setup=failed' "final probe failure certified setup"
+assert_equals 2 "$(cat "$FAKE_ACCOUNT/probe-count")" "setup retried after final probe failure"
+pass "setup fails rather than certifying readiness when its final probe connection drops"
+
 new_account
 : > "$SSH_LOG"
 set +e

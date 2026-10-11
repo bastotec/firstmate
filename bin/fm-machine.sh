@@ -56,6 +56,8 @@
 # after --fix fails the doctor step; human gaps alone do not. Rerunning skips
 # whatever is already present. URL userinfo is redacted from all output;
 # command diagnostics are merged into stdout through the same output filter.
+# Every remote call must exit successfully before its facts can advance setup.
+# A failed probe makes all probe-dependent checklist items human steps.
 #
 # add <alias> <address> <user> appends a marked Host block (HostName, User,
 # StrictHostKeyChecking yes, ConnectTimeout 8, ForwardAgent no) to the ssh
@@ -319,6 +321,7 @@ cmd_check() { # <alias> [<remote-root>] [--address <host> --user <user>]
   DOCTOR_ATTEMPTED=0
   DOCTOR_FIXED=0
   PROBE_OUT=
+  PROBE_RC=0
   CLONE_URL=$(fm_home_route_url "$FM_ROOT")
   if [ "$class" = ok ]; then
     probe_machine "$alias" "$root"
@@ -523,23 +526,35 @@ hub_url() {
 }
 
 # Run bin/fm-machine-remote.sh on the machine as `bash -s`, with the tools
-# and output libraries in front of it. Prints its stdout; returns its status.
+# and output libraries in front of it. Sets REMOTE_OUT and REMOTE_RC (ssh's status).
 remote_machine() { # <alias> <args...>
   local alias=$1 cmd='bash -s --' arg
   shift
   for arg in "$@"; do cmd="$cmd $(sq "$arg")"; done
-  # shellcheck disable=SC2029 # quoted for the remote shell on purpose.
-  cat "$SCRIPT_DIR/fm-home-tools-lib.sh" "$SCRIPT_DIR/fm-machine-output-lib.sh" "$SCRIPT_DIR/fm-machine-remote.sh" \
-    | ssh "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "${PROBE_OPTS[@]}" "$alias" "$cmd" 2>/dev/null
+  set +e
+  REMOTE_OUT=$(
+    # shellcheck disable=SC2029 # quoted for the remote shell on purpose.
+    cat "$SCRIPT_DIR/fm-home-tools-lib.sh" "$SCRIPT_DIR/fm-machine-output-lib.sh" "$SCRIPT_DIR/fm-machine-remote.sh" \
+      | ssh "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "${PROBE_OPTS[@]}" "$alias" "$cmd" 2>/dev/null
+    exit "${PIPESTATUS[1]}"
+  )
+  REMOTE_RC=$?
+  set -e
 }
 
-# Probe the machine into PROBE_OUT and ACCOUNT_HOME.
+# Probe the machine into PROBE_OUT, PROBE_RC and ACCOUNT_HOME.
 probe_machine() { # <alias> <root|->
   local -a tools=()
   local tool
   while IFS= read -r tool; do tools+=("$tool"); done < <(machine_tools)
-  PROBE_OUT=$(remote_machine "$1" probe "$2" "$GATEWAY_URL" "$(hub_url)" "${tools[@]}") || true
-  ACCOUNT_HOME=$(fact account-home)
+  remote_machine "$1" probe "$2" "$GATEWAY_URL" "$(hub_url)" "${tools[@]}"
+  PROBE_RC=$REMOTE_RC
+  PROBE_OUT=
+  ACCOUNT_HOME=
+  if [ "$PROBE_RC" -eq 0 ]; then
+    PROBE_OUT=$REMOTE_OUT
+    ACCOUNT_HOME=$(fact account-home)
+  fi
 }
 
 fact() { # <key> -> value of the first "<key>=" line in PROBE_OUT
@@ -623,6 +638,19 @@ build_items() { # <alias> <root|-> <reach-class> <known-fingerprints>
   esac
   if [ "$class" != ok ]; then
     item machine human "everything else is checked once ssh login works"
+    return 0
+  fi
+
+  if [ "${PROBE_RC:-0}" -ne 0 ]; then
+    for tool in firstmate-clone entrypoint-link doctor; do
+      item "$tool" human "the probe over ssh failed (exit $PROBE_RC); rerun check"
+    done
+    while IFS= read -r tool; do
+      item "tool-$tool" human "the probe over ssh failed (exit $PROBE_RC); rerun check"
+    done < <(machine_tools)
+    for tool in deck gh-auth model-gateway gateway-key stream-hub; do
+      item "$tool" human "the probe over ssh failed (exit $PROBE_RC); rerun check"
+    done
     return 0
   fi
 
@@ -720,6 +748,7 @@ cmd_setup() { # <alias> <remote-root>
   DOCTOR_ATTEMPTED=0
   DOCTOR_FIXED=0
   PROBE_OUT=
+  PROBE_RC=0
 
   set +e
   err=$(ssh "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "${PROBE_OPTS[@]}" "$alias" true < /dev/null 2>&1 >/dev/null)
@@ -733,12 +762,16 @@ cmd_setup() { # <alias> <remote-root>
   printf 'step ssh=done: key login as %s works\n' "$SSH_USER"
 
   remote_clone_and_link "$alias" "$root" "$CLONE_URL"
+  if [ "$CLONE_RC" -ne 0 ]; then
+    line=$(printf '%s\n' "$CLONE_OUT" | awk '/^refuse: / { sub(/^refuse: /, ""); print; exit }')
+    printf 'step firstmate-clone=failed: %s (exit %s)\n' "${line:-clone/link over ssh failed}" "$CLONE_RC"
+    setup_finish "$alias" "$root" "$class" "$known" 1
+  fi
   case "$CLONE_OUT" in
     *clone=present*) printf 'step firstmate-clone=skipped: already at %s\n' "$root" ;;
     *clone=created*) printf 'step firstmate-clone=done: cloned %s at %s\n' "$CLONE_URL" "$root" ;;
     *)
       printf 'step firstmate-clone=failed: %s\n' "$(printf '%s\n' "$CLONE_OUT" | awk '/^refuse: / { sub(/^refuse: /, ""); print; exit }')"
-      probe_machine "$alias" "$root"
       setup_finish "$alias" "$root" "$class" "$known" 1
       ;;
   esac
@@ -747,12 +780,15 @@ cmd_setup() { # <alias> <remote-root>
     *entrypoint-link=created*) printf 'step entrypoint-link=done: linked ~/.local/bin/fm-remote-entrypoint.sh\n' ;;
     *)
       printf 'step entrypoint-link=failed: ~/.local/bin/fm-remote-entrypoint.sh is something else; inspect it on the machine\n'
-      probe_machine "$alias" "$root"
       setup_finish "$alias" "$root" "$class" "$known" 1
       ;;
   esac
 
   probe_machine "$alias" "$root"
+  if [ "$PROBE_RC" -ne 0 ]; then
+    printf 'step probe=failed: the probe over ssh failed (exit %s)\n' "$PROBE_RC"
+    setup_finish "$alias" "$root" "$class" "$known" 1
+  fi
   case "$ACCOUNT_HOME" in /?*) ;; *) printf 'step probe=failed: could not read the machine'"'"'s facts over ssh\n'; setup_finish "$alias" "$root" "$class" "$known" 1 ;; esac
   npm_global=$(fact npm-global)
   while IFS= read -r tool; do
@@ -765,11 +801,19 @@ cmd_setup() { # <alias> <remote-root>
     case "$(fm_home_tool_install_cmd "$tool")" in
       'npm install -g '*) [ "$(fact 'tool npm')" != missing ] && [ "$npm_global" = writable ] || continue ;;
     esac
-    result=$(remote_machine "$alias" install-tool "$tool" "$root" | awk '/^result=/ { sub(/^result=/, ""); print; exit }')
+    remote_machine "$alias" install-tool "$tool" "$root"
+    result=$(printf '%s\n' "$REMOTE_OUT" | awk '/^result=/ { sub(/^result=/, ""); print; exit }')
+    if [ "$REMOTE_RC" -ne 0 ]; then
+      case "$result" in
+        failed:*) line=${result#failed: } ;;
+        *) line='the install over ssh failed' ;;
+      esac
+      printf 'step tool-%s=failed: %s (exit %s)\n' "$tool" "$line" "$REMOTE_RC"
+      setup_finish "$alias" "$root" "$class" "$known" 1
+    fi
     case "$result" in
       done*) printf 'step tool-%s=%s\n' "$tool" "$result" ;;
       *) printf 'step tool-%s=failed: %s\n' "$tool" "${result#failed: }"
-         probe_machine "$alias" "$root"
          setup_finish "$alias" "$root" "$class" "$known" 1 ;;
     esac
   done < <(machine_tools)
@@ -778,11 +822,19 @@ cmd_setup() { # <alias> <remote-root>
   if [ -n "$path" ] && [ "$path" != missing ]; then
     printf 'step deck=skipped: present at %s\n' "$path"
   elif [ "$(fact 'tool cargo')" != missing ] && [ "$(fact 'tool git')" != missing ]; then
-    result=$(remote_machine "$alias" install-deck "$root" "$DECK_REPO_URL" | awk '/^result=/ { sub(/^result=/, ""); print; exit }')
+    remote_machine "$alias" install-deck "$root" "$DECK_REPO_URL"
+    result=$(printf '%s\n' "$REMOTE_OUT" | awk '/^result=/ { sub(/^result=/, ""); print; exit }')
+    if [ "$REMOTE_RC" -ne 0 ]; then
+      case "$result" in
+        failed:*) line=${result#failed: } ;;
+        *) line='the install over ssh failed' ;;
+      esac
+      printf 'step deck=failed: %s (exit %s)\n' "$line" "$REMOTE_RC"
+      setup_finish "$alias" "$root" "$class" "$known" 1
+    fi
     case "$result" in
       done*) printf 'step deck=%s\n' "$result" ;;
       *) printf 'step deck=failed: %s\n' "${result#failed: }"
-         probe_machine "$alias" "$root"
          setup_finish "$alias" "$root" "$class" "$known" 1 ;;
     esac
   fi
@@ -806,11 +858,14 @@ cmd_setup() { # <alias> <remote-root>
   interpret_doctor
   if [ -n "$DOCTOR_FAILURE" ]; then
     printf 'step doctor=failed: %s\n' "$DOCTOR_FAILURE"
-    probe_machine "$alias" "$root"
     setup_finish "$alias" "$root" "$class" "$known" 1
   fi
   printf 'step doctor=done: fm-remote-doctor.sh --fix ran (exit %s)\n' "$DOCTOR_RC"
   probe_machine "$alias" "$root"
+  if [ "$PROBE_RC" -ne 0 ]; then
+    printf 'step probe=failed: the probe over ssh failed (exit %s)\n' "$PROBE_RC"
+    setup_finish "$alias" "$root" "$class" "$known" 1
+  fi
   setup_finish "$alias" "$root" "$class" "$known" 0
 }
 
