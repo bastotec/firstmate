@@ -950,15 +950,17 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
       # `[ -n "$RUN_OUT" ]`: an empty/timed-out primary call means the CLI
       # itself did not respond, so retrying it immediately with a second
       # bounded call would just double the wait for no better answer.
-      COARSE_STATUS=$(fm_nm_runs_status_for_worktree "$WT" "$CREW_BRANCH" "$(nm_runs_list)")
+      runs_list=$(nm_runs_list)
+      COARSE_STATUS=$(fm_nm_runs_status_for_worktree "$WT" "$CREW_BRANCH" "$runs_list")
       if [ -n "$COARSE_STATUS" ]; then
         HAVE_RUN=1
-        # A branch-matching answer the strict rule rejected is this branch's
-        # own current run once the ledger proves the pipeline-owned
-        # continuation, so its axi TOON is the authoritative run detail
-        # (RUN_SOURCE stays full); only a foreign-branch answer leaves
-        # coarse status-word detail.
-        [ "$run_branch" = "$CREW_BRANCH" ] || RUN_SOURCE=coarse
+        RUN_SOURCE=coarse
+        run_head=$(strip_quotes "$(nm_field head)")
+        if [ "$run_branch" = "$CREW_BRANCH" ] && [ -n "$run_head" ] \
+          && fm_nm_run_is_active "$RUN_OUT" \
+          && [ "$(fm_nm_runs_status_for_worktree "$WT" "$CREW_BRANCH" "$runs_list" "$run_head")" = "$COARSE_STATUS" ]; then
+          RUN_SOURCE=full
+        fi
       fi
     fi
   fi

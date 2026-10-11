@@ -1516,6 +1516,47 @@ EOF
   pass "cross-branch run is attributed via the real runs list"
 }
 
+test_same_branch_rejected_response_uses_ledger_evidence() {
+  reset_fakes
+  local d old_head current_head fixture out record
+  d=$(new_case same-branch-rejected-response)
+  make_repo_on_branch "$d/wt" fm/feat-rejected
+  old_head=$(git -C "$d/wt" rev-parse HEAD)
+  git -C "$d/wt" commit -q --allow-empty -m 'local work advances'
+  current_head=$(git -C "$d/wt" rev-parse --short=7 HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/rejected.meta" $(fm_test_stream_task "$d/state" "rejected") "worktree=$d/wt" "kind=ship"
+  FM_FAKE_RUN_HEAD="$old_head"
+  FM_FAKE_RUNS_LIST="  running    fm/feat-rejected ${current_head}  2026-07-30 22:05"
+  for fixture in run_failed run_running run_parked; do
+    FM_FAKE_AXI_STATUS=$($fixture fm/feat-rejected)
+    out=$(run_crew_state "$d" rejected)
+    assert_contains "$out" "state: working" "the current ledger run wins over a rejected $fixture response"
+    assert_contains "$out" "validating (background run)" "rejected same-branch response detail is not reused"
+    assert_contains "$out" "run=ledger; worktree=$d/wt" "same-branch fallback attributes the ledger"
+    assert_not_contains "$out" "run=01RUN" "the rejected same-branch run ID is not emitted"
+    PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" --publish rejected >/dev/null
+    record=$(<"$d/state/rejected.crew-state")
+    assert_contains "$record" "verdict=working" "published state comes from the selected ledger run"
+    assert_contains "$record" $'step_status=running\nrun=\npr=' "publication omits rejected run identity and artifacts"
+    assert_contains "$record" $'step=\n' "publication omits rejected step detail"
+  done
+  FM_FAKE_AXI_STATUS=$(run_parked fm/feat-rejected | grep -v '^  head:')
+  out=$(run_crew_state "$d" rejected)
+  assert_contains "$out" "state: working" "a headless response cannot replace the selected ledger run"
+  assert_contains "$out" "run=ledger; worktree=$d/wt" "a missing response head cannot prove full attribution"
+  assert_not_contains "$out" "run=01RUN" "a headless rejected response has no attributed identity"
+  FM_FAKE_RUN_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  FM_FAKE_AXI_STATUS=$(run_fixing fm/feat-rejected)
+  FM_FAKE_RUNS_LIST=$(printf '  running    fm/feat-rejected bbbbbbb  2026-07-30 22:05\n  failed     fm/feat-rejected %s  2026-07-29 20:00' "$current_head")
+  out=$(run_crew_state "$d" rejected)
+  assert_contains "$out" "state: working" "the anchored continuation remains current with a different response head"
+  assert_contains "$out" "validating (background run)" "a different unfetched response head does not supply full detail"
+  assert_contains "$out" "run=ledger; worktree=$d/wt" "only the selected anchored ledger row is attributed"
+  assert_not_contains "$out" "run=01RUN" "the rejected unfetched run ID is not emitted"
+  pass "same-branch rejected responses use the selected ledger's evidence and publication"
+}
+
 # The runs list is newest-first; a branch with an OLDER completed run must not
 # shadow its own newer active one - the first (topmost) matching row wins.
 test_coarse_socket_refusal_reports_blocked() {
@@ -2584,6 +2625,7 @@ EOF
   assert_contains "$out" "source: run-step" "active run with an unfetched pipeline head still attributes"
   assert_contains "$out" "state: working" "active fix round reads working, not the older failed row"
   assert_contains "$out" "validating (fixing)" "full run detail survives the unfetched pipeline head"
+  assert_contains "$out" "run=01RUN; worktree=$d/wt" "a response matching the selected continuation retains its run identity"
   assert_not_contains "$out" "state: failed" "the older failed row must never answer for the active run"
   pass "active fix round with an unfetched pipeline head reads working"
 }
@@ -2724,6 +2766,7 @@ test_daemon_killed_run_without_live_crew_names_its_cause
 test_daemon_killed_run_with_frozen_busy_record_and_stale_agent_stays_failed
 test_merit_failure_carries_recorded_error
 test_cross_branch_attribution_via_runs_list
+test_same_branch_rejected_response_uses_ledger_evidence
 test_coarse_socket_refusal_reports_blocked
 test_coarse_failed_ledger_with_daemon_down_reports_unknown
 test_cross_branch_attribution_picks_most_recent_row
