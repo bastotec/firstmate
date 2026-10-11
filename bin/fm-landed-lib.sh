@@ -20,7 +20,8 @@
 # The selector uses recorded delivery artifacts and completion verbs, not a
 # live forge check. PR deliveries require an explicit merged outcome; a legacy
 # "(merged DATE)" label alone is never merge evidence.
-# bin/fm-pr-lib.sh's completion-claim gate owns the PR-link rendering limitation.
+# bin/fm-backlog-transition-lib.sh's fm_backlog_record_pr_outcome owns the
+# PR-link rendering limitation and recorded outcome format.
 # Report and local-only deliveries keep their own completion verbs and artifacts
 # independently of any contextual PR outcome.
 # A closed row whose artifact matches its merged or done completion verb is

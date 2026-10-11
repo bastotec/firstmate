@@ -1112,12 +1112,10 @@ fm_pr_github_checks_not_green() {
 # that name a PR. Superseded closes omit --pr.
 # bin/fm-teardown.sh checks before destructive cleanup; its --force discard path
 # never supplies --pr to the close, even when the live verdict is merged.
-# Omitting --pr avoids adding a title link but does not remove an existing
-# row link, and tasks-axi renders any PR-bearing Done row as "(merged DATE)".
-# A confirmed verdict is recorded as the task's explicit outcome
-# (bin/fm-backlog-transition-lib.sh's fm_backlog_record_pr_outcome owns the
-# `Outcome:` line and moves the link out of a superseded or unmerged title).
-# Readers trust that line (fm_pr_task_outcome), never the "(merged DATE)" label.
+# bin/fm-backlog-transition-lib.sh's fm_backlog_record_pr_outcome owns the
+# recorded outcome format and title-link handling needed for tasks-axi rendering.
+# Readers trust that explicit outcome (fm_pr_task_outcome), never the rendered
+# completion label, as merge evidence.
 # bin/fm-teardown.sh's header owns outcome recording on authorized forced cleanup,
 # including the unreadable-forge exception.
 # bin/fm-tasks-axi.sh gates done/close, and bin/fm-captain-hold.sh gates its

@@ -51,6 +51,11 @@
 # lose work, nor be left unaware that work is still sitting there. That is also
 # why no --force is accepted or forwarded here: discarding work is a different
 # authority, exercised with a different command.
+# Before staging a record-only close, retirement uses
+# fm_backlog_record_pr_close_outcome in bin/fm-backlog-transition-lib.sh under
+# bin/fm-teardown.sh's outcome-recording rule; a recording failure stops retirement.
+# The prepared row and staged close allow session-start replay to finish offline.
+# Regression coverage: tests/fm-backlog-atomicity.test.sh.
 #
 # Every OTHER refusal stands and stops the retirement, because each protects
 # something no retirement has a say over: an outcome that never reached the
@@ -351,8 +356,9 @@ if [ "$FINISHED" = 0 ]; then
 fi
 
 # Record bookkeeping only: the task record and its backlog row, through the
-# same transition that owns that pairing for cleanup. Nothing here reads or
-# writes anything outside the state directory.
+# same transition that owns that pairing for cleanup. PR evidence comes from
+# the owning home's row and metadata and a read-only forge check; project work
+# is never changed here.
 # The deliverable a closed or retained row carries, derived from this task's
 # own record exactly as cleanup derives it.
 RETIRE_DONE_ARGS=()
