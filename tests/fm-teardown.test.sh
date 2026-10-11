@@ -1062,6 +1062,53 @@ test_teardown_force_never_claims_unmerged_pr() {
   pass "forced teardown records confirmed PR outcomes without inventing offline outcomes or passing --pr"
 }
 
+test_teardown_contextual_pr_keeps_non_pr_delivery() {
+  local case_dir delivery state outcome verb artifact json
+  for delivery in local scout; do
+    for state in MERGED CLOSED; do
+      case_dir=$(make_case "context-$delivery-$state")
+      if [ "$delivery" = local ]; then
+        write_meta "$case_dir" local-only ship
+        seed_backlog_in_flight "$case_dir"
+        wt_commit_file "$case_dir" feature.txt landed
+        git -C "$case_dir/project" merge -q --ff-only fm/task-x1
+        verb=done
+        artifact='local main'
+      else
+        write_meta "$case_dir" scout scout
+        seed_backlog_in_flight "$case_dir" scout
+        mkdir -p "$case_dir/data/task-x1"
+        printf '# Completed investigation\nNo captain calls remain.\n' > "$case_dir/data/task-x1/report.md"
+        FM_HOME="$case_dir" PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-captain-hold.sh" complete task-x1 --none >/dev/null \
+          || fail "could not attest the scout report"
+        verb=reported
+        artifact='data/task-x1/report.md'
+      fi
+      tasks-axi update task-x1 --pr https://github.com/example/repo/pull/7 \
+        --body 'Superseded: replaced by a smaller change' --file "$case_dir/data/backlog.md" >/dev/null
+      FM_HOME="$case_dir" FM_FAKE_GH_PR_STATE=$state run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" \
+        || fail "contextual PR blocked $delivery cleanup: $(cat "$case_dir/stderr")"
+      [ "$state" = MERGED ] && outcome=merged || outcome=superseded
+      json=$(FM_HOME="$case_dir" PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-fleet-snapshot.sh" --json) \
+        || fail "contextual PR snapshot failed"
+      printf '%s' "$json" | jq -e --arg outcome "$outcome" --arg verb "$verb" '
+        .backlog.records | any(.id == "task-x1" and .outcome == $outcome and .completion.verb == $verb)
+      ' >/dev/null || fail "$delivery lost its completion verb to its PR outcome"
+      json=$(FM_HOME="$case_dir" PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-fleet-snapshot.sh" --secondmate-home-summary) \
+        || fail "contextual PR summary failed"
+      printf '%s' "$json" | jq -e --arg outcome "$outcome" --arg verb "$verb" '
+        .landed | any(.id == "task-x1" and .outcome == $outcome and .completion.verb == $verb)
+      ' >/dev/null || fail "$delivery or its contextual outcome was lost at summary production"
+      json=$(FM_HOME="$case_dir" PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-bearings-snapshot.sh" --json --all-landed) \
+        || fail "contextual PR bearings failed"
+      printf '%s' "$json" | jq -e --arg artifact "$artifact" '
+        .landed | any(.id == "task-x1" and .artifact == $artifact)
+      ' >/dev/null || fail "$delivery was hidden or changed to a PR artifact"
+    done
+  done
+  pass "scout and local-only deliveries retain their own completion and artifact across contextual PR outcomes"
+}
+
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator() {
   local case_dir out backlog_path
   case_dir=$(make_case tasks-axi-manual-optout)
@@ -1201,7 +1248,7 @@ test_squash_merged_pr_allows_when_head_ancestor_of_pr_head() {
 }
 
 test_no_pr_recorded_discovers_merged_pr_by_branch_allows() {
-  local case_dir rc local_head pr_head
+  local case_dir rc local_head pr_head json
   case_dir=$(make_case no-pr-branch-discovery)
   write_meta "$case_dir" no-mistakes ship
   # Reproduces the real false-refusal report exactly, with NO pr=/pr_head=
@@ -1232,7 +1279,14 @@ test_no_pr_recorded_discovers_merged_pr_by_branch_allows() {
   ! grep -q REFUSED "$case_dir/stderr" || fail "no-pr-branch-discovery: teardown printed a REFUSED line"
   assert_grep 'https://github.com/example/repo/pull/7' "$case_dir/data/backlog.md" \
     "no-pr-branch-discovery: resolved PR URL was not recorded on completion"
-  pass "teardown discovers a merged PR by branch name and tears down when no pr= was ever recorded"
+  assert_grep '  Outcome: merged https://github.com/example/repo/pull/7' "$case_dir/data/backlog.md" \
+    "no-pr-branch-discovery: confirmed merge outcome was not recorded"
+  json=$(FM_HOME="$case_dir" PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-bearings-snapshot.sh" --json --all-landed) \
+    || fail "branch-discovered delivery bearings failed"
+  printf '%s' "$json" | jq -e '
+    .landed | any(.id == "task-x1" and .artifact == "https://github.com/example/repo/pull/7")
+  ' >/dev/null || fail "branch-discovered merged PR was omitted from Recently Landed"
+  pass "teardown discovers a merged PR by branch name and records its landed outcome"
 }
 
 test_squash_merged_pr_allows_replayed_unpushed_patch() {
@@ -3493,6 +3547,7 @@ test_teardown_local_only_recorded_pr_gate
 test_teardown_title_is_not_supersession
 test_teardown_closes_superseded_pr_without_merged_claim
 test_teardown_force_never_claims_unmerged_pr
+test_teardown_contextual_pr_keeps_non_pr_delivery
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator
 test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows

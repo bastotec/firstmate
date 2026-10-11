@@ -425,17 +425,21 @@ test_audit_flags_and_migrates_legacy_rows() {
 }
 
 test_embedded_pr_links_are_removed() {
-  local home form mode id title line detail
+  local home form mode id title line detail expected_title
   home=$(make_home embedded-pr-links)
   printf 'CLOSED\n' > "$home/states/4"
   printf 'CLOSED\n' > "$home/states/5"
   for mode in close migrate; do
-    for form in markdown parentheses multiple; do
+    for form in markdown label surrounding parentheses multiple angle bare; do
       id="$mode-$form"
       case "$form" in
-        markdown) title='Fix [PR](https://github.com/example/repo/pull/4)' ;;
-        parentheses) title='Fix (https://github.com/example/repo/pull/4)' ;;
-        multiple) title='Fix [PR](https://github.com/example/repo/pull/4),[old](https://github.com/example/repo/pull/5)' ;;
+        markdown) title='Fix [PR](https://github.com/example/repo/pull/4)'; expected_title='Fix PR' ;;
+        label) title='[Fix account deletion](https://github.com/example/repo/pull/4)'; expected_title='Fix account deletion' ;;
+        surrounding) title='Review [Fix account deletion](https://github.com/example/repo/pull/4) today'; expected_title='Review Fix account deletion today' ;;
+        parentheses) title='Fix (https://github.com/example/repo/pull/4)'; expected_title=Fix ;;
+        multiple) title='Fix [PR](https://github.com/example/repo/pull/4),[old](https://github.com/example/repo/pull/5)'; expected_title='Fix PR,old' ;;
+        angle) title='Fix <https://github.com/example/repo/pull/4>'; expected_title=Fix ;;
+        bare) title='https://github.com/example/repo/pull/4'; expected_title='example/repo#4' ;;
       esac
       add_row "$home" "$id" in_flight '' 'Superseded: replaced by a smaller change' "$title"
       detail=$(tasks-axi show "$id" --full --file "$home/data/backlog.md" | sed -n 's/^  links: //p')
@@ -451,6 +455,8 @@ test_embedded_pr_links_are_removed() {
       assert_contains "$line" '(done ' "$mode left the $form PR fixture labeled merged"
       detail=$(tasks-axi show "$id" --full --file "$home/data/backlog.md" | sed -n 's/^  links: //p')
       assert_not_contains "$detail" 'pr:https://' "$mode left a $form PR link on the title"
+      detail=$(tasks-axi show "$id" --full --file "$home/data/backlog.md" | sed -n 's/^  title: //p' | jq -Rr 'fromjson? // .')
+      assert_equals "$expected_title" "$detail" "$mode lost title words or retained $form link markup"
       assert_contains "$(body_of "$home" "$id")" 'Outcome: superseded' "$mode lost the $form PR outcome"
       assert_contains "$(body_of "$home" "$id")" 'https://github.com/example/repo/pull/4' "$mode lost the $form PR reference"
       if [ "$form" = multiple ]; then
@@ -484,6 +490,31 @@ test_merged_outcome_owns_pr_identity() {
     .landed | any(.id == "replacement" and .artifact == "https://github.com/example/repo/pull/2")
   ' >/dev/null || fail "Recently Landed delivered the original unmerged PR"
   pass "the recorded merged outcome owns PR identity in the snapshot and Recently Landed"
+}
+
+test_migration_preserves_non_pr_deliveries() {
+  local home out
+  home=$(make_home migrated-non-pr-deliveries)
+  printf 'CLOSED\n' > "$home/states/3"
+  add_row "$home" local-delivery in_flight 3
+  add_row "$home" scout-delivery in_flight 3
+  tasks-axi update scout-delivery --kind scout --file "$home/data/backlog.md" >/dev/null
+  tasks-axi "done" local-delivery --note 'local main' --file "$home/data/backlog.md" >/dev/null
+  tasks-axi "done" scout-delivery --report data/scout-delivery/report.md --file "$home/data/backlog.md" >/dev/null
+  in_home "$home" "$AUDIT" --migrate >/dev/null || fail "non-PR delivery migration failed"
+  out=$(in_home "$home" "$ROOT/bin/fm-fleet-snapshot.sh" --json) || fail "migrated delivery snapshot failed"
+  printf '%s' "$out" | jq -e '
+    (.backlog.records | any(.id == "local-delivery" and .outcome == "closed-unmerged"
+      and .local_note == "local main" and .completion.verb == "done"))
+    and (.backlog.records | any(.id == "scout-delivery" and .outcome == "closed-unmerged"
+      and .report_path == "data/scout-delivery/report.md" and .completion.verb == "reported"))
+  ' >/dev/null || fail "migration lost a non-PR completion or the local note preceding its Outcome line"
+  out=$(in_home "$home" "$ROOT/bin/fm-bearings-snapshot.sh" --json --all-landed) || fail "migrated delivery bearings failed"
+  printf '%s' "$out" | jq -e '
+    (.landed | any(.id == "local-delivery" and .artifact == "local main"))
+    and (.landed | any(.id == "scout-delivery" and .artifact == "data/scout-delivery/report.md"))
+  ' >/dev/null || fail "closed-unmerged contextual PRs hid delivered local work or a scout report"
+  pass "migration keeps local and report completions despite closed-unmerged contextual PRs"
 }
 
 test_reopened_outcome_pr_is_gated() {
@@ -555,6 +586,7 @@ if command -v tasks-axi >/dev/null 2>&1; then
   test_audit_flags_and_migrates_legacy_rows
   test_embedded_pr_links_are_removed
   test_merged_outcome_owns_pr_identity
+  test_migration_preserves_non_pr_deliveries
   test_reopened_outcome_pr_is_gated
   test_captain_answer_records_outcome
 else

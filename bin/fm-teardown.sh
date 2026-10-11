@@ -1334,6 +1334,7 @@ pr_is_merged() {
     [ -n "$resolved_url" ] || return 1
     PR_URL=$resolved_url
   fi
+  PR_CLOSE_VERDICT=merged
   return 0
 }
 
@@ -1388,7 +1389,7 @@ backlog_done_args() {
     *)
       if [ "$MODE" = local-only ]; then
         BACKLOG_DONE_ARGS=(--note "local main")
-      elif [ "$FORCE" != --force ] && [ -n "$PR_URL" ] && { [ -z "$PR_CLOSE_VERDICT" ] || [ "$PR_CLOSE_VERDICT" = merged ]; }; then
+      elif [ "$FORCE" != --force ] && [ -n "$PR_URL" ] && [ "$PR_CLOSE_VERDICT" = merged ]; then
         BACKLOG_DONE_ARGS=(--pr "$PR_URL")
       fi
       ;;

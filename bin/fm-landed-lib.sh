@@ -21,8 +21,8 @@
 # live forge check. PR deliveries require an explicit merged outcome; a legacy
 # "(merged DATE)" label alone is never merge evidence.
 # bin/fm-pr-lib.sh's completion-claim gate owns the PR-link rendering limitation.
-# A row whose recorded PR outcome is superseded or closed-unmerged is never a
-# delivery, whatever its label says.
+# Report and local-only deliveries keep their own completion verbs and artifacts
+# independently of any contextual PR outcome.
 # A closed row whose artifact matches its merged or done completion verb is
 # selected only when it retains no captain-question provenance. A retained scout
 # is identified by its kind and recorded report because its title links do not
@@ -47,10 +47,16 @@ FM_LANDED_JQ_DEFS='
   def scout_report:
     .kind == "scout"
     and (.report_path // null) != null;
+  def landed_completion:
+    if scout_report or (.kind == null and .completion.verb == "reported") then .completion.verb = "reported"
+    elif (.local_note // null) != null then .completion.verb = "done"
+    elif (.outcome // null) != null then .completion.verb = .outcome
+    else .
+    end;
   def landed_artifact:
     if scout_report or (.kind == null and .completion.verb == "reported") then (.report_path // null)
-    elif .completion.verb == "merged" then (.pr_url // null)
     elif .completion.verb == "done" then (.local_note // null)
+    elif .completion.verb == "merged" then (.pr_url // null)
     else null
     end;
   # The kind-is-not-scout guards below and in the fallback are LOAD-BEARING:
@@ -74,7 +80,6 @@ FM_LANDED_JQ_DEFS='
       and (.local_note // null) != null);
   def landed_record:
     .state == "done" and .structured
-    and (.outcome == null or .outcome == "merged")
     and (landed_delivery
       or (.kind != "scout"
         and .kind != "captain"
@@ -82,4 +87,8 @@ FM_LANDED_JQ_DEFS='
         and (.pr_url // null) == null
         and (.report_path // null) == null
         and (.local_note // null) == null));
+  def landed_summary_record:
+    . + {state:"done",structured:true}
+    | if .kind == null and .completion.verb == "reported" then .kind = "scout" else . end
+    | landed_record;
 '

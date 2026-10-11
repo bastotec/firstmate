@@ -646,16 +646,13 @@ fm_backlog_record_pr_outcome() {  # <data-dir> <id> <outcome> <url>
     my $new_title = $title;
     my @others;
     if ($outcome ne "merged") {
-      my $kept = "";
-      for my $word (split /(\s+)/, $title) {
-        if (my @links = $word =~ m{(https?://\S+?/pull/\d+)}g) {
-          for my $link (@links) {
-            push @others, $link unless $link eq $url || grep { $_ eq $link } @others;
-          }
-          next;
-        }
-        $kept .= $word;
+      my $pr = qr{https?://\S+?/pull/\d+};
+      for my $link ($title =~ /($pr)/g) {
+        push @others, $link unless $link eq $url || grep { $_ eq $link } @others;
       }
+      my $kept = $title;
+      $kept =~ s{\[([^\]]*)\]\(($pr)\)}{$1}g;
+      $kept =~ s{<($pr)>|\(($pr)\)|($pr)}{}g;
       $kept =~ s/\s+/ /g;
       $kept =~ s/\A[\s-]+|[\s-]+\z//g;
       if ($kept eq "") {
