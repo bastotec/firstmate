@@ -26,8 +26,15 @@ for stub in fm-home-seed.sh fm-remote-home-seed.sh fm-spawn.sh; do
 #!/usr/bin/env bash
 printf '%s %s\n' "$stub" "\$*" >> "\$STUB_LOG"
 if [ "\${STUB_FAIL:-}" = "$stub" ]; then
-  echo "error: stub $stub refused this order" >&2
+  echo "error: \${STUB_FAIL_REASON:-stub $stub refused this order}" >&2
   exit 1
+fi
+if [ "$stub" = fm-remote-home-seed.sh ] && [ -n "\${STUB_UNKNOWN_RC:-}" ]; then
+  printf -- '- %s - charter (host: %s; root: %s; home: %s; scope: s; projects: ; added 2026-01-01)\\n' "\$1" "\$2" "\$3" "\$4" >> "\$FM_HOME/data/secondmates.md"
+  if [ "\$STUB_UNKNOWN_RC" -eq 1 ]; then
+    echo 'error: remote provisioning completion is unknown; route preserved for same-host reconciliation' >&2
+  fi
+  exit "\$STUB_UNKNOWN_RC"
 fi
 echo "stub $stub ok"
 SH
@@ -110,6 +117,37 @@ expect_refusal "name at least one project or pass --no-projects" web --charter c
 assert_absent "$LOG" "a refused plan ran a step"
 pass "plan refuses invalid orders with plain reasons and no steps"
 
+protocol_refusal() {
+  local out rc flat
+  set +e
+  out=$(create plan "$@")
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "control-character order"
+  assert_contains "$out" "refuse:" "missing protocol refusal"
+  assert_not_contains "$out" $'\nstep=' "input injected a step record"
+  assert_not_contains "$out" $'\ndone ' "input injected a completion record"
+  flat=$(printf '%s' "$out" | tr -d '\n')
+  [[ "$flat" != *[[:cntrl:]]* ]] || fail "protocol retained control characters"
+}
+injection=$'\r\nstep=99 injected\ndone id=fake\t\033\177'
+protocol_refusal "bad$injection" --charter c --scope s --no-projects
+protocol_refusal web --charter "c$injection" --scope s --no-projects
+protocol_refusal web --charter c --scope "s$injection" --no-projects
+protocol_refusal web --charter c --scope s --host "box$injection" --root /a --home /b --no-projects
+protocol_refusal web --charter c --scope s --host box --root "/a$injection" --home /b --no-projects
+protocol_refusal web --charter c --scope s --host box --root /a --home "/b$injection" --no-projects
+protocol_refusal web --charter c --scope s --host box --root /a --home /b "site=https://example.com/a$injection"
+protocol_refusal web --charter c --scope s "site$injection"
+out=$(create plan tabs --charter $'c\ttab' --scope $'s\033escape' --no-projects)
+assert_contains "$out" "charter=c tab" "tab normalization"
+assert_contains "$out" "scope=s escape" "escape normalization"
+step=$(printf '%s\n' "$out" | awk 'index($0, "step=1 ") == 1 { print substr($0, 8) }')
+(FM_HOME="$FMH" STUB_LOG="$LOG"; export FM_HOME STUB_LOG; cd "$CODE"; eval "$step")
+assert_contains "$(cat "$LOG")" $'charter=c\ttab | scope=s\033escape' "printed step changed its arguments"
+: > "$LOG"
+pass "facts and refusals normalize control characters without changing printed commands"
+
 # --- apply ---
 out=$(create apply web --charter "Owns the web app" --scope "web app work" app 2>/dev/null)
 assert_contains "$out" "ran step=3" "apply ran every step"
@@ -130,6 +168,37 @@ assert_not_contains "$out" "done id=" "done printed after failure"
 assert_no_grep "fm-spawn.sh" "$LOG" "spawn ran after a failed seed"
 assert_absent "$FMH/data/app2/brief.md" "charter left behind after a failed seed"
 pass "apply stops at a failed seed and removes the charter it wrote"
+
+set +e
+out=$(STUB_FAIL=fm-home-seed.sh STUB_FAIL_REASON=$'refused\torder\r\033\177' create apply noisy --charter c --scope s app 2>/dev/null)
+rc=$?
+set -e
+expect_code 1 "$rc" "seed failure with control characters"
+assert_contains "$out" 'failed step=2: refused order   ' "step failure reason normalization"
+assert_absent "$FMH/data/noisy/brief.md" "known seed failure kept its charter"
+
+for status in 1 255; do
+  : > "$LOG"
+  id="unknown$status"
+  set +e
+  out=$(STUB_UNKNOWN_RC="$status" create apply "$id" --charter c --scope s --host box --root /srv/fm --home "/srv/homes/$id" --no-projects 2>/dev/null)
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "unknown remote seed outcome"
+  assert_contains "$out" "failed step=2:" "unknown seed failure line"
+  assert_contains "$out" "reconcile with the printed step 2 command, then step 3" "unknown seed recovery advice"
+  assert_not_contains "$out" "send the same order again" "invalid recovery advice"
+  assert_present "$FMH/data/$id/brief.md" "unknown seed lost its charter"
+  assert_grep "- $id " "$FMH/data/secondmates.md" "unknown seed lost its route"
+  assert_no_grep "fm-spawn.sh" "$LOG" "spawn ran with unknown seed completion"
+  set +e
+  out=$(create plan "$id" --charter c --scope s --host box --root /srv/fm --home "/srv/homes/$id" --no-projects)
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "repeated create after unknown seed"
+  assert_contains "$out" "already registered" "unknown seed did not preserve identity"
+done
+pass "apply preserves reconciliation records for both unknown seed failure statuses"
 
 : > "$LOG"
 set +e

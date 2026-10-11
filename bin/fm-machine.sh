@@ -14,11 +14,12 @@
 # installs packages. docs/remote-secondmates.md owns what a ready host needs and
 # bin/fm-remote-doctor.sh owns the readiness verdict.
 #
-# check <alias> is read-only. It reports whether an ssh config block sets a
-# HostName for the alias (ssh -G), whether the host key is known (ssh-keygen -F),
+# check <alias> is read-only. An alias is configured when a Host line names it
+# literally or ssh -G resolves it to a different hostname. It reports that
+# configuration and whether the host key is known (ssh-keygen -F),
 # and when it is not, the scanned key fingerprints (ssh-keyscan piped to
 # ssh-keygen -lf -, never written anywhere). It then tries
-#   ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=8 <alias> true
+#   ssh -o UpdateHostKeys=no -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=8 <alias> true
 # and, when that connects, runs read-only `command -v` probes over one more such
 # call for fm-remote-entrypoint.sh, deck and proxai on the account's
 # non-interactive PATH. Exit 0 only when every check is ok.
@@ -26,7 +27,8 @@
 # add <alias> <address> <user> appends a marked Host block (HostName, User,
 # StrictHostKeyChecking yes, ConnectTimeout 8, ForwardAgent no) to the ssh
 # config, and refuses when an existing block already sets a HostName for the
-# alias or names it on a Host line.
+# alias or names it on a Host line. Before writing, it evaluates the candidate
+# config with ssh -G and refuses ineffective HostName or User settings.
 #
 # trust <alias> <SHA256:fingerprint> scans the host key again and appends the
 # scanned key whose fingerprint exactly equals the given one to known_hosts. It
@@ -51,8 +53,11 @@
 # idempotent for the same root and refuses a different root for a recorded
 # alias.
 #
-# FM_SSH_CONFIG and FM_KNOWN_HOSTS replace ~/.ssh/config and ~/.ssh/known_hosts
-# (they are passed to ssh as -F and -o UserKnownHostsFile=); tests use them.
+# FM_SSH_CONFIG selects the ssh config with -F. FM_KNOWN_HOSTS selects the
+# trust file; otherwise the first userknownhostsfile from ssh -G is used, with
+# a leading ~ expanded. Lookup, trust writes and every connection (including
+# the doctor through fm-on.sh) use that file via -o UserKnownHostsFile=.
+# Every connection disables UpdateHostKeys. Tests use scratch selections.
 #
 # Line protocol on stdout, one fact per line, stable for script consumers:
 #   action=check|add|trust|prepare|register
@@ -80,7 +85,9 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 SSH_CONFIG="${FM_SSH_CONFIG:-$HOME/.ssh/config}"
-KNOWN_HOSTS="${FM_KNOWN_HOSTS:-$HOME/.ssh/known_hosts}"
+KNOWN_HOSTS="${FM_KNOWN_HOSTS:-}"
+TMP=
+trap '[ -z "$TMP" ] || rm -rf -- "$TMP"' EXIT
 
 # shellcheck source=bin/fm-home-route-lib.sh
 . "$SCRIPT_DIR/fm-home-route-lib.sh"
@@ -88,7 +95,7 @@ KNOWN_HOSTS="${FM_KNOWN_HOSTS:-$HOME/.ssh/known_hosts}"
 usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 refuse() { printf 'refuse: %s\n' "$1"; exit 1; }
 
-SSH_OPTS=()
+SSH_OPTS=(-o UpdateHostKeys=no)
 [ -z "${FM_SSH_CONFIG:-}" ] || SSH_OPTS+=(-F "$FM_SSH_CONFIG")
 [ -z "${FM_KNOWN_HOSTS:-}" ] || SSH_OPTS+=(-o "UserKnownHostsFile=$FM_KNOWN_HOSTS")
 PROBE_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=8 -o ForwardAgent=no -o ClearAllForwardings=yes)
@@ -105,7 +112,7 @@ valid_root() {
 # Resolve the alias through ssh -G into SSH_HOSTNAME, SSH_USER, SSH_PORT and
 # KNOWN_NAME, the name its host key is stored under.
 resolve_alias() { # <alias>
-  local out alias_lc hostkeyalias
+  local out alias_lc hostkeyalias trust_file
   out=$(ssh "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" -G "$1" < /dev/null 2>/dev/null) || return 1
   SSH_HOSTNAME=$(printf '%s\n' "$out" | awk '$1 == "hostname" { print $2; exit }')
   SSH_USER=$(printf '%s\n' "$out" | awk '$1 == "user" { print $2; exit }')
@@ -117,13 +124,24 @@ resolve_alias() { # <alias>
   alias_lc=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
   ALIAS_CONFIGURED=0
   [ -z "$SSH_HOSTNAME" ] || [ "$(printf '%s' "$SSH_HOSTNAME" | tr '[:upper:]' '[:lower:]')" = "$alias_lc" ] || ALIAS_CONFIGURED=1
+  if config_names_alias "$1"; then ALIAS_CONFIGURED=1; fi
+  if [ -z "${FM_KNOWN_HOSTS:-}" ]; then
+    trust_file=$(printf '%s\n' "$out" | awk '$1 == "userknownhostsfile" { print $2; exit }')
+    [ -n "$trust_file" ] || return 1
+    case "$trust_file" in
+      \~/*) trust_file="$HOME/${trust_file#\~/}" ;;
+      \~) trust_file=$HOME ;;
+    esac
+    KNOWN_HOSTS=$trust_file
+    SSH_OPTS+=(-o "UserKnownHostsFile=$KNOWN_HOSTS")
+  fi
 }
 
 # 0 when a Host line in the ssh config names the alias literally.
 config_names_alias() { # <alias>
   [ -f "$SSH_CONFIG" ] || return 1
   awk -v a="$1" '
-    tolower($1) == "host" { for (i = 2; i <= NF; i++) if ($i == a) found = 1 }
+    tolower($1) == "host" { for (i = 2; i <= NF; i++) if (tolower($i) == tolower(a)) found = 1 }
     END { exit found ? 0 : 1 }
   ' "$SSH_CONFIG"
 }
@@ -162,7 +180,7 @@ cmd_check() { # <alias>
     printf 'check alias=ok: %s resolves to %s as %s on port %s\n' "$alias" "$SSH_HOSTNAME" "$SSH_USER" "$SSH_PORT"
   else
     gaps=1
-    printf 'check alias=missing: no ssh config block sets a HostName for %s\n' "$alias"
+    printf 'check alias=missing: no ssh config block names or resolves %s\n' "$alias"
     printf 'action: bin/fm-machine.sh add %s <address> <user>\n' "$alias"
   fi
 
@@ -255,7 +273,7 @@ SH
 }
 
 cmd_add() { # <alias> <address> <user>
-  local alias=$1 address=$2 user=$3 today
+  local alias=$1 address=$2 user=$3 today candidate effective effective_host effective_user block
   valid_alias "$alias" || refuse "alias must be a plain ssh config name of A-Z, a-z, 0-9, ., _ and -, not starting with -: $alias"
   case "$address" in ''|-*|*[!A-Za-z0-9.:_-]*) refuse "address must be a host name or IP address: $address" ;; esac
   case "$user" in ''|-*|*[!A-Za-z0-9._-]*) refuse "user must be a plain account name: $user" ;; esac
@@ -266,16 +284,15 @@ cmd_add() { # <alias> <address> <user>
   if resolve_alias "$alias" && [ "$ALIAS_CONFIGURED" -eq 1 ]; then
     refuse "$alias already resolves to $SSH_HOSTNAME through the ssh config"
   fi
-  mkdir -p "$(dirname "$SSH_CONFIG")"
-  chmod 700 "$(dirname "$SSH_CONFIG")" 2>/dev/null || true
-  if [ ! -e "$SSH_CONFIG" ]; then (umask 077; : > "$SSH_CONFIG"); fi
-  [ -f "$SSH_CONFIG" ] && [ ! -L "$SSH_CONFIG" ] || refuse "$SSH_CONFIG is not a regular file"
-  if [ -s "$SSH_CONFIG" ] && [ "$(tail -c 1 "$SSH_CONFIG" | od -An -c | tr -d ' ')" != '\n' ]; then
-    printf '\n' >> "$SSH_CONFIG"
+  if [ -e "$SSH_CONFIG" ] || [ -L "$SSH_CONFIG" ]; then
+    [ -f "$SSH_CONFIG" ] && [ ! -L "$SSH_CONFIG" ] || refuse "$SSH_CONFIG is not a regular file"
   fi
+  candidate=$(mktemp "${TMPDIR:-/tmp}/fm-machine-config.XXXXXX")
+  TMP=$candidate
+  [ ! -f "$SSH_CONFIG" ] || cat "$SSH_CONFIG" > "$candidate"
   today=$(date +%F)
-  {
-    printf '\n# >>> firstmate machine %s (added %s)\n' "$alias" "$today"
+  block=$(
+    printf '# >>> firstmate machine %s (added %s)\n' "$alias" "$today"
     printf 'Host %s\n' "$alias"
     printf '  HostName %s\n' "$address"
     printf '  User %s\n' "$user"
@@ -283,7 +300,20 @@ cmd_add() { # <alias> <address> <user>
     printf '  ConnectTimeout 8\n'
     printf '  ForwardAgent no\n'
     printf '# <<< firstmate machine %s\n' "$alias"
-  } >> "$SSH_CONFIG"
+  )
+  printf '\n%s\n' "$block" >> "$candidate"
+  effective=$(ssh -o UpdateHostKeys=no -F "$candidate" -G "$alias" < /dev/null 2>/dev/null) \
+    || refuse "ssh -G could not evaluate the candidate config for $alias"
+  effective_host=$(printf '%s\n' "$effective" | awk '$1 == "hostname" { print tolower($2); exit }')
+  effective_user=$(printf '%s\n' "$effective" | awk '$1 == "user" { print $2; exit }')
+  [ "$effective_host" = "$(printf '%s' "$address" | tr '[:upper:]' '[:lower:]')" ] && [ "$effective_user" = "$user" ] \
+    || refuse "earlier ssh config settings override the requested hostname or user for $alias"
+  mkdir -p "$(dirname "$SSH_CONFIG")"
+  chmod 700 "$(dirname "$SSH_CONFIG")" 2>/dev/null || true
+  if [ ! -e "$SSH_CONFIG" ]; then (umask 077; : > "$SSH_CONFIG"); fi
+  printf '\n%s\n' "$block" >> "$SSH_CONFIG"
+  rm -f -- "$candidate"
+  TMP=
   printf 'added=%s\n' "$SSH_CONFIG"
 }
 
@@ -326,6 +356,7 @@ cmd_prepare() { # <alias> <remote-root>
   [ -n "$url" ] || refuse "this Firstmate checkout has no origin to clone from"
   fm_home_route_is_remote "$url" || refuse "this Firstmate checkout's origin is $url, a local path the machine cannot clone from; point origin at the fork's network URL first"
   fm_project_url_plain "$url" || refuse "this Firstmate checkout's origin contains characters this command will not pass to a remote shell: $url"
+  resolve_alias "$alias" || refuse "ssh -G could not evaluate the alias $alias"
 
   set +e
   out=$(ssh "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "${PROBE_OPTS[@]}" "$alias" sh -s -- "$root" "$url" <<'SH'
@@ -373,13 +404,21 @@ EOF
   # fm-on.sh routes only to recorded homes, so reach this machine through a
   # scratch registry with one route and an absent probe home.
   scratch=$(mktemp -d "${TMPDIR:-/tmp}/fm-machine.XXXXXX")
+  TMP=$scratch
+  {
+    printf '#!/usr/bin/env bash\nexec ssh'
+    printf ' %q' "${SSH_OPTS[@]}" "${PROBE_OPTS[@]}"
+    printf ' "$@"\n'
+  } > "$scratch/ssh"
+  chmod 700 "$scratch/ssh"
   printf -- '- fm-machine-probe - machine readiness probe (host: %s; root: %s; home: %s/.firstmate-machine-probe; scope: readiness probe; projects: ; added %s)\n' \
     "$alias" "$root" "$account_home" "$(date +%F)" > "$scratch/secondmates.md"
   set +e
-  doctor_out=$(FM_DATA_OVERRIDE="$scratch" "$SCRIPT_DIR/fm-on.sh" fm-machine-probe fm-remote-doctor.sh --backend stream --fix < /dev/null 2>&1)
+  doctor_out=$(FM_DATA_OVERRIDE="$scratch" FM_SSH_BIN="$scratch/ssh" "$SCRIPT_DIR/fm-on.sh" fm-machine-probe fm-remote-doctor.sh --backend stream --fix < /dev/null 2>&1)
   status=$?
   set -e
   rm -rf -- "$scratch"
+  TMP=
   printf '%s\n' "$doctor_out" | sed 's/^/doctor: /'
   return "$status"
 }

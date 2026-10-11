@@ -28,12 +28,14 @@
 # the first failure. Step output is relayed to stderr so stdout stays the line
 # protocol. The seed scripts roll themselves back; when step 2 fails with a
 # known outcome this script also removes the charter brief step 1 wrote, so the
-# same order can simply be sent again. A remote seed exiting 255 means unknown
-# completion and keeps the brief for same-route reconciliation. A failed
+# same order can simply be sent again. A seed exiting 255 or reporting
+# 'completion is unknown' keeps the brief for reconciliation with the printed
+# step 2 command, followed by step 3. A failed
 # launch (step 3) leaves the seeded home and route in place; relaunch it with
 # the printed step 3 command.
 #
 # Line protocol on stdout, one fact per line, stable for script consumers:
+# Control characters in echoed values and reasons are normalized to spaces.
 #   action=plan|apply
 #   id=<id>
 #   placement=local|remote
@@ -66,6 +68,10 @@ usage() { sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 # Quote one word for the printed command so it can be pasted into a shell.
 shq() {
+  if [[ "$1" == *[[:cntrl:]]* ]]; then
+    printf '%q' "$1"
+    return
+  fi
   case $1 in
     '' ) printf "''" ;;
     *[!A-Za-z0-9._/:=@%+,-]*) printf "'%s'" "${1//\'/\'\\\'\'}" ;;
@@ -122,6 +128,7 @@ done
 
 REFUSALS=()
 refuse() { REFUSALS+=("$1"); }
+clean() { printf '%s' "$1" | LC_ALL=C tr '[:cntrl:]' ' '; }
 single_line() { case "$1" in *$'\n'*|*$'\r'*) return 1 ;; esac; }
 
 # Identity.
@@ -214,28 +221,28 @@ done
 
 # Facts.
 printf 'action=%s\n' "$ACTION"
-printf 'id=%s\n' "$ID"
+printf 'id=%s\n' "$(clean "$ID")"
 printf 'placement=%s\n' "$PLACEMENT"
 if [ "$PLACEMENT" = remote ]; then
-  printf 'host=%s\n' "$HOST"
-  printf 'root=%s\n' "$ROOT_PATH"
-  printf 'home=%s\n' "$HOME_PATH"
+  printf 'host=%s\n' "$(clean "$HOST")"
+  printf 'root=%s\n' "$(clean "$ROOT_PATH")"
+  printf 'home=%s\n' "$(clean "$HOME_PATH")"
 else
   printf 'home=leased-worktree\n'
 fi
-printf 'charter=%s\n' "$(printf '%s' "$CHARTER" | tr '\r\n' '  ')"
-printf 'scope=%s\n' "$(printf '%s' "$SCOPE" | tr '\r\n' '  ')"
+printf 'charter=%s\n' "$(clean "$CHARTER")"
+printf 'scope=%s\n' "$(clean "$SCOPE")"
 if [ "$NO_PROJECTS" -eq 1 ]; then
   printf 'projects=none\n'
 fi
 i=0
 for name in "${PROJECT_NAMES[@]+"${PROJECT_NAMES[@]}"}"; do
-  printf 'project=%s origin=%s\n' "$name" "${PROJECT_ORIGINS[$i]:-from-clone}"
+  printf 'project=%s origin=%s\n' "$(clean "$name")" "$(clean "${PROJECT_ORIGINS[$i]:-from-clone}")"
   i=$((i + 1))
 done
 
 if [ "${#REFUSALS[@]}" -gt 0 ]; then
-  for reason in "${REFUSALS[@]}"; do printf 'refuse: %s\n' "$reason"; done
+  for reason in "${REFUSALS[@]}"; do printf 'refuse: %s\n' "$(clean "$reason")"; done
   exit 1
 fi
 
@@ -270,7 +277,7 @@ step_reason() {
   [ -n "$line" ] || line=$(grep -v '^[[:space:]]*$' "$OUT" | tail -n 1 || true)
   line=${line#error: }
   [ -n "$line" ] || line="exited $1 with no output"
-  printf '%s' "$line"
+  clean "$line"
 }
 
 run_step() { # <argv...>; the bin/ path is resolved against this checkout
@@ -303,8 +310,8 @@ fi
 printf 'ran step=1\n'
 if ! run_step "${STEP2[@]}"; then
   reason=$(step_reason "$STEP_RC")
-  if [ "$STEP_RC" -eq 255 ]; then
-    reason="$reason (completion unknown; the charter and route are kept, send the same order again to reconcile)"
+  if [ "$STEP_RC" -eq 255 ] || grep -qF 'completion is unknown' "$OUT"; then
+    reason="$reason (completion unknown; the charter and route are kept, reconcile with the printed step 2 command, then step 3)"
   else
     remove_own_brief
   fi
@@ -317,4 +324,4 @@ if ! run_step "${STEP3[@]}"; then
   exit 1
 fi
 printf 'ran step=3\n'
-printf 'done id=%s\n' "$ID"
+printf 'done id=%s\n' "$(clean "$ID")"

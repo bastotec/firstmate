@@ -16,6 +16,8 @@ mkdir -p "$FMH/data"
 export FM_SSH_CONFIG="$T/ssh_config"
 export FM_KNOWN_HOSTS="$T/known_hosts"
 export FAKE_SSH_LOG="$SSH_LOG"
+export REAL_SSH
+REAL_SSH=$(command -v ssh)
 : > "$SSH_LOG"
 cat > "$FM_SSH_CONFIG" <<'CFG'
 Host *
@@ -34,11 +36,19 @@ cat > "$FAKEBIN/ssh" <<'SH'
 #!/usr/bin/env bash
 G=0
 CONFIG=
+TRUST=
+UPDATE_KEYS=yes
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -G) G=1; shift ;;
     -F) CONFIG=$2; shift 2 ;;
-    -o|-p) shift 2 ;;
+    -o)
+      case "$2" in
+        UserKnownHostsFile=*) TRUST=${2#UserKnownHostsFile=} ;;
+        UpdateHostKeys=*) UPDATE_KEYS=${2#UpdateHostKeys=} ;;
+      esac
+      shift 2 ;;
+    -p) shift 2 ;;
     --) shift; break ;;
     -*) shift ;;
     *) break ;;
@@ -47,10 +57,19 @@ done
 alias=$1
 shift
 if [ "$G" -eq 1 ]; then
-  host=$(awk -v a="$alias" '$1 == "Host" { inblk = ($2 == a) } inblk && $1 == "HostName" { print $2; exit }' "$CONFIG")
-  user=$(awk -v a="$alias" '$1 == "Host" { inblk = ($2 == a) } inblk && $1 == "User" { print $2; exit }' "$CONFIG")
-  printf 'user %s\nhostname %s\nport 22\n' "${user:-me}" "$(printf '%s' "${host:-$alias}" | tr '[:upper:]' '[:lower:]')"
-  exit 0
+  if [ -n "${FAKE_G_KNOWN_HOSTS:-}" ]; then
+    "$REAL_SSH" -F "$CONFIG" -G "$alias" | awk '$1 != "userknownhostsfile"'
+    printf 'userknownhostsfile %s\n' "$FAKE_G_KNOWN_HOSTS"
+    exit 0
+  fi
+  exec "$REAL_SSH" -F "$CONFIG" -G "$alias"
+fi
+if [ "$CONFIG" != "$FM_SSH_CONFIG" ] || [ "$TRUST" != "${FAKE_EXPECT_KNOWN_HOSTS:-$FM_KNOWN_HOSTS}" ]; then
+  echo 'wrong ssh config or trust selection' >&2
+  exit 255
+fi
+if [ "$UPDATE_KEYS" != no ]; then
+  printf 'box.lan ssh-rsa UNEXPECTEDKEY\n' >> "$TRUST"
 fi
 printf 'ssh %s %s\n' "$alias" "$*" >> "$FAKE_SSH_LOG"
 case "$1" in
@@ -108,7 +127,9 @@ export PATH="$FAKEBIN:$PATH"
 machine() { FM_HOME="$FMH" "$ROOT/bin/fm-machine.sh" "$@"; }
 
 # --- check ---
+before=$(cat "$FM_KNOWN_HOSTS")
 out=$(machine check box)
+assert_equals "$before" "$(cat "$FM_KNOWN_HOSTS")" "check updated trusted host keys"
 assert_contains "$out" "check alias=ok: box resolves to box.lan as captain on port 22" "alias ok"
 assert_contains "$out" "check hostkey=ok: box.lan is known as SHA256:FPAAAAKEYBOX" "hostkey ok"
 assert_contains "$out" "reach=ok" "reach ok"
@@ -131,7 +152,7 @@ out=$(FAKE_SSH_REACH=auth machine check newbox)
 rc=$?
 set -e
 expect_code 1 "$rc" "unknown machine"
-assert_contains "$out" "check alias=missing: no ssh config block sets a HostName for newbox" "alias missing"
+assert_contains "$out" "check alias=missing: no ssh config block names or resolves newbox" "alias missing"
 assert_contains "$out" "action: bin/fm-machine.sh add newbox <address> <user>" "add action"
 assert_contains "$out" "hostkey-fingerprint=SHA256:FPAAAAKEYNEW type=ED25519" "scanned fingerprint"
 assert_contains "$out" "check hostkey=missing: newbox is not in $FM_KNOWN_HOSTS" "hostkey missing"
@@ -148,6 +169,17 @@ assert_contains "$out" "reach=hostkey" "hostkey class"
 out=$(FAKE_SSH_REACH=timeout machine check box) || true
 assert_contains "$out" "reach=timeout" "timeout class"
 pass "check classifies host key and timeout failures"
+
+cat >> "$FM_SSH_CONFIG" <<'CFG'
+Host samebox
+  HostName samebox
+  User captain
+CFG
+printf 'samebox ssh-ed25519 AAAAKEYSAME\n' >> "$FM_KNOWN_HOSTS"
+out=$(machine check samebox)
+assert_contains "$out" "check alias=ok: samebox resolves to samebox" "literal self-resolving alias"
+assert_not_contains "$out" "action: bin/fm-machine.sh add" "configured alias recommended add"
+pass "check accepts an explicitly configured alias equal to its hostname"
 
 # --- add ---
 before=$(cat "$FM_SSH_CONFIG")
@@ -175,6 +207,28 @@ set -e
 expect_code 1 "$rc" "add unsafe alias"
 pass "add appends a marked block once and refuses an existing alias"
 
+CONFLICT_CONFIG="$T/conflict_config"
+printf 'Host *\n  User olduser\n' > "$CONFLICT_CONFIG"
+before=$(cat "$CONFLICT_CONFIG")
+set +e
+out=$(FM_SSH_CONFIG="$CONFLICT_CONFIG" machine add conflictbox 10.0.0.9 newuser)
+rc=$?
+set -e
+expect_code 1 "$rc" "add with earlier wildcard User"
+assert_contains "$out" "earlier ssh config settings override" "ineffective User refusal"
+assert_equals "$before" "$(cat "$CONFLICT_CONFIG")" "ineffective add changed the config"
+printf 'Host *\n  HostName %%h\n' > "$CONFLICT_CONFIG"
+before=$(cat "$CONFLICT_CONFIG")
+set +e
+out=$(FM_SSH_CONFIG="$CONFLICT_CONFIG" machine add conflictbox 10.0.0.9 captain)
+rc=$?
+set -e
+expect_code 1 "$rc" "add with earlier wildcard HostName"
+assert_equals "$before" "$(cat "$CONFLICT_CONFIG")" "ineffective hostname add changed the config"
+out=$(machine add upperbox UPPER.EXAMPLE captain)
+assert_contains "$out" "added=$FM_SSH_CONFIG" "case-insensitive hostname validation"
+pass "add refuses ineffective hostname or user settings before writing"
+
 # --- trust ---
 before=$(cat "$FM_KNOWN_HOSTS")
 set +e
@@ -196,6 +250,33 @@ set -e
 expect_code 1 "$rc" "trust over a different known key"
 assert_contains "$out" "already has a different known host key" "changed-key refusal"
 pass "trust writes only an exactly matching scanned key"
+
+CLUSTER_HOME="$T/cluster-home"
+CLUSTER_CONFIG="$T/cluster-config"
+CLUSTER_KEYS="$CLUSTER_HOME/.ssh/cluster_keys"
+mkdir -p "$CLUSTER_HOME/.ssh"
+cat > "$CLUSTER_CONFIG" <<CFG
+Host cluster
+  HostName cluster.lan
+  User captain
+  UserKnownHostsFile $CLUSTER_KEYS $CLUSTER_HOME/.ssh/unused_keys
+CFG
+before=$(cat "$FM_KNOWN_HOSTS")
+cluster() {
+  (unset FM_KNOWN_HOSTS
+   HOME="$CLUSTER_HOME" FM_SSH_CONFIG="$CLUSTER_CONFIG" FAKE_EXPECT_KNOWN_HOSTS="$CLUSTER_KEYS" machine "$@")
+}
+out=$(cluster trust cluster SHA256:FPAAAAKEYNEW)
+assert_contains "$out" "trusted=SHA256:FPAAAAKEYNEW file=$CLUSTER_KEYS" "configured trust file"
+assert_grep "cluster.lan ssh-ed25519 AAAAKEYNEW" "$CLUSTER_KEYS" "key missing from selected trust file"
+out=$(cluster check cluster)
+assert_contains "$out" "check hostkey=ok: cluster.lan" "lookup missed configured trust file"
+assert_contains "$out" "reach=ok" "connection missed configured trust file"
+out=$(FAKE_G_KNOWN_HOSTS="$(printf '%s/.ssh/cluster_keys %s/.ssh/unused_keys' '~' '~')" cluster check cluster)
+assert_contains "$out" "reach=ok" "tilde expansion missed selected trust file"
+assert_equals "$before" "$(cat "$FM_KNOWN_HOSTS")" "configured trust wrote default keys"
+assert_absent "$CLUSTER_HOME/.ssh/unused_keys" "trust wrote a secondary file"
+pass "trust and check share the first configured known-hosts file with tilde expansion"
 
 # --- register ---
 out=$(machine register box /srv/firstmate)
@@ -234,6 +315,7 @@ git -C "$NETFM" -c user.name='Firstmate Tests' -c user.email='tests@example.inva
 git -C "$NETFM" remote add origin https://example.com/acme/firstmate.git
 : > "$SSH_LOG"
 out=$(FM_ROOT_OVERRIDE="$NETFM" machine prepare box /srv/firstmate)
+assert_equals "$before" "$(cat "$FM_KNOWN_HOSTS")" "prepare updated trusted host keys"
 assert_contains "$out" "clone=created root=/srv/firstmate" "clone line"
 assert_contains "$out" "entrypoint-link=created: /srv/firstmate/bin/fm-remote-entrypoint.sh" "link line"
 assert_contains "$out" "doctor: check stream-tools=ok: fake" "doctor relayed"
@@ -245,6 +327,8 @@ out=$(FAKE_DOCTOR_RC=1 FM_ROOT_OVERRIDE="$NETFM" machine prepare box /srv/firstm
 rc=$?
 set -e
 expect_code 1 "$rc" "prepare relays the doctor verdict"
+out=$(FM_ROOT_OVERRIDE="$NETFM" cluster prepare cluster /srv/firstmate)
+assert_contains "$out" "doctor: check stream-tools=ok: fake" "doctor lost configured trust selection"
 pass "prepare clones, links and relays the doctor's --fix verdict"
 
 echo "ALL TESTS PASSED"
