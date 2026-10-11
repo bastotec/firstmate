@@ -35,7 +35,7 @@ stopped_at and host_alive(host_pid, home) validates the host identity below.
 
 Subcommands:
   steer publish (--text T | --file F) [--kind wake|away|captain|other] [--home H]
-      kind is informational; prints seq=<n>; exit 2 refused
+      kind is informational; prints seq=<n> and session=<id> on separate lines; exit 2 refused
       (blank/oversized/unreadable), 3 no live host
   steer status [--home H]       one JSON line; exit 3 when no live host
   steer delivered SEQ [--home H]
@@ -277,6 +277,7 @@ def steer_publish(args):
         return 3
     seq = publish_body(Path(record['steer_dir']), body)
     print('seq=%d' % seq)
+    print('session=%s' % record['session'])
     return 0
 
 
