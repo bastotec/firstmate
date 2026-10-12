@@ -98,6 +98,11 @@
 #                           still-working no-mistakes run (default 45)
 #   FM_DECK_PIPELINE_WAIT_SECS  bound on one such wait (default 21600; 0
 #                           disables the pipeline wake)
+#   FM_DECK_STOP_TOOL_GRACE_SECS  after a stop is requested, how long Deck may
+#                           finish on its own before the running shell
+#                           command's process tree is killed (default 1)
+#   FM_DECK_STOP_KILL_SECS  after a stop is requested, when a Deck that still
+#                           has not exited is killed outright (default 15)
 #   FM_DECK_MCP_CONFIG     when set, pass a non-empty value as-is to every
 #                           `deck run --mcp-config`, even if the path is missing;
 #                           an empty value disables MCP. When unset, use
@@ -161,6 +166,10 @@ PIPELINE_POLL=${FM_DECK_PIPELINE_POLL_SECS:-45}
 PIPELINE_WAIT=${FM_DECK_PIPELINE_WAIT_SECS:-21600}
 case "$PIPELINE_POLL" in ''|*[!0-9]*|0) PIPELINE_POLL=45 ;; esac
 case "$PIPELINE_WAIT" in ''|*[!0-9]*) PIPELINE_WAIT=21600 ;; esac
+STOP_TOOL_GRACE=${FM_DECK_STOP_TOOL_GRACE_SECS:-1}
+STOP_KILL=${FM_DECK_STOP_KILL_SECS:-15}
+case "$STOP_TOOL_GRACE" in ''|*[!0-9]*) STOP_TOOL_GRACE=1 ;; esac
+case "$STOP_KILL" in ''|*[!0-9]*) STOP_KILL=15 ;; esac
 # Match the stream backend's config-directory resolution, not the parent task's
 # --state directory: a secondmate host and its workers use its own home.
 if [ "${FM_DECK_MCP_CONFIG+set}" = set ]; then
@@ -191,12 +200,62 @@ deck_stream_end() {
   [ -z "${FM_STREAM_ENDPOINT_ID:-}" ] || python3 "$SCRIPT_DIR/fm_stream_deck.py" end \
     "$STATE" "$ID" "$FM_STREAM_ENDPOINT_ID" >&2 || true
 }
+# Deck's SIGTERM is a cooperative stop: it refuses new model and tool calls,
+# but lets a running tool finish (deck src/stop.rs), so a turn inside a long
+# shell command would hold an interrupt or an exit for as long as that command
+# runs. Once a stop is requested and the grace has passed, this kills the
+# running command's process tree; Deck records it as a finished (killed)
+# command, saves the session and exits at its next stop point. A Deck still
+# running at the kill bound (a stuck model call) is killed outright, and its
+# session keeps every message already appended.
+STOP_REQUESTED_AT=''
+request_turn_stop() {
+  [ -n "$TURN_PID" ] || return 0
+  [ -n "$STOP_REQUESTED_AT" ] || STOP_REQUESTED_AT=$(date +%s)
+  kill -TERM "$TURN_PID" 2>/dev/null || true
+}
+
+kill_tree() {  # <pid>: SIGKILL <pid> and every process descended from it
+  local tree=$1 next pid
+  next=$1
+  while [ -n "$next" ]; do
+    next=$(ps -A -o pid= -o ppid= 2>/dev/null \
+      | awk -v parents=" $(printf '%s' "$next" | tr '\n' ' ') " 'index(parents, " " $2 " ") { print $1 }')
+    [ -z "$next" ] || tree="$tree $next"
+  done
+  for pid in $tree; do kill -KILL "$pid" 2>/dev/null || true; done
+}
+
+escalate_turn_stop() {
+  local elapsed child
+  [ -n "$TURN_PID" ] && [ -n "$STOP_REQUESTED_AT" ] || return 0
+  elapsed=$(( $(date +%s) - STOP_REQUESTED_AT ))
+  if [ "$elapsed" -ge "$STOP_KILL" ]; then
+    kill_tree "$TURN_PID"
+    return 0
+  fi
+  [ "$elapsed" -ge "$STOP_TOOL_GRACE" ] || return 0
+  # Deck runs every shell command and hook as a `bash -lc` child.
+  for child in $(pgrep -P "$TURN_PID" 2>/dev/null); do
+    case "$(ps -o args= -p "$child" 2>/dev/null)" in
+      'bash -lc '*) kill_tree "$child" ;;
+    esac
+  done
+}
+
+stop_turn() {  # stop the running Deck turn and wait for it, bounded
+  [ -n "$TURN_PID" ] || return 0
+  request_turn_stop
+  while kill -0 "$TURN_PID" 2>/dev/null; do
+    escalate_turn_stop
+    sleep 0.1
+  done
+  wait "$TURN_PID" 2>/dev/null || true
+}
+
 cleanup() {
   deck_stream_end
-  if [ -n "$TURN_PID" ]; then
-    kill -TERM "$TURN_PID" 2>/dev/null || true
-    wait "$TURN_PID" 2>/dev/null || true
-  fi
+  stop_turn
   if [ -n "$TURN_RENDER_PID" ]; then
     kill -TERM "$TURN_RENDER_PID" 2>/dev/null || true
     wait "$TURN_RENDER_PID" 2>/dev/null || true
@@ -219,7 +278,7 @@ trap 'exit 1' HUP TERM
 INTERRUPTED=0
 interrupt_turn() {
   INTERRUPTED=1
-  [ -z "$TURN_PID" ] || kill -TERM "$TURN_PID" 2>/dev/null || true
+  request_turn_stop
 }
 trap interrupt_turn INT
 
@@ -592,17 +651,27 @@ $prompt"
     TURN_RENDER_PID=$!
     "$DECK" "${args[@]}" </dev/null > "$TURN_PIPE" &
     TURN_PID=$!
+    STOP_REQUESTED_AT=''
     while kill -0 "$TURN_PID" 2>/dev/null; do
-      if ! watch_maintain; then
+      escalate_turn_stop
+      # /quit typed while the turn runs is an exit request, not a later turn:
+      # stop the turn now, and the prompt loop reads the queued /quit next.
+      if [ -z "$STOP_REQUESTED_AT" ] && grep -qx '/quit' "$WORK"/input.[0-9]* 2>/dev/null; then
+        INTERRUPTED=1
+        request_turn_stop
+        continue
+      fi
+      if [ -z "$STOP_REQUESTED_AT" ] && ! watch_maintain; then
         monitor_failed=1
-        kill -TERM "$TURN_PID" 2>/dev/null || true
-        break
+        request_turn_stop
+        continue
       fi
       sleep 0.1
     done
     wait "$TURN_PID" 2>/dev/null
     deck_rc=$?
     TURN_PID=''
+    STOP_REQUESTED_AT=''
     wait "$TURN_RENDER_PID" 2>/dev/null || true
     TURN_RENDER_PID=''
     if [ "$monitor_failed" -eq 0 ]; then

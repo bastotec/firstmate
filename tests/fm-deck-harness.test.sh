@@ -1296,6 +1296,25 @@ if prompt == 'slow-steer':
     (home / 'in-turn').touch()
     while not (home / 'release').exists():
         time.sleep(.1)
+if prompt in ('long-tool', 'stuck-model'):
+    # Real Deck's SIGTERM is a cooperative stop: it lets a running tool
+    # finish and only then stops. `stuck-model` ignores it outright, the way a
+    # model call that never returns would.
+    import signal
+    stop = []
+    signal.signal(signal.SIGTERM, (lambda *_: stop.append(1)) if prompt == 'long-tool' else signal.SIG_IGN)
+    if prompt == 'long-tool':
+        tool = subprocess.Popen(['bash', '-lc', 'sleep 300; echo slept'])
+        (home / 'tool-pid').write_text(str(tool.pid))
+        tool.wait()
+        print(json.dumps({'type': 'tool_result', 'id': 'c1', 'name': 'run_command', 'duration_ms': 1,
+                          'output': 'killed' if tool.returncode else 'slept'}), flush=True)
+        if stop:
+            print(json.dumps({'type': 'run_stopped', 'reason': 'graceful stop requested'}), flush=True)
+            sys.exit(1)
+    else:
+        (home / 'tool-pid').write_text('stuck')
+        time.sleep(300)
 for i, arg in enumerate(args):
     if arg == '--hook' and args[i+1].startswith('pre_complete='):
         result = subprocess.run(args[i+1].split('=', 1)[1], shell=True)
@@ -1304,6 +1323,66 @@ for i, arg in enumerate(args):
 print(json.dumps({'type': 'run_finished', 'turns': 1}), flush=True)
 PYTHON
   chmod +x "$dir/bin/fm-session-start.sh" "$dir/bin/fm-watch-arm.sh" "$dir/deck"
+}
+
+# Deck lets a running tool finish on SIGTERM, so a secondmate inside a long
+# shell command used to hold Ctrl+C and /quit until that command ended, and a
+# relaunch gave up on it after 30s. The driver now kills the running command's
+# process tree once the stop is requested, and kills a Deck that still does not
+# stop at its bound, so both reach the prompt and exit within seconds.
+test_secondmate_stops_a_turn_inside_a_long_tool() {
+  local dir case
+  for case in ctrl-c quit-only stuck-model; do
+    dir="$TMP_ROOT/host-stop-$case"
+    make_secondmate_host_fixture "$dir"
+    FM_DECK_STOP_KILL_SECS=4 python3 - "$dir" "$case" <<'PYTHON' || fail "Deck secondmate did not stop a turn inside a long tool ($case)"
+import os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1]); case = sys.argv[2]
+home = root / 'home'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+       str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'),
+       '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+def idle():
+    path = root/'parent/host.busy-state'
+    return path.exists() and 'state=idle' in path.read_text()
+def wait_for(check, label, bound=60):
+    deadline = time.monotonic() + bound
+    while time.monotonic() < deadline:
+        if check(): return
+        if p.poll() is not None: raise AssertionError(label+': '+(root/'pane').read_text())
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text())
+def alive(pid):
+    try: os.kill(pid, 0); return True
+    except ProcessLookupError: return False
+prompt = 'stuck-model' if case == 'stuck-model' else 'long-tool'
+with (root/'pane').open('w') as output:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+                         env=env, text=True, start_new_session=True)
+    try:
+        wait_for(idle, 'startup turn')
+        p.stdin.write(prompt + '\n'); p.stdin.flush()
+        wait_for(lambda: (home/'tool-pid').exists(), 'long turn start')
+        tool = (home/'tool-pid').read_text()
+        started = time.monotonic()
+        if case != 'quit-only':
+            os.killpg(p.pid, signal.SIGINT)
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        rc = p.wait(timeout=20)
+        took = time.monotonic() - started
+        assert rc == 0, (rc, (root/'pane').read_text())
+        assert took < (8 if case == 'stuck-model' else 5), took
+        if tool.isdigit():
+            assert not alive(int(tool)), 'the long tool survived its stopped turn'
+        print(f'{case}: exited {took:.1f}s after the stop request')
+    finally:
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGKILL); p.wait()
+PYTHON
+  done
+  pass "Deck secondmate stops a turn inside a long tool on Ctrl+C or /quit, and a stuck Deck at its bound"
 }
 
 test_secondmate_mcp_config_on_startup_steer_and_wake() {
@@ -2304,6 +2383,7 @@ test_stream_deck_ring_rings_live_driver
 test_idle_interrupt_does_not_echo_fake_input
 test_secondmate_host_serializes_wakes_and_steering
 test_secondmate_routine_wakes_think_less
+test_secondmate_stops_a_turn_inside_a_long_tool
 test_secondmate_mcp_config_on_startup_steer_and_wake
 test_secondmate_queued_exit_behind_composer_clears_beats_watcher_turn
 test_secondmate_survives_a_failed_turn
