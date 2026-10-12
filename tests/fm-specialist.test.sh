@@ -11,7 +11,8 @@ command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 
 TMP_ROOT=$(fm_test_tmproot fm-specialist-tests)
 HOME_DIR="$TMP_ROOT/home"
-mkdir -p "$HOME_DIR/state" "$HOME_DIR/data"
+mkdir -p "$HOME_DIR/state" "$HOME_DIR/data" "$HOME_DIR/config"
+export FM_CONFIG_OVERRIDE="$HOME_DIR/config" FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data"
 export FM_HOME="$HOME_DIR" FM_DECK_BIN="$ROOT/tests/assets/deck-crew-stub.py"
 export DECK_STATE="$TMP_ROOT/deck" FM_CREW_WORK_ROOT="$TMP_ROOT/work"
 SPEC="$ROOT/bin/fm-specialist.sh"
@@ -87,7 +88,13 @@ fm_test_kill_tree "$pid" >/dev/null 2>&1 || kill -9 "$pid" 2>/dev/null
 for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
 assert_equals idle "$("$SPEC" status amigo-tech --json | jq -r .status)" "a dead runner is reconciled to idle"
 assert_equals interrupted "$(jq -r .last_job.outcome "$REC")" "the killed job is recorded as interrupted"
-pass "one job at a time; a dead runner is reconciled"
+interrupted_job=$(jq -r .last_job.id "$REC")
+assert_grep "specialist:amigo-tech:$interrupted_job" "$HOME_DIR/state/.wake-queue" "reconciliation wakes the owner of the interrupted job"
+"$SPEC" history amigo-tech >/dev/null || fail "history after interruption"
+"$SPEC" list >/dev/null || fail "list after interruption"
+assert_equals 1 "$(grep -c "specialist:amigo-tech:$interrupted_job" "$HOME_DIR/state/.wake-queue")" "repeated reconciliation emits only one interruption wake"
+assert_equals 1 "$(grep -c "specialist:amigo-tech:$job1" "$HOME_DIR/state/.wake-queue")" "normal completion emits only one wake"
+pass "one job at a time; a dead runner is reconciled and wakes once"
 
 "$SPEC" retire amigo-tech >/dev/null || fail "retire failed"
 assert_equals retired "$(jq -r .status "$REC")" "retire marks the record"
@@ -127,6 +134,78 @@ assert_equals idle "$(jq -r .status "$MEM_REC")" "launch exceptions leave the sp
 assert_equals failed "$(jq -r .last_job.outcome "$MEM_REC")" "launch exceptions finalize failed history"
 assert_grep "specialist:memory-check:$failed_job" "$HOME_DIR/state/.wake-queue" "launch exceptions wake the owner"
 pass "preflight and runtime launch failure keep owned records coherent"
+
+STUB_MODE=hang "$SPEC" job memory-check --brief "Reused runner pid" >/dev/null 2>&1 || fail "start reused-pid job"
+stale_job=$(jq -r .current_job.id "$MEM_REC")
+pid=$(jq -r .current_job.pid "$MEM_REC")
+fm_test_kill_tree "$pid" >/dev/null 2>&1 || kill -9 "$pid" 2>/dev/null
+unrelated=$(python3 -c 'import subprocess,sys; p=subprocess.Popen([sys.executable,"-c","import time; time.sleep(120)"],start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); print(p.pid)')
+fm_test_track_helper_pid "$unrelated"
+jq --argjson pid "$unrelated" '.current_job.pid=$pid' "$MEM_REC" > "$TMP_ROOT/reused.json"
+mv "$TMP_ROOT/reused.json" "$MEM_REC"
+assert_equals idle "$("$SPEC" list --json | jq -r '.[] | select(.name == "memory-check") | .status')" "a reused live pid cannot keep a specialist busy"
+kill -0 "$unrelated" 2>/dev/null || fail "reconciliation must not signal an unrelated process group"
+assert_equals interrupted "$(jq -r .last_job.outcome "$MEM_REC")" "a reused runner pid finalizes the interrupted job"
+assert_grep "specialist:memory-check:$stale_job" "$HOME_DIR/state/.wake-queue" "reused-pid reconciliation emits a completion wake"
+"$SPEC" job memory-check --brief "Recovery succeeded" --wait >/dev/null 2>&1 || fail "reused pid must not block new work"
+kill "$unrelated" 2>/dev/null || true
+pass "runner identity prevents stale pids from blocking work or authorizing signals"
+
+STUB_MODE=hang "$SPEC" job memory-check --brief "Orphaned Deck child" >/dev/null 2>&1 || fail "start orphaned-child job"
+pid=$(jq -r .current_job.pid "$MEM_REC")
+child=
+for _ in $(seq 1 50); do
+  child=$(ps -ax -o pid=,ppid=,command= | awk -v parent="$pid" '$2 == parent && /deck-crew-stub.py/ {print $1}')
+  [ -n "$child" ] && break
+  sleep 0.1
+done
+[ -n "$child" ] || fail "the runner must have launched its Deck child"
+kill -9 "$pid" 2>/dev/null || fail "stop the runner without its child"
+"$SPEC" history memory-check >/dev/null || fail "reconcile the orphaned job through history"
+for _ in $(seq 1 50); do
+  child_state=$(ps -o stat= -p "$child" 2>/dev/null)
+  case "$child_state" in ''|Z*) break ;; esac
+  sleep 0.1
+done
+case "$child_state" in ''|Z*) ;; *) fail "reconciliation must stop its proven orphaned Deck child" ;; esac
+pass "reconciliation retains owned orphan cleanup"
+
+GH_TOKEN=fixture-secret PROXAI_API_KEY=fixture-key "$SPEC" job memory-check --brief "Ambient environment" --wait >/dev/null 2>&1 || fail "unfiltered environment job"
+assert_equals true "$(tail -1 "$DECK_STATE/argv.jsonl" | jq -r .environment.gh_token)" "absent allowlist preserves ambient credentials"
+: > "$HOME_DIR/config/launch-env-allowlist"
+GH_TOKEN=fixture-secret PROXAI_API_KEY=fixture-key "$SPEC" job memory-check --brief "Empty allowlist" --wait >/dev/null 2>&1 || fail "empty allowlist job"
+filtered_log="$(jq -r .workdir "$MEM_REC")/deck-state/argv.jsonl"
+assert_equals false "$(tail -1 "$filtered_log" | jq -r .environment.gh_token)" "an empty allowlist excludes GH_TOKEN"
+assert_equals false "$(tail -1 "$filtered_log" | jq -r .environment.gateway_key)" "gateway credentials cannot bypass filtering"
+assert_equals "$HOME" "$(tail -1 "$filtered_log" | jq -r .environment.home)" "filtering keeps the operational home floor"
+launch_path=$(python3 -c 'import os; print(os.environ["PATH"])')
+assert_equals "$launch_path" "$(tail -1 "$filtered_log" | jq -r .environment.path)" "filtering keeps the Python launcher's operational PATH floor"
+printf '%s\n' '# Explicit test names' '' DECK_STATE CREW_ALLOWED_TEST CREW_EMPTY_TEST CREW_UNSET_TEST GH_TOKEN PROXAI_API_KEY > "$HOME_DIR/config/launch-env-allowlist"
+unset CREW_UNSET_TEST
+GH_TOKEN=fixture-secret PROXAI_API_KEY=fixture-key CREW_ALLOWED_TEST=allowed CREW_EMPTY_TEST= \
+  "$SPEC" job memory-check --brief "Explicit names" --wait >/dev/null 2>&1 || fail "named allowlist job"
+environment=$(tail -1 "$DECK_STATE/argv.jsonl" | jq -c .environment)
+assert_equals true "$(printf '%s' "$environment" | jq -r .gh_token)" "explicit credential names are passed"
+assert_equals true "$(printf '%s' "$environment" | jq -r .gateway_key)" "explicit gateway credential names are passed"
+assert_equals allowed "$(printf '%s' "$environment" | jq -r .allowed)" "listed values are preserved"
+assert_equals '""' "$(printf '%s' "$environment" | jq -c .empty)" "empty values stay empty"
+assert_equals false "$(printf '%s' "$environment" | jq -r .unset)" "unset listed names stay unset"
+pass "specialist launches enforce the shared environment policy"
+
+for invalid in assignment directory dangling inaccessible; do
+  rm -rf "$HOME_DIR/config/launch-env-allowlist"
+  case "$invalid" in
+    assignment) printf 'GH_TOKEN=secret\n' > "$HOME_DIR/config/launch-env-allowlist" ;;
+    directory) mkdir "$HOME_DIR/config/launch-env-allowlist" ;;
+    dangling) ln -s missing "$HOME_DIR/config/launch-env-allowlist" ;;
+    inaccessible) ln -s "$HOME_DIR/config/launch-env-allowlist" "$HOME_DIR/config/launch-env-allowlist" ;;
+  esac
+  before=$(jq -c . "$MEM_REC")
+  expect_code 2 "$("$SPEC" job memory-check --brief "Invalid policy" >/dev/null 2>&1; echo $?)" "$invalid allowlist refuses a specialist launch"
+  assert_equals "$before" "$(jq -c . "$MEM_REC")" "$invalid policy refuses before specialist mutation"
+done
+rm "$HOME_DIR/config/launch-env-allowlist"
+pass "invalid launch policy fails closed before dispatch"
 
 for command in create job status history list retire; do
   args=("$command")

@@ -20,7 +20,7 @@ from pathlib import Path
 args = sys.argv[1:]
 if not args or args[0] != "run":
     sys.exit(0)
-prompt = args[1]
+prompt = sys.stdin.read() if args[1] == "-" else args[1]
 session = None
 ephemeral = "--ephemeral" in args
 hooks = []
@@ -35,12 +35,19 @@ while i < len(args):
     else:
         i += 1
 
-state = Path(os.environ["DECK_STATE"])
+state = Path(os.environ.get("DECK_STATE", Path.cwd() / "deck-state"))
 sessions = state / "sessions"
 sessions.mkdir(parents=True, exist_ok=True)
 log = state / "argv.jsonl"
 with open(log, "a") as fh:
     fh.write(json.dumps({"session": session, "ephemeral": ephemeral, "cwd": os.getcwd(),
+                         "pid": os.getpid(), "stdin_prompt": args[1] == "-", "prompt_bytes": len(prompt.encode()),
+                         "environment": {"gh_token": "GH_TOKEN" in os.environ,
+                                         "gateway_key": "PROXAI_API_KEY" in os.environ or "PROXAI_API_KEY_FILE" in os.environ,
+                                         "allowed": os.environ.get("CREW_ALLOWED_TEST"),
+                                         "empty": os.environ.get("CREW_EMPTY_TEST"),
+                                         "unset": "CREW_UNSET_TEST" in os.environ,
+                                         "home": os.environ.get("HOME"), "path": os.environ.get("PATH")},
                          "skills": str((Path.cwd() / ".agents" / "skills").resolve())}) + "\n")
 
 turns = []
@@ -91,6 +98,9 @@ try:
                 f"memory-seen-at-start: {'yes' if seen else 'no'}\n"
                 f"angle: {angle.group(1) if angle else ''}\n"
             )
+            if os.environ.get("STUB_RESULT_BYTES"):
+                with open(result, "a") as fh:
+                    fh.write("e" * int(os.environ["STUB_RESULT_BYTES"]) + "\n")
         if memory and job and mode != "result-only":
             with open(memory, "a") as fh:
                 fh.write(f"- learned in {job.group(1)}\n")

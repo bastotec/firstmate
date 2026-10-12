@@ -153,11 +153,24 @@ def group_alive(pgid) -> bool:
 
 
 def deck_env() -> dict:
-    """This process's environment plus the gateway key default bin/fm-deck-worker.sh uses."""
     env = os.environ.copy()
     key = Path.home() / ".config" / "proxai" / "client.key"
     if not env.get("PROXAI_API_KEY_FILE") and not env.get("PROXAI_API_KEY") and key.is_file():
         env["PROXAI_API_KEY_FILE"] = str(key)
+    config = os.environ.get("FM_CONFIG_OVERRIDE") or str(home() / "config")
+    policy = subprocess.run(
+        ["bash", "-c", '. "$1/fm-config-inherit-lib.sh"; . "$1/fm-launch-env-lib.sh"; '
+         'fm_launch_env_read "$2" || exit 1; '
+         'printf "%s\\n%s\\n%s\\n" "$LAUNCH_ENV_ENABLED" "$FM_LAUNCH_ENV_FLOOR" "$LAUNCH_ENV_NAMES"',
+         "fm-crew", str(SCRIPT_DIR), config],
+        capture_output=True, text=True, check=False,
+    )
+    if policy.returncode:
+        die(policy.stderr.strip() or "worker launch environment configuration is invalid")
+    enabled, floor, names = policy.stdout.split("\n", 2)
+    if enabled == "1":
+        allowed = set(floor.split()) | set(names.split())
+        env = {name: value for name, value in env.items() if name in allowed}
     return env
 
 
@@ -261,14 +274,15 @@ def brief_text(args) -> str:
     return text.strip() + "\n"
 
 
-def run_deck(argv: list[str], cwd: Path, events: Path, stderr_log: Path, env: dict, new_group: bool = False):
-    with open(events, "w") as out, open(stderr_log, "a") as err:
+def run_deck(argv: list[str], cwd: Path, events: Path, stderr_log: Path, env: dict,
+             prompt_file: Path, new_group: bool = False):
+    with open(events, "w") as out, open(stderr_log, "a") as err, open(prompt_file, "r") as prompt:
         return subprocess.Popen(
             argv,
             cwd=cwd,
             stdout=out,
             stderr=err,
-            stdin=subprocess.DEVNULL,
+            stdin=prompt,
             env=env,
             start_new_session=new_group,
         )
@@ -330,14 +344,31 @@ class Specialist:
         with locked(self.lock_path):
             rec = self.record()
             cur = rec.get("current_job")
-            if rec.get("status") == "running" and cur and not pid_alive(cur.get("pid")):
-                # The runner leads its own process group; a Deck child left
-                # behind by a killed runner must not keep working unowned.
-                with contextlib.suppress(ProcessLookupError, PermissionError):
-                    os.killpg(cur["pid"], signal.SIGKILL)
+            if rec.get("status") == "running" and cur and not self.runner_alive(cur):
+                pid = cur.get("pid")
+                if isinstance(pid, int) and pid > 0 and not pid_alive(pid):
+                    hook = specialist_hook(self.job_dir(cur["id"]), Path(rec["memory"]))
+                    for child, _, pgid, stat in PROCESS_API.processes():
+                        if pgid != pid or stat.startswith("Z"):
+                            continue
+                        arguments = PROCESS_API.process_arguments(child) or []
+                        if ("--session" in arguments and "--hook" in arguments
+                                and arguments[arguments.index("--session") + 1:][:1] == [rec["session"]]
+                                and arguments[arguments.index("--hook") + 1:][:1] == [hook]):
+                            with contextlib.suppress(ProcessLookupError, PermissionError):
+                                os.killpg(pid, signal.SIGKILL)
+                            break
                 self._finish_locked(rec, cur["id"], "interrupted", None)
                 rec = self.record()
             return rec
+
+    def runner_alive(self, cur: dict) -> bool:
+        pid = cur.get("pid")
+        if not pid_alive(pid):
+            return False
+        arguments = PROCESS_API.process_arguments(pid) or []
+        expected = [str(Path(__file__).resolve()), "_spec-run", self.name, cur["id"], "--home", str(self.h)]
+        return arguments[1:] == expected
 
     def _finish_locked(self, rec: dict, job: str, outcome: str, exit_code) -> dict:
         jdir = self.job_dir(job)
@@ -362,6 +393,8 @@ class Specialist:
         rec["jobs"] = int(rec.get("jobs", 0)) + 1
         rec["memory_summary"] = first_lines(read_text(Path(rec["memory"])))
         self.save(rec)
+        wake(self.h, f"specialist:{self.name}:{job}",
+             f"check: specialist {self.name} finished job {job} ({outcome}) - result: {result}")
         return entry
 
 
@@ -481,6 +514,7 @@ def cmd_spec_job(args) -> None:
     sp = Specialist(h, args.name)
     brief = brief_text(args)
     deck_bin()
+    deck_env()
     rec = sp.reconcile()
     with locked(sp.lock_path):
         rec = sp.record()
@@ -504,7 +538,7 @@ def cmd_spec_job(args) -> None:
         sp.save(rec)
     print(f"started job {job} for specialist {args.name}")
     if args.wait:
-        if not wait_for(lambda: not pid_alive(pid), args.wait_timeout):
+        if not wait_for(lambda: not sp.runner_alive({"pid": pid, "id": job}), args.wait_timeout):
             die(f"job {job} wait timed out; the job is still running", 1)
         rec = sp.reconcile()
         last = rec.get("last_job") or {}
@@ -531,12 +565,13 @@ def cmd_spec_run(args) -> None:
         memory = Path(rec["memory"])
         workdir = specialist_workdir(rec)
         argv = [
-            deck_bin(), "run", (jdir / "prompt.md").read_text(), "--session", rec["session"],
+            deck_bin(), "run", "-", "--session", rec["session"],
             "--max-turns", str(int(os.environ.get("FM_CREW_MAX_TURNS", DEFAULT_MAX_TURNS))),
             "--deadline-secs", str(int(os.environ.get("FM_CREW_DEADLINE_SECS", DEFAULT_DEADLINE))),
             "--hook", specialist_hook(jdir, memory),
         ]
-        rc = run_deck(argv, workdir, jdir / "events.ndjson", jdir / "stderr.log", deck_env()).wait()
+        rc = run_deck(argv, workdir, jdir / "events.ndjson", jdir / "stderr.log",
+                      deck_env(), jdir / "prompt.md").wait()
         if rc == 0 and result.is_file() and result.stat().st_size > 0 and memory_updated(jdir, memory):
             outcome = "done"
     except (Exception, SystemExit) as error:
@@ -547,11 +582,6 @@ def cmd_spec_run(args) -> None:
         if cur.get("id") != args.job:
             return
         sp._finish_locked(rec, args.job, outcome, rc)
-    wake(
-        h,
-        f"specialist:{args.name}:{args.job}",
-        f"check: specialist {args.name} finished job {args.job} ({outcome}) - result: {result}",
-    )
 
 
 def cmd_spec_status(args) -> None:
@@ -730,6 +760,7 @@ def cmd_group_start(args) -> None:
     brief = brief_text(args)
     angles = read_angles(args)
     deck_bin()
+    deck_env()
     with locked(g.lock_path):
         if g.exists():
             die(f"task group {args.gid!r} already exists; pick a new id", 3)
@@ -794,12 +825,13 @@ def start_member(g: Group, rec: dict, m: dict, brief: str, total: int) -> subpro
     prompt = member_prompt(rec, brief, m["angle"], result, n, total)
     (mdir / "prompt.md").write_text(prompt)
     argv = [
-        deck_bin(), "run", prompt, "--ephemeral",
+        deck_bin(), "run", "-", "--ephemeral",
         "--max-turns", str(int(os.environ.get("FM_CREW_MAX_TURNS", DEFAULT_MAX_TURNS))),
         "--deadline-secs", str(int(os.environ.get("FM_CREW_DEADLINE_SECS", DEFAULT_DEADLINE))),
         "--hook", result_hook(result),
     ]
-    return run_deck(argv, work, mdir / "events.ndjson", mdir / "stderr.log", deck_env(), new_group=True)
+    return run_deck(argv, work, mdir / "events.ndjson", mdir / "stderr.log",
+                    deck_env(), mdir / "prompt.md", new_group=True)
 
 
 def cmd_group_run(args) -> None:
@@ -871,11 +903,13 @@ def run_group(g: Group) -> bool:
                 work = work_root(g.h) / "groups" / g.gid / "merge"
                 work.mkdir(parents=True, exist_ok=True)
                 prompt = merge_prompt(rec, brief, rec["members"], merged)
-                argv = [deck_bin(), "run", prompt, "--ephemeral", "--max-turns", "60",
+                prompt_file = g.run_dir / "merge-prompt.md"
+                prompt_file.write_text(prompt)
+                argv = [deck_bin(), "run", "-", "--ephemeral", "--max-turns", "60",
                         "--deadline-secs", str(int(os.environ.get("FM_CREW_DEADLINE_SECS", DEFAULT_DEADLINE))),
                         "--hook", result_hook(merged)]
                 merger = run_deck(argv, work, g.run_dir / "merge-events.ndjson",
-                                  g.run_dir / "merge-stderr.log", deck_env())
+                                  g.run_dir / "merge-stderr.log", deck_env(), prompt_file)
                 break
         time.sleep(0.3)
 

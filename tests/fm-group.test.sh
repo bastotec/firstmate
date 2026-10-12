@@ -26,9 +26,11 @@ export FM_HOME="$HOME_DIR" FM_DECK_BIN="$ROOT/tests/assets/deck-crew-stub.py"
 export DECK_STATE="$TMP_ROOT/deck" FM_CREW_WORK_ROOT="$TMP_ROOT/work" STUB_RUNNING_DIR="$TMP_ROOT/running"
 GROUP="$ROOT/bin/fm-group.sh"
 
-live_stubs() {  # <home>
-  pgrep -f "deck-crew-stub.py run" | while read -r pid; do
-    ps -o command= -p "$pid" 2>/dev/null | grep -q -- "$1\|$TMP_ROOT" && echo "$pid"
+live_stubs() {
+  [ -f "$DECK_STATE/argv.jsonl" ] || return 0
+  jq -r .pid "$DECK_STATE/argv.jsonl" | while read -r pid; do
+    command=$(ps -o command= -p "$pid" 2>/dev/null)
+    case "$command" in *deck-crew-stub.py\ run*) echo "$pid" ;; esac
   done
 }
 
@@ -195,3 +197,25 @@ for option in --remote --local-max --merge-brief --no-merge-agent; do
   expect_code 2 "$("$GROUP" start extras --brief x --angle a "${args[@]}" >/dev/null 2>&1; echo $?)" "unrequired option $option is not accepted"
 done
 pass "groups expose only local capped fan-out with a required merge"
+
+printf '%s\n' DECK_STATE STUB_RESULT_BYTES > "$HOME_DIR/config/launch-env-allowlist"
+launches=$(wc -l < "$DECK_STATE/argv.jsonl" | tr -d ' ')
+GH_TOKEN=fixture-secret PROXAI_API_KEY=fixture-key STUB_RESULT_BYTES=30720 \
+  "$GROUP" start large-merge --brief "Review five substantial reports" \
+  --angle a --angle b --angle c --angle d --angle e --wait >/dev/null 2>&1 || fail "large member reports must reach the merger"
+LARGE_REC="$HOME_DIR/state/groups/large-merge.json"
+assert_equals done "$(jq -r .status "$LARGE_REC")" "a large required merge completes"
+assert_grep "merged 5 member results" "$HOME_DIR/data/groups/large-merge/report.md" "the large merge consumes all member reports"
+new_launches=$(jq -s --argjson start "$launches" '.[$start:]' "$DECK_STATE/argv.jsonl")
+assert_equals 6 "$(printf '%s' "$new_launches" | jq length)" "five members and the merger launch through the filtered boundary"
+assert_equals true "$(printf '%s' "$new_launches" | jq 'all(.[]; .stdin_prompt)')" "all generated prompts use stdin"
+merge_bytes=$(printf '%s' "$new_launches" | jq -r '.[-1].prompt_bytes')
+[ "$merge_bytes" -gt 131072 ] || fail "the merger must receive a prompt above Linux's per-argument limit"
+assert_equals true "$(printf '%s' "$new_launches" | jq 'all(.[]; .environment.gh_token == false and .environment.gateway_key == false)')" "members and merger exclude unlisted credentials"
+pass "large reports merge over stdin with filtered member and merger environments"
+
+printf 'GH_TOKEN=secret\n' > "$HOME_DIR/config/launch-env-allowlist"
+expect_code 2 "$("$GROUP" start invalid-policy --brief x --angle a >/dev/null 2>&1; echo $?)" "invalid environment policy refuses group dispatch"
+assert_absent "$HOME_DIR/state/groups/invalid-policy.json" "invalid policy creates no group record"
+rm "$HOME_DIR/config/launch-env-allowlist"
+pass "group environment preflight fails closed before mutation"
