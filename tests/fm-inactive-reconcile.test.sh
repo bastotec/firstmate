@@ -57,6 +57,8 @@ make_world() { # <name>
   MAIN="$WORLD/main"
   MATE="$WORLD/mate"
   mkdir -p "$WORLD/root" "$MAIN"/{state,data,config,projects} "$MATE"/{state,data,config,projects,bin}
+  # Isolate outcome reconciliation from the separately tested cleanup audit.
+  touch "$MAIN/state/.last-idle-sweep" "$MATE/state/.last-idle-sweep"
   : > "$MATE/AGENTS.md"
   make_tools "$WORLD"
   : > "$WORLD/forge.log"

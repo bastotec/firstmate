@@ -136,6 +136,12 @@
 #                          FM_SECONDMATE_REVIVE_INTERVAL seconds (30) while the
 #                          home records a second mate; that script owns the
 #                          revival, its budget, and this one escalation
+#   check: idle workers need a decision / second mate not cleaning up idle workers: <id>...
+#                          surfaced once from durable queue rows keyed
+#                          idle-sweep:<epoch> and idle-sweep-audit:<mate>:<epoch>,
+#                          queued by bin/fm-idle-sweep.sh, which this watcher
+#                          runs detached; that script's header owns cadence,
+#                          cleanup eligibility, decisions, and the audit
 # For normal supervision, resume the session-start primary-harness protocol
 # after each printed reason. Direct duplicate invocations of this script still
 # no-op through the watcher singleton lock.
@@ -281,6 +287,8 @@ case "$AUTOLAND_INTERVAL" in
   ''|*[!0-9]*|0) AUTOLAND_INTERVAL=90 ;;
 esac
 SECONDMATE_REVIVE_INTERVAL=${FM_SECONDMATE_REVIVE_INTERVAL:-30}
+IDLE_SWEEP_INTERVAL=${FM_IDLE_SWEEP_SECS:-1800}
+case "$IDLE_SWEEP_INTERVAL" in ''|*[!0-9]*|0) IDLE_SWEEP_INTERVAL=1800 ;; esac
 case "$SECONDMATE_REVIVE_INTERVAL" in ''|*[!0-9]*|0) SECONDMATE_REVIVE_INTERVAL=30 ;; esac
 HOME_SUMMARY_INTERVAL=${FM_HOME_SUMMARY_INTERVAL:-300}
 case "$HOME_SUMMARY_INTERVAL" in
@@ -1705,7 +1713,7 @@ procevent_surface_after_output() {
 }
 
 procevent_surface_queued() {
-  local key reason captured="" stranded="" unstarted="" notes="" revive=""
+  local key reason captured="" stranded="" unstarted="" notes="" revive="" idle="" idle_audit=""
   PROCEVENT_SURFACED=
   [ -s "$FM_WAKE_QUEUE" ] || return 0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
@@ -1717,7 +1725,7 @@ procevent_surface_queued() {
         notes="$notes ${key#inbox:}"
         continue
         ;;
-      procevent:*|secondmate-revive:*) ;;
+      procevent:*|secondmate-revive:*|idle-sweep:*|idle-sweep-audit:*) ;;
       *) continue ;;
     esac
     [ -e "$(procevent_surfaced_marker "$key")" ] && continue
@@ -1730,6 +1738,11 @@ procevent_surface_queued() {
       secondmate-revive:*)
         key=${key#secondmate-revive:}
         revive="$revive ${key%%:*}"
+        ;;
+      idle-sweep:*) idle=1 ;;
+      idle-sweep-audit:*)
+        key=${key#idle-sweep-audit:}
+        idle_audit="$idle_audit ${key%%:*}"
         ;;
       procevent:*:stranded:*) stranded="$stranded $key" ;;
       procevent:*:launch-failed:*) unstarted="$unstarted $key" ;;
@@ -1745,6 +1758,14 @@ procevent_surface_queued() {
   if [ -n "$revive" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
     reason="$reason secondmate revival failed:$revive"
+  fi
+  if [ -n "$idle" ]; then
+    [ "$reason" = "check:" ] || reason="$reason;"
+    reason="$reason idle workers need a decision"
+  fi
+  if [ -n "$idle_audit" ]; then
+    [ "$reason" = "check:" ] || reason="$reason;"
+    reason="$reason second mate not cleaning up idle workers:$idle_audit"
   fi
   if [ -n "$captured" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
@@ -2172,6 +2193,15 @@ secondmate_revive_detached() {
     "$SCRIPT_DIR/fm-secondmate-revive.sh" scan </dev/null >/dev/null 2>&1 &
 }
 
+# bin/fm-idle-sweep.sh owns sweep eligibility, cadence, and locking.
+# Launch detached because a sweep can take minutes and must not delay the
+# watcher's cycle or liveness beacon.
+idle_sweep_detached() {
+  [ "$(age_of "$STATE/.last-idle-sweep")" -ge "$IDLE_SWEEP_INTERVAL" ] || return 0
+  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+    "$SCRIPT_DIR/fm-idle-sweep.sh" scan </dev/null >/dev/null 2>&1 &
+}
+
 PR_POLL_CONTROL_LOCK=
 
 pr_poll_control_release() {
@@ -2336,6 +2366,10 @@ while :; do
   # A dead second mate is revived here, between first-mate turns, rather than
   # waiting for the next session start (bin/fm-secondmate-revive.sh).
   secondmate_revive_detached
+
+  # Finished workers are cleaned up and idle ones become decisions here, so a
+  # home never keeps them waiting for a model turn (bin/fm-idle-sweep.sh).
+  idle_sweep_detached
 
   # A live secondmate endpoint does not prove that its own wake loop is alive.
   # Observe the foreign queue before the rest of this cycle so an aged row wakes

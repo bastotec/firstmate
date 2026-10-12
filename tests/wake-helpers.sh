@@ -88,6 +88,10 @@ make_case() {
   dir="$TMP_ROOT/$name"
   fakebin="$dir/fakebin"
   mkdir -p "$dir/state" "$fakebin"
+  # These fixtures isolate wake handling, not idle cleanup or mate audits.
+  # Keep the detached sweep outside their observation window; its own suite
+  # exercises the watcher with an unprimed cadence marker.
+  touch "$dir/state/.last-idle-sweep"
   make_fake_crew_state "$fakebin" >/dev/null
   printf '%s\n' "$dir"
 }
