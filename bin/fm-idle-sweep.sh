@@ -1,56 +1,70 @@
 #!/usr/bin/env bash
-# fm-idle-sweep.sh - clean up this home's finished workers and turn every other
-# idle worker into one captain decision, without waiting for a model turn.
+# fm-idle-sweep.sh - guarded cleanup and decision cards for this home's
+# eligible idle workers, without waiting for a model turn.
 #
 # Usage:
 #   fm-idle-sweep.sh scan [--now]
 #   fm-idle-sweep.sh summary
 #
-# Why this exists: the finished-work sweep in .agents/skills/task-delivery
-# runs only when a model turn reaches a heartbeat, and a refusal there was
-# never followed up, so a home could keep dozens of done, dead, failed and
-# silently blocked worker records for weeks (2026-10-12: 33 of 37). The home's
-# watcher (bin/fm-watch.sh) runs `scan` detached on its own cadence, so the
-# sweep happens whether or not any model is awake.
+# The home's watcher (bin/fm-watch.sh) runs `scan` detached on its own cadence,
+# so finished-worker cleanup and idle-worker decisions do not depend on a
+# model turn reaching .agents/skills/task-delivery's finished-work sweep.
+# `scan --now` bypasses the cadence for an operator-triggered sweep, but not
+# the home-scoped scan lock or any eligibility or cleanup guard.
 #
 # One scan, over THIS home's own non-secondmate records only (a home never
 # acts on another home's records; secondmates retire only on a decision):
 #   - a record already held for the captain, or parked on a settled deferral
 #     (bin/fm-captain-hold.sh open / deferred), is left to that decision;
-#   - otherwise its current state is read once with bin/fm-crew-state.sh, and
-#     its age is the time since its status ledger (else its record) changed;
+#   - otherwise the recorded worktree's slot-owner claim is checked first;
+#     a claim naming another task classifies this record as dead, never done
+#     from the claimant's run; all other records take one bin/fm-crew-state.sh
+#     read bounded to 60 seconds; age is the time since the status ledger
+#     (else metadata record) changed;
 #   - working or parked: left alone;
 #   - done, quiet for 15 minutes: cleaned up with
 #     bin/fm-teardown.sh, never --force; a refusal only because the endpoint is
 #     on a retired backend goes to bin/fm-retire-endpoint.sh --finished; any
 #     other refusal becomes a decision to clean it up or keep it;
 #   - failed, blocked, paused, or unknown with its endpoint or copy gone,
-#     quiet for 6 hours: one decision to retire or retry it.
-#   Then this home's record-less live endpoints are closed through
-#   bin/fm-retire-endpoint.sh --list-orphans / --orphan; a refused close
-#   becomes a decision under the id idle-orphan-<task>.
+#     quiet for 6 hours: one decision to retire or retry it, recommending
+#     retire for failed/dead and retry for blocked/paused; an unavailable
+#     backend without evidence that the endpoint or copy is gone is left alone.
+#   Then this home's record-less live endpoints are listed through
+#   bin/fm-retire-endpoint.sh --list-orphans. Before --orphan closure, holds
+#   and settled deferrals on idle-orphan-<task> (or its follow-up), and an
+#   unchanged raised fingerprint of the actual task's ledger, leave the
+#   endpoint alone; otherwise a refused close becomes a decision under
+#   idle-orphan-<task>.
 # A decision is an ordinary captain hold (bin/fm-captain-hold.sh hold) with a
 # full decision card, so it reaches Fleet Town, and in a secondmate home the
-# parent channel, through their existing owners. Each raised decision records
-# the worker's ledger size under state/idle-sweep/<id>.raised, and a
-# later scan raises it again only after the worker's ledger changes,
-# so an answer to keep or retry a worker is never asked twice.
+# parent channel, through their existing owners. If holding the worker's id
+# fails, the sweep attempts a linked follow-up idle-<id> with --title and
+# --origin; the summary's hold_id identifies the successful call.
+# Each raised decision records the worker's ledger byte count under
+# state/idle-sweep/<id>.raised; unchanged size suppresses another decision
+# even when the classification changes. Holds and settled deferrals on either
+# the worker or follow-up id take precedence over a changed fingerprint.
 # In a main home, a scan that raised any decision queues ONE `check:` wake
 # keyed idle-sweep:<epoch> naming those workers.
 #
 # A home that records second mates also audits them: each mate's own sweep
-# must publish a summary younger than 6 hours, read from the
+# must publish a summary no more than 6 hours old, read from the
 # local home's state/idle-sweep.json or over bin/fm-on.sh `summary` for a
-# remote one (an ssh transport failure, exit 255, proves nothing and is
-# skipped). A missing or stale summary, or one listing a worker the mate could
-# neither clean up nor raise, queues ONE `check:` wake keyed
+# remote one, bounded to 60 seconds. An ssh transport failure (exit 255) or
+# read timeout (exit 124) proves nothing and is skipped. A missing local home
+# or state directory counts as a missing summary. A missing or stale summary,
+# or one listing a worker the mate could neither clean up nor raise, queues
+# ONE `check:` wake keyed
 # idle-sweep-audit:<mate>:<epoch> per episode; a fresh clean summary ends it.
 #
 # `summary` prints the last scan's state/idle-sweep.json
 # (schema fm-idle-sweep.v1: generated, generated_epoch, home, workers[] of
 # {id, class, age_seconds, detail, action, hold_id}); hold_id names the raised
 # captain call, or is null; action is one of none, cleaned,
-# carded, or unhandled. Exit 1 when no scan has published one yet.
+# carded, or unhandled. Refused orphan closes are included even when their
+# hold fails; held or unchanged raised orphans appear with action none.
+# Exit 1 when no scan has published a summary yet.
 #
 # Environment knobs:
 #   FM_HOME                        required
@@ -341,7 +355,8 @@ while IFS= read -r meta; do
   add_row "$id" "$CLASS" "$DETAIL" "$action"
 done < <(worker_metas)
 
-# Record-less live endpoints: the orphan close owns every eligibility check.
+# Record-less live endpoints: sweep admission precedes the orphan close's
+# independent endpoint and work-protection checks.
 orphans=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-retire-endpoint.sh" --list-orphans 2>/dev/null) || orphans=
 while IFS=$'\t' read -r otask oeid; do
   [ -n "$otask" ] && [ -n "$oeid" ] || continue

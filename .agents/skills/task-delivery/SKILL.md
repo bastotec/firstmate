@@ -63,7 +63,8 @@ Retire a custom check only through `bin/fm-check-unregister.sh <id>` (or `bin/fm
 
 `AGENTS.md` section 7 records the captain's standing instruction that the mate who created a worker cleans it up once its work is done.
 Run this sweep when a ship lands, when a scout completes, and on every heartbeat, over this home's own endpoint-backed direct reports and endpoint-bound leftover records only, never another home's, and never a secondmate, which retires only on an explicit decision.
-The watcher also runs the same sweep without a model turn through [`bin/fm-idle-sweep.sh`](../../../bin/fm-idle-sweep.sh), whose header owns its cadence, quiet bounds and second-mate audit; a decision it raised is an ordinary captain hold, so handle its wake the way step 3 below describes and never raise it a second time.
+The watcher independently runs [`bin/fm-idle-sweep.sh`](../../../bin/fm-idle-sweep.sh), whose header owns automated cleanup eligibility, decision cards, repeat suppression, cadence, and second-mate audit.
+Handle its decision wakes through `captain-hold-lifecycle` rather than creating a duplicate call.
 
 Use [`bin/fm-pr-lib.sh`'s completion-claim gate](../../../bin/fm-pr-lib.sh) to judge a worker with a recorded PR, regardless of delivery mode.
 Without a recorded PR, a worker is finished when its branch landed, or when it is a scout whose report exists and whose `captain-hold-lifecycle` completion gate passes.

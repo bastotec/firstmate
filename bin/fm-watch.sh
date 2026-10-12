@@ -140,8 +140,8 @@
 #                          surfaced once from durable queue rows keyed
 #                          idle-sweep:<epoch> and idle-sweep-audit:<mate>:<epoch>,
 #                          queued by bin/fm-idle-sweep.sh, which this watcher
-#                          runs detached every FM_IDLE_SWEEP_SECS (1800); that
-#                          script owns the cleanup, the decisions and the audit
+#                          runs detached; that script's header owns cadence,
+#                          cleanup eligibility, decisions, and the audit
 # For normal supervision, resume the session-start primary-harness protocol
 # after each printed reason. Direct duplicate invocations of this script still
 # no-op through the watcher singleton lock.
@@ -2193,10 +2193,9 @@ secondmate_revive_detached() {
     "$SCRIPT_DIR/fm-secondmate-revive.sh" scan </dev/null >/dev/null 2>&1 &
 }
 
-# Idle-worker sweep (bin/fm-idle-sweep.sh): cleans up this home's finished
-# workers, raises every other idle one as a captain decision, and audits second
-# mates' own sweeps. It owns its cadence and lock, so this only starts it
-# detached; it can take minutes and never delays this cycle.
+# bin/fm-idle-sweep.sh owns sweep eligibility, cadence, and locking.
+# Launch detached because a sweep can take minutes and must not delay the
+# watcher's cycle or liveness beacon.
 idle_sweep_detached() {
   [ "$(age_of "$STATE/.last-idle-sweep")" -ge "$IDLE_SWEEP_INTERVAL" ] || return 0
   FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \

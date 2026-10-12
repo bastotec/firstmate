@@ -655,6 +655,7 @@ The gate is command-text/tool-name matching, not a sandbox; do not treat it as p
 Runtime tuning via environment variables (defaults shown).
 Variables documented in a section above are not repeated: mail plane, auto-land hooks, watched tools, inbox, wake gate, possible-ask, turn-end churn, and the away-mode target; Relay variables are in [`relay.md`](relay.md) and process-event variables in [`process-event-sources.md`](process-event-sources.md).
 Script headers own the exact parsing and fallback of each value.
+[`bin/fm-idle-sweep.sh`](../bin/fm-idle-sweep.sh) owns `FM_IDLE_SWEEP_SECS` and the watcher-run cleanup, decision, and second-mate audit contract.
 
 ```sh
 # homes and paths ("FM_HOME")

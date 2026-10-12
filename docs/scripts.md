@@ -21,7 +21,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-update.sh`           | Guarded self-update of firstmate and local or remote secondmate homes, reconciling redundant divergence and classifying every live mate left on the target commit for restart or fallback nudge |
 | `fm-secondmate-restart.sh` | Persist open conversational work, then restart eligible second mates or report the fallback outcome |
 | `fm-secondmate-revive.sh` | Recover a down second mate mid-session through the guarded [secondmate lifecycle](stream-backend.md#secondmate-lifecycle) |
-| `fm-idle-sweep.sh`       | Watcher-run cleanup of this home's finished workers, one captain decision per other idle worker, and an audit that second mates do the same |
+| [`fm-idle-sweep.sh`](../bin/fm-idle-sweep.sh) | Watcher-run guarded worker cleanup, idle-worker decision cards, and second-mate sweep audits; header owns eligibility and repeat suppression |
 | `fm-secondmate-restart-lib.sh` | Shared second-mate restart capability and persistence-request contract |
 | [`fm-machine.sh`](../bin/fm-machine.sh) | Connect and prepare a machine, including optional shared-skills provisioning |
 | [`fm-machine-skills.sh`](../bin/fm-machine-skills.sh) | Record per-machine skill discovery and check skill-dependent placement |
