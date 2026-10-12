@@ -43,8 +43,9 @@
 # bin/fm-home-tools-lib.sh's lists; Deck; gh auth (exit status only); the model
 # gateway at FM_MACHINE_GATEWAY_URL (default Deck's http://127.0.0.1:8329/v1)
 # and its client key file (presence and mode only, never read); and whether
-# this home's config/stream-hub answers from the machine. Exit 0 only when every
-# check and item is ok or present; gaps exit 1.
+# this home's config/stream-hub answers from the machine. After a successful
+# probe it also offers optional machine instructions (described below).
+# Exit 0 only when every check and item is ok or present; gaps exit 1.
 # An absent clone is will-install only when prepare's clone-route guard passes;
 # otherwise the clone item is human with the same refusal reason.
 # With no known remote root, the clone and entrypoint-link items request it;
@@ -126,6 +127,14 @@
 # skills <alias> [<remote-root>] runs only provisioning and inventory refresh;
 # <remote-root> defaults to fm-machine-skills.sh roots (the machine registry,
 # then a remote secondmate route on that host), and is required if unrecorded.
+#
+# Machine instructions: check reports an informational
+# `item machine-instructions=present` after a successful probe; `present` means
+# the offer is available, not that an instructions file exists. Setup emits
+# `step machine-instructions=skipped` after the skills steps. Both offers report
+# the file's presence when readable; neither writes it or makes it required.
+# bin/fm-machine-instructions.sh owns the separate read/save interface and its
+# registration prerequisite.
 #
 # register <alias> <remote-root> records the machine in this home's
 # data/machines.md as `- <alias> (root: <remote-root>; added YYYY-MM-DD)`. It is

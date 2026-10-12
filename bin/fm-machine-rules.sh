@@ -4,14 +4,17 @@
 # Usage:
 #   fm-machine-rules.sh check <merge|comment|publish>
 #
-# A machine's ~/.agents/AGENTS.md (bin/fm-machine-instructions.sh) is the
-# captain's standing instruction for that machine and outranks Firstmate's own
-# standing rules there, including merge, comment and publish authority and
-# yolo (AGENTS.md section 4). Most of it is prose every agent reads; a line
+# A machine's ~/.agents/AGENTS.md (bin/fm-machine-instructions.sh) supplies
+# approval requirements under AGENTS.md section 4's precedence rule.
+# A standalone line in the file
 #   firstmate: ask before <action>[, <action>...]
-# (case-insensitive, actions merge, comment, publish) also makes this script
-# refuse that action for any agent on the machine until the captain approves
-# it. Run it on the machine the agent runs on, before the action.
+# (case-insensitive, actions merge, comment, publish) makes this script refuse
+# that action. Leading and surrounding action whitespace is ignored; Markdown
+# list/quote prefixes, `and` separators, and action punctuation are not accepted.
+# Prose restrictions remain binding even when no machine-readable line exists.
+# Run the check on the machine the agent runs on, before the action; on refusal,
+# ask the captain rather than acting. This script never records or consumes
+# approval; bin/fm-pr-merge.sh owns the explicit attended merge override.
 #
 # check prints `allow` and exits 0, or prints
 #   ask: this machine's ~/.agents/AGENTS.md says "<line>"; ask the captain (a decision card) instead of acting

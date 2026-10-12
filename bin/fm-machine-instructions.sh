@@ -7,10 +7,11 @@
 #   fm-machine-instructions.sh save <machine> --expect <sha256|none> [--json] < new-text
 #
 # <machine> is `local` or an ssh alias bin/fm-machine-skills.sh knows (roots).
-# Deck composes ~/.agents/AGENTS.md first into every session it starts on that
-# machine, and AGENTS.md section 4 makes it outrank Firstmate's standing rules
-# there. Nothing else writes it: dotfiles' installer never does, and this
-# script is the only Firstmate writer.
+# Register a new alias with bin/fm-machine.sh register first, unless a remote
+# secondmate route already records it; setup alone does not register it.
+# AGENTS.md section 4 owns instruction precedence. Deck composes this file
+# first into every session it starts on that machine. The dotfiles skills
+# installer never writes it; this script is the only Firstmate writer.
 #
 # show prints `machine=<m>`, `path=~/.agents/AGENTS.md`, `present=yes|no`,
 # `sha=<sha256>|none`, `pickup: <sentence>`, then `---` and the text. --json
@@ -20,10 +21,11 @@
 # writing a temporary file beside it and renaming it into place, keeping the
 # previous version at ~/.agents/AGENTS.md.bak. An empty stdin removes the file
 # (the previous version is still kept). --expect refuses the save with exit 3
-# when the file changed since it was read (sha) or appeared (none), so two
-# editors never overwrite each other. --expect is required; saves serialize on
-# the machine and refuse a busy lock after ten seconds. Existing permissions
-# are preserved; new files are private (0600). It prints `saved=<sha>|removed` and the
+# when the file changed since it was read (sha) or appeared (none), so concurrent
+# saves through this script cannot overwrite a changed version. --expect is
+# required; saves serialize on the machine and refuse a busy lock after ten
+# seconds. The existing file's permissions are preserved on replacement and
+# backup; new files are private (0600). It prints `saved=<sha>|removed` and the
 # same pickup sentence: sessions read the file only when they start, so every
 # second mate on that machine (and, for local, the primary) picks it up on its
 # next restart; new crewmates get it at launch.

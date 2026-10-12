@@ -33,10 +33,12 @@ The [`fm-machine-skills.sh` header](../bin/fm-machine-skills.sh) owns brief synt
 ### Machine instructions
 
 A machine's `~/.agents/AGENTS.md` holds the captain's binding instructions for that machine (what may run there, resource limits, what it is for).
-Deck composes it first into every session it starts on the machine, and [`AGENTS.md`](../AGENTS.md) section 4 makes it outrank Firstmate's standing rules there, so the primary reads it with `bin/fm-machine-instructions.sh show <machine>` before placing work there and never places work it rules out.
-The dotfiles skills installer never writes it; [`bin/fm-machine-instructions.sh`](../bin/fm-machine-instructions.sh) `show|save <machine>` (or Fleet Town's Machine panel, which calls it) reads and replaces it locally or over ssh, refuses a save over a version changed since it was read, keeps the previous version as `AGENTS.md.bak`, and says which mates pick it up: sessions read it only when they start, so running mates need a restart.
-A line `firstmate: ask before <action>[, <action>...]` (merge, comment, publish) also makes [`bin/fm-machine-rules.sh`](../bin/fm-machine-rules.sh) answer `ask:` for that action on the machine, so an agent there asks the captain instead of acting, and [`bin/fm-pr-merge.sh`](../bin/fm-pr-merge.sh) refuses such a merge, yolo included, without the captain's explicit `--attended-override`, while [`bin/fm-autoland.sh`](../bin/fm-autoland.sh) leaves it for captain approval.
-Before merging, commenting, or publishing, an agent runs `bin/fm-machine-rules.sh check merge|comment|publish` on its own machine and, on `ask:`, puts the action to the captain as a decision card instead of acting.
+[`AGENTS.md`](../AGENTS.md) section 4 owns instruction precedence; before placing work, the primary reads the destination's current instructions and never places work they rule out.
+The [`fm-machine-instructions.sh` header](../bin/fm-machine-instructions.sh) owns machine registration prerequisites, read/save commands, version and permission safeguards, backups, removal, and session pickup requirements.
+Changes are not hot-reloaded into running mates; restart them to pick up the new instructions.
+The [`fm-machine-rules.sh` header](../bin/fm-machine-rules.sh) owns the machine-readable approval syntax and action-check interface.
+Before merging, commenting, or publishing, an agent checks the action on its own machine through that interface and, on an `ask:` result, puts the action to the captain as a decision card instead of acting.
+The [`fm-pr-merge.sh` header](../bin/fm-pr-merge.sh) owns the captain-approved merge override; [auto-land eligibility](configuration.md#auto-land-configautolandjson-configpost-merge) applies the machine check to every candidate, including PRs without a task in this home.
 
 For manual preparation, clone Firstmate on the remote host at an absolute code-root path, from the firstmate fork's network URL; provisioning refuses a copy whose `origin` is a local path or `file://` URL (see [Provision a route](#provision-a-route)).
 Expose that clone's fixed entrypoint on the account's non-interactive SSH `PATH`, for example:
