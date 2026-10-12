@@ -48,6 +48,13 @@ Both raise one `check:` wake in the owning home when a job or group ends.
 Record replacement fsyncs the file before rename and its directory afterward.
 Generated artifacts and child-written results inherit a private 077 umask;
 retained member copies are explicitly 0600.
+Reading an existing specialist record tightens its state/data directories to
+0700 and its existing history and memory files to 0600 before new writes.
+Runner and group target ownership uses the recorded PID and start time plus
+current process-group leadership, not argv, so exec does not invalidate it.
+An unreadable live identity stays uncertain; an observed mismatch is unrelated.
+Specialist liveness keeps an uncertain live runner busy; legacy jobs without
+recorded identity use the home/name/job argv suffix instead.
 The CLI headers own reconciliation, waiting, and explicit cleanup behavior.
 All generated Deck prompts use stdin, not argv, so report size is not limited
 by the operating system's per-argument bound.
