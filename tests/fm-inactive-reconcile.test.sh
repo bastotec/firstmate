@@ -35,6 +35,8 @@ make_tools() { # <world>
 line="state: ${FM_FAKE_CREW_STATE:-unknown} · source: run-step"
 [ -z "${FM_FAKE_CREW_STATE_DETAIL:-}" ] || line="$line · $FM_FAKE_CREW_STATE_DETAIL"
 [ -z "${FM_FAKE_CREW_STATE_ERROR:-}" ] || line="$line · run-error: $FM_FAKE_CREW_STATE_ERROR"
+# The real reader always appends these, and observed= changes on every read.
+line="$line · declared-wait: inactive · evidence: meta=fake; observed=$(date +%s).$$.$RANDOM"
 printf '%s\n' "$line"
 SH
   cat > "$fake/tmux" <<'SH'

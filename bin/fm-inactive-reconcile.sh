@@ -338,9 +338,9 @@ home_secondmate_id() {
 }
 
 # The reader's one-line detail from a `state: <s> · source: <src> · <detail>`
-# current-state line. Trailing ` · run-pr: <url>` and
-# ` · run-error: <error>` fields are not part of the detail. Empty when the
-# line carries no generic detail.
+# current-state line. Trailing ` · run-pr: <url>`, ` · run-error: <error>`,
+# and the always-present ` · declared-wait: ... · evidence: ...` fields are not
+# part of the detail. Empty when the line carries no generic detail.
 crew_state_detail() { # <state-line>
   local line=$1 rest
   case "$line" in
@@ -348,6 +348,7 @@ crew_state_detail() { # <state-line>
     *) printf ''; return 0 ;;
   esac
   rest=${line#state: }
+  rest=${rest%%' · declared-wait: '*}
   rest=${rest#*' · '}
   case "$rest" in
     *' · '*) rest=${rest#*' · '} ;;
@@ -365,8 +366,12 @@ crew_state_detail() { # <state-line>
 # The run's explicit recorded error from the current-state line, not its
 # generic detail. Empty when the reader did not report a run error.
 crew_state_error() { # <state-line>
+  local err
   case "$1" in
-    *' · source: run-step · '*' · run-error: '*) printf '%s' "${1#*' · run-error: '}" ;;
+    *' · source: run-step · '*' · run-error: '*)
+      err=${1#*' · run-error: '}
+      printf '%s' "${err%%' · declared-wait: '*}"
+      ;;
     *) printf '' ;;
   esac
 }

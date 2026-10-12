@@ -68,7 +68,11 @@
 #     hints.open_decisions is the keyed open-decision set returned by
 #     fm-classify-lib.sh's authoritative status_open_decisions fold and reconciled
 #     against current_state; hints.pending_decision and hints.blocked_event are
-#     booleans derived from that set.
+#     booleans derived from that set. For ordinary tasks, reconciliation clears
+#     the projected set only on working from run-step or pane, or a done/failed
+#     verdict; unknown, parked, blocked, and non-authoritative working reads
+#     retain it. Secondmate events are not cleared by the parent task's state.
+#     This affects view hints only, never the durable status-event fold.
 #     endpoint.exists is the cheap local backend endpoint-presence read. For a
 #     stream target a false from it is reported only when endpoint.agent_state,
 #     the one read that waits out a hub restart, has settled on `missing`; a
@@ -865,7 +869,7 @@ task_json_lines() {
     open_decisions_tsv=$(status_open_decisions "$status_log")
     if [ "$kind" != secondmate ] && \
        { { { [ "$current_source" = run-step ] || [ "$current_source" = pane ]; } \
-           && [ "$current_state" != parked ] && [ "$current_state" != blocked ]; } \
+           && [ "$current_state" = working ]; } \
          || { [ "$current_state" = "done" ] || [ "$current_state" = "failed" ]; }; }; then
       open_decisions_tsv=""
     fi

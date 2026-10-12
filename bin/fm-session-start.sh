@@ -165,7 +165,7 @@
 # tail prints, and bin/fm-line-cap-lib.sh bounds how long each of those lines
 # may be. Both bounds are safe because the section prints every task's full
 # status log path, and AGENTS.md section 8 treats a status line as a wake EVENT
-# rather than current state - bin/fm-crew-state.sh owns current state.
+# rather than current state - bin/fm-task-state-lib.sh owns its derivation.
 #
 # RUNTIME BOUND: the primary host (bin/fm-deck-chat.sh) runs the digest before
 # it launches the session and blocks on it, so an unbounded digest is not
