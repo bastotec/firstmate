@@ -62,9 +62,9 @@
 # state/idle-sweep/<id>.raised; unchanged size suppresses another decision
 # even when the classification changes. Holds and settled deferrals on either
 # the worker or follow-up id take precedence over a changed fingerprint.
-# Every hold re-reads the worker record first, and again before a linked
-# follow-up: a concurrent cleanup holds the task's control lock until the record
-# is gone, so a record that changed or vanished is left for a fresh scan
+# Every hold checks the worker record under the hold owner's original-task
+# control lock, retained through direct and linked follow-up holds, so a
+# record that changed or vanished is left for a fresh scan
 # (class unknown, action none) rather than raised for a worker no longer there.
 # A main home has no parent audit, so a scan that leaves workers unhandled
 # queues ONE `check:` wake keyed idle-sweep-unhandled:<epoch> per distinct set.
@@ -287,13 +287,6 @@ hours() {  # <secs>
 
 # raise <id> <class> <why> <project>: hold the worker for the captain with a
 # full card. Prints nothing; sets RAISED=1 on success.
-# record_unchanged <id>: the worker record still reads as it did when this scan
-# classified it (always true for a record-less orphan call).
-record_unchanged() {
-  case "$1" in idle-orphan-*) return 0 ;; esac
-  [ -f "$STATE/$1.meta" ] && [ "$(cat "$STATE/$1.meta" 2>/dev/null)" = "$RECORD" ]
-}
-
 raise() {
   local id=$1 class=$2 why=$3 project=$4 card title situation reason rec o1 o2 l1 l2 rc=0 out call_id=$1 ledger_id=${5:-$1}
   local hold_args=()
@@ -328,31 +321,24 @@ raise() {
       options:[{key:"1",label:$l1,instruction:$o1},{key:"2",label:$l2,instruction:$o2}],
       recommended:$rec}' > "$card" || { rm -f "$card"; return 0; }
   hold_args=(--reason "$reason" --card-file "$card")
-  case "$id" in idle-orphan-*) hold_args+=(--title "${title:0:120}" --repo "$project") ;; esac
-  if ! record_unchanged "$id"; then
-    rm -f "$card"
+  case "$id" in
+    idle-orphan-*) hold_args+=(--title "${title:0:120}" --repo "$project") ;;
+    *) hold_args+=(--expected-record "$RECORD") ;;
+  esac
+  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-captain-hold.sh" hold "$id" \
+    "${hold_args[@]}" 2>&1) || rc=$?
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then
+    rc=0
+    call_id="idle-$id"
+    out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-captain-hold.sh" hold "$call_id" \
+      --title "${title:0:120}" --origin "$id" --repo "$project" "${hold_args[@]}" 2>&1) || rc=$?
+  fi
+  rm -f "$card"
+  if [ "$rc" -eq 3 ]; then
     RAISE_SKIPPED=1
     log "left $id for a fresh scan: its record changed or was cleaned up during this one"
     return 0
   fi
-  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-captain-hold.sh" hold "$id" \
-    "${hold_args[@]}" 2>&1) || rc=$?
-  # The hold waits on the task's control lock, which a concurrent cleanup holds
-  # until it has removed the record and closed the row: re-check before minting
-  # a follow-up call for a worker that is no longer there.
-  if [ "$rc" -ne 0 ] && ! record_unchanged "$id"; then
-    rm -f "$card"
-    RAISE_SKIPPED=1
-    log "left $id for a fresh scan: it was cleaned up while its decision was being held"
-    return 0
-  fi
-  if [ "$rc" -ne 0 ]; then
-    rc=0
-    call_id="idle-$id"
-    out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-captain-hold.sh" hold "$call_id" \
-      --title "${title:0:120}" --origin "$id" --repo "$project" --reason "$reason" --card-file "$card" 2>&1) || rc=$?
-  fi
-  rm -f "$card"
   if [ "$rc" -ne 0 ]; then
     log "could not hold $id ($class): $(one_line "$out")"
     return 0
