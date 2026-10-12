@@ -12,6 +12,7 @@ Driver CLI: fm_stream_deck.py start|end STATE ID ENDPOINT [TURN SUPPORTED].
 start prints the turn projection path; end retires the active descriptor.
 fm_stream_deck.py captain STATE ID flushes eligible captain-direct records and
 bound Bridge orders; project_captain owns eligibility and acknowledgement rules.
+with_deck_images owns how a captain attachment becomes a Deck image part.
 """
 import contextlib
 import fcntl
@@ -23,6 +24,34 @@ import re
 import subprocess
 import sys
 import tempfile
+
+
+ATTACHED_IMAGE = re.compile(r'^Attached: (/.+?) \(image\b[^)]*\)\s*$')
+IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.webp', '.gif'}
+
+
+def with_deck_images(text):
+    """Follow each Fleet Town image attachment line with a Deck image line.
+
+    Fleet Town names a staged copy as `Attached: <path> (image, <size>)`.
+    When that path is a png, jpeg, webp or gif file on this host, a
+    `deck-image: <path>` line after it makes Deck send the picture itself as
+    an image part of the same message; an older Deck shows the line as text.
+    Other lines, missing files and other kinds pass through unchanged.
+    """
+    lines = text.split('\n')
+    out = []
+    for index, line in enumerate(lines):
+        out.append(line)
+        match = ATTACHED_IMAGE.match(line)
+        if not match:
+            continue
+        path = match.group(1)
+        directive = 'deck-image: ' + path
+        if (Path(path).suffix.lower() in IMAGE_SUFFIXES and Path(path).is_file()
+                and lines[index + 1:index + 2] != [directive]):
+            out.append(directive)
+    return '\n'.join(out)
 
 
 def atomic_write(path, body):
@@ -144,7 +173,7 @@ class Receiver:
                 elif directory != self.inbox or not CAPTAIN_DIRECT.match(body):
                     continue
                 ordinary = self.inbox / source.name
-                guidance = body + '\n\nAfter handling this native steer, acknowledge its ordinary task-inbox source by moving ' + str(ordinary) + ' to ' + str(self.inbox / 'handled' / source.name) + '. Do not apply the same source record twice.'
+                guidance = with_deck_images(body) + '\n\nAfter handling this native steer, acknowledge its ordinary task-inbox source by moving ' + str(ordinary) + ' to ' + str(self.inbox / 'handled' / source.name) + '. Do not apply the same source record twice.'
                 if not bridge and (not body.strip() or len(guidance.encode('utf-8')) > 65536):
                     continue
                 candidates.append((int(source.stem), body, guidance))

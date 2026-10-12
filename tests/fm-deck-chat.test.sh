@@ -226,6 +226,15 @@ test_steer_contract_without_a_host() {
   assert_equals "$(printf 'seq=1\nsession=s2')" "$("$STEER" publish --home "$home" --text 'new session')" "a reused sequence belongs to its new session"
   assert_equals 'new session' "$(cat "$home/state/primary-chat/s2/steer/1.msg")" "receipt identifies the inbox actually published to"
 
+  # A Fleet Town image attachment that exists here gains a Deck image line;
+  # other attachments, missing files and plain text stay verbatim.
+  local shot="$LAB/shot one.png" notes="$LAB/notes.txt"
+  printf 'png' > "$shot"; printf 'txt' > "$notes"
+  "$STEER" publish --home "$home" --text "$(printf 'From the captain, directly: look\nAttached: %s (image, 3 B)\nAttached: %s (file, 3 B)\nAttached: %s (image, 9 KB)' \
+    "$shot" "$notes" "$LAB/gone.png")" >/dev/null
+  assert_equals "$(printf 'From the captain, directly: look\nAttached: %s (image, 3 B)\ndeck-image: %s\nAttached: %s (file, 3 B)\nAttached: %s (image, 9 KB)' \
+    "$shot" "$shot" "$notes" "$LAB/gone.png")" "$(cat "$home/state/primary-chat/s2/steer/2.msg")" "an attached image becomes a deck-image line"
+
   kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
   rc=0; "$STEER" publish --home "$home" --text 'late' 2>/dev/null || rc=$?
   expect_code 3 "$rc" "a dead host is not present"

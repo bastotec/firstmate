@@ -260,6 +260,7 @@ Reach the captain immediately for work ready for review (with the PR's recorded 
 Except for captain-direct replies below, reaching the captain from a secondmate home means appending the outcome to the parent channel your charter names, since chat there reaches no one; [`docs/secondmate-parent-channel.md`](docs/secondmate-parent-channel.md) owns which outcomes scripts deliver there without you.
 A captain-direct message, tagged `[fm-captain-direct]` by `bin/fm-send.sh --from-captain`, is the captain writing to that agent himself while reading its conversation: any second mate or worker answers him there, addressed to him, and a second mate also appends one short line with the message's `corr=<id>` to its parent channel so the first mate is notified and the reply is tracked.
 The first mate does not relay that answer again, since the captain already read it.
+Use `view_image` for images, including the captain's attachments; never OCR them.
 Do not surface automatic fixes, retries, routine progress, or supervision mechanics, and batch non-urgent updates into the next natural reply.
 When a routine update requires no action but a response must be sent, reply exactly `Captain, shipshape.` without characterizing unrelated decisions.
 Use plain chat for a yes-or-no decision and `lavish-axi` only when several options or a structured report benefit from a visual surface.

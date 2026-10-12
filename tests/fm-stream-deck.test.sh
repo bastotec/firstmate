@@ -538,6 +538,11 @@ record(8, '[fm-captain-direct]' + mark + 'note\n\nlate')
 (turn/'9.msg').write_text('newer order')
 record(2, '[fm-captain-direct]' + mark + 'note\n\nlower')
 assert captain() == 0, 'never below a sequence already visible'
+# A captain image attachment that exists on this host also reaches Deck as an image line.
+shot = lab/'shot.png'; shot.write_bytes(b'png')
+record(10, '[fm-captain-direct]' + mark + 'note\n\nsee\nAttached: %s (image, 3 B)\nAttached: %s (image, 3 B)' % (shot, lab/'gone.png'))
+assert captain() == 1
+assert (turn/'10.msg').read_text().startswith('[fm-captain-direct]' + mark + 'note\n\nsee\nAttached: %s (image, 3 B)\ndeck-image: %s\nAttached: %s (image, 3 B)\n\nAfter handling' % (shot, shot, lab/'gone.png'))
 subprocess.check_call(cli + ['end', str(lab), 'task', 'b'*32])
 assert captain() == 0, 'an ended turn gets nothing'
 print('PASS captain-direct records reach live steerable turns in sequence order only')

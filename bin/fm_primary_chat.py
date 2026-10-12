@@ -292,6 +292,10 @@ def steer_publish(args):
     if record is None:
         print('error: no live deck-chat primary is registered for this home', file=sys.stderr)
         return 3
+    from fm_stream_deck import with_deck_images
+    imaged = with_deck_images(body)
+    if len(imaged.encode('utf-8')) <= MAX_BODY:
+        body = imaged
     seq = publish_body(Path(record['steer_dir']), body)
     print('seq=%d' % seq)
     print('session=%s' % record['session'])
