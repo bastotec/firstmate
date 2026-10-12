@@ -202,12 +202,12 @@
 # Pre-teardown cleanup sequence (runs once every landed/discard-work safety
 # refusal above has already passed, and BEFORE any worktree return or branch
 # delete below - a still-active run or a leaked process may own live work in
-# that worktree). A normal finished task's endpoint close runs after Fix 1 and
-# before Fix 2, because the endpoint's own pane machinery - its interactive
-# shell, which ignores SIGTERM by design, and the idle pane-resident worker
-# driver - is owned by bin/fm-backend.sh's close path, not by the cwd-based
-# reaper: run in the old order, the reaper counted that machinery as leaked and
-# forced its kill. tests/fm-teardown.test.sh pins this endpoint-first ordering.
+# that worktree). An ordinary task's endpoint close runs after Fix 1 and before
+# Fix 2, including with --force: an unconfirmed validation-run abort must leave
+# the worker available to answer its gate. Endpoint-owned machinery - the
+# interactive shell and idle worker driver - belongs to bin/fm-backend.sh's
+# close path, not the cwd-based leak reaper. tests/fm-teardown.test.sh pins both
+# the validation-before-close and close-before-reap boundaries.
 # The close path itself may still need KILL for that shell; that is expected and
 # is not a leak finding. An endpoint-retirement task keeps its retirement-owned
 # gate after process cleanup, while a secondmate endpoint closes at its dedicated
@@ -2847,13 +2847,9 @@ task_operator_retirement_pending() {
     && [ -n "$noted_by" ] && [ -n "$noted_at" ]
 }
 
-# mark_pending_close_endpoint_confirmed: the other half of the publish-time
-# stamp. A pending close is published carrying endpoint=unconfirmed
-# (bin/fm-backlog-transition-lib.sh's fm_backlog_close_marker_write), so this
-# clears it only after the endpoint gate and every cleanup step that can still
-# refuse have passed, immediately before the final task/backlog transition.
-# An earlier interruption stays for a teardown rerun; an interruption during
-# the final transition replays at the next session start.
+# mark_pending_close_endpoint_confirmed: settle the publish-time hold at the
+# boundary owned by bin/fm-backlog-transition-lib.sh's
+# fm_backlog_close_marker_write.
 #
 # A failed clear stops the run before the task record is removed, because that
 # is the only way it genuinely leaves the close for a rerun: carrying on would
