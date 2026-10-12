@@ -16,6 +16,9 @@
 # acts on another home's records; secondmates retire only on a decision):
 #   - a record already held for the captain, or parked on a settled deferral
 #     (bin/fm-captain-hold.sh open / deferred), is left to that decision;
+#     an unreadable hold or deferral probe on the worker or its follow-up
+#     leaves it untouched this scan, with summary class unknown/action none;
+#     the same fail-closed admission applies to record-less endpoints below;
 #   - otherwise the recorded worktree's slot-owner claim is checked first;
 #     a claim naming another task classifies this record as dead, never done
 #     from the claimant's run; all other records take one bin/fm-crew-state.sh
@@ -154,7 +157,7 @@ record_age() {  # <id>
   printf '%s' $((NOW - t))
 }
 
-hold_settled() {  # <id> -> 0 when the captain already owns this worker's call
+hold_settled() {  # <id>... -> 0 held/deferred, 1 confirmed absent, 2 unreadable
   local id predicate rc
   for id in "$@"; do
     for predicate in open deferred; do
