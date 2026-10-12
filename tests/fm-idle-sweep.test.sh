@@ -207,7 +207,7 @@ test_real_holds_check_worker_records_inside_the_lifecycle_lock() {
       (cd "$dir/home" && "$real_tasks" add worker 'Worker task' --repo firstmate >/dev/null) || fail 'could not seed backlog'
       target=worker
       if [ "$path" = linked ]; then
-        (cd "$dir/home" && "$real_tasks" done worker >/dev/null) || fail 'could not close worker row'
+        (cd "$dir/home" && "$real_tasks" 'done' worker >/dev/null) || fail 'could not close worker row'
         target=idle-worker
       fi
       printf '%s\n' "$target" > "$dir/home/race-target"
