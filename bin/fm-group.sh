@@ -5,7 +5,8 @@
 # adversarial reviewers on one PR). They investigate and report, never edit
 # project files; put project paths and context in the shared brief.
 # Each member is one ephemeral Deck run with no fleet task record.
-# A detached orchestrator runs at most two members on this machine at once.
+# A detached orchestrator runs at most FM_GROUP_LOCAL_MAX members (default two)
+# on this machine at once.
 # When every member ends, a required merge run combines their results into
 # data/groups/<gid>/report.md, keeping member evidence even if the merge fails.
 # Success requires every member and the merger to succeed.

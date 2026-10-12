@@ -26,14 +26,14 @@ specialist is a record, not an endpoint, and is intentionally persistent.
 
 A task group is one parent's ephemeral fan-out: N members share a brief and
 each gets its own angle; each member is one `deck run --ephemeral`. A detached
-orchestrator runs at most two members on this machine at once, merges their
+orchestrator runs at most FM_GROUP_LOCAL_MAX (default two) members on this machine at once, merges their
 results with one more ephemeral run, then cleans the whole group up in one step.
 A cleanup that cannot prove every member process gone requests a captain-held task;
 if that request fails, a separate cleanup escalation wake names the failure.
 
   state/groups/<gid>.json                the record (0600, atomic)
       {"version":1,"kind":"group","id","title","home","status",
-       "created","finished","orchestrator_pid","orchestrator_identity",
+       "created","finished","orchestrator_pid","orchestrator_identity","merger_pid","merger_identity",
        "work_outcome","merge_succeeded","members":[{"key","angle","placement","status","pid","identity",
        "started","finished","result"}],"report","summary","cleanup":{...}|null}
       normal status: running -> merging -> cleaning -> done | failed | cleanup-failed
@@ -118,7 +118,22 @@ def write_json(path: Path, data: dict) -> None:
     with os.fdopen(fd, "w") as fh:
         json.dump(data, fh, indent=1, sort_keys=True)
         fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
     os.replace(tmp, path)
+    # Make the rename itself durable, like bin/fm-state-io.py.
+    dfd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+
+
+def read_input_file(path: str, what: str) -> str:
+    try:
+        return Path(path).read_text()
+    except OSError as e:
+        die(f"cannot read the {what} file {path}: {e.strerror}")
 
 
 def read_json(path: Path) -> dict:
@@ -137,6 +152,11 @@ def locked(path: Path):
             fcntl.flock(fh, fcntl.LOCK_UN)
 
 
+def running_stat(stat: str) -> bool:
+    """A ps STAT for a process still running: not a zombie (Z), not exiting (E on macOS)."""
+    return bool(stat) and not stat.startswith("Z") and "E" not in stat
+
+
 def pid_alive(pid) -> bool:
     if not isinstance(pid, int) or pid <= 0:
         return False
@@ -149,7 +169,7 @@ def pid_alive(pid) -> bool:
     # A reaped child of ours can linger as a zombie; it is not running.
     try:
         out = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
-        return not out.stdout.strip().startswith("Z") and out.stdout.strip() != ""
+        return running_stat(out.stdout.strip())
     except OSError:
         return True
 
@@ -162,11 +182,13 @@ def group_alive(pgid) -> bool:
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True
+        # macOS refuses killpg(0) for a group left with only a zombie leader;
+        # the process table below decides.
+        pass
     out = subprocess.run(["ps", "-A", "-o", "pgid=,stat="], capture_output=True, text=True)
     for line in out.stdout.splitlines():
         parts = line.split()
-        if len(parts) == 2 and parts[0] == str(pgid) and not parts[1].startswith("Z"):
+        if len(parts) == 2 and parts[0] == str(pgid) and running_stat(parts[1]):
             return True
     return False
 
@@ -210,19 +232,19 @@ def refuse_gate() -> None:
         sys.exit(rc)
 
 
-def process_identity(pid: int, deck: bool = False) -> dict | None:
+def process_arguments(pid) -> list[str]:
+    """A process's argv, or [] when it cannot be read (it exited, or the kernel refused)."""
     try:
-        arguments = None
+        return PROCESS_API.process_arguments(pid) or []
+    except OSError:
+        return []
 
-        def read_arguments():
-            nonlocal arguments
-            arguments = PROCESS_API.process_arguments(pid)
-            return bool(arguments) or not pid_alive(pid)
 
-        # An interpreter's exec can briefly leave its argument snapshot empty.
-        # Do not permanently register a live child with an unknown identity.
-        if not wait_for(read_arguments, 1) or not arguments:
-            return None
+def process_identity(pid: int, deck: bool = False) -> dict | None:
+    """A process we started, told apart from a later reuse of its pid: its start time,
+    and that it still leads the process group we gave it. The argument snapshot is not
+    used: on macOS an interpreter's exec changes it, and right after exec it can be empty."""
+    try:
         out = subprocess.run(["ps", "-o", "lstart=,pgid=", "-p", str(pid)], capture_output=True, text=True,
                              env=dict(os.environ, LC_ALL="C"))
     except (OSError, subprocess.SubprocessError):
@@ -230,10 +252,7 @@ def process_identity(pid: int, deck: bool = False) -> dict | None:
     fields = out.stdout.strip().rsplit(None, 1)
     if len(fields) != 2 or fields[1] != str(pid):
         return None
-    if deck and "run" in arguments:
-        arguments = arguments[arguments.index("run"):]
-    return {"arguments": hashlib.sha256(json.dumps(arguments).encode()).hexdigest(),
-            "started": fields[0], "deck": deck}
+    return {"started": fields[0], "deck": deck}
 
 
 def target_state(pid, identity) -> str:
@@ -242,9 +261,7 @@ def target_state(pid, identity) -> str:
     actual = process_identity(pid, bool(identity and identity.get("deck")))
     if not actual or not identity:
         return "unknown"
-    if actual == identity:
-        return "owned"
-    return "unknown" if actual["started"] == identity.get("started") else "unrelated"
+    return "owned" if actual["started"] == identity.get("started") else "unrelated"
 
 
 def work_root(h: Path) -> Path:
@@ -291,7 +308,7 @@ def require_name(name: str, what: str) -> None:
 
 def brief_text(args) -> str:
     if args.brief_file:
-        text = Path(args.brief_file).read_text()
+        text = read_input_file(args.brief_file, "brief")
     elif args.brief is not None:
         text = args.brief
     else:
@@ -378,7 +395,7 @@ class Specialist:
                     for child, _, pgid, stat in PROCESS_API.processes():
                         if pgid != pid or stat.startswith("Z"):
                             continue
-                        arguments = PROCESS_API.process_arguments(child) or []
+                        arguments = process_arguments(child)
                         if ("--session" in arguments and "--hook" in arguments
                                 and arguments[arguments.index("--session") + 1:][:1] == [rec["session"]]
                                 and arguments[arguments.index("--hook") + 1:][:1] == [hook]):
@@ -393,9 +410,10 @@ class Specialist:
         pid = cur.get("pid")
         if not pid_alive(pid):
             return False
-        arguments = PROCESS_API.process_arguments(pid) or []
-        expected = [str(Path(__file__).resolve()), "_spec-run", self.name, cur["id"], "--home", str(self.h)]
-        return arguments[1:] == expected
+        arguments = process_arguments(pid)
+        # argv[0] and how the interpreter names this script can change across exec.
+        expected = ["_spec-run", self.name, cur["id"], "--home", str(self.h)]
+        return arguments[-len(expected):] == expected
 
     def _finish_locked(self, rec: dict, job: str, outcome: str, exit_code) -> dict:
         jdir = self.job_dir(job)
@@ -421,7 +439,7 @@ class Specialist:
         rec["memory_summary"] = first_lines(read_text(Path(rec["memory"])))
         self.save(rec)
         wake(self.h, f"specialist:{self.name}:{job}",
-             f"check: specialist {self.name} finished job {job} ({outcome}) - result: {result}")
+             f"check: specialist {self.name} finished job {job} ({outcome}) - result: {entry['result'] or 'none written'}")
         return entry
 
 
@@ -722,7 +740,7 @@ class Group:
 def read_angles(args) -> list[str]:
     angles = list(args.angle or [])
     if args.angles_file:
-        angles += [x.strip() for x in Path(args.angles_file).read_text().splitlines() if x.strip()]
+        angles += [x.strip() for x in read_input_file(args.angles_file, "angles").splitlines() if x.strip()]
     if not angles:
         die("give each member an angle with --angle (repeatable) or --angles-file")
     return angles
@@ -777,8 +795,14 @@ Write the merged report to RESULT_FILE. Your turn cannot finish until it is writ
 
 
 def result_hook(result: Path) -> str:
-    script = f'[ -s "{result}" ] || {{ echo "Write your result to {result} before finishing." >&2; exit 2; }}'
-    return "pre_complete=bash -c " + shlex.quote(script)
+    command = [sys.executable, str(Path(__file__).resolve()), "_result-check", str(result)]
+    return "pre_complete=" + shlex.join(command)
+
+
+def cmd_result_check(args) -> None:
+    result = Path(args.result)
+    if not result.is_file() or not result.stat().st_size:
+        die(f"Write your result to {result} before finishing.")
 
 
 def cmd_group_start(args) -> None:
@@ -915,7 +939,7 @@ def run_group(g: Group) -> bool:
                          result=str(result) if result.is_file() else None)
             queued = [m for m in rec["members"] if m["status"] == "queued"]
             for m in queued:
-                if len(procs) >= 2:
+                if len(procs) >= local_max():
                     break
                 proc = start_member(g, rec, m, brief, total)
                 procs[m["key"]] = proc
@@ -936,7 +960,10 @@ def run_group(g: Group) -> bool:
                         "--deadline-secs", str(int(os.environ.get("FM_CREW_DEADLINE_SECS", DEFAULT_DEADLINE))),
                         "--hook", result_hook(merged)]
                 merger = run_deck(argv, work, g.run_dir / "merge-events.ndjson",
-                                  g.run_dir / "merge-stderr.log", deck_env(), prompt_file)
+                                  g.run_dir / "merge-stderr.log", deck_env(), prompt_file, new_group=True)
+                rec["merger_pid"] = merger.pid
+                rec["merger_identity"] = process_identity(merger.pid, deck=True)
+                g.save(rec)
                 break
         time.sleep(0.3)
 
@@ -970,6 +997,14 @@ def run_group(g: Group) -> bool:
     return True
 
 
+def local_max() -> int:
+    """Members run on this machine at once: FM_GROUP_LOCAL_MAX, default 2 (the MacBook cap)."""
+    try:
+        return max(1, int(os.environ.get("FM_GROUP_LOCAL_MAX", "2")))
+    except ValueError:
+        return 2
+
+
 def cleanup_group(g: Group, reason: str) -> bool:
     """Kill every member process group, remove run files, prove nothing is left."""
     rec = g.record()
@@ -977,6 +1012,9 @@ def cleanup_group(g: Group, reason: str) -> bool:
     orch = rec.get("orchestrator_pid")
     if isinstance(orch, int) and orch != os.getpid():
         targets[orch] = rec.get("orchestrator_identity")
+    merger_pid = rec.get("merger_pid")
+    if isinstance(merger_pid, int):
+        targets[merger_pid] = rec.get("merger_identity")
     states = {pid: target_state(pid, identity) for pid, identity in targets.items()}
     owned = {pid for pid, state in states.items() if state == "owned"}
     unknown = {pid for pid, state in states.items() if state == "unknown"}
@@ -990,6 +1028,8 @@ def cleanup_group(g: Group, reason: str) -> bool:
                 os.killpg(pid, sig)
         if wait_for(lambda: not any(group_alive(p) or pid_alive(p) for p in owned), 5):
             break
+    # A group just signalled, or one whose leader is still exiting, gets a moment to go.
+    wait_for(lambda: not any(group_alive(p) or pid_alive(p) for p in owned | unknown), 2)
     survivors = [p for p in owned | unknown if group_alive(p) or pid_alive(p)]
     if orch == os.getpid():
         remaining = [pid for pid, _, pgid, stat in PROCESS_API.processes()
@@ -1013,6 +1053,9 @@ def cleanup_group(g: Group, reason: str) -> bool:
         if orch not in survivors:
             r["orchestrator_pid"] = None
             r["orchestrator_identity"] = None
+        if merger_pid not in survivors:
+            r["merger_pid"] = None
+            r["merger_identity"] = None
         for m in r["members"]:
             if m.get("pid") not in survivors:
                 m["pid"] = None
@@ -1035,7 +1078,8 @@ def cleanup_group(g: Group, reason: str) -> bool:
             ],
             "recommended": "1",
         }
-        card_file = g.h / "state" / "groups" / f".{g.gid}.card.json"
+        # Inside the run dir, which a failed cleanup keeps; never beside the records.
+        card_file = g.run_dir / "cleanup-card.json"
         write_json(card_file, card)
         rc = subprocess.run(
             [str(SCRIPT_DIR / "fm-captain-hold.sh"), "hold", f"group-{g.gid}",
@@ -1085,6 +1129,8 @@ def cmd_group_status(args) -> None:
     g = Group(h, args.gid)
     rec = g.record()
     live = [m["key"] for m in rec["members"] if target_state(m.get("pid"), m.get("identity")) in ("owned", "unknown")]
+    if target_state(rec.get("merger_pid"), rec.get("merger_identity")) in ("owned", "unknown"):
+        live.append("merger")
     rec["live_members"] = live
     if args.json:
         print(json.dumps(rec, sort_keys=True))
@@ -1099,7 +1145,14 @@ def cmd_group_status(args) -> None:
 
 def cmd_group_list(args) -> None:
     h = home()
-    out = [read_json(p) for p in sorted((h / "state" / "groups").glob("*.json"))]
+    out = []
+    for path in sorted((h / "state" / "groups").glob("*.json")):
+        if path.name.startswith("."):
+            continue
+        with contextlib.suppress(OSError, ValueError):
+            rec = read_json(path)
+            if rec.get("kind") == "group" and isinstance(rec.get("members"), list):
+                out.append(rec)
     if args.json:
         print(json.dumps(out, sort_keys=True))
         return
@@ -1139,6 +1192,10 @@ def main() -> None:
     s.add_argument("job_dir")
     s.add_argument("memory")
     s.set_defaults(fn=cmd_spec_check)
+
+    s = sub.add_parser("_result-check")
+    s.add_argument("result")
+    s.set_defaults(fn=cmd_result_check)
 
     s = sub.add_parser("status")
     s.add_argument("name")
@@ -1188,7 +1245,7 @@ def main() -> None:
     s.set_defaults(fn=cmd_group_list)
 
     args = p.parse_args()
-    if args.cmd not in ("_spec-check", "group-status", "group-list"):
+    if args.cmd not in ("_spec-check", "_result-check", "group-status", "group-list"):
         refuse_gate()
     if args.cmd in ("_spec-run", "_group-run"):
         os.environ["FM_HOME"] = args.home
