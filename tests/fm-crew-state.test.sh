@@ -457,7 +457,7 @@ EOF
 run_failed_daemon_kill_mid_pipeline() {  # <branch>
   cat <<EOF
 run:
-  id: "01RUN"
+  id: "01KXC3SD5NZYMERGDS68Z1C8ER"
   branch: $1
   status: failed
   head: "${FM_FAKE_RUN_HEAD:-abc1234}"
@@ -1251,6 +1251,7 @@ test_terminal_passed() {
   local out; out=$(run_crew_state "$d" feat-d)
   assert_contains "$out" "state: done" "passed run -> done"
   assert_contains "$out" "source: run-step" "passed -> run-step source"
+  assert_not_contains "$out" "run-pr:" "a merged or closed run does not expand the attributed green-PR protocol"
   pass "terminal passed run is authoritative"
 }
 
@@ -1353,15 +1354,15 @@ test_daemon_killed_green_pr_with_skipped_step_reads_done() {
 
 # The stale-record-after-relaunch shape: the daemon killed a mid-pipeline run
 # (`test` failed with the shutdown error, everything after it pending), the
-# task was relaunched, and its CURRENT-gen busy record proves the new crew is
-# live. The dead run's row still binds by head, so the run-step path alone
-# declared the live task failed.
+# task was relaunched after that run began, and its CURRENT-gen busy record plus
+# newer spawn generation prove the new crew is live. The dead run's row still
+# binds by head, so the run-step path alone declared the live task failed.
 test_relaunched_live_crew_outranks_daemon_killed_run_record() {
   reset_fakes
   local d; d=$(new_case daemon-kill-relaunched)
   make_repo_on_branch "$d/wt" fm/feat-dkill-relaunch
   make_fakebin "$d" >/dev/null
-  fm_write_meta "$d/state/feat-dkill-relaunch.meta" $(fm_test_stream_task "$d/state" "feat-dkill-relaunch") "worktree=$d/wt" "kind=ship" "harness=deck"
+  fm_write_meta "$d/state/feat-dkill-relaunch.meta" $(fm_test_stream_task "$d/state" "feat-dkill-relaunch") "worktree=$d/wt" "kind=ship" "harness=deck" "spawn_gen=s1783891802.1.1"
   fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$d/state" feat-dkill-relaunch)" deck
   FM_FAKE_AXI_STATUS="$(run_failed_daemon_kill_mid_pipeline fm/feat-dkill-relaunch)"
   # The relaunched crew's current-incarnation busy record: a fresh gen with a
@@ -1384,6 +1385,34 @@ test_relaunched_live_crew_outranks_daemon_killed_run_record() {
   assert_contains "$out" "crew live (relaunched, idle)" "the detail names the live idle replacement"
   assert_not_contains "$out" "state: failed" "turn-end idle cannot restore the dead predecessor's failure"
   pass "a relaunched live crew supersedes its predecessor's daemon-killed record while busy or idle"
+}
+
+# An alive worker from the original incarnation can survive the daemon that
+# killed its validation run. Its current semantic record may then become idle,
+# but its spawn generation predates the run and cannot prove a relaunch.
+test_original_live_crew_does_not_outrank_daemon_killed_run_record() {
+  reset_fakes
+  local d; d=$(new_case daemon-kill-original-survivor)
+  make_repo_on_branch "$d/wt" fm/feat-dkill-original
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-dkill-original.meta" $(fm_test_stream_task "$d/state" "feat-dkill-original") "worktree=$d/wt" "kind=ship" "harness=deck" "spawn_gen=s1783891800.1.1"
+  fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$d/state" feat-dkill-original)" deck
+  FM_FAKE_AXI_STATUS="$(run_failed_daemon_kill_mid_pipeline fm/feat-dkill-original)"
+  local gen; gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" feat-dkill-original)
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" feat-dkill-original busy --gen "$gen" \
+    --source deck-wrapper --event turn-start
+  local out; out=$(run_crew_state "$d" feat-dkill-original)
+  assert_contains "$out" "state: unknown" "an alive original worker cannot claim a dead validation run was relaunched"
+  assert_contains "$out" "replacement after run not proven" "the verdict names the missing incarnation ordering proof"
+  assert_not_contains "$out" "state: working" "an unproven live incarnation must not read working"
+  assert_not_contains "$out" "state: failed" "an alive infrastructure-kill survivor gets an honest unknown verdict"
+
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" feat-dkill-original idle --gen "$gen" \
+    --source deck-wrapper --event turn-end
+  out=$(run_crew_state "$d" feat-dkill-original)
+  assert_contains "$out" "state: unknown" "an idle original worker still cannot claim a relaunch"
+  assert_not_contains "$out" "state: working" "turn-end idle does not fabricate replacement linkage"
+  pass "an alive original incarnation leaves killed-run supersession unknown"
 }
 
 # The same killed mid-pipeline record with NO live crew: the failure verdict
@@ -2681,6 +2710,7 @@ test_terminal_failed_ci_genuine_red_stays_failed
 test_terminal_failed_ci_orphan_second_failed_step_stays_failed
 test_daemon_killed_green_pr_with_skipped_step_reads_done
 test_relaunched_live_crew_outranks_daemon_killed_run_record
+test_original_live_crew_does_not_outrank_daemon_killed_run_record
 test_daemon_killed_run_without_live_crew_names_its_cause
 test_daemon_killed_run_with_frozen_busy_record_and_stale_agent_stays_failed
 test_merit_failure_carries_recorded_error

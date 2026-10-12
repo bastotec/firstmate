@@ -62,9 +62,10 @@
 #      absence of that decision into a failure; nm_failed_run_is_green_held_ci,
 #      2026-09-05 jr-voice), else working when the run's own recorded error
 #      names the infrastructure (nm_error_is_infra_kill: daemon shutdown or a
-#      canceled context) and a CURRENT-gen busy or idle record belongs to an
-#      exactly alive relaunched crew (nm_live_crew_outranks_killed_run), else a
-#      genuine failure.
+#      canceled context) and an exactly alive CURRENT-gen busy or idle crew has
+#      a spawn generation newer than the attributed run. An alive incarnation
+#      without that ordering proof reads unknown, never working; every other
+#      case remains a genuine failure.
 #      The run's recorded error is carried in a distinct run-error field, so a
 #      refused publication reads as its recorded cause rather than a bare
 #      `run failed` and generic detail is never mislabeled as an error.
@@ -696,48 +697,70 @@ nm_reclassify_failed_run_as_held_green() {
   nm_failed_run_is_green_held_ci || return 1
   RUN_STATE="done"
   RUN_DETAIL="checks green: PR held for merge (ci monitor ended)"
+  RUN_PR=$(strip_quotes "$(nm_field pr)")
   return 0
 }
 
-# A terminal run record the daemon itself killed is evidence about the run,
-# never about the crew: the same task can be relaunched (a new busy-gen and a
-# fresh endpoint) while the dead run's row still binds by head, and reading
-# that corpse as current state declared a live relaunched task failed
-# (2026-10-09 incident). The busy record is the one gen-guarded signal this
-# reader already has: a relaunch retires the old gen, so a valid CURRENT-gen
-# busy or idle record belongs to this incarnation rather than the dead run.
-# The recovery-grade endpoint classifier must also say exactly alive, because
-# a stream capture can return the hub's cached screen after the owning agent has
-# gone stale or reported the worker closed. An unknown semantic state says
-# nothing and cannot override the run.
-# Returns 0 (setting RUN_DETAIL) when the live crew outranks the killed run.
-nm_live_crew_outranks_killed_run() {
-  [ "$RUN_SOURCE" = full ] || return 1
-  nm_error_is_infra_kill "$RUN_ERROR" || return 1
-  [ -n "$BACKEND_TARGET" ] || return 1
-  [ "$(fm_backend_agent_state "$TASK_BACKEND" "$BACKEND_TARGET")" = alive ] || return 1
-  local verdict=''
+nm_run_created_epoch() {
+  local run_id alphabet prefix char digit i value=0
+  run_id=$(strip_quotes "$(nm_field id)")
+  [ "${#run_id}" -eq 26 ] || return 1
+  alphabet=0123456789ABCDEFGHJKMNPQRSTVWXYZ
+  case "${run_id:0:1}" in [0-7]) ;; *) return 1 ;; esac
+  for ((i = 0; i < 10; i++)); do
+    char=${run_id:i:1}
+    case "$alphabet" in *"$char"*) ;; *) return 1 ;; esac
+    prefix=${alphabet%%"$char"*}
+    digit=${#prefix}
+    value=$((value * 32 + digit))
+  done
+  printf '%s' "$((value / 1000))"
+}
+
+crew_spawn_epoch() {
+  local gen epoch
+  gen=$(meta_value spawn_gen)
+  case "$gen" in s*.*.*) ;; *) return 1 ;; esac
+  epoch=${gen#s}
+  epoch=${epoch%%.*}
+  case "$epoch" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$epoch"
+}
+
+nm_classify_live_crew_after_killed_run() {
+  LIVE_CREW_KILLED_RUN=none
+  [ "$RUN_SOURCE" = full ] || return 0
+  nm_error_is_infra_kill "$RUN_ERROR" || return 0
+  [ -n "$BACKEND_TARGET" ] || return 0
+  [ "$(fm_backend_agent_state "$TASK_BACKEND" "$BACKEND_TARGET")" = alive ] || return 0
+  local verdict='' spawn_epoch='' run_epoch=''
   verdict=$(crew_busy_verdict "$BACKEND_TARGET")
   case "$verdict" in
     busy\ *|idle\ *) ;;
-    *) return 1 ;;
+    *) return 0 ;;
   esac
+  LIVE_CREW_KILLED_RUN=unproven
+  RUN_DETAIL="crew live (${verdict%% *}), but replacement after run not proven; run record failed"
+  spawn_epoch=$(crew_spawn_epoch || true)
+  run_epoch=$(nm_run_created_epoch || true)
+  [ -n "$spawn_epoch" ] && [ -n "$run_epoch" ] && [ "$spawn_epoch" -gt "$run_epoch" ] || return 0
+  LIVE_CREW_KILLED_RUN=replacement
   RUN_DETAIL="crew live (relaunched, ${verdict%% *}); run record failed"
-  return 0
 }
 
 # The one verdict for a terminal failed run: held-for-merge when the PR is
-# green, else superseded by a live relaunched crew when the daemon killed the
-# run under it, else a genuine failure. The merit-failure path keeps its plain
-# `run failed` detail and the run's own recorded error in the distinct error
-# field, so a refused publication reads as its recorded cause.
+# green, working for a provably newer live incarnation, unknown for an alive
+# incarnation whose ordering cannot be proved, else a genuine failure. The
+# merit-failure path keeps its plain `run failed` detail and the run's own
+# recorded error in the distinct error field.
 nm_failed_run_verdict() {
   RUN_ERROR=$(nm_run_error)
   if nm_reclassify_failed_run_as_held_green; then return 0; fi
-  if nm_live_crew_outranks_killed_run; then
-    RUN_STATE=working
-    return 0
-  fi
+  nm_classify_live_crew_after_killed_run
+  case "$LIVE_CREW_KILLED_RUN" in
+    replacement) RUN_STATE=working; return 0 ;;
+    unproven) RUN_STATE=unknown; return 0 ;;
+  esac
   RUN_STATE=failed
   RUN_DETAIL="run failed"
   return 0
@@ -939,7 +962,6 @@ if [ "$HAVE_RUN" = 1 ]; then
   else
     status=$(strip_quotes "$(nm_field status)")
     RUN_STATUS=$status
-    RUN_PR=$(strip_quotes "$(nm_field pr)")
     outcome=$(strip_quotes "$(nm_field outcome)")
     awaiting=$(printf '%s\n' "$RUN_OUT" | grep -E '^[[:space:]]*awaiting_agent:' | head -1 || true)
     gate_status=$(nm_gate_status)
@@ -948,8 +970,12 @@ if [ "$HAVE_RUN" = 1 ]; then
 
     if [ -n "$outcome" ]; then
       case "$outcome" in
-        passed)        RUN_STATE="done"; RUN_DETAIL="run passed: PR merged/closed" ;;
-        checks-passed) RUN_STATE="done"; RUN_DETAIL="checks green: PR ready for review" ;;
+        passed) RUN_STATE="done"; RUN_DETAIL="run passed: PR merged/closed" ;;
+        checks-passed)
+          RUN_STATE="done"
+          RUN_DETAIL="checks green: PR ready for review"
+          RUN_PR=$(strip_quotes "$(nm_field pr)")
+          ;;
         failed)        nm_failed_run_verdict ;;
         cancelled)     RUN_STATE=failed; RUN_DETAIL="run cancelled" ;;
         *)             RUN_STATE=unknown; RUN_DETAIL="outcome: $outcome" ;;
@@ -987,6 +1013,7 @@ if [ "$HAVE_RUN" = 1 ]; then
             if [ "$CI_LOG_STATE" = green ]; then
               RUN_STATE="done"
               RUN_DETAIL="checks green: PR ready for review (still monitoring for merge/close)"
+              RUN_PR=$(strip_quotes "$(nm_field pr)")
             fi
             ;;
           fixing)
@@ -999,7 +1026,7 @@ if [ "$HAVE_RUN" = 1 ]; then
 
   if [ "$RUN_STATE" = working ] && log_reports_ci_ready; then
     if [ "$RUN_SOURCE" = coarse ]; then
-      emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR" "" "$RUN_PR"
+      emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR"
     fi
     [ -n "$CI_STEP_STATUS" ] || CI_STEP_STATUS=$(nm_effective_ci_step_status)
     if [ "$RUN_STATUS" = fixing ]; then
@@ -1010,6 +1037,7 @@ if [ "$HAVE_RUN" = 1 ]; then
       CI_LOG_STATE=not-ready
     fi
     if [ "$CI_LOG_STATE" != not-ready ]; then
+      RUN_PR=$(strip_quotes "$(nm_field pr)")
       emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR" "" "$RUN_PR"
     fi
   fi
