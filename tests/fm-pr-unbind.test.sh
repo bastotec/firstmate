@@ -24,6 +24,15 @@ UNBIND="$ROOT/bin/fm-pr-unbind.sh"
 PR_CHECK="$ROOT/bin/fm-pr-check.sh"
 TMP_ROOT=$(fm_test_tmproot fm-pr-unbind)
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
+REAL_MV=$(command -v mv)
+
+file_mode() {
+  if [ "$(uname)" = Darwin ]; then
+    stat -f %Lp "$1"
+  else
+    stat -c %a "$1"
+  fi
+}
 
 unset FM_HOME FM_ROOT_OVERRIDE FM_DATA_OVERRIDE FM_STATE_OVERRIDE \
   FM_CONFIG_OVERRIDE FM_PROJECTS_OVERRIDE
@@ -78,12 +87,13 @@ run_unbind_extra() {  # <home> <id> <extra-arg>
     "$UNBIND" "$id" "$extra"
 }
 
-run_pr_check() {  # <home> <id> <url>
+run_pr_check() {  # <home> <id> <url> [env assignment...]
   local home=$1 id=$2 url=$3
+  shift 3
   env PATH="$home/fakebin:$BASE_PATH" FM_HOME="$home" \
     FM_TEST_GUARD_LOG=/dev/null FM_TEST_GH_LOG=/dev/null \
     FM_TEST_GH_AXI_LOG=/dev/null FM_TEST_GLAB_LOG=/dev/null \
-    "$PR_CHECK" "$id" "$url"
+    "$@" "$PR_CHECK" "$id" "$url"
 }
 
 write_task_meta() {  # <home> <id>
@@ -131,7 +141,7 @@ test_happy_path_clears_pr_and_poll_and_logs() {
   [ "$(meta_pr "$meta")" = https://github.com/example/repo_name/pull/7 ] \
     || fail "fixture did not record the PR URL"
 
-  out=$(run_unbind "$home" "$id"); rc=$?
+  out=$(umask 000; run_unbind "$home" "$id"); rc=$?
   expect_code 0 "$rc" "unbind on a clean forge"
   assert_contains "$out" "unbound: state/$id.meta" "success line did not name the meta"
   assert_absent "$home/state/$id.meta.pr" "meta grew a stray file"
@@ -142,6 +152,7 @@ test_happy_path_clears_pr_and_poll_and_logs() {
   assert_absent "$home/state/$id.pr-poll-registration" "poll registration survived the clear"
   log="$home/state/pr-unbinds.log"
   assert_present "$log" "the unbind left no assertion log"
+  [ "$(file_mode "$log")" = 600 ] || fail "the assertion log was not mode 600"
   [ "$(grep -c "asserted.$id.pr=https://github.com/example/repo_name/pull/7.by=" "$log")" = 1 ] \
     || fail "the assertion line did not record task, URL, and author: $(cat "$log")"
   grep -q '^window=fm-' "$meta" || fail "the rewrite dropped an unrelated line"
@@ -182,68 +193,81 @@ test_foreign_branch_head_does_not_block() {
   pass "an open pull request for another branch does not block the clear"
 }
 
-test_meta_lock_blocks_stale_publication() {
-  local home id meta entered release started acquired leak
-  local unbind_pid publisher_pid unbind_rc publisher_rc acquired_early=0 attempts=0
+test_real_pr_check_publisher_holds_control_lock() {
+  local home id meta publish_entered publish_release forge_entered forge_release
+  local publisher_pid unbind_pid publisher_rc unbind_rc attempts=0
   id=task-locked
-  home=$(armed_home meta-lock "$id" https://github.com/example/repo_name/pull/12)
+  home=$(armed_home publisher-lock "$id" https://github.com/example/repo_name/pull/12)
   meta="$home/state/$id.meta"
-  entered="$home/forge-entered"
-  release="$home/forge-release"
-  started="$home/publisher-started"
-  acquired="$home/publisher-acquired"
-  leak="$home/stale-publication"
+  publish_entered="$home/publish-entered"
+  publish_release="$home/publish-release"
+  forge_entered="$home/forge-entered"
+  forge_release="$home/forge-release"
+
+  cat > "$home/fakebin/mv" <<'SH'
+#!/usr/bin/env bash
+destination=${!#}
+if [ "$destination" = "${FM_TEST_PUBLISH_DATA_DEST:-}" ]; then
+  : > "$FM_TEST_PUBLISH_ENTERED"
+  deadline=$((SECONDS + ${FM_TEST_STUB_MAX_BLOCK_SECONDS:-20}))
+  while [ ! -e "$FM_TEST_PUBLISH_RELEASE" ] && [ "$SECONDS" -lt "$deadline" ]; do
+    sleep 0.05
+  done
+  [ -e "$FM_TEST_PUBLISH_RELEASE" ] || exit 1
+fi
+exec "$FM_TEST_REAL_MV" "$@"
+SH
+  chmod +x "$home/fakebin/mv"
+
+  run_pr_check "$home" "$id" https://github.com/example/repo_name/pull/12 \
+    FM_TEST_PUBLISH_DATA_DEST="$home/state/$id.pr-poll" \
+    FM_TEST_PUBLISH_ENTERED="$publish_entered" \
+    FM_TEST_PUBLISH_RELEASE="$publish_release" \
+    FM_TEST_REAL_MV="$REAL_MV" >"$home/publisher.out" 2>"$home/publisher.err" &
+  publisher_pid=$!
+  if ! wait_for_file "$publish_entered"; then
+    : > "$publish_release"
+    kill "$publisher_pid" 2>/dev/null || true
+    wait "$publisher_pid" 2>/dev/null || true
+    fail "the real PR publisher never reached poll publication"
+  fi
 
   run_unbind "$home" "$id" \
-    FM_TEST_GH_LIST_ENTERED="$entered" FM_TEST_GH_LIST_RELEASE="$release" \
+    FM_TEST_GH_LIST_ENTERED="$forge_entered" FM_TEST_GH_LIST_RELEASE="$forge_release" \
+    FM_TEST_REAL_MV="$REAL_MV" \
     >"$home/unbind.out" 2>"$home/unbind.err" &
   unbind_pid=$!
-  if ! wait_for_file "$entered"; then
-    : > "$release"
-    kill "$unbind_pid" 2>/dev/null || true
-    wait "$unbind_pid" 2>/dev/null || true
-    fail "the lock fixture never reached the forge guard"
-  fi
-
-  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" bash -c '
-    . "$1"
-    : > "$3"
-    lock=$(fm_meta_lock_path "$2") || exit 1
-    fm_lock_acquire_wait "$lock" || exit 1
-    : > "$4"
-    if grep -q "^pr=" "$2"; then
-      printf "stale\n" > "$5"
-    fi
-    fm_lock_release "$lock"
-  ' _ "$ROOT/bin/fm-wake-lib.sh" "$meta" "$started" "$acquired" "$leak" &
-  publisher_pid=$!
-  if ! wait_for_file "$started"; then
-    : > "$release"
-    kill "$publisher_pid" "$unbind_pid" 2>/dev/null || true
-    wait "$publisher_pid" 2>/dev/null || true
-    wait "$unbind_pid" 2>/dev/null || true
-    fail "the stale publisher fixture did not start"
-  fi
-
   while [ "$attempts" -lt 20 ]; do
-    if [ -e "$acquired" ]; then
-      acquired_early=1
-      break
-    fi
+    [ ! -e "$forge_entered" ] || break
     sleep 0.05
     attempts=$((attempts + 1))
   done
-  : > "$release"
-  wait "$unbind_pid"; unbind_rc=$?
-  wait "$publisher_pid"; publisher_rc=$?
+  if [ -e "$forge_entered" ]; then
+    : > "$publish_release"
+    : > "$forge_release"
+    wait "$publisher_pid" 2>/dev/null || true
+    wait "$unbind_pid" 2>/dev/null || true
+    fail "unbind crossed a real PR publisher before poll publication completed"
+  fi
 
-  expect_code 0 "$unbind_rc" "unbind while a stale publisher waits"
-  expect_code 0 "$publisher_rc" "stale publisher after unbind"
-  [ "$acquired_early" -eq 0 ] || fail "the metadata lock was released before the guarded rewrite"
-  assert_absent "$leak" "a concurrent publisher observed the stale pr="
-  [ "$(meta_pr "$meta")" = "" ] || fail "the guarded rewrite left pr="
-  assert_absent "$home/state/$id.check.sh" "the guarded rewrite left the poll armed"
-  pass "the metadata lock excludes stale publication through the guarded rewrite"
+  : > "$publish_release"
+  wait "$publisher_pid"; publisher_rc=$?
+  if ! wait_for_file "$forge_entered"; then
+    : > "$forge_release"
+    kill "$unbind_pid" 2>/dev/null || true
+    wait "$unbind_pid" 2>/dev/null || true
+    fail "unbind did not continue after the real PR publisher released its control lock"
+  fi
+  : > "$forge_release"
+  wait "$unbind_pid"; unbind_rc=$?
+
+  expect_code 0 "$publisher_rc" "real concurrent PR publisher"
+  expect_code 0 "$unbind_rc" "unbind after real concurrent PR publication"
+  [ "$(meta_pr "$meta")" = "" ] || fail "the serialized unbind left pr="
+  assert_absent "$home/state/$id.check.sh" "the serialized unbind left the poll armed"
+  assert_absent "$home/state/$id.pr-poll" "the serialized unbind left poll data"
+  assert_absent "$home/state/$id.pr-poll-registration" "the serialized unbind left poll registration"
+  pass "a real PR publisher holds the control lock through poll publication"
 }
 
 test_forge_read_failure_refuses() {
@@ -449,6 +473,66 @@ test_unsafe_meta_refuses() {
   pass "a symlinked meta refuses"
 }
 
+test_symlinked_log_refuses_before_removal() {
+  local home id meta target out rc
+  id=task-log-symlink
+  home=$(armed_home log-symlink "$id" https://github.com/example/repo_name/pull/6)
+  meta="$home/state/$id.meta"
+  target="$home/external.log"
+  printf 'external\n' > "$target"
+  chmod 0600 "$target"
+  ln -s "$target" "$home/state/pr-unbinds.log"
+
+  out=$(run_unbind "$home" "$id" 2>&1); rc=$?
+  expect_code 1 "$rc" "unbind with a symlinked assertion log"
+  assert_contains "$out" "could not be registered" "the symlink refusal did not name the log"
+  [ "$(cat "$target")" = external ] || fail "the symlinked log target was modified"
+  [ "$(meta_pr "$meta")" = https://github.com/example/repo_name/pull/6 ] \
+    || fail "a symlinked assertion log allowed pr= removal"
+  assert_present "$home/state/$id.check.sh" "a symlinked assertion log allowed poll removal"
+  pass "a symlinked assertion log refuses without modifying its target"
+}
+
+test_hard_linked_log_refuses_before_removal() {
+  local home id meta target out rc
+  id=task-log-hardlink
+  home=$(armed_home log-hardlink "$id" https://github.com/example/repo_name/pull/6)
+  meta="$home/state/$id.meta"
+  target="$home/external.log"
+  printf 'external\n' > "$target"
+  chmod 0600 "$target"
+  ln "$target" "$home/state/pr-unbinds.log"
+
+  out=$(run_unbind "$home" "$id" 2>&1); rc=$?
+  expect_code 1 "$rc" "unbind with a hard-linked assertion log"
+  assert_contains "$out" "could not be registered" "the hard-link refusal did not name the log"
+  [ "$(cat "$target")" = external ] || fail "the hard-linked log target was modified"
+  [ "$(meta_pr "$meta")" = https://github.com/example/repo_name/pull/6 ] \
+    || fail "a hard-linked assertion log allowed pr= removal"
+  assert_present "$home/state/$id.check.sh" "a hard-linked assertion log allowed poll removal"
+  pass "a hard-linked assertion log refuses without modifying its peer"
+}
+
+test_wrong_mode_log_refuses_before_removal() {
+  local home id meta log out rc
+  id=task-log-mode
+  home=$(armed_home log-mode "$id" https://github.com/example/repo_name/pull/6)
+  meta="$home/state/$id.meta"
+  log="$home/state/pr-unbinds.log"
+  printf 'existing\n' > "$log"
+  chmod 0644 "$log"
+
+  out=$(run_unbind "$home" "$id" 2>&1); rc=$?
+  expect_code 1 "$rc" "unbind with a non-private assertion log"
+  assert_contains "$out" "could not be registered" "the mode refusal did not name the log"
+  [ "$(cat "$log")" = existing ] || fail "the non-private log was modified"
+  [ "$(file_mode "$log")" = 644 ] || fail "the non-private log mode was changed"
+  [ "$(meta_pr "$meta")" = https://github.com/example/repo_name/pull/6 ] \
+    || fail "a non-private assertion log allowed pr= removal"
+  assert_present "$home/state/$id.check.sh" "a non-private assertion log allowed poll removal"
+  pass "a non-private assertion log refuses without modification"
+}
+
 test_failed_log_append_refuses_before_removal() {
   local home id meta out rc
   id=task-logfail
@@ -510,7 +594,7 @@ test_retirement_receipt_is_finished_first() {
 test_happy_path_clears_pr_and_poll_and_logs
 test_open_pr_for_own_branch_refuses
 test_foreign_branch_head_does_not_block
-test_meta_lock_blocks_stale_publication
+test_real_pr_check_publisher_holds_control_lock
 test_forge_read_failure_refuses
 test_missing_gh_refuses_before_any_change
 test_no_pr_meta_refuses
@@ -522,6 +606,9 @@ test_foreign_static_check_refuses
 test_interrupted_poll_removal_is_rerunnable
 test_ambiguous_interrupted_poll_refuses
 test_unsafe_meta_refuses
+test_symlinked_log_refuses_before_removal
+test_hard_linked_log_refuses_before_removal
+test_wrong_mode_log_refuses_before_removal
 test_failed_log_append_refuses_before_removal
 test_invalid_usage_exits_2
 test_retirement_receipt_is_finished_first

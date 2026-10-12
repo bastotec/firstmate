@@ -347,11 +347,25 @@ fi
 UNBIND_LOG="$STATE/pr-unbinds.log"
 UNBIND_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 UNBIND_BY=$(id -un 2>/dev/null || printf '%s' "${USER:-unknown}")
-if ! printf '%s\tasserted\t%s\tpr=%s\tby=%s\n' "$UNBIND_AT" "$ID" "$PR_URL" "$UNBIND_BY" \
-  >> "$UNBIND_LOG"; then
+if ! (umask 077; : | python3 "$SCRIPT_DIR/fm-state-io.py" \
+  root-private-append "$STATE" pr-unbinds.log); then
   echo "error: the unbind could not be registered in $UNBIND_LOG; nothing was cleared" >&2
   exit 1
 fi
+fm_pr_private_file_valid "$UNBIND_LOG" 600 "$STATE_DEVICE_NOW" || {
+  echo "error: the unbind could not be registered in $UNBIND_LOG; nothing was cleared" >&2
+  exit 1
+}
+if ! printf '%s\tasserted\t%s\tpr=%s\tby=%s\n' "$UNBIND_AT" "$ID" "$PR_URL" "$UNBIND_BY" \
+  | (umask 077; python3 "$SCRIPT_DIR/fm-state-io.py" \
+      root-private-append "$STATE" pr-unbinds.log); then
+  echo "error: the unbind could not be registered in $UNBIND_LOG; nothing was cleared" >&2
+  exit 1
+fi
+fm_pr_private_file_valid "$UNBIND_LOG" 600 "$STATE_DEVICE_NOW" || {
+  echo "error: the unbind could not be registered in $UNBIND_LOG; nothing was cleared" >&2
+  exit 1
+}
 
 # Remove the poll artifacts first, each pinned to the exact bytes and file
 # identity the validated snapshot captured, so a swap between validation and
