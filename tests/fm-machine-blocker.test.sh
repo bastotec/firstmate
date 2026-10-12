@@ -148,15 +148,83 @@ test_raise_with_nothing_human_holds_nothing() {
 }
 
 test_clear_removes_record_and_watch() {
-  local home
+  local home row rc
   home=$(make_home clear)
   check_output "$home/check.txt"
   run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" --from "$home/check.txt" >/dev/null \
     || fail "raise failed"
-  run_in "$home" "$BLOCKER" clear Automattic >/dev/null || fail "clear failed"
+  sed 's/=human:/=present:/' "$home/check.txt" > "$home/pass.txt"
+  run_in "$home" "$BLOCKER" clear Automattic --from "$home/pass.txt" >/dev/null || fail "clear failed"
+  rc=0
+  run_in "$home" "$ROOT/bin/fm-captain-hold.sh" open machine-automattic >/dev/null || rc=$?
+  assert_equals 1 "$rc" "clear closes the hold before cleanup"
+  assert_absent "$home/state/cards/machine-automattic.json" "card removed"
+  row=$(run_in "$home" "$ROOT/bin/fm-tasks-axi.sh" show machine-automattic --full) || fail "closed row missing"
+  assert_contains "$row" "Stale-clear evidence:" "clear uses evidence, not captain words"
+  assert_contains "$row" "reported no step left for the captain" "clear records passing re-check evidence"
   assert_absent "$home/state/machine-pending/Automattic.json" "record removed"
   assert_absent "$home/state/when/when-machine-automattic.spec" "watch retired"
-  pass "fm-machine-blocker: clear removes the record and the watch"
+  run_in "$home" "$BLOCKER" clear Automattic >/dev/null || fail "clear is not idempotent"
+  pass "fm-machine-blocker: clear re-checks and closes the hold before cleanup"
+}
+
+test_clear_refuses_while_steps_remain() {
+  local home rec card watch rc
+  home=$(make_home clear-blocked)
+  check_output "$home/check.txt"
+  run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" --from "$home/check.txt" >/dev/null || fail "raise failed"
+  rec=$(run_in "$home" "$BLOCKER" show Automattic)
+  card=$(run_in "$home" "$ROOT/bin/fm-card.sh" show machine-automattic)
+  watch=$(cat "$home/state/when/when-machine-automattic.spec")
+  rc=0
+  run_in "$home" "$BLOCKER" clear Automattic --from "$home/check.txt" >/dev/null || rc=$?
+  assert_equals 1 "$rc" "clear refuses while human steps remain"
+  assert_equals "$rec" "$(run_in "$home" "$BLOCKER" show Automattic)" "blocked cleanup keeps the pending record"
+  assert_equals "$card" "$(run_in "$home" "$ROOT/bin/fm-card.sh" show machine-automattic)" "blocked cleanup keeps the card"
+  assert_equals "$watch" "$(cat "$home/state/when/when-machine-automattic.spec")" "blocked cleanup keeps monitoring"
+  run_in "$home" "$ROOT/bin/fm-captain-hold.sh" open machine-automattic >/dev/null || fail "blocked cleanup closed the hold"
+  pass "fm-machine-blocker: clear preserves a hold with human steps remaining"
+}
+
+test_clear_refuses_unreadable_hold() {
+  local home rec card watch out rc
+  home=$(make_home clear-unreadable)
+  check_output "$home/check.txt"
+  run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" --from "$home/check.txt" >/dev/null || fail "raise failed"
+  sed 's/=human:/=present:/' "$home/check.txt" > "$home/pass.txt"
+  rec=$(run_in "$home" "$BLOCKER" show Automattic)
+  card=$(run_in "$home" "$ROOT/bin/fm-card.sh" show machine-automattic)
+  watch=$(cat "$home/state/when/when-machine-automattic.spec")
+  mv "$home/data/backlog.md" "$home/data/backlog.saved"
+  mkdir "$home/data/backlog.md"
+  rc=0
+  out=$(run_in "$home" "$BLOCKER" clear Automattic --from "$home/pass.txt" 2>&1) || rc=$?
+  assert_equals 2 "$rc" "unreadable hold refuses cleanup"
+  assert_contains "$out" "fm-captain-hold:" "cleanup read error is visible"
+  assert_equals "$rec" "$(run_in "$home" "$BLOCKER" show Automattic)" "read failure preserves the pending record"
+  assert_equals "$watch" "$(cat "$home/state/when/when-machine-automattic.spec")" "read failure preserves monitoring"
+  rmdir "$home/data/backlog.md"
+  mv "$home/data/backlog.saved" "$home/data/backlog.md"
+  assert_equals "$card" "$(run_in "$home" "$ROOT/bin/fm-card.sh" show machine-automattic)" "read failure preserves the card"
+  run_in "$home" "$ROOT/bin/fm-captain-hold.sh" open machine-automattic >/dev/null || fail "read failure lost the hold"
+  run_in "$home" "$BLOCKER" clear Automattic --from "$home/pass.txt" >/dev/null || fail "clear cannot retry after recovery"
+  assert_absent "$home/state/machine-pending/Automattic.json" "retry removes the record"
+  assert_absent "$home/state/cards/machine-automattic.json" "retry closes the card"
+  pass "fm-machine-blocker: clear keeps unreadable holds retryable"
+}
+
+test_clear_closed_hold_needs_no_recheck() {
+  local home
+  home=$(make_home clear-closed)
+  check_output "$home/check.txt"
+  run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" --from "$home/check.txt" >/dev/null || fail "raise failed"
+  sed 's/=human:/=present:/' "$home/check.txt" > "$home/pass.txt"
+  run_in "$home" "$BLOCKER" ready Automattic --from "$home/pass.txt" || fail "ready failed"
+  run_in "$home" "$BLOCKER" resolve Automattic >/dev/null || fail "resolve failed"
+  run_in "$home" "$BLOCKER" clear Automattic --from "$home/missing.txt" >/dev/null || fail "clear unnecessarily re-checked a closed hold"
+  assert_absent "$home/state/machine-pending/Automattic.json" "closed record removed"
+  assert_absent "$home/state/when/when-machine-automattic.spec" "closed watch retired"
+  pass "fm-machine-blocker: clear skips the re-check for a closed hold"
 }
 
 test_raise_preserves_the_waiting_action() {
@@ -255,7 +323,8 @@ test_alias_punctuation_preserves_distinct_identities() {
     run_in "$home" "$ROOT/bin/fm-card.sh" show "$task" >/dev/null || fail "distinct card missing: $task"
     assert_present "$home/state/when/when-$task.spec" "distinct watch exists: $task"
   done
-  run_in "$home" "$BLOCKER" clear Build.one >/dev/null || fail "clear failed"
+  sed 's/=human:/=present:/' "$home/check.txt" > "$home/pass.txt"
+  run_in "$home" "$BLOCKER" clear Build.one --from "$home/pass.txt" >/dev/null || fail "clear failed"
   assert_absent "$home/state/when/when-machine-build.one.spec" "clear retires the dotted alias watch"
   assert_present "$home/state/when/when-machine-build-one.spec" "clear preserves the hyphenated alias watch"
   assert_present "$home/state/when/when-machine-build_one.spec" "clear preserves the underscored alias watch"
@@ -304,7 +373,7 @@ test_raise_again_after_passing_recheck() {
     fi
     previous=$task
   done
-  run_in "$home" "$BLOCKER" clear Automattic >/dev/null || fail "renewed clear failed"
+  run_in "$home" "$BLOCKER" clear Automattic --from "$home/complete.txt" >/dev/null || fail "renewed clear failed"
   assert_absent "$home/state/when/when-machine-automattic-3.spec" "clear retires the recorded suffixed watch"
   assert_absent "$home/state/machine-pending/Automattic.json" "clear removes the renewed pending record"
   pass "fm-machine-blocker: subsequent prerequisites get fresh holds, cards and watches"
@@ -329,12 +398,48 @@ test_renewed_raise_skips_another_actions_open_hold() {
   pass "fm-machine-blocker: renewed escalation skips a hold for another action"
 }
 
+test_raise_reuses_recorded_hold_after_pruning() {
+  local home task=machine-automattic-2 rc
+  home=$(make_home pruned-base)
+  check_output "$home/check.txt"
+  run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" --from "$home/check.txt" >/dev/null || fail "initial raise failed"
+  sed 's/=human:/=present:/' "$home/check.txt" > "$home/pass.txt"
+  run_in "$home" "$BLOCKER" ready Automattic --from "$home/pass.txt" || fail "ready failed"
+  run_in "$home" "$BLOCKER" resolve Automattic >/dev/null || fail "resolve failed"
+  run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" --from "$home/check.txt" >/dev/null || fail "renewed raise failed"
+  assert_equals "$task" "$(run_in "$home" "$BLOCKER" show Automattic | jq -r .task)" "renewal selects the suffixed hold"
+  run_in "$home" "$ROOT/bin/fm-tasks-axi.sh" prune --keep 0 >/dev/null || fail "prune failed"
+  rc=0
+  run_in "$home" "$ROOT/bin/fm-captain-hold.sh" open machine-automattic --distinguish-absent >/dev/null || rc=$?
+  assert_equals 3 "$rc" "retention removes the closed base task"
+  run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" --from "$home/check.txt" >/dev/null || fail "repeated raise failed"
+  assert_equals "$task" "$(run_in "$home" "$BLOCKER" show Automattic | jq -r .task)" "retry preserves the recorded open hold after pruning"
+  run_in "$home" "$ROOT/bin/fm-captain-hold.sh" open "$task" >/dev/null || fail "recorded hold disappeared"
+  run_in "$home" "$ROOT/bin/fm-card.sh" show "$task" >/dev/null || fail "recorded card disappeared"
+  assert_present "$home/state/when/when-$task.spec" "recorded hold keeps its monitoring"
+  assert_absent "$home/state/when/when-machine-automattic.spec" "retry does not recreate the base watch"
+  rc=0
+  run_in "$home" "$ROOT/bin/fm-captain-hold.sh" open machine-automattic --distinguish-absent >/dev/null || rc=$?
+  assert_equals 3 "$rc" "retry does not recreate the base hold"
+  run_in "$home" "$BLOCKER" clear Automattic --from "$home/pass.txt" >/dev/null || fail "clear failed on the recorded hold"
+  rc=0
+  run_in "$home" "$ROOT/bin/fm-captain-hold.sh" open "$task" >/dev/null || rc=$?
+  assert_equals 1 "$rc" "clear resolves the preserved hold"
+  assert_absent "$home/state/cards/$task.json" "clear removes the preserved card"
+  assert_absent "$home/state/when/when-$task.spec" "clear retires the preserved watch"
+  pass "fm-machine-blocker: retention cannot displace a recorded open hold"
+}
+
 test_summary_leads_with_blocked_on_you
 test_raise_writes_card_hold_record_and_watch
 test_recheck_updates_then_resolves_itself
 test_resolve_refuses_while_steps_remain
 test_raise_with_nothing_human_holds_nothing
 test_clear_removes_record_and_watch
+test_clear_refuses_while_steps_remain
+test_clear_refuses_unreadable_hold
+test_clear_closed_hold_needs_no_recheck
+test_raise_reuses_recorded_hold_after_pruning
 test_raise_preserves_the_waiting_action
 test_raise_publishes_only_after_hold_accepts
 test_hold_errors_do_not_resolve

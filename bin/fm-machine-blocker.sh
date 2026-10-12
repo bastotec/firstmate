@@ -10,7 +10,7 @@
 #   fm-machine-blocker.sh ready <alias> [--from <check-output-file>]
 #   fm-machine-blocker.sh resolve <alias>
 #   fm-machine-blocker.sh show <alias>
-#   fm-machine-blocker.sh clear <alias>
+#   fm-machine-blocker.sh clear <alias> [--from <check-output-file>]
 #
 # Input is bin/fm-machine.sh check's line protocol (its header owns it).
 # Items use `item <name>=present|will-install|human: <text>`; raise also reads root=.
@@ -45,9 +45,10 @@
 # the captain's words), which removes the card, and marks the record ready.
 # Hold read/close errors refuse continuation; a fired wake is the cue to resume --for.
 #
-# show prints the record. clear removes the record and retires the watch; run
-# it once the approved action is done (the machine registered and the second
-# mate launched).
+# show prints the record. clear re-checks and resolves an open hold before
+# removing the record and retiring the watch; human steps or hold read errors
+# refuse cleanup. Run it once the approved action is done (the machine
+# registered and the second mate launched).
 #
 # The record is state/machine-pending/<alias>.json, mode 0600:
 #   {"version":1,"alias":"","root":"","task":"<held task id>","for":"",
@@ -180,7 +181,16 @@ hold_title() {
 }
 
 select_hold_task() {
-  local base=$1 rec=$2 task=$1 index=1 rc row title
+  local base=$1 rec=$2 task=$1 index=1 rc row title recorded=${3:-}
+  if [ -n "$recorded" ]; then
+    if hold_open "$recorded"; then
+      printf '%s\n' "$recorded"
+      return 0
+    else
+      rc=$?
+      [ "$rc" -eq 1 ] || return "$rc"
+    fi
+  fi
   while :; do
     if "$SCRIPT_DIR/fm-captain-hold.sh" open "$task" --distinguish-absent >/dev/null; then
       if [ "$index" -eq 1 ]; then
@@ -273,7 +283,7 @@ cmd_raise() {
   fi
   if [ "$state" = needs-you ]; then
     printf '%s\n' "$rec" > "$TMP/record.json"
-    task=$(select_hold_task "$task" "$TMP/record.json")
+    task=$(select_hold_task "$task" "$TMP/record.json" "$old_task")
     rec=$(jq --arg task "$task" '.task = $task' <<<"$rec")
     printf '%s\n' "$rec" > "$TMP/record.json"
     hold_with_card "$task" "$TMP/record.json"
@@ -353,11 +363,25 @@ cmd_show() {
 }
 
 cmd_clear() {
-  local alias=${1:-} task path
+  local alias=${1:-} from='' task path rc
   require_alias "$alias"
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in --from) shift; from=${1:-} ;; *) usage >&2; exit 2 ;; esac
+    shift
+  done
   path=$(record_path "$alias")
   task=$(slug "$alias")
-  [ ! -f "$path" ] || task=$(jq -er .task "$path")
+  if [ -f "$path" ]; then
+    task=$(jq -er .task "$path")
+    if hold_open "$task"; then
+      (cmd_ready "$alias" --from "$from")
+      cmd_resolve "$alias" >/dev/null
+    else
+      rc=$?
+      [ "$rc" -eq 1 ] || exit "$rc"
+    fi
+  fi
   "$SCRIPT_DIR/fm-procevent-when.sh" retire "$task" >/dev/null
   rm -f -- "$path"
   printf 'cleared: %s\n' "$alias"
