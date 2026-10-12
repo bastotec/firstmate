@@ -1,7 +1,7 @@
 //! Take, application and bounded result publication are independent. A network
 //! outage never blocks original-turn reconciliation or permits successor delivery.
 use super::{
-    hub_json, now,
+    diag, hub_json, now,
     receiver::{Decision, Receiver},
     Agent, Error, RESULT_POST_SECS, RESULT_RETRY_SECS,
 };
@@ -208,7 +208,8 @@ impl Agent {
                             }
                         }
                         Err(Error::Superseded) => self.stand_down(),
-                        Err(_) => {
+                        Err(error) => {
+                            diag(&self.options, "command-poll-failed", error);
                             poll_due = instant + Duration::from_secs_f64(backoff);
                             backoff = (backoff * 2.0).min(60.0);
                         }
@@ -265,7 +266,10 @@ impl Agent {
                             }
                             loaded = true;
                         }
-                        Err(_) => load_due = instant + Duration::from_secs(5),
+                        Err(error) => {
+                            diag(&self.options, "command-recovery-failed", error);
+                            load_due = instant + Duration::from_secs(5);
+                        }
                     }
                 }
                 if !self.stood_down.load(Ordering::SeqCst) {
@@ -323,7 +327,8 @@ impl Agent {
                                         receipts.insert(id, receipt);
                                     }
                                 }
-                                Err(_) => {
+                                Err(error) => {
+                                    diag(&self.options, "command-apply-failed", error);
                                     receipt.due = Instant::now() + Duration::from_secs(5);
                                     if !fresh || receipt.command["_native_prepared"] == true {
                                         pending.insert(id, receipt);
@@ -342,7 +347,22 @@ impl Agent {
                     pending.clear();
                 }
                 for record in outcomes.values_mut() {
-                    persist(receiver.as_ref(), record);
+                    if !persist(receiver.as_ref(), record)
+                        && record["_persist_failed"] != true
+                        && record["_dirty"] == true
+                    {
+                        record["_persist_failed"] = json!(true);
+                        diag(
+                            &self.options,
+                            "result-persist-failed",
+                            format_args!(
+                                "order {} result could not be persisted; retrying",
+                                record["order_id"].as_str().unwrap_or("")
+                            ),
+                        );
+                    } else if record["_persist_failed"] == true && record["_dirty"] != true {
+                        record["_persist_failed"] = json!(false);
+                    }
                 }
                 let stopping =
                     self.stop.load(Ordering::SeqCst) || self.stood_down.load(Ordering::SeqCst);
@@ -399,21 +419,30 @@ impl Agent {
                         record["_last_attempt_at"] = json!(now());
                         let result = record["result"].clone();
                         let (done, completion) = mpsc::channel();
+                        let options = &self.options;
                         post = Some((id, completion));
                         scope.spawn(move || {
-                            let settled = matches!(
-                                self.hub.call(
-                                    "POST",
-                                    "/v1/agent/results",
-                                    Some(&result),
-                                    Duration::from_secs(RESULT_POST_SECS)
-                                ),
-                                // A definitive rejection settles; an
-                                // UNMATCHED command id does not, because
-                                // it is not a verdict on this result and
-                                // the hub may still be able to accept it.
-                                Ok(_) | Err(Error::Rejected)
+                            let answer = self.hub.call(
+                                "POST",
+                                "/v1/agent/results",
+                                Some(&result),
+                                Duration::from_secs(RESULT_POST_SECS),
                             );
+                            // A definitive rejection settles; an UNMATCHED
+                            // command id does not, because it is not a
+                            // verdict on this result and the hub may still
+                            // be able to accept it.
+                            let settled = matches!(answer, Ok(_) | Err(Error::Rejected));
+                            if !settled {
+                                diag(
+                                    options,
+                                    "result-ack-failed",
+                                    format_args!(
+                                        "result could not be posted: {}",
+                                        answer.err().unwrap()
+                                    ),
+                                );
+                            }
                             let _ = done.send(settled);
                             self.tick.notify();
                         });

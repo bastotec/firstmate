@@ -1,6 +1,7 @@
 //! Kernel ownership boundary. Every reap and signal shares the child lock.
+use super::diag_write;
 use serde_json::{json, Value};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
@@ -15,6 +16,7 @@ pub struct Pty {
     pub pid: i32,
     pgid: i32,
     tty: String,
+    diagnostics_path: String,
 }
 
 impl Pty {
@@ -104,7 +106,12 @@ impl Pty {
             pid,
             pgid: pid,
             tty,
+            diagnostics_path: String::new(),
         })
+    }
+
+    pub(super) fn set_diagnostics_path(&mut self, path: String) {
+        self.diagnostics_path = path;
     }
 
     pub fn exit_code(&self) -> io::Result<Option<i32>> {
@@ -151,9 +158,9 @@ impl Pty {
         // reaping (and therefore PID reuse) until deliver returns.
         unsafe {
             if self.pgid == libc::getpgrp() || self.pgid == libc::getsid(0) {
-                return Err(io::Error::other(
-                    "refusing to signal agent's own group/session",
-                ));
+                let reason = "refusing to signal agent's own group/session";
+                diag_write(&self.diagnostics_path, "signal-refused", reason);
+                return Err(io::Error::other(reason));
             }
         }
         deliver()?;
@@ -460,7 +467,15 @@ mod tests {
     }
     #[test]
     fn own_group_and_session_are_refused() {
+        let dir = std::env::temp_dir().join(format!(
+            "fm-agent-signal-refused-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let diagnostics = dir.join("task.agent-diagnostics");
         let mut pty = Pty::spawn("/", 40, 200, "test", "http://localhost").unwrap();
+        pty.set_diagnostics_path(diagnostics.display().to_string());
         // SAFETY: only reads this process's group and session IDs.
         for group in unsafe { [libc::getpgrp(), libc::getsid(0)] } {
             pty.pgid = group;
@@ -473,5 +488,11 @@ mod tests {
             );
         }
         pty.close(true).unwrap();
+        let records = fs::read_to_string(&diagnostics).unwrap();
+        assert_eq!(records.lines().count(), 2);
+        assert!(records.lines().all(
+            |line| line.contains("signal-refused refusing to signal agent's own group/session")
+        ));
+        let _ = fs::remove_dir_all(dir);
     }
 }
