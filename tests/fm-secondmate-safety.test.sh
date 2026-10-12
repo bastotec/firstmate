@@ -3235,6 +3235,8 @@ test_secondmate_idle_pane_is_not_stale() {
   local home fakebin out pid window
   home="$TMP_ROOT/watch-home"
   mkdir -p "$home/state"
+  # This case tests idle-pane exemption, not the mate's cleanup-summary audit.
+  touch "$home/state/.last-idle-sweep"
   window=$(fm_test_stream_target_of "$home/state" domain)
   cat > "$home/state/domain.meta" <<EOF
 $(fm_test_stream_task "$home/state" domain)
