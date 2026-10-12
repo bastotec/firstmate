@@ -2641,6 +2641,16 @@ test_parked_own_run_is_aborted_before_teardown() {
   land_shippable_commit "$case_dir"
   head=$(git -C "$case_dir/wt" rev-parse HEAD)
 
+  cat > "$case_dir/on-kill.sh" <<EOF
+#!/usr/bin/env bash
+if [ -s "$case_dir/nm-abort.log" ]; then
+  printf 'abort-before-close\n' > "$case_dir/endpoint-order.log"
+fi
+EOF
+  chmod +x "$case_dir/on-kill.sh"
+  fm_test_fake_stream_set "$(fm_test_stream_target_of "$case_dir/state" task-x1)" \
+    "{\"on_kill\": \"$case_dir/on-kill.sh\"}"
+
   local rc=0
   FM_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$head")" \
   FM_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
@@ -2653,6 +2663,10 @@ test_parked_own_run_is_aborted_before_teardown() {
     "parked-run-abort: no-mistakes axi abort did not target the verified run id"
   assert_grep "parked at a gate; aborting" "$case_dir/stderr" \
     "parked-run-abort: teardown did not report aborting the parked run before removing the worker"
+  assert_grep "abort-before-close" "$case_dir/endpoint-order.log" \
+    "parked-run-abort: endpoint closure preceded the run abort"
+  endpoint_closed "$case_dir/state" task-x1 \
+    || fail "parked-run-abort: the endpoint was not closed after the run abort"
   pass "a task's own parked no-mistakes run is aborted, not orphaned, before the worker is removed"
 }
 
@@ -3148,7 +3162,10 @@ EOF
     "parked-run-abort-unconfirmed: teardown returned the worktree after refusing"
   kill -0 "$pid" 2>/dev/null || fail "parked-run-abort-unconfirmed: process reap ran before refusal"
   kill -KILL "$pid" 2>/dev/null || true
-  pass "teardown refuses before reap or removal when a task-owned run remains parked"
+  if endpoint_closed "$case_dir/state" task-x1; then
+    fail "parked-run-abort-unconfirmed: teardown closed the worker endpoint before refusing"
+  fi
+  pass "teardown refuses before endpoint close, reap or removal when a task-owned run remains parked"
 }
 
 test_another_branchs_parked_run_is_never_touched() {
@@ -3220,6 +3237,56 @@ test_leaked_worktree_process_is_reaped() {
   assert_grep "reaping leaked worktree process" "$case_dir/stderr" \
     "leaked-process-reap: teardown did not report reaping the leaked process"
   pass "a leaked descendant process rooted under the task's worktree is reaped by teardown, not left surviving"
+}
+
+# The finished-worker shape from the 2026-10-09 false-leak incident: the task's
+# endpoint is still live and its foreground worker sits cwd-rooted under the
+# task's own worktree, exactly where the cwd-based reaper looks for leaks. The
+# endpoint close now runs first, so that machinery is taken down by the close
+# path that owns it and the reap pass that follows finds nothing to report -
+# no "reaping leaked" line, no forced kill - while a genuinely disowned
+# process in the same worktree (the case above) is still reaped.
+test_finished_endpoint_machinery_is_closed_not_reaped() {
+  local case_dir rc pid
+  case_dir=$(make_case finished-endpoint-close-order)
+  write_meta "$case_dir" no-mistakes ship
+  land_shippable_commit "$case_dir"
+
+  # The endpoint's foreground worker: a live process cwd-rooted under the
+  # worktree, registered as the fake endpoint's foreground command, with the
+  # hub's on_kill hook taking that process down when the close is delivered -
+  # the pane machinery the endpoint's own close path owns, not the reaper.
+  ( cd "$case_dir/wt" && exec sleep 300 ) &
+  pid=$!
+  disown
+  sleep 0.3
+  kill -0 "$pid" 2>/dev/null || fail "finished-endpoint-close-order: setup sleeper did not start"
+  cat > "$case_dir/on-kill.sh" <<EOF
+#!/usr/bin/env bash
+kill $pid 2>/dev/null || true
+for i in 1 2 3 4 5; do
+  kill -0 $pid 2>/dev/null || exit 0
+  sleep 0.1
+done
+EOF
+  chmod +x "$case_dir/on-kill.sh"
+  fm_test_fake_stream_set "$(fm_test_stream_target_of "$case_dir/state" task-x1)" \
+    '{"foreground": [{"pid": "", "name": "sleep", "argv0": "sleep", "args": "sleep 300"}]}'
+  fm_test_fake_stream_set "$(fm_test_stream_target_of "$case_dir/state" task-x1)" \
+    "{\"on_kill\": \"$case_dir/on-kill.sh\"}"
+
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  kill -0 "$pid" 2>/dev/null && { kill -KILL "$pid" 2>/dev/null || true; }
+
+  expect_code 0 "$rc" "finished-endpoint-close-order: teardown should still succeed"
+  endpoint_closed "$case_dir/state" task-x1 \
+    || fail "finished-endpoint-close-order: the endpoint was not closed by its owning close path"
+  assert_no_grep "reaping leaked" "$case_dir/stderr" \
+    "finished-endpoint-close-order: endpoint machinery was reported as a leaked-process reap"
+  assert_no_grep "force-killing leaked" "$case_dir/stderr" \
+    "finished-endpoint-close-order: endpoint machinery was force-killed as a leak"
+  pass "a finished worker's endpoint machinery is closed by the endpoint path, not reported as a leaked-process reap"
 }
 
 test_leaked_tasktmp_process_is_reaped() {
@@ -3621,6 +3688,7 @@ test_not_found_status_after_abort_confirms_completion
 test_another_branchs_parked_run_is_never_touched
 test_own_autonomous_run_is_left_alone
 test_leaked_worktree_process_is_reaped
+test_finished_endpoint_machinery_is_closed_not_reaped
 test_leaked_tasktmp_process_is_reaped
 test_lsof_error_refuses_before_removal
 test_reused_pid_identity_is_not_force_killed
