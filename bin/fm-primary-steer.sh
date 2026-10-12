@@ -19,6 +19,9 @@
 #       2 rejected (rejected/<seq>.msg or steer_rejected); 3 no live primary.
 # Callers that shell out to this script honor FM_PRIMARY_STEER_BIN, so tests
 # can substitute it.
+# Attachment mapping is owned by bin/fm_stream_deck.py::with_deck_images.
+# If the mapped body exceeds 65536 UTF-8 bytes, publish the original body
+# instead; the original must still satisfy the publish limit above.
 set -u
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # Publishing steers the primary, so a no-mistakes gate agent is refused;

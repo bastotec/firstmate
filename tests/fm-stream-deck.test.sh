@@ -538,13 +538,38 @@ record(8, '[fm-captain-direct]' + mark + 'note\n\nlate')
 (turn/'9.msg').write_text('newer order')
 record(2, '[fm-captain-direct]' + mark + 'note\n\nlower')
 assert captain() == 0, 'never below a sequence already visible'
+# A captain image attachment that exists on this host also reaches Deck as an image line.
+shot = lab/'shot.png'; shot.write_bytes(b'png')
+record(10, '[fm-captain-direct]' + mark + 'note\n\nsee\nAttached: %s (image, 3 B)\nAttached: %s (image, 3 B)' % (shot, lab/'gone.png'))
+assert captain() == 1
+assert (turn/'10.msg').read_text().startswith('[fm-captain-direct]' + mark + 'note\n\nsee\nAttached: %s (image, 3 B)\ndeck-image: %s\nAttached: %s (image, 3 B)\n\nAfter handling' % (shot, shot, lab/'gone.png'))
+from fm_stream_deck import with_deck_images
+for suffix in ('png', 'JPG', 'jpeg', 'webp', 'gif'):
+    image = lab/('shot one.' + suffix); image.write_bytes(b'image')
+    text = 'see\nAttached: %s (image, 5 B)\n' % image
+    expected = 'see\nAttached: %s (image, 5 B)\ndeck-image: %s\n' % (image, image)
+    assert with_deck_images(text) == expected
+    assert with_deck_images(expected) == expected
+notes = lab/'notes.txt'; notes.write_bytes(b'notes')
+directory = lab/'directory.png'; directory.mkdir()
+for path, annotation in ((shot, 'image'), (shot, 'image/jpeg, 3 B'),
+                         (shot, 'image-disabled'), (shot, 'image, '),
+                         (shot, 'file, 3 B'), (notes, 'image, 5 B'),
+                         (directory, 'image, 3 B'), (lab/'gone.png', 'image, 3 B'),
+                         (pathlib.Path('relative.png'), 'image, 3 B')):
+    text = 'Attached: %s (%s)' % (path, annotation)
+    assert with_deck_images(text) == text, text
+bridge = 'Attached: %s (image, 3 B)' % shot
+assert r.apply('image-order', 'b'*32, bridge, lambda: True)[0] is None
+bridge_source = r.find('image-order')[0]
+assert (turn/('%d.msg' % int(bridge_source.stem))).read_text().startswith(bridge + '\n\nAfter handling')
 subprocess.check_call(cli + ['end', str(lab), 'task', 'b'*32])
 assert captain() == 0, 'an ended turn gets nothing'
 print('PASS captain-direct records reach live steerable turns in sequence order only')
 
 from fm_stream_deck import idle_captain_sequence
 for publisher in ('captain', 'bridge'):
-    for payload in ('x' * 70000, 'α' * 32730):
+    for payload in ('x' * 70000, 'α' * 32730, 'image-expansion'):
         state = lab / ('%s-%s' % (publisher, len(payload)))
         receiver = Receiver(str(state), 'task', 'c'*32)
         projection = pathlib.Path(receiver.start('original', True))
@@ -555,6 +580,12 @@ for publisher in ('captain', 'bridge'):
             return pathlib.Path(output.decode().strip())
         body = '[fm-captain-direct]' + mark + 'note\n\n' + payload
         oversized = write_source(body)
+        if payload == 'image-expansion':
+            body += '\nAttached: %s (image, 3 B)\n' % shot
+            guidance = body + '\n\nAfter handling this native steer, acknowledge its ordinary task-inbox source by moving ' + str(oversized) + ' to ' + str(receiver.inbox/'handled'/oversized.name) + '. Do not apply the same source record twice.'
+            body += 'x' * (65536 - len(guidance.encode('utf-8')))
+            header = oversized.read_bytes().split(b'\n--\n', 1)[0]
+            oversized.write_bytes(header + b'\n--\n' + body.encode('utf-8'))
         before = oversized.read_bytes()
         earlier = write_source('[fm-captain-direct]' + mark + 'note\n\nearlier eligible')
         assert receiver.apply('bounded', 'c'*32, 'valid Bridge', lambda: True,
