@@ -227,6 +227,38 @@ test_remote_mate_is_probed_and_relaunched_on_its_host() {
   pass "a remote mate is probed on its host and relaunched or recovered there through fm-control"
 }
 
+test_legacy_remote_missing_escalations_restart_confirmation_without_resetting_spent_budgets() {
+  local dir id
+  dir=$(new_case remote-legacy)
+  printf 'missing\n' > "$dir/home/remote-state"
+  for id in rm1 held spent; do
+    add_remote_mate "$dir" "$id"
+    printf 'down_state=missing\nfirst_seen=1\nfailures=0\nescalated=1\nlast=\n' \
+      > "$dir/home/state/$id.revive"
+  done
+  printf 'stopped_at=1\n' > "$dir/home/state/held.held-stopped"
+  printf 'down_state=missing\nfirst_seen=1\nfailures=2\nescalated=1\nlast=host refused\n' \
+    > "$dir/home/state/spent.revive"
+  cp "$dir/home/state/held.revive" "$dir/held-before.revive"
+  cp "$dir/home/state/spent.revive" "$dir/spent-before.revive"
+  scan "$dir"
+  [ -z "$(calls "$dir")" ] || fail "a legacy escalation recovered without fresh confirmation: $(calls "$dir")"
+  grep -qx 'escalated=0' "$dir/home/state/rm1.revive" || fail "an unattempted legacy episode stayed escalated"
+  scan "$dir"
+  case "$(calls "$dir")" in
+    "rm1 recover-missing --unless-held-stopped --note "*) ;;
+    *) fail "an unattempted legacy remote episode was not recovered: $(calls "$dir")" ;;
+  esac
+  [ ! -e "$dir/home/state/rm1.revive" ] || fail "legacy recovery left its revive record"
+  scan "$dir"
+  [ "$(calls "$dir" | wc -l | tr -d ' ')" = 1 ] || fail "a held or spent episode was retried: $(calls "$dir")"
+  cmp -s "$dir/home/state/held.revive" "$dir/held-before.revive" || fail "a deliberately stopped legacy episode was changed"
+  cmp -s "$dir/home/state/spent.revive" "$dir/spent-before.revive" || fail "a spent escalation was changed"
+  [ -e "$dir/home/state/held.held-stopped" ] || fail "legacy reconciliation removed a deliberate stop"
+  [ "$(queued_revive_wakes "$dir")" = 0 ] || fail "legacy reconciliation queued another escalation"
+  pass "legacy remote-missing escalations recover after fresh confirmation while held and spent episodes stay untouched"
+}
+
 test_a_spent_budget_retries_only_the_escalation() {
   local dir
   dir=$(new_case unwritable)
@@ -457,6 +489,7 @@ test_live_unknown_held_and_non_secondmate_records_are_left_alone
 test_two_failed_revivals_escalate_once_and_stop
 test_a_mate_owned_by_another_lifecycle_action_is_not_a_failure
 test_remote_mate_is_probed_and_relaunched_on_its_host
+test_legacy_remote_missing_escalations_restart_confirmation_without_resetting_spent_budgets
 test_a_spent_budget_retries_only_the_escalation
 test_one_slow_revival_does_not_delay_another_mate
 test_watcher_surfaces_a_failed_revival_on_its_own

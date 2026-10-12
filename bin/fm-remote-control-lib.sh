@@ -108,6 +108,10 @@ fm_remote_route_rebind_meta() {  # <meta> <state-dir>
 # shellcheck disable=SC2153 # META and ID are fm-control.sh's parsed globals.
 fm_remote_recover_missing() {  # <host>
   local host=$1 out rc state
+  if [ "$HARNESS_SET" = 1 ] || [ "$MODEL_SET" = 1 ] || [ "$EFFORT_SET" = 1 ]; then
+    echo "error: recover-missing of a remote mate keeps its recorded profile; --harness/--model/--effort are refused; use relaunch to change it" >&2
+    return 1
+  fi
   rc=0
   out=$("$SCRIPT_DIR/fm-on.sh" "$ID" fm-remote-secondmate-control.sh state "$ID" < /dev/null 2>/dev/null) || rc=$?
   if [ "$rc" -ne 0 ]; then

@@ -49,7 +49,10 @@ cleanup() {
   local worker_pid='' pid
   FM_HOME="$PARENT" FM_PROCEVENT_CLAIM_ROOT="$CLAIMS" \
     "$ROOT/bin/fm-procevent.sh" sweep-home >/dev/null 2>&1 || true
-  for pid in $(stream_agent_pids); do kill "$pid" 2>/dev/null || true; done
+  for pid in $(stream_agent_pids); do
+    kill -CONT "$pid" 2>/dev/null || true
+    kill -KILL "$pid" 2>/dev/null || true
+  done
   [ -z "$HUB_PID" ] || kill "$HUB_PID" 2>/dev/null || true
   if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then
     worker_pid=$(cat "$TMP_ROOT/remote-jobs/worker.pid")
@@ -191,7 +194,7 @@ remote_env() {
   FM_FAKE_REMOTE_ENTRYPOINT="$REMOTE_ROOT/bin/fm-remote-entrypoint.sh" \
   FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
   FM_REMOTE_JOB_STATE_ROOT="$TMP_ROOT/remote-jobs" \
-  FM_FAKE_REMOTE_CWD="$TMP_ROOT" \
+  FM_FAKE_REMOTE_CWD="$REMOTE_ROOT" \
   FM_FAKE_DOCTOR_LOG="$DOCTOR_LOG" \
   FM_FAKE_CONTROL_LOG="$CONTROL_LOG" \
   FM_SEND_SETTLE=0 FM_SEND_SLEEP=0 \
@@ -258,6 +261,23 @@ for pid in $(stream_agent_pids); do
   fi
 done
 pass "remote: a stream launch records the stream binding and runs the agent on the host's hub"
+
+cp "$PARENT_META" "$TMP_ROOT/recover-profile-parent.meta"
+cp "$HOST_META" "$TMP_ROOT/recover-profile-host.meta"
+cp "$REMOTE_HOME/state/parent-route/$ID.agent-identity" "$TMP_ROOT/recover-profile-identity"
+ssh_count=$(cat "$SSH_COUNT")
+for profile_flag in --harness=deck --model=fixture/second --effort=default; do
+  rc=0
+  out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" recover-missing "$profile_flag" 2>&1) || rc=$?
+  expect_code 1 "$rc" "remote recover-missing should refuse $profile_flag"
+  assert_contains "$out" 'keeps its recorded profile' "remote recovery did not name the profile refusal: $out"
+  assert_contains "$out" 'use relaunch to change it' "remote recovery did not explain how to change the profile: $out"
+done
+assert_equals "$ssh_count" "$(cat "$SSH_COUNT")" "profile refusal reached the remote host"
+cmp -s "$PARENT_META" "$TMP_ROOT/recover-profile-parent.meta" || fail "profile refusal changed the parent route"
+cmp -s "$HOST_META" "$TMP_ROOT/recover-profile-host.meta" || fail "profile refusal changed the host route"
+cmp -s "$REMOTE_HOME/state/parent-route/$ID.agent-identity" "$TMP_ROOT/recover-profile-identity" || fail "profile refusal replaced the remote agent"
+pass "remote: recover-missing refuses explicit profile flags before contacting the host"
 
 cp "$PARENT_META" "$TMP_ROOT/alive-parent.meta"
 cp "$HOST_META" "$TMP_ROOT/alive-host.meta"

@@ -187,6 +187,10 @@ revive_one() {  # <meta> <id>
     *) return 0 ;;
   esac
   [ ! -e "$STATE/$id.held-stopped" ] || return 0
+  if [ "$REC_ESCALATED" = 1 ] && [ "$REC_FAILURES" -lt "$ATTEMPTS" ]; then
+    REC_ESCALATED=0
+    REC_SEEN=0
+  fi
   [ "$REC_ESCALATED" = 0 ] || return 0
   # A spent budget only retries publishing its one escalation, never another
   # revival.
