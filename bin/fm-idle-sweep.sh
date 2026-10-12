@@ -29,13 +29,14 @@
 #   - a done ship with no PR, or a closed-unmerged PR, is never cleaned up
 #     automatically, since a pushed but unmerged branch passes cleanup's checks;
 #     it becomes the clean-it-up-or-keep-it decision below;
-#   - done, quiet for 15 minutes: cleaned up with
-#     bin/fm-teardown.sh, never --force; a refusal only because the endpoint is
-#     on a retired backend goes to bin/fm-retire-endpoint.sh --finished;
+#   - otherwise done, quiet for 15 minutes (a ship's PR must be merged):
+#     cleaned up with bin/fm-teardown.sh, never --force; a refusal only because
+#     the endpoint is on a retired backend goes to
+#     bin/fm-retire-endpoint.sh --finished;
 #     a refusal because another cleanup or lifecycle action holds the task
 #     waits for the next scan; after a refusal, a now-absent worker record is
 #     reported as cleaned unless its backlog close is still pending (then
-#     unhandled on every scan until the lifecycle owner clears the pending close),
+#     unhandled),
 #     while a changed record is left untouched with class unknown/action none
 #     for a fresh scan; a remaining refusal on the unchanged record becomes
 #     a decision to clean it up or keep it;
@@ -49,6 +50,9 @@
 #   unchanged raised fingerprint of the actual task's ledger, leave the
 #   endpoint alone; otherwise a refused close becomes a decision under
 #   idle-orphan-<task>.
+# Metadata-less pending backlog closes also appear as unhandled on every scan
+# until the lifecycle owner clears them; the sweep reports but never retries
+# or changes those recovery records.
 # A decision is an ordinary captain hold (bin/fm-captain-hold.sh hold) with a
 # full decision card, so it reaches Fleet Town, and in a secondmate home the
 # parent channel, through their existing owners. If holding the worker's id
