@@ -336,7 +336,8 @@ Retirement is executed on the configured host and refuses while the remote home 
 It closes only the retiring secondmate's stream endpoint and never a sibling secondmate's.
 SSH exit 255 preserves both the route and local records because completion is unknown.
 `--force` remains the explicit discard path and requires the same captain authority as local secondmate discard.
-No generic remote delete or write surface exists: remote writes are confined to inherited allowlist files and backlog handoff scratch files, and remote home removal is reachable only through guarded secondmate retirement.
+No generic remote delete or write surface exists: inherited-material and backlog transfers are confined to their declared allowlist and scratch paths, and remote home removal is reachable only through guarded secondmate retirement.
+Account-level machine preparation and shared-skills installation are separate operations owned by the [`fm-machine.sh` header](../bin/fm-machine.sh).
 
 ## Verification
 
