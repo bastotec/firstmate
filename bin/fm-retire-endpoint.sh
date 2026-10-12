@@ -439,6 +439,27 @@ retirement_done_args() {  # <id> <pr> <verdict>
 # not-found answer is absence. A captain-held row takes the retain transition
 # with its deliverable, exactly as cleanup and the session-start replay do, so
 # a retirement never quietly answers the captain's own question.
+# The record-only mutation runs under the task's control lock, the same lock
+# cleanup, relaunch and an idle-sweep hold (bin/fm-captain-hold.sh
+# --expected-record) take, so none of them acts on a record mid-retirement.
+# Revalidate the pre-cleanup snapshot under that lock: an assertion for the
+# old incarnation must not retire a replacement published while we waited.
+# Regression coverage: tests/fm-teardown-endpoint-safety.test.sh.
+retire_records_only_locked() {  # <id> <expected-record>
+  local lock="$STATE/.control-$1.lock" meta="$STATE/$1.meta" expected_record=$2 current_record rc=0
+  fm_lock_acquire_wait "$lock" || return 1
+  if [ ! -f "$meta" ] || [ -L "$meta" ] \
+    || ! current_record=$(cat "$meta" 2>/dev/null) \
+    || [ "$current_record" != "$expected_record" ]; then
+    FM_BACKLOG_TRANSITION_ERROR="task record changed or vanished after the retirement assertion; nothing further was retired"
+    fm_lock_release "$lock" || true
+    return 1
+  fi
+  retire_records_only "$1" || rc=$?
+  fm_lock_release "$lock" || true
+  return "$rc"
+}
+
 retire_records_only() {  # <id>
   local id=$1 marker mode=close probe_rc=0 gate_rc=0 marker_flags=() row pr verdict=unmerged body
   local meta="$STATE/$id.meta"
@@ -558,6 +579,12 @@ retired_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 retired_by=$(id -un 2>/dev/null || printf '%s' "${USER:-unknown}")
 status=0
 for id in "${IDS[@]}"; do
+  if [ ! -f "$STATE/$id.meta" ] || [ -L "$STATE/$id.meta" ] \
+    || ! retirement_record=$(cat "$STATE/$id.meta" 2>/dev/null); then
+    status=1
+    echo "error: $id's task record could not be read before retirement; nothing was retired" >&2
+    continue
+  fi
   worktree=$(fm_meta_get "$STATE/$id.meta" worktree)
   endpoint=$(fm_backend_target_of_meta "$STATE/$id.meta")
   if ! record_retirement_assertion "$id"; then
@@ -593,7 +620,7 @@ for id in "${IDS[@]}"; do
     else
       report_partial_cleanup "$id" "$teardown_rc"
     fi
-  elif retire_records_only "$id"; then
+  elif retire_records_only_locked "$id" "$retirement_record"; then
     echo "warning: cleanup for $id refused over the work in its worktree, before touching anything on disk; its records are retired on the retirement recorded for $retired_by at $retired_at" >&2
     report_what_remains "$id" "$worktree" "$endpoint"
   else

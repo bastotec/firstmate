@@ -72,7 +72,7 @@ case "$1" in
   deferred) [ -f "$FM_HOME/deferred/$2" ] && exit 0; exit 1 ;;
   hold)
     id=$2; shift 2
-    card= reason= title= origin=
+    card= reason= title= origin= expected= guarded=0
     while [ "$#" -gt 0 ]; do
       case "$1" in
         --card-file) card=$2; shift ;;
@@ -80,10 +80,22 @@ case "$1" in
         --title) title=$2; shift ;;
         --origin) origin=$2; shift ;;
         --repo) shift ;;
+        --expected-record) expected=$2; guarded=1; shift ;;
       esac
       shift
     done
     printf '%s\n' "$id" >> "$FM_HOME/hold-attempts"
+    # a concurrent cleanup that held the control lock finished meanwhile
+    if [ -f "$FM_HOME/cleaned-during-hold/$id" ]; then
+      rm -f "$FM_HOME/state/$id.meta"
+      echo 'task is already closed' >&2
+      [ "$guarded" = 0 ] || exit 3
+      exit 1
+    fi
+    worker=${origin:-$id}
+    if [ "$guarded" = 1 ] && { [ ! -f "$FM_HOME/state/$worker.meta" ] || [ "$(cat "$FM_HOME/state/$worker.meta")" != "$expected" ]; }; then
+      exit 3
+    fi
     case "$reason" in *'('*|*')'*) echo 'reason must not contain parentheses' >&2; exit 1 ;; esac
     [ -f "$FM_HOME/hold-unavailable" ] && exit 1
     [ -f "$FM_HOME/closed/$id" ] && { echo 'task is already closed' >&2; exit 1; }
@@ -125,7 +137,7 @@ SH
     "$dir"/bin/fm-retire-endpoint.sh "$dir"/bin/fm-captain-hold.sh "$dir"/bin/fm-on.sh \
     "$dir"/bin/tasks-axi "$dir"/bin/gh "$dir"/bin/glab
   mkdir -p "$dir/home/crew" "$dir/home/refuse" "$dir/home/held" "$dir/home/deferred" "$dir/home/closed" "$dir/home/unreadable" \
-    "$dir/home/rows" "$dir/home/pr-states" "$dir/home/concurrent-cleanup" "$dir/home/replacement" "$dir/home/pending-close"
+    "$dir/home/rows" "$dir/home/cleaned-during-hold" "$dir/home/pr-states" "$dir/home/concurrent-cleanup" "$dir/home/replacement" "$dir/home/pending-close"
   printf '%s\n' "$dir"
 }
 
@@ -158,6 +170,169 @@ sweep() {  # <dir> [args...]
 
 calls() {  # <dir> <file>
   cat "$dir/home/$2" 2>/dev/null || true
+}
+
+test_a_cleanup_finishing_during_the_hold_mints_no_followup_call() {
+  local dir
+  dir=$(new_case cleaned-during-hold)
+  add_worker "$dir" racy 'state: failed · source: run-step · run failed' 90000
+  : > "$dir/home/cleaned-during-hold/racy"
+
+  sweep "$dir" scan --now || fail "scan failed"
+
+  if grep -qx idle-racy "$dir/home/hold-attempts"; then
+    fail "a follow-up call was minted for a worker another cleanup had just removed"
+  fi
+  [ ! -s "$dir/home/hold-calls" ] || fail "a decision was held for a cleaned-up worker: $(calls "$dir" hold-calls)"
+  [ "$(jq -r '.workers[] | select(.id=="racy") | [.class,.action] | join(" ")' "$dir/home/state/idle-sweep.json")" = 'unknown none' ] \
+    || fail "the raced worker was not left for a fresh scan: $(cat "$dir/home/state/idle-sweep.json")"
+  if grep -q 'idle-sweep-unhandled:' "$dir/home/state/.wake-queue" 2>/dev/null; then
+    fail "a raced cleanup was reported as a failure"
+  fi
+  pass "fm-idle-sweep: a cleanup that finishes while the decision is held mints no follow-up call"
+}
+
+test_real_holds_check_worker_records_inside_the_lifecycle_lock() {
+  local real_tasks dir path mode target expected worker_record
+  real_tasks=$(command -v tasks-axi || true)
+  [ -n "$real_tasks" ] || { echo 'skip: tasks-axi not found for real hold races'; return; }
+  for path in direct linked; do
+    for mode in unchanged removed replaced; do
+      dir=$(new_case "real-hold-$path-$mode")
+      cp "$ROOT/bin/fm-captain-hold.sh" "$dir/bin/fm-captain-hold-real.sh"
+      cp "$ROOT/.tasks.toml" "$dir/home/.tasks.toml"
+      printf '## In flight\n\n## Queued\n\n## Done\n' > "$dir/home/data/backlog.md"
+      add_worker "$dir" worker 'state: failed · source: run-step · run failed' 90000
+      worker_record=$(cat "$dir/home/state/worker.meta")
+      (cd "$dir/home" && "$real_tasks" add worker 'Worker task' --repo firstmate >/dev/null) || fail 'could not seed backlog'
+      target=worker
+      if [ "$path" = linked ]; then
+        (cd "$dir/home" && "$real_tasks" 'done' worker >/dev/null) || fail 'could not close worker row'
+        target=idle-worker
+      fi
+      printf '%s\n' "$target" > "$dir/home/race-target"
+      printf '%s\n' "$mode" > "$dir/home/race-mode"
+      printf '%s\n' "$real_tasks" > "$dir/home/real-tasks"
+      cat > "$dir/bin/fm-captain-hold.sh" <<'SH'
+#!/usr/bin/env bash
+script_dir=$(cd "$(dirname "$0")" && pwd)
+if [ "$1" = hold ]; then
+  printf '%s\n' "$2" >> "$FM_HOME/hold-attempts"
+  if [ "$2" = "$(cat "$FM_HOME/race-target")" ]; then
+    STATE="$FM_HOME/state"
+    . "$script_dir/fm-wake-lib.sh"
+    lock="$STATE/.control-worker.lock"
+    fm_lock_acquire_wait "$lock" || exit 1
+    case "$(cat "$FM_HOME/race-mode")" in
+      removed) rm -f "$STATE/worker.meta" ;;
+      replaced) printf 'spawn_gen=relaunched\nkind=ship\n' > "$STATE/worker.meta" ;;
+    esac
+    fm_lock_release "$lock" || exit 1
+  fi
+fi
+exec "$script_dir/fm-captain-hold-real.sh" "$@"
+SH
+      cat > "$dir/bin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  [ "$arg" != --help ] || exec "$(cat "$FM_HOME/real-tasks")" "$@"
+done
+case "$1" in
+  add|update|hold)
+    STATE="$FM_HOME/state"
+    . "$(dirname "$0")/fm-wake-lib.sh"
+    for id in worker "$2"; do
+      lock="$STATE/.control-$id.lock"
+      if fm_lock_try_acquire "$lock"; then
+        fm_lock_release "$lock"
+        printf '%s\n' "$id" >> "$FM_HOME/unprotected-mutations"
+        exit 1
+      fi
+    done
+    printf '%s\n' "$1 $2" >> "$FM_HOME/protected-mutations"
+    ;;
+esac
+exec "$(cat "$FM_HOME/real-tasks")" "$@"
+SH
+      chmod +x "$dir/bin/fm-captain-hold.sh" "$dir/bin/tasks-axi"
+
+      sweep "$dir" scan --now || fail "real hold scan failed: $path/$mode"
+
+      [ ! -s "$dir/home/unprotected-mutations" ] || fail 'a backlog mutation ran without the original or target lock'
+      if [ "$mode" = unchanged ]; then
+        expected='failed carded'
+        [ -s "$dir/home/protected-mutations" ] || fail 'unchanged worker did not exercise hold mutations'
+        assert_present "$dir/home/state/cards/$target.json" 'unchanged worker lost its decision card'
+        cmp -s "$dir/home/race-target" <(jq -r '.workers[0].hold_id' "$dir/home/state/idle-sweep.json") || fail 'wrong task held'
+        [ "$(cat "$dir/home/state/worker.meta")" = "$worker_record" ] || fail 'holding changed the worker record'
+        if [ "$path" = linked ]; then
+          (cd "$dir/home" && "$real_tasks" show idle-worker --full) > "$dir/followup-row"
+          assert_contains "$(cat "$dir/followup-row")" 'Origin: worker' 'follow-up lost its origin'
+        fi
+      else
+        expected='unknown none'
+        [ ! -s "$dir/home/protected-mutations" ] || fail 'stale decision mutated the backlog'
+        assert_absent "$dir/home/state/cards/$target.json" 'stale worker received a card'
+        assert_absent "$dir/home/state/idle-sweep/worker.raised" 'stale worker was marked raised'
+        [ ! -s "$dir/home/state/.wake-queue" ] || fail 'stale worker queued a wake'
+        if [ "$mode" = removed ]; then
+          assert_absent "$dir/home/state/worker.meta" 'hold recreated a removed worker'
+        else
+          [ "$(cat "$dir/home/state/worker.meta")" = $'spawn_gen=relaunched\nkind=ship' ] || fail 'hold changed the replacement record'
+        fi
+        if [ "$path" = direct ]; then
+          [ "$(calls "$dir" hold-attempts)" = worker ] || fail 'stale direct hold attempted a follow-up'
+        else
+          [ "$(calls "$dir" hold-attempts)" = $'worker\nidle-worker' ] || fail 'linked race was not exercised'
+        fi
+        if (cd "$dir/home" && "$real_tasks" show idle-worker >/dev/null 2>&1); then
+          fail 'a stale linked task was created'
+        fi
+      fi
+      [ "$(jq -r '.workers[0] | [.class,.action] | join(" ")' "$dir/home/state/idle-sweep.json")" = "$expected" ] \
+        || fail "wrong hold outcome for $path/$mode: $(cat "$dir/home/state/idle-sweep.json")"
+      [ ! -e "$dir/home/state/.control-worker.lock" ] && [ ! -L "$dir/home/state/.control-worker.lock" ] || fail 'worker lock leaked'
+      [ ! -e "$dir/home/state/.control-idle-worker.lock" ] && [ ! -L "$dir/home/state/.control-idle-worker.lock" ] || fail 'follow-up lock leaked'
+    done
+  done
+  pass 'fm-idle-sweep: real direct and linked holds skip removed or replaced records and retain both locks through mutation'
+}
+
+test_a_main_home_is_woken_once_for_what_the_sweep_could_not_handle() {
+  local dir
+  dir=$(new_case unhandled-wake)
+  add_worker "$dir" stuck 'state: failed · source: run-step · run failed' 90000
+  : > "$dir/home/hold-unavailable"
+
+  sweep "$dir" scan --now || fail "scan failed"
+  sweep "$dir" scan --now || fail "second scan failed"
+
+  [ "$(jq -r '.workers[] | select(.id=="stuck") | .action' "$dir/home/state/idle-sweep.json")" = unhandled ] \
+    || fail "a worker the sweep could not raise was not published as unhandled"
+  [ "$(grep -c 'idle-sweep-unhandled:' "$dir/home/state/.wake-queue")" = 1 ] \
+    || fail "an unchanged unhandled set did not wake the main home exactly once"
+  assert_contains "$(cat "$dir/home/state/.wake-queue")" "could neither clean up nor raise: stuck" \
+    "the wake should name what was left"
+
+  rm -f "$dir/home/hold-unavailable"
+  sweep "$dir" scan --now || fail "third scan failed"
+  [ "$(grep -c 'idle-sweep-unhandled:' "$dir/home/state/.wake-queue")" = 1 ] \
+    || fail "a handled worker woke the main home again"
+  pass "fm-idle-sweep: a main home is woken once for what the sweep could neither clean up nor raise"
+}
+
+test_a_worker_named_like_an_orphan_call_still_gets_the_record_check() {
+  local dir
+  dir=$(new_case orphan-named-worker)
+  add_worker "$dir" idle-orphan-race 'state: failed · source: run-step · run failed' 90000
+  : > "$dir/home/cleaned-during-hold/idle-orphan-race"
+
+  sweep "$dir" scan --now || fail "scan failed"
+
+  [ ! -s "$dir/home/hold-calls" ] || fail "a removed worker named like an orphan call got a decision: $(calls "$dir" hold-calls)"
+  [ "$(jq -r '.workers[] | select(.id=="idle-orphan-race") | [.class,.action] | join(" ")' "$dir/home/state/idle-sweep.json")" = 'unknown none' ] \
+    || fail "a worker named like an orphan call skipped the record check: $(cat "$dir/home/state/idle-sweep.json")"
+  pass "fm-idle-sweep: a real worker whose id starts with idle-orphan- still gets the locked record check"
 }
 
 test_done_workers_are_cleaned_up_without_force() {
@@ -719,6 +894,7 @@ test_watcher_runs_the_sweep_and_surfaces_its_decision() {
   pass "fm-idle-sweep: the watcher runs the sweep with no model turn and surfaces what it queues"
 }
 
+test_real_holds_check_worker_records_inside_the_lifecycle_lock
 test_done_workers_are_cleaned_up_without_force
 test_closed_unmerged_prs_require_a_cleanup_decision
 test_only_lifecycle_contention_defers_cleanup_refusals
@@ -738,3 +914,6 @@ test_local_mates_with_missing_homes_are_escalated
 test_scan_uses_fixed_quiet_and_audit_bounds
 test_watcher_runs_the_sweep_and_surfaces_its_decision
 test_done_ships_without_merge_evidence_are_never_cleaned_automatically
+test_a_cleanup_finishing_during_the_hold_mints_no_followup_call
+test_a_main_home_is_woken_once_for_what_the_sweep_could_not_handle
+test_a_worker_named_like_an_orphan_call_still_gets_the_record_check

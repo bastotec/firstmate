@@ -1078,6 +1078,106 @@ test_own_and_absent_slot_claims_still_tear_down() {
   pass "fm-teardown: a task's own slot claim, and an unclaimed slot, both still tear down"
 }
 
+test_record_only_retirement_revalidates_after_control_lock_wait() {
+  local dir id=retire-race mode real_sleep rc
+  command -v tasks-axi >/dev/null 2>&1 || {
+    pass "fm-retire-endpoint: skipped lock races (tasks-axi is not installed)"
+    return
+  }
+  real_sleep=$(command -v sleep)
+  for mode in unchanged replaced removed; do
+    dir=$(make_case "retire-lock-$mode")
+    rm -rf "$dir/worktree"
+    git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+      commit --allow-empty -qm base
+    git -C "$dir/project" worktree add -q --detach "$dir/worktree"
+    printf 'uncommitted work\n' > "$dir/worktree/draft.txt"
+    cp "$dir/worktree/draft.txt" "$dir/draft.expected"
+    printf 'backend = "markdown"\n[markdown]\npath = "data/backlog.md"\n' > "$dir/home/.tasks.toml"
+    printf '## In flight\n\n## Queued\n\n## Done\n' > "$dir/home/data/backlog.md"
+    tasks-axi add "$id" 'Retirement race' --file "$dir/home/data/backlog.md" >/dev/null || fail 'could not seed retirement row'
+    tasks-axi start "$id" --file "$dir/home/data/backlog.md" >/dev/null || fail 'could not start retirement row'
+    cp "$dir/home/data/backlog.md" "$dir/backlog.expected"
+    fm_write_meta "$dir/home/state/$id.meta" \
+      $(fm_test_stream_task "$dir/home/state" "$id") \
+      "worktree=$dir/worktree" "project=$dir/project" "harness=deck" \
+      "kind=ship" "mode=no-mistakes" "spawn_gen=original"
+    cp "$dir/home/state/$id.meta" "$dir/replacement.meta"
+    if [ "$mode" = replaced ]; then
+      awk -F= '$1 == "spawn_gen" { $0 = "spawn_gen=replacement" } { print }' \
+        "$dir/home/state/$id.meta" > "$dir/replacement.meta"
+    fi
+    cp -R "$ROOT/bin" "$dir/bin"
+    mv "$dir/bin/fm-teardown.sh" "$dir/bin/fm-teardown-real.sh"
+    cat > "$dir/bin/fm-teardown.sh" <<'SH'
+#!/usr/bin/env bash
+script_dir=$(cd "$(dirname "$0")" && pwd)
+rc=0
+"$script_dir/fm-teardown-real.sh" "$@" || rc=$?
+[ "$rc" = 72 ] || exit "$rc"
+(
+  STATE="$FM_HOME/state"
+  . "$script_dir/fm-wake-lib.sh"
+  lock="$STATE/.control-$1.lock"
+  fm_lock_acquire_wait "$lock" || exit 1
+  trap 'fm_lock_release "$lock"' EXIT
+  : > "$FM_RACE_DIR/ready"
+  for ((i=0; i<200; i++)); do
+    [ ! -e "$FM_RACE_DIR/retried" ] || break
+    sleep 0.05
+  done
+  [ -e "$FM_RACE_DIR/retried" ] || exit 1
+  case "$FM_RACE_MODE" in
+    replaced) cp "$FM_RACE_DIR/replacement.meta" "$STATE/$1.meta" ;;
+    removed) rm -f "$STATE/$1.meta" ;;
+  esac
+) > "$FM_RACE_DIR/holder.out" 2>&1 &
+printf '%s\n' "$!" > "$FM_RACE_DIR/holder.pid"
+for ((i=0; i<100; i++)); do
+  [ ! -e "$FM_RACE_DIR/ready" ] || exit 72
+  sleep 0.05
+done
+exit 1
+SH
+    cat > "$dir/fakebin/sleep" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = 0.1 ] && [ -e "$FM_RACE_DIR/ready" ]; then
+  : > "$FM_RACE_DIR/retried"
+fi
+exec "$FM_REAL_SLEEP" "$@"
+SH
+    chmod +x "$dir/bin/fm-teardown.sh" "$dir/fakebin/sleep"
+    rc=0
+    printf '%s\n' "$id" | FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+      FM_RACE_DIR="$dir" FM_RACE_MODE="$mode" FM_REAL_SLEEP="$real_sleep" \
+      PATH="$dir/fakebin:$PATH" "$dir/bin/fm-retire-endpoint.sh" "$id" \
+      > "$dir/retire.out" 2>&1 || rc=$?
+    [ ! -f "$dir/holder.pid" ] || fm_test_track_helper_pid "$(cat "$dir/holder.pid")"
+    assert_present "$dir/retried" "retirement never waited on the competing lifecycle action: $(cat "$dir/retire.out")"
+    if [ "$mode" = unchanged ]; then
+      [ "$rc" = 0 ] || fail "unchanged record could not retire after contention: $(cat "$dir/retire.out")"
+      assert_absent "$dir/home/state/$id.meta" 'unchanged record was not retired'
+      tasks-axi show "$id" --file "$dir/home/data/backlog.md" > "$dir/row.out"
+      assert_contains "$(cat "$dir/row.out")" 'state: done' 'unchanged retirement did not close its row'
+    else
+      [ "$rc" != 0 ] || fail "$mode record was retired using the old assertion"
+      assert_contains "$(cat "$dir/retire.out")" 'task record changed or vanished' 'retirement did not explain stale assertion'
+      cmp -s "$dir/backlog.expected" "$dir/home/data/backlog.md" || fail 'stale retirement changed the backlog'
+      if [ "$mode" = replaced ]; then
+        cmp -s "$dir/replacement.meta" "$dir/home/state/$id.meta" || fail 'retirement removed or altered the replacement record'
+      else
+        assert_absent "$dir/home/state/$id.meta" 'retirement recreated the vanished record'
+      fi
+      assert_absent "$dir/home/state/$id.backlog-close" 'stale retirement published a close marker'
+    fi
+    cmp -s "$dir/draft.expected" "$dir/worktree/draft.txt" || fail 'retirement changed uncommitted work'
+    assert_absent "$dir/home/state/$id.endpoint-retired" 'retirement left stale authorization'
+    assert_absent "$dir/home/state/.control-$id.lock" 'retirement leaked its control lock'
+  done
+  pass "fm-retire-endpoint: after lock contention only unchanged records retire; replacements and vanished records leave the backlog untouched"
+}
+
+test_record_only_retirement_revalidates_after_control_lock_wait
 test_invalid_endpoint_records_refuse_before_mutation
 test_control_lock_contention_refuses_before_mutation
 test_non_pool_teardown_ignores_task_set_lock

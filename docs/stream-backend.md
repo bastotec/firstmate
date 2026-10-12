@@ -470,6 +470,8 @@ What operator mode touches, and what it does not:
   A manually kept backlog, or a home with no backlog file, is left exactly as the operator keeps it.
 - Cleanup runs first and finishes the job properly whenever its own gates allow.
   When cleanup's work-protection gate refuses, the worktree, any uncommitted work in it, the task branch and the task's data are left byte-untouched and named in the output, for you to deal with under your own authority.
+  Record-only retirement after that refusal requires the task record to remain unchanged since before cleanup; a changed or vanished record stops further retirement without changing the backlog or removing a replacement worker's record.
+  Inspect the current record and backlog row before retrying; the [`fm-retire-endpoint.sh` implementation](../bin/fm-retire-endpoint.sh) owns the serialized snapshot check.
   It never discards work and never passes `--force` to anything.
 - When cleanup's unconfirmed-kill gate refuses, the records are retired anyway on your assertion alone, for an endpoint whose backend could not say whether it stopped.
   The backend answering positively that the endpoint is still present after its kill is the separate runtime refusal `--override-runtime-refusal` proceeds past; without that flag it stands and nothing is retired.

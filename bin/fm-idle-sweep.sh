@@ -56,12 +56,23 @@
 # A decision is an ordinary captain hold (bin/fm-captain-hold.sh hold) with a
 # full decision card, so it reaches Fleet Town, and in a secondmate home the
 # parent channel, through their existing owners. If holding the worker's id
-# fails, the sweep attempts a linked follow-up idle-<id> with --title and
-# --origin; the summary's hold_id identifies the successful call.
+# fails for a reason other than a rejected metadata snapshot, the sweep attempts
+# a linked follow-up idle-<id> with --title and --origin; the summary's hold_id
+# identifies the successful call.
 # Each raised decision records the worker's ledger byte count under
 # state/idle-sweep/<id>.raised; unchanged size suppresses another decision
 # even when the classification changes. Holds and settled deferrals on either
 # the worker or follow-up id take precedence over a changed fingerprint.
+# Worker holds use bin/fm-captain-hold.sh's --expected-record contract; only
+# the explicit record-less orphan caller is exempt, never a worker id prefix.
+# A rejected metadata snapshot is left for a fresh scan (class unknown,
+# action none), without attempting another linked hold or reporting it unhandled.
+# A main home has no parent audit, so a scan that leaves workers unhandled
+# queues ONE `check:` wake keyed idle-sweep-unhandled:<epoch>, naming those ids.
+# state/idle-sweep/.unhandled stores the sorted id set after a successful queue
+# append; unchanged sets suppress repeat wakes, changed sets queue a new one,
+# and a scan with no unhandled workers clears the marker so recurrence wakes again.
+# Secondmate homes leave unhandled workers to the parent audit below.
 # In a main home, a scan that raised any decision queues ONE `check:` wake
 # keyed idle-sweep:<epoch> naming those workers.
 #
@@ -285,6 +296,7 @@ raise() {
   local id=$1 class=$2 why=$3 project=$4 card title situation reason rec o1 o2 l1 l2 rc=0 out call_id=$1 ledger_id=${5:-$1}
   local hold_args=()
   HOLD_ID=
+  RAISE_SKIPPED=0
   local where="this home"
   [ "$FM_HOME" = "${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}" ] || where="home $FM_HOME"
   case "$class" in
@@ -314,16 +326,27 @@ raise() {
       options:[{key:"1",label:$l1,instruction:$o1},{key:"2",label:$l2,instruction:$o2}],
       recommended:$rec}' > "$card" || { rm -f "$card"; return 0; }
   hold_args=(--reason "$reason" --card-file "$card")
-  case "$id" in idle-orphan-*) hold_args+=(--title "${title:0:120}" --repo "$project") ;; esac
+  # only the record-less orphan caller passes "orphan"; a worker whose own id
+  # happens to start with idle-orphan- still gets the locked record check
+  if [ "${6:-}" = orphan ]; then
+    hold_args+=(--title "${title:0:120}" --repo "$project")
+  else
+    hold_args+=(--expected-record "$RECORD")
+  fi
   out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-captain-hold.sh" hold "$id" \
     "${hold_args[@]}" 2>&1) || rc=$?
-  if [ "$rc" -ne 0 ]; then
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then
     rc=0
     call_id="idle-$id"
     out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-captain-hold.sh" hold "$call_id" \
-      --title "${title:0:120}" --origin "$id" --repo "$project" --reason "$reason" --card-file "$card" 2>&1) || rc=$?
+      --title "${title:0:120}" --origin "$id" --repo "$project" "${hold_args[@]}" 2>&1) || rc=$?
   fi
   rm -f "$card"
+  if [ "$rc" -eq 3 ]; then
+    RAISE_SKIPPED=1
+    log "left $id for a fresh scan: its record changed or was cleaned up during this one"
+    return 0
+  fi
   if [ "$rc" -ne 0 ]; then
     log "could not hold $id ($class): $(one_line "$out")"
     return 0
@@ -386,6 +409,7 @@ add_row() {  # <id> <class> <detail> <action>
 while IFS= read -r meta; do
   id=$(basename "$meta" .meta)
   record=$(cat "$meta" 2>/dev/null) || continue
+  RECORD=$record
   project=$(project_of "$meta")
   classify "$id"
   action=none
@@ -396,7 +420,7 @@ while IFS= read -r meta; do
         CLEANUP_WHY="no merged PR is recorded for it, so nothing proves its work landed"
         RAISED=0
         raise "$id" finished "$CLEANUP_WHY" "$project"
-        if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; else action=unhandled; fi
+        if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; elif [ "${RAISE_SKIPPED:-0}" = 1 ]; then CLASS=unknown; DETAIL="worker record changed during scan"; else action=unhandled; fi
         DETAIL=$CLEANUP_WHY
       elif cleanup "$id"; then
         action=cleaned
@@ -416,14 +440,14 @@ while IFS= read -r meta; do
       else
         RAISED=0
         raise "$id" finished "$CLEANUP_WHY" "$project"
-        if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; else action=unhandled; fi
+        if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; elif [ "${RAISE_SKIPPED:-0}" = 1 ]; then CLASS=unknown; DETAIL="worker record changed during scan"; else action=unhandled; fi
         DETAIL=$CLEANUP_WHY
       fi
       ;;
     failed|stalled|dead)
       RAISED=0
       raise "$id" "$CLASS" "$DETAIL" "$project"
-      if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; else action=unhandled; fi
+      if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; elif [ "${RAISE_SKIPPED:-0}" = 1 ]; then CLASS=unknown; DETAIL="worker record changed during scan"; else action=unhandled; fi
       ;;
   esac
   add_row "$id" "$CLASS" "$DETAIL" "$action"
@@ -467,8 +491,8 @@ while IFS=$'\t' read -r otask oeid; do
   fi
   detail="$detail and its close refused: $(one_line "$out")"
   RAISED=0
-  raise "idle-orphan-$otask" dead "$detail" "$(basename "$FM_HOME")" "$otask"
-  if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; else action=unhandled; fi
+  raise "idle-orphan-$otask" dead "$detail" "$(basename "$FM_HOME")" "$otask" orphan
+  if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; elif [ "${RAISE_SKIPPED:-0}" = 1 ]; then CLASS=unknown; DETAIL="worker record changed during scan"; else action=unhandled; fi
   add_row "idle-orphan-$otask" dead "$detail" "$action"
 done <<< "$orphans"
 
@@ -542,9 +566,23 @@ if tmp=$(mktemp "$STATE/.idle-sweep.json.XXXXXX"); then
   fi
 fi
 
+prc=0
+fm_parent_channel_destination "$FM_HOME" "$STATE" >/dev/null 2>&1 || prc=$?
+# A main home has no parent to audit it, so anything this scan could neither
+# clean up nor raise wakes it directly, once per distinct set.
+if [ "$prc" -eq 1 ]; then
+  left=$(printf '%s' "$ROWS" | jq -rs '[.[] | select(.action=="unhandled") | .id] | sort | join(" ")' 2>/dev/null) || left=
+  seen="$RAISED_DIR/.unhandled"
+  if [ -z "$left" ]; then
+    rm -f "$seen" 2>/dev/null || true
+  elif [ "$(cat "$seen" 2>/dev/null)" != "$left" ]; then
+    mkdir -p "$RAISED_DIR" 2>/dev/null || true
+    if fm_wake_append check "idle-sweep-unhandled:$NOW" "check: idle sweep could neither clean up nor raise: $left"; then
+      printf '%s\n' "$left" > "$seen" 2>/dev/null || true
+    fi
+  fi
+fi
 if [ -n "$NEW" ]; then
-  prc=0
-  fm_parent_channel_destination "$FM_HOME" "$STATE" >/dev/null 2>&1 || prc=$?
   if [ "$prc" -eq 1 ]; then
     fm_wake_append check "idle-sweep:$NOW" "check: idle workers need a decision:$NEW" \
       || log "could not queue the decision wake for:$NEW"

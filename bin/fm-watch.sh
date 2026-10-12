@@ -139,7 +139,9 @@
 #                          revival, its budget, and this one escalation
 #   check: idle workers need a decision / second mate not cleaning up idle workers: <id>...
 #                          surfaced once from durable queue rows keyed
-#                          idle-sweep:<epoch> and idle-sweep-audit:<mate>:<epoch>,
+#                          idle-sweep:<epoch> and idle-sweep-audit:<mate>:<epoch>
+#                          (and idle-sweep-unhandled:<epoch> for "idle sweep
+#                          could neither clean up nor raise some workers"),
 #                          queued by bin/fm-idle-sweep.sh, which this watcher
 #                          runs detached; that script's header owns cadence,
 #                          cleanup eligibility, decisions, and the audit
@@ -1714,7 +1716,7 @@ procevent_surface_after_output() {
 }
 
 procevent_surface_queued() {
-  local key reason captured="" stranded="" unstarted="" notes="" revive="" idle="" idle_audit=""
+  local key reason captured="" stranded="" unstarted="" notes="" revive="" idle="" idle_audit="" idle_left=""
   PROCEVENT_SURFACED=
   [ -s "$FM_WAKE_QUEUE" ] || return 0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
@@ -1726,7 +1728,7 @@ procevent_surface_queued() {
         notes="$notes ${key#inbox:}"
         continue
         ;;
-      procevent:*|secondmate-revive:*|idle-sweep:*|idle-sweep-audit:*) ;;
+      procevent:*|secondmate-revive:*|idle-sweep:*|idle-sweep-audit:*|idle-sweep-unhandled:*) ;;
       *) continue ;;
     esac
     [ -e "$(procevent_surfaced_marker "$key")" ] && continue
@@ -1741,6 +1743,7 @@ procevent_surface_queued() {
         revive="$revive ${key%%:*}"
         ;;
       idle-sweep:*) idle=1 ;;
+      idle-sweep-unhandled:*) idle_left=1 ;;
       idle-sweep-audit:*)
         key=${key#idle-sweep-audit:}
         idle_audit="$idle_audit ${key%%:*}"
@@ -1763,6 +1766,10 @@ procevent_surface_queued() {
   if [ -n "$idle" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
     reason="$reason idle workers need a decision"
+  fi
+  if [ -n "$idle_left" ]; then
+    [ "$reason" = "check:" ] || reason="$reason;"
+    reason="$reason idle sweep could neither clean up nor raise some workers"
   fi
   if [ -n "$idle_audit" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"

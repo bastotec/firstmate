@@ -75,6 +75,7 @@ state/
   <id>.revive secondmate-revive.log  mid-session second-mate revival record and log (bin/fm-secondmate-revive.sh)
   <id>.held-stopped       deliberate secondmate stop marker (bin/fm-control.sh)
   idle-sweep.json idle-sweep.log idle-sweep/<id>.raised <mate>.idle-audit <mate>.idle-audit-missing  idle-worker sweep summary, log, raised-decision fingerprints, second-mate audit episodes and missing-summary grace marks (bin/fm-idle-sweep.sh)
+  idle-sweep/.unhandled   main-home unhandled-set wake suppression marker; bin/fm-idle-sweep.sh owns its contents and reset contract
   <id>.check.sh <id>.check-trust  authenticated slow poll and custom-check binding (bin/fm-check-register.sh)
   <id>.pr-poll <id>.pr-poll-registration <id>.pr-poll-retirement <id>.pr-poll-merge-notified  PR merge poll records (bin/fm-pr-lib.sh)
   <id>.merge-authority    accepted merge authority (bin/fm-merge-authority-lib.sh)

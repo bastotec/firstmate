@@ -22,7 +22,7 @@
 # Usage:
 #   fm-captain-hold.sh hold <task-id> --reason <reason> \
 #     [--title <title>] [--repo <repo>] [--origin <origin-id>] [--until YYYY-MM-DD] \
-#     [--card-file <path>] [--reopen-deferred]
+#     [--card-file <path>] [--reopen-deferred] [--expected-record <metadata>]
 #   fm-captain-hold.sh answer <task-id> --decision-file <path> [--release | --defer <condition>]
 #   fm-captain-hold.sh answers [<legacy-origin> | --any-origin] --source <provenance>   (keyed answers on stdin)
 #   fm-captain-hold.sh reconcile-requests --source-id <source-id> --source <provenance>   (task ids on stdin)
@@ -57,6 +57,11 @@
 # card only while the reason is unchanged; a changed reason replaces it with a
 # draft from the new reason, so options written for the old reason never stay
 # in front of the captain. A new hold replaces any leftover card.
+# `--expected-record` admits an idle-sweep hold only while the worker metadata
+# matches under its control lock, retained through the hold and card write.
+# For a linked idle-<origin> hold, --origin selects the worker and its lock is
+# acquired before the follow-up's lock. Exit 3 means changed or absent metadata,
+# with no backlog, card, or parent-channel mutation.
 # Card-write failures after a durable hold only warn; successful closes and
 # releases remove the card, including answer repairs and matching replays.
 # A removal failure warns without reversing the durable resolution; replay
@@ -291,6 +296,8 @@ CAPTAIN_META_LOCK=
 CAPTAIN_META_LOCK_HELD=0
 CAPTAIN_CONTROL_LOCK=
 CAPTAIN_CONTROL_LOCK_HELD=0
+CAPTAIN_ORIGIN_LOCK=
+CAPTAIN_ORIGIN_LOCK_HELD=0
 captain_hold_cleanup() {
   if [ "$CAPTAIN_META_LOCK_HELD" = 1 ]; then
     fm_lock_release "$CAPTAIN_META_LOCK" || true
@@ -299,6 +306,10 @@ captain_hold_cleanup() {
   if [ "$CAPTAIN_CONTROL_LOCK_HELD" = 1 ]; then
     fm_lock_release "$CAPTAIN_CONTROL_LOCK" || true
     CAPTAIN_CONTROL_LOCK_HELD=0
+  fi
+  if [ "$CAPTAIN_ORIGIN_LOCK_HELD" = 1 ]; then
+    fm_lock_release "$CAPTAIN_ORIGIN_LOCK" || true
+    CAPTAIN_ORIGIN_LOCK_HELD=0
   fi
 }
 trap captain_hold_cleanup EXIT
@@ -902,6 +913,7 @@ command_hold() {
   local id=${1:-} title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence
   local existing_hold_kind='' existing_held='' preserve_hold_set=0 card_file=''
   local reopen_deferred=0 existing_reason='' tmp deferral_state=''
+  local expected_record='' expected_record_set=0 worker_id current_record
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -913,6 +925,7 @@ command_hold() {
       --until) shift; until=${1:-} ;;
       --card-file) shift; card_file=${1:-} ;;
       --reopen-deferred) reopen_deferred=1 ;;
+      --expected-record) shift; [ "$#" -gt 0 ] || { usage >&2; exit 2; }; expected_record=$1; expected_record_set=1 ;;
       *) usage >&2; exit 2 ;;
     esac
     shift
@@ -938,7 +951,23 @@ command_hold() {
     [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) : ;;
     *) fail "FM_CAPTAIN_HOLD_NOW must be a UTC YYYY-MM-DDTHH:MM:SSZ timestamp" ;;
   esac
+  worker_id=$id
+  if [ "$expected_record_set" = 1 ] && [ -n "$origin" ]; then
+    [ "$id" = "idle-$origin" ] || fail "--expected-record with --origin requires idle-<origin> as the task id"
+    worker_id=$origin
+    CAPTAIN_ORIGIN_LOCK="$STATE/.control-$worker_id.lock"
+    fm_lock_acquire_wait "$CAPTAIN_ORIGIN_LOCK"
+    CAPTAIN_ORIGIN_LOCK_HELD=1
+  fi
   acquire_task_control_lock "$id"
+  if [ "$expected_record_set" = 1 ]; then
+    if [ ! -f "$STATE/$worker_id.meta" ] \
+      || ! current_record=$(cat "$STATE/$worker_id.meta" 2>/dev/null) \
+      || [ "$current_record" != "$expected_record" ]; then
+      printf 'fm-captain-hold: worker record %s changed or vanished\n' "$worker_id" >&2
+      exit 3
+    fi
+  fi
   require_tasks_axi
   if task_show "$id"; then
     show=$TASK_SHOW_OUTPUT
