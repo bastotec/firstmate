@@ -73,21 +73,16 @@ worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"]
 reaper = threading.Thread(target=worker.wait)
 reaper.start()
 try:
-    real_arguments = crew.PROCESS_API.process_arguments
-    reads = [0]
-
-    def exec_snapshot(pid):
-        reads[0] += 1
-        # /proc cmdline and the macOS argument API may be empty during exec.
-        return None if reads[0] == 1 else real_arguments(pid)
-
-    with patch.object(crew.PROCESS_API, "process_arguments", exec_snapshot):
+    with patch.object(crew.PROCESS_API, "process_arguments", return_value=None):
+        empty_argv = crew.process_arguments(worker.pid)
         identity = crew.process_identity(worker.pid)
-    # Exec may change argv without changing the process group or start time.
+        assert empty_argv == [], "the transient snapshot must be empty"
+        assert crew.target_state(worker.pid, identity) == "owned", "empty argv changed ownership"
     with patch.object(crew.PROCESS_API, "process_arguments", return_value=["changed", "argv"]):
+        changed_argv = crew.process_arguments(worker.pid)
         changed = crew.process_identity(worker.pid)
-        assert changed["arguments"] != identity["arguments"], "argv snapshots must diverge"
-        assert changed["started"] == identity["started"], "the same process must remain alive"
+        assert changed_argv != empty_argv, "argv snapshots must diverge"
+        assert changed == identity, "exec must preserve the kernel identity"
         assert crew.target_state(worker.pid, identity) == "owned", "exec changed ownership"
     group = crew.Group(Path(sys.argv[2]), "identity-exec")
     group.save({"id": "identity-exec", "title": "Exec identity", "status": "running",

@@ -82,6 +82,7 @@ import secrets
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -246,18 +247,17 @@ def process_arguments(pid) -> list[str]:
 
 
 def process_identity(pid: int, deck: bool = False) -> dict | None:
-    """A process we started, told apart from a later reuse of its pid: its start time,
-    and that it still leads the process group we gave it. The argument snapshot is not
-    used: on macOS an interpreter's exec changes it, and right after exec it can be empty."""
+    """A process snapshot with its start time and process group. The argument snapshot
+    is not used: on macOS an interpreter's exec changes it, and right after exec it can be empty."""
     try:
         out = subprocess.run(["ps", "-o", "lstart=,pgid=", "-p", str(pid)], capture_output=True, text=True,
                              env=dict(os.environ, LC_ALL="C"))
     except (OSError, subprocess.SubprocessError):
         return None
     fields = out.stdout.strip().rsplit(None, 1)
-    if len(fields) != 2 or fields[1] != str(pid):
+    if out.returncode or len(fields) != 2 or not fields[1].isdigit():
         return None
-    return {"started": fields[0], "deck": deck, "pid": pid}
+    return {"started": fields[0], "deck": deck, "pid": pid, "pgid": int(fields[1])}
 
 
 def target_state(pid, identity) -> str:
@@ -266,6 +266,8 @@ def target_state(pid, identity) -> str:
     if identity and identity.get("pid", pid) != pid:
         return "unrelated"
     actual = process_identity(pid, bool(identity and identity.get("deck")))
+    if actual and actual["pgid"] != pid:
+        return "unrelated"
     if not actual or not identity:
         return "unknown"
     return "owned" if actual["started"] == identity.get("started") else "unrelated"
@@ -382,7 +384,14 @@ class Specialist:
     def record(self) -> dict:
         if not self.exists():
             die(f"no specialist {self.name!r} in this home", 3)
-        return read_json(self.record_path)
+        rec = read_json(self.record_path)
+        for directory in (self.state, self.data):
+            if directory.is_dir() and stat.S_IMODE(directory.stat().st_mode) != 0o700:
+                directory.chmod(0o700)
+        for path in (self.history_path, Path(rec["memory"])):
+            if path.is_file() and stat.S_IMODE(path.stat().st_mode) != 0o600:
+                path.chmod(0o600)
+        return rec
 
     def save(self, rec: dict) -> None:
         write_json(self.record_path, rec)
