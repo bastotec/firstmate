@@ -4,7 +4,6 @@
 #
 # Usage:
 #   fm-idle-sweep.sh scan [--now]
-#   fm-idle-sweep.sh list
 #   fm-idle-sweep.sh summary
 #
 # Why this exists: the finished-work sweep in .agents/skills/task-delivery
@@ -21,52 +20,44 @@
 #   - otherwise its current state is read once with bin/fm-crew-state.sh, and
 #     its age is the time since its status ledger (else its record) changed;
 #   - working or parked: left alone;
-#   - done, quiet for FM_IDLE_SWEEP_DONE_SECS: cleaned up with
+#   - done, quiet for 15 minutes: cleaned up with
 #     bin/fm-teardown.sh, never --force; a refusal only because the endpoint is
 #     on a retired backend goes to bin/fm-retire-endpoint.sh --finished; any
 #     other refusal becomes a decision to clean it up or keep it;
 #   - failed, blocked, paused, or unknown with its endpoint or copy gone,
-#     quiet for FM_IDLE_SWEEP_IDLE_SECS: one decision to retire or retry it.
+#     quiet for 6 hours: one decision to retire or retry it.
 #   Then this home's record-less live endpoints are closed through
 #   bin/fm-retire-endpoint.sh --list-orphans / --orphan; a refused close
 #   becomes a decision under the id idle-orphan-<task>.
 # A decision is an ordinary captain hold (bin/fm-captain-hold.sh hold) with a
 # full decision card, so it reaches Fleet Town, and in a secondmate home the
 # parent channel, through their existing owners. Each raised decision records
-# the worker's class and ledger size under state/idle-sweep/<id>.raised, and a
-# later scan raises it again only after the worker's ledger or class changes,
+# the worker's ledger size under state/idle-sweep/<id>.raised, and a
+# later scan raises it again only after the worker's ledger changes,
 # so an answer to keep or retry a worker is never asked twice.
 # In a main home, a scan that raised any decision queues ONE `check:` wake
 # keyed idle-sweep:<epoch> naming those workers.
 #
 # A home that records second mates also audits them: each mate's own sweep
-# must publish a summary younger than FM_IDLE_SWEEP_AUDIT_SECS, read from the
+# must publish a summary younger than 6 hours, read from the
 # local home's state/idle-sweep.json or over bin/fm-on.sh `summary` for a
 # remote one (an ssh transport failure, exit 255, proves nothing and is
 # skipped). A missing or stale summary, or one listing a worker the mate could
 # neither clean up nor raise, queues ONE `check:` wake keyed
 # idle-sweep-audit:<mate>:<epoch> per episode; a fresh clean summary ends it.
 #
-# `list` is read-only and prints "<id>\t<class>\t<age-secs>\t<detail>" per
-# record. Classes: active, settling (idle, but not yet past its bound), held,
-# raised, finished, failed, stalled, dead.
 # `summary` prints the last scan's state/idle-sweep.json
 # (schema fm-idle-sweep.v1: generated, generated_epoch, home, workers[] of
-# {id, class, age_seconds, detail, action}); action is one of none, cleaned,
+# {id, class, age_seconds, detail, action, hold_id}); hold_id names the raised
+# captain call, or is null; action is one of none, cleaned,
 # carded, or unhandled. Exit 1 when no scan has published one yet.
 #
 # Environment knobs:
 #   FM_HOME                        required
 #   FM_IDLE_SWEEP_SECS             scan cadence; `scan` without --now is a
 #                                  no-op until this long after the last (1800)
-#   FM_IDLE_SWEEP_IDLE_SECS        quiet time before a failed, blocked, paused
-#                                  or dead worker becomes a decision (21600)
-#   FM_IDLE_SWEEP_DONE_SECS        quiet time before a done worker is cleaned
-#                                  up, leaving its owner's turn first (900)
-#   FM_IDLE_SWEEP_AUDIT_SECS       oldest acceptable second-mate summary (21600)
-#   FM_IDLE_SWEEP_STATE_TIMEOUT    bound on each crew-state read (60)
 #
-# Exit: 0 after a scan or list; 2 on invalid use.
+# Exit: 0 after a scan; 2 on invalid use.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -78,7 +69,7 @@ usage() {
 CMD=${1:-}
 case "$CMD" in
   -h|--help) usage; exit 0 ;;
-  scan|list|summary) shift ;;
+  scan|summary) shift ;;
   *) usage >&2; exit 2 ;;
 esac
 NOW_FLAG=0
@@ -116,11 +107,6 @@ num_or() {  # <value> <default>
   case "$1" in ''|*[!0-9]*) printf '%s' "$2" ;; *) printf '%s' "$1" ;; esac
 }
 SWEEP_SECS=$(num_or "${FM_IDLE_SWEEP_SECS:-}" 1800)
-IDLE_SECS=$(num_or "${FM_IDLE_SWEEP_IDLE_SECS:-}" 21600)
-DONE_SECS=$(num_or "${FM_IDLE_SWEEP_DONE_SECS:-}" 900)
-AUDIT_SECS=$(num_or "${FM_IDLE_SWEEP_AUDIT_SECS:-}" 21600)
-STATE_TIMEOUT=$(num_or "${FM_IDLE_SWEEP_STATE_TIMEOUT:-}" 60)
-[ "$STATE_TIMEOUT" -gt 0 ] || STATE_TIMEOUT=60
 RAISED_DIR="$STATE/idle-sweep"
 LOG="$STATE/idle-sweep.log"
 LOCK="$STATE/.idle-sweep.lock"
@@ -163,44 +149,50 @@ hold_settled() {  # <id> -> 0 when the captain already owns this worker's call
   [ "$rc" -eq 0 ]
 }
 
-fingerprint() {  # <id> <class>
-  printf '%s %s\n' "$2" "$(size_of "$STATE/$1.status")"
+fingerprint() {  # <id>
+  printf '%s\n' "$(size_of "$STATE/$1.status")"
 }
 
-already_raised() {  # <id> <class>
-  [ -f "$RAISED_DIR/$1.raised" ] && [ "$(cat "$RAISED_DIR/$1.raised" 2>/dev/null)" = "$(fingerprint "$1" "$2")" ]
+already_raised() {  # <id>
+  [ -f "$RAISED_DIR/$1.raised" ] && [ "$(cat "$RAISED_DIR/$1.raised" 2>/dev/null)" = "$(fingerprint "$1")" ]
 }
 
 # classify <id>: sets CLASS, DETAIL, AGE
 classify() {
-  local id=$1 line verb
+  local id=$1 line verb worktree
   AGE=$(record_age "$id")
   DETAIL=
-  if hold_settled "$id"; then
+  if hold_settled "$id" || hold_settled "idle-$id"; then
     CLASS=held
     return
   fi
-  line=$(fm_run_timed "$STATE_TIMEOUT" \
-    "$SCRIPT_DIR/fm-crew-state.sh" "$id" 2>/dev/null | head -1) || true
+  worktree=$(fm_meta_get "$STATE/$id.meta" worktree)
+  fm_treehouse_slot_owner_state "$worktree" "$id"
+  if [ "$FM_TREEHOUSE_SLOT_OWNER" = other ]; then
+    line="state: unknown · source: none · recorded copy gone: slot reassigned to $FM_TREEHOUSE_SLOT_OWNER_ID"
+  else
+    line=$(fm_run_timed 60 \
+      "$SCRIPT_DIR/fm-crew-state.sh" "$id" 2>/dev/null | head -1) || true
+  fi
   verb=$(printf '%s' "$line" | sed -n 's/^state: \([a-z]*\).*/\1/p')
   DETAIL=$(printf '%s' "$line" | sed 's/^state: [a-z]* · source: [a-z-]* · //' | cut -c1-200)
   case "$verb" in
     working|parked) CLASS=active; return ;;
-    done) CLASS=finished; [ "$AGE" -ge "$DONE_SECS" ] || CLASS=settling ;;
+    done) CLASS=finished; [ "$AGE" -ge 900 ] || CLASS=settling ;;
     failed) CLASS=failed ;;
     blocked|paused) CLASS=stalled ;;
     unknown)
       case "$DETAIL" in
-        *gone*|*unreachable*) CLASS=dead ;;
+        *gone*) CLASS=dead ;;
         *) CLASS=settling; return ;;
       esac
       ;;
     *) CLASS=settling; return ;;
   esac
-  if [ "$CLASS" != finished ] && [ "$CLASS" != settling ] && [ "$AGE" -lt "$IDLE_SECS" ]; then
+  if [ "$CLASS" != finished ] && [ "$CLASS" != settling ] && [ "$AGE" -lt 21600 ]; then
     CLASS=settling
   fi
-  if [ "$CLASS" != settling ] && already_raised "$id" "$CLASS"; then
+  if [ "$CLASS" != settling ] && already_raised "$id"; then
     CLASS=raised
   fi
 }
@@ -221,7 +213,9 @@ hours() {  # <secs>
 # raise <id> <class> <why> <project>: hold the worker for the captain with a
 # full card. Prints nothing; sets RAISED=1 on success.
 raise() {
-  local id=$1 class=$2 why=$3 project=$4 card title situation reason rec o1 o2 l1 l2 rc=0 out
+  local id=$1 class=$2 why=$3 project=$4 card title situation reason rec o1 o2 l1 l2 rc=0 out call_id=$1
+  local hold_args=()
+  HOLD_ID=
   local where="this home"
   [ "$FM_HOME" = "${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}" ] || where="home $FM_HOME"
   case "$class" in
@@ -242,20 +236,23 @@ raise() {
       l2="Retry it"; o2="Relaunch worker $id in $where on its existing instructions and local copy, and have it finish its task."
       rec=1; [ "$class" = stalled ] && rec=2 ;;
   esac
+  reason="$(printf '%s' "$situation" | tr -d '()' | cut -c1-200); quiet $(hours "$AGE"); $l1 or $l2"
   situation="$(printf '%s' "$situation" | cut -c1-240) ($(hours "$AGE") quiet)"
-  reason="$(printf '%s' "$situation" | cut -c1-200); $l1 or $l2"
   card=$(mktemp "$STATE/.idle-sweep-card.XXXXXX") || return 0
   jq -n --arg project "$project" --arg title "${title:0:120}" --arg situation "$situation" \
     --arg l1 "$l1" --arg o1 "$o1" --arg l2 "$l2" --arg o2 "$o2" --arg rec "$rec" \
     '{project:$project, title:$title, situation:$situation,
       options:[{key:"1",label:$l1,instruction:$o1},{key:"2",label:$l2,instruction:$o2}],
       recommended:$rec}' > "$card" || { rm -f "$card"; return 0; }
+  hold_args=(--reason "$reason" --card-file "$card")
+  case "$id" in idle-orphan-*) hold_args+=(--title "${title:0:120}" --repo "$project") ;; esac
   out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-captain-hold.sh" hold "$id" \
-    --reason "$reason" --card-file "$card" 2>&1) || rc=$?
+    "${hold_args[@]}" 2>&1) || rc=$?
   if [ "$rc" -ne 0 ]; then
     rc=0
-    out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-captain-hold.sh" hold "$id" \
-      --title "${title:0:120}" --repo "$project" --reason "$reason" --card-file "$card" 2>&1) || rc=$?
+    call_id="idle-$id"
+    out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-captain-hold.sh" hold "$call_id" \
+      --title "${title:0:120}" --origin "$id" --repo "$project" --reason "$reason" --card-file "$card" 2>&1) || rc=$?
   fi
   rm -f "$card"
   if [ "$rc" -ne 0 ]; then
@@ -263,9 +260,10 @@ raise() {
     return 0
   fi
   mkdir -p "$RAISED_DIR" 2>/dev/null || true
-  fingerprint "$id" "$class" > "$RAISED_DIR/$id.raised" 2>/dev/null || true
+  fingerprint "$id" > "$RAISED_DIR/$id.raised" 2>/dev/null || true
   log "raised $id ($class): $why"
   RAISED=1
+  HOLD_ID=$call_id
 }
 
 # cleanup <id>: guarded teardown of a finished worker. 0 = cleaned; else
@@ -297,15 +295,6 @@ worker_metas() {
   done
 }
 
-if [ "$CMD" = list ]; then
-  while IFS= read -r meta; do
-    id=$(basename "$meta" .meta)
-    classify "$id"
-    printf '%s\t%s\t%s\t%s\n' "$id" "$CLASS" "$AGE" "$DETAIL"
-  done < <(worker_metas)
-  exit 0
-fi
-
 # --- scan ---------------------------------------------------------------------
 if [ "$NOW_FLAG" -eq 0 ] && [ -e "$STATE/.last-idle-sweep" ]; then
   last=$(mtime_of "$STATE/.last-idle-sweep") || last=0
@@ -320,8 +309,9 @@ NEW=
 ROWS=
 add_row() {  # <id> <class> <detail> <action>
   ROWS="$ROWS$(jq -cn --arg id "$1" --arg class "$2" --argjson age "$AGE" \
-    --arg detail "$3" --arg action "$4" \
-    '{id:$id,class:$class,age_seconds:$age,detail:$detail,action:$action}')"$'\n'
+    --arg detail "$3" --arg action "$4" --arg hold_id "${HOLD_ID:-}" \
+    '{id:$id,class:$class,age_seconds:$age,detail:$detail,action:$action,
+      hold_id:(if $hold_id=="" then null else $hold_id end)}')"$'\n'
 }
 
 while IFS= read -r meta; do
@@ -329,6 +319,7 @@ while IFS= read -r meta; do
   project=$(project_of "$meta")
   classify "$id"
   action=none
+  HOLD_ID=
   case "$CLASS" in
     finished)
       if cleanup "$id"; then
@@ -337,14 +328,14 @@ while IFS= read -r meta; do
       else
         RAISED=0
         raise "$id" finished "$CLEANUP_WHY" "$project"
-        if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $id"; else action=unhandled; fi
+        if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; else action=unhandled; fi
         DETAIL=$CLEANUP_WHY
       fi
       ;;
     failed|stalled|dead)
       RAISED=0
       raise "$id" "$CLASS" "$DETAIL" "$project"
-      if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $id"; else action=unhandled; fi
+      if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; else action=unhandled; fi
       ;;
   esac
   add_row "$id" "$CLASS" "$DETAIL" "$action"
@@ -357,15 +348,21 @@ while IFS=$'\t' read -r otask oeid; do
   rc=0
   out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-retire-endpoint.sh" --orphan "$otask" --endpoint "$oeid" </dev/null 2>&1) || rc=$?
   AGE=0
+  HOLD_ID=
   if [ "$rc" -eq 0 ]; then
     log "closed orphan endpoint $oeid ($otask)"
     add_row "idle-orphan-$otask" dead "endpoint $oeid had no record" cleaned
     continue
   fi
-  hold_settled "idle-orphan-$otask" && continue
+  detail="endpoint $oeid for $otask has no record and its close refused: $(one_line "$out")"
+  if hold_settled "idle-orphan-$otask" || hold_settled "idle-idle-orphan-$otask"; then
+    add_row "idle-orphan-$otask" held "$detail" none
+    continue
+  fi
   RAISED=0
-  raise "idle-orphan-$otask" dead "endpoint $oeid for $otask has no record and its close refused: $(one_line "$out")" "$(basename "$FM_HOME")"
-  if [ "$RAISED" = 1 ]; then NEW="$NEW idle-orphan-$otask"; fi
+  raise "idle-orphan-$otask" dead "$detail" "$(basename "$FM_HOME")"
+  if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; else action=unhandled; fi
+  add_row "idle-orphan-$otask" dead "$detail" "$action"
 done <<< "$orphans"
 
 # --- second-mate audit ----------------------------------------------------------
@@ -380,15 +377,19 @@ audit_mate() {  # <meta>
     [ "$rc" -eq 255 ] && return 0
     [ "$rc" -eq 124 ] && return 0
   else
-    [ -n "$home" ] && [ -d "$home/state" ] || return 0
-    json=$(cat "$home/state/idle-sweep.json" 2>/dev/null) || rc=1
+    json=
+    if [ -n "$home" ]; then
+      json=$(cat "$home/state/idle-sweep.json" 2>/dev/null) || rc=1
+    else
+      rc=1
+    fi
   fi
   if [ "$rc" -ne 0 ] || [ -z "$json" ]; then
     stale="it has never published a cleanup sweep"
   else
     gen=$(printf '%s' "$json" | jq -r '.generated_epoch // 0' 2>/dev/null) || gen=0
     gen=$(num_or "$gen" 0)
-    if [ $((NOW - gen)) -gt "$AUDIT_SECS" ]; then
+    if [ $((NOW - gen)) -gt 21600 ]; then
       stale="its last cleanup sweep was $(hours $((NOW - gen))) ago"
     else
       local left
