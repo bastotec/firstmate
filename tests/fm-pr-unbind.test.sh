@@ -6,8 +6,8 @@
 #     github.com origin;
 #   - the armed poll triple armed for that same URL is removed with it, each
 #     artifact pinned to the bytes and identity the validated snapshot captured;
-#   - every removal is asserted in state/pr-unbinds.log before anything is
-#     removed, and a failed append refuses the whole clear;
+#   - each unbind attempt is asserted in state/pr-unbinds.log before its own
+#     removals, and a failed append refuses the whole clear;
 #   - custom checks, foreign static checks, ambiguous partial poll state, unsafe
 #     metadata, and a missing or non-GitHub worktree origin refuse with the meta
 #     untouched, while validated interrupted poll removal is rerunnable;

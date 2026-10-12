@@ -2,12 +2,11 @@
 # Clear a wrong pr= (and its pr_head=) from a task's state/<id>.meta.
 # Usage: fm-pr-unbind.sh <task-id>
 #
-# A task's meta can end up carrying another task's pr= (observed twice on
-# 2026-10-12: PR 123 and PR 121 recorded on the wrong tasks), and no supported
-# command could remove the wrong value: bin/fm-pr-check.sh only records or
-# rebinds, and teardown, merge, and the audit all read the live forge instead.
-# The stale value then leaks into public records such as failed-outcome
-# annotations. This command is the supported owner for that removal.
+# A task's meta can end up carrying another task's pr=, and no other supported
+# command removes the wrong value: bin/fm-pr-check.sh only records or rebinds,
+# while teardown, merge, and the audit read the live forge instead. The stale
+# value can then leak into public records such as failed-outcome annotations.
+# This command is the supported owner for that removal.
 #
 # Guarded like bin/fm-check-unregister.sh guards custom checks, but against the
 # live forge rather than the local filesystem: the removal is allowed only when
@@ -47,16 +46,16 @@
 # records are untouched: they describe merges that really happened, and
 # teardown owns their removal.
 #
-# Every removal is registered before anything is removed: one append-only line
-# in state/pr-unbinds.log recording who cleared which pr= from which task at
-# what time, mirroring state/endpoint-retirements.log's assertion-before-removal
-# contract. A log line that cannot be appended refuses the removal outright, so
-# a meta is never silently stripped of its PR record. Removals are ordered
-# poll-then-meta so every interruption leaves a benign state: a crash after the
-# poll is gone but before the rewrite leaves a stale pr= that no poll follows
-# and that teardown, merge, and the audit already read around, and re-running
-# the command finishes the job with a second assertion line rather than a
-# duplicate removal.
+# Before starting its own poll-and-meta removals, each unbind attempt appends one
+# assertion line to the append-only state/pr-unbinds.log, naming who is clearing
+# which pr= from which task at what time, mirroring
+# state/endpoint-retirements.log's assertion-before-removal contract.
+# A log line that cannot be appended refuses the removal outright, so a meta is
+# never silently stripped of its PR record.
+# Unbind removals are ordered poll-then-meta so every interruption is
+# rerunnable: a crash after the poll is gone but before the rewrite leaves the
+# stale pr= intact as the identity a rerun validates, then the rerun finishes
+# the job with a second assertion line.
 #
 # Refusals (exit 1, meta untouched beyond a completed retirement recovery): the
 # meta is absent or unsafe (symlink, hard link, foreign device); pr= is missing
@@ -357,9 +356,9 @@ fi
 # Remove the poll artifacts first, each pinned to the exact bytes and file
 # identity the validated snapshot captured, so a swap between validation and
 # removal is refused rather than deleted. This ordering keeps every
-# interruption benign: with the poll gone but the meta not yet rewritten there
-# is no orphaned watch for the watcher to reject, only a stale pr= line that
-# every consumer already treats as advisory.
+# interruption rerunnable: with the poll gone but the meta not yet rewritten
+# there is no orphaned watch for the watcher to reject, and the intact stale
+# pr= gives a rerun the identity it needs to finish the clear.
 if [ "$UNBIND_POLL" = 1 ]; then
   if [ "$UNBIND_CHECK_PRESENT" = 1 ]; then
     fm_pr_poll_retirement_remove_exact "$POLL_CHECK" "$STATE_DEVICE_NOW" \
