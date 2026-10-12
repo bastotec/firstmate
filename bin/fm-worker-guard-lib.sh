@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 # fm-worker-guard-lib.sh - workers never raise captain-facing items.
 #
-# Sourced, not run. The captain's standing rule: a ship or scout worker never
-# asks the captain for anything. Its decisions, questions, blockers, approval
-# needs, and ask-user findings go to its parent mate through its status file
-# (needs-decision / blocked); the mate decides within its authority or raises
-# its own captain call in its own words.
+# Sourced, not run.
+# .agents/skills/captain-hold-lifecycle/SKILL.md owns escalation policy;
+# bin/fm-dod-lib.sh owns the worker role contract.
 #
 # fm_worker_guard_refuse <state-dir> <action> refuses (exit 3) when the caller
 # is a live worker of that home: FM_TASK_ID is set (bin/fm-spawn.sh marks every

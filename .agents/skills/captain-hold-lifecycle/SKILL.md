@@ -17,7 +17,7 @@ The agent performs the semantic inventory because scripts must not infer captain
 ## Policy
 
 Only a mate raises a captain call: workers never bother the captain directly.
-A worker's decision, question, blocker, approval-gate hit, or ask-user finding reaches its parent mate as a status line, and `fm-captain-hold.sh` and `fm-card.sh` refuse a worker (`bin/fm-worker-guard-lib.sh`).
+A worker's decision, question, blocker, approval-gate hit, or ask-user finding reaches its parent mate as a status line; the captain-facing mutations documented in the `fm-captain-hold.sh` and `fm-card.sh` headers refuse a worker through `bin/fm-worker-guard-lib.sh`.
 The parent decides whatever is within its authority; otherwise it holds the call itself, in its own words, as its own request, even when the held task is the worker's own, and tells the worker it is waiting on its mate.
 A scout that finds captain questions appends them as keyed `needs-decision` lines and stops; its parent holds them and runs `complete` for it.
 
@@ -63,6 +63,8 @@ Reconcile it with what actually happened - `answer` when the captain's own words
 The absence of a routed work item is not a divergence and the guard never requires one: when the decision IS the deliverable there is nothing to route.
 
 ## Operating sequence
+
+This sequence is the parent mate's responsibility, not the worker's; the scout's empty-inventory path is owned by the worker role contract in `bin/fm-dod-lib.sh` and its brief in `bin/fm-brief.sh`.
 
 1. Read the complete investigation result and complete the visual review before declaring either complete.
 2. Inventory only genuine unresolved choices that require the captain, and find the task each one gates.

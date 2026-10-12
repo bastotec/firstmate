@@ -68,10 +68,9 @@
 # task, when already held again, after a restore, or for an orphan card.
 # Restore starts a new hold lifecycle and does not restore a deferral date.
 # `show` exits 1 when the task has no card and 2 when its card is invalid.
-# A card is always the holding mate's own request, even when it is keyed by a
-# worker's task id: surfaces attribute it to the mate of the home it lives in,
-# never to the worker. `write`, `draft`, `backfill`, `clear`, and `restore`
-# refuse (exit 3) a ship or scout worker of this home (bin/fm-worker-guard-lib.sh).
+# .agents/skills/captain-hold-lifecycle/SKILL.md owns mate-authored escalation.
+# `write`, `draft`, `backfill`, `clear`, and `restore` refuse (exit 3) a ship or
+# scout worker of this home (bin/fm-worker-guard-lib.sh).
 # FM_CARD_NOW overrides the UTC timestamp for tests.
 set -eu
 
