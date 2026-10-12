@@ -259,6 +259,7 @@ assert_contains "$out" "step shared-skills=failed: $ACCT/dotfiles has local chan
 assert_contains "$(cat "$ACCT/dotfiles/install.sh")" "mine" "local change kept"
 pass "fm-machine.sh skills ships the shared skills repo over ssh and records the inventory"
 
+
 git clone -q "$T/dots-origin.git" "$ACCT/preserve-merge"
 merge_before=$(git -C "$ACCT/preserve-merge" rev-parse HEAD)
 git init -q -b main "$ACCT/preserve-unborn"
@@ -292,5 +293,17 @@ for kind in merge unborn; do
   fi
 done
 pass "shared-skills merges and initial checkouts preserve ignored host-local files"
+
+# A token in the source clone's origin URL never reaches the machine.
+ACCT=$T/acct2
+mkdir -p "$ACCT/.local/bin"
+cp "$FAKEBIN/deck" "$ACCT/.local/bin/deck"
+git -C "$T/dots" remote set-url origin 'https://captain:SECRET-TOKEN@example.com/acme/dots.git'
+printf 'source=%s\nref=main\n' "$T/dots" > "$H/config/shared-skills"
+out=$(machine skills box "$T/srvfm")
+assert_contains "$out" "step shared-skills=done:" "ship with a credential-bearing origin"
+assert_equals "https://example.com/acme/dots.git" "$(git -C "$ACCT/dotfiles" config --get remote.origin.url)" "the machine records the origin without userinfo"
+assert_no_grep SECRET-TOKEN "$ACCT/dotfiles/.git/config" "the token reached the machine"
+pass "the machine's clone never records the source's origin credentials"
 
 echo "ALL TESTS PASSED"

@@ -109,7 +109,8 @@
 # The machine needs no credentials for the repo: this machine pushes the
 # commit over ssh into <dir>'s refs/remotes/origin/<branch> and the machine
 # fast-forwards its <branch> to it (a fresh <dir> is created with this clone's
-# origin URL). It refuses a <dir> that is not a git clone, has local changes,
+# origin URL, any user, token or password in it removed). It refuses a <dir>
+# that is not a git clone, has local changes,
 # is on another branch or cannot safely fast-forward or check out the commit,
 # including a collision with an ignored host-local file. A clean, empty unborn
 # repo with no refs may adopt the requested branch to recover an interrupted
@@ -922,6 +923,22 @@ skills_items() { # <alias>
 
 # Ship the shared skills and record the inventory, printing step lines.
 # Returns 1 on a failed step.
+# A URL as the machine may record it: userinfo (a user, token or password before
+# the host) never leaves this machine; scp-style and local paths pass through.
+skills_url_without_userinfo() { # <url>
+  local url=$1 scheme rest host
+  case "$url" in
+    *://*)
+      scheme=${url%%://*}
+      rest=${url#*://}
+      host=${rest%%/*}
+      case "$host" in *@*) rest=${host##*@}${rest#"$host"} ;; esac
+      printf '%s://%s\n' "$scheme" "$rest"
+      ;;
+    *) printf '%s\n' "$url" ;;
+  esac
+}
+
 skills_steps() { # <alias> <root>
   local alias=$1 root=$2 url line scratch out
   if ! shared_skills_config; then
@@ -929,6 +946,7 @@ skills_steps() { # <alias> <root>
   else
     shared_skills_commit fetch || { printf 'step shared-skills=failed: %s\n' "$SKILLS_REASON"; return 1; }
     url=$(git -C "$SKILLS_SOURCE" config --get remote.origin.url || true)
+    url=$(skills_url_without_userinfo "$url")
     fm_project_url_plain "$url" || url=
     skills_remote "$alias" "$SKILLS_PREPARE_SH" "$SKILLS_DIR" "$url" "$SKILLS_BRANCH"
     if [ "$SKILLS_RC" -ne 0 ]; then
