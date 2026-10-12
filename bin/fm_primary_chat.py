@@ -32,6 +32,9 @@ CLI. Both call this file, which owns the on-disk layout:
   state/primary-chat/switch               a model switch waiting for the primary to be
                                           idle; the keeper then restarts the host on the
                                           same session and removes it
+  state/primary-chat/switches             one line per switch the keeper made:
+                                          "<epoch> <from route|default> <to route>"
+                                          (last 50), for the thread to mark where it was
 
 Record (state/primary-chat.json):
   {"version":1,"home":ABS,"session":ID,"steer_dir":ABS,"events_file":ABS,
@@ -720,6 +723,20 @@ class Keeper:
         self.start_timeout = env_seconds('FM_DECK_CHAT_SERVICE_START_TIMEOUT', 200)
         self.start_grace = env_seconds('FM_DECK_CHAT_SERVICE_START_GRACE', 60)
         self.view = None
+        # the model the live host runs, as far as this keeper knows
+        self.running = chosen_model(self.root, self.model)
+
+    def note_switch(self, was, now):
+        path = self.root / 'switches'
+        try:
+            lines = path.read_text().splitlines()[-49:]
+        except OSError:
+            lines = []
+        lines.append('%d %s %s' % (int(time.time()), was or 'default', now or 'default'))
+        try:
+            atomic_write(path, '\n'.join(lines) + '\n')
+        except OSError:
+            pass
 
     def log(self, message):
         path = self.root / 'service.log'
@@ -860,6 +877,9 @@ class Keeper:
                 except OSError:
                     pass
                 self.log('switching the primary to %s: restarting its host on the same session' % (model or 'default'))
+                if model != self.running:
+                    self.note_switch(self.running, model)
+                self.running = model
                 self.publish('switching', model or 'default')
                 try:
                     os.kill(record['host_pid'], signal.SIGTERM)

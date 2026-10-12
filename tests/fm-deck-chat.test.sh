@@ -1143,6 +1143,7 @@ test_service_keeper() {
   assert_contains "$(tail -1 "$FAKE_DECK_LOG")" "\"--session\", \"$session\"" "the switched host resumes the same deck session"
   assert_contains "$(tail -1 "$FAKE_DECK_LOG")" '"--model", "fake/other"' "the switched host runs the new model"
   assert_grep 'switching the primary to fake/other' "$home/state/primary-chat/service.log" "the keeper logs the switch"
+  assert_grep ' fake/route fake/other' "$home/state/primary-chat/switches" "the keeper records the switch for the thread"
   second=$third
 
   # stop is honoured: the marker keeps the keeper from restarting.
