@@ -114,6 +114,9 @@
 # explicit captain instruction and never skips the live green check, the
 # away-grant check, or a captain hold.
 #
+# A merge this machine's ~/.agents/AGENTS.md asks the captain about
+# (bin/fm-machine-rules.sh check merge) is refused without --attended-override.
+#
 # Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [-- <extra forge merge args>]
 #
 # On GitLab, this script confirms the MR is actually merged before reporting it;
@@ -896,7 +899,15 @@ hold_away_record_for_merge() {
 }
 
 require_current_away_authority() {
+  local rule
   FM_PR_AWAY_POSTURE=false
+  # This machine's binding instructions outrank yolo and the configured merge
+  # authority: a merge they ask the captain about runs only with the captain's
+  # explicit --attended-override (bin/fm-machine-rules.sh owns the rule).
+  if [ "$ATTENDED_OVERRIDE" != true ] && ! rule=$("$SCRIPT_DIR/fm-machine-rules.sh" check merge); then
+    echo "error: PR merge refused - ${rule#ask: }; pass --attended-override only once the captain said to merge this PR; nothing was merged" >&2
+    return 1
+  fi
   if fm_afk_contract_present "$STATE"; then
     FM_PR_AWAY_POSTURE=true
     if [ "$PROVIDER" = github ] && [ "$FM_PR_GITHUB_AUTO_REQUESTED" = true ]; then

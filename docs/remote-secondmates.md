@@ -19,11 +19,23 @@ Do not enable agent forwarding for Firstmate.
 [`bin/fm-machine.sh`](../bin/fm-machine.sh) is the scripted entry point for connecting a new machine; its header owns the commands, trust safeguards, and line protocol.
 Use its read-only `check` before confirming `setup` to perform supported machine preparation and list the remaining human steps; its header also explains the scratch route's home-readiness limits.
 
+### Skills per machine
+
+Deck discovers the current repo's `.agents/skills/` and the account's global `~/.agents/skills/`.
+Optional shared-skills provisioning ships the captain's skills repo over SSH and runs its installer, which decides which skills are shared and which stay on their own machine; the [`fm-machine.sh` header](../bin/fm-machine.sh) owns configuration, provisioning safeguards, and commands for connected machines.
+Setup records the connected machine's inventory, while [`bin/fm-update.sh`](../bin/fm-update.sh) attempts to refresh the local machine and all registered remote machines without provisioning shared skills again.
+These inventories describe discovery in each machine's Firstmate code root, not every project or secondmate home on that host.
+A routing check uses the recorded inventory, which can be stale after a failed refresh; a passing result is not proof that a project's worker has those skills.
+For a skill-dependent task, declare its required skills in the brief and check the destination inventory before routing it to a second mate.
+Ship and scout launches, including relaunches, additionally verify those requirements with live discovery in the actual worker worktree and refuse missing skills before the worker starts.
+The [`fm-machine-skills.sh` header](../bin/fm-machine-skills.sh) owns brief syntax, inventory format and freshness limits, discovery and placement commands, and refusal diagnostics.
+
 ### Machine instructions
 
 A machine's `~/.agents/AGENTS.md` holds the captain's binding instructions for that machine (what may run there, resource limits, what it is for).
-Deck composes it first into every session it starts on the machine, and [`AGENTS.md`](../AGENTS.md) section 4 makes it outrank Firstmate's standing rules there, so the primary also reads it before placing work on that machine.
+Deck composes it first into every session it starts on the machine, and [`AGENTS.md`](../AGENTS.md) section 4 makes it outrank Firstmate's standing rules there, so the primary reads it with `bin/fm-machine-instructions.sh show <machine>` before placing work there and never places work it rules out.
 The dotfiles skills installer never writes it; [`bin/fm-machine-instructions.sh`](../bin/fm-machine-instructions.sh) `show|save <machine>` (or Fleet Town's Machine panel, which calls it) reads and replaces it locally or over ssh, refuses a save over a version changed since it was read, keeps the previous version as `AGENTS.md.bak`, and says which mates pick it up: sessions read it only when they start, so running mates need a restart.
+A line `firstmate: ask before <action>[, <action>...]` (merge, comment, publish) also makes [`bin/fm-machine-rules.sh`](../bin/fm-machine-rules.sh) answer `ask:` for that action on the machine, so an agent there asks the captain instead of acting, and [`bin/fm-pr-merge.sh`](../bin/fm-pr-merge.sh) refuses such a merge, yolo included, without the captain's explicit `--attended-override`.
 
 For manual preparation, clone Firstmate on the remote host at an absolute code-root path, from the firstmate fork's network URL; provisioning refuses a copy whose `origin` is a local path or `file://` URL (see [Provision a route](#provision-a-route)).
 Expose that clone's fixed entrypoint on the account's non-interactive SSH `PATH`, for example:
@@ -47,17 +59,7 @@ Linux uses the same queue and worker protocol without the Aqua-session requireme
 A worker stops itself once its configured code root stops being a Firstmate checkout, so a worker started from a worktree cannot outlive that worktree, and `bin/fm-remote-job-reap-orphans.sh` clears any worker already left behind that way without ever touching one whose checkout still exists.
 The remote account must provide the required toolchain listed under [Readiness, repair, and the human steps](#readiness-repair-and-the-human-steps), the stream prerequisites, and credentials that work on that host.
 The origin URL named for each project must be reachable from the remote account because projects are cloned on that host rather than copied from the primary.
-
-### Skills per machine
-
-Deck discovers the current repo's `.agents/skills/` and the account's global `~/.agents/skills/`.
-Optional shared-skills provisioning ships the captain's skills repo over SSH and runs its installer, which decides which skills are shared and which stay on their own machine; the [`fm-machine.sh` header](../bin/fm-machine.sh) owns configuration, provisioning safeguards, and commands for connected machines.
-Setup records the connected machine's inventory, while [`bin/fm-update.sh`](../bin/fm-update.sh) attempts to refresh the local machine and all registered remote machines without provisioning shared skills again.
-These inventories describe discovery in each machine's Firstmate code root, not every project or secondmate home on that host.
-A routing check uses the recorded inventory, which can be stale after a failed refresh; a passing result is not proof that a project's worker has those skills.
-For a skill-dependent task, declare its required skills in the brief and check the destination inventory before routing it to a second mate.
-Ship and scout launches, including relaunches, additionally verify those requirements with live discovery in the actual worker worktree and refuse missing skills before the worker starts.
-The [`fm-machine-skills.sh` header](../bin/fm-machine-skills.sh) owns brief syntax, inventory format and freshness limits, discovery and placement commands, and refusal diagnostics.
+Before merging, commenting, or publishing, an agent runs `bin/fm-machine-rules.sh check merge|comment|publish` on its own machine and, on `ask:`, puts the action to the captain as a decision card instead of acting.
 
 ## Non-interactive tool contract
 
@@ -356,6 +358,7 @@ The lifecycle test covers seeding a registered project that this machine has nev
 bin/fm-test-run.sh tests/fm-machine.test.sh
 bin/fm-test-run.sh tests/fm-machine-skills.test.sh
 bin/fm-test-run.sh tests/fm-machine-instructions.test.sh
+bin/fm-test-run.sh tests/fm-machine-rules.test.sh
 bin/fm-test-run.sh tests/fm-on.test.sh
 bin/fm-test-run.sh tests/fm-send-remote-delivery.test.sh
 bin/fm-test-run.sh tests/fm-secondmate-reconcile.test.sh
