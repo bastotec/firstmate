@@ -502,6 +502,18 @@ test_machine_approvals_local_and_remote() {
   pass "fm-machine-approvals shows, saves and audits a remote machine over ssh"
 }
 
+test_policy_save_keeps_keys_it_is_not_given() {
+  local w sha
+  w=$(world keys)
+  printf '{"version":1,"home":"/somewhere/home","grant_ttl_secs":600,"gates":[]}' > "$w/agents/approvals.json"
+  sha=$(ap "$w" policy-show --json | jq -r .sha)
+  printf '{"gates":[{"id":"x","tool":"run_command","pattern":"wacli"}]}' | ap "$w" policy-save --expect "$sha" >/dev/null || fail "save refused"
+  assert_equals /somewhere/home "$(jq -r .home "$w/agents/approvals.json")" "home kept"
+  assert_equals 600 "$(jq -r .grant_ttl_secs "$w/agents/approvals.json")" "ttl kept"
+  assert_equals x "$(jq -r '.gates[0].id' "$w/agents/approvals.json")" "gates replaced"
+  pass "policy-save keeps top-level keys the editor did not send"
+}
+
 test_no_policy_or_no_gates_lets_everything_through
 test_policy_without_gates_supports_all_policy_commands
 test_matching_call_is_blocked_and_filed_other_calls_pass
@@ -520,3 +532,4 @@ test_enable_disable_audit_real_deltas
 test_failed_policy_save_preserves_policy
 test_audit_append_failure_rolls_back_policy
 test_machine_approvals_local_and_remote
+test_policy_save_keeps_keys_it_is_not_given
