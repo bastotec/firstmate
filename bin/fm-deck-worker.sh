@@ -236,15 +236,16 @@ kill_tree() {  # <pid>: SIGKILL <pid> and every process descended from it
 }
 
 escalate_turn_stop() {
-  local elapsed child
+  local elapsed child turn_pgid child_pgid
   [ -n "$TURN_PID" ] && [ -n "$STOP_REQUESTED_AT" ] || return 0
   elapsed=$(( $(date +%s) - STOP_REQUESTED_AT ))
   [ "$elapsed" -ge "$STOP_TOOL_GRACE" ] || [ "$elapsed" -ge "$STOP_KILL" ] || return 0
-  # Deck runs every shell command and hook as a `bash -lc` child.
+  turn_pgid=$(ps -o pgid= -p "$TURN_PID" 2>/dev/null | tr -d '[:space:]')
   for child in $(pgrep -P "$TURN_PID" 2>/dev/null); do
-    case "$(ps -o args= -p "$child" 2>/dev/null)" in
-      'bash -lc '*) kill_tree "$child" ;;
-    esac
+    child_pgid=$(ps -o pgid= -p "$child" 2>/dev/null | tr -d '[:space:]')
+    if [ -n "$turn_pgid" ] && [ "$child_pgid" = "$turn_pgid" ]; then
+      kill_tree "$child"
+    fi
   done
   if [ "$elapsed" -ge "$STOP_KILL" ]; then
     kill -KILL "$TURN_PID" 2>/dev/null || true

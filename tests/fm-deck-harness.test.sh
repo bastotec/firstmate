@@ -1296,25 +1296,29 @@ if prompt == 'slow-steer':
     (home / 'in-turn').touch()
     while not (home / 'release').exists():
         time.sleep(.1)
-if prompt in ('long-tool', 'stuck-model'):
+if prompt in ('long-tool', 'exec-tool', 'stuck-model'):
     # Real Deck's SIGTERM is a cooperative stop: it lets a running tool
     # finish and only then stops. `stuck-model` ignores it outright, the way a
     # model call that never returns would.
     import signal
     stop = []
-    signal.signal(signal.SIGTERM, (lambda *_: stop.append(1)) if prompt == 'long-tool' else signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN if prompt == 'stuck-model' else (lambda *_: stop.append(1)))
     mcp = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'],
                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                            stderr=subprocess.DEVNULL, start_new_session=True)
     (home / 'mcp-pid').write_text(str(mcp.pid))
     command = 'python3 "$FM_HOME/fork-tool.py"; echo finished' if (home / 'fork-tool.py').exists() else 'sleep 300; echo slept'
+    if prompt == 'exec-tool':
+        command = 'exec sleep 300'
     tool = subprocess.Popen(['bash', '-lc', command])
     (home / 'tool-pid').write_text(str(tool.pid))
-    if prompt == 'long-tool':
+    if prompt != 'stuck-model':
         tool.wait()
+        (home / 'tool-returncode').write_text(str(tool.returncode))
         print(json.dumps({'type': 'tool_result', 'id': 'c1', 'name': 'run_command', 'duration_ms': 1,
                           'output': 'killed' if tool.returncode else 'slept'}), flush=True)
         if stop:
+            (home / 'graceful-stop').touch()
             print(json.dumps({'type': 'run_stopped', 'reason': 'graceful stop requested'}), flush=True)
             sys.exit(1)
     else:
@@ -1336,7 +1340,7 @@ PYTHON
 # stop at its bound, so both reach the prompt and exit within seconds.
 test_secondmate_stops_a_turn_inside_a_long_tool() {
   local dir case
-  for case in ctrl-c quit-only fork-race stuck-model; do
+  for case in ctrl-c quit-only exec-tool fork-race stuck-model; do
     dir="$TMP_ROOT/host-stop-$case"
     make_secondmate_host_fixture "$dir"
     if [ "$case" = fork-race ]; then
@@ -1401,7 +1405,7 @@ def wait_for(check, label, bound=60):
 def alive(pid):
     result = subprocess.run([os.environ['FM_TEST_SYSTEM_PS'], '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True)
     return result.returncode == 0 and bool(result.stdout.strip()) and 'Z' not in result.stdout
-prompt = 'stuck-model' if case == 'stuck-model' else 'long-tool'
+prompt = case if case in ('exec-tool', 'stuck-model') else 'long-tool'
 with (root/'pane').open('w') as output:
     p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
                          env=env, text=True, start_new_session=True)
@@ -1412,6 +1416,13 @@ with (root/'pane').open('w') as output:
         tool = int((home/'tool-pid').read_text())
         mcp = int((home/'mcp-pid').read_text())
         assert alive(mcp), 'MCP fixture did not start'
+        assert os.getpgid(mcp) == mcp, 'MCP fixture did not create its own process group'
+        assert os.getpgid(tool) == os.getpgid(p.pid), 'tool did not inherit the worker process group'
+        if case == 'exec-tool':
+            def exec_completed():
+                command = subprocess.check_output([os.environ['FM_TEST_SYSTEM_PS'], '-o', 'comm=', '-p', str(tool)], text=True).strip()
+                return pathlib.Path(command).name == 'sleep'
+            wait_for(exec_completed, 'tool exec replacement')
         if case == 'fork-race':
             wait_for(lambda: (home/'fork-parent-pid').exists(), 'forking tool start')
         started = time.monotonic()
@@ -1426,6 +1437,10 @@ with (root/'pane').open('w') as output:
         assert took < (8 if case == 'stuck-model' else 5), (took, (root/'pane').read_text())
         assert not alive(tool), 'the long tool survived its stopped turn'
         assert alive(mcp), 'stopping Deck killed its MCP server'
+        if case != 'stuck-model':
+            assert (home/'graceful-stop').exists(), 'Deck did not acknowledge the cooperative stop'
+        if case == 'exec-tool':
+            assert int((home/'tool-returncode').read_text()) == -signal.SIGKILL, 'exec-replaced tool was not cancelled'
         if case == 'fork-race':
             assert (home/'launch-fork').exists(), 'the fork race was not exercised'
             assert (home/'fork-prevented').exists() or (home/'late-pid').exists(), 'the fork probe never responded'
