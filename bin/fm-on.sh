@@ -136,6 +136,7 @@ case "$COMMAND" in
       sync|update) FLOW=maintenance ;;
       *) FLOW=supervision ;;
     esac ;;
+  fm-retire-endpoint.sh) FLOW=supervision ;;
   fm-backlog-receive.sh) FLOW=placement ;;
   fm-idle-sweep.sh)
     [ "${1:-}" != summary ] || FLOW=reports ;;

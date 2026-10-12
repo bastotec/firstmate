@@ -269,6 +269,30 @@ test_idle_summary_requires_reports_not_maintenance() {
   pass "remote cleanup summaries require reports independently of maintenance"
 }
 
+test_retirement_requires_supervision_not_maintenance() {
+  local h rc=0 out
+  h=$(home retirement)
+  br "$h" set workload --allow maintenance >/dev/null
+  out=$(on "$h" helper fm-retire-endpoint.sh --orphan leftover 2>&1) || rc=$?
+  assert_equals 1 "$rc" "maintenance alone cannot retire a remote endpoint"
+  assert_contains "$out" bridge-blocked: "retirement reports the bridge refusal"
+  assert_contains "$out" supervision "retirement names the required permission"
+  assert_absent "$h/ssh.log" "denied retirement never reached SSH"
+  assert_equals bridge:supervision "$(jq -r .gate "$h"/state/approvals/ap-*.json)" "supervision approval requested"
+  assert_equals workload "$(jq -r .args.machine "$h"/state/approvals/ap-*.json)" "approval targets the bridge"
+  assert_equals supervision "$(jq -r 'select(.event=="blocked") | .flow' "$h/state/bridges.log")" "supervision refusal audited"
+  br "$h" set workload --allow supervision >/dev/null
+  on "$h" helper fm-retire-endpoint.sh --orphan leftover >/dev/null || fail "allowed orphan retirement did not reach SSH"
+  on "$h" helper fm-retire-endpoint.sh --finished leftover >/dev/null || fail "allowed finished retirement did not reach SSH"
+  assert_equals 2 "$(wc -l < "$h/ssh.log" | tr -d ' ')" "supervision alone permits retirement transport"
+  br "$h" deny workload supervision >/dev/null
+  rc=0
+  out=$(on "$h" helper fm-retire-endpoint.sh --orphan leftover 2>&1) || rc=$?
+  assert_equals 1 "$rc" "revoked supervision refuses retirement"
+  assert_equals 2 "$(wc -l < "$h/ssh.log" | tr -d ' ')" "revoked retirement sends nothing"
+  pass "remote endpoint retirement requires supervision independently of maintenance"
+}
+
 test_machine_operations_use_the_shared_gate() {
   local h out rc
   h=$(home machine-operations)
@@ -345,6 +369,7 @@ PY
 test_existing_bridges_are_seeded_and_shown_configured
 test_existing_safe_aliases_remain_configurable
 test_idle_summary_requires_reports_not_maintenance
+test_retirement_requires_supervision_not_maintenance
 test_register_refusal_leaves_permissions_unchanged
 test_seed_uses_home_inventory_not_scratch_routes
 test_create_seeds_before_publishing_a_new_host

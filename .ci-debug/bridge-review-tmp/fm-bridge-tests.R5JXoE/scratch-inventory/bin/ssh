@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+printf "%s\n" "$*" >> /Users/bastotecnologia/.no-mistakes/worktrees/5a1fd3284f12/01M4RY7WFYC1K0YVYD0AXWQ564/.ci-debug/bridge-review-tmp/fm-bridge-tests.R5JXoE/scratch-inventory/ssh.log
+args=(); while IFS= read -r -d "" arg; do args+=("$arg"); done < <(printf "%s" "${!#}" | base64 -d)
+case "${args[0]:-}:${args[1]:-}" in fm-machine-skills.sh:discover) printf "test-skill\\tglobal\\tdescription\\t/test/skill\\n" ;; fm-machine-instructions.sh:read-local) printf "absent\\n" ;; esac
