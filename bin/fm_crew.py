@@ -34,7 +34,7 @@ A cleanup that cannot prove every member process gone becomes a captain-held tas
       {"version":1,"kind":"group","id","title","home","status",
        "created","finished","orchestrator_pid","orchestrator_identity",
        "work_outcome","merge_succeeded","members":[{"key","angle","placement","status","pid","identity",
-       "started","finished","result"}],"report","cleanup":{...}|null}
+       "started","finished","result"}],"report","summary","cleanup":{...}|null}
       status: running -> merging -> cleaning -> done | failed | cleanup-failed
   state/groups/<gid>/                    run files (removed by cleanup)
   data/groups/<gid>/report.md            merged report, kept after cleanup
@@ -899,6 +899,8 @@ def run_group(g: Group) -> bool:
                 body = read_text(Path(m["result"])) if m.get("result") else ""
                 lines.append(f"### {m['key']} - {m['angle']} ({m['status']}, {m['placement']})\n\n{body.strip() or '(no result)'}\n")
             report.write_text("\n".join(lines))
+            # The start of the merged result rides on the record for Fleet Town.
+            rec["summary"] = first_lines(read_text(merged), 400) if merge_ok else f"{done} of {total} members finished; merge failed"
             rec.update(report=str(report), status="cleaning", merge_succeeded=bool(merge_ok),
                        work_outcome="done" if done == total and merge_ok else "failed")
             g.save(rec)

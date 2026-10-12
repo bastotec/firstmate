@@ -48,6 +48,7 @@ pass "five members fan out with at most two local at once"
 report=$(jq -r .report "$REC")
 assert_equals "$HOME_DIR/data/groups/pr-review/report.md" "$report" "the report is kept in data"
 assert_grep "merged 5 member results" "$report" "the merge saw all five results"
+assert_contains "$(jq -r .summary "$REC")" "merged 5 member results" "the record carries the start of the merged result"
 assert_grep "angle: security" "$report" "member results are appended to the report"
 assert_grep "angle: docs" "$report" "every angle is in the report"
 assert_present "$HOME_DIR/data/groups/pr-review/members/m3.md" "member results are kept after cleanup"
