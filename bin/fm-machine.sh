@@ -13,8 +13,8 @@
 #
 # This is the deterministic entry point for an order that connects a machine
 # (for example one sent from a UI and confirmed by the captain). It never
-# handles private keys or prints secrets, never accepts a host key it was not
-# given, and never invokes a system package manager, sudo or a login.
+# transfers private keys or prints secrets, never accepts a host key it was not
+# given, and never invokes a system package manager, sudo or an interactive login.
 # docs/remote-secondmates.md owns what a ready host needs,
 # bin/fm-remote-doctor.sh owns the readiness verdict, bin/fm-home-tools-lib.sh
 # owns the CLI toolchain a home needs, and bin/fm-machine-remote.sh is the half
@@ -65,8 +65,9 @@
 # Deck (FM_DECK_REPO_URL defaults to https://github.com/bastotec/deck.git;
 # bin/fm-machine-remote.sh owns the build and atomic install mechanics,
 # attempted when git and cargo are there), mode 600 on an owner-readable
-# gateway key with group or other permission bits set, then the doctor's --fix
-# through the same scratch route, then the approval gate hook (installed with no
+# gateway key with group or other permission bits set, then the optional tunnels
+# described below, then the doctor's --fix through the same scratch route,
+# then the approval gate hook (installed with no
 # gates enabled; the machine's own policy file turns gates on), then the
 # shared-skills and inventory steps described below.
 # It then prints a `human` line for each remaining human item and the verdict.
@@ -132,26 +133,35 @@
 # <remote-root> defaults to fm-machine-skills.sh roots (the machine registry,
 # then a remote secondmate route on that host), and is required if unrecorded.
 #
-# Tunnels: with config/machine-tunnels holding `gateway=<ssh alias of the
-# gateway host on this machine>`, setup (after the gateway key mode, before the
-# doctor) and `tunnels` forward each local endpoint that does not answer yet -
-# the model gateway at FM_MACHINE_GATEWAY_URL and this home's config/stream-hub,
-# when they name 127.0.0.1 or localhost - from the gateway host, so a new
-# machine needs no hand-made forwards. On the machine it makes the tunnel key
-# (bin/fm-machine-remote.sh tunnel-key) and pins the gateway host's ed25519 key
-# exactly as this machine's own known_hosts trusts it (never trust on first
-# use: no trusted ed25519 key refuses). On the gateway host it backs up
-# ~/.ssh/authorized_keys to authorized_keys.fm-backup-<UTC stamp> and appends
+# Tunnels: config/machine-tunnels holds `gateway=<ssh alias of the gateway
+# host on this machine>`; ssh -G of that alias supplies the host, user and SSH
+# port, with no hard-coded gateway host. setup and `tunnels <alias>` forward
+# eligible endpoints from that host: FM_MACHINE_GATEWAY_URL and this home's
+# config/stream-hub must be http URLs naming 127.0.0.1 or localhost with an
+# explicit port. An endpoint that already gives any HTTP answer is skipped
+# without inspecting or changing its service, protecting existing forwards and
+# local servers. If no eligible endpoint needs a forward, no tunnel key,
+# gateway authorization or service is changed.
+# Otherwise the machine makes its tunnel key (bin/fm-machine-remote.sh
+# tunnel-key), and the gateway host's ed25519 pin is resolved from this
+# machine's selected KNOWN_HOSTS file under its hostname (or [host]:port for a
+# non-default SSH port). Never trust on first use: no trusted ed25519 key
+# refuses. On the gateway host, authorization covers every eligible configured
+# endpoint port, including one that already answers, with the entry:
 #   restrict,port-forwarding,permitopen="127.0.0.1:<port>"...,command="/bin/false" <pubkey>
-# unless that key is already there. Then the machine installs one KeepAlive
-# service per endpoint (labels dev.firstmate.proxai-tunnel and
-# dev.firstmate.stream-hub-tunnel; bin/fm-machine-remote.sh install-tunnel owns
-# the service, port-conflict refusal and verification). An endpoint that
-# already answers is skipped, so live forwards are never touched. Steps print
-# as `step tunnel-key|tunnel-authorize|tunnel-gateway|tunnel-hub=done|skipped|failed`.
-# Without the file setup prints `step tunnels=skipped` and check keeps the
-# model-gateway and stream-hub items human; with it, a missing endpoint is
-# will-install.
+# An identical entry is skipped; different options for that key are replaced,
+# otherwise the entry is appended after terminating any unterminated last line.
+# Before changing an existing ~/.ssh/authorized_keys it is backed up to
+# authorized_keys.fm-backup-<UTC stamp>.<unique suffix>; unrelated keys remain.
+# The machine installs a KeepAlive service only for each endpoint needing a
+# forward (labels dev.firstmate.proxai-tunnel and dev.firstmate.stream-hub-tunnel;
+# bin/fm-machine-remote.sh install-tunnel owns the service, prerequisites,
+# port-conflict refusal and verification). The gateway client key must already
+# be readable on the machine; setup does not copy it or mint a stream token.
+# Without a usable gateway alias in the file setup prints `step tunnels=skipped`
+# and check keeps missing endpoints human; `tunnels` instead refuses.
+# With it, check marks a missing eligible endpoint will-install, but does not
+# preflight the gateway pin, authorization or service-manager prerequisites.
 #
 # Machine instructions: check reports an informational
 # `item machine-instructions=present` after a successful probe; `present` means
@@ -194,10 +204,13 @@
 #                                                model-gateway, gateway-key, stream-hub, approval-gate,
 #                                                shared-skills, skill-inventory, machine-instructions)
 #   step <name>=done|skipped|failed: <evidence or plain reason>   (setup; skills emits
-#                                                shared-skills and skill-inventory; setup names: ssh,
-#                                                firstmate-clone, entrypoint-link, probe, tool-<tool>,
-#                                                deck, gateway-key-mode, doctor, approval-gate,
-#                                                shared-skills, skill-inventory, machine-instructions)
+#                                                shared-skills and skill-inventory; tunnels emits
+#                                                tunnel-key, tunnel-authorize, tunnel-gateway, tunnel-hub;
+#                                                setup names: ssh, firstmate-clone, entrypoint-link,
+#                                                probe, tool-<tool>, deck, gateway-key-mode, tunnels,
+#                                                tunnel-key, tunnel-authorize, tunnel-gateway, tunnel-hub,
+#                                                doctor, approval-gate, shared-skills, skill-inventory,
+#                                                machine-instructions)
 #   human <item-name>: <exact step for a person> (setup, after the steps)
 #   setup=complete|incomplete: <n> human steps|failed   (setup; exit 0, 3, 1)
 #   added=<ssh-config-path>                      (add)
@@ -1125,7 +1138,7 @@ tunnel_resolve() { # <gateway-alias>
   TUN_PIN="$name ssh-ed25519 $line"
 }
 
-# Append the restricted tunnel key to the gateway host's authorized_keys.
+# Reconcile the restricted tunnel authorization; the header owns the contract.
 tunnel_authorize() { # <gateway-alias> <pubkey> <port>...
   local gw=$1 pub=$2 cmd='bash -s --' arg
   shift 2

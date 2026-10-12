@@ -367,7 +367,9 @@ On any untunneled connection to the hub, every byte is in the clear: the bearer 
 Anyone who can read the path can read all of it; anyone who can read a `publish` token can register endpoints and publish forged frames for any of them, impersonating your workers, and anyone who can read a `control` token can type into those workers and close them.
 
 Loopback is the only setting where that is safe on its own.
-Cross-machine use means an SSH tunnel or an equivalent encrypted transport, which firstmate does not create, manage, or check for; a configured `https://` hub URL means only that something in front of the hub terminates TLS, not that the hub does.
+Cross-machine use requires an SSH tunnel or an equivalent encrypted transport; [`bin/fm-machine.sh`'s Tunnels contract](../bin/fm-machine.sh) owns optional machine-setup forwarding.
+The stream adapter does not establish or verify transport encryption, and an answering loopback URL alone does not prove a tunnel exists.
+A configured `https://` hub URL means only that something in front of the hub terminates TLS, not that the hub does.
 Nothing binds a public interface on your behalf, so changing `--bind` is a deliberate act, and doing it without a tunnel publishes your fleet's terminals and their control channel to that network.
 
 Terminal content is never written to disk.

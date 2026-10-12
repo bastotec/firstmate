@@ -54,16 +54,28 @@
 # the private key never leaves the machine.
 # install-tunnel keeps 127.0.0.1:<port> forwarded to the same port on the
 # gateway host with a KeepAlive user service: launchd (~/Library/LaunchAgents/
-# <label>.plist) on macOS, systemd --user (~/.config/systemd/user/<label>.service)
-# on Linux, running /usr/bin/ssh -N with that key, BatchMode, strict host-key
-# checking against ~/.ssh/fm_workload_known_hosts (written from
-# <known-hosts-line>, which the caller pins from its own trusted key; an
-# existing different pin is refused) and ExitOnForwardFailure. An unchanged,
-# running service is left alone; a changed one of ours is replaced; a port
-# something else already answers on is refused. It then waits for the port and
-# verifies it: gateway needs HTTP 200 from <check-url>/models with the gateway
-# client key (read here, passed to curl on stdin, never printed), hub needs any
-# HTTP answer from <check-url>. It prints the same result line.
+# <label>.plist, bootstrapped in gui/<uid>) on macOS, systemd --user
+# (~/.config/systemd/user/<label>.service, Restart=always) on Linux.
+# Linux requires `loginctl show-user <account> -p Linger` to report Linger=yes
+# before writing a pin or service or invoking systemctl; otherwise it refuses
+# with the human step `sudo loginctl enable-linger <account>` on the machine,
+# then rerun setup. It never enables lingering itself; the caller may already
+# have created the key and gateway authorization before this refusal.
+# The service runs /usr/bin/ssh -N with absolute key and pin paths, BatchMode,
+# IdentitiesOnly=yes, IdentityAgent=none, strict host-key checking against
+# ~/.ssh/fm_workload_known_hosts (written from <known-hosts-line>; an existing
+# pin file without that exact line is refused), ExitOnForwardFailure and
+# ServerAliveInterval=15/ServerAliveCountMax=3. A non-default SSH port adds -p.
+# A successful TCP connect to 127.0.0.1:<port> is refused before writing a pin
+# or service unless this label is loaded in launchd or active in systemd;
+# neither an HTTP timeout nor an existing service file establishes ownership.
+# An unchanged, loaded/active service is left alone; otherwise it is installed
+# and started. Verification makes at most 15 attempts, one second apart:
+# gateway needs HTTP 200 from <check-url>/models with the gateway client key
+# (PROXAI_API_KEY_FILE or ~/.config/proxai/client.key, read on the machine and
+# passed via curl -K on stdin, never argv or output); hub needs any HTTP answer
+# from <check-url>. A verification failure leaves the installed service in place
+# and prints result=failed; success prints result=done.
 set -u
 
 if ! declare -F fm_home_tool_install_cmd >/dev/null; then

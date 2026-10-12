@@ -18,7 +18,7 @@ Do not enable agent forwarding for Firstmate.
 
 [`bin/fm-machine.sh`](../bin/fm-machine.sh) is the scripted entry point for connecting a new machine; its header owns the commands, trust safeguards, and line protocol.
 Use its read-only `check` before confirming `setup` to perform supported machine preparation and list the remaining human steps; its header also explains the scratch route's home-readiness limits.
-With `config/machine-tunnels` naming the gateway host, setup also forwards the model gateway and stream hub from it with restricted keys and keep-alive services, so a new machine needs no hand-made forwards; the header owns that step too.
+For optional model-gateway and stream-hub forwarding via `config/machine-tunnels`, see the same header's Tunnels contract.
 When an approved action waits on those human steps, [`bin/fm-machine-blocker.sh`](../bin/fm-machine-blocker.sh) provides the `Blocked on you:` reply and self-closing needs-you card; its header owns the commands, re-check lifecycle, and pending-machine record intended for Fleet Town to consume.
 
 ### Skills per machine
