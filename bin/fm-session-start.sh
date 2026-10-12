@@ -676,17 +676,17 @@ for meta in "$STATE"/*.meta; do
   FLEET_METAS+=("$meta")
   id=$(basename "$meta" .meta)
   window=$(fm_meta_get "$meta" window)
-  FLEET_ENDPOINT_WINDOWS[$index]=$window
+  FLEET_ENDPOINT_WINDOWS[index]=$window
   if [ -n "$window" ]; then
     target=$(fm_backend_target_of_meta "$meta")
     backend=$(fm_backend_of_meta "$meta")
-    FLEET_ENDPOINT_BACKENDS[$index]=$backend
+    FLEET_ENDPOINT_BACKENDS[index]=$backend
     fm_backend_target_settled_exists "$backend" "${target:-$window}" "fm-$id" >/dev/null 2>&1 &
-    FLEET_ENDPOINT_PIDS[$index]=$!
+    FLEET_ENDPOINT_PIDS[index]=$!
   else
-    FLEET_ENDPOINT_BACKENDS[$index]=
-    FLEET_ENDPOINT_PIDS[$index]=
-    FLEET_ENDPOINT_RESULTS[$index]=unknown
+    FLEET_ENDPOINT_BACKENDS[index]=
+    FLEET_ENDPOINT_PIDS[index]=
+    FLEET_ENDPOINT_RESULTS[index]=unknown
   fi
 done
 
@@ -694,9 +694,9 @@ for ((index = 0; index < ${#FLEET_METAS[@]}; index++)); do
   pid=${FLEET_ENDPOINT_PIDS[$index]}
   [ -n "$pid" ] || continue
   if wait "$pid"; then
-    FLEET_ENDPOINT_RESULTS[$index]=alive
+    FLEET_ENDPOINT_RESULTS[index]=alive
   else
-    FLEET_ENDPOINT_RESULTS[$index]=dead
+    FLEET_ENDPOINT_RESULTS[index]=dead
   fi
 done
 
