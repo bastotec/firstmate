@@ -2641,6 +2641,16 @@ test_parked_own_run_is_aborted_before_teardown() {
   land_shippable_commit "$case_dir"
   head=$(git -C "$case_dir/wt" rev-parse HEAD)
 
+  cat > "$case_dir/on-kill.sh" <<EOF
+#!/usr/bin/env bash
+if [ -s "$case_dir/nm-abort.log" ]; then
+  printf 'abort-before-close\n' > "$case_dir/endpoint-order.log"
+fi
+EOF
+  chmod +x "$case_dir/on-kill.sh"
+  fm_test_fake_stream_set "$(fm_test_stream_target_of "$case_dir/state" task-x1)" \
+    "{\"on_kill\": \"$case_dir/on-kill.sh\"}"
+
   local rc=0
   FM_FAKE_AXI_STATUS="$(parked_axi_status_toon fm/task-x1 "$head")" \
   FM_FAKE_NM_ABORT_LOG="$case_dir/nm-abort.log" \
@@ -2653,6 +2663,10 @@ test_parked_own_run_is_aborted_before_teardown() {
     "parked-run-abort: no-mistakes axi abort did not target the verified run id"
   assert_grep "parked at a gate; aborting" "$case_dir/stderr" \
     "parked-run-abort: teardown did not report aborting the parked run before removing the worker"
+  assert_grep "abort-before-close" "$case_dir/endpoint-order.log" \
+    "parked-run-abort: endpoint closure preceded the run abort"
+  endpoint_closed "$case_dir/state" task-x1 \
+    || fail "parked-run-abort: the endpoint was not closed after the run abort"
   pass "a task's own parked no-mistakes run is aborted, not orphaned, before the worker is removed"
 }
 
@@ -3148,7 +3162,10 @@ EOF
     "parked-run-abort-unconfirmed: teardown returned the worktree after refusing"
   kill -0 "$pid" 2>/dev/null || fail "parked-run-abort-unconfirmed: process reap ran before refusal"
   kill -KILL "$pid" 2>/dev/null || true
-  pass "teardown refuses before reap or removal when a task-owned run remains parked"
+  if endpoint_closed "$case_dir/state" task-x1; then
+    fail "parked-run-abort-unconfirmed: teardown closed the worker endpoint before refusing"
+  fi
+  pass "teardown refuses before endpoint close, reap or removal when a task-owned run remains parked"
 }
 
 test_another_branchs_parked_run_is_never_touched() {

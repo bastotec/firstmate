@@ -202,8 +202,8 @@
 # Pre-teardown cleanup sequence (runs once every landed/discard-work safety
 # refusal above has already passed, and BEFORE any worktree return or branch
 # delete below - a still-active run or a leaked process may own live work in
-# that worktree). A normal finished task's endpoint close runs first, ahead of
-# every step below, because the endpoint's own pane machinery - its interactive
+# that worktree). A normal finished task's endpoint close runs after Fix 1 and
+# before Fix 2, because the endpoint's own pane machinery - its interactive
 # shell, which ignores SIGTERM by design, and the idle pane-resident worker
 # driver - is owned by bin/fm-backend.sh's close path, not by the cwd-based
 # reaper: run in the old order, the reaper counted that machinery as leaked and
@@ -3251,6 +3251,9 @@ else
 fi
 
 # Apply the pre-teardown cleanup sequence owned by the script header.
+if [ "$KIND" != secondmate ] && teardown_owns_worktree; then
+  conclude_task_no_mistakes_run "$WT"
+fi
 TASK_ENDPOINT_RETIREMENT_PENDING=0
 if [ "$KIND" != secondmate ] && task_operator_retirement_pending; then
   TASK_ENDPOINT_RETIREMENT_PENDING=1
@@ -3261,11 +3264,7 @@ if [ "$KIND" != secondmate ] && [ "$TASK_ENDPOINT_RETIREMENT_PENDING" = 0 ]; the
   require_task_endpoint_gone "$TASK_KILL_RC" || exit 1
 fi
 
-# Fix 1 and Fix 2 (see script header) run next, unconditionally on --force,
-# while the worktree and tasktmp still exist - a still-parked run or a leaked
-# process can own live work in this exact worktree.
 if [ "$KIND" != secondmate ] && teardown_owns_worktree; then
-  conclude_task_no_mistakes_run "$WT"
   reap_task_worktree_processes worktree "$WT" "$TASK_TMP"
 elif [ "$KIND" != secondmate ]; then
   reap_task_worktree_processes tasktmp "$TASK_TMP"
