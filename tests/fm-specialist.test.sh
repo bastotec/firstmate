@@ -44,6 +44,15 @@ res1=$(cat "$(jq -r .last_job.result "$REC")")
 assert_contains "$res1" "turns-in-session: 1" "first job opens the session"
 assert_grep "learned in $job1" "$HOME_DIR/data/specialists/amigo-tech/memory.md" "job 1 updated memory"
 pass "first job runs on the specialist session and updates memory"
+python3 - "$HOME_DIR/state/specialists/amigo-tech/jobs/$job1" <<'PY' || fail "specialist job artifacts must be private"
+import stat
+import sys
+from pathlib import Path
+for name in ("brief.md", "prompt.md", "result.md"):
+    path = Path(sys.argv[1]) / name
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600, path
+PY
+pass "specialist briefs, prompts and results are private"
 
 out=$("$SPEC" job amigo-tech --brief-file <(printf 'Why did their bot stop replying?\n') --wait 2>&1) \
   || fail "job 2 failed: $out"
