@@ -386,8 +386,13 @@ test_second_mates_that_do_not_sweep_are_escalated_once() {
   : > "$dir/home/remote-unreachable"
 
   sweep "$dir" scan --now || fail "scan failed"
+  if grep -q 'idle-sweep-audit:local-mate' "$dir/home/state/.wake-queue" 2>/dev/null; then
+    fail "a mate that has not swept yet was escalated before its grace bound"
+  fi
+  age_file "$dir/home/state/local-mate.idle-audit-missing" 25200
+  sweep "$dir" scan --now || fail "scan after the grace bound failed"
   assert_contains "$(cat "$dir/home/state/.wake-queue")" "idle-sweep-audit:local-mate:" \
-    "a local mate that never swept should be escalated"
+    "a local mate that never swept within its grace bound should be escalated"
   if grep -q 'idle-sweep-audit:far-mate' "$dir/home/state/.wake-queue"; then
     fail "an unreachable remote mate was escalated on a transport failure"
   fi
@@ -420,6 +425,10 @@ test_local_mates_with_missing_homes_are_escalated() {
   fm_write_meta "$dir/home/state/no-path.meta" "kind=secondmate"
 
   sweep "$dir" scan --now || fail "scan failed"
+  for mate in no-home no-state no-path; do
+    age_file "$dir/home/state/$mate.idle-audit-missing" 25200
+  done
+  sweep "$dir" scan --now || fail "scan after the grace bound failed"
   sweep "$dir" scan --now || fail "second scan failed"
 
   for mate in no-home no-state no-path; do
@@ -474,6 +483,8 @@ test_watcher_runs_the_sweep_and_surfaces_its_decision() {
   mkdir -p "$dir/mate/state"
   fm_write_meta "$dir/home/state/sm.meta" "kind=secondmate" "home=$dir/mate"
   FM_HOME="$dir/home" "$dir/bin/fm-idle-sweep.sh" scan --now || fail "scan failed"
+  age_file "$dir/home/state/sm.idle-audit-missing" 25200
+  FM_HOME="$dir/home" "$dir/bin/fm-idle-sweep.sh" scan --now || fail "scan after the grace bound failed"
   run_watcher_until "$dir" "$dir/watch.out" 'not cleaning up'
   grep -q 'check: second mate not cleaning up idle workers: sm' "$dir/watch.out" \
     || fail "the watcher did not wake the first mate for the sweep's escalation: $(cat "$dir/watch.out") $(cat "$dir/watch.err")"

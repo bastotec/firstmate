@@ -56,7 +56,10 @@
 # local home's state/idle-sweep.json or over bin/fm-on.sh `summary` for a
 # remote one, bounded to 60 seconds. An ssh transport failure (exit 255) or
 # read timeout (exit 124) proves nothing and is skipped. A missing local home
-# or state directory counts as a missing summary. A missing or stale summary,
+# or state directory counts as a missing summary, which escalates only once it
+# has stayed missing for 6 hours (state/<mate>.idle-audit-missing marks when the
+# audit first saw none), so a mate that has not swept yet after an update is
+# not escalated at once. A missing-for-6h or stale summary,
 # or one listing a worker the mate could neither clean up nor raise, queues
 # ONE `check:` wake keyed
 # idle-sweep-audit:<mate>:<epoch> per episode; a fresh clean summary ends it.
@@ -398,7 +401,7 @@ done <<< "$orphans"
 
 # --- second-mate audit ----------------------------------------------------------
 audit_mate() {  # <meta>
-  local meta=$1 mate home host json rc=0 gen stale='' rec
+  local meta=$1 mate home host json rc=0 gen stale='' rec miss first
   mate=$(basename "$meta" .meta)
   rec="$STATE/$mate.idle-audit"
   home=$(fm_meta_get "$meta" home)
@@ -415,9 +418,16 @@ audit_mate() {  # <meta>
       rc=1
     fi
   fi
+  miss="$STATE/$mate.idle-audit-missing"
   if [ "$rc" -ne 0 ] || [ -z "$json" ]; then
-    stale="it has never published a cleanup sweep"
+    # A mate gets one bound to publish its first sweep (it may simply not have
+    # run one yet after an update), measured from when this audit first saw none.
+    [ -f "$miss" ] || touch "$miss" 2>/dev/null || true
+    first=$(mtime_of "$miss") || first=$NOW
+    [ $((NOW - first)) -ge 21600 ] || return 0
+    stale="it has not published a cleanup sweep in $(hours $((NOW - first)))"
   else
+    rm -f "$miss" 2>/dev/null || true
     gen=$(printf '%s' "$json" | jq -r '.generated_epoch // 0' 2>/dev/null) || gen=0
     gen=$(num_or "$gen" 0)
     if [ $((NOW - gen)) -gt 21600 ]; then
