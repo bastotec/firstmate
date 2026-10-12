@@ -1122,25 +1122,50 @@ test_service_keeper() {
   assert_contains "$(cat "$FAKE_DECK_LOG")" '"--model", "fake/route"' "the restart keeps the model"
   assert_grep 'primary is down; restarting now' "$home/state/primary-chat/service.log" "the keeper logs the restart"
 
+  # A model switch waits for the turn under way, then restarts the host on the same
+  # session with the new model; it never goes through stop.
+  local rc third
+  rc=0; "$BIN/fm-deck-chat.sh" model 'bad route;' --home "$home" >/dev/null 2>&1 || rc=$?
+  expect_code 2 "$rc" "model refuses a malformed route"
+  printf 'v1 state=busy source=deck-wrapper\n' > "$home/state/primary.busy-state"
+  out=$("$BIN/fm-deck-chat.sh" model fake/other --home "$home") || fail "model failed: $out"
+  assert_contains "$out" 'primary: switching to fake/other after the turn under way' "model says a busy primary switches after its turn"
+  assert_equals fake/other "$("$BIN/fm-deck-chat.sh" model --home "$home")" "model prints the chosen route"
+  sleep 1
+  assert_equals "$second" "$(python3 "$BIN/fm_primary_chat.py" record pid --home "$home")" "a busy primary is not interrupted"
+  printf 'v1 state=idle source=deck-wrapper\n' > "$home/state/primary.busy-state"
+  wait_for 10 "the switched host exits" dead "$second"
+  wait_for 30 "the keeper starts the switched host" host_is_not "$home" "$second"
+  third=$(python3 "$BIN/fm_primary_chat.py" record pid --home "$home")
+  [ -n "$third" ] || fail "no host after the switch"
+  assert_absent "$home/state/primary-chat/stopped" "a switch never writes the stopped marker"
+  assert_absent "$home/state/primary-chat/switch" "the keeper takes the switch request"
+  assert_contains "$(tail -1 "$FAKE_DECK_LOG")" "\"--session\", \"$session\"" "the switched host resumes the same deck session"
+  assert_contains "$(tail -1 "$FAKE_DECK_LOG")" '"--model", "fake/other"' "the switched host runs the new model"
+  assert_grep 'switching the primary to fake/other' "$home/state/primary-chat/service.log" "the keeper logs the switch"
+  second=$third
+
   # stop is honoured: the marker keeps the keeper from restarting.
   "$BIN/fm-deck-chat.sh" stop --home "$home" >/dev/null
   wait_for 10 "the stopped host exits" dead "$second"
   wait_for 10 "the keeper reports stopped" service_state_is "$home" stopped
   sleep 1.5
-  runs_are "$home" 2 || fail "the keeper restarted a primary stopped on purpose"
+  runs_are "$home" 3 || fail "the keeper restarted a primary stopped on purpose"
 
   # A captain start withdraws the stop and the keeper adopts it.
   out=$("$BIN/fm-deck-chat.sh" --stream --home "$home" --model fake/route 2>&1) || fail "restart --stream failed: $out"
   assert_absent "$home/state/primary-chat/stopped" "a captain --stream clears the marker"
   wait_for 10 "the keeper adopts the captain's host" service_state_is "$home" running
   sleep 1
-  runs_are "$home" 3 || fail "the keeper duplicated the captain's start"
+  runs_are "$home" 4 || fail "the keeper duplicated the captain's start"
   kill -TERM "$keeper"
   wait_for 10 "the keeper exits on SIGTERM" dead "$keeper"
   "$BIN/fm-deck-chat.sh" stop --home "$home" >/dev/null
   unset FM_STREAM_HUB FM_STREAM_TOKEN FM_STREAM_MACHINE FAKE_DECK_LOG
   export SHELL="$saved_shell"
-  pass "fm-deck-chat.sh service-run: adopts a live host, restarts a crash on the same session, honours stop"
+  rc=0; "$BIN/fm-deck-chat.sh" model fake/route --home "$home" >/dev/null 2>&1 || rc=$?
+  expect_code 1 "$rc" "model refuses without a keeper"
+  pass "fm-deck-chat.sh service-run: adopts a live host, restarts a crash on the same session, switches model on the same session, honours stop"
 }
 
 test_service_keeper_alerts() {

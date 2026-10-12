@@ -77,6 +77,15 @@
 #       when the live host was started in a terminal of its own (plain
 #       `fm-deck-chat.sh`): that terminal is its only screen. `deck chat
 #       --local` skips this launcher.
+#   fm-deck-chat.sh model [ROUTE] [--home H]
+#       Switch the serviced primary to another model route: recorded in
+#       state/primary-chat/model, which the keeper starts the host on (over its
+#       own --model). Once the primary is idle the keeper ends the host and
+#       starts it again on the same session, resuming the conversation as any
+#       keeper restart does; it never goes through `stop`. Prints whether the
+#       switch happens now or after the turn under way. Exit 1 when no keeper
+#       runs this home; 2 for a malformed route. Without ROUTE, prints the model
+#       the keeper starts the primary on ("default" for none chosen).
 #   fm-deck-chat.sh install-service [--home H] [--model ROUTE]
 #       macOS: generate ~/Library/LaunchAgents/dev.firstmate.primary.<hash>.plist
 #       (<hash> = first 12 hex of sha256 of the canonical home) and bootstrap it
@@ -141,10 +150,10 @@ q() { printf '%q' "$1"; }
 
 MODE=run
 case "${1:-}" in
-  stop|attach|open|install-service|uninstall-service|service-run|service-alert) MODE=$1; shift ;;
+  stop|attach|open|model|install-service|uninstall-service|service-run|service-alert) MODE=$1; shift ;;
 esac
 HOME_DIR=${FM_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}
-MODEL='' SESSION='' ENDPOINT='' STREAM=0 SUMMARY=''
+MODEL='' SESSION='' ENDPOINT='' STREAM=0 SUMMARY='' ROUTE=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --home) HOME_DIR=${2-}; shift 2 || usage ;;
@@ -154,7 +163,8 @@ while [ $# -gt 0 ]; do
     --summary) SUMMARY=${2-}; shift 2 || usage ;;
     --stream) STREAM=1; shift ;;
     -h|--help) usage ;;
-    *) printf 'fm-deck-chat: unknown argument: %s\n' "$1" >&2; usage ;;
+    *) if [ "$MODE" = model ] && [ -z "$ROUTE" ]; then ROUTE=$1; shift; continue; fi
+       printf 'fm-deck-chat: unknown argument: %s\n' "$1" >&2; usage ;;
   esac
 done
 [ -n "$HOME_DIR" ] && [ -d "$HOME_DIR" ] || die "home not found: $HOME_DIR" 2
@@ -165,6 +175,11 @@ STATE="$FM_HOME/state"
 command -v python3 >/dev/null 2>&1 || die 'python3 is required' 2
 
 STOPPED="$STATE/primary-chat/stopped"
+
+if [ "$MODE" = model ]; then
+  if [ -n "$ROUTE" ]; then exec python3 "$PRIMARY_CHAT" model --home "$FM_HOME" "$ROUTE"; fi
+  exec python3 "$PRIMARY_CHAT" model --home "$FM_HOME"
+fi
 
 # A start the captain made (not the keeper's) withdraws an earlier stop.
 clear_stopped() {
