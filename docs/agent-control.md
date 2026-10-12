@@ -71,7 +71,7 @@ Only the instructions are ever rolled back from those copies; the record copy is
 The steps below describe `relaunch`; [missing-terminal recovery](#recovering-a-missing-terminal) replaces its stop step, and `reincarnate` uses that recovery transaction after the preflight owned by the script header.
 
 1. **Resolve the profile.**
-   For local recovery, an explicit `--harness`, `--model`, or `--effort` wins with the same precedence as `relaunch` - a rescue that names a replacement runtime is one transaction, not a failed recovery followed by a relaunch.
+   For `recover-missing`, an explicit `--harness`, `--model`, or `--effort` wins with the same precedence as `relaunch` - a rescue that names a replacement runtime is one transaction, not a failed recovery followed by a relaunch.
    For local records, a `kind=secondmate` task otherwise re-resolves its durable `config/secondmate-harness` pin, including that file's optional model and effort tokens, exactly as every other respawn does - so setting the pin and relaunching is the ordinary way to move a secondmate's runtime.
    Invalid static harness configuration refuses with the resolver's diagnostic before the existing worker is stopped; only a successful empty resolution may fall back to its recorded harness, and an explicit supported `--harness` bypasses the configured pin.
    A ship or scout keeps the harness already recorded for it, because that harness comes from firstmate's dispatch-profile judgment at intake and must not be silently re-read from configuration.
