@@ -91,12 +91,12 @@ lock and audit stay beside the policy when FM_APPROVAL_POLICY overrides its path
 `by` is --by TEXT or defaults to "<user>@<short-hostname> (cli)".
 A save that leaves gates enabled installs the deck hook when it is missing,
 audited as hook_installed: true; an empty-gate save does not remove the hook.
-policy-save takes the whole policy object on stdin and refuses with exit 3 when
-the file's sha is no longer --expect (none = absent), so a stale editor cannot
-overwrite a newer policy.
-Editors must preserve unchanged fields, including home, machine and grant_ttl_secs;
-a save replaces the object rather than merging it, defaulting version to 1 and
-gates to [] when omitted.
+policy-save takes the policy object on stdin and shallow-merges its top-level keys
+into the saved policy: supplied values replace saved values without merging nested
+objects, while omitted keys such as home, machine and grant_ttl_secs keep their saved values.
+It always replaces gates, defaulting gates to [] and version to 1 when omitted.
+It refuses with exit 3 when the file's sha is no longer --expect (none = absent),
+so a stale editor cannot overwrite a newer policy.
 policy-save --json returns the appended audit entry.
 policy-show --json prints {machine, path, present, sha, error, policy,
 hook_installed, grant_ttl_secs, presets: [{id, description, enabled, gates}],
@@ -736,7 +736,8 @@ def policy_save_main(argv):
         raise Refuse('the policy must be a JSON object', 2)
     incoming.setdefault('version', 1)
     incoming.setdefault('gates', [])
-    entry = commit_policy(lambda current: incoming, by, expect=expect)
+    # Keys the editor did not send (home, machine, grant_ttl_secs) keep their saved values.
+    entry = commit_policy(lambda current: {**(current or {}), **incoming}, by, expect=expect)
     if as_json:
         print(canonical(entry))
     else:
