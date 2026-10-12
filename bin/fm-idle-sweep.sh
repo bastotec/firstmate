@@ -62,6 +62,12 @@
 # state/idle-sweep/<id>.raised; unchanged size suppresses another decision
 # even when the classification changes. Holds and settled deferrals on either
 # the worker or follow-up id take precedence over a changed fingerprint.
+# Every hold re-reads the worker record first, and again before a linked
+# follow-up: a concurrent cleanup holds the task's control lock until the record
+# is gone, so a record that changed or vanished is left for a fresh scan
+# (class unknown, action none) rather than raised for a worker no longer there.
+# A main home has no parent audit, so a scan that leaves workers unhandled
+# queues ONE `check:` wake keyed idle-sweep-unhandled:<epoch> per distinct set.
 # In a main home, a scan that raised any decision queues ONE `check:` wake
 # keyed idle-sweep:<epoch> naming those workers.
 #
@@ -281,10 +287,18 @@ hours() {  # <secs>
 
 # raise <id> <class> <why> <project>: hold the worker for the captain with a
 # full card. Prints nothing; sets RAISED=1 on success.
+# record_unchanged <id>: the worker record still reads as it did when this scan
+# classified it (always true for a record-less orphan call).
+record_unchanged() {
+  case "$1" in idle-orphan-*) return 0 ;; esac
+  [ -f "$STATE/$1.meta" ] && [ "$(cat "$STATE/$1.meta" 2>/dev/null)" = "$RECORD" ]
+}
+
 raise() {
   local id=$1 class=$2 why=$3 project=$4 card title situation reason rec o1 o2 l1 l2 rc=0 out call_id=$1 ledger_id=${5:-$1}
   local hold_args=()
   HOLD_ID=
+  RAISE_SKIPPED=0
   local where="this home"
   [ "$FM_HOME" = "${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}" ] || where="home $FM_HOME"
   case "$class" in
@@ -315,8 +329,23 @@ raise() {
       recommended:$rec}' > "$card" || { rm -f "$card"; return 0; }
   hold_args=(--reason "$reason" --card-file "$card")
   case "$id" in idle-orphan-*) hold_args+=(--title "${title:0:120}" --repo "$project") ;; esac
+  if ! record_unchanged "$id"; then
+    rm -f "$card"
+    RAISE_SKIPPED=1
+    log "left $id for a fresh scan: its record changed or was cleaned up during this one"
+    return 0
+  fi
   out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-captain-hold.sh" hold "$id" \
     "${hold_args[@]}" 2>&1) || rc=$?
+  # The hold waits on the task's control lock, which a concurrent cleanup holds
+  # until it has removed the record and closed the row: re-check before minting
+  # a follow-up call for a worker that is no longer there.
+  if [ "$rc" -ne 0 ] && ! record_unchanged "$id"; then
+    rm -f "$card"
+    RAISE_SKIPPED=1
+    log "left $id for a fresh scan: it was cleaned up while its decision was being held"
+    return 0
+  fi
   if [ "$rc" -ne 0 ]; then
     rc=0
     call_id="idle-$id"
@@ -386,6 +415,7 @@ add_row() {  # <id> <class> <detail> <action>
 while IFS= read -r meta; do
   id=$(basename "$meta" .meta)
   record=$(cat "$meta" 2>/dev/null) || continue
+  RECORD=$record
   project=$(project_of "$meta")
   classify "$id"
   action=none
@@ -396,7 +426,7 @@ while IFS= read -r meta; do
         CLEANUP_WHY="no merged PR is recorded for it, so nothing proves its work landed"
         RAISED=0
         raise "$id" finished "$CLEANUP_WHY" "$project"
-        if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; else action=unhandled; fi
+        if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; elif [ "${RAISE_SKIPPED:-0}" = 1 ]; then CLASS=unknown; DETAIL="worker record changed during scan"; else action=unhandled; fi
         DETAIL=$CLEANUP_WHY
       elif cleanup "$id"; then
         action=cleaned
@@ -416,14 +446,14 @@ while IFS= read -r meta; do
       else
         RAISED=0
         raise "$id" finished "$CLEANUP_WHY" "$project"
-        if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; else action=unhandled; fi
+        if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; elif [ "${RAISE_SKIPPED:-0}" = 1 ]; then CLASS=unknown; DETAIL="worker record changed during scan"; else action=unhandled; fi
         DETAIL=$CLEANUP_WHY
       fi
       ;;
     failed|stalled|dead)
       RAISED=0
       raise "$id" "$CLASS" "$DETAIL" "$project"
-      if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; else action=unhandled; fi
+      if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; elif [ "${RAISE_SKIPPED:-0}" = 1 ]; then CLASS=unknown; DETAIL="worker record changed during scan"; else action=unhandled; fi
       ;;
   esac
   add_row "$id" "$CLASS" "$DETAIL" "$action"
@@ -468,7 +498,7 @@ while IFS=$'\t' read -r otask oeid; do
   detail="$detail and its close refused: $(one_line "$out")"
   RAISED=0
   raise "idle-orphan-$otask" dead "$detail" "$(basename "$FM_HOME")" "$otask"
-  if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; else action=unhandled; fi
+  if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; elif [ "${RAISE_SKIPPED:-0}" = 1 ]; then CLASS=unknown; DETAIL="worker record changed during scan"; else action=unhandled; fi
   add_row "idle-orphan-$otask" dead "$detail" "$action"
 done <<< "$orphans"
 
@@ -542,9 +572,23 @@ if tmp=$(mktemp "$STATE/.idle-sweep.json.XXXXXX"); then
   fi
 fi
 
+prc=0
+fm_parent_channel_destination "$FM_HOME" "$STATE" >/dev/null 2>&1 || prc=$?
+# A main home has no parent to audit it, so anything this scan could neither
+# clean up nor raise wakes it directly, once per distinct set.
+if [ "$prc" -eq 1 ]; then
+  left=$(printf '%s' "$ROWS" | jq -rs '[.[] | select(.action=="unhandled") | .id] | sort | join(" ")' 2>/dev/null) || left=
+  seen="$RAISED_DIR/.unhandled"
+  if [ -z "$left" ]; then
+    rm -f "$seen" 2>/dev/null || true
+  elif [ "$(cat "$seen" 2>/dev/null)" != "$left" ]; then
+    mkdir -p "$RAISED_DIR" 2>/dev/null || true
+    if fm_wake_append check "idle-sweep-unhandled:$NOW" "check: idle sweep could neither clean up nor raise: $left"; then
+      printf '%s\n' "$left" > "$seen" 2>/dev/null || true
+    fi
+  fi
+fi
 if [ -n "$NEW" ]; then
-  prc=0
-  fm_parent_channel_destination "$FM_HOME" "$STATE" >/dev/null 2>&1 || prc=$?
   if [ "$prc" -eq 1 ]; then
     fm_wake_append check "idle-sweep:$NOW" "check: idle workers need a decision:$NEW" \
       || log "could not queue the decision wake for:$NEW"

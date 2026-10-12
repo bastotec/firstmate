@@ -84,6 +84,12 @@ case "$1" in
       shift
     done
     printf '%s\n' "$id" >> "$FM_HOME/hold-attempts"
+    # a concurrent cleanup that held the control lock finished meanwhile
+    if [ -f "$FM_HOME/cleaned-during-hold/$id" ]; then
+      rm -f "$FM_HOME/state/$id.meta"
+      echo 'task is already closed' >&2
+      exit 1
+    fi
     case "$reason" in *'('*|*')'*) echo 'reason must not contain parentheses' >&2; exit 1 ;; esac
     [ -f "$FM_HOME/hold-unavailable" ] && exit 1
     [ -f "$FM_HOME/closed/$id" ] && { echo 'task is already closed' >&2; exit 1; }
@@ -125,7 +131,7 @@ SH
     "$dir"/bin/fm-retire-endpoint.sh "$dir"/bin/fm-captain-hold.sh "$dir"/bin/fm-on.sh \
     "$dir"/bin/tasks-axi "$dir"/bin/gh "$dir"/bin/glab
   mkdir -p "$dir/home/crew" "$dir/home/refuse" "$dir/home/held" "$dir/home/deferred" "$dir/home/closed" "$dir/home/unreadable" \
-    "$dir/home/rows" "$dir/home/pr-states" "$dir/home/concurrent-cleanup" "$dir/home/replacement" "$dir/home/pending-close"
+    "$dir/home/rows" "$dir/home/cleaned-during-hold" "$dir/home/pr-states" "$dir/home/concurrent-cleanup" "$dir/home/replacement" "$dir/home/pending-close"
   printf '%s\n' "$dir"
 }
 
@@ -158,6 +164,49 @@ sweep() {  # <dir> [args...]
 
 calls() {  # <dir> <file>
   cat "$dir/home/$2" 2>/dev/null || true
+}
+
+test_a_cleanup_finishing_during_the_hold_mints_no_followup_call() {
+  local dir
+  dir=$(new_case cleaned-during-hold)
+  add_worker "$dir" racy 'state: failed · source: run-step · run failed' 90000
+  : > "$dir/home/cleaned-during-hold/racy"
+
+  sweep "$dir" scan --now || fail "scan failed"
+
+  if grep -qx idle-racy "$dir/home/hold-attempts"; then
+    fail "a follow-up call was minted for a worker another cleanup had just removed"
+  fi
+  [ ! -s "$dir/home/hold-calls" ] || fail "a decision was held for a cleaned-up worker: $(calls "$dir" hold-calls)"
+  [ "$(jq -r '.workers[] | select(.id=="racy") | [.class,.action] | join(" ")' "$dir/home/state/idle-sweep.json")" = 'unknown none' ] \
+    || fail "the raced worker was not left for a fresh scan: $(cat "$dir/home/state/idle-sweep.json")"
+  if grep -q 'idle-sweep-unhandled:' "$dir/home/state/.wake-queue" 2>/dev/null; then
+    fail "a raced cleanup was reported as a failure"
+  fi
+  pass "fm-idle-sweep: a cleanup that finishes while the decision is held mints no follow-up call"
+}
+
+test_a_main_home_is_woken_once_for_what_the_sweep_could_not_handle() {
+  local dir
+  dir=$(new_case unhandled-wake)
+  add_worker "$dir" stuck 'state: failed · source: run-step · run failed' 90000
+  : > "$dir/home/hold-unavailable"
+
+  sweep "$dir" scan --now || fail "scan failed"
+  sweep "$dir" scan --now || fail "second scan failed"
+
+  [ "$(jq -r '.workers[] | select(.id=="stuck") | .action' "$dir/home/state/idle-sweep.json")" = unhandled ] \
+    || fail "a worker the sweep could not raise was not published as unhandled"
+  [ "$(grep -c 'idle-sweep-unhandled:' "$dir/home/state/.wake-queue")" = 1 ] \
+    || fail "an unchanged unhandled set did not wake the main home exactly once"
+  assert_contains "$(cat "$dir/home/state/.wake-queue")" "could neither clean up nor raise: stuck" \
+    "the wake should name what was left"
+
+  rm -f "$dir/home/hold-unavailable"
+  sweep "$dir" scan --now || fail "third scan failed"
+  [ "$(grep -c 'idle-sweep-unhandled:' "$dir/home/state/.wake-queue")" = 1 ] \
+    || fail "a handled worker woke the main home again"
+  pass "fm-idle-sweep: a main home is woken once for what the sweep could neither clean up nor raise"
 }
 
 test_done_workers_are_cleaned_up_without_force() {
@@ -738,3 +787,5 @@ test_local_mates_with_missing_homes_are_escalated
 test_scan_uses_fixed_quiet_and_audit_bounds
 test_watcher_runs_the_sweep_and_surfaces_its_decision
 test_done_ships_without_merge_evidence_are_never_cleaned_automatically
+test_a_cleanup_finishing_during_the_hold_mints_no_followup_call
+test_a_main_home_is_woken_once_for_what_the_sweep_could_not_handle
