@@ -83,7 +83,7 @@ test_matching_call_is_blocked_and_filed_other_calls_pass() {
   [ -n "$id" ] || fail "no request filed"
   assert_contains "$out" "$id" "message names the request"
   assert_contains "$out" "Do not retry it" "message forbids retrying"
-  mode=$(stat -f %Lp "$w/home/state/approvals/$id.json" 2>/dev/null || stat -c %a "$w/home/state/approvals/$id.json")
+  mode=$(python3 -c 'import os, stat, sys; print(format(stat.S_IMODE(os.stat(sys.argv[1]).st_mode), "o"))' "$w/home/state/approvals/$id.json")
   assert_equals 600 "$mode" "request file is private"
   assert_equals t1 "$(jq -r .agent "$w/home/state/approvals/$id.json")" "agent recorded"
   assert_equals testbox "$(jq -r .machine "$w/home/state/approvals/$id.json")" "machine recorded"
@@ -262,7 +262,7 @@ test_real_deck_blocks_then_runs_once_after_approval() {
   python3 "$ROOT/tests/assets/fake-responses-gateway.py" "$w/port" "$w/gateway.log" \
     '{"command":"agent-slack message send C123 hello-from-deck"}' &
   fm_test_track_helper_pid $!
-  for i in $(seq 1 50); do [ -s "$w/port" ] && break; sleep 0.1; done
+  for ((i=0; i<50; i++)); do [ -s "$w/port" ] && break; sleep 0.1; done
   port=$(cat "$w/port") || fail "gateway did not start"
   deckrun() {
     (cd "$w/home" && HOME="$w/fake" PROXAI_API_KEY=fake-test-key PATH="$w/fakebin:$PATH" DECK_STATE="$w/deck-state" \
