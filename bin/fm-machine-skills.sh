@@ -40,6 +40,8 @@
 # machine=<m>` and exits 0, or `place=refuse: <m> lacks <skills>; <where>` and
 # exits 1, where <where> names the machines that have them all, or says none
 # does. A machine with no recorded inventory is refused (refresh it first).
+# A machine whose bridge does not allow placement (bin/fm-bridge.py) is refused
+# by check and left out of where.
 # A target that names both a known machine and a secondmate on a different
 # machine is refused as ambiguous; coincident bindings remain usable.
 #
@@ -198,12 +200,18 @@ cmd_list() {
 }
 
 # Machines whose inventory has every named skill, space-separated.
+# Placement must cross an allowed bridge (bin/fm-bridge.py): local always may.
+placement_allowed() { # <machine>
+  [ "$1" = local ] || FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-bridge.sh" check "$1" placement >/dev/null 2>&1
+}
+
 machines_with() {
   local f m s ok found=
   for f in "$INV"/*.tsv; do
     [ -f "$f" ] || continue
     m=$(basename "$f" .tsv)
     ok=1
+    placement_allowed "$m" || continue
     for s in "$@"; do has_skill "$m" "$s" || { ok=0; break; }; done
     [ "$ok" -eq 0 ] || found="$found $m"
   done
@@ -240,6 +248,7 @@ cmd_check() { # <machine|secondmate-id> <skill>...
     fi
   fi
   [ -f "$INV/$m.tsv" ] || { printf 'place=refuse: %s has no recorded skill inventory; run bin/fm-machine-skills.sh refresh %s\n' "$m" "$m"; return 1; }
+  placement_allowed "$m" || { printf 'place=refuse: the bridge to %s does not allow placement; the captain allows it with bin/fm-bridge.sh allow %s placement or in Fleet Town\n' "$m" "$m"; return 1; }
   for s in "$@"; do has_skill "$m" "$s" || missing="${missing:+$missing, }$s"; done
   if [ -z "$missing" ]; then
     printf 'place=ok machine=%s\n' "$m"

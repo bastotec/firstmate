@@ -25,6 +25,12 @@
 # of asking on the controlling terminal, which inside a pane is an agent's
 # composer: a prompt there swallows the next typed line.
 # It neither relaxes the host-key policy nor adds known_hosts entries.
+# Before any ssh, the command's flow (supervision, reports, messages, placement, files,
+# maintenance; the readiness doctor is never gated) must be allowed on the bridge to
+# that host by bin/fm-bridge.sh check. A refused flow exits 1 with `bridge-blocked:` on
+# stderr, nothing sent, after bin/fm-bridge.sh block audits it and files one request
+# for the captain. The classification table below is the single owner of which
+# remote command is which flow; an unlisted command counts as maintenance.
 # This command explicitly disables agent forwarding, forwarding setup, and
 # configured SendEnv patterns. The remote entrypoint executes the selected
 # command under an empty environment with only its fixed runtime values.
@@ -103,6 +109,29 @@ for configured_path in "$ROOT" "$HOME_PATH"; do
   case "/$configured_path/" in */../*|*/./*) die "configured remote root or home contains traversal components" ;; esac
   case "$configured_path" in *'//'*) die "configured remote root or home contains an empty path component" ;; esac
 done
+
+# Bridge gate (bin/fm-bridge.py owns flows, defaults and the refused-flow request):
+# classify this command's flow and refuse before anything crosses the bridge.
+FLOW=maintenance
+case "$COMMAND" in
+  fm-remote-doctor.sh) FLOW= ;;
+  fm-remote-secondmate-control.sh)
+    case "${1:-}" in
+      send|key) FLOW=messages ;;
+      launch) FLOW=placement ;;
+      sync|update) FLOW=maintenance ;;
+      *) FLOW=supervision ;;
+    esac ;;
+  fm-backlog-receive.sh) FLOW=placement ;;
+  fm-remote-file.sh) FLOW=files ;;
+  fm-remote-delta-read.sh|fm-procevent-remote-reply.sh|fm-public-followup-collect.sh|fm-x-followup.sh|fm-crew-state.sh|fm-peek.sh) FLOW=reports ;;
+esac
+if [ -n "$FLOW" ] && ! BRIDGE_ANSWER=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-bridge.sh" check "$HOST" "$FLOW" 2>&1); then
+  REQUEST=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-bridge.sh" block "$HOST" "$FLOW" --what "$COMMAND ${1:-}" 2>/dev/null) || REQUEST=
+  printf 'bridge-blocked: %s; nothing was sent to %s. The captain must allow %s on that bridge%s.\n' \
+    "${BRIDGE_ANSWER#deny: }" "$HOST" "$FLOW" "${REQUEST:+ (request $REQUEST is waiting for him in Fleet Town)}" >&2
+  exit 1
+fi
 
 ROOT_B64=$(printf '%s' "$ROOT" | encode_base64)
 HOME_B64=$(printf '%s' "$HOME_PATH" | encode_base64)

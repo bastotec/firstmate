@@ -79,6 +79,12 @@ the agent (Fleet Town's command service) can deliver the exact steer text itself
 A second mate's agent id names its task in the parent home, so its own home cannot
 steer it with fm-send: answer such a request with --no-steer and steer from the parent.
 
+A bridge request (kind "bridge", filed by bin/fm-bridge.py block when bin/fm-on.sh
+refuses a flow) answers differently: --approve runs `fm-bridge.sh allow <machine> <flow>`
+(standing, audited in state/bridges.log) instead of writing a grant, and tells the
+first mate the flow is open and to retry what was blocked; --deny leaves it closed.
+If the allow fails the request stays pending.
+
 Every event (requested, repeated, approved, denied, used, expired-grant, steer-failed)
 is appended to state/approvals.log as one JSON line {at, event, id, agent, machine, tool, key, ...}.
 
@@ -467,7 +473,16 @@ def answer_main(argv):
     t = now()
     rec['status'] = 'approved' if verdict == 'approve' else 'denied'
     rec['answered'] = iso(t)
-    if verdict == 'approve':
+    bridge = rec.get('kind') == 'bridge'
+    if bridge and verdict == 'approve':
+        args = rec.get('args') or {}
+        r = subprocess.run([str(SCRIPT_DIR / 'fm-bridge.sh'), 'allow', str(args.get('machine')), str(args.get('flow')),
+                            '--by', f'captain (approved {rid})'], env=dict(os.environ, FM_HOME=home),
+                           stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        if r.returncode != 0:
+            os.rename(claimed, path)  # leave it pending: nothing was opened
+            raise Refuse(f'could not allow {args.get("flow")} on {args.get("machine")}: {(r.stderr or r.stdout).strip()}', 1)
+    elif verdict == 'approve':
         policy = None
         try:
             policy = load_policy()
@@ -481,7 +496,15 @@ def answer_main(argv):
     write_private(claimed, json.dumps(rec, indent=2, ensure_ascii=False) + '\n')
     audit(home, rec['status'], rec)
 
-    if verdict == 'approve':
+    if bridge:
+        args = rec.get('args') or {}
+        if verdict == 'approve':
+            text = (f'approved: request {rid}. The bridge to {args.get("machine")} now allows {args.get("flow")}; '
+                    f'retry what was blocked ({args.get("what")}).')
+        else:
+            text = (f'denied: request {rid}. {args.get("flow")} to {args.get("machine")} stays blocked; '
+                    f'do not retry it ({args.get("what")}) or reach that machine another way.')
+    elif verdict == 'approve':
         text = (f'approved: run request {rid} now. Run exactly this call once, unchanged '
                 f'(effective working directory {rec["cwd"]}):\n{call_text(rec)}\n'
                 f'The approval is for one use and expires at {rec["grant_expires"]}.')

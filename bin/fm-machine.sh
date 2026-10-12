@@ -7,7 +7,7 @@
 #   fm-machine.sh add <alias> <address> <user>
 #   fm-machine.sh trust <alias> <SHA256:fingerprint>
 #   fm-machine.sh prepare <alias> <remote-root>
-#   fm-machine.sh register <alias> <remote-root>
+#   fm-machine.sh register <alias> <remote-root> [--allow <flow,...|none>]
 #   fm-machine.sh skills <alias> [<remote-root>]
 #   fm-machine.sh tunnels <alias>
 #
@@ -174,7 +174,11 @@
 # register <alias> <remote-root> records the machine in this home's
 # data/machines.md as `- <alias> (root: <remote-root>; added YYYY-MM-DD)`. It is
 # idempotent for the same root and refuses a different root for a recorded
-# alias.
+# alias. It also records the bridge to the machine (bin/fm-bridge.py): --allow
+# names the flows the captain allowed when connecting it; a machine registered
+# without --allow and with no bridge entry yet allows nothing (deny by default).
+# The bridge record is seeded from the machines already known before this one
+# joins, so registering never grants a new machine the existing bridges' flows.
 #
 # FM_SSH_CONFIG selects the ssh config with -F. FM_KNOWN_HOSTS selects the
 # trust file; otherwise the first userknownhostsfile from ssh -G is used, with
@@ -221,6 +225,7 @@
 #   doctor: <each doctor line>                   (prepare)
 #   tunnels=complete|failed                      (tunnels, after its step lines)
 #   registered=<alias> root=<remote-root>        (register)
+#   bridge=<alias> allow=<flows|none>            (register)
 #   register=already-recorded                    (register, idempotent)
 #   refuse: <plain reason>                       (any refusal; exit 1)
 # Usage errors exit 2.
@@ -1449,11 +1454,19 @@ EOF
 # 0 when a URL is safe to embed single-quoted in a remote command.
 fm_project_url_plain() { case "$1" in *[!A-Za-z0-9._~:/@%+=,-]*) return 1 ;; esac; }
 
-cmd_register() { # <alias> <remote-root>
-  local alias=$1 root=$2 file existing tmp
+cmd_register() { # <alias> <remote-root> [--allow <flow,...|none>]
+  local alias=$1 root=$2 allow=${4-} file existing tmp
   valid_alias "$alias" || refuse "alias must be a plain ssh config name of A-Z, a-z, 0-9, ., _ and -, not starting with -: $alias"
   valid_root "$root" || refuse "remote root must be an absolute path of A-Z, a-z, 0-9, ., _, - and /: $root"
   printf 'action=register\nalias=%s\n' "$alias"
+  # Seed the bridge record from today's machines before this one joins them, so a
+  # newly connected machine starts with only the flows named here (bin/fm-bridge.py).
+  "$SCRIPT_DIR/fm-bridge.sh" show >/dev/null || refuse "the bridge record cannot be read; fix config/bridges.json first"
+  if [ -n "$allow" ] || ! "$SCRIPT_DIR/fm-bridge.sh" show --json | python3 -c 'import json,sys; sys.exit(0 if any(b["machine"]==sys.argv[1] and b["configured"] for b in json.load(sys.stdin)["bridges"]) else 1)' "$alias"; then
+    "$SCRIPT_DIR/fm-bridge.sh" set "$alias" --allow "${allow:-none}" --by "fm-machine.sh register" >/dev/null \
+      || refuse "could not record the bridge to $alias"
+  fi
+  printf 'bridge=%s allow=%s\n' "$alias" "$("$SCRIPT_DIR/fm-bridge.sh" show --json | python3 -c 'import json,sys; print(",".join(next((b["allow"] for b in json.load(sys.stdin)["bridges"] if b["machine"]==sys.argv[1]), [])) or "none")' "$alias")"
   file="$DATA/machines.md"
   mkdir -p "$DATA"
   if [ -e "$file" ] || [ -L "$file" ]; then
@@ -1484,7 +1497,7 @@ main() {
     add) [ "$#" -eq 3 ] || usage; cmd_add "$1" "$2" "$3" ;;
     trust) [ "$#" -eq 2 ] || usage; cmd_trust "$1" "$2" ;;
     prepare) [ "$#" -eq 2 ] || usage; cmd_prepare "$1" "$2" ;;
-    register) [ "$#" -eq 2 ] || usage; cmd_register "$1" "$2" ;;
+    register) { [ "$#" -eq 2 ] || { [ "$#" -eq 4 ] && [ "$3" = --allow ]; }; } || usage; cmd_register "$@" ;;
     skills) [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage; cmd_skills "$@" ;;
     tunnels) [ "$#" -eq 1 ] || usage; cmd_tunnels "$1" ;;
     *) usage ;;

@@ -68,6 +68,7 @@ state/
   orders/<id>.json        order proposal waiting for the captain's launch or cancel; bin/fm-order.sh owns schema and storage
   approvals/<id>.json     gated tool call waiting for the captain's approve or deny; answered/ and grants/ beside it; bin/fm-approval.py owns all of it
   approvals.log           approval gate audit log; bin/fm-approval.py owns events and fields
+  bridges.log             bridge gate audit log (seeded, changed, blocked); bin/fm-bridge.py owns fields
   <id>.inbox/             durable steering inbox; written by fm-send, removed by teardown (bin/fm-task-inbox-lib.sh)
   <id>.backlog-close      pending backlog transition for an interrupted cleanup (bin/fm-backlog-transition-lib.sh)
   <id>.external-wait      declared bounded external wait; written only by bin/fm-external-wait.sh, archived in external-waits/
@@ -653,6 +654,22 @@ FM_HOME=<home> bin/fm-approval.sh answer <id> --approve  # or --deny
 [`bin/fm-approval.py`](../bin/fm-approval.py)'s header owns policy defaults and validation, locked saves, stale-editor refusal, change auditing, automatic hook installation, matching limits, request and grant lifetimes, exact-call replay, routing (including secondmate `--no-steer --json` answers), and exit codes.
 The gate is command-text/tool-name matching, not a sandbox; do not treat it as protection against every way to reach a service.
 [`tests/fm-approval.test.sh`](../tests/fm-approval.test.sh) covers the approval contract, and [`tests/fm-machine.test.sh`](../tests/fm-machine.test.sh) covers machine setup and policy-repair reporting.
+
+## Bridge gates (config/bridges.json)
+
+A bridge joins this home's machine to another machine, and each bridge allows a set of flows: `supervision`, `reports` (wakes, replies, deltas), `messages`, `placement` (launching a mate, backlog handoff, skill routing), `files` and `maintenance` (sync and updates).
+[`bin/fm-on.sh`](../bin/fm-on.sh), the path Firstmate uses to act on another machine, refuses a flow the bridge does not allow before anything is sent, audits it in `state/bridges.log`, and files one "needs you" request in `state/approvals/` that Fleet Town shows as a card; approving it allows that flow on that bridge.
+The first use seeds the record from the machines this home already reaches, with every flow allowed, so today's bridges keep working and show as configured; a machine connected afterwards allows nothing until the captain allows flows:
+
+```sh
+bin/fm-bridge.sh show                                  # every bridge and what it allows
+bin/fm-bridge.sh allow workload files --by "captain"   # or deny; set <machine> --allow a,b|none
+bin/fm-machine.sh register newbox /home/me/firstmate --allow supervision,reports
+bin/fm-bridge.sh audit                                 # who changed what, and every blocked flow
+```
+
+[`bin/fm-bridge.py`](../bin/fm-bridge.py)'s header owns the flows, the record, seeding, the request and exit codes; `fm-on.sh`'s header owns which remote command is which flow.
+Fleet Town's own reads of remote homes (the captain's view) do not go through `fm-on.sh` and are not gated.
 
 ## Environment variables
 
