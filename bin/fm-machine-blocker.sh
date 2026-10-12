@@ -25,8 +25,8 @@
 # raise is for an action the captain approved that needs the machine (for
 # example creating a second mate there). It runs `bin/fm-machine.sh check
 # <alias> [<remote-root>]` (or reads --from), writes the pending record, and
-# when human items remain it holds the task machine-<alias, lowercased> for
-# the captain with a full card through bin/fm-captain-hold.sh hold --card-file,
+# when human items remain it holds machine-<alias, lowercased> (or the first
+# available -2, -3, ... task) with a full card via fm-captain-hold.sh hold --card-file,
 # arms the re-check watch, and prints the summary to paste into the same reply.
 # --for names the approved action in a few words ("create Inter Graal");
 # --then says what happens on its own once the steps are done (default: the
@@ -36,7 +36,7 @@
 # with no hold when nothing needs the captain.
 #
 # The watch is a condition->action pair (bin/fm-procevent-when.sh, source
-# when-machine-<alias, lowercased>): condition `ready <alias>`, action
+# when-<record's task>): condition `ready <alias>`, action
 # `resolve <alias>`, every 300 seconds for up to 14 days, one stable true.
 # ready re-runs the check, rewrites the record and, while the hold is open and
 # the human steps changed, the card; it exits 0 when no item is human, 1 when
@@ -175,12 +175,46 @@ hold_open() {  # <task>
   "$SCRIPT_DIR/fm-captain-hold.sh" open "$1" >/dev/null
 }
 
+hold_title() {
+  jq -r '"Set up " + .alias + " so I can " + .for' "$1" | cut -c1-120
+}
+
+select_hold_task() {
+  local base=$1 rec=$2 task=$1 index=1 rc row title
+  while :; do
+    if "$SCRIPT_DIR/fm-captain-hold.sh" open "$task" --distinguish-absent >/dev/null; then
+      if [ "$index" -eq 1 ]; then
+        printf '%s\n' "$task"
+        return 0
+      fi
+      row=$("$SCRIPT_DIR/fm-tasks-axi.sh" show "$task" --full) || return 2
+      title=$(printf '%s\n' "$row" | jq -Rrs '
+        split("\n") | map(select(startswith("  title: "))) | .[0]
+        | ltrimstr("  title: ") | if startswith("\"") then fromjson else . end
+      ') || return 2
+      if [ "$title" = "$(hold_title "$rec")" ]; then
+        printf '%s\n' "$task"
+        return 0
+      fi
+    else
+      rc=$?
+      case "$rc" in
+        3) printf '%s\n' "$task"; return 0 ;;
+        1) ;;
+        *) return "$rc" ;;
+      esac
+    fi
+    index=$((index + 1))
+    task="$base-$index"
+  done
+}
+
 hold_with_card() {  # <task> <record-json-file>
   local task=$1 rec=$2 reason
   card_json "$rec" > "$TMP/card.json"
   reason=$(jq -r '"Blocked on you: " + ([.items[] | select(.state == "you") | .name] | join(", ")) + " on " + .alias' "$rec")
   "$SCRIPT_DIR/fm-captain-hold.sh" hold "$task" --reason "$reason" \
-    --title "$(jq -r '"Set up " + .alias + " so I can " + .for' "$rec" | cut -c1-120)" \
+    --title "$(hold_title "$rec")" \
     --repo firstmate --card-file "$TMP/card.json" >/dev/null
 }
 
@@ -195,7 +229,7 @@ arm_watch() {  # <alias> <task>
 }
 
 cmd_raise() {
-  local alias=${1:-} for='' next='' root='' from='' planned='[]' task rec state path
+  local alias=${1:-} for='' next='' root='' from='' planned='[]' task rec state path old_task=''
   require_alias "$alias"
   shift
   while [ "$#" -gt 0 ]; do
@@ -232,10 +266,18 @@ cmd_raise() {
     jq -e --arg for "$for" --argjson planned "$planned" \
       '.for == $for and .planned == $planned' "$path" >/dev/null \
       || die "a different action already waits on $alias; finish it before raising another"
+    old_task=$(jq -er .task "$path")
+    rec=$(jq --arg task "$old_task" '.task = $task' <<<"$rec")
   fi
   if [ "$state" = needs-you ]; then
     printf '%s\n' "$rec" > "$TMP/record.json"
+    task=$(select_hold_task "$task" "$TMP/record.json")
+    rec=$(jq --arg task "$task" '.task = $task' <<<"$rec")
+    printf '%s\n' "$rec" > "$TMP/record.json"
     hold_with_card "$task" "$TMP/record.json"
+    if [ -n "$old_task" ] && [ "$old_task" != "$task" ]; then
+      "$SCRIPT_DIR/fm-procevent-when.sh" retire "$old_task" >/dev/null
+    fi
   fi
   write_record "$alias" "$rec"
   if [ "$state" = ready ]; then
@@ -309,11 +351,13 @@ cmd_show() {
 }
 
 cmd_clear() {
-  local alias=${1:-} task
+  local alias=${1:-} task path
   require_alias "$alias"
+  path=$(record_path "$alias")
   task=$(slug "$alias")
+  [ ! -f "$path" ] || task=$(jq -er .task "$path")
   "$SCRIPT_DIR/fm-procevent-when.sh" retire "$task" >/dev/null
-  rm -f -- "$(record_path "$alias")"
+  rm -f -- "$path"
   printf 'cleared: %s\n' "$alias"
 }
 

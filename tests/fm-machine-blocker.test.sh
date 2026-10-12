@@ -262,6 +262,73 @@ test_alias_punctuation_preserves_distinct_identities() {
   pass "fm-machine-blocker: dots, hyphens and underscores name distinct holds and watches"
 }
 
+test_raise_again_after_passing_recheck() {
+  local home task previous=machine-automattic card out rc
+  home=$(make_home raise-again)
+  check_output "$home/check.txt"
+  run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" \
+    --secondmate "inter-graal=Inter Graal" --from "$home/check.txt" >/dev/null || fail "initial raise failed"
+  sed 's/=human:/=present:/' "$home/check.txt" > "$home/pass.txt"
+  run_in "$home" "$BLOCKER" ready Automattic --from "$home/pass.txt" || fail "initial re-check failed"
+  run_in "$home" "$BLOCKER" resolve Automattic >/dev/null || fail "initial resolve failed"
+  printf '%s\n' 'item doctor-stream-survival=human: disable KillUserProcesses on the machine' >> "$home/pass.txt"
+  for task in machine-automattic-2 machine-automattic-3; do
+    out=$(run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" \
+      --secondmate "inter-graal=Inter Graal" --from "$home/pass.txt") || fail "renewed raise failed: $out"
+    assert_contains "$out" "Blocked on you: 1 step on Automattic" "new prerequisite is escalated"
+    assert_equals "$task" "$(run_in "$home" "$BLOCKER" show Automattic | jq -r .task)" "renewed record names the fresh task"
+    assert_equals "Inter Graal" "$(run_in "$home" "$BLOCKER" show Automattic | jq -r '.planned[0].name')" "renewed action preserves the planned mate"
+    run_in "$home" "$ROOT/bin/fm-captain-hold.sh" open "$task" >/dev/null || fail "renewed hold is not open"
+    if run_in "$home" "$ROOT/bin/fm-captain-hold.sh" open "$previous" >/dev/null 2>&1; then
+      fail "renewed raise reopened the closed task"
+    fi
+    card=$(run_in "$home" "$ROOT/bin/fm-card.sh" show "$task") || fail "renewed card is missing"
+    assert_equals false "$(jq -r .draft <<<"$card")" "renewed card is full"
+    assert_contains "$(jq -r .situation <<<"$card")" "doctor-stream-survival" "renewed card names the newly discovered prerequisite"
+    assert_present "$home/state/when/when-$task.spec" "renewed watch follows the recorded task"
+    assert_absent "$home/state/when/when-$previous.spec" "previous watch is retired"
+    run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" \
+      --secondmate "inter-graal=Inter Graal" --from "$home/pass.txt" >/dev/null || fail "renewed raise retry failed"
+    assert_equals "$task" "$(run_in "$home" "$BLOCKER" show Automattic | jq -r .task)" "retry reuses the matching open hold"
+    if [ "$task" = machine-automattic-2 ]; then
+      sed 's/doctor-stream-survival=/doctor-stream-survival-extra=/' "$home/pass.txt" > "$home/update.txt"
+      rc=0
+      run_in "$home" "$BLOCKER" ready Automattic --from "$home/update.txt" || rc=$?
+      assert_equals 1 "$rc" "new prerequisite still blocks readiness"
+      assert_contains "$(run_in "$home" "$ROOT/bin/fm-card.sh" show "$task" | jq -r .situation)" \
+        "doctor-stream-survival-extra" "ready refreshes the suffixed card"
+      sed 's/=human:/=present:/' "$home/pass.txt" > "$home/complete.txt"
+      run_in "$home" "$BLOCKER" ready Automattic --from "$home/complete.txt" || fail "renewed passing re-check failed"
+      run_in "$home" "$BLOCKER" resolve Automattic >/dev/null || fail "renewed resolve failed"
+      assert_absent "$home/state/cards/$task.json" "resolve removes the suffixed card"
+    fi
+    previous=$task
+  done
+  run_in "$home" "$BLOCKER" clear Automattic >/dev/null || fail "renewed clear failed"
+  assert_absent "$home/state/when/when-machine-automattic-3.spec" "clear retires the recorded suffixed watch"
+  assert_absent "$home/state/machine-pending/Automattic.json" "clear removes the renewed pending record"
+  pass "fm-machine-blocker: subsequent prerequisites get fresh holds, cards and watches"
+}
+
+test_renewed_raise_skips_another_actions_open_hold() {
+  local home card task
+  home=$(make_home occupied-suffix)
+  check_output "$home/check.txt"
+  run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" --from "$home/check.txt" >/dev/null || fail "raise failed"
+  sed 's/=human:/=present:/' "$home/check.txt" > "$home/pass.txt"
+  run_in "$home" "$BLOCKER" ready Automattic --from "$home/pass.txt" || fail "re-check failed"
+  run_in "$home" "$BLOCKER" resolve Automattic >/dev/null || fail "resolve failed"
+  run_in "$home" "$ROOT/bin/fm-captain-hold.sh" hold machine-automattic-2 \
+    --title "Another existing call" --reason "Existing question" --repo firstmate >/dev/null || fail "fixture hold failed"
+  card=$(run_in "$home" "$ROOT/bin/fm-card.sh" show machine-automattic-2)
+  run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" --from "$home/check.txt" >/dev/null || fail "renewed raise failed"
+  task=$(run_in "$home" "$BLOCKER" show Automattic | jq -r .task)
+  assert_equals machine-automattic-3 "$task" "renewed raise skips the other action's task"
+  assert_equals "$card" "$(run_in "$home" "$ROOT/bin/fm-card.sh" show machine-automattic-2)" "other action's card is preserved"
+  run_in "$home" "$ROOT/bin/fm-captain-hold.sh" open "$task" >/dev/null || fail "fresh hold missing"
+  pass "fm-machine-blocker: renewed escalation skips a hold for another action"
+}
+
 test_summary_leads_with_blocked_on_you
 test_raise_writes_card_hold_record_and_watch
 test_recheck_updates_then_resolves_itself
@@ -272,3 +339,5 @@ test_raise_preserves_the_waiting_action
 test_raise_publishes_only_after_hold_accepts
 test_hold_errors_do_not_resolve
 test_alias_punctuation_preserves_distinct_identities
+test_raise_again_after_passing_recheck
+test_renewed_raise_skips_another_actions_open_hold
