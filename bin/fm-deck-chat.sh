@@ -582,6 +582,8 @@ args=(chat --session "$SESSION" --steer-dir "$STEER_DIR" --events "$EVENTS" --ho
 # bash from pointing an asynchronous command at /dev/null.
 trap ':' INT
 trap '[ -z "$DECK_PID" ] || kill -TERM "$DECK_PID" 2>/dev/null' HUP TERM
+# The machine's approval gate (bin/fm-approval.py) files the first mate's blocked calls here.
+export FM_APPROVAL_HOME="$FM_HOME" FM_APPROVAL_AGENT=primary
 "$DECK" "${args[@]}" <&0 &
 DECK_PID=$!
 rc=0

@@ -62,6 +62,8 @@ state/
   cards/<task-id>.json    captain-facing decision card; bin/fm-card.sh owns schema and storage, bin/fm-captain-hold.sh owns hold and resolution hooks
   cards-cleared.log       stale-card clear and restore log; bin/fm-card.sh owns fields and undo guards
   orders/<id>.json        order proposal waiting for the captain's launch or cancel; bin/fm-order.sh owns schema and storage
+  approvals/<id>.json     gated tool call waiting for the captain's approve or deny; answered/ and grants/ beside it; bin/fm-approval.py owns all of it
+  approvals.log           approval gate audit log; bin/fm-approval.py owns events and fields
   <id>.inbox/             durable steering inbox; written by fm-send, removed by teardown (bin/fm-task-inbox-lib.sh)
   <id>.backlog-close      pending backlog transition for an interrupted cleanup (bin/fm-backlog-transition-lib.sh)
   <id>.external-wait      declared bounded external wait; written only by bin/fm-external-wait.sh, archived in external-waits/
@@ -339,7 +341,7 @@ A task record naming a removed harness (for example `pi` or `claude`) is reporte
 Firstmate does not expose a spawn or relaunch effort axis for Deck: a dispatch profile with effort or a relaunch with non-default effort is refused before any worker is created or stopped.
 Supervisor watcher turns use the separate [turn-effort policy](#turn-effort-configeffort-policyjson).
 A Deck spawn needs `deck`, `jq`, and Python 3 on the worker's `PATH`, plus a worker-readable credential for Deck's proxai endpoint.
-Deck runs tools without approval prompts and Firstmate adds no pre-tool guard, so use it only where that autonomy is acceptable.
+Deck runs tools without interactive approval prompts; [Approval gates](#approval-gates-agentsapprovalsjson) owns Firstmate's optional machine-local protection.
 Workers load gitignored `deck-mcp.json` from the driver's effective config directory, and the chat host loads `<home>/config/deck-mcp.json`; `FM_DECK_MCP_CONFIG` overrides the path as-is and an empty value disables MCP.
 Each home owns its MCP file rather than inheriting OAuth-backed servers, and [Deck's MCP docs](https://github.com/bastotec/deck/blob/main/docs/mcp.md) own its format and OAuth login.
 When `config/crew-dispatch.json` exists, crewmate and scout spawns need an explicit resolved harness instead of falling back to `config/crew-harness`.
@@ -612,6 +614,27 @@ After `FM_INBOX_OVERDUE_SECS` (default 600) unread, `bin/fm-guard.sh` prints `CA
 | `config/inbox-profile` | `FM_INBOX_PROFILE` | AWS profile for those calls; absent or explicitly empty means ambient credentials. |
 
 The region, model, and profile files are read as their first non-blank, non-`#` line.
+
+## Approval gates (~/.agents/approvals.json)
+
+Some machines should not rely on `AGENTS.md` alone for actions the captain wants to see first, such as Slack, PR comments or email.
+After hook installation, every Deck agent in that machine account passes through [`bin/fm-approval.sh`](../bin/fm-approval.sh); unapproved matching calls become pending requests in their owning home rather than executing.
+This repository provides the approval command and records; Fleet Town's card display and answer routing require the separate firstmate-ui integration.
+The policy stays on the machine, outside home inheritance and dotfiles synchronization; the captain manages it with `enable` and `disable` or edits it locally.
+Nothing is gated until the captain enables a gate:
+
+```sh
+bin/fm-approval.sh install-hook            # once per machine; also offered by bin/fm-machine.sh check/setup
+bin/fm-approval.sh presets                 # current presets and their scope
+bin/fm-approval.sh enable slack-send gh-pr-write
+bin/fm-approval.sh status                  # installed hook, enabled gates, policy errors
+FM_HOME=<home> bin/fm-approval.sh list      # pending requests
+FM_HOME=<home> bin/fm-approval.sh answer <id> --approve  # or --deny
+```
+
+[`bin/fm-approval.py`](../bin/fm-approval.py)'s header owns policy defaults and validation, matching limits, request and grant lifetimes, exact-call replay, routing (including secondmate `--no-steer --json` answers), and exit codes.
+The gate is command-text/tool-name matching, not a sandbox; do not treat it as protection against every way to reach a service.
+[`tests/fm-approval.test.sh`](../tests/fm-approval.test.sh) covers the approval contract, and [`tests/fm-machine.test.sh`](../tests/fm-machine.test.sh) covers machine setup and policy-repair reporting.
 
 ## Environment variables
 

@@ -8,6 +8,7 @@
 #   fm-machine-remote.sh probe <remote-root> <gateway-url> <hub-url|-> <tool>...
 #   fm-machine-remote.sh install-tool <tool> <remote-root>
 #   fm-machine-remote.sh install-deck <remote-root> <deck-repo-url>
+#   fm-machine-remote.sh install-approval-gate <remote-root>
 #
 # It needs no Firstmate checkout on the machine, so it works before prepare.
 # Runtime lookups and install checks use the remote job worker's PATH, composed by
@@ -26,6 +27,7 @@
 #   gateway=reachable|unreachable      (any HTTP answer from <gateway-url>/models)
 #   gateway-key=present|missing|unsafe|unreadable path=<file> [mode=<octal>]
 #   stream-hub=reachable|unreachable|unknown
+#   approval-gate=hook=installed|missing gates=<ids>|none [error=...]   (unknown without a clone)
 # The gateway key file is $PROXAI_API_KEY_FILE when the ssh environment sets it,
 # else ~/.config/proxai/client.key, where Deck looks by default. Only its
 # presence and mode are read; its contents are never opened. `unreadable` means
@@ -41,6 +43,9 @@
 # documents, and installs the binary atomically at ~/.local/bin/deck. It refuses
 # to reuse a cached clone with a different origin. Both print one
 # `result=done|failed: <reason>` line, with URL userinfo redacted in all output.
+# install-approval-gate runs <remote-root>/bin/fm-approval.sh install-hook, which
+# merges the approval gate into ~/.agents/deck.hooks.json; it enables no gate
+# (bin/fm-approval.py owns the policy) and prints the same result line.
 set -u
 
 if ! declare -F fm_home_tool_install_cmd >/dev/null; then
@@ -146,6 +151,19 @@ cmd_probe() { # <root> <gateway-url> <hub-url|-> <tool>...
     code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' "$hub" < /dev/null 2>/dev/null) || true
     case "$code" in 000|'') printf 'stream-hub=unreachable\n' ;; *) printf 'stream-hub=reachable\n' ;; esac
   fi
+  if [ "$root" != - ] && [ -f "$root/bin/fm-approval.sh" ] && command -v python3 >/dev/null 2>&1; then
+    printf 'approval-gate=%s\n' "$(bash "$root/bin/fm-approval.sh" status < /dev/null 2>/dev/null | head -n 1)"
+  else
+    printf 'approval-gate=unknown\n'
+  fi
+}
+
+cmd_install_approval_gate() { # <root>
+  local root=$1 out
+  [ -f "$root/bin/fm-approval.sh" ] || die "no bin/fm-approval.sh in $root; update the Firstmate clone first"
+  command -v python3 >/dev/null 2>&1 || die "python3 is missing"
+  out=$(bash "$root/bin/fm-approval.sh" install-hook < /dev/null 2>&1) || die "${out:-install-hook failed}"
+  printf 'result=done: %s\n' "$out"
 }
 
 cmd_install_tool() { # <tool> <root>
@@ -190,13 +208,14 @@ cmd_install_deck() { # <root> <repo-url>
 }
 
 main() {
-  [ "$#" -ge 1 ] || { echo "usage: fm-machine-remote.sh probe|install-tool|install-deck ..." >&2; exit 2; }
+  [ "$#" -ge 1 ] || { echo "usage: fm-machine-remote.sh probe|install-tool|install-deck|install-approval-gate ..." >&2; exit 2; }
   local sub=$1
   shift
   case "$sub" in
     probe) [ "$#" -ge 3 ] || exit 2; cmd_probe "$@" ;;
     install-tool) [ "$#" -eq 2 ] || exit 2; cmd_install_tool "$@" ;;
     install-deck) [ "$#" -eq 2 ] || exit 2; cmd_install_deck "$@" ;;
+    install-approval-gate) [ "$#" -eq 1 ] || exit 2; cmd_install_approval_gate "$@" ;;
     *) exit 2 ;;
   esac
 }

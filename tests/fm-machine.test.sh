@@ -909,4 +909,52 @@ assert_contains "$out" 'http://[redacted]@127.0.0.1:8329/v1 answers' "ordinary g
 assert_not_contains "$out" 'pa"ss' "gateway output exposed the password"
 pass "machine output redacts URL userinfo in facts, success, failure, diagnostics and refusals"
 
+# --- approval gate ---
+new_account
+git -C "$NETFM" remote set-url origin https://example.com/acme/firstmate.git
+mkdir -p "$RROOT/bin" "$RROOT/.git"
+printf 'fixture\n' > "$RROOT/AGENTS.md"
+: > "$RROOT/bin/fm-remote-entrypoint.sh"
+printf 'https://example.com/acme/firstmate.git\n' > "$RROOT/.git/origin"
+cp "$ROOT/bin/fm-approval.sh" "$ROOT/bin/fm-approval.py" "$RROOT/bin/"
+ln -sf "$(command -v python3)" "$FAKE_RBIN/python3"
+out=$(machine check box "$RROOT") || true
+assert_contains "$out" "item approval-gate=will-install: setup installs the approval gate hook with no gates enabled" "check did not offer the approval gate"
+out=$(machine setup box "$RROOT") || true
+assert_contains "$out" 'step approval-gate=done: installed the approval gate' "setup did not install the approval gate"
+assert_equals "$(python3 -c 'import json,sys; print("bash " + json.dumps(sys.argv[1]) + " gate")' "$RROOT/bin/fm-approval.sh")" \
+  "$(jq -r '.hooks.pre_tool_use[0].command' "$FAKE_ACCOUNT/.agents/deck.hooks.json")" "global pre-tool hook runs the approval gate"
+assert_equals true "$(jq -r '.hooks.pre_tool_use[0].fail_closed' "$FAKE_ACCOUNT/.agents/deck.hooks.json")" "hook failures block calls"
+assert_equals true "$(jq '.hooks.pre_tool_use[0] | has("matcher") | not' "$FAKE_ACCOUNT/.agents/deck.hooks.json")" "hook applies to all tools"
+assert_absent "$FAKE_ACCOUNT/.agents/approvals.json" "setup must not enable any gate"
+out=$(machine check box "$RROOT") || true
+assert_contains "$out" "item approval-gate=present: the approval gate runs in ~/.agents/deck.hooks.json; gates=none" "check did not see the installed gate"
+out=$(machine setup box "$RROOT") || true
+assert_contains "$out" 'step approval-gate=skipped: already installed' "setup reinstalled the gate"
+pass "check offers and setup installs the approval gate with no gates enabled"
+
+for hook_state in installed missing; do
+  if [ "$hook_state" = missing ]; then rm "$FAKE_ACCOUNT/.agents/deck.hooks.json"; fi
+  printf '{"gates": [' > "$FAKE_ACCOUNT/.agents/approvals.json"
+  set +e
+  out=$(machine check box "$RROOT")
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "check with broken policy and $hook_state hook"
+  assert_contains "$out" 'item approval-gate=human: fix ~/.agents/approvals.json' "policy repair takes precedence over hook readiness"
+  assert_contains "$out" 'every tool call is blocked' "policy error explains blocked calls"
+  set +e
+  out=$(machine setup box "$RROOT")
+  rc=$?
+  set -e
+  expect_code 3 "$rc" "setup with broken policy and $hook_state hook"
+  assert_contains "$out" 'human approval-gate: fix ~/.agents/approvals.json' "setup retains the human repair step"
+  assert_contains "$out" 'setup=incomplete: 1 human steps' "broken policy prevents readiness on an otherwise healthy machine"
+  assert_equals '{"gates": [' "$(cat "$FAKE_ACCOUNT/.agents/approvals.json")" "setup does not overwrite the broken machine-local policy"
+done
+printf '{"version":1,"gates":[]}' > "$FAKE_ACCOUNT/.agents/approvals.json"
+out=$(machine check box "$RROOT") || fail "repaired machine is not ready: $out"
+assert_contains "$out" 'item approval-gate=present:' "repaired policy restores readiness"
+pass "broken approval policies remain human repair items regardless of hook installation"
+
 echo "ALL TESTS PASSED"
