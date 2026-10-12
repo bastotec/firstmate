@@ -23,7 +23,7 @@ root, lab = map(Path, sys.argv[1:3])
 deck = sys.argv[3]
 lab = lab / 'scenarios'
 lab.mkdir()
-state = lab / 'state'
+state = lab / "state's path"
 state.mkdir()
 cwd = lab / 'cwd'
 cwd.mkdir()
@@ -211,8 +211,10 @@ try:
     proxy_thread = threading.Thread(target=proxy.serve_forever)
     proxy_thread.start()
     env = dict(os.environ, DECK_STATE=str(lab / 'deck-state'), FM_HOME=str(lab),
-               FM_DECK_DEADLINE_SECS='240')
-    agent = launch([sys.executable, str(root / 'bin/fm-stream-agent.py'), 'serve', '--hub',
+               FM_DECK_DEADLINE_SECS='240', FM_STREAM_CODE_ROOT=str(root))
+    native_agent = os.environ.get('FM_STREAM_AGENT_LIVE_BINARY')
+    agent_command = [native_agent] if native_agent else [sys.executable, str(root / 'bin/fm-stream-agent.py')]
+    agent = launch(agent_command + ['serve', '--hub',
         'http://127.0.0.1:' + str(proxy.server_port), '--token-file', str(lab / 'token'),
         '--machine', 'lab', '--label', 'worker', '--cwd', str(cwd), '--status-path',
         str(state / 'worker.status'), '--ready-file', str(lab / 'agent.ready'),
@@ -425,6 +427,80 @@ try:
     record('native-result-outage-recovered', attempts=result_attempts,
            successor_native_applications=['D', 'E'], original_unresolved_binding=source('native-ended')[1])
 
+    # A real idle PTY keeps the human draft unsubmitted while the host takes
+    # a captain source out of band. That turn also exercises both publication
+    # interleavings at one next tool safe point, without a terminal doorbell.
+    (state / 'worker.turn-ended').unlink()
+    draft = ('Runtime test only: execute printf HUMAN-PRESERVED > human-result; '
+             'then append done: human to ' + str(state / 'worker.status') + ' and finish.')
+    request('/v1/tasks/' + endpoint + '/input', {'text': draft, 'submit': False})
+    def captain_source(text):
+        body = '[fm-captain-direct]⁣note\n\n' + text
+        path = subprocess.check_output(['bash', '-c',
+            '. "$1"; fm_task_inbox_write "$2" worker "$3"', 'live-captain',
+            str(root / 'bin/fm-task-inbox-lib.sh'), str(state), body], text=True).strip()
+        return Path(path)
+    def publish_captain():
+        return int(subprocess.check_output([sys.executable, str(root / 'bin/fm_stream_deck.py'),
+                    'captain', str(state), 'worker'], text=True))
+    idle_source = captain_source('Runtime test only: acknowledge this source, then execute touch ordering-started; ' +
+        barrier('ordering-gate') + '. Follow new native instructions in sequence. '
+        'Never execute old stream-order sources. After applying all new instructions and acknowledging their sources, '
+        'use a separate tool call to execute touch ordering-waiting; ' + barrier('ordering-finish') +
+        '. Then append done: ordered to ' + str(state / 'worker.status') + ' and finish.')
+    assert publish_captain() == 0, 'idle descriptor must not accept mid-turn publication'
+    wait_for(lambda: (cwd / 'ordering-started').exists(), 'idle delivery despite human draft')
+    assert not (cwd / 'human-result').exists(), 'captain delivery submitted the human draft'
+    ordering = json.loads((receiver / 'active.json').read_bytes())
+    ordered_projection = receiver / ordering['turn']
+    assert (inbox / 'handled' / idle_source.name).exists()
+    ordered_projection.chmod(0o500)
+    order_f = bridge_record('native-F', 'Execute echo F >> interleavings. Acknowledge this source. Preserve the ordering-finish gate.')
+    send(order_f, 'bridge-F')
+    wait_for(lambda: source('native-F'), 'earlier Bridge source')
+    captain_g = captain_source('Execute echo G >> interleavings. Acknowledge this source. Preserve the ordering-finish gate.')
+    ordered_projection.chmod(0o700)
+    assert publish_captain() == 2, 'one flush must publish earlier Bridge F and later captain G'
+    captain_h = captain_source('Execute echo H >> interleavings. Acknowledge this source. Preserve the ordering-finish gate.')
+    order_i = bridge_record('native-I', 'Execute echo I >> interleavings. Acknowledge this source. Preserve the ordering-finish gate.')
+    send(order_i, 'bridge-I')
+    wait_for(lambda: (ordered_projection / (str(int(captain_h.stem)) + '.msg')).exists()
+             and source('native-I') and (ordered_projection / (str(int(source('native-I')[0].stem)) + '.msg')).exists(),
+             'newer Bridge flushes earlier captain at the next safe point')
+    (cwd / 'ordering-gate').touch()
+    wait_for(lambda: (cwd / 'ordering-waiting').exists(), 'interleavings applied in the same turn')
+    assert (cwd / 'interleavings').read_text().splitlines() == ['F', 'G', 'H', 'I']
+    for ordinary in (captain_g, captain_h):
+        assert (inbox / 'handled' / ordinary.name).exists()
+    assert json.loads((receiver / 'active.json').read_bytes()) == ordering
+    assert not (state / 'worker.turn-ended').exists()
+    (cwd / 'ordering-finish').touch()
+    wait_for(lambda: (state / 'worker.turn-ended').exists(), 'ordered captain turn ends naturally')
+    for order in (order_f, order_i):
+        answer(order)
+    # The canonical escaped doorbell queued after mid-turn acknowledgement is
+    # a no-op even though the supported inbox path contains an apostrophe.
+    bell = subprocess.check_output(['bash', '-c', '. "$1"; fm_task_inbox_doorbell_line "$2"',
+        'live-bell', str(root / 'bin/fm-task-inbox-lib.sh'), str(captain_g)], text=True)
+    # The earlier intentionally stranded Bridge source is not ordinary work;
+    # retain it but exclude it from this empty-inbox observation window.
+    stranded = source('native-ended')[0]
+    retained_source = inbox / 'retained-native-ended'
+    stranded.rename(retained_source)
+    (state / 'worker.turn-ended').unlink()
+    request('/v1/tasks/' + endpoint + '/input', {'text': '', 'submit': True})
+    wait_for(lambda: (cwd / 'human-result').exists(), 'preserved human draft submits')
+    wait_for(lambda: (state / 'worker.turn-ended').exists(), 'human turn finishes')
+    assert (cwd / 'human-result').read_text() == 'HUMAN-PRESERVED'
+    human_turn = json.loads((receiver / 'active.json').read_bytes())['turn']
+    request('/v1/tasks/' + endpoint + '/input', {'text': bell, 'submit': True})
+    time.sleep(1)
+    assert json.loads((receiver / 'active.json').read_bytes())['turn'] == human_turn
+    retained_source.rename(stranded)
+    record('captain-idle-and-interleavings', inbox_has_apostrophe=True,
+           human_draft_preserved=True, applications=['F', 'G', 'H', 'I'],
+           no_extra_turn_after_ack=True, native_turn=ordering['turn'])
+
     # Run the actual retained base agent. It remains usable via legacy input,
     # but Bridge native steering is refused before this receiver sees it.
     retained_script = lab / 'retained-agent.py'
@@ -458,7 +534,7 @@ try:
            legacy_input=True, retained_native_refused=True, native_70000_refused=True,
            ordinary_execution=ordinary_endpoint, ordinary_received_bytes=70000)
     assert not proxy_errors
-    print('PASS all seven native live receiver scenarios', flush=True)
+    print('PASS all eight native live receiver scenarios', flush=True)
 finally:
     release_take.set()
     release_post.set()

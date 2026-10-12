@@ -35,6 +35,22 @@ fn parse_source(bytes: &[u8]) -> Option<(Value, String)> {
     }
     Some((binding, rest.split_once('\n')?.1.to_owned()))
 }
+fn captain_source(bytes: &[u8]) -> Option<&str> {
+    let body = std::str::from_utf8(bytes).ok()?.split_once("\n--\n")?.1;
+    let mut header = body;
+    if let Some(rest) = header.strip_prefix("[fm-from-firstmate]\u{2063}") {
+        header = rest;
+        if header.starts_with("corr=") {
+            let (corr, rest) = header.split_once(' ')?;
+            if corr.len() == 5 || corr[5..].chars().any(char::is_whitespace) {
+                return None;
+            }
+            header = rest;
+        }
+    }
+    header.strip_prefix("[fm-captain-direct]\u{2063}")?;
+    Some(body)
+}
 fn hash(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
 }
@@ -170,6 +186,17 @@ impl Receiver {
         }
         Ok(found)
     }
+    fn guidance(&self, source: &Path, text: &str) -> String {
+        let source = self.inbox.join(source.file_name().unwrap());
+        format!(
+            "{text}\n\nAfter handling this native steer, acknowledge its ordinary task-inbox source by moving {} to {}. Do not apply the same source record twice.",
+            source.display(),
+            self.inbox
+                .join("handled")
+                .join(source.file_name().unwrap())
+                .display()
+        )
+    }
     fn enqueue(&self, binding: &Value, text: &str) -> io::Result<PathBuf> {
         // Keep allocation/format/idempotency under the existing inbox owner.
         let library = std::env::var_os("FM_STREAM_CODE_ROOT")
@@ -187,7 +214,10 @@ impl Receiver {
                     "task inbox writer unavailable; set FM_STREAM_CODE_ROOT to the repository root",
                 )
             })?;
-        let body = format!("[stream-order {}]\nNative Deck delivery only: do not execute this source as ordinary steering. Retain it until native guidance instructs acknowledgement.\n{text}", serde_json::to_string(binding).map_err(io::Error::other)?);
+        let body = format!(
+            "[stream-order {}]\nNative Deck delivery only: do not execute this source as ordinary steering. Retain it until native guidance instructs acknowledgement.\n{text}",
+            serde_json::to_string(binding).map_err(io::Error::other)?
+        );
         let output = Command::new("bash")
             .args([
                 "-c",
@@ -460,27 +490,69 @@ impl Receiver {
                             .to_string_lossy()
                             .parse::<u64>()
                             .map_err(io::Error::other)?,
+                        p,
                         text,
                     ))
                 })
                 .collect::<io::Result<Vec<_>>>()?;
-            sources.sort_by_key(|(number, _)| *number);
-            for (number, text) in sources {
-                let name = format!("{number}.msg");
-                if ["", "handled", "rejected"]
-                    .iter()
-                    .any(|sub| projection.join(sub).join(&name).exists())
-                {
+            // Like the driver's publisher, flush pending captain sources before
+            // exposing a newer Bridge sequence to Deck's next safe point.
+            for entry in fs::read_dir(&self.inbox)? {
+                let source = entry?.path();
+                if source.extension().is_none_or(|s| s != "msg") {
                     continue;
                 }
-                let source = self.inbox.join(format!("{number:03}.msg"));
-                let guidance = format!("{text}\n\nAfter handling this native steer, acknowledge its ordinary task-inbox source by moving {} to {}. Do not apply the same source record twice.", source.display(), self.inbox.join("handled").join(source.file_name().unwrap()).display());
-                if guidance.len() > 65536 {
-                    return Ok(Decision::refused(
-                        "Deck steering exceeds interface size after source reference",
-                    ));
+                let Some(number) = source
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .and_then(|s| s.parse::<u64>().ok())
+                else {
+                    continue;
+                };
+                let bytes = match fs::read(&source) {
+                    Ok(bytes) => bytes,
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                    Err(e) => return Err(e),
+                };
+                if let Some(body) = captain_source(&bytes) {
+                    if body.trim().is_empty() || self.guidance(&source, body).len() > 65536 {
+                        continue;
+                    }
+                    sources.push((number, source, body.to_owned()));
+                }
+            }
+            let mut floor = 0;
+            for sub in ["", "handled", "rejected"] {
+                let entries = match fs::read_dir(projection.join(sub)) {
+                    Ok(entries) => entries,
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                    Err(e) => return Err(e),
+                };
+                for entry in entries {
+                    let path = entry?.path();
+                    if path.extension().is_some_and(|s| s == "msg") {
+                        if let Some(number) = path
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .and_then(|s| s.parse::<u64>().ok())
+                        {
+                            floor = floor.max(number);
+                        }
+                    }
+                }
+            }
+            sources.sort_by_key(|(number, _, _)| *number);
+            for (number, source, text) in sources {
+                if number <= floor {
+                    continue;
+                }
+                let name = format!("{number}.msg");
+                let guidance = self.guidance(&source, &text);
+                if text.trim().is_empty() || guidance.len() > 65536 {
+                    break;
                 }
                 atomic(&projection.join(name), guidance.as_bytes())?;
+                floor = number;
             }
         }
         drop(_lock);
@@ -634,6 +706,160 @@ mod tests {
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             );
+        }
+    }
+    #[test]
+    fn newer_bridge_order_flushes_earlier_captain_source() {
+        let lab = Lab::new();
+        let receiver = lab.receiver();
+        start(&receiver, "original");
+        let body = "[fm-from-firstmate]\u{2063}corr=test [fm-captain-direct]\u{2063}note\n\nApply the earlier correction.\r\n";
+        fs::write(
+            receiver.inbox.join("001.msg"),
+            format!("schema=fm-task-inbox.v1\nat=x\n--\n{body}"),
+        )
+        .unwrap();
+        let mut reservation = json!({});
+        assert!(matches!(
+            receiver
+                .apply(
+                    "later",
+                    &receiver.endpoint,
+                    "Apply the later correction.",
+                    || true,
+                    false,
+                    &mut reservation,
+                    "later-command",
+                    false
+                )
+                .unwrap(),
+            Decision::Pending(_)
+        ));
+        let earlier = fs::read_to_string(receiver.root.join("original/1.msg")).unwrap();
+        assert!(earlier.starts_with(body));
+        assert!(receiver.root.join("original/2.msg").is_file());
+        assert!(
+            receiver.inbox.join("001.msg").is_file(),
+            "publication acknowledged the ordinary source"
+        );
+    }
+    #[test]
+    fn newer_bridge_order_skips_native_ineligible_captain_sources() {
+        for payload in ["x".repeat(70000), "α".repeat(32730)] {
+            let lab = Lab::new();
+            let receiver = lab.receiver();
+            start(&receiver, "original");
+            let body = format!("[fm-captain-direct]\u{2063}note\n\n{payload}");
+            let source = receiver.inbox.join("001.msg");
+            let before = format!("schema=fm-task-inbox.v1\nat=x\n--\n{body}").into_bytes();
+            fs::write(&source, &before).unwrap();
+            let earlier = "[fm-captain-direct]\u{2063}note\n\nearlier eligible";
+            fs::write(
+                receiver.inbox.join("002.msg"),
+                format!("schema=fm-task-inbox.v1\nat=x\n--\n{earlier}"),
+            )
+            .unwrap();
+            let mut reservation = json!({});
+            assert!(matches!(
+                receiver
+                    .apply(
+                        "bounded",
+                        &receiver.endpoint,
+                        "valid Bridge",
+                        || true,
+                        false,
+                        &mut reservation,
+                        "bounded-command",
+                        true
+                    )
+                    .unwrap(),
+                Decision::Pending(_)
+            ));
+            let later = "[fm-captain-direct]\u{2063}note\n\nlater eligible";
+            fs::write(
+                receiver.inbox.join("004.msg"),
+                format!("schema=fm-task-inbox.v1\nat=x\n--\n{later}"),
+            )
+            .unwrap();
+            for _ in 0..2 {
+                assert!(matches!(
+                    receiver
+                        .apply(
+                            "bounded",
+                            &receiver.endpoint,
+                            "valid Bridge",
+                            || true,
+                            true,
+                            &mut reservation,
+                            "bounded-command",
+                            false
+                        )
+                        .unwrap(),
+                    Decision::Pending(_)
+                ));
+                let projection = receiver.root.join("original");
+                let mut numbers: Vec<u64> = fs::read_dir(&projection)
+                    .unwrap()
+                    .map(|entry| {
+                        entry
+                            .unwrap()
+                            .path()
+                            .file_stem()
+                            .unwrap()
+                            .to_str()
+                            .unwrap()
+                            .parse()
+                            .unwrap()
+                    })
+                    .collect();
+                numbers.sort_unstable();
+                assert_eq!(numbers, [2, 3, 4]);
+                for (number, text) in [(2, earlier), (3, "valid Bridge"), (4, later)] {
+                    let bytes = fs::read(projection.join(format!("{number}.msg"))).unwrap();
+                    assert!(bytes.starts_with(format!("{text}\n\nAfter handling").as_bytes()));
+                    assert!(bytes.len() <= 65536);
+                }
+                assert_eq!(fs::read(&source).unwrap(), before);
+                assert!(!receiver.inbox.join("handled/001.msg").exists());
+            }
+            fs::create_dir_all(receiver.root.join("original/handled")).unwrap();
+            fs::rename(
+                receiver.root.join("original/3.msg"),
+                receiver.root.join("original/handled/3.msg"),
+            )
+            .unwrap();
+            assert!(matches!(
+                receiver
+                    .apply(
+                        "bounded",
+                        &receiver.endpoint,
+                        "valid Bridge",
+                        || true,
+                        true,
+                        &mut reservation,
+                        "bounded-command",
+                        false
+                    )
+                    .unwrap(),
+                Decision::Confirmed(true, _)
+            ));
+            assert!(matches!(
+                receiver
+                    .apply(
+                        "too-large",
+                        &receiver.endpoint,
+                        &"x".repeat(70000),
+                        || true,
+                        false,
+                        &mut json!({}),
+                        "too-large-command",
+                        false
+                    )
+                    .unwrap(),
+                Decision::Confirmed(false, _)
+            ));
+            assert_eq!(fs::read(source).unwrap(), before);
+            assert_eq!(receiver.sources().unwrap().len(), 1);
         }
     }
     #[test]

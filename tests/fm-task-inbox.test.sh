@@ -181,12 +181,15 @@ test_write_is_durable_and_exact() {
 # command line. Execute the real line in real shells and assert it is inert:
 # exit 0, no output, and nothing in the inbox touched.
 test_doorbell_is_a_shell_noop() {
-  local state rec doorbell sh out before after marker
+  local state rec doorbell sh out before after marker alias_bell
   state="$TMP_ROOT/noop/x; touch marker; #'s space/state"
   marker="$state/marker"
   mkdir -p "$state"
   rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "please continue")
   doorbell=$(inbox_lib "$state" fm_task_inbox_doorbell_line "$rec")
+  ln -s "$state" "$state-alias"
+  alias_bell=$(inbox_lib "$state" fm_task_inbox_doorbell_line "$state-alias/t1.inbox/001.msg")
+  [ "$alias_bell" = "$doorbell" ] || fail "a symlink alias changed the canonical doorbell"
   case "$doorbell" in
     ': '*) ;;
     *) fail "the doorbell must start with the shell no-op prefix, got: $doorbell" ;;

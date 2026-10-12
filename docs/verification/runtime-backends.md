@@ -37,14 +37,24 @@ FM_DECK_LIVE=1 bin/fm-test-run.sh tests/fm-stream-deck-live-e2e.test.sh
 
 `FM_DECK_LIVE_BINARY` selects a non-default Deck build for the same guard; the version string alone is insufficient because builds reporting `deck 0.1.0` can lack `--steer-dir`.
 The guard inherits gateway configuration by reference and isolates Deck state and all hub, agent, and worker records in its test lab.
-The current guard extends that check through seven live receiver scenarios: original-turn reservation and duplicate reconciliation, storage-failure recovery without successor delivery, delayed destructive takes, independent result-post retries, byte-exact CRLF/carriage-return/Unicode persistence, retained-agent compatibility with native-only size limits, and Bridge course correction with unchanged turn evidence.
+The current guard extends that check through eight live receiver scenarios: original-turn reservation and duplicate reconciliation, storage-failure recovery without successor delivery, delayed destructive takes, independent result-post retries, byte-exact CRLF/carriage-return/Unicode persistence, retained-agent compatibility with native-only size limits, Bridge course correction with unchanged turn evidence, and idle captain delivery with an untouched human draft plus both Bridge/captain publication interleavings.
+Measured on 2026-10-11 on macOS with Python 3.9.6, the Python agent 2.1.0, and Deck 0.1.0 supporting `--steer-dir`, the command above passed all eight scenarios, including an apostrophe-containing inbox path, ordered F/G/H/I application at safe points, preservation of human composer text, and no extra turn after source acknowledgement.
 It emits per-scenario JSON evidence before this success marker:
 
 ```text
-PASS all seven native live receiver scenarios
+PASS all eight native live receiver scenarios
 ```
 
-The portable application regressions run with `bin/fm-test-run.sh tests/fm-stream-deck.test.sh`.
+The guard can select a separately built native agent without installing it:
+
+```sh
+FM_STREAM_AGENT_LIVE_BINARY="$PWD/target/debug/fm-stream-agent" FM_DECK_LIVE=1 bin/fm-test-run.sh tests/fm-stream-deck-live-e2e.test.sh
+```
+
+On 2026-10-11, Rust agent 2.1.0 built locally with Rust 1.96.0 passed the portable Rust/Python lifecycle parity guard and all 47 agent unit tests.
+The corrected driver and native receiver also passed all eight real Deck scenarios on that date, including idle human-draft preservation, ordered F/G/H/I safe-point application and no extra apostrophe-path acknowledgement turn.
+The portable application regressions run with `bin/fm-test-run.sh tests/fm-stream-deck.test.sh`, including oversized captain fallback followed by eligible native sources through both publication paths.
+The native receiver's corresponding regression is `newer_bridge_order_skips_native_ineligible_captain_sources` in [`crates/fm-stream-agent/src/receiver.rs`](../../crates/fm-stream-agent/src/receiver.rs).
 Current operator behavior and supported limits are owned by [`../stream-backend.md`](../stream-backend.md#command-path).
 
 ### Interactive attach latency

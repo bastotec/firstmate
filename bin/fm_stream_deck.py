@@ -10,8 +10,8 @@ No projection is ever carried into the next turn. Only Deck's handled file
 confirms application; inbox publication, run liveness and PTY writes do not.
 Driver CLI: fm_stream_deck.py start|end STATE ID ENDPOINT [TURN SUPPORTED].
 start prints the turn projection path; end retires the active descriptor.
-fm_stream_deck.py captain STATE ID attempts captain-direct publication and
-prints the count; project_captain owns eligibility and acknowledgement rules.
+fm_stream_deck.py captain STATE ID flushes eligible captain-direct records and
+bound Bridge orders; project_captain owns eligibility and acknowledgement rules.
 """
 import contextlib
 import fcntl
@@ -115,6 +115,50 @@ class Receiver:
             os.fsync(stream.fileno())
         sync_dir(record.parent)
         return record
+
+    def publish(self, active):
+        """Flush both native sources in sequence under the lifecycle lock."""
+        projection = self.root / active['turn']
+        visible = [int(p.stem) for sub in ('', 'handled', 'rejected')
+                   for p in (projection / sub).glob('*.msg') if p.stem.isdigit()]
+        floor = max(visible, default=0)
+        candidates = []
+        for directory in (self.inbox, self.inbox / 'handled'):
+            for source in directory.glob('*.msg'):
+                if not source.stem.isdigit():
+                    continue
+                try:
+                    body = source.read_bytes().decode('utf-8').split('\n--\n', 1)[1]
+                except (FileNotFoundError, IndexError, UnicodeDecodeError):
+                    continue
+                bridge = body.startswith('[stream-order ')
+                if bridge:
+                    try:
+                        binding = json.loads(body.split('\n', 1)[0][14:-1])
+                        if (binding['execution'] != self.endpoint
+                                or binding['turn'] != active['turn']):
+                            continue
+                        body = body.split('\n', 2)[2]
+                    except (ValueError, KeyError, IndexError):
+                        continue
+                elif directory != self.inbox or not CAPTAIN_DIRECT.match(body):
+                    continue
+                ordinary = self.inbox / source.name
+                guidance = body + '\n\nAfter handling this native steer, acknowledge its ordinary task-inbox source by moving ' + str(ordinary) + ' to ' + str(self.inbox / 'handled' / source.name) + '. Do not apply the same source record twice.'
+                if not bridge and (not body.strip() or len(guidance.encode('utf-8')) > 65536):
+                    continue
+                candidates.append((int(source.stem), body, guidance))
+        published = 0
+        for number, body, guidance in sorted(candidates):
+            if number <= floor:
+                continue
+            if not body.strip() or len(guidance.encode('utf-8')) > 65536:
+                # Do not let a larger sequence strand an eligible predecessor.
+                break
+            atomic_write(projection / (str(number) + '.msg'), guidance)
+            floor = number
+            published += 1
+        return published
 
     def order_path(self, order_id):
         return self.root / ('order-' + hashlib.sha256(
@@ -248,29 +292,7 @@ class Receiver:
                 active = self.active()
                 if not active or not active['active'] or active['turn'] != binding['turn']:
                     return None, 'original Deck turn ended; application unconfirmed'
-                # Reconstruct any earlier source-only publication left by a
-                # crash before making a larger sequence visible to Deck.
-                sources = []
-                for directory in (self.inbox, self.inbox / 'handled'):
-                    for source in directory.glob('*.msg'):
-                        try:
-                            body = source.read_bytes().decode('utf-8').split('\n--\n', 1)[1]
-                        except FileNotFoundError:
-                            continue
-                        if body.startswith('[stream-order '):
-                            prior = json.loads(body.split('\n', 1)[0][14:-1])
-                            if prior == binding or (prior['execution'] == execution
-                                                   and prior['turn'] == binding['turn']):
-                                sources.append((int(source.stem), body.split('\n', 2)[2]))
-                for number, body in sorted(sources):
-                    name = str(number) + '.msg'
-                    if not any((projection / sub / name).exists()
-                               for sub in ('', 'handled', 'rejected')):
-                        source = self.inbox / ('%03d.msg' % number)
-                        guidance = body + '\n\nAfter handling this native steer, acknowledge its ordinary task-inbox source by moving ' + str(source) + ' to ' + str(self.inbox / 'handled' / source.name) + '. Do not apply the same source record twice.'
-                        if len(guidance.encode('utf-8')) > 65536:
-                            return False, 'Deck steering exceeds interface size after source reference'
-                        atomic_write(projection / name, guidance)
+                self.publish(active)
         if handled.is_file():
             return True, ''
         if rejected.is_file():
@@ -289,7 +311,7 @@ CAPTAIN_DIRECT = re.compile(
 
 
 def project_captain(state, task):
-    """Best-effort publication of eligible captain records into live Deck turns.
+    """Best-effort ordered publication of native sources into live Deck turns.
 
     The ring and driver turn-start call this independently of terminal input.
     Only active, supported turn descriptors with an existing projection qualify;
@@ -299,13 +321,15 @@ def project_captain(state, task):
     the task inbox's handled/ acknowledges it, not publication or movement of the
     native projection. The doorbell remains the fallback for unhandled sources.
 
-    A sequence is never made visible below one already visible in that turn, nor
-    above an unprojected stream order bound to it, because Deck silently drops a
-    late lower sequence. Such records remain in the ordinary inbox; this helper
-    does not wait for a predecessor or schedule a retry. The guidance, including
-    source paths, must fit Deck's 64 KiB ceiling or publication is skipped.
-    Prints the count published. tests/fm-stream-deck.test.sh pins eligibility
-    and ordering.
+    Both publication paths flush eligible captain records and Bridge orders
+    bound to the active execution and turn in sequence under the lifecycle lock.
+    No sequence is published below one already visible in that turn, because
+    Deck silently drops a late lower sequence. Guidance, including source paths,
+    must fit Deck's 64 KiB UTF-8 byte ceiling. Native-ineligible captain records
+    retain their ordinary inbox fallback without blocking later eligible sources;
+    an ineligible bound Bridge order stops the flush rather than being overtaken.
+    Prints the total number of native projections published, including Bridge
+    orders. tests/fm-stream-deck.test.sh pins eligibility and ordering.
     """
     inbox = Path(state) / (task + '.inbox')
     published = 0
@@ -319,38 +343,23 @@ def project_captain(state, task):
             projection = receiver.root / active['turn']
             if not projection.is_dir():
                 continue
-            visible = [int(p.stem) for sub in ('', 'handled', 'rejected')
-                       for p in (projection / sub).glob('*.msg') if p.stem.isdigit()]
-            floor = max(visible, default=0)
-            ceiling = None
-            candidates = []
-            for source in inbox.glob('*.msg'):
-                if not source.stem.isdigit():
-                    continue
-                try:
-                    body = source.read_bytes().decode('utf-8').split('\n--\n', 1)[1]
-                except (FileNotFoundError, IndexError, UnicodeDecodeError):
-                    continue
-                number = int(source.stem)
-                if body.startswith('[stream-order '):
-                    try:
-                        binding = json.loads(body.split('\n', 1)[0][14:-1])
-                    except ValueError:
-                        continue
-                    if binding.get('turn') == active['turn'] and number > floor:
-                        ceiling = number if ceiling is None else min(ceiling, number)
-                elif CAPTAIN_DIRECT.match(body):
-                    candidates.append((number, source, body))
-            for number, source, body in sorted(candidates):
-                if number <= floor or (ceiling is not None and number > ceiling):
-                    continue
-                guidance = body + '\n\nAfter handling this native steer, acknowledge its ordinary task-inbox source by moving ' + str(source) + ' to ' + str(inbox / 'handled' / source.name) + '. Do not apply the same source record twice.'
-                if not body.strip() or len(guidance.encode('utf-8')) > 65536:
-                    continue
-                atomic_write(projection / (str(number) + '.msg'), guidance)
-                floor = number
-                published += 1
+            published += receiver.publish(active)
     return published
+
+
+def idle_captain_sequence(state, task, floor):
+    """Newest pending captain source; observation never acknowledges it."""
+    newest = int(floor)
+    for source in (Path(state) / (task + '.inbox')).glob('*.msg'):
+        if not source.stem.isdigit():
+            continue
+        try:
+            body = source.read_bytes().decode('utf-8').split('\n--\n', 1)[1]
+        except (FileNotFoundError, IndexError, UnicodeDecodeError):
+            continue
+        if CAPTAIN_DIRECT.match(body):
+            newest = max(newest, int(source.stem))
+    return newest
 
 
 def main():
