@@ -26,7 +26,7 @@ import sys
 import tempfile
 
 
-ATTACHED_IMAGE = re.compile(r'^Attached: (/.+?) \(image\b[^)]*\)\s*$')
+ATTACHED_IMAGE = re.compile(r'^Attached: (/.+?) \(image, [^()\n]+\)\s*$')
 IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.webp', '.gif'}
 
 
@@ -172,8 +172,10 @@ class Receiver:
                         continue
                 elif directory != self.inbox or not CAPTAIN_DIRECT.match(body):
                     continue
+                if not bridge:
+                    body = with_deck_images(body)
                 ordinary = self.inbox / source.name
-                guidance = with_deck_images(body) + '\n\nAfter handling this native steer, acknowledge its ordinary task-inbox source by moving ' + str(ordinary) + ' to ' + str(self.inbox / 'handled' / source.name) + '. Do not apply the same source record twice.'
+                guidance = body + '\n\nAfter handling this native steer, acknowledge its ordinary task-inbox source by moving ' + str(ordinary) + ' to ' + str(self.inbox / 'handled' / source.name) + '. Do not apply the same source record twice.'
                 if not bridge and (not body.strip() or len(guidance.encode('utf-8')) > 65536):
                     continue
                 candidates.append((int(source.stem), body, guidance))

@@ -51,6 +51,41 @@ fn captain_source(bytes: &[u8]) -> Option<&str> {
     header.strip_prefix("[fm-captain-direct]\u{2063}")?;
     Some(body)
 }
+/// Mirrors the attachment mapping owned by bin/fm_stream_deck.py::with_deck_images.
+fn with_deck_images(text: &str) -> String {
+    let lines: Vec<_> = text.split('\n').collect();
+    let mut out = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        out.push((*line).to_owned());
+        let Some((path, annotation)) = line
+            .trim_end_matches(|c: char| c.is_whitespace() || matches!(c, '\u{1c}'..='\u{1f}'))
+            .strip_prefix("Attached: ")
+            .and_then(|rest| rest.rsplit_once(" (image, "))
+        else {
+            continue;
+        };
+        let Some(size) = annotation.strip_suffix(')') else {
+            continue;
+        };
+        if !path.starts_with('/') || path.len() <= 1 || size.is_empty() || size.contains(['(', ')'])
+        {
+            continue;
+        }
+        let file = Path::new(path);
+        let supported = file.extension().and_then(|s| s.to_str()).is_some_and(|s| {
+            matches!(
+                s.to_ascii_lowercase().as_str(),
+                "png" | "jpg" | "jpeg" | "webp" | "gif"
+            )
+        });
+        let directive = format!("deck-image: {path}");
+        if supported && file.is_file() && lines.get(index + 1).copied() != Some(directive.as_str())
+        {
+            out.push(directive);
+        }
+    }
+    out.join("\n")
+}
 fn hash(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
 }
@@ -515,10 +550,11 @@ impl Receiver {
                     Err(e) => return Err(e),
                 };
                 if let Some(body) = captain_source(&bytes) {
-                    if body.trim().is_empty() || self.guidance(&source, body).len() > 65536 {
+                    let body = with_deck_images(body);
+                    if body.trim().is_empty() || self.guidance(&source, &body).len() > 65536 {
                         continue;
                     }
-                    sources.push((number, source, body.to_owned()));
+                    sources.push((number, source, body));
                 }
             }
             let mut floor = 0;
@@ -581,15 +617,17 @@ impl Receiver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    static NEXT_LAB: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     struct Lab(PathBuf);
     impl Lab {
         fn new() -> Self {
             let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../target/receiver-tests")
                 .join(format!(
-                    "{}-{}",
+                    "{}-{}-{}",
                     std::process::id(),
-                    hash(&format!("{:?}", std::time::SystemTime::now()))
+                    hash(&format!("{:?}", std::time::SystemTime::now())),
+                    NEXT_LAB.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                 ));
             fs::create_dir_all(&root).unwrap();
             Self(root)
@@ -742,6 +780,113 @@ mod tests {
             receiver.inbox.join("001.msg").is_file(),
             "publication acknowledged the ordinary source"
         );
+    }
+    #[test]
+    fn newer_bridge_order_flushes_captain_images_only() {
+        let lab = Lab::new();
+        let receiver = lab.receiver();
+        start(&receiver, "original");
+        let mut body = "[fm-captain-direct]\u{2063}note\n\nsee".to_owned();
+        let mut expected = body.clone();
+        for suffix in ["png", "JPG", "jpeg", "webp", "gif"] {
+            let shot = lab.0.join(format!("shot one.{suffix}"));
+            fs::write(&shot, b"image").unwrap();
+            let line = format!("\nAttached: {} (image, 5 B)", shot.display());
+            body.push_str(&line);
+            expected.push_str(&format!("{line}\ndeck-image: {}", shot.display()));
+        }
+        let shot = lab.0.join("shot one.png");
+        let directive = format!("deck-image: {}", shot.display());
+        let idempotent = format!("\nAttached: {} (image, 5 B)\n{directive}", shot.display());
+        body.push_str(&idempotent);
+        expected.push_str(&idempotent);
+        let notes = lab.0.join("notes.txt");
+        fs::write(&notes, b"notes").unwrap();
+        let directory = lab.0.join("directory.png");
+        fs::create_dir(&directory).unwrap();
+        for (path, annotation) in [
+            (shot.clone(), "image"),
+            (shot.clone(), "image/jpeg, 5 B"),
+            (shot.clone(), "image-disabled"),
+            (shot.clone(), "image, "),
+            (shot.clone(), "file, 5 B"),
+            (notes, "image, 5 B"),
+            (directory, "image, 5 B"),
+            (lab.0.join("gone.png"), "image, 5 B"),
+            (PathBuf::from("relative.png"), "image, 5 B"),
+        ] {
+            let line = format!("\nAttached: {} ({annotation})", path.display());
+            body.push_str(&line);
+            expected.push_str(&line);
+        }
+        let source = receiver.inbox.join("001.msg");
+        let before = format!("schema=fm-task-inbox.v1\n--\n{body}");
+        fs::write(&source, &before).unwrap();
+        let bridge = format!("Attached: {} (image, 5 B)", shot.display());
+        let mut reservation = json!({});
+        for _ in 0..2 {
+            assert!(matches!(
+                receiver
+                    .apply(
+                        "later-image",
+                        &receiver.endpoint,
+                        &bridge,
+                        || true,
+                        false,
+                        &mut reservation,
+                        "later-command",
+                        false
+                    )
+                    .unwrap(),
+                Decision::Pending(_)
+            ));
+            assert_eq!(
+                fs::read_to_string(receiver.root.join("original/1.msg")).unwrap(),
+                receiver.guidance(&source, &expected)
+            );
+            assert_eq!(
+                fs::read_to_string(receiver.root.join("original/2.msg")).unwrap(),
+                receiver.guidance(&receiver.inbox.join("002.msg"), &bridge)
+            );
+            assert_eq!(fs::read_to_string(&source).unwrap(), before);
+        }
+        assert_eq!(with_deck_images(&expected), expected);
+    }
+    #[test]
+    fn newer_bridge_order_skips_expanded_oversized_captain_image() {
+        let lab = Lab::new();
+        let receiver = lab.receiver();
+        start(&receiver, "original");
+        let shot = lab.0.join("shot.png");
+        fs::write(&shot, b"png").unwrap();
+        let source = receiver.inbox.join("001.msg");
+        let mut body = format!(
+            "[fm-captain-direct]\u{2063}note\n\nAttached: {} (image, 3 B)\n",
+            shot.display()
+        );
+        body.push_str(&"x".repeat(65536 - receiver.guidance(&source, &body).len()));
+        assert_eq!(receiver.guidance(&source, &body).len(), 65536);
+        let before = format!("schema=fm-task-inbox.v1\n--\n{body}");
+        fs::write(&source, &before).unwrap();
+        let mut reservation = json!({});
+        assert!(matches!(
+            receiver
+                .apply(
+                    "later",
+                    &receiver.endpoint,
+                    "valid Bridge",
+                    || true,
+                    false,
+                    &mut reservation,
+                    "later-command",
+                    false
+                )
+                .unwrap(),
+            Decision::Pending(_)
+        ));
+        assert!(!receiver.root.join("original/1.msg").exists());
+        assert!(receiver.root.join("original/2.msg").is_file());
+        assert_eq!(fs::read_to_string(&source).unwrap(), before);
     }
     #[test]
     fn newer_bridge_order_skips_native_ineligible_captain_sources() {
