@@ -66,6 +66,9 @@
 #      a spawn generation newer than the attributed run. An alive incarnation
 #      without that ordering proof reads unknown, never working; every other
 #      case remains a genuine failure.
+#      The `run-pr` field appears only on a positively attributed checks-green
+#      done verdict; working, parked, ordinary completed, failed, cancelled,
+#      merged, and closed run states never emit it.
 #      The run's recorded error is carried in a distinct run-error field, so a
 #      refused publication reads as its recorded cause rather than a bare
 #      `run failed` and generic detail is never mislabeled as an error.
