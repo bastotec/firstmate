@@ -16,12 +16,13 @@
 # root (machines.md first, then the first secondmates.md route on that host).
 #
 # refresh runs `deck skills` in the machine's Firstmate checkout (this home's
-# root for local; fm-on.sh discover in the code root for a remote) and replaces
+# root for local; fm-on.sh runs this script's discover in the code root for a remote) and replaces
 # state/machine-skills/<machine>.tsv atomically. The file starts with one
 # `# machine=<m> root=<root> refreshed=<UTC ISO time> count=<n>` line, then one
 # `<name>\t<scope>\t<path>` line per skill (scope is deck's repo|global).
-# list, where and check read only these recorded files, not live discovery;
+# list, where and check use these recorded inventories, not live discovery;
 # they impose no age limit, so consult refreshed before relying on a result.
+# where and check also consult bridge policy as described below.
 # With no machine named, refresh attempts all of them; an unreachable machine
 # or failed or empty discovery keeps its previous file and prints
 # `refresh <m>=failed: <reason>`. Other machines are still attempted, but any
@@ -29,6 +30,8 @@
 # `<alias>:<root>` refreshes a machine not registered yet (bin/fm-machine.sh
 # setup runs before register). bin/fm-machine.sh setup and bin/fm-update.sh
 # call it. roots prints `<machine>\t<root>` for every known machine.
+# discover runs `deck skills` in this code root without recording an inventory;
+# it is the receiving command for remote refresh.
 #
 # list prints the recorded inventory: `machine=<m> count=<n> refreshed=<t>`
 # per machine, followed by `skill <name> <scope>` lines when one is named.
@@ -52,8 +55,8 @@
 # It exits 0 when nothing is required or missing, else prints `refuse: ...`
 # and exits 1. Missing-skill diagnostics include the inventory's `where` answer;
 # invalid names or failed discovery refuse without suggesting a placement.
-# A home with no inventory of its own answers where from
-# $FM_SECONDMATE_PARENT_HOME's, when set, else asks the primary.
+# A home with no inventory of its own answers where using both the inventory
+# and bridge policy of $FM_SECONDMATE_PARENT_HOME, when set, else asks the primary.
 # bin/fm-spawn.sh runs this for ship/scout launches and relaunches using the
 # resolved worker Deck executable in the actual task worktree, after allocation
 # and any fresh-spawn base refresh, before worker launch. This applies in both

@@ -659,11 +659,11 @@ The gate is command-text/tool-name matching, not a sandbox; do not treat it as p
 ## Bridge gates (config/bridges.json)
 
 A bridge joins this home's machine to another machine, with separate permissions for cross-machine flows.
-[`bin/fm-on.sh`](../bin/fm-on.sh) enforces those permissions before SSH, including machine-level skill discovery, shared-skills installation, and instruction reads or saves.
+[`bin/fm-on.sh`](../bin/fm-on.sh) enforces those permissions before SSH, including machine-level skill discovery, shared-skills installation, and instruction or approval-policy reads and saves.
 A refused call reports `bridge-blocked:`, records the refusal, and files a "needs you" request that Fleet Town's existing approval card can show.
 Unlike a tool-call approval, approving a bridge request grants standing permission for that flow on that bridge and asks the first mate to retry; denying it leaves the flow closed.
 Existing bridges are seeded on first use and shown as configured/seeded; newly connected machines allow nothing until the captain selects permissions.
-An unreadable or invalid record refuses remote operations rather than restoring seeded permissions.
+An unreadable or invalid record refuses gated remote operations rather than restoring seeded permissions.
 Use the bridge command to inspect or change permissions, or select them when registering a machine:
 
 ```sh

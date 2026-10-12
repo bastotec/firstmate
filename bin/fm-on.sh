@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Execute one tracked Firstmate command in a configured remote secondmate home.
+# Execute one tracked Firstmate command in a remote home or machine operation lane.
 #
 # Usage:
 #   fm-on.sh [--stdin] [--machine-root <root>] <secondmate-id|ssh-alias> <fm-command> [args...]
@@ -23,11 +23,12 @@
 # remote completion and must be reconciled by the semantic caller, never
 # blindly repeated by this layer.
 #
-# The SSH alias keeps normal public-key and strict host-key policy in ~/.ssh.
-# BatchMode makes an unknown host key or a password prompt fail at once instead
-# of asking on the controlling terminal, which inside a pane is an agent's
-# composer: a prompt there swallows the next typed line.
-# It neither relaxes the host-key policy nor adds known_hosts entries.
+# The SSH alias keeps its public-key configuration in ~/.ssh, but every call
+# forces StrictHostKeyChecking=yes and UpdateHostKeys=no, including the doctor.
+# BatchMode makes a password prompt fail at once instead of asking on the
+# controlling terminal, which inside a pane is an agent's composer: a prompt
+# there swallows the next typed line. Unknown host keys are refused, and this
+# transport never adds or refreshes known_hosts entries.
 # Before any ssh, the command's flow (supervision, reports, messages, placement, files,
 # maintenance; the readiness doctor is never gated) must be allowed on the bridge to
 # that host by bin/fm-bridge.sh check. A refused flow exits 1 with `bridge-blocked:` on

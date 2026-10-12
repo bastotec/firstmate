@@ -41,7 +41,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | [`fm-group.sh`](../bin/fm-group.sh) | Run an ephemeral task group: N members on one brief with per-member angles, a merged report, and one-step cleanup |
 | `fm_crew.py`             | Record layout and run mechanics behind `fm-specialist.sh` and `fm-group.sh` |
 | [`fm-order.sh`](../bin/fm-order.sh) | Own order proposals: the first mate's reading of a plain-word order, waiting for launch or cancel |
-| [`fm-approval.sh`](../bin/fm-approval.sh) | Per-machine approval gates: the Deck hook that blocks gated tool calls, the policy presets, and the captain's one-time approve or deny |
+| [`fm-approval.sh`](../bin/fm-approval.sh) | Per-machine tool-call gates and policy presets; answer tool-call or bridge requests under the [approval contract](../bin/fm-approval.py) |
 | [`fm-machine-approvals.sh`](../bin/fm-machine-approvals.sh) | Show, save (sha-guarded, audited) and audit a machine's approval gates, locally or over ssh |
 | [`fm-bridge.sh`](../bin/fm-bridge.sh) | Inspect and configure cross-machine permissions; [Bridge gates](configuration.md#bridge-gates-configbridgesjson) owns operator setup |
 | `fm-decision-hold.sh`    | One-release compatibility shim mapping the retired decision commands onto fm-captain-hold.sh |

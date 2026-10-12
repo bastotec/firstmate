@@ -568,9 +568,9 @@ SH
   set -e
 }
 
-# Run the remote doctor through fm-on.sh. fm-on.sh routes only to recorded
-# homes, so reach this machine through a scratch registry with one route and
-# an absent probe home. Sets DOCTOR_OUT and DOCTOR_RC.
+# Run the remote doctor through fm-on.sh's registry lane with a scratch route
+# and an absent probe home, so readiness can be checked before a secondmate
+# home exists. Sets DOCTOR_OUT and DOCTOR_RC.
 run_doctor() { # <alias> <root> <account-home> [--fix]
   local alias=$1 root=$2 account_home=$3 scratch
   shift 3
