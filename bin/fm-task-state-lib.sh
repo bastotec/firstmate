@@ -91,7 +91,8 @@
 #      evidence. This intentionally replaces the former pane fallback: a busy
 #      worker cannot establish an unavailable validation outcome and can mask a
 #      dead run; unavailability is not proof the task stopped.
-#      No run for this crew (pre-validation, or kind=scout): fall back to the
+#      A successful lookup with no attributable run (including an empty response),
+#      or a task that skips validation lookup (scout/secondmate): fall back to the
 #      recorded backend's pane busy state, then the status log's last line only
 #      when its verb maps to a recognized run-state. Decision-only events such as
 #      `resolved` never become current state or detail.
@@ -946,9 +947,9 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
       # The active-or-most-recent run is for another branch, or it names this
       # branch with a head this copy cannot verify (a pipeline-advanced fix
       # round, or a rewritten tip). Deliberately nested inside
-      # `[ -n "$RUN_OUT" ]`: an empty/timed-out primary call means the CLI
-      # itself did not respond, so retrying it immediately with a second
-      # bounded call would just double the wait for no better answer.
+      # `[ -n "$RUN_OUT" ]`: a successful empty response supplies no run to
+      # reconcile through the ledger. Failed or timed-out primary calls already
+      # returned unknown above, without a second bounded query.
       runs_list=$(nm_runs_list)
       COARSE_STATUS=$(fm_nm_runs_status_for_worktree "$WT" "$CREW_BRANCH" "$runs_list")
       if [ -n "$COARSE_STATUS" ]; then

@@ -66,7 +66,9 @@
 # notice_emitted, plus optional status_head and ledger_claim fields. The
 # inactive-path fingerprint binds the spawn incarnation, task id, terminal
 # state, PR text, sanitized last status, and the current-state reader's detail
-# and run-error fields; the ledger-path fingerprint instead binds the
+# and run-error fields, excluding observation-only declared-wait, evidence, and
+# read time so an unchanged outcome keeps its receipt across repeated reads
+# (tests/fm-inactive-reconcile.test.sh). The ledger-path fingerprint instead binds the
 # incarnation, task id, terminal state, literal `ledger` origin, and complete
 # terminal ledger line.
 # The inactive-path publication carries the reader's generic detail as

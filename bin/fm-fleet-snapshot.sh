@@ -60,7 +60,10 @@
 #     but mutable current-state, status, report, and endpoint evidence is discarded
 #     rather than attributed to the replacement generation.
 #     Local current_state is parsed from bin/fm-crew-state.sh <id> and preserves
-#     state, source, detail, and raw line separately. Remote secondmate rows use
+#     state, source, detail, and raw line separately. detail is the unparsed tail
+#     after source, including the reader's trailing observation fields, not just
+#     its generic outcome detail; raw retains the entire line. The reader's
+#     format is owned by bin/fm-task-state-lib.sh. Remote secondmate rows use
 #     an explicit unknown value because their endpoint liveness belongs to
 #     supervision rather than this snapshot path.
 #     paths.status_log.last_event is historical wake-event data only, never
