@@ -91,18 +91,19 @@
 # name a slot a DIFFERENT live task now holds. Cleanup kills every process under
 # that path and hard-resets it before returning it, so releasing a slot that is
 # not genuinely this task's destroys another worker's live work. Before the first
-# cleanup step, teardown verifies record exclusivity: no OTHER task record in
-# this home or any locally registered Firstmate home may name the same live path
-# in its worktree= or home=. One live path with two task records is the reuse
-# collision itself, whichever record is stale.
+# cleanup step, teardown reads the slot's owner claim. A readable claim naming
+# another task pre-empts the record scan, even when another discoverable record
+# names the same slot. Otherwise, teardown verifies record exclusivity: no OTHER
+# task record in this home or any locally registered Firstmate home may name
+# the same live path in its worktree= or home=; a collision refuses whether the
+# claim names this task, is absent, or cannot be read.
 # That scan alone cannot prove THIS record is the current owner, because the task
 # that took the slot next may leave no record it can reach - its own worker may
 # have exited and its record been cleaned up, or it may live in a home this
-# machine does not register - which is how a released-then-reassigned slot was
-# returned out from under a live worker (observed 2026-09-07). So teardown also
-# reads the slot's own owner claim, written by bin/fm-spawn.sh at the moment the
-# slot is taken and dropped here once it is genuinely returned; bin/fm-wake-lib.sh
-# owns the claim, its location, and its states. A claim naming another task is
+# machine does not register. The slot's owner claim is written by bin/fm-spawn.sh
+# when the slot is taken and dropped here once it is genuinely returned.
+# bin/fm-wake-lib.sh owns the claim, its location, and its states.
+# A claim naming another task is
 # proof of reassignment: the slot is no longer this task's, so teardown warns,
 # names the claimant, and then finishes only this task's own cleanup - endpoint,
 # status, records, checks, backlog - while every step that would read or touch
@@ -2061,6 +2062,11 @@ require_exclusive_worktree_slot_record() {
   local record_meta=$1 record_id=$2 record_state=$3 worktree=$4
   local slot state_dir other other_id field other_path other_slot
   slot=$(canonical_existing_dir "$worktree") || return 0
+  # A readable claim naming another task proves this record is stale, even if
+  # that task's record is discoverable. The ownership guard skips slot cleanup.
+  # All other claim states retain the existing record-scan refusal.
+  fm_treehouse_slot_owner_state "$slot" "$record_id"
+  [ "$FM_TREEHOUSE_SLOT_OWNER" != other ] || return 0
   collect_local_firstmate_states "$record_state" || return 1
   for state_dir in "${TREEHOUSE_OWNER_STATES[@]}"; do
     for other in "$state_dir"/*.meta; do
@@ -2090,26 +2096,12 @@ require_exclusive_task_worktree_slot() {
 # Positive slot ownership, read from the claim the task that took the slot wrote
 # into the slot itself (bin/fm-wake-lib.sh owns the claim and its states).
 #
-# The record scan above proves that no OTHER task record names this slot. It
-# cannot prove that THIS record is not the stale one, because the task that took
-# the slot next may leave no record this scan can reach: its own worker may have
-# exited and its record been cleaned up, or it may belong to a home this machine
-# does not register. The claim closes that gap from the other side - it names the
-# task that actually took the slot, and it is written under the same project lock
-# that allocates it - so a claim naming another task is proof the slot was
-# reassigned after this record was written.
-#
-# A claim naming another task does not refuse: it means the slot is no longer
-# this task's, so the record's own cleanup proceeds and every slot step is
-# skipped (see the script header for why refusing would strand the record and
-# why skipping discards nothing). Returns TEARDOWN_SLOT_REASSIGNED_RC for that
-# state so each caller gates its slot steps on one determination; the claimant
-# stays in FM_TREEHOUSE_SLOT_OWNER_ID and FM_TREEHOUSE_SLOT_OWNER_HOME.
-#
-# An absent claim proceeds as the slot's owner: a slot taken before claims
-# existed, or already returned to the pool, carries none, and refusing those
-# would strand every task in flight across the change for no evidence at all.
-# Those keep exactly the record-scan protection they had before.
+# The script header owns the record-scan precedence, reassignment safety, and
+# absent/unreadable-claim policy; tests/fm-teardown-endpoint-safety.test.sh pins
+# these cases, including contested records.
+# Returns TEARDOWN_SLOT_REASSIGNED_RC for reassignment so each caller gates its
+# slot steps on one determination; the claimant stays in
+# FM_TREEHOUSE_SLOT_OWNER_ID and FM_TREEHOUSE_SLOT_OWNER_HOME.
 TEARDOWN_SLOT_REASSIGNED_RC=3
 require_owned_worktree_slot_record() {  # <task-id> <worktree>
   local record_id=$1 worktree=$2 marker

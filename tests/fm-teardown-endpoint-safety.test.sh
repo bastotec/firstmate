@@ -965,6 +965,44 @@ test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot() {
   pass "fm-teardown: a pool slot claimed by another task is left alone while the task's own cleanup finishes"
 }
 
+# With two discoverable records, only a readable reassignment claim proves
+# which record is stale; every other claim shape retains the record-scan guard.
+test_contested_slot_claim_preempts_only_with_reassignment_evidence() {
+  local dir shape id=finished-task other=current-task rc
+  for shape in other unreadable mine absent; do
+    dir=$(make_case "contested-claim-$shape")
+    mark_case_as_treehouse_pool "$dir"
+    fm_write_meta "$dir/home/state/$id.meta" \
+      $(fm_test_stream_task "$dir/home/state" "$id") \
+      "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+    fm_write_meta "$dir/home/state/$other.meta" \
+      $(fm_test_stream_task "$dir/home/state" "$other") \
+      "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+    case "$shape" in
+      other) claim_pool_slot "$dir" "$other" ;;
+      unreadable) printf 'not-a-claim\n' > "$dir/pool/1/.fm-slot-owner" ;;
+      mine) claim_pool_slot "$dir" "$id" ;;
+    esac
+    cp "$dir/home/state/$other.meta" "$dir/other.meta.before"
+    if [ "$shape" = other ]; then
+      set +e
+      run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+      rc=$?
+      set -e
+      [ "$rc" -eq 0 ] || fail "readable reassignment claim did not preempt record collision: $(cat "$dir/stderr")"
+      assert_reassigned_slot_left_alone "$dir" "$id" "$other" "contested reassigned slot"
+      assert_present "$dir/worktree/sentinel" "contested reassigned slot was reset"
+    else
+      assert_refused_without_mutation "$dir" "$id" "contested $shape claim"
+      assert_contains "$(cat "$dir/stderr")" "also task $other's recorded worktree" \
+        "contested $shape claim changed the existing record-scan refusal"
+    fi
+    cmp -s "$dir/other.meta.before" "$dir/home/state/$other.meta" \
+      || fail "contested $shape claim changed the other task's record"
+  done
+  pass "fm-teardown: only a readable reassignment claim preempts a contested slot record"
+}
+
 # The two states that must never become a false refusal: the task's own claim,
 # and no claim at all (a slot taken before claims existed, or already returned).
 test_own_and_absent_slot_claims_still_tear_down() {
@@ -1012,6 +1050,7 @@ test_bare_relative_origin_shares_project_lock_with_clone
 test_reused_pool_slot_refuses_before_touching_the_other_task
 test_cross_home_pool_slot_collision_refuses
 test_sole_slot_record_still_tears_down
+test_contested_slot_claim_preempts_only_with_reassignment_evidence
 test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot
 test_own_and_absent_slot_claims_still_tear_down
 test_recorded_endpoint_that_changed_directory_still_tears_down
