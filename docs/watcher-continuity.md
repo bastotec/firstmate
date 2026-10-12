@@ -17,9 +17,10 @@ It accumulates watcher results that arrive while a Deck turn runs and delivers t
 The recovery-episode contract below owns once-per-generation announcement.
 A handling successor does not re-announce; it enters its poll loop immediately and keeps scanning signals, stale panes, and checks.
 The model does not re-arm after ordinary wakes.
-A periodic beat is that continuity, not a failure: a fresh watcher pid appears carrying the SAME recovery-generation, any unacked durable inbox record is replayed as that turn's instruction, and the drain presents no unhandled event.
-Handling the replayed instruction is the whole duty; there is no driver failure or supervisor restart to repair, because a downtime republication reuses the pending episode's generation instead of minting one.
-A real driver loss instead shows a NEW recovery-generation together with the launch-brief digest re-presented as a fresh first turn, and that case follows the recorded recovery path.
+A periodic beat is that continuity, not a failure: a fresh watcher pid may appear carrying the SAME recovery-generation and replay any unacked durable inbox record as that turn's instruction.
+When no launch brief is re-presented and the drain shows no unhandled event, handling the replayed instruction is the whole duty; there is no driver failure or supervisor restart to repair.
+A re-presented launch brief or session reset is the definitive driver-loss signal and always warrants the recorded recovery path; a NEW recovery-generation also supports that diagnosis, while generation sameness is only supporting evidence of a beat and never proof that no failure occurred.
+`_fm_recovery_marker_publish` preserves a pending or announced generation across downtime publication, so a real driver loss can still show the same generation.
 Terminal arm-output classification (`started`, `attached`, or `FAILED`) remains defense in depth for the manual recovery path.
 The Deck driver uses `&` only for an owned child whose PID it monitors and waits during cleanup, never for an untracked replacement watcher.
 
