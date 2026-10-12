@@ -54,7 +54,7 @@
 # the probe does not judge the entrypoint link.
 # Required-tool doctor gaps are human items; read-only fixable checks are
 # will-install, while fixable checks remaining after setup's --fix are human
-# items and fail setup.
+# items and fail setup. Doctor-reported human checks retain evidence with actions.
 #
 # setup <alias> <remote-root> performs only the automatable items, in order,
 # printing one `step` line as each completes and stopping at the first failure:

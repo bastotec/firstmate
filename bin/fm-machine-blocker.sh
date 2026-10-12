@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Turn a machine check's human steps into what the captain sees: a "Blocked on
 # you:" reply, a needs-you decision card that resolves itself, and the pending
-# machine record Fleet Town draws as a pending island.
+# machine record intended for Fleet Town's pending-island display.
 #
 # Usage:
 #   fm-machine-blocker.sh summary [--alias <alias>] [--then <text>]   (check output on stdin)
@@ -12,8 +12,8 @@
 #   fm-machine-blocker.sh show <alias>
 #   fm-machine-blocker.sh clear <alias>
 #
-# Input is bin/fm-machine.sh check's line protocol (its header owns it); only
-# `item <name>=present|will-install|human: <text>` lines are read here.
+# Input is bin/fm-machine.sh check's line protocol (its header owns it).
+# Items use `item <name>=present|will-install|human: <text>`; raise also reads root=.
 #
 # summary prints the reply block and exits 0 when any item is human:
 #   Blocked on you: <n> step(s) on <alias> before I can continue.
@@ -23,34 +23,34 @@
 # With no human item it prints nothing and exits 1.
 #
 # raise is for an action the captain approved that needs the machine (for
-# example creating a second mate there). It runs `bin/fm-machine.sh check
-# <alias> [<remote-root>]` (or reads --from), writes the pending record, and
-# when human items remain it holds machine-<alias, lowercased> (or the first
-# available -2, -3, ... task) with a full card via fm-captain-hold.sh hold --card-file,
-# arms the re-check watch, and prints the summary to paste into the same reply.
+# example creating a second mate there). It runs the machine check (or --from).
+# With human items it establishes a full hold/card via fm-captain-hold.sh before
+# publishing the record, then arms the watch and prints the reply. Task:
+# machine-<alias, A-Z lowercased, dots/underscores kept>; closed tasks use the
+# first free or same-action open -2, -3, ... task; different recorded work is refused.
 # --for names the approved action in a few words ("create Inter Graal");
 # --then says what happens on its own once the steps are done (default: the
 # watch re-checks every 5 minutes and the first mate carries on).
-# --secondmate records a second mate whose creation waits on this machine, so
-# Fleet Town shows it as a planned plot. It prints `ready: <alias>` and exits 0
+# --secondmate records a second mate whose creation waits on this machine for
+# Fleet Town to consume. raise prints `ready: <alias>` and exits 0
 # with no hold when nothing needs the captain.
 #
 # The watch is a condition->action pair (bin/fm-procevent-when.sh, source
 # when-<record's task>): condition `ready <alias>`, action
 # `resolve <alias>`, every 300 seconds for up to 14 days, one stable true.
-# ready re-runs the check, rewrites the record and, while the hold is open and
-# the human steps changed, the card; it exits 0 when no item is human, 1 when
-# some are, 2 when the check could not be read. resolve closes the hold through
+# ready re-runs the check, rewrites the record and refreshes changed human steps
+# on an open card; it exits 0 with no human items (todo may remain), 1 with human
+# items, 2 for check/hold read errors. resolve closes the hold through
 # fm-captain-hold.sh stale-clear with the passing check as evidence (never as
 # the captain's words), which removes the card, and marks the record ready.
-# The watch's fired wake is the first mate's cue to carry on with --for.
+# Hold read/close errors refuse continuation; a fired wake is the cue to resume --for.
 #
 # show prints the record. clear removes the record and retires the watch; run
 # it once the approved action is done (the machine registered and the second
 # mate launched).
 #
 # The record is state/machine-pending/<alias>.json, mode 0600:
-#   {"version":1,"alias":"","root":"","task":"machine-<alias>","for":"",
+#   {"version":1,"alias":"","root":"","task":"<held task id>","for":"",
 #    "then":"","state":"needs-you|ready","checked":"<UTC>",
 #    "planned":[{"id":"","name":""}],
 #    "items":[{"name":"","state":"done|you|todo","text":""}]}
@@ -220,6 +220,8 @@ hold_with_card() {  # <task> <record-json-file>
 
 arm_watch() {  # <alias> <task>
   local alias=$1 task=$2
+  # A machine check can exceed the watcher's 30-second custom-check budget;
+  # use the condition->action runner with its own longer timeout instead.
   # An earlier watch for this machine (fired or not) is replaced by a fresh one.
   "$SCRIPT_DIR/fm-procevent-when.sh" retire "$task" >/dev/null
   "$SCRIPT_DIR/fm-procevent-when.sh" arm "$task" --interval 300 --stable 1 \
