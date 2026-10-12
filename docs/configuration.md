@@ -137,7 +137,7 @@ Relaunch uses the separate recovery eligibility in [`agent-control.md`](agent-co
 Completion refuses to report success until the item is closed, and session start reconciles this home's books after an interrupted run.
 An interrupted spawn re-reads its task record and backlog row under the per-task lock, repairs a row the commit believed it had moved, and reports only what was verified ([`bin/fm-spawn.sh`](../bin/fm-spawn.sh); [`tests/fm-backlog-atomicity.test.sh`](../tests/fm-backlog-atomicity.test.sh)).
 Transitions run from the configured data directory's parent; a markdown backlog is also addressed with an explicit `--file <data>/backlog.md` so the change lands in the owning home, while other adapters are addressed by that root alone.
-The gate does not apply to persistent secondmates, manual-backend homes, or markdown homes without a backlog file.
+The gate applies to ship/scout endpoint lifecycle, not persistent secondmates or direct specialist/group runs, and is skipped on manual-backend homes or markdown homes without a backlog file.
 On an automatic-backend home, missing or incompatible `tasks-axi`, an unresolvable or control-byte data directory, or an unreadable backend configuration fails lifecycle work before mutation; the [backend resolution contract](../bin/fm-tasks-axi-lib.sh) owns the diagnostics and the compatibility probe.
 Migrated-hold resolution on a beads home reads only the root `.tasks.toml` `[beads]` section and refuses (rc=2) when beads is selected elsewhere without one.
 Secondmate handoffs use `fm-backlog-handoff.sh`, which validates fleet-level rules and delegates the move to `tasks-axi mv`; its [header](../bin/fm-backlog-handoff.sh) owns route-specific outcomes.
@@ -205,7 +205,7 @@ When the steer client reports no deck-chat primary (exit 3), the digest is typed
 
 The optional `config/trace-context` presence flag enables default-off native W3C trace-context propagation.
 `FM_TRACE_CONTEXT` overrides it: `1`/`on`/`true`/`yes` enables, any other non-empty value disables, and unset or empty defers to the file.
-Each locked home session resolves the decision once, and every spawn from that home uses it until a new session starts.
+Each locked home session resolves the decision once, and every `fm-spawn.sh` launch from that home uses it until a new session starts.
 A launched secondmate, local or remote, receives the presence flag and the primary's frozen decision as a non-empty `FM_TRACE_CONTEXT=on|off`; live convergence into a running home leaves the flag unchanged.
 [`trace-context.md`](trace-context.md) owns carrier semantics, supported routes, the manual fleet-restart requirement, and safety limits, `bin/fm-trace-context-lib.sh`'s header owns the mechanics, and [`verification/trace-context.md`](verification/trace-context.md) holds the evidence.
 

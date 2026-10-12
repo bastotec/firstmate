@@ -3,6 +3,9 @@
 #
 # Output contract: `--json` prints one object with schema
 # `fm-fleet-snapshot.v1`.
+# Worker inventory comes from endpoint task metadata and secondmate ledgers;
+# direct specialist jobs and task groups are not collected here. Their CLI
+# headers (bin/fm-specialist.sh and bin/fm-group.sh) own inspection.
 # The command does not acquire the session lock, drain wakes, arm watchers,
 # mutate backlog state, or write reports. Its default ledger collector may
 # atomically refresh parent-side cached copies of remote home summaries under

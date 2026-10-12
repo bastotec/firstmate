@@ -15,7 +15,7 @@ This skill owns the step procedures and does not restate those rules.
 
 ## Before spawning
 
-Treat file or subsystem overlap as a risk signal rather than an automatic reason to wait, and dispatch isolated work immediately with no concurrency cap when each change can be independently implemented and validated and the selected delivery path can reconcile ordinary rebases or conflicts.
+For ship tasks, treat file or subsystem overlap as a risk signal rather than an automatic reason to wait, and dispatch isolated work immediately with no concurrency cap when each change can be independently implemented and validated and the selected delivery path can reconcile ordinary rebases or conflicts.
 Serialize only for a true semantic dependency, shared mutable external state, incompatible concurrent migration, or another concrete condition that makes independent progress or reconciliation unsafe; same-file editing alone is insufficient, and genuine blockers remain durable.
 Before spawning, check the work already in flight for the same problem, not just the same area: when the request is the same change a running task is already making, fold it into that task or stop, rather than dispatching a second worker to solve it again and notifying both.
 Whenever work you dispatch touches an area another task is already working, say so in both directions before the new worker starts, and again whenever a new overlap appears mid-flight: name the other work and the files or subsystem it touches, both to the new worker and to every running worker it overlaps.
@@ -62,7 +62,7 @@ Retire a custom check only through `bin/fm-check-unregister.sh <id>` (or `bin/fm
 ## Finished-work sweep
 
 `AGENTS.md` section 7 records the captain's standing instruction that the mate who created a worker cleans it up once its work is done.
-Run this sweep when a ship lands, when a scout completes, and on every heartbeat, over this home's own direct reports and endpoint-bound leftover records only, never another home's, and never a secondmate, which retires only on an explicit decision.
+Run this sweep when a ship lands, when a scout completes, and on every heartbeat, over this home's own endpoint-backed direct reports and endpoint-bound leftover records only, never another home's, and never a secondmate, which retires only on an explicit decision.
 
 Use [`bin/fm-pr-lib.sh`'s completion-claim gate](../../../bin/fm-pr-lib.sh) to judge a worker with a recorded PR, regardless of delivery mode.
 Without a recorded PR, a worker is finished when its branch landed, or when it is a scout whose report exists and whose `captain-hold-lifecycle` completion gate passes.

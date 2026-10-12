@@ -177,9 +177,8 @@
 #   Names are read once per spawn; values are expanded in the destination pane,
 #   not copied from the invoking process or written into the launch text.
 #   Unset names stay unset and empty values stay empty.
-#   The fixed operational floor is HOME PATH USER LOGNAME SHELL TERM COLORTERM
-#   LANG LC_ALL LC_CTYPE TMPDIR TMP TEMP GOTMPDIR, plus the task marker
-#   FM_TASK_ID that ship and scout panes receive above.
+#   bin/fm-launch-env-lib.sh declares the shared operational floor, including
+#   the FM_TASK_ID marker that ship and scout panes receive above.
 #   An enabled task trace also retains TRACEPARENT. Explicit Firstmate launch
 #   assignments still apply inside the filtered environment. Raw commands must
 #   be POSIX sh compatible under this opt-in; the absent-file path is unchanged.

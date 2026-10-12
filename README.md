@@ -118,7 +118,7 @@ The plain launch above keeps the primary in its own terminal, so bare `deck chat
     │ steering inbox / status files │
     ▼              ▼               ▼
  ┌────────┐   ┌────────┐      ┌────────┐
- │fm-task1│   │fm-task2│  ... │fm-taskN│   one stream endpoint per task
+ │fm-task1│   │fm-task2│  ... │fm-taskN│   one stream endpoint per endpoint-backed task
  │crewmate│   │crewmate│      │crewmate│   one autonomous agent each
  └───┬────┘   └───┬────┘      └───┬────┘
      ▼            ▼               ▼

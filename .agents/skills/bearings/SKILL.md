@@ -149,13 +149,13 @@ Every `/bearings` chat response renders EXACTLY these four sections, in THIS ord
 2. **Recently Landed** - the bounded current recent-completions baseline: merged PRs, completed scouts, and finished local-only merges across the main fleet and every registered secondmate home.
    Empty-state: "No recent completions are in the current baseline."
 3. **Underway** - the running-agents table below, then one line of current state per live direct report the table does not already describe.
-   Empty-state: "Nothing is underway."
+   Empty-state: "No current work is shown in this view."
 4. **Charted Next** - queued or gated work waiting on the fleet or a date, deferred or aged captain-hold safety gates, plus action-free fleet-integrity warnings.
    Empty-state: "Nothing is queued."
 
 ### Running-agents table
 
-Underway always opens with a table of every agent whose process is running right now, across this home and every second mate home, because that is the live work the section exists to show.
+Underway always opens with a table of the agents confirmed running in the snapshot across this home and second mate homes; [`bin/fm-fleet-snapshot.sh`](../../../bin/fm-fleet-snapshot.sh)'s header owns inventory coverage.
 Build it only from the snapshot's `running` rows, in their order; the snapshot already keeps out every agent that merely has a record, and every second mate's worker whose home report is out of date, so never add a row from `in_flight`, `secondmates`, or backlog state, and never drop a `running` row because its work looks idle or finished.
 
 | Agent | Where | Right now |
@@ -170,7 +170,7 @@ Build it only from the snapshot's `running` rows, in their order; the snapshot a
 - **Right now** is one or two plain-English sentences that start with "Running", built from `state` and `doing` plus that agent's own items elsewhere in the digest, such as its decisions waiting on the captain.
   Never put task ids, harness or backend names, status prefixes, or raw state labels in this column.
   When the row's `freshness` is `cached`, say the picture comes from that home's last saved report.
-- When `running` is empty but other Underway lines remain, the table becomes the sentence "No agents are running right now."
+- When `running` is empty but other Underway lines remain, the table becomes the sentence "No workers are confirmed running in this view."
 - When `omitted` mentions `running`, add one line under the table saying how many agents were left out and why.
 
 Rules that keep the contract unambiguous:

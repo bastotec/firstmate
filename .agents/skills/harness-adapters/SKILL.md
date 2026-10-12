@@ -12,7 +12,8 @@ metadata:
 # harness-adapters
 
 This is the one skill, trigger, and routing owner for harness-specific Firstmate operations.
-Load this router first, then the references selected by the Operation-to-reference matrix below.
+For primary sessions and endpoint-backed workers launched through `fm-spawn.sh`, load this router first, then the references selected by the Operation-to-reference matrix below.
+Direct-run lifecycle is owned by the [`fm-specialist.sh`](../../../bin/fm-specialist.sh) and [`fm-group.sh`](../../../bin/fm-group.sh) headers, not this endpoint-operation matrix.
 When an action spans rows, load the union once rather than every reference.
 Files under `references/` are resources of this skill, not additional catalogued skills.
 

@@ -57,15 +57,15 @@ An actual disabled relaunch regenerates the task meta without `traceparent=`, so
 
 Each locked `bin/fm-session-start.sh` run resolves that home's `config/trace-context` plus `FM_TRACE_CONTEXT` exactly once into session-scoped effective state.
 The decision is atomically published through a same-directory temporary file and bound to the current session lock, so a failed publication cannot reactivate a stale `on` record from an earlier session.
-Every spawn from that home reads only the frozen `on` or `off` decision.
+Every `fm-spawn.sh` launch from that home reads only the frozen `on` or `off` decision.
 Later config or environment edits are ignored until that home starts a new session.
 Missing, stale, unreadable, invalid, or unsuccessfully published effective state defaults safely to `off`.
 
 When the primary launches a Secondmate, local or remote, it propagates `config/trace-context` into the Secondmate home and passes the primary session's frozen decision as a non-empty `FM_TRACE_CONTEXT=on|off` launch override.
 The Secondmate resolves that inherited override when its own home session starts.
 That flag is session-scoped enablement rather than durable configuration, so it is transferred at the launch convergence point - where the frozen decision is handed over with it - and left untouched by live convergence into an already-running home, on local and remote routes alike.
-What propagates is the enablement decision, never trace identity: a Secondmate launched while enabled receives its own task carrier from the primary - the Secondmate agent's identity, reused verbatim when the Secondmate itself is relaunched - and each worker it spawns roots its own per-task trace.
-A Secondmate launched while disabled keeps its workers untraced even if `config/trace-context` is present in its home.
+What propagates is the enablement decision, never trace identity: a Secondmate launched while enabled receives its own task carrier from the primary - the Secondmate agent's identity, reused verbatim when the Secondmate itself is relaunched - and each endpoint worker it spawns roots its own per-task trace.
+A Secondmate launched while disabled keeps those workers untraced even if `config/trace-context` is present in its home.
 When enabled, a relaunch reuses the task's valid recorded carrier; a task without one roots a fresh trace.
 A duplicate Secondmate launch is refused before trace-context inheritance, so duplicate-launch preflight does not mutate the Secondmate home.
 
