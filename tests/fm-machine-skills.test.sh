@@ -186,6 +186,7 @@ git init -q --bare -b main "$T/dots-origin.git"
 git init -q -b main "$T/dots"
 mkdir -p "$T/dots/skills/pr-review"
 printf -- '---\nname: pr-review\n---\n' > "$T/dots/skills/pr-review/SKILL.md"
+printf 'skills/host-local/\n' > "$T/dots/.gitignore"
 cat > "$T/dots/install.sh" <<'SH'
 #!/bin/sh
 [ "$1" = --skills-only ] || exit 9
@@ -257,5 +258,39 @@ expect_code 1 "$rc" "ship over local changes"
 assert_contains "$out" "step shared-skills=failed: $ACCT/dotfiles has local changes" "dirty refusal"
 assert_contains "$(cat "$ACCT/dotfiles/install.sh")" "mine" "local change kept"
 pass "fm-machine.sh skills ships the shared skills repo over ssh and records the inventory"
+
+git clone -q "$T/dots-origin.git" "$ACCT/preserve-merge"
+merge_before=$(git -C "$ACCT/preserve-merge" rev-parse HEAD)
+git init -q -b main "$ACCT/preserve-unborn"
+git -C "$ACCT/preserve-unborn" remote add origin "$T/dots-origin.git"
+printf 'skills/host-local/\n' >> "$ACCT/preserve-unborn/.git/info/exclude"
+mkdir -p "$T/dots2/skills/host-local"
+printf 'upstream skill\n' > "$T/dots2/skills/host-local/SKILL.md"
+git -C "$T/dots2" add -f skills/host-local/SKILL.md
+git -C "$T/dots2" -c user.name=t -c user.email=t@t commit -qm incoming-skill
+git -C "$T/dots2" push -q origin main
+for kind in merge unborn; do
+  dir="preserve-$kind"
+  skill="$ACCT/$dir/skills/host-local/SKILL.md"
+  mkdir -p "$(dirname "$skill")"
+  printf 'host-local skill\n' > "$skill"
+  git -C "$ACCT/$dir" check-ignore -q skills/host-local/SKILL.md || fail "$kind fixture must ignore the host-local skill"
+  assert_equals '' "$(git -C "$ACCT/$dir" status --porcelain)" "$kind ignored skill is invisible to preparation's clean check"
+  printf 'source=%s\ndir=%s\n' "$T/dots" "$dir" > "$H/config/shared-skills"
+  set +e
+  out=$(machine skills box "$T/srvfm")
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "$kind incoming skill collision"
+  assert_contains "$out" "step shared-skills=failed: $ACCT/$dir cannot safely" "$kind must report the update collision"
+  assert_equals 'host-local skill' "$(cat "$skill")" "$kind must preserve the ignored skill contents"
+  assert_absent "$ACCT/.agents/skills/host-local" "$kind collision must stop before running the installer"
+  if [ "$kind" = merge ]; then
+    assert_equals "$merge_before" "$(git -C "$ACCT/$dir" rev-parse HEAD)" "refused merge must preserve HEAD"
+  elif git -C "$ACCT/$dir" rev-parse --verify HEAD >/dev/null 2>&1; then
+    fail "refused initial checkout must leave HEAD unborn"
+  fi
+done
+pass "shared-skills merges and initial checkouts preserve ignored host-local files"
 
 echo "ALL TESTS PASSED"

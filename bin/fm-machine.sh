@@ -871,9 +871,10 @@ fi'
 SKILLS_FINISH_SH='dir=$HOME/$1 branch=$2 commit=$3 install=$4
 cd "$dir" || exit 3
 if git rev-parse --verify -q HEAD >/dev/null; then
-  git merge --ff-only -q "$commit" >/dev/null 2>&1 || { echo "refuse: $dir cannot fast-forward to $commit"; exit 3; }
+  git merge --ff-only --no-overwrite-ignore -q "$commit" >/dev/null 2>&1 || { echo "refuse: $dir cannot safely fast-forward to $commit"; exit 3; }
 else
-  git checkout -q -b "$branch" "$commit" && git branch -q --set-upstream-to="origin/$branch" >/dev/null 2>&1
+  git checkout --no-overwrite-ignore -q -b "$branch" "$commit" >/dev/null 2>&1 || { echo "refuse: $dir cannot safely check out $commit"; exit 3; }
+  git branch -q --set-upstream-to="origin/$branch" >/dev/null 2>&1
 fi
 [ "$(git rev-parse HEAD)" = "$commit" ] || { echo "refuse: $dir is not at $commit after the update"; exit 3; }
 mkdir -p "$HOME/.cache"
