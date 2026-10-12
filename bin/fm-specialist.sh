@@ -19,7 +19,8 @@
 #
 # `job` starts one detached Deck turn and returns; when it ends the home gets a
 # `check: specialist <name> finished job <job> (<outcome>) - result: <path>`
-# wake. One job runs at a time per specialist. Skills placed in
+# wake, using `none written` when no result file exists.
+# One job runs at a time per specialist. Skills placed in
 # data/specialists/<name>/skills/ are linked into its workdir's .agents/skills/.
 # Jobs produce knowledge, not project changes: hand a change
 # a job recommends to a ship. Retire refuses a running job and keeps its record,

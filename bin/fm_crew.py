@@ -26,9 +26,9 @@ specialist is a record, not an endpoint, and is intentionally persistent.
 
 A task group is one parent's ephemeral fan-out: N members share a brief and
 each gets its own angle; each member is one `deck run --ephemeral`. A detached
-orchestrator runs at most FM_GROUP_LOCAL_MAX (default two) members on this machine at once, merges their
+orchestrator schedules members under the local concurrency cap, merges their
 results with one more ephemeral run, then cleans the whole group up in one step.
-A cleanup that cannot prove every member process gone requests a captain-held task;
+A cleanup with surviving target process groups requests a captain-held task;
 if that request fails, a separate cleanup escalation wake names the failure.
 
   state/groups/<gid>.json                the record (0600, atomic)
@@ -57,6 +57,8 @@ FM_CREW_WORK_ROOT overrides ~/.local/state/firstmate-crew; each home's neutral
 workdirs live below its hashed home key (specialists use empty repositories for
 owned skill discovery). Choose this root before creating a specialist: its
 workdir is persisted, and retirement removes it only within the current root.
+FM_GROUP_LOCAL_MAX caps concurrent members per group on this machine (default 2);
+integer values below 1 become 1, and non-integer values fall back to 2.
 FM_CREW_MAX_TURNS defaults to 200 for specialists and members; the merger uses 60.
 FM_CREW_DEADLINE_SECS defaults to 3600 for each Deck run; CLI wait timeouts are
 independent of this override. docs/configuration.md owns launch environment grants.
@@ -166,7 +168,7 @@ def pid_alive(pid) -> bool:
         return False
     except PermissionError:
         return True
-    # A reaped child of ours can linger as a zombie; it is not running.
+    # An exited child can linger as a zombie until reaped; it is not running.
     try:
         out = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
         return running_stat(out.stdout.strip())
@@ -998,7 +1000,7 @@ def run_group(g: Group) -> bool:
 
 
 def local_max() -> int:
-    """Members run on this machine at once: FM_GROUP_LOCAL_MAX, default 2 (the MacBook cap)."""
+    """Resolve the per-group concurrency cap documented in the module docstring."""
     try:
         return max(1, int(os.environ.get("FM_GROUP_LOCAL_MAX", "2")))
     except ValueError:
@@ -1006,7 +1008,7 @@ def local_max() -> int:
 
 
 def cleanup_group(g: Group, reason: str) -> bool:
-    """Kill every member process group, remove run files, prove nothing is left."""
+    """Stop owned member, merger, and orchestrator groups; retain run files if any survive."""
     rec = g.record()
     targets = {m["pid"]: m.get("identity") for m in rec["members"] if isinstance(m.get("pid"), int)}
     orch = rec.get("orchestrator_pid")
