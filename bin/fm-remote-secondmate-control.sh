@@ -302,7 +302,7 @@ cmd_route() {
 
 cmd_launch() {
   local id=$1 harness=$2 model=$3 effort=$4 selected_backend=$5 traceparent=${6:-}
-  local current meta out kill_out old old_backend='' old_target=''
+  local current meta out kill_out old old_backend='' old_target='' pid
 
   validate_id "$id"
   validate_home "$id"
@@ -340,7 +340,15 @@ cmd_launch() {
           die "the agent-less endpoint $REMOTE_ENDPOINT_TARGET was not confirmed gone, so this launch would risk a duplicate: $(printf '%s' "$kill_out" | head -n 1)"
         fi
         ;;
-      missing) ;;
+      missing)
+        # A restarted hub forgets an endpoint until its agent re-registers, so
+        # `missing` alone does not prove the agent gone; one still running here
+        # for this mate keeps the id taken, whatever identity was recorded.
+        fm_backend_source stream || die "could not load backend stream"
+        if pid=$(fm_backend_stream_local_agent_pid "fm-$id" "$CONTROL_STATE/$id.status"); then
+          die "the stream endpoint of $id is missing from the hub, but its agent process (pid $pid) is still running on this host; wait for it to re-register, or stop that agent first, then launch again"
+        fi
+        ;;
       *) die "remote endpoint state is $current; refusing duplicate launch" ;;
     esac
     old_backend=$REMOTE_ENDPOINT_BACKEND

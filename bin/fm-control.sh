@@ -137,9 +137,10 @@
 # bin/fm-on.sh through bin/fm-remote-secondmate-control.sh, which verifies every
 # postcondition where the agent runs. A relaunch then re-reads the host's route
 # and rewrites this record's remote_* binding, so the parent points at the
-# mate's new endpoint. recover-missing
-# stays refused for a remote mate; a gone remote endpoint needs recovery on
-# its host (docs/remote-secondmates.md "Lifecycle control").
+# mate's new endpoint. recover-missing launches a gone remote endpoint again
+# through bin/fm-spawn.sh --secondmate, after a fresh `missing` reading from the
+# host, and that host's launch refuses while the mate's agent still runs there
+# (docs/remote-secondmates.md "Lifecycle control").
 # bin/fm-remote-control-lib.sh owns that route.
 #
 # Fail-closed boundaries:

@@ -231,7 +231,8 @@ Steering, peek, crew-state, the parent channel, and liveness run through host ve
 Before relaunch reaches host lifecycle control, the primary checks readiness with the same check/repair/recheck sequence as launch; a remaining gap or SSH exit 255 refuses without stopping the mate.
 An ordinary primary `fm-control.sh` relaunch keeps the recorded profile unless flags replace it, resets unnamed model and effort axes when the harness changes, and rewrites the parent's binding and resolved harness, model, and effort from the host's route after success.
 If that route read or parent publication fails after host success, the primary reports failure with the old parent binding retained; reconcile on the same host rather than assuming no replacement launched.
-`recover-missing` remains unavailable through the primary for remote mates; [`bin/fm-secondmate-revive.sh`](../bin/fm-secondmate-revive.sh) owns confirmed-missing escalation without claiming revival attempts.
+`recover-missing` for a remote mate launches a gone endpoint again through the normal spawn route (readiness, convergence, host launch, rebind), but only after a fresh `missing` reading from the host, and the host's launch refuses while a stream agent for that mate still runs there, because a restarted hub forgets endpoints until their agents re-register.
+[`bin/fm-secondmate-revive.sh`](../bin/fm-secondmate-revive.sh) uses it for a confirmed-missing remote mate within its usual attempt budget, so a mate whose agent died with a hub restart comes back within minutes.
 For deliberate-stop protection, use exit through the primary control plane; its [`fm-control.sh` header](../bin/fm-control.sh) owns the primary marker, including unknown SSH outcomes and the primary-only automatic-admission guard.
 A host-local control call does not establish that primary marker, so it is not a substitute for primary exit when automatic revival must stay suppressed.
 

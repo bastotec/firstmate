@@ -55,7 +55,7 @@ A stream mate whose own agent is gone reads `unreadable` while the hub still hol
 
 Between session starts, the owning home's watcher runs [`bin/fm-secondmate-revive.sh`](../bin/fm-secondmate-revive.sh) without waiting for a model turn; its header owns confirmation, per-mate concurrency, retry limits, escalation, and the environment knobs, with the scan cadence owned by [`bin/fm-watch.sh`](../bin/fm-watch.sh).
 With the watcher running and default settings, a consistently dead mate normally reaches a recovery attempt within a couple of minutes; completion depends on the control-plane postconditions, and unknown readings or a competing lifecycle action defer recovery.
-The scan uses control-plane relaunch for a dead endpoint and guarded missing-endpoint recovery below for a local registry gap; [remote lifecycle control](remote-secondmates.md#lifecycle-control) owns remote limits.
+The scan uses control-plane relaunch for a dead endpoint and guarded missing-endpoint recovery below for a registry gap, local or remote; [remote lifecycle control](remote-secondmates.md#lifecycle-control) owns the remote guard.
 Successful revivals are silent and logged; a spent revival budget produces one failure notification rather than repeated restarts.
 A secondmate deliberately stopped through control-plane exit stays down across scans and session start until explicitly relaunched or freshly observed alive; [`bin/fm-control.sh`'s header](../bin/fm-control.sh) owns the stop marker and automatic-admission guard.
 [`verification/supervision.md`](verification/supervision.md#secondmate-revival) lists the portable regression entry points.

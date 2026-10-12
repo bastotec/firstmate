@@ -31,10 +31,11 @@ Portable regression entry points:
 bin/fm-test-run.sh tests/fm-secondmate-revive.test.sh tests/fm-secondmate-liveness.test.sh tests/fm-control.test.sh tests/fm-remote-secondmate-stream.test.sh tests/fm-secondmate-restart.test.sh
 ```
 
-The revival suite exercises confirmed local and remote down readings, local missing-endpoint recovery, remote missing-endpoint escalation without claimed attempts, exclusion of non-secondmate records, per-mate concurrency across overlapping scans, retry exhaustion, escalation publication retries, and watcher-driven recovery without a model turn.
+The revival suite exercises confirmed local and remote down readings, local and remote missing-endpoint recovery, escalation of a remote endpoint that will not come back after its attempt budget, exclusion of non-secondmate records, per-mate concurrency across overlapping scans, retry exhaustion, escalation publication retries, and watcher-driven recovery without a model turn.
 It also exercises deliberate-stop marker withdrawal under the lifecycle lock and recovery between probing and automatic admission without consuming a failure.
 The liveness suite covers startup's held-stop and live-lock skips and the fresh liveness recheck after taking that lock.
 The control and remote stream suites cover secondmate exit protection, locked alive-admission refusal, and the primary stop marker after a lost remote exit response.
+The remote stream suite also restarts its real hub to make a remote mate's endpoint missing, proves recovery refuses while the forgotten agent still runs on the host, and proves the revive scan alone brings the mate back on a new endpoint once that agent is gone.
 The restart suite covers selection of the deciding failure instead of a preceding warning; [Deck portable regression](deck.md#portable-regression) owns queued-exit ordering coverage.
 These are regression entry points, not a new dated live-harness result.
 

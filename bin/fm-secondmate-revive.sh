@@ -18,12 +18,11 @@
 #   - `alive` clears the mate's revive record and any deliberate-stop marker;
 #   - `dead` (endpoint present, no agent) is revived with
 #     `bin/fm-control.sh <id> relaunch`, local or remote;
-#   - local `missing` (endpoint gone) is revived with
+#   - `missing` (endpoint gone), local or remote, is revived with
 #     `bin/fm-control.sh <id> recover-missing`, whose own guard refuses while the
-#     mate's agent process is still running, so a hub that merely forgot a live
-#     endpoint is never duplicated;
-#   - remote `missing` has no primary-side recovery verb, so after confirmation
-#     it is escalated once with no revival attempts claimed;
+#     mate's agent process is still running (on this machine, or on the mate's
+#     host for a remote route), so a hub that merely forgot a live endpoint is
+#     never duplicated;
 #   - anything else (ambiguous, unreadable, unknown) is left alone.
 # A down reading is acted on only after it has been seen on two scans at least
 # FM_SECONDMATE_REVIVE_CONFIRM_SECS apart. fm-control refuses a second lifecycle
@@ -92,8 +91,13 @@ log() {  # <line>
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >> "$LOG" 2>/dev/null || true
 }
 
+# The first error line when there is one, else the first line that is not a
+# warning: control-plane output can open with banners before its refusal.
 one_line() {  # <text>
-  printf '%s\n' "$1" | sed -n '/^warning: /d;/./{s/^error: //;s/[[:space:]]\{1,\}/ /g;p;q;}' | cut -c1-300
+  local line
+  line=$(printf '%s\n' "$1" | sed -n '/^error: /{p;q;}')
+  [ -n "$line" ] || line=$(printf '%s\n' "$1" | sed -n '/^[Ww][Aa][Rr][Nn][Ii][Nn][Gg]: /d;/./{p;q;}')
+  printf '%s\n' "$line" | sed 's/^error: //;s/[[:space:]]\{1,\}/ /g' | cut -c1-300
 }
 
 # Revive record fields: down_state first_seen failures escalated last.
@@ -160,8 +164,7 @@ probe() {  # <meta> <id>  -> prints alive|dead|missing|unknown
 }
 
 revive_one() {  # <meta> <id>
-  local meta=$1 id=$2 state now verb out rc remote failures reason
-  remote=$(fm_meta_get "$meta" remote_host)
+  local meta=$1 id=$2 state now verb out rc failures reason
   state=$(probe "$meta" "$id")
   now=$(date +%s)
   record_read "$id"
@@ -199,11 +202,6 @@ revive_one() {  # <meta> <id>
   fi
   [ $((now - REC_SEEN)) -ge "$CONFIRM_SECS" ] || return 0
 
-  if [ "$state" = missing ] && [ -n "$remote" ]; then
-    escalate "$id" "its endpoint on $remote is gone; no automatic revival was tried, because only that host can recover a remote endpoint" \
-      && record_write "$id" "$state" "$REC_SEEN" "$REC_FAILURES" 1
-    return 0
-  fi
   verb=relaunch
   [ "$state" = dead ] || verb=recover-missing
   log "reviving $id ($state endpoint) with $verb"
