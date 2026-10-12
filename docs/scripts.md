@@ -20,7 +20,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-secondmate-reconcile.sh` | Queue Bearings reconcile requests for later supervision delivery and ask each mismatched home through its durable inbox with a per-home cooldown |
 | `fm-update.sh`           | Guarded self-update of firstmate and local or remote secondmate homes, reconciling redundant divergence and classifying every live mate left on the target commit for restart or fallback nudge |
 | `fm-secondmate-restart.sh` | Persist open conversational work, then restart eligible second mates or report the fallback outcome |
-| `fm-secondmate-revive.sh` | Revive a dead second mate mid-session through the control plane, with a bounded retry budget and one escalation |
+| `fm-secondmate-revive.sh` | Recover a down second mate mid-session through the guarded [secondmate lifecycle](stream-backend.md#secondmate-lifecycle) |
 | `fm-secondmate-restart-lib.sh` | Shared second-mate restart capability and persistence-request contract |
 | `fm-on.sh`               | Execute one tracked Firstmate command in a configured remote secondmate home, using its job worker except for the doctor bootstrap |
 | `fm-remote-job-lib.sh`   | Shared bounded remote job queue, worker readiness, LaunchAgent contract, and filesystem-composed PATH |
@@ -109,7 +109,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-wake-lib.sh`         | Shared durable wake queue, recovery generations, portable locks, and watcher identity/health helpers |
 | `fm-classify-lib.sh`     | Shared wake classification, durable keyed-decision folds and scans, unread status selection, and bounded latest-event snapshots |
 | `fm-send.sh`             | Send task text, keys, or typed harness invocations, or publish primary chat input (routing contract: [script header](../bin/fm-send.sh)) |
-| `fm-control.sh`          | Agent lifecycle control plane: allowlisted `interrupt`, `exit`, and transactional `relaunch`/`recover-missing` verbs for an exact task id ([agent-control.md](agent-control.md)) |
+| `fm-control.sh`          | Agent lifecycle control plane for an exact task id ([local transactions](agent-control.md), [remote routing](remote-secondmates.md#lifecycle-control)) |
 | `fm-control-lib.sh`      | One executable owner of the control-plane verb allowlist, per-harness interrupt/exit mechanics, and per-backend capability |
 | `fm-busy-lib.sh`         | Single owner of the semantic busy-state contract: verdicts, source attribution, and per-harness sources |
 | `fm-busy-event.sh`       | The only writer of a task's semantic busy-state record and native-harness progress marker; arms an incarnation and applies lifecycle events |

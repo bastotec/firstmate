@@ -270,8 +270,8 @@ for profile_flag in --harness=deck --model=fixture/second --effort=default; do
   rc=0
   out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" recover-missing "$profile_flag" 2>&1) || rc=$?
   expect_code 1 "$rc" "remote recover-missing should refuse $profile_flag"
-  assert_contains "$out" 'keeps its recorded profile' "remote recovery did not name the profile refusal: $out"
-  assert_contains "$out" 'use relaunch to change it' "remote recovery did not explain how to change the profile: $out"
+  assert_contains "$out" "launches with this home's configured secondmate profile and takes no profile flags" "remote recovery did not name the profile refusal: $out"
+  assert_contains "$out" 'use relaunch to choose harness, model or effort' "remote recovery did not explain how to change the profile: $out"
 done
 assert_equals "$ssh_count" "$(cat "$SSH_COUNT")" "profile refusal reached the remote host"
 cmp -s "$PARENT_META" "$TMP_ROOT/recover-profile-parent.meta" || fail "profile refusal changed the parent route"

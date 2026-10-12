@@ -111,7 +111,7 @@ fm_remote_route_rebind_meta() {  # <meta> <state-dir>
 fm_remote_recover_missing() {  # <host>
   local host=$1 out rc state
   if [ "$HARNESS_SET" = 1 ] || [ "$MODEL_SET" = 1 ] || [ "$EFFORT_SET" = 1 ]; then
-    echo "error: recover-missing of a remote mate keeps its recorded profile; --harness/--model/--effort are refused; use relaunch to change it" >&2
+    echo "error: remote recover-missing launches with this home's configured secondmate profile and takes no profile flags; use relaunch to choose harness, model or effort" >&2
     return 1
   fi
   rc=0
