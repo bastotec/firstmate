@@ -150,8 +150,7 @@ Classify each wake this way:
   The window ages against the crew's own latest status line, so only a status append that stops declaring the wait ends this routing and restores wedge detection.
 - `check` -> always escalate. Check scripts print only when firstmate should wake.
 - `stale` with a terminal status or bare legacy captain-relevant line -> escalate.
-  A task whose current state is reconciled `done` and whose metadata records its PR or MR is the exception: preserve any newly actionable completion, then absorb its quiet pane and clear stale tracking instead of raising or retaining a possible-wedge escalation.
-  [`architecture.md`](../../../docs/architecture.md#stale-panes-and-the-wedge-ladder) owns this held-for-merge boundary.
+  A task whose current state satisfies the [held-for-merge boundary](../../../docs/architecture.md#stale-panes-and-the-wedge-ladder) is the exception: preserve any newly actionable completion, then absorb its quiet pane and clear stale tracking instead of raising or retaining a possible-wedge escalation.
   Nonterminal progress remains transient even when its prose contains a legacy free-text token or its seen-status marker already matches, so record a marker and self-handle.
   If a non-exempt pane is still idle past `FM_STALE_ESCALATE_SECS` (default 240s), housekeeping escalates it as a possible wedge.
   This bounds wedge-detection latency to the threshold plus a tick: a delay, never a loss.
