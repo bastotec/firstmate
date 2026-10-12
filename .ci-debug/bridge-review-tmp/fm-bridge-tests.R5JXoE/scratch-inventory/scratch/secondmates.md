@@ -1,2 +1,0 @@
-- helper - helper work (host: workload; root: /r/firstmate; home: /r/homes/helper; scope: help; projects: none; added 2026-10-01)
-- builder - builder work (host: buildbox; root: /r/firstmate; home: /r/homes/builder; scope: x; projects: none; added 2026-10-12)
