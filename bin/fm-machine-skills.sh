@@ -124,6 +124,7 @@ deck_skills_on() { # <machine> <root>
     # shellcheck disable=SC2029 # quoted for the remote shell on purpose.
     {
       cat "$SCRIPT_DIR/fm-remote-job-lib.sh"
+      # shellcheck disable=SC2016 # Expanded by the remote shell, not this one.
       printf '\n%s\n' 'PATH=$(fm_remote_job_compose_operator_path "$HOME") && exec env -i HOME="$HOME" PATH="$PATH" deck skills < /dev/null'
     } | "$SSH_BIN" -o BatchMode=yes -o ConnectTimeout=8 -o ForwardAgent=no \
       -o ClearAllForwardings=yes -o 'SendEnv=-*' -o UpdateHostKeys=no \

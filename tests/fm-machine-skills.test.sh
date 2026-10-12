@@ -105,7 +105,7 @@ assert_equals 'place=ok machine=workload' "$(skills check workload pr-review)" "
 pass "check refuses conflicting machine and secondmate bindings"
 rm "$H/state/machine-skills/box.tsv"
 
-printf '# Task\nDo it.\nSkills: `klipper-printers`, pr-review\n' > "$T/brief.md"
+printf '# Task\nDo it.\nSkills: %s, pr-review\n' "\`klipper-printers\`" > "$T/brief.md"
 set +e
 out=$(FAKE_DECK_LIST='pr-review\tglobal\tReview\t/x\n' skills brief-check "$T/brief.md" "$T/proj")
 rc=$?

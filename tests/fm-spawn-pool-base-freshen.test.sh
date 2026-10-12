@@ -745,7 +745,7 @@ test_pool_slot_claim_follows_the_spawn_outcome() {
 
 test_skills_are_checked_in_the_final_worker_copy() {
   local rec id out status target before
-  id=pool-skills-refresh-r1
+  id='pool-skills-refresh-r1'
   rec=$(make_case skills-refresh "$id")
   read_case_record "$rec"
   mkdir -p "$PROJECT_DIR/.agents/skills/required"
@@ -769,7 +769,7 @@ SH
   assert_absent "$HOME_DIR/state/$id.meta" "skill refusal published task metadata"
   assert_present "$PROJECT_DIR/.agents/skills/required/SKILL.md" "primary skill was removed"
 
-  id=pool-skills-relaunch-r1
+  id='pool-skills-relaunch-r1'
   rec=$(make_case skills-relaunch "$id")
   read_case_record "$rec"
   out=$(run_spawn "$id" --scout)
