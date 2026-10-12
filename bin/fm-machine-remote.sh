@@ -271,23 +271,36 @@ tunnel_unit() { # <kind launchd|systemd> <label> <args...>
 
 cmd_install_tunnel() { # <label> <port> <user> <host> <ssh-port> <known-line> <check-url> <gateway|hub>
   local label=$1 port=$2 user=$3 host=$4 sshport=$5 known=$6 url=$7 what=$8
-  local kind unit dir pin key tmp code tries running=0
+  local kind unit dir pin key tmp code tries account running=0
   case "$label" in dev.firstmate.*) ;; *) die "tunnel label must start with dev.firstmate." ;; esac
   case "$port:$sshport" in *[!0-9:]*|:*|*:) die "ports must be numbers" ;; esac
   command -v curl >/dev/null 2>&1 || die "curl is missing"
   key="$HOME/.ssh/$TUNNEL_KEY_NAME"
   [ -f "$key" ] || die "no tunnel key at $key; run tunnel-key first"
+  case "$(uname -s)" in
+    Darwin) kind=launchd; dir="$HOME/Library/LaunchAgents"; unit="$dir/$label.plist" ;;
+    Linux)
+      kind=systemd; dir="$HOME/.config/systemd/user"; unit="$dir/$label.service"
+      account=${USER:-$(id -un)}
+      [ "$(loginctl show-user "$account" -p Linger < /dev/null 2>/dev/null)" = Linger=yes ] \
+        || die "run sudo loginctl enable-linger $account on the machine, then rerun setup"
+      ;;
+    *) die "no supported service manager on $(uname -s)" ;;
+  esac
+  if [ "$kind" = launchd ]; then
+    launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 < /dev/null && running=1
+  else
+    systemctl --user is-active --quiet "$label.service" < /dev/null 2>/dev/null && running=1
+  fi
+  if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && [ "$running" -eq 0 ]; then
+    die "127.0.0.1:$port is already taken by something else; free it or forward it yourself"
+  fi
   pin="$HOME/.ssh/$TUNNEL_KNOWN_NAME"
   if [ -f "$pin" ]; then
     grep -qxF -- "$known" "$pin" || die "$pin already pins a different key for the gateway host; inspect it before replacing"
   else
     (umask 077; printf '%s\n' "$known" > "$pin") || die "cannot write $pin"
   fi
-  case "$(uname -s)" in
-    Darwin) kind=launchd; dir="$HOME/Library/LaunchAgents"; unit="$dir/$label.plist" ;;
-    Linux) kind=systemd; dir="$HOME/.config/systemd/user"; unit="$dir/$label.service" ;;
-    *) die "no supported service manager on $(uname -s)" ;;
-  esac
   local -a args=(/usr/bin/ssh -N -i "$key" -o IdentitiesOnly=yes -o IdentityAgent=none
     -o "UserKnownHostsFile=$pin" -o StrictHostKeyChecking=yes -o BatchMode=yes
     -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
@@ -295,18 +308,9 @@ cmd_install_tunnel() { # <label> <port> <user> <host> <ssh-port> <known-line> <c
   args+=(-L "127.0.0.1:$port:127.0.0.1:$port" "$user@$host")
   tmp=$(mktemp "${TMPDIR:-/tmp}/fm-tunnel.XXXXXX") || die "cannot stage the service file"
   tunnel_unit "$kind" "$label" "${args[@]}" > "$tmp"
-  if [ "$kind" = launchd ]; then
-    launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 < /dev/null && running=1
-  else
-    systemctl --user is-active --quiet "$label.service" < /dev/null 2>/dev/null && running=1
-  fi
   if [ -f "$unit" ] && cmp -s "$tmp" "$unit" && [ "$running" -eq 1 ]; then
     rm -f "$tmp"
   else
-    if [ ! -f "$unit" ] && [ "$(http_code "http://127.0.0.1:$port/")" != 000 ]; then
-      rm -f "$tmp"
-      die "127.0.0.1:$port is already taken by something else; free it or forward it yourself"
-    fi
     mkdir -p "$dir" || { rm -f "$tmp"; die "cannot create $dir"; }
     mv -f "$tmp" "$unit" || { rm -f "$tmp"; die "cannot install $unit"; }
     if [ "$kind" = launchd ]; then
@@ -323,7 +327,7 @@ cmd_install_tunnel() { # <label> <port> <user> <host> <ssh-port> <known-line> <c
     if [ "$what" = gateway ]; then code=$(gateway_code "$url"); else code=$(http_code "$url"); fi
     case "$what:$code" in gateway:200|hub:[1-9]??) break ;; esac
     tries=$((tries + 1))
-    [ "$tries" -lt "${FM_TUNNEL_WAIT_TRIES:-15}" ] || break
+    [ "$tries" -lt 15 ] || break
     sleep 1
   done
   case "$what:$code" in

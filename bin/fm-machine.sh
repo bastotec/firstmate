@@ -1142,15 +1142,40 @@ for port; do opts="$opts,permitopen=\"127.0.0.1:$port\""; done
 opts="$opts,command=\"/bin/false\""
 keys="$HOME/.ssh/authorized_keys"
 mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh" || { echo 'result=failed: cannot prepare ~/.ssh'; exit 1; }
-if [ -f "$keys" ] && awk -v b="$blob" '{ for (i = 1; i <= NF; i++) if ($i == b) f = 1 } END { exit f ? 0 : 1 }' "$keys"; then
+entry="$opts $pub"
+match_key='function tunnel_key(line, fields) {
+  sub(/^[ \t]+/, "", line)
+  if (line !~ /^ssh-ed25519[ \t]/) sub(/^([^ \t"]|"[^"]*")+[ \t]+/, "", line)
+  split(line, fields, /[ \t]+/)
+  return fields[1] == "ssh-ed25519" && fields[2] == blob
+}'
+if [ -f "$keys" ] && awk -v blob="$blob" -v entry="$entry" "$match_key"'
+  tunnel_key($0) && $0 == entry { found = 1 }
+  END { exit found ? 0 : 1 }' "$keys"; then
   echo 'result=skipped: the tunnel key is already authorized'
   exit 0
 fi
 if [ -f "$keys" ]; then
-  backup="$keys.fm-backup-$(date -u +%Y%m%dT%H%M%SZ)"
+  backup=$(mktemp "$keys.fm-backup-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX") || { echo 'result=failed: cannot prepare authorized_keys backup'; exit 1; }
   cp -p "$keys" "$backup" || { echo 'result=failed: cannot back up authorized_keys'; exit 1; }
 fi
-(umask 077; printf '%s %s\n' "$opts" "$pub" >> "$keys") || { echo 'result=failed: cannot append to authorized_keys'; exit 1; }
+if [ -f "$keys" ] && awk -v blob="$blob" "$match_key"'
+  tunnel_key($0) { found = 1 }
+  END { exit found ? 0 : 1 }' "$keys"; then
+  tmp=$(mktemp "$keys.fm-new.XXXXXX") || { echo 'result=failed: cannot stage authorized_keys'; exit 1; }
+  if ! awk -v blob="$blob" -v entry="$entry" "$match_key"'
+    tunnel_key($0) { print entry; next }
+    { print }' "$keys" > "$tmp" || ! mv -f "$tmp" "$keys"; then
+    rm -f "$tmp"
+    echo 'result=failed: cannot replace the tunnel authorization'
+    exit 1
+  fi
+else
+  if [ -s "$keys" ] && [ -n "$(tail -c 1 "$keys")" ]; then
+    printf '\n' >> "$keys" || { echo 'result=failed: cannot terminate authorized_keys'; exit 1; }
+  fi
+  (umask 077; printf '%s\n' "$entry" >> "$keys") || { echo 'result=failed: cannot append to authorized_keys'; exit 1; }
+fi
 chmod 600 "$keys"
 echo "result=done: authorized to forward only $(printf '127.0.0.1:%s ' "$@")${backup:+; backup at $backup}"
 AUTH
@@ -1167,9 +1192,11 @@ tunnel_steps() { # <alias>
     printf 'step tunnels=skipped: no config/machine-tunnels in this home\n'
     return 0
   fi
-  gw_port=; hub_port=
-  [ "$(fact gateway)" = reachable ] || gw_port=$(local_port "$GATEWAY_URL") || gw_port=
-  [ "$(fact stream-hub)" != unreachable ] || hub_port=$(local_port "$(hub_url)") || hub_port=
+  gw_port=$(local_port "$GATEWAY_URL") || gw_port=
+  hub_port=$(local_port "$(hub_url)") || hub_port=
+  for port in $gw_port $hub_port; do ports+=("$port"); done
+  [ "$(fact gateway)" != reachable ] || gw_port=
+  [ "$(fact stream-hub)" = unreachable ] || hub_port=
   [ "$(fact gateway)" != reachable ] || printf 'step tunnel-gateway=skipped: %s already answers\n' "$GATEWAY_URL"
   [ "$(fact stream-hub)" != reachable ] || printf 'step tunnel-hub=skipped: %s already answers\n' "$(hub_url)"
   [ -n "$gw_port$hub_port" ] || return 0
@@ -1183,7 +1210,6 @@ tunnel_steps() { # <alias>
   esac
   case "$pub" in *[!A-Za-z0-9+/=@._\ -]*) printf 'step tunnel-key=failed: the public key has unexpected characters\n'; return 1 ;; esac
   printf 'step tunnel-key=done: ~/.ssh/fm_workload_tunnel on %s\n' "$alias"
-  for port in $gw_port $hub_port; do ports+=("$port"); done
   tunnel_authorize "$gw" "$pub" "${ports[@]}"
   result=$(printf '%s\n' "$REMOTE_OUT" | awk '/^result=/ { sub(/^result=/, ""); print; exit }')
   case "$REMOTE_RC:$result" in
