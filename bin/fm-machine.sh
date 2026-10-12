@@ -54,7 +54,7 @@
 # the probe does not judge the entrypoint link.
 # Required-tool doctor gaps are human items; read-only fixable checks are
 # will-install, while fixable checks remaining after setup's --fix are human
-# items and fail setup.
+# items and fail setup. Checks the doctor tags human retain evidence with actions.
 #
 # setup <alias> <remote-root> performs only the automatable items, in order,
 # printing one `step` line as each completes and stopping at the first failure:
@@ -149,6 +149,9 @@
 # a leading ~ expanded. Lookup, trust writes and every connection (including
 # the doctor through fm-on.sh) use that file via -o UserKnownHostsFile=.
 # Every connection disables UpdateHostKeys. Tests use scratch selections.
+#
+# bin/fm-machine-blocker.sh turns check's human items into the captain's
+# reply, a needs-you card and the pending-machine record.
 #
 # Line protocol on stdout, one fact per line, stable for script consumers:
 # The checklist replaces the former check entrypoint/deck/proxai lines; a local
@@ -667,7 +670,11 @@ interpret_doctor() {
             text=${action:-$text}
             gaps=$((gaps + 1))
             ;;
-          *) state=human; text=${action:-$text}; gaps=$((gaps + 1)) ;;
+          *)
+            state=human
+            [ -z "$action" ] || [ "$action" = "$text" ] || text="$action ($text)"
+            gaps=$((gaps + 1))
+            ;;
         esac
         DOCTOR_ITEMS="${DOCTOR_ITEMS}item doctor-$name=$state: $text"$'\n'
         ;;

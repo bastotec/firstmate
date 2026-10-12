@@ -72,6 +72,12 @@ A seeded home delivers firstmate's OWN changes to the route its code root delive
 Remote provisioning does the same on its own host ([`docs/remote-secondmates.md`](../../../docs/remote-secondmates.md#provision-a-route)).
 A home seeded before that gate existed still carries the old route and says so through the session-start `HOME_ROUTE` line; repointing it is a migration, not a seed.
 
+Before provisioning on a machine that is not registered yet, resolve the intended remote code root and run `bin/fm-machine.sh check <alias> <remote-root>`; when any item is `human`, follow `AGENTS.md` section 9 using `bin/fm-machine-blocker.sh raise <alias> --root <remote-root> --for "create <Name>" --secondmate <id>=<Name>` and paste its reply block into the same reply.
+Once no human steps remain, either on the initial check or on the watch's passing re-check, run the captain-consented `bin/fm-machine.sh setup <alias> <remote-root>` before registering, provisioning or launching, because automatic setup items may still remain.
+Never run setup over a machine whose dotfiles have local changes without the captain's say; inspect them first and obtain any missing setup consent before proceeding.
+Handle setup's result as its header specifies: continue only on complete success; on incomplete setup re-check and escalate the remaining human steps through `AGENTS.md` section 9, and on failure report the evidence without registering or provisioning.
+After successful setup, register the machine, provision and launch, and run `bin/fm-machine-blocker.sh clear <alias>`.
+
 Provision a whole remote home through its configured SSH host with:
 
 ```sh
