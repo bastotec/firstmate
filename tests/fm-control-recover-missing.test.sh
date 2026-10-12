@@ -72,6 +72,34 @@ make_fakebin() {  # <dir>
   # Exit-0 stand-ins for every launchable worker harness, so a launch resolves
   # its executable here rather than whatever the developer has installed.
   fm_fake_exit0 "$fb" deck
+  printf 'absent\n' > "$1/fake/retired-endpoint"
+  cat > "$fb/tmux" <<'SH'
+#!/usr/bin/env bash
+[ "$*" = 'list-windows -a -F #{session_name}:#{window_name}' ] || exit 90
+printf '%s\n' "$*" >> "${0%/fakebin/tmux}/fake/retired-queries"
+case "$(< "${0%/fakebin/tmux}/fake/retired-endpoint")" in
+  absent) printf 'old:fm-rc10\nother:fm-rc1\n' ;;
+  present) printf 'old:fm-rc1\n' ;;
+  no-server) echo 'no server running on fixture/socket' >&2; exit 1 ;;
+  unreadable) echo 'permission denied' >&2; exit 1 ;;
+  *) exit 127 ;;
+esac
+SH
+  cat > "$fb/herdr" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  'status --json --session old') printf '{"server":{"running":true}}\n' ;;
+  'pane list --workspace ws1 --session old')
+    case "$(< "${0%/fakebin/herdr}/fake/retired-endpoint")" in
+      absent) printf '{"result":{"panes":[{"pane_id":"p10"}]}}\n' ;;
+      present) printf '{"result":{"panes":[{"pane_id":"p1"}]}}\n' ;;
+      *) printf '{"error":"unreadable"}\n' ;;
+    esac ;;
+  *) exit 90 ;;
+esac
+printf '%s\n' "$*" >> "${0%/fakebin/herdr}/fake/retired-queries"
+SH
+  chmod +x "$fb/tmux" "$fb/herdr"
   cat > "$fb/sleep" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -1087,8 +1115,230 @@ test_recover_missing_records_the_dirty_state_it_found() {
 test_recover_missing_freezes_the_recorded_profile_for_a_secondmate
 test_recover_missing_preserves_uncommitted_work
 test_recover_missing_records_the_dirty_state_it_found
+test_reincarnate() {
+  local dir out rc case_name before brief_before
+  for case_name in success legacy scout no-server herdr herdr-present herdr-unreadable endpoint-present inventory-error provider-missing secondmate dirty absent live shared shared-retired unsupported current handoff-fail; do
+    dir=$(new_case "reincarnate-$case_name" rc1)
+    add_ship_task "$dir" rc1
+    sed 's/^model=default/model=preserved-model/' "$dir/home/state/rc1.meta" > "$dir/meta"
+    mv "$dir/meta" "$dir/home/state/rc1.meta"
+    printf 'working: preserved history\n' > "$dir/home/state/rc1.status"
+    if command -v tasks-axi >/dev/null 2>&1; then
+      printf '# Backlog\n\n## In flight\n\n## Queued\n\n## Done\n' > "$dir/home/data/backlog.md"
+      tasks-axi add rc1 'preserved task row' --kind ship --file "$dir/home/data/backlog.md" >/dev/null
+      tasks-axi start rc1 --file "$dir/home/data/backlog.md" >/dev/null
+      cp "$dir/home/data/backlog.md" "$dir/backlog-before"
+    fi
+    make_endpoint_missing "$dir"
+    # Preserve the remainder of the record, while giving it a retired identity.
+    cp "$dir/home/state/rc1.meta" "$dir/original-meta"
+    record_without_binding "$dir/home/state/rc1.meta" > "$dir/meta"
+    printf 'backend=tmux\nwindow=old:fm-rc1\n' >> "$dir/meta"
+    mv "$dir/meta" "$dir/home/state/rc1.meta"
+    case "$case_name" in
+      scout|secondmate)
+        sed "s/^kind=ship/kind=$case_name/" "$dir/home/state/rc1.meta" > "$dir/meta"
+        mv "$dir/meta" "$dir/home/state/rc1.meta" ;;
+      herdr*)
+        sed 's/^backend=tmux/backend=herdr/; s/^window=.*/window=old:p1/' "$dir/home/state/rc1.meta" > "$dir/meta"
+        printf 'herdr_session=old\nherdr_workspace_id=ws1\nherdr_tab_id=t1\nherdr_pane_id=p1\n' >> "$dir/meta"
+        mv "$dir/meta" "$dir/home/state/rc1.meta"
+        case "$case_name" in
+          herdr-present) echo present > "$dir/fake/retired-endpoint" ;;
+          herdr-unreadable) echo unreadable > "$dir/fake/retired-endpoint" ;;
+        esac ;;
+      endpoint-present) echo present > "$dir/fake/retired-endpoint" ;;
+      inventory-error) echo unreadable > "$dir/fake/retired-endpoint" ;;
+      provider-missing) echo unavailable > "$dir/fake/retired-endpoint" ;;
+      no-server) echo no-server > "$dir/fake/retired-endpoint" ;;
+      current) cp "$dir/original-meta" "$dir/home/state/rc1.meta" ;;
+      handoff-fail) printf '%s' "$dir/proj" > "$dir/fake/cwd" ;;
+      legacy) sed '/^backend=/d; /^endpoint_task_id=/d' "$dir/home/state/rc1.meta" > "$dir/meta"; mv "$dir/meta" "$dir/home/state/rc1.meta" ;;
+      dirty) echo preserved > "$dir/wt/untracked" ;;
+      absent) rm -rf "$dir/wt" ;;
+      live)
+        # Shim only the read-only proof; every other Python call is real.
+        cat > "$dir/fakebin/python3" <<SH
+#!/usr/bin/env bash
+case "\${4:-}" in --prove-stopped) echo 'task-bound driver is running' >&2; exit 1 ;; esac
+exec '$(command -v python3)' "\$@"
+SH
+        chmod +x "$dir/fakebin/python3"
+        ;;
+      shared)
+        {
+          fm_test_fake_dir_task "$dir/fake" "$dir/home/state" other
+          echo "worktree=$dir/wt"
+          echo "project=$dir/proj"
+          echo 'harness=deck'
+        } > "$dir/home/state/other.meta"
+        printf 'fm-other\n' > "$dir/fake/windows"
+        ;;
+      shared-retired)
+        cp "$dir/home/state/rc1.meta" "$dir/home/state/other.meta"
+        sed 's/rc1/other/g' "$dir/home/state/other.meta" > "$dir/meta"
+        mv "$dir/meta" "$dir/home/state/other.meta"
+        printf '#!/usr/bin/env bash\nprintf "old:fm-other\\n"\n' > "$dir/fakebin/tmux" ;;
+      unsupported) sed 's/harness=deck/harness=pi/' "$dir/home/state/rc1.meta" > "$dir/meta"; mv "$dir/meta" "$dir/home/state/rc1.meta" ;;
+    esac
+    before=$(cat "$dir/home/state/rc1.meta")
+    brief_before=$(cat "$dir/home/data/rc1/brief.md")
+    if out=$(run_control "$dir" rc1 reincarnate --note 'Continue preserved work'); then rc=0; else rc=$?; fi
+    assert_contains "$(cat "$dir/home/state/rc1.status")" 'working: preserved history' 'continuation must preserve task history'
+    if [ -f "$dir/backlog-before" ]; then
+      cmp -s "$dir/backlog-before" "$dir/home/data/backlog.md" || fail 'continuation must preserve the in-flight row'
+    fi
+    case "$case_name" in
+      success|legacy|scout|no-server|herdr)
+        [ "$rc" = 0 ] || fail "reincarnate $case_name failed: $out"
+        assert_bound_to_created "$dir" rc1
+        assert_contains "$out" 'backend=stream' 'reincarnate must report its new backend'
+        [ "$(meta_field "$dir" rc1 endpoint_task_id)" = rc1 ] || fail 'legacy record must gain an exact binding'
+        assert_equals preserved-model "$(meta_field "$dir" rc1 model)" 'reincarnate must preserve its recorded model'
+        assert_equals default "$(meta_field "$dir" rc1 effort)" 'reincarnate must preserve its recorded effort'
+        assert_contains "$(cat "$dir/home/data/rc1/brief.md")" 'Continue preserved work' 'progress note must survive'
+        ;;
+      handoff-fail)
+        [ "$rc" != 0 ] || fail 'handoff failure must refuse'
+        assert_bound_to_created "$dir" rc1
+        assert_contains "$out" 'no agent was ever stopped' 'reincarnate must never claim it stopped an agent'
+        assert_contains "$out" "retry with 'relaunch'" 'failed handoff must name its retry path'
+        ;;
+      *)
+        [ "$rc" != 0 ] || fail "reincarnate $case_name should refuse"
+        [ "$(cat "$dir/home/state/rc1.meta")" = "$before" ] || fail "$case_name refusal changed metadata"
+        [ "$(created_endpoint_count "$dir" rc1)" = 0 ] || fail "$case_name refusal created an endpoint"
+        assert_equals "$brief_before" "$(cat "$dir/home/data/rc1/brief.md")" 'refusal must preserve instructions'
+        assert_absent "$dir/home/state/rc1.control-relaunch" 'refusal must precede the transaction'
+        [ ! -s "$dir/fake/keys" ] || fail "$case_name refusal sent lifecycle keys"
+        case "$case_name" in
+          secondmate) assert_contains "$out" 'supports ship and scout work items only' 'secondmates must refuse at the kind boundary' ;;
+          endpoint-present|herdr-present|shared-retired) assert_contains "$out" 'is still present' 'shared preflight must require endpoint absence' ;;
+          inventory-error|herdr-unreadable|provider-missing) assert_contains "$out" 'inventory is unreadable' 'unavailable inventory must refuse rather than prove absence' ;;
+        esac
+        ;;
+    esac
+  done
+  pass 'reincarnate: retired and legacy records continue, unsafe copies and unproven stops refuse'
+}
+
+test_reincarnate_rejects_profile_options() {
+  local dir flag out rc meta_before brief_before
+  dir=$(new_case reincarnate-options rc1)
+  add_ship_task "$dir" rc1
+  meta_before=$(cat "$dir/home/state/rc1.meta")
+  brief_before=$(cat "$dir/home/data/rc1/brief.md")
+  for flag in --harness --model --effort; do
+    out=$(run_control "$dir" rc1 reincarnate "$flag" default --note continue); rc=$?
+    expect_code 1 "$rc" "reincarnate must reject $flag: $out"
+    assert_contains "$out" "apply to 'relaunch' and 'recover-missing' only" 'replacement profiles belong to existing verbs'
+    assert_nothing_changed "$dir" rc1 "$meta_before" "$brief_before"
+    assert_absent "$dir/home/state/rc1.control-relaunch" 'rejected options must precede the transaction'
+  done
+  pass 'reincarnate: replacement-profile options refuse without mutation'
+}
+
+test_reincarnate_refuses_a_surviving_worker() {
+  local dir child out rc meta_before brief_before
+  dir=$(new_case surviving-worker rc1)
+  add_ship_task "$dir" rc1
+  make_endpoint_missing "$dir"
+  record_without_binding "$dir/home/state/rc1.meta" > "$dir/meta"
+  printf 'backend=tmux\nwindow=old:fm-rc1\n' >> "$dir/meta"
+  mv "$dir/meta" "$dir/home/state/rc1.meta"
+  printf 'present\n' > "$dir/fake/retired-endpoint"
+  mkdir -p "$dir/old code"
+  printf '#!/usr/bin/env bash\nperl -e "sleep 60" run &\necho $! > "%s"\nwait\n' "$dir/child" > "$dir/old code/fm-deck-worker.sh"
+  python3 - "$ROOT" "$dir" <<'PY' || fail 'inert orphan-worker setup failed'
+import os, pathlib, signal, subprocess, sys, time
+root, case = map(pathlib.Path, sys.argv[1:])
+p = subprocess.Popen(['bash', str(case/'old code/fm-deck-worker.sh'),
+                      '--id', 'rc1', '--state', str(case/'home/state'), '--', 'brief'],
+                     start_new_session=True, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL)
+try:
+    for _ in range(100):
+        if (case/'child').exists():
+            break
+        time.sleep(.05)
+    child = int((case/'child').read_text())
+    os.kill(child, 0)
+    p.kill()
+    p.wait(timeout=10)
+    assert subprocess.run([sys.executable, str(root/'bin/fm-deck-stop.py'),
+                           str(case/'home/state'), 'rc1', '--prove-stopped']).returncode == 0
+    os.kill(child, 0)
+    assert not subprocess.check_output(['ps', '-p', str(child), '-o', 'stat='], text=True).strip().startswith('Z')
+except BaseException:
+    os.killpg(p.pid, signal.SIGKILL)
+    p.wait(timeout=10)
+    raise
+PY
+  child=$(< "$dir/child")
+  fm_test_track_helper_pid "$child"
+  meta_before=$(cat "$dir/home/state/rc1.meta")
+  brief_before=$(cat "$dir/home/data/rc1/brief.md")
+  out=$(run_control "$dir" rc1 reincarnate --note continue); rc=$?
+  kill -0 "$child" 2>/dev/null || fail 'read-only proof signalled the surviving worker'
+  case "$(ps -p "$child" -o stat=)" in *Z*) fail 'the surviving worker is no longer active' ;; esac
+  kill "$child" 2>/dev/null || true
+  expect_code 1 "$rc" "reincarnate must refuse an endpoint with a surviving worker: $out"
+  assert_contains "$out" 'retired endpoint old:fm-rc1 is still present' 'independent endpoint proof must catch the surviving worker'
+  assert_nothing_changed "$dir" rc1 "$meta_before" "$brief_before"
+  assert_absent "$dir/home/state/rc1.control-relaunch" 'stop refusal must precede the transaction'
+  [ ! -s "$dir/fake/keys" ] || fail 'the old endpoint must not be driven'
+  pass 'reincarnate: endpoint proof refuses an orphan worker without signalling it'
+}
+
+test_retired_driver_stop_proof() {
+  local dir
+  dir=$(new_case driver-proof)
+  mkdir -p "$dir/old code"
+  printf '#!/usr/bin/env bash\necho ready > "%s"\nwhile :; do sleep 1; done\n' "$dir/ready" > "$dir/old code/fm-deck-worker.sh"
+  python3 - "$ROOT" "$dir" <<'PY' || fail 'read-only driver proof must be scoped and preserve the live fixture'
+import pathlib, subprocess, sys
+root, case = map(pathlib.Path, sys.argv[1:])
+probe = [sys.executable, str(root/'bin/fm-deck-stop.py'), str(case/'home/state')]
+# This is an inert shell fixture, not a harness. It uses an old code-root and
+# a spaced path, and never submits a prompt or invokes Deck.
+p = subprocess.Popen(['bash', str(case/'old code/fm-deck-worker.sh'),
+                      '--id', 'rc1', '--state', str(case/'home/state'),
+                      '--gen', 'fixture', '--deck', '/fixture/deck', '--', 'brief'],
+                     start_new_session=True)
+try:
+    import time
+    for _ in range(100):
+        if (case/'ready').exists():
+            break
+        time.sleep(.1)
+    assert (case/'ready').exists(), 'fixture driver did not start'
+    assert subprocess.run(probe + ['rc1', '--prove-stopped']).returncode != 0
+    assert subprocess.run(probe + ['other', '--prove-stopped']).returncode == 0
+    assert p.poll() is None, 'proof must never signal a live driver'
+finally:
+    import os, signal
+    os.killpg(p.pid, signal.SIGTERM)
+    p.wait(timeout=10)
+assert subprocess.run(probe + ['rc1', '--prove-stopped']).returncode == 0
+import shutil
+empty_path = case/'no-provider'
+empty_path.mkdir()
+(empty_path/'ps').symlink_to(shutil.which('ps'))
+result = subprocess.run(probe + ['rc1', '--prove-stopped', 'tmux', 'old:fm-rc1', ''],
+                        env=dict(os.environ, PATH=str(empty_path)),
+                        capture_output=True, text=True)
+assert result.returncode != 0 and 'tmux' in result.stderr, result
+PY
+  pass 'retired driver proof: exact task identity across old code roots, no signals'
+}
+
+test_retired_driver_stop_proof
+test_reincarnate
+test_reincarnate_rejects_profile_options
+test_reincarnate_refuses_a_surviving_worker
 test_recover_missing_recreates_the_terminal_and_launches_the_replacement
 test_recover_missing_on_stream_rebinds_a_new_endpoint
+
 test_recover_missing_on_stream_refuses_while_its_agent_still_runs
 test_stream_agent_probe_finds_an_agent_under_a_spaced_home
 test_recover_missing_on_stream_ignores_unowned_agents

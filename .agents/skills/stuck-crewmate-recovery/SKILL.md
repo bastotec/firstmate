@@ -14,7 +14,7 @@ metadata:
 
 Use this playbook when the session-start digest reports an ordinary direct report's endpoint dead or its metadata has no window, or when a direct report is stale, looping, repeatedly confused, asking a question its brief already answers, unresponsive, or when a steer failed to land.
 
-Interrupt, stop, relaunch, and recover a worker through `bin/fm-control.sh <task-id> interrupt|exit|relaunch|recover-missing`, which resolves the recorded runtime itself, verifies each action, and never tears down or discards anything ([`docs/agent-control.md`](../../../docs/agent-control.md)).
+Interrupt, stop, relaunch, and recover a worker through `bin/fm-control.sh`'s allowlisted task verbs, which resolve the recorded runtime, verify each action, and never tear down or discard anything ([`docs/agent-control.md`](../../../docs/agent-control.md)).
 For any secondmate recovery, load `secondmate-provisioning`; [remote lifecycle routing](../../../docs/remote-secondmates.md#lifecycle-control) owns the primary control plane's supported remote verbs.
 Load `harness-adapters` before a resume command or a harness-specific skill invocation, and whenever the adapter's own quirks matter.
 The target window's harness is recorded as `harness=` in `state/<id>.meta`.
@@ -33,7 +33,7 @@ A no-mistakes run matched to the crew's branch and current code remains authorit
 
 When no authoritative run accounts for the task, inspect only its recorded backend and worktree inventory.
 Use `treehouse status` for the recorded stream task's worktree.
-A retired-backend record cannot be recovered through lifecycle control; [Runtime backend](../../../docs/configuration.md#runtime-backend-configbackend--fm_backend) owns its reconciliation and retirement boundary, and one whose work is finished goes to `task-delivery`'s finished-work sweep instead.
+[Runtime backend](../../../docs/configuration.md#runtime-backend-configbackend--fm_backend) owns retired-record classification, supported continuation, and retirement; one whose work is finished goes to `task-delivery`'s finished-work sweep instead.
 Do not sweep another home's endpoints or infer ownership from a matching window label.
 
 Before relaunch, prove that no live agent still owns the recorded task and that the existing worktree remains available.
