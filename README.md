@@ -30,7 +30,7 @@ You can run one coding agent easily.
 But the moment you want three project tasks done in parallel - fixes, investigations, plans, audits - you become a tab-juggler: babysitting sessions, copy-pasting context between repos, forgetting which terminal had the failing test.
 
 firstmate flips the model.
-You talk to a single agent - the first mate - and it runs the crew for you: spawning autonomous agents on visible stream endpoints, giving each a clean git worktree, supervising them to completion, and handing you finished PRs, approved local merges, or standalone investigation reports.
+You talk to a single agent - the first mate - and it runs the crew for you: spawning autonomous agents on visible stream endpoints, giving project-changing workers clean git worktrees, supervising them to completion, and handing you finished PRs, approved local merges, or standalone investigation reports.
 For larger fleets, you can opt in to persistent secondmates: second mates that are still ordinary direct reports, but run from their own isolated firstmate homes on this machine or another SSH-reachable host.
 
 firstmate is not a model, not a harness, not a skill, not an MCP server, and not a CLI.
@@ -42,9 +42,10 @@ Launching the Deck chat host inside it for your primary session instantiates you
 ## Features
 
 - **One liaison** - the first mate dispatches, supervises, escalates only real decisions, and reports plain outcomes; you can also message a second mate or worker directly and read its answer in its own conversation ([captain-direct sending](bin/fm-send.sh)).
-- **A visible crew** - every crewmate works in its own stream endpoint on the fleet's hub, which you can attach to, watch, or type into; the first mate reconciles.
-- **Disposable worktrees** - each task runs in a clean [treehouse](https://github.com/kunchenguid/treehouse) git worktree, so parallel work on one repo never collides.
+- **A visible crew** - ship and scout workers and secondmates have their own stream endpoints on the fleet's hub, which you can attach to, watch, or type into; the first mate reconciles.
+- **Disposable worktrees** - ship and scout tasks run in clean [treehouse](https://github.com/kunchenguid/treehouse) git worktrees, so parallel work on one repo never collides.
 - **Two task shapes** - ship tasks deliver authorized changes; scout tasks leave standalone investigation reports when the intake contract warrants separate research.
+- **Specialists and task groups** - use [specialists](bin/fm-specialist.sh) for recurring subject knowledge and [task groups](bin/fm-group.sh) for independent investigation angles; their headers own usage and lifecycle.
 - **Explicit project modes** - each project ships via `no-mistakes`, `direct-PR`, or `local-only`, with an optional `+yolo` merge-autonomy flag.
 - **Optional auto-land** - authorized green PRs land and run private post-merge deployment hooks without waiting for their worker; [Auto-land setup](docs/configuration.md#auto-land-configautolandjson-configpost-merge) owns the opt-in and safety policy.
 - **Optional secondmates** - opt in to persistent second mates that run from isolated firstmate homes with their own `FM_HOME`, state, projects, and session lock, either locally or as a whole home on an SSH-reachable host, with guarded updates and recovery that never turns an unavailable remote route into a local replacement.
@@ -129,7 +130,7 @@ The plain launch above keeps the primary in its own terminal, so bare `deck chat
 ```
 
 You chat with the first mate.
-It routes each request to a crewmate in its own session endpoint and git worktree, supervises the fleet with a zero-token event-driven watcher, and brings you finished PRs, approved local merges, or investigation reports.
+It routes project work to ship or scout workers in isolated worktrees, supervises the fleet with a zero-token event-driven watcher, and brings you finished PRs, approved local merges, or investigation reports.
 Optional secondmates extend this to persistent local or whole-home remote second mates, dispatch profiles let you steer which model handles which task, and opt-in Relay lets the same fleet answer public mentions.
 
 Full architecture - the supervision engine, worktree isolation, secondmates, dispatch profiles, project modes, optional Relay, fleet sync, and self-update - is in [docs/architecture.md](docs/architecture.md).
@@ -176,7 +177,7 @@ Firstmate's skills live in two separate places with different audiences:
 - [docs/extension-bindings.md](docs/extension-bindings.md) - maintainer architecture for the narrow trusted external `process-event-adapter/1` package, binding, handshake, and evidence boundary.
 - [docs/remote-secondmates.md](docs/remote-secondmates.md) - current setup, routing, transfer, recovery, and safety behavior for whole-home remote second mates.
 - [docs/wedge-alarm.md](docs/wedge-alarm.md) - configure the active alert for an away-mode escalation delivery that gets stuck.
-- [docs/stream-backend.md](docs/stream-backend.md) - setup, security model, and limits for the stream backend, firstmate's only runtime backend, which puts every task's live output on one hub.
+- [docs/stream-backend.md](docs/stream-backend.md) - setup, security model, and limits for the stream backend, firstmate's only runtime backend, which puts endpoint-backed tasks' live output on one hub.
 - [docs/verification/runtime-backends.md](docs/verification/runtime-backends.md) - active maintainer verification for runtime backend guarantees.
 - [docs/gitlab-merge-watch.md](docs/gitlab-merge-watch.md) - maintainer verification for watching and merging GitLab merge requests on arbitrary instances.
 - [docs/verification/supervision.md](docs/verification/supervision.md) - active maintainer verification for session-start, guard, continuity, and wedge integrations.

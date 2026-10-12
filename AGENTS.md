@@ -71,7 +71,7 @@ Use `gh-axi` for GitHub, `chrome-devtools-axi` for browser work, and compatible 
 
 ## 4. Harness and runtime dispatch
 
-Deck is the only harness and stream is the only runtime backend; `docs/configuration.md` owns both schemas and `bin/fm-spawn.sh` validates every launch.
+Deck is the only harness and stream is the only endpoint backend; `docs/configuration.md` owns both schemas and `bin/fm-spawn.sh` validates ship, scout, and secondmate launches.
 Never dispatch on an unverified adapter: if `config/crew-harness` or `config/secondmate-harness` names anything but deck (absent or `default` means deck), report the refusal and never fall back around invalid configuration.
 For skill-dependent tasks, follow [Skills per machine](docs/remote-secondmates.md#skills-per-machine) before briefing or routing to a second mate; never place work on a machine that lacks its required skills.
 When `config/crew-dispatch.json` exists, consult it at every crewmate or scout intake and pass `fm-spawn` the resolved concrete profile; `harness-adapters` owns precedence and quota-informed selection.
@@ -121,8 +121,8 @@ Route by the nature of the work against each registered secondmate scope, not by
 Send in-scope work to the fitting secondmate unless it is blocked or the captain redirects it; its marked replies return through its status or a referenced document, never by reading its chat.
 The exception is a small single-repo ship or scout in a project this home has cloned: spawn it directly and send the owning secondmate a one-line FYI through `fm-send`.
 Large or multi-step domain work, and projects cloned only in a secondmate's home, still go to the secondmate; if no scope fits, use the main home or discuss creating a persistent secondmate.
-Pick the worker shape by how the work recurs: a plain ship or scout for one-off work; a specialist (`bin/fm-specialist.sh`) for recurring subject matter that should accumulate knowledge, such as one customer, subsystem, or integration, since it resumes one conversation and keeps its own memory across jobs; a secondmate when the work needs its own backlog, supervision, and judgment.
-For parallel independent angles on one question, such as several adversarial reviews of one PR, run one task group (`bin/fm-group.sh`), which merges the results and cleans up every member itself.
+Pick the worker shape by how the work recurs: a plain ship or scout for one-off work; a specialist (`bin/fm-specialist.sh`) for recurring investigation that should accumulate subject knowledge; a secondmate when the work needs its own backlog, supervision, and judgment.
+For parallel independent investigation angles on one question, such as several adversarial reviews of one PR, use `bin/fm-group.sh`; its header owns results and cleanup, and neither groups nor specialist jobs authorize project changes.
 For one-off operational work, take the simplest direct path, and build no wrapper, control plane, custom verifier, or automation unless that path hits a concrete blocker or repeated need.
 
 Consult existing reports and evidence before commissioning an investigation, then classify the deliverable:
@@ -146,7 +146,8 @@ A semantic conflict a worker reports is yours to decide or escalate, never to ha
 
 ### Dispatch and supervision handoff
 
-Write the brief under section 11, then spawn only through `bin/fm-spawn.sh`; it must resolve an isolated task worktree distinct from the primary checkout, and a failed isolation assertion stops the task.
+For ships, scouts, and secondmates, write the brief under section 11, then spawn only through `bin/fm-spawn.sh`; it must resolve an isolated task worktree or secondmate home distinct from the primary checkout, and a failed isolation assertion stops the task.
+Specialist jobs and task groups use only their owning entrypoints named at intake above, not the ship/scout endpoint lifecycle.
 When the tasks-axi backlog gate applies, the spawn moves the work item to In flight and refuses work this home has no item for.
 After spawning, confirm the worker is processing the brief.
 

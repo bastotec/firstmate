@@ -1,6 +1,7 @@
 # Stream backend
 
-The stream backend puts every task's live terminal output on one central hub, so a single place can watch workers on any machine and talk to them.
+The stream backend puts ship, scout, and secondmate endpoints' live terminal output on one central hub, so a single place can watch those workers on any machine and talk to them.
+Direct specialist and task-group runs have no stream endpoint; their [CLI headers](scripts.md) own inspection and lifecycle.
 It is firstmate's only runtime backend; [`Away-mode supervisor backend`](configuration.md#away-mode-supervisor-backend-fm_supervisor_backend--fm_supervisor_target) owns the separate primary-supervisor discovery.
 
 [`docs/configuration.md`](configuration.md#runtime-backend-configbackend--fm_backend) owns backend selection, task-selector resolution, and the task metadata contract.

@@ -10,7 +10,8 @@
 #
 # Usage (FM_HOME must name the owning home):
 #   fm-specialist.sh create <name> --subject "<subject>" [--project <p>]...
-#   fm-specialist.sh job <name> --brief "<text>" | --brief-file <file> [--wait]
+#   fm-specialist.sh job <name> --brief "<text>" | --brief-file <file>
+#       [--wait] [--wait-timeout <seconds>]
 #   fm-specialist.sh status <name> [--json]
 #   fm-specialist.sh history <name> [-n N] [--json]
 #   fm-specialist.sh list [--all] [--json]
@@ -21,7 +22,14 @@
 # wake. One job runs at a time per specialist. Skills placed in
 # data/specialists/<name>/skills/ are linked into its workdir's .agents/skills/.
 # Jobs produce knowledge, not project changes: hand a change
-# a job recommends to a ship. Retire keeps the memory and Deck session.
+# a job recommends to a ship. Retire refuses a running job and keeps its record,
+# memory, history, and Deck session while removing its neutral workdir.
+# Status, history, list, job, and retire reconcile an interrupted runner by its
+# home/name/job identity and emit its completion wake; they are not read-only.
+# --wait exits nonzero on failure or timeout (default 3660 seconds); a timeout
+# does not cancel the job. Inspect it with status before submitting another.
+# bin/fm_crew.py's docstring owns runtime tuning and workdir placement;
+# docs/configuration.md "Worker launch environment" owns environment grants.
 set -eu
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 case "${1:-}" in

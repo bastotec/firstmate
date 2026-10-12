@@ -325,7 +325,8 @@ An older linked-worktree home picks up that rule on its next bootstrap or spawn 
 ## FM_HOME
 
 `FM_HOME` selects the operational home for one firstmate instance; scripts always run from this repo's `bin/`, but `state/`, `data/`, `config/`, and `projects/` come from `$FM_HOME`, and most scripts default to the repo root when it is unset.
-`bin/fm-send.sh` is stricter: it requires `FM_HOME` to be set, so a steer cannot silently resolve against the wrong home.
+`bin/fm-send.sh`, `bin/fm-specialist.sh`, and `bin/fm-group.sh` require `FM_HOME` to be set explicitly, so their operations cannot silently resolve against the wrong home.
+Specialist and group records always use that home's `state/` and `data/`; their configuration and neutral-workdir overrides are owned by the [`bin/fm_crew.py` docstring](../bin/fm_crew.py).
 `FM_ROOT_OVERRIDE` overrides the repo root, including the checkout the worktree-tangle guard watches, and also acts as the whole-root override when `FM_HOME` is unset.
 `FM_STATE_OVERRIDE`, `FM_DATA_OVERRIDE`, `FM_PROJECTS_OVERRIDE`, and `FM_CONFIG_OVERRIDE` override single directories for tests and specialized setups.
 Before `fm-brief.sh`, `fm-spawn.sh`, or `fm-afk-launch.sh` persists or passes on a path, it resolves a relative `FM_HOME`, `FM_STATE_OVERRIDE`, or `FM_DATA_OVERRIDE` against the caller's working directory and rejects an unresolvable one by name; `fm-spawn.sh` also rejects control bytes in them.
@@ -333,7 +334,9 @@ Lifecycle access to a backlog, task record, or pending-close record must resolve
 
 ## Harness support
 
-Deck is the only harness: the primary runs as the chat host [`bin/fm-deck-chat.sh`](../bin/fm-deck-chat.sh), and crewmates, scouts, and secondmates run under the worker driver [`bin/fm-deck-worker.sh`](../bin/fm-deck-worker.sh).
+Deck is the only harness: the primary runs as the chat host [`bin/fm-deck-chat.sh`](../bin/fm-deck-chat.sh), and ship workers, scouts, and secondmates run under the worker driver [`bin/fm-deck-worker.sh`](../bin/fm-deck-worker.sh).
+Specialists and task groups use direct Deck runs rather than stream endpoints; the [`fm-specialist.sh`](../bin/fm-specialist.sh) and [`fm-group.sh`](../bin/fm-group.sh) headers own their launch contracts.
+The harness profiles and driver-specific MCP wiring below apply to `fm-spawn.sh` launches, not those direct runs.
 `config/crew-harness` holds the crewmate and scout adapter; absent or `default` means deck, and any other name is refused ([`bin/fm-harness.sh`](../bin/fm-harness.sh)).
 `config/secondmate-harness` holds `<harness> [<model>] [<effort>]` on its first non-empty, non-comment line; an absent or `default` harness falls back through `config/crew-harness` to deck and reads no model or effort.
 Its model token may be a fallback chain ("Model fallback chains" above), and changing it affects the next secondmate spawn or relaunch under the profile rules in [`agent-control.md`](agent-control.md#transactional-relaunch).
@@ -354,8 +357,9 @@ A new harness joins only after a supervised trial task verifies it.
 
 ## Worker launch environment (config/launch-env-allowlist)
 
-The optional, inherited `config/launch-env-allowlist` limits the ambient environment passed to newly launched workers, scouts, and secondmates, including relaunches; existing processes keep their environment.
-With no file, selected harness markers are cleared and the provider, terminal daemon, and shell initialization decide what else reaches the worker, so do not assume a worker inherits the invoking process's environment.
+The optional, inherited `config/launch-env-allowlist` limits the ambient environment passed to newly launched ship workers, scouts, secondmates, specialist jobs, group members, and mergers, including relaunches; existing processes keep their environment.
+With no file, `fm-spawn.sh` clears selected harness markers and the provider, terminal daemon, and shell initialization decide what else reaches the worker, so do not assume an endpoint worker inherits the invoking process's environment.
+Direct specialist and group runs instead inherit their launcher environment when the allowlist is absent.
 
 List one environment variable **name** per line, never values, assignments, wildcards, or commands; blank and `#` lines are allowed.
 Invalid names, an unreadable or nonregular file, or a path inspection error stop the launch, and an empty file enables filtering with only Firstmate's operational floor.
@@ -368,13 +372,16 @@ OPENAI_API_KEY
 SSH_AUTH_SOCK
 ```
 
-Firstmate always keeps basic home, `PATH`, terminal, locale, temporary-directory, and backend routing variables, plus its own launch assignments, task marker, and enabled trace; [`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns the exact names.
+The shared basic home, `PATH`, terminal, locale, temporary-directory, and task-marker floor is declared by [`fm-launch-env-lib.sh`](../bin/fm-launch-env-lib.sh).
+Endpoint launches also keep their own launch assignments, backend routing, and enabled trace; [`fm-spawn.sh --help`](../bin/fm-spawn.sh) owns those names.
 Everything else must be listed, including credential-store locations, proxy settings, and certificate overrides your tools need.
-Values come from the destination pane at execution time, are never copied from the invoking process or written into the launch command, and listing a name does not provision it on another machine.
+For endpoint launches, values come from the destination pane at execution time and are never copied from the invoking process or written into the launch command.
+For direct specialist and group runs, values come from the launcher environment; an automatically discovered `PROXAI_API_KEY_FILE` is also subject to filtering and must be listed when needed.
+Listing a name does not provision it on another machine.
 
 | Provider or Git transport | Additional names needed |
 | --- | --- |
-| Provider login stored under the home directory | None. |
+| Provider login stored under the home directory | None for tools that load the store themselves; launcher-supplied credential locations still need the grants described above. |
 | Provider configured through environment variables | The exact credential and endpoint names, such as `OPENAI_API_KEY`, for each provider actually used. |
 | Custom provider store | Its location variables, such as `XDG_CONFIG_HOME`. |
 | Git over SSH with an agent | `SSH_AUTH_SOCK`, plus `GIT_SSH_COMMAND` only if your transport needs it. |
@@ -382,9 +389,9 @@ Values come from the destination pane at execution time, are never copied from t
 | Git over HTTPS with a credential helper | Whatever the helper requires, such as `GH_TOKEN` or `GITHUB_TOKEN` for a GitHub CLI helper. |
 
 Verify provider login and Git transport after opting in; Firstmate does not infer credentials or install a secret manager.
-Raw launch commands run under noninteractive POSIX `sh` with this option.
-The filter applies at the worker command boundary, after the terminal daemon and pane shell started, and is not a sandbox: it cannot revoke same-user access to credential files or stop tools from loading credentials again.
-[`tests/fm-spawn-dispatch-profile.test.sh`](../tests/fm-spawn-dispatch-profile.test.sh) covers the emitted launch commands.
+Raw endpoint launch commands run under noninteractive POSIX `sh` with this option.
+The filter applies at the worker command boundary (after the terminal daemon and pane shell start for endpoint launches), and is not a sandbox: it cannot revoke same-user access to credential files or stop tools from loading credentials again.
+[`tests/fm-spawn-dispatch-profile.test.sh`](../tests/fm-spawn-dispatch-profile.test.sh) covers emitted endpoint launch commands; [`tests/fm-specialist.test.sh`](../tests/fm-specialist.test.sh) and [`tests/fm-group.test.sh`](../tests/fm-group.test.sh) cover direct-run grants and invalid-policy refusal.
 
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
@@ -625,7 +632,7 @@ Script headers own the exact parsing and fallback of each value.
 
 ```sh
 # homes and paths ("FM_HOME")
-FM_HOME=                 # operational home; unset means this repo root; fm-send requires it
+FM_HOME=                 # operational home; unset usually means this repo root; see "FM_HOME" for stricter entrypoints
 FM_ROOT_OVERRIDE=        # firstmate repo root and tangle-guard target
 FM_STATE_OVERRIDE=       # alternate state dir, mainly for tests
 FM_DATA_OVERRIDE=        # alternate data dir, mainly for tests

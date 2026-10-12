@@ -28,20 +28,39 @@ A task group is one parent's ephemeral fan-out: N members share a brief and
 each gets its own angle; each member is one `deck run --ephemeral`. A detached
 orchestrator runs at most two members on this machine at once, merges their
 results with one more ephemeral run, then cleans the whole group up in one step.
-A cleanup that cannot prove every member process gone becomes a captain-held task.
+A cleanup that cannot prove every member process gone requests a captain-held task;
+if that request fails, a separate cleanup escalation wake names the failure.
 
   state/groups/<gid>.json                the record (0600, atomic)
       {"version":1,"kind":"group","id","title","home","status",
        "created","finished","orchestrator_pid","orchestrator_identity",
        "work_outcome","merge_succeeded","members":[{"key","angle","placement","status","pid","identity",
        "started","finished","result"}],"report","summary","cleanup":{...}|null}
-      status: running -> merging -> cleaning -> done | failed | cleanup-failed
-  state/groups/<gid>/                    run files (removed by cleanup)
-  data/groups/<gid>/report.md            merged report, kept after cleanup
+      normal status: running -> merging -> cleaning -> done | failed | cleanup-failed
+      requested cleanup: running | merging -> cleaning -> cancelled | cleanup-failed
+      cleanup retries restore work_outcome (done, failed, or cancelled) on success
+  state/groups/<gid>/                    run files (removed only on proven cleanup)
+  data/groups/<gid>/report.md            merged report or merge-failure evidence,
+                                         kept after cleanup when produced
+  data/groups/<gid>/members/<key>.md     retained completed member results
 
 Both raise one `check:` wake in the owning home when a job or group ends.
-FM_DECK_BIN overrides the deck binary; FM_CREW_WORK_ROOT overrides the neutral
-working directory root (specialists use empty repositories for owned skill discovery).
+The CLI headers own reconciliation, waiting, and explicit cleanup behavior.
+All generated Deck prompts use stdin, not argv, so report size is not limited
+by the operating system's per-argument bound.
+
+FM_HOME is required; state, data, and project paths are always rooted there.
+Only FM_CONFIG_OVERRIDE selects a different config directory; state, data, and
+project directory overrides used by endpoint scripts do not apply here.
+FM_DECK_BIN overrides the deck executable (default: deck on PATH).
+FM_CREW_WORK_ROOT overrides ~/.local/state/firstmate-crew; each home's neutral
+workdirs live below its hashed home key (specialists use empty repositories for
+owned skill discovery). Choose this root before creating a specialist: its
+workdir is persisted, and retirement removes it only within the current root.
+FM_CREW_MAX_TURNS defaults to 200 for specialists and members; the merger uses 60.
+FM_CREW_DEADLINE_SECS defaults to 3600 for each Deck run; CLI wait timeouts are
+independent of this override. docs/configuration.md owns launch environment grants.
+Regression entrypoints: tests/fm-specialist.test.sh and tests/fm-group.test.sh.
 """
 
 from __future__ import annotations

@@ -1,6 +1,7 @@
 # Native W3C trace-context propagation
 
-Firstmate can propagate a W3C [`traceparent`](https://www.w3.org/TR/trace-context/) to every agent it spawns so an external observer can identify each task as exactly one trace and correlate everything that task runs under that one identity.
+Firstmate can propagate a W3C [`traceparent`](https://www.w3.org/TR/trace-context/) to ship, scout, and secondmate agents launched through `fm-spawn.sh` so an external observer can identify each task as exactly one trace and correlate everything that task runs under that one identity.
+Direct specialist and task-group runs do not use this task-carrier wiring.
 The trace boundary is the task: a persistent Secondmate is routing infrastructure with its own agent identity, never a shared trace root for the unrelated tasks routed through it.
 The capability is default-off, source-owned, vendor-neutral, and deliberately narrow.
 This document is the rationale and current-behavior guide; `docs/configuration.md` owns the configuration schema, `bin/fm-trace-context-lib.sh`'s header owns the exact mechanics, and [`verification/trace-context.md`](verification/trace-context.md) records the repeatable test evidence.
