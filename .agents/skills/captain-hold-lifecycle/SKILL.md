@@ -16,6 +16,11 @@ The agent performs the semantic inventory because scripts must not infer captain
 
 ## Policy
 
+Only a mate raises a captain call: workers never bother the captain directly.
+A worker's decision, question, blocker, approval-gate hit, or ask-user finding reaches its parent mate as a status line, and `fm-captain-hold.sh` and `fm-card.sh` refuse a worker (`bin/fm-worker-guard-lib.sh`).
+The parent decides whatever is within its authority; otherwise it holds the call itself, in its own words, as its own request, even when the held task is the worker's own, and tells the worker it is waiting on its mate.
+A scout that finds captain questions appends them as keyed `needs-decision` lines and stops; its parent holds them and runs `complete` for it.
+
 Every unresolved question that belongs to the captain and is discovered while producing, reading, presenting, or ending an investigation or visual review must be carried by a captain-held task in the authoritative backlog of the home that owns the originating work before that work or review may be treated as complete.
 Prefer holding the work item the question gates over minting a new row; create a new task only when no work item exists to hold.
 Put the question and its options in the hold reason, and keep one held task per genuine gate: a multi-question review is one held task pointing at its report, not a row per question. Represent that task with exactly one board card that consolidates its questions and options; never fan one task id into duplicate same-key cards.

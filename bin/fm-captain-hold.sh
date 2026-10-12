@@ -248,6 +248,11 @@
 # The hold or answer is already durable in the backlog, so a channel that
 # cannot be written is reported as `actionable:` on stderr rather than undoing
 # the record; bin/fm-inactive-reconcile.sh's diagnostics name a broken binding.
+#
+# Only a mate raises or settles a captain call: `hold`, `answer`, `answers`, and
+# `stale-clear` refuse (exit 3) a ship or scout worker of this home, per
+# bin/fm-worker-guard-lib.sh; a worker's question goes to its mate as a status
+# line instead.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -273,6 +278,9 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 # shellcheck source=bin/fm-parent-channel-lib.sh
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-parent-channel-lib.sh"
+# shellcheck source=bin/fm-worker-guard-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/fm-worker-guard-lib.sh"
 
 PARENT_HOLD_PUBLISHED=0
 CARD_TOOL="$SCRIPT_DIR/fm-card.sh"
@@ -2170,6 +2178,10 @@ command_probe() {
   printf 'fm-captain-hold: %s\n' "$FM_BACKLOG_ROW_ERROR" >&2
   exit 2
 }
+
+case "${1:-}" in
+  hold|answer|answers|stale-clear) fm_worker_guard_refuse "$STATE" "$1 a captain call" ;;
+esac
 
 case "${1:-}" in
   hold) shift; command_hold "$@" ;;

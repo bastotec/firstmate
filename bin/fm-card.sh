@@ -68,6 +68,10 @@
 # task, when already held again, after a restore, or for an orphan card.
 # Restore starts a new hold lifecycle and does not restore a deferral date.
 # `show` exits 1 when the task has no card and 2 when its card is invalid.
+# A card is always the holding mate's own request, even when it is keyed by a
+# worker's task id: surfaces attribute it to the mate of the home it lives in,
+# never to the worker. `write`, `draft`, `backfill`, `clear`, and `restore`
+# refuse (exit 3) a ship or scout worker of this home (bin/fm-worker-guard-lib.sh).
 # FM_CARD_NOW overrides the UTC timestamp for tests.
 set -eu
 
@@ -82,6 +86,8 @@ TASKS="$SCRIPT_DIR/fm-tasks-axi.sh"
 
 # shellcheck source=bin/fm-pr-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-worker-guard-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-worker-guard-lib.sh"
 
 usage() { awk '/^# Usage:/{on=1; next} on && /^#$/{exit} on{sub(/^#   /, ""); print}' "${BASH_SOURCE[0]}"; }
 die() { printf 'fm-card: %s\n' "$1" >&2; exit "${2:-2}"; }
@@ -429,6 +435,10 @@ cmd_restore() {
   log_line restored "$id" "$(printf '%s' "$line" | jq -r .kind)" "restored on request" "$reason" "$card"
   printf 'restored: %s\n' "$id"
 }
+
+case "${1:-}" in
+  write|draft|backfill|clear|restore) fm_worker_guard_refuse "$STATE" "$1 a decision card" ;;
+esac
 
 case "${1:-}" in
   validate) shift; cmd_validate "$@" ;;
