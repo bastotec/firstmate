@@ -14,15 +14,14 @@
 #   fm-specialist.sh status <name> [--json]
 #   fm-specialist.sh history <name> [-n N] [--json]
 #   fm-specialist.sh list [--all] [--json]
-#   fm-specialist.sh retire <name> [--purge-session]
+#   fm-specialist.sh retire <name>
 #
 # `job` starts one detached Deck turn and returns; when it ends the home gets a
 # `check: specialist <name> finished job <job> (<outcome>) - result: <path>`
 # wake. One job runs at a time per specialist. Skills placed in
-# data/specialists/<name>/skills/ load for that specialist only
-# (DECK_SKILLS_DIRS). Jobs produce knowledge, not project changes: hand a change
-# a job recommends to a ship. Retire keeps the memory; --purge-session also deletes the
-# Deck session.
+# data/specialists/<name>/skills/ are linked into its workdir's .agents/skills/.
+# Jobs produce knowledge, not project changes: hand a change
+# a job recommends to a ship. Retire keeps the memory and Deck session.
 set -eu
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 case "${1:-}" in

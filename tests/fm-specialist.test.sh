@@ -25,6 +25,15 @@ assert_equals true "$(jq -r .persistent "$REC")" "a specialist record is marked 
 assert_equals idle "$(jq -r .status "$REC")" "a new specialist is idle"
 assert_present "$HOME_DIR/data/specialists/amigo-tech/memory.md" "create seeds the memory file"
 assert_present "$HOME_DIR/data/specialists/amigo-tech/skills" "create makes the own-skills dir"
+workdir=$(jq -r .workdir "$REC")
+mkdir -p "$HOME_DIR/data/specialists/amigo-tech/skills/crew-owned-test"
+printf '%s\n' '---' 'name: crew-owned-test' 'description: Specialist discovery fixture' '---' 'A specialist-owned skill.' \
+  > "$HOME_DIR/data/specialists/amigo-tech/skills/crew-owned-test/SKILL.md"
+assert_present "$workdir/.agents/skills/crew-owned-test/SKILL.md" "the supported discovery path exposes the owned skill"
+if command -v deck >/dev/null 2>&1; then
+  discovered=$(cd "$workdir" && env -u DECK_SKILLS_DIRS deck skills 2>&1) || fail "Deck skill discovery failed: $discovered"
+  assert_contains "$discovered" "crew-owned-test" "the real Deck loader discovers the specialist skill"
+fi
 expect_code 3 "$("$SPEC" create amigo-tech --subject x >/dev/null 2>&1; echo $?)" "create refuses a duplicate"
 pass "create writes a persistent idle record, memory and skills dir"
 
@@ -75,7 +84,6 @@ expect_code 3 "$("$SPEC" job amigo-tech --brief again >/dev/null 2>&1; echo $?)"
 expect_code 3 "$("$SPEC" retire amigo-tech >/dev/null 2>&1; echo $?)" "retire refuses a running job"
 pid=$(jq -r .current_job.pid "$REC")
 fm_test_kill_tree "$pid" >/dev/null 2>&1 || kill -9 "$pid" 2>/dev/null
-pkill -9 -f "deck-crew-stub.py run .*Hang\." 2>/dev/null || true
 for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
 assert_equals idle "$("$SPEC" status amigo-tech --json | jq -r .status)" "a dead runner is reconciled to idle"
 assert_equals interrupted "$(jq -r .last_job.outcome "$REC")" "the killed job is recorded as interrupted"
@@ -87,3 +95,44 @@ assert_present "$HOME_DIR/data/specialists/amigo-tech/memory.md" "retire keeps t
 assert_equals "" "$("$SPEC" list)" "list hides retired specialists"
 expect_code 3 "$("$SPEC" job amigo-tech --brief x >/dev/null 2>&1; echo $?)" "a retired specialist takes no jobs"
 pass "retire keeps memory and stops new jobs"
+assert_present "$DECK_STATE/sessions/$session.json" "retirement keeps the conversation"
+expect_code 2 "$("$SPEC" retire amigo-tech --purge-session >/dev/null 2>&1; echo $?)" "retirement cannot delete the conversation"
+
+"$SPEC" create memory-check --subject "memory enforcement" >/dev/null || fail "create memory-check"
+MEM_REC="$HOME_DIR/state/specialists/memory-check.json"
+out=$(STUB_MODE=result-only "$SPEC" job memory-check --brief "Write only a result" --wait 2>&1) && fail "seeded memory must not satisfy the first job's update check"
+assert_equals failed "$(jq -r .last_job.outcome "$MEM_REC")" "a result without a memory write fails immediately after create"
+"$SPEC" job memory-check --brief "Update both" --wait >/dev/null 2>&1 || fail "memory-check successful job"
+out=$(STUB_MODE=result-only "$SPEC" job memory-check --brief "Write only a result again" --wait 2>&1) && fail "the previous job's memory must not satisfy this job"
+assert_equals failed "$(jq -r .last_job.outcome "$MEM_REC")" "each job requires its own memory update"
+pass "unchanged memory cannot satisfy a new job"
+"$SPEC" job memory-check --brief "Successful predecessor" --wait >/dev/null 2>&1 || fail "the timeout regression needs a successful previous result"
+
+out=$(STUB_MODE=hang "$SPEC" job memory-check --brief "Wait timeout" --wait --wait-timeout 1 2>&1) && fail "a timed-out wait must fail"
+assert_contains "$out" "wait timed out" "a timeout is explicit"
+assert_equals running "$(jq -r .status "$MEM_REC")" "timeout does not claim the old result or end the job"
+pid=$(jq -r .current_job.pid "$MEM_REC")
+fm_test_kill_tree "$pid" >/dev/null 2>&1 || kill -9 "$pid" 2>/dev/null
+"$SPEC" status memory-check >/dev/null || fail "reconcile timed-out job"
+pass "a hanging job cannot reuse an earlier completion"
+
+before=$(jq -c . "$MEM_REC")
+expect_code 2 "$(FM_DECK_BIN="$TMP_ROOT/missing-deck" "$SPEC" job memory-check --brief x >/dev/null 2>&1; echo $?)" "missing Deck is refused synchronously"
+assert_equals "$before" "$(jq -c . "$MEM_REC")" "launch preflight leaves the specialist unchanged"
+printf '%s\n' 'not an executable format' > "$TMP_ROOT/broken-deck"
+chmod +x "$TMP_ROOT/broken-deck"
+out=$(FM_DECK_BIN="$TMP_ROOT/broken-deck" "$SPEC" job memory-check --brief "Launch exception" --wait 2>&1) && fail "a runtime launch exception must fail"
+failed_job=$(jq -r .last_job.id "$MEM_REC")
+assert_equals idle "$(jq -r .status "$MEM_REC")" "launch exceptions leave the specialist idle"
+assert_equals failed "$(jq -r .last_job.outcome "$MEM_REC")" "launch exceptions finalize failed history"
+assert_grep "specialist:memory-check:$failed_job" "$HOME_DIR/state/.wake-queue" "launch exceptions wake the owner"
+pass "preflight and runtime launch failure keep owned records coherent"
+
+for command in create job status history list retire; do
+  args=("$command")
+  [ "$command" = list ] || args+=(memory-check)
+  [ "$command" != create ] || args+=(--subject x)
+  expect_code 3 "$(NO_MISTAKES_GATE=1 FM_GATE_REFUSE_BYPASS=0 "$SPEC" "${args[@]}" \
+    >/dev/null 2>&1; echo $?)" "gate agents cannot invoke specialist $command"
+done
+pass "the gate boundary covers reconciliation and specialist mutations"

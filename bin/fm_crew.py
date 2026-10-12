@@ -19,22 +19,21 @@ specialist is a record, not an endpoint, and is intentionally persistent.
   state/specialists/<name>/history.jsonl one line per finished job
       {"job","brief","started","finished","outcome","result","exit"}
   state/specialists/<name>/jobs/<job>/   brief.md prompt.md events.ndjson
-                                         result.md started runner.log
+                                         result.md started memory-before.json runner.log
   data/specialists/<name>/memory.md      its memory: read at every job start,
                                          updated before every job may finish
-  data/specialists/<name>/skills/        its own skills (DECK_SKILLS_DIRS)
+  data/specialists/<name>/skills/        linked at workdir/.agents/skills
 
 A task group is one parent's ephemeral fan-out: N members share a brief and
 each gets its own angle; each member is one `deck run --ephemeral`. A detached
-orchestrator runs at most --local-max members on this machine at once (and up to
---remote-max more through `bin/fm-on.sh` to a remote home route), merges their
+orchestrator runs at most two members on this machine at once, merges their
 results with one more ephemeral run, then cleans the whole group up in one step.
-A cleanup that cannot prove every member process gone becomes a decision card.
+A cleanup that cannot prove every member process gone becomes a captain-held task.
 
   state/groups/<gid>.json                the record (0600, atomic)
       {"version":1,"kind":"group","id","title","home","status",
-       "created","finished","orchestrator_pid","local_max","remote":route|null,
-       "remote_max","members":[{"key","angle","placement","status","pid",
+       "created","finished","orchestrator_pid","orchestrator_identity",
+       "work_outcome","merge_succeeded","members":[{"key","angle","placement","status","pid","identity",
        "started","finished","result"}],"report","cleanup":{...}|null}
       status: running -> merging -> cleaning -> done | failed | cleanup-failed
   state/groups/<gid>/                    run files (removed by cleanup)
@@ -42,7 +41,7 @@ A cleanup that cannot prove every member process gone becomes a decision card.
 
 Both raise one `check:` wake in the owning home when a job or group ends.
 FM_DECK_BIN overrides the deck binary; FM_CREW_WORK_ROOT overrides the neutral
-working directory root (outside any repository, so no project AGENTS.md loads).
+working directory root (specialists use empty repositories for owned skill discovery).
 """
 
 from __future__ import annotations
@@ -51,6 +50,7 @@ import argparse
 import contextlib
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -67,6 +67,10 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 DEFAULT_DEADLINE = 3600
 DEFAULT_MAX_TURNS = 200
+
+PROCESS_SPEC = importlib.util.spec_from_file_location("fm_deck_stop", SCRIPT_DIR / "fm-deck-stop.py")
+PROCESS_API = importlib.util.module_from_spec(PROCESS_SPEC)
+PROCESS_SPEC.loader.exec_module(PROCESS_API)
 
 
 def die(msg: str, code: int = 2) -> None:
@@ -158,13 +162,49 @@ def deck_env() -> dict:
 
 
 def deck_bin() -> str:
-    explicit = os.environ.get("FM_DECK_BIN")
-    if explicit:
-        return explicit
-    found = shutil.which("deck")
+    requested = os.environ.get("FM_DECK_BIN") or "deck"
+    found = shutil.which(requested)
     if not found:
-        die("deck is not on PATH (set FM_DECK_BIN)")
+        die(f"deck executable is unavailable: {requested} (set FM_DECK_BIN)")
     return found
+
+
+def refuse_gate() -> None:
+    rc = subprocess.run(
+        ["bash", "-c", '. "$1"; fm_refuse_if_gate_agent', "fm-crew", str(SCRIPT_DIR / "fm-gate-refuse-lib.sh")],
+        check=False,
+    ).returncode
+    if rc:
+        sys.exit(rc)
+
+
+def process_identity(pid: int, deck: bool = False) -> dict | None:
+    try:
+        arguments = PROCESS_API.process_arguments(pid)
+        if not arguments:
+            return None
+        out = subprocess.run(["ps", "-o", "lstart=,pgid=", "-p", str(pid)], capture_output=True, text=True,
+                             env=dict(os.environ, LC_ALL="C"))
+    except (OSError, subprocess.SubprocessError):
+        return None
+    fields = out.stdout.strip().rsplit(None, 1)
+    if len(fields) != 2 or fields[1] != str(pid):
+        return None
+    if deck and "run" in arguments:
+        arguments = arguments[arguments.index("run"):]
+    return {"arguments": hashlib.sha256(json.dumps(arguments).encode()).hexdigest(),
+            "started": fields[0], "deck": deck}
+
+
+def target_state(pid, identity) -> str:
+    if not pid_alive(pid):
+        return "unknown" if group_alive(pid) else "stopped"
+    actual = process_identity(pid, bool(identity and identity.get("deck")))
+    if not actual or not identity:
+        return "unknown"
+    if actual == identity:
+        return "owned"
+    return "unknown" if actual["started"] == identity.get("started") else "unrelated"
 
 
 def work_root(h: Path) -> Path:
@@ -325,6 +365,18 @@ class Specialist:
         return entry
 
 
+def specialist_workdir(rec: dict) -> Path:
+    workdir = Path(rec["workdir"])
+    workdir.mkdir(parents=True, exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    subprocess.run(["git", "-c", "init.templateDir=", "init", "--quiet", str(workdir)], env=env, check=True)
+    skills_link = workdir / ".agents" / "skills"
+    skills_link.parent.mkdir(exist_ok=True)
+    if not skills_link.exists():
+        skills_link.symlink_to(Path(rec["skills_dir"]), target_is_directory=True)
+    return workdir
+
+
 def cmd_spec_create(args) -> None:
     h = home()
     sp = Specialist(h, args.name)
@@ -342,7 +394,6 @@ def cmd_spec_create(args) -> None:
                 "## Summary\n\n- (nothing learned yet)\n\n## Facts\n\n## Open threads\n"
             )
         workdir = work_root(h) / "specialists" / args.name
-        workdir.mkdir(parents=True, exist_ok=True)
         session = f"fm-spec-{args.name}-{secrets.token_hex(4)}"
         rec = {
             "version": 1,
@@ -363,6 +414,7 @@ def cmd_spec_create(args) -> None:
             "last_job": None,
             "memory_summary": first_lines(memory.read_text()),
         }
+        specialist_workdir(rec)
         sp.save(rec)
     print(f"created specialist {args.name} session={session} memory={memory} skills={skills}")
 
@@ -397,20 +449,38 @@ Your turn cannot finish until both files are written during this job.
 """
 
 
+def memory_metadata(memory: Path) -> list[int] | None:
+    try:
+        stat = memory.stat()
+        return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
+    except FileNotFoundError:
+        return None
+
+
+def memory_updated(jdir: Path, memory: Path) -> bool:
+    current = memory_metadata(memory)
+    return current is not None and current != json.loads((jdir / "memory-before.json").read_text())
+
+
 def specialist_hook(jdir: Path, memory: Path) -> str:
-    started = jdir / "started"
+    command = [sys.executable, str(Path(__file__).resolve()), "_spec-check", str(jdir), str(memory)]
+    return "pre_complete=" + shlex.join(command)
+
+
+def cmd_spec_check(args) -> None:
+    jdir = Path(args.job_dir)
     result = jdir / "result.md"
-    script = (
-        f'[ -s "{result}" ] || {{ echo "Write your result to {result} before finishing." >&2; exit 2; }}; '
-        f'[ "{memory}" -nt "{started}" ] || {{ echo "Update your memory file {memory} before finishing." >&2; exit 2; }}'
-    )
-    return "pre_complete=bash -c " + shlex.quote(script)
+    if not result.is_file() or not result.stat().st_size:
+        die(f"Write your result to {result} before finishing.")
+    if not memory_updated(jdir, Path(args.memory)):
+        die(f"Update your memory file {args.memory} before finishing.")
 
 
 def cmd_spec_job(args) -> None:
     h = home()
     sp = Specialist(h, args.name)
     brief = brief_text(args)
+    deck_bin()
     rec = sp.reconcile()
     with locked(sp.lock_path):
         rec = sp.record()
@@ -424,12 +494,9 @@ def cmd_spec_job(args) -> None:
         (jdir / "brief.md").write_text(brief)
         (jdir / "prompt.md").write_text(specialist_prompt(rec, job, jdir, brief))
         (jdir / "started").write_text(str(now()))
-        # The memory check compares mtimes; make sure a write in this same
-        # second still counts as newer than the start marker.
-        past = time.time() - 2
-        os.utime(jdir / "started", (past, past))
+        (jdir / "memory-before.json").write_text(json.dumps(memory_metadata(Path(rec["memory"]))))
         pid = detach(
-            [sys.executable, str(Path(__file__).resolve()), "_spec-run", args.name, job],
+            [sys.executable, str(Path(__file__).resolve()), "_spec-run", args.name, job, "--home", str(h)],
             jdir / "runner.log",
         )
         rec["status"] = "running"
@@ -437,9 +504,12 @@ def cmd_spec_job(args) -> None:
         sp.save(rec)
     print(f"started job {job} for specialist {args.name}")
     if args.wait:
-        wait_for(lambda: not pid_alive(pid), args.wait_timeout)
+        if not wait_for(lambda: not pid_alive(pid), args.wait_timeout):
+            die(f"job {job} wait timed out; the job is still running", 1)
         rec = sp.reconcile()
         last = rec.get("last_job") or {}
+        if last.get("id") != job:
+            die(f"job {job} has no matching completion record", 1)
         print(f"job {job} {last.get('outcome', 'unknown')} result={last.get('result')}")
         if last.get("outcome") != "done":
             sys.exit(1)
@@ -449,31 +519,28 @@ def cmd_spec_run(args) -> None:
     """Detached runner for one job: one deck turn on the persistent session."""
     h = home()
     sp = Specialist(h, args.name)
-    rec = sp.record()
     jdir = sp.job_dir(args.job)
-    memory = Path(rec["memory"])
-    workdir = Path(rec["workdir"])
-    workdir.mkdir(parents=True, exist_ok=True)
-    env = deck_env()
-    skills = rec.get("skills_dir")
-    if skills:
-        env["DECK_SKILLS_DIRS"] = skills
-    argv = [
-        deck_bin(),
-        "run",
-        (jdir / "prompt.md").read_text(),
-        "--session",
-        rec["session"],
-        "--max-turns",
-        str(int(os.environ.get("FM_CREW_MAX_TURNS", DEFAULT_MAX_TURNS))),
-        "--deadline-secs",
-        str(int(os.environ.get("FM_CREW_DEADLINE_SECS", DEFAULT_DEADLINE))),
-        "--hook",
-        specialist_hook(jdir, memory),
-    ]
-    rc = run_deck(argv, workdir, jdir / "events.ndjson", jdir / "stderr.log", env).wait()
     result = jdir / "result.md"
-    outcome = "done" if rc == 0 and result.is_file() and result.stat().st_size > 0 else "failed"
+    rc = 1
+    outcome = "failed"
+    try:
+        with locked(sp.lock_path):
+            rec = sp.record()
+            if (rec.get("current_job") or {}).get("id") != args.job:
+                return
+        memory = Path(rec["memory"])
+        workdir = specialist_workdir(rec)
+        argv = [
+            deck_bin(), "run", (jdir / "prompt.md").read_text(), "--session", rec["session"],
+            "--max-turns", str(int(os.environ.get("FM_CREW_MAX_TURNS", DEFAULT_MAX_TURNS))),
+            "--deadline-secs", str(int(os.environ.get("FM_CREW_DEADLINE_SECS", DEFAULT_DEADLINE))),
+            "--hook", specialist_hook(jdir, memory),
+        ]
+        rc = run_deck(argv, workdir, jdir / "events.ndjson", jdir / "stderr.log", deck_env()).wait()
+        if rc == 0 and result.is_file() and result.stat().st_size > 0 and memory_updated(jdir, memory):
+            outcome = "done"
+    except (Exception, SystemExit) as error:
+        print(f"specialist job failed: {error}", file=sys.stderr)
     with locked(sp.lock_path):
         rec = sp.record()
         cur = rec.get("current_job") or {}
@@ -549,8 +616,6 @@ def cmd_spec_retire(args) -> None:
         rec["status"] = "retired"
         rec["retired"] = now()
         sp.save(rec)
-    if args.purge_session:
-        subprocess.run([deck_bin(), "session", "delete", rec["session"]], check=False)
     workdir = Path(rec.get("workdir", ""))
     if workdir.is_dir() and work_root(h) in workdir.parents:
         shutil.rmtree(workdir, ignore_errors=True)
@@ -569,6 +634,7 @@ class Group:
         self.run_dir = h / "state" / "groups" / gid
         self.data = h / "data" / "groups" / gid
         self.lock_path = h / "state" / "groups" / f".{gid}.lock"
+        self.cleanup_lock_path = h / "state" / "groups" / f".{gid}.cleanup.lock"
 
     def exists(self) -> bool:
         return self.record_path.is_file()
@@ -627,7 +693,7 @@ Your turn cannot finish until RESULT_FILE is written.
 """
 
 
-def merge_prompt(rec: dict, brief: str, members: list[dict], merged: Path, extra: str) -> str:
+def merge_prompt(rec: dict, brief: str, members: list[dict], merged: Path) -> str:
     parts = []
     for m in members:
         body = read_text(Path(m["result"])) if m.get("result") else ""
@@ -644,7 +710,6 @@ RESULT_FILE: {merged}
 ## Merge instructions
 
 Deduplicate overlapping findings, keep each finding's evidence and which members raised it, drop what members contradicted with better evidence, and end with one recommended decision.
-{extra.strip()}
 
 ## Member results
 
@@ -664,14 +729,12 @@ def cmd_group_start(args) -> None:
     g = Group(h, args.gid)
     brief = brief_text(args)
     angles = read_angles(args)
-    if args.local_max < 1 and not args.remote:
-        die("--local-max must be at least 1 without --remote")
+    deck_bin()
     with locked(g.lock_path):
         if g.exists():
             die(f"task group {args.gid!r} already exists; pick a new id", 3)
         g.run_dir.mkdir(parents=True, exist_ok=True)
         (g.run_dir / "brief.md").write_text(brief)
-        (g.run_dir / "merge.md").write_text(args.merge_brief or "")
         members = []
         for i, angle in enumerate(angles, 1):
             key = f"m{i}"
@@ -690,179 +753,186 @@ def cmd_group_start(args) -> None:
             "created": now(),
             "finished": None,
             "orchestrator_pid": None,
-            "local_max": args.local_max,
-            "remote": args.remote,
-            "remote_max": args.remote_max if args.remote else 0,
             "members": members,
-            "merge": not args.no_merge_agent,
+            "merge_succeeded": False,
+            "work_outcome": None,
             "report": None,
             "cleanup": None,
         }
         g.save(rec)
-        pid = detach(
-            [sys.executable, str(Path(__file__).resolve()), "_group-run", args.gid],
-            g.run_dir / "orchestrator.log",
-        )
+        try:
+            pid = detach(
+                [sys.executable, str(Path(__file__).resolve()), "_group-run", args.gid, "--home", str(h)],
+                g.run_dir / "orchestrator.log",
+            )
+        except OSError as error:
+            rec.update(status="failed", work_outcome="failed", failure=str(error), finished=now())
+            for m in rec["members"]:
+                m["status"] = "cancelled"
+            g.save(rec)
+            wake(h, f"group:{g.gid}", f"check: task group {g.gid} failed to start: {error}")
+            die(f"task group {g.gid} failed to start: {error}", 1)
         rec["orchestrator_pid"] = pid
+        rec["orchestrator_identity"] = process_identity(pid)
         g.save(rec)
     print(f"started task group {args.gid} with {len(angles)} members")
     if args.wait:
-        wait_for(lambda: not pid_alive(pid), args.wait_timeout)
+        if not wait_for(lambda: not pid_alive(pid), args.wait_timeout):
+            die(f"task group {args.gid} wait timed out; the group is still running", 1)
         rec = g.record()
         print(f"task group {args.gid} {rec['status']} report={rec.get('report')}")
         if rec["status"] != "done":
             sys.exit(1)
 
 
-def remote_ready(route: str) -> bool:
-    out = subprocess.run(
-        [str(SCRIPT_DIR / "fm-on.sh"), route, "fm-group.sh", "remote-ready"],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    return out.returncode == 0 and "ready" in out.stdout
-
-
-def start_member(g: Group, rec: dict, m: dict, placement: str, brief: str, total: int) -> subprocess.Popen:
+def start_member(g: Group, rec: dict, m: dict, brief: str, total: int) -> subprocess.Popen:
     mdir = g.member_dir(m["key"])
     result = mdir / "result.md"
     n = int(m["key"][1:])
-    if placement == "local":
-        work = work_root(g.h) / "groups" / g.gid / m["key"]
-        work.mkdir(parents=True, exist_ok=True)
-        prompt = member_prompt(rec, brief, m["angle"], result, n, total)
-        (mdir / "prompt.md").write_text(prompt)
-        argv = [
-            deck_bin(), "run", prompt, "--ephemeral",
-            "--max-turns", str(int(os.environ.get("FM_CREW_MAX_TURNS", DEFAULT_MAX_TURNS))),
-            "--deadline-secs", str(int(os.environ.get("FM_CREW_DEADLINE_SECS", DEFAULT_DEADLINE))),
-            "--hook", result_hook(result),
-        ]
-        return run_deck(argv, work, mdir / "events.ndjson", mdir / "stderr.log", deck_env(), new_group=True)
-    # Remote: the remote home runs the member and prints its result on stdout.
-    # The prompt names the remote result path, so it is built there.
-    payload = json.dumps({"title": rec["title"], "brief": brief, "angle": m["angle"], "n": n, "total": total})
-    (mdir / "prompt.md").write_text(payload)
-    with open(mdir / "remote.out", "w") as out, open(mdir / "stderr.log", "a") as err, open(mdir / "prompt.md") as inp:
-        return subprocess.Popen(
-            [str(SCRIPT_DIR / "fm-on.sh"), "--stdin", rec["remote"], "fm-group.sh", "remote-member"],
-            stdin=inp, stdout=out, stderr=err, start_new_session=True,
-        )
+    work = work_root(g.h) / "groups" / g.gid / m["key"]
+    work.mkdir(parents=True, exist_ok=True)
+    prompt = member_prompt(rec, brief, m["angle"], result, n, total)
+    (mdir / "prompt.md").write_text(prompt)
+    argv = [
+        deck_bin(), "run", prompt, "--ephemeral",
+        "--max-turns", str(int(os.environ.get("FM_CREW_MAX_TURNS", DEFAULT_MAX_TURNS))),
+        "--deadline-secs", str(int(os.environ.get("FM_CREW_DEADLINE_SECS", DEFAULT_DEADLINE))),
+        "--hook", result_hook(result),
+    ]
+    return run_deck(argv, work, mdir / "events.ndjson", mdir / "stderr.log", deck_env(), new_group=True)
 
 
 def cmd_group_run(args) -> None:
     """Detached orchestrator: schedule members, merge, clean up, wake the owner."""
     h = home()
     g = Group(h, args.gid)
-    rec = g.record()
+    try:
+        completed = run_group(g)
+    except (Exception, SystemExit) as error:
+        print(f"task group failed: {error}", file=sys.stderr)
+        with locked(g.cleanup_lock_path):
+            with locked(g.lock_path):
+                rec = g.record()
+                if rec["status"] not in ("running", "merging", "cleaning"):
+                    return
+                rec.update(status="cleaning", work_outcome="failed", failure=str(error))
+                g.save(rec)
+            try:
+                ok = cleanup_group(g, reason="failed")
+            except Exception as cleanup_error:
+                print(f"task group cleanup failed: {cleanup_error}", file=sys.stderr)
+                g.update(lambda r: r.update(cleanup={"at": now(), "reason": "failed",
+                                                     "survivors": [], "error": str(cleanup_error)}))
+                ok = False
+            g.update(lambda r: r.update(status="failed" if ok else "cleanup-failed", finished=now()))
+        completed = True
+    if completed:
+        rec = g.record()
+        done = sum(1 for m in rec["members"] if m["status"] == "done")
+        wake(h, f"group:{g.gid}", f"check: task group {g.gid} {rec['status']} ({done}/{len(rec['members'])} members) - report: {rec.get('report')}")
+
+
+def run_group(g: Group) -> bool:
+    with locked(g.lock_path):
+        rec = g.record()
     brief = read_text(g.run_dir / "brief.md")
     total = len(rec["members"])
-    remote_ok = bool(rec.get("remote")) and rec.get("remote_max", 0) > 0 and remote_ready(rec["remote"])
     procs: dict[str, subprocess.Popen] = {}
 
     while True:
-        rec = g.record()
-        if rec["status"] != "running":
-            break  # cancelled by cleanup
-        for key, proc in list(procs.items()):
-            rc = proc.poll()
-            if rc is None:
-                continue
-            del procs[key]
-            mdir = g.member_dir(key)
-            result = mdir / "result.md"
-
-            def finish(r, key=key, rc=rc, result=result, mdir=mdir):
-                m = Group.member(r, key)
-                if m["placement"] != "local" and rc == 0:
-                    text = read_text(mdir / "remote.out")
-                    if text.strip():
-                        result.write_text(text)
+        with locked(g.lock_path):
+            rec = g.record()
+            if rec["status"] != "running":
+                return False
+            for key, proc in list(procs.items()):
+                rc = proc.poll()
+                if rc is None:
+                    continue
+                del procs[key]
+                result = g.member_dir(key) / "result.md"
+                m = Group.member(rec, key)
                 ok = rc == 0 and result.is_file() and result.stat().st_size > 0
-                m["status"] = "done" if ok else "failed"
-                m["finished"] = now()
-                m["result"] = str(result) if result.is_file() else None
-
-            g.update(finish)
-        rec = g.record()
-        queued = [m for m in rec["members"] if m["status"] == "queued"]
-        if not queued and not procs:
-            break
-        for m in queued:
-            if sum(1 for k in procs if Group.member(rec, k)["placement"] == "local") < rec["local_max"]:
-                placement = "local"
-            elif remote_ok and sum(1 for k in procs if Group.member(rec, k)["placement"] != "local") < rec["remote_max"]:
-                placement = f"remote:{rec['remote']}"
-            else:
+                m.update(status="done" if ok else "failed", finished=now(),
+                         result=str(result) if result.is_file() else None)
+            queued = [m for m in rec["members"] if m["status"] == "queued"]
+            for m in queued:
+                if len(procs) >= 2:
+                    break
+                proc = start_member(g, rec, m, brief, total)
+                procs[m["key"]] = proc
+                m.update(status="running", placement="local", pid=proc.pid,
+                         identity=process_identity(proc.pid, deck=True), started=now())
+                g.save(rec)
+            g.save(rec)
+            if not procs and all(m["status"] != "queued" for m in rec["members"]):
+                rec["status"] = "merging"
+                g.save(rec)
+                merged = g.run_dir / "merged.md"
+                work = work_root(g.h) / "groups" / g.gid / "merge"
+                work.mkdir(parents=True, exist_ok=True)
+                prompt = merge_prompt(rec, brief, rec["members"], merged)
+                argv = [deck_bin(), "run", prompt, "--ephemeral", "--max-turns", "60",
+                        "--deadline-secs", str(int(os.environ.get("FM_CREW_DEADLINE_SECS", DEFAULT_DEADLINE))),
+                        "--hook", result_hook(merged)]
+                merger = run_deck(argv, work, g.run_dir / "merge-events.ndjson",
+                                  g.run_dir / "merge-stderr.log", deck_env())
                 break
-            proc = start_member(g, rec, m, placement, brief, total)
-            procs[m["key"]] = proc
-
-            def mark(r, key=m["key"], placement=placement, pid=proc.pid):
-                mm = Group.member(r, key)
-                mm.update(status="running", placement=placement, pid=pid, started=now())
-
-            rec = g.update(mark)
         time.sleep(0.3)
 
-    rec = g.record()
-    if rec["status"] != "running":
-        return
-    g.update(lambda r: r.update(status="merging"))
-    rec = g.record()
-    g.data.mkdir(parents=True, exist_ok=True)
-    merged = g.run_dir / "merged.md"
-    if rec.get("merge"):
-        work = work_root(h) / "groups" / g.gid / "merge"
-        work.mkdir(parents=True, exist_ok=True)
-        prompt = merge_prompt(rec, brief, rec["members"], merged, read_text(g.run_dir / "merge.md"))
-        argv = [deck_bin(), "run", prompt, "--ephemeral", "--max-turns", "60",
-                "--deadline-secs", str(int(os.environ.get("FM_CREW_DEADLINE_SECS", DEFAULT_DEADLINE))),
-                "--hook", result_hook(merged)]
-        run_deck(argv, work, g.run_dir / "merge-events.ndjson", g.run_dir / "merge-stderr.log",
-                 deck_env(), new_group=True).wait()
-    report = g.data / "report.md"
-    done = sum(1 for m in rec["members"] if m["status"] == "done")
-    lines = [f"# Task group {rec['title']}\n", f"{done} of {total} members finished with a result.\n"]
-    if merged.is_file() and merged.stat().st_size > 0:
-        lines.append("## Merged report\n\n" + read_text(merged).strip() + "\n")
-    else:
-        lines.append("## Merged report\n\n(no merge run; member results follow unmerged)\n")
-    lines.append("## Member results\n")
-    for m in rec["members"]:
-        body = read_text(Path(m["result"])) if m.get("result") else ""
-        lines.append(f"### {m['key']} - {m['angle']} ({m['status']}, {m['placement']})\n\n{body.strip() or '(no result)'}\n")
-    report.write_text("\n".join(lines))
-    g.update(lambda r: r.update(report=str(report), status="cleaning"))
-    outcome = cleanup_group(g, reason="finished")
-    rec = g.record()
-    final = "done" if done == total and outcome else ("cleanup-failed" if not outcome else "failed")
-    g.update(lambda r: r.update(status=final, finished=now()))
-    wake(h, f"group:{g.gid}", f"check: task group {g.gid} {final} ({done}/{total} members) - report: {report}")
-
-
-def member_pids(rec: dict) -> list[int]:
-    return [m["pid"] for m in rec["members"] if isinstance(m.get("pid"), int)]
+    merge_rc = merger.wait()
+    with locked(g.cleanup_lock_path):
+        with locked(g.lock_path):
+            rec = g.record()
+            if rec["status"] != "merging":
+                return False
+            g.data.mkdir(parents=True, exist_ok=True)
+            report = g.data / "report.md"
+            done = sum(1 for m in rec["members"] if m["status"] == "done")
+            merge_ok = merge_rc == 0 and merged.is_file() and merged.stat().st_size > 0
+            lines = [f"# Task group {rec['title']}\n", f"{done} of {total} members finished with a result.\n"]
+            if merge_ok:
+                lines.append("## Merged report\n\n" + read_text(merged).strip() + "\n")
+            else:
+                lines.append("## Merge failed\n\nMember evidence is retained below.\n")
+            lines.append("## Member results\n")
+            for m in rec["members"]:
+                body = read_text(Path(m["result"])) if m.get("result") else ""
+                lines.append(f"### {m['key']} - {m['angle']} ({m['status']}, {m['placement']})\n\n{body.strip() or '(no result)'}\n")
+            report.write_text("\n".join(lines))
+            rec.update(report=str(report), status="cleaning", merge_succeeded=bool(merge_ok),
+                       work_outcome="done" if done == total and merge_ok else "failed")
+            g.save(rec)
+        ok = cleanup_group(g, reason="finished")
+        g.update(lambda r: r.update(status=r["work_outcome"] if ok else "cleanup-failed", finished=now()))
+    return True
 
 
 def cleanup_group(g: Group, reason: str) -> bool:
     """Kill every member process group, remove run files, prove nothing is left."""
     rec = g.record()
-    targets = member_pids(rec)
+    targets = {m["pid"]: m.get("identity") for m in rec["members"] if isinstance(m.get("pid"), int)}
     orch = rec.get("orchestrator_pid")
-    if reason != "finished" and isinstance(orch, int) and orch != os.getpid():
-        targets.append(orch)
+    if isinstance(orch, int) and orch != os.getpid():
+        targets[orch] = rec.get("orchestrator_identity")
+    states = {pid: target_state(pid, identity) for pid, identity in targets.items()}
+    owned = {pid for pid, state in states.items() if state == "owned"}
+    unknown = {pid for pid, state in states.items() if state == "unknown"}
     for sig in (signal.SIGTERM, signal.SIGKILL):
-        for pid in targets:
+        for pid in list(owned):
+            state = target_state(pid, targets[pid])
+            if state in ("unrelated", "stopped"):
+                owned.discard(pid)
+                continue
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(pid, sig)
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.kill(pid, sig)
-        if wait_for(lambda: not any(group_alive(p) or pid_alive(p) for p in targets), 5):
+        if wait_for(lambda: not any(group_alive(p) or pid_alive(p) for p in owned), 5):
             break
-    survivors = [p for p in targets if group_alive(p) or pid_alive(p)]
-    # Tests cannot make a process immune to SIGKILL; this stands in for one.
+    survivors = [p for p in owned | unknown if group_alive(p) or pid_alive(p)]
+    if orch == os.getpid():
+        remaining = [pid for pid, _, pgid, stat in PROCESS_API.processes()
+                     if pgid == orch and pid != orch and not stat.startswith("Z") and pid_alive(pid)]
+        if remaining:
+            survivors.append(orch)
     if os.environ.get("FM_CREW_TEST_SURVIVOR"):
         survivors.append(int(os.environ["FM_CREW_TEST_SURVIVOR"]))
     for m in rec["members"]:
@@ -871,13 +941,19 @@ def cleanup_group(g: Group, reason: str) -> bool:
             keep.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(m["result"], keep)
     work = work_root(g.h) / "groups" / g.gid
-    shutil.rmtree(work, ignore_errors=True)
     if not survivors:
+        shutil.rmtree(work, ignore_errors=True)
         shutil.rmtree(g.run_dir, ignore_errors=True)
 
     def note(r):
         r["cleanup"] = {"at": now(), "reason": reason, "survivors": survivors}
+        if orch not in survivors:
+            r["orchestrator_pid"] = None
+            r["orchestrator_identity"] = None
         for m in r["members"]:
+            if m.get("pid") not in survivors:
+                m["pid"] = None
+                m["identity"] = None
             if m["status"] in ("queued", "running"):
                 m["status"] = "cancelled"
             if m.get("result"):
@@ -889,9 +965,9 @@ def cleanup_group(g: Group, reason: str) -> bool:
         card = {
             "project": "firstmate",
             "title": f"Task group {g.gid} left processes behind",
-            "situation": f"Cleanup could not stop member processes {survivors}. They may still be using the model.",
+            "situation": first_lines(f"Cleanup could not stop member processes {survivors}. They may still be using the model."),
             "options": [
-                {"key": "1", "label": "Retry cleanup", "instruction": f"Run FM_HOME={g.h} bin/fm-group.sh cleanup {g.gid}."},
+                {"key": "1", "label": "Retry cleanup", "instruction": f"Run FM_HOME={shlex.quote(str(g.h))} bin/fm-group.sh cleanup {g.gid}."},
                 {"key": "2", "label": "Inspect first", "instruction": f"Inspect pids {survivors} before retrying the cleanup."},
             ],
             "recommended": "1",
@@ -899,12 +975,15 @@ def cleanup_group(g: Group, reason: str) -> bool:
         card_file = g.h / "state" / "groups" / f".{g.gid}.card.json"
         write_json(card_file, card)
         rc = subprocess.run(
-            [str(SCRIPT_DIR / "fm-card.sh"), "write", f"group-{g.gid}", "--file", str(card_file)],
-            env=dict(os.environ, FM_HOME=str(g.h)),
+            [str(SCRIPT_DIR / "fm-captain-hold.sh"), "hold", f"group-{g.gid}",
+             "--title", card["title"], "--repo", "firstmate", "--reason", card["situation"],
+             "--card-file", str(card_file)],
+            env=dict(os.environ, FM_HOME=str(g.h), FM_STATE_OVERRIDE=str(g.h / "state"),
+                     FM_DATA_OVERRIDE=str(g.h / "data"), FM_CONFIG_OVERRIDE=str(g.h / "config")),
             check=False,
         ).returncode
         if rc != 0:
-            wake(g.h, f"group-cleanup:{g.gid}", f"check: task group {g.gid} cleanup left processes {survivors} and its decision card failed")
+            wake(g.h, f"group-cleanup:{g.gid}", f"check: task group {g.gid} cleanup left processes {survivors} and its captain hold failed")
         card_file.unlink(missing_ok=True)
         return False
     return True
@@ -913,20 +992,27 @@ def cleanup_group(g: Group, reason: str) -> bool:
 def cmd_group_cleanup(args) -> None:
     h = home()
     g = Group(h, args.gid)
-    before = g.record()["status"]
-    # Leaving "running" first stops the orchestrator from starting more members.
-    g.update(lambda r: r.update(status="cleaning"))
-    ok = cleanup_group(g, reason="requested")
-    if not ok:
-        final = "cleanup-failed"
-    elif before in ("running", "merging", "cleaning", "cleanup-failed"):
-        final = "cancelled" if before != "cleanup-failed" else "done"
-    else:
-        final = before
-    g.update(lambda r: r.update(status=final, finished=r.get("finished") or now()))
+    with locked(g.cleanup_lock_path):
+        with locked(g.lock_path):
+            rec = g.record()
+            if not rec.get("work_outcome"):
+                if any(m["status"] == "cancelled" for m in rec["members"]):
+                    rec["work_outcome"] = "cancelled"
+                elif rec.get("merge_succeeded") and rec.get("report") and all(m["status"] == "done" for m in rec["members"]):
+                    rec["work_outcome"] = "done"
+                elif rec["status"] in ("running", "merging"):
+                    rec["work_outcome"] = "cancelled"
+                else:
+                    rec["work_outcome"] = "failed"
+            rec["status"] = "cleaning"
+            g.save(rec)
+        ok = cleanup_group(g, reason="requested")
+        g.update(lambda r: r.update(status=r["work_outcome"] if ok else "cleanup-failed",
+                                    finished=r.get("finished") or now()))
     rec = g.record()
+    wake(h, f"group-cleanup:{g.gid}", f"check: task group {g.gid} cleanup {rec['status']} - survivors: {rec['cleanup']['survivors']}")
     if not ok:
-        print(f"cleanup of task group {args.gid} left processes {rec['cleanup']['survivors']}; raised a decision card", file=sys.stderr)
+        print(f"cleanup of task group {args.gid} left processes {rec['cleanup']['survivors']}; captain hold requested", file=sys.stderr)
         sys.exit(1)
     print(f"cleaned up task group {args.gid}: no member processes left")
 
@@ -935,7 +1021,7 @@ def cmd_group_status(args) -> None:
     h = home()
     g = Group(h, args.gid)
     rec = g.record()
-    live = [m["key"] for m in rec["members"] if pid_alive(m.get("pid")) or group_alive(m.get("pid"))]
+    live = [m["key"] for m in rec["members"] if target_state(m.get("pid"), m.get("identity")) in ("owned", "unknown")]
     rec["live_members"] = live
     if args.json:
         print(json.dumps(rec, sort_keys=True))
@@ -957,37 +1043,6 @@ def cmd_group_list(args) -> None:
     for rec in out:
         done = sum(1 for m in rec["members"] if m["status"] == "done")
         print(f"{rec['id']}\t{rec['status']}\t{done}/{len(rec['members'])}\t{rec['title']}")
-
-
-def cmd_remote_ready(args) -> None:
-    del args
-    deck = shutil.which("deck") or os.environ.get("FM_DECK_BIN")
-    if not deck:
-        die("deck is not installed on this machine", 3)
-    print("ready")
-
-
-def cmd_remote_member(args) -> None:
-    """Run one member here (a remote home) and print its result on stdout."""
-    del args
-    payload = json.loads(sys.stdin.read())
-    h = home()
-    work = work_root(h) / "remote-members" / secrets.token_hex(6)
-    work.mkdir(parents=True)
-    try:
-        result = work / "result.md"
-        rec = {"title": payload["title"]}
-        prompt = member_prompt(rec, payload["brief"], payload["angle"], result, payload["n"], payload["total"])
-        argv = [deck_bin(), "run", prompt, "--ephemeral", "--max-turns", str(DEFAULT_MAX_TURNS),
-                "--deadline-secs", str(DEFAULT_DEADLINE), "--hook", result_hook(result)]
-        proc = run_deck(argv, work, work / "events.ndjson", work / "stderr.log", deck_env())
-        rc = proc.wait()
-        if rc != 0 or not result.is_file():
-            sys.stderr.write(read_text(work / "stderr.log")[-2000:])
-            sys.exit(rc or 1)
-        sys.stdout.write(result.read_text())
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
 
 
 # ------------------------------------------------------------------ CLI
@@ -1014,7 +1069,13 @@ def main() -> None:
     s = sub.add_parser("_spec-run")
     s.add_argument("name")
     s.add_argument("job")
+    s.add_argument("--home", required=True)
     s.set_defaults(fn=cmd_spec_run)
+
+    s = sub.add_parser("_spec-check")
+    s.add_argument("job_dir")
+    s.add_argument("memory")
+    s.set_defaults(fn=cmd_spec_check)
 
     s = sub.add_parser("status")
     s.add_argument("name")
@@ -1034,7 +1095,6 @@ def main() -> None:
 
     s = sub.add_parser("retire")
     s.add_argument("name")
-    s.add_argument("--purge-session", action="store_true")
     s.set_defaults(fn=cmd_spec_retire)
 
     s = sub.add_parser("group-start")
@@ -1044,17 +1104,13 @@ def main() -> None:
     s.add_argument("--brief-file")
     s.add_argument("--angle", action="append")
     s.add_argument("--angles-file")
-    s.add_argument("--merge-brief")
-    s.add_argument("--no-merge-agent", action="store_true")
-    s.add_argument("--local-max", type=int, default=int(os.environ.get("FM_GROUP_LOCAL_MAX", 2)))
-    s.add_argument("--remote")
-    s.add_argument("--remote-max", type=int, default=3)
     s.add_argument("--wait", action="store_true")
     s.add_argument("--wait-timeout", type=float, default=2 * DEFAULT_DEADLINE + 120)
     s.set_defaults(fn=cmd_group_start)
 
     s = sub.add_parser("_group-run")
     s.add_argument("gid")
+    s.add_argument("--home", required=True)
     s.set_defaults(fn=cmd_group_run)
 
     for name, fn in (("group-status", cmd_group_status), ("group-cleanup", cmd_group_cleanup)):
@@ -1068,10 +1124,11 @@ def main() -> None:
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_group_list)
 
-    sub.add_parser("remote-ready").set_defaults(fn=cmd_remote_ready)
-    sub.add_parser("remote-member").set_defaults(fn=cmd_remote_member)
-
     args = p.parse_args()
+    if args.cmd not in ("_spec-check", "group-status", "group-list"):
+        refuse_gate()
+    if args.cmd in ("_spec-run", "_group-run"):
+        os.environ["FM_HOME"] = args.home
     args.fn(args)
 
 

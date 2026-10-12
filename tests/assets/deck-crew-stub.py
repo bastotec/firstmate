@@ -41,7 +41,7 @@ sessions.mkdir(parents=True, exist_ok=True)
 log = state / "argv.jsonl"
 with open(log, "a") as fh:
     fh.write(json.dumps({"session": session, "ephemeral": ephemeral, "cwd": os.getcwd(),
-                         "skills": os.environ.get("DECK_SKILLS_DIRS")}) + "\n")
+                         "skills": str((Path.cwd() / ".agents" / "skills").resolve())}) + "\n")
 
 turns = []
 if session:
@@ -49,6 +49,8 @@ if session:
     if path.exists():
         turns = json.loads(path.read_text())
 print(json.dumps({"type": "run_started", "session": session or "ephemeral"}), flush=True)
+if os.environ.get("STUB_REMOVE_LAUNCHER"):
+    Path(os.environ["FM_DECK_BIN"]).unlink(missing_ok=True)
 
 running = Path(os.environ.get("STUB_RUNNING_DIR", state / "running"))
 running.mkdir(parents=True, exist_ok=True)
@@ -58,10 +60,14 @@ with open(state / "concurrency.log", "a") as fh:
     fh.write(f"{len(list(running.iterdir()))}\n")
 try:
     mode = os.environ.get("STUB_MODE", "")
+    if prompt.startswith("You merge"):
+        mode = os.environ.get("STUB_MERGE_MODE", mode)
     if mode == "hang":
         while True:
             time.sleep(1)
     time.sleep(float(os.environ.get("STUB_SLEEP", "0")))
+    if mode == "fail":
+        sys.exit(1)
 
     def field(name):
         m = re.search(rf"^{name}: (.+)$", prompt, re.M)
@@ -85,7 +91,7 @@ try:
                 f"memory-seen-at-start: {'yes' if seen else 'no'}\n"
                 f"angle: {angle.group(1) if angle else ''}\n"
             )
-        if memory and job:
+        if memory and job and mode != "result-only":
             with open(memory, "a") as fh:
                 fh.write(f"- learned in {job.group(1)}\n")
     for hook in hooks:
