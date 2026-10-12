@@ -762,6 +762,9 @@ SH
     assert_grep "Never inspect or change any other home's endpoint namespace" "$prompt" "$kind command weakened cross-home isolation"
     # shellcheck disable=SC2016 # Backticks are literal brief markup.
     assert_grep 'except to answer him in your own conversation when a steering message carries the `[fm-captain-direct]` tag' "$prompt" "$kind command did not let the worker answer a captain-direct message"
+    assert_grep "Never run \`fm-captain-hold.sh hold/answer/answers/stale-clear\` or write a decision card with \`fm-card.sh\` yourself." "$prompt" "$kind launch must forbid captain-facing writes"
+    assert_grep "A scout whose report leaves nothing for the captain may run \`fm-captain-hold.sh complete <your-id> --none\`." "$prompt" "$kind launch must permit a scout's empty completion inventory"
+    assert_no_grep 'or any other captain-facing command yourself' "$prompt" "$kind launch must not override the scout completion permission with a blanket ban"
     assert_grep 'brief for' "$prompt" "$kind command lost the task"
     [ "$(grep -c '^# Current worker role contract$' "$prompt")" -eq 1 ] ||
       fail "$brief_kind $kind duplicated the delivered worker contract"

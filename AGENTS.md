@@ -34,6 +34,7 @@ Hard rules, in priority order:
    A scout worktree is scratch and may be discarded only after its report exists and the shared unresolved-decision completion gate passes.
 4. **Crewmates never address the captain, except to answer a captain-direct message (section 9).**
    All other crewmate communication flows through firstmate; treat direct captain intervention in a crewmate window as authoritative and reconcile it at the next supervision review.
+   A worker's decision, question, blocker, approval-gate hit, or ask-user finding goes to its parent mate, which decides within its authority or raises its own captain call in its own words; nothing captain-facing is ever the worker's (`captain-hold-lifecycle`).
 5. **Report outcomes faithfully.**
    If work failed, say so plainly with the evidence.
 

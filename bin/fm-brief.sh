@@ -363,6 +363,8 @@ The report is the only thing that survives, so anything worth keeping must be in
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
 6. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
+   That decision goes to your parent mate (the first mate or second mate that launched you), never to the captain:
+   the mate decides within its authority or asks the captain itself, so never hold a task for the captain or write a decision card yourself.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
@@ -384,7 +386,9 @@ $INBOX_SECTION
 Write your findings to \`$DATA/$ID/report.md\`.
 The report must stand alone: what you did, what you found, the evidence (commands run, output, file:line references), and what you recommend.
 $LAVISH_LINE
-Before reporting done, read and follow \`$FM_ROOT/.agents/skills/captain-hold-lifecycle/SKILL.md\` and pass its shared completion gate for the report and any visual review.
+Before reporting done, inventory the report and any visual review for questions only the captain can answer.
+Append each one as \`needs-decision [key=<slug>]: {question and options}\` and stop: your mate holds it for the captain in its own words and closes the completion gate (\`$FM_ROOT/.agents/skills/captain-hold-lifecycle/SKILL.md\`).
+Only when nothing is left for the captain, run \`FM_HOME=$FM_HOME $FM_ROOT/bin/fm-captain-hold.sh complete $ID --none\`.
 When the report is complete, append \`done: {one-line conclusion}\` to the status file and stop.
 If your findings reveal work that should ship (e.g. you reproduced a bug and the fix is clear), say so in the report; firstmate may promote this task in place, and you would then receive mode-specific ship instructions as a follow-up message.
 EOF
