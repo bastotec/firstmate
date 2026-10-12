@@ -15,7 +15,7 @@ mkdir -p "$HOME_DIR/state" "$HOME_DIR/data"
 export FM_HOME="$HOME_DIR" FM_DECK_BIN="$ROOT/tests/assets/deck-crew-stub.py"
 export DECK_STATE="$TMP_ROOT/deck" FM_CREW_WORK_ROOT="$TMP_ROOT/work"
 SPEC="$ROOT/bin/fm-specialist.sh"
-REC="$HOME_DIR/state/specialists/amigo-tech/record.json"
+REC="$HOME_DIR/state/specialists/amigo-tech.json"
 
 out=$("$SPEC" create amigo-tech --subject "Amigo Tech, a Docana customer" --project docana 2>&1) \
   || fail "create failed: $out"

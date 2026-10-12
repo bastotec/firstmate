@@ -9,7 +9,7 @@ A specialist is a named, persistent worker of one home. Every job it gets is one
 (deck compacts long sessions). No process stays alive between jobs: an idle
 specialist is a record, not an endpoint, and is intentionally persistent.
 
-  state/specialists/<name>/record.json   the record (0600, atomic)
+  state/specialists/<name>.json          the record (0600, atomic)
       {"version":1,"kind":"specialist","persistent":true,"name","subject",
        "home","session","memory","skills_dir","workdir","projects":[...],
        "status":"idle"|"running"|"retired","created","jobs":N,
@@ -258,9 +258,9 @@ class Specialist:
         self.name = name
         self.state = h / "state" / "specialists" / name
         self.data = h / "data" / "specialists" / name
-        self.record_path = self.state / "record.json"
+        self.record_path = h / "state" / "specialists" / f"{name}.json"
         self.history_path = self.state / "history.jsonl"
-        self.lock_path = self.state / ".lock"
+        self.lock_path = h / "state" / "specialists" / f".{name}.lock"
 
     def exists(self) -> bool:
         return self.record_path.is_file()
@@ -515,8 +515,8 @@ def cmd_spec_list(args) -> None:
     h = home()
     root = h / "state" / "specialists"
     out = []
-    for rec_path in sorted(root.glob("*/record.json")):
-        rec = Specialist(h, rec_path.parent.name).reconcile()
+    for rec_path in sorted(root.glob("*.json")):
+        rec = Specialist(h, rec_path.stem).reconcile()
         if rec.get("status") == "retired" and not args.all:
             continue
         out.append(rec)

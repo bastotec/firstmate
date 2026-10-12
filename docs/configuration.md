@@ -83,7 +83,7 @@ state/
   reconcile-notify/       one-shot Bearings reconcile requests (bin/fm-secondmate-reconcile.sh)
   primary-chat.json       live deck-chat primary record (bin/fm_primary_chat.py owns fields)
   primary-chat/           primary session, steering, keeper, model choice and switch records (bin/fm_primary_chat.py owns layout)
-  specialists/<name>/     persistent specialist record, job history and job files; idle is intended, not a leak (bin/fm_crew.py)
+  specialists/<name>.json specialists/<name>/  persistent specialist record, job history and job files; idle is intended, not a leak (bin/fm_crew.py)
   groups/<gid>.json groups/<gid>/  task group record and its run files until cleanup (bin/fm_crew.py)
   procevent/ procevent-inbox/ when/  process-event sources and results (docs/process-event-sources.md)
   extensions/ extension-invocations/  extension working state (docs/process-event-sources.md)
