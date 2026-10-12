@@ -81,6 +81,7 @@ state/
   model-chain/            per-lane model cooldowns ("Model fallback chains")
   pending-replies/        parent-owned secondmate pending replies (bin/fm-pending-reply-lib.sh)
   home-summary.json       this home's ledger (bin/fm-home-summary-refresh.sh)
+  machine-pending/<m>.json  a machine being connected: its checklist and planned second mates; bin/fm-machine-blocker.sh owns format and lifecycle
   machine-skills/<m>.tsv  each machine's `deck skills` inventory; bin/fm-machine-skills.sh owns format and refresh
   secondmate-summary-cache/  parent-side copies of remote ledgers (bin/fm-fleet-snapshot.sh)
   reconcile-notify/       one-shot Bearings reconcile requests (bin/fm-secondmate-reconcile.sh)

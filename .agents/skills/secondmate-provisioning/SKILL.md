@@ -72,6 +72,9 @@ A seeded home delivers firstmate's OWN changes to the route its code root delive
 Remote provisioning does the same on its own host ([`docs/remote-secondmates.md`](../../../docs/remote-secondmates.md#provision-a-route)).
 A home seeded before that gate existed still carries the old route and says so through the session-start `HOME_ROUTE` line; repointing it is a migration, not a seed.
 
+Before provisioning on a machine that is not registered yet, run `bin/fm-machine.sh check`; when any item is `human`, run `bin/fm-machine-blocker.sh raise <alias> --for "create <Name>" --secondmate <id>=<Name>` and paste its `Blocked on you:` block into the same reply, so the captain sees the steps, a needs-you card, and the planned second mate on a pending island in Fleet Town.
+Its watch wakes you once a re-check passes; then register the machine, provision and launch, and run `bin/fm-machine-blocker.sh clear <alias>`.
+
 Provision a whole remote home through its configured SSH host with:
 
 ```sh

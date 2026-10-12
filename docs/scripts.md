@@ -23,6 +23,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-secondmate-revive.sh` | Recover a down second mate mid-session through the guarded [secondmate lifecycle](stream-backend.md#secondmate-lifecycle) |
 | `fm-secondmate-restart-lib.sh` | Shared second-mate restart capability and persistence-request contract |
 | [`fm-machine.sh`](../bin/fm-machine.sh) | Connect and prepare a machine, including optional shared-skills provisioning |
+| [`fm-machine-blocker.sh`](../bin/fm-machine-blocker.sh) | Turn a machine check's human steps into a `Blocked on you:` reply, a self-closing needs-you card and a pending-machine record |
 | [`fm-machine-skills.sh`](../bin/fm-machine-skills.sh) | Record per-machine skill discovery and check skill-dependent placement |
 | [`fm-machine-instructions.sh`](../bin/fm-machine-instructions.sh) | Read and version-safely replace a machine's binding instructions |
 | [`fm-machine-rules.sh`](../bin/fm-machine-rules.sh) | Check whether a machine's instructions require captain approval for an action |

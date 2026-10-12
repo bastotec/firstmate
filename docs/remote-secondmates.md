@@ -18,6 +18,7 @@ Do not enable agent forwarding for Firstmate.
 
 [`bin/fm-machine.sh`](../bin/fm-machine.sh) is the scripted entry point for connecting a new machine; its header owns the commands, trust safeguards, and line protocol.
 Use its read-only `check` before confirming `setup` to perform supported machine preparation and list the remaining human steps; its header also explains the scratch route's home-readiness limits.
+When an approved action waits on those human steps, [`bin/fm-machine-blocker.sh`](../bin/fm-machine-blocker.sh) turns the check into the captain's `Blocked on you:` reply, a needs-you card that closes itself once a re-check passes, and the pending-machine record Fleet Town draws as a pending island; its header owns the commands and record format.
 
 ### Skills per machine
 

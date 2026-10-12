@@ -150,6 +150,9 @@
 # the doctor through fm-on.sh) use that file via -o UserKnownHostsFile=.
 # Every connection disables UpdateHostKeys. Tests use scratch selections.
 #
+# bin/fm-machine-blocker.sh turns check's human items into the captain's
+# reply, a needs-you card and the pending-machine record.
+#
 # Line protocol on stdout, one fact per line, stable for script consumers:
 # The checklist replaces the former check entrypoint/deck/proxai lines; a local
 # proxai executable is not required when the configured gateway answers.
@@ -667,7 +670,11 @@ interpret_doctor() {
             text=${action:-$text}
             gaps=$((gaps + 1))
             ;;
-          *) state=human; text=${action:-$text}; gaps=$((gaps + 1)) ;;
+          *)
+            state=human
+            [ -z "$action" ] || [ "$action" = "$text" ] || text="$action ($text)"
+            gaps=$((gaps + 1))
+            ;;
         esac
         DOCTOR_ITEMS="${DOCTOR_ITEMS}item doctor-$name=$state: $text"$'\n'
         ;;
