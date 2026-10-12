@@ -420,7 +420,23 @@ That protection covers only the gap between a replacement's registration and its
 
 Readers wait one ordinary rejoin window before answering an unresolved Bridge order; if no endpoint appears, the order remains pending without a membership nack, and an identical resend can try placement again.
 The cheap presence probe behind capture, current-path and endpoint-addressed input answers from the first reply and pays no rejoin wait.
-The recovery-grade worker classifier waits its own bounded six-second window, after which it can report `missing` while a live agent remains in a longer backoff; that verdict produces no Bridge membership nack.
+
+The recovery-grade worker classifier waits its own bounded six-second window (`FM_BACKEND_STREAM_MISSING_GRACE_SECS` in `bin/backends/stream.sh`), after which it can report `missing` while a live agent remains in a longer backoff; that verdict produces no Bridge membership nack.
+That window is derived from both ends, and both matter.
+The lower bound is what it has to outlast, which is three terms, not one.
+An agent discovers the hub forgot it only by publishing, and an idle worker publishes nothing but its state heartbeat, so the wait comes first: at shipped defaults every 5s (both agents' `--state-interval` default, capped by the hub's `state_max_age_secs`/3).
+Then the frame build, which is not free - the agent inspects foreground processes and cwd before it posts anything, so a tenth of a second when the box is idle and appreciably more when it is not.
+Then the 404 and the registration round trip it answers with.
+The upper bound is what it has to fit inside.
+Callers bound this classifier: `fm-fleet-snapshot.sh` gives 10s to a whole crew-state read (`FM_SNAPSHOT_CREW_STATE_TIMEOUT`), of which this probe is one part, so a torn-down endpoint has to reach `missing` well within that rather than timing the caller out and folding to `unknown`.
+6s therefore clears the lower bound by well under a second at shipped defaults, and a box loaded enough to make the ps/lsof pair or the registration POST take that second over spends the window: the classifier then says `missing` about a worker that is healthy and rejoining, with the consequences spelled out below.
+Widening is not available - the 10s caller bound leaves no room - so the constant stands at 6 and the thin margin is part of what it costs.
+
+So what the window covers is precisely one case: a rejoin that succeeds on the first attempt the agent makes after a restart.
+It does not cover a rejoin delayed behind a failed attempt.
+An attempt that times out or meets a hub still coming up doubles that agent's re-registration backoff and pushes the next attempt out by it (both agents back off from 2s to 60s with jitter), which can be far longer than this window; the endpoint is then reported `missing` while its worker is healthy and still coming back.
+That verdict is not retried into harmlessness later: `fm-watch.sh` treats `missing` like `dead` and escalates the pending steer, and `fm_task_inbox_due_action` stays quiet for an escalated record, so the steer leaves the delivery ladder rather than being rung again.
+Widening the window to cover the backoff ladder is not available here - it would blow the 10s caller bound above - so that cost is real and stands.
 
 Only `no_such_endpoint` from the hub triggers re-registration; a failed connection never does, because a hub on its way back up may still hold the record.
 An idle endpoint finds out on its state heartbeat rather than waiting for its worker to print something.

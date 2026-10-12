@@ -51,46 +51,7 @@ FM_BACKEND_STREAM_DEFAULT_URL="http://127.0.0.1:7717"
 # tests/assets/stream-agent-stub.py (tests/fixtures.sh's fm_test_fake_stream).
 FM_BACKEND_STREAM_AGENT_BIN="${FM_STREAM_AGENT_BIN:-$(dirname -- "${BASH_SOURCE[0]}")/../fm-stream-agent.py}"
 
-# How long a 404 has to keep being the answer before it counts as `missing`.
-# A hub that restarted has forgotten every endpoint until each agent registers
-# itself again, so a verdict taken inside that window is about the hub rather
-# than the worker.
-#
-# The number is derived from both ends, and both matter.
-#   Lower bound - what it has to outlast, which is three terms, not one. An
-#   agent discovers the hub forgot it only by publishing, and an idle worker
-#   publishes nothing but its state heartbeat, so the wait comes first: at
-#   shipped defaults every 5s (both agents' --state-interval default, capped
-#   by the hub's state_max_age_secs/3). Then the frame BUILD, which is not
-#   free - the agent inspects foreground processes and cwd before it posts
-#   anything, so a tenth of a second when the box is idle and appreciably
-#   more when it is not. Then the 404 and the
-#   registration round trip it answers with.
-#   Upper bound - what it has to fit inside. Callers bound this classifier:
-#   fm-fleet-snapshot.sh gives 10s to a whole crew-state read, of which this
-#   probe is one part, so a torn-down endpoint has to reach `missing` well
-#   within that rather than timing the caller out and folding to unknown.
-# 6s therefore clears the lower bound by well under a second at shipped
-# defaults, and a box loaded enough to make the ps/lsof pair or the
-# registration POST take that second over spends the window: the classifier
-# then says `missing` about a worker that is healthy and rejoining, with the
-# consequences spelled out below. Widening is not available - the 10s caller
-# bound leaves no room - so the constant stands at 6 and the thin margin is
-# part of what it costs.
-#
-# So what the window covers is precisely one case: a rejoin that succeeds on
-# the FIRST attempt the agent makes after a restart. It does not cover a rejoin
-# delayed behind a failed attempt. An attempt that times out or meets a hub
-# still coming up doubles that agent's re-registration backoff and pushes the
-# next attempt out by it (both agents back off from 2s to 60s with jitter),
-# which can be far longer than this
-# window; the endpoint is then reported `missing` while its worker is healthy
-# and still coming back. That verdict is not retried into harmlessness later:
-# fm-watch.sh treats `missing` like `dead` and escalates the pending steer, and
-# fm_task_inbox_due_action stays quiet for an escalated record, so the steer
-# leaves the delivery ladder rather than being rung again. Widening the window
-# to cover the backoff ladder is not available here - it would blow the 10s
-# caller bound above - so that cost is real and stands.
+# docs/stream-backend.md "When the hub restarts" owns this rejoin grace window's full known-incomplete record.
 FM_BACKEND_STREAM_MISSING_GRACE_SECS=6
 
 # The last HTTP status fm_backend_stream_api saw. Initialised at source time so
