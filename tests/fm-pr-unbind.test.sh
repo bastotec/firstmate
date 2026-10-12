@@ -44,6 +44,14 @@ make_home() {  # <name>; prints the home
 case "\${1:-} \${2:-}" in
   "pr list")
     [ "\${FM_TEST_GH_LIST_FAIL:-0}" = 0 ] || exit 1
+    if [ -n "\${FM_TEST_GH_LIST_ENTERED:-}" ]; then
+      : > "\$FM_TEST_GH_LIST_ENTERED"
+      deadline=\$((SECONDS + \${FM_TEST_STUB_MAX_BLOCK_SECONDS:-20}))
+      while [ ! -e "\${FM_TEST_GH_LIST_RELEASE:-}" ] && [ "\$SECONDS" -lt "\$deadline" ]; do
+        sleep 0.05
+      done
+      [ -e "\${FM_TEST_GH_LIST_RELEASE:-}" ] || exit 1
+    fi
     cat "$home/open-heads"
     exit 0
     ;;
@@ -92,6 +100,15 @@ write_task_meta() {  # <home> <id>
 
 meta_pr() {  # <meta-file>
   sed -n 's/^pr=//p' "$1" | tail -1
+}
+
+wait_for_file() {  # <path>
+  local path=$1 attempts=0
+  while [ ! -e "$path" ] && [ "$attempts" -lt 200 ]; do
+    sleep 0.05
+    attempts=$((attempts + 1))
+  done
+  [ -e "$path" ]
 }
 
 # The recorded meta with the poll armed for the given URL through the real
@@ -163,6 +180,70 @@ test_foreign_branch_head_does_not_block() {
   [ "$(meta_pr "$meta")" = "" ] || fail "a foreign head blocked the clear"
   assert_absent "$home/state/$id.check.sh" "a foreign head left the poll armed"
   pass "an open pull request for another branch does not block the clear"
+}
+
+test_meta_lock_blocks_stale_publication() {
+  local home id meta entered release started acquired leak
+  local unbind_pid publisher_pid unbind_rc publisher_rc acquired_early=0 attempts=0
+  id=task-locked
+  home=$(armed_home meta-lock "$id" https://github.com/example/repo_name/pull/12)
+  meta="$home/state/$id.meta"
+  entered="$home/forge-entered"
+  release="$home/forge-release"
+  started="$home/publisher-started"
+  acquired="$home/publisher-acquired"
+  leak="$home/stale-publication"
+
+  run_unbind "$home" "$id" \
+    FM_TEST_GH_LIST_ENTERED="$entered" FM_TEST_GH_LIST_RELEASE="$release" \
+    >"$home/unbind.out" 2>"$home/unbind.err" &
+  unbind_pid=$!
+  if ! wait_for_file "$entered"; then
+    : > "$release"
+    kill "$unbind_pid" 2>/dev/null || true
+    wait "$unbind_pid" 2>/dev/null || true
+    fail "the lock fixture never reached the forge guard"
+  fi
+
+  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" bash -c '
+    . "$1"
+    : > "$3"
+    lock=$(fm_meta_lock_path "$2") || exit 1
+    fm_lock_acquire_wait "$lock" || exit 1
+    : > "$4"
+    if grep -q "^pr=" "$2"; then
+      printf "stale\n" > "$5"
+    fi
+    fm_lock_release "$lock"
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$meta" "$started" "$acquired" "$leak" &
+  publisher_pid=$!
+  if ! wait_for_file "$started"; then
+    : > "$release"
+    kill "$publisher_pid" "$unbind_pid" 2>/dev/null || true
+    wait "$publisher_pid" 2>/dev/null || true
+    wait "$unbind_pid" 2>/dev/null || true
+    fail "the stale publisher fixture did not start"
+  fi
+
+  while [ "$attempts" -lt 20 ]; do
+    if [ -e "$acquired" ]; then
+      acquired_early=1
+      break
+    fi
+    sleep 0.05
+    attempts=$((attempts + 1))
+  done
+  : > "$release"
+  wait "$unbind_pid"; unbind_rc=$?
+  wait "$publisher_pid"; publisher_rc=$?
+
+  expect_code 0 "$unbind_rc" "unbind while a stale publisher waits"
+  expect_code 0 "$publisher_rc" "stale publisher after unbind"
+  [ "$acquired_early" -eq 0 ] || fail "the metadata lock was released before the guarded rewrite"
+  assert_absent "$leak" "a concurrent publisher observed the stale pr="
+  [ "$(meta_pr "$meta")" = "" ] || fail "the guarded rewrite left pr="
+  assert_absent "$home/state/$id.check.sh" "the guarded rewrite left the poll armed"
+  pass "the metadata lock excludes stale publication through the guarded rewrite"
 }
 
 test_forge_read_failure_refuses() {
@@ -429,6 +510,7 @@ test_retirement_receipt_is_finished_first() {
 test_happy_path_clears_pr_and_poll_and_logs
 test_open_pr_for_own_branch_refuses
 test_foreign_branch_head_does_not_block
+test_meta_lock_blocks_stale_publication
 test_forge_read_failure_refuses
 test_missing_gh_refuses_before_any_change
 test_no_pr_meta_refuses

@@ -149,6 +149,25 @@ fm_lock_acquire_wait "$CONTROL_LOCK" || {
 }
 CONTROL_LOCK_HELD=1
 
+META_LOCK=$(fm_meta_lock_path "$META") || {
+  echo "error: task metadata is unavailable" >&2
+  exit 1
+}
+fm_lock_acquire_wait "$META_LOCK" || {
+  echo "error: task metadata is unavailable" >&2
+  exit 1
+}
+META_LOCK_HELD=1
+[ -f "$META" ] && [ ! -L "$META" ] && [ "$(fm_pr_file_link_count "$META")" = 1 ] \
+  || { echo "error: task metadata is unavailable" >&2; exit 1; }
+[ "$(fm_pr_file_device "$META")" = "$STATE_DEVICE" ] \
+  || { echo "error: task metadata is unavailable" >&2; exit 1; }
+fm_pr_metadata_identity_parse "$META" \
+  && [ "$FM_PR_META_URL" = "$PR_URL" ] || {
+  echo "error: task metadata changed while the unbind was being prepared" >&2
+  exit 1
+}
+
 # Resolve the repository to query from the task's own worktree origin, so the
 # guard reads the forge the task actually targets. A missing, non-directory,
 # or non-git worktree refuses, and a non-github.com origin reaches the explicit
@@ -365,29 +384,8 @@ if [ "$UNBIND_POLL" = 1 ]; then
   fi
 fi
 
-# Atomic guarded rewrite under the task's metadata lock: drop only pr= and
-# pr_head= lines, preserving every other line and its order byte-for-byte.
-META_LOCK=$(fm_meta_lock_path "$META") || {
-  echo "error: task metadata is unavailable" >&2
-  exit 1
-}
-fm_lock_acquire_wait "$META_LOCK" || {
-  echo "error: task metadata is unavailable" >&2
-  exit 1
-}
-META_LOCK_HELD=1
-
-# Revalidate under the lock: the record must still be the one read and guarded.
-[ -f "$META" ] && [ ! -L "$META" ] && [ "$(fm_pr_file_link_count "$META")" = 1 ] \
-  || { echo "error: task metadata is unavailable" >&2; exit 1; }
-[ "$(fm_pr_file_device "$META")" = "$STATE_DEVICE" ] \
-  || { echo "error: task metadata is unavailable" >&2; exit 1; }
-fm_pr_metadata_identity_parse "$META" \
-  && [ "$FM_PR_META_URL" = "$PR_URL" ] || {
-  echo "error: task metadata changed while the unbind was being prepared" >&2
-  exit 1
-}
-
+# Atomic guarded rewrite: drop only pr= and pr_head= lines, preserving every
+# other line and its order byte-for-byte.
 META_TMP=$(mktemp "$STATE/.fm-pr-unbind-meta.XXXXXX") || {
   echo "error: could not prepare the metadata rewrite" >&2
   exit 1
