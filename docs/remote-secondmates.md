@@ -19,6 +19,15 @@ Do not enable agent forwarding for Firstmate.
 [`bin/fm-machine.sh`](../bin/fm-machine.sh) is the scripted entry point for connecting a new machine; its header owns the commands, trust safeguards, and line protocol.
 Use its read-only `check` before confirming `setup` to perform supported machine preparation and list the remaining human steps; its header also explains the scratch route's home-readiness limits.
 
+### Skills per machine
+
+Deck on a machine sees the repo's `.agents/skills/` plus that account's global `~/.agents/skills/`.
+When the primary home has `config/shared-skills`, `setup` (and `bin/fm-machine.sh skills <alias>` for a machine already connected) ships the captain's skills repo to the machine over ssh and runs its installer, which decides which skills are shared and which stay on their own machine.
+Every setup and every `bin/fm-update.sh` then records each machine's skills in `state/machine-skills/<machine>.tsv`, where Fleet Town reads them.
+A brief that needs particular skills names them on a `Skills: <a>, <b>` line; `bin/fm-spawn.sh` refuses to start it on a machine whose Deck does not list them, and names the machines that have them.
+Before routing such a task to a second mate, `bin/fm-machine-skills.sh check <secondmate-id> <skill>...` gives the same answer from the inventory.
+[`bin/fm-machine-skills.sh`](../bin/fm-machine-skills.sh) owns the inventory format and the checks.
+
 For manual preparation, clone Firstmate on the remote host at an absolute code-root path, from the firstmate fork's network URL; provisioning refuses a copy whose `origin` is a local path or `file://` URL (see [Provision a route](#provision-a-route)).
 Expose that clone's fixed entrypoint on the account's non-interactive SSH `PATH`, for example:
 
@@ -334,6 +343,7 @@ The lifecycle test covers seeding a registered project that this machine has nev
 
 ```sh
 bin/fm-test-run.sh tests/fm-machine.test.sh
+bin/fm-test-run.sh tests/fm-machine-skills.test.sh
 bin/fm-test-run.sh tests/fm-on.test.sh
 bin/fm-test-run.sh tests/fm-send-remote-delivery.test.sh
 bin/fm-test-run.sh tests/fm-secondmate-reconcile.test.sh

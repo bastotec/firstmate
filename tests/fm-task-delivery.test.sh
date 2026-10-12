@@ -166,6 +166,36 @@ EOF
   pass "fm-spawn: the brief's recorded mode and the spawn's explicit mode must agree"
 }
 
+# A brief that names skills is placed only where the worker will see them: a
+# machine without a Mac-only skill refuses and names the machine that has it.
+test_spawn_refuses_a_brief_needing_skills_this_machine_lacks() {
+  local rec home proj fakebin out status
+  rec=$(make_home skills)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  # This machine is "workload": its deck lists only shared skills.
+  # shellcheck disable=SC2016 # the stub expands it.
+  printf '#!/bin/sh\n[ "$1" = skills ] && printf "pr-review\\tglobal\\tReview\\t/s/pr-review/SKILL.md\\n"\nexit 0\n' > "$fakebin/deck"
+  mkdir -p "$home/state/machine-skills"
+  printf '# machine=local root=/fm refreshed=2026-10-12T00:00:00Z count=2\nklipper-printers\tglobal\t/s/k\npr-review\tglobal\t/s/p\n' \
+    > "$home/state/machine-skills/local.tsv"
+  write_brief "$home" skills-mac-c1 direct-PR
+  printf 'Skills: klipper-printers, pr-review\n' >> "$home/data/skills-mac-c1/brief.md"
+  out=$(run_spawn "$home" "$fakebin" skills-mac-c1 "$proj" deck --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a spawn needing a skill this machine lacks should exit non-zero"
+  assert_contains "$out" "skills-mac-c1 not placed here: this machine lacks the skills the brief needs (klipper-printers); they are on: local" \
+    "the refusal did not name the missing skill and the machine that has it"
+  assert_absent "$home/state/skills-mac-c1.meta" "a refused placement wrote task metadata"
+
+  write_brief "$home" skills-shared-c2 direct-PR
+  printf 'Skills: pr-review\n' >> "$home/data/skills-shared-c2/brief.md"
+  out=$(run_spawn "$home" "$fakebin" skills-shared-c2 "$proj" deck --mode direct-PR --yolo off)
+  assert_not_contains "$out" "not placed here" "a brief whose skills are present was refused"
+  pass "fm-spawn: a brief naming skills is placed only on a machine whose deck has them"
+}
+
 # The registry is the captain's standing posture, so dropping below its rigor is
 # allowed but never silent, while matching or exceeding it stays quiet. An
 # unregistered project resolves to the same no-mistakes standing default
@@ -911,6 +941,7 @@ test_spawn_refreshes_legacy_worker_roles
 test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
+test_spawn_refuses_a_brief_needing_skills_this_machine_lacks
 test_spawn_notices_a_rigor_downgrade_against_the_registry
 test_scout_records_no_delivery_posture
 test_promote_requires_and_records_the_delivery_contract

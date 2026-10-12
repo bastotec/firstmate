@@ -8,6 +8,7 @@
 #   fm-machine.sh trust <alias> <SHA256:fingerprint>
 #   fm-machine.sh prepare <alias> <remote-root>
 #   fm-machine.sh register <alias> <remote-root>
+#   fm-machine.sh skills <alias> [<remote-root>]
 #
 # This is the deterministic entry point for an order that connects a machine
 # (for example one sent from a UI and confirmed by the captain). It never
@@ -95,6 +96,25 @@
 # checks as skip for an absent home and creates nothing there. Tool installation
 # remains manual with prepare; use setup for supported automatic installs.
 #
+# Shared skills: when this home has config/shared-skills, setup (after the
+# doctor) and `skills` bring the machine's copy of the captain's skills repo up
+# to date and run its installer, then record the machine's skill inventory
+# (bin/fm-machine-skills.sh refresh). The file holds key=value lines:
+#   source=<absolute path of this machine's clone of the skills repo>   (required)
+#   ref=<ref to ship, default origin/main; origin/* is fetched first>
+#   dir=<clone path relative to the remote account's home, default dotfiles>
+#   install=<command run in that clone, default ./install.sh --skills-only>
+# The machine needs no credentials for the repo: this machine pushes the
+# commit over ssh into <dir>'s refs/remotes/origin/<branch> and the machine
+# fast-forwards its <branch> to it (a fresh <dir> is created with this clone's
+# origin URL). It refuses a <dir> that is not a git clone, has local changes,
+# is on another branch or cannot fast-forward. Which skills link is the
+# installer's business (dotfiles keeps machine-only skills to their host).
+# Without the file, the step prints `step shared-skills=skipped`. check prints
+# `item shared-skills=present|will-install|human` and `item skill-inventory`.
+# skills <alias> [<remote-root>] runs just this step on a connected machine;
+# <remote-root> defaults as for check.
+#
 # register <alias> <remote-root> records the machine in this home's
 # data/machines.md as `- <alias> (root: <remote-root>; added YYYY-MM-DD)`. It is
 # idempotent for the same root and refuses a different root for a recorded
@@ -109,7 +129,7 @@
 # Line protocol on stdout, one fact per line, stable for script consumers:
 # The checklist replaces the former check entrypoint/deck/proxai lines; a local
 # proxai executable is not required when the configured gateway answers.
-#   action=check|setup|add|trust|prepare|register
+#   action=check|setup|add|trust|prepare|register|skills
 #   alias=<alias>
 #   root=<remote-root>|-                         (check, setup)
 #   hostname=<name> user=<user> port=<port>     (check)
@@ -122,10 +142,12 @@
 #                                                (check; names: ssh-alias, ssh-hostkey, ssh-login,
 #                                                machine, firstmate-clone, entrypoint-link, doctor,
 #                                                doctor-<check>, doctor-required-<tool>, tool-<tool>, deck, gh-auth,
-#                                                model-gateway, gateway-key, stream-hub)
+#                                                model-gateway, gateway-key, stream-hub,
+#                                                shared-skills, skill-inventory)
 #   step <name>=done|skipped|failed: <evidence or plain reason>   (setup; names: ssh,
 #                                                firstmate-clone, entrypoint-link, probe, tool-<tool>,
-#                                                deck, gateway-key-mode, doctor)
+#                                                deck, gateway-key-mode, doctor, shared-skills,
+#                                                skill-inventory)
 #   human <item-name>: <exact step for a person> (setup, after the steps)
 #   setup=complete|incomplete: <n> human steps|failed   (setup; exit 0, 3, 1)
 #   added=<ssh-config-path>                      (add)
@@ -160,10 +182,11 @@ trap '[ -z "$TMP" ] || rm -rf -- "$TMP"' EXIT
 
 CHECK_ADDRESS=
 CHECK_USER=
+SKILLS_ITEMS=
 GATEWAY_URL=${FM_MACHINE_GATEWAY_URL:-http://127.0.0.1:8329/v1}
 DECK_REPO_URL=${FM_DECK_REPO_URL:-https://github.com/bastotec/deck.git}
 
-usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 refuse() { printf 'refuse: %s\n' "$1"; exit 1; }
 
 SSH_OPTS=(-o UpdateHostKeys=no)
@@ -342,6 +365,7 @@ cmd_check() { # <alias> [<remote-root>] [--address <host> --user <user>]
       run_doctor "$alias" "$root" "$ACCOUNT_HOME"
     fi
     printf '%s\n' "$PROBE_OUT" | grep '^tool ' || true
+    [ "$PROBE_RC" -ne 0 ] || skills_items "$alias"
   fi
   build_items "$alias" "$root" "$class" "$known"
   printf '%s' "$ITEMS"
@@ -757,9 +781,183 @@ build_items() { # <alias> <root|-> <reach-class> <known-fingerprints>
     unreachable) item stream-hub human "make $(hub_url) reachable from the machine (docs/stream-backend.md owns encrypted cross-machine access), and give each home there its own config/stream-hub and config/stream-token" ;;
     *) item stream-hub human "this home has no config/stream-hub to check against; set it, then rerun" ;;
   esac
+  ITEMS="$ITEMS${SKILLS_ITEMS:-}"
 }
 
 items_not_present() { printf '%s' "$ITEMS" | grep -c -v -E '^item [^=]+=present:' || true; }
+
+# Read config/shared-skills into SKILLS_SOURCE, SKILLS_REF, SKILLS_BRANCH,
+# SKILLS_DIR and SKILLS_INSTALL. Returns 1 when absent; refuses a bad file.
+shared_skills_config() {
+  local file="$FM_HOME/config/shared-skills" line key value
+  SKILLS_SOURCE='' SKILLS_REF=origin/main SKILLS_DIR=dotfiles SKILLS_INSTALL='./install.sh --skills-only'
+  [ -f "$file" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) continue ;; esac
+    key=${line%%=*}
+    value=${line#*=}
+    case "$key" in
+      source) SKILLS_SOURCE=$value ;;
+      ref) SKILLS_REF=$value ;;
+      dir) SKILLS_DIR=$value ;;
+      install) SKILLS_INSTALL=$value ;;
+      *) refuse "config/shared-skills has an unknown key: $key" ;;
+    esac
+  done < "$file"
+  case "$SKILLS_SOURCE" in /*) ;; *) refuse "config/shared-skills needs source=<absolute path of the skills repo clone>" ;; esac
+  git -C "$SKILLS_SOURCE" rev-parse --git-dir >/dev/null 2>&1 || refuse "config/shared-skills source is not a git clone: $SKILLS_SOURCE"
+  case "$SKILLS_REF" in ''|-*|*[!A-Za-z0-9._/-]*) refuse "config/shared-skills ref must be a plain ref name: $SKILLS_REF" ;; esac
+  case "$SKILLS_DIR" in ''|/*|-*|*[!A-Za-z0-9._/-]*|*..*) refuse "config/shared-skills dir must be a plain path under the remote home: $SKILLS_DIR" ;; esac
+  case "$SKILLS_INSTALL" in ''|*[!A-Za-z0-9._/\ =-]*) refuse "config/shared-skills install must be a plain command: $SKILLS_INSTALL" ;; esac
+  SKILLS_BRANCH=${SKILLS_REF#origin/}
+  return 0
+}
+
+# Resolve the commit to ship into SKILLS_COMMIT, fetching origin/* refs first.
+# Sets SKILLS_REASON and returns 1 on failure.
+shared_skills_commit() {
+  SKILLS_REASON=
+  case "$SKILLS_REF" in
+    origin/*) git -C "$SKILLS_SOURCE" fetch --quiet origin < /dev/null 2>/dev/null \
+      || { SKILLS_REASON="git fetch origin failed in $SKILLS_SOURCE"; return 1; } ;;
+  esac
+  SKILLS_COMMIT=$(git -C "$SKILLS_SOURCE" rev-parse --verify --quiet "$SKILLS_REF^{commit}") \
+    || { SKILLS_REASON="$SKILLS_REF does not name a commit in $SKILLS_SOURCE"; return 1; }
+}
+
+# Run a short sh script on the machine with args; sets SKILLS_OUT and SKILLS_RC.
+skills_remote() { # <alias> <script> <args...>
+  local alias=$1 script=$2 cmd='sh -s --' arg
+  shift 2
+  for arg in "$@"; do cmd="$cmd $(sq "$arg")"; done
+  set +e
+  # shellcheck disable=SC2029 # quoted for the remote shell on purpose.
+  SKILLS_OUT=$(printf '%s\n' "$script" | ssh "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "${PROBE_OPTS[@]}" "$alias" "$cmd" 2>&1)
+  SKILLS_RC=$?
+  set -e
+}
+
+# shellcheck disable=SC2016 # expanded by the remote shell.
+SKILLS_STATE_SH='dir=$HOME/$1
+if [ ! -e "$dir" ]; then echo "skills-repo=absent"
+elif ! git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then echo "skills-repo=not-git"
+else echo "skills-repo=present head=$(git -C "$dir" rev-parse HEAD 2>/dev/null)"; fi'
+
+# Ensure <dir> on the machine can take the push: create it, or check it is a
+# clean clone on <branch>.
+# shellcheck disable=SC2016 # expanded by the remote shell.
+SKILLS_PREPARE_SH='dir=$HOME/$1 url=$2 branch=$3
+if [ ! -e "$dir" ]; then
+  mkdir -p "$(dirname "$dir")" && git init -q "$dir" && git -C "$dir" remote add origin "$url" || { echo "refuse: could not create a clone at $dir"; exit 3; }
+  echo "skills-repo=created"
+elif ! git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
+  echo "refuse: $dir exists and is not a git clone"; exit 3
+else
+  [ -z "$(git -C "$dir" status --porcelain 2>/dev/null)" ] || { echo "refuse: $dir has local changes; commit or discard them on the machine"; exit 3; }
+  cur=$(git -C "$dir" symbolic-ref --short -q HEAD)
+  [ "$cur" = "$branch" ] || { echo "refuse: $dir is on ${cur:-a detached HEAD}, not $branch"; exit 3; }
+  echo "skills-repo=present"
+fi'
+
+# shellcheck disable=SC2016 # expanded by the remote shell.
+SKILLS_FINISH_SH='dir=$HOME/$1 branch=$2 commit=$3 install=$4
+cd "$dir" || exit 3
+if git rev-parse --verify -q HEAD >/dev/null; then
+  git merge --ff-only -q "$commit" >/dev/null 2>&1 || { echo "refuse: $dir cannot fast-forward to $commit"; exit 3; }
+else
+  git checkout -q -b "$branch" "$commit" && git branch -q --set-upstream-to="origin/$branch" >/dev/null 2>&1
+fi
+[ "$(git rev-parse HEAD)" = "$commit" ] || { echo "refuse: $dir is not at $commit after the update"; exit 3; }
+mkdir -p "$HOME/.cache"
+sh -c "$install" < /dev/null > "$HOME/.cache/fm-shared-skills.log" 2>&1 || { echo "refuse: $install failed in $dir (log: ~/.cache/fm-shared-skills.log)"; exit 3; }
+echo "linked=$(find "$HOME/.agents/skills" -maxdepth 1 -type l 2>/dev/null | wc -l | tr -d " ")"'
+
+# Build SKILLS_ITEMS for check: shared-skills and skill-inventory.
+skills_items() { # <alias>
+  local head
+  SKILLS_ITEMS=
+  shared_skills_config || return 0
+  if ! shared_skills_commit; then
+    SKILLS_ITEMS="item shared-skills=human: $SKILLS_REASON"$'\n'
+  else
+    skills_remote "$1" "$SKILLS_STATE_SH" "$SKILLS_DIR"
+    head=$(printf '%s\n' "$SKILLS_OUT" | sed -n 's/^skills-repo=present head=//p')
+    if [ "$SKILLS_RC" -ne 0 ]; then
+      SKILLS_ITEMS="item shared-skills=human: could not read ~/$SKILLS_DIR over ssh; rerun check"$'\n'
+    elif [ "$head" = "$SKILLS_COMMIT" ]; then
+      SKILLS_ITEMS="item shared-skills=present: ~/$SKILLS_DIR is at $SKILLS_REF ($(printf '%.7s' "$SKILLS_COMMIT"))"$'\n'
+    elif printf '%s\n' "$SKILLS_OUT" | grep -q '^skills-repo=not-git'; then
+      SKILLS_ITEMS="item shared-skills=human: ~/$SKILLS_DIR on the machine is not a git clone; move it aside"$'\n'
+    else
+      SKILLS_ITEMS="item shared-skills=will-install: setup ships $SKILLS_REF of $SKILLS_SOURCE to ~/$SKILLS_DIR and runs $SKILLS_INSTALL"$'\n'
+    fi
+  fi
+  if [ -f "${FM_STATE_OVERRIDE:-$FM_HOME/state}/machine-skills/$1.tsv" ]; then
+    SKILLS_ITEMS="${SKILLS_ITEMS}item skill-inventory=present: state/machine-skills/$1.tsv"$'\n'
+  else
+    SKILLS_ITEMS="${SKILLS_ITEMS}item skill-inventory=will-install: setup records it with bin/fm-machine-skills.sh refresh $1"$'\n'
+  fi
+}
+
+# Ship the shared skills and record the inventory, printing step lines.
+# Returns 1 on a failed step.
+skills_steps() { # <alias> <root>
+  local alias=$1 root=$2 url line scratch out
+  if ! shared_skills_config; then
+    printf 'step shared-skills=skipped: this home has no config/shared-skills\n'
+  else
+    shared_skills_commit || { printf 'step shared-skills=failed: %s\n' "$SKILLS_REASON"; return 1; }
+    url=$(git -C "$SKILLS_SOURCE" config --get remote.origin.url || true)
+    fm_project_url_plain "$url" || url=
+    skills_remote "$alias" "$SKILLS_PREPARE_SH" "$SKILLS_DIR" "$url" "$SKILLS_BRANCH"
+    if [ "$SKILLS_RC" -ne 0 ]; then
+      line=$(printf '%s\n' "$SKILLS_OUT" | awk '/^refuse: / { sub(/^refuse: /, ""); print; exit }')
+      printf 'step shared-skills=failed: %s\n' "${line:-preparing ~/$SKILLS_DIR over ssh failed (exit $SKILLS_RC)}"
+      return 1
+    fi
+    if ! out=$(GIT_SSH_COMMAND="ssh$(printf ' %q' "${SSH_OPTS[@]}" "${PROBE_OPTS[@]}")" \
+      git -C "$SKILLS_SOURCE" push --quiet "$alias:$SKILLS_DIR" "$SKILLS_COMMIT:refs/remotes/origin/$SKILLS_BRANCH" < /dev/null 2>&1); then
+      printf 'step shared-skills=failed: git push to %s:%s failed (%s)\n' "$alias" "$SKILLS_DIR" "$(printf '%s\n' "$out" | tail -n 1)"
+      return 1
+    fi
+    skills_remote "$alias" "$SKILLS_FINISH_SH" "$SKILLS_DIR" "$SKILLS_BRANCH" "$SKILLS_COMMIT" "$SKILLS_INSTALL"
+    if [ "$SKILLS_RC" -ne 0 ]; then
+      line=$(printf '%s\n' "$SKILLS_OUT" | awk '/^refuse: / { sub(/^refuse: /, ""); print; exit }')
+      printf 'step shared-skills=failed: %s\n' "${line:-updating ~/$SKILLS_DIR over ssh failed (exit $SKILLS_RC)}"
+      return 1
+    fi
+    printf 'step shared-skills=done: ~/%s at %s (%s), %s skill links in ~/.agents/skills\n' "$SKILLS_DIR" "$SKILLS_REF" \
+      "$(printf '%.7s' "$SKILLS_COMMIT")" "$(printf '%s\n' "$SKILLS_OUT" | sed -n 's/^linked=//p')"
+  fi
+  scratch=$(mktemp -d "${TMPDIR:-/tmp}/fm-machine.XXXXXX")
+  TMP=$scratch
+  {
+    printf '#!/usr/bin/env bash\nexec ssh'
+    printf ' %q' "${SSH_OPTS[@]}"
+    printf ' "$@"\n'
+  } > "$scratch/ssh"
+  chmod 700 "$scratch/ssh"
+  set +e
+  out=$(FM_SSH_BIN="$scratch/ssh" "$SCRIPT_DIR/fm-machine-skills.sh" refresh "$alias:$root" 2>&1)
+  set -e
+  rm -rf -- "$scratch"
+  TMP=
+  case "$out" in
+    *"refresh $alias=done: "*) printf 'step skill-inventory=done: %s recorded in state/machine-skills/%s.tsv\n' "${out##*=done: }" "$alias" ;;
+    *) printf 'step skill-inventory=failed: %s\n' "${out##*=failed: }"; return 1 ;;
+  esac
+}
+
+cmd_skills() { # <alias> [<remote-root>]
+  local alias=$1 root=${2:-}
+  valid_alias "$alias" || refuse "alias must be a plain ssh config name of A-Z, a-z, 0-9, ., _ and -, not starting with -: $alias"
+  [ -n "$root" ] || root=$("$SCRIPT_DIR/fm-machine-skills.sh" roots 2>/dev/null | awk -F '\t' -v a="$alias" '$1 == a { print $2; exit }')
+  [ -n "$root" ] || refuse "no remote root is recorded for $alias; pass it: bin/fm-machine.sh skills $alias <remote-root>"
+  valid_root "$root" || refuse "remote root must be an absolute path of A-Z, a-z, 0-9, ., _, - and /: $root"
+  printf 'action=skills\nalias=%s\nroot=%s\n' "$alias" "$root"
+  resolve_alias "$alias" || refuse "ssh -G could not evaluate the alias $alias"
+  skills_steps "$alias" "$root" || exit 1
+}
 
 cmd_setup() { # <alias> <remote-root>
   local alias=$1 root=$2 err rc class known line tool path result npm_global
@@ -886,6 +1084,7 @@ cmd_setup() { # <alias> <remote-root>
     setup_finish "$alias" "$root" "$class" "$known" 1
   fi
   printf 'step doctor=done: fm-remote-doctor.sh --fix ran (exit %s)\n' "$DOCTOR_RC"
+  skills_steps "$alias" "$root" || setup_finish "$alias" "$root" "$class" "$known" 1
   probe_machine "$alias" "$root"
   if [ "$PROBE_RC" -ne 0 ]; then
     printf 'step probe=failed: the probe over ssh failed (exit %s)\n' "$PROBE_RC"
@@ -897,6 +1096,8 @@ cmd_setup() { # <alias> <remote-root>
 # Print the remaining human steps and the verdict, then exit.
 setup_finish() { # <alias> <root> <reach-class> <known> <failed 0|1>
   local line name text count=0
+  SKILLS_ITEMS=
+  [ "$3" != ok ] || [ "${PROBE_RC:-0}" -ne 0 ] || skills_items "$1"
   build_items "$1" "$2" "$3" "$4"
   while IFS= read -r line; do
     case "$line" in
@@ -962,6 +1163,7 @@ main() {
     trust) [ "$#" -eq 2 ] || usage; cmd_trust "$1" "$2" ;;
     prepare) [ "$#" -eq 2 ] || usage; cmd_prepare "$1" "$2" ;;
     register) [ "$#" -eq 2 ] || usage; cmd_register "$1" "$2" ;;
+    skills) [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage; cmd_skills "$@" ;;
     *) usage ;;
   esac
 }

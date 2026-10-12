@@ -37,6 +37,7 @@ config/
   wake-gate-key-var wake-gate-mode  optional wake-gate opt-in and mode ("Wake gate")
   effort-policy.json      optional per-turn reasoning effort switch and level ("Turn effort")
   deck-mcp.json           optional Deck MCP servers ("Harness support")
+  shared-skills           optional skills repo shipped to connected machines; primary home only (bin/fm-machine.sh header)
   inbox-* voice-read-*    inbox model and voice-read settings ("Inbox and voice records")
   extensions.d/           mode-0700 explicit extension bindings (docs/process-event-sources.md)
   x-mode.env              generated Relay watcher cadence; written only by bootstrap (docs/relay.md)
@@ -75,6 +76,7 @@ state/
   model-chain/            per-lane model cooldowns ("Model fallback chains")
   pending-replies/        parent-owned secondmate pending replies (bin/fm-pending-reply-lib.sh)
   home-summary.json       this home's ledger (bin/fm-home-summary-refresh.sh)
+  machine-skills/<m>.tsv  each machine's `deck skills` inventory; bin/fm-machine-skills.sh owns format and refresh
   secondmate-summary-cache/  parent-side copies of remote ledgers (bin/fm-fleet-snapshot.sh)
   reconcile-notify/       one-shot Bearings reconcile requests (bin/fm-secondmate-reconcile.sh)
   primary-chat.json       live deck-chat primary record (bin/fm-deck-chat.sh)

@@ -219,7 +219,7 @@ TOOL
 #!/bin/sh
 [ "${FAKE_CARGO_FAIL:-0}" = 1 ] && exit 101
 mkdir -p target/release
-printf '#!/bin/sh\necho deck 0.1\n' > target/release/deck
+printf '#!/bin/sh\n[ "$1" != skills ] || { printf "afk\\trepo\\tAway\\t%%s/.agents/skills/afk/SKILL.md\\n" "$PWD"; exit 0; }\necho deck 0.1\n' > target/release/deck
 chmod +x target/release/deck
 TOOL
   cat > "$FAKE_RBIN/gh" <<'TOOL'
@@ -686,6 +686,9 @@ assert_contains "$out" "step tool-treehouse=skipped: present" "tool rerun"
 assert_contains "$out" "step deck=skipped: present" "deck rerun"
 assert_not_contains "$out" "step gateway-key-mode" "key mode rerun"
 assert_contains "$out" "setup=complete" "complete rerun"
+assert_contains "$out" "step shared-skills=skipped: this home has no config/shared-skills" "unconfigured shared skills"
+assert_contains "$out" "step skill-inventory=done: 1 skills recorded in state/machine-skills/box.tsv" "inventory step"
+assert_present "$FMH/state/machine-skills/box.tsv" "setup did not record the inventory"
 pass "setup is idempotent and reports complete once nothing is left"
 
 for required in 'MISSING (incompatible)' 'VERSION_UNREADABLE (requires semantic version >=0.21.0)'; do

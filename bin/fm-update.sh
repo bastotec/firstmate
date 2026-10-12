@@ -34,6 +34,8 @@
 #     that same tip whose runtime CANNOT prove a restart, so the older re-read
 #     steer is all that is honest for them)
 #   - stream-native: built|current|prebuilt <dir> | failed: <reason>  (primary)
+#   - skill-inventory <machine>=done: <n> skills | failed: <reason>  (every
+#     machine bin/fm-machine-skills.sh knows, refreshed after the homes update)
 #   - stream-native secondmate <id>: same result (settled local mate with a
 #     recorded window); only for rust selections, see the native section below
 #
@@ -271,6 +273,14 @@ if [ -f "$SECONDMATES_MD" ]; then
       process_secondmate "$id" "$home" "" origin yes
     fi
   done < "$SECONDMATES_MD"
+fi
+
+# Refresh every machine's skill inventory (bin/fm-machine-skills.sh owns it),
+# best effort: an unreachable machine keeps its previous inventory.
+# FM_UPDATE_SKILL_INVENTORY=0 skips it.
+if [ "${FM_UPDATE_SKILL_INVENTORY:-1}" != 0 ]; then
+  FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-machine-skills.sh" refresh 2>&1 < /dev/null \
+    | sed 's/^refresh /skill-inventory /' || true
 fi
 
 # --- caller action summary -------------------------------------------------

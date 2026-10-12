@@ -118,7 +118,7 @@ bump_origin() {
 run_update() {
   local w=$1
   PATH="$w/fakebin:$PATH" \
-    FM_SSH_BIN="${FM_TEST_SSH_BIN:-ssh}" \
+    FM_SSH_BIN="${FM_TEST_SSH_BIN:-ssh}" FM_UPDATE_SKILL_INVENTORY="${FM_TEST_SKILL_INVENTORY:-0}" \
     FM_ROOT_OVERRIDE="$w/main" FM_HOME="$w/home" "$UPDATE" 2>/dev/null
 }
 
@@ -627,6 +627,21 @@ SH
   pass "T13 updates prepare each rust home's binaries and keep native failures best-effort"
 }
 
+# --- T14: the update refreshes the skill inventory ----------------------------
+test_update_refreshes_skill_inventory() {
+  local w out
+  w=$(new_world t14)
+  mkdir -p "$w/fakebin"
+  # shellcheck disable=SC2016 # the stub expands it.
+  printf '#!/bin/sh\nprintf "afk\\trepo\\tdesc\\t%%s/afk/SKILL.md\\npr-review\\tglobal\\tdesc\\t/s/pr-review/SKILL.md\\n" "$PWD"\n' > "$w/fakebin/deck"
+  chmod +x "$w/fakebin/deck"
+  out=$(FM_TEST_SKILL_INVENTORY=1 run_update "$w")
+  assert_contains "$out" "skill-inventory local=done: 2 skills" "the update must refresh this machine's skill inventory"
+  assert_contains "$(cat "$w/home/state/machine-skills/local.tsv")" "pr-review	global" "the inventory file must hold deck's skills"
+  assert_contains "$out" "restart-secondmates:" "the inventory refresh must leave the action summary intact"
+  pass "T14 the update refreshes the skill inventory"
+}
+
 test_updates_main_and_secondmate
 test_reread_gate_is_instruction_only
 test_bin_only_advance_restarts
@@ -644,5 +659,6 @@ test_firstmate_detached_head_skipped
 test_unsafe_secondmate_home_skipped_before_git_update
 test_primary_update_rebinds_local_watch
 test_update_builds_native_stream_binaries
+test_update_refreshes_skill_inventory
 
 echo "# all fm-update tests passed"
