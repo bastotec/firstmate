@@ -102,6 +102,10 @@ trap 'exit 1' HUP INT TERM
 fm_pr_poll_prepare "$STATE" "$ID" "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" "$SCRIPT_DIR/fm-pr-poll.sh" \
   || { echo "error: could not prepare PR poll" >&2; exit 1; }
 
+# The task control lock covers the metadata rewrite through poll publication so
+# a direct registration cannot interleave with lifecycle cleanup or PR unbind.
+# fm-pr-merge.sh already owns that lock when it records metadata and may pass a
+# task-matched inheritance marker; every other invocation acquires it here.
 CONTROL_LOCK="$STATE/.control-$ID.lock"
 if [ "${FM_PR_MERGE_HOLDS_CONTROL_LOCK:-}" != "$ID" ]; then
   fm_lock_acquire_wait "$CONTROL_LOCK" || {

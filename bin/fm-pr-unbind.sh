@@ -40,18 +40,21 @@
 # rejected as unauthenticated on every cycle from then on. The meta rewrite
 # itself is the same atomic tmp-then-mv under the task's metadata lock that
 # bin/fm-pr-check.sh uses, and the whole unbind runs under the task's control
-# lock (state/.control-<id>.lock), the lock bin/fm-watch.sh holds for a poll
-# transaction and bin/fm-teardown.sh for lifecycle cleanup, so it cannot
-# interleave with either. The merge-notification marker and merge-authority
+# lock (state/.control-<id>.lock). bin/fm-pr-check.sh holds that lock from its
+# metadata rewrite through poll publication, bin/fm-watch.sh holds it for a poll
+# transaction, and bin/fm-teardown.sh holds it for lifecycle cleanup, so none
+# can interleave with unbind. The merge-notification marker and merge-authority
 # records are untouched: they describe merges that really happened, and
 # teardown owns their removal.
 #
 # Before starting its own poll-and-meta removals, each unbind attempt appends one
 # assertion line to the append-only state/pr-unbinds.log, naming who is clearing
 # which pr= from which task at what time, mirroring
-# state/endpoint-retirements.log's assertion-before-removal contract.
-# A log line that cannot be appended refuses the removal outright, so a meta is
-# never silently stripped of its PR record.
+# state/endpoint-retirements.log's assertion-before-removal contract. The log
+# must be a private mode-600 regular single-link file on the state device; it is
+# created with that mode when absent, and descriptor-bound appends never follow
+# a link. An unsafe target or failed append refuses the removal outright, so a
+# meta is never silently stripped of its PR record.
 # Unbind removals are ordered poll-then-meta so every interruption is
 # rerunnable: a crash after the poll is gone but before the rewrite leaves the
 # stale pr= intact as the identity a rerun validates, then the rerun finishes
@@ -64,8 +67,9 @@
 # cannot be read (gh missing, unauthenticated, offline, or an unreadable
 # answer); an open pull request exists for the task's own fm/<task-id> branch;
 # the armed check is foreign, or remaining poll artifacts cannot be bound to the
-# recorded pr=; a pending retirement receipt
-# cannot be finished; the task's control or metadata lock cannot be acquired.
+# recorded pr=; a pending retirement receipt cannot be finished; the unbind log
+# is unsafe or cannot be appended; the task's control or metadata lock cannot
+# be acquired.
 # While another lifecycle action holds the control lock the unbind waits for it
 # (bin/fm-wake-lib.sh's fm_lock_acquire_wait, the mutation-critical acquire)
 # rather than refusing, so it never interleaves with a poll transaction or a
@@ -122,8 +126,8 @@ fi
 PR_URL=$FM_PR_META_URL
 
 # The whole unbind runs under the task's control lock, the same lock
-# bin/fm-watch.sh holds for a PR-poll transaction and bin/fm-teardown.sh for
-# lifecycle cleanup, so it cannot interleave with either.
+# bin/fm-pr-check.sh holds through poll publication, bin/fm-watch.sh holds for a
+# PR-poll transaction, and bin/fm-teardown.sh holds for lifecycle cleanup.
 CONTROL_LOCK="$STATE/.control-$ID.lock"
 CONTROL_LOCK_HELD=0
 META_TMP=

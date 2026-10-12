@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Descriptor-bound I/O for wake-gate records and root-level status files."""
+"""Descriptor-bound I/O for wake-gate and root-level state records."""
 
 import errno
 import os
