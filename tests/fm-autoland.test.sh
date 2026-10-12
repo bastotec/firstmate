@@ -132,7 +132,7 @@ write_live() {
 tick() {  # <home> [<script>] [env...] -> stdout of one tick
   local home=$1 script=${2:-$AUTOLAND}
   shift 2 2>/dev/null || shift $#
-  env FM_HOME="$home" FM_TEST_GH_LOG="$home/gh.log" FM_TEST_GQL="$home/gql.json" FM_TEST_LIVE="$home/live.json" \
+  env FM_HOME="$home" FM_MACHINE_INSTRUCTIONS="$home/machine-instructions.md" FM_TEST_GH_LOG="$home/gh.log" FM_TEST_GQL="$home/gql.json" FM_TEST_LIVE="$home/live.json" \
     PATH="$FAKEBIN:$PATH" "$@" "$script" check
 }
 
@@ -359,7 +359,7 @@ owned_bin() {
   local tmpbin="$1/bin" lib
   mkdir -p "$tmpbin"
   cp "$AUTOLAND" "$tmpbin/"
-  for lib in fm-timeout-lib.sh fm-pr-lib.sh fm-line-cap-lib.sh fm-check-lib.sh fm-project-mode.sh fm-fleet-sync.sh fm-wake-lib.sh; do
+  for lib in fm-timeout-lib.sh fm-pr-lib.sh fm-line-cap-lib.sh fm-check-lib.sh fm-project-mode.sh fm-fleet-sync.sh fm-wake-lib.sh fm-machine-rules.sh; do
     ln -s "$ROOT/bin/$lib" "$tmpbin/$lib"
   done
   cat > "$tmpbin/fm-pr-merge.sh" <<'SH'
@@ -403,6 +403,31 @@ test_task_owned_pr_uses_fm_pr_merge() {
   assert_contains "$out" "because task task-x is still held for the captain" "task helper refusal reported"
   [ "$(merges "$home")" = 0 ] || fail "gh merged around fm-pr-merge.sh"
   pass "fm-autoland: task-owned PRs use the head-pinned helper and report its refusals"
+}
+
+test_machine_merge_rule_applies_to_both_paths() {
+  local home script path node out
+  for path in unowned owned; do
+    home=$(make_home "machine-rule-$path")
+    script=$AUTOLAND
+    [ "$path" != owned ] || script="$(owned_bin "$home")/fm-autoland.sh"
+    write_config "$home" "$CONFIG_AUTH"
+    node=$(pr_node "$HEAD_A")
+    write_gql "$home" "$MAIN_1" "$node"
+    write_live "$home" "$node"
+    printf 'firstmate: ask before merge\n' > "$home/machine-instructions.md"
+    out=$(tick "$home" "$script")
+    assert_contains "$out" "green PR not landing:" "$path machine rule holds the PR"
+    assert_contains "$out" "ask the captain" "$path machine rule names required approval"
+    [ "$(merges "$home")" = 0 ] || fail "$path machine rule allowed a forge merge"
+    [ ! -e "$home/pr-merge.log" ] || fail "owned path ran despite machine restriction"
+    out=$(tick "$home" "$script")
+    [ -z "$out" ] || fail "$path machine rule repeated the same hold"
+    printf 'firstmate: ask before comment\n' > "$home/machine-instructions.md"
+    out=$(tick "$home" "$script")
+    assert_contains "$out" "merged https://github.com/o/r/pull/7" "$path unrelated rule permits merge"
+  done
+  pass "fm-autoland: machine merge restrictions precede both merge paths"
 }
 
 test_successful_slow_query_does_not_consume_merge_budget() {
@@ -1021,6 +1046,7 @@ test_refused_merge_is_reported
 test_authority_follows_the_registry
 test_other_base_and_other_repo_are_ignored
 test_task_owned_pr_uses_fm_pr_merge
+test_machine_merge_rule_applies_to_both_paths
 test_successful_slow_query_does_not_consume_merge_budget
 test_task_helper_success_requires_a_landed_or_queued_outcome
 test_case_insensitive_task_ownership_preserves_recorded_url

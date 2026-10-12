@@ -19,6 +19,27 @@ Do not enable agent forwarding for Firstmate.
 [`bin/fm-machine.sh`](../bin/fm-machine.sh) is the scripted entry point for connecting a new machine; its header owns the commands, trust safeguards, and line protocol.
 Use its read-only `check` before confirming `setup` to perform supported machine preparation and list the remaining human steps; its header also explains the scratch route's home-readiness limits.
 
+### Skills per machine
+
+Deck discovers the current repo's `.agents/skills/` and the account's global `~/.agents/skills/`.
+Optional shared-skills provisioning ships the captain's skills repo over SSH and runs its installer, which decides which skills are shared and which stay on their own machine; the [`fm-machine.sh` header](../bin/fm-machine.sh) owns configuration, provisioning safeguards, and commands for connected machines.
+Setup records the connected machine's inventory, while [`bin/fm-update.sh`](../bin/fm-update.sh) attempts to refresh the local machine and all registered remote machines without provisioning shared skills again.
+These inventories describe discovery in each machine's Firstmate code root, not every project or secondmate home on that host.
+A routing check uses the recorded inventory, which can be stale after a failed refresh; a passing result is not proof that a project's worker has those skills.
+For a skill-dependent task, declare its required skills in the brief and check the destination inventory before routing it to a second mate.
+Ship and scout launches, including relaunches, additionally verify those requirements with live discovery in the actual worker worktree and refuse missing skills before the worker starts.
+The [`fm-machine-skills.sh` header](../bin/fm-machine-skills.sh) owns brief syntax, inventory format and freshness limits, discovery and placement commands, and refusal diagnostics.
+
+### Machine instructions
+
+A machine's `~/.agents/AGENTS.md` holds the captain's binding instructions for that machine (what may run there, resource limits, what it is for).
+[`AGENTS.md`](../AGENTS.md) section 4 owns instruction precedence; before placing work, the primary reads the destination's current instructions and never places work they rule out.
+The [`fm-machine-instructions.sh` header](../bin/fm-machine-instructions.sh) owns machine registration prerequisites, read/save commands, version and permission safeguards, backups, removal, and session pickup requirements.
+Changes are not hot-reloaded into running mates; restart them to pick up the new instructions.
+The [`fm-machine-rules.sh` header](../bin/fm-machine-rules.sh) owns the machine-readable approval syntax and action-check interface.
+Before merging, commenting, or publishing, an agent checks the action on its own machine through that interface and, on an `ask:` result, puts the action to the captain as a decision card instead of acting.
+The [`fm-pr-merge.sh` header](../bin/fm-pr-merge.sh) owns the captain-approved merge override; [auto-land eligibility](configuration.md#auto-land-configautolandjson-configpost-merge) applies the machine check to every candidate, including PRs without a task in this home.
+
 For manual preparation, clone Firstmate on the remote host at an absolute code-root path, from the firstmate fork's network URL; provisioning refuses a copy whose `origin` is a local path or `file://` URL (see [Provision a route](#provision-a-route)).
 Expose that clone's fixed entrypoint on the account's non-interactive SSH `PATH`, for example:
 
@@ -41,17 +62,6 @@ Linux uses the same queue and worker protocol without the Aqua-session requireme
 A worker stops itself once its configured code root stops being a Firstmate checkout, so a worker started from a worktree cannot outlive that worktree, and `bin/fm-remote-job-reap-orphans.sh` clears any worker already left behind that way without ever touching one whose checkout still exists.
 The remote account must provide the required toolchain listed under [Readiness, repair, and the human steps](#readiness-repair-and-the-human-steps), the stream prerequisites, and credentials that work on that host.
 The origin URL named for each project must be reachable from the remote account because projects are cloned on that host rather than copied from the primary.
-
-### Skills per machine
-
-Deck discovers the current repo's `.agents/skills/` and the account's global `~/.agents/skills/`.
-Optional shared-skills provisioning ships the captain's skills repo over SSH and runs its installer, which decides which skills are shared and which stay on their own machine; the [`fm-machine.sh` header](../bin/fm-machine.sh) owns configuration, provisioning safeguards, and commands for connected machines.
-Setup records the connected machine's inventory, while [`bin/fm-update.sh`](../bin/fm-update.sh) attempts to refresh the local machine and all registered remote machines without provisioning shared skills again.
-These inventories describe discovery in each machine's Firstmate code root, not every project or secondmate home on that host.
-A routing check uses the recorded inventory, which can be stale after a failed refresh; a passing result is not proof that a project's worker has those skills.
-For a skill-dependent task, declare its required skills in the brief and check the destination inventory before routing it to a second mate.
-Ship and scout launches, including relaunches, additionally verify those requirements with live discovery in the actual worker worktree and refuse missing skills before the worker starts.
-The [`fm-machine-skills.sh` header](../bin/fm-machine-skills.sh) owns brief syntax, inventory format and freshness limits, discovery and placement commands, and refusal diagnostics.
 
 ## Non-interactive tool contract
 
@@ -349,6 +359,8 @@ The lifecycle test covers seeding a registered project that this machine has nev
 ```sh
 bin/fm-test-run.sh tests/fm-machine.test.sh
 bin/fm-test-run.sh tests/fm-machine-skills.test.sh
+bin/fm-test-run.sh tests/fm-machine-instructions.test.sh
+bin/fm-test-run.sh tests/fm-machine-rules.test.sh
 bin/fm-test-run.sh tests/fm-on.test.sh
 bin/fm-test-run.sh tests/fm-send-remote-delivery.test.sh
 bin/fm-test-run.sh tests/fm-secondmate-reconcile.test.sh

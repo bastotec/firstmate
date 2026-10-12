@@ -493,6 +493,38 @@ test_verified_merge_records_pr_and_head() {
   pass "fm-pr-merge records pr= and pr_head= for a verified GitHub merge"
 }
 
+# A machine whose binding instructions ask the captain before a merge outranks
+# yolo and the configured merge authority: the merge waits for the captain's
+# explicit --attended-override.
+test_machine_instructions_hold_a_merge_for_the_captain() {
+  local case_dir rc
+  case_dir=$(make_case machine-asks-merge)
+  mkdir -p "$case_dir/wt" "$case_dir/user-home/.agents"
+  add_gh_mocks "$case_dir" deadbeefcafefeed0000000000000000deadbeef
+  : > "$case_dir/gh-axi.log"
+  printf '# workload\n\nfirstmate: ask before merge, comment\n' > "$case_dir/user-home/.agents/AGENTS.md"
+  printf 'yolo=on\n' >> "$case_dir/state/task-x1.meta"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/9 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "machine-asks-merge: a yolo merge on a machine that asks first must refuse"
+  assert_grep 'says "firstmate: ask before merge, comment"; ask the captain' "$case_dir/stderr" \
+    "machine-asks-merge: the refusal did not quote the machine's rule"
+  assert_no_grep ' merge ' "$case_dir/gh-axi.log" "machine-asks-merge: the forge merge ran anyway"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/9 --attended-override \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "machine-asks-merge: the captain's explicit override merges"
+  assert_logged_gh_merge "$case_dir" 9 example/repo --squash
+  pass "fm-pr-merge holds a merge the machine's instructions ask the captain about"
+}
+
 # The forge call is the point of no return: once gh-axi has merged, nothing this
 # script does afterwards can un-merge it. Proving pr= is already in the task's
 # meta at that moment is what makes a later failure unable to lose the merge.
@@ -3296,6 +3328,7 @@ test_late_finishing_old_cancellation_is_superseded
 test_unfinished_rerun_keeps_a_check_red
 test_supersession_never_crosses_check_names
 test_undated_runs_never_supersede
+test_machine_instructions_hold_a_merge_for_the_captain
 test_allow_red_still_waives_only_the_current_failure
 test_allow_red_is_refused_while_away
 test_allow_red_requires_one_separate_name

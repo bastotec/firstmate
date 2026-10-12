@@ -43,8 +43,9 @@
 # bin/fm-home-tools-lib.sh's lists; Deck; gh auth (exit status only); the model
 # gateway at FM_MACHINE_GATEWAY_URL (default Deck's http://127.0.0.1:8329/v1)
 # and its client key file (presence and mode only, never read); and whether
-# this home's config/stream-hub answers from the machine. Exit 0 only when every
-# check and item is ok or present; gaps exit 1.
+# this home's config/stream-hub answers from the machine. After a successful
+# probe it also offers optional machine instructions (described below).
+# Exit 0 only when every check and item is ok or present; gaps exit 1.
 # An absent clone is will-install only when prepare's clone-route guard passes;
 # otherwise the clone item is human with the same refusal reason.
 # With no known remote root, the clone and entrypoint-link items request it;
@@ -127,6 +128,14 @@
 # <remote-root> defaults to fm-machine-skills.sh roots (the machine registry,
 # then a remote secondmate route on that host), and is required if unrecorded.
 #
+# Machine instructions: check reports an informational
+# `item machine-instructions=present` after a successful probe; `present` means
+# the offer is available, not that an instructions file exists. Setup emits
+# `step machine-instructions=skipped` after the skills steps. Both offers report
+# the file's presence when readable; neither writes it or makes it required.
+# bin/fm-machine-instructions.sh owns the separate read/save interface and its
+# registration prerequisite.
+#
 # register <alias> <remote-root> records the machine in this home's
 # data/machines.md as `- <alias> (root: <remote-root>; added YYYY-MM-DD)`. It is
 # idempotent for the same root and refuses a different root for a recorded
@@ -155,12 +164,12 @@
 #                                                machine, firstmate-clone, entrypoint-link, doctor,
 #                                                doctor-<check>, doctor-required-<tool>, tool-<tool>, deck, gh-auth,
 #                                                model-gateway, gateway-key, stream-hub,
-#                                                shared-skills, skill-inventory)
+#                                                shared-skills, skill-inventory, machine-instructions)
 #   step <name>=done|skipped|failed: <evidence or plain reason>   (setup; skills emits
 #                                                shared-skills and skill-inventory; setup names: ssh,
 #                                                firstmate-clone, entrypoint-link, probe, tool-<tool>,
 #                                                deck, gateway-key-mode, doctor, shared-skills,
-#                                                skill-inventory)
+#                                                skill-inventory, machine-instructions)
 #   human <item-name>: <exact step for a person> (setup, after the steps)
 #   setup=complete|incomplete: <n> human steps|failed   (setup; exit 0, 3, 1)
 #   added=<ssh-config-path>                      (add)
@@ -378,7 +387,11 @@ cmd_check() { # <alias> [<remote-root>] [--address <host> --user <user>]
       run_doctor "$alias" "$root" "$ACCOUNT_HOME"
     fi
     printf '%s\n' "$PROBE_OUT" | grep '^tool ' || true
-    [ "$PROBE_RC" -ne 0 ] || skills_items "$alias"
+    if [ "$PROBE_RC" -eq 0 ]; then
+      skills_items "$alias"
+      instructions_offer "$alias"
+      SKILLS_ITEMS="${SKILLS_ITEMS}item machine-instructions=present: $INSTR_TEXT"$'\n'
+    fi
   fi
   build_items "$alias" "$root" "$class" "$known"
   printf '%s' "$ITEMS"
@@ -939,6 +952,22 @@ skills_url_without_userinfo() { # <url>
   esac
 }
 
+# The machine's binding instructions (~/.agents/AGENTS.md), offered at connect:
+# never written here, only reported, with the command that writes them.
+# Sets INSTR_TEXT.
+instructions_offer() { # <alias>
+  local lines
+  # A plain command, not `sh -s`: reading this file is never a clone or install.
+  # shellcheck disable=SC2016 # expanded by the machine's shell.
+  SKILLS_OUT=$(ssh "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "${PROBE_OPTS[@]}" "$1" \
+    'f=$HOME/.agents/AGENTS.md; if [ -f "$f" ]; then echo "present $(wc -l < "$f" | tr -d " ")"; else echo absent; fi' < /dev/null 2>/dev/null) || SKILLS_OUT=
+  case "$SKILLS_OUT" in
+    present\ *) lines=${SKILLS_OUT#present }; INSTR_TEXT="the machine's ~/.agents/AGENTS.md ($lines lines) binds every agent there; after registering this machine, review it with bin/fm-machine-instructions.sh show $1" ;;
+    absent) INSTR_TEXT="none yet (optional): after registering this machine, read its version with bin/fm-machine-instructions.sh show $1, then write its binding instructions with bin/fm-machine-instructions.sh save $1 --expect <sha|none> or Fleet Town's Machine panel" ;;
+    *) INSTR_TEXT="could not read ~/.agents/AGENTS.md over ssh; after registering this machine, check it with bin/fm-machine-instructions.sh show $1" ;;
+  esac
+}
+
 skills_steps() { # <alias> <root>
   local alias=$1 root=$2 url line scratch out
   if ! shared_skills_config; then
@@ -1124,6 +1153,8 @@ cmd_setup() { # <alias> <remote-root>
   fi
   printf 'step doctor=done: fm-remote-doctor.sh --fix ran (exit %s)\n' "$DOCTOR_RC"
   skills_steps "$alias" "$root" || setup_finish "$alias" "$root" "$class" "$known" 1
+  instructions_offer "$alias"
+  printf 'step machine-instructions=skipped: %s\n' "$INSTR_TEXT"
   probe_machine "$alias" "$root"
   if [ "$PROBE_RC" -ne 0 ]; then
     printf 'step probe=failed: the probe over ssh failed (exit %s)\n' "$PROBE_RC"

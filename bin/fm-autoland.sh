@@ -28,6 +28,8 @@
 # Landing. docs/configuration.md "Auto-land" owns eligibility, including
 # authority, attestation, risk, and hold-label policy. Both merge paths use
 # fm_pr_github_checks_not_green in bin/fm-pr-lib.sh for the green-check rule.
+# Before either merge path, bin/fm-machine-rules.sh checks this machine's merge
+# approval requirement; a refusal leaves the PR for captain approval.
 # A PR owned by a task in this home merges through bin/fm-pr-merge.sh, so
 # captain holds, away posture, and merge records apply unchanged; any other PR
 # is re-read live and merged with gh pinned to the verified head. Pending or red
@@ -410,6 +412,10 @@ merge_attempt() {  # <url> <head> <method> <attestation> <max_risk> <base>
   decide "$rec" "$need_attest" "$max_risk"
   if [ "$VERDICT" != merge ]; then
     MERGE_ERROR=${REASON:-"its live checks are no longer all green"}
+    return 1
+  fi
+  if ! out=$("$SCRIPT_DIR/fm-machine-rules.sh" check merge); then
+    MERGE_ERROR=${out:-"this machine's merge authority could not be checked"}
     return 1
   fi
   if task_for_pr "$url"; then

@@ -708,6 +708,7 @@ assert_not_contains "$out" "step gateway-key-mode" "key mode rerun"
 assert_contains "$out" "setup=complete" "complete rerun"
 assert_contains "$out" "step shared-skills=skipped: this home has no config/shared-skills" "unconfigured shared skills"
 assert_contains "$out" "step skill-inventory=done: 1 skills recorded in state/machine-skills/box.tsv" "inventory step"
+assert_contains "$out" "step machine-instructions=skipped: none yet (optional): after registering this machine, read its version with bin/fm-machine-instructions.sh show box, then write its binding instructions with bin/fm-machine-instructions.sh save box --expect <sha|none>" "setup offers the machine's instructions"
 assert_present "$FMH/state/machine-skills/box.tsv" "setup did not record the inventory"
 pass "setup is idempotent and reports complete once nothing is left"
 
