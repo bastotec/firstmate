@@ -155,12 +155,15 @@ record_age() {  # <id>
 }
 
 hold_settled() {  # <id> -> 0 when the captain already owns this worker's call
-  local rc=0
-  FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-captain-hold.sh" open "$1" >/dev/null 2>&1 || rc=$?
-  [ "$rc" -eq 0 ] && return 0
-  rc=0
-  FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-captain-hold.sh" deferred "$1" >/dev/null 2>&1 || rc=$?
-  [ "$rc" -eq 0 ]
+  local id predicate rc
+  for id in "$@"; do
+    for predicate in open deferred; do
+      rc=0
+      FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-captain-hold.sh" "$predicate" "$id" >/dev/null 2>&1 || rc=$?
+      [ "$rc" -eq 1 ] || return "$rc"
+    done
+  done
+  return 1
 }
 
 fingerprint() {  # <id>
@@ -173,13 +176,15 @@ already_raised() {  # <id>
 
 # classify <id>: sets CLASS, DETAIL, AGE
 classify() {
-  local id=$1 line verb worktree
+  local id=$1 line verb worktree hold_rc=0
   AGE=$(record_age "$id")
   DETAIL=
-  if hold_settled "$id" || hold_settled "idle-$id"; then
-    CLASS=held
-    return
-  fi
+  hold_settled "$id" "idle-$id" || hold_rc=$?
+  case "$hold_rc" in
+    0) CLASS=held; return ;;
+    1) ;;
+    *) CLASS=unknown; DETAIL="captain hold could not be read"; return ;;
+  esac
   worktree=$(fm_meta_get "$STATE/$id.meta" worktree)
   fm_treehouse_slot_owner_state "$worktree" "$id"
   if [ "$FM_TREEHOUSE_SLOT_OWNER" = other ]; then
@@ -363,10 +368,13 @@ while IFS=$'\t' read -r otask oeid; do
   AGE=0
   HOLD_ID=
   detail="endpoint $oeid for $otask has no record"
-  if hold_settled "idle-orphan-$otask" || hold_settled "idle-idle-orphan-$otask"; then
-    add_row "idle-orphan-$otask" held "$detail" none
-    continue
-  fi
+  hold_rc=0
+  hold_settled "idle-orphan-$otask" "idle-idle-orphan-$otask" || hold_rc=$?
+  case "$hold_rc" in
+    0) add_row "idle-orphan-$otask" held "$detail" none; continue ;;
+    1) ;;
+    *) add_row "idle-orphan-$otask" unknown "$detail; captain hold could not be read" none; continue ;;
+  esac
   if already_raised "idle-orphan-$otask" "$otask"; then
     add_row "idle-orphan-$otask" raised "$detail" none
     continue

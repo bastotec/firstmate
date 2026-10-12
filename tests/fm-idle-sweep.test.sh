@@ -61,6 +61,9 @@ SH
   cat > "$dir/bin/fm-captain-hold.sh" <<'SH'
 #!/usr/bin/env bash
 case "$1" in
+  open|deferred) [ -f "$FM_HOME/unreadable/$1-$2" ] && exit 2 ;;
+esac
+case "$1" in
   open) [ -f "$FM_HOME/held/$2" ] && exit 0; exit 1 ;;
   deferred) [ -f "$FM_HOME/deferred/$2" ] && exit 0; exit 1 ;;
   hold)
@@ -97,7 +100,7 @@ cat "$FM_HOME/remote-summary" 2>/dev/null || exit 1
 SH
   chmod +x "$dir"/bin/fm-crew-state.sh "$dir"/bin/fm-teardown.sh \
     "$dir"/bin/fm-retire-endpoint.sh "$dir"/bin/fm-captain-hold.sh "$dir"/bin/fm-on.sh
-  mkdir -p "$dir/home/crew" "$dir/home/refuse" "$dir/home/held" "$dir/home/deferred" "$dir/home/closed"
+  mkdir -p "$dir/home/crew" "$dir/home/refuse" "$dir/home/held" "$dir/home/deferred" "$dir/home/closed" "$dir/home/unreadable"
   printf '%s\n' "$dir"
 }
 
@@ -335,6 +338,44 @@ test_orphan_decisions_gate_closure_and_repeated_escalation() {
   pass "fm-idle-sweep: orphan decisions gate closure until the actual task ledger changes"
 }
 
+test_unreadable_holds_prevent_worker_and_orphan_actions() {
+  local dir probe identity prefix mode id
+  for probe in open deferred; do
+    for identity in own followup; do
+      dir=$(new_case "unreadable-$probe-$identity")
+      printf 'gone-task\teid123\n' > "$dir/home/orphans"
+      printf 'blocked: turn active\n' > "$dir/home/state/gone-task.status"
+      : > "$dir/home/orphan-refused"
+      sweep "$dir" scan --now || fail "initial scan failed"
+      [ "$(calls "$dir" hold-calls)" = idle-orphan-gone-task ] || fail "the initial orphan call was not raised"
+      printf 'working: turn ended\n' >> "$dir/home/state/gone-task.status"
+      rm -f "$dir/home/orphan-refused"
+
+      add_worker "$dir" finished-worker 'state: done · source: run-step · run passed' 90000
+      add_worker "$dir" failed-worker 'state: failed · source: run-step · run failed' 90000
+      prefix=
+      [ "$identity" != followup ] || prefix=idle-
+      mode=held
+      [ "$probe" != deferred ] || mode=deferred
+      : > "$dir/home/$mode/${prefix}idle-orphan-gone-task"
+      for id in finished-worker failed-worker idle-orphan-gone-task; do
+        : > "$dir/home/unreadable/$probe-${prefix}$id"
+      done
+
+      sweep "$dir" scan --now || fail "scan failed"
+
+      [ "$(jq '[.workers[] | select(.class=="unknown" and .action=="none")] | length' "$dir/home/state/idle-sweep.json")" = 3 ] \
+        || fail "unreadable $probe calls on $identity identities were not published as unknown/none"
+      assert_present "$dir/home/state/finished-worker.meta" "unreadable holds permitted finished-worker cleanup"
+      [ ! -s "$dir/home/teardown-calls" ] || fail "unreadable holds permitted teardown"
+      [ ! -s "$dir/home/crew-state-calls" ] || fail "unreadable holds permitted worker classification"
+      [ "$(grep -c '^--orphan ' "$dir/home/retire-calls")" = 1 ] || fail "an orphan with an unreadable call was closed"
+      [ "$(grep -c . "$dir/home/hold-attempts")" = 1 ] || fail "unreadable holds permitted escalation"
+    done
+  done
+  pass "fm-idle-sweep: unreadable open or deferred calls leave workers and orphans untouched"
+}
+
 test_second_mates_that_do_not_sweep_are_escalated_once() {
   local dir mate_home
   dir=$(new_case audit)
@@ -447,6 +488,7 @@ test_closed_worker_gets_a_linked_followup_hold
 test_record_less_endpoints_are_closed_as_orphans
 test_refused_orphans_are_published_even_when_holding_fails
 test_orphan_decisions_gate_closure_and_repeated_escalation
+test_unreadable_holds_prevent_worker_and_orphan_actions
 test_second_mates_that_do_not_sweep_are_escalated_once
 test_local_mates_with_missing_homes_are_escalated
 test_scan_uses_fixed_quiet_and_audit_bounds
