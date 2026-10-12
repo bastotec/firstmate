@@ -26,8 +26,8 @@
 # example creating a second mate there). It runs the machine check (or --from).
 # With human items it establishes a full hold/card via fm-captain-hold.sh before
 # publishing the record, then arms the watch and prints the reply. Task:
-# machine-<alias, A-Z lowercased, dots/underscores kept>; closed tasks use the
-# first free or same-action open -2, -3, ... task; different recorded work is refused.
+# machine-<alias, A-Z lowercased, dots/underscores kept>. Reuse a recorded open task;
+# otherwise search base, -2, -3, ... for an absent/same-action open task; refuse different recorded work.
 # --for names the approved action in a few words ("create Inter Graal");
 # --then says what happens on its own once the steps are done (default: the
 # watch re-checks every 5 minutes and the first mate carries on).
