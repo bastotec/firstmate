@@ -35,10 +35,13 @@ Usage:
   fm-approval.sh show <request-id>
   fm-approval.sh presets
   fm-approval.sh policy [--json]               this machine's policy (or that none exists)
-  fm-approval.sh enable <preset>... [--machine NAME] [--home DIR]
-  fm-approval.sh disable <gate-id>...
+  fm-approval.sh enable <preset>... [--machine NAME] [--home DIR] [--by TEXT]
+  fm-approval.sh disable <gate-id>... [--by TEXT]
   fm-approval.sh install-hook                  merge the gate into ~/.agents/deck.hooks.json
   fm-approval.sh status [--json]               hook installed?, gates, for checklists and UIs
+  fm-approval.sh policy-show [--json]          policy, its sha, presets on/off, custom gates
+  fm-approval.sh policy-save --expect <sha|none> [--by TEXT] [--json] < policy.json
+  fm-approval.sh policy-audit [--limit N] [--json]   who changed the policy, what and when
 
 gate. Reads Deck's event ({"tool_name", "args", "session_id", ...}). A call no gate
 matches exits 0 at once. A matching call is allowed only by a grant the captain issued
@@ -79,8 +82,36 @@ steer it with fm-send: answer such a request with --no-steer and steer from the 
 Every event (requested, repeated, approved, denied, used, expired-grant, steer-failed)
 is appended to state/approvals.log as one JSON line {at, event, id, agent, machine, tool, key, ...}.
 
+Policy management (enable, disable, policy-save) is one locked read-modify-write of
+the policy file and appends one JSON line to ~/.agents/approvals-audit.log with
+{at, by, before, after, added, removed, changed}: the policy's sha256 before and
+after (or "none") and the sorted gate ids added, removed and edited.
+The lock dir is ~/.agents/.approvals.lock, refused after ten seconds busy; both
+lock and audit stay beside the policy when FM_APPROVAL_POLICY overrides its path.
+`by` is --by TEXT or defaults to "<user>@<short-hostname> (cli)".
+A save that leaves gates enabled installs the deck hook when it is missing,
+audited as hook_installed: true; an empty-gate save does not remove the hook.
+policy-save takes the whole policy object on stdin and refuses with exit 3 when
+the file's sha is no longer --expect (none = absent), so a stale editor cannot
+overwrite a newer policy.
+Editors must preserve unchanged fields, including home, machine and grant_ttl_secs;
+a save replaces the object rather than merging it, defaulting version to 1 and
+gates to [] when omitted.
+policy-save --json returns the appended audit entry.
+policy-show --json prints {machine, path, present, sha, error, policy,
+hook_installed, grant_ttl_secs, presets: [{id, description, enabled, gates}],
+custom: [gate], gates: [gate]}.
+The policy field preserves all stored fields, defaulting an omitted gates to [];
+it is null when absent or invalid, with error describing an invalid policy.
+A preset is enabled when every one of its gate ids is present, and custom gates
+are those no preset names.
+policy-audit --json returns an array newest first (empty when no audit exists),
+defaulting to the last 50 entries; --limit N is clamped to 1..1000.
+bin/fm-machine-approvals.sh's header owns named-machine local/SSH transport and
+its attribution default.
+
 Exit: 0 ok/allowed; 2 blocked (gate) or usage error; 1 other failure; 3 already
-answered or unknown request; 4 answer recorded but steering failed.
+answered or unknown request, or stale policy-save; 4 answer recorded but steering failed.
 FM_APPROVAL_NOW (epoch seconds) overrides the clock and FM_APPROVAL_SEND overrides
 the fm-send.sh path, for tests.
 """
@@ -478,13 +509,128 @@ def answer_main(argv):
     return 0
 
 
-def save_policy(policy):
-    path = policy_path()
-    validate_policy(policy, path)
-    write_private(path, json.dumps(policy, indent=2) + '\n')
+def policy_sha():
+    try:
+        return hashlib.sha256(policy_path().read_bytes()).hexdigest()
+    except FileNotFoundError:
+        return 'none'
+
+
+def audit_path():
+    return policy_path().parent / 'approvals-audit.log'
+
+
+def default_by():
+    try:
+        user = os.getlogin()
+    except OSError:
+        user = os.environ.get('USER') or 'unknown'
+    return f'{user}@{socket.gethostname().split(".")[0]} (cli)'
+
+
+class PolicyLock:
+    def __init__(self):
+        self.path = policy_path().parent / '.approvals.lock'
+
+    def __enter__(self):
+        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        for _ in range(100):
+            try:
+                self.path.mkdir()
+                return self
+            except FileExistsError:
+                time.sleep(0.1)
+        raise Refuse(f'the policy lock {self.path} is busy; try again')
+
+    def __exit__(self, *exc):
+        try:
+            self.path.rmdir()
+        except OSError:
+            pass
+
+
+def commit_policy(change, by, expect=None):
+    """Locked read-modify-write: change(current_policy_or_None) returns the new policy.
+    Returns the audit entry. expect, when given, must equal the sha before the change."""
+    by = (by or default_by()).strip()
+    if not by or len(by) > 120 or any(ord(c) < 32 for c in by):
+        raise Refuse('--by must be one short line of text', 2)
+    with PolicyLock():
+        before = policy_sha()
+        if expect is not None and expect != before:
+            raise Refuse(f'the policy changed since it was read (now {before}); reload it first', 3)
+        current = load_policy()
+        old = {g['id']: canonical(g) for g in (current or {}).get('gates', [])}
+        policy = change(current)
+        path = policy_path()
+        validate_policy(policy, path)
+        new = {g['id']: canonical(g) for g in policy.get('gates', [])}
+        data = json.dumps(policy, indent=2) + '\n'
+        entry = {'at': iso(now()), 'by': by, 'before': before,
+                 'after': hashlib.sha256(data.encode('utf-8')).hexdigest(),
+                 'added': sorted(set(new) - set(old)), 'removed': sorted(set(old) - set(new)),
+                 'changed': sorted(i for i in set(new) & set(old) if new[i] != old[i])}
+        backup = path.with_name(f'.{path.name}.rollback.{secrets.token_hex(4)}')
+        replaced = False
+        rollback_failed = False
+        try:
+            if before != 'none':
+                write_private(backup, path.read_bytes().decode('utf-8'))
+            fd = os.open(audit_path(), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(fd, 'a', encoding='utf-8') as f:
+                if new and not hook_installed(read_json(hooks_path()) if hooks_path().exists() else None):
+                    install_hook()
+                    entry['hook_installed'] = True
+                write_private(path, data)
+                replaced = True
+                f.write(canonical(entry) + '\n')
+                f.flush()
+                os.fsync(f.fileno())
+        except (OSError, Refuse) as e:
+            if replaced:
+                try:
+                    if before == 'none':
+                        path.unlink()
+                    else:
+                        os.replace(backup, path)
+                except OSError as rollback_error:
+                    rollback_failed = True
+                    raise Refuse(f'policy save failed ({e}); restoring {path} also failed: '
+                                 f'{rollback_error}; recovery copy: {backup}') from e
+            raise Refuse(f'policy save failed; policy unchanged: {e}') from e
+        finally:
+            if not rollback_failed:
+                backup.unlink(missing_ok=True)
+    return entry
+
+
+def take_by(argv):
+    """Pull --by TEXT out of argv; returns (by_or_None, remaining)."""
+    out, by, i = [], None, 0
+    while i < len(argv):
+        if argv[i] == '--by':
+            if i + 1 >= len(argv):
+                raise Refuse('--by needs text', 2)
+            by = argv[i + 1]
+            i += 2
+            continue
+        out.append(argv[i])
+        i += 1
+    return by, out
+
+
+def preset_gates(name):
+    preset = PRESETS[name]
+    return [dict(id=name if n == 0 else f'{name}-{n + 1}', description=preset['description'], **rule)
+            for n, rule in enumerate(preset['gates'])]
+
+
+def preset_ids():
+    return {g['id'] for name in PRESETS for g in preset_gates(name)}
 
 
 def enable_main(argv):
+    by, argv = take_by(argv)
     names, machine, home = [], None, None
     i = 0
     while i < len(argv):
@@ -500,36 +646,129 @@ def enable_main(argv):
     unknown = [n for n in names if n not in PRESETS]
     if unknown or not names:
         raise Refuse(f'unknown preset(s): {" ".join(unknown) or "(none given)"}; see `fm-approval.sh presets`', 2)
-    policy = load_policy() or {'version': 1, 'gates': []}
-    if machine:
-        policy['machine'] = machine
-    if home:
-        policy['home'] = home
-    ids = {g['id'] for g in policy['gates']}
-    for name in names:
-        preset = PRESETS[name]
-        for n, rule in enumerate(preset['gates']):
-            gid = name if n == 0 else f'{name}-{n + 1}'
-            if gid in ids:
-                continue
-            policy['gates'].append(dict(id=gid, description=preset['description'], **rule))
-            ids.add(gid)
-    save_policy(policy)
+
+    def change(current):
+        policy = current or {'version': 1, 'gates': []}
+        policy.setdefault('gates', [])
+        if machine:
+            policy['machine'] = machine
+        if home:
+            policy['home'] = home
+        ids = {g['id'] for g in policy['gates']}
+        for name in names:
+            for gate in preset_gates(name):
+                if gate['id'] not in ids:
+                    policy['gates'].append(gate)
+                    ids.add(gate['id'])
+        return policy
+    commit_policy(change, by)
     print(f'enabled {" ".join(names)} in {policy_path()}')
     return 0
 
 
 def disable_main(argv):
-    policy = load_policy()
-    if not policy:
+    by, argv = take_by(argv)
+    if not policy_path().exists():
         print('no policy on this machine; nothing is gated')
         return 0
-    drop = set(argv)
-    drop |= {g['id'] for g in policy['gates'] if g['id'].rsplit('-', 1)[0] in drop and g['id'].rsplit('-', 1)[-1].isdigit()}
-    before = len(policy['gates'])
-    policy['gates'] = [g for g in policy['gates'] if g['id'] not in drop]
-    save_policy(policy)
-    print(f'removed {before - len(policy["gates"])} gate(s) from {policy_path()}')
+    removed = []
+
+    def change(current):
+        policy = current or {'version': 1, 'gates': []}
+        gates = policy.get('gates', [])
+        drop = set(argv)
+        drop |= {g['id'] for g in gates if g['id'].rsplit('-', 1)[0] in drop and g['id'].rsplit('-', 1)[-1].isdigit()}
+        policy['gates'] = [g for g in gates if g['id'] not in drop]
+        removed.extend(g for g in gates if g['id'] in drop)
+        return policy
+    commit_policy(change, by)
+    print(f'removed {len(removed)} gate(s) from {policy_path()}')
+    return 0
+
+
+def policy_record():
+    hooks = read_json(hooks_path()) if hooks_path().exists() else None
+    rec = {'machine': None, 'path': str(policy_path()), 'present': policy_path().exists(),
+           'sha': policy_sha(), 'error': None, 'policy': None, 'hook_installed': hook_installed(hooks),
+           'grant_ttl_secs': DEFAULT_TTL, 'presets': [], 'custom': [], 'gates': []}
+    try:
+        rec['policy'] = load_policy()
+    except Refuse as e:
+        rec['error'] = str(e)
+    policy = rec['policy'] or {}
+    gates = policy.get('gates', [])
+    ids = {g['id'] for g in gates}
+    rec['machine'] = machine_name(policy)
+    rec['grant_ttl_secs'] = policy.get('grant_ttl_secs', DEFAULT_TTL)
+    rec['gates'] = gates
+    for name, preset in PRESETS.items():
+        pg = preset_gates(name)
+        rec['presets'].append({'id': name, 'description': preset['description'],
+                               'enabled': all(g['id'] in ids for g in pg), 'gates': pg})
+    known = preset_ids()
+    rec['custom'] = [g for g in gates if g['id'] not in known]
+    return rec
+
+
+def policy_save_main(argv):
+    by, argv = take_by(argv)
+    expect, as_json = None, False
+    i = 0
+    while i < len(argv):
+        if argv[i] == '--expect' and i + 1 < len(argv):
+            expect = argv[i + 1]
+            i += 2
+        elif argv[i] == '--json':
+            as_json = True
+            i += 1
+        else:
+            raise Refuse(f'unknown argument: {argv[i]}', 2)
+    if expect is None or not (expect == 'none' or re.fullmatch(r'[0-9a-f]{64}', expect)):
+        raise Refuse('policy-save needs --expect <sha256|none> from policy-show', 2)
+    raw = sys.stdin.read(256 * 1024 + 1)
+    if len(raw) > 256 * 1024:
+        raise Refuse('the policy is over 256 KiB', 2)
+    try:
+        incoming = json.loads(raw)
+    except ValueError as e:
+        raise Refuse(f'the policy is not valid JSON: {e}', 2)
+    if not isinstance(incoming, dict):
+        raise Refuse('the policy must be a JSON object', 2)
+    incoming.setdefault('version', 1)
+    incoming.setdefault('gates', [])
+    entry = commit_policy(lambda current: incoming, by, expect=expect)
+    if as_json:
+        print(canonical(entry))
+    else:
+        print(f'saved={entry["after"]} added={",".join(entry["added"]) or "-"} '
+              f'removed={",".join(entry["removed"]) or "-"} changed={",".join(entry["changed"]) or "-"}')
+    return 0
+
+
+def policy_audit_main(argv):
+    limit, as_json = 50, '--json' in argv
+    if '--limit' in argv:
+        try:
+            limit = max(1, min(1000, int(argv[argv.index('--limit') + 1])))
+        except (IndexError, ValueError):
+            raise Refuse('--limit takes a number', 2)
+    entries = []
+    try:
+        with open(audit_path(), encoding='utf-8') as f:
+            for line in f:
+                try:
+                    entries.append(json.loads(line))
+                except ValueError:
+                    continue
+    except FileNotFoundError:
+        pass
+    entries = entries[-limit:][::-1]
+    if as_json:
+        print(json.dumps(entries))
+    else:
+        for e in entries:
+            print(f'{e.get("at")}\t{e.get("by")}\t+{",".join(e.get("added", [])) or "-"}'
+                  f'\t-{",".join(e.get("removed", [])) or "-"}\t~{",".join(e.get("changed", [])) or "-"}')
     return 0
 
 
@@ -538,11 +777,20 @@ def hook_command():
 
 
 def hook_installed(config):
-    hooks = (config or {}).get('hooks', {}).get('pre_tool_use', [])
-    return any(isinstance(h, dict) and HOOK_COMMAND_RE.search(str(h.get('command', ''))) for h in hooks)
+    if not isinstance(config, dict) or not isinstance(config.get('hooks', {}), dict):
+        return False
+    hooks = config.get('hooks', {}).get('pre_tool_use', [])
+    return isinstance(hooks, list) and any(
+        isinstance(h, dict) and HOOK_COMMAND_RE.search(str(h.get('command', ''))) for h in hooks)
 
 
 def install_hook_main():
+    install_hook()
+    print(f'installed the approval gate in {hooks_path()}')
+    return 0
+
+
+def install_hook():
     path = hooks_path()
     config = {'hooks': {}}
     if path.exists():
@@ -557,8 +805,6 @@ def install_hook_main():
     entries[:] = [h for h in entries if not (isinstance(h, dict) and HOOK_COMMAND_RE.search(str(h.get('command', ''))))]
     entries.insert(0, {'command': hook_command(), 'fail_closed': True})
     write_private(path, json.dumps(config, indent=2) + '\n')
-    print(f'installed the approval gate in {path}')
-    return 0
 
 
 def status_record():
@@ -626,6 +872,21 @@ def main(argv):
             return enable_main(rest)
         if cmd == 'disable':
             return disable_main(rest)
+        if cmd == 'policy-show':
+            rec = policy_record()
+            if '--json' in rest:
+                print(json.dumps(rec))
+            else:
+                print(f'{rec["path"]} sha={rec["sha"]} hook={"installed" if rec["hook_installed"] else "missing"}')
+                for p in rec['presets']:
+                    print(f'preset {p["id"]}={"on" if p["enabled"] else "off"}\t{p["description"]}')
+                for g in rec['custom']:
+                    print(f'custom {g["id"]}\t{g["tool"]}\t{g.get("pattern", "(any call)")}')
+            return 0
+        if cmd == 'policy-save':
+            return policy_save_main(rest)
+        if cmd == 'policy-audit':
+            return policy_audit_main(rest)
         if cmd == 'install-hook':
             return install_hook_main()
         if cmd == 'status':

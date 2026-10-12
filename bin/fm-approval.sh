@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # fm-approval.sh - per-machine approval gates for risky agent tool calls.
 #
-# Usage: fm-approval.sh gate|answer|list|show|presets|policy|enable|disable|install-hook|status ...
+# Usage: see bin/fm-approval.py's header (also printed with no arguments).
 #
 # Thin entry point; bin/fm-approval.py's header owns the whole contract: the
 # machine-local policy at ~/.agents/approvals.json, the Deck pre_tool_use hook

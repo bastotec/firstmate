@@ -297,6 +297,211 @@ test_real_deck_blocks_then_runs_once_after_approval() {
   pass "real deck: blocked, approved once runs once, denied never runs"
 }
 
+test_policy_show_save_and_audit() {
+  local w out sha rc
+  w=$(world policy)
+  out=$(ap "$w" policy-show --json) || fail "policy-show failed"
+  assert_equals none "$(printf '%s' "$out" | jq -r .sha)" "absent policy has sha none"
+  assert_equals false "$(printf '%s' "$out" | jq -r '.presets[] | select(.id=="slack-send") | .enabled')" "preset off"
+  ap "$w" enable slack-send --by "tester" >/dev/null || fail "enable failed"
+  out=$(ap "$w" policy-show --json)
+  assert_equals true "$(printf '%s' "$out" | jq -r '.presets[] | select(.id=="slack-send") | .enabled')" "preset on"
+  assert_equals true "$(printf '%s' "$out" | jq -r .hook_installed)" "enabling a gate installs the hook"
+  sha=$(printf '%s' "$out" | jq -r .sha)
+  # Add a custom gate and drop the MCP half of slack-send in one save.
+  printf '%s' "$out" | jq '.policy | .gates = ([.gates[] | select(.id != "slack-send-2") | .description = "edited"] + [{id:"jira-write", tool:"run_command", pattern:"\\bjira\\b.*\\b(create|comment)\\b", description:"Jira writes"}])' \
+    | ap "$w" policy-save --expect "$sha" --by "captain (Fleet Town)" --json > "$w/save.json" || fail "save refused: $(cat "$w/save.json")"
+  assert_equals '["jira-write"]' "$(jq -c .added "$w/save.json")" "added reported"
+  assert_equals '["slack-send-2"]' "$(jq -c .removed "$w/save.json")" "removed reported"
+  assert_equals '["slack-send"]' "$(jq -c .changed "$w/save.json")" "edited gate reported"
+  out=$(ap "$w" policy-show --json)
+  assert_equals jira-write "$(printf '%s' "$out" | jq -r '.custom[0].id')" "custom gate listed"
+  assert_equals false "$(printf '%s' "$out" | jq -r '.presets[] | select(.id=="slack-send") | .enabled')" "partial preset reads off"
+  rc=0; gate "$w" t1 run_command '{"command":"jira issue create x"}' >/dev/null || rc=$?
+  assert_equals 2 "$rc" "custom gate blocks"
+  rc=0; printf '{"gates":[]}' | ap "$w" policy-save --expect "$sha" >/dev/null 2>&1 || rc=$?
+  assert_equals 3 "$rc" "a stale --expect is refused"
+  assert_equals jira-write "$(ap "$w" policy-show --json | jq -r '.custom[0].id')" "a refused save changes nothing"
+  out=$(ap "$w" policy-audit --json)
+  assert_equals 2 "$(printf '%s' "$out" | jq length)" "two audited changes"
+  assert_equals "captain (Fleet Town)" "$(printf '%s' "$out" | jq -r '.[0].by')" "newest first, with who"
+  assert_equals tester "$(printf '%s' "$out" | jq -r '.[1].by')" "cli --by recorded"
+  assert_equals true "$(printf '%s' "$out" | jq -r '.[1].hook_installed')" "hook install audited"
+  rc=0; printf '{"gates":[{"id":"bad","tool":"run_command","pattern":"("}]}' \
+    | ap "$w" policy-save --expect "$(ap "$w" policy-show --json | jq -r .sha)" >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "an invalid policy is refused"
+  assert_equals jira-write "$(ap "$w" policy-show --json | jq -r '.custom[0].id')" "an invalid save changes nothing"
+  pass "policy-show, locked policy-save with --expect, and the audit trail"
+}
+
+test_enable_disable_audit_real_deltas() {
+  local w out sha
+  w=$(world audit-deltas)
+  FM_APPROVAL_AUDIT="$w/elsewhere.log" ap "$w" enable slack-send >/dev/null || fail "initial enable"
+  assert_present "$w/agents/approvals-audit.log" "audit is beside the machine policy"
+  assert_absent "$w/elsewhere.log" "no independent audit destination"
+  sha=$(ap "$w" policy-show --json | jq -r .sha)
+  ap "$w" enable gmail-send >/dev/null || fail "enable another preset"
+  out=$(ap "$w" policy-audit --limit 1 --json)
+  assert_equals '["gmail-send"]' "$(printf '%s' "$out" | jq -c '.[0].added')" "enable on an existing policy records additions"
+  assert_equals "$sha" "$(printf '%s' "$out" | jq -r '.[0].before')" "before is the previous policy sha"
+  assert_equals "$(ap "$w" policy-show --json | jq -r .sha)" "$(printf '%s' "$out" | jq -r '.[0].after')" "after is the saved policy sha"
+  ap "$w" disable slack-send >/dev/null || fail "disable preset"
+  out=$(ap "$w" policy-audit --limit 1 --json)
+  assert_equals '["slack-send","slack-send-2"]' "$(printf '%s' "$out" | jq -c '.[0].removed')" "disable records both removed gates"
+  assert_equals '[]' "$(printf '%s' "$out" | jq -c '.[0].changed')" "unchanged Gmail gate is not reported changed"
+  pass "enable and disable audit the original gate snapshot"
+}
+
+test_failed_policy_save_preserves_policy() {
+  local w out sha rc config audit_before
+  w=$(world save-failures)
+  printf '{"version":1,"gates":[]}' > "$w/agents/approvals.json"
+  sha=$(ap "$w" policy-show --json | jq -r .sha)
+  for config in '{bad json' '{"hooks":[]}' '{"hooks":{"pre_tool_use":{}}}'; do
+    printf '%s' "$config" > "$w/agents/deck.hooks.json"
+    out=$(ap "$w" policy-show --json) || fail "show with malformed hooks"
+    assert_equals false "$(printf '%s' "$out" | jq -r .hook_installed)" "malformed hooks reported missing"
+    rc=0
+    printf '%s' "$out" | jq '.policy | .gates = [{id:"custom",tool:"run_command"}]' \
+      | ap "$w" policy-save --expect "$sha" >/dev/null 2>&1 || rc=$?
+    assert_equals 1 "$rc" "save refuses malformed hooks"
+    assert_equals "$sha" "$(ap "$w" policy-show --json | jq -r .sha)" "failed hook installation does not stale the editor"
+    assert_equals '[]' "$(ap "$w" policy-audit --json)" "no mutation audited"
+    assert_equals "$config" "$(cat "$w/agents/deck.hooks.json")" "invalid hooks not overwritten"
+  done
+  printf '{"hooks":{}}' > "$w/agents/deck.hooks.json"
+  rm "$w/agents/approvals-audit.log" || fail "remove empty audit fixture"
+  mkdir "$w/agents/approvals-audit.log" || fail "audit failure setup"
+  rc=0
+  ap "$w" enable slack-send >/dev/null 2>&1 || rc=$?
+  assert_equals 1 "$rc" "unopenable audit refuses enable"
+  assert_equals "$sha" "$(ap "$w" policy-show --json | jq -r .sha)" "audit open failure preserves policy"
+  assert_equals false "$(ap "$w" status --json | jq -r .hook_installed)" "audit open failure happens before hook installation"
+  rmdir "$w/agents/approvals-audit.log"
+  printf '{"gates":[{"id":"custom","tool":"run_command"}]}' \
+    | ap "$w" policy-save --expect "$sha" >/dev/null || fail "same editor sha can retry successfully"
+  sha=$(ap "$w" policy-show --json | jq -r .sha)
+  audit_before=$(cat "$w/agents/approvals-audit.log")
+  chmod 400 "$w/agents/approvals-audit.log"
+  if [ ! -w "$w/agents/approvals-audit.log" ]; then
+    rc=0
+    ap "$w" disable custom >/dev/null 2>&1 || rc=$?
+    assert_equals 1 "$rc" "non-writable existing audit refuses disable"
+    assert_equals "$sha" "$(ap "$w" policy-show --json | jq -r .sha)" "non-writable audit preserves policy"
+    assert_equals "$audit_before" "$(cat "$w/agents/approvals-audit.log")" "previous audit entries preserved"
+  fi
+  chmod 600 "$w/agents/approvals-audit.log"
+  pass "hook and audit preparation failures leave policy and editor sha unchanged"
+}
+
+test_audit_append_failure_rolls_back_policy() {
+  local w
+  w=$(world append-failure)
+  python3 - "$ROOT/bin/fm-approval.py" "$w" <<'PY' || fail "audit append rollback"
+import contextlib
+import importlib.util
+import io
+import os
+import sys
+from pathlib import Path
+from unittest.mock import patch
+
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location('approval', sys.argv[1])
+approval = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(approval)
+w = Path(sys.argv[2])
+policy = w / 'agents' / 'approvals.json'
+log = policy.parent / 'approvals-audit.log'
+os.environ['FM_APPROVAL_POLICY'] = str(policy)
+os.environ['FM_DECK_HOOKS'] = str(policy.parent / 'deck.hooks.json')
+fdopen = os.fdopen
+
+class FailedAudit:
+    def __init__(self, file):
+        self.file = file
+    def __enter__(self):
+        return self
+    def __exit__(self, *args):
+        self.file.close()
+    def write(self, data):
+        raise OSError('injected audit append failure')
+
+def fail_append(fd, mode, **kwargs):
+    file = fdopen(fd, mode, **kwargs)
+    return FailedAudit(file) if mode == 'a' else file
+
+for initial in (None, b'{"gates":[]}\n', b'{\r\n  "gates": []\r\n}\r\n'):
+    if initial is None:
+        policy.unlink(missing_ok=True)
+    else:
+        policy.write_bytes(initial)
+    log.write_bytes(b'{"by":"previous"}\n')
+    before = approval.policy_sha()
+    with patch.object(approval.os, 'fdopen', side_effect=fail_append), \
+         patch.object(sys, 'stdin', io.StringIO('{"gates":[]}')), \
+         contextlib.redirect_stderr(io.StringIO()) as stderr:
+        rc = approval.main(['policy-save', '--expect', before])
+    assert rc == 1, rc
+    assert 'policy unchanged' in stderr.getvalue(), stderr.getvalue()
+    assert (policy.read_bytes() if policy.exists() else None) == initial
+    assert log.read_bytes() == b'{"by":"previous"}\n'
+    assert not (policy.parent / '.approvals.lock').exists()
+    assert not list(policy.parent.glob('.*rollback.*'))
+    with patch.object(sys, 'stdin', io.StringIO('{"gates":[]}')), \
+         contextlib.redirect_stdout(io.StringIO()):
+        assert approval.main(['policy-save', '--expect', before]) == 0
+PY
+  pass "audit append failure restores existing policy bytes or removes a new policy"
+}
+
+test_machine_approvals_local_and_remote() {
+  local w fmh out rc
+  w=$(world machine)
+  fmh="$w/fmh"
+  mkdir -p "$fmh/data" "$w/remote-home/.agents"
+  printf -- '- box (root: %s; added 2026-10-12)\n' "$ROOT" > "$fmh/data/machines.md"
+  # Fake ssh: run the remote command here as an account whose HOME is remote-home.
+  # shellcheck disable=SC2016 # the fake's own variables expand when it runs.
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'while [ "$#" -gt 1 ]; do case "$1" in -o) shift 2 ;; *) break ;; esac; done\n'
+    printf 'printf "%%s\\n" "$1" >> %q\n' "$w/ssh.log"
+    printf 'shift\n'
+    printf 'HOME=%q exec bash -c "$*"\n' "$w/remote-home"
+  } > "$w/bin/ssh"
+  chmod +x "$w/bin/ssh"
+  mm() { FM_HOME="$fmh" FM_SSH_BIN="$w/bin/ssh" FM_APPROVAL_POLICY='' FM_DECK_HOOKS='' "$ROOT/bin/fm-machine-approvals.sh" "$@"; }
+  out=$(mm show box) || fail "remote show failed: $out"
+  assert_equals none "$(printf '%s' "$out" | jq -r .sha)" "remote starts empty"
+  assert_equals null "$(printf '%s' "$out" | jq -c .policy)" "absent stored policy is null"
+  jq -n --arg home "$w/remote-home" '{version:1, home:$home, machine:"remote-box", grant_ttl_secs:120, extra:{owner:"kept"}, gates:[]}' \
+    > "$w/remote-home/.agents/approvals.json"
+  out=$(mm show box) || fail "remote show stored policy"
+  assert_equals "$(jq -Sc . "$w/remote-home/.agents/approvals.json")" "$(printf '%s' "$out" | jq -Sc .policy)" "show exposes the complete stored policy"
+  printf '%s' "$out" | jq '.policy | .gates = [{id:"whatsapp-send", tool:"run_command", pattern:"\\bwacli\\b[^\\n]*\\bsend\\b", description:"WhatsApp"}]' \
+    | mm save box --expect "$(printf '%s' "$out" | jq -r .sha)" > "$w/out" || fail "remote save failed: $(cat "$w/out")"
+  assert_equals box "$(head -n1 "$w/ssh.log")" "went over ssh to the alias"
+  assert_present "$w/remote-home/.agents/approvals.json" "policy written on the remote account"
+  assert_equals "$w/remote-home" "$(jq -r .home "$w/remote-home/.agents/approvals.json")" "editor preserves routing home"
+  assert_equals remote-box "$(jq -r .machine "$w/remote-home/.agents/approvals.json")" "editor preserves machine identity"
+  assert_equals 120 "$(jq -r .grant_ttl_secs "$w/remote-home/.agents/approvals.json")" "editor preserves TTL"
+  assert_equals kept "$(jq -r .extra.owner "$w/remote-home/.agents/approvals.json")" "editor preserves other stored fields"
+  mkdir -p "$w/remote-home/state"
+  rc=0
+  (unset FM_APPROVAL_HOME FM_APPROVAL_AGENT; printf '{"tool_name":"run_command","session_id":"ordinary","args":{"command":"wacli send text hi"}}' \
+    | FM_APPROVAL_POLICY="$w/remote-home/.agents/approvals.json" ap "$w" gate >/dev/null 2>&1) || rc=$?
+  assert_equals 2 "$rc" "ordinary Deck call is gated after editor save"
+  assert_equals 1 "$(find "$w/remote-home/state/approvals" -maxdepth 1 -name 'ap-*.json' | wc -l | tr -d ' ')" "ordinary session files an approvable request using preserved home"
+  assert_equals "captain (Fleet Town)" "$(mm audit box | jq -r '.[0].by')" "remote audit has who"
+  rc=0; printf '{"gates":[]}' | mm save box --expect none >/dev/null 2>&1 || rc=$?
+  assert_equals 3 "$rc" "remote conflict exits 3"
+  rc=0; mm show nowhere >/dev/null 2>&1 || rc=$?
+  assert_equals 1 "$rc" "unknown machine refused"
+  pass "fm-machine-approvals shows, saves and audits a remote machine over ssh"
+}
+
 test_no_policy_or_no_gates_lets_everything_through
 test_policy_without_gates_supports_all_policy_commands
 test_matching_call_is_blocked_and_filed_other_calls_pass
@@ -310,3 +515,8 @@ test_mcp_tool_glob_and_presets
 test_install_hook_merges_and_is_idempotent
 test_installed_hook_command_runs_the_gate
 test_real_deck_blocks_then_runs_once_after_approval
+test_policy_show_save_and_audit
+test_enable_disable_audit_real_deltas
+test_failed_policy_save_preserves_policy
+test_audit_append_failure_rolls_back_policy
+test_machine_approvals_local_and_remote
