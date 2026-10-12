@@ -17,6 +17,11 @@ It accumulates watcher results that arrive while a Deck turn runs and delivers t
 The recovery-episode contract below owns once-per-generation announcement.
 A handling successor does not re-announce; it enters its poll loop immediately and keeps scanning signals, stale panes, and checks.
 The model does not re-arm after ordinary wakes.
+A periodic beat is that continuity, not a failure: the driver may replace only its watcher child, so a fresh watcher pid can appear carrying the SAME recovery-generation without restarting the home agent or its Deck session.
+The driver replays any unacked durable inbox record as that turn's instruction.
+When no launch brief is re-presented and the drain shows no unhandled event, handling the replayed instruction is the whole duty; there is no driver failure or supervisor restart to repair.
+A re-presented launch brief or session reset is the definitive driver-loss signal and always warrants the recorded recovery path; a NEW recovery-generation also supports that diagnosis, while generation sameness is only supporting evidence of a beat and never proof that no failure occurred.
+`_fm_recovery_marker_publish` in `bin/fm-wake-lib.sh` preserves a pending or announced generation across downtime publication, so a real driver loss can still show the same generation.
 Terminal arm-output classification (`started`, `attached`, or `FAILED`) remains defense in depth for the manual recovery path.
 The Deck driver uses `&` only for an owned child whose PID it monitors and waits during cleanup, never for an untracked replacement watcher.
 
