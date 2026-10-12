@@ -293,6 +293,48 @@ test_refused_orphans_are_published_even_when_holding_fails() {
   pass "fm-idle-sweep: refused orphan summaries reflect the actual hold result"
 }
 
+test_orphan_decisions_gate_closure_and_repeated_escalation() {
+  local dir mode
+  for mode in held deferred; do
+    dir=$(new_case "orphan-$mode")
+    printf 'gone-task\teid123\n' > "$dir/home/orphans"
+    : > "$dir/home/$mode/idle-orphan-gone-task"
+
+    sweep "$dir" scan --now || fail "scan failed"
+
+    if grep -q '^--orphan ' "$dir/home/retire-calls"; then
+      fail "an orphan with a $mode decision was closed"
+    fi
+    [ ! -s "$dir/home/hold-calls" ] || fail "an orphan with a $mode decision was raised"
+    [ "$(jq -r '.workers[0] | [.class,.action] | join(" ")' "$dir/home/state/idle-sweep.json")" = 'held none' ] \
+      || fail "the $mode orphan was not published as held"
+  done
+
+  dir=$(new_case orphan-raised)
+  printf 'gone-task\teid123\n' > "$dir/home/orphans"
+  printf 'blocked: turn active\n' > "$dir/home/state/gone-task.status"
+  : > "$dir/home/orphan-refused"
+  sweep "$dir" scan --now || fail "first scan failed"
+  [ "$(calls "$dir" hold-calls)" = idle-orphan-gone-task ] || fail "the orphan was not raised"
+
+  rm -f "$dir/home/orphan-refused"
+  sweep "$dir" scan --now || fail "second scan failed"
+  [ "$(grep -c '^--orphan ' "$dir/home/retire-calls")" = 1 ] || fail "an unchanged raised orphan was closed"
+  [ "$(jq -r '.workers[0] | [.class,.action] | join(" ")' "$dir/home/state/idle-sweep.json")" = 'raised none' ] \
+    || fail "the unchanged orphan was not published as raised"
+
+  : > "$dir/home/orphan-refused"
+  sweep "$dir" scan --now || fail "third scan failed"
+  [ "$(grep -c . "$dir/home/hold-calls")" = 1 ] || fail "an unchanged orphan was raised again"
+  [ "$(grep -c '^--orphan ' "$dir/home/retire-calls")" = 1 ] || fail "an unchanged orphan's close was retried"
+
+  printf 'blocked: new turn\n' >> "$dir/home/state/gone-task.status"
+  sweep "$dir" scan --now || fail "fourth scan failed"
+  [ "$(grep -c . "$dir/home/hold-calls")" = 2 ] || fail "a changed orphan ledger did not permit a new decision"
+  [ "$(grep -c '^--orphan ' "$dir/home/retire-calls")" = 2 ] || fail "a changed orphan ledger did not permit closure"
+  pass "fm-idle-sweep: orphan decisions gate closure until the actual task ledger changes"
+}
+
 test_second_mates_that_do_not_sweep_are_escalated_once() {
   local dir mate_home
   dir=$(new_case audit)
@@ -404,6 +446,7 @@ test_reassigned_slots_cannot_supply_completion
 test_closed_worker_gets_a_linked_followup_hold
 test_record_less_endpoints_are_closed_as_orphans
 test_refused_orphans_are_published_even_when_holding_fails
+test_orphan_decisions_gate_closure_and_repeated_escalation
 test_second_mates_that_do_not_sweep_are_escalated_once
 test_local_mates_with_missing_homes_are_escalated
 test_scan_uses_fixed_quiet_and_audit_bounds

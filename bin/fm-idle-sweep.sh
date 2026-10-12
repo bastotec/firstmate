@@ -150,11 +150,11 @@ hold_settled() {  # <id> -> 0 when the captain already owns this worker's call
 }
 
 fingerprint() {  # <id>
-  printf '%s\n' "$(size_of "$STATE/$1.status")"
+  printf '%s\n' "$(size_of "$STATE/${2:-$1}.status")"
 }
 
 already_raised() {  # <id>
-  [ -f "$RAISED_DIR/$1.raised" ] && [ "$(cat "$RAISED_DIR/$1.raised" 2>/dev/null)" = "$(fingerprint "$1")" ]
+  [ -f "$RAISED_DIR/$1.raised" ] && [ "$(cat "$RAISED_DIR/$1.raised" 2>/dev/null)" = "$(fingerprint "$1" "${2:-$1}")" ]
 }
 
 # classify <id>: sets CLASS, DETAIL, AGE
@@ -213,7 +213,7 @@ hours() {  # <secs>
 # raise <id> <class> <why> <project>: hold the worker for the captain with a
 # full card. Prints nothing; sets RAISED=1 on success.
 raise() {
-  local id=$1 class=$2 why=$3 project=$4 card title situation reason rec o1 o2 l1 l2 rc=0 out call_id=$1
+  local id=$1 class=$2 why=$3 project=$4 card title situation reason rec o1 o2 l1 l2 rc=0 out call_id=$1 ledger_id=${5:-$1}
   local hold_args=()
   HOLD_ID=
   local where="this home"
@@ -260,7 +260,7 @@ raise() {
     return 0
   fi
   mkdir -p "$RAISED_DIR" 2>/dev/null || true
-  fingerprint "$id" > "$RAISED_DIR/$id.raised" 2>/dev/null || true
+  fingerprint "$id" "$ledger_id" > "$RAISED_DIR/$id.raised" 2>/dev/null || true
   log "raised $id ($class): $why"
   RAISED=1
   HOLD_ID=$call_id
@@ -345,22 +345,27 @@ done < <(worker_metas)
 orphans=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-retire-endpoint.sh" --list-orphans 2>/dev/null) || orphans=
 while IFS=$'\t' read -r otask oeid; do
   [ -n "$otask" ] && [ -n "$oeid" ] || continue
-  rc=0
-  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-retire-endpoint.sh" --orphan "$otask" --endpoint "$oeid" </dev/null 2>&1) || rc=$?
   AGE=0
   HOLD_ID=
-  if [ "$rc" -eq 0 ]; then
-    log "closed orphan endpoint $oeid ($otask)"
-    add_row "idle-orphan-$otask" dead "endpoint $oeid had no record" cleaned
-    continue
-  fi
-  detail="endpoint $oeid for $otask has no record and its close refused: $(one_line "$out")"
+  detail="endpoint $oeid for $otask has no record"
   if hold_settled "idle-orphan-$otask" || hold_settled "idle-idle-orphan-$otask"; then
     add_row "idle-orphan-$otask" held "$detail" none
     continue
   fi
+  if already_raised "idle-orphan-$otask" "$otask"; then
+    add_row "idle-orphan-$otask" raised "$detail" none
+    continue
+  fi
+  rc=0
+  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-retire-endpoint.sh" --orphan "$otask" --endpoint "$oeid" </dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    log "closed orphan endpoint $oeid ($otask)"
+    add_row "idle-orphan-$otask" dead "$detail" cleaned
+    continue
+  fi
+  detail="$detail and its close refused: $(one_line "$out")"
   RAISED=0
-  raise "idle-orphan-$otask" dead "$detail" "$(basename "$FM_HOME")"
+  raise "idle-orphan-$otask" dead "$detail" "$(basename "$FM_HOME")" "$otask"
   if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; else action=unhandled; fi
   add_row "idle-orphan-$otask" dead "$detail" "$action"
 done <<< "$orphans"
