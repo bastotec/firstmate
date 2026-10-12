@@ -14,6 +14,7 @@
 #   show  -> fm-approval.sh policy-show --json
 #   save  -> fm-approval.sh policy-save --expect ... --by ... --json (stdin passes through)
 #   audit -> fm-approval.sh policy-audit --json [--limit N]
+# save defaults --by to "captain (Fleet Town)"; --by TEXT overrides attribution.
 # Output is that JSON on stdout. A remote machine is reached with
 # `ssh -o BatchMode=yes <alias>` (FM_SSH_BIN overrides ssh). Refusals print
 # `refuse: <reason>` and exit 1 (3 for a save conflict); usage errors exit 2.

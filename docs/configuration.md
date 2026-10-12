@@ -619,12 +619,12 @@ The region, model, and profile files are read as their first non-blank, non-`#` 
 
 Some machines should not rely on `AGENTS.md` alone for actions the captain wants to see first, such as Slack, PR comments or email.
 After hook installation, every Deck agent in that machine account passes through [`bin/fm-approval.sh`](../bin/fm-approval.sh); unapproved matching calls become pending requests in their owning home rather than executing.
-This repository provides the approval command and records; Fleet Town's card display and answer routing require the separate firstmate-ui integration.
-The policy stays on the machine, outside home inheritance and dotfiles synchronization; the captain manages it with `enable` and `disable` or edits it locally.
+This repository provides the approval commands, records, and machine-policy editing backend; Fleet Town's Machine panel, removal confirmation, card display, and answer routing require the separate firstmate-ui integration.
+The policy stays on the machine, outside home inheritance and dotfiles synchronization; the captain manages presets and custom gates through the CLI or the machine-policy transport.
 Nothing is gated until the captain enables a gate:
 
 ```sh
-bin/fm-approval.sh install-hook            # once per machine; also offered by bin/fm-machine.sh check/setup
+bin/fm-approval.sh install-hook            # optional; also offered by bin/fm-machine.sh check/setup
 bin/fm-approval.sh presets                 # current presets and their scope
 bin/fm-approval.sh enable slack-send gh-pr-write
 bin/fm-approval.sh status                  # installed hook, enabled gates, policy errors
@@ -632,8 +632,8 @@ FM_HOME=<home> bin/fm-approval.sh list      # pending requests
 FM_HOME=<home> bin/fm-approval.sh answer <id> --approve  # or --deny
 ```
 
-Fleet Town's Machine panel edits the same file on any machine through [`bin/fm-machine-approvals.sh`](../bin/fm-machine-approvals.sh) (`show`, `save --expect <sha>`, `audit`); every change, from there or the CLI, is one locked save appended to `~/.agents/approvals-audit.log` with who, when and which gates were added, removed or edited.
-[`bin/fm-approval.py`](../bin/fm-approval.py)'s header owns policy defaults and validation, matching limits, request and grant lifetimes, exact-call replay, routing (including secondmate `--no-steer --json` answers), and exit codes.
+[`bin/fm-machine-approvals.sh`](../bin/fm-machine-approvals.sh)'s header owns local/SSH policy editing commands and machine selection for Fleet Town's integration.
+[`bin/fm-approval.py`](../bin/fm-approval.py)'s header owns policy defaults and validation, locked saves, stale-editor refusal, change auditing, automatic hook installation, matching limits, request and grant lifetimes, exact-call replay, routing (including secondmate `--no-steer --json` answers), and exit codes.
 The gate is command-text/tool-name matching, not a sandbox; do not treat it as protection against every way to reach a service.
 [`tests/fm-approval.test.sh`](../tests/fm-approval.test.sh) covers the approval contract, and [`tests/fm-machine.test.sh`](../tests/fm-machine.test.sh) covers machine setup and policy-repair reporting.
 

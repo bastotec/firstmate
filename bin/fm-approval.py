@@ -35,8 +35,8 @@ Usage:
   fm-approval.sh show <request-id>
   fm-approval.sh presets
   fm-approval.sh policy [--json]               this machine's policy (or that none exists)
-  fm-approval.sh enable <preset>... [--machine NAME] [--home DIR]
-  fm-approval.sh disable <gate-id>...
+  fm-approval.sh enable <preset>... [--machine NAME] [--home DIR] [--by TEXT]
+  fm-approval.sh disable <gate-id>... [--by TEXT]
   fm-approval.sh install-hook                  merge the gate into ~/.agents/deck.hooks.json
   fm-approval.sh status [--json]               hook installed?, gates, for checklists and UIs
   fm-approval.sh policy-show [--json]          policy, its sha, presets on/off, custom gates
@@ -83,24 +83,35 @@ Every event (requested, repeated, approved, denied, used, expired-grant, steer-f
 is appended to state/approvals.log as one JSON line {at, event, id, agent, machine, tool, key, ...}.
 
 Policy management (enable, disable, policy-save) is one locked read-modify-write of
-the policy file (lock dir ~/.agents/.approvals.lock, refused after ten seconds busy)
-and appends one JSON line to ~/.agents/approvals-audit.log with
-{at, by, before, after, added, removed, changed}: the policy's sha256
-before and after (or "none") and the gate ids added, removed and edited. `by` is
---by TEXT (Fleet Town passes "captain (Fleet Town)") or <user>@<host> (cli). A save
-that leaves gates enabled installs the deck hook when it is missing (audited as
-hook_installed). policy-save takes the whole policy object on stdin and refuses with
-exit 3 when the file's sha is no longer --expect (none = absent), so a stale editor
-cannot overwrite a newer policy. policy-show --json prints {machine, path, present,
-sha, error, policy, hook_installed, grant_ttl_secs, presets: [{id, description,
-enabled, gates}], custom: [gate], gates: [gate]}; policy is the complete stored
-object (null when absent or invalid), for editors to preserve unchanged fields.
+the policy file and appends one JSON line to ~/.agents/approvals-audit.log with
+{at, by, before, after, added, removed, changed}: the policy's sha256 before and
+after (or "none") and the sorted gate ids added, removed and edited.
+The lock dir is ~/.agents/.approvals.lock, refused after ten seconds busy; both
+lock and audit stay beside the policy when FM_APPROVAL_POLICY overrides its path.
+`by` is --by TEXT or defaults to "<user>@<short-hostname> (cli)".
+A save that leaves gates enabled installs the deck hook when it is missing,
+audited as hook_installed: true; an empty-gate save does not remove the hook.
+policy-save takes the whole policy object on stdin and refuses with exit 3 when
+the file's sha is no longer --expect (none = absent), so a stale editor cannot
+overwrite a newer policy.
+Editors must preserve unchanged fields, including home, machine and grant_ttl_secs;
+a save replaces the object rather than merging it, defaulting version to 1 and
+gates to [] when omitted.
+policy-save --json returns the appended audit entry.
+policy-show --json prints {machine, path, present, sha, error, policy,
+hook_installed, grant_ttl_secs, presets: [{id, description, enabled, gates}],
+custom: [gate], gates: [gate]}.
+The policy field preserves all stored fields, defaulting an omitted gates to [];
+it is null when absent or invalid, with error describing an invalid policy.
 A preset is enabled when every one of its gate ids is present, and custom gates
 are those no preset names.
-bin/fm-machine-approvals.sh runs these on a named machine, locally or over ssh.
+policy-audit --json returns an array newest first (empty when no audit exists),
+defaulting to the last 50 entries; --limit N is clamped to 1..1000.
+bin/fm-machine-approvals.sh's header owns named-machine local/SSH transport and
+its attribution default.
 
 Exit: 0 ok/allowed; 2 blocked (gate) or usage error; 1 other failure; 3 already
-answered or unknown request; 4 answer recorded but steering failed.
+answered or unknown request, or stale policy-save; 4 answer recorded but steering failed.
 FM_APPROVAL_NOW (epoch seconds) overrides the clock and FM_APPROVAL_SEND overrides
 the fm-send.sh path, for tests.
 """
