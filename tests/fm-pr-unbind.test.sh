@@ -50,6 +50,7 @@ make_home() {  # <name>; prints the home
   : > "$home/open-heads"
   cat > "$home/fakebin/gh" <<SH
 #!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$home/gh.log"
 case "\${1:-} \${2:-}" in
   "pr list")
     [ "\${FM_TEST_GH_LIST_FAIL:-0}" = 0 ] || exit 1
@@ -72,6 +73,7 @@ esac
 exit 1
 SH
   chmod +x "$home/fakebin/gh"
+  : > "$home/gh.log"
   printf '%s\n' "$home"
 }
 
@@ -339,6 +341,29 @@ test_non_github_origin_refuses() {
   pass "a non-GitHub worktree origin refuses"
 }
 
+test_github_origin_url_forms_are_normalized() {
+  local home id meta out rc case_name origin
+  while IFS='|' read -r case_name origin; do
+    id="task-origin-$case_name"
+    home=$(armed_home "origin-$case_name" "$id" https://github.com/example/repo_name/pull/4)
+    meta="$home/state/$id.meta"
+    git -C "$home/wt" remote set-url origin "$origin" >/dev/null 2>&1
+    : > "$home/gh.log"
+
+    out=$(run_unbind "$home" "$id"); rc=$?
+    expect_code 0 "$rc" "unbind with $case_name GitHub origin"
+    [ "$(meta_pr "$meta")" = "" ] || fail "$case_name GitHub origin left pr="
+    grep -qxF 'pr list --repo example/repo_name --state open --head fm/'"$id"' --limit 5 --json headRefName --jq .[].headRefName' "$home/gh.log" \
+      || fail "$case_name GitHub origin was not normalized for the forge query: $(cat "$home/gh.log")"
+  done <<'EOF'
+userinfo|https://user@github.com/example/repo_name.git
+https-port|https://github.com:443/example/repo_name.git
+ssh-port|ssh://git@github.com:22/example/repo_name.git
+scp-user|deploy@github.com:example/repo_name.git
+EOF
+  pass "GitHub origins with userinfo and ports are normalized"
+}
+
 test_missing_worktree_refuses() {
   local home id meta out rc
   id=task-nowt
@@ -599,6 +624,7 @@ test_forge_read_failure_refuses
 test_missing_gh_refuses_before_any_change
 test_no_pr_meta_refuses
 test_non_github_origin_refuses
+test_github_origin_url_forms_are_normalized
 test_missing_worktree_refuses
 test_poll_mismatch_refuses
 test_custom_check_is_left_alone

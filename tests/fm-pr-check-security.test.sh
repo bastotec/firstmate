@@ -2251,33 +2251,70 @@ test_merged_poll_row_names_no_authority_when_no_record_grants_one() {
   pass "poll distinguishes attended authorization from external landing"
 }
 
-test_authority_persistence_refuses_rebound_metadata() {
-  local dir state url_a url_b rc
+test_external_rebind_waits_for_merge_control_lock() {
+  local dir state url_a url_b rc rebind_rc i
   url_a=https://github.com/o/r/pull/1
   url_b=https://github.com/o/r/pull/2
-  dir=$(make_case merge-authority-rebound-metadata)
+  dir=$(make_case merge-authority-external-rebind)
   state="$dir/home/state"
   write_task_meta "$dir" task-a
   run_check_entry "$dir" task-a "$url_a" >/dev/null 2> "$dir/seed.err" \
     || fail "rebind: could not arm the original poll"
   cat > "$dir/rebind.sh" <<SH
 #!/usr/bin/env bash
-"$PR_CHECK" task-a "$url_b" >/dev/null
+: > "$dir/rebind-started"
+set +e
+"$PR_CHECK" task-a "$url_b" > "$dir/rebind.out" 2> "$dir/rebind.err"
+rc=\$?
+set -e
+printf '%s\n' "\$rc" > "$dir/rebind.rc"
 SH
   chmod +x "$dir/rebind.sh"
+  cat > "$dir/merge-hook.sh" <<SH
+#!/usr/bin/env bash
+"$dir/rebind.sh" > "$dir/rebind-launch.out" 2> "$dir/rebind-launch.err" &
+printf '%s\n' "\$!" > "$dir/rebind.pid"
+i=0
+while [ ! -e "$dir/rebind-started" ] && [ "\$i" -lt 200 ]; do
+  sleep 0.01
+  i=\$((i + 1))
+done
+[ -e "$dir/rebind-started" ] || exit 91
+sleep 0.5
+if [ ! -e "$dir/rebind.rc" ] && grep -qxF "pr=$url_a" "$state/task-a.meta"; then
+  : > "$dir/rebind-waited"
+else
+  : > "$dir/rebind-crossed-lock"
+fi
+SH
+  chmod +x "$dir/merge-hook.sh"
+
   set +e
-  FM_TEST_GH_MERGE_HOOK="$dir/rebind.sh" \
+  FM_TEST_GH_MERGE_HOOK="$dir/merge-hook.sh" \
     FM_TEST_GH_GRAPHQL_STATE=OPEN FM_TEST_GH_GRAPHQL_MERGED=false \
     FM_TEST_GH_GRAPHQL_QUEUED=true \
     run_merge_entry "$dir" task-a "$url_a" > "$dir/merge.out" 2> "$dir/merge.err"
   rc=$?
   set -e
-  [ "$rc" -ne 0 ] || fail "rebind: accepted merge persisted against rebound metadata"
+  [ "$rc" -eq 0 ] || fail "rebind: serialized merge failed: $(cat "$dir/merge.err")"
+  [ -e "$dir/rebind-waited" ] \
+    || fail "rebind: external registration did not wait for the merge control lock"
+  [ ! -e "$dir/rebind-crossed-lock" ] \
+    || fail "rebind: external registration crossed the merge control lock"
+
+  i=0
+  while [ ! -e "$dir/rebind.rc" ] && [ "$i" -lt 500 ]; do
+    sleep 0.01
+    i=$((i + 1))
+  done
+  [ -e "$dir/rebind.rc" ] || fail "rebind: serialized external registration did not finish"
+  rebind_rc=$(cat "$dir/rebind.rc")
+  [ "$rebind_rc" -eq 0 ] || fail "rebind: external registration failed: $(cat "$dir/rebind.err")"
   grep -qxF "pr=$url_b" "$state/task-a.meta" \
-    || fail "rebind: merge hook did not replace the canonical identity"
-  [ ! -e "$state/task-a.merge-authority" ] \
-    || fail "rebind: authority was published for the wrong canonical identity"
-  pass "accepted merge authority refuses rebound task metadata"
+    || fail "rebind: external registration did not run after the merge released its lock"
+  [ -e "$state/task-a.merge-authority" ] \
+    || fail "rebind: accepted merge authority was not persisted before the rebind"
+  pass "an external rebind waits for the merge control lock"
 }
 
 test_authority_persists_before_control_unlock() {
@@ -2379,7 +2416,7 @@ case " $* " in
   *"task-a.pr-poll-merge-notified "*)
     if [ ! -e "$FM_TEST_REPLACEMENT_RAN" ]; then
       : > "$FM_TEST_REPLACEMENT_RAN"
-      "$FM_TEST_REPLACEMENT_SCRIPT"
+      "$FM_TEST_REPLACEMENT_SCRIPT" > "$FM_TEST_REPLACEMENT_LOG" 2>&1 &
     fi
     ;;
 esac
@@ -2389,6 +2426,7 @@ SH
   set +e
   FM_TEST_REAL_MV="$REAL_MV" FM_TEST_REPLACEMENT_RAN="$dir/replacement-ran" \
     FM_TEST_REPLACEMENT_SCRIPT="$dir/replace-authority.sh" \
+    FM_TEST_REPLACEMENT_LOG="$dir/replace-authority.log" \
     FM_TEST_GH_STATE=MERGED run_watcher_bounded "$dir/home" "$dir/fakebin" \
       > "$dir/watch-a.out" 2> "$dir/watch-a.err"
   rc=$?
@@ -2398,7 +2436,7 @@ SH
   while [ ! -e "$dir/replacement-merge.rc" ]; do
     sleep 0.01
     i=$((i + 1))
-    [ "$i" -lt 200 ] || fail "replacement: serialized replacement merge did not finish"
+    [ "$i" -lt 500 ] || fail "replacement: serialized replacement merge did not finish"
   done
   [ "$(cat "$dir/replacement-merge.rc")" -eq 0 ] \
     || fail "replacement: serialized replacement merge failed: $(cat "$dir/replacement-merge.err")"
@@ -2575,7 +2613,7 @@ test_merged_poll_retries_a_failed_upward_report
 test_self_merge_and_poll_publish_one_outcome
 test_merged_poll_row_carries_the_merge_authority
 test_merged_poll_row_names_no_authority_when_no_record_grants_one
-test_authority_persistence_refuses_rebound_metadata
+test_external_rebind_waits_for_merge_control_lock
 test_authority_persists_before_control_unlock
 test_teardown_cannot_race_authority_consumption
 test_authority_retirement_preserves_replacement

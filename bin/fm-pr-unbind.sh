@@ -85,6 +85,8 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-project-origin-lib.sh
+. "$SCRIPT_DIR/fm-project-origin-lib.sh"
 
 # Resolved after the libraries because fm-wake-lib.sh derives its own STATE with
 # a defaulting expansion that would silently turn an explicitly empty
@@ -185,17 +187,38 @@ if [ -z "$ORIGIN" ]; then
   echo "error: the task's worktree has no usable origin, so the forge cannot be checked for the task's own branch" >&2
   exit 1
 fi
+if ! fm_project_origin_safe "$ORIGIN"; then
+  echo "error: the task's worktree origin does not name a valid repository" >&2
+  exit 1
+fi
+ORIGIN_HOST=
+ORIGIN_PATH=
 case "$ORIGIN" in
-  git@github.com:*|https://github.com/*|ssh://git@github.com/*)
-    REPO=$(printf '%s' "$ORIGIN" | sed -e 's|^git@github.com:||' \
-      -e 's|^ssh://git@github.com/||' -e 's|^https://github.com/||' \
-      -e 's|/$||' -e 's|\.git$||')
+  https://*|http://*|ssh://*|git://*)
+    origin_rest=${ORIGIN#*://}
+    origin_authority=${origin_rest%%/*}
+    origin_hostport=${origin_authority##*@}
+    ORIGIN_HOST=${origin_hostport%%:*}
+    if [ "$origin_rest" != "$origin_authority" ]; then
+      ORIGIN_PATH=${origin_rest#*/}
+    fi
     ;;
-  *)
-    echo "error: the PR unbind supports github.com origins only; the task's worktree origin is unsupported" >&2
-    exit 1
+  *:*)
+    origin_rest=$ORIGIN
+    case "$origin_rest" in
+      *@*) origin_rest=${origin_rest#*@} ;;
+    esac
+    ORIGIN_HOST=${origin_rest%%:*}
+    ORIGIN_PATH=${origin_rest#*:}
     ;;
 esac
+ORIGIN_HOST=$(printf '%s' "$ORIGIN_HOST" | tr '[:upper:]' '[:lower:]')
+if [ "$ORIGIN_HOST" != github.com ]; then
+  echo "error: the PR unbind supports github.com origins only; the task's worktree origin is unsupported" >&2
+  exit 1
+fi
+REPO=${ORIGIN_PATH%/}
+REPO=${REPO%.git}
 # Reuse the canonical URL parser to validate the derived owner/repository shape,
 # rather than trusting whatever string the remote URL carried.
 if ! fm_pr_url_parse "https://github.com/$REPO/pull/1"; then

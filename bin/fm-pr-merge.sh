@@ -1136,14 +1136,7 @@ case "$PROVIDER" in
     [ "$away_status" -eq 0 ] || exit "$away_status"
     refuse_github_queue_while_away || exit 2
     merge_status=0
-    # The forge command runs inside this task's control-lock critical section,
-    # and a forge hook may re-enter firstmate (the rebound-metadata guard in
-    # tests/fm-pr-check-security.test.sh drives exactly that shape). Pass the
-    # lock-ownership marker into the child so a re-entrant fm-pr-check.sh joins
-    # this critical section instead of waiting forever on the lock this merge
-    # holds; every other caller still acquires the lock and stays serialized.
-    merge_output=$(FM_PR_MERGE_HOLDS_CONTROL_LOCK="$ID" \
-      gh pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" \
+    merge_output=$(gh pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" \
       --match-head-commit "$FM_PR_MERGE_HEAD" \
       "${merge_args[@]+"${merge_args[@]}"}" "$@" 2>&1) || merge_status=$?
     if [ "$merge_status" -eq 0 ]; then
@@ -1201,12 +1194,7 @@ case "$PROVIDER" in
     if [ "$FM_PR_AWAY_POSTURE" = true ]; then
       gitlab_merge_args=(--auto-merge=false)
     fi
-    # Same re-entrancy contract as the GitHub branch above: the forge merge
-    # child runs while this merge holds the task control lock, so it inherits
-    # the ownership marker and a re-entrant fm-pr-check.sh joins the critical
-    # section rather than deadlocking on the lock this merge holds.
-    FM_PR_MERGE_HOLDS_CONTROL_LOCK="$ID" GITLAB_HOST="$FM_PR_HOST" \
-      glab mr merge "$PR_NUMBER" -R "$PROJECT_URL" \
+    GITLAB_HOST="$FM_PR_HOST" glab mr merge "$PR_NUMBER" -R "$PROJECT_URL" \
       --sha "$FM_PR_MERGE_HEAD" --yes "$@" "${gitlab_merge_args[@]+"${gitlab_merge_args[@]}"}" || merge_status=$?
     if [ "$merge_status" -ne 0 ]; then
       fm_afk_contract_lock_release || true

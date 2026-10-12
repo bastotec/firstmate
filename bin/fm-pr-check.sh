@@ -104,36 +104,10 @@ fm_pr_poll_prepare "$STATE" "$ID" "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$N
 
 # The task control lock covers the metadata rewrite through poll publication so
 # a direct registration cannot interleave with lifecycle cleanup or PR unbind.
-# Two re-entry shapes must join this critical section instead of waiting on a
-# lock their own call tree already holds, or they deadlock: fm-pr-merge.sh,
-# which owns the lock and passes a task-matched inheritance marker, and any
-# process the lock holder itself spawns that re-enters firstmate - the forge
-# merge child and a watcher poll transaction's hooks are the real shapes - for
-# which the lock's recorded holder being an ancestor of this process is the
-# join proof. Every other invocation acquires the lock here.
+# fm-pr-merge.sh already owns that lock when it records metadata and passes a
+# task-matched inheritance marker; every other invocation acquires it here.
 CONTROL_LOCK="$STATE/.control-$ID.lock"
-pr_check_lock_holder_is_ancestor() {
-  local holder child pid ppid
-  holder=$(cat "$CONTROL_LOCK/pid" 2>/dev/null) || return 1
-  case "$holder" in ''|*[!0-9]*) return 1 ;; esac
-  fm_pid_alive "$holder" || return 1
-  fm_current_pid child || return 1
-  [ "$holder" != "$child" ] || return 1
-  pid=$child
-  while :; do
-    if [ -r "/proc/$pid/status" ]; then
-      ppid=$(awk '/^PPid:/{print $2; exit}' "/proc/$pid/status" 2>/dev/null) || return 1
-    else
-      ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]') || return 1
-    fi
-    case "$ppid" in ''|*[!0-9]*|0) return 1 ;; esac
-    [ "$ppid" != "$holder" ] || return 0
-    [ "$ppid" != "1" ] || return 1
-    pid=$ppid
-  done
-}
-if [ "${FM_PR_MERGE_HOLDS_CONTROL_LOCK:-}" != "$ID" ] \
-  && ! pr_check_lock_holder_is_ancestor; then
+if [ "${FM_PR_MERGE_HOLDS_CONTROL_LOCK:-}" != "$ID" ]; then
   fm_lock_acquire_wait "$CONTROL_LOCK" || {
     echo "error: could not take the task $ID control lock" >&2
     exit 1
