@@ -9,6 +9,8 @@
 #   fm-machine-remote.sh install-tool <tool> <remote-root>
 #   fm-machine-remote.sh install-deck <remote-root> <deck-repo-url>
 #   fm-machine-remote.sh install-approval-gate <remote-root>
+#   fm-machine-remote.sh tunnel-key <alias>
+#   fm-machine-remote.sh install-tunnel <label> <port> <user> <host> <ssh-port> <known-hosts-line> <check-url> gateway|hub
 #
 # It needs no Firstmate checkout on the machine, so it works before prepare.
 # Runtime lookups and install checks use the remote job worker's PATH, composed by
@@ -46,6 +48,22 @@
 # install-approval-gate runs <remote-root>/bin/fm-approval.sh install-hook, which
 # merges the approval gate into ~/.agents/deck.hooks.json; it enables no gate
 # (bin/fm-approval.py owns the policy) and prints the same result line.
+#
+# tunnel-key makes ~/.ssh/fm_workload_tunnel (ed25519, no passphrase, comment
+# fm-tunnel@<alias>) when it is absent and prints `pubkey=<public key line>`;
+# the private key never leaves the machine.
+# install-tunnel keeps 127.0.0.1:<port> forwarded to the same port on the
+# gateway host with a KeepAlive user service: launchd (~/Library/LaunchAgents/
+# <label>.plist) on macOS, systemd --user (~/.config/systemd/user/<label>.service)
+# on Linux, running /usr/bin/ssh -N with that key, BatchMode, strict host-key
+# checking against ~/.ssh/fm_workload_known_hosts (written from
+# <known-hosts-line>, which the caller pins from its own trusted key; an
+# existing different pin is refused) and ExitOnForwardFailure. An unchanged,
+# running service is left alone; a changed one of ours is replaced; a port
+# something else already answers on is refused. It then waits for the port and
+# verifies it: gateway needs HTTP 200 from <check-url>/models with the gateway
+# client key (read here, passed to curl on stdin, never printed), hub needs any
+# HTTP answer from <check-url>. It prints the same result line.
 set -u
 
 if ! declare -F fm_home_tool_install_cmd >/dev/null; then
@@ -207,8 +225,117 @@ cmd_install_deck() { # <root> <repo-url>
   printf 'result=done: %s at %s\n' "$dest" "$(git -C "$src" rev-parse --short HEAD)"
 }
 
+TUNNEL_KEY_NAME=fm_workload_tunnel
+TUNNEL_KNOWN_NAME=fm_workload_known_hosts
+
+cmd_tunnel_key() { # <alias>
+  local key="$HOME/.ssh/$TUNNEL_KEY_NAME"
+  { mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"; } || die "cannot prepare ~/.ssh"
+  if [ ! -f "$key" ]; then
+    command -v ssh-keygen >/dev/null 2>&1 || die "ssh-keygen is missing"
+    ssh-keygen -q -t ed25519 -N "" -C "fm-tunnel@$1" -f "$key" < /dev/null >&2 || die "ssh-keygen failed"
+  fi
+  [ -f "$key.pub" ] || die "$key exists without $key.pub; move it aside and rerun setup"
+  printf 'pubkey=%s\n' "$(head -n 1 "$key.pub")"
+}
+
+# HTTP status from <url>, or 000 when nothing answers; extra args go to curl.
+http_code() { # <url> [curl args...]
+  local url=$1 code
+  shift
+  code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' "$@" "$url" < /dev/null 2>/dev/null) || true
+  printf '%s\n' "${code:-000}"
+}
+
+gateway_code() { # <gateway-url>
+  local key=${PROXAI_API_KEY_FILE:-$HOME/.config/proxai/client.key} code
+  [ -r "$key" ] || { printf 'nokey\n'; return; }
+  code=$({ printf 'header = "Authorization: Bearer '; tr -d '\r\n' < "$key"; printf '"\n'; } \
+    | curl -s -o /dev/null -m 5 -w '%{http_code}' -K - "${1%/}/models" 2>/dev/null) || true
+  printf '%s\n' "${code:-000}"
+}
+
+tunnel_unit() { # <kind launchd|systemd> <label> <args...>
+  local kind=$1 label=$2 a
+  shift 2
+  if [ "$kind" = launchd ]; then
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n'
+    printf '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+    printf '<plist version="1.0">\n<dict>\n  <key>Label</key><string>%s</string>\n  <key>ProgramArguments</key>\n  <array>\n' "$label"
+    for a in "$@"; do printf '    <string>%s</string>\n' "$a"; done
+    printf '  </array>\n  <key>RunAtLoad</key><true/>\n  <key>KeepAlive</key><true/>\n  <key>ThrottleInterval</key><integer>10</integer>\n</dict>\n</plist>\n'
+  else
+    printf '[Unit]\nDescription=Firstmate tunnel %s\nAfter=network-online.target\n\n[Service]\nExecStart=%s\nRestart=always\nRestartSec=10\n\n[Install]\nWantedBy=default.target\n' "$label" "$*"
+  fi
+}
+
+cmd_install_tunnel() { # <label> <port> <user> <host> <ssh-port> <known-line> <check-url> <gateway|hub>
+  local label=$1 port=$2 user=$3 host=$4 sshport=$5 known=$6 url=$7 what=$8
+  local kind unit dir pin key tmp code tries running=0
+  case "$label" in dev.firstmate.*) ;; *) die "tunnel label must start with dev.firstmate." ;; esac
+  case "$port:$sshport" in *[!0-9:]*|:*|*:) die "ports must be numbers" ;; esac
+  command -v curl >/dev/null 2>&1 || die "curl is missing"
+  key="$HOME/.ssh/$TUNNEL_KEY_NAME"
+  [ -f "$key" ] || die "no tunnel key at $key; run tunnel-key first"
+  pin="$HOME/.ssh/$TUNNEL_KNOWN_NAME"
+  if [ -f "$pin" ]; then
+    grep -qxF -- "$known" "$pin" || die "$pin already pins a different key for the gateway host; inspect it before replacing"
+  else
+    (umask 077; printf '%s\n' "$known" > "$pin") || die "cannot write $pin"
+  fi
+  case "$(uname -s)" in
+    Darwin) kind=launchd; dir="$HOME/Library/LaunchAgents"; unit="$dir/$label.plist" ;;
+    Linux) kind=systemd; dir="$HOME/.config/systemd/user"; unit="$dir/$label.service" ;;
+    *) die "no supported service manager on $(uname -s)" ;;
+  esac
+  local -a args=(/usr/bin/ssh -N -i "$key" -o IdentitiesOnly=yes -o IdentityAgent=none
+    -o "UserKnownHostsFile=$pin" -o StrictHostKeyChecking=yes -o BatchMode=yes
+    -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
+  [ "$sshport" = 22 ] || args+=(-p "$sshport")
+  args+=(-L "127.0.0.1:$port:127.0.0.1:$port" "$user@$host")
+  tmp=$(mktemp "${TMPDIR:-/tmp}/fm-tunnel.XXXXXX") || die "cannot stage the service file"
+  tunnel_unit "$kind" "$label" "${args[@]}" > "$tmp"
+  if [ "$kind" = launchd ]; then
+    launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 < /dev/null && running=1
+  else
+    systemctl --user is-active --quiet "$label.service" < /dev/null 2>/dev/null && running=1
+  fi
+  if [ -f "$unit" ] && cmp -s "$tmp" "$unit" && [ "$running" -eq 1 ]; then
+    rm -f "$tmp"
+  else
+    if [ ! -f "$unit" ] && [ "$(http_code "http://127.0.0.1:$port/")" != 000 ]; then
+      rm -f "$tmp"
+      die "127.0.0.1:$port is already taken by something else; free it or forward it yourself"
+    fi
+    mkdir -p "$dir" || { rm -f "$tmp"; die "cannot create $dir"; }
+    mv -f "$tmp" "$unit" || { rm -f "$tmp"; die "cannot install $unit"; }
+    if [ "$kind" = launchd ]; then
+      [ "$running" -eq 0 ] || launchctl bootout "gui/$(id -u)/$label" < /dev/null >/dev/null 2>&1 || true
+      launchctl bootstrap "gui/$(id -u)" "$unit" < /dev/null >&2 || die "launchctl bootstrap of $label failed"
+    else
+      systemctl --user daemon-reload < /dev/null >&2 || die "systemctl --user daemon-reload failed"
+      systemctl --user enable "$label.service" < /dev/null >&2 || die "cannot enable $label"
+      systemctl --user restart "$label.service" < /dev/null >&2 || die "cannot start $label"
+    fi
+  fi
+  tries=0
+  while :; do
+    if [ "$what" = gateway ]; then code=$(gateway_code "$url"); else code=$(http_code "$url"); fi
+    case "$what:$code" in gateway:200|hub:[1-9]??) break ;; esac
+    tries=$((tries + 1))
+    [ "$tries" -lt "${FM_TUNNEL_WAIT_TRIES:-15}" ] || break
+    sleep 1
+  done
+  case "$what:$code" in
+    gateway:200) printf 'result=done: %s forwards 127.0.0.1:%s; %s/models answers 200 with the client key\n' "$label" "$port" "${url%/}" ;;
+    gateway:nokey) die "$label forwards 127.0.0.1:$port, but there is no readable gateway client key to verify it with" ;;
+    hub:[1-9]??) printf 'result=done: %s forwards 127.0.0.1:%s; %s answers\n' "$label" "$port" "$url" ;;
+    *) die "$label is installed but $url does not answer as expected (HTTP $code); check that the gateway host accepts the tunnel key" ;;
+  esac
+}
+
 main() {
-  [ "$#" -ge 1 ] || { echo "usage: fm-machine-remote.sh probe|install-tool|install-deck|install-approval-gate ..." >&2; exit 2; }
+  [ "$#" -ge 1 ] || { echo "usage: fm-machine-remote.sh probe|install-tool|install-deck|install-approval-gate|tunnel-key|install-tunnel ..." >&2; exit 2; }
   local sub=$1
   shift
   case "$sub" in
@@ -216,6 +343,8 @@ main() {
     install-tool) [ "$#" -eq 2 ] || exit 2; cmd_install_tool "$@" ;;
     install-deck) [ "$#" -eq 2 ] || exit 2; cmd_install_deck "$@" ;;
     install-approval-gate) [ "$#" -eq 1 ] || exit 2; cmd_install_approval_gate "$@" ;;
+    tunnel-key) [ "$#" -eq 1 ] || exit 2; cmd_tunnel_key "$@" ;;
+    install-tunnel) [ "$#" -eq 8 ] || exit 2; cmd_install_tunnel "$@" ;;
     *) exit 2 ;;
   esac
 }
