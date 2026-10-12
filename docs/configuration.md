@@ -52,6 +52,8 @@ data/
   charter.md              a secondmate home's seeded charter (bin/fm-home-seed.sh)
   <id>/brief.md           task brief, or secondmate charter brief
   <id>/report.md          scout deliverable; survives teardown
+  specialists/<name>/     a specialist's memory.md and own skills/ (bin/fm_crew.py owns the layout)
+  groups/<gid>/           a task group's merged report.md and kept member results (bin/fm_crew.py)
   extensions/packages/    read-only content-addressed extension packages (bin/fm-extension.sh)
 state/
   <id>.meta               task metadata; bin/fm-spawn.sh owns base fields, "Runtime backend" the backend fields
@@ -81,6 +83,8 @@ state/
   reconcile-notify/       one-shot Bearings reconcile requests (bin/fm-secondmate-reconcile.sh)
   primary-chat.json       live deck-chat primary record (bin/fm_primary_chat.py owns fields)
   primary-chat/           primary session, steering, keeper, model choice and switch records (bin/fm_primary_chat.py owns layout)
+  specialists/<name>/     persistent specialist record, job history and job files; idle is intended, not a leak (bin/fm_crew.py)
+  groups/<gid>.json groups/<gid>/  task group record and its run files until cleanup (bin/fm_crew.py)
   procevent/ procevent-inbox/ when/  process-event sources and results (docs/process-event-sources.md)
   extensions/ extension-invocations/  extension working state (docs/process-event-sources.md)
   decision-bindings/ reconcile-requests/  captain-answer bindings and reconcile obligations; written only by bin/fm-captain-hold.sh

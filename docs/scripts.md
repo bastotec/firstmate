@@ -33,6 +33,9 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-backlog-receive.sh`  | Idempotently ingest one confined remote handoff outbox through tasks-axi             |
 | `fm-captain-hold.sh`     | Own captain holds and answer or evidence-backed resolutions, gate investigation completion, and report status/backlog divergence |
 | [`fm-card.sh`](../bin/fm-card.sh) | Own captain-facing decision cards and evidence-backed stale-card clear and restore |
+| [`fm-specialist.sh`](../bin/fm-specialist.sh) | Create, hand jobs to, inspect, and retire persistent specialists: one resumed Deck session, own memory, own skills |
+| [`fm-group.sh`](../bin/fm-group.sh) | Run an ephemeral task group: N members on one brief with per-member angles, a merged report, and one-step cleanup |
+| `fm_crew.py`             | Record layout and run mechanics behind `fm-specialist.sh` and `fm-group.sh` |
 | [`fm-order.sh`](../bin/fm-order.sh) | Own order proposals: the first mate's reading of a plain-word order, waiting for launch or cancel |
 | `fm-decision-hold.sh`    | One-release compatibility shim mapping the retired decision commands onto fm-captain-hold.sh |
 | `fm-brief.sh`            | Scaffold ship (explicit `--mode`), scout, and secondmate-charter briefs, with Captain's intent and Firstmate spec subsections on ship/scout |
