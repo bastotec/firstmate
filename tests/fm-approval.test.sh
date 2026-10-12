@@ -297,6 +297,73 @@ test_real_deck_blocks_then_runs_once_after_approval() {
   pass "real deck: blocked, approved once runs once, denied never runs"
 }
 
+test_policy_show_save_and_audit() {
+  local w out sha rc
+  w=$(world policy)
+  out=$(ap "$w" policy-show --json) || fail "policy-show failed"
+  assert_equals none "$(printf '%s' "$out" | jq -r .sha)" "absent policy has sha none"
+  assert_equals false "$(printf '%s' "$out" | jq -r '.presets[] | select(.id=="slack-send") | .enabled')" "preset off"
+  ap "$w" enable slack-send --by "tester" >/dev/null || fail "enable failed"
+  out=$(ap "$w" policy-show --json)
+  assert_equals true "$(printf '%s' "$out" | jq -r '.presets[] | select(.id=="slack-send") | .enabled')" "preset on"
+  assert_equals true "$(printf '%s' "$out" | jq -r .hook_installed)" "enabling a gate installs the hook"
+  sha=$(printf '%s' "$out" | jq -r .sha)
+  # Add a custom gate and drop the MCP half of slack-send in one save.
+  printf '%s' "$out" | jq '{version:1, gates: ([.gates[] | select(.id != "slack-send-2")] + [{id:"jira-write", tool:"run_command", pattern:"\\bjira\\b.*\\b(create|comment)\\b", description:"Jira writes"}])}' \
+    | ap "$w" policy-save --expect "$sha" --by "captain (Fleet Town)" --json > "$w/save.json" || fail "save refused: $(cat "$w/save.json")"
+  assert_equals '["jira-write"]' "$(jq -c .added "$w/save.json")" "added reported"
+  assert_equals '["slack-send-2"]' "$(jq -c .removed "$w/save.json")" "removed reported"
+  out=$(ap "$w" policy-show --json)
+  assert_equals jira-write "$(printf '%s' "$out" | jq -r '.custom[0].id')" "custom gate listed"
+  assert_equals false "$(printf '%s' "$out" | jq -r '.presets[] | select(.id=="slack-send") | .enabled')" "partial preset reads off"
+  rc=0; gate "$w" t1 run_command '{"command":"jira issue create x"}' >/dev/null || rc=$?
+  assert_equals 2 "$rc" "custom gate blocks"
+  rc=0; printf '{"gates":[]}' | ap "$w" policy-save --expect "$sha" >/dev/null 2>&1 || rc=$?
+  assert_equals 3 "$rc" "a stale --expect is refused"
+  assert_equals jira-write "$(ap "$w" policy-show --json | jq -r '.custom[0].id')" "a refused save changes nothing"
+  out=$(ap "$w" policy-audit --json)
+  assert_equals 2 "$(printf '%s' "$out" | jq length)" "two audited changes"
+  assert_equals "captain (Fleet Town)" "$(printf '%s' "$out" | jq -r '.[0].by')" "newest first, with who"
+  assert_equals tester "$(printf '%s' "$out" | jq -r '.[1].by')" "cli --by recorded"
+  assert_equals true "$(printf '%s' "$out" | jq -r '.[1].hook_installed')" "hook install audited"
+  rc=0; printf '{"gates":[{"id":"bad","tool":"run_command","pattern":"("}]}' \
+    | ap "$w" policy-save --expect "$(ap "$w" policy-show --json | jq -r .sha)" >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "an invalid policy is refused"
+  assert_equals jira-write "$(ap "$w" policy-show --json | jq -r '.custom[0].id')" "an invalid save changes nothing"
+  pass "policy-show, locked policy-save with --expect, and the audit trail"
+}
+
+test_machine_approvals_local_and_remote() {
+  local w fmh out rc
+  w=$(world machine)
+  fmh="$w/fmh"
+  mkdir -p "$fmh/data" "$w/remote-home/.agents"
+  printf -- '- box (root: %s; added 2026-10-12)\n' "$ROOT" > "$fmh/data/machines.md"
+  # Fake ssh: run the remote command here as an account whose HOME is remote-home.
+  # shellcheck disable=SC2016 # the fake's own variables expand when it runs.
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'while [ "$#" -gt 1 ]; do case "$1" in -o) shift 2 ;; *) break ;; esac; done\n'
+    printf 'printf "%%s\\n" "$1" >> %q\n' "$w/ssh.log"
+    printf 'shift\n'
+    printf 'HOME=%q exec bash -c "$*"\n' "$w/remote-home"
+  } > "$w/bin/ssh"
+  chmod +x "$w/bin/ssh"
+  mm() { FM_HOME="$fmh" FM_SSH_BIN="$w/bin/ssh" FM_APPROVAL_POLICY='' FM_DECK_HOOKS='' "$ROOT/bin/fm-machine-approvals.sh" "$@"; }
+  out=$(mm show box) || fail "remote show failed: $out"
+  assert_equals none "$(printf '%s' "$out" | jq -r .sha)" "remote starts empty"
+  printf '{"gates":[]}' | jq '.gates = [{id:"whatsapp-send", tool:"run_command", pattern:"\\bwacli\\b[^\\n]*\\bsend\\b", description:"WhatsApp"}]' \
+    | mm save box --expect none > "$w/out" || fail "remote save failed: $(cat "$w/out")"
+  assert_equals box "$(head -n1 "$w/ssh.log")" "went over ssh to the alias"
+  assert_present "$w/remote-home/.agents/approvals.json" "policy written on the remote account"
+  assert_equals "captain (Fleet Town)" "$(mm audit box | jq -r '.[0].by')" "remote audit has who"
+  rc=0; printf '{"gates":[]}' | mm save box --expect none >/dev/null 2>&1 || rc=$?
+  assert_equals 3 "$rc" "remote conflict exits 3"
+  rc=0; mm show nowhere >/dev/null 2>&1 || rc=$?
+  assert_equals 1 "$rc" "unknown machine refused"
+  pass "fm-machine-approvals shows, saves and audits a remote machine over ssh"
+}
+
 test_no_policy_or_no_gates_lets_everything_through
 test_policy_without_gates_supports_all_policy_commands
 test_matching_call_is_blocked_and_filed_other_calls_pass
@@ -310,3 +377,5 @@ test_mcp_tool_glob_and_presets
 test_install_hook_merges_and_is_idempotent
 test_installed_hook_command_runs_the_gate
 test_real_deck_blocks_then_runs_once_after_approval
+test_policy_show_save_and_audit
+test_machine_approvals_local_and_remote

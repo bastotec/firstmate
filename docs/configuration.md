@@ -632,6 +632,7 @@ FM_HOME=<home> bin/fm-approval.sh list      # pending requests
 FM_HOME=<home> bin/fm-approval.sh answer <id> --approve  # or --deny
 ```
 
+Fleet Town's Machine panel edits the same file on any machine through [`bin/fm-machine-approvals.sh`](../bin/fm-machine-approvals.sh) (`show`, `save --expect <sha>`, `audit`); every change, from there or the CLI, is one locked save appended to `~/.agents/approvals-audit.log` with who, when and which gates were added, removed or edited.
 [`bin/fm-approval.py`](../bin/fm-approval.py)'s header owns policy defaults and validation, matching limits, request and grant lifetimes, exact-call replay, routing (including secondmate `--no-steer --json` answers), and exit codes.
 The gate is command-text/tool-name matching, not a sandbox; do not treat it as protection against every way to reach a service.
 [`tests/fm-approval.test.sh`](../tests/fm-approval.test.sh) covers the approval contract, and [`tests/fm-machine.test.sh`](../tests/fm-machine.test.sh) covers machine setup and policy-repair reporting.
