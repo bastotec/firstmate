@@ -21,6 +21,11 @@ TMP_ROOT=$(fm_test_tmproot fm-remote-secondmate-e2e)
 mkdir -p "$TMP_ROOT"
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd -P)
 PARENT="$TMP_ROOT/parent"
+# These suites connect remote-mac as an existing, fully allowed bridge
+# (bin/fm-bridge.py denies a machine nothing has allowed yet).
+mkdir -p "$TMP_ROOT/parent/config"
+FM_HOME="$TMP_ROOT/parent" "$ROOT/bin/fm-bridge.sh" set remote-mac \
+  --allow supervision,reports,messages,placement,files,maintenance --by tests >/dev/null
 REMOTE_ROOT="$TMP_ROOT/remote-root"
 REMOTE_HOME="$TMP_ROOT/remote-home"
 LOCAL_HOME="$TMP_ROOT/local-home"
