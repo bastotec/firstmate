@@ -439,6 +439,17 @@ retirement_done_args() {  # <id> <pr> <verdict>
 # not-found answer is absence. A captain-held row takes the retain transition
 # with its deliverable, exactly as cleanup and the session-start replay do, so
 # a retirement never quietly answers the captain's own question.
+# The record-only mutation runs under the task's control lock, the same lock
+# cleanup, relaunch and an idle-sweep hold (bin/fm-captain-hold.sh
+# --expected-record) take, so none of them acts on a record mid-retirement.
+retire_records_only_locked() {  # <id>
+  local lock="$STATE/.control-$1.lock" rc=0
+  fm_lock_acquire_wait "$lock" || return 1
+  retire_records_only "$1" || rc=$?
+  fm_lock_release "$lock" || true
+  return "$rc"
+}
+
 retire_records_only() {  # <id>
   local id=$1 marker mode=close probe_rc=0 gate_rc=0 marker_flags=() row pr verdict=unmerged body
   local meta="$STATE/$id.meta"
@@ -593,7 +604,7 @@ for id in "${IDS[@]}"; do
     else
       report_partial_cleanup "$id" "$teardown_rc"
     fi
-  elif retire_records_only "$id"; then
+  elif retire_records_only_locked "$id"; then
     echo "warning: cleanup for $id refused over the work in its worktree, before touching anything on disk; its records are retired on the retirement recorded for $retired_by at $retired_at" >&2
     report_what_remains "$id" "$worktree" "$endpoint"
   else

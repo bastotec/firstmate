@@ -324,10 +324,13 @@ raise() {
       options:[{key:"1",label:$l1,instruction:$o1},{key:"2",label:$l2,instruction:$o2}],
       recommended:$rec}' > "$card" || { rm -f "$card"; return 0; }
   hold_args=(--reason "$reason" --card-file "$card")
-  case "$id" in
-    idle-orphan-*) hold_args+=(--title "${title:0:120}" --repo "$project") ;;
-    *) hold_args+=(--expected-record "$RECORD") ;;
-  esac
+  # only the record-less orphan caller passes "orphan"; a worker whose own id
+  # happens to start with idle-orphan- still gets the locked record check
+  if [ "${6:-}" = orphan ]; then
+    hold_args+=(--title "${title:0:120}" --repo "$project")
+  else
+    hold_args+=(--expected-record "$RECORD")
+  fi
   out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-captain-hold.sh" hold "$id" \
     "${hold_args[@]}" 2>&1) || rc=$?
   if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then
@@ -486,7 +489,7 @@ while IFS=$'\t' read -r otask oeid; do
   fi
   detail="$detail and its close refused: $(one_line "$out")"
   RAISED=0
-  raise "idle-orphan-$otask" dead "$detail" "$(basename "$FM_HOME")" "$otask"
+  raise "idle-orphan-$otask" dead "$detail" "$(basename "$FM_HOME")" "$otask" orphan
   if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; elif [ "${RAISE_SKIPPED:-0}" = 1 ]; then CLASS=unknown; DETAIL="worker record changed during scan"; else action=unhandled; fi
   add_row "idle-orphan-$otask" dead "$detail" "$action"
 done <<< "$orphans"

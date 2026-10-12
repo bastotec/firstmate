@@ -321,6 +321,20 @@ test_a_main_home_is_woken_once_for_what_the_sweep_could_not_handle() {
   pass "fm-idle-sweep: a main home is woken once for what the sweep could neither clean up nor raise"
 }
 
+test_a_worker_named_like_an_orphan_call_still_gets_the_record_check() {
+  local dir
+  dir=$(new_case orphan-named-worker)
+  add_worker "$dir" idle-orphan-race 'state: failed · source: run-step · run failed' 90000
+  : > "$dir/home/cleaned-during-hold/idle-orphan-race"
+
+  sweep "$dir" scan --now || fail "scan failed"
+
+  [ ! -s "$dir/home/hold-calls" ] || fail "a removed worker named like an orphan call got a decision: $(calls "$dir" hold-calls)"
+  [ "$(jq -r '.workers[] | select(.id=="idle-orphan-race") | [.class,.action] | join(" ")' "$dir/home/state/idle-sweep.json")" = 'unknown none' ] \
+    || fail "a worker named like an orphan call skipped the record check: $(cat "$dir/home/state/idle-sweep.json")"
+  pass "fm-idle-sweep: a real worker whose id starts with idle-orphan- still gets the locked record check"
+}
+
 test_done_workers_are_cleaned_up_without_force() {
   local dir
   dir=$(new_case done-workers)
@@ -902,3 +916,4 @@ test_watcher_runs_the_sweep_and_surfaces_its_decision
 test_done_ships_without_merge_evidence_are_never_cleaned_automatically
 test_a_cleanup_finishing_during_the_hold_mints_no_followup_call
 test_a_main_home_is_woken_once_for_what_the_sweep_could_not_handle
+test_a_worker_named_like_an_orphan_call_still_gets_the_record_check
