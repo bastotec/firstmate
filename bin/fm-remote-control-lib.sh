@@ -104,7 +104,9 @@ fm_remote_route_rebind_meta() {  # <meta> <state-dir>
 # the recorded remote home and stream backend. Only a fresh `missing` reading
 # from the host is recovered, and the host's launch refuses while the mate's
 # previous agent process still runs there, so a hub that merely forgot a live
-# agent is never answered with a second one. The caller holds the control lock.
+# agent is never answered with a second one. Explicit --harness/--model/--effort
+# are refused; use relaunch for profile changes. Recovery uses the normal
+# secondmate spawn's profile resolution. The caller holds the control lock.
 # shellcheck disable=SC2153 # META and ID are fm-control.sh's parsed globals.
 fm_remote_recover_missing() {  # <host>
   local host=$1 out rc state

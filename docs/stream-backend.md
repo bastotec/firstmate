@@ -54,13 +54,13 @@ For a stream mate, `missing` means the hub's in-memory registry does not know th
 A stream mate whose own agent is gone reads `unreadable` while the hub still holds its record, then `missing` once the hub reaps that record after an hour of agent silence; an unreadable state never licenses automatic recovery.
 
 Between session starts, the owning home's watcher runs [`bin/fm-secondmate-revive.sh`](../bin/fm-secondmate-revive.sh) without waiting for a model turn; its header owns confirmation, per-mate concurrency, retry limits, escalation, and the environment knobs, with the scan cadence owned by [`bin/fm-watch.sh`](../bin/fm-watch.sh).
-With the watcher running and default settings, a consistently dead mate normally reaches a recovery attempt within a couple of minutes; completion depends on the control-plane postconditions, and unknown readings or a competing lifecycle action defer recovery.
-The scan uses control-plane relaunch for a dead endpoint and guarded missing-endpoint recovery below for a registry gap, local or remote; [remote lifecycle control](remote-secondmates.md#lifecycle-control) owns the remote guard.
+With the watcher running and default settings, a consistently dead or missing mate normally reaches a recovery attempt within a couple of minutes; completion depends on the control-plane postconditions, and unknown readings or a competing lifecycle action defer recovery.
+The scan uses control-plane relaunch for a dead endpoint and guarded missing-endpoint recovery for a registry gap; the local route is described below, and [remote lifecycle control](remote-secondmates.md#lifecycle-control) owns the remote route.
 Successful revivals are silent and logged; a spent revival budget produces one failure notification rather than repeated restarts.
 A secondmate deliberately stopped through control-plane exit stays down across scans and session start until explicitly relaunched or freshly observed alive; [`bin/fm-control.sh`'s header](../bin/fm-control.sh) owns the stop marker and automatic-admission guard.
 [`verification/supervision.md`](verification/supervision.md#secondmate-revival) lists the portable regression entry points.
 
-A new stream agent generates a fresh endpoint id, so `recover-missing` starts a new endpoint on this home's configured hub (same `fm-<id>` label, the recorded worktree as its cwd) and rebinds the task's endpoint identity through [`bin/fm-endpoint-rebind-lib.sh`](../bin/fm-endpoint-rebind-lib.sh), keeping its worktree and non-endpoint fields.
+For a local record, a new stream agent generates a fresh endpoint id, so `recover-missing` starts a new endpoint on this home's configured hub (same `fm-<id>` label, the recorded worktree as its cwd) and rebinds the task's endpoint identity through [`bin/fm-endpoint-rebind-lib.sh`](../bin/fm-endpoint-rebind-lib.sh), keeping its worktree and non-endpoint fields.
 Because a stream `missing` alone does not prove the worker gone, recovery first looks for a local stream agent matching both the task label and this home's task status path.
 A matching agent blocks recovery even when the hub has forgotten it; wait for its re-registration or stop that exact agent before retrying.
 [Agent control](agent-control.md#failure-and-rollback) owns failed-rebind cleanup, retained new-endpoint bindings, and retry handling.

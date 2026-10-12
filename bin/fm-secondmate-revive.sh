@@ -44,6 +44,11 @@
 # state/secondmate-revive.log. Each mate is handled by its own worker under
 # state/.secondmate-revive-<id>.lock, so one slow relaunch never delays another.
 #
+# Escalated records with failures below the current attempt budget restart
+# confirmation, admitting legacy remote-missing escalations that tried no
+# recovery. Deliberate-stop markers and spent budgets remain protected;
+# tests/fm-secondmate-revive.test.sh pins this compatibility boundary.
+#
 # Both automatic recovery verbs pass --unless-held-stopped for fm-control's
 # locked admission guard. This scan withdraws a stale deliberate-stop marker
 # only under that same control lock after a fresh alive reading.
