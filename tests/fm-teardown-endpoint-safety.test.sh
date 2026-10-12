@@ -309,9 +309,11 @@ test_recorded_process_identity_cleanup_is_exact() {
 # not a hypothetical: the former cmux adapter's `close-workspace` answered OK
 # and left the last workspace in its window standing. The fake stream hub
 # reproduces exactly that class with kill_undelivered - the hub answers the
-# kill, its agent never acknowledges it, and the endpoint stays live - so the
-# assertions below are about what cleanup does with a worker that is provably
-# still there.
+# kill, its agent never acknowledges it, and its worker stays live while the hub
+# closes only the endpoint record - so the assertions below are about what
+# cleanup does with a worker that is provably still there. That positive answer
+# is the kill contract's still-present verdict, so the refusal names it rather
+# than the unconfirmed one, and names the override that answers it.
 test_unconfirmed_endpoint_kill_refuses_record_removal() {
   local dir id=unconfirmed target rc
   dir=$(make_case unconfirmed-kill)
@@ -330,14 +332,20 @@ test_unconfirmed_endpoint_kill_refuses_record_removal() {
   set -e
   [ "$rc" -ne 0 ] || fail "cleanup reported success for a kill nothing proved landed"
   endpoint_closed "$target" \
-    && fail "the unconfirmed case is vacuous: the endpoint was actually closed"
+    || fail "the fake hub did not reproduce the real hub's close after an undelivered kill"
+  [ "$(fm_test_fake_stream_endpoints | jq -r --arg e "${target##*:}" \
+    '.endpoints[] | select(.endpoint_id == $e) | .closed_by // empty')" = hub ] \
+    || fail "the fake hub did not record its own close after an undelivered kill"
   assert_present "$dir/home/state/$id.meta" \
     "cleanup removed the durable endpoint record while its worker was still running"
-  assert_contains "$(cat "$dir/unconfirmed.err")" "not confirmed gone" \
-    "cleanup did not report the unproven result: $(cat "$dir/unconfirmed.err")"
+  assert_contains "$(cat "$dir/unconfirmed.err")" "still present after its kill" \
+    "cleanup did not report the still-present answer: $(cat "$dir/unconfirmed.err")"
+  assert_contains "$(cat "$dir/unconfirmed.err")" "override-runtime-refusal" \
+    "cleanup did not name the override that answers a still-present endpoint: $(cat "$dir/unconfirmed.err")"
 
-  # The same cleanup, once the close is performed for real, removes the record.
-  fm_test_fake_stream_set "$target" '{"kill_undelivered": false}'
+  # The endpoint's later authoritative close supersedes the hub's close, after
+  # which the same cleanup can remove the record.
+  fm_test_fake_stream_set "$target" '{"kill_undelivered": false, "closed_by": "agent", "alive": false}'
   FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
     FM_RUNTIME_LOG="$dir/runtime.log" PATH="$dir/fakebin:$PATH" \
     "$TEARDOWN" "$id" --force > "$dir/confirmed.out" 2> "$dir/confirmed.err" \
@@ -345,7 +353,70 @@ test_unconfirmed_endpoint_kill_refuses_record_removal() {
   endpoint_closed "$target" || fail "the confirmed case did not actually close the endpoint"
   assert_absent "$dir/home/state/$id.meta" \
     "cleanup kept the durable endpoint record after a confirmed kill"
-  pass "fm-teardown: an unconfirmed endpoint kill keeps every durable record, while a confirmed kill stays successful"
+  pass "fm-teardown: a still-present endpoint keeps every durable record, while a confirmed kill stays successful"
+}
+
+# A retirement asserts what no backend could, but the backend answering
+# POSITIVELY that the endpoint is still there is a runtime's own refusal, and
+# a plain retirement must not remove a record the backend says is alive: only
+# the override field clears it. This stages the retirement note exactly as
+# bin/fm-retire-endpoint.sh writes it, so the gate is exercised through the
+# same record cleanup reads, without driving the interactive command here.
+test_a_plain_retirement_stops_on_a_still_present_endpoint() {
+  local dir id=retire-present target rc
+  dir=$(make_case retire-present)
+  fm_write_meta "$dir/home/state/$id.meta" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
+    "worktree=$dir/nonexistent-worktree" "project=$dir/nonexistent-project" \
+    "kind=scout" "mode=no-mistakes" "spawn_gen=spawn-retire-present"
+  target=$(fm_test_stream_target_of "$dir/home/state" "$id")
+  fm_test_fake_stream_set "$target" '{"kill_undelivered": true}'
+  printf 'id=%s\nspawn_gen=spawn-retire-present\nretired_by=op\nretired_at=2026-01-01T00:00:00Z\nruntime_refusal_override=0\n' \
+    "$id" > "$dir/home/state/$id.endpoint-retired"
+
+  set +e
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_RUNTIME_LOG="$dir/runtime.log" PATH="$dir/fakebin:$PATH" \
+    "$TEARDOWN" "$id" --force > "$dir/retire.out" 2> "$dir/retire.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 71 ] \
+    || fail "a plain retirement over a still-present endpoint must exit with the runtime-refusal status, got $rc: $(cat "$dir/retire.err")"
+  assert_present "$dir/home/state/$id.meta" \
+    "a plain retirement removed a record the backend says is alive"
+  assert_contains "$(cat "$dir/retire.err")" "did not override a runtime refusal" \
+    "the refusal did not say the retirement lacked the override: $(cat "$dir/retire.err")"
+  [ "$(fm_test_fake_stream_endpoints | jq -r --arg e "${target##*:}" \
+    '.endpoints[] | select(.endpoint_id == $e) | .closed_by // empty')" = hub ] \
+    || fail "the undelivered kill did not leave the fake hub's record closed by the hub"
+
+  # Retrying a plain retirement sees that durable hub-close verdict before it
+  # can issue another DELETE, so the same override remains mandatory.
+  printf 'id=%s\nspawn_gen=spawn-retire-present\nretired_by=op\nretired_at=2026-01-01T00:00:00Z\nruntime_refusal_override=0\n' \
+    "$id" > "$dir/home/state/$id.endpoint-retired"
+  set +e
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_RUNTIME_LOG="$dir/runtime.log" PATH="$dir/fakebin:$PATH" \
+    "$TEARDOWN" "$id" --force > "$dir/retry.out" 2> "$dir/retry.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 71 ] \
+    || fail "a retried plain retirement must preserve the runtime-refusal status, got $rc: $(cat "$dir/retry.err")"
+  assert_present "$dir/home/state/$id.meta" \
+    "a retried plain retirement removed the hub-closed endpoint record"
+
+  # The same retirement with the override field set proceeds past it.
+  printf 'id=%s\nspawn_gen=spawn-retire-present\nretired_by=op\nretired_at=2026-01-01T00:00:00Z\nruntime_refusal_override=1\n' \
+    "$id" > "$dir/home/state/$id.endpoint-retired"
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_RUNTIME_LOG="$dir/runtime.log" PATH="$dir/fakebin:$PATH" \
+    "$TEARDOWN" "$id" --force > "$dir/override.out" 2> "$dir/override.err" \
+    || fail "a retirement with the override should proceed past a still-present endpoint: $(cat "$dir/override.err")"
+  assert_absent "$dir/home/state/$id.meta" \
+    "an overriding retirement left the record it retired"
+  assert_contains "$(cat "$dir/override.err")" "overrode that runtime's refusal" \
+    "the overriding retirement did not name the override it rested on: $(cat "$dir/override.err")"
+  pass "fm-teardown: a plain retirement stops on a still-present endpoint and only the override proceeds"
 }
 
 # endpoint_closed <target>: whether the fake hub holds the endpoint as closed.
@@ -936,6 +1007,7 @@ test_supported_backend_endpoint_records_validate
 test_recorded_process_identity_cleanup_is_exact
 test_exact_endpoint_cleanup_spares_its_neighbors
 test_unconfirmed_endpoint_kill_refuses_record_removal
+test_a_plain_retirement_stops_on_a_still_present_endpoint
 test_bare_relative_origin_shares_project_lock_with_clone
 test_reused_pool_slot_refuses_before_touching_the_other_task
 test_cross_home_pool_slot_collision_refuses

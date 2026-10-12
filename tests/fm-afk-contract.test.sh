@@ -275,6 +275,41 @@ test_propose_confirm_writes_the_record_and_announces_hold_for_return() {
   pass "propose then confirm writes the record, announces hold-for-return only, and every read subcommand reflects it"
 }
 
+test_record_iso_and_epoch_stamps_are_one_instant() {
+  local home fakebin expected_iso=2026-10-10T19:00:22Z expected_epoch=1791658822
+  home=$(make_home aligned-timestamps)
+  fakebin="$home/fakebin"
+  mkdir -p "$fakebin"
+  cat > "$fakebin/date" <<'SH'
+#!/usr/bin/env bash
+if [ "$#" -eq 2 ] && [ "$1" = -u ] && [ "$2" = +%Y-%m-%dT%H:%M:%SZ ]; then
+  printf '2026-10-10T19:00:22Z\n'
+elif [ "$#" -eq 1 ] && [ "$1" = +%s ]; then
+  printf '1791658823\n'
+else
+  exec /bin/date "$@"
+fi
+SH
+  chmod +x "$fakebin/date"
+  PATH="$fakebin:$PATH" contract "$home" propose >/dev/null \
+    || fail "proposal with a second boundary failed"
+  assert_equals "$expected_iso" "$(contract "$home" field entered --proposal)" \
+    "proposal entry ISO changed"
+  assert_equals "$expected_epoch" "$(contract "$home" field entered_epoch --proposal)" \
+    "proposal entry fields described different instants"
+  PATH="$fakebin:$PATH" contract "$home" confirm >/dev/null \
+    || fail "confirmation with a second boundary failed"
+  assert_equals "$expected_iso" "$(contract "$home" field entered)" \
+    "confirmed entry ISO changed"
+  assert_equals "$expected_epoch" "$(contract "$home" field entered_epoch)" \
+    "confirmed entry fields described different instants"
+  assert_equals "$expected_iso" "$(contract "$home" field confirmed)" \
+    "confirmation ISO changed"
+  assert_equals "$expected_epoch" "$(contract "$home" field confirmed_epoch)" \
+    "confirmation fields described different instants"
+  pass "record ISO and epoch stamps describe the same instant across a second boundary"
+}
+
 test_confirm_requires_readback_and_refresh_is_a_no_op() {
   local home out first rc
   home=$(make_home defaults)
@@ -685,6 +720,7 @@ test_clause_ids_are_input_ordinals_across_accepted_and_refused
 test_readback_renders_words_verbatim_and_both_lists
 test_words_preserve_final_newline_shape
 test_propose_confirm_writes_the_record_and_announces_hold_for_return
+test_record_iso_and_epoch_stamps_are_one_instant
 test_confirm_requires_readback_and_refresh_is_a_no_op
 test_confirming_a_new_proposal_archives_the_standing_record
 test_failed_replacement_keeps_the_standing_record

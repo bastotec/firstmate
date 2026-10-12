@@ -70,8 +70,9 @@ shell still running its rc files, before the real one; POST /v1/test/config
 {"task_routes_unavailable": true} makes every task route answer 503 from then
 on, a hub that stopped answering;
 {"fail_text": "substring"} refuses only a text containing it;
-{"kill_undelivered": true} answers a kill with delivered=false and leaves the
-endpoint exactly as it was (a kill its agent never acknowledged);
+{"kill_undelivered": true} answers a kill with delivered=false and closes the
+hub's endpoint record while leaving its worker alive (a kill its agent never
+acknowledged);
 {"fail_capture": true} fails every screen read and {"capture_fail_after": n}
 every read after the first n; {"tick_format": "...{t}.{d}s...", "tick_base": b,
 "tick_file": path} renders one row anew on every screen read (t = b + reads,
@@ -609,10 +610,14 @@ class Stub(http.server.BaseHTTPRequestHandler):
                     fh.write("%s: %s\n" % (payload["state"],
                                            " ".join(str(payload.get("note") or "").split())))
                 self._json(200, {"ok": True, "appended": endpoint_id})
+            elif method == "DELETE" and tail == "" and endpoint["closed_at"]:
+                self._refuse(409, "endpoint_closed", "endpoint %s is closed" % endpoint_id)
             elif method == "DELETE" and tail == "" and endpoint.get("kill_undelivered"):
                 self._on_kill(endpoint, endpoint_id)
-                # The agent never acknowledges this kill: the record stays as it
-                # was and the hub says so, the shape a kill nothing confirmed has.
+                # The agent never acknowledges this kill, so the hub closes the
+                # record it can no longer steer without claiming the worker died.
+                endpoint["closed_at"] = endpoint["closed_at"] or time.time()
+                endpoint["closed_by"] = "hub"
                 self._json(200, {"ok": True, "closed": endpoint_id,
                                  "machine": endpoint["machine"], "delivered": False})
             elif method == "DELETE" and tail == "":
