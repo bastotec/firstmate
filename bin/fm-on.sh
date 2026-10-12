@@ -136,6 +136,8 @@ case "$COMMAND" in
       *) FLOW=supervision ;;
     esac ;;
   fm-backlog-receive.sh) FLOW=placement ;;
+  fm-idle-sweep.sh)
+    [ "${1:-}" != summary ] || FLOW=reports ;;
   fm-remote-file.sh)
     FLOW=files
     if [ "${1:-}" = get ] && [ "${2:-}" = state/home-summary.json ]; then

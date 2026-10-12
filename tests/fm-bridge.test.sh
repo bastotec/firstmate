@@ -57,6 +57,30 @@ test_existing_bridges_are_seeded_and_shown_configured() {
   pass "today's bridges are seeded with what flows now and show as configured"
 }
 
+test_existing_safe_aliases_remain_configurable() {
+  local h alias out long_alias
+  h=$(home compatible-aliases)
+  long_alias=$(printf 'box%070d' 0)
+  add_route "$h" underscore _workload
+  add_route "$h" dotted .workload
+  add_route "$h" long "$long_alias"
+  out=$(br "$h" show --json) || fail "seeding safe aliases failed"
+  for alias in _workload .workload "$long_alias"; do
+    assert_equals true "$(printf '%s' "$out" | jq -r --arg m "$alias" '.bridges[] | select(.machine==$m) | .seeded')" "existing alias seeded"
+    br "$h" check "$alias" maintenance >/dev/null || fail "existing alias lost permissions"
+    br "$h" set "$alias" --allow none >/dev/null || fail "safe alias cannot be configured"
+    br "$h" allow "$alias" messages >/dev/null || fail "safe alias cannot be allowed"
+    on "$h" "$alias" fm-remote-secondmate-control.sh send x hello >/dev/null || fail "safe alias cannot send"
+    br "$h" deny "$alias" messages >/dev/null || fail "safe alias cannot be denied"
+    ! br "$h" check "$alias" messages >/dev/null 2>&1 || fail "denial did not hold"
+  done
+  for alias in '' -bad 'bad name' 'bad/path'; do
+    ! br "$h" set "$alias" --allow messages >/dev/null 2>&1 || fail "unsafe alias accepted"
+  done
+  assert_equals 3 "$(wc -l < "$h/ssh.log" | tr -d ' ')" "safe aliases reached the transport"
+  pass "supported SSH aliases seed and remain configurable without a length restriction"
+}
+
 test_new_machine_denies_everything_by_default() {
   local h rc out
   h=$(home fresh)
@@ -226,6 +250,25 @@ test_summary_read_requires_reports_and_files() {
   pass "summary transfer requires both file and report permissions"
 }
 
+test_idle_summary_requires_reports_not_maintenance() {
+  local h rc=0 out
+  h=$(home idle-report)
+  br "$h" set workload --allow maintenance >/dev/null
+  out=$(on "$h" helper fm-idle-sweep.sh summary 2>&1) || rc=$?
+  assert_equals 1 "$rc" "maintenance alone cannot collect a cleanup report"
+  assert_contains "$out" reports "refusal names the report permission"
+  assert_absent "$h/ssh.log" "denied report never crossed"
+  assert_equals bridge:reports "$(jq -r .gate "$h"/state/approvals/ap-*.json)" "report approval requested"
+  br "$h" set workload --allow reports >/dev/null
+  on "$h" helper fm-idle-sweep.sh summary >/dev/null || fail "allowed summary refused"
+  rc=0
+  out=$(on "$h" helper fm-idle-sweep.sh 2>&1) || rc=$?
+  assert_equals 1 "$rc" "report permission cannot authorize a cleanup operation"
+  assert_contains "$out" maintenance "other sweep operations retain maintenance gating"
+  assert_equals 1 "$(wc -l < "$h/ssh.log" | tr -d ' ')" "only the allowed report crossed"
+  pass "remote cleanup summaries require reports independently of maintenance"
+}
+
 test_machine_operations_use_the_shared_gate() {
   local h out rc
   h=$(home machine-operations)
@@ -300,6 +343,8 @@ PY
 }
 
 test_existing_bridges_are_seeded_and_shown_configured
+test_existing_safe_aliases_remain_configurable
+test_idle_summary_requires_reports_not_maintenance
 test_register_refusal_leaves_permissions_unchanged
 test_seed_uses_home_inventory_not_scratch_routes
 test_create_seeds_before_publishing_a_new_host

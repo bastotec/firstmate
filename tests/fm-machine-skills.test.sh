@@ -125,7 +125,26 @@ out=$(PATH="$FAKEBIN:$PATH" FM_HOME="$T/mate" FM_SECONDMATE_PARENT_HOME="$H" FAK
   "$SKILLS" brief-check "$T/brief.md" "$T/proj" 2>&1)
 set -e
 assert_contains "$out" "they are on: local" "a local mate answers where from its primary's inventory"
-pass "brief-check refuses a spawn whose brief needs a skill the machine lacks"
+printf 'remote-only\tglobal\t/x\n' >> "$H/state/machine-skills/workload.tsv"
+printf '# Task\nSkills: remote-only\n' > "$T/remote-brief.md"
+FM_HOME="$H" "$ROOT/bin/fm-bridge.sh" allow workload placement >/dev/null
+FM_HOME="$T/mate" "$ROOT/bin/fm-bridge.sh" set workload --allow none >/dev/null
+set +e
+out=$(PATH="$FAKEBIN:$PATH" FM_HOME="$T/mate" FM_SECONDMATE_PARENT_HOME="$H" FAKE_DECK_LIST='pr-review\tglobal\tReview\t/x\n' \
+  "$SKILLS" brief-check "$T/remote-brief.md" "$T/proj" 2>&1)
+rc=$?
+set -e
+expect_code 1 "$rc" "missing remote-only skill still refuses local spawn"
+assert_contains "$out" 'they are on: workload' "borrowed inventory uses its owner's bridge permissions"
+FM_HOME="$H" "$ROOT/bin/fm-bridge.sh" deny workload placement >/dev/null
+FM_HOME="$T/mate" "$ROOT/bin/fm-bridge.sh" allow workload placement >/dev/null
+set +e
+out=$(PATH="$FAKEBIN:$PATH" FM_HOME="$T/mate" FM_SECONDMATE_PARENT_HOME="$H" FAKE_DECK_LIST='pr-review\tglobal\tReview\t/x\n' \
+  "$SKILLS" brief-check "$T/remote-brief.md" "$T/proj" 2>&1)
+set -e
+assert_contains "$out" 'no machine in the inventory has them all' "child permission cannot override a denied parent bridge"
+FM_HOME="$H" "$ROOT/bin/fm-bridge.sh" allow workload placement >/dev/null
+pass "brief-check refuses missing skills and pairs borrowed inventory with its owner's policy"
 
 # --- bin/fm-machine.sh skills: ship the shared skills over ssh ---
 ACCT="$T/acct"

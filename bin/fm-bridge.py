@@ -57,7 +57,6 @@ pending for the same bridge and flow. It prints the request id.
 bin/fm-approval.py's header owns bridge approval answers and retry steering.
 
 Exit: 0 ok/allowed; 1 denied or refused; 2 usage.
-FM_BRIDGE_NOW (epoch seconds) overrides the clock for tests.
 """
 import hashlib
 import json
@@ -71,18 +70,13 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 FLOWS = ('supervision', 'reports', 'messages', 'placement', 'files', 'maintenance')
-NAME_RE = re.compile(r'\A[A-Za-z0-9][A-Za-z0-9._-]{0,62}\Z')
+NAME_RE = re.compile(r'\A(?!-)[A-Za-z0-9._-]+\Z')
 
 
 class Refuse(Exception):
     def __init__(self, message, code=1):
         super().__init__(message)
         self.code = code
-
-
-def now():
-    v = os.environ.get('FM_BRIDGE_NOW')
-    return float(v) if v else time.time()
 
 
 def iso(t):
@@ -121,7 +115,7 @@ def audit(entry):
     log.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     with os.fdopen(fd, 'a', encoding='utf-8') as f:
-        f.write(canonical(dict(at=iso(now()), **entry)) + '\n')
+        f.write(canonical(dict(at=iso(time.time()), **entry)) + '\n')
 
 
 class Lock:
@@ -171,7 +165,7 @@ def load():
     if not path.exists():
         with Lock():
             if not path.exists():
-                t = iso(now())
+                t = iso(time.time())
                 record = {'version': 1, 'bridges': {m: {'allow': list(FLOWS), 'seeded': True, 'updated': t,
                                                         'by': 'seeded from existing routes'}
                                                     for m in known_machines()}}
@@ -210,7 +204,7 @@ def change(machine, flows, by, operation='set'):
         elif operation == 'deny':
             selected = set(before) - selected
         after = [f for f in FLOWS if f in selected]
-        record['bridges'][machine] = {'allow': after, 'seeded': False, 'updated': iso(now()), 'by': by}
+        record['bridges'][machine] = {'allow': after, 'seeded': False, 'updated': iso(time.time()), 'by': by}
         write_private(record_path(), json.dumps(record, indent=2) + '\n')
         entry = {'event': 'changed', 'by': by, 'bridge': machine, 'before': before, 'after': after}
         audit(entry)
@@ -255,7 +249,7 @@ def publish_request(machine, flow, what):
                 continue
             if rec.get('kind') == 'bridge' and rec.get('gate') == gate and rec.get('args', {}).get('machine') == machine:
                 return rec['id'], False
-    t = now()
+    t = time.time()
     rid = f'ap-{time.strftime("%Y%m%dT%H%M%S", time.gmtime(t))}-{secrets.token_hex(3)}'
     args = {'machine': machine, 'flow': flow, 'what': what}
     rec = {'version': 1, 'id': rid, 'status': 'pending', 'kind': 'bridge', 'machine': machine,

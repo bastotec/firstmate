@@ -15,17 +15,15 @@
 #   save  -> fm-approval.sh policy-save --expect ... --by ... --json (stdin passes through)
 #   audit -> fm-approval.sh policy-audit --json [--limit N]
 # save defaults --by to "captain (Fleet Town)"; --by TEXT overrides attribution.
-# Output is that JSON on stdout. A remote machine is reached with
-# `ssh -o BatchMode=yes <alias>` (FM_SSH_BIN overrides ssh). Refusals print
+# Output is that JSON on stdout. A remote machine is reached through
+# fm-on.sh's maintenance gate (FM_SSH_BIN overrides ssh). Refusals print
 # `refuse: <reason>` and exit 1 (3 for a save conflict); usage errors exit 2.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SSH_BIN=${FM_SSH_BIN:-ssh}
 
 usage() { sed -n '4,6p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 refuse() { printf 'refuse: %s\n' "$1"; exit "${2:-1}"; }
-sq() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
 
 root_of() { # <machine> -> that machine's Firstmate code root
   local m=$1
@@ -38,16 +36,16 @@ root_of() { # <machine> -> that machine's Firstmate code root
 }
 
 run_on() { # <machine> <root> <args...>; stdin passes through
-  local m=$1 root=$2 cmd arg
+  local m=$1 root=$2
+  local -a input=()
   shift 2
   if [ "$m" = local ]; then
     bash "$root/bin/fm-approval.sh" "$@"
     return
   fi
-  cmd="bash $(sq "$root/bin/fm-approval.sh")"
-  for arg in "$@"; do cmd="$cmd $(sq "$arg")"; done
-  # shellcheck disable=SC2029 # built for the remote shell on purpose.
-  "$SSH_BIN" -o BatchMode=yes -o ConnectTimeout=8 -o ForwardAgent=no -o ClearAllForwardings=yes "$m" "$cmd"
+  [ "$1" != policy-save ] || input=(--stdin)
+  FM_ROOT_OVERRIDE="$SCRIPT_DIR/.." \
+    "$SCRIPT_DIR/fm-on.sh" "${input[@]+"${input[@]}"}" --machine-root "$root" "$m" fm-approval.sh "$@"
 }
 
 [ "$#" -ge 2 ] || usage

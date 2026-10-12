@@ -252,7 +252,7 @@ brief_skills() { # <brief>
 }
 
 cmd_brief_check() { # <brief> <project-dir>
-  local brief=$1 dir=$2 out s missing=''
+  local brief=$1 dir=$2 out s missing='' FM_HOME=$FM_HOME
   local -a need=()
   [ -f "$brief" ] || { printf 'refuse: no brief at %s\n' "$brief"; return 1; }
   while IFS= read -r s; do
@@ -271,7 +271,8 @@ cmd_brief_check() { # <brief> <project-dir>
   [ -n "$missing" ] || return 0
   # A local secondmate answers "where" from its primary's inventory.
   if ! ls "$INV"/*.tsv >/dev/null 2>&1 && [ -n "${FM_SECONDMATE_PARENT_HOME:-}" ]; then
-    INV="$FM_SECONDMATE_PARENT_HOME/state/machine-skills"
+    FM_HOME=$FM_SECONDMATE_PARENT_HOME
+    INV="$FM_HOME/state/machine-skills"
   fi
   printf 'refuse: this machine lacks the skills the brief needs (%s); %s\n' "$missing" "$(where_text "${need[@]}")"
   return 1
