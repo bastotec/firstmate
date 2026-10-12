@@ -8,9 +8,9 @@
 #     artifact pinned to the bytes and identity the validated snapshot captured;
 #   - every removal is asserted in state/pr-unbinds.log before anything is
 #     removed, and a failed append refuses the whole clear;
-#   - custom checks, foreign static checks, torn poll state, unsafe metadata,
-#     and a missing or non-GitHub worktree origin all refuse with the meta
-#     untouched;
+#   - custom checks, foreign static checks, ambiguous partial poll state, unsafe
+#     metadata, and a missing or non-GitHub worktree origin refuse with the meta
+#     untouched, while validated interrupted poll removal is rerunnable;
 #   - every other line of the meta survives the rewrite byte-for-byte.
 # Each case runs in a scratch home whose gh stub answers `pr list` from a
 # per-case file, with the poll armed through the real bin/fm-pr-check.sh so the
@@ -222,10 +222,12 @@ test_non_github_origin_refuses() {
   home=$(armed_home gitlab-origin "$id" https://github.com/example/repo_name/pull/4)
   meta="$home/state/$id.meta"
   git -C "$home/wt" remote set-url origin git@gitlab.com:example/repo_name.git >/dev/null 2>&1
+  rm -f "$home/fakebin/gh"
 
   out=$(run_unbind "$home" "$id" 2>&1); rc=$?
   expect_code 1 "$rc" "unbind with a non-GitHub worktree origin"
-  assert_contains "$out" "no github.com origin" "the refusal did not name the origin"
+  assert_contains "$out" "PR unbind supports github.com origins only" \
+    "the refusal did not name the GitHub-only limitation"
   [ "$(meta_pr "$meta")" = https://github.com/example/repo_name/pull/4 ] \
     || fail "a non-GitHub origin cleared pr="
   assert_present "$home/state/$id.check.sh" "a non-GitHub origin removed the poll"
@@ -241,7 +243,7 @@ test_missing_worktree_refuses() {
 
   out=$(run_unbind "$home" "$id" 2>&1); rc=$?
   expect_code 1 "$rc" "unbind with no worktree"
-  assert_contains "$out" "no github.com origin" "the refusal did not name the origin"
+  assert_contains "$out" "no usable origin" "the refusal did not name the missing origin"
   [ "$(meta_pr "$meta")" = https://github.com/example/repo_name/pull/4 ] \
     || fail "a missing worktree cleared pr="
   pass "a missing worktree refuses"
@@ -306,20 +308,48 @@ test_foreign_static_check_refuses() {
   pass "a foreign static check refuses"
 }
 
-test_torn_poll_state_refuses() {
-  local home id meta out rc
+test_interrupted_poll_removal_is_rerunnable() {
+  local home id meta out rc remainder
+  for remainder in sidecars registration data; do
+    id="task-resume-$remainder"
+    home=$(armed_home "resume-$remainder" "$id" https://github.com/example/repo_name/pull/5)
+    meta="$home/state/$id.meta"
+    rm -f "$home/state/$id.check.sh"
+    case "$remainder" in
+      registration) rm -f "$home/state/$id.pr-poll" ;;
+      data) rm -f "$home/state/$id.pr-poll-registration" ;;
+    esac
+
+    out=$(run_unbind "$home" "$id"); rc=$?
+    expect_code 0 "$rc" "rerun after poll removal stopped with $remainder remaining"
+    assert_contains "$out" "unbound: state/$id.meta" "the resumed unbind did not report success"
+    [ "$(meta_pr "$meta")" = "" ] || fail "the resumed unbind left pr= with $remainder remaining"
+    assert_absent "$home/state/$id.check.sh" "the resumed unbind restored a poll check"
+    assert_absent "$home/state/$id.pr-poll" "the resumed unbind left poll data"
+    assert_absent "$home/state/$id.pr-poll-registration" "the resumed unbind left poll registration"
+  done
+  pass "an interrupted poll-artifact removal is idempotent and rerunnable"
+}
+
+test_ambiguous_interrupted_poll_refuses() {
+  local home id meta data out rc
   id=task-torn
   home=$(armed_home torn-poll "$id" https://github.com/example/repo_name/pull/5)
   meta="$home/state/$id.meta"
+  data="$home/state/$id.pr-poll"
   rm -f "$home/state/$id.check.sh"
+  printf 'github\nhttps://github.com/example/repo_name/pull/6\ngithub.com\nexample/repo_name\n6\n' > "$data"
+  chmod 0600 "$data"
 
   out=$(run_unbind "$home" "$id" 2>&1); rc=$?
-  expect_code 1 "$rc" "unbind with poll sidecars but no check"
-  assert_contains "$out" "without their check" "the refusal did not name the torn state"
+  expect_code 1 "$rc" "unbind with ambiguous remaining poll sidecars"
+  assert_contains "$out" "ambiguous" "the refusal did not name the ambiguous state"
   [ "$(meta_pr "$meta")" = https://github.com/example/repo_name/pull/5 ] \
-    || fail "a torn poll cleared pr="
-  assert_present "$home/state/$id.pr-poll" "a torn poll removed its sidecar"
-  pass "torn poll state refuses"
+    || fail "ambiguous poll state cleared pr="
+  assert_present "$data" "ambiguous poll state removed its sidecar"
+  assert_present "$home/state/$id.pr-poll-registration" "ambiguous poll state removed its registration"
+  assert_absent "$home/state/pr-unbinds.log" "ambiguous poll state was logged as an unbind"
+  pass "ambiguous interrupted poll state refuses"
 }
 
 test_unsafe_meta_refuses() {
@@ -385,6 +415,7 @@ test_retirement_receipt_is_finished_first() {
   fm_pr_poll_retirement_publish "$home/state" "$id" "$ROOT/bin/fm-pr-poll.sh" merged \
     || fail "could not publish the retirement receipt"
   assert_present "$receipt" "the fixture published no receipt"
+  rm -f "$home/state/$id.check.sh"
 
   out=$(run_unbind "$home" "$id"); rc=$?
   expect_code 0 "$rc" "unbind with a pending retirement receipt"
@@ -406,7 +437,8 @@ test_missing_worktree_refuses
 test_poll_mismatch_refuses
 test_custom_check_is_left_alone
 test_foreign_static_check_refuses
-test_torn_poll_state_refuses
+test_interrupted_poll_removal_is_rerunnable
+test_ambiguous_interrupted_poll_refuses
 test_unsafe_meta_refuses
 test_failed_log_append_refuses_before_removal
 test_invalid_usage_exits_2

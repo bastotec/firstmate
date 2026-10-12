@@ -17,8 +17,9 @@
 # live review work, so clearing is refused and the operator reconciles by hand.
 # The repository is resolved from the task's recorded worktree's github.com
 # origin, so a task on any GitHub repository resolves with nothing configured
-# per task; a missing or non-GitHub worktree origin refuses rather than
-# guessing the repository from the very pr= value being cleared.
+# per task; a missing worktree origin refuses, and the command explicitly
+# supports github.com origins only rather than guessing the repository from the
+# very pr= value being cleared.
 #
 # What is removed, and only that: every pr= and pr_head= line in the meta, plus
 # the PR-poll artifacts armed for that same URL (state/<id>.check.sh, .pr-poll,
@@ -26,7 +27,9 @@
 # identifies it, byte-identity with bin/fm-pr-poll.sh at mode 600, and each
 # artifact is then removed only against the hash and file identity the valid
 # snapshot captured, so a file swapped between validation and removal is never
-# deleted. A mode-700 state/<id>.check.sh is a custom check and is left alone:
+# deleted. If an interruption has already removed part of that triple, a rerun
+# validates each remaining sidecar against the task and finishes the removal.
+# A mode-700 state/<id>.check.sh is a custom check and is left alone:
 # custom checks are unrelated to pr= and bin/fm-check-unregister.sh owns them.
 # A mode-600 check that is not the poll template is a foreign static check and
 # refuses rather than being interpreted. A pending merge-retirement receipt for
@@ -58,11 +61,11 @@
 # Refusals (exit 1, meta untouched beyond a completed retirement recovery): the
 # meta is absent or unsafe (symlink, hard link, foreign device); pr= is missing
 # or malformed (there is nothing supported to clear); the task's worktree has
-# no usable github.com origin; the forge cannot be read (gh missing,
-# unauthenticated, offline, or an unreadable answer); an open pull request
-# exists for the task's own fm/<task-id> branch; the armed check is a foreign
-# static check, or poll sidecars exist without their check, or the armed poll
-# does not validate against the recorded pr=; a pending retirement receipt
+# no usable origin or does not use the supported github.com forge; the forge
+# cannot be read (gh missing, unauthenticated, offline, or an unreadable
+# answer); an open pull request exists for the task's own fm/<task-id> branch;
+# the armed check is foreign, or remaining poll artifacts cannot be bound to the
+# recorded pr=; a pending retirement receipt
 # cannot be finished; the task's control or metadata lock cannot be acquired.
 # While another lifecycle action holds the control lock the unbind waits for it
 # (bin/fm-wake-lib.sh's fm_lock_acquire_wait, the mutation-critical acquire)
@@ -119,11 +122,6 @@ if ! fm_pr_metadata_identity_parse "$META"; then
 fi
 PR_URL=$FM_PR_META_URL
 
-command -v gh >/dev/null 2>&1 || {
-  echo "error: clearing a pr= record requires gh on PATH" >&2
-  exit 1
-}
-
 # The whole unbind runs under the task's control lock, the same lock
 # bin/fm-watch.sh holds for a PR-poll transaction and bin/fm-teardown.sh for
 # lifecycle cleanup, so it cannot interleave with either.
@@ -153,30 +151,39 @@ CONTROL_LOCK_HELD=1
 
 # Resolve the repository to query from the task's own worktree origin, so the
 # guard reads the forge the task actually targets. A missing, non-directory,
-# or non-git worktree, or an origin that is not a github.com URL, refuses:
-# guessing the repository from the stale pr= would test the wrong project.
+# or non-git worktree refuses, and a non-github.com origin reaches the explicit
+# supported-forge refusal below rather than guessing from the stale pr=.
 WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
 REPO=
+ORIGIN=
 if [ -n "$WT" ] && [ -d "$WT" ]; then
   ORIGIN=$(git -C "$WT" remote get-url origin 2>/dev/null) || ORIGIN=
-  case "$ORIGIN" in
-    git@github.com:*|https://github.com/*|ssh://git@github.com/*)
-      REPO=$(printf '%s' "$ORIGIN" | sed -e 's|^git@github.com:||' \
-        -e 's|^ssh://git@github.com/||' -e 's|^https://github.com/||' \
-        -e 's|/$||' -e 's|\.git$||')
-      ;;
-  esac
 fi
-if [ -z "$REPO" ]; then
-  echo "error: the task's worktree has no github.com origin, so the forge cannot be checked for the task's own branch" >&2
+if [ -z "$ORIGIN" ]; then
+  echo "error: the task's worktree has no usable origin, so the forge cannot be checked for the task's own branch" >&2
   exit 1
 fi
+case "$ORIGIN" in
+  git@github.com:*|https://github.com/*|ssh://git@github.com/*)
+    REPO=$(printf '%s' "$ORIGIN" | sed -e 's|^git@github.com:||' \
+      -e 's|^ssh://git@github.com/||' -e 's|^https://github.com/||' \
+      -e 's|/$||' -e 's|\.git$||')
+    ;;
+  *)
+    echo "error: the PR unbind supports github.com origins only; the task's worktree origin is unsupported" >&2
+    exit 1
+    ;;
+esac
 # Reuse the canonical URL parser to validate the derived owner/repository shape,
 # rather than trusting whatever string the remote URL carried.
 if ! fm_pr_url_parse "https://github.com/$REPO/pull/1"; then
   echo "error: the task's worktree origin does not name a valid GitHub repository" >&2
   exit 1
 fi
+command -v gh >/dev/null 2>&1 || {
+  echo "error: clearing a pr= record requires gh on PATH" >&2
+  exit 1
+}
 
 # The guard itself: no open pull request may exist for the task's own
 # fm/<task-id> branch. gh pr list applies its own --jq projection to the JSON
@@ -199,12 +206,6 @@ done <<EOF
 $OPEN_HEADS
 EOF
 
-# Classify the armed check and capture the poll snapshot, so every removal is
-# pinned to bytes and file identities that were just validated. Poll checks are
-# byte-identical to bin/fm-pr-poll.sh at mode 600; custom checks are mode 700
-# and unrelated to pr=; any other mode-600 check is a foreign static check this
-# command must not interpret. Poll sidecars without their check can only be a
-# torn publication, and are likewise refused rather than guessed at.
 POLL_CHECK="$STATE/$ID.check.sh"
 POLL_DATA="$STATE/$ID.pr-poll"
 POLL_REG="$STATE/$ID.pr-poll-registration"
@@ -212,42 +213,11 @@ poll_artifact_present() {  # <path>
   [ -e "$1" ] || [ -L "$1" ]
 }
 POLL_TEMPLATE="$SCRIPT_DIR/fm-pr-poll.sh"
-POLL_CLASS=
-if poll_artifact_present "$POLL_CHECK"; then
-  if [ "$(fm_pr_file_mode "$POLL_CHECK")" = 600 ] \
-    && cmp -s "$POLL_TEMPLATE" "$POLL_CHECK"; then
-    # A valid poll carries the full triple and cross-validates against the
-    # pr= read above; fm_pr_poll_snapshot_capture enforces both and captures
-    # the hashes and identities the removals below are pinned to.
-    if ! fm_pr_poll_snapshot_capture "$STATE" "$ID" "$POLL_TEMPLATE"; then
-      echo "error: the task's armed PR poll does not validate against its recorded pr=; reconcile by hand" >&2
-      exit 1
-    fi
-    POLL_CLASS=poll
-  elif [ "$(fm_pr_file_mode "$POLL_CHECK")" = 700 ]; then
-    # A custom check is not a PR poll and has no pr= identity; it stays, and
-    # bin/fm-check-unregister.sh owns its retirement.
-    if poll_artifact_present "$POLL_DATA" || poll_artifact_present "$POLL_REG"; then
-      echo "error: poll sidecars exist beside a custom check; reconcile by hand" >&2
-      exit 1
-    fi
-    POLL_CLASS=custom
-  else
-    echo "error: state/$ID.check.sh is not a PR poll or a custom check; reconcile by hand" >&2
-    exit 1
-  fi
-else
-  if poll_artifact_present "$POLL_DATA" || poll_artifact_present "$POLL_REG"; then
-    echo "error: PR poll sidecars exist without their check; reconcile by hand" >&2
-    exit 1
-  fi
-  POLL_CLASS=none
-fi
-# A pending merge-retirement receipt is finished first, exactly as
-# bin/fm-watch.sh would, while the meta still names the PR the receipt
-# validates against. A finished recovery removes exactly the artifacts the
-# receipt pinned - leaving at most a stale pr= with no poll - so the poll
-# classification is redone for what remains rather than assumed.
+
+# A pending merge-retirement receipt is finished before classifying the poll,
+# exactly as bin/fm-watch.sh would, while the meta still names the PR the
+# receipt validates against. Recovery explicitly accepts a receipt whose
+# pinned removals were interrupted, including one whose check is already gone.
 if ! fm_pr_poll_retirement_recover_one "$STATE" "$ID" "$POLL_TEMPLATE"; then
   echo "error: a pending PR poll retirement could not be validated; reconcile by hand" >&2
   exit 1
@@ -256,17 +226,101 @@ if poll_artifact_present "$STATE/$ID.pr-poll-retirement"; then
   echo "error: a pending PR poll retirement could not be finished; reconcile by hand" >&2
   exit 1
 fi
+
+# Classify what remains after receipt recovery. A complete poll is captured by
+# the shared snapshot validator. If a previous unbind was interrupted after
+# removing the check, each remaining sidecar is instead validated directly
+# against the task, recorded pr=, state device, and (where recorded) template
+# and peer identity. This makes every removal boundary rerunnable without
+# treating malformed or mismatched fixed-path files as poll artifacts.
+STATE_DEVICE_NOW=$(fm_pr_file_device "$STATE") || {
+  echo "error: state directory is unavailable" >&2
+  exit 1
+}
 UNBIND_POLL=0
-if [ "$POLL_CLASS" = poll ]; then
-  if poll_artifact_present "$POLL_CHECK" || poll_artifact_present "$POLL_DATA" \
-    || poll_artifact_present "$POLL_REG"; then
-    if ! poll_artifact_present "$POLL_CHECK" || ! poll_artifact_present "$POLL_DATA" \
-      || ! poll_artifact_present "$POLL_REG" \
-      || ! fm_pr_poll_snapshot_capture "$STATE" "$ID" "$POLL_TEMPLATE"; then
-      echo "error: the task's armed PR poll did not survive its retirement recovery intact; reconcile by hand" >&2
+UNBIND_CHECK_PRESENT=0
+UNBIND_DATA_PRESENT=0
+UNBIND_REG_PRESENT=0
+UNBIND_CHECK_IDENTITY=
+UNBIND_CHECK_HASH=
+UNBIND_DATA_IDENTITY=
+UNBIND_DATA_HASH=
+UNBIND_REG_IDENTITY=
+UNBIND_REG_HASH=
+if poll_artifact_present "$POLL_CHECK"; then
+  if [ "$(fm_pr_file_mode "$POLL_CHECK")" = 600 ] \
+    && cmp -s "$POLL_TEMPLATE" "$POLL_CHECK"; then
+    if ! fm_pr_poll_snapshot_capture "$STATE" "$ID" "$POLL_TEMPLATE"; then
+      echo "error: the task's armed PR poll does not validate against its recorded pr=; reconcile by hand" >&2
       exit 1
     fi
     UNBIND_POLL=1
+    UNBIND_CHECK_PRESENT=1
+    UNBIND_DATA_PRESENT=1
+    UNBIND_REG_PRESENT=1
+    UNBIND_CHECK_IDENTITY=$FM_PR_POLL_SNAPSHOT_CHECK_IDENTITY
+    UNBIND_CHECK_HASH=$FM_PR_POLL_SNAPSHOT_TEMPLATE_HASH
+    UNBIND_DATA_IDENTITY=$FM_PR_POLL_SNAPSHOT_DATA_IDENTITY
+    UNBIND_DATA_HASH=$FM_PR_POLL_SNAPSHOT_DATA_HASH
+    UNBIND_REG_IDENTITY=$FM_PR_POLL_SNAPSHOT_REG_IDENTITY
+    UNBIND_REG_HASH=$FM_PR_POLL_SNAPSHOT_REG_HASH
+  elif [ "$(fm_pr_file_mode "$POLL_CHECK")" = 700 ]; then
+    if poll_artifact_present "$POLL_DATA" || poll_artifact_present "$POLL_REG"; then
+      echo "error: poll sidecars exist beside a custom check; reconcile by hand" >&2
+      exit 1
+    fi
+  else
+    echo "error: state/$ID.check.sh is not a PR poll or a custom check; reconcile by hand" >&2
+    exit 1
+  fi
+elif poll_artifact_present "$POLL_DATA" || poll_artifact_present "$POLL_REG"; then
+  UNBIND_POLL=1
+  if poll_artifact_present "$POLL_DATA"; then
+    UNBIND_DATA_IDENTITY=$(fm_pr_file_identity "$POLL_DATA") \
+      && UNBIND_DATA_HASH=$(fm_pr_sha256 "$POLL_DATA") \
+      && fm_pr_private_file_valid "$POLL_DATA" 600 "$STATE_DEVICE_NOW" \
+      && fm_pr_poll_data_parse "$POLL_DATA" \
+      && [ "$FM_PR_DATA_PROVIDER" = "$FM_PR_META_PROVIDER" ] \
+      && [ "$FM_PR_DATA_URL" = "$FM_PR_META_URL" ] \
+      && [ "$FM_PR_DATA_HOST" = "$FM_PR_META_HOST" ] \
+      && [ "$FM_PR_DATA_PATH" = "$FM_PR_META_PATH" ] \
+      && [ "$FM_PR_DATA_NUMBER" = "$FM_PR_META_NUMBER" ] \
+      && [ "$(fm_pr_file_identity "$POLL_DATA")" = "$UNBIND_DATA_IDENTITY" ] \
+      && [ "$(fm_pr_sha256 "$POLL_DATA")" = "$UNBIND_DATA_HASH" ] || {
+      echo "error: the remaining PR poll sidecar is ambiguous; reconcile by hand" >&2
+      exit 1
+    }
+    UNBIND_DATA_PRESENT=1
+  fi
+  if poll_artifact_present "$POLL_REG"; then
+    POLL_TEMPLATE_HASH=$(fm_pr_sha256 "$POLL_TEMPLATE") || {
+      echo "error: the PR poll template is unreadable" >&2
+      exit 1
+    }
+    UNBIND_REG_IDENTITY=$(fm_pr_file_identity "$POLL_REG") \
+      && UNBIND_REG_HASH=$(fm_pr_sha256 "$POLL_REG") \
+      && fm_pr_private_file_valid "$POLL_REG" 600 "$STATE_DEVICE_NOW" \
+      && fm_pr_poll_registration_parse "$POLL_REG" \
+      && [ "$FM_PR_REG_ID" = "$ID" ] \
+      && [ "$FM_PR_REG_PROVIDER" = "$FM_PR_META_PROVIDER" ] \
+      && [ "$FM_PR_REG_URL" = "$FM_PR_META_URL" ] \
+      && [ "$FM_PR_REG_HOST" = "$FM_PR_META_HOST" ] \
+      && [ "$FM_PR_REG_PATH" = "$FM_PR_META_PATH" ] \
+      && [ "$FM_PR_REG_NUMBER" = "$FM_PR_META_NUMBER" ] \
+      && [ "$FM_PR_REG_TEMPLATE_HASH" = "$POLL_TEMPLATE_HASH" ] \
+      && [ "$(fm_pr_file_identity "$POLL_REG")" = "$UNBIND_REG_IDENTITY" ] \
+      && [ "$(fm_pr_sha256 "$POLL_REG")" = "$UNBIND_REG_HASH" ] || {
+      echo "error: the remaining PR poll registration is ambiguous; reconcile by hand" >&2
+      exit 1
+    }
+    UNBIND_REG_PRESENT=1
+  fi
+  if [ "$UNBIND_DATA_PRESENT" = 1 ] && [ "$UNBIND_REG_PRESENT" = 1 ]; then
+    [ "$FM_PR_REG_DATA_IDENTITY" = "$UNBIND_DATA_IDENTITY" ] \
+      && [ "$FM_PR_REG_DATA_HASH" = "$UNBIND_DATA_HASH" ] || {
+      echo "error: the remaining PR poll sidecars disagree; reconcile by hand" >&2
+      exit 1
+    }
   fi
 fi
 
@@ -288,25 +342,27 @@ fi
 # is no orphaned watch for the watcher to reject, only a stale pr= line that
 # every consumer already treats as advisory.
 if [ "$UNBIND_POLL" = 1 ]; then
-  STATE_DEVICE_NOW=$(fm_pr_file_device "$STATE") || {
-    echo "error: state directory is unavailable" >&2
-    exit 1
-  }
-  fm_pr_poll_retirement_remove_exact "$POLL_CHECK" "$STATE_DEVICE_NOW" \
-    "$FM_PR_POLL_SNAPSHOT_CHECK_IDENTITY" "$FM_PR_POLL_SNAPSHOT_TEMPLATE_HASH" || {
-    echo "error: the armed PR poll check could not be removed; the meta still names its PR" >&2
-    exit 1
-  }
-  fm_pr_poll_retirement_remove_exact "$POLL_DATA" "$STATE_DEVICE_NOW" \
-    "$FM_PR_POLL_SNAPSHOT_DATA_IDENTITY" "$FM_PR_POLL_SNAPSHOT_DATA_HASH" || {
-    echo "error: the PR poll sidecar could not be removed; the meta still names its PR" >&2
-    exit 1
-  }
-  fm_pr_poll_retirement_remove_exact "$POLL_REG" "$STATE_DEVICE_NOW" \
-    "$FM_PR_POLL_SNAPSHOT_REG_IDENTITY" "$FM_PR_POLL_SNAPSHOT_REG_HASH" || {
-    echo "error: the PR poll registration could not be removed; the meta still names its PR" >&2
-    exit 1
-  }
+  if [ "$UNBIND_CHECK_PRESENT" = 1 ]; then
+    fm_pr_poll_retirement_remove_exact "$POLL_CHECK" "$STATE_DEVICE_NOW" \
+      "$UNBIND_CHECK_IDENTITY" "$UNBIND_CHECK_HASH" || {
+      echo "error: the armed PR poll check could not be removed; the meta still names its PR" >&2
+      exit 1
+    }
+  fi
+  if [ "$UNBIND_REG_PRESENT" = 1 ]; then
+    fm_pr_poll_retirement_remove_exact "$POLL_REG" "$STATE_DEVICE_NOW" \
+      "$UNBIND_REG_IDENTITY" "$UNBIND_REG_HASH" || {
+      echo "error: the PR poll registration could not be removed; the meta still names its PR" >&2
+      exit 1
+    }
+  fi
+  if [ "$UNBIND_DATA_PRESENT" = 1 ]; then
+    fm_pr_poll_retirement_remove_exact "$POLL_DATA" "$STATE_DEVICE_NOW" \
+      "$UNBIND_DATA_IDENTITY" "$UNBIND_DATA_HASH" || {
+      echo "error: the PR poll sidecar could not be removed; the meta still names its PR" >&2
+      exit 1
+    }
+  fi
 fi
 
 # Atomic guarded rewrite under the task's metadata lock: drop only pr= and
