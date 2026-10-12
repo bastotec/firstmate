@@ -28,7 +28,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | [`fm-machine-skills.sh`](../bin/fm-machine-skills.sh) | Record per-machine skill discovery and check skill-dependent placement |
 | [`fm-machine-instructions.sh`](../bin/fm-machine-instructions.sh) | Read and version-safely replace a machine's binding instructions |
 | [`fm-machine-rules.sh`](../bin/fm-machine-rules.sh) | Check whether a machine's instructions require captain approval for an action |
-| `fm-on.sh`               | Execute one tracked Firstmate command in a configured remote secondmate home, using its job worker except for the doctor bootstrap |
+| [`fm-on.sh`](../bin/fm-on.sh) | Execute a tracked Firstmate command in a remote home or machine lane after bridge permission checks; the doctor uses the SSH bootstrap |
 | `fm-remote-job-lib.sh`   | Shared bounded remote job queue, worker readiness, LaunchAgent contract, and filesystem-composed PATH |
 | `fm-remote-job-worker.sh` | Long-lived remote queue worker for tracked `fm-*.sh` commands in the account runtime |
 | `fm-remote-job-reap-orphans.sh` | Stop remote job workers left running by a pruned code root, never one whose checkout still exists |
@@ -43,7 +43,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | [`fm-order.sh`](../bin/fm-order.sh) | Own order proposals: the first mate's reading of a plain-word order, waiting for launch or cancel |
 | [`fm-approval.sh`](../bin/fm-approval.sh) | Per-machine approval gates: the Deck hook that blocks gated tool calls, the policy presets, and the captain's one-time approve or deny |
 | [`fm-machine-approvals.sh`](../bin/fm-machine-approvals.sh) | Show, save (sha-guarded, audited) and audit a machine's approval gates, locally or over ssh |
-| [`fm-bridge.sh`](../bin/fm-bridge.sh) | Bridge gates: which flows may cross to each machine, seeded from today's routes, deny by default for new machines, audited |
+| [`fm-bridge.sh`](../bin/fm-bridge.sh) | Inspect and configure cross-machine permissions; [Bridge gates](configuration.md#bridge-gates-configbridgesjson) owns operator setup |
 | `fm-decision-hold.sh`    | One-release compatibility shim mapping the retired decision commands onto fm-captain-hold.sh |
 | `fm-brief.sh`            | Scaffold ship (explicit `--mode`), scout, and secondmate-charter briefs, with Captain's intent and Firstmate spec subsections on ship/scout |
 | [`fm-dod-lib.sh`](../bin/fm-dod-lib.sh) | Own ship/scout worker role scope, ship definitions of done, the ship-only cross-worker "Other work in flight" section shared by briefs and scout promotion, and the no-mistakes `--intent` contract |

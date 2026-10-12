@@ -3,10 +3,9 @@
 #
 # Usage: fm-bridge.sh show|check|allow|deny|set|block|audit ...
 #
-# Thin entry point; bin/fm-bridge.py's header owns the whole contract: the bridge
-# record (config/bridges.json, seeded from today's routes on first use, deny by
-# default for machines connected later), the six flows, the audit log
-# (state/bridges.log) and the refused-flow request bin/fm-on.sh files.
+# Thin entry point; bin/fm-bridge.py's header owns the bridge record, flow
+# definitions, seeding, audit log and refused-flow request contract.
+# docs/configuration.md "Bridge gates" owns operator setup and UI boundaries.
 set -u
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 exec python3 "$SCRIPT_DIR/fm-bridge.py" "$@"

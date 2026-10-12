@@ -10,7 +10,8 @@
 # SSH config alias, remote Firstmate code root, and remote FM_HOME. A host alias
 # may be used directly only when exactly one record selects it; an ambiguous
 # alias is refused. The command must be a genuine executable in this checkout's
-# bin/fm-*.sh namespace. No per-command table exists.
+# bin/fm-*.sh namespace; there is no command authorization allowlist.
+# The bridge classification table below selects the required flow permissions.
 #
 # argv is encoded as one NUL-delimited stream and passed through the fixed
 # fm-remote-entrypoint.sh. The remote command's stdin is /dev/null by default,
@@ -30,9 +31,10 @@
 # Before any ssh, the command's flow (supervision, reports, messages, placement, files,
 # maintenance; the readiness doctor is never gated) must be allowed on the bridge to
 # that host by bin/fm-bridge.sh check. A refused flow exits 1 with `bridge-blocked:` on
-# stderr, nothing sent, after bin/fm-bridge.sh block audits it and files one request
-# for the captain. The classification table below is the single owner of which
-# remote command is which flow; an unlisted command counts as maintenance.
+# stderr, nothing sent; bin/fm-bridge.py owns refusal auditing and request publication.
+# The classification table below is the single owner of which remote command
+# requires which flows; an unlisted command counts as maintenance.
+# A command assigned multiple flows must pass every permission check.
 # This command explicitly disables agent forwarding, forwarding setup, and
 # configured SendEnv patterns. The remote entrypoint executes the selected
 # command under an empty environment with only its fixed runtime values.

@@ -39,6 +39,7 @@ config/
   deck-mcp.json           optional Deck MCP servers ("Harness support")
   shared-skills           optional skills repo shipped to connected machines; primary home only (bin/fm-machine.sh header)
   machine-tunnels         optional gateway host whose model gateway and stream hub machine setup forwards (bin/fm-machine.sh header)
+  bridges.json            home-local cross-machine permissions ("Bridge gates"; bin/fm-bridge.py owns schema)
   inbox-* voice-read-*    inbox model and voice-read settings ("Inbox and voice records")
   extensions.d/           mode-0700 explicit extension bindings (docs/process-event-sources.md)
   x-mode.env              generated Relay watcher cadence; written only by bootstrap (docs/relay.md)
@@ -66,7 +67,7 @@ state/
   cards/<task-id>.json    captain-facing decision card; bin/fm-card.sh owns schema and storage, bin/fm-captain-hold.sh owns hold and resolution hooks
   cards-cleared.log       stale-card clear and restore log; bin/fm-card.sh owns fields and undo guards
   orders/<id>.json        order proposal waiting for the captain's launch or cancel; bin/fm-order.sh owns schema and storage
-  approvals/<id>.json     gated tool call waiting for the captain's approve or deny; answered/ and grants/ beside it; bin/fm-approval.py owns all of it
+  approvals/<id>.json     tool-call or bridge-flow request awaiting approve or deny; bin/fm-approval.py owns answers, answered/ and grants/; bin/fm-bridge.py owns bridge requests
   approvals.log           approval gate audit log; bin/fm-approval.py owns events and fields
   bridges.log             bridge gate audit log (seeded, changed, blocked); bin/fm-bridge.py owns fields
   <id>.inbox/             durable steering inbox; written by fm-send, removed by teardown (bin/fm-task-inbox-lib.sh)
@@ -657,9 +658,13 @@ The gate is command-text/tool-name matching, not a sandbox; do not treat it as p
 
 ## Bridge gates (config/bridges.json)
 
-A bridge joins this home's machine to another machine, and each bridge allows a set of flows: `supervision`, `reports` (wakes, replies, deltas), `messages`, `placement` (launching a mate, backlog handoff, skill routing), `files` and `maintenance` (sync and updates).
-[`bin/fm-on.sh`](../bin/fm-on.sh), the path Firstmate uses to act on another machine, refuses a flow the bridge does not allow before anything is sent, audits it in `state/bridges.log`, and files one "needs you" request in `state/approvals/` that Fleet Town shows as a card; approving it allows that flow on that bridge.
-The first use seeds the record from the machines this home already reaches, with every flow allowed, so today's bridges keep working and show as configured; a machine connected afterwards allows nothing until the captain allows flows:
+A bridge joins this home's machine to another machine, with separate permissions for cross-machine flows.
+[`bin/fm-on.sh`](../bin/fm-on.sh) enforces those permissions before SSH, including machine-level skill discovery, shared-skills installation, and instruction reads or saves.
+A refused call reports `bridge-blocked:`, records the refusal, and files a "needs you" request that Fleet Town's existing approval card can show.
+Unlike a tool-call approval, approving a bridge request grants standing permission for that flow on that bridge and asks the first mate to retry; denying it leaves the flow closed.
+Existing bridges are seeded on first use and shown as configured/seeded; newly connected machines allow nothing until the captain selects permissions.
+An unreadable or invalid record refuses remote operations rather than restoring seeded permissions.
+Use the bridge command to inspect or change permissions, or select them when registering a machine:
 
 ```sh
 bin/fm-bridge.sh show                                  # every bridge and what it allows
@@ -668,8 +673,12 @@ bin/fm-machine.sh register newbox /home/me/firstmate --allow supervision,reports
 bin/fm-bridge.sh audit                                 # who changed what, and every blocked flow
 ```
 
-[`bin/fm-bridge.py`](../bin/fm-bridge.py)'s header owns the flows, the record, seeding, the request and exit codes; `fm-on.sh`'s header owns which remote command is which flow.
-Fleet Town's own reads of remote homes (the captain's view) do not go through `fm-on.sh` and are not gated.
+[`bin/fm-bridge.py`](../bin/fm-bridge.py)'s header owns flow definitions, record schema, seeding, request publication and exit codes; `show --json` returns the current flow list and bridge configuration.
+[`bin/fm-on.sh`](../bin/fm-on.sh)'s classification table owns each remote command's required permissions, and [`bin/fm-approval.py`](../bin/fm-approval.py)'s header owns answer handling.
+The readiness doctor remains available without bridge permission so a machine can be connected.
+Fleet Town's own SSH reads of remote homes are the captain's view and are not gated; this exemption does not apply to Firstmate's remote report collection.
+The bridge editing panel and connect-form permission checkboxes belong to a separate firstmate-ui change; use the CLI or existing approval cards here.
+[`tests/fm-bridge.test.sh`](../tests/fm-bridge.test.sh) covers seeding, new-machine refusal, permission enforcement, requests, approvals, and skill routing.
 
 ## Environment variables
 

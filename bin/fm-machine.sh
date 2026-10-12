@@ -97,8 +97,8 @@
 # rule bin/fm-home-route-lib.sh applies to seeding; a local path or file:// URL
 # is refused), links ~/.local/bin/fm-remote-entrypoint.sh to it when nothing is
 # there, and then runs `bin/fm-on.sh <alias> fm-remote-doctor.sh --backend
-# stream --fix` and relays its verdict and exit status. fm-on.sh only routes to
-# recorded remote homes, so a machine with no second mate yet is reached through
+# stream --fix` and relays its verdict and exit status. This doctor call uses
+# fm-on.sh's registry routing, so a machine with no second mate yet is reached through
 # a scratch single-route registry naming <remote-root> and an absent probe home
 # under the remote account's home directory; the doctor reports home-specific
 # checks as skip for an absent home and creates nothing there. Tool installation
@@ -174,11 +174,11 @@
 # register <alias> <remote-root> records the machine in this home's
 # data/machines.md as `- <alias> (root: <remote-root>; added YYYY-MM-DD)`. It is
 # idempotent for the same root and refuses a different root for a recorded
-# alias. It also records the bridge to the machine (bin/fm-bridge.py): --allow
-# names the flows the captain allowed when connecting it; a machine registered
-# without --allow and with no bridge entry yet allows nothing (deny by default).
-# The bridge record is seeded from the machines already known before this one
-# joins, so registering never grants a new machine the existing bridges' flows.
+# alias. --allow replaces the bridge's permitted flows with the captain's selection;
+# omitting it preserves an existing entry or records an empty selection for a new one.
+# It validates the registry and root before changing permissions, and initializes
+# bridge policy before adding the new route (bin/fm-bridge.py owns seeding).
+# A same-root re-registration with --allow changes permissions, not the route.
 #
 # FM_SSH_CONFIG selects the ssh config with -F. FM_KNOWN_HOSTS selects the
 # trust file; otherwise the first userknownhostsfile from ssh -G is used, with

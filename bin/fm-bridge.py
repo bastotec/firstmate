@@ -8,12 +8,12 @@ allows a set of flows; anything else is refused before it leaves this machine.
 bin/fm-on.sh, the one path Firstmate uses to act on another machine, asks `check`
 before every remote command and calls `block` when the answer is no.
 
-Flows:
+Flow meanings (bin/fm-on.sh's classification table owns command mapping):
   supervision  launch-state reads, relaunch, interrupt/exit, retire, route, capture, observe
   reports      wakes, replies, deltas and follow-ups read back from the remote home
   messages     steering a remote mate (fm-send's remote leg: send, key)
   placement    putting work there: launching a second mate, backlog handoff, skill routing
-  files        file and attachment transfer (fm-remote-file.sh, Fleet Town attachments)
+  files        file and attachment transfer
   maintenance  code, config and inheritance sync, updates, extensions, budget probes
 The readiness doctor (fm-remote-doctor.sh) is the connect flow itself and is never gated.
 
@@ -22,14 +22,20 @@ under a lock:
   {"version": 1, "bridges": {"<alias>": {"allow": [flow...], "seeded": bool,
                                          "updated": "<utc>", "by": "<who>"}}}
 When the file does not exist, the first command seeds it from the machines this home
-already reaches (data/machines.md and the remote routes in data/secondmates.md): each gets every flow, "seeded": true, so the
-bridges that work today keep working and show as configured. From then on a machine
-with no entry, such as one connected later, allows nothing until the captain allows
-flows (`allow`, `set`, bin/fm-machine.sh register --allow, or Fleet Town).
-`local` (this machine) always allows everything.
+already reaches, via fm-machine-skills.sh roots using <home>/data (not a scratch
+FM_DATA_OVERRIDE inventory): each gets every flow, "seeded": true, so existing
+bridges keep working and show as configured.
+Registration, remote seeding, and migration initialize this record before publishing
+new routes; a later machine with no entry allows nothing until the captain allows
+flows (`allow`, `set`, bin/fm-machine.sh register --allow, or an approval card).
+An existing unreadable or invalid record is refused, never re-seeded.
+`local` (this machine) needs no cross-machine permission.
 
-Every change appends one JSON line to <home>/state/bridges.log:
-{at, by, event: seeded|changed|blocked, bridge, before, after, flow?, what?}.
+Seed and permission-change events append a JSON line to <home>/state/bridges.log:
+{at, by, event: seeded|changed, bridge, before, after}.
+Blocked events instead carry {at, by, event: blocked, bridge, flow, what,
+request, new_request}; request identifies the pending approval reused or created.
+FM_STATE_OVERRIDE selects the audit directory when set.
 
 Usage:
   fm-bridge.sh show [--json]
@@ -47,9 +53,8 @@ for a known machine with no entry (it allows nothing). set replaces a bridge's f
 block records a refused flow: one audit line, and one pending request in this home's
 state/approvals/ (the approval card path Fleet Town already shows; agent `primary`,
 tool `bridge`, gate `bridge:<flow>`, args {machine, flow, what}) unless one is already
-pending for the same bridge and flow. bin/fm-approval.py answers it: --approve allows
-that flow on that bridge (standing, audited) and tells the first mate to retry what
-was blocked; --deny leaves it blocked. It prints the request id.
+pending for the same bridge and flow. It prints the request id.
+bin/fm-approval.py's header owns bridge approval answers and retry steering.
 
 Exit: 0 ok/allowed; 1 denied or refused; 2 usage.
 FM_BRIDGE_NOW (epoch seconds) overrides the clock for tests.
