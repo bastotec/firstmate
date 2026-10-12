@@ -96,7 +96,7 @@ assert_contains "$(jq -r .title "$card")" "left processes behind" "the card name
 "$ROOT/bin/fm-captain-hold.sh" open group-unkillable || fail "the escalation must be held in the authoritative backlog"
 assert_contains "$("$ROOT/bin/fm-card.sh" calls)" "group-unkillable" "normal captain-call discovery includes the group escalation"
 out=$("$GROUP" cleanup unkillable 2>&1) || fail "a retried cleanup should succeed: $out"
-assert_equals done "$(jq -r .status "$HOME_DIR/state/groups/unkillable.json")" "cleanup retry preserves the completed work outcome"
+assert_equals 'done' "$(jq -r .status "$HOME_DIR/state/groups/unkillable.json")" "cleanup retry preserves the completed work outcome"
 pass "a cleanup that cannot prove every member gone raises a captain-held task"
 
 STUB_MERGE_MODE=fail "$GROUP" start merge-fails --brief x --angle a --wait >/dev/null 2>&1 && fail "a required merge failure must fail the group"
@@ -204,7 +204,7 @@ GH_TOKEN=fixture-secret PROXAI_API_KEY=fixture-key STUB_RESULT_BYTES=30720 \
   "$GROUP" start large-merge --brief "Review five substantial reports" \
   --angle a --angle b --angle c --angle d --angle e --wait >/dev/null 2>&1 || fail "large member reports must reach the merger"
 LARGE_REC="$HOME_DIR/state/groups/large-merge.json"
-assert_equals done "$(jq -r .status "$LARGE_REC")" "a large required merge completes"
+assert_equals 'done' "$(jq -r .status "$LARGE_REC")" "a large required merge completes"
 assert_grep "merged 5 member results" "$HOME_DIR/data/groups/large-merge/report.md" "the large merge consumes all member reports"
 new_launches=$(jq -s --argjson start "$launches" '.[$start:]' "$DECK_STATE/argv.jsonl")
 assert_equals 6 "$(printf '%s' "$new_launches" | jq length)" "five members and the merger launch through the filtered boundary"

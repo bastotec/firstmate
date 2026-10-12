@@ -182,7 +182,7 @@ launch_path=$(python3 -c 'import os; print(os.environ["PATH"])')
 assert_equals "$launch_path" "$(tail -1 "$filtered_log" | jq -r .environment.path)" "filtering keeps the Python launcher's operational PATH floor"
 printf '%s\n' '# Explicit test names' '' DECK_STATE CREW_ALLOWED_TEST CREW_EMPTY_TEST CREW_UNSET_TEST GH_TOKEN PROXAI_API_KEY > "$HOME_DIR/config/launch-env-allowlist"
 unset CREW_UNSET_TEST
-GH_TOKEN=fixture-secret PROXAI_API_KEY=fixture-key CREW_ALLOWED_TEST=allowed CREW_EMPTY_TEST= \
+GH_TOKEN=fixture-secret PROXAI_API_KEY=fixture-key CREW_ALLOWED_TEST=allowed CREW_EMPTY_TEST='' \
   "$SPEC" job memory-check --brief "Explicit names" --wait >/dev/null 2>&1 || fail "named allowlist job"
 environment=$(tail -1 "$DECK_STATE/argv.jsonl" | jq -c .environment)
 assert_equals true "$(printf '%s' "$environment" | jq -r .gh_token)" "explicit credential names are passed"
