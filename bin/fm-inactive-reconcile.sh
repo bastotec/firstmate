@@ -65,13 +65,14 @@
 # incarnation, state, outcome_key, origin, phase, pr, created_epoch, and
 # notice_emitted, plus optional status_head and ledger_claim fields. The
 # inactive-path fingerprint binds the spawn incarnation, task id, terminal
-# state, PR text, sanitized last status, and the current-state reader's detail;
-# the ledger-path fingerprint instead binds the incarnation, task id, terminal
-# state, literal `ledger` origin, and complete terminal ledger line.
-# The inactive-path parent line carries that reader detail as `error=` when
-# present, so the run's own recorded terminal cause - an infrastructure kill
-# like `daemon shutting down` - travels with the published verdict instead of
-# being dropped (2026-10-09 incident).
+# state, PR text, sanitized last status, and the current-state reader's detail
+# and run-error fields; the ledger-path fingerprint instead binds the
+# incarnation, task id, terminal state, literal `ledger` origin, and complete
+# terminal ledger line.
+# The inactive-path publication carries the reader's generic detail as
+# `detail=` and its distinct recorded terminal cause as `error=`, so a normal
+# detail such as `run completed` is not mislabeled while an infrastructure kill
+# like `daemon shutting down` still travels with the verdict.
 # When a terminal ledger append races just after the inactive path's final read,
 # ledger_claim binds that one ledger fingerprint to the already-delivered
 # inactive receipt so the two publishers cannot report one completion twice.
@@ -337,8 +338,8 @@ home_secondmate_id() {
 }
 
 # The reader's one-line detail from a `state: <s> · source: <src> · <detail>`
-# current-state line: everything after the second separator. Empty when the
-# line carries no detail, so nothing is appended to the parent line for it.
+# current-state line. A trailing ` · run-error: <error>` field is not part of
+# the detail. Empty when the line carries no generic detail.
 crew_state_detail() { # <state-line>
   local line=$1 rest
   case "$line" in
@@ -348,22 +349,30 @@ crew_state_detail() { # <state-line>
   rest=${line#state: }
   rest=${rest#*' · '}
   case "$rest" in
-    *' · '*) printf '%s' "${rest#*' · '}" ;;
+    *' · '*) rest=${rest#*' · '} ;;
+    *) printf ''; return 0 ;;
+  esac
+  case "$line" in
+    *' · source: run-step · '*' · run-error: '*) printf '%s' "${rest%%' · run-error: '*}" ;;
+    *) printf '%s' "$rest" ;;
+  esac
+}
+
+# The run's explicit recorded error from the current-state line, not its
+# generic detail. Empty when the reader did not report a run error.
+crew_state_error() { # <state-line>
+  case "$1" in
+    *' · source: run-step · '*' · run-error: '*) printf '%s' "${1#*' · run-error: '}" ;;
     *) printf '' ;;
   esac
 }
 
-report_to_parent() { # <task> <state> <outcome-key> <fingerprint> <pr> [detail]
-  local task=$1 state=$2 outcome_key=$3 fingerprint=$4 pr=$5 detail=${6:-} line
+report_to_parent() { # <task> <state> <outcome-key> <fingerprint> <pr> [detail] [run-error]
+  local task=$1 state=$2 outcome_key=$3 fingerprint=$4 pr=$5 detail=${6:-} run_error=${7:-} line
   line="$state [key=$outcome_key]: inactive terminal child=$task fingerprint=$fingerprint"
   [ -z "$pr" ] || line="$line pr=$pr"
-  # The current-state reader's one-line detail carries the run's own recorded
-  # terminal cause (bin/fm-crew-state.sh's nm_run_error), so an infrastructure
-  # kill - the daemon shutting down under a green PR - names itself on the
-  # parent line instead of reading as an unexplained failure (2026-10-09
-  # incident: the run record said `error: daemon shutting down`, the published
-  # line dropped it).
-  [ -z "$detail" ] || line="$line error=$(fm_parent_channel_clean_note "$detail")"
+  [ -z "$detail" ] || line="$line detail=$(fm_parent_channel_clean_note "$detail")"
+  [ -z "$run_error" ] || line="$line error=$(fm_parent_channel_clean_note "$run_error")"
   fm_parent_channel_report "$FM_HOME" "$STATE" "$line"
 }
 
@@ -502,7 +511,7 @@ report_child() { # <id>
 }
 
 reconcile_direct_child_locked() { # <id> <meta> <secondmate-id-or-empty> <timeout>
-  local id=$1 meta=$2 self=${3:-} timeout=$4 status turn last age state_line state detail pr incarnation fingerprint outcome_key payload kind state_rc=0
+  local id=$1 meta=$2 self=${3:-} timeout=$4 status turn last age state_line state detail run_error pr incarnation fingerprint outcome_key payload kind state_rc=0
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 0
   kind=$(meta_field "$meta" kind)
   [ "$kind" = secondmate ] && return 0
@@ -528,12 +537,11 @@ reconcile_direct_child_locked() { # <id> <meta> <secondmate-id-or-empty> <timeou
     'state: failed '*) state='failed' ;;
     *) return 0 ;;
   esac
-  # The reader's one-line detail (third ` · `-separated field), carried onto
-  # the parent line so the recorded cause travels with the verdict.
   detail=$(crew_state_detail "$state_line")
+  run_error=$(crew_state_error "$state_line")
   pr=$(pr_for_task "$meta")
   incarnation=$(meta_incarnation "$meta")
-  fingerprint=$(sha256_text "$incarnation|$id|$state|$pr|$(clean_field "$last")|$detail")
+  fingerprint=$(sha256_text "$incarnation|$id|$state|$pr|$(clean_field "$last")|$detail|$run_error")
   if [ -n "$self" ]; then
     outcome_key="inactive-outcome-$self-$id-$state"
   else
@@ -542,7 +550,7 @@ reconcile_direct_child_locked() { # <id> <meta> <secondmate-id-or-empty> <timeou
   ensure_record "$fingerprint" "$id" "$incarnation" "$state" "$outcome_key" direct "upstream" "$pr" "$(sha256_text "$last")" || return 1
   [ -n "$RECORD_PENDING" ] || return 0
   if [ -n "$self" ]; then
-    if report_to_parent "$id" "$state" "$outcome_key" "$fingerprint" "$pr" "$detail"; then
+    if report_to_parent "$id" "$state" "$outcome_key" "$fingerprint" "$pr" "$detail" "$run_error"; then
       mark_reported "$RECORD_PENDING" || return 1
     else
       notice_parent_report_failed "$RECORD_PENDING" "$fingerprint" \
@@ -553,7 +561,8 @@ reconcile_direct_child_locked() { # <id> <meta> <secondmate-id-or-empty> <timeou
   record_phase_set "$RECORD_PENDING" presentation || return 1
   payload="inactive terminal outcome awaiting captain presentation: child=$id state=$state"
   [ -z "$pr" ] || payload="$payload pr=$pr"
-  [ -z "$detail" ] || payload="$payload error=$(fm_parent_channel_clean_note "$detail")"
+  [ -z "$detail" ] || payload="$payload detail=$(fm_parent_channel_clean_note "$detail")"
+  [ -z "$run_error" ] || payload="$payload error=$(fm_parent_channel_clean_note "$run_error")"
   queue_presentation "$RECORD_PENDING" "$fingerprint" "$payload" || true
 }
 

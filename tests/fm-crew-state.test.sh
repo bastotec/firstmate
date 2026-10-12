@@ -153,6 +153,17 @@ run_crew_state() {  # <case-dir> <id>
   PATH="$1/fakebin:$PATH" FM_STATE_OVERRIDE="$1/state" "$CREW_STATE" "$2"
 }
 
+probe_stream_backend() {  # <home> <function> [args...]
+  local home=$1
+  shift
+  (
+    export FM_HOME="$home" FM_ROOT="$ROOT"
+    # shellcheck source=/dev/null
+    . "$ROOT/bin/fm-backend.sh"
+    "$@"
+  )
+}
+
 new_case() {  # <name> -> echoes case dir with an empty state/
   local d="$TMP_ROOT/$1"
   mkdir -p "$d/state"
@@ -1334,7 +1345,7 @@ test_daemon_killed_green_pr_with_skipped_step_reads_done() {
   local out; out=$(run_crew_state "$d" feat-dkill-jev)
   assert_contains "$out" "state: done" "a daemon kill after a green PR reads done, not failed"
   assert_contains "$out" "source: run-step" "the reclassified verdict stays run-step sourced"
-  assert_contains "$out" "daemon shutting down" "the published detail carries the run's recorded cause"
+  assert_contains "$out" "run-error: daemon shutting down" "the state line separately carries the run's recorded cause"
   assert_contains "$out" "https://github.com/o/r/pull/6" "the PR URL is surfaced for review"
   assert_not_contains "$out" "state: failed" "the killed monitor must not read as a failed run"
   pass "daemon shutdown under a green PR with a skipped step reads held-for-merge done"
@@ -1351,6 +1362,7 @@ test_relaunched_live_crew_outranks_daemon_killed_run_record() {
   make_repo_on_branch "$d/wt" fm/feat-dkill-relaunch
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-dkill-relaunch.meta" $(fm_test_stream_task "$d/state" "feat-dkill-relaunch") "worktree=$d/wt" "kind=ship" "harness=deck"
+  fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$d/state" feat-dkill-relaunch)" deck
   FM_FAKE_AXI_STATUS="$(run_failed_daemon_kill_mid_pipeline fm/feat-dkill-relaunch)"
   # The relaunched crew's current-incarnation busy record: a fresh gen with a
   # busy event, exactly what fm-spawn's relaunch arms and the deck worker
@@ -1362,7 +1374,7 @@ test_relaunched_live_crew_outranks_daemon_killed_run_record() {
   assert_contains "$out" "state: working" "a live relaunched crew outranks its dead predecessor's failed record"
   assert_contains "$out" "source: run-step" "the verdict stays an attributed run-step read"
   assert_contains "$out" "crew live (relaunched)" "the detail names the live-crew override"
-  assert_contains "$out" "daemon shutting down" "the detail carries the run's recorded cause"
+  assert_contains "$out" "run-error: daemon shutting down" "the state line separately carries the run's recorded cause"
   assert_not_contains "$out" "state: failed" "the stale killed record must not declare the live task failed"
   pass "a relaunched live crew supersedes its predecessor's daemon-killed record"
 }
@@ -1378,31 +1390,42 @@ test_daemon_killed_run_without_live_crew_names_its_cause() {
   FM_FAKE_AXI_STATUS="$(run_failed_daemon_kill_mid_pipeline fm/feat-dkill-nocrew)"
   local out; out=$(run_crew_state "$d" feat-dkill-nocrew)
   assert_contains "$out" "state: failed" "an unrelaunched killed run keeps its terminal failure verdict"
-  assert_contains "$out" "run failed - daemon shutting down" "the failure names the recorded infrastructure cause"
+  assert_contains "$out" "run failed" "the failed run keeps its generic detail"
+  assert_contains "$out" "run-error: daemon shutting down" "the failure separately names the recorded infrastructure cause"
   assert_not_contains "$out" "state: done" "no green evidence exists, so no held-for-merge reclassification"
   pass "a daemon-killed run with no live crew still fails, naming its cause"
 }
 
 # The reboot shape: the same kill took the worker too, so a FROZEN busy record
-# from the dead incarnation is the only live-crew evidence. The override must
-# refuse it - a dead crew reading working would mask exactly the wedge alarm
-# this reader exists to raise - and the failure still names its cause.
-test_daemon_killed_run_with_frozen_busy_record_and_dead_endpoint_stays_failed() {
+# from the dead incarnation remains alongside a cached readable screen. The
+# stream agent's own reading is stale, so the recovery-grade endpoint verdict
+# is unreadable even though capture succeeds. The override must refuse it - a
+# dead crew reading working would mask exactly the wedge alarm this reader
+# exists to raise - and the failure still names its cause.
+test_daemon_killed_run_with_frozen_busy_record_and_stale_agent_stays_failed() {
   reset_fakes
   local d; d=$(new_case daemon-kill-frozen-busy)
   make_repo_on_branch "$d/wt" fm/feat-dkill-frozen
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-dkill-frozen.meta" $(fm_test_stream_task "$d/state" "feat-dkill-frozen") "worktree=$d/wt" "kind=ship" "harness=deck"
+  fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$d/state" feat-dkill-frozen)" deck
   FM_FAKE_AXI_STATUS="$(run_failed_daemon_kill_mid_pipeline fm/feat-dkill-frozen)"
   local gen; gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" feat-dkill-frozen)
   "$ROOT/bin/fm-busy-event.sh" apply "$d/state" feat-dkill-frozen busy --gen "$gen" \
     --source deck-wrapper --event turn-start
-  FM_FAKE_ENDPOINT_MISSING=1   # the reboot took the worker's endpoint with it
-  local out; out=$(run_crew_state "$d" feat-dkill-frozen)
-  assert_contains "$out" "state: failed" "a frozen busy record over a dead endpoint cannot mask the failure"
-  assert_contains "$out" "run failed - daemon shutting down" "the failure still names the recorded infrastructure cause"
-  assert_not_contains "$out" "crew live (relaunched)" "the live-crew override refused unreadable endpoint evidence"
-  pass "a frozen busy record over a dead endpoint keeps the killed run failed"
+  FM_FAKE_ENDPOINT_UNREADABLE=1   # capture stays cached, but the agent state is stale
+  local out target capture agent_state
+  out=$(run_crew_state "$d" feat-dkill-frozen)
+  target=$(fm_test_stream_target_of "$d/state" feat-dkill-frozen)
+  capture=$(probe_stream_backend "$d" fm_backend_capture stream "$target" 1 fm-feat-dkill-frozen)
+  agent_state=$(probe_stream_backend "$d" fm_backend_agent_state stream "$target")
+  assert_contains "$capture" ">" "the stale endpoint still serves its cached capture"
+  assert_equals unreadable "$agent_state" "the same endpoint is not recovery-grade alive"
+  assert_contains "$out" "state: failed" "a frozen busy record over a stale agent cannot mask the failure"
+  assert_contains "$out" "run failed" "the failed run keeps its generic detail"
+  assert_contains "$out" "run-error: daemon shutting down" "the failure separately names the recorded infrastructure cause"
+  assert_not_contains "$out" "crew live (relaunched)" "the live-crew override requires an exactly alive endpoint"
+  pass "a cached capture from a stale agent cannot make a killed run working"
 }
 
 # A merit failure keeps its failed verdict and now names its step-scoped
@@ -1417,6 +1440,7 @@ test_merit_failure_carries_recorded_error() {
   local out; out=$(run_crew_state "$d" feat-merit)
   assert_contains "$out" "state: failed" "a genuine merit failure stays failed"
   assert_contains "$out" "refusing non-compliant PR publication" "the failure carries its recorded cause"
+  assert_contains "$out" "run failed · run-error:" "the generic detail and recorded error remain distinct"
   assert_not_contains "$out" "state: done" "a refused publication never reads done"
   pass "a merit failure keeps the failed verdict and names its recorded cause"
 }
@@ -2651,7 +2675,7 @@ test_terminal_failed_ci_orphan_second_failed_step_stays_failed
 test_daemon_killed_green_pr_with_skipped_step_reads_done
 test_relaunched_live_crew_outranks_daemon_killed_run_record
 test_daemon_killed_run_without_live_crew_names_its_cause
-test_daemon_killed_run_with_frozen_busy_record_and_dead_endpoint_stays_failed
+test_daemon_killed_run_with_frozen_busy_record_and_stale_agent_stays_failed
 test_merit_failure_carries_recorded_error
 test_cross_branch_attribution_via_runs_list
 test_coarse_socket_refusal_reports_blocked
