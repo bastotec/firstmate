@@ -26,16 +26,16 @@
 #     (else metadata record) changed;
 #   - working or parked, or done with its PR (recorded, or the last PR link in
 #     its ledger) still open or unreadable: left alone;
-#   - a done ship with no PR at all is never cleaned up automatically, since a
-#     pushed but unmerged branch passes cleanup's checks; it becomes the
-#     clean-it-up-or-keep-it decision below;
+#   - a done ship with no PR, or a closed-unmerged PR, is never cleaned up
+#     automatically, since a pushed but unmerged branch passes cleanup's checks;
+#     it becomes the clean-it-up-or-keep-it decision below;
 #   - done, quiet for 15 minutes: cleaned up with
 #     bin/fm-teardown.sh, never --force; a refusal only because the endpoint is
 #     on a retired backend goes to bin/fm-retire-endpoint.sh --finished;
 #     a refusal because another cleanup or lifecycle action holds the task
 #     waits for the next scan; after a refusal, a now-absent worker record is
 #     reported as cleaned unless its backlog close is still pending (then
-#     unhandled),
+#     unhandled on every scan until the lifecycle owner clears the pending close),
 #     while a changed record is left untouched with class unknown/action none
 #     for a fresh scan; a remaining refusal on the unchanged record becomes
 #     a decision to clean it up or keep it;
@@ -233,8 +233,10 @@ classify() {
         pr_state=$(fm_run_timed 60 bash -c '. "$1/fm-pr-lib.sh"; fm_pr_live_state "$2"' \
           _ "$SCRIPT_DIR" "$pr" 2>/dev/null) || pr_state=
         case "$pr_state" in
+          merged) ;;
           open) CLASS=awaiting-merge; return ;;
-          '') CLASS=settling; DETAIL="cannot read whether $pr merged"; return ;;
+          closed) UNPROVEN=1 ;;
+          *) CLASS=settling; DETAIL="cannot read whether $pr merged"; return ;;
         esac
       elif [ "$(fm_meta_get "$STATE/$id.meta" kind)" != scout ]; then
         # nothing proves a ship without a PR landed, so it is never cleaned up
@@ -404,7 +406,7 @@ while IFS= read -r meta; do
       elif [ "$(cat "$meta" 2>/dev/null)" != "$record" ]; then
         CLASS=unknown
         DETAIL="worker record changed during scan"
-      elif printf '%s' "$CLEANUP_WHY" | grep -Eqi 'already running|in progress|lock'; then
+      elif printf '%s' "$CLEANUP_WHY" | grep -Eq '^another lifecycle action is already running for task |^another Treehouse slot allocation or return is in progress for '; then
         CLASS=settling
         DETAIL="another cleanup or lifecycle action holds it: $CLEANUP_WHY"
       else
@@ -422,6 +424,16 @@ while IFS= read -r meta; do
   esac
   add_row "$id" "$CLASS" "$DETAIL" "$action"
 done < <(worker_metas)
+
+for marker in "$STATE"/*.backlog-close; do
+  [ -e "$marker" ] || [ -L "$marker" ] || continue
+  id=$(basename "$marker" .backlog-close)
+  [ ! -e "$STATE/$id.meta" ] && [ ! -L "$STATE/$id.meta" ] || continue
+  printf '%s' "$ROWS" | jq -se --arg id "$id" 'any(.[]; .id==$id)' >/dev/null && continue
+  AGE=$(record_age "$id")
+  HOLD_ID=
+  add_row "$id" unknown "its record is gone but its backlog close is still pending" unhandled
+done
 
 # Record-less live endpoints: sweep admission precedes the orphan close's
 # independent endpoint and work-protection checks.

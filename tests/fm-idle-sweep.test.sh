@@ -29,6 +29,12 @@ SH
   cat > "$dir/bin/fm-teardown.sh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_HOME/teardown-calls"
+if [ -f "$FM_HOME/pending-close/$1" ]; then
+  printf 'id=%s\ndata=%s/data\nspawn_gen=fixture\ncleanup_incomplete=0\n' "$1" "$FM_HOME" > "$FM_HOME/state/$1.backlog-close"
+  rm -f "$FM_HOME/state/$1.meta"
+  echo 'error: backlog close failed' >&2
+  exit 1
+fi
 if [ -f "$FM_HOME/concurrent-cleanup/$1" ]; then
   rm -f "$FM_HOME/state/$1.meta"
   echo 'error: teardown refused: task record is absent' >&2
@@ -119,7 +125,7 @@ SH
     "$dir"/bin/fm-retire-endpoint.sh "$dir"/bin/fm-captain-hold.sh "$dir"/bin/fm-on.sh \
     "$dir"/bin/tasks-axi "$dir"/bin/gh "$dir"/bin/glab
   mkdir -p "$dir/home/crew" "$dir/home/refuse" "$dir/home/held" "$dir/home/deferred" "$dir/home/closed" "$dir/home/unreadable" \
-    "$dir/home/rows" "$dir/home/pr-states" "$dir/home/concurrent-cleanup" "$dir/home/replacement"
+    "$dir/home/rows" "$dir/home/pr-states" "$dir/home/concurrent-cleanup" "$dir/home/replacement" "$dir/home/pending-close"
   printf '%s\n' "$dir"
 }
 
@@ -252,6 +258,93 @@ test_open_pr_workers_wait_for_merge_without_a_cleanup_decision() {
   [ "$(jq -r '.options[0].label' "$dir/home/cards/ready.json")" = 'Clean it up' ] \
     || fail "a finished worker lost its cleanup options"
   pass "fm-idle-sweep: open PR workers wait for merge; merged workers retain guarded cleanup"
+}
+
+test_closed_unmerged_prs_require_a_cleanup_decision() {
+  local dir id
+  dir=$(new_case closed-unmerged)
+  for id in closed-recorded closed-ledger closed-mr unreadable merged-ledger; do
+    add_worker "$dir" "$id" 'state: done · source: status-log · PR ready' 7200
+  done
+  printf 'pr=https://github.com/owner/repo/pull/51\n' >> "$dir/home/state/closed-recorded.meta"
+  printf 'done: PR https://github.com/owner/repo/pull/52\n' >> "$dir/home/state/closed-ledger.status"
+  printf 'done: PR https://gitlab.example/group/repo/-/merge_requests/53\n' >> "$dir/home/state/closed-mr.status"
+  printf 'pr=https://github.com/owner/repo/pull/54\n' >> "$dir/home/state/unreadable.meta"
+  printf 'done: PR https://github.com/owner/repo/pull/55\n' >> "$dir/home/state/merged-ledger.status"
+  printf 'CLOSED\n' > "$dir/home/pr-states/51"
+  printf 'CLOSED\n' > "$dir/home/pr-states/52"
+  printf 'closed\n' > "$dir/home/pr-states/53"
+  printf 'MERGED\n' > "$dir/home/pr-states/55"
+  for id in closed-ledger closed-mr merged-ledger; do
+    age_file "$dir/home/state/$id.status" 7200
+  done
+
+  sweep "$dir" scan --now || fail "scan failed"
+
+  [ "$(calls "$dir" teardown-calls)" = merged-ledger ] || fail "cleanup admitted an unmerged or unreadable PR"
+  [ "$(sort "$dir/home/hold-calls" | tr '\n' ' ')" = 'closed-ledger closed-mr closed-recorded ' ] \
+    || fail "closed-unmerged PRs did not become exactly one decision each"
+  for id in closed-recorded closed-ledger closed-mr; do
+    assert_present "$dir/home/state/$id.meta" "a closed-unmerged PR worker was removed"
+    [ "$(jq -r '.options | map(.label) | join(",")' "$dir/home/cards/$id.json")" = 'Clean it up,Keep it' ] \
+      || fail "a closed-unmerged PR did not get cleanup options"
+    [ "$(jq -r --arg id "$id" '.workers[] | select(.id==$id) | .action' "$dir/home/state/idle-sweep.json")" = carded ] \
+      || fail "a closed-unmerged PR decision was not published"
+  done
+  assert_present "$dir/home/state/unreadable.meta" "an unreadable PR worker was removed"
+  assert_absent "$dir/home/state/merged-ledger.meta" "a merged PR reported in the ledger was not cleaned up"
+  pass "fm-idle-sweep: only merged PRs admit cleanup; closed-unmerged PRs become decisions"
+}
+
+test_only_lifecycle_contention_defers_cleanup_refusals() {
+  local dir id
+  dir=$(new_case contention)
+  for id in lifecycle treehouse clock unresolved-lock unrelated-progress; do
+    add_worker "$dir" "$id" 'state: done · source: run-step · run passed: PR merged/closed' 7200
+  done
+  printf 'error: another lifecycle action is already running for task lifecycle; nothing was changed\n' > "$dir/home/refuse/lifecycle"
+  printf 'REFUSED: another Treehouse slot allocation or return is in progress for repo; nothing was changed\n' > "$dir/home/refuse/treehouse"
+  printf 'REFUSED: worktree /pool/clock has uncommitted changes\n' > "$dir/home/refuse/clock"
+  printf 'REFUSED: cannot resolve the shared Treehouse project lock for repo; nothing was changed\n' > "$dir/home/refuse/unresolved-lock"
+  printf 'REFUSED: worktree /pool/in progress has uncommitted changes\n' > "$dir/home/refuse/unrelated-progress"
+
+  sweep "$dir" scan --now || fail "scan failed"
+
+  [ "$(sort "$dir/home/hold-calls" | tr '\n' ' ')" = 'clock unrelated-progress unresolved-lock ' ] \
+    || fail "contention matching suppressed an unrelated refusal or raised a busy task"
+  for id in lifecycle treehouse; do
+    [ "$(jq -r --arg id "$id" '.workers[] | select(.id==$id) | [.class,.action] | join(" ")' "$dir/home/state/idle-sweep.json")" = 'settling none' ] \
+      || fail "a supported contention refusal did not wait for the next scan"
+  done
+  [ "$(wc -l < "$dir/home/teardown-calls" | tr -d ' ')" = 5 ] || fail "not all refusal paths were exercised"
+  pass "fm-idle-sweep: only supported lifecycle contention defers a cleanup decision"
+}
+
+test_pending_backlog_closes_remain_visible_until_cleared() {
+  local dir round
+  dir=$(new_case pending-close)
+  add_worker "$dir" pending 'state: done · source: run-step · run passed: PR merged/closed' 7200
+  : > "$dir/home/pending-close/pending"
+
+  sweep "$dir" scan --now || fail "initial scan failed"
+
+  assert_absent "$dir/home/state/pending.meta" "the failed close did not remove the worker record"
+  assert_present "$dir/home/state/pending.backlog-close" "the failed close did not leave its recovery record"
+  cp "$dir/home/state/pending.backlog-close" "$dir/marker.saved"
+  for round in 1 2 3; do
+    [ "$(jq '.workers | length' "$dir/home/state/idle-sweep.json")" = 1 ] || fail "pending close was omitted or duplicated"
+    [ "$(jq -r '.workers[0] | [.id,.action] | join(" ")' "$dir/home/state/idle-sweep.json")" = 'pending unhandled' ] \
+      || fail "pending close did not remain unhandled on scan $round"
+    cmp -s "$dir/marker.saved" "$dir/home/state/pending.backlog-close" || fail "sweep changed the lifecycle owner's pending-close record"
+    sweep "$dir" scan --now || fail "repeat scan failed"
+  done
+  [ "$(calls "$dir" teardown-calls)" = pending ] || fail "sweep retried a metadata-less pending close"
+  [ ! -s "$dir/home/hold-attempts" ] || fail "pending-close reporting created a captain call"
+
+  rm "$dir/home/state/pending.backlog-close"
+  sweep "$dir" scan --now || fail "scan after lifecycle recovery failed"
+  [ "$(jq '.workers | length' "$dir/home/state/idle-sweep.json")" = 0 ] || fail "a cleared pending close stayed in the summary"
+  pass "fm-idle-sweep: metadata-less pending closes stay unhandled until their owner clears them"
 }
 
 test_concurrent_cleanup_does_not_raise_stale_decisions() {
@@ -627,6 +720,9 @@ test_watcher_runs_the_sweep_and_surfaces_its_decision() {
 }
 
 test_done_workers_are_cleaned_up_without_force
+test_closed_unmerged_prs_require_a_cleanup_decision
+test_only_lifecycle_contention_defers_cleanup_refusals
+test_pending_backlog_closes_remain_visible_until_cleared
 test_open_pr_workers_wait_for_merge_without_a_cleanup_decision
 test_concurrent_cleanup_does_not_raise_stale_decisions
 test_refusals_and_idle_workers_become_one_decision_each
