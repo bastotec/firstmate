@@ -29,7 +29,7 @@ run_in() {  # <home> <command> <args...>
   shift
   PATH="$home/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
     FM_DATA_OVERRIDE="$home/data" FM_CARD_NOW=2026-10-12T16:21:00Z \
-    FM_MACHINE_BLOCKER_NOW=2026-10-12T16:21:00Z "$@"
+    FM_MACHINE_BLOCKER_NOW=2026-10-12T16:21:00Z FM_PROCEVENT_CLAIM_ROOT="$TMP_ROOT/claims" "$@"
 }
 
 # The check that blocked Inter Graal: three steps only the captain can do.
@@ -77,7 +77,11 @@ test_raise_writes_card_hold_record_and_watch() {
   assert_equals false "$(jq -r .draft <<<"$card")" "the card is a full card"
   assert_equals "Automattic needs you before I can create Inter Graal" "$(jq -r .title <<<"$card")" "card title names machine and action"
   assert_contains "$(jq -r .situation <<<"$card")" "Blocked on you: 3 steps on Automattic - gh-auth, model-gateway, stream-hub." "card quotes the human items"
-  assert_contains "$(jq -r '.options[1].instruction' <<<"$card")" "gh auth login" "card carries the exact steps"
+  assert_equals 1 "$(jq '.options | length' <<<"$card")" "card offers only the re-check"
+  assert_equals "Done - re-check now" "$(jq -r '.options[0].label' <<<"$card")" "card labels the re-check"
+  assert_contains "$(jq -r '.options[0].instruction' <<<"$card")" "Do NOT record this option through answer." "delivered instruction forbids recording an answer"
+  assert_contains "$(jq -r '.options[0].instruction' <<<"$card")" "ready Automattic; if it passes, run bin/fm-machine-blocker.sh resolve Automattic" "delivered instruction gates closure on readiness"
+  assert_contains "$(jq -r '.options[0].instruction' <<<"$card")" "leave the card open" "delivered instruction preserves the failed re-check"
   run_in "$home" "$ROOT/bin/fm-captain-hold.sh" open machine-automattic >/dev/null || fail "hold is not open"
   rec=$(run_in "$home" "$BLOCKER" show Automattic) || fail "no pending record"
   assert_equals needs-you "$(jq -r .state <<<"$rec")" "record waits on the captain"
@@ -155,9 +159,116 @@ test_clear_removes_record_and_watch() {
   pass "fm-machine-blocker: clear removes the record and the watch"
 }
 
+test_raise_preserves_the_waiting_action() {
+  local home rec card watch out from
+  home=$(make_home preserve-action)
+  check_output "$home/check.txt"
+  sed 's/=human:/=present:/' "$home/check.txt" > "$home/pass.txt"
+  run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" \
+    --secondmate "inter-graal=Inter Graal" --from "$home/check.txt" >/dev/null || fail "raise failed"
+  rec=$(run_in "$home" "$BLOCKER" show Automattic)
+  card=$(run_in "$home" "$ROOT/bin/fm-card.sh" show machine-automattic)
+  watch=$(cat "$home/state/when/when-machine-automattic.spec")
+  for from in "$home/check.txt" "$home/pass.txt"; do
+    if out=$(run_in "$home" "$BLOCKER" raise Automattic --for "create another mate" \
+      --secondmate "another=Another" --from "$from" 2>&1); then
+      fail "raise replaced a different waiting action"
+    fi
+    assert_contains "$out" "a different action already waits" "conflicting action is reported"
+    assert_equals "$rec" "$(run_in "$home" "$BLOCKER" show Automattic)" "rejected raise preserves the record"
+    assert_equals "$card" "$(run_in "$home" "$ROOT/bin/fm-card.sh" show machine-automattic)" "rejected raise preserves the card"
+    assert_equals "$watch" "$(cat "$home/state/when/when-machine-automattic.spec")" "rejected raise preserves the watch"
+  done
+  if run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" \
+    --secondmate "another=Another" --from "$home/check.txt" >/dev/null 2>&1; then
+    fail "raise replaced planned mates under the same action title"
+  fi
+  assert_equals "$rec" "$(run_in "$home" "$BLOCKER" show Automattic)" "conflicting planned mates preserve the record"
+  run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" \
+    --secondmate "inter-graal=Inter Graal" --from "$home/check.txt" >/dev/null || fail "identical raise refused"
+  assert_equals "$rec" "$(run_in "$home" "$BLOCKER" show Automattic)" "identical raise keeps the action"
+  pass "fm-machine-blocker: conflicting raises preserve the waiting action"
+}
+
+test_raise_publishes_only_after_hold_accepts() {
+  local home rec out
+  home=$(make_home rejected-hold)
+  check_output "$home/check.txt"
+  run_in "$home" "$ROOT/bin/fm-captain-hold.sh" hold machine-automattic \
+    --title "Another existing call" --reason "Existing question" --repo firstmate >/dev/null || fail "fixture hold failed"
+  if out=$(run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" --from "$home/check.txt" 2>&1); then
+    fail "raise succeeded despite rejected hold"
+  fi
+  assert_contains "$out" "different title" "hold refusal is visible"
+  assert_absent "$home/state/machine-pending/Automattic.json" "rejected hold publishes no record"
+  assert_absent "$home/state/when/when-machine-automattic.spec" "rejected hold arms no watch"
+  home=$(make_home rejected-refresh)
+  check_output "$home/check.txt"
+  run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" --from "$home/check.txt" >/dev/null || fail "raise failed"
+  rec=$(run_in "$home" "$BLOCKER" show Automattic)
+  mv "$home/data/backlog.md" "$home/data/backlog.saved"
+  mkdir "$home/data/backlog.md"
+  grep -v 'gh-auth=' "$home/check.txt" > "$home/two.txt"
+  if run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" --from "$home/two.txt" >/dev/null 2>&1; then
+    fail "raise refreshed a record despite rejected hold"
+  fi
+  assert_equals "$rec" "$(run_in "$home" "$BLOCKER" show Automattic)" "hold failure leaves existing record intact"
+  pass "fm-machine-blocker: hold acceptance precedes record publication"
+}
+
+test_hold_errors_do_not_resolve() {
+  local home rec out rc
+  home=$(make_home hold-error)
+  check_output "$home/check.txt"
+  run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" --from "$home/check.txt" >/dev/null || fail "raise failed"
+  sed 's/=human:/=present:/' "$home/check.txt" > "$home/pass.txt"
+  run_in "$home" "$BLOCKER" ready Automattic --from "$home/pass.txt" || fail "passing re-check failed"
+  rec=$(run_in "$home" "$BLOCKER" show Automattic)
+  mv "$home/data/backlog.md" "$home/data/backlog.saved"
+  mkdir "$home/data/backlog.md"
+  rc=0
+  out=$(run_in "$home" "$BLOCKER" resolve Automattic 2>&1) || rc=$?
+  assert_equals 2 "$rc" "unreadable hold is an error, not a closed hold"
+  assert_contains "$out" "fm-captain-hold:" "hold diagnostic is visible"
+  assert_not_contains "$out" "carry on with:" "hold error announces no continuation"
+  assert_equals "$rec" "$(run_in "$home" "$BLOCKER" show Automattic)" "hold error does not rewrite the record"
+  assert_present "$home/state/cards/machine-automattic.json" "hold error leaves the card intact"
+  rmdir "$home/data/backlog.md"
+  mv "$home/data/backlog.saved" "$home/data/backlog.md"
+  run_in "$home" "$ROOT/bin/fm-captain-hold.sh" open machine-automattic >/dev/null || fail "hold disappeared on error"
+  run_in "$home" "$BLOCKER" resolve Automattic >/dev/null || fail "resolve could not retry after recovery"
+  run_in "$home" "$BLOCKER" resolve Automattic >/dev/null || fail "already closed hold is not an error"
+  pass "fm-machine-blocker: hold read errors fail visibly and remain retryable"
+}
+
+test_alias_punctuation_preserves_distinct_identities() {
+  local home alias task
+  home=$(make_home aliases)
+  check_output "$home/check.txt"
+  for alias in Build.one Build-one Build_one; do
+    task="machine-$(printf '%s' "$alias" | tr 'A-Z' 'a-z')"
+    run_in "$home" "$BLOCKER" raise "$alias" --for "create $alias mate" --from "$home/check.txt" >/dev/null || fail "raise collided for $alias"
+    assert_equals "$task" "$(run_in "$home" "$BLOCKER" show "$alias" | jq -r .task)" "record preserves alias punctuation"
+  done
+  for task in machine-build.one machine-build-one machine-build_one; do
+    run_in "$home" "$ROOT/bin/fm-captain-hold.sh" open "$task" >/dev/null || fail "distinct hold missing: $task"
+    run_in "$home" "$ROOT/bin/fm-card.sh" show "$task" >/dev/null || fail "distinct card missing: $task"
+    assert_present "$home/state/when/when-$task.spec" "distinct watch exists: $task"
+  done
+  run_in "$home" "$BLOCKER" clear Build.one >/dev/null || fail "clear failed"
+  assert_absent "$home/state/when/when-machine-build.one.spec" "clear retires the dotted alias watch"
+  assert_present "$home/state/when/when-machine-build-one.spec" "clear preserves the hyphenated alias watch"
+  assert_present "$home/state/when/when-machine-build_one.spec" "clear preserves the underscored alias watch"
+  pass "fm-machine-blocker: dots, hyphens and underscores name distinct holds and watches"
+}
+
 test_summary_leads_with_blocked_on_you
 test_raise_writes_card_hold_record_and_watch
 test_recheck_updates_then_resolves_itself
 test_resolve_refuses_while_steps_remain
 test_raise_with_nothing_human_holds_nothing
 test_clear_removes_record_and_watch
+test_raise_preserves_the_waiting_action
+test_raise_publishes_only_after_hold_accepts
+test_hold_errors_do_not_resolve
+test_alias_punctuation_preserves_distinct_identities

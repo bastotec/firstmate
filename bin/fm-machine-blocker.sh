@@ -78,7 +78,7 @@ require_alias() {
     ''|-*|*[!A-Za-z0-9._-]*|.|..) die "alias must be a plain ssh name: ${1:-}" ;;
   esac
 }
-slug() { printf 'machine-%s\n' "$(printf '%s' "$1" | tr 'A-Z._' 'a-z--')"; }
+slug() { printf 'machine-%s\n' "$(printf '%s' "$1" | tr 'A-Z' 'a-z')"; }
 record_path() { printf '%s/%s.json\n' "$PENDING" "$1"; }
 scratch() { [ -n "$TMP" ] || TMP=$(mktemp -d "${TMPDIR:-/tmp}/fm-machine-blocker.XXXXXX"); }
 
@@ -164,9 +164,7 @@ card_json() {  # <record-json-file>
         situation: (("Blocked on you: \($n) step\(if $n == 1 then "" else "s" end) on \(.alias) - \([$you[].name] | join(", ")).\n" + .then) | .[0:280]),
         options: [
           {key: "1", label: "Done - re-check now",
-           instruction: ("I finished the steps on \(.alias). Re-check it now with bin/fm-machine-blocker.sh ready \(.alias) and carry on with: \(.for)." | .[0:1000])},
-          {key: "2", label: "Show me the steps again",
-           instruction: (("List the steps on \(.alias) still waiting on me, each with its exact command: " + ([$you | to_entries[] | "\(.key + 1). \(.value.name): \(.value.text)"] | join(" "))) | .[0:1000])}
+           instruction: ("Do NOT record this option through answer. Run bin/fm-machine-blocker.sh ready \(.alias); if it passes, run bin/fm-machine-blocker.sh resolve \(.alias) to stale-clear with evidence, then carry on with: \(.for). Otherwise reply with the remaining Blocked on you steps using bin/fm-machine-blocker.sh show \(.alias), and leave the card open." | .[0:1000])}
         ],
         recommended: "1"
       }
@@ -174,7 +172,7 @@ card_json() {  # <record-json-file>
 }
 
 hold_open() {  # <task>
-  "$SCRIPT_DIR/fm-captain-hold.sh" open "$1" >/dev/null 2>&1
+  "$SCRIPT_DIR/fm-captain-hold.sh" open "$1" >/dev/null
 }
 
 hold_with_card() {  # <task> <record-json-file>
@@ -197,7 +195,7 @@ arm_watch() {  # <alias> <task>
 }
 
 cmd_raise() {
-  local alias=${1:-} for='' next='' root='' from='' planned='[]' task rec state
+  local alias=${1:-} for='' next='' root='' from='' planned='[]' task rec state path
   require_alias "$alias"
   shift
   while [ "$#" -gt 0 ]; do
@@ -229,18 +227,27 @@ cmd_raise() {
     --argjson planned "$planned" --slurpfile items "$TMP/items" \
     '{version: 1, alias: $alias, root: $root, task: $task, for: $for, then: $next,
       state: $state, checked: $checked, planned: $planned, items: $items[0]}')
+  path=$(record_path "$alias")
+  if [ -f "$path" ]; then
+    jq -e --arg for "$for" --argjson planned "$planned" \
+      '.for == $for and .planned == $planned' "$path" >/dev/null \
+      || die "a different action already waits on $alias; finish it before raising another"
+  fi
+  if [ "$state" = needs-you ]; then
+    printf '%s\n' "$rec" > "$TMP/record.json"
+    hold_with_card "$task" "$TMP/record.json"
+  fi
   write_record "$alias" "$rec"
   if [ "$state" = ready ]; then
     printf 'ready: %s\n' "$alias"
     return 0
   fi
-  hold_with_card "$task" "$(record_path "$alias")"
   arm_watch "$alias" "$task"
   summary_from_items "$TMP/items" "$alias" "$next"
 }
 
 cmd_ready() {
-  local alias=${1:-} from='' path rec_old you_old you_new state rec
+  local alias=${1:-} from='' path rec_old you_old you_new state rec rc
   require_alias "$alias"
   shift
   while [ "$#" -gt 0 ]; do
@@ -259,8 +266,13 @@ cmd_ready() {
   you_old=$(jq -c '[.items[] | select(.state == "you")]' <<<"$rec_old")
   you_new=$(jq -c '[.[] | select(.state == "you")]' "$TMP/items")
   if [ "$state" = needs-you ]; then
-    if [ "$you_old" != "$you_new" ] && hold_open "$(jq -r .task <<<"$rec")"; then
-      hold_with_card "$(jq -r .task <<<"$rec")" "$path" || true
+    if [ "$you_old" != "$you_new" ]; then
+      if hold_open "$(jq -r .task <<<"$rec")"; then
+        hold_with_card "$(jq -r .task <<<"$rec")" "$path"
+      else
+        rc=$?
+        [ "$rc" -eq 1 ] || exit "$rc"
+      fi
     fi
     exit 1
   fi
@@ -268,7 +280,7 @@ cmd_ready() {
 }
 
 cmd_resolve() {
-  local alias=${1:-} path task
+  local alias=${1:-} path task rc
   require_alias "$alias"
   path=$(record_path "$alias")
   [ -f "$path" ] || die "no pending record for $alias"
@@ -280,6 +292,9 @@ cmd_resolve() {
     "$alias" "$(jq -r .checked "$path")" > "$TMP/evidence"
   if hold_open "$task"; then
     "$SCRIPT_DIR/fm-captain-hold.sh" stale-clear "$task" --evidence-file "$TMP/evidence" >/dev/null
+  else
+    rc=$?
+    [ "$rc" -eq 1 ] || exit "$rc"
   fi
   write_record "$alias" "$(jq '.state = "ready"' "$path")"
   printf 'ready: %s; carry on with: %s\n' "$alias" "$(jq -r .for "$path")"

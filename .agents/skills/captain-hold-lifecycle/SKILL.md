@@ -81,6 +81,7 @@ This reconciles calls the home already holds and so binds an idle second mate to
 On every heartbeat, run `bin/fm-card.sh backfill` first, then replace each draft with a full card, then run `bin/fm-card.sh stale`.
 Under the captain's standing ruling of 2026-10-07, check each candidate's evidence yourself, clear the ones it confirms with `bin/fm-card.sh clear <id> --why "<one line of evidence>"`, keep any call the captain still needs, and tell the captain how many you cleared and why in your next natural reply.
 A message "card <id>: option <key>" is the captain choosing that option; a redirect text is the captain's words too.
+A needs-you card raised by `bin/fm-machine-blocker.sh` is the exception: never record its option through `answer`; follow its instruction, and only a passing re-check closes it.
 The home that holds the call resolves it: a second mate answers a call in its own backlog through the steps below, and a home that does not hold the call forwards the captain's exact words to the second mate that does through `bin/fm-send.sh`.
 If that call was already cleared, run `bin/fm-card.sh restore <id>` first so the captain's answer is recorded rather than refused.
 For a work-gating approval such as a merge, record the captain's words with `answer --release` before carrying out the selected instruction through the gated work path.
