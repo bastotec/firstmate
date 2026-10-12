@@ -21,6 +21,7 @@ home() {
   mkdir -p "$h/data" "$h/state" "$h/config" "$h/bin"
   printf -- '- helper - helper work (host: workload; root: /r/firstmate; home: /r/homes/helper; scope: help; projects: none; added 2026-10-01)\n' \
     > "$h/data/secondmates.md"
+  # shellcheck disable=SC2016 # Variables expand when the generated SSH stub runs.
   {
     printf '#!/usr/bin/env bash\n'
     printf 'printf "%%s\\n" "$*" >> %q\n' "$h/ssh.log"

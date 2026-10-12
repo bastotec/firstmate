@@ -356,7 +356,9 @@ cmd_install_tunnel() { # <label> <port> <user> <host> <ssh-port> <known-line> <c
 cmd_skills_prepare() {
   local dir="$HOME/$1" url=$2 branch=$3 cur
   if [ ! -e "$dir" ]; then
-    mkdir -p "$(dirname "$dir")" && git init -q -b "$branch" "$dir" && git -C "$dir" remote add origin "$url" || die "could not create a clone at $dir"
+    if ! { mkdir -p "$(dirname "$dir")" && git init -q -b "$branch" "$dir" && git -C "$dir" remote add origin "$url"; }; then
+      die "could not create a clone at $dir"
+    fi
     echo 'skills-repo=created'
   elif ! git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
     die "$dir exists and is not a git clone"
