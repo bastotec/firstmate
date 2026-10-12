@@ -25,7 +25,7 @@ file always shows exactly what is gated.
 
 Usage:
   fm-approval.sh gate                          deck pre_tool_use hook; event JSON on stdin
-  fm-approval.sh answer <request-id> --approve|--deny [--note TEXT] [--no-steer] [--json]
+  fm-approval.sh answer <request-id> --approve|--deny [--no-steer] [--json]
   fm-approval.sh list [--json]                 this home's pending requests
   fm-approval.sh show <request-id>
   fm-approval.sh presets
@@ -167,6 +167,7 @@ def load_policy():
     except ValueError as e:
         raise Refuse(f'{path} is not valid JSON: {e}')
     validate_policy(policy, path)
+    policy.setdefault('gates', [])
     return policy
 
 
@@ -381,14 +382,11 @@ def blocked_message(rec, again=False):
 
 
 def call_text(rec):
-    args = rec.get('args')
-    if rec.get('tool') == 'run_command' and isinstance(args, dict):
-        return args.get('command', '')
-    return f'{rec.get("tool")} {canonical(args)}'
+    return f'{rec.get("tool")} {canonical(rec.get("args"))}'
 
 
 def answer_main(argv):
-    rid, verdict, note, steer, as_json = None, None, '', True, False
+    rid, verdict, steer, as_json = None, None, True, False
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -396,11 +394,6 @@ def answer_main(argv):
             if verdict:
                 raise Refuse('give exactly one of --approve or --deny', 2)
             verdict = a[2:]
-        elif a == '--note':
-            if i + 1 >= len(argv):
-                raise Refuse('--note needs text', 2)
-            note = argv[i + 1]
-            i += 1
         elif a == '--no-steer':
             steer = False
         elif a == '--json':
@@ -411,7 +404,7 @@ def answer_main(argv):
             raise Refuse(f'unknown argument: {a}', 2)
         i += 1
     if not rid or not verdict:
-        raise Refuse('usage: fm-approval.sh answer <request-id> --approve|--deny [--note TEXT] [--no-steer]', 2)
+        raise Refuse('usage: fm-approval.sh answer <request-id> --approve|--deny [--no-steer] [--json]', 2)
     if not REQ_RE.match(rid):
         raise Refuse(f'not a request id: {rid}', 2)
     home = os.environ.get('FM_HOME')
@@ -435,8 +428,6 @@ def answer_main(argv):
     t = now()
     rec['status'] = 'approved' if verdict == 'approve' else 'denied'
     rec['answered'] = iso(t)
-    if note:
-        rec['note'] = note
     if verdict == 'approve':
         policy = None
         try:
@@ -449,17 +440,15 @@ def answer_main(argv):
         rec['grant_expires'] = grant['expires']
         write_private(d / 'grants' / f'{rec["key"]}.{rid}.json', canonical(grant) + '\n')
     write_private(claimed, json.dumps(rec, indent=2, ensure_ascii=False) + '\n')
-    audit(home, rec['status'], rec, note=note or None)
+    audit(home, rec['status'], rec)
 
     if verdict == 'approve':
         text = (f'approved: run request {rid} now. Run exactly this call once, unchanged '
-                f'(tool {rec["tool"]}, working directory {rec["cwd"]}):\n{call_text(rec)}\n'
+                f'(effective working directory {rec["cwd"]}):\n{call_text(rec)}\n'
                 f'The approval is for one use and expires at {rec["grant_expires"]}.')
     else:
         text = (f'denied: request {rid} ({call_text(rec)}). Do not run it or reach the same effect '
                 'another way; carry on without it and say what you did instead.')
-    if note:
-        text += f'\nCaptain\'s note: {note}'
     if not steer or rec['agent'].startswith('session:'):
         if as_json:
             print(canonical({'id': rid, 'status': rec['status'], 'agent': rec['agent'], 'steer': text, 'steered': False}))

@@ -813,6 +813,7 @@ build_items() { # <alias> <root|-> <reach-class> <known-fingerprints>
 
   gate=$(fact approval-gate)
   case "$gate" in
+    *\ error=*) item approval-gate human "fix ~/.agents/approvals.json on the machine; every tool call is blocked until the policy is repaired: ${gate#* error=}" ;;
     hook=installed\ *) item approval-gate present "the approval gate runs in ~/.agents/deck.hooks.json; ${gate#hook=installed }; bin/fm-approval.sh enable <preset> on the machine turns gates on" ;;
     hook=missing\ *) item approval-gate will-install "setup installs the approval gate hook with no gates enabled; bin/fm-approval.sh enable <preset> on the machine then turns them on" ;;
     *) ;;  # a clone without bin/fm-approval.sh (or no clone yet) has nothing to report

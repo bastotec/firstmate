@@ -53,6 +53,24 @@ test_no_policy_or_no_gates_lets_everything_through() {
   pass "no policy or no gates gates nothing"
 }
 
+test_policy_without_gates_supports_all_policy_commands() {
+  local w out
+  w=$(world defaultgates)
+  printf '{"version":1,"machine":"work-mac"}' > "$w/agents/approvals.json"
+  gate "$w" t1 run_command "$SLACK" >/dev/null || fail "omitted gates must allow"
+  assert_equals '[]' "$(ap "$w" policy --json | jq -c .gates)" "policy normalizes omitted gates"
+  assert_equals '[]' "$(ap "$w" status --json | jq -c .gates)" "status reports no gates"
+  ap "$w" disable slack-send >/dev/null || fail "disable with omitted gates"
+  assert_equals '[]' "$(jq -c .gates "$w/agents/approvals.json")" "disable saves empty gates"
+  printf '{"version":1,"machine":"work-mac"}' > "$w/agents/approvals.json"
+  out=$(ap "$w" enable slack-send) || fail "enable with omitted gates: $out"
+  assert_equals work-mac "$(jq -r .machine "$w/agents/approvals.json")" "machine identity preserved"
+  assert_equals 2 "$(jq '.gates | length' "$w/agents/approvals.json")" "both Slack gates enabled"
+  ap "$w" disable slack-send >/dev/null || fail "disable enabled gates"
+  gate "$w" t1 run_command "$SLACK" >/dev/null || fail "disabled gates must allow"
+  pass "omitted gates have the same default across policy commands"
+}
+
 test_matching_call_is_blocked_and_filed_other_calls_pass() {
   local w out rc id mode
   w=$(world block)
@@ -80,23 +98,28 @@ test_matching_call_is_blocked_and_filed_other_calls_pass() {
 }
 
 test_approval_lets_exactly_that_call_through_once() {
-  local w id rc out
+  local w id rc out args replay
   w=$(world approve)
+  args=$(printf '%s' "$SLACK" | jq -c '. + {cwd:"subdir",timeout_secs:30}')
   ap "$w" enable slack-send >/dev/null
-  gate "$w" t1 run_command "$SLACK" >/dev/null
+  gate "$w" t1 run_command "$args" >/dev/null
   id=$(pending_ids "$w")
   out=$(ap "$w" answer "$id" --approve) || fail "approve failed: $out"
   assert_contains "$(cat "$w/bin/sent.log")" "approved: run request $id now" "agent steered"
-  assert_contains "$(cat "$w/bin/sent.log")" 'agent-slack message send C123 "hello team"' "steer carries the exact call"
+  replay=$(awk '/^run_command / { sub(/^run_command /, ""); print }' "$w/bin/sent.log")
+  assert_equals "$(printf '%s' "$args" | jq -Sc .)" "$(printf '%s' "$replay" | jq -Sc .)" "steer carries all original arguments"
+  assert_contains "$(cat "$w/bin/sent.log")" "effective working directory $(cd "$w/home" && pwd -P)/subdir" "effective cwd shown separately"
   assert_equals '' "$(pending_ids "$w")" "no longer pending"
-  rc=0; gate "$w" t2 run_command "$SLACK" >/dev/null || rc=$?
+  rc=0; gate "$w" t2 run_command "$args" >/dev/null || rc=$?
   assert_equals 2 "$rc" "another agent cannot use the grant"
-  rc=0; gate "$w" t1 run_command '{"command":"agent-slack message send C123 \"hello all\""}' >/dev/null || rc=$?
+  rc=0; gate "$w" t1 run_command "$(printf '%s' "$args" | jq -c '.command = "agent-slack message send C123 \"hello all\""')" >/dev/null || rc=$?
   assert_equals 2 "$rc" "different text is not approved"
-  rc=0; (cd "$w" && printf '{"tool_name":"run_command","args":%s}' "$SLACK" | FM_APPROVAL_AGENT=t1 FM_APPROVAL_HOME="$w/home" ap "$w" gate >/dev/null 2>&1) || rc=$?
+  rc=0; (cd "$w" && printf '{"tool_name":"run_command","args":%s}' "$args" | FM_APPROVAL_AGENT=t1 FM_APPROVAL_HOME="$w/home" ap "$w" gate >/dev/null 2>&1) || rc=$?
   assert_equals 2 "$rc" "different working directory is not approved"
-  gate "$w" t1 run_command "$SLACK" >/dev/null || fail "approved call was blocked"
   rc=0; gate "$w" t1 run_command "$SLACK" >/dev/null || rc=$?
+  assert_equals 2 "$rc" "omitting execution options is not approved"
+  gate "$w" t1 run_command "$replay" >/dev/null || fail "replayed approved call was blocked"
+  rc=0; gate "$w" t1 run_command "$replay" >/dev/null || rc=$?
   assert_equals 2 "$rc" "grant is single use"
   assert_grep '"event":"used"' "$w/home/state/approvals.log" "use audited"
   pass "approve lets exactly that call through once"
@@ -121,8 +144,13 @@ test_deny_steers_and_keeps_blocking() {
   ap "$w" enable slack-send >/dev/null
   gate "$w" t1 run_command "$SLACK" >/dev/null
   id=$(pending_ids "$w")
+  rc=0; ap "$w" answer "$id" --deny --note text >/dev/null 2>&1 || rc=$?
+  assert_equals 2 "$rc" "unrequested note option is rejected"
+  assert_equals "$id" "$(pending_ids "$w")" "invalid option leaves request pending"
   out=$(ap "$w" answer "$id" --deny --json) || fail "deny failed"
   assert_equals denied "$(printf '%s' "$out" | jq -r .status)" "json status"
+  assert_equals false "$(jq 'has("note")' "$w/home/state/approvals/answered/$id.json")" "answer has no annotation field"
+  assert_equals false "$(jq -s 'any(.[]; has("note"))' "$w/home/state/approvals.log")" "audit has no annotation field"
   assert_contains "$(cat "$w/bin/sent.log")" "denied: request $id" "agent told denied"
   rc=0; gate "$w" t1 run_command "$SLACK" >/dev/null || rc=$?
   assert_equals 2 "$rc" "denied call stays blocked"
@@ -133,14 +161,20 @@ test_deny_steers_and_keeps_blocking() {
 }
 
 test_no_steer_json_hands_back_the_steer_text() {
-  local w id out
+  local w id out args text replay
   w=$(world nosteer)
+  args=$(printf '%s' "$SLACK" | jq -c '. + {cwd:"subdir",timeout_secs:30}')
   ap "$w" enable slack-send >/dev/null
-  gate "$w" t1 run_command "$SLACK" >/dev/null
+  gate "$w" t1 run_command "$args" >/dev/null
   id=$(pending_ids "$w")
   out=$(ap "$w" answer "$id" --approve --no-steer --json) || fail "answer failed"
   assert_equals false "$(printf '%s' "$out" | jq -r .steered)" "not steered"
-  assert_contains "$(printf '%s' "$out" | jq -r .steer)" "approved: run request $id now" "steer text returned"
+  text=$(printf '%s' "$out" | jq -r .steer)
+  assert_contains "$text" "approved: run request $id now" "steer text returned"
+  replay=$(printf '%s\n' "$text" | awk '/^run_command / { sub(/^run_command /, ""); print }')
+  assert_equals "$(printf '%s' "$args" | jq -Sc .)" "$(printf '%s' "$replay" | jq -Sc .)" "returned steer preserves all arguments"
+  assert_contains "$text" "effective working directory $(cd "$w/home" && pwd -P)/subdir" "effective cwd returned separately"
+  gate "$w" t1 run_command "$replay" >/dev/null || fail "returned exact call was blocked"
   assert_absent "$w/bin/sent.log" "nothing sent"
   pass "--no-steer --json returns the steer for another route"
 }
@@ -264,6 +298,7 @@ test_real_deck_blocks_then_runs_once_after_approval() {
 }
 
 test_no_policy_or_no_gates_lets_everything_through
+test_policy_without_gates_supports_all_policy_commands
 test_matching_call_is_blocked_and_filed_other_calls_pass
 test_approval_lets_exactly_that_call_through_once
 test_grant_expires
