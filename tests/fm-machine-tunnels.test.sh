@@ -26,7 +26,8 @@ export GATEWAY_PORT HUB_PORT
 GATEWAY_URL="http://127.0.0.1:$GATEWAY_PORT/v1"
 HUB_URL="http://127.0.0.1:$HUB_PORT"
 printf '%s\n' "$HUB_URL" > "$FMH/config/stream-hub"
-export FAKE_PYTHON="$(command -v python3)" FAKE_SERVICE_PARSER="$T/service.py"
+FAKE_PYTHON=$(command -v python3)
+export FAKE_PYTHON FAKE_SERVICE_PARSER="$T/service.py"
 listener_pid=
 cleanup() {
   if [ -n "$listener_pid" ]; then
