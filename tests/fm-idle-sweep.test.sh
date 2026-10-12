@@ -2,20 +2,8 @@
 # tests/fm-idle-sweep.test.sh - the watcher-run idle-worker sweep owned by
 # bin/fm-idle-sweep.sh.
 #
-# A home kept done, dead, failed and silently blocked worker records for weeks
-# because its cleanup ran only on a model heartbeat and a refusal was never
-# followed up. The guarantees under test:
-#   - a done worker is cleaned up through bin/fm-teardown.sh, never --force,
-#     and a retired-backend refusal goes to fm-retire-endpoint.sh --finished;
-#   - any other refusal, and every failed, long-blocked or dead worker, becomes
-#     exactly one captain hold carrying a full retire-or-retry card;
-#   - working workers, workers still inside their quiet bound, and workers the
-#     captain already holds or deferred are left alone;
-#   - a raised worker is not raised again until its ledger changes;
-#   - a main home queues one check wake per scan that raised anything;
-#   - record-less live endpoints are closed through --orphan;
-#   - a second mate whose own sweep is missing or stale is escalated once per
-#     episode, and an ssh transport failure proves nothing.
+# bin/fm-idle-sweep.sh's header owns the cleanup, decision-card, admission,
+# repeat-suppression, and second-mate audit guarantees exercised here.
 #
 # bin/ is copied into each case with the crew-state, teardown, retirement,
 # captain-hold and fm-on scripts replaced by recording stubs driven by files
