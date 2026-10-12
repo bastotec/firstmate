@@ -20,6 +20,10 @@ cat > "$FAKEBIN/ssh" <<'SH'
 while [ "$#" -gt 0 ]; do case "$1" in -o) shift 2 ;; -*) shift ;; *) break ;; esac; done
 [ "$1" = workload ] || { echo "ssh: unknown host $1" >&2; exit 255; }
 shift
+if [ "${FAKE_SSH_DROP:-0}" = 1 ]; then
+  printf 'present %064d\ntruncated' 0
+  exit 255
+fi
 cd "$FAKE_ACCT" && HOME="$FAKE_ACCT" exec sh -c "$*"
 SH
 chmod +x "$FAKEBIN/ssh"
@@ -48,12 +52,13 @@ assert_contains "$(cat "$T/acct/.agents/AGENTS.md")" "GPU" "conflict left the fi
 printf 'Use at most 4 CPUs.\n' | instr save workload --expect "$sha" >/dev/null
 assert_equals "Use at most 4 CPUs." "$(cat "$T/acct/.agents/AGENTS.md")" "second save"
 assert_contains "$(cat "$T/acct/.agents/AGENTS.md.bak")" "GPU" "previous version kept"
-out=$(printf '' | instr save workload)
+sha=$(instr show workload --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])')
+out=$(printf '' | instr save workload --expect "$sha")
 assert_contains "$out" "saved=removed" "empty save removes"
 assert_absent "$T/acct/.agents/AGENTS.md" "file removed"
 pass "save refuses a changed file, keeps a backup, and empty removes"
 
-out=$(printf 'Mac rules\n' | instr save local --json)
+out=$(printf 'Mac rules\n' | instr save local --expect none --json)
 assert_contains "$out" '"mates": ["primary", "laya"]' "local pickup names the primary and local mates"
 assert_equals "Mac rules" "$(cat "$T/mac/.agents/AGENTS.md")" "local file written"
 set +e
@@ -63,11 +68,136 @@ set -e
 expect_code 1 "$rc" "unknown machine"
 assert_contains "$out" "refuse: not a known machine: ghost" "unknown machine refusal"
 set +e
-out=$(head -c 70000 /dev/zero | tr '\0' a | instr save local)
+out=$(head -c 70000 /dev/zero | tr '\0' a | instr save local --expect none)
 rc=$?
 set -e
 expect_code 1 "$rc" "oversized text"
 assert_contains "$(cat "$T/mac/.agents/AGENTS.md")" "Mac rules" "oversized save left the file alone"
 pass "local saves name the primary, and unknown machines and oversized text are refused"
+
+file_mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
+assert_equals 600 "$(file_mode "$T/mac/.agents/AGENTS.md")" "new instructions are private"
+for mode in 600 640 400; do
+  chmod "$mode" "$T/mac/.agents/AGENTS.md"
+  sha=$(instr show local --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])')
+  printf 'Mode %s\n\n\n' "$mode" | instr save local --expect "$sha" >/dev/null
+  assert_equals "$mode" "$(file_mode "$T/mac/.agents/AGENTS.md")" "replacement preserves permissions"
+  assert_equals "$mode" "$(file_mode "$T/mac/.agents/AGENTS.md.bak")" "backup preserves permissions"
+  instr show local --json | python3 -c 'import json,sys; assert json.load(sys.stdin)["text"].endswith("\n\n\n")'
+done
+rc=0
+printf 'overwrite\n' | instr save local > "$T/no-expect.out" || rc=$?
+expect_code 2 "$rc" "missing expectation refuses"
+for expect in - abcd; do
+  rc=0
+  printf 'overwrite\n' | instr save local --expect "$expect" > "$T/bad-expect.out" || rc=$?
+  expect_code 1 "$rc" "invalid expectation refuses"
+done
+assert_equals "Mode 400" "$(cat "$T/mac/.agents/AGENTS.md")" "invalid expectations leave instructions alone"
+pass "saves preserve permissions and trailing newlines, and require a version"
+
+REAL_CAT=$(command -v cat)
+REAL_SHA256SUM=$(command -v sha256sum || true)
+REAL_SHASUM=$(command -v shasum || true)
+export REAL_CAT REAL_SHA256SUM REAL_SHASUM
+cat > "$FAKEBIN/cat" <<'SH'
+#!/usr/bin/env bash
+if [ "${FAKE_READ_FAIL:-0}" = 1 ] && [ "${1:-}" = "$HOME/.agents/AGENTS.md" ]; then
+  printf truncated
+  exit 1
+fi
+exec "$REAL_CAT" "$@"
+SH
+for tool in sha256sum shasum; do
+  cat > "$FAKEBIN/$tool" <<'SH'
+#!/usr/bin/env bash
+[ "${FAKE_HASH_FAIL:-0}" != 1 ] || exit 1
+case "${0##*/}" in sha256sum) real=$REAL_SHA256SUM ;; shasum) real=$REAL_SHASUM ;; esac
+[ -n "$real" ] || exit 127
+exec "$real" "$@"
+SH
+  chmod +x "$FAKEBIN/$tool"
+done
+chmod +x "$FAKEBIN/cat"
+for failure in hash read ssh; do
+  rc=0
+  case "$failure" in
+    hash) out=$(FAKE_HASH_FAIL=1 instr show local --json) || rc=$? ;;
+    read) out=$(FAKE_READ_FAIL=1 instr show local --json) || rc=$? ;;
+    ssh) out=$(FAKE_SSH_DROP=1 instr show workload --json) || rc=$? ;;
+  esac
+  expect_code 1 "$rc" "$failure failure refuses instructions"
+  assert_contains "$out" "could not read" "$failure failure reported"
+  assert_not_contains "$out" '"present":' "$failure failure cannot present partial JSON"
+done
+pass "failed hashing, file reads, and SSH transport never present instructions"
+
+REAL_MV=$(command -v mv)
+REAL_MKDIR=$(command -v mkdir)
+export REAL_MV REAL_MKDIR
+cat > "$FAKEBIN/mv" <<'SH'
+#!/usr/bin/env bash
+if [ "${FAKE_SAVE_PAUSE:-0}" = 1 ] && [ "${!#}" = "$HOME/.agents/AGENTS.md" ]; then
+  touch "$FAKE_BARRIER/paused"
+  for ((i=0; i<200; i++)); do
+    [ ! -e "$FAKE_BARRIER/release" ] || break
+    sleep 0.05
+  done
+  [ -e "$FAKE_BARRIER/release" ] || exit 1
+fi
+exec "$REAL_MV" "$@"
+SH
+cat > "$FAKEBIN/mkdir" <<'SH'
+#!/usr/bin/env bash
+if [ "${FAKE_SAVE_CONTENDER:-0}" = 1 ] && [ "${!#}" = "$HOME/.agents/.AGENTS.md.lock" ]; then
+  touch "$FAKE_BARRIER/contender"
+fi
+exec "$REAL_MKDIR" "$@"
+SH
+chmod +x "$FAKEBIN/mv" "$FAKEBIN/mkdir"
+wait_marker() {
+  local i
+  for ((i=0; i<100; i++)); do
+    [ ! -e "$1" ] || return 0
+    sleep 0.05
+  done
+  fail "did not reach barrier $1"
+}
+for state in absent present remove; do
+  barrier="$T/barrier-$state"
+  mkdir -p "$barrier"
+  export FAKE_BARRIER="$barrier"
+  if [ "$state" = absent ]; then
+    rm -f "$T/acct/.agents/AGENTS.md"
+    sha=none
+  else
+    printf 'original\n' > "$T/acct/.agents/AGENTS.md"
+    sha=$(instr show workload --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["sha"])')
+  fi
+  (printf 'winner\n' | FAKE_SAVE_PAUSE=1 instr save workload --expect "$sha" > "$barrier/first.out") &
+  first=$!
+  fm_test_track_helper_pid "$first"
+  wait_marker "$barrier/paused"
+  (
+    rc=0
+    if [ "$state" = remove ]; then text=''; else text=loser; fi
+    printf '%s' "$text" | FAKE_SAVE_CONTENDER=1 instr save workload --expect "$sha" > "$barrier/second.out" || rc=$?
+    printf '%s\n' "$rc" > "$barrier/second.rc"
+  ) &
+  second=$!
+  fm_test_track_helper_pid "$second"
+  wait_marker "$barrier/contender"
+  assert_absent "$barrier/second.rc" "contender cannot finish while first save owns the lock"
+  touch "$barrier/release"
+  wait "$first" || fail "first save failed"
+  wait "$second" || fail "second save fixture failed"
+  expect_code 3 "$(cat "$barrier/second.rc")" "concurrent $state edit must conflict"
+  assert_equals winner "$(cat "$T/acct/.agents/AGENTS.md")" "winning save survives"
+  if [ "$state" != absent ]; then
+    assert_equals original "$(cat "$T/acct/.agents/AGENTS.md.bak")" "conflicting edit preserves backup"
+  fi
+  assert_absent "$T/acct/.agents/.AGENTS.md.lock" "writer releases its lock"
+done
+pass "concurrent creates, updates, and removals serialize their version checks"
 
 echo "ALL TESTS PASSED"

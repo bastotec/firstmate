@@ -412,6 +412,10 @@ merge_attempt() {  # <url> <head> <method> <attestation> <max_risk> <base>
     MERGE_ERROR=${REASON:-"its live checks are no longer all green"}
     return 1
   fi
+  if ! out=$("$SCRIPT_DIR/fm-machine-rules.sh" check merge); then
+    MERGE_ERROR=${out:-"this machine's merge authority could not be checked"}
+    return 1
+  fi
   if task_for_pr "$url"; then
     if ! out=$(FM_HOME="$FM_HOME" FM_PR_MERGE_EXPECT_HEAD="$head" FM_PR_MERGE_EXPECT_BASE="$base" "$SCRIPT_DIR/fm-pr-merge.sh" "$TASK_PR_ID" "$TASK_PR_URL" -- "--$method" 2>&1); then
       MERGE_ERROR=$(printf '%s\n' "$out" | grep -m1 -E '^error:|refus' | sed 's/^error: //')

@@ -953,9 +953,9 @@ instructions_offer() { # <alias>
   SKILLS_OUT=$(ssh "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "${PROBE_OPTS[@]}" "$1" \
     'f=$HOME/.agents/AGENTS.md; if [ -f "$f" ]; then echo "present $(wc -l < "$f" | tr -d " ")"; else echo absent; fi' < /dev/null 2>/dev/null) || SKILLS_OUT=
   case "$SKILLS_OUT" in
-    present\ *) lines=${SKILLS_OUT#present }; INSTR_TEXT="the machine's ~/.agents/AGENTS.md ($lines lines) binds every agent there; review it with bin/fm-machine-instructions.sh show $1" ;;
-    absent) INSTR_TEXT="none yet (optional): write this machine's binding instructions with bin/fm-machine-instructions.sh save $1 or Fleet Town's Machine panel" ;;
-    *) INSTR_TEXT="could not read ~/.agents/AGENTS.md over ssh; check it later with bin/fm-machine-instructions.sh show $1" ;;
+    present\ *) lines=${SKILLS_OUT#present }; INSTR_TEXT="the machine's ~/.agents/AGENTS.md ($lines lines) binds every agent there; after registering this machine, review it with bin/fm-machine-instructions.sh show $1" ;;
+    absent) INSTR_TEXT="none yet (optional): after registering this machine, read its version with bin/fm-machine-instructions.sh show $1, then write its binding instructions with bin/fm-machine-instructions.sh save $1 --expect <sha|none> or Fleet Town's Machine panel" ;;
+    *) INSTR_TEXT="could not read ~/.agents/AGENTS.md over ssh; after registering this machine, check it with bin/fm-machine-instructions.sh show $1" ;;
   esac
 }
 

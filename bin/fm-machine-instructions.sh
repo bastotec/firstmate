@@ -4,7 +4,7 @@
 #
 # Usage:
 #   fm-machine-instructions.sh show <machine> [--json]
-#   fm-machine-instructions.sh save <machine> [--expect <sha256>|--expect none] [--json] < new-text
+#   fm-machine-instructions.sh save <machine> --expect <sha256|none> [--json] < new-text
 #
 # <machine> is `local` or an ssh alias bin/fm-machine-skills.sh knows (roots).
 # Deck composes ~/.agents/AGENTS.md first into every session it starts on that
@@ -21,7 +21,9 @@
 # previous version at ~/.agents/AGENTS.md.bak. An empty stdin removes the file
 # (the previous version is still kept). --expect refuses the save with exit 3
 # when the file changed since it was read (sha) or appeared (none), so two
-# editors never overwrite each other. It prints `saved=<sha>|removed` and the
+# editors never overwrite each other. --expect is required; saves serialize on
+# the machine and refuse a busy lock after ten seconds. Existing permissions
+# are preserved; new files are private (0600). It prints `saved=<sha>|removed` and the
 # same pickup sentence: sessions read the file only when they start, so every
 # second mate on that machine (and, for local, the primary) picks it up on its
 # next restart; new crewmates get it at launch.
@@ -47,27 +49,52 @@ refuse() { printf 'refuse: %s\n' "$1"; exit 1; }
 # shellcheck disable=SC2016 # expanded by the machine's shell.
 READ_SH='f=$HOME/.agents/AGENTS.md
 if [ -f "$f" ]; then
-  s=$( (sha256sum "$f" 2>/dev/null || shasum -a 256 "$f") | cut -d" " -f1)
-  printf "present %s\n" "$s"; cat "$f"
+  s=$(sha256sum "$f" 2>/dev/null || shasum -a 256 "$f") || exit 1
+  s=${s%% *}
+  [ "${#s}" -eq 64 ] || exit 1
+  case "$s" in *[!0-9a-f]*) exit 1 ;; esac
+  printf "present %s\n" "$s"
+  cat "$f" || exit 1
 else printf "absent\n"; fi'
 
-# Replace the file with stdin unless it changed from $1 (sha, none, or - for any).
+# Replace the file with stdin unless it changed from $1 (sha or none).
 # shellcheck disable=SC2016 # expanded by the machine's shell.
 WRITE_SH='d=$HOME/.agents f=$d/AGENTS.md expect=$1
-sha() { (sha256sum "$1" 2>/dev/null || shasum -a 256 "$1") | cut -d" " -f1; }
+sha() {
+  s=$(sha256sum "$1" 2>/dev/null || shasum -a 256 "$1") || return 1
+  s=${s%% *}
+  [ "${#s}" -eq 64 ] || return 1
+  case "$s" in *[!0-9a-f]*) return 1 ;; esac
+  printf "%s\n" "$s"
+}
+umask 077
 mkdir -p "$d" || { echo "refuse: cannot create $d"; exit 1; }
 tmp=$(mktemp "$d/.AGENTS.md.XXXXXX") || { echo "refuse: cannot write in $d"; exit 1; }
-cat > "$tmp" || { rm -f "$tmp"; echo "refuse: could not receive the text"; exit 1; }
-if [ "$expect" != - ]; then
-  if [ -f "$f" ]; then now=$(sha "$f"); else now=none; fi
-  [ "$now" = "$expect" ] || { rm -f "$tmp"; echo "conflict: $now"; exit 3; }
-fi
-[ ! -f "$f" ] || cp -p "$f" "$f.bak" || { rm -f "$tmp"; echo "refuse: cannot keep the previous version"; exit 1; }
+locked=no
+trap '\''rm -f "$tmp"; [ "$locked" != yes ] || rmdir "$d/.AGENTS.md.lock"'\'' 0
+trap '\''exit 1'\'' 1 2 15
+cat > "$tmp" || { echo "refuse: could not receive the text"; exit 1; }
+n=0
+until mkdir "$d/.AGENTS.md.lock" 2>/dev/null; do
+  n=$((n + 1))
+  [ "$n" -lt 100 ] || { echo "refuse: instructions writer lock is busy"; exit 1; }
+  sleep 0.1
+done
+locked=yes
+mode=600
+if [ -f "$f" ]; then
+  now=$(sha "$f") || { echo "refuse: cannot hash $f"; exit 1; }
+  mode=$(stat -c %a "$f" 2>/dev/null || stat -f %Lp "$f") || exit 1
+else now=none; fi
+[ "$now" = "$expect" ] || { echo "conflict: $now"; exit 3; }
+[ ! -f "$f" ] || cp -p "$f" "$f.bak" || { echo "refuse: cannot keep the previous version"; exit 1; }
 if [ -s "$tmp" ]; then
-  chmod 644 "$tmp" && mv -f "$tmp" "$f" || { rm -f "$tmp"; echo "refuse: cannot replace $f"; exit 1; }
-  echo "saved=$(sha "$f")"
+  saved=$(sha "$tmp") || { echo "refuse: cannot hash received text"; exit 1; }
+  chmod "$mode" "$tmp" && mv -f "$tmp" "$f" || { echo "refuse: cannot replace $f"; exit 1; }
+  echo "saved=$saved"
 else
-  rm -f "$tmp" "$f"; echo "saved=removed"
+  rm -f "$f" || { echo "refuse: cannot remove $f"; exit 1; }
+  echo "saved=removed"
 fi'
 
 valid_machine() {
@@ -130,7 +157,7 @@ print(json.dumps({"machine": m, "path": "~/.agents/AGENTS.md", "present": presen
 cmd_show() { # <machine> [--json]
   local m=$1 as_json=${2:-} out head present sha tmp
   valid_machine "$m" || refuse "not a known machine: $m"
-  out=$(on_machine "$m" "$READ_SH"; printf x) || refuse "could not read ~/.agents/AGENTS.md on $m"
+  out=$(on_machine "$m" "$READ_SH" && printf x) || refuse "could not read ~/.agents/AGENTS.md on $m"
   out=${out%x}
   head=${out%%$'\n'*}
   case "$head" in
@@ -148,8 +175,8 @@ cmd_show() { # <machine> [--json]
   fi
 }
 
-cmd_save() { # <machine> [--expect <sha|none>] [--json]
-  local m=$1 expect=- as_json='' out rc
+cmd_save() { # <machine> --expect <sha|none> [--json]
+  local m=$1 expect='' as_json='' out rc
   shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -158,7 +185,11 @@ cmd_save() { # <machine> [--expect <sha|none>] [--json]
       *) usage ;;
     esac
   done
-  case "$expect" in -|none) ;; *[!0-9a-f]*|'') refuse "--expect takes a sha256 or none" ;; esac
+  [ -n "$expect" ] || usage
+  if [ "$expect" != none ]; then
+    case "$expect" in *[!0-9a-f]*) refuse "--expect takes a sha256 or none" ;; esac
+    [ "${#expect}" -eq 64 ] || refuse "--expect takes a sha256 or none"
+  fi
   valid_machine "$m" || refuse "not a known machine: $m"
   tmp=$(mktemp "${TMPDIR:-/tmp}/fm-instr.XXXXXX")
   trap 'rm -f "$tmp"' EXIT
