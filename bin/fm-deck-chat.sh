@@ -561,7 +561,7 @@ else
     "$STATE/primary-chat/startup-digest.txt" >> "$WORK/first"
 fi
 python3 "$PRIMARY_CHAT" record write --home "$FM_HOME" --session "$SESSION" --host-pid $$ \
-  --endpoint "$ENDPOINT" --startup-file "$WORK/first" || die 'could not publish startup and write state/primary-chat.json'
+  --endpoint "$ENDPOINT" --model "$MODEL" --startup-file "$WORK/first" || die 'could not publish startup and write state/primary-chat.json'
 RECORDED=1
 
 sup_args=(supervise --home "$FM_HOME" --host-pid $$ --gen "$GEN" --events-offset "$EVENTS_OFFSET")
