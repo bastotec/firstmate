@@ -78,7 +78,7 @@ require_alias() {
     ''|-*|*[!A-Za-z0-9._-]*|.|..) die "alias must be a plain ssh name: ${1:-}" ;;
   esac
 }
-slug() { printf 'machine-%s\n' "$(printf '%s' "$1" | tr 'A-Z' 'a-z')"; }
+slug() { printf 'machine-%s\n' "$(printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]')"; }
 record_path() { printf '%s/%s.json\n' "$PENDING" "$1"; }
 scratch() { [ -n "$TMP" ] || TMP=$(mktemp -d "${TMPDIR:-/tmp}/fm-machine-blocker.XXXXXX"); }
 

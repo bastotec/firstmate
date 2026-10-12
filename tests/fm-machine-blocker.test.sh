@@ -246,7 +246,7 @@ test_alias_punctuation_preserves_distinct_identities() {
   home=$(make_home aliases)
   check_output "$home/check.txt"
   for alias in Build.one Build-one Build_one; do
-    task="machine-$(printf '%s' "$alias" | tr 'A-Z' 'a-z')"
+    task="machine-$(printf '%s' "$alias" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
     run_in "$home" "$BLOCKER" raise "$alias" --for "create $alias mate" --from "$home/check.txt" >/dev/null || fail "raise collided for $alias"
     assert_equals "$task" "$(run_in "$home" "$BLOCKER" show "$alias" | jq -r .task)" "record preserves alias punctuation"
   done
