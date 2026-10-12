@@ -148,6 +148,15 @@ def group_alive(pgid) -> bool:
     return False
 
 
+def deck_env() -> dict:
+    """This process's environment plus the gateway key default bin/fm-deck-worker.sh uses."""
+    env = os.environ.copy()
+    key = Path.home() / ".config" / "proxai" / "client.key"
+    if not env.get("PROXAI_API_KEY_FILE") and not env.get("PROXAI_API_KEY") and key.is_file():
+        env["PROXAI_API_KEY_FILE"] = str(key)
+    return env
+
+
 def deck_bin() -> str:
     explicit = os.environ.get("FM_DECK_BIN")
     if explicit:
@@ -445,7 +454,7 @@ def cmd_spec_run(args) -> None:
     memory = Path(rec["memory"])
     workdir = Path(rec["workdir"])
     workdir.mkdir(parents=True, exist_ok=True)
-    env = os.environ.copy()
+    env = deck_env()
     skills = rec.get("skills_dir")
     if skills:
         env["DECK_SKILLS_DIRS"] = skills
@@ -730,7 +739,7 @@ def start_member(g: Group, rec: dict, m: dict, placement: str, brief: str, total
             "--deadline-secs", str(int(os.environ.get("FM_CREW_DEADLINE_SECS", DEFAULT_DEADLINE))),
             "--hook", result_hook(result),
         ]
-        return run_deck(argv, work, mdir / "events.ndjson", mdir / "stderr.log", os.environ.copy(), new_group=True)
+        return run_deck(argv, work, mdir / "events.ndjson", mdir / "stderr.log", deck_env(), new_group=True)
     # Remote: the remote home runs the member and prints its result on stdout.
     # The prompt names the remote result path, so it is built there.
     payload = json.dumps({"title": rec["title"], "brief": brief, "angle": m["angle"], "n": n, "total": total})
@@ -812,7 +821,7 @@ def cmd_group_run(args) -> None:
                 "--deadline-secs", str(int(os.environ.get("FM_CREW_DEADLINE_SECS", DEFAULT_DEADLINE))),
                 "--hook", result_hook(merged)]
         run_deck(argv, work, g.run_dir / "merge-events.ndjson", g.run_dir / "merge-stderr.log",
-                 os.environ.copy(), new_group=True).wait()
+                 deck_env(), new_group=True).wait()
     report = g.data / "report.md"
     done = sum(1 for m in rec["members"] if m["status"] == "done")
     lines = [f"# Task group {rec['title']}\n", f"{done} of {total} members finished with a result.\n"]
@@ -971,7 +980,7 @@ def cmd_remote_member(args) -> None:
         prompt = member_prompt(rec, payload["brief"], payload["angle"], result, payload["n"], payload["total"])
         argv = [deck_bin(), "run", prompt, "--ephemeral", "--max-turns", str(DEFAULT_MAX_TURNS),
                 "--deadline-secs", str(DEFAULT_DEADLINE), "--hook", result_hook(result)]
-        proc = run_deck(argv, work, work / "events.ndjson", work / "stderr.log", os.environ.copy())
+        proc = run_deck(argv, work, work / "events.ndjson", work / "stderr.log", deck_env())
         rc = proc.wait()
         if rc != 0 or not result.is_file():
             sys.stderr.write(read_text(work / "stderr.log")[-2000:])
