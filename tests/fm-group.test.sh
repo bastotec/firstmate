@@ -74,7 +74,7 @@ live_stubs() {
   done
 }
 
-out=$(STUB_SLEEP=0.6 FM_GROUP_LOCAL_MAX=5 "$GROUP" start pr-review --title "Review PR 12" --brief "Review https://example.test/pr/12" \
+out=$(STUB_SLEEP=0.6 "$GROUP" start pr-review --title "Review PR 12" --brief "Review https://example.test/pr/12" \
   --angle "security" --angle "correctness" --angle "tests" --angle "performance" --angle "docs" --wait 2>&1) \
   || fail "group run failed: $out"
 REC="$HOME_DIR/state/groups/pr-review.json"
@@ -259,3 +259,59 @@ expect_code 2 "$("$GROUP" start invalid-policy --brief x --angle a >/dev/null 2>
 assert_absent "$HOME_DIR/state/groups/invalid-policy.json" "invalid policy creates no group record"
 rm "$HOME_DIR/config/launch-env-allowlist"
 pass "group environment preflight fails closed before mutation"
+
+python3 - "$ROOT" "$TMP_ROOT" <<'PY' || fail "a result path with shell syntax must never run as shell"
+import importlib.util
+import os
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("fm_crew", Path(sys.argv[1]) / "bin/fm_crew.py")
+crew = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(crew)
+tmp = Path(sys.argv[2])
+odd = tmp / "odd $(touch pwned) dir"
+odd.mkdir()
+hook = crew.result_hook(odd / "result.md").split("=", 1)[1]
+rc = subprocess.run(["bash", "-lc", hook], cwd=tmp, capture_output=True).returncode
+assert rc == 2, rc
+assert not (tmp / "pwned").exists(), "the hook ran a command substitution from the path"
+(odd / "result.md").write_text("found\n")
+assert subprocess.run(["bash", "-lc", hook], cwd=tmp, capture_output=True).returncode == 0
+PY
+pass "the result gate quotes its path, so a home path cannot inject shell"
+
+printf '%s\n' '{"project":"firstmate","title":"t"}' > "$HOME_DIR/state/groups/.stray.card.json"
+printf '%s\n' '{"not":"a group"}' > "$HOME_DIR/state/groups/stray.json"
+out=$("$GROUP" list 2>&1) || fail "list must survive stray files beside group records: $out"
+assert_not_contains "$("$GROUP" list --json)" '"title": "t"' "list leaves out a stray card"
+rm -f "$HOME_DIR/state/groups/.stray.card.json" "$HOME_DIR/state/groups/stray.json"
+pass "list reads only group records"
+
+: > "$DECK_STATE/concurrency.log"
+STUB_RUNNING_DIR="$TMP_ROOT/running-serial" STUB_SLEEP=0.4 FM_GROUP_LOCAL_MAX=1 "$GROUP" start serial --brief x --angle a --angle b --angle c --wait >/dev/null 2>&1 \
+  || fail "a capped group must still finish"
+assert_equals 1 "$(sort -n "$DECK_STATE/concurrency.log" | tail -1)" "FM_GROUP_LOCAL_MAX=1 runs one member at a time"
+pass "the local cap is configurable"
+
+python3 - "$ROOT" <<'PY' || fail "a group left with only a zombie leader must read as gone"
+import importlib.util
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("fm_crew", Path(sys.argv[1]) / "bin/fm_crew.py")
+crew = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(crew)
+leader = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+time.sleep(1)  # exited, not yet reaped: a zombie leading an otherwise empty group
+try:
+    assert not crew.pid_alive(leader.pid), "a zombie is not running"
+    assert not crew.group_alive(leader.pid), "macOS answers killpg(0) with EPERM here; that is not a live group"
+finally:
+    leader.wait()
+PY
+pass "a zombie-only process group is not mistaken for a survivor"

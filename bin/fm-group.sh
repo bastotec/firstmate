@@ -5,7 +5,8 @@
 # adversarial reviewers on one PR). They investigate and report, never edit
 # project files; put project paths and context in the shared brief.
 # Each member is one ephemeral Deck run with no fleet task record.
-# A detached orchestrator runs at most two members on this machine at once.
+# A detached orchestrator schedules members under the local concurrency cap
+# owned by bin/fm_crew.py's runtime tuning documentation.
 # When every member ends, a required merge run combines their results into
 # data/groups/<gid>/report.md, keeping member evidence even if the merge fails.
 # Success requires every member and the merger to succeed.
@@ -25,8 +26,10 @@
 #   fm-group.sh cleanup <gid>      stop and remove the whole group now
 #
 # Group ids are single-use; records and completed results survive cleanup.
-# Status and list are read-only; cleanup cancels unfinished work and can be
-# retried after cleanup-failed without changing the retained work outcome.
+# Status and list are read-only; status's live_members includes "merger" when
+# its process group is live or uncertain, alongside member keys.
+# Cleanup cancels unfinished work and can be retried after cleanup-failed
+# without changing the retained work outcome.
 # --wait exits nonzero unless the group is done, or on timeout (default 7320
 # seconds); a timeout does not cancel the group.
 # bin/fm_crew.py's docstring owns runtime tuning and workdir placement;
