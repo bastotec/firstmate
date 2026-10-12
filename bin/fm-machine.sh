@@ -105,7 +105,10 @@
 # remains manual with prepare; use setup for supported automatic installs.
 #
 # Shared skills: setup (after the doctor) and `skills` record the connected
-# machine's inventory with bin/fm-machine-skills.sh refresh. When this home has
+# machine's inventory with bin/fm-machine-skills.sh refresh. These steps require
+# bridge permission before setup, even for an unregistered alias; see
+# docs/configuration.md "Bridge gates" and bin/fm-on.sh's classification table.
+# When this home has
 # config/shared-skills, they first update the machine's copy of the captain's
 # skills repo and run its installer. The file holds key=value lines:
 #   source=<absolute path of this machine's clone of the skills repo>   (required)

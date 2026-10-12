@@ -664,7 +664,8 @@ A refused call reports `bridge-blocked:`, records the refusal, and files a "need
 Unlike a tool-call approval, approving a bridge request grants standing permission for that flow on that bridge and asks the first mate to retry; denying it leaves the flow closed.
 Existing bridges are seeded on first use and shown as configured/seeded; newly connected machines allow nothing until the captain selects permissions.
 An unreadable or invalid record refuses gated remote operations rather than restoring seeded permissions.
-Use the bridge command to inspect or change permissions, or select them when registering a machine:
+Select bridge permissions before machine setup's skill steps or remote-home provisioning; setup consent alone does not configure a bridge.
+Use the bridge command before setup to inspect or change permissions, or select them when registering a machine:
 
 ```sh
 bin/fm-bridge.sh show                                  # every bridge and what it allows
