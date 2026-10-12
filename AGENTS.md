@@ -71,7 +71,7 @@ Use `gh-axi` for GitHub, `chrome-devtools-axi` for browser work, and compatible 
 
 ## 4. Harness and runtime dispatch
 
-Deck is the only harness and stream is the only runtime backend; `docs/configuration.md` owns both schemas and `bin/fm-spawn.sh` validates every launch.
+Deck is the only harness and stream is the only endpoint backend; `docs/configuration.md` owns both schemas and `bin/fm-spawn.sh` validates ship, scout, and secondmate launches.
 Never dispatch on an unverified adapter: if `config/crew-harness` or `config/secondmate-harness` names anything but deck (absent or `default` means deck), report the refusal and never fall back around invalid configuration.
 For skill-dependent tasks, follow [Skills per machine](docs/remote-secondmates.md#skills-per-machine) before briefing or routing to a second mate; never place work on a machine that lacks its required skills.
 Each machine's `~/.agents/AGENTS.md` is the captain's standing instruction for that machine and outranks this file's standing rules there, including merge, comment, and publish authority and yolo (only a current explicit captain instruction outranks it); follow [Machine instructions](docs/remote-secondmates.md#machine-instructions) before placing work on a machine and before merging, commenting, or publishing from one.
@@ -122,6 +122,8 @@ Route by the nature of the work against each registered secondmate scope, not by
 Send in-scope work to the fitting secondmate unless it is blocked or the captain redirects it; its marked replies return through its status or a referenced document, never by reading its chat.
 The exception is a small single-repo ship or scout in a project this home has cloned: spawn it directly and send the owning secondmate a one-line FYI through `fm-send`.
 Large or multi-step domain work, and projects cloned only in a secondmate's home, still go to the secondmate; if no scope fits, use the main home or discuss creating a persistent secondmate.
+Pick the worker shape by how the work recurs: a plain ship or scout for one-off work; a specialist (`bin/fm-specialist.sh`) for recurring investigation that should accumulate subject knowledge; a secondmate when the work needs its own backlog, supervision, and judgment.
+For parallel independent investigation angles on one question, such as several adversarial reviews of one PR, use `bin/fm-group.sh`; its header owns results and cleanup, and neither groups nor specialist jobs authorize project changes.
 For one-off operational work, take the simplest direct path, and build no wrapper, control plane, custom verifier, or automation unless that path hits a concrete blocker or repeated need.
 
 Consult existing reports and evidence before commissioning an investigation, then classify the deliverable:
@@ -145,7 +147,8 @@ A semantic conflict a worker reports is yours to decide or escalate, never to ha
 
 ### Dispatch and supervision handoff
 
-Write the brief under section 11, then spawn only through `bin/fm-spawn.sh`; it must resolve an isolated task worktree distinct from the primary checkout, and a failed isolation assertion stops the task.
+For ships, scouts, and secondmates, write the brief under section 11, then spawn only through `bin/fm-spawn.sh`; it must resolve an isolated task worktree or secondmate home distinct from the primary checkout, and a failed isolation assertion stops the task.
+Specialist jobs and task groups use only their owning entrypoints named at intake above, not the ship/scout endpoint lifecycle.
 When the tasks-axi backlog gate applies, the spawn moves the work item to In flight and refuses work this home has no item for.
 After spawning, confirm the worker is processing the brief.
 
@@ -184,7 +187,7 @@ When a worker reports a PR or a ready local-only branch, load `task-delivery`.
 For PR-based tasks, record the PR with `bin/fm-pr-check.sh` and give the captain its full URL.
 Bind any custom `state/<id>.check.sh` you write with `bin/fm-check-register.sh` before the watcher runs it, and retire it only through `bin/fm-check-unregister.sh` or teardown, never a hand-composed `rm`.
 Tear down a ship task only after landing is confirmed; a refusal for uncommitted or unlanded work means stop and investigate.
-It is the captain's standing instruction that the mate who created a worker cleans it up once its work is done, so he never has to remember to: at completion and at every heartbeat, each home cleans up only its own finished direct reports through `task-delivery`'s finished-work sweep, never forces, and sends anything not provably finished to the captain as a one-line decision.
+It is the captain's standing instruction that the mate who created a worker cleans it up once its work is done, so he never has to remember to: at completion and at every heartbeat, each home cleans up only its own finished endpoint-backed direct reports through `task-delivery`'s finished-work sweep, never forces, and sends anything not provably finished to the captain as a one-line decision.
 Retire a secondmate only on an explicit captain or main-firstmate decision, with no work under way in its home; its empty queue is healthy.
 
 ### Scout outcome and promotion

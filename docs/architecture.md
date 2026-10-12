@@ -172,6 +172,7 @@ Firstmate's own no-mistakes gate runs agents inside a checkout that also contain
 The tracked `.no-mistakes.yaml` sets `disable_project_settings: true`; no-mistakes honors that setting only from the trusted default-branch copy, so a pushed branch cannot enable its own project instructions during validation.
 Independently, `fm-spawn.sh`, `fm-send.sh`, `fm-control.sh`, and `fm-teardown.sh` source `bin/fm-gate-refuse-lib.sh` and refuse fleet mutation under its gate-context contract.
 The [Deck chat host](../bin/fm-deck-chat.sh) and [primary steer CLI](../bin/fm-primary-steer.sh) apply the same boundary to their mutating entrypoints; the steer CLI's status and delivery reads remain available.
+[`fm_crew.py`](../bin/fm_crew.py) applies that boundary to specialist and group lifecycle mutations, including specialist status, list, and history because they reconcile interrupted jobs; group status and list remain read-only.
 [`fm-retire-endpoint.sh`](../bin/fm-retire-endpoint.sh) applies the same refusal directly to orphan closure before locking, assertion logging, or killing; its read-only orphan listing remains available, and record retirement still delegates cleanup to the guarded teardown entrypoint.
 A normal primary checkout or crewmate worktree has neither signal and is unaffected.
 The helper's header owns the exact signal detection, relocated-home limitation, test-harness bypass, and relationship to no-mistakes' HEAD-continuity guard.
@@ -179,7 +180,8 @@ The helper's header owns the exact signal detection, relocated-home limitation, 
 ## Two task shapes
 
 Ship tasks change projects and ship by project mode (`no-mistakes`, `direct-PR`, or `local-only`); scout tasks leave standalone investigation reports at `data/<id>/report.md` and never push.
-The intake and authority contract in `AGENTS.md` owns when separate scout research is warranted.
+The intake and authority contract in `AGENTS.md` owns when separate scout research is warranted and when to select a specialist or task group instead.
+Those knowledge workers use direct Deck runs outside the stream endpoint, task-metadata, and Treehouse lifecycle described here; their CLI headers ([specialists](../bin/fm-specialist.sh), [groups](../bin/fm-group.sh)) and [`fm_crew.py` docstring](../bin/fm_crew.py) own lifecycle and record mechanics.
 
 ## Dispatch profiles
 

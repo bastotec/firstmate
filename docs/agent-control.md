@@ -1,6 +1,6 @@
 # Agent lifecycle control plane
 
-Firstmate talks to a running agent two ways, and they are not the same channel.
+Firstmate talks to a running endpoint-backed agent two ways, and they are not the same channel.
 
 The **data plane** is [`bin/fm-send.sh`](../bin/fm-send.sh): conversational text for the agent to read.
 The [`fm-send.sh` header](../bin/fm-send.sh) owns secondmate routing and the captain-direct inbox exception.
