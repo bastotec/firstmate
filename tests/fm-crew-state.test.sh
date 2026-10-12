@@ -1346,7 +1346,7 @@ test_daemon_killed_green_pr_with_skipped_step_reads_done() {
   assert_contains "$out" "state: done" "a daemon kill after a green PR reads done, not failed"
   assert_contains "$out" "source: run-step" "the reclassified verdict stays run-step sourced"
   assert_contains "$out" "run-error: daemon shutting down" "the state line separately carries the run's recorded cause"
-  assert_contains "$out" "https://github.com/o/r/pull/6" "the PR URL is surfaced for review"
+  assert_contains "$out" "run-pr: https://github.com/o/r/pull/6" "the attributed green PR is machine-readable"
   assert_not_contains "$out" "state: failed" "the killed monitor must not read as a failed run"
   pass "daemon shutdown under a green PR with a skipped step reads held-for-merge done"
 }
@@ -1373,10 +1373,17 @@ test_relaunched_live_crew_outranks_daemon_killed_run_record() {
   local out; out=$(run_crew_state "$d" feat-dkill-relaunch)
   assert_contains "$out" "state: working" "a live relaunched crew outranks its dead predecessor's failed record"
   assert_contains "$out" "source: run-step" "the verdict stays an attributed run-step read"
-  assert_contains "$out" "crew live (relaunched)" "the detail names the live-crew override"
+  assert_contains "$out" "crew live (relaunched, busy)" "the detail names the live busy replacement"
   assert_contains "$out" "run-error: daemon shutting down" "the state line separately carries the run's recorded cause"
   assert_not_contains "$out" "state: failed" "the stale killed record must not declare the live task failed"
-  pass "a relaunched live crew supersedes its predecessor's daemon-killed record"
+
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" feat-dkill-relaunch idle --gen "$gen" \
+    --source deck-wrapper --event turn-end
+  out=$(run_crew_state "$d" feat-dkill-relaunch)
+  assert_contains "$out" "state: working" "an alive idle replacement still outranks its dead predecessor's failed record"
+  assert_contains "$out" "crew live (relaunched, idle)" "the detail names the live idle replacement"
+  assert_not_contains "$out" "state: failed" "turn-end idle cannot restore the dead predecessor's failure"
+  pass "a relaunched live crew supersedes its predecessor's daemon-killed record while busy or idle"
 }
 
 # The same killed mid-pipeline record with NO live crew: the failure verdict

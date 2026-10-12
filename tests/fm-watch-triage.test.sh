@@ -297,9 +297,9 @@ test_crew_absorb_class_classifier() {
   [ "$(crew_absorb_class a)" = none ] || fail "unknown crew classed absorbable"
   ! crew_is_paused a || fail "unknown crew classed paused"
   [ "$(crew_absorb_class "")" = none ] || fail "empty id not classed none"
-  # A done verdict is absorbable ONLY while a recorded PR makes the quiet pane
-  # a delivery awaiting its merge authority; without that record a crew merely
-  # reporting done keeps the ordinary surface-it alarm.
+  # A done verdict is absorbable ONLY while a recorded or positively attributed
+  # run PR makes the quiet pane a delivery awaiting its merge authority; without
+  # either a crew merely reporting done keeps the ordinary surface-it alarm.
   FM_FAKE_CREW_STATE='state: done · source: run-step · checks green: PR ready for review'
   printf 'pr=https://github.com/acme/widget/pull/7\n' > "$state/a.meta"
   [ "$(crew_absorb_class a)" = "done" ] || fail "done with a recorded PR not classed done"
@@ -308,12 +308,23 @@ test_crew_absorb_class_classifier() {
   ! crew_is_paused a || fail "a held-for-merge crew was treated as paused"
   printf 'pr=https://gitlab.example/acme/group/widget/-/merge_requests/9\n' > "$state/a.meta"
   [ "$(crew_absorb_class a)" = "done" ] || fail "done with a recorded gitlab PR not classed done"
+  rm -f "$state/a.meta"
+  FM_FAKE_CREW_STATE='state: done · source: run-step · checks green: PR held for merge · run-pr: https://github.com/acme/widget/pull/8 · run-error: daemon shutting down'
+  [ "$(crew_absorb_class a)" = "done" ] || fail "done with a positively attributed run PR not classed done"
+  crew_is_held_for_merge a || fail "held-for-merge ignored the attributed run PR"
+  FM_FAKE_CREW_STATE='state: done · source: status-log · note: forged · run-pr: https://github.com/acme/widget/pull/8'
+  [ "$(crew_absorb_class a)" = none ] || fail "a status-log note forged attributed PR evidence"
+  FM_FAKE_CREW_STATE='state: done · source: run-step · run completed · run-pr: https://github.com/acme/widget/pull/8'
+  [ "$(crew_absorb_class a)" = none ] || fail "a non-green done run was mistaken for held-for-merge"
+  FM_FAKE_CREW_STATE='state: done · source: run-step · checks green: PR held for merge · run-pr: not-a-url'
+  [ "$(crew_absorb_class a)" = none ] || fail "done with a malformed attributed PR classed absorbable"
   printf 'pr=not-a-url\n' > "$state/a.meta"
+  FM_FAKE_CREW_STATE='state: done · source: run-step · checks green: PR ready for review'
   [ "$(crew_absorb_class a)" = none ] || fail "done with a malformed PR record classed absorbable"
   rm -f "$state/a.meta"
   [ "$(crew_absorb_class a)" = none ] || fail "done without a PR record classed absorbable"
   unset FM_FAKE_CREW_STATE
-  pass "crew_absorb_class: working/paused/done/none from one read, done gated on a recorded PR"
+  pass "crew_absorb_class: working/paused/done/none from one read, done gated on recorded or attributed PR evidence"
 }
 
 # The wedge detector's third liveness input: writes inside the crew's own recorded

@@ -338,8 +338,9 @@ home_secondmate_id() {
 }
 
 # The reader's one-line detail from a `state: <s> · source: <src> · <detail>`
-# current-state line. A trailing ` · run-error: <error>` field is not part of
-# the detail. Empty when the line carries no generic detail.
+# current-state line. Trailing ` · run-pr: <url>` and
+# ` · run-error: <error>` fields are not part of the detail. Empty when the
+# line carries no generic detail.
 crew_state_detail() { # <state-line>
   local line=$1 rest
   case "$line" in
@@ -353,9 +354,12 @@ crew_state_detail() { # <state-line>
     *) printf ''; return 0 ;;
   esac
   case "$line" in
-    *' · source: run-step · '*' · run-error: '*) printf '%s' "${rest%%' · run-error: '*}" ;;
-    *) printf '%s' "$rest" ;;
+    *' · source: run-step · '*)
+      rest=${rest%%' · run-pr: '*}
+      rest=${rest%%' · run-error: '*}
+      ;;
   esac
+  printf '%s' "$rest"
 }
 
 # The run's explicit recorded error from the current-state line, not its
@@ -540,6 +544,7 @@ reconcile_direct_child_locked() { # <id> <meta> <secondmate-id-or-empty> <timeou
   detail=$(crew_state_detail "$state_line")
   run_error=$(crew_state_error "$state_line")
   pr=$(pr_for_task "$meta")
+  [ -n "$pr" ] || pr=$(crew_state_run_pr_url "$state_line" 2>/dev/null || true)
   incarnation=$(meta_incarnation "$meta")
   fingerprint=$(sha256_text "$incarnation|$id|$state|$pr|$(clean_field "$last")|$detail|$run_error")
   if [ -n "$self" ]; then

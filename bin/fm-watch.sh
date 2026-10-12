@@ -45,8 +45,9 @@
 #                          wake payload itself, not just repetition, forces a
 #                          closer look instead of another routine supervision
 #                          resume. Unless afk is active. A task already
-#                          reconciled as done with a recorded PR (held for its
-#                          merge) is exempt from every wedge alarm: a finished
+#                          reconciled as done with valid recorded or attributed
+#                          PR evidence (held for its merge) is exempt from every
+#                          wedge alarm: a finished
 #                          worker's pane is supposed to be quiet, and each false
 #                          alarm trains the supervisor to dismiss the real one.
 #                          A pane whose own task
@@ -1234,7 +1235,7 @@ handle_held_merge_stale() {  # <window> <task> [pane-hash]
   date +%s > "$STATE/.stale-since-$key"
   rm -f "$STATE/.wedge-escalations-$key"
   clear_write_tracking "$key"
-  triage_log "absorbed stale (done with recorded PR awaiting merge): $win"
+  triage_log "absorbed stale (done with PR evidence awaiting merge): $win"
 }
 
 # Apply the busy-pane completed-turn bound to a window whose bound has already
@@ -1338,9 +1339,9 @@ clear_pause_tracking() {  # <window-key>
 # After fm-crew-state has fallen back to stopped or unknown, paused classification is
 # recovered only for a confidently dead ordinary crew, or for a secondmate, whose
 # endpoint liveness this function deliberately never reads. A reconciled done
-# delivery with a recorded PR passes straight through as `done`, because the
-# status line never names that wait: the wait IS the delivery, and crew_absorb_class
-# has already gated it on the PR record.
+# delivery with valid recorded or attributed PR evidence passes straight
+# through as `done`, because the status line never names that wait: the wait IS
+# the delivery, and crew_absorb_class has already validated that PR evidence.
 pause_state_class() {  # <window> <task>
   local win=$1 task=$2 key last recheck_file class agent_alive kind
   key=$(window_key "$win")
@@ -1373,7 +1374,7 @@ pause_state_class() {  # <window> <task>
     printf 'working'
     return
   fi
-  # A reconciled done delivery with a recorded PR is a finished worker, not a
+  # A reconciled done delivery with valid PR evidence is a finished worker, not a
   # live decision gate to keep inspecting: no liveness read can add anything to
   # a state whose outcome is already recorded, so it never falls into the
   # first-sight surface branch below.
@@ -1414,9 +1415,9 @@ pause_state_class() {  # <window> <task>
 # was - routinely `done: PR ...` after a delivery, which no line predicate can
 # read as a wait. An alarm bounded only by the line therefore re-fires for the
 # captain's whole thinking time, on exactly the work they already have in hand.
-# A reconciled done delivery with a recorded PR is that same shape answered one
-# record earlier: the task's own reconciled state already names the outcome, so
-# handle_held_merge_stale bounds its pane instead (crew_is_held_for_merge).
+# A reconciled done delivery with valid PR evidence is that same shape answered
+# one record earlier: the task's own reconciled state already names the outcome,
+# so handle_held_merge_stale bounds its pane instead (crew_is_held_for_merge).
 #
 # `open` is that record's own read-only predicate and owns its semantics: exit 0
 # still an open captain call, 1 not, 2 could not be established. Only a 0 bounds
@@ -1512,7 +1513,7 @@ captain_call_stale_bound() {  # <window-key> <task>
 # still-LIVE agent even under a declared wait, so a worker genuinely waiting on
 # a decision is never silenced - which routes every parked-but-live worker here, on
 # first sight of each distinct stale hash. A reconciled done delivery with a
-# recorded PR never reaches this branch (pause_state_class answers `done` for it),
+# Valid PR evidence never reaches this branch (pause_state_class answers `done`),
 # because its quiet pane is the expected shape of a finished worker, not an
 # inconclusive state to inspect.
 #
@@ -2710,7 +2711,7 @@ EOF
             triage_log "absorbed stale (supervisor-declared external wait, until $EXT_WAIT_UNTIL): $w"
           elif [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
             if crew_is_held_for_merge "$task"; then
-              # A reconciled done delivery with a recorded PR is never handed to
+              # A reconciled done delivery with valid PR evidence is never handed to
               # the away-mode daemon either: the daemon's stale vocabulary reads
               # status lines and pane state, neither of which names this wait,
               # so the handoff would dress a finished worker's expected quiet up
@@ -2816,8 +2817,9 @@ EOF
           #   - paused: a declared wait pause_state_class admits (its header owns which
           #     liveness evidence each kind of crew must supply), so absorb on the long
           #     PAUSE_RESURFACE_SECS cadence instead of wedge-escalating;
-          #   - done: a reconciled done delivery with a recorded PR (crew_absorb_class
-          #     passes it through when no declared wait is on the line), so absorb it
+          #   - done: a reconciled done delivery with valid PR evidence
+          #     (crew_absorb_class accepts metadata or the attributed run field),
+          #     passed through when no declared wait is on the line, so absorb it
           #     because a finished worker's pane is supposed to be quiet while the
           #     merge authority decides;
           #   - none: no running pipeline, no exact busy verdict, no admitted declared wait.

@@ -15,7 +15,7 @@
 # fixed mapping logic, no heuristics and no LLM. Output is one stable, parseable,
 # token-tight line firstmate can read every heartbeat:
 #
-#   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|remote-endpoint|none> · <detail> [· run-error: <error>]
+#   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|remote-endpoint|none> · <detail> [· run-pr: <url>] [· run-error: <error>]
 #
 # Logic, in order:
 #   1. Resolve worktree + backend target + kind from state/<id>.meta. A meta
@@ -62,8 +62,9 @@
 #      absence of that decision into a failure; nm_failed_run_is_green_held_ci,
 #      2026-09-05 jr-voice), else working when the run's own recorded error
 #      names the infrastructure (nm_error_is_infra_kill: daemon shutdown or a
-#      canceled context) and a CURRENT-gen busy record proves a relaunched
-#      live crew (nm_live_crew_outranks_killed_run), else a genuine failure.
+#      canceled context) and a CURRENT-gen busy or idle record belongs to an
+#      exactly alive relaunched crew (nm_live_crew_outranks_killed_run), else a
+#      genuine failure.
 #      The run's recorded error is carried in a distinct run-error field, so a
 #      refused publication reads as its recorded cause rather than a bare
 #      `run failed` and generic detail is never mislabeled as an error.
@@ -212,6 +213,7 @@ RUN_OUT=''
 RUN_SOURCE=full
 COARSE_STATUS=''
 RUN_ERROR=''
+RUN_PR=''
 
 # The run's current step and that step's status, tab-separated (header: step=).
 crew_state_step() {
@@ -259,11 +261,12 @@ crew_state_publish() {  # <state> <detail> [run-error]
   rm -f -- "$tmp"
 }
 
-# Emit the one canonical line and exit 0. Detail and run error are optional.
-emit() {  # <state> <source> [detail] [run-error]
+# Emit the one canonical line and exit 0. Detail, run error, and run PR are optional.
+emit() {  # <state> <source> [detail] [run-error] [run-pr]
   [ "$MODE" != publish ] || crew_state_publish "$1" "${3:-}" "${4:-}"
   local line="state: $1${SEP}source: $2"
   [ -n "${3:-}" ] && line="$line${SEP}$3"
+  [ -n "${5:-}" ] && line="$line${SEP}run-pr: $5"
   [ -n "${4:-}" ] && line="$line${SEP}run-error: $4"
   printf '%s\n' "$line"
   exit 0
@@ -693,9 +696,6 @@ nm_reclassify_failed_run_as_held_green() {
   nm_failed_run_is_green_held_ci || return 1
   RUN_STATE="done"
   RUN_DETAIL="checks green: PR held for merge (ci monitor ended)"
-  local pr_url
-  pr_url=$(strip_quotes "$(nm_field pr)")
-  [ -n "$pr_url" ] && RUN_DETAIL="$RUN_DETAIL: $pr_url"
   return 0
 }
 
@@ -705,13 +705,11 @@ nm_reclassify_failed_run_as_held_green() {
 # that corpse as current state declared a live relaunched task failed
 # (2026-10-09 incident). The busy record is the one gen-guarded signal this
 # reader already has: a relaunch retires the old gen, so a valid CURRENT-gen
-# busy record proves this incarnation's worker is live regardless of which
-# run row the ledger answers with. Two guards keep the override honest: only
-# a BUSY record wins (idle or unknown says nothing against the record), and
-# the recovery-grade endpoint classifier must say exactly alive, because a
-# stream capture can return the hub's cached screen after the owning agent has
-# gone stale or reported the worker closed. A reboot can otherwise leave a
-# frozen busy record that masks the wedge a dead crew deserves to raise.
+# busy or idle record belongs to this incarnation rather than the dead run.
+# The recovery-grade endpoint classifier must also say exactly alive, because
+# a stream capture can return the hub's cached screen after the owning agent has
+# gone stale or reported the worker closed. An unknown semantic state says
+# nothing and cannot override the run.
 # Returns 0 (setting RUN_DETAIL) when the live crew outranks the killed run.
 nm_live_crew_outranks_killed_run() {
   [ "$RUN_SOURCE" = full ] || return 1
@@ -721,10 +719,10 @@ nm_live_crew_outranks_killed_run() {
   local verdict=''
   verdict=$(crew_busy_verdict "$BACKEND_TARGET")
   case "$verdict" in
-    busy\ *) ;;
+    busy\ *|idle\ *) ;;
     *) return 1 ;;
   esac
-  RUN_DETAIL="crew live (relaunched); run record failed"
+  RUN_DETAIL="crew live (relaunched, ${verdict%% *}); run record failed"
   return 0
 }
 
@@ -908,6 +906,7 @@ if [ "$HAVE_RUN" = 1 ]; then
   RUN_STATE=working
   RUN_DETAIL=""
   RUN_ERROR=""
+  RUN_PR=""
   CI_STEP_STATUS=""
   CI_LOG_STATE=""
   RUN_STATUS=""
@@ -940,6 +939,7 @@ if [ "$HAVE_RUN" = 1 ]; then
   else
     status=$(strip_quotes "$(nm_field status)")
     RUN_STATUS=$status
+    RUN_PR=$(strip_quotes "$(nm_field pr)")
     outcome=$(strip_quotes "$(nm_field outcome)")
     awaiting=$(printf '%s\n' "$RUN_OUT" | grep -E '^[[:space:]]*awaiting_agent:' | head -1 || true)
     gate_status=$(nm_gate_status)
@@ -999,7 +999,7 @@ if [ "$HAVE_RUN" = 1 ]; then
 
   if [ "$RUN_STATE" = working ] && log_reports_ci_ready; then
     if [ "$RUN_SOURCE" = coarse ]; then
-      emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR"
+      emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR" "" "$RUN_PR"
     fi
     [ -n "$CI_STEP_STATUS" ] || CI_STEP_STATUS=$(nm_effective_ci_step_status)
     if [ "$RUN_STATUS" = fixing ]; then
@@ -1010,7 +1010,7 @@ if [ "$HAVE_RUN" = 1 ]; then
       CI_LOG_STATE=not-ready
     fi
     if [ "$CI_LOG_STATE" != not-ready ]; then
-      emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR"
+      emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR" "" "$RUN_PR"
     fi
   fi
 
@@ -1047,7 +1047,7 @@ if [ "$HAVE_RUN" = 1 ]; then
       ;;
   esac
 
-  emit "$RUN_STATE" run-step "$RUN_DETAIL" "$RUN_ERROR"
+  emit "$RUN_STATE" run-step "$RUN_DETAIL" "$RUN_ERROR" "$RUN_PR"
 fi
 
 # --- fallback: no run attributed to this crew ------------------------------

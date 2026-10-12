@@ -38,10 +38,10 @@ A busy pane is exempt from staleness only until its last completed turn or expli
 Past that bound, and for provably-working stale panes past `FM_STALE_ESCALATE_SECS`, the pane takes the wedge escalation: an escalation count in the reason and, at `FM_WEDGE_DEMAND_INSPECT_COUNT`, a `demand-deep-inspection` marker.
 Escalation is for inspection only, never an automatic interrupt, signal, or restart of the worker or its tool process.
 
-A task whose current-state read has reconciled `done` and whose metadata records its PR or MR is already a completed delivery held for merge, not working liveness.
+A task whose current-state read has reconciled `done` and whose metadata records its PR or MR, or whose authoritative run-step line positively attributes that PR or MR, is already a completed delivery held for merge, not working liveness.
 Its expected quiet pane is absorbed instead of entering the wedge ladder in both attended and away supervision.
 The daemon also clears stale markers left from earlier work and refuses to turn an enriched-wedge wake queued before reconciliation into a wedge escalation.
-A `done` read without a recorded PR or MR keeps the ordinary stale alarm path, while new status events and the eventual merge remain independent actionable wake sources.
+A `done` read without either recorded or positively attributed PR or MR evidence keeps the ordinary stale alarm path, while new status events and the eventual merge remain independent actionable wake sources.
 
 A pane whose recorded task worktree holds a file newer than its quiet window is deferred instead of escalated, because a crew writing files behind a static pane is liveness that neither pane quietness nor the run step can show.
 That deferral re-surfaces on the `FM_PAUSE_RESURFACE_SECS` cadence and costs one pruned, depth-bounded, wall-clock-bounded walk taken only when about to escalate, never on every poll.
