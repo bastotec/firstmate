@@ -19,6 +19,12 @@ Do not enable agent forwarding for Firstmate.
 [`bin/fm-machine.sh`](../bin/fm-machine.sh) is the scripted entry point for connecting a new machine; its header owns the commands, trust safeguards, and line protocol.
 Use its read-only `check` before confirming `setup` to perform supported machine preparation and list the remaining human steps; its header also explains the scratch route's home-readiness limits.
 
+### Machine instructions
+
+A machine's `~/.agents/AGENTS.md` holds the captain's binding instructions for that machine (what may run there, resource limits, what it is for).
+Deck composes it first into every session it starts on the machine, and [`AGENTS.md`](../AGENTS.md) section 4 makes it outrank Firstmate's standing rules there, so the primary also reads it before placing work on that machine.
+The dotfiles skills installer never writes it; [`bin/fm-machine-instructions.sh`](../bin/fm-machine-instructions.sh) `show|save <machine>` (or Fleet Town's Machine panel, which calls it) reads and replaces it locally or over ssh, refuses a save over a version changed since it was read, keeps the previous version as `AGENTS.md.bak`, and says which mates pick it up: sessions read it only when they start, so running mates need a restart.
+
 For manual preparation, clone Firstmate on the remote host at an absolute code-root path, from the firstmate fork's network URL; provisioning refuses a copy whose `origin` is a local path or `file://` URL (see [Provision a route](#provision-a-route)).
 Expose that clone's fixed entrypoint on the account's non-interactive SSH `PATH`, for example:
 
@@ -349,6 +355,7 @@ The lifecycle test covers seeding a registered project that this machine has nev
 ```sh
 bin/fm-test-run.sh tests/fm-machine.test.sh
 bin/fm-test-run.sh tests/fm-machine-skills.test.sh
+bin/fm-test-run.sh tests/fm-machine-instructions.test.sh
 bin/fm-test-run.sh tests/fm-on.test.sh
 bin/fm-test-run.sh tests/fm-send-remote-delivery.test.sh
 bin/fm-test-run.sh tests/fm-secondmate-reconcile.test.sh

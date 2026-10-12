@@ -74,6 +74,7 @@ Use `gh-axi` for GitHub, `chrome-devtools-axi` for browser work, and compatible 
 Deck is the only harness and stream is the only runtime backend; `docs/configuration.md` owns both schemas and `bin/fm-spawn.sh` validates every launch.
 Never dispatch on an unverified adapter: if `config/crew-harness` or `config/secondmate-harness` names anything but deck (absent or `default` means deck), report the refusal and never fall back around invalid configuration.
 For skill-dependent tasks, follow [Skills per machine](docs/remote-secondmates.md#skills-per-machine) before briefing or routing to a second mate; never place work on a machine that lacks its required skills.
+Each machine's `~/.agents/AGENTS.md` is its binding instructions: Deck loads it first into every session there, and it outranks this file's standing rules on that machine (section "Captain instruction precedence" still applies). Before placing work on a machine, read it with `bin/fm-machine-instructions.sh show <machine>` and never place work it rules out there; change it only through that script or Fleet Town's Machine panel.
 When `config/crew-dispatch.json` exists, consult it at every crewmate or scout intake and pass `fm-spawn` the resolved concrete profile; `harness-adapters` owns precedence and quota-informed selection.
 Firstmate alone resolves a matched profile array, keeps malformed profile configuration as an actionable error, and never silently downgrades the captain's strongest-reasoning class to save quota.
 `secondmate-provisioning` owns secondmate harness pins and inherited local material.
@@ -319,7 +320,7 @@ A promised final public reply is durable state, never conversation memory, poste
 
 ## Captain instruction precedence
 
-A current, explicit, concrete captain instruction overrides any conflicting standing rule written above.
+A current, explicit, concrete captain instruction overrides any conflicting standing rule written above, and a machine's `~/.agents/AGENTS.md` (section 4) overrides them on that machine.
 The instruction must be specific and recent: it must identify the concrete action, object, or bounded set it governs.
 Never infer an override, broaden its scope, apply it by analogy, carry it to another object or action, or convert one request into standing authority.
 Ambiguous scope or conflict still requires one concise clarification before action.
