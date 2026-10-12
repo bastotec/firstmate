@@ -35,7 +35,7 @@
 #     the driver backstops failed, refused, and interrupted turns with a failure
 #     status when Deck exits without one;
 #   - Ctrl+C cancels the running turn and returns to the prompt; `/quit` at the
-#     prompt ends the worker;
+#     prompt ends the worker. The secondmate's mid-turn stop is described below;
 #   - an ordinary ship worker (not a --secondmate home host) whose
 #     turn ends while its no-mistakes run is still working
 #     (bin/fm-crew-state.sh reads `state: working · source: run-step`) is not
@@ -90,6 +90,25 @@
 # so does a driver whose launch brief never reached a session even after one
 # repeat.
 #
+# SECOND MATE TURN STOP (--secondmate)
+# Ctrl+C, an exact queued /quit during a turn, watcher failure, and cleanup all
+# request SIGTERM on the background Deck process. Deck's SIGTERM is cooperative
+# (deck src/stop.rs): it prevents new calls but lets a running tool finish.
+# After the tool grace, or at the hard kill bound if earlier, the driver cancels
+# each direct child sharing Deck's process group. Shell tools and hooks inherit
+# that group even when bash execs the command; MCP servers lead separate groups
+# and are excluded. Each selected subtree is frozen with SIGSTOP and rescanned
+# until no new descendants appear, then SIGKILLed to prevent late-fork escape.
+# Deck can then record the killed tool result, emit run_stopped with reason
+# "graceful stop requested", save the session, and exit at its next stop point.
+# At the hard bound, the driver kills only Deck itself after cancelling those
+# tool trees, never MCP groups; only already-appended session messages survive
+# this fallback. The default bound is below fm-control's 30-second exit wait.
+# Ctrl+C returns to the supervised prompt; /quit remains queued for the prompt
+# loop to exit. Cleanup uses the same bounded stop before releasing the lock.
+# tests/fm-deck-harness.test.sh pins cancellation, exec replacement, fork races,
+# and MCP exclusion in test_secondmate_stops_a_turn_inside_a_long_tool.
+#
 # ENVIRONMENT
 #   FM_DECK_MAX_TURNS       model calls per turn (default 200; Deck's own 24 is
 #                           sized for a single question, not a coding task)
@@ -98,11 +117,10 @@
 #                           still-working no-mistakes run (default 45)
 #   FM_DECK_PIPELINE_WAIT_SECS  bound on one such wait (default 21600; 0
 #                           disables the pipeline wake)
-#   FM_DECK_STOP_TOOL_GRACE_SECS  after a stop is requested, how long Deck may
-#                           finish on its own before the running shell
-#                           command's process tree is killed (default 1)
-#   FM_DECK_STOP_KILL_SECS  after a stop is requested, when a Deck that still
-#                           has not exited is killed outright (default 15)
+#   FM_DECK_STOP_TOOL_GRACE_SECS  secondmate stop grace in seconds before
+#                           cancelling running tool and hook trees (default 1)
+#   FM_DECK_STOP_KILL_SECS  secondmate stop bound in seconds before killing
+#                           Deck itself if it has not exited (default 15)
 #   FM_DECK_MCP_CONFIG     when set, pass a non-empty value as-is to every
 #                           `deck run --mcp-config`, even if the path is missing;
 #                           an empty value disables MCP. When unset, use
@@ -200,14 +218,7 @@ deck_stream_end() {
   [ -z "${FM_STREAM_ENDPOINT_ID:-}" ] || python3 "$SCRIPT_DIR/fm_stream_deck.py" end \
     "$STATE" "$ID" "$FM_STREAM_ENDPOINT_ID" >&2 || true
 }
-# Deck's SIGTERM is a cooperative stop: it refuses new model and tool calls,
-# but lets a running tool finish (deck src/stop.rs), so a turn inside a long
-# shell command would hold an interrupt or an exit for as long as that command
-# runs. Once a stop is requested and the grace has passed, this kills the
-# running command's process tree; Deck records it as a finished (killed)
-# command, saves the session and exits at its next stop point. A Deck still
-# running at the kill bound (a stuck model call) is killed outright, and its
-# session keeps every message already appended.
+# The header's SECOND MATE TURN STOP section owns this cancellation contract.
 STOP_REQUESTED_AT=''
 request_turn_stop() {
   [ -n "$TURN_PID" ] || return 0
