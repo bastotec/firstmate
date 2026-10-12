@@ -9,11 +9,12 @@
 #   fm-machine.sh prepare <alias> <remote-root>
 #   fm-machine.sh register <alias> <remote-root>
 #   fm-machine.sh skills <alias> [<remote-root>]
+#   fm-machine.sh tunnels <alias>
 #
 # This is the deterministic entry point for an order that connects a machine
 # (for example one sent from a UI and confirmed by the captain). It never
-# handles private keys or prints secrets, never accepts a host key it was not
-# given, and never invokes a system package manager, sudo or a login.
+# transfers private keys or prints secrets, never accepts a host key it was not
+# given, and never invokes a system package manager, sudo or an interactive login.
 # docs/remote-secondmates.md owns what a ready host needs,
 # bin/fm-remote-doctor.sh owns the readiness verdict, bin/fm-home-tools-lib.sh
 # owns the CLI toolchain a home needs, and bin/fm-machine-remote.sh is the half
@@ -64,8 +65,9 @@
 # Deck (FM_DECK_REPO_URL defaults to https://github.com/bastotec/deck.git;
 # bin/fm-machine-remote.sh owns the build and atomic install mechanics,
 # attempted when git and cargo are there), mode 600 on an owner-readable
-# gateway key with group or other permission bits set, then the doctor's --fix
-# through the same scratch route, then the approval gate hook (installed with no
+# gateway key with group or other permission bits set, then the optional tunnels
+# described below, then the doctor's --fix through the same scratch route,
+# then the approval gate hook (installed with no
 # gates enabled; the machine's own policy file turns gates on), then the
 # shared-skills and inventory steps described below.
 # It then prints a `human` line for each remaining human item and the verdict.
@@ -131,6 +133,36 @@
 # <remote-root> defaults to fm-machine-skills.sh roots (the machine registry,
 # then a remote secondmate route on that host), and is required if unrecorded.
 #
+# Tunnels: config/machine-tunnels holds `gateway=<ssh alias of the gateway
+# host on this machine>`; ssh -G of that alias supplies the host, user and SSH
+# port, with no hard-coded gateway host. setup and `tunnels <alias>` forward
+# eligible endpoints from that host: FM_MACHINE_GATEWAY_URL and this home's
+# config/stream-hub must be http URLs naming 127.0.0.1 or localhost with an
+# explicit port. An endpoint that already gives any HTTP answer is skipped
+# without inspecting or changing its service, protecting existing forwards and
+# local servers. If no eligible endpoint needs a forward, no tunnel key,
+# gateway authorization or service is changed.
+# Otherwise the machine makes its tunnel key (bin/fm-machine-remote.sh
+# tunnel-key), and the gateway host's ed25519 pin is resolved from this
+# machine's selected KNOWN_HOSTS file under its hostname (or [host]:port for a
+# non-default SSH port). Never trust on first use: no trusted ed25519 key
+# refuses. On the gateway host, authorization covers every eligible configured
+# endpoint port, including one that already answers, with the entry:
+#   restrict,port-forwarding,permitopen="127.0.0.1:<port>"...,command="/bin/false" <pubkey>
+# An identical entry is skipped; different options for that key are replaced,
+# otherwise the entry is appended after terminating any unterminated last line.
+# Before changing an existing ~/.ssh/authorized_keys it is backed up to
+# authorized_keys.fm-backup-<UTC stamp>.<unique suffix>; unrelated keys remain.
+# The machine installs a KeepAlive service only for each endpoint needing a
+# forward (labels dev.firstmate.proxai-tunnel and dev.firstmate.stream-hub-tunnel;
+# bin/fm-machine-remote.sh install-tunnel owns the service, prerequisites,
+# port-conflict refusal and verification). The gateway client key must already
+# be readable on the machine; setup does not copy it or mint a stream token.
+# Without a usable gateway alias in the file setup prints `step tunnels=skipped`
+# and check keeps missing endpoints human; `tunnels` instead refuses.
+# With it, check marks a missing eligible endpoint will-install, but does not
+# preflight the gateway pin, authorization or service-manager prerequisites.
+#
 # Machine instructions: check reports an informational
 # `item machine-instructions=present` after a successful probe; `present` means
 # the offer is available, not that an instructions file exists. Setup emits
@@ -156,7 +188,7 @@
 # Line protocol on stdout, one fact per line, stable for script consumers:
 # The checklist replaces the former check entrypoint/deck/proxai lines; a local
 # proxai executable is not required when the configured gateway answers.
-#   action=check|setup|add|trust|prepare|register|skills
+#   action=check|setup|add|trust|prepare|register|skills|tunnels
 #   alias=<alias>
 #   root=<remote-root>|-                         (check, setup, skills)
 #   hostname=<name> user=<user> port=<port>     (check)
@@ -172,10 +204,13 @@
 #                                                model-gateway, gateway-key, stream-hub, approval-gate,
 #                                                shared-skills, skill-inventory, machine-instructions)
 #   step <name>=done|skipped|failed: <evidence or plain reason>   (setup; skills emits
-#                                                shared-skills and skill-inventory; setup names: ssh,
-#                                                firstmate-clone, entrypoint-link, probe, tool-<tool>,
-#                                                deck, gateway-key-mode, doctor, approval-gate,
-#                                                shared-skills, skill-inventory, machine-instructions)
+#                                                shared-skills and skill-inventory; tunnels emits
+#                                                tunnel-key, tunnel-authorize, tunnel-gateway, tunnel-hub;
+#                                                setup names: ssh, firstmate-clone, entrypoint-link,
+#                                                probe, tool-<tool>, deck, gateway-key-mode, tunnels,
+#                                                tunnel-key, tunnel-authorize, tunnel-gateway, tunnel-hub,
+#                                                doctor, approval-gate, shared-skills, skill-inventory,
+#                                                machine-instructions)
 #   human <item-name>: <exact step for a person> (setup, after the steps)
 #   setup=complete|incomplete: <n> human steps|failed   (setup; exit 0, 3, 1)
 #   added=<ssh-config-path>                      (add)
@@ -184,6 +219,7 @@
 #   clone=present|created root=<remote-root>     (prepare)
 #   entrypoint-link=present|created|conflict: <target>   (prepare)
 #   doctor: <each doctor line>                   (prepare)
+#   tunnels=complete|failed                      (tunnels, after its step lines)
 #   registered=<alias> root=<remote-root>        (register)
 #   register=already-recorded                    (register, idempotent)
 #   refuse: <plain reason>                       (any refusal; exit 1)
@@ -214,7 +250,7 @@ SKILLS_ITEMS=
 GATEWAY_URL=${FM_MACHINE_GATEWAY_URL:-http://127.0.0.1:8329/v1}
 DECK_REPO_URL=${FM_DECK_REPO_URL:-https://github.com/bastotec/deck.git}
 
-usage() { sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 refuse() { printf 'refuse: %s\n' "$1"; exit 1; }
 
 SSH_OPTS=(-o UpdateHostKeys=no)
@@ -801,6 +837,8 @@ build_items() { # <alias> <root|-> <reach-class> <known-fingerprints>
 
   if [ "$(fact gateway)" = reachable ]; then
     item model-gateway present "$GATEWAY_URL answers"
+  elif tunnel_offers "$GATEWAY_URL"; then
+    item model-gateway will-install "setup installs it: dev.firstmate.proxai-tunnel forwards $GATEWAY_URL from the gateway host in config/machine-tunnels"
   else
     item model-gateway human "make $GATEWAY_URL answer on the machine: run proxai there, or forward its port from the gateway host with a user service running ssh -N -L <port>:127.0.0.1:<port> <gateway-host>"
   fi
@@ -814,7 +852,11 @@ build_items() { # <alias> <root|-> <reach-class> <known-fingerprints>
 
   case "$(fact stream-hub)" in
     reachable) item stream-hub present "$(hub_url) answers from the machine" ;;
-    unreachable) item stream-hub human "make $(hub_url) reachable from the machine (docs/stream-backend.md owns encrypted cross-machine access), and give each home there its own config/stream-hub and config/stream-token" ;;
+    unreachable) if tunnel_offers "$(hub_url)"; then
+        item stream-hub will-install "setup installs it: dev.firstmate.stream-hub-tunnel forwards $(hub_url) from the gateway host in config/machine-tunnels"
+      else
+        item stream-hub human "make $(hub_url) reachable from the machine (docs/stream-backend.md owns encrypted cross-machine access), and give each home there its own config/stream-hub and config/stream-token"
+      fi ;;
     *) item stream-hub human "this home has no config/stream-hub to check against; set it, then rerun" ;;
   esac
 
@@ -1045,6 +1087,183 @@ cmd_skills() { # <alias> [<remote-root>]
   skills_steps "$alias" "$root" || exit 1
 }
 
+# --- tunnels to the gateway host ---
+
+TUNNEL_CONFIG="$FM_HOME/config/machine-tunnels"
+
+# The gateway host's ssh alias from config/machine-tunnels, or nothing.
+tunnel_gateway_alias() {
+  local v
+  [ -f "$TUNNEL_CONFIG" ] || return 1
+  v=$(awk -F= '$1 == "gateway" { sub(/^[^=]*=/, ""); print; exit }' "$TUNNEL_CONFIG" | tr -d '[:space:]')
+  valid_alias "$v" || return 1
+  printf '%s\n' "$v"
+}
+
+# "<port>" when the URL is http on 127.0.0.1 or localhost with an explicit port.
+local_port() { # <url>
+  case "$1" in
+    http://127.0.0.1:[0-9]*|http://localhost:[0-9]*)
+      local rest=${1#http://*:}
+      printf '%s\n' "${rest%%[!0-9]*}" ;;
+    *) return 1 ;;
+  esac
+}
+
+# 0 when setup can forward this endpoint (config present and the URL is local).
+tunnel_offers() { # <url>
+  tunnel_gateway_alias >/dev/null && local_port "$1" >/dev/null
+}
+
+# Resolve the gateway alias into TUN_HOST, TUN_USER, TUN_SSH_PORT and TUN_PIN,
+# the known_hosts line pinning its ed25519 key as this machine trusts it.
+tunnel_resolve() { # <gateway-alias>
+  local out name line
+  TUNNEL_REASON=
+  out=$(ssh "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" -G "$1" < /dev/null 2>/dev/null) || { TUNNEL_REASON="ssh -G could not evaluate the gateway alias $1"; return 1; }
+  TUN_HOST=$(printf '%s\n' "$out" | awk '$1 == "hostname" { print $2; exit }')
+  TUN_USER=$(printf '%s\n' "$out" | awk '$1 == "user" { print $2; exit }')
+  TUN_SSH_PORT=$(printf '%s\n' "$out" | awk '$1 == "port" { print $2; exit }')
+  [ -n "$TUN_SSH_PORT" ] || TUN_SSH_PORT=22
+  if ! valid_alias "$TUN_HOST" || ! valid_alias "$TUN_USER"; then
+    TUNNEL_REASON="the gateway alias $1 resolves to an unusable host or user"
+    return 1
+  fi
+  name=$TUN_HOST
+  [ "$TUN_SSH_PORT" = 22 ] || name="[$TUN_HOST]:$TUN_SSH_PORT"
+  line=$(ssh-keygen -F "$name" -f "$KNOWN_HOSTS" 2>/dev/null | grep -v '^#' | awk '$2 == "ssh-ed25519" { print $3; exit }')
+  case "$line" in
+    ''|*[!A-Za-z0-9+/=]*) TUNNEL_REASON="this machine trusts no ed25519 host key for $name in $KNOWN_HOSTS; connect to $1 once and verify its key first"; return 1 ;;
+  esac
+  TUN_PIN="$name ssh-ed25519 $line"
+}
+
+# Reconcile the restricted tunnel authorization; the header owns the contract.
+tunnel_authorize() { # <gateway-alias> <pubkey> <port>...
+  local gw=$1 pub=$2 cmd='bash -s --' arg
+  shift 2
+  for arg in "$pub" "$@"; do cmd="$cmd $(sq "$arg")"; done
+  set +e
+  # shellcheck disable=SC2029 # quoted for the remote shell on purpose.
+  REMOTE_OUT=$(ssh "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "${PROBE_OPTS[@]}" "$gw" "$cmd" 2>&1 <<'AUTH'
+set -u
+pub=$1
+shift
+blob=$(printf '%s\n' "$pub" | awk '{ print $2 }')
+opts=restrict,port-forwarding
+for port; do opts="$opts,permitopen=\"127.0.0.1:$port\""; done
+opts="$opts,command=\"/bin/false\""
+keys="$HOME/.ssh/authorized_keys"
+mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh" || { echo 'result=failed: cannot prepare ~/.ssh'; exit 1; }
+entry="$opts $pub"
+match_key='function tunnel_key(line, fields) {
+  sub(/^[ \t]+/, "", line)
+  if (line !~ /^ssh-ed25519[ \t]/) sub(/^([^ \t"]|"[^"]*")+[ \t]+/, "", line)
+  split(line, fields, /[ \t]+/)
+  return fields[1] == "ssh-ed25519" && fields[2] == blob
+}'
+if [ -f "$keys" ] && awk -v blob="$blob" -v entry="$entry" "$match_key"'
+  tunnel_key($0) && $0 == entry { found = 1 }
+  END { exit found ? 0 : 1 }' "$keys"; then
+  echo 'result=skipped: the tunnel key is already authorized'
+  exit 0
+fi
+if [ -f "$keys" ]; then
+  backup=$(mktemp "$keys.fm-backup-$(date -u +%Y%m%dT%H%M%SZ).XXXXXX") || { echo 'result=failed: cannot prepare authorized_keys backup'; exit 1; }
+  cp -p "$keys" "$backup" || { echo 'result=failed: cannot back up authorized_keys'; exit 1; }
+fi
+if [ -f "$keys" ] && awk -v blob="$blob" "$match_key"'
+  tunnel_key($0) { found = 1 }
+  END { exit found ? 0 : 1 }' "$keys"; then
+  tmp=$(mktemp "$keys.fm-new.XXXXXX") || { echo 'result=failed: cannot stage authorized_keys'; exit 1; }
+  if ! awk -v blob="$blob" -v entry="$entry" "$match_key"'
+    tunnel_key($0) { print entry; next }
+    { print }' "$keys" > "$tmp" || ! mv -f "$tmp" "$keys"; then
+    rm -f "$tmp"
+    echo 'result=failed: cannot replace the tunnel authorization'
+    exit 1
+  fi
+else
+  if [ -s "$keys" ] && [ -n "$(tail -c 1 "$keys")" ]; then
+    printf '\n' >> "$keys" || { echo 'result=failed: cannot terminate authorized_keys'; exit 1; }
+  fi
+  (umask 077; printf '%s\n' "$entry" >> "$keys") || { echo 'result=failed: cannot append to authorized_keys'; exit 1; }
+fi
+chmod 600 "$keys"
+echo "result=done: authorized to forward only $(printf '127.0.0.1:%s ' "$@")${backup:+; backup at $backup}"
+AUTH
+)
+  REMOTE_RC=$?
+  set -e
+}
+
+# Run the tunnel steps; PROBE_OUT must hold a fresh probe. 1 on failure.
+tunnel_steps() { # <alias>
+  local alias=$1 gw pub result port hub_port gw_port line
+  local -a ports=()
+  if ! gw=$(tunnel_gateway_alias); then
+    printf 'step tunnels=skipped: no config/machine-tunnels in this home\n'
+    return 0
+  fi
+  gw_port=$(local_port "$GATEWAY_URL") || gw_port=
+  hub_port=$(local_port "$(hub_url)") || hub_port=
+  for port in $gw_port $hub_port; do ports+=("$port"); done
+  [ "$(fact gateway)" != reachable ] || gw_port=
+  [ "$(fact stream-hub)" = unreachable ] || hub_port=
+  [ "$(fact gateway)" != reachable ] || printf 'step tunnel-gateway=skipped: %s already answers\n' "$GATEWAY_URL"
+  [ "$(fact stream-hub)" != reachable ] || printf 'step tunnel-hub=skipped: %s already answers\n' "$(hub_url)"
+  [ -n "$gw_port$hub_port" ] || return 0
+  tunnel_resolve "$gw" || { printf 'step tunnel-key=failed: %s\n' "$TUNNEL_REASON"; return 1; }
+  remote_machine "$alias" tunnel-key "$alias"
+  pub=$(printf '%s\n' "$REMOTE_OUT" | awk '/^pubkey=/ { sub(/^pubkey=/, ""); print; exit }')
+  case "$REMOTE_RC:$pub" in
+    0:'ssh-ed25519 '*) ;;
+    *) line=$(printf '%s\n' "$REMOTE_OUT" | awk '/^result=failed: / { sub(/^result=failed: /, ""); print; exit }')
+       printf 'step tunnel-key=failed: %s\n' "${line:-could not make the tunnel key over ssh}"; return 1 ;;
+  esac
+  case "$pub" in *[!A-Za-z0-9+/=@._\ -]*) printf 'step tunnel-key=failed: the public key has unexpected characters\n'; return 1 ;; esac
+  printf 'step tunnel-key=done: ~/.ssh/fm_workload_tunnel on %s\n' "$alias"
+  tunnel_authorize "$gw" "$pub" "${ports[@]}"
+  result=$(printf '%s\n' "$REMOTE_OUT" | awk '/^result=/ { sub(/^result=/, ""); print; exit }')
+  case "$REMOTE_RC:$result" in
+    0:done*|0:skipped*) printf 'step tunnel-authorize=%s\n' "$result" ;;
+    *) [ -n "$result" ] || result="failed: ssh to $gw failed (exit $REMOTE_RC)"
+       printf 'step tunnel-authorize=failed: %s\n' "${result#failed: }"; return 1 ;;
+  esac
+  if [ -n "$gw_port" ]; then
+    remote_machine "$alias" install-tunnel dev.firstmate.proxai-tunnel "$gw_port" "$TUN_USER" "$TUN_HOST" "$TUN_SSH_PORT" "$TUN_PIN" "$GATEWAY_URL" gateway
+    result=$(printf '%s\n' "$REMOTE_OUT" | awk '/^result=/ { sub(/^result=/, ""); print; exit }')
+    case "$REMOTE_RC:$result" in
+      0:done*) printf 'step tunnel-gateway=%s\n' "$result" ;;
+      *) printf 'step tunnel-gateway=failed: %s\n' "${result#failed: }"; return 1 ;;
+    esac
+  fi
+  if [ -n "$hub_port" ]; then
+    remote_machine "$alias" install-tunnel dev.firstmate.stream-hub-tunnel "$hub_port" "$TUN_USER" "$TUN_HOST" "$TUN_SSH_PORT" "$TUN_PIN" "$(hub_url)" hub
+    result=$(printf '%s\n' "$REMOTE_OUT" | awk '/^result=/ { sub(/^result=/, ""); print; exit }')
+    case "$REMOTE_RC:$result" in
+      0:done*) printf 'step tunnel-hub=%s\n' "$result" ;;
+      *) printf 'step tunnel-hub=failed: %s\n' "${result#failed: }"; return 1 ;;
+    esac
+  fi
+}
+
+cmd_tunnels() { # <alias>
+  local alias=$1 err rc
+  valid_alias "$alias" || refuse "alias must be a plain ssh config name of A-Z, a-z, 0-9, ., _ and -, not starting with -: $alias"
+  printf 'action=tunnels\nalias=%s\n' "$alias"
+  resolve_alias "$alias" || refuse "ssh -G could not evaluate the alias $alias"
+  tunnel_gateway_alias >/dev/null || refuse "this home has no config/machine-tunnels naming the gateway host (gateway=<ssh alias>)"
+  set +e
+  err=$(ssh "${SSH_OPTS[@]+"${SSH_OPTS[@]}"}" "${PROBE_OPTS[@]}" "$alias" true < /dev/null 2>&1 >/dev/null)
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || refuse "cannot log in to $alias: $(printf '%s' "$err" | grep -v '^[[:space:]]*$' | tail -n 1 | tr -d '\r')"
+  probe_machine "$alias" -
+  [ "$PROBE_RC" -eq 0 ] || refuse "the probe over ssh failed (exit $PROBE_RC)"
+  if tunnel_steps "$alias"; then printf 'tunnels=complete\n'; else printf 'tunnels=failed\n'; exit 1; fi
+}
+
 cmd_setup() { # <alias> <remote-root>
   local alias=$1 root=$2 err rc class known line tool path result npm_global
   valid_alias "$alias" || refuse "alias must be a plain ssh config name of A-Z, a-z, 0-9, ., _ and -, not starting with -: $alias"
@@ -1163,6 +1382,8 @@ cmd_setup() { # <alias> <remote-root>
       ;;
   esac
 
+  tunnel_steps "$alias" || setup_finish "$alias" "$root" "$class" "$known" 1
+
   run_doctor "$alias" "$root" "$ACCOUNT_HOME" --fix
   interpret_doctor
   if [ -n "$DOCTOR_FAILURE" ]; then
@@ -1265,6 +1486,7 @@ main() {
     prepare) [ "$#" -eq 2 ] || usage; cmd_prepare "$1" "$2" ;;
     register) [ "$#" -eq 2 ] || usage; cmd_register "$1" "$2" ;;
     skills) [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage; cmd_skills "$@" ;;
+    tunnels) [ "$#" -eq 1 ] || usage; cmd_tunnels "$1" ;;
     *) usage ;;
   esac
 }

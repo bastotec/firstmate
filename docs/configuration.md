@@ -38,6 +38,7 @@ config/
   effort-policy.json      optional per-turn reasoning effort switch and level ("Turn effort")
   deck-mcp.json           optional Deck MCP servers ("Harness support")
   shared-skills           optional skills repo shipped to connected machines; primary home only (bin/fm-machine.sh header)
+  machine-tunnels         optional gateway host whose model gateway and stream hub machine setup forwards (bin/fm-machine.sh header)
   inbox-* voice-read-*    inbox model and voice-read settings ("Inbox and voice records")
   extensions.d/           mode-0700 explicit extension bindings (docs/process-event-sources.md)
   x-mode.env              generated Relay watcher cadence; written only by bootstrap (docs/relay.md)
