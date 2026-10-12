@@ -2528,7 +2528,14 @@ test_a_steer_that_arrives_inside_the_rejoin_window_is_requeued_not_lost() {
   # again: a healthy rejoining worker silently lost one instruction. The
   # requeue holds the same order record through a second window for
   # idempotency, while active placement order keeps it ahead of later steers.
-  start_hub order-requeue
+  # The requeue is a Rust-hub guarantee (the Python rollback keeps its single
+  # ordinary window), so these two cases pin the Rust binary the way the suite
+  # header's FM_TEST_STREAM_HUB_BINARY escape exists for. Scoped to this case:
+  # later cases must keep running the suite's default hub.
+  local rust_hub="${FM_TEST_STREAM_HUB_BINARY:-$ROOT/target/debug/fm-stream-hub}"
+  [ -x "$rust_hub" ] \
+    || fail "the requeue cases need the Rust hub binary; build it with: cargo build -p fm-stream-hub"
+  FM_TEST_STREAM_HUB_BINARY="$rust_hub" start_hub order-requeue
   local endpoint agent leaf out first_pid second_pid waited=0 lines
   endpoint=$(start_agent box-a requeued)
   agent=$(agent_pid_for box-a requeued)
@@ -2589,6 +2596,12 @@ test_a_requeued_steer_to_a_worker_that_never_rejoins_fails_cleanly() {
   # worker is gone again - the agent never comes back - the requeued steer
   # settles as the ordinary unresolved answer, keeps its id binding, and never
   # holds the caller past its bounded windows.
+  if [ -z "${FM_TEST_STREAM_HUB_BINARY:-}" ]; then
+    FM_TEST_STREAM_HUB_BINARY="$ROOT/target/debug/fm-stream-hub"
+    export FM_TEST_STREAM_HUB_BINARY
+  fi
+  [ -x "$FM_TEST_STREAM_HUB_BINARY" ] \
+    || fail "the requeue cases need the Rust hub binary; build it with: cargo build -p fm-stream-hub"
   start_hub order-requeue-gone
   local endpoint agent leaf out first_pid waited=0
   endpoint=$(start_agent box-a gone-again)
