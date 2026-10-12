@@ -212,8 +212,16 @@ def refuse_gate() -> None:
 
 def process_identity(pid: int, deck: bool = False) -> dict | None:
     try:
-        arguments = PROCESS_API.process_arguments(pid)
-        if not arguments:
+        arguments = None
+
+        def read_arguments():
+            nonlocal arguments
+            arguments = PROCESS_API.process_arguments(pid)
+            return bool(arguments) or not pid_alive(pid)
+
+        # An interpreter's exec can briefly leave its argument snapshot empty.
+        # Do not permanently register a live child with an unknown identity.
+        if not wait_for(read_arguments, 1) or not arguments:
             return None
         out = subprocess.run(["ps", "-o", "lstart=,pgid=", "-p", str(pid)], capture_output=True, text=True,
                              env=dict(os.environ, LC_ALL="C"))

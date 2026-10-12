@@ -26,6 +26,46 @@ export FM_HOME="$HOME_DIR" FM_DECK_BIN="$ROOT/tests/assets/deck-crew-stub.py"
 export DECK_STATE="$TMP_ROOT/deck" FM_CREW_WORK_ROOT="$TMP_ROOT/work" STUB_RUNNING_DIR="$TMP_ROOT/running"
 GROUP="$ROOT/bin/fm-group.sh"
 
+python3 - "$ROOT" "$HOME_DIR" <<'PY' || fail "a transiently empty argument snapshot must not strand cleanup"
+import importlib.util
+import subprocess
+import sys
+import threading
+from pathlib import Path
+from unittest.mock import patch
+
+spec = importlib.util.spec_from_file_location("fm_crew", Path(sys.argv[1]) / "bin/fm_crew.py")
+crew = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(crew)
+worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"], start_new_session=True)
+# Reap the child when cleanup signals it, as the normal orchestrator/init does.
+reaper = threading.Thread(target=worker.wait)
+reaper.start()
+try:
+    real_arguments = crew.PROCESS_API.process_arguments
+    reads = [0]
+
+    def exec_snapshot(pid):
+        reads[0] += 1
+        # /proc cmdline and the macOS argument API may be empty during exec.
+        return None if reads[0] == 1 else real_arguments(pid)
+
+    with patch.object(crew.PROCESS_API, "process_arguments", exec_snapshot):
+        identity = crew.process_identity(worker.pid)
+    group = crew.Group(Path(sys.argv[2]), "identity-exec")
+    group.save({"orchestrator_pid": None, "members": [{"key": "m1", "pid": worker.pid,
+                "identity": identity, "status": "running", "result": None}]})
+    assert crew.cleanup_group(group, "requested"), "a transient snapshot left a live cleanup survivor"
+    assert group.record()["cleanup"]["survivors"] == []
+    assert not crew.pid_alive(worker.pid), "cleanup must stop the actual owned process"
+finally:
+    if worker.poll() is None:
+        worker.kill()
+    worker.wait()
+    reaper.join()
+PY
+pass "a transiently empty argument snapshot does not leave an unowned cleanup survivor"
+
 live_stubs() {
   [ -f "$DECK_STATE/argv.jsonl" ] || return 0
   jq -r .pid "$DECK_STATE/argv.jsonl" | while read -r pid; do
