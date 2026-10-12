@@ -2,9 +2,10 @@
 # The machine-side half of bin/fm-machine.sh: facts and narrow installs that run
 # as the remote account itself.
 #
-# Usage (bin/fm-machine.sh sends the tools and output libraries followed by this file
-# as the script of `ssh <alias> bash -s -- ...`; run directly, it sources those
-# libraries from beside itself):
+# Usage (bootstrap calls from bin/fm-machine.sh send the tools and output
+# libraries followed by this file as `ssh <alias> bash -s -- ...`; shared-skills
+# calls run the tracked command through bin/fm-on.sh's machine lane instead.
+# Run directly, it sources those libraries from beside itself):
 #   fm-machine-remote.sh probe <remote-root> <gateway-url> <hub-url|-> <tool>...
 #   fm-machine-remote.sh install-tool <tool> <remote-root>
 #   fm-machine-remote.sh install-deck <remote-root> <deck-repo-url>
@@ -15,7 +16,9 @@
 #   fm-machine-remote.sh tunnel-key <alias>
 #   fm-machine-remote.sh install-tunnel <label> <port> <user> <host> <ssh-port> <known-hosts-line> <check-url> gateway|hub
 #
-# It needs no Firstmate checkout on the machine, so it works before prepare.
+# Bootstrap calls need no Firstmate checkout on the machine and work before prepare.
+# Shared-skills calls require the prepared checkout and remote job worker;
+# bin/fm-machine.sh's header owns their provisioning contract.
 # Runtime lookups and install checks use the remote job worker's PATH, composed by
 # that checkout's bin/fm-remote-job-lib.sh when <remote-root> already holds
 # one; before that it uses the ssh PATH with ~/.local/bin in front, and says so.
