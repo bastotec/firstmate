@@ -430,6 +430,7 @@ Readers wait one ordinary rejoin window before answering an unresolved Bridge or
 The cheap presence probe behind capture, current-path and endpoint-addressed input answers from the first reply and pays no rejoin wait.
 
 The session-start fleet digest uses a settled form of that probe: it retries only an HTTP 404 from the task-description route (`no_such_endpoint` on a supported hub) once per second through the bounded six-second first-attempt rejoin window, prints the endpoint alive if it returns, and on that 404 path prints it dead only after every retry remains 404.
+It launches every task's settled read together, so unresolved endpoints share that one wall-clock grace window rather than extending startup by six seconds per endpoint.
 Other probe refusals still render dead from the first reply; they are not rejoin evidence and get no retry.
 `tests/fm-session-start.test.sh` pins both a worker returning during the window and an absence lasting through it.
 
