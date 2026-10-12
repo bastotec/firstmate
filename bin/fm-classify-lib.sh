@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shared wake classifier: the common source of truth for captain-relevant status
-# tests, declared-external-wait vocabulary, and the working/paused absorb
+# tests, declared-external-wait vocabulary, and the working/paused/done absorb
 # classification that makes no-verb signal and stale-pane wakes safe to absorb.
 # Sourced by BOTH the always-on watcher
 # (bin/fm-watch.sh) and the away-mode daemon (bin/fm-supervise-daemon.sh) so the
@@ -28,11 +28,12 @@
 # from byte 0, preferring a bounded duplicate over a lost event.
 #
 # There are three documented exceptions. The absorb classification
-# (crew_absorb_class and its working/paused wrappers) is NOT a pure status-file
+# (crew_absorb_class and its working/paused/done wrappers) is NOT a pure status-file
 # read: it reuses bin/fm-crew-state.sh, which may make a bounded no-mistakes call,
 # to decide whether a crew that just stopped its turn or went stale is working,
-# deliberately paused, or neither. Callers run it ONLY on no-verb signal handling
-# and first sighting of a stale hash, never on every wake, so the per-wake triage
+# deliberately paused, done awaiting its merge, or none of those. Callers run it
+# ONLY on no-verb signal handling, first sighting of a stale hash, or a due
+# stale-escalation boundary, never on every wake, so the per-wake triage
 # stays cheap. status_open_decisions_incremental (see "incremental (cursor-backed)
 # open-decisions fold" below) also writes: it persists a per-status-file byte
 # cursor and folded open-set as a side effect, so a per-drain fleet-wide scan
@@ -1887,13 +1888,23 @@ status_span_has_actionable() {  # <status-file> <start-offset>
 #             (e.g. waiting on CI);
 #   paused  - the crew's authoritative current state is a declared external-wait
 #             pause (paused:), which is EXPECTED to idle;
+#   done    - a reconciled done crew with a recorded PR, waiting on the merge
+#             authority. This is a completed delivery, not liveness: it is never
+#             "provably working", and stale handling suppresses wedge alarms
+#             while it waits;
 #   none    - neither, so the wake must surface (a stopped/finished/parked/failed/
 #             torn-down/unknown crew, or an unreadable verdict).
-# One fm-crew-state.sh read serves BOTH absorb reasons at once. Reading the state
+# One fm-crew-state.sh read serves ALL absorb reasons at once. Reading the state
 # authoritatively (not the status log) is what keeps run-step precedence: a crew
 # that appended paused: but then STARTED a run reports working, never paused.
+# A done verdict is gated on a recorded PR because that record is what makes the
+# wait a delivery awaiting merge: without it (crew_done_pr_url returns 1) the
+# verdict reads none, so a crew merely reporting done with no PR - possibly a
+# worker wedged after a status append, or waiting on an unrecorded outcome -
+# keeps the ordinary surface-it alarm.
 # NOT a pure read: fm-crew-state.sh may make a bounded no-mistakes call, so callers
-# run it only on no-verb signal and first-sighting stale paths, never every wake.
+# run it only on no-verb signals, first-sighting stale paths, and due stale
+# escalation boundaries, never every wake.
 # FM_CREW_STATE_BIN lets tests stub the verdict.
 crew_absorb_class() {  # <id>
   local id=$1 line state src
@@ -1902,11 +1913,43 @@ crew_absorb_class() {  # <id>
   case "$line" in state:*) ;; *) printf 'none'; return ;; esac
   state=${line#state: }; state=${state%% *}
   if [ "$state" = paused ]; then printf 'paused'; return; fi
+  if [ "$state" = "done" ]; then
+    # Redirected: crew_done_pr_url prints the URL for callers that name it in a
+    # wake reason, so its stdout must not leak into this classifier's token.
+    if crew_done_pr_url "${STATE:-${FM_STATE_OVERRIDE:-}}" "$id" >/dev/null; then
+      printf 'done'
+    else
+      printf 'none'
+    fi
+    return
+  fi
   if [ "$state" = working ]; then
     src=${line#*source: }; src=${src%% *}
     case "$src" in run-step|pane) printf 'working'; return ;; esac
   fi
   printf 'none'
+}
+
+# 0 when crew <id>'s delivery is recorded as a PR awaiting its merge authority:
+# a canonical pr=<url> line in the task's meta, written by bin/fm-pr-check.sh
+# only after fm_pr_url_parse validated the URL, so reading it back needs a
+# structural sanity check rather than a second full parse. Deliberately local,
+# like fm-afk-contract.sh's task-id alphabet, because this library is sourced
+# lazily mid-flow by consumers holding fm-pr-lib.sh's parse globals, and
+# sourcing that library here would reset them. 1 for no record, a malformed
+# URL, or an empty state dir, so the caller keeps its ordinary alarm rather
+# than trusting an unreadable record; the task's status log is deliberately
+# not consulted, because the no-verb signal path reaches this classifier for
+# tasks whose logs it has not read.
+crew_done_pr_url() {  # <state-dir> <id>
+  local url
+  [ -n "$1" ] && [ -n "$2" ] || return 1
+  url=$(grep '^pr=' "$1/$2.meta" 2>/dev/null | tail -1 | cut -d= -f2-)
+  case "$url" in
+    https://github.com/*/pull/[0-9]*|https://*/*/-/merge_requests/[0-9]*) ;;
+    *) return 1 ;;
+  esac
+  printf '%s\n' "$url"
 }
 
 # 0 if crew <id> shows POSITIVE evidence it is still working (crew_absorb_class
@@ -1918,7 +1961,7 @@ crew_absorb_class() {  # <id>
 # because the crew may be done, waiting on a decision, or wedged. For stale panes
 # it is checked before trusting the status log so a pre-validation captain-relevant
 # line does not override an active run. See crew_absorb_class for the exact
-# working/paused/none decision.
+# working/done/paused/none decision.
 crew_is_provably_working() {  # <id>
   [ "$(crew_absorb_class "$1")" = working ]
 }
@@ -1928,6 +1971,13 @@ crew_is_provably_working() {  # <id>
 # escalating a possible wedge.
 crew_is_paused() {  # <id>
   [ "$(crew_absorb_class "$1")" = paused ]
+}
+
+# 0 if crew <id> is a reconciled done delivery with a recorded PR, awaiting the
+# merge authority. The stale path suppresses possible-wedge alarms because the
+# pane of a finished worker is expected to be quiet for the whole merge wait.
+crew_is_held_for_merge() {  # <id>
+  [ "$(crew_absorb_class "$1")" = "done" ]
 }
 
 # Directories excluded from the worktree write probe below, and the depth it walks.

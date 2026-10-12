@@ -91,4 +91,4 @@ $ # Every line above beginning 'done [key=child-' or carrying 'captain-hold-' wa
 - Each line was written by the script that recorded the underlying fact: `bin/fm-inactive-reconcile.sh` on the mate watcher's poll, `bin/fm-pr-check.sh`, and `bin/fm-captain-hold.sh`.
 - Each line produced one `signal:` wake in the real parent watcher, which is the event that starts the parent firstmate's turn and therefore the captain-facing report.
 - The mate watcher's own `signal:` on `child.status` shows the mate was woken as before; whatever the mate model would have said in its chat afterward is irrelevant to delivery.
-- The trailing `stale:` line in the mate watcher log is the idle real pane after the child's final line, ordinary liveness escalation unrelated to delivery.
+- The trailing `stale:` line in the mate watcher log was the then-current ordinary liveness escalation after the child's final line; the current [held-for-merge boundary](../architecture.md#stale-panes-and-the-wedge-ladder) absorbs this shape without changing the parent-channel delivery the fixture proves.

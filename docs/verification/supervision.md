@@ -2,7 +2,7 @@
 
 Audience: maintainer verification.
 
-This record supports current busy-state, turn-end, secondmate-revival, and wedge-alarm guarantees.
+This record supports current busy-state, held-for-merge stale-suppression, turn-end, secondmate-revival, and wedge-alarm guarantees.
 Operator behavior and active limits remain in the linked current guides.
 Task-specific chronology, temporary paths, run identifiers, and delivery transcripts remain in private reports or PR evidence.
 
@@ -17,6 +17,17 @@ tests/fm-busy-state.test.sh
 tests/fm-busy-adapter-wiring.test.sh
 tests/fm-crew-state.test.sh
 ```
+
+## Held-for-merge stale suppression
+
+[`Architecture`](../architecture.md#stale-panes-and-the-wedge-ladder) owns the completed-delivery boundary and its safety rationale.
+Portable regression entry points:
+
+```sh
+bin/fm-test-run.sh tests/fm-watch-triage.test.sh tests/fm-watch-triage-stale.test.sh tests/fm-daemon.test.sh
+```
+
+The suites cover the recorded GitHub and GitLab delivery gate, the no-record alarm path, first-sight and due-ladder suppression with one authoritative state read, away-housekeeping marker retirement, and preservation of a newly actionable completion when an enriched wedge is already queued.
 
 ## Turn-end supervision
 

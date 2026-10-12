@@ -779,6 +779,41 @@ test_enriched_wedge_under_declared_wait_uses_pause_cadence() {
   pass "an enriched wedge under a declared wait uses the pause cadence and restores wedge detection on resume"
 }
 
+test_enriched_wedge_held_merge_preserves_done() {
+  local dir state fakebin task win key reason
+  dir=$(make_supercase enriched-wedge-held-merge)
+  state="$dir/state"; fakebin="$dir/fakebin"; task=delivered-wedge
+  cat > "$fakebin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' 'state: done · source: run-step · checks green: PR ready for review'
+SH
+  chmod +x "$fakebin/fm-crew-state.sh"
+  win=$(daemon_task "$state" "$task")
+  printf 'pr=https://github.com/acme/widget/pull/7\n' >> "$state/$task.meta"
+  printf 'done: PR https://github.com/acme/widget/pull/7 checks green\n' > "$state/$task.status"
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  reason="stale: $win (idle 250s, possible wedge, escalation 4)"
+
+  LOG="$dir/daemon.log" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    STATE="$state" FM_STATE_OVERRIDE="$state" handle_wake "$reason" "$state"
+  grep -F "stale + actionable status: done: PR https://github.com/acme/widget/pull/7 checks green" \
+    "$state/.subsuper-escalations" >/dev/null \
+    || fail "an enriched wedge replaced an unseen held-merge completion"
+  grep -F "possible wedge" "$state/.subsuper-escalations" >/dev/null \
+    && fail "an enriched wedge overrode the held-merge completion"
+  [ ! -e "$state/.subsuper-stale-$key" ] \
+    || fail "an enriched wedge left stale tracking on a held-merge completion"
+
+  : > "$state/.subsuper-escalations"
+  LOG="$dir/daemon.log" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    STATE="$state" FM_STATE_OVERRIDE="$state" handle_wake "$reason" "$state"
+  [ ! -s "$state/.subsuper-escalations" ] \
+    || fail "an already-seen held-merge completion was re-escalated as a wedge"
+  [ ! -e "$state/.subsuper-stale-$key" ] \
+    || fail "an already-seen held-merge completion retained stale tracking"
+  pass "enriched wedges preserve unseen completions and silence held-for-merge repeats"
+}
+
 test_stale_terminal_escalates() {
   local dir state out win
   dir=$(make_supercase stale-terminal)
@@ -1242,6 +1277,28 @@ test_housekeeping_captain_held_stale_marker_transitions_to_pause() {
   [ ! -e "$state/.subsuper-stale-$key" ] || fail "a captain hold remained wedge-aged"
   [ ! -s "$state/.subsuper-escalations" ] || fail "a captain hold was escalated as a possible wedge"
   pass "housekeeping moves a captain hold's existing stale marker to pause before wedge escalation"
+}
+
+test_housekeeping_held_merge_stale_marker_clears_without_escalation() {
+  local dir state fakebin task key
+  dir=$(make_supercase stale-to-held-merge)
+  state="$dir/state"; fakebin="$dir/fakebin"; task=delivered-w14m
+  cat > "$fakebin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' 'state: done · source: run-step · checks green: PR ready for review'
+SH
+  chmod +x "$fakebin/fm-crew-state.sh"
+  daemon_task "$state" "$task" >/dev/null
+  printf 'pr=https://github.com/acme/widget/pull/7\n' >> "$state/$task.meta"
+  printf 'done: PR https://github.com/acme/widget/pull/7 checks green\n' > "$state/$task.status"
+  key=$(printf '%s' "$task" | tr ':/.' '___')
+  echo $(( $(date +%s) - 5000 )) > "$state/.subsuper-stale-$key"
+  date +%s > "$state/.subsuper-last-scan"
+  FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" STATE="$state" FM_STATE_OVERRIDE="$state" \
+    FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
+  [ ! -e "$state/.subsuper-stale-$key" ] || fail "a held-for-merge delivery retained its daemon stale marker"
+  [ ! -s "$state/.subsuper-escalations" ] || fail "a held-for-merge delivery escalated as a possible wedge"
+  pass "housekeeping clears a held-for-merge stale marker without escalating"
 }
 
 test_housekeeping_pause_marker_transitions_to_clear() {
@@ -3176,6 +3233,7 @@ test_classify_check_and_unknown_escalate
 test_stale_transient_self_records_marker
 test_stale_diagnostic_wedge_survives_busy_housekeeping
 test_enriched_wedge_under_declared_wait_uses_pause_cadence
+test_enriched_wedge_held_merge_preserves_done
 test_stale_terminal_escalates
 test_stale_actionable_wait_escalates_and_keeps_pause_cadence
 test_stale_paused_classifies_pause
@@ -3199,6 +3257,7 @@ test_housekeeping_paused_unpaused_cleared
 test_housekeeping_captain_held_resolved_cleared
 test_housekeeping_stale_marker_transitions_to_pause
 test_housekeeping_captain_held_stale_marker_transitions_to_pause
+test_housekeeping_held_merge_stale_marker_clears_without_escalation
 test_housekeeping_pause_marker_transitions_to_clear
 test_housekeeping_stream_persistent_stale_resolves_meta
 test_housekeeping_stream_idle_screen_busy_record_clears_stale

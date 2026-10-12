@@ -344,6 +344,162 @@ test_nonterminal_stale_paused_absorbed_then_resurfaced() {
   pass "a declared pause is absorbed on first sight, then re-surfaced as a recheck past the threshold, never wedge-escalated"
 }
 
+# --- stale pane, crew reconciled DONE with a recorded PR: absorbed and never
+#     wedge-escalated ----------------------------------------------------------
+# The live case behind this bound: a finished worker whose PR sits green and
+# ready while the merge authority decides. Its pane is legitimately quiet for
+# the whole wait, but every rung of the wedge ladder re-alarmed it - nine
+# consecutive possible-wedge escalations on one finished delivery - training
+# the supervisor to dismiss exactly the alarm that will one day be real. The
+# terminal branch is the canonical shape (the delivery's own done: line is the
+# last status entry), and the recorded PR is what makes the quiet pane a
+# delivery awaiting merge rather than an unknown state, so it gates the bound:
+# done with no PR keeps the ordinary surface-it alarm.
+test_done_pr_held_for_merge_stale_absorbed_not_wedge_escalated() {
+  local dir state fakebin out capture_file calls window key pane_hash sig pid back statusf pr since
+  dir=$(make_case nonterminal-stale-held-merge); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; calls="$dir/crew-state.calls"
+  cat > "$fakebin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> "$FM_TEST_CREW_STATE_CALLS"
+printf '%s\n' 'state: done · source: run-step · checks green: PR ready for review'
+SH
+  chmod +x "$fakebin/fm-crew-state.sh"
+  window=$(stream_window "$state" delivered)
+  printf 'idle, waiting on the merge' > "$capture_file"
+  printf 'window=%s\nbackend=stream\nkind=ship\n' "$window" > "$state/delivered.meta"
+  statusf="$state/delivered.status"
+  pr=https://github.com/acme/widget/pull/7
+  printf 'pr=%s\n' "$pr" >> "$state/delivered.meta"
+  printf 'done: PR %s checks green\n' "$pr" > "$statusf"
+  back=$(( $(date +%s) - 500 ))
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$statusf"
+  else touch -m -d "@$back" "$statusf"; fi
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-delivered_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle, waiting on the merge")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+
+  : > "$calls"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  printf '2\n' > "$state/.wedge-escalations-$key"
+  stream_capture "$window" "$capture_file"
+  stream_foreground "$window" zsh
+  PATH="$fakebin:$PATH" \
+    FM_TEST_CREW_STATE_CALLS="$calls" FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PAUSE_RESURFACE_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "watcher exited for a done delivery awaiting merge (should absorb): $(cat "$out")"
+  fi
+  [ ! -s "$out" ] || fail "a done delivery awaiting merge printed a wake reason during absorb"
+  [ ! -s "$state/.wake-queue" ] || fail "a done delivery awaiting merge enqueued a wake during absorb"
+  [ ! -e "$state/.held-merge-resurfaced-$key" ] || fail "held-merge re-surface bookkeeping was created"
+  [ "$(wc -l < "$calls" | tr -d ' ')" = 1 ] || fail "terminal stale classification read crew state more than once"
+  [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$pane_hash" ] || fail "stale suppressor not advanced on held-merge absorb"
+  [ -s "$state/.stale-since-$key" ] || fail "held-merge absorb must keep the wedge timer reset, not drop it"
+  [ ! -e "$state/.wedge-escalations-$key" ] || fail "an undeclared episode's escalation count outlived the delivery"
+  [ ! -e "$state/.paused-$key" ] || fail "a held-merge absorb wrote pause bookkeeping no status line declares"
+  reap "$pid"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the intentional held-merge phase-A stop"
+
+  : > "$out"
+  : > "$calls"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  stream_capture "$window" "$capture_file"
+  stream_foreground "$window" zsh
+  PATH="$fakebin:$PATH" \
+    FM_TEST_CREW_STATE_CALLS="$calls" FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=1 FM_PAUSE_RESURFACE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_poll_cycle "$state" "$pid"; then
+    reap "$pid"; fail "the wedge ladder escalated a done delivery awaiting merge: $(cat "$out")"
+  fi
+  [ ! -s "$out" ] || fail "the due wedge ladder printed a wake for a done delivery awaiting merge: $(cat "$out")"
+  [ ! -s "$state/.wake-queue" ] || fail "the due wedge ladder enqueued a wake for a done delivery awaiting merge"
+  [ "$(wc -l < "$calls" | tr -d ' ')" = 1 ] || fail "the due held-merge ladder read crew state more than once"
+  since=$(cat "$state/.stale-since-$key" 2>/dev/null || true)
+  [ "$since" -gt $(( $(date +%s) - 10 )) ] \
+    || fail "the held-merge ladder absorb did not reset the wedge timer"
+  reap "$pid"
+  ack_stopped_cycle "$state" || fail "could not acknowledge the intentional held-merge phase-B stop"
+
+  pass "a done delivery with a recorded PR remains quiet and never wedge-escalates"
+}
+
+test_stable_declared_pause_working_reads_state_once() {
+  local dir state fakebin out capture_file calls window key pane_hash sig pid
+  dir=$(make_case stable-pause-working-single-read); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; calls="$dir/crew-state.calls"
+  cat > "$fakebin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> "$FM_TEST_CREW_STATE_CALLS"
+printf '%s\n' 'state: working · source: run-step · validation running'
+SH
+  chmod +x "$fakebin/fm-crew-state.sh"
+  window=$(stream_window "$state" validating)
+  printf 'idle validation pane' > "$capture_file"
+  printf 'window=%s\nbackend=stream\nkind=ship\n' "$window" > "$state/validating.meta"
+  printf 'paused: prior external wait\n' > "$state/validating.status"
+  sig=$(seen_sig "$state/validating.status"); printf '%s' "$sig" > "$state/.seen-validating_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle validation pane")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  printf '1\n' > "$state/.count-$key"
+  : > "$state/.paused-$key"
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  : > "$calls"
+  stream_capture "$window" "$capture_file"
+  stream_foreground "$window" zsh
+  PATH="$fakebin:$PATH" FM_TEST_CREW_STATE_CALLS="$calls" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
+    FM_STALE_ESCALATE_SECS=1 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || { reap "$pid"; fail "the due working stale did not complete its evaluation"; }
+  [ "$(wc -l < "$calls" | tr -d ' ')" = 1 ] \
+    || fail "a stable declared-pause working stale read crew state more than once"
+  grep -F "possible wedge" "$out" >/dev/null \
+    || fail "the working stale did not retain its ordinary wedge outcome"
+  pass "a stable declared-pause working stale reads crew state once"
+}
+
+# The gate on the held-merge bound: a crew whose state reconciles done with NO
+# recorded PR - a worker that reported done but whose delivery was never
+# recorded, possibly wedged after its status append - keeps the ordinary
+# surface-it alarm, so the quiet pane cannot silently absorb it.
+test_done_without_pr_record_is_still_surfaced() {
+  local dir state fakebin out drain_out capture_file window key pane_hash sig pid
+  dir=$(make_case terminal-stale-no-pr); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  window=$(stream_window "$state" finished-no-pr)
+  printf 'idle, done but unrecorded' > "$capture_file"
+  printf 'window=%s\nbackend=stream\nkind=ship\n' "$window" > "$state/finished-no-pr.meta"
+  printf 'done: implementation complete\n' > "$state/finished-no-pr.status"
+  sig=$(seen_sig "$state/finished-no-pr.status"); printf '%s' "$sig" > "$state/.seen-finished-no-pr_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle, done but unrecorded")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE='state: done · source: run-step · run completed'
+
+  # Even with a high wedge threshold, done without a PR surfaces at once.
+  stream_capture "$window" "$capture_file"
+  PATH="$fakebin:$PATH" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "watcher did not surface a done crew with no recorded PR"
+  grep -Fx "stale: $window" "$out" >/dev/null || fail "watcher did not print the immediate stale wake for done without a PR"
+  grep -F "possible wedge" "$out" >/dev/null && fail "an immediate done-no-PR stale was mislabeled a wedge"
+  [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$pane_hash" ] || fail "stale suppressor was not advanced on surface"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the done-no-PR stale failed"
+  grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "done-no-PR stale wake was not queued"
+  pass "a done crew with no recorded PR keeps the ordinary surface-it alarm"
+}
+
 # A captain-held crew can leave a stable backend endpoint after its agent exits.
 # fm-crew-state then authoritatively reports stopped rather than paused, but the
 # confirmed-dead agent plus the declared wait or captain-held transfer must retain
@@ -1311,5 +1467,8 @@ test_afk_busy_declared_pause_hands_off_plain_stale
 test_afk_busy_declared_pause_ticking_pane_hands_off_once
 test_nonterminal_stale_not_working_surfaced
 test_nonterminal_stale_paused_absorbed_then_resurfaced
+test_done_pr_held_for_merge_stale_absorbed_not_wedge_escalated
+test_stable_declared_pause_working_reads_state_once
+test_done_without_pr_record_is_still_surfaced
 test_exited_declared_pause_is_bounded_but_live_gate_surfaces
 test_absorbed_replacement_wait_does_not_inherit_the_old_throttle
