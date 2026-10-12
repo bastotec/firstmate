@@ -76,8 +76,8 @@ the agent (Fleet Town's command service) can deliver the exact steer text itself
 A second mate's agent id names its task in the parent home, so its own home cannot
 steer it with fm-send: answer such a request with --no-steer and steer from the parent.
 
-Every event (requested, repeated, approved, denied, used, expired-grant) is appended to
-state/approvals.log as one JSON line {at, event, id, agent, machine, tool, key, ...}.
+Every event (requested, repeated, approved, denied, used, expired-grant, steer-failed)
+is appended to state/approvals.log as one JSON line {at, event, id, agent, machine, tool, key, ...}.
 
 Exit: 0 ok/allowed; 2 blocked (gate) or usage error; 1 other failure; 3 already
 answered or unknown request; 4 answer recorded but steering failed.

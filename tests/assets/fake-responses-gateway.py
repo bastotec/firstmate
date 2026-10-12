@@ -5,7 +5,7 @@ Usage: fake-responses-gateway.py <port-file> <log-file> <tool-args-json>
 
 Each POST .../responses gets one streamed reply: while the request carries no
 function_call_output it asks for run_command with <tool-args-json>; once it does,
-it answers with plain text quoting the start of that output. Every request body
+it answers with the plain text "done". Every request body
 is appended to <log-file>, one JSON line each. The chosen port is written to
 <port-file>. Runs until killed.
 """
