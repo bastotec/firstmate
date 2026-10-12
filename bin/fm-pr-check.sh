@@ -103,11 +103,13 @@ fm_pr_poll_prepare "$STATE" "$ID" "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$N
   || { echo "error: could not prepare PR poll" >&2; exit 1; }
 
 CONTROL_LOCK="$STATE/.control-$ID.lock"
-fm_lock_acquire_wait "$CONTROL_LOCK" || {
-  echo "error: could not take the task $ID control lock" >&2
-  exit 1
-}
-CONTROL_LOCK_HELD=1
+if [ "${FM_PR_MERGE_HOLDS_CONTROL_LOCK:-}" != "$ID" ]; then
+  fm_lock_acquire_wait "$CONTROL_LOCK" || {
+    echo "error: could not take the task $ID control lock" >&2
+    exit 1
+  }
+  CONTROL_LOCK_HELD=1
+fi
 META_LOCK=$(fm_meta_lock_path "$META") || exit 1
 fm_lock_acquire_wait "$META_LOCK"
 META_LOCK_HELD=1
@@ -146,8 +148,10 @@ fm_pr_poll_publish_prepared || {
   echo "error: could not publish PR poll" >&2
   exit 1
 }
-fm_lock_release "$CONTROL_LOCK"
-CONTROL_LOCK_HELD=0
+if [ "$CONTROL_LOCK_HELD" = 1 ]; then
+  fm_lock_release "$CONTROL_LOCK"
+  CONTROL_LOCK_HELD=0
+fi
 # In a secondmate home the registration itself is a captain-facing fact:
 # publish the child's PR-ready line with the canonical URL just recorded, so it
 # reaches the parent whether or not the mate model appends anything

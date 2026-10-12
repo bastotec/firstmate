@@ -819,7 +819,8 @@ METHODS
 }
 
 record_pr_metadata() {
-  if ! "$SCRIPT_DIR/fm-pr-check.sh" "$ID" "$URL"; then
+  if ! FM_PR_MERGE_HOLDS_CONTROL_LOCK="$ID" \
+    "$SCRIPT_DIR/fm-pr-check.sh" "$ID" "$URL"; then
     return 1
   fi
   grep -qxF "pr=$URL" "$META" || {
