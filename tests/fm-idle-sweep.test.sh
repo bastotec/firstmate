@@ -129,11 +129,19 @@ age_file() {  # <path> <seconds-ago>
 
 # add_worker <dir> <id> <crew-state-line> <seconds-quiet>
 add_worker() {
-  local dir=$1 id=$2 line=$3 quiet=$4
+  local dir=$1 id=$2 line=$3 quiet=$4 n
   fm_write_meta "$dir/home/state/$id.meta" "kind=ship" "worktree=$dir/pool/1/firstmate"
   printf 'working: started\n' > "$dir/home/state/$id.status"
   age_file "$dir/home/state/$id.status" "$quiet"
   printf '%s\n' "$line" > "$dir/home/crew/$id"
+  # a run whose PR merged carries that PR, as a delivered ship's record does
+  case "$line" in
+    *'PR merged/closed'*)
+      n=$(printf '%s' "$id" | cksum | cut -d' ' -f1)
+      printf 'pr=https://github.com/owner/repo/pull/9%s\n' "$n" >> "$dir/home/state/$id.meta"
+      printf 'MERGED\n' > "$dir/home/pr-states/9$n"
+      ;;
+  esac
 }
 
 sweep() {  # <dir> [args...]
@@ -154,6 +162,10 @@ test_done_workers_are_cleaned_up_without_force() {
   printf "warning: endpoint x is on the retired 'tmux' backend, which firstmate can no longer close\n" \
     > "$dir/home/refuse/retired-tmux"
   add_worker "$dir" fresh-done 'state: done · source: run-step · run passed: PR merged/closed' 60
+  printf 'pr=https://github.com/owner/repo/pull/11\n' >> "$dir/home/state/shipped.meta"
+  printf 'pr=https://github.com/owner/repo/pull/12\n' >> "$dir/home/state/retired-tmux.meta"
+  printf 'MERGED\n' > "$dir/home/pr-states/11"
+  printf 'MERGED\n' > "$dir/home/pr-states/12"
 
   sweep "$dir" scan --now || fail "scan failed"
 
@@ -169,6 +181,37 @@ test_done_workers_are_cleaned_up_without_force() {
   [ "$(jq -r '.workers[] | select(.id=="shipped") | .action' "$dir/home/state/idle-sweep.json")" = cleaned ] \
     || fail "the summary does not record the cleanup: $(cat "$dir/home/state/idle-sweep.json")"
   pass "fm-idle-sweep: done workers are cleaned up through the guarded paths, never forced"
+}
+
+test_done_ships_without_merge_evidence_are_never_cleaned_automatically() {
+  local dir
+  dir=$(new_case unproven)
+  add_worker "$dir" no-pr 'state: done · source: status-log · branch pushed' 7200
+  add_worker "$dir" ledger-pr 'state: done · source: status-log · PR ready' 7200
+  printf 'done: PR https://github.com/owner/repo/pull/21 checks green\n' >> "$dir/home/state/ledger-pr.status"
+  age_file "$dir/home/state/ledger-pr.status" 7200
+  printf 'OPEN\n' > "$dir/home/pr-states/21"
+  add_worker "$dir" busy-lock 'state: done · source: run-step · run passed: PR merged/closed' 7200
+  printf 'pr=https://github.com/owner/repo/pull/22\n' >> "$dir/home/state/busy-lock.meta"
+  printf 'MERGED\n' > "$dir/home/pr-states/22"
+  printf 'error: another lifecycle action is already running for task busy-lock\n' > "$dir/home/refuse/busy-lock"
+
+  sweep "$dir" scan --now || fail "scan failed"
+
+  if grep -Eq '^(no-pr|ledger-pr)$' "$dir/home/teardown-calls" 2>/dev/null; then
+    fail "a done ship without a merged PR was sent to cleanup: $(calls "$dir" teardown-calls)"
+  fi
+  assert_contains "$(calls "$dir" hold-calls)" no-pr "a done ship with no PR should become a decision"
+  if grep -qx ledger-pr "$dir/home/hold-calls" 2>/dev/null; then
+    fail "a worker whose ledger PR is still open became a decision"
+  fi
+  [ "$(jq -r '.workers[] | select(.id=="ledger-pr") | .class' "$dir/home/state/idle-sweep.json")" = awaiting-merge ] \
+    || fail "a PR reported only in the ledger was not read as awaiting merge"
+  if grep -qx busy-lock "$dir/home/hold-calls" 2>/dev/null; then
+    fail "a cleanup refused only by a busy lock became a decision instead of waiting"
+  fi
+  assert_present "$dir/home/state/busy-lock.meta" "a lock-refused worker record was removed"
+  pass "fm-idle-sweep: done ships need a merged PR to be cleaned up, and a busy lock just waits"
 }
 
 test_open_pr_workers_wait_for_merge_without_a_cleanup_decision() {
@@ -220,6 +263,10 @@ test_concurrent_cleanup_does_not_raise_stale_decisions() {
   add_worker "$dir" replaced 'state: done · source: run-step · run passed: PR merged/closed' 7200
   printf 'spawn_gen=old\n' >> "$dir/home/state/replaced.meta"
   fm_write_meta "$dir/home/replacement/replaced" "kind=ship" "worktree=$dir/pool/2/firstmate" "spawn_gen=new"
+  printf 'pr=https://github.com/owner/repo/pull/31\n' >> "$dir/home/state/removed.meta"
+  printf 'pr=https://github.com/owner/repo/pull/32\n' >> "$dir/home/state/replaced.meta"
+  printf 'MERGED\n' > "$dir/home/pr-states/31"
+  printf 'MERGED\n' > "$dir/home/pr-states/32"
 
   sweep "$dir" scan --now || fail "scan failed"
 
@@ -243,6 +290,8 @@ test_refusals_and_idle_workers_become_one_decision_each() {
   dir=$(new_case decisions)
   add_worker "$dir" unlanded 'state: done · source: run-step · run passed: PR merged/closed' 7200
   printf 'REFUSED: task unlanded has uncommitted changes (dirty copy)\n' > "$dir/home/refuse/unlanded"
+  printf 'pr=https://github.com/owner/repo/pull/41\n' >> "$dir/home/state/unlanded.meta"
+  printf 'MERGED\n' > "$dir/home/pr-states/41"
   add_worker "$dir" broke 'state: failed · source: run-step · run failed (test step)' 90000
   add_worker "$dir" waiting 'state: blocked · source: status-log · needs a token' 90000
   add_worker "$dir" vanished 'state: unknown · source: none · backend target gone: hub:abc' 90000
@@ -309,7 +358,7 @@ test_reassigned_slots_cannot_supply_completion() {
   local dir
   dir=$(new_case reassigned)
   add_worker "$dir" stale 'state: done · source: run-step · new owner completed' 90000
-  add_worker "$dir" claimant 'state: done · source: run-step · run passed' 7200
+  add_worker "$dir" claimant 'state: done · source: run-step · run passed: PR merged/closed' 7200
   mkdir -p "$dir/pool/1/firstmate"
   printf 'task=claimant\nhome=%s\n' "$dir/home" > "$dir/pool/1/.fm-slot-owner"
 
@@ -528,7 +577,7 @@ test_local_mates_with_missing_homes_are_escalated() {
 test_scan_uses_fixed_quiet_and_audit_bounds() {
   local dir rc=0
   dir=$(new_case fixed-bounds)
-  add_worker "$dir" 'done' 'state: done · source: run-step · run passed' 1200
+  add_worker "$dir" 'done' 'state: done · source: run-step · run passed: PR merged/closed' 1200
   add_worker "$dir" recent 'state: blocked · source: status-log · needs a token' 1200
   mkdir -p "$dir/mate/state"
   fm_write_meta "$dir/home/state/mate.meta" "kind=secondmate" "home=$dir/mate"
@@ -592,3 +641,4 @@ test_second_mates_that_do_not_sweep_are_escalated_once
 test_local_mates_with_missing_homes_are_escalated
 test_scan_uses_fixed_quiet_and_audit_bounds
 test_watcher_runs_the_sweep_and_surfaces_its_decision
+test_done_ships_without_merge_evidence_are_never_cleaned_automatically

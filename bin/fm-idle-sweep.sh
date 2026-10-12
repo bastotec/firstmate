@@ -24,11 +24,18 @@
 #     from the claimant's run; all other records take one bin/fm-crew-state.sh
 #     read bounded to 60 seconds; age is the time since the status ledger
 #     (else metadata record) changed;
-#   - working or parked, or done with a recorded PR still open: left alone;
+#   - working or parked, or done with its PR (recorded, or the last PR link in
+#     its ledger) still open or unreadable: left alone;
+#   - a done ship with no PR at all is never cleaned up automatically, since a
+#     pushed but unmerged branch passes cleanup's checks; it becomes the
+#     clean-it-up-or-keep-it decision below;
 #   - done, quiet for 15 minutes: cleaned up with
 #     bin/fm-teardown.sh, never --force; a refusal only because the endpoint is
 #     on a retired backend goes to bin/fm-retire-endpoint.sh --finished;
-#     after a refusal, a now-absent worker record is reported as cleaned,
+#     a refusal because another cleanup or lifecycle action holds the task
+#     waits for the next scan; after a refusal, a now-absent worker record is
+#     reported as cleaned unless its backlog close is still pending (then
+#     unhandled),
 #     while a changed record is left untouched with class unknown/action none
 #     for a fresh scan; a remaining refusal on the unchanged record becomes
 #     a decision to clean it up or keep it;
@@ -192,6 +199,7 @@ already_raised() {  # <id>
 # classify <id>: sets CLASS, DETAIL, AGE
 classify() {
   local id=$1 line verb worktree row pr pr_state hold_rc=0
+  UNPROVEN=0
   AGE=$(record_age "$id")
   DETAIL=
   hold_settled "$id" "idle-$id" || hold_rc=$?
@@ -217,14 +225,21 @@ classify() {
       [ "$AGE" -ge 900 ] || { CLASS=settling; return; }
       row=$(fm_backlog_row_show "${FM_DATA_OVERRIDE:-$FM_HOME/data}" "$id" --full 2>/dev/null) || row=
       pr=$(fm_pr_task_url "$row" "$STATE/$id.meta") || pr=
+      # a worker reports its PR in its ledger before firstmate records it
+      [ -n "$pr" ] || pr=$(grep -Eo 'https://[^[:space:]]+/(pull|merge_requests)/[0-9]+' \
+        "$STATE/$id.status" 2>/dev/null | tail -1) || pr=
       if [ -n "$pr" ]; then
         # shellcheck disable=SC2016 # Positional arguments expand in the child shell.
         pr_state=$(fm_run_timed 60 bash -c '. "$1/fm-pr-lib.sh"; fm_pr_live_state "$2"' \
           _ "$SCRIPT_DIR" "$pr" 2>/dev/null) || pr_state=
-        if [ "$pr_state" = open ]; then
-          CLASS=awaiting-merge
-          return
-        fi
+        case "$pr_state" in
+          open) CLASS=awaiting-merge; return ;;
+          '') CLASS=settling; DETAIL="cannot read whether $pr merged"; return ;;
+        esac
+      elif [ "$(fm_meta_get "$STATE/$id.meta" kind)" != scout ]; then
+        # nothing proves a ship without a PR landed, so it is never cleaned up
+        # automatically: a pushed, unmerged branch would pass cleanup's checks
+        UNPROVEN=1
       fi
       ;;
     failed) CLASS=failed ;;
@@ -371,15 +386,27 @@ while IFS= read -r meta; do
   HOLD_ID=
   case "$CLASS" in
     finished)
-      if cleanup "$id"; then
+      if [ "$UNPROVEN" = 1 ]; then
+        CLEANUP_WHY="no merged PR is recorded for it, so nothing proves its work landed"
+        RAISED=0
+        raise "$id" finished "$CLEANUP_WHY" "$project"
+        if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; else action=unhandled; fi
+        DETAIL=$CLEANUP_WHY
+      elif cleanup "$id"; then
         action=cleaned
         log "cleaned up $id"
+      elif [ ! -e "$meta" ] && [ ! -L "$meta" ] && [ -e "$STATE/$id.backlog-close" ]; then
+        action=unhandled
+        DETAIL="its record is gone but its backlog close is still pending: $CLEANUP_WHY"
       elif [ ! -e "$meta" ] && [ ! -L "$meta" ]; then
         action=cleaned
         DETAIL="worker record already removed"
       elif [ "$(cat "$meta" 2>/dev/null)" != "$record" ]; then
         CLASS=unknown
         DETAIL="worker record changed during scan"
+      elif printf '%s' "$CLEANUP_WHY" | grep -Eqi 'already running|in progress|lock'; then
+        CLASS=settling
+        DETAIL="another cleanup or lifecycle action holds it: $CLEANUP_WHY"
       else
         RAISED=0
         raise "$id" finished "$CLEANUP_WHY" "$project"
