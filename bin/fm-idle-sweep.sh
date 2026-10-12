@@ -27,8 +27,11 @@
 #   - working or parked, or done with a recorded PR still open: left alone;
 #   - done, quiet for 15 minutes: cleaned up with
 #     bin/fm-teardown.sh, never --force; a refusal only because the endpoint is
-#     on a retired backend goes to bin/fm-retire-endpoint.sh --finished; any
-#     other refusal becomes a decision to clean it up or keep it;
+#     on a retired backend goes to bin/fm-retire-endpoint.sh --finished;
+#     after a refusal, a now-absent worker record is reported as cleaned,
+#     while a changed record is left untouched with class unknown/action none
+#     for a fresh scan; a remaining refusal on the unchanged record becomes
+#     a decision to clean it up or keep it;
 #   - failed, blocked, paused, or unknown with its endpoint or copy gone,
 #     quiet for 6 hours: one decision to retire or retry it, recommending
 #     retire for failed/dead and retry for blocked/paused; an unavailable
