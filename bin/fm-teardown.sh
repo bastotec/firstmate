@@ -2061,6 +2061,11 @@ require_exclusive_worktree_slot_record() {
   local record_meta=$1 record_id=$2 record_state=$3 worktree=$4
   local slot state_dir other other_id field other_path other_slot
   slot=$(canonical_existing_dir "$worktree") || return 0
+  # A readable claim naming another task proves this record is stale, even if
+  # that task's record is discoverable. The ownership guard skips slot cleanup.
+  # All other claim states retain the existing record-scan refusal.
+  fm_treehouse_slot_owner_state "$slot" "$record_id"
+  [ "$FM_TREEHOUSE_SLOT_OWNER" != other ] || return 0
   collect_local_firstmate_states "$record_state" || return 1
   for state_dir in "${TREEHOUSE_OWNER_STATES[@]}"; do
     for other in "$state_dir"/*.meta; do
