@@ -677,11 +677,8 @@ for meta in "$STATE"/*.meta; do
   target=$(fm_backend_target_of_meta "$meta")
   if [ -n "$window" ]; then
     backend=$(fm_backend_of_meta "$meta")
-    # Settled, not cheap: a stream worker re-registering with its hub after a
-    # restart answers the presence probe 404 for a few seconds while being
-    # alive, and this digest is read once at session open - a rejoin reported
-    # dead here is a die-off that never happened. The settled read retries the
-    # 404 briefly (bin/fm-backend.sh) and only reports dead once it persists.
+    # The digest needs one settled presence verdict; docs/stream-backend.md
+    # owns why stream rejoins wait before rendering an endpoint dead.
     if fm_backend_target_settled_exists "$backend" "${target:-$window}" "fm-$id"; then
       printf 'endpoint: alive (backend=%s window=%s)\n' "$backend" "$window"
     else
