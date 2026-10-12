@@ -152,10 +152,6 @@ fm_pr_poll_publish_prepared || {
   echo "error: could not publish PR poll" >&2
   exit 1
 }
-if [ "$CONTROL_LOCK_HELD" = 1 ]; then
-  fm_lock_release "$CONTROL_LOCK"
-  CONTROL_LOCK_HELD=0
-fi
 # In a secondmate home the registration itself is a captain-facing fact:
 # publish the child's PR-ready line with the canonical URL just recorded, so it
 # reaches the parent whether or not the mate model appends anything
@@ -175,3 +171,7 @@ case "$READY_RC" in
   *) printf 'actionable: PR %s is registered but its ready line did not reach the parent channel (rc=%s)\n' "$URL" "$READY_RC" >&2 ;;
 esac
 printf 'armed: state/%s.check.sh\n' "$ID"
+if [ "$CONTROL_LOCK_HELD" = 1 ]; then
+  fm_lock_release "$CONTROL_LOCK"
+  CONTROL_LOCK_HELD=0
+fi

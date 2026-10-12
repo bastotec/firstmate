@@ -25,6 +25,7 @@ PR_CHECK="$ROOT/bin/fm-pr-check.sh"
 TMP_ROOT=$(fm_test_tmproot fm-pr-unbind)
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 REAL_MV=$(command -v mv)
+REAL_GREP=$(command -v grep)
 
 file_mode() {
   if [ "$(uname)" = Darwin ]; then
@@ -196,15 +197,20 @@ test_foreign_branch_head_does_not_block() {
 }
 
 test_real_pr_check_publisher_holds_control_lock() {
-  local home id meta publish_entered publish_release forge_entered forge_release
-  local publisher_pid unbind_pid publisher_rc unbind_rc attempts=0
+  local home id meta publish_entered publish_release ready_entered ready_release ready_dest
+  local forge_entered forge_release publisher_pid unbind_pid publisher_rc unbind_rc attempts=0
   id=task-locked
   home=$(armed_home publisher-lock "$id" https://github.com/example/repo_name/pull/12)
   meta="$home/state/$id.meta"
   publish_entered="$home/publish-entered"
   publish_release="$home/publish-release"
+  ready_entered="$home/ready-entered"
+  ready_release="$home/ready-release"
+  ready_dest="$home/state/parent-replies.status"
   forge_entered="$home/forge-entered"
   forge_release="$home/forge-release"
+  printf '%s\n' mate-x > "$home/.fm-secondmate-home"
+  printf 'schema=fm-secondmate-parent.v1\nroute=remote\n' > "$home/.fm-secondmate-parent"
 
   cat > "$home/fakebin/mv" <<'SH'
 #!/usr/bin/env bash
@@ -219,16 +225,34 @@ if [ "$destination" = "${FM_TEST_PUBLISH_DATA_DEST:-}" ]; then
 fi
 exec "$FM_TEST_REAL_MV" "$@"
 SH
-  chmod +x "$home/fakebin/mv"
+  cat > "$home/fakebin/grep" <<'SH'
+#!/usr/bin/env bash
+destination=${!#}
+if [ "$destination" = "${FM_TEST_READY_DEST:-}" ]; then
+  : > "$FM_TEST_READY_ENTERED"
+  deadline=$((SECONDS + ${FM_TEST_STUB_MAX_BLOCK_SECONDS:-20}))
+  while [ ! -e "$FM_TEST_READY_RELEASE" ] && [ "$SECONDS" -lt "$deadline" ]; do
+    sleep 0.05
+  done
+  [ -e "$FM_TEST_READY_RELEASE" ] || exit 1
+fi
+exec "$FM_TEST_REAL_GREP" "$@"
+SH
+  chmod +x "$home/fakebin/mv" "$home/fakebin/grep"
 
   run_pr_check "$home" "$id" https://github.com/example/repo_name/pull/12 \
     FM_TEST_PUBLISH_DATA_DEST="$home/state/$id.pr-poll" \
     FM_TEST_PUBLISH_ENTERED="$publish_entered" \
     FM_TEST_PUBLISH_RELEASE="$publish_release" \
-    FM_TEST_REAL_MV="$REAL_MV" >"$home/publisher.out" 2>"$home/publisher.err" &
+    FM_TEST_READY_DEST="$ready_dest" \
+    FM_TEST_READY_ENTERED="$ready_entered" \
+    FM_TEST_READY_RELEASE="$ready_release" \
+    FM_TEST_REAL_MV="$REAL_MV" FM_TEST_REAL_GREP="$REAL_GREP" \
+    >"$home/publisher.out" 2>"$home/publisher.err" &
   publisher_pid=$!
   if ! wait_for_file "$publish_entered"; then
     : > "$publish_release"
+    : > "$ready_release"
     kill "$publisher_pid" 2>/dev/null || true
     wait "$publisher_pid" 2>/dev/null || true
     fail "the real PR publisher never reached poll publication"
@@ -236,7 +260,7 @@ SH
 
   run_unbind "$home" "$id" \
     FM_TEST_GH_LIST_ENTERED="$forge_entered" FM_TEST_GH_LIST_RELEASE="$forge_release" \
-    FM_TEST_REAL_MV="$REAL_MV" \
+    FM_TEST_REAL_MV="$REAL_MV" FM_TEST_REAL_GREP="$REAL_GREP" \
     >"$home/unbind.out" 2>"$home/unbind.err" &
   unbind_pid=$!
   while [ "$attempts" -lt 20 ]; do
@@ -246,6 +270,7 @@ SH
   done
   if [ -e "$forge_entered" ]; then
     : > "$publish_release"
+    : > "$ready_release"
     : > "$forge_release"
     wait "$publisher_pid" 2>/dev/null || true
     wait "$unbind_pid" 2>/dev/null || true
@@ -253,6 +278,29 @@ SH
   fi
 
   : > "$publish_release"
+  if ! wait_for_file "$ready_entered"; then
+    : > "$ready_release"
+    : > "$forge_release"
+    kill "$publisher_pid" "$unbind_pid" 2>/dev/null || true
+    wait "$publisher_pid" 2>/dev/null || true
+    wait "$unbind_pid" 2>/dev/null || true
+    fail "the real PR publisher never reached ready-line publication"
+  fi
+  attempts=0
+  while [ "$attempts" -lt 20 ]; do
+    [ ! -e "$forge_entered" ] || break
+    sleep 0.05
+    attempts=$((attempts + 1))
+  done
+  if [ -e "$forge_entered" ]; then
+    : > "$ready_release"
+    : > "$forge_release"
+    wait "$publisher_pid" 2>/dev/null || true
+    wait "$unbind_pid" 2>/dev/null || true
+    fail "unbind crossed a real PR publisher before ready-line publication completed"
+  fi
+
+  : > "$ready_release"
   wait "$publisher_pid"; publisher_rc=$?
   if ! wait_for_file "$forge_entered"; then
     : > "$forge_release"
@@ -265,11 +313,13 @@ SH
 
   expect_code 0 "$publisher_rc" "real concurrent PR publisher"
   expect_code 0 "$unbind_rc" "unbind after real concurrent PR publication"
+  grep -qF "child $id PR ready: https://github.com/example/repo_name/pull/12" "$ready_dest" \
+    || fail "the serialized publisher did not publish its ready line"
   [ "$(meta_pr "$meta")" = "" ] || fail "the serialized unbind left pr="
   assert_absent "$home/state/$id.check.sh" "the serialized unbind left the poll armed"
   assert_absent "$home/state/$id.pr-poll" "the serialized unbind left poll data"
   assert_absent "$home/state/$id.pr-poll-registration" "the serialized unbind left poll registration"
-  pass "a real PR publisher holds the control lock through poll publication"
+  pass "a real PR publisher holds the control lock through ready publication"
 }
 
 test_forge_read_failure_refuses() {
