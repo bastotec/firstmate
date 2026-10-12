@@ -392,7 +392,7 @@ test_local_mates_with_missing_homes_are_escalated() {
 test_scan_uses_fixed_quiet_and_audit_bounds() {
   local dir rc=0
   dir=$(new_case fixed-bounds)
-  add_worker "$dir" done 'state: done · source: run-step · run passed' 1200
+  add_worker "$dir" 'done' 'state: done · source: run-step · run passed' 1200
   add_worker "$dir" recent 'state: blocked · source: status-log · needs a token' 1200
   mkdir -p "$dir/mate/state"
   fm_write_meta "$dir/home/state/mate.meta" "kind=secondmate" "home=$dir/mate"
