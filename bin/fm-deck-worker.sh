@@ -216,12 +216,21 @@ request_turn_stop() {
 }
 
 kill_tree() {  # <pid>: SIGKILL <pid> and every process descended from it
-  local tree=$1 next pid
-  next=$1
-  while [ -n "$next" ]; do
+  local tree=$1 next pid changed seen=$'\n'
+  kill -STOP "$1" 2>/dev/null || return 0
+  seen+="$1"$'\n'
+  while :; do
+    changed=0
     next=$(ps -A -o pid= -o ppid= 2>/dev/null \
-      | awk -v parents=" $(printf '%s' "$next" | tr '\n' ' ') " 'index(parents, " " $2 " ") { print $1 }')
-    [ -z "$next" ] || tree="$tree $next"
+      | awk -v parents=" $(printf '%s' "$tree" | tr '\n' ' ') " 'index(parents, " " $2 " ") { print $1 }')
+    for pid in $next; do
+      case "$seen" in *$'\n'"$pid"$'\n'*) continue ;; esac
+      kill -STOP "$pid" 2>/dev/null || true
+      tree="$tree $pid"
+      seen+="$pid"$'\n'
+      changed=1
+    done
+    [ "$changed" -eq 1 ] || break
   done
   for pid in $tree; do kill -KILL "$pid" 2>/dev/null || true; done
 }
@@ -230,17 +239,16 @@ escalate_turn_stop() {
   local elapsed child
   [ -n "$TURN_PID" ] && [ -n "$STOP_REQUESTED_AT" ] || return 0
   elapsed=$(( $(date +%s) - STOP_REQUESTED_AT ))
-  if [ "$elapsed" -ge "$STOP_KILL" ]; then
-    kill_tree "$TURN_PID"
-    return 0
-  fi
-  [ "$elapsed" -ge "$STOP_TOOL_GRACE" ] || return 0
+  [ "$elapsed" -ge "$STOP_TOOL_GRACE" ] || [ "$elapsed" -ge "$STOP_KILL" ] || return 0
   # Deck runs every shell command and hook as a `bash -lc` child.
   for child in $(pgrep -P "$TURN_PID" 2>/dev/null); do
     case "$(ps -o args= -p "$child" 2>/dev/null)" in
       'bash -lc '*) kill_tree "$child" ;;
     esac
   done
+  if [ "$elapsed" -ge "$STOP_KILL" ]; then
+    kill -KILL "$TURN_PID" 2>/dev/null || true
+  fi
 }
 
 stop_turn() {  # stop the running Deck turn and wait for it, bounded
