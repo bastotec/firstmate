@@ -1003,6 +1003,47 @@ test_contested_slot_claim_preempts_only_with_reassignment_evidence() {
   pass "fm-teardown: only a readable reassignment claim preempts a contested slot record"
 }
 
+# Two records naming one slot whose owner claim names one of them: the claim
+# proves the other record is the stale one. The stale record's own cleanup runs
+# without touching the slot, and the claimant can then return it - instead of
+# each record refusing on the other forever.
+test_claimed_slot_collision_releases_the_stale_record() {
+  local dir stale=stale-scout owner=claiming-ship worker rc
+
+  dir=$(make_case slot-collision-claimed)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$stale.meta" \
+    $(fm_test_stream_task "$dir/home/state" "$stale") \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$owner.meta" \
+    $(fm_test_stream_task "$dir/home/state" "$owner") \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  claim_pool_slot "$dir" "$owner"
+  ( cd "$dir/worktree" && exec sleep 30 ) &
+  worker=$!
+
+  set +e
+  run_case "$dir" "$stale" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "the stale record of a claimed slot collision did not clean up: $(cat "$dir/stderr")"
+  kill -0 "$worker" 2>/dev/null || fail "stale-record cleanup killed the worker in the claimant's slot"
+  assert_present "$dir/worktree/sentinel" "stale-record cleanup reset the claimant's slot"
+  assert_present "$dir/home/state/$owner.meta" "stale-record cleanup removed the claimant's record"
+  assert_reassigned_slot_left_alone "$dir" "$stale" "$owner" "claimed slot collision"
+  kill "$worker" 2>/dev/null || true
+  wait "$worker" 2>/dev/null || true
+
+  : > "$dir/runtime.log"
+  run_case "$dir" "$owner" > "$dir/stdout" 2> "$dir/stderr" \
+    || fail "the claimant could not clean up once the stale record was gone: $(cat "$dir/stderr")"
+  assert_absent "$dir/home/state/$owner.meta" "claimant cleanup left its record"
+  grep -Fq "treehouse <return>" "$dir/runtime.log" \
+    || fail "claimant cleanup did not return its slot: $(cat "$dir/runtime.log")"
+
+  pass "fm-teardown: a slot collision settled by the owner claim releases the stale record, then the owner"
+}
+
 # The two states that must never become a false refusal: the task's own claim,
 # and no claim at all (a slot taken before claims existed, or already returned).
 test_own_and_absent_slot_claims_still_tear_down() {
@@ -1053,6 +1094,7 @@ test_sole_slot_record_still_tears_down
 test_contested_slot_claim_preempts_only_with_reassignment_evidence
 test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot
 test_own_and_absent_slot_claims_still_tear_down
+test_claimed_slot_collision_releases_the_stale_record
 test_recorded_endpoint_that_changed_directory_still_tears_down
 test_project_lock_anchors_at_the_local_root_across_home_layouts
 test_remote_seeded_home_returns_its_uncontested_slot
