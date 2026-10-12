@@ -169,7 +169,7 @@ EOF
 # A brief that names skills is placed only where the worker will see them: a
 # machine without a Mac-only skill refuses and names the machine that has it.
 test_spawn_refuses_a_brief_needing_skills_this_machine_lacks() {
-  local rec home proj fakebin out status
+  local rec home proj fakebin out status pool
   rec=$(make_home skills)
   IFS='|' read -r home proj fakebin <<EOF
 $rec
@@ -180,9 +180,13 @@ EOF
   mkdir -p "$home/state/machine-skills"
   printf '# machine=local root=/fm refreshed=2026-10-12T00:00:00Z count=2\nklipper-printers\tglobal\t/s/k\npr-review\tglobal\t/s/p\n' \
     > "$home/state/machine-skills/local.tsv"
+  fm_fake_exit0 "$fakebin" treehouse
   write_brief "$home" skills-mac-c1 direct-PR
+  git -C "$proj" -c user.name=t -c user.email=t@t commit --allow-empty -qm initial
+  pool="$TMP_ROOT/skills/pool"
+  git -C "$proj" worktree add -q --detach "$pool" HEAD
   printf 'Skills: klipper-printers, pr-review\n' >> "$home/data/skills-mac-c1/brief.md"
-  out=$(run_spawn "$home" "$fakebin" skills-mac-c1 "$proj" deck --mode direct-PR --yolo off)
+  out=$(fm_test_run_spawn "$home" "$pool" "$fakebin" skills-mac-c1 "$proj" deck --mode direct-PR --yolo off)
   status=$?
   [ "$status" -ne 0 ] || fail "a spawn needing a skill this machine lacks should exit non-zero"
   assert_contains "$out" "skills-mac-c1 not placed here: this machine lacks the skills the brief needs (klipper-printers); they are on: local" \
@@ -191,7 +195,10 @@ EOF
 
   write_brief "$home" skills-shared-c2 direct-PR
   printf 'Skills: pr-review\n' >> "$home/data/skills-shared-c2/brief.md"
-  out=$(run_spawn "$home" "$fakebin" skills-shared-c2 "$proj" deck --mode direct-PR --yolo off)
+  out=$(fm_test_run_spawn "$home" "$pool" "$fakebin" skills-shared-c2 "$proj" deck --mode direct-PR --yolo off)
+  status=$?
+  expect_code 0 "$status" "shared skills spawn: $out"
+  assert_present "$home/state/skills-shared-c2.meta" "shared skills spawn did not publish a task"
   assert_not_contains "$out" "not placed here" "a brief whose skills are present was refused"
   pass "fm-spawn: a brief naming skills is placed only on a machine whose deck has them"
 }

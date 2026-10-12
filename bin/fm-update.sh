@@ -277,11 +277,8 @@ fi
 
 # Refresh every machine's skill inventory (bin/fm-machine-skills.sh owns it),
 # best effort: an unreachable machine keeps its previous inventory.
-# FM_UPDATE_SKILL_INVENTORY=0 skips it.
-if [ "${FM_UPDATE_SKILL_INVENTORY:-1}" != 0 ]; then
-  FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-machine-skills.sh" refresh 2>&1 < /dev/null \
-    | sed 's/^refresh /skill-inventory /' || true
-fi
+FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-machine-skills.sh" refresh 2>&1 < /dev/null \
+  | sed 's/^refresh /skill-inventory /' || true
 
 # --- caller action summary -------------------------------------------------
 

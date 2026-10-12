@@ -26,6 +26,7 @@ SH
 # ssh answers for workload with shared skills only; FAKE_SSH_DOWN fails it.
 cat > "$FAKEBIN/ssh" <<'SH'
 #!/usr/bin/env bash
+cat > /dev/null
 while [ "$#" -gt 0 ]; do case "$1" in -o) shift 2 ;; -*) shift ;; *) break ;; esac; done
 printf '%s %s\n' "$1" "$2" >> "$FAKE_SSH_LOG"
 [ -z "${FAKE_SSH_DOWN:-}" ] || { echo 'ssh: connect to host workload port 22: Connection refused' >&2; exit 255; }
@@ -90,6 +91,20 @@ set -e
 assert_contains "$out" "ghost has no recorded skill inventory" "unknown machine"
 pass "check never places Mac-only work on workload and says where it can go"
 
+printf -- '- box - printer machine (root: /srv/fm; added 2026-09-16)\n' > "$H/data/machines.md"
+printf -- '- box - workload mate (host: workload; root: /home/b/firstmate; home: /home/b/sm/box; scope: misc; projects: ; added 2026-09-16)\n' >> "$H/data/secondmates.md"
+cp "$H/state/machine-skills/local.tsv" "$H/state/machine-skills/box.tsv"
+set +e
+out=$(skills check box klipper-printers)
+rc=$?
+set -e
+expect_code 1 "$rc" "colliding machine and mate names"
+assert_contains "$out" 'box is ambiguous' "the collision must not authorize the machine's skills"
+printf -- '- workload - same host mate (host: workload; root: /home/b/firstmate; home: /home/b/sm/same; scope: misc; projects: ; added 2026-09-16)\n' >> "$H/data/secondmates.md"
+assert_equals 'place=ok machine=workload' "$(skills check workload pr-review)" "coincident bindings remain usable"
+pass "check refuses conflicting machine and secondmate bindings"
+rm "$H/state/machine-skills/box.tsv"
+
 printf '# Task\nDo it.\nSkills: `klipper-printers`, pr-review\n' > "$T/brief.md"
 set +e
 out=$(FAKE_DECK_LIST='pr-review\tglobal\tReview\t/x\n' skills brief-check "$T/brief.md" "$T/proj")
@@ -113,6 +128,48 @@ ACCT="$T/acct"
 SBIN="$T/sbin"
 mkdir -p "$ACCT/.local/bin" "$SBIN" "$T/srvfm"
 cp "$FAKEBIN/deck" "$ACCT/.local/bin/deck"
+
+mkdir -p "$ACCT/.nix-profile/bin" "$T/o'brien fm"
+cat > "$ACCT/.nix-profile/bin/deck" <<'SH'
+#!/bin/sh
+[ "$1" = skills ] || exit 9
+[ -z "${SSH_AUTH_SOCK:-}${CAPTAIN_SECRET:-}" ] || exit 10
+printf 'nix-skill\tglobal\tNix skill\t%s/skill/SKILL.md\n' "$PWD"
+SH
+cat > "$SBIN/inventory-ssh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+agent= forward= send= update= strict= batch=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o)
+      case "$2" in
+        ForwardAgent=*) agent=${2#*=} ;;
+        ClearAllForwardings=*) forward=${2#*=} ;;
+        SendEnv=*) send=${2#*=} ;;
+        UpdateHostKeys=*) update=${2#*=} ;;
+        StrictHostKeyChecking=*) strict=${2#*=} ;;
+        BatchMode=*) batch=${2#*=} ;;
+      esac
+      shift 2 ;;
+    *) break ;;
+  esac
+done
+[ "$agent:$forward:$send:$update:$strict:$batch" = 'no:yes:-*:no:yes:yes' ] || exit 90
+shift
+HOME="$FAKE_ACCT" PATH=/usr/bin:/bin exec sh -c "$*"
+SH
+chmod +x "$ACCT/.nix-profile/bin/deck" "$SBIN/inventory-ssh"
+mv "$ACCT/.local/bin/deck" "$ACCT/deck.saved"
+printf -- '- quoted - quoted root (host: quotedbox; root: %s/o'"'"'brien fm; home: %s/sm/quoted; scope: misc; projects: ; added 2026-09-16)\n' "$T" "$ACCT" >> "$H/data/secondmates.md"
+out=$(FAKE_ACCT="$ACCT" FM_SSH_BIN="$SBIN/inventory-ssh" CAPTAIN_SECRET=secret SSH_AUTH_SOCK=/secret skills refresh quotedbox) || fail "quoted remote refresh failed: $out"
+assert_contains "$out" 'refresh quotedbox=done: 1 skills' "registered quoted root with Nix-only Deck"
+assert_grep "nix-skill"$'\t'"global"$'\t'"$T/o'brien fm/skill/SKILL.md" "$H/state/machine-skills/quotedbox.tsv" "remote discovery used the correct root and runtime"
+out=$(FAKE_ACCT="$ACCT" FM_SSH_BIN="$SBIN/inventory-ssh" skills refresh "explicit:$T/o'brien fm") || fail "explicit remote refresh failed: $out"
+assert_contains "$out" 'refresh explicit=done: 1 skills' "explicit quoted root"
+mv "$ACCT/deck.saved" "$ACCT/.local/bin/deck"
+pass "remote refresh uses protected SSH and the operator PATH with quoted roots"
+
 # ssh for fm-machine.sh: -G answers from a fixed config; anything else runs
 # locally as the scratch remote account, so git push and the installer are real.
 cat > "$SBIN/ssh" <<'SH'
@@ -121,6 +178,7 @@ G=0
 while [ "$#" -gt 0 ]; do case "$1" in -G) G=1; shift ;; -o|-F) shift 2 ;; -*) shift ;; *) break ;; esac; done
 if [ "$G" -eq 1 ]; then printf 'hostname box.lan\nuser captain\nport 22\n'; exit 0; fi
 shift
+case "$*" in *git-receive-pack*) [ "${FAKE_PUSH_FAIL:-0}" != 1 ] || exit 255 ;; esac
 cd "$FAKE_ACCT" && HOME="$FAKE_ACCT" exec sh -c "$*"
 SH
 chmod +x "$SBIN/ssh"
@@ -144,8 +202,16 @@ printf 'source=%s\n' "$T/dots" > "$H/config/shared-skills"
 machine() { PATH="$SBIN:$FAKEBIN:$PATH" FAKE_ACCT="$ACCT" FM_HOME="$H" FM_KNOWN_HOSTS="$T/known" FM_SSH_CONFIG="$T/ssh_config" "$ROOT/bin/fm-machine.sh" "$@" 2>&1; }
 : > "$T/ssh_config"
 
+set +e
+out=$(FAKE_PUSH_FAIL=1 machine skills box "$T/srvfm")
+rc=$?
+set -e
+expect_code 1 "$rc" "first push failure"
+assert_contains "$out" 'git push to box:dotfiles failed' "failure must be transport, not preparation"
+assert_equals main "$(git -C "$ACCT/dotfiles" symbolic-ref --short HEAD)" "fresh unborn repository uses the requested branch"
+if git -C "$ACCT/dotfiles" rev-parse --verify HEAD >/dev/null 2>&1; then fail "failed push unexpectedly installed a commit"; fi
 out=$(machine skills box "$T/srvfm")
-assert_contains "$out" "step shared-skills=done: ~/dotfiles at origin/main" "first ship"
+assert_contains "$out" "step shared-skills=done: ~/dotfiles at origin/main" "first ship retry"
 assert_contains "$out" "1 skill links in ~/.agents/skills" "linked count"
 assert_contains "$out" "step skill-inventory=done: 3 skills recorded in state/machine-skills/box.tsv" "inventory after ship"
 assert_equals "$T/dots/skills/pr-review" "$(readlink "$ACCT/.agents/skills/pr-review" | sed "s|$ACCT/dotfiles|$T/dots|")" "skill is a symlink into the clone"
@@ -162,6 +228,24 @@ git -C "$T/dots2" push -q origin main
 out=$(machine skills box "$T/srvfm")
 assert_contains "$out" "step shared-skills=done:" "second ship"
 assert_equals "$(git -C "$T/dots2" rev-parse HEAD)" "$(git -C "$ACCT/dotfiles" rev-parse HEAD)" "the machine fast-forwarded to origin/main"
+
+printf 'source=%s\ndir=legacy-empty\n' "$T/dots" > "$H/config/shared-skills"
+git init -q -b master "$ACCT/legacy-empty"
+git -C "$ACCT/legacy-empty" remote add origin "$T/dots-origin.git"
+out=$(machine skills box "$T/srvfm")
+assert_contains "$out" 'step shared-skills=done: ~/legacy-empty' "empty legacy repository recovers"
+assert_equals main "$(git -C "$ACCT/legacy-empty" symbolic-ref --short HEAD)" "recovered repository uses main"
+assert_equals "$(git -C "$T/dots2" rev-parse HEAD)" "$(git -C "$ACCT/legacy-empty" rev-parse HEAD)" "recovered repository has the requested commit"
+git -C "$ACCT/legacy-empty" checkout -qb master
+before=$(git -C "$ACCT/legacy-empty" rev-parse HEAD)
+set +e
+out=$(machine skills box "$T/srvfm")
+rc=$?
+set -e
+expect_code 1 "$rc" "committed wrong branch"
+assert_contains "$out" 'is on master, not main' "committed repositories retain the branch guard"
+assert_equals "$before" "$(git -C "$ACCT/legacy-empty" rev-parse HEAD)" "wrong-branch work is preserved"
+printf 'source=%s\n' "$T/dots" > "$H/config/shared-skills"
 
 # Local changes on the machine are never overwritten.
 printf 'mine\n' >> "$ACCT/dotfiles/install.sh"

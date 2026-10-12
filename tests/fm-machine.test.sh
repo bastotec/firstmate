@@ -272,6 +272,26 @@ assert_contains "$out" "item gateway-key=will-install: setup restricts path=$FAK
 assert_contains "$out" "item stream-hub=present:" "hub item"
 assert_not_contains "$out" "SECRET-GATEWAY-KEY" "check printed the gateway key"
 assert_absent "$RROOT" "check created the clone"
+
+mkdir -p "$FMH/config"
+git init -q -b main "$T/skills-upstream"
+printf 'one\n' > "$T/skills-upstream/note"
+git -C "$T/skills-upstream" add note
+git -C "$T/skills-upstream" -c user.name=t -c user.email=t@t commit -qm one
+git clone -q "$T/skills-upstream" "$T/skills-source"
+skills_before=$(git -C "$T/skills-source" rev-parse origin/main)
+printf 'two\n' > "$T/skills-upstream/note"
+git -C "$T/skills-upstream" -c user.name=t -c user.email=t@t commit -qam two
+printf 'source=%s\n' "$T/skills-source" > "$FMH/config/shared-skills"
+out=$(machine check box "$RROOT") || true
+assert_contains "$out" 'item shared-skills=will-install:' "check reviews shared skills without fetching"
+assert_equals "$skills_before" "$(git -C "$T/skills-source" rev-parse origin/main)" "check must not update the local skills remote ref"
+assert_absent "$T/skills-source/.git/FETCH_HEAD" "check must not create FETCH_HEAD"
+if git -C "$T/skills-source" cat-file -e "$(git -C "$T/skills-upstream" rev-parse HEAD)" 2>/dev/null; then
+  fail "check fetched new objects into the skills clone"
+fi
+rm "$FMH/config/shared-skills"
+pass "check resolves the cached skills commit without mutating the source clone"
 pass "check prints the machine checklist read-only"
 
 ROUTEFM="$T/clone-route-fm"

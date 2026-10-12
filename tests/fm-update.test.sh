@@ -44,6 +44,9 @@ new_world() {
   local name=$1 w
   w="$TMP_ROOT/$name"
   mkdir -p "$w/home/state" "$w/home/data" "$w/fakebin" "$w/fake"
+  printf '#!/bin/sh\nprintf "fixture\\tglobal\\tFixture skill\\t/s/fixture/SKILL.md\\n"\n' > "$w/fakebin/deck"
+  printf '#!/bin/sh\nexit 255\n' > "$w/fakebin/ssh"
+  chmod +x "$w/fakebin/deck" "$w/fakebin/ssh"
   # Fresh watcher beacon keeps fm-guard quiet.
   touch "$w/home/state/.last-watcher-beat"
 
@@ -118,7 +121,7 @@ bump_origin() {
 run_update() {
   local w=$1
   PATH="$w/fakebin:$PATH" \
-    FM_SSH_BIN="${FM_TEST_SSH_BIN:-ssh}" FM_UPDATE_SKILL_INVENTORY="${FM_TEST_SKILL_INVENTORY:-0}" \
+    FM_DECK_BIN="$w/fakebin/deck" FM_SSH_BIN="${FM_TEST_SSH_BIN:-$w/fakebin/ssh}" \
     FM_ROOT_OVERRIDE="$w/main" FM_HOME="$w/home" "$UPDATE" 2>/dev/null
 }
 
@@ -239,8 +242,12 @@ test_legacy_remote_advance_restarts() {
 set -u
 cat > /dev/null
 while [ "$#" -gt 0 ]; do
-  case "$1" in -o) shift 2 ;; --) shift; break ;; *) exit 90 ;; esac
+  case "$1" in -o) shift 2 ;; --) shift; break ;; *) break ;; esac
 done
+if [ "${2:-}" != fm-remote-entrypoint.sh ]; then
+  printf 'fixture\tglobal\tFixture skill\t/s/fixture/SKILL.md\n'
+  exit 0
+fi
 shift 2
 argv_b64=$4
 decode() { printf '%s' "$1" | base64 --decode 2>/dev/null || printf '%s' "$1" | base64 -D; }
@@ -635,7 +642,7 @@ test_update_refreshes_skill_inventory() {
   # shellcheck disable=SC2016 # the stub expands it.
   printf '#!/bin/sh\nprintf "afk\\trepo\\tdesc\\t%%s/afk/SKILL.md\\npr-review\\tglobal\\tdesc\\t/s/pr-review/SKILL.md\\n" "$PWD"\n' > "$w/fakebin/deck"
   chmod +x "$w/fakebin/deck"
-  out=$(FM_TEST_SKILL_INVENTORY=1 run_update "$w")
+  out=$(run_update "$w")
   assert_contains "$out" "skill-inventory local=done: 2 skills" "the update must refresh this machine's skill inventory"
   assert_contains "$(cat "$w/home/state/machine-skills/local.tsv")" "pr-review	global" "the inventory file must hold deck's skills"
   assert_contains "$out" "restart-secondmates:" "the inventory refresh must leave the action summary intact"

@@ -813,14 +813,16 @@ shared_skills_config() {
   return 0
 }
 
-# Resolve the commit to ship into SKILLS_COMMIT, fetching origin/* refs first.
+# Resolve the commit into SKILLS_COMMIT; the fetch argument refreshes origin/* first.
 # Sets SKILLS_REASON and returns 1 on failure.
 shared_skills_commit() {
   SKILLS_REASON=
-  case "$SKILLS_REF" in
-    origin/*) git -C "$SKILLS_SOURCE" fetch --quiet origin < /dev/null 2>/dev/null \
-      || { SKILLS_REASON="git fetch origin failed in $SKILLS_SOURCE"; return 1; } ;;
-  esac
+  if [ "${1:-}" = fetch ]; then
+    case "$SKILLS_REF" in
+      origin/*) git -C "$SKILLS_SOURCE" fetch --quiet origin < /dev/null 2>/dev/null \
+        || { SKILLS_REASON="git fetch origin failed in $SKILLS_SOURCE"; return 1; } ;;
+    esac
+  fi
   SKILLS_COMMIT=$(git -C "$SKILLS_SOURCE" rev-parse --verify --quiet "$SKILLS_REF^{commit}") \
     || { SKILLS_REASON="$SKILLS_REF does not name a commit in $SKILLS_SOURCE"; return 1; }
 }
@@ -848,14 +850,20 @@ else echo "skills-repo=present head=$(git -C "$dir" rev-parse HEAD 2>/dev/null)"
 # shellcheck disable=SC2016 # expanded by the remote shell.
 SKILLS_PREPARE_SH='dir=$HOME/$1 url=$2 branch=$3
 if [ ! -e "$dir" ]; then
-  mkdir -p "$(dirname "$dir")" && git init -q "$dir" && git -C "$dir" remote add origin "$url" || { echo "refuse: could not create a clone at $dir"; exit 3; }
+  mkdir -p "$(dirname "$dir")" && git init -q -b "$branch" "$dir" && git -C "$dir" remote add origin "$url" || { echo "refuse: could not create a clone at $dir"; exit 3; }
   echo "skills-repo=created"
 elif ! git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
   echo "refuse: $dir exists and is not a git clone"; exit 3
 else
   [ -z "$(git -C "$dir" status --porcelain 2>/dev/null)" ] || { echo "refuse: $dir has local changes; commit or discard them on the machine"; exit 3; }
   cur=$(git -C "$dir" symbolic-ref --short -q HEAD)
-  [ "$cur" = "$branch" ] || { echo "refuse: $dir is on ${cur:-a detached HEAD}, not $branch"; exit 3; }
+  if [ "$cur" != "$branch" ]; then
+    if [ -n "$cur" ] && ! git -C "$dir" rev-parse --verify -q HEAD >/dev/null && ! git -C "$dir" show-ref --quiet; then
+      git -C "$dir" symbolic-ref HEAD "refs/heads/$branch" || exit 3
+    else
+      echo "refuse: $dir is on ${cur:-a detached HEAD}, not $branch"; exit 3
+    fi
+  fi
   echo "skills-repo=present"
 fi'
 
@@ -906,7 +914,7 @@ skills_steps() { # <alias> <root>
   if ! shared_skills_config; then
     printf 'step shared-skills=skipped: this home has no config/shared-skills\n'
   else
-    shared_skills_commit || { printf 'step shared-skills=failed: %s\n' "$SKILLS_REASON"; return 1; }
+    shared_skills_commit fetch || { printf 'step shared-skills=failed: %s\n' "$SKILLS_REASON"; return 1; }
     url=$(git -C "$SKILLS_SOURCE" config --get remote.origin.url || true)
     fm_project_url_plain "$url" || url=
     skills_remote "$alias" "$SKILLS_PREPARE_SH" "$SKILLS_DIR" "$url" "$SKILLS_BRANCH"

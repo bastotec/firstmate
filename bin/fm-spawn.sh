@@ -1551,12 +1551,6 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
     echo "error: $BRIEF ## Captain's intent has an operator-address line: $ADDRESS_LINE; write the captain's actual words without a Captain label or address before spawn, since the heading already records provenance" >&2
     exit 1
   fi
-  # A brief's "Skills:" line must be visible to a worker on this machine;
-  # bin/fm-machine-skills.sh owns the check and names the machines that have them.
-  if ! SKILLS_REFUSAL=$("$FM_ROOT/bin/fm-machine-skills.sh" brief-check "$BRIEF" "$PROJ_ABS"); then
-    echo "error: $ID not placed here: ${SKILLS_REFUSAL#refuse: }" >&2
-    exit 1
-  fi
   if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
     if fm_brief_task_heading_present "$BRIEF" "## Captain's intent"; then
       CAPTAIN_INTENT=$(fm_brief_task_heading_body "$BRIEF" "## Captain's intent")
@@ -2021,6 +2015,12 @@ elif [ "$KIND" != secondmate ]; then
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" || exit 1
+fi
+if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
+  if ! SKILLS_REFUSAL=$(FM_DECK_BIN="${DECK_BIN:-deck}" "$FM_ROOT/bin/fm-machine-skills.sh" brief-check "$BRIEF" "$WT"); then
+    echo "error: $ID not placed here: ${SKILLS_REFUSAL#refuse: }" >&2
+    exit 1
+  fi
 fi
 
 # Per-task temp root: /tmp/fm-<id>/ with Go's build temp nested at gotmp/. Go won't

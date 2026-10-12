@@ -743,6 +743,62 @@ test_pool_slot_claim_follows_the_spawn_outcome() {
   pass "a Treehouse slot claim names the launched task, refuses when unclaimable, and is dropped by a locked abort"
 }
 
+test_skills_are_checked_in_the_final_worker_copy() {
+  local rec id out status target before
+  id=pool-skills-refresh-r1
+  rec=$(make_case skills-refresh "$id")
+  read_case_record "$rec"
+  mkdir -p "$PROJECT_DIR/.agents/skills/required"
+  printf 'skill\n' > "$PROJECT_DIR/.agents/skills/required/SKILL.md"
+  git -C "$PROJECT_DIR" add .agents
+  git -C "$PROJECT_DIR" -c user.name=t -c user.email=t@t commit -qm primary-skill
+  cat > "$FAKEBIN_DIR/deck" <<'SH'
+#!/bin/sh
+[ "$1" = skills ] || exit 0
+printf '%s\n' "$PWD" >> "$FAKE_SKILLS_LOG"
+[ ! -f .agents/skills/required/SKILL.md ] || printf 'required\trepo\tRequired\t%s/.agents/skills/required/SKILL.md\n' "$PWD"
+exit 0
+SH
+  printf 'Skills: required\n' >> "$HOME_DIR/data/$id/brief.md"
+  out=$(FAKE_SKILLS_LOG="$CASE_DIR/skills.log" FM_DECK_BIN=/not-the-worker-deck run_spawn "$id" --scout)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn used a skill from the primary instead of the refreshed worker copy"
+  assert_contains "$out" 'lacks the skills the brief needs (required)' "refreshed worktree skill refusal"
+  assert_equals "$POOL_DIR" "$(cat "$CASE_DIR/skills.log")" "Deck discovery runs in the final worktree"
+  assert_equals "$(git -C "$CASE_DIR/publisher" rev-parse HEAD)" "$(git -C "$POOL_DIR" rev-parse HEAD)" "the skill check follows base refresh"
+  assert_absent "$HOME_DIR/state/$id.meta" "skill refusal published task metadata"
+  assert_present "$PROJECT_DIR/.agents/skills/required/SKILL.md" "primary skill was removed"
+
+  id=pool-skills-relaunch-r1
+  rec=$(make_case skills-relaunch "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$id" --scout)
+  expect_code 0 "$?" "initial relaunch fixture: $out"
+  mkdir -p "$POOL_DIR/.agents/skills/required"
+  printf 'skill\n' > "$POOL_DIR/.agents/skills/required/SKILL.md"
+  git -C "$POOL_DIR" add .agents
+  git -C "$POOL_DIR" -c user.name=t -c user.email=t@t commit -qm task-skill
+  before=$(git -C "$POOL_DIR" rev-parse HEAD)
+  printf 'Skills: required\n' >> "$HOME_DIR/data/$id/brief.md"
+  cat > "$FAKEBIN_DIR/deck" <<'SH'
+#!/bin/sh
+[ "$1" = skills ] || exit 0
+printf '%s\n' "$PWD" >> "$FAKE_SKILLS_LOG"
+[ ! -f .agents/skills/required/SKILL.md ] || printf 'required\trepo\tRequired\t%s/.agents/skills/required/SKILL.md\n' "$PWD"
+exit 0
+SH
+  target=$(awk -F= '$1 == "window" { print substr($0, index($0, "=") + 1); exit }' "$HOME_DIR/state/$id.meta")
+  fm_test_fake_stream_foreground "$target" bash
+  out=$(FAKE_SKILLS_LOG="$CASE_DIR/skills.log" FM_DECK_BIN=/not-the-worker-deck \
+    fm_test_run_spawn "$HOME_DIR" "$POOL_DIR" "$FAKEBIN_DIR" "$id" --relaunch)
+  expect_code 0 "$?" "relaunch with a task-only skill: $out"
+  assert_equals "$POOL_DIR" "$(cat "$CASE_DIR/skills.log")" "relaunch checks the recorded worktree with the worker's Deck"
+  assert_equals "$before" "$(git -C "$POOL_DIR" rev-parse HEAD)" "relaunch preserves the task branch"
+  assert_absent "$PROJECT_DIR/.agents/skills/required/SKILL.md" "task-only skill appeared in the primary"
+  pass "skill checks use the refreshed or recorded worker copy and resolved Deck"
+}
+
+test_skills_are_checked_in_the_final_worker_copy
 test_remote_seeded_home_spawns_from_treehouse_pool
 test_pool_slot_claim_follows_the_spawn_outcome
 test_linked_spawning_home_rejects_primary_before_refresh

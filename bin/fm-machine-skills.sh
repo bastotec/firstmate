@@ -15,8 +15,8 @@
 # root (machines.md first, then the first secondmates.md route on that host).
 #
 # refresh runs `deck skills` in the machine's Firstmate checkout (this home's
-# root for local; `ssh <alias>` in the code root, with ~/.local/bin and
-# ~/.cargo/bin in front of PATH, for a remote) and replaces
+# root for local; `ssh <alias>` in the code root, with the remote runtime's
+# operator PATH, for a remote) and replaces
 # state/machine-skills/<machine>.tsv atomically. The file starts with one
 # `# machine=<m> root=<root> refreshed=<UTC ISO time> count=<n>` line, then one
 # `<name>\t<scope>\t<path>` line per skill (scope is deck's repo|global).
@@ -65,6 +65,11 @@ SSH_BIN=${FM_SSH_BIN:-ssh}
 usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 valid_name() { case "$1" in ''|-*|*[!A-Za-z0-9._-]*) return 1 ;; esac; }
+sq() {
+  printf "'"
+  printf '%s' "$1" | sed "s/'/'\\\\''/g"
+  printf "'"
+}
 
 # Print "<machine>\t<root>" for every known machine, local first.
 machines() {
@@ -106,8 +111,12 @@ deck_skills_on() { # <machine> <root>
     (cd "$2" && "$DECK_BIN" skills < /dev/null)
   else
     # shellcheck disable=SC2029 # quoted for the remote shell on purpose.
-    "$SSH_BIN" -o BatchMode=yes -o ConnectTimeout=8 "$1" \
-      "cd '$2' && PATH=\"\$HOME/.local/bin:\$HOME/.cargo/bin:\$PATH\" deck skills" < /dev/null
+    {
+      cat "$SCRIPT_DIR/fm-remote-job-lib.sh"
+      printf '\n%s\n' 'PATH=$(fm_remote_job_compose_operator_path "$HOME") && exec env -i HOME="$HOME" PATH="$PATH" deck skills < /dev/null'
+    } | "$SSH_BIN" -o BatchMode=yes -o ConnectTimeout=8 -o ForwardAgent=no \
+      -o ClearAllForwardings=yes -o 'SendEnv=-*' -o UpdateHostKeys=no \
+      -o StrictHostKeyChecking=yes "$1" "cd $(sq "$2") && bash -s"
   fi
 }
 
@@ -121,7 +130,7 @@ cmd_refresh() {
     if [ "$arg" != "$m" ]; then
       root=${arg#*:}
       case "$root" in /*) ;; *) printf 'refuse: root must be absolute: %s\n' "$root"; exit 2 ;; esac
-      case "$root" in *[!A-Za-z0-9._/-]*) printf 'refuse: root must be a plain path: %s\n' "$root"; exit 2 ;; esac
+      case "$root" in *$'\n'*|*$'\r'*|*$'\t'*) printf 'refuse: root contains control characters: %s\n' "$root"; exit 2 ;; esac
       extra+=("$m"$'\t'"$root")
     elif [ -z "$(machine_root "$m")" ]; then
       printf 'refresh %s=failed: not a known machine (data/machines.md or a remote route in data/secondmates.md)\n' "$m"
@@ -209,9 +218,14 @@ cmd_where() {
 cmd_check() { # <machine|secondmate-id> <skill>...
   local target=$1 m missing='' s
   shift
+  valid_name "$target" || { printf 'place=refuse: invalid machine or secondmate id: %s\n' "$target"; return 1; }
   m=$target
-  if [ -z "$(machine_root "$m")" ] && secondmate_registry_line_for_id "$DATA/secondmates.md" "$target" 2>/dev/null; then
+  if secondmate_registry_line_for_id "$DATA/secondmates.md" "$target" 2>/dev/null; then
     if [ "$SECONDMATE_REGISTRY_REMOTE" -eq 1 ]; then m=$SECONDMATE_REGISTRY_HOST; else m=local; fi
+    if [ "$m" != "$target" ] && [ -n "$(machine_root "$target")" ]; then
+      printf 'place=refuse: %s is ambiguous: machine %s or secondmate on %s\n' "$target" "$target" "$m"
+      return 1
+    fi
   fi
   [ -f "$INV/$m.tsv" ] || { printf 'place=refuse: %s has no recorded skill inventory; run bin/fm-machine-skills.sh refresh %s\n' "$m" "$m"; return 1; }
   for s in "$@"; do has_skill "$m" "$s" || missing="${missing:+$missing, }$s"; done
