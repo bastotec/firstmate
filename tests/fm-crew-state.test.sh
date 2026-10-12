@@ -2088,7 +2088,8 @@ test_no_timeout_uses_perl_bound() {
   cat > "$d/fakebin/no-mistakes" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${FM_FAKE_NM_CALLS:-/dev/null}"
-while :; do :; done
+# Block without competing for CPU with the bounded reader and its probe.
+/bin/sleep 30
 SH
   chmod +x "$d/fakebin/no-mistakes"
   toolbin=$(make_no_timeout_toolbin "$d")
