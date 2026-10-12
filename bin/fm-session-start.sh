@@ -665,25 +665,53 @@ section "FLEET STATE"
 print_backlog_compact "$DATA/backlog.md" "data/backlog.md"
 
 subsection "Work under way (state/*.meta)"
-META_FOUND=0
+FLEET_METAS=()
+FLEET_ENDPOINT_WINDOWS=()
+FLEET_ENDPOINT_BACKENDS=()
+FLEET_ENDPOINT_PIDS=()
+FLEET_ENDPOINT_RESULTS=()
 for meta in "$STATE"/*.meta; do
   [ -f "$meta" ] || continue
+  index=${#FLEET_METAS[@]}
+  FLEET_METAS+=("$meta")
+  id=$(basename "$meta" .meta)
+  window=$(fm_meta_get "$meta" window)
+  FLEET_ENDPOINT_WINDOWS[$index]=$window
+  if [ -n "$window" ]; then
+    target=$(fm_backend_target_of_meta "$meta")
+    backend=$(fm_backend_of_meta "$meta")
+    FLEET_ENDPOINT_BACKENDS[$index]=$backend
+    fm_backend_target_settled_exists "$backend" "${target:-$window}" "fm-$id" >/dev/null 2>&1 &
+    FLEET_ENDPOINT_PIDS[$index]=$!
+  else
+    FLEET_ENDPOINT_BACKENDS[$index]=
+    FLEET_ENDPOINT_PIDS[$index]=
+    FLEET_ENDPOINT_RESULTS[$index]=unknown
+  fi
+done
+
+for ((index = 0; index < ${#FLEET_METAS[@]}; index++)); do
+  pid=${FLEET_ENDPOINT_PIDS[$index]}
+  [ -n "$pid" ] || continue
+  if wait "$pid"; then
+    FLEET_ENDPOINT_RESULTS[$index]=alive
+  else
+    FLEET_ENDPOINT_RESULTS[$index]=dead
+  fi
+done
+
+META_FOUND=0
+for ((index = 0; index < ${#FLEET_METAS[@]}; index++)); do
   META_FOUND=1
+  meta=${FLEET_METAS[$index]}
   id=$(basename "$meta" .meta)
   printf '\n--- %s ---\n' "$id"
   cat "$meta"
 
-  window=$(fm_meta_get "$meta" window)
-  target=$(fm_backend_target_of_meta "$meta")
+  window=${FLEET_ENDPOINT_WINDOWS[$index]}
   if [ -n "$window" ]; then
-    backend=$(fm_backend_of_meta "$meta")
-    # The digest needs one settled presence verdict; docs/stream-backend.md
-    # owns why stream rejoins wait before rendering an endpoint dead.
-    if fm_backend_target_settled_exists "$backend" "${target:-$window}" "fm-$id"; then
-      printf 'endpoint: alive (backend=%s window=%s)\n' "$backend" "$window"
-    else
-      printf 'endpoint: dead (backend=%s window=%s)\n' "$backend" "$window"
-    fi
+    backend=${FLEET_ENDPOINT_BACKENDS[$index]}
+    printf 'endpoint: %s (backend=%s window=%s)\n' "${FLEET_ENDPOINT_RESULTS[$index]}" "$backend" "$window"
   else
     printf 'endpoint: unknown (no window recorded)\n'
   fi

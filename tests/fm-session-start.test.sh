@@ -19,9 +19,9 @@
 #     blocked row kept whole, the dispatchable queued listing bounded with an
 #     exact disclosed remainder
 #   - orphan status logs whose task meta has already disappeared
-#   - per-task endpoint-liveness lines for a live and a dead recorded stream
-#     endpoint, for one rejoining (briefly 404) and reading alive, and for a
-#     record left on a retired backend
+#   - per-task endpoint-liveness lines for live, dead, and rejoining stream
+#     endpoints, including one shared grace window across missing endpoints,
+#     and for a record left on a retired backend
 #   - composition: the script invokes the real fm-lock.sh/fm-bootstrap.sh/
 #     fm-wake-drain.sh (their real, distinctive output appears verbatim), it
 #     does not reimplement their logic
@@ -1013,7 +1013,8 @@ ROWS
 # --- endpoint liveness: live and gone stream endpoints, retired records ------
 
 test_endpoint_liveness_stream() {
-  local rec root home fakebin out live dead
+  local rec root home fakebin out live dead started single_elapsed
+  local missing_a missing_b missing_c multi_elapsed
   rec=$(new_world liveness-stream)
   IFS='|' read -r root home fakebin <<EOF
 $rec
@@ -1027,11 +1028,38 @@ EOF
   dead=$(fm_test_stream_target_of "$home/state" task-dead)
   fm_test_fake_stream_set "$dead" '{"forget": true}'
 
+  started=$(date +%s)
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  single_elapsed=$(( $(date +%s) - started ))
   assert_contains "$out" "endpoint: alive (backend=stream window=$live)" "live stream endpoint not reported alive"
   assert_contains "$out" "endpoint: dead (backend=stream window=$dead)" "gone stream endpoint not reported dead"
 
-  pass "stream endpoint liveness is reported per task: alive for a live endpoint, dead for a gone one"
+  rec=$(new_world liveness-stream-shared-window)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_deck "$fakebin"
+  { live_task_lines "$home/state" missing-a; printf 'kind=ship\n'; } > "$home/state/missing-a.meta"
+  { live_task_lines "$home/state" missing-b; printf 'kind=ship\n'; } > "$home/state/missing-b.meta"
+  { live_task_lines "$home/state" missing-c; printf 'kind=ship\n'; } > "$home/state/missing-c.meta"
+  missing_a=$(fm_test_stream_target_of "$home/state" missing-a)
+  missing_b=$(fm_test_stream_target_of "$home/state" missing-b)
+  missing_c=$(fm_test_stream_target_of "$home/state" missing-c)
+  fm_test_fake_stream_set "$missing_a" '{"forget": true}'
+  fm_test_fake_stream_set "$missing_b" '{"forget": true}'
+  fm_test_fake_stream_set "$missing_c" '{"forget": true}'
+
+  started=$(date +%s)
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  multi_elapsed=$(( $(date +%s) - started ))
+  assert_contains "$out" "endpoint: dead (backend=stream window=$missing_a)" "first missing stream endpoint not reported dead"
+  assert_contains "$out" "endpoint: dead (backend=stream window=$missing_b)" "second missing stream endpoint not reported dead"
+  assert_contains "$out" "endpoint: dead (backend=stream window=$missing_c)" "third missing stream endpoint not reported dead"
+  [ "$multi_elapsed" -le $((single_elapsed + 4)) ] \
+    || fail "missing stream endpoints did not share one rejoin window (one=${single_elapsed}s three=${multi_elapsed}s)"
+
+  pass "stream endpoint liveness reports live and gone endpoints within one fleet-wide rejoin window"
 }
 
 # A worker re-registering with its hub after a restart answers the presence
