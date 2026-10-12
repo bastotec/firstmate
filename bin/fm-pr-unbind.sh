@@ -40,10 +40,11 @@
 # rejected as unauthenticated on every cycle from then on. The meta rewrite
 # itself is the same atomic tmp-then-mv under the task's metadata lock that
 # bin/fm-pr-check.sh uses, and the whole unbind runs under the task's control
-# lock (state/.control-<id>.lock). bin/fm-pr-check.sh holds that lock from its
-# metadata rewrite through poll publication, bin/fm-watch.sh holds it for a poll
-# transaction, and bin/fm-teardown.sh holds it for lifecycle cleanup, so none
-# can interleave with unbind. The merge-notification marker and merge-authority
+# lock (state/.control-<id>.lock). bin/fm-pr-check.sh holds that lock across its
+# metadata rewrite, poll publication, parent-channel ready report, and final
+# success output; bin/fm-watch.sh holds it for a poll transaction, and
+# bin/fm-teardown.sh holds it for lifecycle cleanup, so none can interleave with
+# unbind. The merge-notification marker and merge-authority
 # records are untouched: they describe merges that really happened, and
 # teardown owns their removal.
 #
@@ -128,8 +129,10 @@ fi
 PR_URL=$FM_PR_META_URL
 
 # The whole unbind runs under the task's control lock, the same lock
-# bin/fm-pr-check.sh holds through poll publication, bin/fm-watch.sh holds for a
-# PR-poll transaction, and bin/fm-teardown.sh holds for lifecycle cleanup.
+# bin/fm-pr-check.sh holds across its metadata rewrite, poll publication,
+# parent-channel ready report, and final success output; bin/fm-watch.sh holds
+# it for a PR-poll transaction, and bin/fm-teardown.sh holds it for lifecycle
+# cleanup.
 CONTROL_LOCK="$STATE/.control-$ID.lock"
 CONTROL_LOCK_HELD=0
 META_TMP=
