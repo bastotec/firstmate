@@ -62,12 +62,15 @@
 # state/idle-sweep/<id>.raised; unchanged size suppresses another decision
 # even when the classification changes. Holds and settled deferrals on either
 # the worker or follow-up id take precedence over a changed fingerprint.
-# Every hold checks the worker record under the hold owner's original-task
-# control lock, retained through direct and linked follow-up holds, so a
-# record that changed or vanished is left for a fresh scan
-# (class unknown, action none) rather than raised for a worker no longer there.
+# Guarded worker holds use bin/fm-captain-hold.sh's --expected-record contract.
+# A rejected metadata snapshot is left for a fresh scan (class unknown,
+# action none), without attempting another linked hold or reporting it unhandled.
 # A main home has no parent audit, so a scan that leaves workers unhandled
-# queues ONE `check:` wake keyed idle-sweep-unhandled:<epoch> per distinct set.
+# queues ONE `check:` wake keyed idle-sweep-unhandled:<epoch>, naming those ids.
+# state/idle-sweep/.unhandled stores the sorted id set after a successful queue
+# append; unchanged sets suppress repeat wakes, changed sets queue a new one,
+# and a scan with no unhandled workers clears the marker so recurrence wakes again.
+# Secondmate homes leave unhandled workers to the parent audit below.
 # In a main home, a scan that raised any decision queues ONE `check:` wake
 # keyed idle-sweep:<epoch> naming those workers.
 #
