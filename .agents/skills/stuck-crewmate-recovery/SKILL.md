@@ -59,7 +59,7 @@ Nothing reaches the captain in that case.
 
 Never restart, stop, or update the shared daemon on a crewmate's claim.
 It is one instance serving every lane and home, so a restart kills other lanes' in-flight runs.
-Only positive socket refusal or absence is a daemon-down finding; escalate that finding, or a failed run record that names a daemon error, to the captain.
+Only positive socket refusal or absence is a daemon-down finding; escalate that finding, or a `failed` verdict from `bin/fm-crew-state.sh` whose `run-error` names an infrastructure kill, to the captain, never the raw run record after the current-state reader has reconciled it.
 
 ## Live-endpoint escalation
 

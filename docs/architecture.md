@@ -38,10 +38,10 @@ A busy pane is exempt from staleness only until its last completed turn or expli
 Past that bound, and for provably-working stale panes past `FM_STALE_ESCALATE_SECS`, the pane takes the wedge escalation: an escalation count in the reason and, at `FM_WEDGE_DEMAND_INSPECT_COUNT`, a `demand-deep-inspection` marker.
 Escalation is for inspection only, never an automatic interrupt, signal, or restart of the worker or its tool process.
 
-A task whose current-state read has reconciled `done` and whose metadata records its PR or MR is already a completed delivery held for merge, not working liveness.
+A task whose current-state read has reconciled `done` and whose metadata records its PR or MR, or whose authoritative run-step line positively attributes that PR or MR, is already a completed delivery held for merge, not working liveness.
 Its expected quiet pane is absorbed instead of entering the wedge ladder in both attended and away supervision.
 The daemon also clears stale markers left from earlier work and refuses to turn an enriched-wedge wake queued before reconciliation into a wedge escalation.
-A `done` read without a recorded PR or MR keeps the ordinary stale alarm path, while new status events and the eventual merge remain independent actionable wake sources.
+A `done` read without either recorded or positively attributed PR or MR evidence keeps the ordinary stale alarm path, while new status events and the eventual merge remain independent actionable wake sources.
 
 A pane whose recorded task worktree holds a file newer than its quiet window is deferred instead of escalated, because a crew writing files behind a static pane is liveness that neither pane quietness nor the run step can show.
 That deferral re-surfaces on the `FM_PAUSE_RESURFACE_SECS` cadence and costs one pruned, depth-bounded, wall-clock-bounded walk taken only when about to escalate, never on every poll.
@@ -89,7 +89,9 @@ A secondmate home's terminal outcomes, PR registrations, holds, and merges reach
 `bin/fm-crew-state.sh <id>` is the cheap current-state read, and its header owns the precedence.
 An attributed no-mistakes run step is authoritative even if the pane has closed, under [`bin/fm-nm-run-lib.sh`](../bin/fm-nm-run-lib.sh)'s attribution rules, and a live run outranks a terminal one so a crashed run never reports a healthy task as failed.
 A run whose only failure is the ci monitor after checks read green reports done, because a monitor observing a human merge decision must not turn its absence into failure.
-A terminal record whose daemon a probe proves down reports unknown, because an instrument failure must never read as work failure.
+Outside that held-green case, an infrastructure-killed full run is superseded by a current-incarnation busy or idle record only when the recovery-grade endpoint probe reports exactly alive and the worker's spawn generation postdates the attributed run.
+An alive incarnation without that ordering proof reads unknown, so neither the original worker surviving the daemon, a dead predecessor, nor a cached screen can be mistaken for a live replacement.
+A coarse terminal ledger record whose daemon probe reports down reads unknown, because an instrument failure must never read as work failure.
 Without a matching run, exact busy reports working, exact idle permits the status-log fallback, and unknown or dead stays unknown rather than trusting a stale log.
 
 `bin/fm-fleet-snapshot.sh --json` emits the `fm-fleet-snapshot.v1` contract that `bin/fm-fleet-view.sh` and `bin/fm-bearings-snapshot.sh` render, and its header owns the schema and remote-home collection.

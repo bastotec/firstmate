@@ -32,7 +32,10 @@ make_tools() { # <world>
   mkdir -p "$fake"
   cat > "$fake/fm-crew-state.sh" <<'SH'
 #!/usr/bin/env bash
-printf 'state: %s · source: fake\n' "${FM_FAKE_CREW_STATE:-unknown}"
+line="state: ${FM_FAKE_CREW_STATE:-unknown} · source: run-step"
+[ -z "${FM_FAKE_CREW_STATE_DETAIL:-}" ] || line="$line · $FM_FAKE_CREW_STATE_DETAIL"
+[ -z "${FM_FAKE_CREW_STATE_ERROR:-}" ] || line="$line · run-error: $FM_FAKE_CREW_STATE_ERROR"
+printf '%s\n' "$line"
 SH
   cat > "$fake/tmux" <<'SH'
 #!/usr/bin/env bash
@@ -152,8 +155,12 @@ reap() { kill "$1" 2>/dev/null || true; wait "$1" 2>/dev/null || true; }
 test_main_direct_terminal_presentation_receipt() {
   local err seq generation
   make_world main-direct; write_child "$MAIN" child 'done: PR https://example.test/owner/repo/pull/1 checks green'
-  FM_FAKE_CREW_STATE='done' run_reconcile "$MAIN" --startup
+  FM_FAKE_CREW_STATE='done' FM_FAKE_CREW_STATE_DETAIL='run completed' run_reconcile "$MAIN" --startup
   [ "$(wake_count "$MAIN" 'inactive-outcome:')" = 1 ] || fail "main did not queue terminal presentation"
+  grep -Fq 'detail=run completed' "$MAIN/state/.wake-queue" \
+    || fail "main presentation dropped the successful terminal detail"
+  ! grep -Fq 'error=' "$MAIN/state/.wake-queue" \
+    || fail "main presentation mislabeled a successful terminal detail as an error"
   [ "$(outcome_count "$MAIN" pending)" = 1 ] || fail "main did not retain presentation receipt"
 
   err="$WORLD/drain.err"
@@ -399,6 +406,40 @@ test_secondmate_remote_route_ledger_delivery() {
   [ "$(grep -c 'child-outcome-child-done' "$MATE/state/parent-replies.status")" = 1 ] \
     || fail "remote ledger delivery was not once-only: $(cat "$MATE/state/parent-replies.status" 2>/dev/null)"
   pass "the remote route carries a child's ledger line once"
+}
+
+# The 2026-10-09 incident, publication side: the current-state reader exposes
+# the generic failure detail and the run record's terminal error separately.
+# The inactive publication must preserve that distinction while carrying the
+# infrastructure cause to the parent.
+test_inactive_delivery_carries_the_run_recorded_error() {
+  make_world inactive-error; bind_secondmate local
+  write_child "$MATE" child 'working: mid-validation'
+  FM_FAKE_CREW_STATE='failed' FM_FAKE_CREW_STATE_DETAIL='run failed' \
+    FM_FAKE_CREW_STATE_ERROR='daemon shutting down' run_reconcile "$MATE" --startup
+  grep -Fq "failed [key=inactive-outcome-mate-child-failed]: inactive terminal child=child fingerprint=" \
+    "$MAIN/state/mate.status" \
+    || fail "the inactive path did not deliver its terminal line: $(cat "$MAIN/state/mate.status" 2>/dev/null)"
+  grep -Fq "detail=run failed error=daemon shutting down" "$MAIN/state/mate.status" \
+    || fail "the parent line did not preserve the detail/error split: $(cat "$MAIN/state/mate.status" 2>/dev/null)"
+  ! grep -Fq "error=run failed" "$MAIN/state/mate.status" \
+    || fail "the parent line mislabeled the generic detail as an error: $(cat "$MAIN/state/mate.status" 2>/dev/null)"
+  [ "$(outcome_count "$MATE" reported)" = 1 ] || fail "the inactive delivery left no durable receipt"
+  pass "an inactive terminal delivery carries the run's distinct recorded error"
+}
+
+# A successful terminal detail remains ordinary detail and creates no error
+# field on the parent line.
+test_inactive_successful_terminal_detail_is_not_an_error() {
+  make_world inactive-success-detail; bind_secondmate local
+  write_child "$MATE" child 'working: mid-validation'
+  FM_FAKE_CREW_STATE='done' FM_FAKE_CREW_STATE_DETAIL='run completed' \
+    run_reconcile "$MATE" --startup
+  grep -Fq "detail=run completed" "$MAIN/state/mate.status" \
+    || fail "the parent line dropped a successful terminal detail: $(cat "$MAIN/state/mate.status" 2>/dev/null)"
+  ! grep -Fq 'error=' "$MAIN/state/mate.status" \
+    || fail "a successful terminal detail was published as an error: $(cat "$MAIN/state/mate.status" 2>/dev/null)"
+  pass "a successful terminal detail is never published as an error"
 }
 
 # `report <child>` is the teardown-side delivery: it delivers or says nothing
@@ -831,6 +872,8 @@ test_progress_after_inactive_delivery_starts_a_new_event
 test_long_terminal_lines_have_distinct_receipts
 test_secondmate_partial_ledger_line_waits_for_newline
 test_secondmate_remote_route_ledger_delivery
+test_inactive_delivery_carries_the_run_recorded_error
+test_inactive_successful_terminal_detail_is_not_an_error
 test_report_subcommand_delivers_and_refuses
 test_report_avoids_scan_meta_lock_inversion
 test_local_secondmate_rejects_relative_parent_home

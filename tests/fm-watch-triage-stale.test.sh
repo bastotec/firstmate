@@ -344,7 +344,7 @@ test_nonterminal_stale_paused_absorbed_then_resurfaced() {
   pass "a declared pause is absorbed on first sight, then re-surfaced as a recheck past the threshold, never wedge-escalated"
 }
 
-# --- stale pane, crew reconciled DONE with a recorded PR: absorbed and never
+# --- stale pane, crew reconciled DONE with PR evidence: absorbed and never
 #     wedge-escalated ----------------------------------------------------------
 # The live case behind this bound: a finished worker whose PR sits green and
 # ready while the merge authority decides. Its pane is legitimately quiet for
@@ -352,9 +352,9 @@ test_nonterminal_stale_paused_absorbed_then_resurfaced() {
 # consecutive possible-wedge escalations on one finished delivery - training
 # the supervisor to dismiss exactly the alarm that will one day be real. The
 # terminal branch is the canonical shape (the delivery's own done: line is the
-# last status entry), and the recorded PR is what makes the quiet pane a
-# delivery awaiting merge rather than an unknown state, so it gates the bound:
-# done with no PR keeps the ordinary surface-it alarm.
+# last status entry). A recorded PR or the authoritative run's attributed PR is
+# what makes the quiet pane a delivery awaiting merge rather than an unknown
+# state, so done with neither keeps the ordinary surface-it alarm.
 test_done_pr_held_for_merge_stale_absorbed_not_wedge_escalated() {
   local dir state fakebin out capture_file calls window key pane_hash sig pid back statusf pr since
   dir=$(make_case nonterminal-stale-held-merge); state="$dir/state"; fakebin="$dir/fakebin"
@@ -362,7 +362,7 @@ test_done_pr_held_for_merge_stale_absorbed_not_wedge_escalated() {
   cat > "$fakebin/fm-crew-state.sh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$1" >> "$FM_TEST_CREW_STATE_CALLS"
-printf '%s\n' 'state: done · source: run-step · checks green: PR ready for review'
+printf '%s\n' 'state: done · source: run-step · checks green: PR ready for review · run-pr: https://github.com/acme/widget/pull/7'
 SH
   chmod +x "$fakebin/fm-crew-state.sh"
   window=$(stream_window "$state" delivered)
@@ -404,6 +404,8 @@ SH
   reap "$pid"
   ack_stopped_cycle "$state" || fail "could not acknowledge the intentional held-merge phase-A stop"
 
+  grep -v '^pr=' "$state/delivered.meta" > "$state/delivered.meta.next"
+  mv "$state/delivered.meta.next" "$state/delivered.meta"
   : > "$out"
   : > "$calls"
   echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
@@ -416,8 +418,8 @@ SH
   if ! wait_poll_cycle "$state" "$pid"; then
     reap "$pid"; fail "the wedge ladder escalated a done delivery awaiting merge: $(cat "$out")"
   fi
-  [ ! -s "$out" ] || fail "the due wedge ladder printed a wake for a done delivery awaiting merge: $(cat "$out")"
-  [ ! -s "$state/.wake-queue" ] || fail "the due wedge ladder enqueued a wake for a done delivery awaiting merge"
+  [ ! -s "$out" ] || fail "the attributed green PR's due wedge ladder printed a wake: $(cat "$out")"
+  [ ! -s "$state/.wake-queue" ] || fail "the attributed green PR's due wedge ladder enqueued a wake"
   [ "$(wc -l < "$calls" | tr -d ' ')" = 1 ] || fail "the due held-merge ladder read crew state more than once"
   since=$(cat "$state/.stale-since-$key" 2>/dev/null || true)
   [ "$since" -gt $(( $(date +%s) - 10 )) ] \
@@ -425,7 +427,7 @@ SH
   reap "$pid"
   ack_stopped_cycle "$state" || fail "could not acknowledge the intentional held-merge phase-B stop"
 
-  pass "a done delivery with a recorded PR remains quiet and never wedge-escalates"
+  pass "a done delivery with a recorded or attributed PR remains quiet and never wedge-escalates"
 }
 
 test_stable_declared_pause_working_reads_state_once() {

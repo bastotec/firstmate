@@ -1888,24 +1888,45 @@ status_span_has_actionable() {  # <status-file> <start-offset>
 #             (e.g. waiting on CI);
 #   paused  - the crew's authoritative current state is a declared external-wait
 #             pause (paused:), which is EXPECTED to idle;
-#   done    - a reconciled done crew with a recorded PR, waiting on the merge
-#             authority. This is a completed delivery, not liveness: it is never
-#             "provably working", and stale handling suppresses wedge alarms
-#             while it waits;
+#   done    - a reconciled done crew with a recorded or positively attributed
+#             run PR, waiting on the merge authority. This is a completed
+#             delivery, not liveness: it is never "provably working", and stale
+#             handling suppresses wedge alarms while it waits;
 #   none    - neither, so the wake must surface (a stopped/finished/parked/failed/
 #             torn-down/unknown crew, or an unreadable verdict).
 # One fm-crew-state.sh read serves ALL absorb reasons at once. Reading the state
 # authoritatively (not the status log) is what keeps run-step precedence: a crew
 # that appended paused: but then STARTED a run reports working, never paused.
-# A done verdict is gated on a recorded PR because that record is what makes the
-# wait a delivery awaiting merge: without it (crew_done_pr_url returns 1) the
-# verdict reads none, so a crew merely reporting done with no PR - possibly a
-# worker wedged after a status append, or waiting on an unrecorded outcome -
-# keeps the ordinary surface-it alarm.
+# A done verdict is gated on a recorded PR or an authoritative checks-green
+# state line's machine-readable run-pr field because that evidence makes the
+# wait a delivery awaiting merge. Without either, the verdict reads none, so
+# a crew merely reporting done with no PR - possibly a worker wedged after a
+# status append, or waiting on an unrecorded outcome - keeps the ordinary
+# surface-it alarm.
 # NOT a pure read: fm-crew-state.sh may make a bounded no-mistakes call, so callers
 # run it only on no-verb signals, first-sighting stale paths, and due stale
 # escalation boundaries, never every wake.
 # FM_CREW_STATE_BIN lets tests stub the verdict.
+crew_pr_url_valid() {  # <url>
+  case "$1" in
+    https://github.com/*/pull/[0-9]*|https://*/*/-/merge_requests/[0-9]*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+crew_state_run_pr_url() {  # <state-line>
+  local line=$1 url
+  case "$line" in
+    state:\ done' · source: run-step · checks green:'*) ;;
+    *) return 1 ;;
+  esac
+  case "$line" in *' · run-pr: '*) ;; *) return 1 ;; esac
+  url=${line#*' · run-pr: '}
+  url=${url%%' · '*}
+  crew_pr_url_valid "$url" || return 1
+  printf '%s\n' "$url"
+}
+
 crew_absorb_class() {  # <id>
   local id=$1 line state src
   [ -n "$id" ] || { printf 'none'; return; }
@@ -1914,9 +1935,10 @@ crew_absorb_class() {  # <id>
   state=${line#state: }; state=${state%% *}
   if [ "$state" = paused ]; then printf 'paused'; return; fi
   if [ "$state" = "done" ]; then
-    # Redirected: crew_done_pr_url prints the URL for callers that name it in a
-    # wake reason, so its stdout must not leak into this classifier's token.
-    if crew_done_pr_url "${STATE:-${FM_STATE_OVERRIDE:-}}" "$id" >/dev/null; then
+    # Redirected: both helpers print the URL for callers that name it in a wake
+    # reason, so their stdout must not leak into this classifier's token.
+    if crew_done_pr_url "${STATE:-${FM_STATE_OVERRIDE:-}}" "$id" >/dev/null \
+      || crew_state_run_pr_url "$line" >/dev/null; then
       printf 'done'
     else
       printf 'none'
@@ -1945,10 +1967,7 @@ crew_done_pr_url() {  # <state-dir> <id>
   local url
   [ -n "$1" ] && [ -n "$2" ] || return 1
   url=$(grep '^pr=' "$1/$2.meta" 2>/dev/null | tail -1 | cut -d= -f2-)
-  case "$url" in
-    https://github.com/*/pull/[0-9]*|https://*/*/-/merge_requests/[0-9]*) ;;
-    *) return 1 ;;
-  esac
+  crew_pr_url_valid "$url" || return 1
   printf '%s\n' "$url"
 }
 
@@ -1973,9 +1992,10 @@ crew_is_paused() {  # <id>
   [ "$(crew_absorb_class "$1")" = paused ]
 }
 
-# 0 if crew <id> is a reconciled done delivery with a recorded PR, awaiting the
-# merge authority. The stale path suppresses possible-wedge alarms because the
-# pane of a finished worker is expected to be quiet for the whole merge wait.
+# 0 if crew <id> is a reconciled done delivery with a recorded or positively
+# attributed run PR, awaiting the merge authority. The stale path suppresses
+# possible-wedge alarms because the pane of a finished worker is expected to
+# be quiet for the whole merge wait.
 crew_is_held_for_merge() {  # <id>
   [ "$(crew_absorb_class "$1")" = "done" ]
 }

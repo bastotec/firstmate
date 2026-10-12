@@ -153,6 +153,17 @@ run_crew_state() {  # <case-dir> <id>
   PATH="$1/fakebin:$PATH" FM_STATE_OVERRIDE="$1/state" "$CREW_STATE" "$2"
 }
 
+probe_stream_backend() {  # <home> <function> [args...]
+  local home=$1
+  shift
+  (
+    export FM_HOME="$home" FM_ROOT="$ROOT"
+    # shellcheck source=/dev/null
+    . "$ROOT/bin/fm-backend.sh"
+    "$@"
+  )
+}
+
 new_case() {  # <name> -> echoes case dir with an empty state/
   local d="$TMP_ROOT/$1"
   mkdir -p "$d/state"
@@ -405,6 +416,91 @@ steps[9]{step,status,findings,duration_ms}:
   push,completed,0,0
   pr,completed,0,0
   ci,failed,0,76127890
+EOF
+}
+
+# The 2026-10-09 incident shape, verbatim from the real ledger: a green PR
+# (14 of 14 checks) whose terminal FAILED run carries `error: daemon shutting
+# down` AND a `jev,skipped` step. The optional jev step reading `skipped` is
+# exactly what disqualified the older completed-only orphaned-monitor test, so
+# the run kept reading failed after the kill.
+run_failed_ci_orphan_daemon_kill_jev_skipped() {  # <branch>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: failed
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: "https://github.com/o/r/pull/6"
+  findings: none
+outcome: failed
+error: "daemon shutting down"
+steps[10]{step,status,findings,duration_ms}:
+  intent,completed,0,103
+  rebase,completed,0,2610
+  review,completed,0,1575824
+  jev,skipped,0,95
+  test,completed,0,390024
+  document,completed,0,952282
+  lint,completed,0,248
+  push,completed,0,6268
+  pr,completed,0,36046
+  ci,failed,0,19690039
+EOF
+}
+
+# The same kill landing mid-pipeline instead of on the monitor: a substantive
+# step (test) failed with the daemon-shutdown error, later steps never ran,
+# and the run's PR field still names a PR an earlier push opened. This record
+# must NOT read done - nothing proves the checks green - and must not read as
+# a merit failure either once the crew itself is provably live again.
+run_failed_daemon_kill_mid_pipeline() {  # <branch>
+  cat <<EOF
+run:
+  id: "01KXC3SD5NZYMERGDS68Z1C8ER"
+  branch: $1
+  status: failed
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: "https://github.com/o/r/pull/15"
+  findings: 2 info
+outcome: failed
+error: "daemon shutting down"
+steps[9]{step,status,findings,duration_ms}:
+  intent,completed,0,16
+  rebase,completed,0,18967
+  review,completed,2,1440882
+  test,failed,0,644594
+  document,pending,0,0
+  lint,pending,0,0
+  push,pending,0,0
+  pr,pending,0,0
+  ci,pending,0,0
+EOF
+}
+
+# A merit failure that carries a step-scoped recorded error: the work itself
+# was refused, so the failure verdict must stand and now name its cause.
+run_failed_refused_publication() {  # <branch>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: failed
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  pr: ""
+  findings: none
+outcome: failed
+error: "step pr failed: refusing non-compliant PR publication: risk statement stale"
+steps[9]{step,status,findings,duration_ms}:
+  intent,completed,0,16
+  rebase,completed,0,18967
+  review,completed,0,1440882
+  test,completed,0,644594
+  document,completed,0,952282
+  lint,completed,0,248
+  push,completed,0,6268
+  pr,failed,0,36046
+  ci,pending,0,0
 EOF
 }
 
@@ -1155,6 +1251,7 @@ test_terminal_passed() {
   local out; out=$(run_crew_state "$d" feat-d)
   assert_contains "$out" "state: done" "passed run -> done"
   assert_contains "$out" "source: run-step" "passed -> run-step source"
+  assert_not_contains "$out" "run-pr:" "a merged or closed run does not expand the attributed green-PR protocol"
   pass "terminal passed run is authoritative"
 }
 
@@ -1232,6 +1329,156 @@ daemon shutting down"
   assert_contains "$out" "state: failed" "a second failed step keeps the run failed"
   assert_not_contains "$out" "state: done" "a second failed step must not reclassify to done"
   pass "a second failed step disqualifies the orphaned-monitor reclassification"
+}
+
+# The 2026-10-09 incident: the same orphaned-monitor shape with the pipeline's
+# optional jev step reading `skipped` and the run's own recorded cause naming
+# the daemon shutdown. The older completed-only predicate rejected the skipped
+# row, so a 14-of-14-green PR kept reading failed after the kill.
+test_daemon_killed_green_pr_with_skipped_step_reads_done() {
+  reset_fakes
+  local d; d=$(new_case daemon-kill-green-jev)
+  make_repo_on_branch "$d/wt" fm/feat-dkill-jev
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-dkill-jev.meta" $(fm_test_stream_task "$d/state" "feat-dkill-jev") "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_failed_ci_orphan_daemon_kill_jev_skipped fm/feat-dkill-jev)"
+  FM_FAKE_CI_LOGS="all CI checks passed - still monitoring until merged or closed"
+  local out; out=$(run_crew_state "$d" feat-dkill-jev)
+  assert_contains "$out" "state: done" "a daemon kill after a green PR reads done, not failed"
+  assert_contains "$out" "source: run-step" "the reclassified verdict stays run-step sourced"
+  assert_contains "$out" "run-error: daemon shutting down" "the state line separately carries the run's recorded cause"
+  assert_contains "$out" "run-pr: https://github.com/o/r/pull/6" "the attributed green PR is machine-readable"
+  assert_not_contains "$out" "state: failed" "the killed monitor must not read as a failed run"
+  pass "daemon shutdown under a green PR with a skipped step reads held-for-merge done"
+}
+
+# The stale-record-after-relaunch shape: the daemon killed a mid-pipeline run
+# (`test` failed with the shutdown error, everything after it pending), the
+# task was relaunched after that run began, and its CURRENT-gen busy record plus
+# newer spawn generation prove the new crew is live. The dead run's row still
+# binds by head, so the run-step path alone declared the live task failed.
+test_relaunched_live_crew_outranks_daemon_killed_run_record() {
+  reset_fakes
+  local d; d=$(new_case daemon-kill-relaunched)
+  make_repo_on_branch "$d/wt" fm/feat-dkill-relaunch
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-dkill-relaunch.meta" $(fm_test_stream_task "$d/state" "feat-dkill-relaunch") "worktree=$d/wt" "kind=ship" "harness=deck" "spawn_gen=s1783891802.1.1"
+  fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$d/state" feat-dkill-relaunch)" deck
+  FM_FAKE_AXI_STATUS="$(run_failed_daemon_kill_mid_pipeline fm/feat-dkill-relaunch)"
+  # The relaunched crew's current-incarnation busy record: a fresh gen with a
+  # busy event, exactly what fm-spawn's relaunch arms and the deck worker
+  # writes at turn-start.
+  local gen; gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" feat-dkill-relaunch)
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" feat-dkill-relaunch busy --gen "$gen" \
+    --source deck-wrapper --event turn-start
+  local out; out=$(run_crew_state "$d" feat-dkill-relaunch)
+  assert_contains "$out" "state: working" "a live relaunched crew outranks its dead predecessor's failed record"
+  assert_contains "$out" "source: run-step" "the verdict stays an attributed run-step read"
+  assert_contains "$out" "crew live (relaunched, busy)" "the detail names the live busy replacement"
+  assert_contains "$out" "run-error: daemon shutting down" "the state line separately carries the run's recorded cause"
+  assert_not_contains "$out" "state: failed" "the stale killed record must not declare the live task failed"
+
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" feat-dkill-relaunch idle --gen "$gen" \
+    --source deck-wrapper --event turn-end
+  out=$(run_crew_state "$d" feat-dkill-relaunch)
+  assert_contains "$out" "state: working" "an alive idle replacement still outranks its dead predecessor's failed record"
+  assert_contains "$out" "crew live (relaunched, idle)" "the detail names the live idle replacement"
+  assert_not_contains "$out" "state: failed" "turn-end idle cannot restore the dead predecessor's failure"
+  pass "a relaunched live crew supersedes its predecessor's daemon-killed record while busy or idle"
+}
+
+# An alive worker from the original incarnation can survive the daemon that
+# killed its validation run. Its current semantic record may then become idle,
+# but its spawn generation predates the run and cannot prove a relaunch.
+test_original_live_crew_does_not_outrank_daemon_killed_run_record() {
+  reset_fakes
+  local d; d=$(new_case daemon-kill-original-survivor)
+  make_repo_on_branch "$d/wt" fm/feat-dkill-original
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-dkill-original.meta" $(fm_test_stream_task "$d/state" "feat-dkill-original") "worktree=$d/wt" "kind=ship" "harness=deck" "spawn_gen=s1783891800.1.1"
+  fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$d/state" feat-dkill-original)" deck
+  FM_FAKE_AXI_STATUS="$(run_failed_daemon_kill_mid_pipeline fm/feat-dkill-original)"
+  local gen; gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" feat-dkill-original)
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" feat-dkill-original busy --gen "$gen" \
+    --source deck-wrapper --event turn-start
+  local out; out=$(run_crew_state "$d" feat-dkill-original)
+  assert_contains "$out" "state: unknown" "an alive original worker cannot claim a dead validation run was relaunched"
+  assert_contains "$out" "replacement after run not proven" "the verdict names the missing incarnation ordering proof"
+  assert_not_contains "$out" "state: working" "an unproven live incarnation must not read working"
+  assert_not_contains "$out" "state: failed" "an alive infrastructure-kill survivor gets an honest unknown verdict"
+
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" feat-dkill-original idle --gen "$gen" \
+    --source deck-wrapper --event turn-end
+  out=$(run_crew_state "$d" feat-dkill-original)
+  assert_contains "$out" "state: unknown" "an idle original worker still cannot claim a relaunch"
+  assert_not_contains "$out" "state: working" "turn-end idle does not fabricate replacement linkage"
+  pass "an alive original incarnation leaves killed-run supersession unknown"
+}
+
+# The same killed mid-pipeline record with NO live crew: the failure verdict
+# stands and now carries the run's recorded cause, so a reader sees the kill.
+test_daemon_killed_run_without_live_crew_names_its_cause() {
+  reset_fakes
+  local d; d=$(new_case daemon-kill-no-crew)
+  make_repo_on_branch "$d/wt" fm/feat-dkill-nocrew
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-dkill-nocrew.meta" $(fm_test_stream_task "$d/state" "feat-dkill-nocrew") "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_failed_daemon_kill_mid_pipeline fm/feat-dkill-nocrew)"
+  local out; out=$(run_crew_state "$d" feat-dkill-nocrew)
+  assert_contains "$out" "state: failed" "an unrelaunched killed run keeps its terminal failure verdict"
+  assert_contains "$out" "run failed" "the failed run keeps its generic detail"
+  assert_contains "$out" "run-error: daemon shutting down" "the failure separately names the recorded infrastructure cause"
+  assert_not_contains "$out" "state: done" "no green evidence exists, so no held-for-merge reclassification"
+  pass "a daemon-killed run with no live crew still fails, naming its cause"
+}
+
+# The reboot shape: the same kill took the worker too, so a FROZEN busy record
+# from the dead incarnation remains alongside a cached readable screen. The
+# stream agent's own reading is stale, so the recovery-grade endpoint verdict
+# is unreadable even though capture succeeds. The override must refuse it - a
+# dead crew reading working would mask exactly the wedge alarm this reader
+# exists to raise - and the failure still names its cause.
+test_daemon_killed_run_with_frozen_busy_record_and_stale_agent_stays_failed() {
+  reset_fakes
+  local d; d=$(new_case daemon-kill-frozen-busy)
+  make_repo_on_branch "$d/wt" fm/feat-dkill-frozen
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-dkill-frozen.meta" $(fm_test_stream_task "$d/state" "feat-dkill-frozen") "worktree=$d/wt" "kind=ship" "harness=deck"
+  fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$d/state" feat-dkill-frozen)" deck
+  FM_FAKE_AXI_STATUS="$(run_failed_daemon_kill_mid_pipeline fm/feat-dkill-frozen)"
+  local gen; gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" feat-dkill-frozen)
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" feat-dkill-frozen busy --gen "$gen" \
+    --source deck-wrapper --event turn-start
+  FM_FAKE_ENDPOINT_UNREADABLE=1   # capture stays cached, but the agent state is stale
+  local out target capture agent_state
+  out=$(run_crew_state "$d" feat-dkill-frozen)
+  target=$(fm_test_stream_target_of "$d/state" feat-dkill-frozen)
+  capture=$(probe_stream_backend "$d" fm_backend_capture stream "$target" 1 fm-feat-dkill-frozen)
+  agent_state=$(probe_stream_backend "$d" fm_backend_agent_state stream "$target")
+  assert_contains "$capture" ">" "the stale endpoint still serves its cached capture"
+  assert_equals unreadable "$agent_state" "the same endpoint is not recovery-grade alive"
+  assert_contains "$out" "state: failed" "a frozen busy record over a stale agent cannot mask the failure"
+  assert_contains "$out" "run failed" "the failed run keeps its generic detail"
+  assert_contains "$out" "run-error: daemon shutting down" "the failure separately names the recorded infrastructure cause"
+  assert_not_contains "$out" "crew live (relaunched)" "the live-crew override requires an exactly alive endpoint"
+  pass "a cached capture from a stale agent cannot make a killed run working"
+}
+
+# A merit failure keeps its failed verdict and now names its step-scoped
+# recorded error, so a refused publication reads as its own cause.
+test_merit_failure_carries_recorded_error() {
+  reset_fakes
+  local d; d=$(new_case merit-failed-cause)
+  make_repo_on_branch "$d/wt" fm/feat-merit
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-merit.meta" $(fm_test_stream_task "$d/state" "feat-merit") "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_failed_refused_publication fm/feat-merit)"
+  local out; out=$(run_crew_state "$d" feat-merit)
+  assert_contains "$out" "state: failed" "a genuine merit failure stays failed"
+  assert_contains "$out" "refusing non-compliant PR publication" "the failure carries its recorded cause"
+  assert_contains "$out" "run failed · run-error:" "the generic detail and recorded error remain distinct"
+  assert_not_contains "$out" "state: done" "a refused publication never reads done"
+  pass "a merit failure keeps the failed verdict and names its recorded cause"
 }
 
 # (e) cross-branch attribution: `axi status` returns ANOTHER branch's run (the
@@ -2461,6 +2708,12 @@ test_terminal_failed_ci_orphan_after_green_reads_done
 test_terminal_failed_ci_orphan_status_only_reads_done
 test_terminal_failed_ci_genuine_red_stays_failed
 test_terminal_failed_ci_orphan_second_failed_step_stays_failed
+test_daemon_killed_green_pr_with_skipped_step_reads_done
+test_relaunched_live_crew_outranks_daemon_killed_run_record
+test_original_live_crew_does_not_outrank_daemon_killed_run_record
+test_daemon_killed_run_without_live_crew_names_its_cause
+test_daemon_killed_run_with_frozen_busy_record_and_stale_agent_stays_failed
+test_merit_failure_carries_recorded_error
 test_cross_branch_attribution_via_runs_list
 test_coarse_socket_refusal_reports_blocked
 test_coarse_failed_ledger_with_daemon_down_reports_unknown

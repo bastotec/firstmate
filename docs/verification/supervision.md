@@ -27,7 +27,7 @@ Portable regression entry points:
 bin/fm-test-run.sh tests/fm-watch-triage.test.sh tests/fm-watch-triage-stale.test.sh tests/fm-daemon.test.sh
 ```
 
-The suites cover the recorded GitHub and GitLab delivery gate, the no-record alarm path, first-sight and due-ladder suppression with one authoritative state read, away-housekeeping marker retirement, and preservation of a newly actionable completion when an enriched wedge is already queued.
+The suites cover the recorded GitHub and GitLab delivery gate, the positively attributed run-PR gate, the no-evidence alarm path, first-sight and due-ladder suppression with one authoritative state read, away-housekeeping marker retirement, and preservation of a newly actionable completion when an enriched wedge is already queued.
 
 ## Turn-end supervision
 

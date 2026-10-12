@@ -15,7 +15,7 @@
 # fixed mapping logic, no heuristics and no LLM. Output is one stable, parseable,
 # token-tight line firstmate can read every heartbeat:
 #
-#   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|remote-endpoint|none> · <detail>
+#   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|remote-endpoint|none> · <detail> [· run-pr: <url>] [· run-error: <error>]
 #
 # Logic, in order:
 #   1. Resolve worktree + backend target + kind from state/<id>.meta. A meta
@@ -55,16 +55,27 @@
 #      checks" from "checks green, waiting on merge" (see nm_ci_checks_state) -
 #      a ci-step log-tail check overrides working -> done once checks read
 #      green, so a green PR is never silently read as still-validating. And a
-#      terminal FAILED run whose only failure is the ci monitor step, after
-#      every substantive step completed and the ci log's last marker reads
-#      checks green, also reads done (held-for-merge), never failed: a monitor
-#      whose only remaining job is to observe a human merge decision must not
-#      convert the absence of that decision into a failure verdict
-#      (nm_failed_run_is_green_held_ci; 2026-09-05 jr-voice incident). In the
-#      coarse runs-ledger fallback (no steps table, no ci log), a terminal
-#      FAILED record whose daemon an explicit probe proves down reads unknown,
-#      never failed: an instrument failure must not read as work failure
-#      (nm_daemon_probe_down).
+#      terminal FAILED run goes through nm_failed_run_verdict: held-for-merge
+#      done when only the ci monitor failed after every other step completed
+#      or skipped and the ci log reads checks green (a monitor whose only
+#      remaining job is to observe a merge decision must not convert the
+#      absence of that decision into a failure; nm_failed_run_is_green_held_ci,
+#      2026-09-05 jr-voice), else working when the run's own recorded error
+#      names the infrastructure (nm_error_is_infra_kill: daemon shutdown or a
+#      canceled context) and an exactly alive CURRENT-gen busy or idle crew has
+#      a spawn generation newer than the attributed run. An alive incarnation
+#      without that ordering proof reads unknown, never working; every other
+#      case remains a genuine failure.
+#      The `run-pr` field appears only on a positively attributed checks-green
+#      done verdict; working, parked, ordinary completed, failed, cancelled,
+#      merged, and closed run states never emit it.
+#      The run's recorded error is carried in a distinct run-error field, so a
+#      refused publication reads as its recorded cause rather than a bare
+#      `run failed` and generic detail is never mislabeled as an error.
+#      In the coarse runs-ledger fallback (no steps table, no ci log), a
+#      terminal FAILED record whose daemon an explicit probe proves down reads
+#      unknown, never failed: an instrument failure must not read as work
+#      failure (nm_daemon_probe_down).
 #   3. Reconcile the status log: if its last line says needs-decision/blocked but
 #      the run-step shows the run moved on, the log is deterministically stale and
 #      is flagged superseded. A genuinely parked run plus a needs-decision log
@@ -109,6 +120,7 @@
 #     run=<id>             the no-mistakes run id; empty from the coarse ledger
 #     pr=<url>             the run's PR, when present; empty from the coarse ledger
 #     detail=<text>        this reader's one-line detail
+#     error=<text>         the run's recorded terminal error, when present
 #     updated_at=<UTC>     when any other line last changed
 #   Scouts, secondmates, remote mates, missing metadata and torn-down copies
 #   publish nothing; bin/fm-teardown.sh removes the record.
@@ -204,6 +216,8 @@ HAVE_RUN=0
 RUN_OUT=''
 RUN_SOURCE=full
 COARSE_STATUS=''
+RUN_ERROR=''
+RUN_PR=''
 
 # The run's current step and that step's status, tab-separated (header: step=).
 crew_state_step() {
@@ -222,7 +236,7 @@ crew_state_step() {
 }
 
 # Header: PUBLISHED RECORD.
-crew_state_publish() {  # <state> <detail>
+crew_state_publish() {  # <state> <detail> [run-error]
   local record="$STATE/$ID.crew-state" tmp body step='' step_status='' run='' pr=''
   [ "$PUBLISH_READY" = 1 ] || return 0
   if [ "$HAVE_RUN" != 1 ]; then
@@ -236,8 +250,9 @@ crew_state_publish() {  # <state> <detail>
     run=$(strip_quotes "$(nm_field id)")
     pr=$(strip_quotes "$(nm_field pr)")
   fi
-  body=$(printf 'verdict=%s\nstep=%s\nstep_status=%s\nrun=%s\npr=%s\ndetail=%s' \
-    "$1" "$step" "$step_status" "$run" "$pr" "$(printf '%s' "$2" | tr '\n\r' '  ')")
+  body=$(printf 'verdict=%s\nstep=%s\nstep_status=%s\nrun=%s\npr=%s\ndetail=%s\nerror=%s' \
+    "$1" "$step" "$step_status" "$run" "$pr" "$(printf '%s' "$2" | tr '\n\r' '  ')" \
+    "$(printf '%s' "${3:-}" | tr '\n\r' '  ')")
   [ ! -L "$record" ] || return 0
   if [ -f "$record" ] && [ "$(grep -v '^updated_at=' "$record" 2>/dev/null)" = "$body" ]; then
     return 0
@@ -250,11 +265,13 @@ crew_state_publish() {  # <state> <detail>
   rm -f -- "$tmp"
 }
 
-# Emit the one canonical line and exit 0. Detail is optional.
-emit() {  # <state> <source> [detail]
-  [ "$MODE" != publish ] || crew_state_publish "$1" "${3:-}"
+# Emit the one canonical line and exit 0. Detail, run error, and run PR are optional.
+emit() {  # <state> <source> [detail] [run-error] [run-pr]
+  [ "$MODE" != publish ] || crew_state_publish "$1" "${3:-}" "${4:-}"
   local line="state: $1${SEP}source: $2"
   [ -n "${3:-}" ] && line="$line${SEP}$3"
+  [ -n "${5:-}" ] && line="$line${SEP}run-pr: $5"
+  [ -n "${4:-}" ] && line="$line${SEP}run-error: $4"
   printf '%s\n' "$line"
   exit 0
 }
@@ -601,16 +618,52 @@ nm_run_activity_is_recent() {
   ! printf '%s\n' "$rows" | grep -q 'quiet'
 }
 
+# The run's recorded terminal error, on one line, when `axi status` carries one.
+# The pipeline records WHY a terminal run ended on a top-level `error:` scalar
+# (quoted or bare), and that cause is what distinguishes an infrastructure kill
+# - "daemon shutting down" (the daemon's own TERM path marking every in-flight
+# run failed), a reboot, or a canceled context - from a merit failure the work
+# itself earned ("step pr failed: refusing ..."). The value is carried in this
+# reader's distinct run-error field so any reader of the parent line can see
+# the kill was not the crew's failure without mistaking the generic state
+# detail for an error.
+nm_run_error() {
+  local err
+  err=$(strip_quotes "$(nm_field error)")
+  printf '%s' "$err" | tr '\n\r' '  '
+}
+
+# 0 when the run's recorded terminal error names the infrastructure, not the
+# work: the daemon's own shutdown marking its in-flight runs failed, or a
+# canceled context from the same stop. The two literals are the daemon's own
+# terminal-kill words (`daemon shutting down` appears verbatim in the
+# installed no-mistakes binary's error strings; `context canceled` is the Go
+# context error it surfaces when the same stop unwinds a step), while every
+# merit failure records a step-scoped cause instead ("step pr failed: ...",
+# "step review failed: agent ...", a gate refusal). Exact match only: a
+# missing or unrecognized error is simply not an infrastructure kill - the
+# merit-failure path stays untouched.
+nm_error_is_infra_kill() {  # <error-text>
+  case "$1" in
+    'daemon shutting down'|'context canceled') return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # 0 when a terminal FAILED run's only failure is the ci monitor step and the
 # ci log's last recognized marker reads checks green. Requires the exact
 # shape, all on positive evidence: a steps[] table where every step completed
-# except exactly `ci` failed (any other non-completed status, or a second
-# failed step, disqualifies), plus nm_ci_checks_state=green (a genuinely red
-# check, or an unreadable ci log, keeps the failure a failure). This is the
-# orphaned-CI-monitor gap (2026-09-05 jr-voice): a run held for a captain
-# merge decision polls until the shared daemon restarts under it and marks
-# the run failed, although GitHub's own check state - the actual shippability
-# authority - is green and every substantive step completed.
+# or was skipped except exactly `ci` failed (any other non-completed status,
+# or a second failed step, disqualifies), plus nm_ci_checks_state=green (a
+# genuinely red check, or an unreadable ci log, keeps the failure a failure).
+# This is the orphaned-CI-monitor gap (2026-09-05 jr-voice): a run held for a
+# captain merge decision polls until the shared daemon restarts under it and
+# marks the run failed, although GitHub's own check state - the actual
+# shippability authority - is green and every substantive step completed.
+# A `skipped` step no longer disqualifies: the pipeline's optional jev step
+# reads skipped on exactly the runs that otherwise match this shape, so the
+# older completed-only test let a 14-of-14-green killed run keep reading
+# failed (2026-10-09 incident).
 nm_failed_run_is_green_held_ci() {
   local rows row rest step status saw_ci_failed
   rows=$(nm_steps_rows)
@@ -622,7 +675,7 @@ nm_failed_run_is_green_held_ci() {
     rest=${row#*,}
     status=$(strip_quotes "$(trim "${rest%%,*}")")
     case "$status" in
-      completed) continue ;;
+      completed|skipped) continue ;;
       failed)
         [ "$step" = ci ] || return 1
         saw_ci_failed=1
@@ -640,13 +693,79 @@ EOF
 # Reclassify a terminal failed run as done (held-for-merge) when
 # nm_failed_run_is_green_held_ci matches, surfacing the run's PR URL so the
 # supervisor reads the concrete review-ready outcome instead of a failure.
+# The run's own recorded error rides alongside the detail, so a reader sees
+# the monitor died (daemon shutdown or canceled context) rather than the checks
+# failing.
 nm_reclassify_failed_run_as_held_green() {
   nm_failed_run_is_green_held_ci || return 1
   RUN_STATE="done"
   RUN_DETAIL="checks green: PR held for merge (ci monitor ended)"
-  local pr_url
-  pr_url=$(strip_quotes "$(nm_field pr)")
-  [ -n "$pr_url" ] && RUN_DETAIL="$RUN_DETAIL: $pr_url"
+  RUN_PR=$(strip_quotes "$(nm_field pr)")
+  return 0
+}
+
+nm_run_created_epoch() {
+  local run_id alphabet prefix char digit i value=0
+  run_id=$(strip_quotes "$(nm_field id)")
+  [ "${#run_id}" -eq 26 ] || return 1
+  alphabet=0123456789ABCDEFGHJKMNPQRSTVWXYZ
+  case "${run_id:0:1}" in [0-7]) ;; *) return 1 ;; esac
+  for ((i = 0; i < 10; i++)); do
+    char=${run_id:i:1}
+    case "$alphabet" in *"$char"*) ;; *) return 1 ;; esac
+    prefix=${alphabet%%"$char"*}
+    digit=${#prefix}
+    value=$((value * 32 + digit))
+  done
+  printf '%s' "$((value / 1000))"
+}
+
+crew_spawn_epoch() {
+  local gen epoch
+  gen=$(meta_value spawn_gen)
+  case "$gen" in s*.*.*) ;; *) return 1 ;; esac
+  epoch=${gen#s}
+  epoch=${epoch%%.*}
+  case "$epoch" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$epoch"
+}
+
+nm_classify_live_crew_after_killed_run() {
+  LIVE_CREW_KILLED_RUN=none
+  [ "$RUN_SOURCE" = full ] || return 0
+  nm_error_is_infra_kill "$RUN_ERROR" || return 0
+  [ -n "$BACKEND_TARGET" ] || return 0
+  [ "$(fm_backend_agent_state "$TASK_BACKEND" "$BACKEND_TARGET")" = alive ] || return 0
+  local verdict='' spawn_epoch='' run_epoch=''
+  verdict=$(crew_busy_verdict "$BACKEND_TARGET")
+  case "$verdict" in
+    busy\ *|idle\ *) ;;
+    *) return 0 ;;
+  esac
+  LIVE_CREW_KILLED_RUN=unproven
+  RUN_DETAIL="crew live (${verdict%% *}), but replacement after run not proven; run record failed"
+  spawn_epoch=$(crew_spawn_epoch || true)
+  run_epoch=$(nm_run_created_epoch || true)
+  [ -n "$spawn_epoch" ] && [ -n "$run_epoch" ] && [ "$spawn_epoch" -gt "$run_epoch" ] || return 0
+  LIVE_CREW_KILLED_RUN=replacement
+  RUN_DETAIL="crew live (relaunched, ${verdict%% *}); run record failed"
+}
+
+# The one verdict for a terminal failed run: held-for-merge when the PR is
+# green, working for a provably newer live incarnation, unknown for an alive
+# incarnation whose ordering cannot be proved, else a genuine failure. The
+# merit-failure path keeps its plain `run failed` detail and the run's own
+# recorded error in the distinct error field.
+nm_failed_run_verdict() {
+  RUN_ERROR=$(nm_run_error)
+  if nm_reclassify_failed_run_as_held_green; then return 0; fi
+  nm_classify_live_crew_after_killed_run
+  case "$LIVE_CREW_KILLED_RUN" in
+    replacement) RUN_STATE=working; return 0 ;;
+    unproven) RUN_STATE=unknown; return 0 ;;
+  esac
+  RUN_STATE=failed
+  RUN_DETAIL="run failed"
   return 0
 }
 
@@ -812,6 +931,8 @@ fi
 if [ "$HAVE_RUN" = 1 ]; then
   RUN_STATE=working
   RUN_DETAIL=""
+  RUN_ERROR=""
+  RUN_PR=""
   CI_STEP_STATUS=""
   CI_LOG_STATE=""
   RUN_STATUS=""
@@ -852,12 +973,13 @@ if [ "$HAVE_RUN" = 1 ]; then
 
     if [ -n "$outcome" ]; then
       case "$outcome" in
-        passed)        RUN_STATE="done"; RUN_DETAIL="run passed: PR merged/closed" ;;
-        checks-passed) RUN_STATE="done"; RUN_DETAIL="checks green: PR ready for review" ;;
-        failed)
-          if nm_reclassify_failed_run_as_held_green; then :; else
-            RUN_STATE=failed; RUN_DETAIL="run failed"
-          fi ;;
+        passed) RUN_STATE="done"; RUN_DETAIL="run passed: PR merged/closed" ;;
+        checks-passed)
+          RUN_STATE="done"
+          RUN_DETAIL="checks green: PR ready for review"
+          RUN_PR=$(strip_quotes "$(nm_field pr)")
+          ;;
+        failed)        nm_failed_run_verdict ;;
         cancelled)     RUN_STATE=failed; RUN_DETAIL="run cancelled" ;;
         *)             RUN_STATE=unknown; RUN_DETAIL="outcome: $outcome" ;;
       esac
@@ -880,11 +1002,8 @@ if [ "$HAVE_RUN" = 1 ]; then
       case "$status" in
         ci)             RUN_STATE=working; RUN_DETAIL="ci running" ;;
         running|fixing) RUN_STATE=working; RUN_DETAIL="validating ($status)" ;;
-        completed)      RUN_STATE="done"; RUN_DETAIL="run completed" ;;
-        failed)
-          if nm_reclassify_failed_run_as_held_green; then :; else
-            RUN_STATE=failed; RUN_DETAIL="run failed"
-          fi ;;
+        completed)      RUN_STATE="done";  RUN_DETAIL="run completed" ;;
+        failed)         nm_failed_run_verdict ;;
         cancelled)      RUN_STATE=failed;  RUN_DETAIL="run cancelled" ;;
         "")             RUN_STATE=working; RUN_DETAIL="run active" ;;
         *)              RUN_STATE=working; RUN_DETAIL="run active ($status)" ;;
@@ -897,6 +1016,7 @@ if [ "$HAVE_RUN" = 1 ]; then
             if [ "$CI_LOG_STATE" = green ]; then
               RUN_STATE="done"
               RUN_DETAIL="checks green: PR ready for review (still monitoring for merge/close)"
+              RUN_PR=$(strip_quotes "$(nm_field pr)")
             fi
             ;;
           fixing)
@@ -920,7 +1040,8 @@ if [ "$HAVE_RUN" = 1 ]; then
       CI_LOG_STATE=not-ready
     fi
     if [ "$CI_LOG_STATE" != not-ready ]; then
-      emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR"
+      RUN_PR=$(strip_quotes "$(nm_field pr)")
+      emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}run still monitoring PR" "" "$RUN_PR"
     fi
   fi
 
@@ -957,7 +1078,7 @@ if [ "$HAVE_RUN" = 1 ]; then
       ;;
   esac
 
-  emit "$RUN_STATE" run-step "$RUN_DETAIL"
+  emit "$RUN_STATE" run-step "$RUN_DETAIL" "$RUN_ERROR" "$RUN_PR"
 fi
 
 # --- fallback: no run attributed to this crew ------------------------------
