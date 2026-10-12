@@ -79,7 +79,8 @@ state/
   machine-skills/<m>.tsv  each machine's `deck skills` inventory; bin/fm-machine-skills.sh owns format and refresh
   secondmate-summary-cache/  parent-side copies of remote ledgers (bin/fm-fleet-snapshot.sh)
   reconcile-notify/       one-shot Bearings reconcile requests (bin/fm-secondmate-reconcile.sh)
-  primary-chat.json       live deck-chat primary record (bin/fm-deck-chat.sh)
+  primary-chat.json       live deck-chat primary record (bin/fm_primary_chat.py owns fields)
+  primary-chat/           primary session, steering, keeper, model choice and switch records (bin/fm_primary_chat.py owns layout)
   procevent/ procevent-inbox/ when/  process-event sources and results (docs/process-event-sources.md)
   extensions/ extension-invocations/  extension working state (docs/process-event-sources.md)
   decision-bindings/ reconcile-requests/  captain-answer bindings and reconcile obligations; written only by bin/fm-captain-hold.sh

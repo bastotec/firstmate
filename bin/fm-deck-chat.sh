@@ -77,6 +77,18 @@
 #       when the live host was started in a terminal of its own (plain
 #       `fm-deck-chat.sh`): that terminal is its only screen. `deck chat
 #       --local` skips this launcher.
+#   fm-deck-chat.sh model [ROUTE] [--home H]
+#       Request a syntax-checked gateway route for the serviced primary.
+#       Once the primary is idle the keeper ends the host and starts it again
+#       on the same session, resuming the conversation as any keeper restart
+#       does; it never goes through `stop`. Prints whether the switch is
+#       requested now or after the turn under way, not a completion receipt.
+#       Exit 1 when no keeper serves this home (verified by its singleton lock);
+#       restart a terminal-run host with --model by hand instead. Exit 2 for a
+#       malformed route. Without ROUTE, prints the stored choice, else the live
+#       keeper's --model, else "default"; this is the configured choice, not
+#       necessarily the live host's model while a switch is pending.
+#       bin/fm_primary_chat.py owns the model and switch records.
 #   fm-deck-chat.sh install-service [--home H] [--model ROUTE]
 #       macOS: generate ~/Library/LaunchAgents/dev.firstmate.primary.<hash>.plist
 #       (<hash> = first 12 hex of sha256 of the canonical home) and bootstrap it
@@ -89,7 +101,8 @@
 #       hub and credentials per docs/stream-backend.md before installing.
 #       The generated plist does not capture FM_STREAM_* overrides; use the
 #       home's config files for persistent stream settings.
-#       Re-running replaces the agent (e.g. to change --model).
+#       Re-running replaces the agent; --model is a fallback for keeper starts,
+#       overridden by the stored choice from `model ROUTE`.
 #   fm-deck-chat.sh uninstall-service [--home H]
 #       Boot the agent out and delete its plist; a running primary keeps running.
 #   fm-deck-chat.sh service-run [--home H] [--model ROUTE]
@@ -141,10 +154,10 @@ q() { printf '%q' "$1"; }
 
 MODE=run
 case "${1:-}" in
-  stop|attach|open|install-service|uninstall-service|service-run|service-alert) MODE=$1; shift ;;
+  stop|attach|open|model|install-service|uninstall-service|service-run|service-alert) MODE=$1; shift ;;
 esac
 HOME_DIR=${FM_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}
-MODEL='' SESSION='' ENDPOINT='' STREAM=0 SUMMARY=''
+MODEL='' SESSION='' ENDPOINT='' STREAM=0 SUMMARY='' ROUTE=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --home) HOME_DIR=${2-}; shift 2 || usage ;;
@@ -154,7 +167,8 @@ while [ $# -gt 0 ]; do
     --summary) SUMMARY=${2-}; shift 2 || usage ;;
     --stream) STREAM=1; shift ;;
     -h|--help) usage ;;
-    *) printf 'fm-deck-chat: unknown argument: %s\n' "$1" >&2; usage ;;
+    *) if [ "$MODE" = model ] && [ -z "$ROUTE" ]; then ROUTE=$1; shift; continue; fi
+       printf 'fm-deck-chat: unknown argument: %s\n' "$1" >&2; usage ;;
   esac
 done
 [ -n "$HOME_DIR" ] && [ -d "$HOME_DIR" ] || die "home not found: $HOME_DIR" 2
@@ -165,6 +179,11 @@ STATE="$FM_HOME/state"
 command -v python3 >/dev/null 2>&1 || die 'python3 is required' 2
 
 STOPPED="$STATE/primary-chat/stopped"
+
+if [ "$MODE" = model ]; then
+  if [ -n "$ROUTE" ]; then exec python3 "$PRIMARY_CHAT" model --home "$FM_HOME" "$ROUTE"; fi
+  exec python3 "$PRIMARY_CHAT" model --home "$FM_HOME"
+fi
 
 # A start the captain made (not the keeper's) withdraws an earlier stop.
 clear_stopped() {
@@ -546,7 +565,7 @@ else
     "$STATE/primary-chat/startup-digest.txt" >> "$WORK/first"
 fi
 python3 "$PRIMARY_CHAT" record write --home "$FM_HOME" --session "$SESSION" --host-pid $$ \
-  --endpoint "$ENDPOINT" --startup-file "$WORK/first" || die 'could not publish startup and write state/primary-chat.json'
+  --endpoint "$ENDPOINT" --model "$MODEL" --startup-file "$WORK/first" || die 'could not publish startup and write state/primary-chat.json'
 RECORDED=1
 
 sup_args=(supervise --home "$FM_HOME" --host-pid $$ --gen "$GEN" --events-offset "$EVENTS_OFFSET")

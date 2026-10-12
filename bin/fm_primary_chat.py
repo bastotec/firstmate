@@ -20,27 +20,43 @@ CLI. Both call this file, which owns the on-disk layout:
                                           written before clearing stopped, even
                                           when no stopped marker existed
   state/primary-chat/service.json         the keeper's current view (0600, atomic):
-                                          {"pid","state","detail","since","home"};
-                                          state is running|starting|down|waiting|stopped
+                                          {"pid","state","detail","since","home","model"};
+                                          state is running|starting|switching|down|waiting|stopped;
+                                          model is the keeper's --model fallback,
+                                          not the stored choice or live host's route
   state/primary-chat/service.log          keeper log (size-capped, one rotation)
   state/primary-chat/service-down         durable alert marker while the primary
                                           has been down past the alert window
   state/primary-chat/service.lock         keeper singleton (flock)
+  state/primary-chat/model                the model route the captain chose for the
+                                          primary (`model ROUTE`); the keeper starts
+                                          the host on it, over its own --model
+  state/primary-chat/switch               "<request epoch> <route>": a model switch
+                                          waiting for a live, idle primary; the keeper
+                                          atomically claims and removes this request
+                                          before ending the host, leaving newer requests
+                                          pending, and restarts on the claimed route
+  state/primary-chat/switches             successful switch starts that change route:
+                                          "<completion epoch> <from route|default> <to route>"
+                                          (last 1000), for the thread to mark where it was
 
 Record (state/primary-chat.json):
   {"version":1,"home":ABS,"session":ID,"steer_dir":ABS,"events_file":ABS,
-   "endpoint":"<hub-tag>:<endpoint-id>"|null,"host_pid":N,"started_at":EPOCH}
+   "endpoint":"<hub-tag>:<endpoint-id>"|null,"host_pid":N,"started_at":EPOCH,"model":ROUTE}
+model is the host's launch route, or "" when no explicit model was passed.
 A clean host exit adds "stopped_at". A record is live only when it has no
 stopped_at and host_alive(host_pid, home) validates the host identity below.
 
 Subcommands:
+  model --home H [ROUTE]
+      bin/fm-deck-chat.sh's `model` header owns the public switch/readback contract.
   steer publish: bin/fm-primary-steer.sh's header owns the public publish contract.
   steer status [--home H]       one JSON line; exit 3 when no live host
   steer delivered SEQ [--home H]
       exit 0 delivered (steer_acked >= SEQ or handled/SEQ.msg), 1 pending,
       2 rejected (rejected/SEQ.msg or steer_rejected), 3 no live host
   prepare --home H [--session ID]   create dirs, persist and print the session
-  record write --home H --session ID --host-pid N [--endpoint T] [--startup-file F]
+  record write --home H --session ID --host-pid N [--endpoint T] [--model ROUTE] [--startup-file F]
       publishes startup before making the host visible, retaining pending messages
   record stop --home H --host-pid N
   record pid --home H        print the live host pid; exit 3 when none
@@ -55,11 +71,14 @@ Subcommands:
   service --home H --deck-chat PATH [--model ROUTE]
       the keeper a launchd agent runs (bin/fm-deck-chat.sh install-service):
       adopts a live host and waits while any live harness holds the session lock.
-      Otherwise, while captain-start is younger than FM_DECK_CHAT_SERVICE_START_GRACE,
-      publishes waiting with detail "captain start in progress", even if it never
-      observed the stopped marker. Once grace and any backoff expire, starts one
-      with `fm-deck-chat.sh --stream` (resuming the persisted session), backing off
-      while it keeps dying soon after start.
+      For ordinary recovery, while captain-start is younger than
+      FM_DECK_CHAT_SERVICE_START_GRACE, publishes waiting with detail "captain start
+      in progress", even if it never observed the stopped marker. Once grace and
+      any backoff expire, starts one with `fm-deck-chat.sh --stream` (resuming the
+      persisted session), backing off while it keeps dying soon after start.
+      A claimed model switch SIGTERMs the live host, resets crash backoff, and
+      restarts on the claimed route without waiting for captain-start grace;
+      records the route change after a successful start.
       Honours state/primary-chat/stopped, including hosts that register late.
       Waits for an in-flight --stream launcher even past its expected window;
       logs that delay once and leaves it to finish independently on shutdown.
@@ -366,6 +385,7 @@ def record_write(args):
         'version': 1, 'home': str(home), 'session': args.session,
         'steer_dir': str(base / 'steer'), 'events_file': str(base / 'events.ndjson'),
         'endpoint': args.endpoint or None, 'host_pid': args.host_pid,
+        'model': args.model,
         'started_at': int(time.time())}, sort_keys=True) + '\n')
     return 0
 
@@ -627,6 +647,62 @@ class Supervisor:
 # ---------------------------------------------------------------- service keeper
 
 SERVICE_LOG_MAX = 1 << 20
+# a gateway route: provider/model[/variant], nothing a shell or a path could abuse
+MODEL_RE = re.compile(r'\A[a-z0-9][a-z0-9._-]{0,63}(?:/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}){1,3}\Z')
+
+
+def chosen_model(root, fallback=''):
+    """The model the captain chose for the primary (state/primary-chat/model), else `fallback`."""
+    try:
+        model = (Path(root) / 'model').read_text().strip()
+    except OSError:
+        return fallback
+    return model if MODEL_RE.match(model) else fallback
+
+
+def primary_idle(state):
+    """True when state/primary.busy-state says the primary is between turns."""
+    try:
+        text = (Path(state) / 'primary.busy-state').read_text()
+    except OSError:
+        return True
+    return re.search(r'(?:^|\s)state=idle(?:\s|$)', text) is not None
+
+
+def keeper_view(root):
+    """The serving keeper's view while its singleton lock is held, else None."""
+    root = Path(root)
+    try:
+        with open(root / 'service.lock', 'r') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                view = json.loads((root / 'service.json').read_text())
+                if isinstance(view, dict) and view.get('home') == str(root.parent.parent):
+                    return view
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def set_model(args):
+    home, state, _, root = paths(args.home)
+    if not args.route:
+        print(chosen_model(root, (keeper_view(root) or {}).get('model', '')) or 'default')
+        return 0
+    if not MODEL_RE.match(args.route):
+        print('error: not a model route: %s' % args.route, file=sys.stderr)
+        return 2
+    if keeper_view(root) is None:
+        print('error: no service keeper runs this primary; restart it with --model %s' % args.route,
+              file=sys.stderr)
+        return 1
+    with open(root / '.model.lock', 'a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        atomic_write(root / 'model', args.route + '\n')
+        atomic_write(root / 'switch', '%d %s\n' % (int(time.time()), args.route))
+    print('primary: switching to %s %s' % (args.route, 'now' if primary_idle(state) else 'after the turn under way'))
+    return 0
 
 
 def env_seconds(name, default):
@@ -653,6 +729,44 @@ class Keeper:
         self.start_timeout = env_seconds('FM_DECK_CHAT_SERVICE_START_TIMEOUT', 200)
         self.start_grace = env_seconds('FM_DECK_CHAT_SERVICE_START_GRACE', 60)
         self.view = None
+        self.running = self.model
+        self.host_pid = None
+
+    def adopt(self, record):
+        if self.host_pid == record['host_pid']:
+            return
+        self.host_pid = record['host_pid']
+        if 'model' in record:
+            self.running = record['model']
+            return
+        out = subprocess.run(['ps', '-o', 'args=', '-p', str(self.host_pid)],
+                             capture_output=True, text=True)
+        match = re.search(r' --model (\S+)(?: |$)', out.stdout)
+        self.running = match.group(1) if match and MODEL_RE.match(match.group(1)) else self.model
+
+    def claim_switch(self):
+        claimed = self.root / '.switch-claimed'
+        try:
+            os.replace(self.root / 'switch', claimed)
+        except FileNotFoundError:
+            return None
+        try:
+            fields = claimed.read_text().split()
+            return fields[1] if len(fields) == 2 and MODEL_RE.match(fields[1]) else None
+        finally:
+            claimed.unlink()
+
+    def note_switch(self, was, now):
+        path = self.root / 'switches'
+        try:
+            lines = path.read_text().splitlines()[-999:]
+        except OSError:
+            lines = []
+        lines.append('%d %s %s' % (int(time.time()), was or 'default', now or 'default'))
+        try:
+            atomic_write(path, '\n'.join(lines) + '\n')
+        except OSError:
+            pass
 
     def log(self, message):
         path = self.root / 'service.log'
@@ -670,7 +784,7 @@ class Keeper:
         self.view = (state, detail)
         atomic_write(self.root / 'service.json', json.dumps({
             'version': 1, 'home': str(self.home), 'pid': os.getpid(), 'state': state,
-            'detail': detail, 'since': int(time.time())}, sort_keys=True) + '\n')
+            'detail': detail, 'since': int(time.time()), 'model': self.model}, sort_keys=True) + '\n')
 
     def stopped_on_purpose(self):
         return (self.root / 'stopped').exists()
@@ -715,13 +829,19 @@ class Keeper:
             out.seek(0)
             return rc, out.read().decode('utf-8', 'replace')
 
-    def start(self):
+    def start(self, model=None):
         argv = ['--stream', '--home', str(self.home)]
-        if self.model:
-            argv += ['--model', self.model]
+        if model is None:
+            model = chosen_model(self.root, self.model)
+        if model:
+            argv += ['--model', model]
         rc, out = self.run_deck_chat(argv, self.start_timeout)
         tail = ' | '.join(line for line in out.strip().splitlines()[-3:])
         self.log('start exit %d: %s' % (rc, tail or 'no output'))
+        if rc == 0:
+            self.running = model
+            record = live_record(self.home)
+            self.host_pid = record['host_pid'] if record else None
         return rc == 0
 
     def alert(self, down_for):
@@ -769,6 +889,8 @@ class Keeper:
         next_try = 0.0
         alerted = outage is not None
         was_down = False
+        switch_model = None
+        switch_from = None
         while not self.stop.is_set():
             now = time.time()
             if self.stopped_on_purpose():
@@ -779,10 +901,29 @@ class Keeper:
                     self.log('stopped on purpose; not restarting')
                 self.publish('stopped', 'state/primary-chat/stopped present')
                 outage, up_since, alerted, was_down, delay = None, None, False, False, 0.0
+                switch_model = None
                 self.recovered()
                 self.stop.wait(self.poll)
                 continue
             record = live_record(self.home)
+            if record:
+                self.adopt(record)
+            model = (self.claim_switch() if record and switch_model is None
+                     and primary_idle(self.state) else None)
+            if model is not None:
+                switch_model, switch_from = model, self.running
+                self.log('switching the primary to %s: restarting its host on the same session' % model)
+                self.publish('switching', model)
+                try:
+                    os.kill(record['host_pid'], signal.SIGTERM)
+                except (OSError, KeyError, TypeError):
+                    pass
+                for _ in range(100):
+                    if live_record(self.home) is None or self.stop.is_set():
+                        break
+                    self.stop.wait(0.1)
+                last_start, delay, next_try = 0.0, 0.0, 0.0
+                continue
             if record:
                 if was_down:
                     self.log('primary is up in endpoint %s' % record.get('endpoint'))
@@ -815,12 +956,16 @@ class Keeper:
                 captain_start = float((self.root / 'captain-start').read_text())
             except (OSError, ValueError):
                 captain_start = 0.0
-            if now - captain_start < self.start_grace:
+            if switch_model is None and now - captain_start < self.start_grace:
                 self.publish('waiting', 'captain start in progress')
             elif now >= next_try:
                 self.publish('starting', 'fm-deck-chat.sh --stream')
                 last_start = now
-                if self.start():
+                if self.start(switch_model):
+                    if switch_model is not None:
+                        if switch_model != switch_from:
+                            self.note_switch(switch_from, switch_model)
+                        switch_model = None
                     was_down = False
                 if self.stop.is_set():
                     break
@@ -858,6 +1003,7 @@ def main(argv):
     write = record.add_parser('write')
     write.add_argument('--session', required=True)
     write.add_argument('--endpoint', default='')
+    write.add_argument('--model', default='')
     write.add_argument('--startup-file')
     stop = record.add_parser('stop')
     record.add_parser('pid').add_argument('--home', required=True)
@@ -871,6 +1017,9 @@ def main(argv):
     supervise.add_argument('--events-offset', type=int, required=True)
     supervise.add_argument('--effort-headers', action='store_true',
                            help='mark routine wakes for a lower reasoning effort (bin/fm-effort-policy.sh)')
+    model = sub.add_parser('model')
+    model.add_argument('--home', default=default_home())
+    model.add_argument('route', nargs='?', default='')
     service = sub.add_parser('service')
     service.add_argument('--home', required=True)
     service.add_argument('--deck-chat', required=True)
@@ -888,6 +1037,8 @@ def main(argv):
         return {'write': record_write, 'stop': record_stop, 'pid': record_pid}[args.action](args)
     if args.cmd == 'service':
         return Keeper(args).run()
+    if args.cmd == 'model':
+        return set_model(args)
     return Supervisor(args).run()
 
 

@@ -54,6 +54,8 @@ steer, events = pathlib.Path(opt('--steer-dir')), pathlib.Path(opt('--events'))
 hook = next(a.split('=', 1)[1] for a in argv if a.startswith('pre_complete='))
 log = pathlib.Path(os.environ['FAKE_DECK_LOG'])
 log.write_text(json.dumps({'argv': argv, 'pid': os.getpid(), 'cwd': os.getcwd()}))
+with open(str(log) + '.starts', 'a') as handle:
+    handle.write(json.dumps({'argv': argv, 'pid': os.getpid()}) + '\n')
 stop = []
 signal.signal(signal.SIGTERM, lambda *_: stop.append(1))
 def emit(**event):
@@ -446,7 +448,7 @@ primary = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(primary)
 primary.prepare(argparse.Namespace(home=str(home), session='ordering'))
 primary.record_write(argparse.Namespace(home=str(home), session='ordering',
-                                       host_pid=os.getpid(), endpoint='', startup_file=None))
+                                       host_pid=os.getpid(), endpoint='', model='', startup_file=None))
 events = home / 'state/primary-chat/ordering/events.ndjson'
 def append(*rows):
     with events.open('ab') as output:
@@ -1108,6 +1110,7 @@ test_service_keeper() {
   sleep 1
   runs_are "$home" 1 || fail "the keeper started a second primary next to a live one"
   assert_equals "$first" "$(python3 "$BIN/fm_primary_chat.py" record pid --home "$home")" "the adopted host is untouched"
+  assert_equals fake/route "$("$BIN/fm-deck-chat.sh" model --home "$home")" "model readback uses the keeper argument before a stored choice"
   wait_for 10 "an inherited alert marker clears after stable adoption" test ! -e "$home/state/primary-chat/service-down"
   assert_absent "$LAB/adoption-alarm.log" "adoption of a recovered host never re-alerts"
 
@@ -1122,25 +1125,149 @@ test_service_keeper() {
   assert_contains "$(cat "$FAKE_DECK_LOG")" '"--model", "fake/route"' "the restart keeps the model"
   assert_grep 'primary is down; restarting now' "$home/state/primary-chat/service.log" "the keeper logs the restart"
 
+  # A model switch waits for the turn under way, then restarts the host on the same
+  # session with the new model; it never goes through stop.
+  wait_for 10 "the restarted startup turn completes" "$STEER" delivered 2 --home "$home"
+  wait_for 10 "the restarted primary settles idle" busy_is "$home" idle
+  local rc third
+  rc=0; "$BIN/fm-deck-chat.sh" model 'bad route;' --home "$home" >/dev/null 2>&1 || rc=$?
+  expect_code 2 "$rc" "model refuses a malformed route"
+  printf 'v1 state=busy source=deck-wrapper\n' > "$home/state/primary.busy-state"
+  out=$("$BIN/fm-deck-chat.sh" model fake/other --home "$home") || fail "model failed: $out"
+  assert_contains "$out" 'primary: switching to fake/other after the turn under way' "model says a busy primary switches after its turn"
+  assert_equals fake/other "$("$BIN/fm-deck-chat.sh" model --home "$home")" "model prints the chosen route"
+  kill -TERM "$keeper"
+  wait_for 10 "the original keeper exits with a busy switch pending" dead "$keeper"
+  wait "$keeper"
+  date +%s > "$home/state/primary-chat/captain-start"
+  FM_DECK_CHAT_SERVICE_POLL=0.5 FM_DECK_CHAT_SERVICE_BACKOFF=0.5 FM_DECK_CHAT_SERVICE_STABLE_SECS=2 \
+    FM_DECK_CHAT_SERVICE_START_GRACE=60 "$BIN/fm-deck-chat.sh" service-run --home "$home" --model fake/route \
+    > "$LAB/keeper-replacement.out" 2>&1 &
+  keeper=$!
+  fm_test_track_helper_pid "$keeper"
+  wait_for 10 "the replacement keeper adopts the busy host" service_state_is "$home" running
+  sleep 1
+  assert_equals "$second" "$(python3 "$BIN/fm_primary_chat.py" record pid --home "$home")" "a busy primary is not interrupted"
+  printf 'v1 state=idle source=deck-wrapper\n' > "$home/state/primary.busy-state"
+  wait_for 10 "the switched host exits" dead "$second"
+  wait_for 10 "the keeper starts the switched host without captain grace" host_is_not "$home" "$second"
+  third=$(python3 "$BIN/fm_primary_chat.py" record pid --home "$home")
+  [ -n "$third" ] || fail "no host after the switch"
+  assert_absent "$home/state/primary-chat/stopped" "a switch never writes the stopped marker"
+  assert_absent "$home/state/primary-chat/switch" "the keeper takes the switch request"
+  assert_contains "$(tail -1 "$FAKE_DECK_LOG")" "\"--session\", \"$session\"" "the switched host resumes the same deck session"
+  assert_contains "$(tail -1 "$FAKE_DECK_LOG")" '"--model", "fake/other"' "the switched host runs the new model"
+  assert_grep 'switching the primary to fake/other' "$home/state/primary-chat/service.log" "the keeper logs the switch"
+  wait_for 10 "the completed switch is recorded for the thread" grep -q ' fake/route fake/other$' "$home/state/primary-chat/switches"
+  second=$third
+  wait_for 10 "the switched startup turn completes" "$STEER" delivered 3 --home "$home"
+  wait_for 10 "the switched startup finishes" busy_is "$home" idle
+  deck_pid=$(record_field "$FAKE_DECK_LOG" pid)
+  kill -STOP "$deck_pid"
+  "$BIN/fm-deck-chat.sh" model fake/queued --home "$home" >/dev/null
+  wait_for 10 "the keeper claims the first request while the old host is exiting" service_state_is "$home" switching
+  "$BIN/fm-deck-chat.sh" model fake/final --home "$home" >/dev/null
+  assert_grep ' fake/final' "$home/state/primary-chat/switch" "the newer switch remains pending"
+  kill -CONT "$deck_pid"
+  wait_for 30 "both queued switches complete" runs_are "$home" 5
+  wait_for 10 "the final model starts" grep -q '"--model", "fake/final"' "$FAKE_DECK_LOG"
+  wait_for 10 "the final switch is recorded" grep -q ' fake/queued fake/final$' "$home/state/primary-chat/switches"
+  python3 - "$FAKE_DECK_LOG.starts" "$home/state/primary-chat/switches" "$session" <<'PY'
+import json, pathlib, sys
+starts = [json.loads(row)['argv'] for row in pathlib.Path(sys.argv[1]).read_text().splitlines()]
+models = [args[args.index('--model') + 1] for args in starts]
+assert models == ['fake/route', 'fake/route', 'fake/other', 'fake/queued', 'fake/final'], models
+assert all(args[args.index('--session') + 1] == sys.argv[3] for args in starts), starts
+switches = [row.split()[1:] for row in pathlib.Path(sys.argv[2]).read_text().splitlines()]
+assert switches == [['fake/route', 'fake/other'], ['fake/other', 'fake/queued'], ['fake/queued', 'fake/final']], switches
+PY
+  assert_absent "$home/state/primary-chat/stopped" "queued switches never deliberately stop the primary"
+  second=$(python3 "$BIN/fm_primary_chat.py" record pid --home "$home")
+
   # stop is honoured: the marker keeps the keeper from restarting.
   "$BIN/fm-deck-chat.sh" stop --home "$home" >/dev/null
   wait_for 10 "the stopped host exits" dead "$second"
   wait_for 10 "the keeper reports stopped" service_state_is "$home" stopped
   sleep 1.5
-  runs_are "$home" 2 || fail "the keeper restarted a primary stopped on purpose"
+  runs_are "$home" 5 || fail "the keeper restarted a primary stopped on purpose"
 
   # A captain start withdraws the stop and the keeper adopts it.
   out=$("$BIN/fm-deck-chat.sh" --stream --home "$home" --model fake/route 2>&1) || fail "restart --stream failed: $out"
   assert_absent "$home/state/primary-chat/stopped" "a captain --stream clears the marker"
   wait_for 10 "the keeper adopts the captain's host" service_state_is "$home" running
   sleep 1
-  runs_are "$home" 3 || fail "the keeper duplicated the captain's start"
+  runs_are "$home" 6 || fail "the keeper duplicated the captain's start"
   kill -TERM "$keeper"
   wait_for 10 "the keeper exits on SIGTERM" dead "$keeper"
   "$BIN/fm-deck-chat.sh" stop --home "$home" >/dev/null
   unset FM_STREAM_HUB FM_STREAM_TOKEN FM_STREAM_MACHINE FAKE_DECK_LOG
   export SHELL="$saved_shell"
-  pass "fm-deck-chat.sh service-run: adopts a live host, restarts a crash on the same session, honours stop"
+  python3 - "$home/state/primary-chat/service.json" "$$" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+view = json.loads(path.read_text())
+view['pid'] = int(sys.argv[2])
+path.write_text(json.dumps(view))
+PY
+  rc=0; "$BIN/fm-deck-chat.sh" model fake/route --home "$home" >/dev/null 2>&1 || rc=$?
+  expect_code 1 "$rc" "model refuses a stale service record with a reused live PID"
+  assert_equals fake/final "$(cat "$home/state/primary-chat/model")" "a refusal preserves the stored choice"
+  assert_absent "$home/state/primary-chat/switch" "a refusal creates no pending switch"
+  pass "fm-deck-chat.sh service-run: adopts a live host, restarts a crash on the same session, switches model on the same session, honours stop"
+}
+
+test_service_model_tracking() {
+  local home host fallback fallback_host
+  home=$(new_home model-tracking)
+  FAKE_DECK_LOG="$LAB/deck-tracking.log" "$BIN/fm-deck-chat.sh" --home "$home" --model fake/captain \
+    </dev/null > "$LAB/host-tracking.out" 2>&1 &
+  host=$!
+  fm_test_track_helper_pid "$host"
+  wait_for 10 "the captain's model is registered" "$STEER" status --home "$home"
+  assert_equals fake/captain "$(record_field "$home/state/primary-chat.json" model)" "the host record owns its running model"
+  fallback=$(new_home model-fallback)
+  FAKE_DECK_LOG="$LAB/deck-fallback.log" "$BIN/fm-deck-chat.sh" --home "$fallback" \
+    </dev/null > "$LAB/host-fallback.out" 2>&1 &
+  fallback_host=$!
+  fm_test_track_helper_pid "$fallback_host"
+  wait_for 10 "the default-model captain host registers" "$STEER" status --home "$fallback"
+  python3 - "$BIN" "$home" "$fallback" <<'PY'
+import argparse, importlib.util, pathlib, sys
+bin_dir, home, fallback = map(pathlib.Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location('primary_chat', bin_dir / 'fm_primary_chat.py')
+primary = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(primary)
+root = home / 'state/primary-chat'
+(root / 'model').write_text('fake/pending\n')
+args = argparse.Namespace(home=str(home), deck_chat=str(bin_dir / 'fm-deck-chat.sh'), model='fake/fallback')
+keeper = primary.Keeper(args)
+record = primary.live_record(home)
+assert record is not None
+keeper.adopt(record)
+assert keeper.running == 'fake/captain', keeper.running
+record.pop('model')
+keeper = primary.Keeper(args)
+keeper.adopt(record)
+assert keeper.running == 'fake/captain', keeper.running
+record = primary.live_record(fallback)
+assert record is not None
+record.pop('model')
+keeper.adopt(record)
+assert keeper.running == 'fake/fallback', keeper.running
+history = root / 'switches'
+history.write_text(''.join('%d fake/a fake/b\n' % i for i in range(1005)))
+keeper.note_switch('fake/b', 'fake/c')
+lines = history.read_text().splitlines()
+assert len(lines) == 1000, len(lines)
+assert lines[0] == '6 fake/a fake/b', lines[0]
+assert lines[-1].split()[1:] == ['fake/b', 'fake/c'], lines[-1]
+PY
+  kill -TERM "$host" "$fallback_host"
+  wait_for 10 "the model-tracking host exits" dead "$host"
+  wait_for 10 "the fallback host exits" dead "$fallback_host"
+  wait "$host" 2>/dev/null || true
+  wait "$fallback_host" 2>/dev/null || true
+  pass "primary keeper: adoption uses the host model or argv, falls back to its argument, and retains 1000 switch records"
 }
 
 test_service_keeper_alerts() {
@@ -1206,4 +1333,5 @@ test_stream_endpoint_host
 test_task_named_primary_blocks_the_host
 test_away_mode_pauses_the_watcher
 test_service_keeper
+test_service_model_tracking
 test_service_keeper_alerts
