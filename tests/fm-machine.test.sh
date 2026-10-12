@@ -219,7 +219,7 @@ TOOL
 #!/bin/sh
 [ "${FAKE_CARGO_FAIL:-0}" = 1 ] && exit 101
 mkdir -p target/release
-printf '#!/bin/sh\necho deck 0.1\n' > target/release/deck
+printf '#!/bin/sh\n[ "$1" != skills ] || { printf "afk\\trepo\\tAway\\t%%s/.agents/skills/afk/SKILL.md\\n" "$PWD"; exit 0; }\necho deck 0.1\n' > target/release/deck
 chmod +x target/release/deck
 TOOL
   cat > "$FAKE_RBIN/gh" <<'TOOL'
@@ -272,6 +272,26 @@ assert_contains "$out" "item gateway-key=will-install: setup restricts path=$FAK
 assert_contains "$out" "item stream-hub=present:" "hub item"
 assert_not_contains "$out" "SECRET-GATEWAY-KEY" "check printed the gateway key"
 assert_absent "$RROOT" "check created the clone"
+
+mkdir -p "$FMH/config"
+git init -q -b main "$T/skills-upstream"
+printf 'one\n' > "$T/skills-upstream/note"
+git -C "$T/skills-upstream" add note
+git -C "$T/skills-upstream" -c user.name=t -c user.email=t@t commit -qm one
+git clone -q "$T/skills-upstream" "$T/skills-source"
+skills_before=$(git -C "$T/skills-source" rev-parse origin/main)
+printf 'two\n' > "$T/skills-upstream/note"
+git -C "$T/skills-upstream" -c user.name=t -c user.email=t@t commit -qam two
+printf 'source=%s\n' "$T/skills-source" > "$FMH/config/shared-skills"
+out=$(machine check box "$RROOT") || true
+assert_contains "$out" 'item shared-skills=will-install:' "check reviews shared skills without fetching"
+assert_equals "$skills_before" "$(git -C "$T/skills-source" rev-parse origin/main)" "check must not update the local skills remote ref"
+assert_absent "$T/skills-source/.git/FETCH_HEAD" "check must not create FETCH_HEAD"
+if git -C "$T/skills-source" cat-file -e "$(git -C "$T/skills-upstream" rev-parse HEAD)" 2>/dev/null; then
+  fail "check fetched new objects into the skills clone"
+fi
+rm "$FMH/config/shared-skills"
+pass "check resolves the cached skills commit without mutating the source clone"
 pass "check prints the machine checklist read-only"
 
 ROUTEFM="$T/clone-route-fm"
@@ -686,6 +706,9 @@ assert_contains "$out" "step tool-treehouse=skipped: present" "tool rerun"
 assert_contains "$out" "step deck=skipped: present" "deck rerun"
 assert_not_contains "$out" "step gateway-key-mode" "key mode rerun"
 assert_contains "$out" "setup=complete" "complete rerun"
+assert_contains "$out" "step shared-skills=skipped: this home has no config/shared-skills" "unconfigured shared skills"
+assert_contains "$out" "step skill-inventory=done: 1 skills recorded in state/machine-skills/box.tsv" "inventory step"
+assert_present "$FMH/state/machine-skills/box.tsv" "setup did not record the inventory"
 pass "setup is idempotent and reports complete once nothing is left"
 
 for required in 'MISSING (incompatible)' 'VERSION_UNREADABLE (requires semantic version >=0.21.0)'; do

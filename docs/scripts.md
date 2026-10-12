@@ -22,6 +22,8 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-secondmate-restart.sh` | Persist open conversational work, then restart eligible second mates or report the fallback outcome |
 | `fm-secondmate-revive.sh` | Recover a down second mate mid-session through the guarded [secondmate lifecycle](stream-backend.md#secondmate-lifecycle) |
 | `fm-secondmate-restart-lib.sh` | Shared second-mate restart capability and persistence-request contract |
+| [`fm-machine.sh`](../bin/fm-machine.sh) | Connect and prepare a machine, including optional shared-skills provisioning |
+| [`fm-machine-skills.sh`](../bin/fm-machine-skills.sh) | Record per-machine skill discovery and check skill-dependent placement |
 | `fm-on.sh`               | Execute one tracked Firstmate command in a configured remote secondmate home, using its job worker except for the doctor bootstrap |
 | `fm-remote-job-lib.sh`   | Shared bounded remote job queue, worker readiness, LaunchAgent contract, and filesystem-composed PATH |
 | `fm-remote-job-worker.sh` | Long-lived remote queue worker for tracked `fm-*.sh` commands in the account runtime |

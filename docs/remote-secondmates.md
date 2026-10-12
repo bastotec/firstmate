@@ -42,6 +42,17 @@ A worker stops itself once its configured code root stops being a Firstmate chec
 The remote account must provide the required toolchain listed under [Readiness, repair, and the human steps](#readiness-repair-and-the-human-steps), the stream prerequisites, and credentials that work on that host.
 The origin URL named for each project must be reachable from the remote account because projects are cloned on that host rather than copied from the primary.
 
+### Skills per machine
+
+Deck discovers the current repo's `.agents/skills/` and the account's global `~/.agents/skills/`.
+Optional shared-skills provisioning ships the captain's skills repo over SSH and runs its installer, which decides which skills are shared and which stay on their own machine; the [`fm-machine.sh` header](../bin/fm-machine.sh) owns configuration, provisioning safeguards, and commands for connected machines.
+Setup records the connected machine's inventory, while [`bin/fm-update.sh`](../bin/fm-update.sh) attempts to refresh the local machine and all registered remote machines without provisioning shared skills again.
+These inventories describe discovery in each machine's Firstmate code root, not every project or secondmate home on that host.
+A routing check uses the recorded inventory, which can be stale after a failed refresh; a passing result is not proof that a project's worker has those skills.
+For a skill-dependent task, declare its required skills in the brief and check the destination inventory before routing it to a second mate.
+Ship and scout launches, including relaunches, additionally verify those requirements with live discovery in the actual worker worktree and refuse missing skills before the worker starts.
+The [`fm-machine-skills.sh` header](../bin/fm-machine-skills.sh) owns brief syntax, inventory format and freshness limits, discovery and placement commands, and refusal diagnostics.
+
 ## Non-interactive tool contract
 
 Remote job execution never runs a login or interactive shell, so `~/.profile`, `~/.bashrc`, and `~/.zshrc` never contribute to the job worker's runtime `PATH`.
@@ -327,7 +338,8 @@ Retirement is executed on the configured host and refuses while the remote home 
 It closes only the retiring secondmate's stream endpoint and never a sibling secondmate's.
 SSH exit 255 preserves both the route and local records because completion is unknown.
 `--force` remains the explicit discard path and requires the same captain authority as local secondmate discard.
-No generic remote delete or write surface exists: remote writes are confined to inherited allowlist files and backlog handoff scratch files, and remote home removal is reachable only through guarded secondmate retirement.
+No generic remote delete or write surface exists: inherited-material and backlog transfers are confined to their declared allowlist and scratch paths, and remote home removal is reachable only through guarded secondmate retirement.
+Account-level machine preparation and shared-skills installation are separate operations owned by the [`fm-machine.sh` header](../bin/fm-machine.sh).
 
 ## Verification
 
@@ -336,6 +348,7 @@ The lifecycle test covers seeding a registered project that this machine has nev
 
 ```sh
 bin/fm-test-run.sh tests/fm-machine.test.sh
+bin/fm-test-run.sh tests/fm-machine-skills.test.sh
 bin/fm-test-run.sh tests/fm-on.test.sh
 bin/fm-test-run.sh tests/fm-send-remote-delivery.test.sh
 bin/fm-test-run.sh tests/fm-secondmate-reconcile.test.sh

@@ -23,8 +23,9 @@
 # there is one ff implementation, not several.
 #
 # It does NOT re-read AGENTS.md or nudge secondmates itself - those are LLM
-# actions the skill performs. The script's job is the safe git mechanics
-# plus a parseable summary telling the caller what to do next:
+# actions the skill performs. The script's job is the safe git mechanics,
+# best-effort machine skill inventory refresh, and a parseable summary telling
+# the caller what to do next:
 #   - one status line per target (updated/already current/skipped)
 #   - reread-firstmate: yes|no    (did the running firstmate's instructions change)
 #   - restart-secondmates: fm-<id>...|none (every live secondmate this pass left
@@ -34,6 +35,8 @@
 #     that same tip whose runtime CANNOT prove a restart, so the older re-read
 #     steer is all that is honest for them)
 #   - stream-native: built|current|prebuilt <dir> | failed: <reason>  (primary)
+#   - skill-inventory <machine>=done: <n> skills | failed: <reason>  (every
+#     machine bin/fm-machine-skills.sh knows, refreshed after the homes update)
 #   - stream-native secondmate <id>: same result (settled local mate with a
 #     recorded window); only for rust selections, see the native section below
 #
@@ -272,6 +275,11 @@ if [ -f "$SECONDMATES_MD" ]; then
     fi
   done < "$SECONDMATES_MD"
 fi
+
+# Refresh every machine's skill inventory (bin/fm-machine-skills.sh owns it),
+# best effort: an unreachable machine keeps its previous inventory.
+FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-machine-skills.sh" refresh 2>&1 < /dev/null \
+  | sed 's/^refresh /skill-inventory /' || true
 
 # --- caller action summary -------------------------------------------------
 
