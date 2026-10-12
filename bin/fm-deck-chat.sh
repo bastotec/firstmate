@@ -78,14 +78,17 @@
 #       `fm-deck-chat.sh`): that terminal is its only screen. `deck chat
 #       --local` skips this launcher.
 #   fm-deck-chat.sh model [ROUTE] [--home H]
-#       Switch the serviced primary to another model route: recorded in
-#       state/primary-chat/model, which the keeper starts the host on (over its
-#       own --model). Once the primary is idle the keeper ends the host and
-#       starts it again on the same session, resuming the conversation as any
-#       keeper restart does; it never goes through `stop`. Prints whether the
-#       switch happens now or after the turn under way. Exit 1 when no keeper
-#       runs this home; 2 for a malformed route. Without ROUTE, prints the model
-#       the keeper starts the primary on ("default" for none chosen).
+#       Request a syntax-checked gateway route for the serviced primary.
+#       Once the primary is idle the keeper ends the host and starts it again
+#       on the same session, resuming the conversation as any keeper restart
+#       does; it never goes through `stop`. Prints whether the switch is
+#       requested now or after the turn under way, not a completion receipt.
+#       Exit 1 when no keeper serves this home (verified by its singleton lock);
+#       restart a terminal-run host with --model by hand instead. Exit 2 for a
+#       malformed route. Without ROUTE, prints the stored choice, else the live
+#       keeper's --model, else "default"; this is the configured choice, not
+#       necessarily the live host's model while a switch is pending.
+#       bin/fm_primary_chat.py owns the model and switch records.
 #   fm-deck-chat.sh install-service [--home H] [--model ROUTE]
 #       macOS: generate ~/Library/LaunchAgents/dev.firstmate.primary.<hash>.plist
 #       (<hash> = first 12 hex of sha256 of the canonical home) and bootstrap it
@@ -98,7 +101,8 @@
 #       hub and credentials per docs/stream-backend.md before installing.
 #       The generated plist does not capture FM_STREAM_* overrides; use the
 #       home's config files for persistent stream settings.
-#       Re-running replaces the agent (e.g. to change --model).
+#       Re-running replaces the agent; --model is a fallback for keeper starts,
+#       overridden by the stored choice from `model ROUTE`.
 #   fm-deck-chat.sh uninstall-service [--home H]
 #       Boot the agent out and delete its plist; a running primary keeps running.
 #   fm-deck-chat.sh service-run [--home H] [--model ROUTE]

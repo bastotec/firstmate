@@ -21,7 +21,9 @@ CLI. Both call this file, which owns the on-disk layout:
                                           when no stopped marker existed
   state/primary-chat/service.json         the keeper's current view (0600, atomic):
                                           {"pid","state","detail","since","home","model"};
-                                          state is running|starting|switching|down|waiting|stopped
+                                          state is running|starting|switching|down|waiting|stopped;
+                                          model is the keeper's --model fallback,
+                                          not the stored choice or live host's route
   state/primary-chat/service.log          keeper log (size-capped, one rotation)
   state/primary-chat/service-down         durable alert marker while the primary
                                           has been down past the alert window
@@ -29,27 +31,25 @@ CLI. Both call this file, which owns the on-disk layout:
   state/primary-chat/model                the model route the captain chose for the
                                           primary (`model ROUTE`); the keeper starts
                                           the host on it, over its own --model
-  state/primary-chat/switch               a model switch waiting for the primary to be
-                                          idle; the keeper then restarts the host on the
-                                          same session and removes it
-  state/primary-chat/switches             one line per switch the keeper made:
-                                          "<epoch> <from route|default> <to route>"
+  state/primary-chat/switch               "<request epoch> <route>": a model switch
+                                          waiting for a live, idle primary; the keeper
+                                          atomically claims and removes this request
+                                          before ending the host, leaving newer requests
+                                          pending, and restarts on the claimed route
+  state/primary-chat/switches             successful switch starts that change route:
+                                          "<completion epoch> <from route|default> <to route>"
                                           (last 1000), for the thread to mark where it was
 
 Record (state/primary-chat.json):
   {"version":1,"home":ABS,"session":ID,"steer_dir":ABS,"events_file":ABS,
    "endpoint":"<hub-tag>:<endpoint-id>"|null,"host_pid":N,"started_at":EPOCH,"model":ROUTE}
+model is the host's launch route, or "" when no explicit model was passed.
 A clean host exit adds "stopped_at". A record is live only when it has no
 stopped_at and host_alive(host_pid, home) validates the host identity below.
 
 Subcommands:
   model --home H [ROUTE]
-      with ROUTE: record it for the keeper and ask for a switch: once the primary is
-      idle the keeper ends the host (never through `stop`) and starts it again on
-      the same session with the new model. Prints whether it switches now or after
-      the turn under way. Exit 1 when no keeper serves this home (a host run in its
-      own terminal is restarted with --model by hand), 2 for a malformed route.
-      Without ROUTE: print the model the keeper starts the primary on.
+      bin/fm-deck-chat.sh's `model` header owns the public switch/readback contract.
   steer publish: bin/fm-primary-steer.sh's header owns the public publish contract.
   steer status [--home H]       one JSON line; exit 3 when no live host
   steer delivered SEQ [--home H]
@@ -71,11 +71,14 @@ Subcommands:
   service --home H --deck-chat PATH [--model ROUTE]
       the keeper a launchd agent runs (bin/fm-deck-chat.sh install-service):
       adopts a live host and waits while any live harness holds the session lock.
-      Otherwise, while captain-start is younger than FM_DECK_CHAT_SERVICE_START_GRACE,
-      publishes waiting with detail "captain start in progress", even if it never
-      observed the stopped marker. Once grace and any backoff expire, starts one
-      with `fm-deck-chat.sh --stream` (resuming the persisted session), backing off
-      while it keeps dying soon after start.
+      For ordinary recovery, while captain-start is younger than
+      FM_DECK_CHAT_SERVICE_START_GRACE, publishes waiting with detail "captain start
+      in progress", even if it never observed the stopped marker. Once grace and
+      any backoff expire, starts one with `fm-deck-chat.sh --stream` (resuming the
+      persisted session), backing off while it keeps dying soon after start.
+      A claimed model switch SIGTERMs the live host, resets crash backoff, and
+      restarts on the claimed route without waiting for captain-start grace;
+      records the route change after a successful start.
       Honours state/primary-chat/stopped, including hosts that register late.
       Waits for an in-flight --stream launcher even past its expected window;
       logs that delay once and leaves it to finish independently on shutdown.
