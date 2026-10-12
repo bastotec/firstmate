@@ -5,8 +5,10 @@ bin/fm-approval.sh is the entry point; this file holds the whole contract.
 
 A machine opts in by listing gates in its own policy file, ~/.agents/approvals.json
 (FM_APPROVAL_POLICY overrides). The file is machine-local: dotfiles and Firstmate
-never overwrite it, and an absent file or an empty "gates" list means nothing is
-gated. Deck runs `gate` as a global pre_tool_use hook from ~/.agents/deck.hooks.json
+home synchronization never overwrite it; only explicit policy management changes it.
+An absent file or an omitted or empty "gates" list means nothing is gated.
+An empty file is invalid JSON, not an empty policy.
+Deck runs `gate` as a global pre_tool_use hook from ~/.agents/deck.hooks.json
 (`install-hook` merges it there without touching other entries), so every Deck agent
 on the machine passes through it, whatever its AGENTS.md says.
 
@@ -22,6 +24,9 @@ A gate matches when `tool` equals the tool name (or matches it as a shell glob, 
 found in the call: in args.command for run_command, else in the call's canonical JSON.
 Built-in presets (`presets` lists them) are copied into the file by `enable`, so the
 file always shows exactly what is gated.
+Matching is not a sandbox: it examines command text or tool names and arguments,
+not every way to reach a service; workarounds remain forbidden by the block message.
+FM_DECK_HOOKS overrides the hooks file path for install-hook and status.
 
 Usage:
   fm-approval.sh gate                          deck pre_tool_use hook; event JSON on stdin
@@ -45,8 +50,8 @@ do not retry or work around it, wait to be told. A request is filed in the ownin
 as state/approvals/<id>.json (mode 0600, atomic) with id, machine, home, agent,
 session, tool, args, cwd, gate, key, requested; an identical call already pending
 reuses that request instead of filing another. Requests never expire and nothing is
-ever approved automatically. A policy that exists but cannot be read or parsed blocks
-every call (fail closed) with the reason, and so does a gated call with no home to file
+ever approved automatically. A policy that exists but cannot be read, parsed or
+validated blocks every call (fail closed) with the reason, and so does a gated call with no home to file
 into. Deck runs hooks with a 10 s timeout and by default fails open on a crash or timeout;
 the installed entry sets "fail_closed": true, which a Deck with fail-closed hooks honors
 by blocking instead (an older Deck ignores the key). The gate never waits: it files and
@@ -60,7 +65,10 @@ approved, but nothing can steer them, so they are told to stop and wait.
 answer. Run in the owning home (FM_HOME). --approve writes a one-time grant
 (state/approvals/grants/<key>.<id>.json, expiring after grant_ttl_secs, default 900) and
 steers the agent through bin/fm-send.sh: "approved: run request <id> now", with the
-exact call. --deny steers "denied". Either way the request leaves the pending set
+tool name and complete original arguments as canonical JSON, with the effective cwd
+shown separately. Replay those arguments unchanged, including any relative cwd;
+the displayed effective cwd is not a replacement for the original cwd argument.
+--deny steers "denied". Either way the request leaves the pending set
 (moved to state/approvals/answered/). A request already answered is refused (exit 3).
 A failed steer leaves the answer recorded and exits 4 with the reason. --no-steer records
 only; --json prints {id, status, agent, steer, steered} so a caller with its own route to
