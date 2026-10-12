@@ -443,8 +443,15 @@ retirement_done_args() {  # <id> <pr> <verdict>
 # cleanup, relaunch and an idle-sweep hold (bin/fm-captain-hold.sh
 # --expected-record) take, so none of them acts on a record mid-retirement.
 retire_records_only_locked() {  # <id>
-  local lock="$STATE/.control-$1.lock" rc=0
+  local lock="$STATE/.control-$1.lock" meta="$STATE/$1.meta" expected_record=$2 current_record rc=0
   fm_lock_acquire_wait "$lock" || return 1
+  if [ ! -f "$meta" ] || [ -L "$meta" ] \
+    || ! current_record=$(cat "$meta" 2>/dev/null) \
+    || [ "$current_record" != "$expected_record" ]; then
+    FM_BACKLOG_TRANSITION_ERROR="task record changed or vanished after the retirement assertion; nothing further was retired"
+    fm_lock_release "$lock" || true
+    return 1
+  fi
   retire_records_only "$1" || rc=$?
   fm_lock_release "$lock" || true
   return "$rc"
@@ -569,6 +576,12 @@ retired_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 retired_by=$(id -un 2>/dev/null || printf '%s' "${USER:-unknown}")
 status=0
 for id in "${IDS[@]}"; do
+  if [ ! -f "$STATE/$id.meta" ] || [ -L "$STATE/$id.meta" ] \
+    || ! retirement_record=$(cat "$STATE/$id.meta" 2>/dev/null); then
+    status=1
+    echo "error: $id's task record could not be read before retirement; nothing was retired" >&2
+    continue
+  fi
   worktree=$(fm_meta_get "$STATE/$id.meta" worktree)
   endpoint=$(fm_backend_target_of_meta "$STATE/$id.meta")
   if ! record_retirement_assertion "$id"; then
@@ -604,7 +617,7 @@ for id in "${IDS[@]}"; do
     else
       report_partial_cleanup "$id" "$teardown_rc"
     fi
-  elif retire_records_only_locked "$id"; then
+  elif retire_records_only_locked "$id" "$retirement_record"; then
     echo "warning: cleanup for $id refused over the work in its worktree, before touching anything on disk; its records are retired on the retirement recorded for $retired_by at $retired_at" >&2
     report_what_remains "$id" "$worktree" "$endpoint"
   else
