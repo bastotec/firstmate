@@ -280,6 +280,8 @@ Captain-direct messages (`fm-send --from-captain`) use the durable task inbox ra
 With a stream-hosted driver and a Deck build supporting `--steer-dir`, ringing attempts native publication into a live turn, and each new turn also attempts publication of pending captain messages before its first model call.
 Published messages reach the model at its next safe point without interrupting or restarting the turn; [`project_captain`](../bin/fm_stream_deck.py) owns publication eligibility, sequencing limits, and acknowledgement rules.
 Native publication is best-effort: unsupported builds, skipped records, and publication failures retain the ordinary inbox path rather than refusing the durable send.
+Captain images in native steering follow [`with_deck_images`](../bin/fm_stream_deck.py), also used by [primary steering](../bin/fm-primary-steer.sh); Bridge-order bodies are not transformed.
+Remote attachments must already be staged on the receiving host before sending; native publication does not copy attachment bytes.
 An idle driver observes new captain records out of band and starts a turn without waiting for Enter, including while its composer holds human text.
 The draft remains pending and is repainted after the turn; the fallback terminal ring never overwrites or submits it.
 The [`fm-send.sh` header](../bin/fm-send.sh) owns delivery status and reply tracking, and the [driver header](../bin/fm-deck-worker.sh) owns suppression of redundant empty-inbox doorbells.

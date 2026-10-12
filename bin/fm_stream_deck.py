@@ -33,10 +33,13 @@ IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.webp', '.gif'}
 def with_deck_images(text):
     """Follow each Fleet Town image attachment line with a Deck image line.
 
-    Fleet Town names a staged copy as `Attached: <path> (image, <size>)`.
-    When that path is a png, jpeg, webp or gif file on this host, a
-    `deck-image: <path>` line after it makes Deck send the picture itself as
-    an image part of the same message; an older Deck shows the line as text.
+    Fleet Town names a staged copy as `Attached: <abs path> (image, <size>)`.
+    When that path is a file on this host with a png, jpg, jpeg, webp or gif
+    suffix (case-insensitive), a `deck-image: <path>` line immediately after it
+    makes Deck send the picture itself as an image part of the same message;
+    an older Deck shows the line as text.
+    An identical directive already immediately after the attachment is retained
+    without duplication, so repeated mapping is safe.
     Other lines, missing files and other kinds pass through unchanged.
     """
     lines = text.split('\n')
@@ -355,8 +358,9 @@ def project_captain(state, task):
     Both publication paths flush eligible captain records and Bridge orders
     bound to the active execution and turn in sequence under the lifecycle lock.
     No sequence is published below one already visible in that turn, because
-    Deck silently drops a late lower sequence. Guidance, including source paths,
-    must fit Deck's 64 KiB UTF-8 byte ceiling. Native-ineligible captain records
+    Deck silently drops a late lower sequence. Guidance, including source paths
+    and attachment expansion from with_deck_images, must fit Deck's 64 KiB
+    UTF-8 byte ceiling. Native-ineligible captain records
     retain their ordinary inbox fallback without blocking later eligible sources;
     an ineligible bound Bridge order stops the flush rather than being overtaken.
     Prints the total number of native projections published, including Bridge
