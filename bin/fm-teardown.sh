@@ -2955,13 +2955,8 @@ remove_secondmate_registry_entry() {
 }
 
 preflight_wake_gate_task_state "$STATE" "$ID" || exit 1
-# The claim is read first: a slot claimed by another task is skipped by every
-# later step, so a second record naming it cannot be harmed and the record scan
-# would only strand this stale record beside the claimant's.
+require_exclusive_task_worktree_slot || exit 1
 require_owned_task_worktree_slot || exit 1
-if teardown_owns_worktree; then
-  require_exclusive_task_worktree_slot || exit 1
-fi
 
 validate_pr_poll_cleanup "$STATE" "$ID" || exit 1
 
