@@ -56,13 +56,15 @@
 # A decision is an ordinary captain hold (bin/fm-captain-hold.sh hold) with a
 # full decision card, so it reaches Fleet Town, and in a secondmate home the
 # parent channel, through their existing owners. If holding the worker's id
-# fails, the sweep attempts a linked follow-up idle-<id> with --title and
-# --origin; the summary's hold_id identifies the successful call.
+# fails for a reason other than a rejected metadata snapshot, the sweep attempts
+# a linked follow-up idle-<id> with --title and --origin; the summary's hold_id
+# identifies the successful call.
 # Each raised decision records the worker's ledger byte count under
 # state/idle-sweep/<id>.raised; unchanged size suppresses another decision
 # even when the classification changes. Holds and settled deferrals on either
 # the worker or follow-up id take precedence over a changed fingerprint.
-# Guarded worker holds use bin/fm-captain-hold.sh's --expected-record contract.
+# Worker holds use bin/fm-captain-hold.sh's --expected-record contract; only
+# the explicit record-less orphan caller is exempt, never a worker id prefix.
 # A rejected metadata snapshot is left for a fresh scan (class unknown,
 # action none), without attempting another linked hold or reporting it unhandled.
 # A main home has no parent audit, so a scan that leaves workers unhandled

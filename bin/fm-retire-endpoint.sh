@@ -442,7 +442,10 @@ retirement_done_args() {  # <id> <pr> <verdict>
 # The record-only mutation runs under the task's control lock, the same lock
 # cleanup, relaunch and an idle-sweep hold (bin/fm-captain-hold.sh
 # --expected-record) take, so none of them acts on a record mid-retirement.
-retire_records_only_locked() {  # <id>
+# Revalidate the pre-cleanup snapshot under that lock: an assertion for the
+# old incarnation must not retire a replacement published while we waited.
+# Regression coverage: tests/fm-teardown-endpoint-safety.test.sh.
+retire_records_only_locked() {  # <id> <expected-record>
   local lock="$STATE/.control-$1.lock" meta="$STATE/$1.meta" expected_record=$2 current_record rc=0
   fm_lock_acquire_wait "$lock" || return 1
   if [ ! -f "$meta" ] || [ -L "$meta" ] \
