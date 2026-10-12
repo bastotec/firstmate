@@ -32,7 +32,7 @@ The primary runs under the Deck chat host, [`bin/fm-deck-chat.sh`](../bin/fm-dec
 
 ## Verbs
 
-The remaining sections describe task control through `fm-control.sh`.
+The verb table and transactional sections below describe local task records; [remote lifecycle control](remote-secondmates.md#lifecycle-control) owns the primary's separate routing for remotely placed secondmates.
 
 | Verb | Effect | Postcondition |
 | --- | --- | --- |
@@ -69,7 +69,7 @@ The [`fm-control.sh` header](../bin/fm-control.sh) owns the separate deliberate-
 Only the instructions are ever rolled back from those copies; the record copy is never written back over the live record, because every other writer takes the per-task record lock this plane does not hold.
 
 1. **Resolve the profile.**
-   An explicit `--harness`, `--model`, or `--effort` wins, and `recover-missing` accepts exactly the same three flags with exactly this precedence - a rescue that names a replacement runtime is one transaction, not a failed recovery followed by a relaunch.
+   For local recovery, an explicit `--harness`, `--model`, or `--effort` wins with the same precedence as `relaunch` - a rescue that names a replacement runtime is one transaction, not a failed recovery followed by a relaunch.
    For local records, a `kind=secondmate` task otherwise re-resolves its durable `config/secondmate-harness` pin, including that file's optional model and effort tokens, exactly as every other respawn does - so setting the pin and relaunching is the ordinary way to move a secondmate's runtime.
    Invalid static harness configuration refuses with the resolver's diagnostic before the existing worker is stopped; only a successful empty resolution may fall back to its recorded harness, and an explicit supported `--harness` bypasses the configured pin.
    A ship or scout keeps the harness already recorded for it, because that harness comes from firstmate's dispatch-profile judgment at intake and must not be silently re-read from configuration.
@@ -135,7 +135,7 @@ It differs from the steps above in exactly three places.
   A legacy `fm-<id>` task label, an explicit `<hub-tag>:<endpoint-id>` endpoint, and a record whose `endpoint_task_id` names another task are all refused.
 - A remotely placed secondmate is never driven from this home's own endpoint view.
   Its agent runs on another host, so none of the postconditions this plane verifies could be read for it here; local endpoint validation would refuse the record regardless, because `window=remote:<id>` can never match a local backend's required shape.
-  [Remote lifecycle routing](remote-secondmates.md#lifecycle-control) owns its supported primary verbs, readiness gate, and host-to-parent rebinding; the host-local record is ordinary and local, so the transaction's checkpoint, journal, rollback, and postconditions apply there.
+  [Remote lifecycle routing](remote-secondmates.md#lifecycle-control) owns its supported primary verbs, readiness gate, and host-to-parent rebinding; delegated relaunch uses the ordinary host-local transaction, while remote missing-endpoint recovery uses the normal secondmate spawn route.
 - A recorded harness other than exact `deck` is refused before any lifecycle action, including `relaunch` or `recover-missing` with an explicit replacement `--harness`.
   Removed adapters and noncanonical raw-command basenames have no verified control mechanics; an override does not bypass that check, and their records and work remain untouched.
 - An adapter that is not verified for this task's kind is refused **before** the running agent is stopped, not after.

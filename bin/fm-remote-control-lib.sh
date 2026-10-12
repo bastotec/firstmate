@@ -16,7 +16,8 @@
 # fm_remote_control_run is bin/fm-control.sh's remote arm: interrupt, exit, and
 # relaunch run that same control plane on the
 # host over bin/fm-on.sh, and a relaunch rewrites this home's binding from the
-# host's route afterwards. It reads fm-control.sh's parsed globals.
+# host's route afterwards. recover-missing launches a gone endpoint again
+# (fm_remote_recover_missing). It reads fm-control.sh's parsed globals.
 
 # fm_remote_route_parse <route-output>: validate one host route. Sets
 # FM_REMOTE_ROUTE_BACKEND, _TARGET, _HARNESS, _MODEL, _EFFORT, _STREAM_HUB,
@@ -96,6 +97,45 @@ fm_remote_route_rebind_meta() {  # <meta> <state-dir>
   return "$rc"
 }
 
+# recover-missing for a remote mate: its endpoint is gone from the hub, so
+# there is nothing on the host for a relaunch to restart. It launches the mate
+# again through the same route a first launch takes (bin/fm-spawn.sh --secondmate:
+# readiness, convergence, launch on the host, rebind of this record), keeping
+# the recorded remote home and stream backend. Only a fresh `missing` reading
+# from the host is recovered, and the host's launch refuses while the mate's
+# previous agent process still runs there, so a hub that merely forgot a live
+# agent is never answered with a second one. Explicit --harness/--model/--effort
+# are refused; use relaunch for profile changes. Recovery uses the normal
+# secondmate spawn's profile resolution. The caller holds the control lock.
+# shellcheck disable=SC2153 # META and ID are fm-control.sh's parsed globals.
+fm_remote_recover_missing() {  # <host>
+  local host=$1 out rc state
+  if [ "$HARNESS_SET" = 1 ] || [ "$MODEL_SET" = 1 ] || [ "$EFFORT_SET" = 1 ]; then
+    echo "error: remote recover-missing launches with this home's configured secondmate profile and takes no profile flags; use relaunch to choose harness, model or effort" >&2
+    return 1
+  fi
+  rc=0
+  out=$("$SCRIPT_DIR/fm-on.sh" "$ID" fm-remote-secondmate-control.sh state "$ID" < /dev/null 2>/dev/null) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "error: remote secondmate $ID on $host could not be read (exit $rc); recover-missing refused" >&2
+    [ "$rc" -ne 255 ] || return 255
+    return 1
+  fi
+  state=$(printf '%s\n' "$out" | tail -1)
+  [ "$state" = missing ] || {
+    echo "error: task $ID's endpoint on $host reads '$state'; recover-missing requires a positively missing endpoint" >&2
+    return 1
+  }
+  rc=0
+  out=$(FM_SPAWN_NO_GUARD=1 "$SCRIPT_DIR/fm-spawn.sh" "$ID" --secondmate 2>&1) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    [ -z "$out" ] || printf '%s\n' "$out" >&2
+    return "$rc"
+  fi
+  printf '%s\n' "$out"
+  echo "recovered $ID remote=$host target=$(fm_meta_get "$META" remote_target)"
+}
+
 # shellcheck disable=SC2153 # META, STATE, ID, VERB, and NEW_* are fm-control.sh's parsed globals.
 fm_remote_control_run() {
   local host harness model effort prior_harness out rc route
@@ -109,8 +149,12 @@ fm_remote_control_run() {
       return "$rc"
       ;;
     relaunch) ;;
+    recover-missing)
+      fm_remote_recover_missing "$host"
+      return
+      ;;
     *)
-      echo "error: task $ID is a remotely placed secondmate on $host; '$VERB' is not available for it here, and its missing-endpoint recovery is the secondmate liveness sweep" >&2
+      echo "error: task $ID is a remotely placed secondmate on $host; '$VERB' is not available for it here" >&2
       return 1
       ;;
   esac

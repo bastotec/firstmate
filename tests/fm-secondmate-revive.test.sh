@@ -13,8 +13,8 @@
 #   - two failed revivals queue exactly ONE check wake for the captain and stop
 #     the retries until the mate is seen alive again;
 #   - a remote route is probed on its host, relaunched there when dead, and a
-#     remote endpoint that is gone is escalated, since only its host can
-#     recover it;
+#     remote endpoint that is gone is recovered through fm-control
+#     recover-missing like a local one, within the same budget;
 #   - the real watcher runs the scan on its own cadence without blocking its
 #     liveness beacon, so a dead mate comes back with no first-mate turn.
 #
@@ -216,12 +216,47 @@ test_remote_mate_is_probed_and_relaunched_on_its_host() {
   [ -z "$(calls "$dir")" ] || fail "an unreachable host was treated as a dead mate"
   rm -f "$dir/home/remote-unreachable"
   printf 'missing\n' > "$dir/home/remote-state"
-  scan "$dir"; scan "$dir"
-  [ -z "$(calls "$dir")" ] || fail "a gone remote endpoint was acted on from the primary"
-  [ "$(queued_revive_wakes "$dir")" = 1 ] || fail "a gone remote endpoint was not escalated once"
   scan "$dir"
-  [ "$(queued_revive_wakes "$dir")" = 1 ] || fail "a gone remote endpoint was escalated twice"
-  pass "a remote mate is probed and relaunched on its host, and a gone remote endpoint escalates once"
+  [ -z "$(calls "$dir")" ] || fail "a single missing reading recovered the remote mate: $(calls "$dir")"
+  scan "$dir"
+  case "$(calls "$dir")" in
+    "rm1 recover-missing --unless-held-stopped --note "*) ;;
+    *) fail "a confirmed gone remote endpoint was not recovered through fm-control: $(calls "$dir")" ;;
+  esac
+  [ "$(queued_revive_wakes "$dir")" = 0 ] || fail "a recovered remote endpoint woke the first mate"
+  pass "a remote mate is probed on its host and relaunched or recovered there through fm-control"
+}
+
+test_legacy_remote_missing_escalations_restart_confirmation_without_resetting_spent_budgets() {
+  local dir id
+  dir=$(new_case remote-legacy)
+  printf 'missing\n' > "$dir/home/remote-state"
+  for id in rm1 held spent; do
+    add_remote_mate "$dir" "$id"
+    printf 'down_state=missing\nfirst_seen=1\nfailures=0\nescalated=1\nlast=\n' \
+      > "$dir/home/state/$id.revive"
+  done
+  printf 'stopped_at=1\n' > "$dir/home/state/held.held-stopped"
+  printf 'down_state=missing\nfirst_seen=1\nfailures=2\nescalated=1\nlast=host refused\n' \
+    > "$dir/home/state/spent.revive"
+  cp "$dir/home/state/held.revive" "$dir/held-before.revive"
+  cp "$dir/home/state/spent.revive" "$dir/spent-before.revive"
+  scan "$dir"
+  [ -z "$(calls "$dir")" ] || fail "a legacy escalation recovered without fresh confirmation: $(calls "$dir")"
+  grep -qx 'escalated=0' "$dir/home/state/rm1.revive" || fail "an unattempted legacy episode stayed escalated"
+  scan "$dir"
+  case "$(calls "$dir")" in
+    "rm1 recover-missing --unless-held-stopped --note "*) ;;
+    *) fail "an unattempted legacy remote episode was not recovered: $(calls "$dir")" ;;
+  esac
+  [ ! -e "$dir/home/state/rm1.revive" ] || fail "legacy recovery left its revive record"
+  scan "$dir"
+  [ "$(calls "$dir" | wc -l | tr -d ' ')" = 1 ] || fail "a held or spent episode was retried: $(calls "$dir")"
+  cmp -s "$dir/home/state/held.revive" "$dir/held-before.revive" || fail "a deliberately stopped legacy episode was changed"
+  cmp -s "$dir/home/state/spent.revive" "$dir/spent-before.revive" || fail "a spent escalation was changed"
+  [ -e "$dir/home/state/held.held-stopped" ] || fail "legacy reconciliation removed a deliberate stop"
+  [ "$(queued_revive_wakes "$dir")" = 0 ] || fail "legacy reconciliation queued another escalation"
+  pass "legacy remote-missing escalations recover after fresh confirmation while held and spent episodes stay untouched"
 }
 
 test_a_spent_budget_retries_only_the_escalation() {
@@ -386,17 +421,28 @@ SH
   pass "a mate recovered between scanning and locked admission resets its episode without a failure"
 }
 
-test_a_gone_remote_endpoint_is_reported_without_claiming_attempts() {
+test_a_gone_remote_endpoint_that_will_not_come_back_escalates_once() {
   local dir
   dir=$(new_case remote-gone)
   add_remote_mate "$dir" rm1
   printf 'missing\n' > "$dir/home/remote-state"
+  # The host refuses while the forgotten agent still runs there; each refusal
+  # is one failed attempt, one per confirmation window.
+  : > "$dir/home/control-fails"
   scan "$dir"; scan "$dir"
-  grep 'secondmate-revive:rm1' "$dir/home/state/.wake-queue" | grep -q 'no automatic revival was tried' \
-    || fail "a gone remote endpoint did not say no revival was tried: $(cat "$dir/home/state/.wake-queue")"
-  grep 'secondmate-revive:rm1' "$dir/home/state/.wake-queue" | grep -q 'automatic revivals did not' \
-    && fail "a gone remote endpoint claimed revival attempts that never ran"
-  pass "a gone remote endpoint is reported without claiming revival attempts"
+  [ "$(calls "$dir" | grep -c 'rm1 recover-missing')" = 1 ] \
+    || fail "the first confirmed window did not make exactly one attempt: $(calls "$dir")"
+  [ "$(queued_revive_wakes "$dir")" = 0 ] || fail "one failed attempt escalated before the budget was spent"
+  scan "$dir"
+  [ "$(calls "$dir" | grep -c 'rm1 recover-missing')" = 2 ] \
+    || fail "the second window did not retry the recovery: $(calls "$dir")"
+  [ "$(queued_revive_wakes "$dir")" = 1 ] || fail "a spent budget was not escalated once"
+  scan "$dir"; scan "$dir"
+  [ "$(calls "$dir" | grep -c 'rm1 recover-missing')" = 2 ] || fail "a spent budget kept retrying"
+  [ "$(queued_revive_wakes "$dir")" = 1 ] || fail "a spent budget was escalated twice"
+  grep 'secondmate-revive:rm1' "$dir/home/state/.wake-queue" | grep -q '2 automatic revivals did not' \
+    || fail "the escalation did not report the attempts: $(cat "$dir/home/state/.wake-queue")"
+  pass "a gone remote endpoint that will not come back costs two attempts and one escalation"
 }
 
 test_watcher_revives_a_dead_mate_without_a_turn() {
@@ -443,6 +489,7 @@ test_live_unknown_held_and_non_secondmate_records_are_left_alone
 test_two_failed_revivals_escalate_once_and_stop
 test_a_mate_owned_by_another_lifecycle_action_is_not_a_failure
 test_remote_mate_is_probed_and_relaunched_on_its_host
+test_legacy_remote_missing_escalations_restart_confirmation_without_resetting_spent_budgets
 test_a_spent_budget_retries_only_the_escalation
 test_one_slow_revival_does_not_delay_another_mate
 test_watcher_surfaces_a_failed_revival_on_its_own
@@ -450,6 +497,6 @@ test_a_slow_mate_does_not_hold_back_later_scans_of_another
 test_a_fresh_exit_keeps_its_record_while_the_control_lock_is_held
 test_a_refused_held_relaunch_is_not_a_failure
 test_recovery_between_the_scan_and_admission_is_not_a_failure
-test_a_gone_remote_endpoint_is_reported_without_claiming_attempts
+test_a_gone_remote_endpoint_that_will_not_come_back_escalates_once
 test_watcher_revives_a_dead_mate_without_a_turn
 echo "# all fm-secondmate-revive tests passed"

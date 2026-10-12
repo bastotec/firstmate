@@ -308,14 +308,11 @@ test_record_bound_to_another_task_is_refused() {
   pass "fm-control: a record whose endpoint identity names another task is refused"
 }
 
-# A remotely placed secondmate's agent runs on another host, so none of the
-# postconditions this plane verifies could be read for it here. Endpoint
-# validation would refuse the record anyway - `window=remote:<id>` can never
-# match a local backend's shape - but it would blame malformed metadata for a
-# correctly configured route. interrupt, exit, and relaunch are routed to the
-# host over fm-on (which refuses here: this home has no registry route), and
-# recover-missing is refused by placement; none of them reaches a local endpoint.
-test_remote_secondmate_is_refused_by_placement() {
+# Remote lifecycle actions run through fm-on, never a local endpoint. This
+# home has no registry route: interrupt, exit, and relaunch report that refusal
+# directly; recover-missing refuses because it cannot confirm the host state.
+# None may misdiagnose the remote record as malformed or touch a local agent.
+test_unconfigured_remote_secondmate_route_is_refused() {
   local dir out rc verb
   for verb in interrupt exit relaunch recover-missing; do
     dir=$(new_case "remote-$verb")
@@ -336,10 +333,10 @@ test_remote_secondmate_is_refused_by_placement() {
     else
       out=$(run_control "$dir" t1 "$verb"); rc=$?
     fi
-    expect_code 1 "$rc" "$verb on a remotely placed secondmate should refuse here"
+    expect_code 1 "$rc" "$verb without a configured remote route should refuse here"
     if [ "$verb" = recover-missing ]; then
-      assert_contains "$out" "remotely placed secondmate on example.invalid" \
-        "the $verb refusal should name the remote placement, not blame the record"
+      assert_contains "$out" "remote secondmate t1 on example.invalid could not be read (exit 1); recover-missing refused" \
+        "recovery must refuse when the remote host state cannot be confirmed"
     else
       assert_contains "$out" "secondmate registry" \
         "the $verb should be routed to the host through fm-on: $out"
@@ -349,7 +346,7 @@ test_remote_secondmate_is_refused_by_placement() {
     [ -z "$(literals "$dir")" ] && [ -z "$(keys_sent "$dir")" ] \
       || fail "$verb on a remote secondmate must reach no local endpoint"
   done
-  pass "fm-control: a remotely placed secondmate is refused by placement, not by a metadata complaint"
+  pass "fm-control: an unconfigured remote route refuses without misdiagnosing metadata or touching a local agent"
 }
 
 hold_lifecycle_lock() {  # <lock-path>
@@ -942,7 +939,7 @@ test_window_label_is_refused_with_the_exact_id
 test_explicit_endpoint_is_refused
 test_unknown_task_is_refused
 test_record_bound_to_another_task_is_refused
-test_remote_secondmate_is_refused_by_placement
+test_unconfigured_remote_secondmate_route_is_refused
 test_interrupt_and_exit_lock_before_task_state_resolution
 test_verb_allowlist_is_closed
 test_resume_is_refused_with_its_reason

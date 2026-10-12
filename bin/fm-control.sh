@@ -72,8 +72,8 @@
 #              state; it never leaves a half-transitioned task claiming to be
 #              running.
 #
-#   recover-missing Restore a terminal for a task whose endpoint reads missing,
-#              then hand the launch to the existing owner
+#   recover-missing For a local record, restore a terminal whose endpoint reads
+#              missing, then hand the launch to the existing owner
 #              (bin/fm-spawn.sh --relaunch). Proves the missing
 #              state and refuses an unavailable or conflicting local-copy
 #              ownership rather than resetting or reallocating anything.
@@ -137,10 +137,9 @@
 # bin/fm-on.sh through bin/fm-remote-secondmate-control.sh, which verifies every
 # postcondition where the agent runs. A relaunch then re-reads the host's route
 # and rewrites this record's remote_* binding, so the parent points at the
-# mate's new endpoint. recover-missing
-# stays refused for a remote mate; a gone remote endpoint needs recovery on
-# its host (docs/remote-secondmates.md "Lifecycle control").
-# bin/fm-remote-control-lib.sh owns that route.
+# mate's new endpoint. bin/fm-remote-control-lib.sh owns the separate remote
+# recover-missing route and its refusal of replacement-profile flags;
+# docs/remote-secondmates.md "Lifecycle control" owns operator guidance.
 #
 # Fail-closed boundaries:
 #   - A recorded harness outside the exact supported set is refused before any

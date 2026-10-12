@@ -49,7 +49,10 @@ cleanup() {
   local worker_pid='' pid
   FM_HOME="$PARENT" FM_PROCEVENT_CLAIM_ROOT="$CLAIMS" \
     "$ROOT/bin/fm-procevent.sh" sweep-home >/dev/null 2>&1 || true
-  for pid in $(stream_agent_pids); do kill "$pid" 2>/dev/null || true; done
+  for pid in $(stream_agent_pids); do
+    kill -CONT "$pid" 2>/dev/null || true
+    kill -KILL "$pid" 2>/dev/null || true
+  done
   [ -z "$HUB_PID" ] || kill "$HUB_PID" 2>/dev/null || true
   if [ -f "$TMP_ROOT/remote-jobs/worker.pid" ]; then
     worker_pid=$(cat "$TMP_ROOT/remote-jobs/worker.pid")
@@ -191,7 +194,7 @@ remote_env() {
   FM_FAKE_REMOTE_ENTRYPOINT="$REMOTE_ROOT/bin/fm-remote-entrypoint.sh" \
   FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
   FM_REMOTE_JOB_STATE_ROOT="$TMP_ROOT/remote-jobs" \
-  FM_FAKE_REMOTE_CWD="$TMP_ROOT" \
+  FM_FAKE_REMOTE_CWD="$REMOTE_ROOT" \
   FM_FAKE_DOCTOR_LOG="$DOCTOR_LOG" \
   FM_FAKE_CONTROL_LOG="$CONTROL_LOG" \
   FM_SEND_SETTLE=0 FM_SEND_SLEEP=0 \
@@ -258,6 +261,23 @@ for pid in $(stream_agent_pids); do
   fi
 done
 pass "remote: a stream launch records the stream binding and runs the agent on the host's hub"
+
+cp "$PARENT_META" "$TMP_ROOT/recover-profile-parent.meta"
+cp "$HOST_META" "$TMP_ROOT/recover-profile-host.meta"
+cp "$REMOTE_HOME/state/parent-route/$ID.agent-identity" "$TMP_ROOT/recover-profile-identity"
+ssh_count=$(cat "$SSH_COUNT")
+for profile_flag in --harness=deck --model=fixture/second --effort=default; do
+  rc=0
+  out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" recover-missing "$profile_flag" 2>&1) || rc=$?
+  expect_code 1 "$rc" "remote recover-missing should refuse $profile_flag"
+  assert_contains "$out" "launches with this home's configured secondmate profile and takes no profile flags" "remote recovery did not name the profile refusal: $out"
+  assert_contains "$out" 'use relaunch to choose harness, model or effort' "remote recovery did not explain how to change the profile: $out"
+done
+assert_equals "$ssh_count" "$(cat "$SSH_COUNT")" "profile refusal reached the remote host"
+cmp -s "$PARENT_META" "$TMP_ROOT/recover-profile-parent.meta" || fail "profile refusal changed the parent route"
+cmp -s "$HOST_META" "$TMP_ROOT/recover-profile-host.meta" || fail "profile refusal changed the host route"
+cmp -s "$REMOTE_HOME/state/parent-route/$ID.agent-identity" "$TMP_ROOT/recover-profile-identity" || fail "profile refusal replaced the remote agent"
+pass "remote: recover-missing refuses explicit profile flags before contacting the host"
 
 cp "$PARENT_META" "$TMP_ROOT/alive-parent.meta"
 cp "$HOST_META" "$TMP_ROOT/alive-host.meta"
@@ -392,13 +412,13 @@ pass "remote: explicit model chains resolve on the host and rebind their resolve
 [ "${FM_REMOTE_SECONDMATE_PROFILE_ONLY:-0}" != 1 ] || exit 0
 
 out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" recover-missing 2>&1) \
-  && fail "recover-missing was accepted for a remote mate: $out"
-assert_contains "$out" "not available for it here" "recover-missing refusal was not named: $out"
+  && fail "recover-missing was accepted for a live remote mate: $out"
+assert_contains "$out" "reads 'alive'" "recover-missing of a live remote mate did not name its state: $out"
 out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" exit 2>&1) || fail "remote exit failed: $out"
 wait_hub_state "$STREAM_TARGET" dead
 assert_present "$PARENT/state/$ID.held-stopped" "a successful remote exit left no primary stop record"
 assert_present "$REMOTE_HOME/state/parent-route/$ID.held-stopped" "a successful remote exit left no host stop record"
-pass "remote: exit stops a stream mate on its host; recover-missing stays refused"
+pass "remote: exit stops a stream mate on its host; recover-missing refuses a live one"
 
 out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" relaunch 2>&1) || fail "explicit relaunch after remote exit failed: $out"
 wait_hub_state "$STREAM_TARGET" alive
@@ -427,5 +447,59 @@ assert_absent "$PARENT/state/$ID.held-stopped" "a rejected remote exit recorded 
 assert_absent "$REMOTE_HOME/state/parent-route/$ID.held-stopped" "a rejected remote exit reached host-local control"
 wait_hub_state "$STREAM_TARGET" alive
 pass "remote: a rejected exit does not record a deliberate stop"
+
+# --- the hub forgets the mate (2026-10-10) -----------------------------------
+# A hub restart empties its registry; an agent that still runs re-registers on
+# its own, but one that is gone leaves the endpoint missing for good. The
+# primary's revive scan must bring such a mate back with nobody acting, and
+# must never start a second agent beside one that still runs.
+restart_hub() {
+  kill "$HUB_PID" 2>/dev/null || true
+  wait "$HUB_PID" 2>/dev/null || true
+  rm -f "$TMP_ROOT/hub-ready"
+  python3 "$ROOT/bin/fm-stream-hub.py" serve --bind 127.0.0.1 --port "$HUB_PORT" \
+    --token-file "$TMP_ROOT/hub-tokens" --ready-file "$TMP_ROOT/hub-ready" \
+    >> "$TMP_ROOT/hub.log" 2>&1 &
+  HUB_PID=$!
+  waited=0
+  while [ ! -s "$TMP_ROOT/hub-ready" ] && [ "$waited" -lt 100 ]; do sleep 0.1; waited=$((waited + 1)); done
+  [ -s "$TMP_ROOT/hub-ready" ] || fail "the hub did not come back: $(cat "$TMP_ROOT/hub.log")"
+}
+revive_scan() {
+  remote_env env FM_SECONDMATE_REVIVE_CONFIRM_SECS=0 "$ROOT/bin/fm-secondmate-revive.sh" scan
+}
+
+AGENT_PIDS=$(stream_agent_pids)
+[ -n "$AGENT_PIDS" ] || fail "no stream agent runs for the live mate"
+for pid in $AGENT_PIDS; do kill -STOP "$pid"; done
+restart_hub
+wait_hub_state "$STREAM_TARGET" missing
+rc=0
+out=$(remote_env "$ROOT/bin/fm-control.sh" "$ID" recover-missing 2>&1) || rc=$?
+[ "$rc" -ne 0 ] || fail "recover-missing started a second agent beside one that still runs: $out"
+assert_contains "$out" "is still running on this host" "the host did not name the running agent: $out"
+assert_equals "$STREAM_TARGET" "$(meta_value "$PARENT_META" remote_target)" "a refused recovery rebound the parent"
+pass "remote: recover-missing refuses while the forgotten agent still runs on the host"
+
+for pid in $AGENT_PIDS; do kill -KILL "$pid" 2>/dev/null || true; done
+waited=0
+while [ -n "$(stream_agent_pids)" ] && [ "$waited" -lt 100 ]; do sleep 0.1; waited=$((waited + 1)); done
+[ -z "$(stream_agent_pids)" ] || fail "the killed agent did not exit"
+restart_hub
+wait_hub_state "$STREAM_TARGET" missing
+revive_scan
+assert_equals "$STREAM_TARGET" "$(meta_value "$PARENT_META" remote_target)" "one missing reading recovered the mate"
+revive_scan
+NEW_TARGET=$(meta_value "$PARENT_META" remote_target)
+[ "$NEW_TARGET" != "$STREAM_TARGET" ] \
+  || fail "the revive scan did not bring the mate back: $(cat "$PARENT/state/secondmate-revive.log" 2>/dev/null)"
+wait_hub_state "$NEW_TARGET" alive
+assert_equals "${NEW_TARGET#*:}" "$(meta_value "$HOST_META" stream_endpoint_id)" "the parent and host records name different endpoints"
+assert_grep "revived $ID" "$PARENT/state/secondmate-revive.log" "the recovery was not logged"
+assert_absent "$PARENT/state/$ID.revive" "a successful recovery left its revive record"
+if [ -f "$PARENT/state/.wake-queue" ] && grep -q "secondmate-revive:$ID" "$PARENT/state/.wake-queue"; then
+  fail "a recovered mate woke the first mate"
+fi
+pass "remote: a mate whose endpoint the hub lost comes back from the revive scan alone"
 
 echo "ALL TESTS PASSED"
