@@ -4,6 +4,7 @@
 # Usage:
 #   fm-machine-skills.sh refresh [<machine>[:<root>]...]
 #   fm-machine-skills.sh roots
+#   fm-machine-skills.sh discover
 #   fm-machine-skills.sh list [<machine>]
 #   fm-machine-skills.sh where <skill>...
 #   fm-machine-skills.sh check <machine|secondmate-id> <skill>...
@@ -15,8 +16,7 @@
 # root (machines.md first, then the first secondmates.md route on that host).
 #
 # refresh runs `deck skills` in the machine's Firstmate checkout (this home's
-# root for local; `ssh <alias>` in the code root, with the remote runtime's
-# operator PATH, for a remote) and replaces
+# root for local; fm-on.sh discover in the code root for a remote) and replaces
 # state/machine-skills/<machine>.tsv atomically. The file starts with one
 # `# machine=<m> root=<root> refreshed=<UTC ISO time> count=<n>` line, then one
 # `<name>\t<scope>\t<path>` line per skill (scope is deck's repo|global).
@@ -70,7 +70,6 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 INV="$STATE/machine-skills"
 DECK_BIN=${FM_DECK_BIN:-deck}
-SSH_BIN=${FM_SSH_BIN:-ssh}
 
 # shellcheck source=bin/fm-secondmate-registry-lib.sh
 . "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
@@ -78,11 +77,6 @@ SSH_BIN=${FM_SSH_BIN:-ssh}
 usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 valid_name() { case "$1" in ''|-*|*[!A-Za-z0-9._-]*) return 1 ;; esac; }
-sq() {
-  printf "'"
-  printf '%s' "$1" | sed "s/'/'\\\\''/g"
-  printf "'"
-}
 
 # Print "<machine>\t<root>" for every known machine, local first.
 machines() {
@@ -123,14 +117,8 @@ deck_skills_on() { # <machine> <root>
   if [ "$1" = local ]; then
     (cd "$2" && "$DECK_BIN" skills < /dev/null)
   else
-    # shellcheck disable=SC2029 # quoted for the remote shell on purpose.
-    {
-      cat "$SCRIPT_DIR/fm-remote-job-lib.sh"
-      # shellcheck disable=SC2016 # Expanded by the remote shell, not this one.
-      printf '\n%s\n' 'PATH=$(fm_remote_job_compose_operator_path "$HOME") && exec env -i HOME="$HOME" PATH="$PATH" deck skills < /dev/null'
-    } | "$SSH_BIN" -o BatchMode=yes -o ConnectTimeout=8 -o ForwardAgent=no \
-      -o ClearAllForwardings=yes -o 'SendEnv=-*' -o UpdateHostKeys=no \
-      -o StrictHostKeyChecking=yes "$1" "cd $(sq "$2") && bash -s"
+    FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$SCRIPT_DIR/.." \
+      "$SCRIPT_DIR/fm-on.sh" --machine-root "$2" "$1" fm-machine-skills.sh discover
   fi
 }
 
@@ -296,6 +284,7 @@ main() {
   case "$sub" in
     refresh) cmd_refresh "$@" ;;
     roots) [ "$#" -eq 0 ] || usage; machines ;;
+    discover) [ "$#" -eq 0 ] || usage; (cd "$FM_ROOT" && "$DECK_BIN" skills < /dev/null) ;;
     list) [ "$#" -le 1 ] || usage; cmd_list "$@" ;;
     where) [ "$#" -ge 1 ] || usage; cmd_where "$@" ;;
     check) [ "$#" -ge 2 ] || usage; cmd_check "$@" ;;

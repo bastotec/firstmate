@@ -24,6 +24,8 @@ home() {
   {
     printf '#!/usr/bin/env bash\n'
     printf 'printf "%%s\\n" "$*" >> %q\n' "$h/ssh.log"
+    printf '%s\n' 'args=(); while IFS= read -r -d "" arg; do args+=("$arg"); done < <(printf "%s" "${!#}" | base64 -d)'
+    printf '%s\n' 'case "${args[0]:-}:${args[1]:-}" in fm-machine-skills.sh:discover) printf "test-skill\\tglobal\\tdescription\\t/test/skill\\n" ;; fm-machine-instructions.sh:read-local) printf "absent\\n" ;; esac'
   } > "$h/bin/ssh"
   chmod +x "$h/bin/ssh"
   cat > "$h/bin/fm-send.sh" <<'EOF'
@@ -160,7 +162,149 @@ test_skill_placement_only_considers_allowed_bridges() {
   pass "skill routing refuses machines whose bridge does not allow placement"
 }
 
+test_register_refusal_leaves_permissions_unchanged() {
+  local h before audit rc=0 out
+  h=$(home register-refusal)
+  FM_HOME="$h" "$ROOT/bin/fm-machine.sh" register workload /r/firstmate --allow messages >/dev/null
+  before=$(br "$h" show --json)
+  audit=$(br "$h" audit --json)
+  out=$(FM_HOME="$h" "$ROOT/bin/fm-machine.sh" register workload /wrong/root --allow files) || rc=$?
+  assert_equals 1 "$rc" "wrong-root registration refuses"
+  assert_contains "$out" 'different root' "refusal reason"
+  assert_equals "$before" "$(br "$h" show --json)" "refusal preserves bridge record"
+  assert_equals "$audit" "$(br "$h" audit --json)" "refusal does not audit a permission change"
+  pass "registration validates the existing route before changing permissions"
+}
+
+test_seed_uses_home_inventory_not_scratch_routes() {
+  local h rc=0 out
+  h=$(home scratch-inventory)
+  mkdir -p "$h/scratch"
+  add_route "$h" builder buildbox
+  mv "$h/data/secondmates.md" "$h/scratch/secondmates.md"
+  printf -- '- helper - helper work (host: workload; root: /r/firstmate; home: /r/homes/helper; scope: help; projects: none; added 2026-10-01)\n' > "$h/data/secondmates.md"
+  out=$(FM_HOME="$h" FM_DATA_OVERRIDE="$h/scratch" "$BRIDGE" show --json)
+  assert_equals workload "$(printf '%s' "$out" | jq -r '.bridges[].machine')" "only actual home inventory seeded"
+  br "$h" check buildbox maintenance >/dev/null 2>&1 || rc=$?
+  assert_equals 1 "$rc" "scratch destination remains denied"
+  pass "scratch routes cannot confer grandfathered permissions"
+}
+
+test_create_seeds_before_publishing_a_new_host() {
+  local h out rc=0
+  h=$(home create)
+  out=$(FM_HOME="$h" FM_SSH_BIN="$h/bin/ssh" "$ROOT/bin/fm-secondmate-create.sh" apply builder \
+    --charter 'Builder work' --scope build --host buildbox --root /r/firstmate --home /r/homes/builder --no-projects 2>&1) || rc=$?
+  assert_equals 1 "$rc" "new host provisioning requires consent"
+  assert_contains "$out" 'bridge-blocked:' "new host is refused"
+  assert_equals workload "$(br "$h" show --json | jq -r '.bridges[].machine')" "only existing host was seeded"
+  br "$h" check workload maintenance >/dev/null || fail "existing bridge lost permissions"
+  ! br "$h" check buildbox maintenance >/dev/null 2>&1 || fail "new host was seeded"
+  assert_equals 1 "$(wc -l < "$h/ssh.log" | tr -d ' ')" "only exempt doctor crossed"
+  assert_equals buildbox "$(jq -r .args.machine "$h"/state/approvals/ap-*.json)" "new bridge has an approval request"
+  pass "secondmate creation seeds the pre-add inventory and denies the new host"
+}
+
+test_summary_read_requires_reports_and_files() {
+  local h rc=0 err
+  h=$(home report)
+  br "$h" set workload --allow files >/dev/null
+  err=$(on "$h" helper fm-remote-file.sh get state/home-summary.json 2>&1) || rc=$?
+  assert_equals 1 "$rc" "files alone cannot collect a report"
+  assert_contains "$err" reports "report permission is requested"
+  assert_absent "$h/ssh.log" "report never crossed"
+  on "$h" helper fm-remote-file.sh get data/attachment.txt >/dev/null || fail "ordinary file needs only files"
+  br "$h" allow workload reports >/dev/null
+  on "$h" helper fm-remote-file.sh get state/home-summary.json >/dev/null || fail "both permissions should pass"
+  br "$h" deny workload files >/dev/null
+  rc=0
+  err=$(on "$h" helper fm-remote-file.sh get state/home-summary.json 2>&1) || rc=$?
+  assert_equals 1 "$rc" "reports alone cannot transfer a file"
+  assert_contains "$err" files "file permission is still required"
+  assert_equals 2 "$(wc -l < "$h/ssh.log" | tr -d ' ')" "only approved reads crossed"
+  pass "summary transfer requires both file and report permissions"
+}
+
+test_machine_operations_use_the_shared_gate() {
+  local h out rc
+  h=$(home machine-operations)
+  br "$h" set workload --allow none >/dev/null
+  add_route "$h" other workload
+  rc=0
+  out=$(FM_HOME="$h" FM_SSH_BIN="$h/bin/ssh" "$ROOT/bin/fm-machine-skills.sh" refresh workload 2>&1) || rc=$?
+  assert_equals 1 "$rc" "maintenance-denied skill discovery refuses"
+  assert_contains "$out" bridge-blocked: "discovery reports bridge refusal"
+  for operation in show save; do
+    rc=0
+    if [ "$operation" = show ]; then
+      out=$(FM_HOME="$h" FM_SSH_BIN="$h/bin/ssh" "$ROOT/bin/fm-machine-instructions.sh" show workload 2>&1) || rc=$?
+    else
+      out=$(printf rules | FM_HOME="$h" FM_SSH_BIN="$h/bin/ssh" "$ROOT/bin/fm-machine-instructions.sh" save workload --expect none 2>&1) || rc=$?
+    fi
+    assert_equals 1 "$rc" "instruction $operation refuses denied maintenance"
+    assert_contains "$out" bridge-blocked: "$operation reports bridge refusal"
+  done
+  assert_absent "$h/ssh.log" "no denied machine operation crossed"
+  br "$h" allow workload maintenance >/dev/null
+  out=$(FM_HOME="$h" FM_SSH_BIN="$h/bin/ssh" "$ROOT/bin/fm-machine-skills.sh" refresh workload) || fail "allowed discovery refused: $out"
+  assert_contains "$out" 'refresh workload=done: 1 skills' "machine discovery ignores secondmate ambiguity"
+  out=$(FM_HOME="$h" FM_SSH_BIN="$h/bin/ssh" "$ROOT/bin/fm-machine-instructions.sh" show workload) || fail "allowed instruction read refused: $out"
+  assert_contains "$out" present=no "allowed machine read returned protocol"
+  assert_equals 2 "$(wc -l < "$h/ssh.log" | tr -d ' ')" "allowed operations use SSH"
+  printf 'broken' > "$h/config/bridges.json"
+  rc=0
+  out=$(FM_HOME="$h" FM_SSH_BIN="$h/bin/ssh" "$ROOT/bin/fm-machine-skills.sh" refresh workload 2>&1) || rc=$?
+  assert_equals 1 "$rc" "broken policy refuses maintenance"
+  assert_equals 2 "$(wc -l < "$h/ssh.log" | tr -d ' ')" "broken policy sent nothing"
+  pass "machine-level maintenance crosses only through the bridge gate"
+}
+
+test_concurrent_mutations_and_requests_are_serialized() {
+  local h
+  h=$(home concurrent)
+  br "$h" set workload --allow messages >/dev/null
+  python3 - "$h" "$BRIDGE" <<'PY' || fail "concurrency regression"
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+h, bridge = sys.argv[1:]
+env = dict(os.environ, FM_HOME=h)
+lock = Path(h) / 'config/.bridges.lock'
+lock.mkdir()
+commands = [('allow', 'workload', 'files'), ('deny', 'workload', 'messages')]
+processes = [subprocess.Popen([bridge, *args], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE) for args in commands]
+time.sleep(1)
+lock.rmdir()
+for p in processes:
+    out, err = p.communicate(timeout=15)
+    assert p.returncode == 0, (out, err)
+record = json.loads((Path(h) / 'config/bridges.json').read_text())
+assert record['bridges']['workload']['allow'] == ['files'], record
+processes = [subprocess.Popen([bridge, 'block', 'workload', 'reports', '--what', 'summary'], env=env,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(16)]
+ids = []
+for p in processes:
+    out, err = p.communicate(timeout=20)
+    assert p.returncode == 0, (out, err)
+    ids.append(out.strip())
+assert len(set(ids)) == 1, ids
+requests = list((Path(h) / 'state/approvals').glob('ap-*.json'))
+assert len(requests) == 1, requests
+assert json.loads(requests[0].read_text())['gate'] == 'bridge:reports'
+PY
+  pass "concurrent permission updates and blocked requests preserve policy invariants"
+}
+
 test_existing_bridges_are_seeded_and_shown_configured
+test_register_refusal_leaves_permissions_unchanged
+test_seed_uses_home_inventory_not_scratch_routes
+test_create_seeds_before_publishing_a_new_host
+test_summary_read_requires_reports_and_files
+test_machine_operations_use_the_shared_gate
+test_concurrent_mutations_and_requests_are_serialized
 test_new_machine_denies_everything_by_default
 test_register_records_the_flows_chosen_at_connect
 test_blocked_flow_is_refused_before_ssh_with_one_request

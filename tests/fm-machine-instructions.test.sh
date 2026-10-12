@@ -7,6 +7,8 @@ set -euo pipefail
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+export TEST_CODE_ROOT="$ROOT"
+
 T=$(fm_test_tmproot fm-machine-instructions)
 FAKEBIN=$(fm_fakebin "$T")
 H="$T/home"
@@ -24,7 +26,11 @@ if [ "${FAKE_SSH_DROP:-0}" = 1 ]; then
   printf 'present %064d\ntruncated' 0
   exit 255
 fi
-cd "$FAKE_ACCT" && HOME="$FAKE_ACCT" exec sh -c "$*"
+root=$(printf '%s' "$3" | base64 -d)
+home=$(printf '%s' "$4" | base64 -d)
+args=()
+while IFS= read -r -d '' arg; do args+=("$arg"); done < <(printf '%s' "$5" | base64 -d)
+HOME="$FAKE_ACCT" FM_HOME="$home" FM_ROOT_OVERRIDE="$root" exec "$TEST_CODE_ROOT/bin/${args[0]}" "${args[@]:1}"
 SH
 chmod +x "$FAKEBIN/ssh"
 expect_code() { [ "$1" = "$2" ] || fail "$3: expected exit $1, got $2"; }

@@ -131,6 +131,9 @@ rm -rf -- "$GUARD_PROBE"
 SESSION=$(FM_HOME="$SOURCE" FM_STATE_OVERRIDE="$SOURCE/state" "$SCRIPT_DIR/fm-lock.sh" status)
 case "$SESSION" in 'lock: free'|'lock: stale '*) ;; *) die "source session is not stopped: $SESSION" ;; esac
 
+"$SCRIPT_DIR/fm-bridge.sh" show >/dev/null \
+  || die 'the bridge record cannot be read; fix config/bridges.json first'
+
 if [ -e "$JOURNAL" ] || [ -L "$JOURNAL" ]; then
   [ -d "$JOURNAL" ] && [ ! -L "$JOURNAL" ] || die 'unsafe migration journal'
   [ -z "$(find "$JOURNAL" ! -type d ! -type f -print)" ] && [ -z "$(find "$JOURNAL" -type f -links +1 -print)" ] || die 'unsafe migration journal artifacts'

@@ -8,6 +8,8 @@ set -euo pipefail
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+export TEST_CODE_ROOT="$ROOT"
+
 T=$(fm_test_tmproot fm-machine-skills)
 FAKEBIN=$(fm_fakebin "$T")
 H="$T/home"
@@ -28,7 +30,8 @@ cat > "$FAKEBIN/ssh" <<'SH'
 #!/usr/bin/env bash
 cat > /dev/null
 while [ "$#" -gt 0 ]; do case "$1" in -o) shift 2 ;; -*) shift ;; *) break ;; esac; done
-printf '%s %s\n' "$1" "$2" >> "$FAKE_SSH_LOG"
+root=$(printf '%s' "$4" | base64 -d)
+printf '%s root=%s\n' "$1" "$root" >> "$FAKE_SSH_LOG"
 [ -z "${FAKE_SSH_DOWN:-}" ] || { echo 'ssh: connect to host workload port 22: Connection refused' >&2; exit 255; }
 printf 'afk\trepo\tAway mode\t/home/b/firstmate/.agents/skills/afk/SKILL.md\n'
 printf 'pr-review\tglobal\tReview\t/home/b/.agents/skills/pr-review/SKILL.md\n'
@@ -47,7 +50,7 @@ assert_contains "$out" "refresh local=done: 3 skills" "local refresh"
 assert_contains "$out" "refresh workload=done: 2 skills" "remote refresh"
 grep -q "^# machine=workload root=/home/b/firstmate refreshed=.* count=2$" "$H/state/machine-skills/workload.tsv" || fail "header line"
 assert_grep "pr-review	global	/home/b/.agents/skills/pr-review/SKILL.md" "$H/state/machine-skills/workload.tsv" "skill line"
-assert_grep "workload cd '/home/b/firstmate'" "$FAKE_SSH_LOG" "remote deck runs in the code root"
+assert_grep "workload root=/home/b/firstmate" "$FAKE_SSH_LOG" "remote deck runs in the code root"
 assert_equals "local	$T/proj
 workload	/home/b/firstmate" "$(skills roots)" "roots lists local first, then remote hosts once"
 pass "refresh records local and remote inventories"
@@ -60,6 +63,7 @@ expect_code 1 "$rc" "refresh with an unreachable machine"
 assert_contains "$out" "refresh workload=failed: ssh: connect to host workload port 22: Connection refused" "failure reason"
 assert_contains "$out" "refresh local=done" "a failed machine does not stop the others"
 assert_grep "pr-review" "$H/state/machine-skills/workload.tsv" "the previous inventory is kept"
+FM_HOME="$H" "$ROOT/bin/fm-bridge.sh" allow newbox maintenance >/dev/null
 out=$(skills refresh newbox:/srv/fm)
 assert_contains "$out" "refresh newbox=done: 2 skills" "an unregistered machine refreshes with an explicit root"
 rm -f "$H/state/machine-skills/newbox.tsv"
@@ -156,12 +160,21 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ "$agent:$forward:$send:$update:$strict:$batch" = 'no:yes:-*:no:yes:yes' ] || exit 90
+[ "$1" != -- ] || shift
 shift
-HOME="$FAKE_ACCT" PATH=/usr/bin:/bin exec sh -c "$*"
+root=$(printf '%s' "$3" | base64 -d)
+home=$(printf '%s' "$4" | base64 -d)
+args=()
+while IFS= read -r -d '' arg; do args+=("$arg"); done < <(printf '%s' "$5" | base64 -d)
+. "$TEST_CODE_ROOT/bin/fm-remote-job-lib.sh"
+path=$(fm_remote_job_compose_operator_path "$FAKE_ACCT")
+exec env -i HOME="$FAKE_ACCT" PATH="$path" FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$TEST_CODE_ROOT/bin/${args[0]}" "${args[@]:1}"
 SH
 chmod +x "$ACCT/.nix-profile/bin/deck" "$SBIN/inventory-ssh"
 mv "$ACCT/.local/bin/deck" "$ACCT/deck.saved"
 printf -- '- quoted - quoted root (host: quotedbox; root: %s/o'"'"'brien fm; home: %s/sm/quoted; scope: misc; projects: ; added 2026-09-16)\n' "$T" "$ACCT" >> "$H/data/secondmates.md"
+FM_HOME="$H" "$ROOT/bin/fm-bridge.sh" allow quotedbox maintenance >/dev/null
+FM_HOME="$H" "$ROOT/bin/fm-bridge.sh" allow explicit maintenance >/dev/null
 out=$(FAKE_ACCT="$ACCT" FM_SSH_BIN="$SBIN/inventory-ssh" CAPTAIN_SECRET=secret SSH_AUTH_SOCK=/secret skills refresh quotedbox) || fail "quoted remote refresh failed: $out"
 assert_contains "$out" 'refresh quotedbox=done: 1 skills' "registered quoted root with Nix-only Deck"
 assert_grep "nix-skill"$'\t'"global"$'\t'"$T/o'brien fm/skill/SKILL.md" "$H/state/machine-skills/quotedbox.tsv" "remote discovery used the correct root and runtime"
@@ -178,8 +191,14 @@ G=0
 while [ "$#" -gt 0 ]; do case "$1" in -G) G=1; shift ;; -o|-F) shift 2 ;; -*) shift ;; *) break ;; esac; done
 if [ "$G" -eq 1 ]; then printf 'hostname box.lan\nuser captain\nport 22\n'; exit 0; fi
 shift
-case "$*" in *git-receive-pack*) [ "${FAKE_PUSH_FAIL:-0}" != 1 ] || exit 255 ;; esac
-cd "$FAKE_ACCT" && HOME="$FAKE_ACCT" exec sh -c "$*"
+root=$(printf '%s' "$3" | base64 -d)
+home=$(printf '%s' "$4" | base64 -d)
+args=()
+while IFS= read -r -d '' arg; do args+=("$arg"); done < <(printf '%s' "$5" | base64 -d)
+[ "${args[1]:-}" != skills-import ] || [ "${FAKE_PUSH_FAIL:-0}" != 1 ] || exit 255
+. "$TEST_CODE_ROOT/bin/fm-remote-job-lib.sh"
+path=$(fm_remote_job_compose_operator_path "$FAKE_ACCT")
+exec env -i HOME="$FAKE_ACCT" PATH="$path" FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$TEST_CODE_ROOT/bin/${args[0]}" "${args[@]:1}"
 SH
 chmod +x "$SBIN/ssh"
 git init -q --bare -b main "$T/dots-origin.git"
@@ -203,12 +222,13 @@ printf 'source=%s\n' "$T/dots" > "$H/config/shared-skills"
 machine() { PATH="$SBIN:$FAKEBIN:$PATH" FAKE_ACCT="$ACCT" FM_HOME="$H" FM_KNOWN_HOSTS="$T/known" FM_SSH_CONFIG="$T/ssh_config" "$ROOT/bin/fm-machine.sh" "$@" 2>&1; }
 : > "$T/ssh_config"
 
+FM_HOME="$H" "$ROOT/bin/fm-bridge.sh" allow box maintenance >/dev/null
 set +e
 out=$(FAKE_PUSH_FAIL=1 machine skills box "$T/srvfm")
 rc=$?
 set -e
 expect_code 1 "$rc" "first push failure"
-assert_contains "$out" 'git push to box:dotfiles failed' "failure must be transport, not preparation"
+assert_contains "$out" 'step shared-skills=failed:' "failure must be transport, not preparation"
 assert_equals main "$(git -C "$ACCT/dotfiles" symbolic-ref --short HEAD)" "fresh unborn repository uses the requested branch"
 if git -C "$ACCT/dotfiles" rev-parse --verify HEAD >/dev/null 2>&1; then fail "failed push unexpectedly installed a commit"; fi
 out=$(machine skills box "$T/srvfm")

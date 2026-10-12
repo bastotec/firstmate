@@ -397,6 +397,7 @@ seed_env() {
 # Migration uses the same real transport/provisioning/spawn owners and the
 # real stream hub and agent, never the runner's real sessions or remote accounts.
 if [ "${FM_TEST_MIGRATION_ONLY:-0}" = 1 ]; then
+  FM_HOME="$PARENT" "$ROOT/bin/fm-bridge.sh" set remote-mac --allow supervision,reports,messages,placement,files,maintenance >/dev/null
   # <id> [<project-delivery-mode>]: a source home is a real firstmate checkout
   # carrying durable records, an excluded credential set, and optionally one
   # registered project clone whose origin the remote host must clone for itself.
@@ -809,6 +810,7 @@ if [ "${FM_TEST_PROVISION_ONLY:-0}" = 1 ]; then
 fi
 
 mkdir -p "$TMP_ROOT/seed-parent/data" "$TMP_ROOT/seed-parent/state"
+FM_HOME="$TMP_ROOT/seed-parent" "$ROOT/bin/fm-bridge.sh" set remote-mac --allow supervision,reports,messages,placement,files,maintenance >/dev/null
 FM_SECONDMATE_CHARTER='Failing seed charter.' FM_SECONDMATE_SCOPE='failed seed' \
   FM_FAKE_SSH_MODE=provision-block-fail seed_env "$ROOT/bin/fm-remote-home-seed.sh" \
   seed-fail remote-mac "$REMOTE_ROOT" "$TMP_ROOT/seed-fail-home" --no-projects \

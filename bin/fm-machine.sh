@@ -112,15 +112,15 @@
 #   ref=<ref to ship, default origin/main; setup/skills fetch origin/* first>
 #   dir=<clone path relative to the remote account's home, default dotfiles>
 #   install=<command run in that clone, default ./install.sh --skills-only>
-# The machine needs no credentials for the repo: this machine pushes the
-# commit over ssh into <dir>'s refs/remotes/origin/<branch> and the machine
+# The machine needs no credentials for the repo: this machine sends the
+# commit's objects through fm-on.sh into <dir>'s refs/remotes/origin/<branch> and the machine
 # fast-forwards its <branch> to it (a fresh <dir> is created with this clone's
 # origin URL, any user, token or password in it removed). It refuses a <dir>
 # that is not a git clone, has local changes,
 # is on another branch or cannot safely fast-forward or check out the commit,
 # including a collision with an ignored host-local file. A clean, empty unborn
 # repo with no refs may adopt the requested branch to recover an interrupted
-# first push; committed work retains the branch guard. Which skills link is the
+# first transfer; committed work retains the branch guard. Which skills link is the
 # installer's business (dotfiles keeps machine-only skills to their host).
 # Without the file, shared provisioning prints `step shared-skills=skipped`,
 # but inventory refresh still runs. On a successful probe with the file present,
@@ -936,42 +936,6 @@ if [ ! -e "$dir" ]; then echo "skills-repo=absent"
 elif ! git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then echo "skills-repo=not-git"
 else echo "skills-repo=present head=$(git -C "$dir" rev-parse HEAD 2>/dev/null)"; fi'
 
-# Ensure <dir> on the machine can take the push: create it, or check it is a
-# clean clone on <branch>.
-# shellcheck disable=SC2016 # expanded by the remote shell.
-SKILLS_PREPARE_SH='dir=$HOME/$1 url=$2 branch=$3
-if [ ! -e "$dir" ]; then
-  mkdir -p "$(dirname "$dir")" && git init -q -b "$branch" "$dir" && git -C "$dir" remote add origin "$url" || { echo "refuse: could not create a clone at $dir"; exit 3; }
-  echo "skills-repo=created"
-elif ! git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
-  echo "refuse: $dir exists and is not a git clone"; exit 3
-else
-  [ -z "$(git -C "$dir" status --porcelain 2>/dev/null)" ] || { echo "refuse: $dir has local changes; commit or discard them on the machine"; exit 3; }
-  cur=$(git -C "$dir" symbolic-ref --short -q HEAD)
-  if [ "$cur" != "$branch" ]; then
-    if [ -n "$cur" ] && ! git -C "$dir" rev-parse --verify -q HEAD >/dev/null && ! git -C "$dir" show-ref --quiet; then
-      git -C "$dir" symbolic-ref HEAD "refs/heads/$branch" || exit 3
-    else
-      echo "refuse: $dir is on ${cur:-a detached HEAD}, not $branch"; exit 3
-    fi
-  fi
-  echo "skills-repo=present"
-fi'
-
-# shellcheck disable=SC2016 # expanded by the remote shell.
-SKILLS_FINISH_SH='dir=$HOME/$1 branch=$2 commit=$3 install=$4
-cd "$dir" || exit 3
-if git rev-parse --verify -q HEAD >/dev/null; then
-  git merge --ff-only --no-overwrite-ignore -q "$commit" >/dev/null 2>&1 || { echo "refuse: $dir cannot safely fast-forward to $commit"; exit 3; }
-else
-  git checkout --no-overwrite-ignore -q -b "$branch" "$commit" >/dev/null 2>&1 || { echo "refuse: $dir cannot safely check out $commit"; exit 3; }
-  git branch -q --set-upstream-to="origin/$branch" >/dev/null 2>&1
-fi
-[ "$(git rev-parse HEAD)" = "$commit" ] || { echo "refuse: $dir is not at $commit after the update"; exit 3; }
-mkdir -p "$HOME/.cache"
-sh -c "$install" < /dev/null > "$HOME/.cache/fm-shared-skills.log" 2>&1 || { echo "refuse: $install failed in $dir (log: ~/.cache/fm-shared-skills.log)"; exit 3; }
-echo "linked=$(find "$HOME/.agents/skills" -maxdepth 1 -type l 2>/dev/null | wc -l | tr -d " ")"'
-
 # Build SKILLS_ITEMS for check: shared-skills and skill-inventory.
 skills_items() { # <alias>
   local head
@@ -1034,34 +998,7 @@ instructions_offer() { # <alias>
 }
 
 skills_steps() { # <alias> <root>
-  local alias=$1 root=$2 url line scratch out
-  if ! shared_skills_config; then
-    printf 'step shared-skills=skipped: this home has no config/shared-skills\n'
-  else
-    shared_skills_commit fetch || { printf 'step shared-skills=failed: %s\n' "$SKILLS_REASON"; return 1; }
-    url=$(git -C "$SKILLS_SOURCE" config --get remote.origin.url || true)
-    url=$(skills_url_without_userinfo "$url")
-    fm_project_url_plain "$url" || url=
-    skills_remote "$alias" "$SKILLS_PREPARE_SH" "$SKILLS_DIR" "$url" "$SKILLS_BRANCH"
-    if [ "$SKILLS_RC" -ne 0 ]; then
-      line=$(printf '%s\n' "$SKILLS_OUT" | awk '/^refuse: / { sub(/^refuse: /, ""); print; exit }')
-      printf 'step shared-skills=failed: %s\n' "${line:-preparing ~/$SKILLS_DIR over ssh failed (exit $SKILLS_RC)}"
-      return 1
-    fi
-    if ! out=$(GIT_SSH_COMMAND="ssh$(printf ' %q' "${SSH_OPTS[@]}" "${PROBE_OPTS[@]}")" \
-      git -C "$SKILLS_SOURCE" push --quiet "$alias:$SKILLS_DIR" "$SKILLS_COMMIT:refs/remotes/origin/$SKILLS_BRANCH" < /dev/null 2>&1); then
-      printf 'step shared-skills=failed: git push to %s:%s failed (%s)\n' "$alias" "$SKILLS_DIR" "$(printf '%s\n' "$out" | tail -n 1)"
-      return 1
-    fi
-    skills_remote "$alias" "$SKILLS_FINISH_SH" "$SKILLS_DIR" "$SKILLS_BRANCH" "$SKILLS_COMMIT" "$SKILLS_INSTALL"
-    if [ "$SKILLS_RC" -ne 0 ]; then
-      line=$(printf '%s\n' "$SKILLS_OUT" | awk '/^refuse: / { sub(/^refuse: /, ""); print; exit }')
-      printf 'step shared-skills=failed: %s\n' "${line:-updating ~/$SKILLS_DIR over ssh failed (exit $SKILLS_RC)}"
-      return 1
-    fi
-    printf 'step shared-skills=done: ~/%s at %s (%s), %s skill links in ~/.agents/skills\n' "$SKILLS_DIR" "$SKILLS_REF" \
-      "$(printf '%.7s' "$SKILLS_COMMIT")" "$(printf '%s\n' "$SKILLS_OUT" | sed -n 's/^linked=//p')"
-  fi
+  local alias=$1 root=$2 url scratch out
   scratch=$(mktemp -d "${TMPDIR:-/tmp}/fm-machine.XXXXXX")
   TMP=$scratch
   {
@@ -1070,8 +1007,37 @@ skills_steps() { # <alias> <root>
     printf ' "$@"\n'
   } > "$scratch/ssh"
   chmod 700 "$scratch/ssh"
+  if ! shared_skills_config; then
+    printf 'step shared-skills=skipped: this home has no config/shared-skills\n'
+  else
+    shared_skills_commit fetch || { printf 'step shared-skills=failed: %s\n' "$SKILLS_REASON"; return 1; }
+    url=$(git -C "$SKILLS_SOURCE" config --get remote.origin.url || true)
+    url=$(skills_url_without_userinfo "$url")
+    fm_project_url_plain "$url" || url=
+    if ! out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$SCRIPT_DIR/.." FM_SSH_BIN="$scratch/ssh" "$SCRIPT_DIR/fm-on.sh" --machine-root "$root" "$alias" \
+      fm-machine-remote.sh skills-prepare "$SKILLS_DIR" "$url" "$SKILLS_BRANCH" 2>&1); then
+      printf 'step shared-skills=failed: %s\n' "${out#result=failed: }"
+      return 1
+    fi
+    if ! (set -o pipefail; printf '%s\n' "$SKILLS_COMMIT" | git -C "$SKILLS_SOURCE" pack-objects --stdout --revs > "$scratch/skills.pack"); then
+      printf 'step shared-skills=failed: could not pack skills commit\n'
+      return 1
+    fi
+    if ! out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$SCRIPT_DIR/.." FM_SSH_BIN="$scratch/ssh" "$SCRIPT_DIR/fm-on.sh" --stdin --machine-root "$root" "$alias" \
+      fm-machine-remote.sh skills-import "$SKILLS_DIR" "$SKILLS_BRANCH" "$SKILLS_COMMIT" < "$scratch/skills.pack" 2>&1); then
+      printf 'step shared-skills=failed: %s\n' "$out"
+      return 1
+    fi
+    if ! out=$(FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$SCRIPT_DIR/.." FM_SSH_BIN="$scratch/ssh" "$SCRIPT_DIR/fm-on.sh" --machine-root "$root" "$alias" \
+      fm-machine-remote.sh skills-finish "$SKILLS_DIR" "$SKILLS_BRANCH" "$SKILLS_COMMIT" "$SKILLS_INSTALL" 2>&1); then
+      printf 'step shared-skills=failed: %s\n' "${out#result=failed: }"
+      return 1
+    fi
+    printf 'step shared-skills=done: ~/%s at %s (%s), %s skill links in ~/.agents/skills\n' "$SKILLS_DIR" "$SKILLS_REF" \
+      "$(printf '%.7s' "$SKILLS_COMMIT")" "$(printf '%s\n' "$out" | sed -n 's/^linked=//p')"
+  fi
   set +e
-  out=$(FM_SSH_BIN="$scratch/ssh" "$SCRIPT_DIR/fm-machine-skills.sh" refresh "$alias:$root" 2>&1)
+  out=$(FM_HOME="$FM_HOME" FM_SSH_BIN="$scratch/ssh" "$SCRIPT_DIR/fm-machine-skills.sh" refresh "$alias:$root" 2>&1)
   set -e
   rm -rf -- "$scratch"
   TMP=
@@ -1459,6 +1425,18 @@ cmd_register() { # <alias> <remote-root> [--allow <flow,...|none>]
   valid_alias "$alias" || refuse "alias must be a plain ssh config name of A-Z, a-z, 0-9, ., _ and -, not starting with -: $alias"
   valid_root "$root" || refuse "remote root must be an absolute path of A-Z, a-z, 0-9, ., _, - and /: $root"
   printf 'action=register\nalias=%s\n' "$alias"
+  file="$DATA/machines.md"
+  existing=
+  if [ -e "$file" ] || [ -L "$file" ]; then
+    [ -f "$file" ] && [ ! -L "$file" ] || refuse "$file is not a regular file"
+    existing=$(awk -v a="$alias" '$1 == "-" && $2 == a { print; exit }' "$file")
+    if [ -n "$existing" ]; then
+      case "$existing" in
+        "- $alias (root: $root; added "*) ;;
+        *) refuse "$alias is already recorded with a different root: $existing" ;;
+      esac
+    fi
+  fi
   # Seed the bridge record from today's machines before this one joins them, so a
   # newly connected machine starts with only the flows named here (bin/fm-bridge.py).
   "$SCRIPT_DIR/fm-bridge.sh" show >/dev/null || refuse "the bridge record cannot be read; fix config/bridges.json first"
@@ -1467,18 +1445,8 @@ cmd_register() { # <alias> <remote-root> [--allow <flow,...|none>]
       || refuse "could not record the bridge to $alias"
   fi
   printf 'bridge=%s allow=%s\n' "$alias" "$("$SCRIPT_DIR/fm-bridge.sh" show --json | python3 -c 'import json,sys; print(",".join(next((b["allow"] for b in json.load(sys.stdin)["bridges"] if b["machine"]==sys.argv[1]), [])) or "none")' "$alias")"
-  file="$DATA/machines.md"
+  [ -z "$existing" ] || { printf 'register=already-recorded\n'; return 0; }
   mkdir -p "$DATA"
-  if [ -e "$file" ] || [ -L "$file" ]; then
-    [ -f "$file" ] && [ ! -L "$file" ] || refuse "$file is not a regular file"
-    existing=$(awk -v a="$alias" '$1 == "-" && $2 == a { print; exit }' "$file")
-    if [ -n "$existing" ]; then
-      case "$existing" in
-        "- $alias (root: $root; added "*) printf 'register=already-recorded\n'; return 0 ;;
-        *) refuse "$alias is already recorded with a different root: $existing" ;;
-      esac
-    fi
-  fi
   tmp=$(mktemp "$DATA/.machines.md.XXXXXX")
   [ ! -f "$file" ] || cat "$file" > "$tmp"
   printf -- '- %s (root: %s; added %s)\n' "$alias" "$root" "$(date +%F)" >> "$tmp"

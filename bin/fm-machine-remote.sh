@@ -8,6 +8,9 @@
 #   fm-machine-remote.sh probe <remote-root> <gateway-url> <hub-url|-> <tool>...
 #   fm-machine-remote.sh install-tool <tool> <remote-root>
 #   fm-machine-remote.sh install-deck <remote-root> <deck-repo-url>
+#   fm-machine-remote.sh skills-prepare <dir> <url> <branch>
+#   fm-machine-remote.sh skills-import <dir> <branch> <commit> < pack
+#   fm-machine-remote.sh skills-finish <dir> <branch> <commit> <install>
 #   fm-machine-remote.sh install-approval-gate <remote-root>
 #   fm-machine-remote.sh tunnel-key <alias>
 #   fm-machine-remote.sh install-tunnel <label> <port> <user> <host> <ssh-port> <known-hosts-line> <check-url> gateway|hub
@@ -350,6 +353,48 @@ cmd_install_tunnel() { # <label> <port> <user> <host> <ssh-port> <known-line> <c
   esac
 }
 
+cmd_skills_prepare() {
+  local dir="$HOME/$1" url=$2 branch=$3 cur
+  if [ ! -e "$dir" ]; then
+    mkdir -p "$(dirname "$dir")" && git init -q -b "$branch" "$dir" && git -C "$dir" remote add origin "$url" || die "could not create a clone at $dir"
+    echo 'skills-repo=created'
+  elif ! git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
+    die "$dir exists and is not a git clone"
+  else
+    [ -z "$(git -C "$dir" status --porcelain)" ] || die "$dir has local changes"
+    cur=$(git -C "$dir" symbolic-ref --short -q HEAD)
+    if [ "$cur" != "$branch" ]; then
+      if [ -n "$cur" ] && ! git -C "$dir" rev-parse --verify -q HEAD >/dev/null && ! git -C "$dir" show-ref --quiet; then
+        git -C "$dir" symbolic-ref HEAD "refs/heads/$branch" || exit 3
+      else
+        die "$dir is on ${cur:-a detached HEAD}, not $branch"
+      fi
+    fi
+    echo 'skills-repo=present'
+  fi
+}
+
+cmd_skills_import() {
+  local dir="$HOME/$1" branch=$2 commit=$3
+  git -C "$dir" unpack-objects -q || die 'could not receive skills objects'
+  git -C "$dir" update-ref "refs/remotes/origin/$branch" "$commit" || die 'could not record skills commit'
+}
+
+cmd_skills_finish() {
+  local dir="$HOME/$1" branch=$2 commit=$3 install=$4
+  cd "$dir" || exit 3
+  if git rev-parse --verify -q HEAD >/dev/null; then
+    git merge --ff-only --no-overwrite-ignore -q "$commit" >/dev/null 2>&1 || die "$dir cannot safely fast-forward to $commit"
+  else
+    git checkout --no-overwrite-ignore -q -b "$branch" "$commit" >/dev/null 2>&1 || die "$dir cannot safely check out $commit"
+    git branch -q --set-upstream-to="origin/$branch" >/dev/null 2>&1
+  fi
+  [ "$(git rev-parse HEAD)" = "$commit" ] || die "$dir is not at $commit after the update"
+  mkdir -p "$HOME/.cache"
+  sh -c "$install" < /dev/null > "$HOME/.cache/fm-shared-skills.log" 2>&1 || die "$install failed in $dir (log: ~/.cache/fm-shared-skills.log)"
+  echo "linked=$(find "$HOME/.agents/skills" -maxdepth 1 -type l 2>/dev/null | wc -l | tr -d ' ')"
+}
+
 main() {
   [ "$#" -ge 1 ] || { echo "usage: fm-machine-remote.sh probe|install-tool|install-deck|install-approval-gate|tunnel-key|install-tunnel ..." >&2; exit 2; }
   local sub=$1
@@ -358,6 +403,9 @@ main() {
     probe) [ "$#" -ge 3 ] || exit 2; cmd_probe "$@" ;;
     install-tool) [ "$#" -eq 2 ] || exit 2; cmd_install_tool "$@" ;;
     install-deck) [ "$#" -eq 2 ] || exit 2; cmd_install_deck "$@" ;;
+    skills-prepare) [ "$#" -eq 3 ] || exit 2; cmd_skills_prepare "$@" ;;
+    skills-import) [ "$#" -eq 3 ] || exit 2; cmd_skills_import "$@" ;;
+    skills-finish) [ "$#" -eq 4 ] || exit 2; cmd_skills_finish "$@" ;;
     install-approval-gate) [ "$#" -eq 1 ] || exit 2; cmd_install_approval_gate "$@" ;;
     tunnel-key) [ "$#" -eq 1 ] || exit 2; cmd_tunnel_key "$@" ;;
     install-tunnel) [ "$#" -eq 8 ] || exit 2; cmd_install_tunnel "$@" ;;

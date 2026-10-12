@@ -220,6 +220,9 @@ MANIFEST_BYTES=$(LC_ALL=C wc -c < "$TMP/manifest" | tr -d ' ')
 [ "$MANIFEST_BYTES" -le "$MAX_MANIFEST_BYTES" ] \
   || die "remote provisioning manifest exceeds the $MAX_MANIFEST_BYTES-byte bound"
 
+FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-bridge.sh" show >/dev/null \
+  || die "the bridge record cannot be read; fix config/bridges.json first"
+
 TODAY=$(date +%F)
 REG_TMP="$TMP/secondmates.next"
 if [ -f "$REG" ]; then grep -vE "^- $ID( |$)" "$REG" > "$REG_TMP" || true; else : > "$REG_TMP"; fi

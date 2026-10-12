@@ -17,7 +17,7 @@ Flows:
   maintenance  code, config and inheritance sync, updates, extensions, budget probes
 The readiness doctor (fm-remote-doctor.sh) is the connect flow itself and is never gated.
 
-Record: <home>/config/bridges.json (FM_BRIDGES overrides), private, written atomically
+Record: <home>/config/bridges.json, private, written atomically
 under a lock:
   {"version": 1, "bridges": {"<alias>": {"allow": [flow...], "seeded": bool,
                                          "updated": "<utc>", "by": "<who>"}}}
@@ -36,15 +36,13 @@ Usage:
   fm-bridge.sh check <machine> <flow>            exit 0 allowed, 1 denied
   fm-bridge.sh allow <machine> <flow>... [--by TEXT]
   fm-bridge.sh deny <machine> <flow>... [--by TEXT]
-  fm-bridge.sh set <machine> --allow <flow,...|none> [--expect <sha|none>] [--by TEXT] [--json]
+  fm-bridge.sh set <machine> --allow <flow,...|none> [--by TEXT]
   fm-bridge.sh block <machine> <flow> --what <text>
   fm-bridge.sh audit [--limit N] [--json]
-  fm-bridge.sh flows
 
-show --json prints {sha, flows: [...], bridges: [{machine, allow, deny, seeded, updated,
+show --json prints {flows: [...], bridges: [{machine, allow, deny, seeded, updated,
 by, configured}]}, one entry per bridge recorded or machine known; configured is false
-for a known machine with no entry (it allows nothing). set replaces a bridge's flows;
---expect refuses with exit 3 when the record changed since it was read (sha of the file).
+for a known machine with no entry (it allows nothing). set replaces a bridge's flows.
 
 block records a refused flow: one audit line, and one pending request in this home's
 state/approvals/ (the approval card path Fleet Town already shows; agent `primary`,
@@ -53,7 +51,7 @@ pending for the same bridge and flow. bin/fm-approval.py answers it: --approve a
 that flow on that bridge (standing, audited) and tells the first mate to retry what
 was blocked; --deny leaves it blocked. It prints the request id.
 
-Exit: 0 ok/allowed; 1 denied or refused; 2 usage; 3 stale --expect.
+Exit: 0 ok/allowed; 1 denied or refused; 2 usage.
 FM_BRIDGE_NOW (epoch seconds) overrides the clock for tests.
 """
 import hashlib
@@ -61,6 +59,7 @@ import json
 import os
 import re
 import secrets
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -94,18 +93,11 @@ def home():
 
 
 def record_path():
-    return Path(os.environ.get('FM_BRIDGES') or home() / 'config' / 'bridges.json')
+    return home() / 'config' / 'bridges.json'
 
 
 def log_path():
     return Path(os.environ.get('FM_STATE_OVERRIDE') or home() / 'state') / 'bridges.log'
-
-
-def sha():
-    try:
-        return hashlib.sha256(record_path().read_bytes()).hexdigest()
-    except FileNotFoundError:
-        return 'none'
 
 
 def write_private(path, data):
@@ -147,22 +139,14 @@ class Lock:
 
 
 def known_machines():
-    """Remote machines this home reaches: data/machines.md entries and remote routes in
-    data/secondmates.md (the sources bin/fm-machine-skills.sh roots reads)."""
-    data = Path(os.environ.get('FM_DATA_OVERRIDE') or home() / 'data')
-    names = []
-    patterns = ((data / 'machines.md', re.compile(r'^- ([A-Za-z0-9][A-Za-z0-9._-]*) \(root:')),
-                (data / 'secondmates.md', re.compile(r'^- [A-Za-z0-9._-]+ - .*\(host:\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*;')))
-    for path, pattern in patterns:
-        try:
-            lines = path.read_text(encoding='utf-8').splitlines()
-        except OSError:
-            continue
-        for line in lines:
-            m = pattern.match(line)
-            if m and NAME_RE.match(m.group(1)) and m.group(1) not in names and m.group(1) != 'local':
-                names.append(m.group(1))
-    return names
+    env = dict(os.environ, FM_HOME=str(home()), FM_DATA_OVERRIDE=str(home() / 'data'))
+    try:
+        result = subprocess.run([str(SCRIPT_DIR / 'fm-machine-skills.sh'), 'roots'],
+                                env=env, check=True, capture_output=True, text=True)
+    except (OSError, subprocess.CalledProcessError) as e:
+        raise Refuse(f'cannot read machine inventory: {e}')
+    return [line.split('\t', 1)[0] for line in result.stdout.splitlines()
+            if line.split('\t', 1)[0] != 'local' and NAME_RE.match(line.split('\t', 1)[0])]
 
 
 def validate(record):
@@ -204,7 +188,7 @@ def allowed(record, machine, flow):
     return flow in record['bridges'].get(machine, {}).get('allow', [])
 
 
-def change(machine, new_allow, by, expect=None):
+def change(machine, flows, by, operation='set'):
     if not NAME_RE.match(machine) or machine == 'local':
         raise Refuse(f'not a remote machine name: {machine}', 2)
     by = (by or f'{os.environ.get("USER", "unknown")} (cli)').strip()
@@ -212,12 +196,15 @@ def change(machine, new_allow, by, expect=None):
         raise Refuse('--by must be one short line of text', 2)
     load()
     with Lock():
-        if expect is not None and expect != sha():
-            raise Refuse(f'the bridges changed since they were read (now {sha()}); reload first', 3)
         record = json.loads(record_path().read_text(encoding='utf-8'))
         validate(record)
         before = record['bridges'].get(machine, {}).get('allow', [])
-        after = [f for f in FLOWS if f in set(new_allow)]
+        selected = set(flows)
+        if operation == 'allow':
+            selected |= set(before)
+        elif operation == 'deny':
+            selected = set(before) - selected
+        after = [f for f in FLOWS if f in selected]
         record['bridges'][machine] = {'allow': after, 'seeded': False, 'updated': iso(now()), 'by': by}
         write_private(record_path(), json.dumps(record, indent=2) + '\n')
         entry = {'event': 'changed', 'by': by, 'bridge': machine, 'before': before, 'after': after}
@@ -248,6 +235,11 @@ def take(argv, flag):
 
 
 def file_request(machine, flow, what):
+    with Lock():
+        return publish_request(machine, flow, what)
+
+
+def publish_request(machine, flow, what):
     approvals = home() / 'state' / 'approvals'
     gate = f'bridge:{flow}'
     if approvals.is_dir():
@@ -281,7 +273,7 @@ def show_record():
         out.append({'machine': m, 'allow': allow, 'deny': [f for f in FLOWS if f not in allow],
                     'seeded': bool((b or {}).get('seeded')), 'updated': (b or {}).get('updated'),
                     'by': (b or {}).get('by'), 'configured': b is not None})
-    return {'sha': sha(), 'flows': list(FLOWS), 'bridges': out}
+    return {'flows': list(FLOWS), 'bridges': out}
 
 
 def main(argv):
@@ -290,9 +282,6 @@ def main(argv):
         return 2
     cmd, rest = argv[0], list(argv[1:])
     try:
-        if cmd == 'flows':
-            print('\n'.join(FLOWS))
-            return 0
         if cmd == 'show':
             rec = show_record()
             if '--json' in rest:
@@ -313,21 +302,15 @@ def main(argv):
             if len(rest) < 2:
                 raise Refuse(f'usage: fm-bridge.sh {cmd} <machine> <flow>...', 2)
             machine, flows = rest[0], parse_flows(rest[1:])
-            current = set(load()['bridges'].get(machine, {}).get('allow', []))
-            new = current | set(flows) if cmd == 'allow' else current - set(flows)
-            entry = change(machine, new, by)
+            entry = change(machine, flows, by, cmd)
             print(f'{machine}: allow={",".join(entry["after"]) or "none"}')
             return 0
         if cmd == 'set':
-            by, expect, flows = take(rest, '--by'), take(rest, '--expect'), take(rest, '--allow')
-            as_json = '--json' in rest
-            rest = [r for r in rest if r != '--json']
+            by, flows = take(rest, '--by'), take(rest, '--allow')
             if len(rest) != 1 or flows is None:
                 raise Refuse('usage: fm-bridge.sh set <machine> --allow <flow,...|none>', 2)
-            if expect is not None and not (expect == 'none' or re.fullmatch(r'[0-9a-f]{64}', expect)):
-                raise Refuse('--expect takes a sha256 or none', 2)
-            entry = change(rest[0], parse_flows([flows]), by, expect)
-            print(canonical(entry) if as_json else f'{rest[0]}: allow={",".join(entry["after"]) or "none"}')
+            entry = change(rest[0], parse_flows([flows]), by)
+            print(f'{rest[0]}: allow={",".join(entry["after"]) or "none"}')
             return 0
         if cmd == 'block':
             what = take(rest, '--what') or ''
