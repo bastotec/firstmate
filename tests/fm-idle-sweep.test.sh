@@ -29,6 +29,16 @@ SH
   cat > "$dir/bin/fm-teardown.sh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_HOME/teardown-calls"
+if [ -f "$FM_HOME/concurrent-cleanup/$1" ]; then
+  rm -f "$FM_HOME/state/$1.meta"
+  echo 'error: teardown refused: task record is absent' >&2
+  exit 1
+fi
+if [ -f "$FM_HOME/replacement/$1" ]; then
+  cp "$FM_HOME/replacement/$1" "$FM_HOME/state/$1.meta"
+  echo 'REFUSED: another lifecycle action is already running' >&2
+  exit 1
+fi
 if [ -f "$FM_HOME/refuse/$1" ]; then cat "$FM_HOME/refuse/$1" >&2; exit 1; fi
 rm -f "$FM_HOME/state/$1.meta"
 SH
@@ -86,9 +96,30 @@ printf '%s\n' "$*" >> "$FM_HOME/on-calls"
 [ -f "$FM_HOME/remote-unreachable" ] && exit 255
 cat "$FM_HOME/remote-summary" 2>/dev/null || exit 1
 SH
+  cat > "$dir/bin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = show ]; then
+  cat "$FM_HOME/rows/$2" 2>/dev/null && exit 0
+  echo 'code: NOT_FOUND'
+fi
+exit 1
+SH
+  cat > "$dir/bin/gh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_HOME/forge-calls"
+cat "$FM_HOME/pr-states/${3##*/}" 2>/dev/null || exit 1
+SH
+  cat > "$dir/bin/glab" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_HOME/forge-calls"
+state=$(cat "$FM_HOME/pr-states/$3" 2>/dev/null) || exit 1
+printf 'state: %s\n' "$state"
+SH
   chmod +x "$dir"/bin/fm-crew-state.sh "$dir"/bin/fm-teardown.sh \
-    "$dir"/bin/fm-retire-endpoint.sh "$dir"/bin/fm-captain-hold.sh "$dir"/bin/fm-on.sh
-  mkdir -p "$dir/home/crew" "$dir/home/refuse" "$dir/home/held" "$dir/home/deferred" "$dir/home/closed" "$dir/home/unreadable"
+    "$dir"/bin/fm-retire-endpoint.sh "$dir"/bin/fm-captain-hold.sh "$dir"/bin/fm-on.sh \
+    "$dir"/bin/tasks-axi "$dir"/bin/gh "$dir"/bin/glab
+  mkdir -p "$dir/home/crew" "$dir/home/refuse" "$dir/home/held" "$dir/home/deferred" "$dir/home/closed" "$dir/home/unreadable" \
+    "$dir/home/rows" "$dir/home/pr-states" "$dir/home/concurrent-cleanup" "$dir/home/replacement"
   printf '%s\n' "$dir"
 }
 
@@ -108,7 +139,7 @@ add_worker() {
 sweep() {  # <dir> [args...]
   local dir=$1
   shift
-  FM_HOME="$dir/home" "$dir/bin/fm-idle-sweep.sh" "$@"
+  PATH="$dir/bin:$PATH" TASKS_AXI_BACKEND=markdown FM_HOME="$dir/home" "$dir/bin/fm-idle-sweep.sh" "$@"
 }
 
 calls() {  # <dir> <file>
@@ -138,6 +169,73 @@ test_done_workers_are_cleaned_up_without_force() {
   [ "$(jq -r '.workers[] | select(.id=="shipped") | .action' "$dir/home/state/idle-sweep.json")" = cleaned ] \
     || fail "the summary does not record the cleanup: $(cat "$dir/home/state/idle-sweep.json")"
   pass "fm-idle-sweep: done workers are cleaned up through the guarded paths, never forced"
+}
+
+test_open_pr_workers_wait_for_merge_without_a_cleanup_decision() {
+  local dir id
+  dir=$(new_case awaiting-merge)
+  add_worker "$dir" ready 'state: done · source: run-step · checks green: PR ready for review' 7200
+  add_worker "$dir" monitoring 'state: done · source: run-step · checks green: PR ready for review (still monitoring for merge/close)' 7200
+  add_worker "$dir" ended-monitor 'state: done · source: run-step · checks green: PR held for merge (ci monitor ended)' 7200
+  printf 'pr=https://github.com/owner/repo/pull/1\n' >> "$dir/home/state/ready.meta"
+  printf '  links: pr:https://github.com/owner/repo/pull/1\n' > "$dir/home/rows/monitoring"
+  printf 'pr=https://gitlab.example/group/repo/-/merge_requests/2\n' >> "$dir/home/state/ended-monitor.meta"
+  printf 'OPEN\n' > "$dir/home/pr-states/1"
+  printf 'opened\n' > "$dir/home/pr-states/2"
+  for id in ready monitoring ended-monitor; do
+    printf 'REFUSED: task %s is not finished: its PR is still open\n' "$id" > "$dir/home/refuse/$id"
+  done
+
+  sweep "$dir" scan --now || fail "scan failed"
+
+  [ ! -s "$dir/home/teardown-calls" ] || fail "open PR workers were sent to cleanup"
+  [ ! -s "$dir/home/hold-attempts" ] || fail "normal merge waits became cleanup decisions"
+  [ ! -s "$dir/home/state/.wake-queue" ] || fail "normal merge waits queued a decision wake"
+  [ "$(jq '[.workers[] | select(.class=="awaiting-merge" and .action=="none")] | length' "$dir/home/state/idle-sweep.json")" = 3 ] \
+    || fail "open PR workers were not published as awaiting merge"
+  for id in ready monitoring ended-monitor; do
+    assert_present "$dir/home/state/$id.meta" "an open PR worker was removed"
+  done
+
+  printf 'MERGED\n' > "$dir/home/pr-states/1"
+  printf 'merged\n' > "$dir/home/pr-states/2"
+  rm -f "$dir/home/refuse/monitoring" "$dir/home/refuse/ended-monitor"
+  printf 'REFUSED: task ready has uncommitted changes\n' > "$dir/home/refuse/ready"
+  sweep "$dir" scan --now || fail "scan after merge failed"
+
+  assert_absent "$dir/home/state/monitoring.meta" "a merged PR worker was not cleaned up"
+  assert_absent "$dir/home/state/ended-monitor.meta" "a merged MR worker was not cleaned up"
+  [ "$(calls "$dir" hold-calls)" = ready ] || fail "a finished worker's cleanup refusal did not get one decision"
+  [ "$(jq -r '.options[0].label' "$dir/home/cards/ready.json")" = 'Clean it up' ] \
+    || fail "a finished worker lost its cleanup options"
+  pass "fm-idle-sweep: open PR workers wait for merge; merged workers retain guarded cleanup"
+}
+
+test_concurrent_cleanup_does_not_raise_stale_decisions() {
+  local dir
+  dir=$(new_case concurrent-cleanup)
+  add_worker "$dir" removed 'state: done · source: run-step · run passed: PR merged/closed' 7200
+  : > "$dir/home/concurrent-cleanup/removed"
+  : > "$dir/home/closed/removed"
+  add_worker "$dir" replaced 'state: done · source: run-step · run passed: PR merged/closed' 7200
+  printf 'spawn_gen=old\n' >> "$dir/home/state/replaced.meta"
+  fm_write_meta "$dir/home/replacement/replaced" "kind=ship" "worktree=$dir/pool/2/firstmate" "spawn_gen=new"
+
+  sweep "$dir" scan --now || fail "scan failed"
+
+  assert_absent "$dir/home/state/removed.meta" "the concurrent cleanup did not remove its record"
+  [ "$(calls "$dir" teardown-calls | sort | tr '\n' ' ')" = 'removed replaced ' ] \
+    || fail "the race was not exercised through both cleanup attempts"
+  [ ! -s "$dir/home/hold-attempts" ] || fail "a stale cleanup refusal became a decision"
+  [ ! -s "$dir/home/state/.wake-queue" ] || fail "a stale cleanup refusal queued a decision wake"
+  assert_absent "$dir/home/state/idle-sweep/removed.raised" "a removed worker was fingerprinted as raised"
+  assert_absent "$dir/home/state/idle-sweep/replaced.raised" "a replacement worker was fingerprinted as raised"
+  cmp -s "$dir/home/replacement/replaced" "$dir/home/state/replaced.meta" || fail "the replacement record was changed"
+  [ "$(jq -r '.workers[] | select(.id=="removed") | .action' "$dir/home/state/idle-sweep.json")" = cleaned ] \
+    || fail "concurrent cleanup was not reconciled"
+  [ "$(jq -r '.workers[] | select(.id=="replaced") | [.class,.action] | join(" ")' "$dir/home/state/idle-sweep.json")" = 'unknown none' ] \
+    || fail "the replacement worker was not left for a fresh scan"
+  pass "fm-idle-sweep: concurrent removal or replacement cannot create stale cleanup decisions"
 }
 
 test_refusals_and_idle_workers_become_one_decision_each() {
@@ -480,6 +578,8 @@ test_watcher_runs_the_sweep_and_surfaces_its_decision() {
 }
 
 test_done_workers_are_cleaned_up_without_force
+test_open_pr_workers_wait_for_merge_without_a_cleanup_decision
+test_concurrent_cleanup_does_not_raise_stale_decisions
 test_refusals_and_idle_workers_become_one_decision_each
 test_a_raised_worker_is_raised_again_only_after_its_ledger_changes
 test_reassigned_slots_cannot_supply_completion

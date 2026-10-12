@@ -24,7 +24,7 @@
 #     from the claimant's run; all other records take one bin/fm-crew-state.sh
 #     read bounded to 60 seconds; age is the time since the status ledger
 #     (else metadata record) changed;
-#   - working or parked: left alone;
+#   - working or parked, or done with a recorded PR still open: left alone;
 #   - done, quiet for 15 minutes: cleaned up with
 #     bin/fm-teardown.sh, never --force; a refusal only because the endpoint is
 #     on a retired backend goes to bin/fm-retire-endpoint.sh --finished; any
@@ -122,6 +122,12 @@ fi
 . "$SCRIPT_DIR/fm-parent-channel-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-tasks-axi-lib.sh
+. "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+# shellcheck source=bin/fm-backlog-transition-lib.sh
+. "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
+# shellcheck source=bin/fm-pr-lib.sh
+. "$SCRIPT_DIR/fm-pr-lib.sh"
 
 num_or() {  # <value> <default>
   case "$1" in ''|*[!0-9]*) printf '%s' "$2" ;; *) printf '%s' "$1" ;; esac
@@ -182,7 +188,7 @@ already_raised() {  # <id>
 
 # classify <id>: sets CLASS, DETAIL, AGE
 classify() {
-  local id=$1 line verb worktree hold_rc=0
+  local id=$1 line verb worktree row pr pr_state hold_rc=0
   AGE=$(record_age "$id")
   DETAIL=
   hold_settled "$id" "idle-$id" || hold_rc=$?
@@ -203,7 +209,20 @@ classify() {
   DETAIL=$(printf '%s' "$line" | sed 's/^state: [a-z]* · source: [a-z-]* · //' | cut -c1-200)
   case "$verb" in
     working|parked) CLASS=active; return ;;
-    done) CLASS=finished; [ "$AGE" -ge 900 ] || CLASS=settling ;;
+    done)
+      CLASS=finished
+      [ "$AGE" -ge 900 ] || { CLASS=settling; return; }
+      row=$(fm_backlog_row_show "${FM_DATA_OVERRIDE:-$FM_HOME/data}" "$id" --full 2>/dev/null) || row=
+      pr=$(fm_pr_task_url "$row" "$STATE/$id.meta") || pr=
+      if [ -n "$pr" ]; then
+        pr_state=$(fm_run_timed 60 bash -c '. "$1/fm-pr-lib.sh"; fm_pr_live_state "$2"' \
+          _ "$SCRIPT_DIR" "$pr" 2>/dev/null) || pr_state=
+        if [ "$pr_state" = open ]; then
+          CLASS=awaiting-merge
+          return
+        fi
+      fi
+      ;;
     failed) CLASS=failed ;;
     blocked|paused) CLASS=stalled ;;
     unknown)
@@ -341,6 +360,7 @@ add_row() {  # <id> <class> <detail> <action>
 
 while IFS= read -r meta; do
   id=$(basename "$meta" .meta)
+  record=$(cat "$meta" 2>/dev/null) || continue
   project=$(project_of "$meta")
   classify "$id"
   action=none
@@ -350,6 +370,12 @@ while IFS= read -r meta; do
       if cleanup "$id"; then
         action=cleaned
         log "cleaned up $id"
+      elif [ ! -e "$meta" ] && [ ! -L "$meta" ]; then
+        action=cleaned
+        DETAIL="worker record already removed"
+      elif [ "$(cat "$meta" 2>/dev/null)" != "$record" ]; then
+        CLASS=unknown
+        DETAIL="worker record changed during scan"
       else
         RAISED=0
         raise "$id" finished "$CLEANUP_WHY" "$project"
