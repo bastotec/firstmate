@@ -84,17 +84,19 @@ is appended to state/approvals.log as one JSON line {at, event, id, agent, machi
 
 Policy management (enable, disable, policy-save) is one locked read-modify-write of
 the policy file (lock dir ~/.agents/.approvals.lock, refused after ten seconds busy)
-and appends one JSON line to ~/.agents/approvals-audit.log (FM_APPROVAL_AUDIT
-overrides) with {at, by, before, after, added, removed, changed}: the policy's sha256
+and appends one JSON line to ~/.agents/approvals-audit.log with
+{at, by, before, after, added, removed, changed}: the policy's sha256
 before and after (or "none") and the gate ids added, removed and edited. `by` is
 --by TEXT (Fleet Town passes "captain (Fleet Town)") or <user>@<host> (cli). A save
 that leaves gates enabled installs the deck hook when it is missing (audited as
 hook_installed). policy-save takes the whole policy object on stdin and refuses with
 exit 3 when the file's sha is no longer --expect (none = absent), so a stale editor
 cannot overwrite a newer policy. policy-show --json prints {machine, path, present,
-sha, error, hook_installed, grant_ttl_secs, presets: [{id, description, enabled,
-gates}], custom: [gate], gates: [gate]}; a preset is enabled when every one of its
-gate ids is present, and custom gates are those no preset names.
+sha, error, policy, hook_installed, grant_ttl_secs, presets: [{id, description,
+enabled, gates}], custom: [gate], gates: [gate]}; policy is the complete stored
+object (null when absent or invalid), for editors to preserve unchanged fields.
+A preset is enabled when every one of its gate ids is present, and custom gates
+are those no preset names.
 bin/fm-machine-approvals.sh runs these on a named machine, locally or over ssh.
 
 Exit: 0 ok/allowed; 2 blocked (gate) or usage error; 1 other failure; 3 already
@@ -504,7 +506,7 @@ def policy_sha():
 
 
 def audit_path():
-    return Path(os.environ.get('FM_APPROVAL_AUDIT') or policy_path().parent / 'approvals-audit.log')
+    return policy_path().parent / 'approvals-audit.log'
 
 
 def default_by():
@@ -547,22 +549,47 @@ def commit_policy(change, by, expect=None):
         if expect is not None and expect != before:
             raise Refuse(f'the policy changed since it was read (now {before}); reload it first', 3)
         current = load_policy()
+        old = {g['id']: canonical(g) for g in (current or {}).get('gates', [])}
         policy = change(current)
         path = policy_path()
         validate_policy(policy, path)
-        old = {g['id']: g for g in (current or {}).get('gates', [])}
-        new = {g['id']: g for g in policy.get('gates', [])}
-        write_private(path, json.dumps(policy, indent=2) + '\n')
-        entry = {'at': iso(now()), 'by': by, 'before': before, 'after': policy_sha(),
+        new = {g['id']: canonical(g) for g in policy.get('gates', [])}
+        data = json.dumps(policy, indent=2) + '\n'
+        entry = {'at': iso(now()), 'by': by, 'before': before,
+                 'after': hashlib.sha256(data.encode('utf-8')).hexdigest(),
                  'added': sorted(set(new) - set(old)), 'removed': sorted(set(old) - set(new)),
-                 'changed': sorted(i for i in set(new) & set(old) if canonical(new[i]) != canonical(old[i]))}
-        if new and not hook_installed(read_json(hooks_path()) if hooks_path().exists() else None):
-            install_hook()
-            entry['hook_installed'] = True
-        log = audit_path()
-        fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-        with os.fdopen(fd, 'a', encoding='utf-8') as f:
-            f.write(canonical(entry) + '\n')
+                 'changed': sorted(i for i in set(new) & set(old) if new[i] != old[i])}
+        backup = path.with_name(f'.{path.name}.rollback.{secrets.token_hex(4)}')
+        replaced = False
+        rollback_failed = False
+        try:
+            if before != 'none':
+                write_private(backup, path.read_bytes().decode('utf-8'))
+            fd = os.open(audit_path(), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(fd, 'a', encoding='utf-8') as f:
+                if new and not hook_installed(read_json(hooks_path()) if hooks_path().exists() else None):
+                    install_hook()
+                    entry['hook_installed'] = True
+                write_private(path, data)
+                replaced = True
+                f.write(canonical(entry) + '\n')
+                f.flush()
+                os.fsync(f.fileno())
+        except (OSError, Refuse) as e:
+            if replaced:
+                try:
+                    if before == 'none':
+                        path.unlink()
+                    else:
+                        os.replace(backup, path)
+                except OSError as rollback_error:
+                    rollback_failed = True
+                    raise Refuse(f'policy save failed ({e}); restoring {path} also failed: '
+                                 f'{rollback_error}; recovery copy: {backup}') from e
+            raise Refuse(f'policy save failed; policy unchanged: {e}') from e
+        finally:
+            if not rollback_failed:
+                backup.unlink(missing_ok=True)
     return entry
 
 
@@ -651,12 +678,13 @@ def disable_main(argv):
 def policy_record():
     hooks = read_json(hooks_path()) if hooks_path().exists() else None
     rec = {'machine': None, 'path': str(policy_path()), 'present': policy_path().exists(),
-           'sha': policy_sha(), 'error': None, 'hook_installed': hook_installed(hooks),
+           'sha': policy_sha(), 'error': None, 'policy': None, 'hook_installed': hook_installed(hooks),
            'grant_ttl_secs': DEFAULT_TTL, 'presets': [], 'custom': [], 'gates': []}
     try:
-        policy = load_policy() or {}
+        rec['policy'] = load_policy()
     except Refuse as e:
-        policy, rec['error'] = {}, str(e)
+        rec['error'] = str(e)
+    policy = rec['policy'] or {}
     gates = policy.get('gates', [])
     ids = {g['id'] for g in gates}
     rec['machine'] = machine_name(policy)
@@ -738,8 +766,11 @@ def hook_command():
 
 
 def hook_installed(config):
-    hooks = (config or {}).get('hooks', {}).get('pre_tool_use', [])
-    return any(isinstance(h, dict) and HOOK_COMMAND_RE.search(str(h.get('command', ''))) for h in hooks)
+    if not isinstance(config, dict) or not isinstance(config.get('hooks', {}), dict):
+        return False
+    hooks = config.get('hooks', {}).get('pre_tool_use', [])
+    return isinstance(hooks, list) and any(
+        isinstance(h, dict) and HOOK_COMMAND_RE.search(str(h.get('command', ''))) for h in hooks)
 
 
 def install_hook_main():
