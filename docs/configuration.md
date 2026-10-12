@@ -62,6 +62,8 @@ state/
   cards/<task-id>.json    captain-facing decision card; bin/fm-card.sh owns schema and storage, bin/fm-captain-hold.sh owns hold and resolution hooks
   cards-cleared.log       stale-card clear and restore log; bin/fm-card.sh owns fields and undo guards
   orders/<id>.json        order proposal waiting for the captain's launch or cancel; bin/fm-order.sh owns schema and storage
+  approvals/<id>.json     gated tool call waiting for the captain's approve or deny; answered/ and grants/ beside it; bin/fm-approval.py owns all of it
+  approvals.log           approval gate audit log (requested, repeated, approved, denied, used, expired-grant); bin/fm-approval.py owns fields
   <id>.inbox/             durable steering inbox; written by fm-send, removed by teardown (bin/fm-task-inbox-lib.sh)
   <id>.backlog-close      pending backlog transition for an interrupted cleanup (bin/fm-backlog-transition-lib.sh)
   <id>.external-wait      declared bounded external wait; written only by bin/fm-external-wait.sh, archived in external-waits/
@@ -612,6 +614,24 @@ After `FM_INBOX_OVERDUE_SECS` (default 600) unread, `bin/fm-guard.sh` prints `CA
 | `config/inbox-profile` | `FM_INBOX_PROFILE` | AWS profile for those calls; absent or explicitly empty means ambient credentials. |
 
 The region, model, and profile files are read as their first non-blank, non-`#` line.
+
+## Approval gates (~/.agents/approvals.json)
+
+Some machines should not rely on `AGENTS.md` alone for actions the captain wants to see first, such as Slack, PR comments or email.
+On such a machine every Deck agent runs [`bin/fm-approval.sh`](../bin/fm-approval.sh) `gate` as a global `pre_tool_use` hook from `~/.agents/deck.hooks.json`; a call a gate matches is blocked and filed as a request in the agent's owning home, Fleet Town shows it as a card, and approving it lets exactly that call through once.
+The policy is machine-local, never overwritten by dotfiles or Firstmate, and absent or empty by default, so nothing is gated until the captain turns a gate on:
+
+```sh
+bin/fm-approval.sh install-hook            # once per machine; bin/fm-machine.sh setup does it for a new machine
+bin/fm-approval.sh presets                 # slack-send, gh-pr-write, gh-issue-comment, whatsapp-send, gmail-send, git-push-protected
+bin/fm-approval.sh enable slack-send gh-pr-write
+bin/fm-approval.sh status                  # hook=installed gates=slack-send,slack-send-2,gh-pr-write
+FM_HOME=<home> bin/fm-approval.sh list     # pending requests; answer with: answer <id> --approve|--deny
+```
+
+Matching is on the command text (or the MCP tool name), so it catches what an agent types, not every way to reach a service; a determined workaround is a policy violation the gate's message forbids, not something it can prevent.
+A policy that cannot be parsed blocks every tool call on that machine until it is fixed.
+[`bin/fm-approval.py`](../bin/fm-approval.py)'s header owns the policy format, the request and grant records, and the exit codes.
 
 ## Environment variables
 

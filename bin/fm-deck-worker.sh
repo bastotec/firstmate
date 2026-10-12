@@ -420,6 +420,15 @@ EVIDENCE_HOOK="python3 $(q "$STATE_IO") root-worker-status-after $(q "$STATE") $
 PROGRESS_HOOK="diagnostic=\$($(q "$BUSY_EVENT") progress $(q "$STATE") $(q "$ID") --gen $(q "$GEN") 2>&1 >/dev/null) || { printf '%s\\n' \"\$diagnostic\" >&2; diagnostic=\$(printf '%s' \"\$diagnostic\" | tr '\\n\\r' '  '); printf 'failed: deck wrapper could not refresh progress: %s\\n' \"\$diagnostic\" | python3 $(q "$STATE_IO") root-append $(q "$STATE") $(q "$ID.status"); exit 1; }"
 # bin/fm-crew-state.sh "PUBLISHED RECORD" owns the ship-worker validation hooks.
 CREW_STATE_FOLLOW="FM_STATE_OVERRIDE=$(q "$STATE") $(q "$SCRIPT_DIR/fm-crew-state.sh") --follow-detached $(q "$ID")"
+# The machine's approval gate (bin/fm-approval.py), when ~/.agents/deck.hooks.json
+# runs it, files this agent's blocked calls in the home that supervises it: its
+# own home for a secondmate host, else the home whose state holds this task.
+if [ "$SECONDMATE" = 1 ]; then
+  export FM_APPROVAL_HOME="$FM_HOME"
+else
+  FM_APPROVAL_HOME=$(cd "$STATE/.." && pwd) && export FM_APPROVAL_HOME
+fi
+export FM_APPROVAL_AGENT="$ID"
 PRE_TOOL_HOOK=''
 if [ "$SECONDMATE" != 1 ] && [ "$(sed -n 's/^kind=//p' "$STATE/$ID.meta" 2>/dev/null | tail -1)" = ship ]; then
   PRE_TOOL_HOOK="hook_event=\$(cat); case \"\$hook_event\" in *no-mistakes*) $CREW_STATE_FOLLOW >/dev/null 2>&1 || true ;; esac"

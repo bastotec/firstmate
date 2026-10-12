@@ -42,9 +42,11 @@
 # home, logout survival, GUI session); every tool in the stream backend's and
 # bin/fm-home-tools-lib.sh's lists; Deck; gh auth (exit status only); the model
 # gateway at FM_MACHINE_GATEWAY_URL (default Deck's http://127.0.0.1:8329/v1)
-# and its client key file (presence and mode only, never read); and whether
-# this home's config/stream-hub answers from the machine. After a successful
-# probe it also offers optional machine instructions (described below).
+# and its client key file (presence and mode only, never read); whether
+# this home's config/stream-hub answers from the machine; and whether the
+# approval gate (bin/fm-approval.py) is in the machine's deck.hooks.json, with
+# the gates its policy enables (no item for a clone that predates it).
+# After a successful probe it also offers optional machine instructions (described below).
 # Exit 0 only when every check and item is ok or present; gaps exit 1.
 # An absent clone is will-install only when prepare's clone-route guard passes;
 # otherwise the clone item is human with the same refusal reason.
@@ -63,8 +65,9 @@
 # bin/fm-machine-remote.sh owns the build and atomic install mechanics,
 # attempted when git and cargo are there), mode 600 on an owner-readable
 # gateway key with group or other permission bits set, then the doctor's --fix
-# through the same scratch route, then the shared-skills and inventory steps
-# described below.
+# through the same scratch route, then the approval gate hook (installed with no
+# gates enabled; the machine's own policy file turns gates on), then the
+# shared-skills and inventory steps described below.
 # It then prints a `human` line for each remaining human item and the verdict.
 # A doctor that did not run, a transport failure, or a fixable gap left after
 # --fix fails the doctor step; human gaps alone do not. Rerunning skips
@@ -163,13 +166,13 @@
 #                                                (check; names: ssh-alias, ssh-hostkey, ssh-login,
 #                                                machine, firstmate-clone, entrypoint-link, doctor,
 #                                                doctor-<check>, doctor-required-<tool>, tool-<tool>, deck, gh-auth,
-#                                                model-gateway, gateway-key, stream-hub,
+#                                                model-gateway, gateway-key, stream-hub, approval-gate,
 #                                                shared-skills, skill-inventory, machine-instructions)
 #   step <name>=done|skipped|failed: <evidence or plain reason>   (setup; skills emits
 #                                                shared-skills and skill-inventory; setup names: ssh,
 #                                                firstmate-clone, entrypoint-link, probe, tool-<tool>,
-#                                                deck, gateway-key-mode, doctor, shared-skills,
-#                                                skill-inventory, machine-instructions)
+#                                                deck, gateway-key-mode, doctor, approval-gate,
+#                                                shared-skills, skill-inventory, machine-instructions)
 #   human <item-name>: <exact step for a person> (setup, after the steps)
 #   setup=complete|incomplete: <n> human steps|failed   (setup; exit 0, 3, 1)
 #   added=<ssh-config-path>                      (add)
@@ -686,7 +689,7 @@ EOF
 # Build the checklist into ITEMS, one "item <name>=present|will-install|human: <text>"
 # line each, from the ssh facts, PROBE_OUT and DOCTOR_OUT.
 build_items() { # <alias> <root|-> <reach-class> <known-fingerprints>
-  local alias=$1 root=$2 class=$3 known=$4 tool path cmd npm_global key_state
+  local alias=$1 root=$2 class=$3 known=$4 tool path cmd npm_global key_state gate
   ITEMS=
   item() { ITEMS="${ITEMS}item $1=$2: $3"$'\n'; }
   if [ "$ALIAS_CONFIGURED" -eq 1 ]; then
@@ -806,6 +809,13 @@ build_items() { # <alias> <root|-> <reach-class> <known-fingerprints>
     reachable) item stream-hub present "$(hub_url) answers from the machine" ;;
     unreachable) item stream-hub human "make $(hub_url) reachable from the machine (docs/stream-backend.md owns encrypted cross-machine access), and give each home there its own config/stream-hub and config/stream-token" ;;
     *) item stream-hub human "this home has no config/stream-hub to check against; set it, then rerun" ;;
+  esac
+
+  gate=$(fact approval-gate)
+  case "$gate" in
+    hook=installed\ *) item approval-gate present "the approval gate runs in ~/.agents/deck.hooks.json; ${gate#hook=installed }; bin/fm-approval.sh enable <preset> on the machine turns gates on" ;;
+    hook=missing\ *) item approval-gate will-install "setup installs the approval gate hook with no gates enabled; bin/fm-approval.sh enable <preset> on the machine then turns them on" ;;
+    *) ;;  # a clone without bin/fm-approval.sh (or no clone yet) has nothing to report
   esac
   ITEMS="$ITEMS${SKILLS_ITEMS:-}"
 }
@@ -1152,6 +1162,19 @@ cmd_setup() { # <alias> <remote-root>
     setup_finish "$alias" "$root" "$class" "$known" 1
   fi
   printf 'step doctor=done: fm-remote-doctor.sh --fix ran (exit %s)\n' "$DOCTOR_RC"
+  case "$(fact approval-gate)" in
+    hook=installed\ *) printf 'step approval-gate=skipped: already installed\n' ;;
+    unknown|'') printf 'step approval-gate=skipped: the clone at %s has no bin/fm-approval.sh yet\n' "$root" ;;
+    *)
+      remote_machine "$alias" install-approval-gate "$root"
+      result=$(printf '%s\n' "$REMOTE_OUT" | awk '/^result=/ { sub(/^result=/, ""); print; exit }')
+      case "$REMOTE_RC:$result" in
+        0:done*) printf 'step approval-gate=%s\n' "$result" ;;
+        *) printf 'step approval-gate=failed: %s\n' "${result#failed: }"
+           setup_finish "$alias" "$root" "$class" "$known" 1 ;;
+      esac
+      ;;
+  esac
   skills_steps "$alias" "$root" || setup_finish "$alias" "$root" "$class" "$known" 1
   instructions_offer "$alias"
   printf 'step machine-instructions=skipped: %s\n' "$INSTR_TEXT"

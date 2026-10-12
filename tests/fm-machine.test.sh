@@ -909,4 +909,25 @@ assert_contains "$out" 'http://[redacted]@127.0.0.1:8329/v1 answers' "ordinary g
 assert_not_contains "$out" 'pa"ss' "gateway output exposed the password"
 pass "machine output redacts URL userinfo in facts, success, failure, diagnostics and refusals"
 
+# --- approval gate ---
+new_account
+git -C "$NETFM" remote set-url origin https://example.com/acme/firstmate.git
+mkdir -p "$RROOT/bin" "$RROOT/.git"
+printf 'fixture\n' > "$RROOT/AGENTS.md"
+: > "$RROOT/bin/fm-remote-entrypoint.sh"
+printf 'https://example.com/acme/firstmate.git\n' > "$RROOT/.git/origin"
+cp "$ROOT/bin/fm-approval.sh" "$ROOT/bin/fm-approval.py" "$RROOT/bin/"
+ln -sf "$(command -v python3)" "$FAKE_RBIN/python3"
+out=$(machine check box "$RROOT") || true
+assert_contains "$out" "item approval-gate=will-install: setup installs the approval gate hook with no gates enabled" "check did not offer the approval gate"
+out=$(machine setup box "$RROOT") || true
+assert_contains "$out" 'step approval-gate=done: installed the approval gate' "setup did not install the approval gate"
+assert_contains "$(cat "$FAKE_ACCOUNT/.agents/deck.hooks.json")" 'fm-approval.sh' "hook not merged into the machine's deck.hooks.json"
+assert_absent "$FAKE_ACCOUNT/.agents/approvals.json" "setup must not enable any gate"
+out=$(machine check box "$RROOT") || true
+assert_contains "$out" "item approval-gate=present: the approval gate runs in ~/.agents/deck.hooks.json; gates=none" "check did not see the installed gate"
+out=$(machine setup box "$RROOT") || true
+assert_contains "$out" 'step approval-gate=skipped: already installed' "setup reinstalled the gate"
+pass "check offers and setup installs the approval gate with no gates enabled"
+
 echo "ALL TESTS PASSED"
