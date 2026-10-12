@@ -218,6 +218,7 @@ classify() {
       row=$(fm_backlog_row_show "${FM_DATA_OVERRIDE:-$FM_HOME/data}" "$id" --full 2>/dev/null) || row=
       pr=$(fm_pr_task_url "$row" "$STATE/$id.meta") || pr=
       if [ -n "$pr" ]; then
+        # shellcheck disable=SC2016 # Positional arguments expand in the child shell.
         pr_state=$(fm_run_timed 60 bash -c '. "$1/fm-pr-lib.sh"; fm_pr_live_state "$2"' \
           _ "$SCRIPT_DIR" "$pr" 2>/dev/null) || pr_state=
         if [ "$pr_state" = open ]; then
