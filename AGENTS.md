@@ -73,7 +73,7 @@ Use `gh-axi` for GitHub, `chrome-devtools-axi` for browser work, and compatible 
 
 Deck is the only harness and stream is the only runtime backend; `docs/configuration.md` owns both schemas and `bin/fm-spawn.sh` validates every launch.
 Never dispatch on an unverified adapter: if `config/crew-harness` or `config/secondmate-harness` names anything but deck (absent or `default` means deck), report the refusal and never fall back around invalid configuration.
-A task that needs particular skills lists them on its brief's `Skills:` line, and a task routed to a second mate needs `bin/fm-machine-skills.sh check <mate> <skill>...` to pass first; never place it on a machine that lacks them ([`docs/remote-secondmates.md`](docs/remote-secondmates.md#skills-per-machine)).
+For skill-dependent tasks, follow [Skills per machine](docs/remote-secondmates.md#skills-per-machine) before briefing or routing to a second mate; never place work on a machine that lacks its required skills.
 When `config/crew-dispatch.json` exists, consult it at every crewmate or scout intake and pass `fm-spawn` the resolved concrete profile; `harness-adapters` owns precedence and quota-informed selection.
 Firstmate alone resolves a matched profile array, keeps malformed profile configuration as an actionable error, and never silently downgrades the captain's strongest-reasoning class to save quota.
 `secondmate-provisioning` owns secondmate harness pins and inherited local material.

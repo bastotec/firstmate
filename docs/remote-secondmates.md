@@ -19,15 +19,6 @@ Do not enable agent forwarding for Firstmate.
 [`bin/fm-machine.sh`](../bin/fm-machine.sh) is the scripted entry point for connecting a new machine; its header owns the commands, trust safeguards, and line protocol.
 Use its read-only `check` before confirming `setup` to perform supported machine preparation and list the remaining human steps; its header also explains the scratch route's home-readiness limits.
 
-### Skills per machine
-
-Deck on a machine sees the repo's `.agents/skills/` plus that account's global `~/.agents/skills/`.
-When the primary home has `config/shared-skills`, `setup` (and `bin/fm-machine.sh skills <alias>` for a machine already connected) ships the captain's skills repo to the machine over ssh and runs its installer, which decides which skills are shared and which stay on their own machine.
-Every setup and every `bin/fm-update.sh` then records each machine's skills in `state/machine-skills/<machine>.tsv`, where Fleet Town reads them.
-A brief that needs particular skills names them on a `Skills: <a>, <b>` line; `bin/fm-spawn.sh` refuses to start it on a machine whose Deck does not list them, and names the machines that have them.
-Before routing such a task to a second mate, `bin/fm-machine-skills.sh check <secondmate-id> <skill>...` gives the same answer from the inventory.
-[`bin/fm-machine-skills.sh`](../bin/fm-machine-skills.sh) owns the inventory format and the checks.
-
 For manual preparation, clone Firstmate on the remote host at an absolute code-root path, from the firstmate fork's network URL; provisioning refuses a copy whose `origin` is a local path or `file://` URL (see [Provision a route](#provision-a-route)).
 Expose that clone's fixed entrypoint on the account's non-interactive SSH `PATH`, for example:
 
@@ -50,6 +41,17 @@ Linux uses the same queue and worker protocol without the Aqua-session requireme
 A worker stops itself once its configured code root stops being a Firstmate checkout, so a worker started from a worktree cannot outlive that worktree, and `bin/fm-remote-job-reap-orphans.sh` clears any worker already left behind that way without ever touching one whose checkout still exists.
 The remote account must provide the required toolchain listed under [Readiness, repair, and the human steps](#readiness-repair-and-the-human-steps), the stream prerequisites, and credentials that work on that host.
 The origin URL named for each project must be reachable from the remote account because projects are cloned on that host rather than copied from the primary.
+
+### Skills per machine
+
+Deck discovers the current repo's `.agents/skills/` and the account's global `~/.agents/skills/`.
+Optional shared-skills provisioning ships the captain's skills repo over SSH and runs its installer, which decides which skills are shared and which stay on their own machine; the [`fm-machine.sh` header](../bin/fm-machine.sh) owns configuration, provisioning safeguards, and commands for connected machines.
+Setup records the connected machine's inventory, while [`bin/fm-update.sh`](../bin/fm-update.sh) attempts to refresh the local machine and all registered remote machines without provisioning shared skills again.
+These inventories describe discovery in each machine's Firstmate code root, not every project or secondmate home on that host.
+A routing check uses the recorded inventory, which can be stale after a failed refresh; a passing result is not proof that a project's worker has those skills.
+For a skill-dependent task, declare its required skills in the brief and check the destination inventory before routing it to a second mate.
+Ship and scout launches, including relaunches, additionally verify those requirements with live discovery in the actual worker worktree and refuse missing skills before the worker starts.
+The [`fm-machine-skills.sh` header](../bin/fm-machine-skills.sh) owns brief syntax, inventory format and freshness limits, discovery and placement commands, and refusal diagnostics.
 
 ## Non-interactive tool contract
 

@@ -20,9 +20,12 @@
 # state/machine-skills/<machine>.tsv atomically. The file starts with one
 # `# machine=<m> root=<root> refreshed=<UTC ISO time> count=<n>` line, then one
 # `<name>\t<scope>\t<path>` line per skill (scope is deck's repo|global).
-# Fleet Town and the checks below read only that file. With no machine named it
-# refreshes all of them; a machine that cannot be reached keeps its previous
-# file and prints `refresh <m>=failed: <reason>`, without failing the others.
+# list, where and check read only these recorded files, not live discovery;
+# they impose no age limit, so consult refreshed before relying on a result.
+# With no machine named, refresh attempts all of them; an unreachable machine
+# or failed or empty discovery keeps its previous file and prints
+# `refresh <m>=failed: <reason>`. Other machines are still attempted, but any
+# failure makes refresh exit 1.
 # `<alias>:<root>` refreshes a machine not registered yet (bin/fm-machine.sh
 # setup runs before register). bin/fm-machine.sh setup and bin/fm-update.sh
 # call it. roots prints `<machine>\t<root>` for every known machine.
@@ -37,14 +40,22 @@
 # machine=<m>` and exits 0, or `place=refuse: <m> lacks <skills>; <where>` and
 # exits 1, where <where> names the machines that have them all, or says none
 # does. A machine with no recorded inventory is refused (refresh it first).
+# A target that names both a known machine and a secondmate on a different
+# machine is refused as ambiguous; coincident bindings remain usable.
 #
-# brief-check reads the brief's `Skills: <a>, <b>` line (absent means none
-# required) and checks it against a live `deck skills` run in <project-dir>,
-# the skills a worker launched there will see. It exits 0 when nothing is
-# missing, else prints `refuse: ...` with the inventory's `where` answer and
-# exits 1. A home with no inventory of its own answers from
-# $FM_SECONDMATE_PARENT_HOME's, else says the primary can. bin/fm-spawn.sh runs it for ship and scout spawns, so this applies
-# to the primary and to every secondmate on its own machine.
+# brief-check reads the brief's first unindented `Skills: <a>, <b>` line
+# (absent or empty means none required). Names are comma-separated plain skill
+# names; spaces, tabs and backticks are stripped. It checks them against a live
+# `deck skills` run in <project-dir>, not the recorded Firstmate inventory.
+# It exits 0 when nothing is required or missing, else prints `refuse: ...`
+# and exits 1. Missing-skill diagnostics include the inventory's `where` answer;
+# invalid names or failed discovery refuse without suggesting a placement.
+# A home with no inventory of its own answers where from
+# $FM_SECONDMATE_PARENT_HOME's, when set, else asks the primary.
+# bin/fm-spawn.sh runs this for ship/scout launches and relaunches using the
+# resolved worker Deck executable in the actual task worktree, after allocation
+# and any fresh-spawn base refresh, before worker launch. This applies in both
+# primary and secondmate homes; it does not check a secondmate charter launch.
 #
 # FM_DECK_BIN overrides deck and FM_SSH_BIN overrides ssh (tests).
 # Usage errors exit 2.

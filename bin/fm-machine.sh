@@ -62,11 +62,13 @@
 # bin/fm-machine-remote.sh owns the build and atomic install mechanics,
 # attempted when git and cargo are there), mode 600 on an owner-readable
 # gateway key with group or other permission bits set, then the doctor's --fix
-# through the same scratch route.
+# through the same scratch route, then the shared-skills and inventory steps
+# described below.
 # It then prints a `human` line for each remaining human item and the verdict.
 # A doctor that did not run, a transport failure, or a fixable gap left after
 # --fix fails the doctor step; human gaps alone do not. Rerunning skips
-# whatever is already present. URL userinfo is redacted from all output;
+# already-present tool and clone installs, but repeats the shared-skills
+# installer and inventory refresh. URL userinfo is redacted from all output;
 # command diagnostics are merged into stdout through the same output filter.
 # SSH login, clone/link, probe and install calls must exit successfully before
 # their facts can advance setup; the doctor's reported gaps are handled above.
@@ -96,24 +98,33 @@
 # checks as skip for an absent home and creates nothing there. Tool installation
 # remains manual with prepare; use setup for supported automatic installs.
 #
-# Shared skills: when this home has config/shared-skills, setup (after the
-# doctor) and `skills` bring the machine's copy of the captain's skills repo up
-# to date and run its installer, then record the machine's skill inventory
-# (bin/fm-machine-skills.sh refresh). The file holds key=value lines:
+# Shared skills: setup (after the doctor) and `skills` record the connected
+# machine's inventory with bin/fm-machine-skills.sh refresh. When this home has
+# config/shared-skills, they first update the machine's copy of the captain's
+# skills repo and run its installer. The file holds key=value lines:
 #   source=<absolute path of this machine's clone of the skills repo>   (required)
-#   ref=<ref to ship, default origin/main; origin/* is fetched first>
+#   ref=<ref to ship, default origin/main; setup/skills fetch origin/* first>
 #   dir=<clone path relative to the remote account's home, default dotfiles>
 #   install=<command run in that clone, default ./install.sh --skills-only>
 # The machine needs no credentials for the repo: this machine pushes the
 # commit over ssh into <dir>'s refs/remotes/origin/<branch> and the machine
 # fast-forwards its <branch> to it (a fresh <dir> is created with this clone's
 # origin URL). It refuses a <dir> that is not a git clone, has local changes,
-# is on another branch or cannot fast-forward. Which skills link is the
+# is on another branch or cannot safely fast-forward or check out the commit,
+# including a collision with an ignored host-local file. A clean, empty unborn
+# repo with no refs may adopt the requested branch to recover an interrupted
+# first push; committed work retains the branch guard. Which skills link is the
 # installer's business (dotfiles keeps machine-only skills to their host).
-# Without the file, the step prints `step shared-skills=skipped`. check prints
-# `item shared-skills=present|will-install|human` and `item skill-inventory`.
-# skills <alias> [<remote-root>] runs just this step on a connected machine;
-# <remote-root> defaults as for check.
+# Without the file, shared provisioning prints `step shared-skills=skipped`,
+# but inventory refresh still runs. On a successful probe with the file present,
+# check prints `item shared-skills=present|will-install|human` and
+# `item skill-inventory`; it resolves the locally cached ref without fetching
+# or running the installer. A present inventory item means a recorded file,
+# not a live skill check. Installer output goes to ~/.cache/fm-shared-skills.log
+# on the connected machine.
+# skills <alias> [<remote-root>] runs only provisioning and inventory refresh;
+# <remote-root> defaults to fm-machine-skills.sh roots (the machine registry,
+# then a remote secondmate route on that host), and is required if unrecorded.
 #
 # register <alias> <remote-root> records the machine in this home's
 # data/machines.md as `- <alias> (root: <remote-root>; added YYYY-MM-DD)`. It is
@@ -131,7 +142,7 @@
 # proxai executable is not required when the configured gateway answers.
 #   action=check|setup|add|trust|prepare|register|skills
 #   alias=<alias>
-#   root=<remote-root>|-                         (check, setup)
+#   root=<remote-root>|-                         (check, setup, skills)
 #   hostname=<name> user=<user> port=<port>     (check)
 #   hostkey-fingerprint=<SHA256:...> type=<TYPE> (check, when the key is unknown)
 #   reach=ok|auth|hostkey|timeout|refused|unresolved|error   (check)
@@ -144,7 +155,8 @@
 #                                                doctor-<check>, doctor-required-<tool>, tool-<tool>, deck, gh-auth,
 #                                                model-gateway, gateway-key, stream-hub,
 #                                                shared-skills, skill-inventory)
-#   step <name>=done|skipped|failed: <evidence or plain reason>   (setup; names: ssh,
+#   step <name>=done|skipped|failed: <evidence or plain reason>   (setup; skills emits
+#                                                shared-skills and skill-inventory; setup names: ssh,
 #                                                firstmate-clone, entrypoint-link, probe, tool-<tool>,
 #                                                deck, gateway-key-mode, doctor, shared-skills,
 #                                                skill-inventory)
