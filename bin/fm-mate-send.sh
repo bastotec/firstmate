@@ -15,7 +15,8 @@
 # A refused or failed delivery comes back to this mate as a first-mate message
 # naming the corr and the reason, and is logged for the first mate; nothing is
 # dropped silently. Cross-machine delivery must pass the bridge's "messages"
-# flow (bin/fm-bridge.sh).
+# flow (bin/fm-bridge.sh); a remote sender's channel is also pulled under the
+# "reports" flow, like every report it sends the first mate.
 #
 # Exit codes: 0 queued; 1 refused (bad target, worker caller, main home,
 # empty or oversized text); 2 usage; 4 the queue write failed (resend).

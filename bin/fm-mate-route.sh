@@ -91,7 +91,9 @@ bounce_id() {  # <corr>
   printf 'bounce:%s' "$1" | shasum -a 256 | cut -c1-16
 }
 
-# Close <record> as <outcome> (refused|failed) with REASON: log, bounce, wake.
+# Close <record> as <outcome> (refused|failed) with REASON: bounce, wake and
+# log first, then archive. The bounce is idempotent on its delivery id, and the
+# log check makes a retried pass skip bookkeeping an interrupted pass finished.
 close_undelivered() {  # <record> <outcome>
   local record=$1 outcome=$2 name note bounce_note=''
   name=${record##*/}
@@ -102,19 +104,24 @@ close_undelivered() {  # <record> <outcome>
   else
     bounce_note=' (the sender is not a recorded second mate)'
   fi
+  if ! fm_mate_mail_logged "$STATE" "$FM_MM_FROM" "$FM_MM_CORR"; then
+    fm_wake_append check "mate-mail:$FM_MM_CORR" \
+      "check: second mate message $FM_MM_CORR from $FM_MM_FROM to $FM_MM_TO was $outcome: $REASON$bounce_note" \
+      || return 1
+    fm_mate_mail_log "$STATE" "$outcome" "$REASON$bounce_note" || return 1
+  fi
   mkdir -p "$DIR/$outcome" && mv "$record" "$DIR/$outcome/$name" || return 1
-  rm -f "${record%.msg}.tries"
-  fm_mate_mail_log "$STATE" "$outcome" "$REASON$bounce_note" || true
-  fm_wake_append check "mate-mail:$FM_MM_CORR" \
-    "check: second mate message $FM_MM_CORR from $FM_MM_FROM to $FM_MM_TO was $outcome: $REASON$bounce_note" || true
+  rm -f "${record%.msg}.tries" "${record%.msg}.publishing"
   printf '%s: %s %s -> %s: %s%s\n' "$outcome" "$FM_MM_CORR" "$FM_MM_FROM" "$FM_MM_TO" "$REASON" "$bounce_note"
 }
 
 close_delivered() {  # <record> <how>
   local record=$1 name=${1##*/}
+  if ! fm_mate_mail_logged "$STATE" "$FM_MM_FROM" "$FM_MM_CORR"; then
+    fm_mate_mail_log "$STATE" delivered "$2" || return 1
+  fi
   mkdir -p "$DIR/delivered" && mv "$record" "$DIR/delivered/$name" || return 1
-  rm -f "${record%.msg}.tries"
-  fm_mate_mail_log "$STATE" delivered "$2" || true
+  rm -f "${record%.msg}.tries" "${record%.msg}.publishing"
   printf 'delivered: %s %s -> %s\n' "$FM_MM_CORR" "$FM_MM_FROM" "$FM_MM_TO"
 }
 
@@ -133,9 +140,35 @@ attempt_exhausted() {  # <record>
   [ "$count" -ge "$MAX_TRIES" ] || [ $((now - first)) -ge "$MAX_AGE" ]
 }
 
-deliver_primary() {
-  local tagged rc=0
+# 0 when the Deck chat primary's steering inbox already holds <tagged-prefix>,
+# so a pass interrupted after publication never publishes the message twice.
+primary_holds() {  # <tagged-prefix>
+  python3 - "$SCRIPT_DIR" "$FM_HOME" "$1" <<'PY' 2>/dev/null
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from fm_primary_chat import read_record
+record = read_record(sys.argv[2]) or {}
+steer = Path(record.get('steer_dir') or '/nonexistent')
+needle = sys.argv[3].encode()
+for sub in ('', 'handled', 'rejected'):
+    for msg in (steer / sub).glob('*.msg') if (steer / sub).is_dir() else ():
+        try:
+            if needle in msg.read_bytes():
+                sys.exit(0)
+        except OSError:
+            pass
+sys.exit(1)
+PY
+}
+
+deliver_primary() {  # <record>
+  local tagged rc=0 marker="${1%.msg}.publishing"
   fm_message_mark_from_mate "$FM_MM_FROM" "$FM_MM_CORR" "$FM_MM_TEXT" tagged || return 1
+  if [ -e "$marker" ] && primary_holds "[fm-from-mate:$FM_MM_FROM]${FM_OPERATIONAL_MARK}corr=$FM_MM_CORR "; then
+    DELIVERED_HOW=chat; return 0
+  fi
+  : > "$marker" || return 1
   FM_HOME="$FM_HOME" "$SEND_BIN" primary "$tagged" >/dev/null 2>&1 || rc=$?
   [ "$rc" -ne 0 ] || { DELIVERED_HOW=chat; return 0; }
   [ "$rc" -eq 3 ] || return 1
@@ -158,6 +191,17 @@ ls -tr "$DIR/pending" 2>/dev/null | grep '\.msg$' | while IFS= read -r name; do
     fm_mate_mail_log "$STATE" failed "$REASON" || true
     continue
   fi
+  # A pass that logged this message but stopped before archiving it finished
+  # every side effect already: archive it under its logged outcome.
+  if fm_mate_mail_logged "$STATE" "$FM_MM_FROM" "$FM_MM_CORR"; then
+    done_as=$(grep -F "\"from\": \"$FM_MM_FROM\"" "$STATE/mate-messages.log" \
+      | grep -F "\"corr\": \"$FM_MM_CORR\"" | tail -1 \
+      | sed -n 's/.*"outcome": "\([a-z]*\)".*/\1/p')
+    case "$done_as" in delivered|refused|failed) ;; *) done_as=delivered ;; esac
+    mkdir -p "$DIR/$done_as" && mv "$record" "$DIR/$done_as/$name" || true
+    rm -f "${record%.msg}.tries" "${record%.msg}.publishing"
+    continue
+  fi
   if ! mate_meta "$FM_MM_FROM" >/dev/null; then
     REASON="the sender $FM_MM_FROM is not a recorded second mate of this fleet"
     close_undelivered "$record" refused; continue
@@ -173,7 +217,7 @@ ls -tr "$DIR/pending" 2>/dev/null | grep '\.msg$' | while IFS= read -r name; do
   DELIVERED_HOW=inbox
   err=
   if [ "$FM_MM_TO" = primary ]; then
-    deliver_primary && { close_delivered "$record" "$DELIVERED_HOW"; continue; }
+    deliver_primary "$record" && { close_delivered "$record" "$DELIVERED_HOW"; continue; }
     err="the first mate's chat did not accept it"
   else
     if err=$(FM_HOME="$FM_HOME" "$SEND_BIN" "$FM_MM_TO" --fire-and-forget "$FM_MM_CORR" \

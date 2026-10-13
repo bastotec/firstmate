@@ -34,11 +34,21 @@
 #
 # LOG (primary home): state/mate-messages.log, one JSON object per line,
 #   {at, from, to, corr, re, outcome: delivered|refused|failed, reason, text}
-# It is the first mate's oversight copy and Fleet Town's thread source.
+# It is the first mate's oversight copy and Fleet Town's thread source. The
+# router writes it (and any check wake) before archiving a record, at most once
+# per sender/corr, so an interrupted pass completes its bookkeeping on retry.
+#
+# BRIDGES. The router requires the `messages` flow on the sender's and the
+# target's bridge. A remote sender's channel is also pulled under the `reports`
+# flow like every other mate report; a denied reports flow already raises the
+# captain's bridge request in bin/fm-on.sh, and the message waits queued on the
+# remote channel until it is allowed.
 #
 # Sourced. No side effects on source. Bash 3.2 compatible.
 
-FM_MATE_MAIL_MAX_BYTES=${FM_MATE_MAIL_MAX_BYTES:-4000}
+# Fixed cap: a longer peer message points at a data/*.md file instead.
+# shellcheck disable=SC2034 # read by bin/fm-mate-send.sh
+FM_MATE_MAIL_MAX_BYTES=4000
 
 fm_mate_mail_id_valid() {  # <id>
   local LC_ALL=C
@@ -78,7 +88,9 @@ fm_mate_mail_parse_line() {  # <line>
   FM_MM_CORR='' FM_MM_TO='' FM_MM_RE='' FM_MM_TEXT=''
   case "$line" in 'mate-message '*': '*) ;; *) return 1 ;; esac
   head=${line%%: *}
-  FM_MM_TEXT=$(fm_mate_mail_unescape "${line#*: }")
+  # The sentinel keeps trailing newlines that command substitution would strip.
+  FM_MM_TEXT=$(fm_mate_mail_unescape "${line#*: }"; printf x)
+  FM_MM_TEXT=${FM_MM_TEXT%x}
   FM_MM_CORR=$(printf '%s\n' "$head" | sed -n 's/.* corr=\([a-f0-9]\{16\}\)\( .*\)\{0,1\}$/\1/p')
   FM_MM_TO=$(printf '%s\n' "$head" | sed -n 's/.* to=\([^ ]*\).*/\1/p')
   FM_MM_RE=$(printf '%s\n' "$head" | sed -n 's/.* re=\([a-f0-9]\{16\}\).*/\1/p')
@@ -135,6 +147,12 @@ fm_mate_mail_read() {  # <record>
   FM_MM_TEXT=${FM_MM_TEXT%x}
   [ "$(sed -n 1p "$f")" = schema=fm-mate-mail.v1 ] || return 1
   fm_mate_mail_id_valid "$FM_MM_FROM" && fm_mate_mail_corr_valid "$FM_MM_CORR"
+}
+
+# 0 when <state>/mate-messages.log already has a line for <from>/<corr>.
+fm_mate_mail_logged() {  # <state> <from> <corr>
+  [ -f "$1/mate-messages.log" ] || return 1
+  grep -F "\"from\": \"$2\"" "$1/mate-messages.log" 2>/dev/null | grep -Fq "\"corr\": \"$3\""
 }
 
 # Append one oversight line to <state>/mate-messages.log.

@@ -383,6 +383,19 @@ cmd_ingest() {
   [ "$status" = delta ] && [ "$payload_bytes" -gt 0 ] || { fm_lock_release "$lock"; die "delta result has no payload"; }
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
+    if fm_mate_mail_is_line "$line"; then
+      # A peer message rides this channel only to reach the first mate's
+      # router; it goes to the spool before any document fetch, never into the
+      # mate's status stream (bin/fm-mate-mail-lib.sh). A malformed one is
+      # mirrored as-is so the first mate can see it; a duplicate is already
+      # spooled or routed.
+      append_rc=0
+      fm_mate_mail_spool_line "$STATE" "$id" "$line" || append_rc=$?
+      case "$append_rc" in
+        0|1) continue ;;
+        3) fm_lock_release "$lock"; die "cannot spool a peer message from $id" ;;
+      esac
+    fi
     rewritten=$line
     while IFS= read -r doc; do
       [ -n "$doc" ] || continue
@@ -401,18 +414,6 @@ cmd_ingest() {
         || { fm_lock_release "$lock"; die "could not store referenced remote document: $doc"; }
       rewritten=${rewritten//"$doc"/"$local_doc"}
     done < <(printf '%s\n' "$line" | grep -Eo 'data/[A-Za-z0-9._/-]+\.md' | awk '!seen[$0]++')
-    if fm_mate_mail_is_line "$rewritten"; then
-      # A peer message rides this channel only to reach the first mate's
-      # router; it goes to the spool, never into the mate's status stream
-      # (bin/fm-mate-mail-lib.sh). A malformed one is mirrored as-is so the
-      # first mate can see it; a duplicate is already spooled or routed.
-      append_rc=0
-      fm_mate_mail_spool_line "$STATE" "$id" "$rewritten" || append_rc=$?
-      case "$append_rc" in
-        0|1) continue ;;
-        3) fm_lock_release "$lock"; die "cannot spool a peer message from $id" ;;
-      esac
-    fi
     append_rc=0
     append_status_once "$status_file" "$rewritten" || append_rc=$?
     [ "$append_rc" -ne 2 ] || { fm_lock_release "$lock"; die "cannot append remote reply"; }

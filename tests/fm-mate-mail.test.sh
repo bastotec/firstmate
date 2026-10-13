@@ -207,7 +207,7 @@ test_remote_ingest_diverts_wire_line_to_spool() {
   local parent="$TMP_ROOT/ingest-$RANDOM" payload result empty full bytes line rc
   mkdir -p "$parent/state"
   payload="$parent/payload"
-  line=$(fm_mate_mail_line 0123456789abcdef cadia '' $'hi\nthere')
+  line=$(fm_mate_mail_line 0123456789abcdef cadia '' $'see data/notes.md\nthere\n\n')
   printf 'working: still on it\n%s\n' "$line" > "$payload"
   empty=$(: | shasum -a 256 | awk '{print $1}')
   full=$(shasum -a 256 < "$payload" | awk '{print $1}')
@@ -224,11 +224,50 @@ test_remote_ingest_diverts_wire_line_to_spool() {
   grep -q '^working: still on it$' "$parent/state/dave.status" || fail "the ordinary line was not mirrored"
   grep -q 'mate-message' "$parent/state/dave.status" && fail "a peer message must not enter the status stream"
   fm_mate_mail_read "$parent/state/mate-mail/pending/dave@0123456789abcdef.msg" || fail "the peer message was not spooled"
-  [ "$FM_MM_TEXT" = $'hi\nthere' ] || fail "spooled text wrong: $FM_MM_TEXT"
-  pass "fm-procevent-remote-reply: a remote peer message goes to the spool, not the status stream"
+  [ "$FM_MM_TEXT" = $'see data/notes.md\nthere\n\n' ] || fail "spooled text wrong (trailing newlines must survive): $FM_MM_TEXT"
+  [ ! -e "$parent/data/remote-secondmates" ] || fail "a peer message must not fetch documents"
+  grep -q 'remote-reply-document' "$parent/state/dave.status" && fail "a peer message must not raise a document escalation"
+  pass "fm-procevent-remote-reply: a remote peer message goes to the spool before any document fetch, newlines intact"
+}
+
+test_primary_publication_is_not_repeated() {
+  local parent corr send steer
+  parent=$(make_fleet primary dave cadia)
+  steer="$parent/steer"
+  mkdir -p "$steer"
+  printf '{"steer_dir": "%s"}\n' "$steer" > "$parent/state/primary-chat.json"
+  send="$parent/fakebin/send-primary"
+  # The stub publishes like the chat primary, then the pass is interrupted
+  # before it can archive the record.
+  # shellcheck disable=SC2016 # the stub expands its own arguments
+  printf '#!/usr/bin/env bash\nn=$(ls "%s" | wc -l | tr -d " ")\nprintf "%%s" "$2" > "%s/$((n + 1)).msg"\n' "$steer" "$steer" > "$send"
+  chmod +x "$send"
+  corr=$(mate_send "$parent" dave primary "need a decision on X" | sed -n 's/.*corr=\([a-f0-9]*\).*/\1/p')
+  : > "$parent/state/mate-mail/pending/dave@$corr.publishing"
+  "$send" primary "[fm-from-mate:dave]$FM_OPERATIONAL_MARK""corr=$corr note"
+  run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" >/dev/null || fail "router pass failed"
+  [ "$(find "$steer" -name '*.msg' | wc -l | tr -d ' ')" = 1 ] || fail "the first mate got the same message twice"
+  [ -f "$parent/state/mate-mail/delivered/dave@$corr.msg" ] || fail "an already-published message should close as delivered"
+  pass "fm-mate-route: a message already in the first mate's chat is not published again"
+}
+
+test_interrupted_bookkeeping_completes_once() {
+  local parent corr
+  parent=$(make_fleet resume dave cadia)
+  corr=$(mate_send "$parent" dave nobody "x" | sed -n 's/.*corr=\([a-f0-9]*\).*/\1/p')
+  run_route "$parent" >/dev/null || fail "router pass failed"
+  # Simulate a pass that logged and woke, then died before archiving.
+  mv "$parent/state/mate-mail/refused/dave@$corr.msg" "$parent/state/mate-mail/pending/"
+  run_route "$parent" >/dev/null || fail "router pass failed"
+  [ -f "$parent/state/mate-mail/refused/dave@$corr.msg" ] || fail "the record should be archived under its logged outcome"
+  [ "$(grep -c "\"corr\": \"$corr\"" "$parent/state/mate-messages.log")" = 1 ] || fail "the message was logged twice"
+  [ "$(grep -c "mate-mail:$corr" "$parent/state/.wake-queue")" = 1 ] || fail "the first mate was woken twice"
+  pass "fm-mate-route: an interrupted pass finishes its bookkeeping without repeating it"
 }
 
 test_local_mate_queues_in_parent_spool
+test_primary_publication_is_not_repeated
+test_interrupted_bookkeeping_completes_once
 test_remote_ingest_diverts_wire_line_to_spool
 test_deck_wakes_idle_mate_on_peer_message
 test_remote_wire_line_round_trips
