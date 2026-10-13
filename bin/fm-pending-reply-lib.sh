@@ -59,7 +59,7 @@
 #                           escalation was closed again (see the escalation
 #                           lifecycle note below); empty until then
 #   resolved_epoch=
-#   resolved_via=           status | document | helper | empty
+#   resolved_via=           status | document | helper | captain-direct | empty
 #   wrong_home_hits=        count of corr sightings under the secondmate home
 #   wrong_home_first_sighting= encoded path:line identity of the first sighting
 #   wrong_home_sightings=   comma-separated encoded path:line identities
@@ -1410,6 +1410,10 @@ fm_pending_reply_tick_one() {  # <state-dir> <corr_id> <busy_state> [secondmate-
   if fm_pending_reply_try_resolve "$state" "$corr"; then
     return 0
   fi
+  if fm_pending_reply_is_captain_direct "$rec"; then
+    fm_pending_reply_settle_captain_direct "$state" "$corr" || true
+    return 0
+  fi
   phase=$(fm_pending_reply_get "$rec" phase)
   case "$phase" in
     awaiting_report|recovery_sending)
@@ -1458,6 +1462,37 @@ fm_pending_reply_tick_one() {  # <state-dir> <corr_id> <busy_state> [secondmate-
       fm_pending_reply_maybe_escalate "$state" "$corr" 2>/dev/null || true
       ;;
   esac
+  return 0
+}
+
+# A captain-direct record (bin/fm-send.sh --from-captain) tracks the captain's
+# own message, which the mate answers in its conversation where he reads it, so
+# a missing parent line is not a missed report. It never gets the recovery
+# request: that request repeats the captain's words, and the mate answers the
+# captain a second time (captain direction 2026-10-13). It never escalates
+# either. A correlated parent line still resolves it; otherwise it resolves on
+# its own once grace has passed after delivery, with resolved_via=captain-direct.
+fm_pending_reply_is_captain_direct() {  # <record-path>
+  case "$(fm_pending_reply_get "$1" request_summary)" in
+    'from the captain: '*) return 0 ;;
+  esac
+  return 1
+}
+
+fm_pending_reply_settle_captain_direct() {  # <state-dir> <corr_id>
+  local state=$1 corr=$2 rec delivered grace now
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  [ "$(fm_pending_reply_get "$rec" phase)" != resolved ] || return 0
+  delivered=$(fm_pending_reply_get "$rec" delivered_epoch)
+  case "$delivered" in ''|*[!0-9]*) return 1 ;; esac
+  grace=$(fm_pending_reply_get "$rec" grace_secs)
+  case "$grace" in ''|*[!0-9]*) grace=$(fm_pending_reply_grace_secs) ;; esac
+  now=$(fm_pending_reply_now)
+  [ $((now - delivered)) -ge "$grace" ] || return 1
+  fm_pending_reply_set "$rec" phase resolved || return 1
+  fm_pending_reply_set "$rec" resolved_epoch "$now" || return 1
+  fm_pending_reply_set "$rec" resolved_via captain-direct || return 1
+  fm_pending_reply_close_escalation "$state" "$corr" >/dev/null 2>&1 || true
   return 0
 }
 

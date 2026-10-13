@@ -259,7 +259,7 @@ Never start a survey, audit, or "find improvements" sweep on your own initiative
 # The captain and the parent channel
 The main firstmate never reads this chat, and the captain reads it only when he messages you himself: otherwise both see only what is appended to $STATUS_FILE, and a captain-facing sentence that is not appended there has not been sent.
 That file is your parent channel, and in this home it IS the captain: every sentence you would say to the captain, and every outcome the local AGENTS.md tells a firstmate to bring to the captain, is one appended line there, never chat.
-The one exception is a captain-direct message (below): answer him in this chat, and also append one short correlated line to the parent channel so the main firstmate is notified.
+The one exception is a captain-direct message (below): answer him in this chat; the main firstmate was already told when it was delivered.
 Your own machinery publishes the durable facts about your crew's work for you (\`bin/fm-parent-channel-lib.sh\`): a child's terminal done or failed line with its note and PR on every supervision poll, a PR-ready line when you register a PR, a task you hold for the captain and its answer, a merge, and a child's final line at cleanup all reach the parent channel from the scripts that record them, whether or not you append anything.
 What only you can append is judgement: the answer to a marked request below, a recommendation or caveat on a delivered outcome, a blocker or failure of your own, and anything else you would otherwise say to the captain.
 
@@ -274,7 +274,7 @@ A plain \`echo\` that includes the same \`corr=<id>\` on this parent channel is 
 For a terse result, a status line is the whole answer.
 For a detailed answer (an investigation, a plan, an audit), write it to a doc under your home's \`data/\` and append a status line that points to that doc - the scout-report pattern - so the main firstmate is woken and can read it.
 Before treating an investigation or visual review as complete, load \`captain-hold-lifecycle\` from this home's \`.agents/skills/\` and pass its shared completion gate.
-When the marker and \`corr=<id>\` token are followed by a \`$FM_CAPTAIN_DIRECT_LABEL\` tag, the captain wrote the message to you himself and reads this chat: answer him here, addressed to him and readable on its own, then append one short line with that \`corr=<id>\` to the parent channel, such as \`done corr=<id>: answered the captain directly: {gist}\`.
+When the marker and \`corr=<id>\` token are followed by a \`$FM_CAPTAIN_DIRECT_LABEL\` tag, the captain wrote the message to you himself and reads this chat: answer him here once, addressed to him and readable on its own. The main firstmate was told at delivery, so append no parent-channel line just to acknowledge it; report on the parent channel only an outcome you would report anyway. A message repeating a \`corr=<id>\` you already answered is a duplicate: acknowledge it in your own log at most and send the captain no second reply.
 A message with NO marker is the captain typing directly into your pane: treat it as authoritative captain intervention and stay conversational exactly as you would for any captain message; do not force it onto the status path.
 A request arriving through the instruction inbox below follows the same marker and reply rules.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Steer a task by durable record: write the message into the task's steering
 # inbox and ring a constant doorbell line into its terminal, best-effort.
-# Usage: fm-send.sh [--decision-answer] <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] [--from-captain] <text...>
+# Usage: fm-send.sh [--decision-answer] <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] [--from-captain | --correction] <text...>
 #   --decision-answer requires an exact task id and keyed answer, resolves
 #   regular metadata under the supervision lease and metadata lock, and refuses
 #   harness-native text rather than leaving the durable inbox plane.
@@ -121,8 +121,21 @@
 # docs/stream-backend.md "Command path" owns captain-direct native delivery
 # timing, compatibility, and fallback; durable send and reply tracking below
 # do not depend on native publication.
-# The old "From the captain, directly:" prose prefix is not detected; Fleet Town
-# adopting this flag is a follow-up in its own repository.
+# The old "From the captain, directly:" prose prefix is not detected.
+# Once a captain message to a secondmate is delivered, this home records it and
+# queues one FYI inbox note for its own first mate naming the corr
+# (bin/fm-captain-direct-lib.sh owns the ledger and the wording), and stdout
+# carries `corr=<id>` and `first_mate=told|failed` so the caller does not write
+# a second note.
+#
+# Captain-direct echo guard: a later steer from this home to the same secondmate
+# that repeats or reconciles a captain message it already received (names its
+# corr, restates a run of his words, or talks about his direct message, within
+# the window bin/fm-captain-direct-lib.sh owns) is not sent. fm-send prints
+# `suppressed=captain-direct-echo corr=<id>` on stdout and why on stderr, logs
+# it to state/captain-direct.log, and exits 0. --correction sends it anyway,
+# for the one fix a later report from the mate shows is really needed; a
+# --resolve-key answer is never held back, so decision bookkeeping still closes.
 #
 # Parent-owned pending-reply expectation: every newly marked secondmate request
 # except an explicit --fire-and-forget delivery receives a privacy-safe
@@ -272,6 +285,8 @@ fi
 . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-captain-direct-lib.sh
+. "$SCRIPT_DIR/fm-captain-direct-lib.sh"
 
 FM_GUARD_CONTINUE_LINE='This is a supervision warning only; the requested message WILL still be sent.' "$SCRIPT_DIR/fm-guard.sh" || true
 
@@ -436,6 +451,7 @@ shift
 RESOLVE_KEYS=
 FIRE_AND_FORGET_ID=
 FROM_CAPTAIN=0
+CORRECTION=0
 fm_send_add_resolve_key() {  # <key>
   local k=$1
   case "$k" in
@@ -478,12 +494,20 @@ while :; do
       FROM_CAPTAIN=1
       shift
       ;;
+    --correction)
+      CORRECTION=1
+      shift
+      ;;
     *) break ;;
   esac
 done
 
 if [ "$TARGET_BACKEND" != remote ]; then
   fm_backend_validate "$TARGET_BACKEND" || exit 1
+fi
+if [ "$FROM_CAPTAIN" = 1 ] && [ "$CORRECTION" = 1 ]; then
+  echo "error: --correction is for a first-mate steer and cannot accompany --from-captain; nothing was sent" >&2
+  exit 1
 fi
 if [ "$FROM_CAPTAIN" = 1 ]; then
   if [ "$DECISION_ANSWER" = 1 ] || [ -n "$FIRE_AND_FORGET_ID" ] || [ -z "$TARGET_SELECTOR" ]; then
@@ -526,6 +550,43 @@ if [ -n "$TARGET_SELECTOR" ] && [ -n "$TARGET_META" ] && [ "$(fm_meta_get "$TARG
   MARK_FROM_FIRSTMATE=1
   TARGET_TASK_ID=$(fm_send_id_from_meta "$TARGET_META")
 fi
+
+# Captain-direct echo guard (see the header): never deliver the captain's own
+# message to a secondmate a second time.
+if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ "$FROM_CAPTAIN" != 1 ] && [ -z "$RESOLVE_KEYS" ] \
+  && [ "${1:-}" != "--key" ] && [ -n "$*" ]; then
+  if echo_corr=$(fm_captain_direct_echo_corr "$STATE" "$TARGET_TASK_ID" "$*"); then
+    if [ "$CORRECTION" = 1 ]; then
+      fm_captain_direct_log "$STATE" "correction-sent corr=$echo_corr task=$TARGET_TASK_ID"
+    else
+      fm_captain_direct_log "$STATE" "suppressed corr=$echo_corr task=$TARGET_TASK_ID"
+      printf 'suppressed=captain-direct-echo corr=%s\n' "$echo_corr"
+      echo "fm-send: NOT sent to $TARGET_TASK_ID - it already has the captain's own message (corr=$echo_corr) and answers him itself, and this steer repeats or reconciles it. Nothing to do. If a later report from $TARGET_TASK_ID shows a real gap, send only that fix with --correction." >&2
+      exit 0
+    fi
+  fi
+fi
+
+# After a captain message reaches a secondmate: record it for the echo guard and
+# tell this home's first mate once, FYI only (see the header).
+fm_send_captain_direct_delivered() {
+  local mate note told=told
+  [ "$FROM_CAPTAIN" = 1 ] && [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ -n "$PENDING_REPLY_CORR" ] || return 0
+  # A same-corr resend lands on the same record, so the first mate was already told.
+  if [ -f "$(fm_captain_direct_dir "$STATE")/$PENDING_REPLY_CORR" ]; then
+    printf 'corr=%s\nfirst_mate=told\n' "$PENDING_REPLY_CORR"
+    return 0
+  fi
+  fm_captain_direct_record "$STATE" "$TARGET_TASK_ID" "$PENDING_REPLY_CORR" "$RESOLVE_ANSWER_TEXT" \
+    || echo "warning: the captain's message was delivered, but its echo-guard record could not be written under $STATE/captain-direct" >&2
+  mate=$TARGET_TASK_ID
+  note=$(fm_captain_direct_note_text "$mate" "$PENDING_REPLY_CORR" "$RESOLVE_ANSWER_TEXT")
+  if ! printf '%s' "$note" | FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-inbox.sh" note - >/dev/null 2>&1; then
+    told=failed
+    echo "warning: the captain's message was delivered, but the first mate's FYI note could not be queued" >&2
+  fi
+  printf 'corr=%s\nfirst_mate=%s\n' "$PENDING_REPLY_CORR" "$told"
+}
 
 # Validate the answerer-closes request before any durable mutation or send: the
 # target must have a task ledger in THIS home, the send must carry an answer
@@ -921,6 +982,7 @@ else
       fm_send_close_resolved_keys "$RESOLVE_ANSWER_TEXT" || exit 1
       fm_send_feed_resolved_holds "$RESOLVE_ANSWER_TEXT" || exit 1
     fi
+    fm_send_captain_direct_delivered
     exit 0
   fi
   if [ "$INBOX_PLANE" = 1 ]; then
@@ -1008,6 +1070,7 @@ else
       2) echo "fm-send: the steer is durably delivered at $INBOX_RECORD; the doorbell did not reach $T and the watcher will re-ring" >&2 ;;
       3) echo "fm-send: doorbell not typed because the agent in $T has exited; the steer is durably recorded at $INBOX_RECORD for recovery (stuck-crewmate-recovery), and the watcher will not re-ring a dead pane" >&2 ;;
     esac
+    fm_send_captain_direct_delivered
     exit 0
   fi
   # Slash commands open a completion popup in some TUIs; submitting too fast

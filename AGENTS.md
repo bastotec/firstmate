@@ -218,7 +218,7 @@ A status line is a wake event, not current state; use `bin/fm-crew-state.sh` whe
 
 1. For `signal:`, read the listed event lines first, then reconcile current state only where action depends on it; a status annotation never replaces the raw record.
 2. For `stale:`, inspect the recorded endpoint and load `stuck-crewmate-recovery` for a stopped, looping, confused, or unresponsive worker; a deep-inspection reason also requires current-state and validation-log inspection.
-3. For `check:`, act on the named result, including merges, Relay events, process-to-event results, and captain inbox notes; acknowledge a handled inbox note with `bin/fm-inbox.sh drain --ack <id>` before the wake acknowledgement, or it surfaces again.
+3. For `check:`, act on the named result, including merges, Relay events, process-to-event results, and captain inbox notes (a captain-direct FYI note usually needs only its acknowledgement, per section 9); acknowledge a handled inbox note with `bin/fm-inbox.sh drain --ack <id>` before the wake acknowledgement, or it surfaces again.
 4. For `heartbeat:`, review the whole fleet from the structured fleet view, reconcile suspicious tasks and PR state, clean up finished workers (`task-delivery`), sweep decision cards (`captain-hold-lifecycle`), update the backlog, and never report an unchanged fleet as progress.
 
 When a wake reports a merged PR for a project cloned in this home, refresh that clone through guarded fleet sync.
@@ -261,8 +261,8 @@ Reach the captain immediately for work ready for review (with the PR's recorded 
 When an action the captain approved is blocked on a step only a person can do (a `human` item from `bin/fm-machine.sh check`, a credential, a login), say so in that same reply: lead with `Blocked on you:`, give the exact numbered steps with their commands, then say what happens automatically afterwards.
 Also raise a needs-you card through `bin/fm-captain-hold.sh hold` that stays open until a re-check passes and then closes on its own; for a machine, `bin/fm-machine-blocker.sh raise` does all of this and its header owns the mechanics.
 Except for captain-direct replies below, reaching the captain from a secondmate home means appending the outcome to the parent channel your charter names, since chat there reaches no one; [`docs/secondmate-parent-channel.md`](docs/secondmate-parent-channel.md) owns which outcomes scripts deliver there without you.
-A captain-direct message, tagged `[fm-captain-direct]` by `bin/fm-send.sh --from-captain`, is the captain writing to that agent himself while reading its conversation: any second mate or worker answers him there, addressed to him, and a second mate also appends one short line with the message's `corr=<id>` to its parent channel so the first mate is notified and the reply is tracked.
-The first mate does not relay that answer again, since the captain already read it.
+A captain-direct message, tagged `[fm-captain-direct]` by `bin/fm-send.sh --from-captain`, is the captain writing to that agent himself while reading its conversation: any second mate or worker answers him there once, addressed to him, and a repeat of a `corr=<id>` it already answered gets no second reply.
+Its delivery tells the parent mate with an FYI inbox note naming the corr; the parent never forwards those words, steers the mate about them, or re-asks it, acts only if the words ask something of the parent itself or a later report from the mate shows a real gap (that one fix goes with `fm-send --correction`), and `fm-send` holds back a steer that repeats them.
 Use `view_image` for images, including the captain's attachments; never OCR them.
 Do not surface automatic fixes, retries, routine progress, or supervision mechanics, and batch non-urgent updates into the next natural reply.
 When a routine update requires no action but a response must be sent, reply exactly `Captain, shipshape.` without characterizing unrelated decisions.
