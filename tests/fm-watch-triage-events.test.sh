@@ -337,7 +337,7 @@ test_unread_inbox_note_resurfaces_a_bounded_number_of_times() {
 # for the home, and the new loop live. A change that does not parse keeps the
 # running code.
 test_watcher_reloads_changed_code_in_place() {
-  local dir state copy out pid arm lock_pid lock_owner count ref_mtime
+  local dir state copy out pid arm lock_pid lock_owner duplicate ref_mtime
   dir=$(make_case code-reload); state="$dir/state"
   dir=$(cd "$dir" && pwd -P)
   copy="$dir/fmroot"
@@ -367,13 +367,18 @@ test_watcher_reloads_changed_code_in_place() {
   [ "$lock_pid" = "$pid" ] || { reap "$arm"; fail "the reload changed the lock holder ($lock_pid, not $pid)"; }
   [ "$(readlink "$state/.watch.lock")" = "$lock_owner" ] \
     || { reap "$arm"; fail "the reload replaced the singleton lock instead of adopting it"; }
-  # Count watcher processes whose parent is not itself a watcher: bash
-  # command-substitution subshells carry the same command line.
-  count=$(ps -axo pid=,ppid=,command= | awk -v path="$copy/bin/fm-watch.sh" '
-    { cmd = $0; sub(/^ *[0-9]+ +[0-9]+ +/, "", cmd) }
-    cmd == "bash " path { pid[$1] = $2 }
-    END { n = 0; for (p in pid) if (!(pid[p] in pid)) n++; print n }')
-  [ "$count" = 1 ] || { reap "$arm"; fail "the reload left $count watchers for one home"; }
+  # Prove singleton ownership by attempting a second launch, not by matching
+  # ps command rendering (which may name bash by its absolute path).
+  PATH="$dir/fakebin:$PATH" FM_HOME="$dir" "$copy/bin/fm-watch.sh" > "$dir/duplicate.out" 2>&1 &
+  duplicate=$!
+  wait_for_exit "$duplicate" 100 \
+    || { reap "$duplicate"; reap "$arm"; fail "the reloaded watcher allowed a second watcher to run"; }
+  if [ "$(cat "$state/.watch.lock/pid" 2>/dev/null)" != "$pid" ] \
+    || [ "$(readlink "$state/.watch.lock")" != "$lock_owner" ] \
+    || ! is_live_non_zombie "$pid"; then
+    reap "$arm"
+    fail "the duplicate launch disturbed the reloaded watcher's ownership"
+  fi
   grep -F "re-executing in place" "$state/.watch-triage.log" >/dev/null \
     || { reap "$arm"; fail "the reload was not logged"; }
 

@@ -629,6 +629,8 @@ portable_serial_weight_hints() {
 # 37527983434 is the first stream-only run, after the tmux/herdr removal.
 # The mate-mail hint is from green serial shard 3 of run 38445663105
 # (2026-10-13); every serial shard passed in that run.
+# fm-watch-parent-channel-echo was measured in green serial shard 8 of run
+# 38444133335 (2026-10-13), with three family-phase workers.
 # The five tests/fm-watch-triage*.test.sh suites were one 694233 ms script
 # before run 37413095868; their hints start from each suite's share of that,
 # from the per-case output timestamps of run 37401433503's serial shard 1.
@@ -766,6 +768,7 @@ tests/fm-wake-drain-unread-status.test.sh 22307
 tests/fm-wake-gate.test.sh 17081
 tests/fm-wake-queue.test.sh 206368
 tests/fm-watch-arm.test.sh 107952
+tests/fm-watch-parent-channel-echo.test.sh 10154
 tests/fm-watch-recovery-loop.test.sh 64315
 tests/fm-watch-triage-declared-wait.test.sh 176541
 tests/fm-watch-triage-events.test.sh 129600
