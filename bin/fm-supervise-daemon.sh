@@ -58,9 +58,10 @@
 #     undelivered past FM_MAX_DEFER_SECS, the daemon retries a normal flush and
 #     writes state/.subsuper-inject-wedged and attempts a configurable active
 #     alert if submit still cannot be confirmed.
-#   - Cheap heartbeat catch-all: every HEARTBEAT_SCAN_SECS the daemon greps all
-#     state/*.status for a captain-relevant line the per-wake classifier might
-#     have missed (e.g. a status verb outside CAPTAIN_RE) and escalates it.
+#   - Cheap heartbeat catch-all: every HEARTBEAT_SCAN_SECS the daemon scans
+#     incoming state/*.status for a captain-relevant line the per-wake classifier
+#     might have missed and escalates it. status_file_is_incoming in
+#     bin/fm-classify-lib.sh owns eligibility.
 #
 # The robustness shell from the prior always-inject version is preserved:
 # single-instance lock (portable helper, no flock dependency), crash-loop
