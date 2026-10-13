@@ -24,10 +24,11 @@ Deck's own tests pin the original hook contract (`cargo test --locked`, 85 tests
 
 ## Portable regression
 
-`tests/fm-deck-harness.test.sh` drives the real driver against a fake `deck` that logs its arguments, honours `--session`, and runs `pre_complete` plus `pre_tool_use` / `post_tool_use` with the tool event on stdin:
+`tests/fm-deck-harness.test.sh` drives the real driver against a fake `deck` that logs its arguments, honours `--session`, and runs `pre_complete` plus `pre_tool_use` / `post_tool_use` with the tool event on stdin.
+The focused portable regression set is:
 
 ```sh
-bin/fm-test-run.sh tests/fm-deck-harness.test.sh tests/fm-deck-turn-failure-supersession.test.sh
+bin/fm-test-run.sh tests/fm-brief.test.sh tests/fm-deck-harness.test.sh tests/fm-deck-turn-failure-supersession.test.sh tests/fm-wake-drain-outcome-backstop.test.sh
 ```
 
 These suites print one `ok - ...` line per case; their case names are the current coverage list.
@@ -51,8 +52,11 @@ The evidence gate snapshots the status log's byte offset at turn start and searc
 Firstmate-owned bookkeeping lines such as `resolved:` and `note:` do not satisfy the gate or the driver's postcondition.
 Those reads, the driver's fallback append, and turn-end publication use Python 3 descriptor-bound I/O, reject symlinks and non-regular or multiply linked files, and never touch an unsafe target.
 `tests/fm-deck-turn-failure-supersession.test.sh` pins ordered, captured-endpoint classification for exact task-local recovery-generation and record-id stamped `turn-failed` records, including mismatched generations, repeated failures, and durable supersession.
+`tests/fm-brief.test.sh` executes the generated status command in Deck and non-Deck environments, proving that Deck selects the locked append boundary without changing the fallback protocol.
 The Deck harness proves that Firstmate bookkeeping does not satisfy the worker-evidence gate, a silent failed turn creates no watcher-downtime marker, and a later turn's worker-authored `working:` evidence binds to the same task-local recovery generation through the locked status append.
-The focused supersession suite sends a working-plus-terminal burst through that executable append boundary and proves its single write orders the generated binding before the terminal record, while a working append attempted after an existing terminal record leaves the terminal bytes unchanged.
+The focused supersession suite sends a working-plus-terminal burst through that executable append boundary and proves its single write orders the generated binding before the terminal record.
+It also proves that a stale same-turn working append after a terminal leaves the terminal bytes unchanged, while the next turn's working append is retained without a stale recovery marker.
+`tests/fm-wake-drain-outcome-backstop.test.sh` proves that a captured span containing only a superseded turn failure advances its outcome receipt without captain-facing output.
 The terminal regression drives two real `fm-send.sh` steers through the Python stream hub and PTY agent, confirming each submit from the cleared composer after the turn finishes while proving no transient rendered working row remains.
 The finished-turn row renders its UTC completion time from `run_finished.finished_at` and falls back to the timestamp-less wording when the field is absent, while the idle prompt notes the UTC idle instant beside its bare `❯` row.
 
