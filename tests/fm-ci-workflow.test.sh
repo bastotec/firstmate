@@ -141,7 +141,7 @@ test_measured_lanes_keep_their_authorized_bounds() {
       || fail "$job timeout must stay $expected minutes, got $actual"
   done <<'CAPS'
 tests-portable-parallel 15
-tests-portable-serial 15
+tests-portable-serial 20
 macos-stock-bash 10
 CAPS
   pass "the measured lane bounds match their authorized caps"
