@@ -901,9 +901,16 @@ test_secondmate_relaunch_preserves_an_in_place_model_choice() {
   out=$(run_control "$dir" smchoice relaunch --model example/explicit); rc=$?
   expect_code 0 "$rc" "an explicit model overrides the choice: $out"
   assert_equals example/explicit "$(meta_field "$dir" smchoice model)" "an explicit --model wins"
+  out=$(run_control "$dir" smchoice relaunch); rc=$?
+  expect_code 0 "$rc" "an ordinary relaunch after an explicit model: $out"
+  assert_equals example/explicit "$(journal_field "$dir" smchoice to_model)" "an explicit --model becomes the kept choice"
   out=$(run_control "$dir" smchoice relaunch --model default); rc=$?
   expect_code 0 "$rc" "an explicit model reset overrides the choice: $out"
   assert_equals default "$(meta_field "$dir" smchoice model)" "an explicit default keeps its reset semantics"
+  [ -z "$(meta_field "$dir" smchoice model_choice)" ] || fail "an explicit default clears the choice"
+  out=$(run_control "$dir" smchoice relaunch); rc=$?
+  expect_code 0 "$rc" "an ordinary relaunch after a reset: $out"
+  assert_equals example/pinned "$(journal_field "$dir" smchoice to_model)" "after a reset the configured pin applies again"
   pass "fm-control model/relaunch: a secondmate's in-place choice overrides its pin only without an explicit model"
 }
 

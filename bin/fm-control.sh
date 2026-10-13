@@ -466,6 +466,20 @@ model_meta_write() {  # <route>: model= in this record, under its lock
   return "$rc"
 }
 
+model_choice_write() {  # <route|empty>: model_choice= in this record, under its lock
+  local route=$1 lock tmp rc=0
+  lock=$(fm_meta_lock_path "$META") || return 1
+  fm_lock_acquire_wait "$lock" || return 1
+  tmp="$META.choice.${BASHPID:-$$}"
+  { awk -F= '$1 != "model_choice"' "$META"; [ -z "$route" ] || printf 'model_choice=%s\n' "$route"; } > "$tmp" || rc=1
+  if [ "$rc" -eq 0 ] && ! fm_backlog_atomic_transition publish "$tmp" "$META" "task record" "$STATE"; then
+    rc=1
+  fi
+  rm -f "$tmp" 2>/dev/null || true
+  fm_lock_release "$lock" || true
+  return "$rc"
+}
+
 model_switch() {
   local switcher="$SCRIPT_DIR/fm_model_switch.py" host rc where prior
   python3 "$switcher" check "$MODEL_ROUTE" --policy "$CONFIG/model-policy.json" || exit 1
@@ -1298,6 +1312,15 @@ do_relaunch() {
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
+  # An explicit --model is the captain's newest choice; `--model default` and a
+  # harness change drop it (the pin applies again).
+  if [ "$VERB" = relaunch ]; then
+    if [ "$TARGET_HARNESS" != "$PRIOR_HARNESS" ] || { [ "$MODEL_SET" = 1 ] && [ "$TARGET_MODEL" = default ]; }; then
+      model_choice_write '' || echo "warning: $ID's model_choice= could not be cleared" >&2
+    elif [ "$MODEL_SET" = 1 ]; then
+      model_choice_write "$TARGET_MODEL" || echo "warning: $ID's model_choice= could not be updated" >&2
+    fi
+  fi
   echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT"
 }
 
