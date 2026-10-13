@@ -1102,6 +1102,53 @@ test_arm_reports_an_unparseable_wake_library_as_a_broken_install() {
   pass "watch-arm: an unparseable wake library is a broken install, not a resource problem"
 }
 
+test_handling_child_stderr_is_retained() {
+  local dir mode rc i
+  for mode in exits interrupted; do
+    dir=$(make_case "handling-stderr-$mode")
+    mkdir -p "$dir/bin" "$dir/home"
+    cp -R "$ROOT/bin/." "$dir/bin/"
+    cat > "$dir/bin/fm-watch.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'handling successor startup diagnostic\n' >&2
+if [ "$FM_TEST_CHILD_MODE" = exits ]; then exit 7; fi
+trap 'exit 143' TERM
+: > "$FM_HOME/child-ready"
+while :; do sleep 0.1; done
+SH
+    chmod +x "$dir/bin/fm-watch.sh"
+    FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/state" FM_WATCH_PREDECESSOR_ARM_PID=4242 \
+      FM_TEST_CHILD_MODE="$mode" FM_ARM_CONFIRM_TIMEOUT=30 \
+      "$dir/bin/fm-watch-arm.sh" > "$dir/arm.out" 2> "$dir/arm.err" &
+    ARM_PID=$!
+    if [ "$mode" = interrupted ]; then
+      i=0
+      while [ "$i" -lt 100 ] && [ ! -f "$dir/home/child-ready" ]; do
+        sleep 0.1
+        i=$((i + 1))
+      done
+      [ -f "$dir/home/child-ready" ] || fail "handling child did not reach startup"
+      kill -TERM "$ARM_PID" || fail "could not interrupt handling arm"
+    fi
+    wait "$ARM_PID"
+    rc=$?
+    if [ "$mode" = exits ]; then
+      [ "$rc" -eq 7 ] || fail "handling child exit was not propagated: $rc"
+      grep -F 'watcher: FAILED' "$dir/arm.out" >/dev/null || fail "missing failed arm result"
+    else
+      [ "$rc" -eq 143 ] || fail "arm interruption was not propagated: $rc"
+    fi
+    grep -Fx 'handling successor startup diagnostic' "$dir/arm.out" >/dev/null \
+      || fail "handling child stderr did not survive $mode cycle"
+    [ ! -s "$dir/arm.err" ] || fail "handling stderr escaped the capture"
+    [ -s "$dir/state/.watch-cycle-exits.log" ] || fail "cycle close was not recorded"
+    [ -z "$(find "$dir/state" -name '.watch-arm-output.*' -print)" ] \
+      || fail "cycle capture was not cleaned up"
+  done
+  pass "watch-arm: handling child stderr survives failed and interrupted startup cycles"
+}
+
+test_handling_child_stderr_is_retained
 test_attached_arm_reports_the_delivered_wake
 test_attached_arm_reports_the_delivered_wake_after_drain
 test_arm_refuses_an_unusable_launch_confirm_window

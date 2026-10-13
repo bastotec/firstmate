@@ -44,7 +44,9 @@
 # Every observed watcher cycle appends one tab-separated lifecycle record to
 # state/.watch-cycle-exits.log. The arm layer owns that bounded ledger; it records
 # arm/watcher identities, timestamps, exit/signal classification, beacon age,
-# lock identity before and after close, and successor disposition. The separate
+# lock identity before and after close, and successor disposition. Handling-successor
+# children retain stderr alongside stdout and surface it even when the arm is
+# interrupted, before removing the temporary capture. The separate
 # state/.watch-triage.log remains exclusively the watcher's absorbed-wake debug
 # log and is never written here.
 #
@@ -549,6 +551,9 @@ handle_arm_signal() {
     wait "$child" 2>/dev/null || true
   fi
   cycle_log_append "$rc" "$signal" arm-interrupted none
+  if [ -n "$child" ] && [ -n "${FM_WATCH_PREDECESSOR_ARM_PID:-}" ]; then
+    print_watch_output "$child_out"
+  fi
   cleanup_child
   exit "$rc"
 }
@@ -562,7 +567,7 @@ child_out=$(mktemp "$STATE/.watch-arm-output.XXXXXX") || {
   exit 1
 }
 if [ -n "${FM_WATCH_PREDECESSOR_ARM_PID:-}" ]; then
-  FM_WATCH_HANDLING_SUCCESSOR=1 "$WATCH" >"$child_out" &
+  FM_WATCH_HANDLING_SUCCESSOR=1 "$WATCH" >"$child_out" 2>&1 &
 else
   "$WATCH" >"$child_out" &
 fi
