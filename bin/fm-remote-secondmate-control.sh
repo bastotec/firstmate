@@ -54,8 +54,9 @@
 # launch, and any the old endpoint still hosts. A launch refuses before starting
 # anything while the recorded previous agent is still running outside its
 # endpoint, and any proof that cannot be made within the bound is a failure,
-# never a success; FM_REMOTE_AGENT_IDENTITY_WAIT (seconds, default 30) sets that
-# bound. The proved identity is kept in the private parent-route state directory
+# never a success; FM_REMOTE_AGENT_IDENTITY_WAIT (seconds, default 30) is the
+# floor of that bound, which adapts per mate to this host's measured start time
+# (agent_identity_wait below). The proved identity is kept in the private parent-route state directory
 # for the next relaunch, and retire removes it. An already-alive endpoint is
 # reused without a relaunch.
 #
@@ -180,6 +181,34 @@ print_route() { # <id>
 # bin/fm-wake-lib.sh's fm_pid_identity, reduced to one checksum word so a
 # recycled pid never reads as the same process.
 AGENT_IDENTITY_WAIT=${FM_REMOTE_AGENT_IDENTITY_WAIT:-30}
+AGENT_IDENTITY_WAIT_MAX=${FM_REMOTE_AGENT_IDENTITY_WAIT_MAX:-300}
+case "$AGENT_IDENTITY_WAIT" in ''|*[!0-9]*|0) AGENT_IDENTITY_WAIT=30 ;; esac
+case "$AGENT_IDENTITY_WAIT_MAX" in ''|*[!0-9]*|0) AGENT_IDENTITY_WAIT_MAX=300 ;; esac
+
+# The proof window adapts to the host. A slow machine (a login shell that takes
+# long to start the Deck host) can need far more than the default, and a proof
+# that times out on a healthy start reads as a failed revival. So each mate's
+# last proven start time is recorded here, and the window is twice that, never
+# below FM_REMOTE_AGENT_IDENTITY_WAIT nor above FM_REMOTE_AGENT_IDENTITY_WAIT_MAX.
+# A proof that runs out records the window it had, so the next attempt waits
+# twice as long.
+agent_start_record() { printf '%s/%s.agent-start-secs\n' "$CONTROL_STATE" "$1"; }
+
+agent_identity_wait() {  # <id>
+  local learned wait
+  learned=$(head -n 1 "$(agent_start_record "$1")" 2>/dev/null || true)
+  case "$learned" in ''|*[!0-9]*) learned=0 ;; esac
+  wait=$((learned * 2))
+  [ "$wait" -ge "$AGENT_IDENTITY_WAIT" ] || wait=$AGENT_IDENTITY_WAIT
+  [ "$wait" -le "$AGENT_IDENTITY_WAIT_MAX" ] || wait=$AGENT_IDENTITY_WAIT_MAX
+  printf '%s\n' "$wait"
+}
+
+agent_start_learn() {  # <id> <seconds>
+  local file
+  file=$(agent_start_record "$1")
+  printf '%s\n' "$2" > "$file.tmp.$$" 2>/dev/null && mv -f "$file.tmp.$$" "$file" 2>/dev/null || true
+}
 AGENT_IDENTITY_POLL=${FM_REMOTE_AGENT_IDENTITY_POLL:-0.5}
 
 identity_path() { printf '%s/%s.agent-identity\n' "$CONTROL_STATE" "$1"; }
@@ -232,7 +261,7 @@ EOF
 # allowing the bound for one whose endpoint was just removed to exit.
 require_identities_gone() {  # <id> <identity-lines>
   local pid deadline
-  deadline=$(( $(date +%s) + AGENT_IDENTITY_WAIT ))
+  deadline=$(( $(date +%s) + $(agent_identity_wait "$1") ))
   while pid=$(live_identity "$2"); do
     [ "$(date +%s)" -lt "$deadline" ] \
       || die "the previous agent process for $1 (pid $pid) is still running without its endpoint; refusing to start a second agent beside it - stop that process, then launch again"
@@ -248,8 +277,10 @@ verify_replacement() {  # <id> <harness> <old-identity-lines> [<old-backend> <ol
   # <harness> is accepted for the callers' stable argument order; no supported
   # harness carries a posture flag the proof must check.
   local id=$1 old=$3 old_backend=${4:-} old_target=${5:-}
-  local deadline reason new fresh pid token leftover file
-  deadline=$(( $(date +%s) + AGENT_IDENTITY_WAIT ))
+  local deadline reason new fresh pid token leftover file wait started
+  wait=$(agent_identity_wait "$id")
+  started=$(date +%s)
+  deadline=$(( started + wait ))
   while :; do
     reason=
     remote_endpoint_require "$id"
@@ -282,10 +313,13 @@ EOF
       if ! { printf '%s' "$fresh" > "$file.tmp.$$" && mv -f "$file.tmp.$$" "$file"; }; then
         die "relaunch of $id proved its new agent but could not record that agent's identity"
       fi
+      agent_start_learn "$id" "$(( $(date +%s) - started ))"
       return 0
     fi
-    [ "$(date +%s)" -lt "$deadline" ] \
-      || die "relaunch of $id not verified within ${AGENT_IDENTITY_WAIT}s: $reason; not reporting it as relaunched"
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      agent_start_learn "$id" "$wait"
+      die "relaunch of $id not verified within ${wait}s: $reason; not reporting it as relaunched"
+    fi
     sleep "$AGENT_IDENTITY_POLL"
   done
 }
@@ -646,6 +680,7 @@ cmd_retire() {
       "$SCRIPT_DIR/fm-teardown.sh" "$id"
   fi
   rm -f -- "$(identity_path "$id")"
+  rm -f -- "$(agent_start_record "$id")"
 }
 
 case "${1:-}" in

@@ -295,12 +295,24 @@ alive "$current" || fail "relaunch setup left no live agent"
 # A control plane that reports "relaunched" while the old agent keeps running.
 # shellcheck disable=SC2016 # the fake control plane expands $1 itself.
 fake_control 'echo "relaunched $1 harness=deck from=deck model=default effort=default backend=stream"'
+# Start from the floor: earlier launches here already recorded a real start time.
+START_RECORD="$SM_HOME/state/parent-route/$SM_ID.agent-start-secs"
+rm -f "$START_RECORD"
 if out=$(control_quick relaunch "$SM_ID" deck default default 2>&1); then
   fail "a relaunch that left the old agent running reported success: $out"
 fi
 assert_contains "$out" "the previous agent process (pid $current) is still running" \
   "the failure did not name the old agent still running"
 assert_not_contains "$out" "relaunched $SM_ID" "a failed proof still reported the relaunch"
+# A proof that ran out of time doubles the next window, so a slow host's start
+# is not counted as a failure twice in a row.
+[ "$(cat "$START_RECORD" 2>/dev/null)" = 2 ] || fail "a timed-out proof did not record its window: $(cat "$START_RECORD" 2>/dev/null)"
+began=$(date +%s)
+if out=$(control_quick relaunch "$SM_ID" deck default default 2>&1); then
+  fail "a second relaunch that left the old agent running reported success: $out"
+fi
+assert_contains "$out" "not verified within 4s" "the window after a timed-out proof did not double: $out"
+[ $(( $(date +%s) - began )) -ge 4 ] || fail "the doubled window did not wait its full bound"
 # The real control plane genuinely replaces it.
 real_control
 out=$(control relaunch "$SM_ID" deck default default 2>&1) || fail "a proved relaunch failed: $out"
@@ -310,7 +322,10 @@ replacement=$(endpoint_agent)
   || fail "the relaunch did not leave a new live agent"
 alive "$current" && fail "the old agent is still running after a proved relaunch"
 grep -q "^$replacement " "$IDENTITY" || fail "the relaunch did not record the replacement's identity"
-pass "the relaunch verb reports success only after the old agent is gone and a new one is running"
+learned=$(cat "$START_RECORD" 2>/dev/null)
+case "$learned" in ''|*[!0-9]*) fail "a proved relaunch did not record its start time: $learned" ;; esac
+[ "$learned" -lt 30 ] || fail "a proved relaunch recorded the window instead of its measured start: $learned"
+pass "the relaunch verb reports success only after the old agent is gone and a new one is running, and its proof window adapts to the measured start"
 
 # --- 6. A relaunch whose endpoint is gone is not refused as unidentifiable ---
 current=$replacement
