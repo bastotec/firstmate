@@ -166,6 +166,8 @@ WATCH_HANDLING_GENERATION='' WATCH_HANDLING_WATCHER_PID=''
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
 # shellcheck source=bin/fm-task-inbox-lib.sh
 . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
+# shellcheck source=bin/fm-classify-lib.sh
+. "$SCRIPT_DIR/fm-classify-lib.sh"
 while [ $# -gt 0 ]; do
   case "$1" in
     --secondmate) SECONDMATE=1; shift ;;
@@ -652,6 +654,7 @@ TURN_RECOVERABLE=3
 LAUNCH_UNDELIVERED=0
 run_turn() {  # <prompt>
   local prompt=$1 rc event status_before monitor_failed=0 deck_rc tee_rc jq_rc published=0
+  local first_status recovery_gen turn_recovery_gen
   local -a turn_pipeline
   # The effort applies to this turn only, whatever path it ends by.
   local effort=$TURN_EFFORT
@@ -659,6 +662,7 @@ run_turn() {  # <prompt>
   [ "$SECONDMATE" != 1 ] || host_lock_owned || return 1
   [ "$SECONDMATE" != 1 ] || watch_start || return 1
   [ "$SECONDMATE" != 1 ] || watch_confirm_handling_delivery || return 1
+  turn_recovery_gen=$(fm_recovery_marker_generation "$STATE/.watcher-down" 2>/dev/null || true)
   [ -z "$effort" ] || prompt="deck-effort: $effort
 $prompt"
   local switched
@@ -782,6 +786,17 @@ $prompt"
     event=turn-failed
   fi
   status_before=$(cat "$TURN_MARK" 2>/dev/null || printf '0\n')
+  if [ -n "$turn_recovery_gen" ]; then
+    first_status=$(python3 "$STATE_IO" root-first-worker-status-after "$STATE" "$ID.status" "$status_before" 2>/dev/null || true)
+    case "$first_status" in
+      "working [recovery-gen=$turn_recovery_gen]:"*) ;;
+      working:*|working\ \[*\]:*)
+        if fm_turn_failed_generation_pending "$STATUS_FILE" "$turn_recovery_gen" "$status_before"; then
+          printf 'working [recovery-gen=%s]: deck turn reported working\n' "$turn_recovery_gen" | status_append || true
+        fi
+        ;;
+    esac
+  fi
   if [ "$SECONDMATE" = 1 ]; then
     if [ "$event" = turn-end ] && ! jq -es 'any(.[]; .type == "run_finished") and (all(.[]; .type != "run_failed"))' "$EVENTS" >/dev/null; then
       event=turn-failed
@@ -801,12 +816,22 @@ $prompt"
     fi
     host_lock_owned || return 1
   elif ! status_has_worker_evidence "$status_before"; then
-    if ! printf 'failed: deck turn ended without a status line (%s gen=%s)\n' "$event" "$GEN" | status_append; then
+    if [ "$event" = turn-failed ]; then
+      recovery_gen=$(fm_recovery_marker_reserve_generation "$STATE/.watcher-down" 2>/dev/null || true)
+      if [ -n "$recovery_gen" ]; then
+        printf 'failed: deck turn ended without a status line (turn-failed recovery-gen=%s at=%s)\n' \
+          "$recovery_gen" "$status_before" | status_append
+      else
+        printf 'failed: deck turn ended without a status line (turn-failed)\n' | status_append
+      fi
+    else
+      printf 'failed: deck turn ended without a status line (%s)\n' "$event" | status_append
+    fi || {
       printf 'fm-deck-worker: could not safely append required turn evidence to %s\n' "$STATUS_FILE" >&2
       record_busy_event idle turn-failed || return 1
       publish_turnend || true
       return 1
-    fi
+    }
   fi
   record_busy_event idle "$event" || return 1
   IDLE_SINCE=$(date -u +%Y-%m-%dT%H:%MZ)

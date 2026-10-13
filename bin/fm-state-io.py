@@ -155,13 +155,13 @@ def record_size(dir_fd: int, name: str) -> int:
         os.close(fd)
 
 
-def has_worker_status_after(dir_fd: int, name: str, offset: int) -> bool:
+def first_worker_status_after(dir_fd: int, name: str, offset: int) -> bytes | None:
     flags = os.O_RDONLY | os.O_NONBLOCK | require_nofollow()
     flags |= getattr(os, "O_CLOEXEC", 0)
     try:
         fd = os.open(name, flags, dir_fd=dir_fd)
     except FileNotFoundError:
-        return False
+        return None
     try:
         require_regular_single_link(fd)
         size = os.fstat(fd).st_size
@@ -169,7 +169,7 @@ def has_worker_status_after(dir_fd: int, name: str, offset: int) -> bool:
             raise UnsafeStatePath("invalid status offset")
         delta_size = size - offset
         if delta_size > MAX_STATUS_DELTA_BYTES:
-            return False
+            return None
         os.lseek(fd, offset, os.SEEK_SET)
         payload = bytearray()
         while len(payload) < delta_size:
@@ -177,7 +177,10 @@ def has_worker_status_after(dir_fd: int, name: str, offset: int) -> bool:
             if not chunk:
                 break
             payload.extend(chunk)
-        return any(WORKER_STATUS_RE.match(line) for line in bytes(payload).split(b"\n")[:-1])
+        return next(
+            (line for line in bytes(payload).split(b"\n")[:-1] if WORKER_STATUS_RE.match(line)),
+            None,
+        )
     finally:
         os.close(fd)
 
@@ -251,6 +254,7 @@ def main() -> int:
         "replace",
         "remove",
         "root-append",
+        "root-first-worker-status-after",
         "root-private-append",
         "root-size",
         "root-touch",
@@ -259,7 +263,10 @@ def main() -> int:
     if len(sys.argv) not in (4, 5) or sys.argv[1] not in operations:
         return 2
     operation, directory, name = sys.argv[1:4]
-    if (operation == "root-worker-status-after") != (len(sys.argv) == 5):
+    if operation in ("root-first-worker-status-after", "root-worker-status-after"):
+        if len(sys.argv) != 5:
+            return 2
+    elif len(sys.argv) != 4:
         return 2
     validate_name(name)
     if operation.startswith("root-"):
@@ -273,12 +280,18 @@ def main() -> int:
             sys.stdout.buffer.write(read_record(dir_fd, name))
         elif operation == "root-size":
             print(record_size(dir_fd, name))
-        elif operation == "root-worker-status-after":
+        elif operation in ("root-first-worker-status-after", "root-worker-status-after"):
             try:
                 offset = int(sys.argv[4])
             except ValueError:
                 return 2
-            return 0 if has_worker_status_after(dir_fd, name, offset) else 1
+            first = first_worker_status_after(dir_fd, name, offset)
+            if operation == "root-first-worker-status-after":
+                if first is None:
+                    return 1
+                sys.stdout.buffer.write(first)
+                return 0
+            return 0 if first is not None else 1
         elif operation == "root-touch":
             touch_record(dir_fd, name)
         elif operation == "remove":

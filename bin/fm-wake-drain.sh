@@ -232,11 +232,11 @@ print_status_outcome_backstop_section() {  # <task-and-endpoint-snapshot>
     event_endpoint=$FM_STATUS_SNAPSHOT_EVENT_ENDPOINT
     [ "$receipt" -lt "$event_endpoint" ] || continue
     status_is_captain_relevant "$event" || continue
-    # A superseded Deck turn-failure backstop line is not a failure outcome:
-    # the same busy generation went on to open another turn, so this is the
-    # replayed-turn case the classifier reclassifies as paused/attention
-    # (fm_turn_failed_superseded_line in bin/fm-classify-lib.sh).
-    fm_turn_failed_superseded_line "$STATE/$task.status" "$event" && continue
+    if fm_turn_failed_superseded_line "$STATE/$task.status" "$event" "$endpoint"; then
+      STATUS_OUTCOME_BACKSTOP_ACKNOWLEDGED="$STATUS_OUTCOME_BACKSTOP_ACKNOWLEDGED$task$(printf '\t')$event_endpoint
+"
+      continue
+    fi
     verb=$(status_line_verb "$event")
     case "$verb" in
       needs-decision|blocked)

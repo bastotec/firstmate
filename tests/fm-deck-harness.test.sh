@@ -99,6 +99,7 @@ case "$prompt" in
     "$FM_TEST_BUSY_EVENT" arm "$(dirname "$FM_TEST_STATUS")" t1 >/dev/null
     ;;
   *legacy-finish-write-status*) printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS" ;;
+  *write-working*) printf 'working: replay resumed\n' >> "$FM_TEST_STATUS" ;;
   *write-status*|*'changed state while this session was idle'*) printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS" ;;
   *resolve-only*) printf 'resolved [key=choice]: answered: yes\n' >> "$FM_TEST_STATUS" ;;
   *sleep*)
@@ -418,10 +419,8 @@ test_bookkeeping_lines_do_not_satisfy_turn_evidence() {
   [ "$(cat "$dir/gate.log")" = refused ] || fail "a resolved line satisfied Deck's pre-complete evidence gate"
   [ "$(sed -n 1p "$dir/state/t1.status")" = 'resolved [key=choice]: answered: yes' ] \
     || fail "the fixture did not append its Firstmate-owned bookkeeping line"
-  case $(sed -n 2p "$dir/state/t1.status") in
-    'failed: deck turn ended without a status line (turn-end gen='"$(cat "$dir/gen")"')') ;;
-    *) fail "the wrapper postcondition treated a resolved line as worker evidence: $(sed -n 2p "$dir/state/t1.status")" ;;
-  esac
+  [ "$(sed -n 2p "$dir/state/t1.status")" = 'failed: deck turn ended without a status line (turn-end)' ] \
+    || fail "the wrapper postcondition treated a resolved line as worker evidence: $(sed -n 2p "$dir/state/t1.status")"
   pass "fm-deck-worker: Firstmate bookkeeping cannot satisfy worker evidence"
 }
 
@@ -584,23 +583,40 @@ test_driver_backstops_silent_and_failed_turns() {
   local silent="$TMP_ROOT/postcondition-silent" failed="$TMP_ROOT/postcondition-failed"
   make_fake_deck "$silent"
   run_worker "$silent" $'/quit\n' || fail "the silent-turn driver did not exit cleanly"
-  case $(cat "$silent/state/t1.status") in
-    'failed: deck turn ended without a status line (turn-end gen='"$(cat "$silent/gen")"')') ;;
-    *) fail "a silently completed turn did not receive the exact fallback status: $(cat "$silent/state/t1.status")" ;;
-  esac
+  [ "$(cat "$silent/state/t1.status")" = 'failed: deck turn ended without a status line (turn-end)' ] \
+    || fail "a silently completed turn did not receive the exact fallback status: $(cat "$silent/state/t1.status")"
   assert_not_contains "$(cat "$silent/pane.out")" "No such file or directory" "a missing status log leaked a turn-start read error into the pane"
   [ -f "$silent/state/t1.turn-ended" ] || fail "the silent turn did not publish turn-ended after its fallback status"
 
   make_fake_deck "$failed"
   run_worker "$failed" $'/quit\n' 'fail-turn' || fail "the failed-turn driver did not remain available for /quit"
   case $(cat "$failed/state/t1.status") in
-    'failed: deck turn ended without a status line (turn-failed gen='"$(cat "$failed/gen")"')') ;;
+    'failed: deck turn ended without a status line (turn-failed recovery-gen='*' at=0)') ;;
     *) fail "a provider-failed turn did not receive the exact fallback status: $(cat "$failed/state/t1.status")" ;;
   esac
   [ -f "$failed/state/t1.turn-ended" ] || fail "the provider-failed turn did not publish turn-ended after its fallback status"
   assert_not_contains "$(cat "$failed/pane.out")" 'waiting at the prompt for the next wake' \
     "a crewmate turn failure took the persistent secondmate's survival path"
   pass "fm-deck-worker: silent and failed turns gain status evidence before turn-end"
+}
+
+test_replayed_working_turn_records_recovery_supersession() {
+  local dir="$TMP_ROOT/recovery-supersession" failure generation
+  make_fake_deck "$dir"
+  run_worker "$dir" $'write-working\n/quit\n' 'fail-turn' \
+    || fail "the replay fixture did not return to its prompt"
+  failure=$(sed -n '1p' "$dir/state/t1.status")
+  generation=${failure#*recovery-gen=}; generation=${generation%% *}
+  case "$generation" in ''|*[!A-Za-z0-9._-]*) fail "the failed turn reserved no recovery generation: $failure" ;; esac
+  [ "$(sed -n '2p' "$dir/state/t1.status")" = 'working: replay resumed' ] \
+    || fail "the replay did not append its worker working status"
+  [ "$(sed -n '3p' "$dir/state/t1.status")" = "working [recovery-gen=$generation]: deck turn reported working" ] \
+    || fail "the wrapper did not bind the replayed working status to its recovery generation"
+  FM_TEST_DECK_STATUS="$dir/state/t1.status" FM_TEST_DECK_FAILURE="$failure" \
+    bash -c '. "$1"; fm_turn_failed_superseded_line "$FM_TEST_DECK_STATUS" "$FM_TEST_DECK_FAILURE"' \
+      _ "$ROOT/bin/fm-classify-lib.sh" \
+    || fail "the replayed working turn did not durably supersede its failure"
+  pass "fm-deck-worker: replayed working evidence supersedes its recovery failure"
 }
 
 test_idle_interrupt_does_not_echo_fake_input() {
@@ -684,10 +700,8 @@ test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt() {
   kill -INT -- -"$pid" 2>/dev/null || fail "could not signal the Deck worker process group"
   for _ in $(seq 50); do grep -q 'event=interrupted' "$dir/state/t1.busy-state" 2>/dev/null && break; sleep 0.1; done
   assert_grep 'event=interrupted' "$dir/state/t1.busy-state" "Ctrl+C did not close the turn as interrupted"
-  case $(cat "$dir/state/t1.status") in
-    'failed: deck turn ended without a status line (interrupted gen='"$gen"')') ;;
-    *) fail "an interrupted turn did not receive the exact fallback status: $(cat "$dir/state/t1.status")" ;;
-  esac
+  [ "$(cat "$dir/state/t1.status")" = 'failed: deck turn ended without a status line (interrupted)' ] \
+    || fail "an interrupted turn did not receive the exact fallback status: $(cat "$dir/state/t1.status")"
   for _ in $(seq 50); do [ -f "$dir/state/t1.turn-ended" ] && break; sleep 0.1; done
   [ -f "$dir/state/t1.turn-ended" ] || fail "the interrupted turn did not publish turn-ended after its fallback status"
   kill -0 "$pid" 2>/dev/null || fail "the driver exited on Ctrl+C instead of returning to its prompt"
@@ -2671,6 +2685,7 @@ test_finished_turn_renders_the_utc_completion_time
 test_idle_prompt_notes_the_utc_idle_instant
 test_status_checks_and_fallbacks_refuse_unsafe_paths
 test_driver_backstops_silent_and_failed_turns
+test_replayed_working_turn_records_recovery_supersession
 test_doorbell_for_an_empty_own_inbox_starts_no_turn
 test_idle_captain_preserves_partial_input
 test_stale_captain_cue_does_not_dispatch_an_acknowledged_source

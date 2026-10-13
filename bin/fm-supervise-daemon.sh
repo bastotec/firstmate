@@ -430,14 +430,6 @@ classify_stale() {  # <window> <state> [<span-record> <span-status>]
           ;;
       esac
     fi
-    # A Deck turn-failure backstop line whose same busy generation later opened
-    # another turn is a replayed turn, not dead work: it keeps the pause-cadence
-    # recheck instead of the terminal escalate path
-    # (fm_turn_failed_superseded_line in bin/fm-classify-lib.sh).
-    if fm_turn_failed_superseded_line "$state/$task.status" "$last"; then
-      printf 'self|superseded turn-failure (%s): %s' "$win" "$last"
-      return
-    fi
     printf 'self|stale + terminal (already escalated by signal): %s' "$last"
     return
   fi

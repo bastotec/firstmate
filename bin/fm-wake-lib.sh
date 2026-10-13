@@ -610,6 +610,48 @@ fm_recovery_marker_snapshot() {
   fm_lock_release "$lock"
 }
 
+fm_recovery_marker_generation() {  # <marker>
+  local marker=$1 lock token
+  lock="${marker}.lock"
+  fm_lock_acquire_wait "$lock" || return 1
+  if fm_recovery_marker_read "$marker"; then
+    token=$FM_RECOVERY_MARKER_TOKEN
+  else
+    token=
+  fi
+  fm_lock_release "$lock"
+  [ -n "$token" ] || return 1
+  printf '%s' "${token##*:}"
+}
+
+fm_recovery_marker_reserve_generation() {  # <marker>
+  local marker=$1 lock token=
+  lock="${marker}.lock"
+  fm_lock_acquire_wait "$lock" || return 1
+  if [ -d "$marker" ] && [ ! -L "$marker" ]; then
+    fm_lock_release "$lock"
+    return 1
+  fi
+  if fm_recovery_marker_read "$marker"; then
+    case "$FM_RECOVERY_MARKER_TOKEN" in
+      pending:*|announced:*) token=$FM_RECOVERY_MARKER_TOKEN ;;
+    esac
+  fi
+  if [ -z "$token" ]; then
+    if ! _fm_recovery_marker_write_locked "$marker" downtime ""; then
+      fm_lock_release "$lock"
+      return 1
+    fi
+    if ! fm_recovery_marker_read "$marker"; then
+      fm_lock_release "$lock"
+      return 1
+    fi
+    token=$FM_RECOVERY_MARKER_TOKEN
+  fi
+  fm_lock_release "$lock"
+  printf '%s' "${token##*:}"
+}
+
 _fm_recovery_marker_ack() {
   local marker=$1 expected_generation=$2 lock tmp line
   [ -n "$expected_generation" ] || return 2
