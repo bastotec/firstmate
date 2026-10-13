@@ -28,7 +28,7 @@ The stable `run` driver uses `--secondmate` for secondmates; [`bin/fm-deck-chat.
 | Skill | No slash-skill form; use natural language. Deck reads the worktree's `AGENTS.md` chain and `.agents/skills` itself. |
 | Autonomy | See [Harness support](../../../../../docs/configuration.md#harness-support) for the tool-approval posture; [the state-derivation header](../../../../../bin/fm-task-state-lib.sh) owns the non-guard validation-observation hooks. |
 | Marker | None; see Detection and liveness below. |
-| Resume | Deterministic relaunch; the driver starts a new Deck session from the brief on disk. |
+| Resume | Use deterministic relaunch; the [driver header](../../../../../bin/fm-deck-worker.sh) owns session continuity and fresh-session eligibility by worker role. |
 
 ## Detection and liveness
 

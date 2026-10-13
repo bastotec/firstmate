@@ -57,12 +57,12 @@
 #       --deck <deck-binary> [--model <route>] [--secondmate] -- <first-prompt>
 # --secondmate requires FM_HOME and hosts that home, leaving --state pointed
 # at the parent task state for busy/progress and failure publication.
-# Startup runs once before the first turn. A tracked watcher stays armed through
+# Startup runs once before the first turn. A tracked watcher is supervised through
 # every turn; its results become later turns, with queued stdin serialized
 # alongside them. pre_complete checks lock ownership instead of worker evidence.
-# The driver postcondition does not park without an owned watcher or a pending
-# result. Unrecoverable watcher failures stop the driver rather than leaving an
-# idle host blind; the recovery exceptions are defined below.
+# The driver keeps an owned watcher, a pending result, or a scheduled retry.
+# Unrecoverable watcher failures stop the driver rather than leaving an idle
+# host blind; the recovery exceptions are defined below.
 #
 # HOME HOST INVARIANTS (--secondmate)
 # The driver, not a turn-scoped Deck process, owns the home session lock.
@@ -77,15 +77,21 @@
 # /quit after clear/re-read retries (tests/fm-deck-harness.test.sh).
 # Supervision uses child processes and stdin, never backend-specific injection.
 # Startup, lock, watcher, and event-capture failures publish failure status and
-# stop the driver, except a watcher cycle that fails or ends without a result
-# (retried with a fresh watcher up to FM_DECK_WATCH_FAILURE_LIMIT times in a
-# row), a successor watcher that does not confirm startup in
-# time or dies first, and a refused handling-delivery confirmation: the driver
-# logs the condition to stderr, stops the remaining arm child, clears the handoff
-# claims, and starts a fresh watcher with no predecessor claim. If that start
-# fails, the driver stops; otherwise it continues the turn without publishing
-# failed status. Wakes remain durable in the home queue for bin/fm-wake-drain.sh;
-# this recovery does not fix the cause of a successor watcher's death.
+# stop the driver, with these watcher recovery exceptions:
+# - A watcher cycle that fails or ends without a result logs a stderr warning,
+#   clears handoff claims, and schedules a fresh watcher with no predecessor
+#   claim after as many seconds as consecutive failed cycles, without publishing
+#   failure status. A successful result resets the count; reaching
+#   FM_DECK_WATCH_FAILURE_LIMIT stops the host
+#   with failure status. The retry deadline never blocks input or turn-stop
+#   handling, and no watcher starts while turn cancellation is pending.
+# - A successor watcher that does not confirm startup in time or dies first,
+#   or a refused handling-delivery confirmation, logs the condition to stderr,
+#   stops the remaining arm child, clears handoff claims, and starts a fresh
+#   watcher with no predecessor claim. If that start fails, the driver stops;
+#   otherwise it continues the turn without publishing failed status.
+# Wakes remain durable in the home queue for bin/fm-wake-drain.sh; these retries
+# do not fix the cause of a watcher's death.
 # For unconfirmed successor startup, the driver surfaces the completed arm
 # capture after stopping and waiting for the arm, before a fresh start reuses it;
 # bin/fm-watch-arm.sh's header owns handling-child diagnostic capture.
@@ -108,6 +114,23 @@
 # bin/fm_stream_deck.py project_captain owns that distinction. The regression is
 # test_secondmate_retries_a_captain_wake_whose_turn_failed in
 # tests/fm-deck-harness.test.sh.
+#
+# SECOND MATE SESSION CONTINUITY (--secondmate)
+# As soon as run_started names the session, including during the startup turn,
+# the host atomically records its session id on line 1 and FM_HOME on line 2 of
+# <state>/<id>.deck-session in the parent task state. Write failure warns on
+# stderr without stopping the host. Automatic revive and update restart reuse
+# that conversation only when the record is a non-symlink file, its id contains
+# only letters, digits, dot, underscore, or dash, its home exactly matches the
+# current FM_HOME, and Deck's session file exists at
+# ${XDG_STATE_HOME:-$HOME/.local/state}/deck/sessions/<session-id>.json.
+# Otherwise, or with FM_DECK_FRESH_SESSION=1, the host starts a new conversation
+# and records the new binding. A legacy id-only record cannot authorize resume.
+# Every host start still supplies the charter and newly collected startup
+# digest; conversation continuity never replaces reconciliation from disk.
+# bin/fm-teardown.sh removes the binding on secondmate retirement, including
+# forced descendant cleanup, but ordinary exit and relaunch preserve it.
+# Ship and scout drivers do not persist sessions across relaunches.
 #
 # SECOND MATE TURN STOP (--secondmate)
 # Ctrl+C, an exact queued /quit during a turn, unrecoverable watcher failure,
@@ -147,7 +170,8 @@
 #                           Deck itself if it has not exited (default 15)
 #   FM_DECK_WATCH_FAILURE_LIMIT  consecutive failed watcher cycles after which a
 #                           secondmate host stops (default 5); fewer are
-#                           retried with a fresh watcher
+#                           retried with a fresh watcher; empty, zero, or
+#                           nonnumeric values use the default
 #   FM_DECK_FRESH_SESSION   1 makes a secondmate host start a new Deck session
 #                           instead of resuming the one it recorded
 #   FM_DECK_WATCH_CONFIRM_SECS  how long a secondmate host waits for a
@@ -550,9 +574,8 @@ watch_effort() {
     | "$SCRIPT_DIR/fm-effort-policy.sh" classify --home "$FM_HOME" 2>/dev/null
 }
 
-# Returns 2 for a watcher cycle that failed or produced nothing: the host
-# restarts its watcher for that (watch_maintain), because the wakes stay durable
-# in the home queue and a second mate must not die with a watcher cycle.
+# Returns 2 for a failed or empty cycle; watch_maintain applies the header's
+# bounded retry contract without consuming the durable wake queue.
 WATCH_LAST_FAILURE=''
 watch_result() {
   local rc predecessor=$WATCH_PID
@@ -569,9 +592,8 @@ watch_result() {
   WATCH_PREDECESSOR_ARM_PID=$predecessor
 }
 
-# A failed watcher cycle is retried with a fresh watcher, backing off a little
-# more each time; only FM_DECK_WATCH_FAILURE_LIMIT failures in a row, with no
-# result in between, stop the host as before.
+# Keep retry timing advisory so the turn loop can still process input and
+# escalate cancellation while no watcher runs; the header owns retry policy.
 WATCH_FAILURES=0 WATCH_RETRY_AT=0
 watch_maintain() {
   local rc
@@ -702,11 +724,7 @@ $(cat "$WORK/startup")"
 fi
 
 SESSION=''
-# A secondmate host keeps one Deck conversation across relaunches: the session
-# id is recorded beside the host's state and resumed by the next host while
-# Deck still has that session, so a relaunch (an automatic revive, an update
-# restart) never drops the mate's context. FM_DECK_FRESH_SESSION=1 starts a new
-# one instead.
+# The header owns home-bound resume eligibility and the fresh-session opt-out.
 SESSION_RECORD=''
 if [ "$SECONDMATE" = 1 ]; then
   SESSION_RECORD="$STATE/$ID.deck-session"

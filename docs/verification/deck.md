@@ -42,6 +42,9 @@ The driver header owns the bounded grace that admits the delayed exit.
 The `test_secondmate_survives_a_refused_handling_confirmation` case in that suite injects a refusal through a fake `fm-watch-arm.sh` while running the real driver.
 Its assertions cover stderr-only diagnostics, retirement of the refused watcher, a replacement with no predecessor claim, absence of `failed:` status, delivery of the original and replacement wakes in the same Deck session, and clean `/quit`; the driver header owns the recovery contract.
 The `test_secondmate_host_survives_an_unconfirmed_successor_watcher` case injects both a silent successor and one that exits before confirmation, then asserts a stderr replacement warning, no corresponding failure status, two subsequent wake turns, and clean `/quit`.
+The `test_secondmate_host_survives_a_failed_watcher_and_resumes_its_session` case fails a running watcher as it consumes its trigger, asserts the replacement has no predecessor claim, serves a later wake without failure status, and verifies the session binding exists while startup is still active.
+It exercises relaunch with a retained Deck session file, missing-file fallback, explicit fresh-session opt-out, an unbound legacy record, and a reassigned home; these are fixture assertions, not live Deck persistence evidence.
+`tests/fm-secondmate-safety.test.sh` verifies successful retirement removes the binding and refused retirement preserves it.
 The `test_secondmate_host_retains_failed_successor_start_evidence` case runs the real arm and driver with a deterministic watcher fixture that exits before startup confirmation, remains unconfirmed past the host deadline, or reaches the arm deadline before the host deadline.
 It asserts startup stderr appears exactly once in the host output, termination stderr appears exactly once for both deadline cases, the unconfirmed child is gone, a replacement serves a later wake without `failed:` status, and `/quit` exits cleanly.
 `tests/fm-watch-arm.test.sh`'s `test_handling_child_stderr_is_retained` separately asserts stderr capture on failed and interrupted handling-child starts, propagated exit codes, lifecycle recording, and temporary-capture removal; [the arm header](../../bin/fm-watch-arm.sh) owns the capture contract.
@@ -72,6 +75,7 @@ This driver-only path does not alter backend transport or endpoint classifiers.
 The separate `test_secondmate_stops_a_turn_inside_a_long_tool` fixture models Deck's cooperative SIGTERM while running real child processes under the secondmate driver.
 It asserts bounded exit for Ctrl+C and mid-turn `/quit`, cancellation after shell exec replacement, freeze-and-rescan handling of a late-fork race, and the hard fallback for a TERM-resistant model call even when the tool grace exceeds the kill bound.
 Its MCP-like child leads a separate process group and must remain alive in every case; cooperative cases must acknowledge the stop after the tool returns.
+The `test_secondmate_watcher_backoff_keeps_turn_stop_responsive` fixture waits for a four-second watcher retry delay during a long tool, then asserts Ctrl+C and queued `/quit` remain responsive without another watcher start.
 These are portable fixture assertions, not additional live Deck evidence; the [driver header](../../bin/fm-deck-worker.sh) owns the stop contract.
 
 ## Live check
