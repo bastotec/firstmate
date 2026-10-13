@@ -95,6 +95,17 @@
 # dying. A driver that could not record or publish that failure still stops, and
 # so does a driver whose launch brief never reached a session even after one
 # repeat.
+# An idle captain-wake turn that returns a recoverable failure restores the
+# previous attempted-source floor, allowing a still-pending ordinary inbox
+# record to wake again after backoff without another captain message. The delay
+# doubles on consecutive failed captain-wake turns, capped at 300 seconds;
+# FM_DECK_CAPTAIN_RETRY_SECS sets its initial value (see ENVIRONMENT).
+# A successful captain-wake turn resets the backoff and keeps the advanced floor,
+# even if the model did not acknowledge the source, preserving the anti-spin
+# guard. Native Deck acknowledgement is not ordinary inbox acknowledgement;
+# bin/fm_stream_deck.py project_captain owns that distinction. The regression is
+# test_secondmate_retries_a_captain_wake_whose_turn_failed in
+# tests/fm-deck-harness.test.sh.
 #
 # SECOND MATE TURN STOP (--secondmate)
 # Ctrl+C, an exact queued /quit during a turn, unrecoverable watcher failure,
@@ -120,6 +131,10 @@
 #   FM_DECK_MAX_TURNS       model calls per turn (default 200; Deck's own 24 is
 #                           sized for a single question, not a coding task)
 #   FM_DECK_DEADLINE_SECS   wall-clock bound per turn (default 3600)
+#   FM_DECK_CAPTAIN_RETRY_SECS  initial delay after a recoverably failed idle
+#                           captain wake (seconds; default 30; empty or
+#                           nonnumeric values use the default; 0 allows an
+#                           immediate retry)
 #   FM_DECK_PIPELINE_POLL_SECS  idle-prompt poll interval for a ship worker's
 #                           still-working no-mistakes run (default 45)
 #   FM_DECK_PIPELINE_WAIT_SECS  bound on one such wait (default 21600; 0
@@ -953,12 +968,14 @@ The host repeated this launch brief because the previous turn failed before Deck
 
 $1"
   fi
+  DRIVE_FAILED=0
   run_turn "$prompt" || rc=$?
   if [ "$rc" -eq 0 ]; then
     pipeline_arm
     return 0
   fi
   [ "$rc" -eq "$TURN_RECOVERABLE" ] || exit 1
+  DRIVE_FAILED=1
   if [ -z "$SESSION" ]; then
     if [ "$relaunch" = 1 ]; then
       host_failure 'opened no Deck session even after repeating the launch brief; stopping for a guarded relaunch' || true
@@ -983,13 +1000,18 @@ doorbell_without_work() {  # <line>
 }
 
 # Observe new captain sources without reading or submitting the human composer.
-# Remember attempted idle sources so a missing model acknowledgement cannot spin.
+# The header owns the attempted-source anti-spin guard and failed-wake retry
+# contract; a failed turn alone cannot prove the model handled its source.
 IDLE_CAPTAIN_FLOOR=0
+IDLE_CAPTAIN_RETRY_AT=0
+IDLE_CAPTAIN_BACKOFF=0
+DRIVE_FAILED=0
 idle_captain_ready() {
   local number source sequence
   IFS= read -r number 2>/dev/null < "$WORK/input.captain" || return 1
   case "$number" in ''|*[!0-9]*) return 1 ;; esac
   [ "$number" -gt "$IDLE_CAPTAIN_FLOOR" ] || return 1
+  [ "$(date +%s)" -ge "$IDLE_CAPTAIN_RETRY_AT" ] || return 1
   # A mid-turn acknowledgement can outpace the advisory observer.
   # The indicated immutable ordinary source must still be pending.
   for source in "$STATE/$ID.inbox"/*.msg; do
@@ -1069,9 +1091,22 @@ while :; do
   fi
   INTERRUPTED=0
   if idle_captain_ready; then
+    captain_floor_before=$IDLE_CAPTAIN_FLOOR
     IDLE_CAPTAIN_FLOOR=$IDLE_CAPTAIN_NEXT
     doorbell=$(fm_task_inbox_doorbell_line "$STATE/$ID.inbox/0.msg") || exit 1
     drive_turn "$doorbell"
+    if [ "$DRIVE_FAILED" = 1 ]; then
+      IDLE_CAPTAIN_FLOOR=$captain_floor_before
+      retry=${FM_DECK_CAPTAIN_RETRY_SECS:-30}
+      case "$retry" in ''|*[!0-9]*) retry=30 ;; esac
+      IDLE_CAPTAIN_BACKOFF=$(( IDLE_CAPTAIN_BACKOFF ? IDLE_CAPTAIN_BACKOFF * 2 : retry ))
+      [ "$IDLE_CAPTAIN_BACKOFF" -le 300 ] || IDLE_CAPTAIN_BACKOFF=300
+      IDLE_CAPTAIN_RETRY_AT=$(( $(date +%s) + IDLE_CAPTAIN_BACKOFF ))
+      printf 'fm-deck-worker: captain record %s retried in %ss\n' "$IDLE_CAPTAIN_NEXT" "$IDLE_CAPTAIN_BACKOFF" >&2
+    else
+      IDLE_CAPTAIN_BACKOFF=0
+      IDLE_CAPTAIN_RETRY_AT=0
+    fi
     show_prompt=1
     continue
   fi
