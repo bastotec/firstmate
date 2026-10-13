@@ -130,8 +130,8 @@
 #          Unset/0 (the default) runs all six sweeps - this flag is purely
 #          additive.
 #          Set FM_BOOTSTRAP_NETWORK to split this run by whether a step talks to
-#          the network, so a session start can print its digest from local reads
-#          alone and run the network half off the digest's blocking path:
+#          the network. bin/fm-session-start.sh's header owns how the digest
+#          composes the local pass with deferred checks and blocking reads:
 #            all  (default, and any unrecognized value) - every local and network
 #                 step. Unrecognized values fall back here on purpose: a typo
 #                 must never silently skip a safety sweep.

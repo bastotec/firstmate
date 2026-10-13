@@ -123,7 +123,7 @@ state/
 ```
 
 `bin/fm-classify-lib.sh` owns status-event vocabulary, and the producing PR and Relay helpers own the meta fields they append.
-`bin/fm-session-start.sh`'s header owns session-start ordering and the digest, and `bin/fm-startup-network.sh`'s header owns the deferred stage that keeps network calls and the inactive-outcome scan off the digest's blocking path.
+`bin/fm-session-start.sh`'s header owns session-start ordering, blocking reads, and the digest; `bin/fm-startup-network.sh`'s header owns the deferred checks and inactive-outcome scan.
 `AGENTS.md` keeps the run-once and read-once rules, lock-refusal safety, installation consent, and direct-report recovery boundaries; `stuck-crewmate-recovery` owns dead-direct-report recovery and `secondmate-provisioning` owns persistent-secondmate recovery.
 
 ## Model fallback chains (spawn-side)
