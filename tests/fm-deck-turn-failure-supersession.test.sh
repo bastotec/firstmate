@@ -30,7 +30,7 @@ test_later_working_in_the_same_recovery_generation_supersedes() {
   dir=$(new_case same-generation)
   status="$dir/state/task.status"
   generation=deck-same
-  record=record-one
+  record='record-one'
   append_failure "$status" "$generation" "$record"
   failure=$(failure_line "$generation" "$record")
   printf 'working: replay resumed\n' >> "$status"
@@ -49,7 +49,7 @@ test_original_turn_state_cannot_supersede_before_replay() {
   dir=$(new_case no-replay)
   status="$dir/state/task.status"
   generation=deck-original
-  record=record-original
+  record='record-original'
   printf 'working: original turn started\n' > "$status"
   append_failure "$status" "$generation" "$record"
   failure=$(failure_line "$generation" "$record")
@@ -66,7 +66,7 @@ test_unbound_and_different_generation_working_lines_do_not_supersede() {
   dir=$(new_case mismatched-working)
   status="$dir/state/task.status"
   generation=deck-mismatch
-  record=record-mismatch
+  record='record-mismatch'
   append_failure "$status" "$generation" "$record"
   failure=$(failure_line "$generation" "$record")
   printf 'working: unbound replay line\n' >> "$status"
@@ -84,7 +84,7 @@ test_supersession_is_independent_of_watcher_recovery_state() {
   dir=$(new_case task-local)
   status="$dir/state/task.status"
   generation=deck-local
-  record=record-local
+  record='record-local'
   append_failure "$status" "$generation" "$record"
   failure=$(failure_line "$generation" "$record")
   printf 'working [recovery-gen=%s]: replay stayed healthy\n' "$generation" >> "$status"
@@ -142,7 +142,7 @@ test_captured_endpoint_bounds_supersession_evidence() {
   dir=$(new_case endpoint)
   status="$dir/state/task.status"
   generation=deck-endpoint
-  record=record-endpoint
+  record='record-endpoint'
   append_failure "$status" "$generation" "$record"
   failure=$(failure_line "$generation" "$record")
   failure_endpoint=$(wc -c < "$status" | tr -d '[:space:]')
