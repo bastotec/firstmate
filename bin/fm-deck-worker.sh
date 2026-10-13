@@ -94,8 +94,9 @@
 # repeat.
 #
 # SECOND MATE TURN STOP (--secondmate)
-# Ctrl+C, an exact queued /quit during a turn, watcher failure, and cleanup all
-# request SIGTERM on the background Deck process. Deck's SIGTERM is cooperative
+# Ctrl+C, an exact queued /quit during a turn, unrecoverable watcher failure,
+# and cleanup all request SIGTERM on the background Deck process.
+# Deck's SIGTERM is cooperative
 # (deck src/stop.rs): it prevents new calls but lets a running tool finish.
 # After the tool grace, or at the hard kill bound if earlier, the driver cancels
 # each direct child sharing Deck's process group. Shell tools and hooks inherit
