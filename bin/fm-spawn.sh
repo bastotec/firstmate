@@ -2118,14 +2118,19 @@ else
 fi
 SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
-  awk -F= '
+  awk -F= -v choice_action="$SPAWN_MODEL_CHOICE_ACTION" '
     BEGIN {
+      if (choice_action != "keep") owned["model_choice"] = 1
       split("window endpoint_task_id worktree project harness kind mode yolo tasktmp model effort account_slot busy_gen spawn_gen model_chain_lane traceparent backend stream_hub stream_endpoint_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
   ' "$RELAUNCH_META"
 }
+SPAWN_MODEL_CHOICE_ACTION=keep
+if [ "$SPAWN_CONTROL_PARENT" = 1 ]; then
+  SPAWN_MODEL_CHOICE_ACTION=${FM_CONTROL_MODEL_CHOICE_ACTION:-keep}
+fi
 {
   echo "window=$META_WINDOW"
   echo "endpoint_task_id=$ID"
@@ -2157,6 +2162,9 @@ preserve_relaunch_meta() {
   [ -z "$MODEL_CHAIN_LANE" ] || echo "model_chain_lane=$MODEL_CHAIN_LANE"
   if [ "$RELAUNCH" -eq 1 ]; then
     preserve_relaunch_meta
+    if [ "$SPAWN_MODEL_CHOICE_ACTION" = replace ] && [ "${MODEL:-default}" != default ]; then
+      echo "model_choice=$MODEL"
+    fi
   fi
   if [ "$SPAWN_CONTROL_PARENT" = 1 ] && [ -n "${FM_CONTROL_RELAUNCH_TX:-}" ]; then
     echo "control_relaunch_tx=$FM_CONTROL_RELAUNCH_TX"

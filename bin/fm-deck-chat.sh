@@ -506,6 +506,10 @@ fi
 if [ -z "${PROXAI_API_KEY_FILE:-}${PROXAI_API_KEY:-}" ] && [ -f "$HOME/.config/proxai/client.key" ]; then
   export PROXAI_API_KEY_FILE="$HOME/.config/proxai/client.key"
 fi
+if [ -z "${DECK_MODEL_POLICY:-}" ]; then
+  MODEL_POLICY="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/model-policy.json"
+  [ ! -f "$MODEL_POLICY" ] || export DECK_MODEL_POLICY="$MODEL_POLICY"
+fi
 
 WORK='' GEN='' RECORDED=0 SUP_PID='' DECK_PID=''
 # shellcheck disable=SC2329 # Invoked by the EXIT trap.

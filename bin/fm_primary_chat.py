@@ -110,6 +110,9 @@ import tempfile
 import threading
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from fm_model_switch import policy_permits
+
 BIN = Path(__file__).resolve().parent
 MAX_BODY = 65536
 KINDS = ('wake', 'away', 'captain', 'other')
@@ -736,6 +739,10 @@ def set_model(args):
     if not MODEL_RE.match(args.route):
         print('error: not a model route: %s' % args.route, file=sys.stderr)
         return 2
+    policy = Path(os.environ.get('FM_CONFIG_OVERRIDE') or home / 'config') / 'model-policy.json'
+    if not policy_permits(args.route, policy):
+        print('error: %s is blocked by the model policy' % args.route, file=sys.stderr)
+        return 1
     if not root.is_dir():
         print('error: no service keeper runs this primary; restart it with --model %s' % args.route,
               file=sys.stderr)
