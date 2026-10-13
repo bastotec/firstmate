@@ -4,11 +4,21 @@
 # When the main firstmate delivers a reply-bearing marked from-firstmate request
 # to a secondmate, this library records a durable parent-owned pending-reply
 # expectation BEFORE delivery, embeds a privacy-safe correlation id in the
-# outbound message, and later resolves that expectation only from a correlated
-# parent status line or status-pointed document - never from transport success,
-# chat content, or unrelated status activity.
+# outbound message, and later resolves an ordinary expectation only from a
+# correlated parent status line or status-pointed document - never from transport
+# success, chat content, or unrelated status activity.
 #
-# Safety property (captain direction 2026-07-22): a secondmate agent may ignore
+# Captain-direct exception: a request_summary equal to "from the captain:" or
+# beginning "from the captain: " identifies the captain's own message, answered
+# in the mate's conversation (AGENTS.md section 9). It never gets a recovery
+# repost or escalation, including while delivery is unknown: repeating those
+# words could cause a second captain-facing reply. A correlated parent report
+# still resolves it; otherwise it resolves after grace following confirmed
+# delivery, with resolved_via=captain-direct. Unknown delivery stays retryable
+# under the same correlation until confirmed or resolved by a correlated report.
+# Regression: tests/fm-captain-direct-echo.test.sh.
+#
+# Safety property for ordinary requests (captain direction 2026-07-22): a secondmate agent may ignore
 # the marker and answer only in its visible conversation. The parent must notice
 # the missing correlated report without scraping that conversation, send exactly
 # one automatic recovery request asking for a repost through the parent channel,
@@ -34,7 +44,8 @@
 #   request_summary=        short sanitized summary (no secrets by design)
 #   created_epoch=          when the expectation was created
 #   delivered_epoch=        when the marked request was confirmed delivered
-#                           (empty until delivery; delivery never resolves)
+#                           (empty until delivery; the captain-direct exception
+#                           above settles after grace, not at delivery)
 #   phase=                  awaiting_report | delivery_unknown | recovery_sending |
 #                           recovery_sent | recovery_failed | recovery_unknown |
 #                           escalated | resolved
@@ -59,7 +70,7 @@
 #                           escalation was closed again (see the escalation
 #                           lifecycle note below); empty until then
 #   resolved_epoch=
-#   resolved_via=           status | document | helper | empty
+#   resolved_via=           status | document | helper | captain-direct | empty
 #   wrong_home_hits=        count of corr sightings under the secondmate home
 #   wrong_home_first_sighting= encoded path:line identity of the first sighting
 #   wrong_home_sightings=   comma-separated encoded path:line identities
@@ -1242,6 +1253,10 @@ _fm_pending_reply_maybe_escalate_locked() {  # <state-dir> <corr_id>
   local delivered task_id meta sm_home remote_host
   rec=$(fm_pending_reply_path "$state" "$corr")
   [ -f "$rec" ] || return 1
+  if fm_pending_reply_is_captain_direct "$rec"; then
+    _fm_pending_reply_try_resolve_locked "$state" "$corr" || true
+    return 0
+  fi
   phase=$(fm_pending_reply_get "$rec" phase)
   if [ "$phase" = delivery_unknown ]; then
     _fm_pending_reply_reconcile_delivery_locked "$state" "$corr" || true
@@ -1399,6 +1414,12 @@ fm_pending_reply_tick_one() {  # <state-dir> <corr_id> <busy_state> [secondmate-
   fm_pending_reply_reconcile_delivery "$state" "$corr" || true
   phase=$(fm_pending_reply_get "$rec" phase)
   delivered=$(fm_pending_reply_get "$rec" delivered_epoch)
+  if fm_pending_reply_is_captain_direct "$rec"; then
+    if ! fm_pending_reply_try_resolve "$state" "$corr"; then
+      fm_pending_reply_settle_captain_direct "$state" "$corr" || true
+    fi
+    return 0
+  fi
   if [ -z "$delivered" ]; then
     case "$phase" in
       delivery_unknown) fm_pending_reply_maybe_escalate "$state" "$corr" 2>/dev/null || true ;;
@@ -1458,6 +1479,31 @@ fm_pending_reply_tick_one() {  # <state-dir> <corr_id> <busy_state> [secondmate-
       fm_pending_reply_maybe_escalate "$state" "$corr" 2>/dev/null || true
       ;;
   esac
+  return 0
+}
+
+# Recognize the sanitized summary prefix; the header owns the captain-direct exception.
+fm_pending_reply_is_captain_direct() {  # <record-path>
+  case "$(fm_pending_reply_get "$1" request_summary)" in
+    'from the captain:'|'from the captain: '*) return 0 ;;
+  esac
+  return 1
+}
+
+fm_pending_reply_settle_captain_direct() {  # <state-dir> <corr_id>
+  local state=$1 corr=$2 rec delivered grace now
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  [ "$(fm_pending_reply_get "$rec" phase)" != resolved ] || return 0
+  delivered=$(fm_pending_reply_get "$rec" delivered_epoch)
+  case "$delivered" in ''|*[!0-9]*) return 1 ;; esac
+  grace=$(fm_pending_reply_get "$rec" grace_secs)
+  case "$grace" in ''|*[!0-9]*) grace=$(fm_pending_reply_grace_secs) ;; esac
+  now=$(fm_pending_reply_now)
+  [ $((now - delivered)) -ge "$grace" ] || return 1
+  fm_pending_reply_set "$rec" phase resolved || return 1
+  fm_pending_reply_set "$rec" resolved_epoch "$now" || return 1
+  fm_pending_reply_set "$rec" resolved_via captain-direct || return 1
+  fm_pending_reply_close_escalation "$state" "$corr" >/dev/null 2>&1 || true
   return 0
 }
 

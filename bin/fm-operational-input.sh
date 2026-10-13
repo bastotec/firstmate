@@ -48,7 +48,7 @@ FM_FROMFIRST_MARK="${FM_FROMFIRST_LABEL}${FM_FROMFIRST_SEPARATOR}"
 # section 9 owns that rule.
 FM_CAPTAIN_DIRECT_LABEL='[fm-captain-direct]'
 FM_CAPTAIN_DIRECT_MARK="${FM_CAPTAIN_DIRECT_LABEL}${FM_OPERATIONAL_MARK}"
-FM_CAPTAIN_DIRECT_NOTE='The captain wrote this to you himself and reads your conversation, so answer him there, and if this message carries a corr= token also append one short line with that token to your parent channel.'
+FM_CAPTAIN_DIRECT_NOTE='The captain wrote this to you himself and reads your conversation, so answer him there, once. Your parent mate was already told, so append no parent-channel line just to acknowledge it. If this same corr= reaches you again, it is a duplicate: do not answer him a second time.'
 
 fm_operational_kind_is_current() {  # <kind>
   case " $FM_OPERATIONAL_KINDS " in

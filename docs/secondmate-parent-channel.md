@@ -27,7 +27,7 @@ Every captain-facing outcome that leaves durable evidence in the mate home is pu
 | PR merged | the merge poll or the mate's own merge | `bin/fm-merge-outcome-lib.sh` |
 | Child leaving the home | its final ledger line | `bin/fm-teardown.sh`, which refuses to remove the child while that line is undelivered |
 | Child ended silently | terminal current state with a silent ledger | the existing inactive-outcome scan in `bin/fm-inactive-reconcile.sh`, which carries the reader's generic state detail as `detail=` and its separately recorded run cause as `error=` |
-| Answer to a marked request | a correlated line guarded by the pending-reply record | `bin/fm-secondmate-report.sh`, which resolves the parent channel from the mate home; the pending-reply guard repairs a line stranded in the local mate's same-basename status file before recovery or escalation |
+| Answer to an ordinary marked request | a correlated line guarded by the pending-reply record | `bin/fm-secondmate-report.sh`, which resolves the parent channel from the mate home; the pending-reply guard repairs a line stranded in the local mate's same-basename status file before recovery or escalation; [captain-direct messages](#captain-direct-messages) follow their own rule |
 | An outcome that exists only in the mate's reasoning | none | the charter and the `AGENTS.md` carve-outs only |
 
 The ledger delivery reads files only: it calls no harness, no forge, and no current-state reader, so it does not depend on the harness or the runtime backend.
@@ -57,6 +57,7 @@ A missed-reply escalation includes the complete first sighting path and line num
 `tests/fm-teardown.test.sh` covers teardown delivering a child's final line and refusing when the channel cannot be written.
 `tests/fm-brief.test.sh` pins the charter's channel rule.
 `tests/fm-send-secondmate-marker.test.sh` covers the captain-direct tag for secondmate and worker targets, its refusals, and a correlated line resolving a captain message's pending reply.
+`tests/fm-captain-direct-echo.test.sh` covers the parent's one FYI note per captain-direct delivery, the echo guard that holds back a parent steer repeating it (and `--correction`), and a captain-direct pending reply that never reposts or escalates.
 `tests/fm-pending-reply.test.sh` covers helper-selected local routing, remote-channel classification, same-basename restatement before false escalation, readable wrong-home diagnostics, and the rule that arbitrary mate-home sightings never acknowledge a reply.
 
 ## Live verification
