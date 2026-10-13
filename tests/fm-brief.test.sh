@@ -124,6 +124,7 @@ test_status_protocol_uses_deck_append_boundary() {
     > "$status"
   FM_DECK_STATUS_IO="$ROOT/bin/fm-state-io.py" \
     FM_DECK_STATUS_STATE="$home/state" FM_DECK_STATUS_NAME="$id.status" \
+    FM_DECK_STATUS_DRIVER_GEN=deck-brief \
     bash -c "$command" || fail "Deck status command failed"
   [ "$(sed -n '2p' "$status")" = 'working: replay resumed' ] \
     || fail "Deck status command lost the worker-authored line"

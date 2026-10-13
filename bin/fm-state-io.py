@@ -88,7 +88,9 @@ def write_all(fd: int, payload: bytes) -> None:
         view = view[written:]
 
 
-def recovery_status_payload(existing: bytes, payload: bytes, turn_offset=None) -> bytes:
+def recovery_status_payload(
+    existing: bytes, payload: bytes, turn_offset=None, driver_generation=None
+) -> bytes:
     generation = None
     terminal = False
     cursor = 0
@@ -98,8 +100,12 @@ def recovery_status_payload(existing: bytes, payload: bytes, turn_offset=None) -
         failure = TURN_FAILURE_RE.match(line)
         marker = RECOVERY_WORKING_RE.match(line)
         if failure:
-            generation = failure.group(1)
-            terminal = False
+            if driver_generation is None or failure.group(1) == driver_generation:
+                generation = failure.group(1)
+                terminal = False
+            else:
+                generation = None
+                terminal = False
         elif marker and marker.group(1) == generation:
             generation = None
             terminal = False
@@ -121,8 +127,12 @@ def recovery_status_payload(existing: bytes, payload: bytes, turn_offset=None) -
         marker = RECOVERY_WORKING_RE.match(line)
         if failure:
             output.extend(raw_line)
-            generation = failure.group(1)
-            terminal = False
+            if driver_generation is None or failure.group(1) == driver_generation:
+                generation = failure.group(1)
+                terminal = False
+            else:
+                generation = None
+                terminal = False
         elif marker and marker.group(1) == generation:
             output.extend(raw_line)
             generation = None
@@ -158,6 +168,7 @@ def append_record(dir_fd: int, name: str, payload: bytes) -> None:
                     break
                 existing.extend(chunk)
             turn_offset = None
+            driver_generation = None
             if name == os.environ.get("FM_DECK_STATUS_NAME"):
                 raw_offset = os.environ.get("FM_DECK_STATUS_TURN_OFFSET")
                 if raw_offset is not None:
@@ -167,7 +178,16 @@ def append_record(dir_fd: int, name: str, payload: bytes) -> None:
                         raise UnsafeStatePath("invalid Deck turn status offset")
                     if turn_offset < 0 or turn_offset > len(existing):
                         raise UnsafeStatePath("invalid Deck turn status offset")
-            payload = recovery_status_payload(bytes(existing), payload, turn_offset)
+                raw_generation = os.environ.get("FM_DECK_STATUS_DRIVER_GEN")
+                if raw_generation is None:
+                    driver_generation = b""
+                elif not re.fullmatch(r"[A-Za-z0-9._-]+", raw_generation):
+                    raise UnsafeStatePath("invalid Deck driver generation")
+                else:
+                    driver_generation = raw_generation.encode("ascii")
+            payload = recovery_status_payload(
+                bytes(existing), payload, turn_offset, driver_generation
+            )
         if payload and os.write(fd, payload) != len(payload):
             raise OSError("short state append")
         os.fsync(fd)

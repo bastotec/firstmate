@@ -155,38 +155,13 @@ status_is_terminal_verb() {
 # A silent failed Deck turn opens a task-local recovery episode:
 #   failed: deck turn ended without a status line
 #     (turn-failed recovery-gen=<generation> id=<record-id>)
-# The next turn reuses that generation. Its first worker-authored `working:`
-# record is immediately followed by `working [recovery-gen=<generation>]:`.
-# The random record id identifies one failure independently of concurrent status
-# writers, while the ordered generation marker keeps supersession durable.
-fm_turn_failed_pending_generation() {  # <status-file> <captured-endpoint>
-  local f=$1 limit=$2
-  case "$limit" in ''|*[!0-9]*) return 1 ;; esac
-  [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 1
-  LC_ALL=C perl -e '
-    use bytes;
-    my ($path, $limit) = @ARGV;
-    open my $file, "<", $path or exit 1;
-    binmode $file;
-    my (%pending, $sequence);
-    while (tell($file) < $limit) {
-      my $line = <$file>;
-      last unless defined $line && tell($file) <= $limit;
-      $line =~ s/[\r\n]+\z//;
-      if ($line =~ m{^failed: deck turn ended without a status line \(turn-failed recovery-gen=([A-Za-z0-9._-]+) id=[A-Za-z0-9._-]+\)$}) {
-        $pending{$1} = ++$sequence;
-      } elsif ($line =~ m{^working \[recovery-gen=([A-Za-z0-9._-]+)\]:}) {
-        delete $pending{$1};
-      } elsif ($line =~ m{^(?:done|needs-decision|blocked|failed)(?::|[ \t][^:\r\n]*:)}) {
-        %pending = ();
-      }
-    }
-    my ($latest) = sort { $pending{$b} <=> $pending{$a} } keys %pending;
-    exit 1 unless defined $latest;
-    print $latest;
-  ' "$f" "$limit"
-}
-
+# The next turn in that driver incarnation reuses its busy generation. Its first
+# worker-authored `working:` record is immediately followed by
+# `working [recovery-gen=<generation>]:`. The locked append path compares that
+# generation with the current driver generation, so a relaunch cannot close an
+# older incarnation's episode. The random record id identifies one failure
+# independently of concurrent status writers, while the ordered generation
+# marker keeps supersession durable.
 fm_turn_failed_superseded_line() {  # <status-file> <status-line> [captured-endpoint]
   local f=$1 line=$2 limit=${3:-} note rest gen record_id size
   [ "$(status_line_verb "$line")" = failed ] || return 1

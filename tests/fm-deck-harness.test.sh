@@ -595,7 +595,7 @@ test_driver_backstops_silent_and_failed_turns() {
   make_fake_deck "$failed"
   run_worker "$failed" $'/quit\n' 'fail-turn' || fail "the failed-turn driver did not remain available for /quit"
   case $(cat "$failed/state/t1.status") in
-    'failed: deck turn ended without a status line (turn-failed recovery-gen='*' id=record-'*')') ;;
+    'failed: deck turn ended without a status line (turn-failed recovery-gen='"$(cat "$failed/gen")"' id=record-'*')') ;;
     *) fail "a provider-failed turn did not receive the exact fallback status: $(cat "$failed/state/t1.status")" ;;
   esac
   [ -f "$failed/state/t1.turn-ended" ] || fail "the provider-failed turn did not publish turn-ended after its fallback status"
@@ -611,7 +611,8 @@ test_replayed_working_turn_records_recovery_supersession() {
     || fail "the replay fixture did not return to its prompt"
   failure=$(sed -n '1p' "$dir/state/t1.status")
   generation=${failure#*recovery-gen=}; generation=${generation%% *}
-  case "$generation" in ''|*[!A-Za-z0-9._-]*) fail "the failed turn reserved no recovery generation: $failure" ;; esac
+  [ "$generation" = "$(cat "$dir/gen")" ] \
+    || fail "the failed turn was not bound to its driver generation: $failure"
   [ "$(sed -n '2p' "$dir/state/t1.status")" = 'working: replay resumed' ] \
     || fail "the replay did not append its worker working status"
   [ "$(sed -n '3p' "$dir/state/t1.status")" = "working [recovery-gen=$generation]: deck turn reported working" ] \
@@ -621,6 +622,35 @@ test_replayed_working_turn_records_recovery_supersession() {
       _ "$ROOT/bin/fm-classify-lib.sh" \
     || fail "the replayed working turn did not durably supersede its failure"
   pass "fm-deck-worker: replayed working evidence supersedes its recovery failure"
+}
+
+test_fresh_driver_keeps_older_turn_failure_actionable() {
+  local dir="$TMP_ROOT/recovery-driver-incarnation" failure old_generation new_generation
+  make_fake_deck "$dir"
+  run_worker "$dir" $'/quit\n' 'fail-turn' \
+    || fail "the old driver fixture did not return to its prompt"
+  failure=$(sed -n '1p' "$dir/state/t1.status")
+  old_generation=$(cat "$dir/gen")
+  case "$failure" in
+    *"recovery-gen=$old_generation "*) ;;
+    *) fail "the old turn failure was not bound to its driver generation: $failure" ;;
+  esac
+
+  run_worker "$dir" $'/quit\n' 'write-working' \
+    || fail "the fresh driver fixture did not return to its prompt"
+  new_generation=$(cat "$dir/gen")
+  [ "$new_generation" != "$old_generation" ] \
+    || fail "the relaunch fixture reused its old driver generation"
+  [ "$(sed -n '2p' "$dir/state/t1.status")" = 'working: replay resumed' ] \
+    || fail "the fresh driver lost its working status"
+  [ "$(wc -l < "$dir/state/t1.status" | tr -d '[:space:]')" = 2 ] \
+    || fail "the fresh driver bound the old recovery episode"
+  if FM_TEST_DECK_STATUS="$dir/state/t1.status" FM_TEST_DECK_FAILURE="$failure" \
+      bash -c '. "$1"; fm_turn_failed_superseded_line "$FM_TEST_DECK_STATUS" "$FM_TEST_DECK_FAILURE"' \
+        _ "$ROOT/bin/fm-classify-lib.sh"; then
+    fail "the fresh driver superseded the old incarnation's genuine failure"
+  fi
+  pass "fm-deck-worker: a fresh driver cannot supersede an older turn failure"
 }
 
 test_bookkeeping_before_failed_turn_keeps_unique_recovery_identity() {
@@ -2733,6 +2763,7 @@ test_idle_prompt_notes_the_utc_idle_instant
 test_status_checks_and_fallbacks_refuse_unsafe_paths
 test_driver_backstops_silent_and_failed_turns
 test_replayed_working_turn_records_recovery_supersession
+test_fresh_driver_keeps_older_turn_failure_actionable
 test_bookkeeping_before_failed_turn_keeps_unique_recovery_identity
 test_terminal_replay_closes_recovery_before_later_turn
 test_doorbell_for_an_empty_own_inbox_starts_no_turn

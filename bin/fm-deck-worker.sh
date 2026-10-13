@@ -166,8 +166,6 @@ WATCH_HANDLING_GENERATION='' WATCH_HANDLING_WATCHER_PID=''
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
 # shellcheck source=bin/fm-task-inbox-lib.sh
 . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
-# shellcheck source=bin/fm-classify-lib.sh
-. "$SCRIPT_DIR/fm-classify-lib.sh"
 while [ $# -gt 0 ]; do
   case "$1" in
     --secondmate) SECONDMATE=1; shift ;;
@@ -193,6 +191,7 @@ HOST_ROLE=secondmate
 STATUS_FILE="$STATE/$ID.status"
 TURNEND_FILE="$STATE/$ID.turn-ended"
 export FM_DECK_STATUS_IO="$STATE_IO" FM_DECK_STATUS_STATE="$STATE" FM_DECK_STATUS_NAME="$ID.status"
+export FM_DECK_STATUS_DRIVER_GEN="$GEN"
 MAX_TURNS=${FM_DECK_MAX_TURNS:-200}
 DEADLINE=${FM_DECK_DEADLINE_SECS:-3600}
 case "$MAX_TURNS" in ''|*[!0-9]*) MAX_TURNS=200 ;; esac
@@ -659,7 +658,7 @@ TURN_RECOVERABLE=3
 LAUNCH_UNDELIVERED=0
 run_turn() {  # <prompt>
   local prompt=$1 rc event status_before monitor_failed=0 deck_rc tee_rc jq_rc published=0
-  local recovery_gen failure_id turn_recovery_gen
+  local failure_id
   local -a turn_pipeline
   # The effort applies to this turn only, whatever path it ends by.
   local effort=$TURN_EFFORT
@@ -705,10 +704,6 @@ $prompt"
   status_before=$(cat "$TURN_MARK" 2>/dev/null || printf '0\n')
   FM_DECK_STATUS_TURN_OFFSET=$status_before
   export FM_DECK_STATUS_TURN_OFFSET
-  turn_recovery_gen=''
-  if [ "$SECONDMATE" != 1 ]; then
-    turn_recovery_gen=$(fm_turn_failed_pending_generation "$STATUS_FILE" "$status_before" 2>/dev/null || true)
-  fi
   record_busy_event busy turn-start || return 1
   # The rendered working row is transient: save its screen position so a
   # completed turn can replace it with the final event rendering. A later steer
@@ -817,12 +812,10 @@ $prompt"
     host_lock_owned || return 1
   elif ! status_has_worker_evidence "$status_before"; then
     if [ "$event" = turn-failed ]; then
-      recovery_gen=$turn_recovery_gen
-      [ -n "$recovery_gen" ] || recovery_gen=$(deck_recovery_token deck- 2>/dev/null || true)
       failure_id=$(deck_recovery_token record- 2>/dev/null || true)
-      if [ -n "$recovery_gen" ] && [ -n "$failure_id" ]; then
+      if [ -n "$failure_id" ]; then
         printf 'failed: deck turn ended without a status line (turn-failed recovery-gen=%s id=%s)\n' \
-          "$recovery_gen" "$failure_id" | status_append
+          "$GEN" "$failure_id" | status_append
       else
         printf 'failed: deck turn ended without a status line (turn-failed)\n' | status_append
       fi

@@ -156,38 +156,17 @@ test_captured_endpoint_bounds_supersession_evidence() {
   pass "supersession respects the classifier's captured endpoint"
 }
 
-test_pending_generation_tracks_the_task_local_episode() {
-  local dir status endpoint generation
-  dir=$(new_case pending-generation)
-  status="$dir/state/task.status"
-  append_failure "$status" deck-pending record-pending
-  endpoint=$(wc -c < "$status" | tr -d '[:space:]')
-  generation=$(fm_turn_failed_pending_generation "$status" "$endpoint") \
-    || fail "the task-local failure did not open a recovery episode"
-  [ "$generation" = deck-pending ] \
-    || fail "the pending recovery generation changed: $generation"
-  printf 'working [recovery-gen=deck-pending]: replay resumed\n' >> "$status"
-  endpoint=$(wc -c < "$status" | tr -d '[:space:]')
-  fm_turn_failed_pending_generation "$status" "$endpoint" >/dev/null \
-    && fail "working evidence did not close the task-local recovery episode"
-
-  status="$dir/state/terminal.status"
-  append_failure "$status" deck-terminal record-terminal
-  printf 'done: replay completed\n' >> "$status"
-  endpoint=$(wc -c < "$status" | tr -d '[:space:]')
-  fm_turn_failed_pending_generation "$status" "$endpoint" >/dev/null \
-    && fail "terminal evidence did not close the task-local recovery episode"
-  pass "pending recovery generations close on working or terminal evidence"
-}
-
 test_working_binding_is_atomic_with_status_append() {
   local dir status offset turn_offset failure endpoint
   dir=$(new_case binding-order)
   status="$dir/state/task.status"
   append_failure "$status" deck-bind record-bind
   failure=$(failure_line deck-bind record-bind)
+  turn_offset=$(wc -c < "$status" | tr -d '[:space:]')
   printf 'working: replay resumed\ndone: replay completed\n' \
-    | python3 "$ROOT/bin/fm-state-io.py" root-append "$dir/state" task.status \
+    | FM_DECK_STATUS_NAME=task.status FM_DECK_STATUS_TURN_OFFSET="$turn_offset" \
+      FM_DECK_STATUS_DRIVER_GEN=deck-bind \
+      python3 "$ROOT/bin/fm-state-io.py" root-append "$dir/state" task.status \
     || fail "the working and terminal burst was not appended"
   [ "$(sed -n '2p' "$status")" = 'working: replay resumed' ] \
     || fail "the worker-authored working line was not preserved"
@@ -208,6 +187,7 @@ test_working_binding_is_atomic_with_status_append() {
   offset=$(wc -c < "$status" | tr -d '[:space:]')
   printf 'working: stale replay update\n' \
     | FM_DECK_STATUS_NAME=late.status FM_DECK_STATUS_TURN_OFFSET="$turn_offset" \
+      FM_DECK_STATUS_DRIVER_GEN=deck-late \
       python3 "$ROOT/bin/fm-state-io.py" root-append "$dir/state" late.status \
     || fail "the late working append boundary failed"
   [ "$(wc -c < "$status" | tr -d '[:space:]')" = "$offset" ] \
@@ -217,6 +197,7 @@ test_working_binding_is_atomic_with_status_append() {
 
   printf 'working: next turn resumed\n' \
     | FM_DECK_STATUS_NAME=late.status FM_DECK_STATUS_TURN_OFFSET="$offset" \
+      FM_DECK_STATUS_DRIVER_GEN=deck-late \
       python3 "$ROOT/bin/fm-state-io.py" root-append "$dir/state" late.status \
     || fail "the next turn working append boundary failed"
   [ "$(tail -1 "$status")" = 'working: next turn resumed' ] \
@@ -226,6 +207,30 @@ test_working_binding_is_atomic_with_status_append() {
   pass "working supersession shares the locked status append"
 }
 
+test_new_driver_cannot_bind_an_older_failure() {
+  local dir status turn_offset failure
+  dir=$(new_case driver-incarnation)
+  status="$dir/state/task.status"
+  append_failure "$status" old-driver record-old
+  failure=$(failure_line old-driver record-old)
+  turn_offset=$(wc -c < "$status" | tr -d '[:space:]')
+
+  printf 'working: fresh driver started\n' \
+    | FM_DECK_STATUS_NAME=task.status FM_DECK_STATUS_TURN_OFFSET="$turn_offset" \
+      FM_DECK_STATUS_DRIVER_GEN=new-driver \
+      python3 "$ROOT/bin/fm-state-io.py" root-append "$dir/state" task.status \
+    || fail "the fresh driver working append failed"
+  [ "$(tail -1 "$status")" = 'working: fresh driver started' ] \
+    || fail "the fresh driver lost its working status"
+  [ "$(wc -l < "$status" | tr -d '[:space:]')" = 2 ] \
+    || fail "the fresh driver bound an older incarnation's failure"
+  fm_turn_failed_superseded_line "$status" "$failure" \
+    && fail "the fresh driver superseded an older incarnation's failure"
+  status_span_has_actionable "$status" 0 \
+    || fail "the older incarnation's failure stopped being actionable"
+  pass "a fresh driver cannot bind an older recovery episode"
+}
+
 test_later_working_in_the_same_recovery_generation_supersedes
 test_original_turn_state_cannot_supersede_before_replay
 test_unbound_and_different_generation_working_lines_do_not_supersede
@@ -233,7 +238,7 @@ test_supersession_is_independent_of_watcher_recovery_state
 test_only_exact_turn_failed_records_participate
 test_record_identity_disambiguates_repeated_failures
 test_captured_endpoint_bounds_supersession_evidence
-test_pending_generation_tracks_the_task_local_episode
 test_working_binding_is_atomic_with_status_append
+test_new_driver_cannot_bind_an_older_failure
 
 echo "fm-deck-turn-failure-supersession: all cases passed"
