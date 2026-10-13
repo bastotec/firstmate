@@ -494,6 +494,8 @@ watch_confirm_handling_delivery() {
 watch_start() {
   local predecessor=$WATCH_PREDECESSOR_ARM_PID
   [ -z "$WATCH_PID" ] || return 0
+  [ -z "$STOP_REQUESTED_AT" ] || return 0
+  [ "$(date +%s)" -ge "$WATCH_RETRY_AT" ] || return 0
   host_lock_owned || return 1
   if [ -e "$FM_HOME/state/.afk" ]; then
     host_failure 'daemon-owned away/quiet mode is unsupported; clear it through the owning supervisor before relaunch'
@@ -570,10 +572,10 @@ watch_result() {
 # A failed watcher cycle is retried with a fresh watcher, backing off a little
 # more each time; only FM_DECK_WATCH_FAILURE_LIMIT failures in a row, with no
 # result in between, stop the host as before.
-WATCH_FAILURES=0
+WATCH_FAILURES=0 WATCH_RETRY_AT=0
 watch_maintain() {
   local rc
-  while [ -n "$WATCH_PID" ] && ! kill -0 "$WATCH_PID" 2>/dev/null; do
+  if [ -n "$WATCH_PID" ] && ! kill -0 "$WATCH_PID" 2>/dev/null; then
     rc=0
     watch_result || rc=$?
     if [ "$rc" -eq 2 ]; then
@@ -587,14 +589,16 @@ watch_maintain() {
       WATCH_PREDECESSOR_ARM_PID=''
       WATCH_HANDLING_GENERATION=''
       WATCH_HANDLING_WATCHER_PID=''
-      sleep "$WATCH_FAILURES"
+      WATCH_RETRY_AT=$(( $(date +%s) + WATCH_FAILURES ))
+      return 0
     elif [ "$rc" -ne 0 ]; then
       return 1
     else
       WATCH_FAILURES=0
+      WATCH_RETRY_AT=0
     fi
-    watch_start || return 1
-  done
+  fi
+  watch_start
 }
 
 # The evidence gate: the turn may finish only after it appended a worker status
@@ -708,10 +712,11 @@ if [ "$SECONDMATE" = 1 ]; then
   SESSION_RECORD="$STATE/$ID.deck-session"
   if [ "${FM_DECK_FRESH_SESSION:-0}" != 1 ] && [ -f "$SESSION_RECORD" ] && [ ! -L "$SESSION_RECORD" ]; then
     recorded_session=$(head -n 1 "$SESSION_RECORD" 2>/dev/null || true)
+    recorded_home=$(sed -n '2p' "$SESSION_RECORD" 2>/dev/null || true)
     case "$recorded_session" in
       ''|*[!A-Za-z0-9._-]*) ;;
       *)
-        if [ -f "${DECK_SESSIONS_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/deck/sessions}/$recorded_session.json" ]; then
+        if [ "$recorded_home" = "$FM_HOME" ] && [ -f "${XDG_STATE_HOME:-$HOME/.local/state}/deck/sessions/$recorded_session.json" ]; then
           SESSION=$recorded_session
         fi
         ;;
@@ -720,9 +725,20 @@ if [ "$SECONDMATE" = 1 ]; then
 fi
 session_record() {
   [ -n "$SESSION_RECORD" ] && [ -n "$SESSION" ] || return 0
-  [ "$(head -n 1 "$SESSION_RECORD" 2>/dev/null || true)" != "$SESSION" ] || return 0
-  printf '%s\n' "$SESSION" > "$SESSION_RECORD.tmp.$$" && mv -f "$SESSION_RECORD.tmp.$$" "$SESSION_RECORD" \
+  [ "$(cat "$SESSION_RECORD" 2>/dev/null || true)" != "$(printf '%s\n%s' "$SESSION" "$FM_HOME")" ] || return 0
+  printf '%s\n%s\n' "$SESSION" "$FM_HOME" > "$SESSION_RECORD.tmp.$$" && mv -f "$SESSION_RECORD.tmp.$$" "$SESSION_RECORD" \
     || printf 'fm-deck-worker: warning: could not record Deck session %s\n' "$SESSION" >&2
+}
+session_observe() {
+  local started
+  if [ -z "$SESSION" ]; then
+    started=$(jq -r 'select(.type == "run_started") | .session' "$EVENTS" 2>/dev/null | head -1)
+    case "$started" in
+      ''|*[!A-Za-z0-9._-]*) return 0 ;;
+      *) SESSION=$started ;;
+    esac
+  fi
+  session_record
 }
 # run_turn's code for a turn that failed in a way a persistent supervisor is
 # expected to outlive. Only home-host mode returns it; a crewmate or scout
@@ -812,6 +828,7 @@ $prompt"
     TURN_PID=$!
     STOP_REQUESTED_AT=''
     while kill -0 "$TURN_PID" 2>/dev/null; do
+      [ -n "$SESSION" ] || session_observe
       escalate_turn_stop
       # /quit typed while the turn runs is an exit request, not a later turn:
       # stop the turn now, and the prompt loop reads the queued /quit next.
@@ -833,6 +850,7 @@ $prompt"
     STOP_REQUESTED_AT=''
     wait "$TURN_RENDER_PID" 2>/dev/null || true
     TURN_RENDER_PID=''
+    session_observe
     if [ "$monitor_failed" -eq 0 ]; then
       watch_maintain || monitor_failed=1
     fi
@@ -857,10 +875,7 @@ $prompt"
     printf '\033[u\033[J'
     jq -rj "$RENDER" "$EVENTS" 2>/dev/null
   fi
-  if [ -z "$SESSION" ]; then
-    SESSION=$(jq -r 'select(.type == "run_started") | .session' "$EVENTS" 2>/dev/null | head -1)
-  fi
-  session_record
+  session_observe
   if [ "$INTERRUPTED" = 1 ]; then
     printf '\nInterrupted.\n'
     event=interrupted
