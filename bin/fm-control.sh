@@ -124,17 +124,21 @@
 #              must be a plain route the captain's model policy
 #              (config/model-policy.json) permits and the gateway lists. The
 #              choice is saved as the record's model= and model_choice= (a later
-#              same-harness relaunch uses it unless --model is passed)
+#              relaunch follows the precedence described above)
 #              and in state/<id>.model, which the Deck driver reads before
 #              every turn; a running turn also gets Deck's
 #              `deck-control: set_model` control at its next safe point when
 #              its Deck accepts it (bin/fm_model_switch.py owns the checks and
-#              that publication). Prints `model <id> -> <route> (live|next-turn)`.
+#              that publication). A handled task-inbox record marks the thread
+#              as `[fm-control] model switch: <was> -> <now>` and reserves the
+#              control's sequence without colliding with captain records.
+#              Reservation failure exits 1 before saving the choice.
+#              Prints `model <id> -> <route> (live|next-turn)` on publication,
+#              not confirmed application by Deck.
 #              Exit 3 when the driver predates in-place switching (its
 #              state/<id>.deck-caps is missing or stale): relaunch with --model
-#              instead. A remote second mate runs this on its host over
-#              bin/fm-on.sh (fm-remote-secondmate-control.sh model), after the
-#              policy check here, and this record's model= follows on success.
+#              instead. docs/remote-secondmates.md "Lifecycle control" owns
+#              routing and policy checks for remotely placed secondmates.
 #   reincarnate Continue a retired-backend ship or scout on a fresh stream
 #              endpoint in the SAME clean worktree, using recover-missing's
 #              transaction and fm-spawn --relaunch. Requires a supported
@@ -1031,10 +1035,9 @@ resolve_relaunch_profile() {
   CONFIG_EFFORT=
   if [ "$KIND" = secondmate ] && [ "$VERB" = relaunch ] \
      && [ "$HARNESS_SET" = 0 ]; then
-    # A secondmate's harness, model, and effort are a durable configured pin
-    # that every respawn re-resolves (the secondmate-provisioning contract), so
-    # a relaunch with no explicit harness picks up a newly configured one
-    # instead of freezing whatever this incarnation happens to run. Crewmates
+    # Re-resolve the secondmate pin so a relaunch can pick up a configured
+    # harness change; the model-choice precedence in this script's header
+    # still applies after resolution. Crewmates
     # and scouts deliberately do NOT resolve config here: their harness comes
     # from firstmate's own dispatch-profile judgment at intake, and silently
     # re-resolving it would bypass that consultation.

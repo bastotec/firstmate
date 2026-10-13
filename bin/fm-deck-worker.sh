@@ -128,6 +128,9 @@
 #                           non-empty FM_CONFIG_OVERRIDE, else FM_HOME/config,
 #                           else the tracked code root's config/ directory.
 #                           Resolution happens once at driver startup.
+#   DECK_MODEL_POLICY     Deck's policy path, passed through when non-empty.
+#                           When empty, export model-policy.json from the same
+#                           config-directory resolution as MCP, if it exists.
 #   FM_STREAM_ENDPOINT_ID  set by the owning stream agent, enabling receiver
 #                           start/end registration for each driver turn
 #   PROXAI_BASE_URL, PROXAI_MODEL, PROXAI_API_KEY_FILE, PROXAI_API_KEY

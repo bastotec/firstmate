@@ -31,19 +31,25 @@ CLI. Both call this file, which owns the on-disk layout:
   state/primary-chat/model                the model route the captain chose for the
                                           primary (`model ROUTE`); the keeper starts
                                           the host on it, over its own --model
-  state/primary-chat/switch               "<request epoch> <route>": a model switch
+  state/primary-chat/switch               "<request epoch> <route>": a fallback switch
                                           waiting for a live, idle primary; the keeper
                                           atomically claims and removes this request
                                           before ending the host, leaving newer requests
                                           pending, and restarts on the claimed route
-  state/primary-chat/switches             successful switch starts that change route:
-                                          "<completion epoch> <from route|default> <to route>"
-                                          (last 1000), for the thread to mark where it was
+  state/primary-chat/switches             route changes recorded on in-place control
+                                          publication or successful fallback host start:
+                                          "<record epoch> <from route|default> <to route>"
+                                          (last 1000), for the thread to mark where it was;
+                                          in-place entries are not application receipts
 
 Record (state/primary-chat.json):
   {"version":1,"home":ABS,"session":ID,"steer_dir":ABS,"events_file":ABS,
-   "endpoint":"<hub-tag>:<endpoint-id>"|null,"host_pid":N,"started_at":EPOCH,"model":ROUTE}
-model is the host's launch route, or "" when no explicit model was passed.
+   "endpoint":"<hub-tag>:<endpoint-id>"|null,"host_pid":N,"started_at":EPOCH,
+   "model":ROUTE,"set_model":BOOL}
+model is the host's launch route ("" when omitted), updated on in-place control
+publication; it is not an application receipt.
+set_model records whether this host's `deck chat --help` advertises set_model;
+a missing field in an older record means unsupported.
 A clean host exit adds "stopped_at". A record is live only when it has no
 stopped_at and host_alive(host_pid, home) validates the host identity below.
 

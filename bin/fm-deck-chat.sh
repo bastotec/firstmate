@@ -84,13 +84,15 @@
 #       applied at once while idle or at the turn's next safe point (deck
 #       checks it against the gateway and the model policy and reports
 #       model_switched or model_switch_refused in its events); prints
-#       "switched to ROUTE in place". Otherwise, for the serviced primary:
+#       "switched to ROUTE in place" on publication, not confirmed application.
+#       This path needs no keeper. Otherwise, for the serviced primary:
 #       once the primary is idle the keeper ends the host and starts it again
 #       on the same session, resuming the conversation as any keeper restart
 #       does; it never goes through `stop`. Prints whether the switch is
 #       requested now or after the turn under way, not a completion receipt.
-#       Exit 1 when no keeper serves this home (verified by its singleton lock);
-#       restart a terminal-run host with --model by hand instead. Exit 2 for a
+#       The fallback exits 1 when no keeper serves this home (verified by its
+#       singleton lock); restart an unsupported terminal-run host with --model
+#       by hand instead. Exit 2 for a
 #       malformed route. Without ROUTE, prints the stored choice, else the live
 #       keeper's --model, else "default"; this is the configured choice, not
 #       necessarily the live host's model while a switch is pending.
