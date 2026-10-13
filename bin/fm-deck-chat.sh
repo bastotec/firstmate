@@ -545,6 +545,13 @@ trap 'exit 1' HUP TERM
 # would share its records, so the host refuses to start next to one.
 [ ! -e "$STATE/primary.meta" ] || die 'a task named primary exists in this home (state/primary.meta); not starting'
 "$SCRIPT_DIR/fm-lock.sh" >&2 || die 'the home session lock is held by another session; not starting'
+if ! FM_STATE_OVERRIDE="$STATE" bash -c '
+    # shellcheck disable=SC1090,SC1091
+    . "$1"
+    fm_recovery_marker_publish_fresh "$STATE/.watcher-down"
+  ' _ "$SCRIPT_DIR/fm-wake-lib.sh"; then
+  die 'could not publish a fresh recovery generation'
+fi
 # Run here by the captain rather than inside an endpoint --stream prepared.
 [ -n "$ENDPOINT" ] || clear_stopped
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/fm-deck-chat.XXXXXX") || exit 1

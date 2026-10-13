@@ -928,25 +928,51 @@ test_unconsumable_rows_are_retired_instead_of_wedging_the_queue() {
 }
 
 test_driver_relaunch_publication_mints_a_fresh_generation() {
-  local dir state marker lib gen1 gen2 token
+  local dir state marker lib baseline gen1 gen2 token
   dir=$(make_case driver-relaunch-fresh-generation)
   state="$dir/state"
   marker="$state/.watcher-down"
   lib="$ROOT/bin/fm-wake-lib.sh"
 
-  # A first launch has no episode, and a fresh publication must not open one:
-  # minting over a clean home would make the first watcher start announce a
-  # recovery that never happened.
+  # A first launch records a closed baseline but opens no recovery episode.
   FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_publish_fresh "$2"' \
     _ "$lib" "$marker" \
-    || fail "fresh publication refused a home with no episode"
-  [ ! -e "$marker" ] || fail "fresh publication opened an episode on a first launch"
+    || fail "fresh publication refused a first launch"
+  case "$(cat "$marker")" in
+    acked:downtime:*) ;;
+    *) fail "fresh publication opened an episode on a first launch: $(cat "$marker")" ;;
+  esac
+  baseline=$(recovery_marker_generation "$marker")
+
+  # Even if the first driver dies before session-start completion, its durable
+  # baseline makes the next launch distinguishable and forces a fresh episode.
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_publish_fresh "$2"' \
+    _ "$lib" "$marker" \
+    || fail "driver relaunch over the first-launch baseline failed"
+  gen1=$(recovery_marker_generation "$marker")
+  [ "$gen1" != "$baseline" ] \
+    || fail "driver relaunch reused the first-launch baseline generation"
+  case "$(cat "$marker")" in
+    pending:downtime:*) ;;
+    *) fail "driver relaunch over the baseline did not open an episode: $(cat "$marker")" ;;
+  esac
+
+  # Existing homes can predate the baseline. Their durable completed startup
+  # still proves an absent recovery marker does not mean a first launch.
+  rm -f "$marker"
+  printf '123\n' > "$state/.session-start-complete"
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_publish_fresh "$2"' \
+    _ "$lib" "$marker" \
+    || fail "driver relaunch with completed startup evidence failed"
+  [ "$(recovery_marker_generation "$marker")" != "$gen1" ] \
+    || fail "driver relaunch with an absent marker reused the lost generation"
+  case "$(cat "$marker")" in
+    pending:downtime:*) ;;
+    *) fail "completed startup evidence did not open a recovery episode: $(cat "$marker")" ;;
+  esac
 
   # An ordinary downtime publication preserves a pending generation for a LIVE
   # watcher's outstanding acknowledgement.
-  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_publish "$2" downtime' \
-    _ "$lib" "$marker" \
-    || fail "could not open a pending episode"
   token=$(cat "$marker")
   gen1=$(recovery_marker_generation "$marker")
   FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_publish "$2" downtime' \

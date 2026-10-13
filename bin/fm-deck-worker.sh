@@ -615,38 +615,15 @@ INPUT_PID=$!
 if [ "$SECONDMATE" = 1 ]; then
   [ -n "${FM_HOME:-}" ] && [ -d "$FM_HOME" ] || { host_failure 'requires an explicit home'; exit 2; }
   cd "$FM_HOME" || exit 2
-  # Every driver relaunch opens its own recovery episode, so the re-presented
-  # launch brief can never carry the previous driver's generation: after this,
-  # a changed generation is a definitive driver-loss signal and generation
-  # sameness alone a healthy-beat signal (docs/watcher-continuity.md).
-  # fm_recovery_marker_publish_fresh (bin/fm-wake-lib.sh) owns the semantics:
-  # an absent marker stays absent, and an outstanding acknowledgement of the
-  # replaced generation is not stranded, because queue-row consumption is
-  # sequence-bound and only episode retirement is generation-bound.
-  # Published before session start, so the startup drain names this driver's
-  # generation in its WAKE_ACK_REQUIRED and the first turn retires it without
-  # a dedicated recovery turn.
-  # Two refusals to mint: a live harness still holding the home session lock
-  # means this launch is a duplicate that session start will refuse, and
-  # minting over the live driver's home would turn that duplicate into a false
-  # driver-loss signal; and state/.afk hands supervision to the away daemon,
-  # whose watcher continuity this driver must not disturb right before its own
-  # watch_start refuses the away-mode home anyway.
-  relaunch_recovery_publication() {
-    local lock_pid
-    [ -e "$FM_HOME/state/.afk" ] && return 0
-    lock_pid=$(cat "$FM_HOME/state/.lock" 2>/dev/null || true)
-    case "$lock_pid" in
-      ''|*[!0-9]*) ;;
-      *) fm_harness_pid_alive "$lock_pid" && return 0 ;;
-    esac
-    FM_STATE_OVERRIDE="$FM_HOME/state" bash -c '
-        # shellcheck disable=SC1090,SC1091
-        . "$1"
-        fm_recovery_marker_publish_fresh "$STATE/.watcher-down"
-      ' _ "$SCRIPT_DIR/fm-wake-lib.sh"
-  }
-  if ! relaunch_recovery_publication; then
+  if ! "$SCRIPT_DIR/fm-lock.sh" >&2; then
+    host_failure 'home session lock is held by another session'; exit 1
+  fi
+  host_lock_owned || exit 1
+  if [ ! -e "$FM_HOME/state/.afk" ] && ! FM_STATE_OVERRIDE="$FM_HOME/state" bash -c '
+      # shellcheck disable=SC1090,SC1091
+      . "$1"
+      fm_recovery_marker_publish_fresh "$STATE/.watcher-down"
+    ' _ "$SCRIPT_DIR/fm-wake-lib.sh"; then
     host_failure 'could not publish a fresh recovery generation'; exit 1
   fi
   # Startup is executed exactly once by the stable host, not by a short-lived

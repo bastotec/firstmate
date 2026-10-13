@@ -515,7 +515,7 @@ _fm_atomic_replace() {
 _fm_recovery_marker_write_locked() {
   local marker=$1 kind=$2 generation=${3:-} status=${4:-pending} tmp
   case "$kind" in handling|downtime) ;; *) return 1 ;; esac
-  case "$status" in pending|announced) ;; *) return 1 ;; esac
+  case "$status" in pending|announced|acked) ;; *) return 1 ;; esac
   tmp=$(mktemp "${marker}.tmp.XXXXXX") || return 1
   [ -n "$generation" ] || generation="$(fm_current_pid).$(date +%s).${tmp##*.}"
   if ! printf '%s:%s:%s\n' "$status" "$kind" "$generation" > "$tmp" \
@@ -537,6 +537,7 @@ _fm_recovery_marker_write_locked() {
 # a LIVE watcher's outstanding acknowledgement depends on.
 _fm_recovery_marker_publish() {
   local marker=$1 kind=${2:-downtime} posture=${3:-preserve} lock saved_token generation='' status=pending
+  local completion completion_pid
   case "$kind" in handling|downtime) ;; *) return 1 ;; esac
   case "$posture" in preserve|fresh) ;; *) return 1 ;; esac
   lock="${marker}.lock"
@@ -564,11 +565,18 @@ _fm_recovery_marker_publish() {
     fi
     FM_RECOVERY_MARKER_TOKEN=$saved_token
   fi
-  if [ "$posture" = fresh ]; then
-    # A relaunch mints its generation only over an existing episode: a home
-    # with no marker is a first launch, and publishing one there would make
-    # the first watcher start announce a recovery that never happened.
-    if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
+  if [ "$posture" = fresh ] && [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
+    completion="${marker%/*}/.session-start-complete"
+    completion_pid=
+    if [ -f "$completion" ] && [ ! -L "$completion" ]; then
+      IFS= read -r completion_pid < "$completion" || completion_pid=
+      case "$completion_pid" in ''|*[!0-9]*) completion_pid= ;; esac
+    fi
+    if [ -z "$completion_pid" ]; then
+      if ! _fm_recovery_marker_write_locked "$marker" "$kind" "" acked; then
+        fm_lock_release "$lock"
+        return 1
+      fi
       fm_lock_release "$lock"
       return 0
     fi
@@ -807,13 +815,11 @@ fm_recovery_marker_arm_check() {
   fm_recovery_transition "$1" arm-check
 }
 
-# Driver-relaunch publication: mints a new pending downtime generation whenever
-# an episode marker exists, replacing the preserved one, so a relaunched driver
-# can never re-present the previous driver's generation alongside its launch
-# brief. Absent marker stays absent: a first launch has no episode to open.
-# The outstanding acknowledgement of the replaced generation is not stranded,
-# because acknowledgement is sequence-bound for queue rows and only the episode
-# retirement is generation-bound (docs/watcher-continuity.md).
+# Driver-relaunch publication: a first launch records an acknowledged baseline
+# without opening an episode, and every later launch replaces it with a new
+# pending generation. A prior session-start completion bootstraps an established
+# home whose marker predates this lifecycle. docs/watcher-continuity.md owns the
+# episode and acknowledgement semantics.
 fm_recovery_marker_publish_fresh() {
   fm_recovery_transition "$1" publish-fresh downtime
 }

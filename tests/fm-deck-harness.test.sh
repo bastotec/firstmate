@@ -2060,6 +2060,71 @@ PYTHON
   pass "fm-deck-worker: every secondmate relaunch publishes a fresh recovery generation"
 }
 
+test_concurrent_secondmate_duplicate_mints_once() {
+  local dir="$TMP_ROOT/host-concurrent-relaunch-generation" real_mv
+  make_secondmate_host_fixture "$dir"
+  real_mv=$(command -v mv) || fail "could not find mv for the concurrent relaunch fixture"
+  mv "$dir/bin/fm-lock.sh" "$dir/bin/fm-lock.real.sh"
+  cat > "$dir/bin/fm-lock.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$$" >> "$FM_TEST_LOCK_ARRIVALS"
+for _ in $(seq 1 200); do
+  [ "$(wc -l < "$FM_TEST_LOCK_ARRIVALS" | tr -d ' ')" -ge 2 ] && exec "$(dirname "$0")/fm-lock.real.sh" "$@"
+  sleep 0.05
+done
+exit 1
+SH
+  mkdir "$dir/fakebin"
+  cat > "$dir/fakebin/mv" <<'SH'
+#!/usr/bin/env bash
+last=${!#}
+[ "$last" != "$FM_TEST_MARKER" ] || printf '%s\n' "$$" >> "$FM_TEST_MARKER_WRITES"
+exec "$FM_TEST_REAL_MV" "$@"
+SH
+  chmod +x "$dir/bin/fm-lock.sh" "$dir/fakebin/mv"
+  FM_TEST_REAL_MV="$real_mv" python3 - "$dir" <<'PYTHON' \
+    || fail "concurrent Deck secondmate duplicates minted more than one recovery generation"
+import os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+home = root / 'home'
+marker = home / 'state/.watcher-down'
+lib = str(root/'bin/fm-wake-lib.sh')
+subprocess.run(['bash', '-c', '. "$1"; fm_recovery_marker_publish "$2" downtime', '_', lib, str(marker)],
+               check=True, env=dict(os.environ, FM_STATE_OVERRIDE=str(home/'state')))
+arrivals = root / 'lock-arrivals'
+writes = root / 'marker-writes'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='',
+           FM_TEST_LOCK_ARRIVALS=str(arrivals), FM_TEST_MARKER=str(marker),
+           FM_TEST_MARKER_WRITES=str(writes), PATH=str(root/'fakebin')+os.pathsep+os.environ['PATH'])
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker', str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'), '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+procs = [subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                          env=env, text=True, start_new_session=True) for _ in range(2)]
+try:
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        if sum(p.poll() is None for p in procs) == 1 and (home/'state/.session-start-complete').exists():
+            break
+        time.sleep(.05)
+    else:
+        raise AssertionError('concurrent launches did not settle to one lock owner')
+    rows = writes.read_text().splitlines() if writes.exists() else []
+    assert len(rows) == 1, 'concurrent launches published %d recovery generations' % len(rows)
+    winner = next(p for p in procs if p.poll() is None)
+    winner.stdin.write('/quit\n'); winner.stdin.flush()
+    assert winner.wait(timeout=20) == 0, 'winning driver did not stop on /quit'
+finally:
+    for p in procs:
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGTERM)
+            try:
+                p.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                os.killpg(p.pid, signal.SIGKILL); p.wait()
+PYTHON
+  pass "fm-deck-worker: concurrent duplicate relaunches publish one recovery generation"
+}
+
 test_secondmate_repeats_its_launch_brief_after_a_session_less_failure() {
   local dir="$TMP_ROOT/host-no-session"
   make_secondmate_host_fixture "$dir"
@@ -2608,6 +2673,7 @@ test_secondmate_queued_exit_behind_composer_clears_beats_watcher_turn
 test_secondmate_survives_a_failed_turn
 test_secondmate_survives_a_refused_handling_confirmation
 test_secondmate_relaunch_publishes_a_fresh_recovery_generation
+test_concurrent_secondmate_duplicate_mints_once
 test_secondmate_repeats_its_launch_brief_after_a_session_less_failure
 test_secondmate_stops_when_a_repeated_launch_brief_opens_no_session
 test_secondmate_stops_when_a_failed_turn_cannot_be_recorded
