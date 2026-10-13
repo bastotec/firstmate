@@ -20,9 +20,11 @@ The model does not re-arm after ordinary wakes.
 A periodic beat is that continuity, not a failure: the driver may replace only its watcher child, so a fresh watcher pid can appear carrying the SAME recovery-generation without restarting the home agent or its Deck session.
 The driver replays any unacked durable inbox record as that turn's instruction.
 When no launch brief is re-presented and the drain shows no unhandled event, handling the replayed instruction is the whole duty; there is no driver failure or supervisor restart to repair.
-A re-presented launch brief or session reset is a definitive driver-loss signal and always warrants the recorded recovery path.
-A NEW recovery-generation is definitive evidence that watcher continuity broke, while generation sameness alone is reliable evidence of a healthy beat.
-Only a generation minted by the driver-relaunch transition is also definitive evidence of driver loss; `fm_recovery_generation_is_driver_loss` owns that check, and a watcher-reopen generation does not satisfy it.
+The definitive driver-loss signals are a re-presented launch brief or session reset and a generation minted by the `driver-relaunch` transition; either always warrants the recorded recovery path.
+`fm_recovery_generation_is_driver_loss` owns the origin-aware generation check.
+A new generation with any other origin - `downtime`, `watcher-reopen`, `arm-check`, or `driver-baseline` - is supporting evidence only and never proves loss.
+A healthy acknowledge-then-append cycle also mints a fresh `downtime` generation, so generation change alone must never be read as breakage.
+Generation sameness remains reliable evidence of a healthy beat because every brief-bearing driver relaunch after the true first launch mints fresh.
 Every deck driver that can present a launch brief claims and verifies the home session lock, then invokes `fm_recovery_marker_publish_fresh` before session start (`bin/fm-deck-chat.sh` and `bin/fm-deck-worker.sh`, owned by `_fm_recovery_marker_publish` in `bin/fm-wake-lib.sh`).
 A secondmate launch during daemon-owned away or quiet mode is refused before presenting its brief and skips relaunch publication so it does not replace the daemon's generation.
 A true first launch records an acknowledged baseline without opening a recovery episode; every later brief-bearing launch replaces that baseline or existing episode with a pending fresh generation, and an established home with no marker is recognized by its durable completed-startup record.
