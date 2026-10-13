@@ -58,8 +58,8 @@ ever approved automatically. A policy that exists but cannot be read, parsed or
 validated blocks every call (fail closed) with the reason, and so does a gated call with no home to file
 into. Deck runs hooks with a 10 s timeout and by default fails open on a crash or timeout;
 the installed entry sets "fail_closed": true, which a Deck with fail-closed hooks honors
-by blocking instead (an older Deck ignores the key). The gate never waits: it files and
-returns.
+by blocking instead (an older Deck ignores the key). The gate does not wait for an
+approval decision: it files and returns, though request-lock acquisition can wait.
 
 Workers never page the captain. A request from a ship or scout worker of the owning
 home (state/<agent>.meta names kind=ship or scout) is filed with "audience": "mate":
@@ -72,8 +72,10 @@ owns the separate Fleet Town integration limits.
 
 escalate. Run in the owning home (FM_HOME); the shell entry point refuses an
 owning-home worker through bin/fm-worker-guard-lib.sh (exit 3). Escalation and answer
-share a per-request lock, as does the gate's own filing of the request; an unknown or
-no-longer-pending request is refused (exit 3). Escalation appends the escalated audit
+share a per-request lock. Request creation holds that lock through publication, the
+requested audit and the mate's needs-decision append, so an answer cannot close the
+decision before its opener exists. An unknown or no-longer-pending request is refused
+(exit 3). Escalation appends the escalated audit
 event first and only then sets audience to captain with an escalated timestamp: if the
 audit cannot be written, nothing changes and it exits 1. Repeating a completed
 escalation is a no-op.
