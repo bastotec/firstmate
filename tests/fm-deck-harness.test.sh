@@ -1533,18 +1533,26 @@ PYTHON
 # death before START. Normal fake cycles publish the same identity-bound beacon
 # the arm verifies and wait for an explicit trigger, never a startup timer.
 test_secondmate_host_retains_failed_successor_start_evidence() {
-  local dir="$TMP_ROOT/host-failed-successor-evidence"
-  make_secondmate_host_fixture "$dir"
-  cp "$ROOT/bin/fm-watch-arm.sh" "$dir/bin/fm-watch-arm.sh"
-  cat > "$dir/bin/fm-watch.sh" <<'SH'
+  local dir mode
+  for mode in exits interrupted; do
+    dir="$TMP_ROOT/host-failed-successor-evidence-$mode"
+    make_secondmate_host_fixture "$dir"
+    cp "$ROOT/bin/fm-watch-arm.sh" "$dir/bin/fm-watch-arm.sh"
+    cat > "$dir/bin/fm-watch.sh" <<'SH'
 #!/usr/bin/env bash
 . "$(dirname "$0")/fm-wake-lib.sh"
 if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" = 1 ] && [ -f "$FM_HOME/fail-successor-start" ]; then
   rm "$FM_HOME/fail-successor-start"
   printf 'failed handling successor: fixture startup refused\n' >&2
   printf 'failed\n' >> "$FM_HOME/failed-starts"
-  : > "$FM_HOME/successor-died"
-  exit 7
+  if [ "$FM_TEST_CHILD_MODE" = exits ]; then
+    : > "$FM_HOME/successor-died"
+    exit 7
+  fi
+  trap 'printf "unconfirmed handling successor: terminated at deadline\n" >&2; exit 143' TERM
+  printf '%s\n' "$$" > "$FM_HOME/unconfirmed-child"
+  : > "$FM_HOME/successor-was-silent"
+  while :; do sleep 0.1; done
 fi
 mkdir -p "$STATE/.watch.lock"
 printf '%s\n' "$$" > "$STATE/.watch.lock/pid"
@@ -1559,11 +1567,13 @@ while [ ! -f "$FM_HOME/trigger" ]; do sleep 0.1; done
 rm "$FM_HOME/trigger"
 printf 'check: example\n'
 SH
-  chmod +x "$dir/bin/fm-watch.sh"
-  python3 - "$dir" <<'PYTHON' || fail "Deck host lost failed successor evidence or supervision"
+    chmod +x "$dir/bin/fm-watch.sh"
+    python3 - "$dir" "$mode" <<'PYTHON' || fail "Deck host lost failed successor evidence or supervision ($mode)"
 import json, os, pathlib, signal, subprocess, sys, time
-root = pathlib.Path(sys.argv[1]); home = root/'home'
-env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+root = pathlib.Path(sys.argv[1]); home = root/'home'; mode = sys.argv[2]
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='',
+           FM_TEST_CHILD_MODE=mode, FM_DECK_WATCH_CONFIRM_SECS='1' if mode == 'interrupted' else '15',
+           FM_ARM_CONFIRM_TIMEOUT='30')
 gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
 cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
        str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'),
@@ -1592,9 +1602,20 @@ with (root/'pane').open('w') as output:
         (home/'trigger').touch()
         wait_for(lambda: len(rows()) == 2 and idle() and len(starts()) == 2, 'normal rearm after failed START')
         evidence = (root/'pane').read_text()
-        assert 'failed handling successor: fixture startup refused' in evidence, evidence
-        assert 'successor watcher exited before confirming startup; starting a fresh watcher' in evidence, evidence
-        assert 'watcher: FAILED - watcher cycle exited 7' in evidence, evidence
+        assert evidence.count('failed handling successor: fixture startup refused') == 1, evidence
+        if mode == 'exits':
+            assert 'successor watcher exited before confirming startup; starting a fresh watcher' in evidence, evidence
+            assert 'watcher: FAILED - watcher cycle exited 7' in evidence, evidence
+        else:
+            assert 'successor watcher did not confirm startup within 1s; starting a fresh watcher' in evidence, evidence
+            assert evidence.count('unconfirmed handling successor: terminated at deadline') == 1, evidence
+            assert (home/'successor-was-silent').exists()
+            try:
+                os.kill(int((home/'unconfirmed-child').read_text()), 0)
+            except ProcessLookupError:
+                pass
+            else:
+                raise AssertionError('unconfirmed child survived replacement')
         assert (home/'failed-starts').read_text().splitlines() == ['failed']
         os.kill(int(starts()[-1]), 0)
         (home/'trigger').touch()
@@ -1608,7 +1629,8 @@ with (root/'pane').open('w') as output:
         if p.poll() is None:
             os.killpg(p.pid, signal.SIGKILL); p.wait()
 PYTHON
-  pass "Deck host retains failed handling child stderr and rearms to serve later wakes"
+  done
+  pass "Deck host retains failed and interrupted handling child stderr and serves later wakes"
 }
 
 test_secondmate_mcp_config_on_startup_steer_and_wake() {

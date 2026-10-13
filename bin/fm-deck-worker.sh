@@ -412,7 +412,6 @@ watch_wait_handling_successor() {
     if ! kill -0 "$WATCH_PID" 2>/dev/null; then
       wait "$WATCH_PID" 2>/dev/null || true
       WATCH_PID=''
-      cat "$WORK/watch.out"
       watch_restart_unclaimed 'successor watcher exited before confirming startup'
       return
     fi
@@ -433,6 +432,7 @@ watch_restart_unclaimed() {  # <reason>
     wait "$WATCH_PID" 2>/dev/null || true
     WATCH_PID=''
   fi
+  cat "$WORK/watch.out"
   watch_start
 }
 
