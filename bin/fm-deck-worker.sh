@@ -953,12 +953,14 @@ The host repeated this launch brief because the previous turn failed before Deck
 
 $1"
   fi
+  DRIVE_FAILED=0
   run_turn "$prompt" || rc=$?
   if [ "$rc" -eq 0 ]; then
     pipeline_arm
     return 0
   fi
   [ "$rc" -eq "$TURN_RECOVERABLE" ] || exit 1
+  DRIVE_FAILED=1
   if [ -z "$SESSION" ]; then
     if [ "$relaunch" = 1 ]; then
       host_failure 'opened no Deck session even after repeating the launch brief; stopping for a guarded relaunch' || true
@@ -984,12 +986,19 @@ doorbell_without_work() {  # <line>
 
 # Observe new captain sources without reading or submitting the human composer.
 # Remember attempted idle sources so a missing model acknowledgement cannot spin.
+# A turn that failed (a gateway outage, say) never reached the model, so its
+# source is retried after a growing backoff (FM_DECK_CAPTAIN_RETRY_SECS, doubling,
+# capped at 5 minutes) instead of waiting for the next captain message.
 IDLE_CAPTAIN_FLOOR=0
+IDLE_CAPTAIN_RETRY_AT=0
+IDLE_CAPTAIN_BACKOFF=0
+DRIVE_FAILED=0
 idle_captain_ready() {
   local number source sequence
   IFS= read -r number 2>/dev/null < "$WORK/input.captain" || return 1
   case "$number" in ''|*[!0-9]*) return 1 ;; esac
   [ "$number" -gt "$IDLE_CAPTAIN_FLOOR" ] || return 1
+  [ "$(date +%s)" -ge "$IDLE_CAPTAIN_RETRY_AT" ] || return 1
   # A mid-turn acknowledgement can outpace the advisory observer.
   # The indicated immutable ordinary source must still be pending.
   for source in "$STATE/$ID.inbox"/*.msg; do
@@ -1069,9 +1078,22 @@ while :; do
   fi
   INTERRUPTED=0
   if idle_captain_ready; then
+    captain_floor_before=$IDLE_CAPTAIN_FLOOR
     IDLE_CAPTAIN_FLOOR=$IDLE_CAPTAIN_NEXT
     doorbell=$(fm_task_inbox_doorbell_line "$STATE/$ID.inbox/0.msg") || exit 1
     drive_turn "$doorbell"
+    if [ "$DRIVE_FAILED" = 1 ]; then
+      IDLE_CAPTAIN_FLOOR=$captain_floor_before
+      retry=${FM_DECK_CAPTAIN_RETRY_SECS:-30}
+      case "$retry" in ''|*[!0-9]*) retry=30 ;; esac
+      IDLE_CAPTAIN_BACKOFF=$(( IDLE_CAPTAIN_BACKOFF ? IDLE_CAPTAIN_BACKOFF * 2 : retry ))
+      [ "$IDLE_CAPTAIN_BACKOFF" -le 300 ] || IDLE_CAPTAIN_BACKOFF=300
+      IDLE_CAPTAIN_RETRY_AT=$(( $(date +%s) + IDLE_CAPTAIN_BACKOFF ))
+      printf 'fm-deck-worker: captain record %s retried in %ss\n' "$IDLE_CAPTAIN_NEXT" "$IDLE_CAPTAIN_BACKOFF" >&2
+    else
+      IDLE_CAPTAIN_BACKOFF=0
+      IDLE_CAPTAIN_RETRY_AT=0
+    fi
     show_prompt=1
     continue
   fi

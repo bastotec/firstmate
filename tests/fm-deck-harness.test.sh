@@ -1368,7 +1368,15 @@ session = args[args.index('--session') + 1] if '--session' in args else 'host-se
 inbox = pathlib.Path(__file__).parent / 'parent/host.inbox'
 records = list(sorted(inbox.glob('*.msg'))) if 'Firstmate instruction waiting:' in prompt else []
 body = ''.join(record.read_text() for record in records)
-if records:
+if records and (home / 'fail-captain-once').exists():
+    # a gateway outage: the turn fails before the model sees the records
+    (home / 'fail-captain-once').unlink()
+    with (home / 'captain-failures').open('a') as f:
+        f.write(prompt + '\n')
+    print(json.dumps({'type': 'run_started', 'session': session}), flush=True)
+    print(json.dumps({'type': 'run_failed', 'error': 'model gateway request failed (HTTP 502)'}), flush=True)
+    sys.exit(9)
+if records and not (home / 'captain-wakes').exists():
     deadline = time.time() + 2
     while time.time() < deadline:
         starts = (home / 'watch-starts').read_text().splitlines() if (home / 'watch-starts').exists() else []
@@ -1573,6 +1581,60 @@ with (root/'pane').open('w') as output:
 PYTHON
   done
   pass "Deck secondmate stops a turn inside a long tool on Ctrl+C or /quit, and a stuck Deck at its bound"
+}
+
+# A captain wake whose turn failed before the model ran (a gateway outage) is
+# retried after a backoff, instead of waiting for the captain's next message.
+test_secondmate_retries_a_captain_wake_whose_turn_failed() {
+  local dir="$TMP_ROOT/host-captain-retry"
+  make_secondmate_host_fixture "$dir"
+  FM_DECK_CAPTAIN_RETRY_SECS=1 python3 - "$dir" <<'PYTHON' || fail "a failed captain wake was not retried"
+import json, os, pathlib, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+home = root / 'home'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+       str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'),
+       '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+def rows():
+    path = home/'turns'
+    return [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+def idle():
+    path = root/'parent/host.busy-state'
+    return path.exists() and 'state=idle' in path.read_text()
+def wait_for(check, label, bound=40):
+    deadline = time.monotonic() + bound
+    while time.monotonic() < deadline:
+        if check(): return
+        if p.poll() is not None: raise AssertionError(label+': '+(root/'pane').read_text())
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text())
+with (root/'pane').open('w') as output:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+                         env=env, text=True, start_new_session=True)
+    try:
+        wait_for(lambda: idle() and len(rows()) == 1, 'startup turn')
+        (home/'captain-wakes').touch()
+        (home/'fail-captain-once').touch()
+        subprocess.check_call(['bash', '-c', '. "$1"; fm_task_inbox_write "$2" host "$3" >/dev/null', 'w',
+                               str(root/'bin/fm-task-inbox-lib.sh'), str(root/'parent'),
+                               '[fm-captain-direct]\u2063check the build'])
+        wait_for(lambda: (home/'captain-failures').exists(), 'the captain wake ran and failed')
+        assert list((root/'parent/host.inbox').glob('*.msg')), 'the failed turn handled the record'
+        wait_for(lambda: any('check the build' in r['inbox'] for r in rows()), 'the captain wake was retried')
+        assert not list((root/'parent/host.inbox').glob('*.msg')), 'the retried turn did not handle the record'
+        assert 'retried in 1s' in (root/'pane').read_text(), (root/'pane').read_text()
+        handled = len(rows())
+        time.sleep(3)
+        assert len(rows()) == handled, 'a handled captain record was retried again'
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        assert p.wait(timeout=20) == 0, (root/'pane').read_text()
+    finally:
+        if p.poll() is None:
+            os.killpg(p.pid, 9); p.wait()
+PYTHON
+  pass "Deck secondmate retries a captain wake whose turn failed before the model ran"
 }
 
 # A successor watcher that is slow to confirm or dies before confirming used to
@@ -2742,6 +2804,7 @@ test_idle_interrupt_does_not_echo_fake_input
 test_secondmate_host_serializes_wakes_and_steering
 test_secondmate_routine_wakes_think_less
 test_secondmate_stops_a_turn_inside_a_long_tool
+test_secondmate_retries_a_captain_wake_whose_turn_failed
 test_secondmate_host_survives_an_unconfirmed_successor_watcher
 test_secondmate_host_retains_failed_successor_start_evidence
 test_secondmate_mcp_config_on_startup_steer_and_wake
