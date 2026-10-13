@@ -366,6 +366,20 @@ PY
   pass "concurrent permission updates and blocked requests preserve policy invariants"
 }
 
+test_lifecycle_control_is_supervision() {
+  local h rc
+  h=$(home control)
+  br "$h" show >/dev/null
+  add_route "$h" builder buildbox
+  br "$h" allow buildbox supervision --by tester >/dev/null || fail "allow failed"
+  on "$h" builder fm-control.sh builder relaunch >/dev/null 2>&1 || true
+  assert_grep "buildbox" "$h/ssh.log" "fm-control crossed on supervision"
+  br "$h" deny buildbox supervision --by tester >/dev/null
+  rc=0; on "$h" builder fm-control.sh builder interrupt >/dev/null 2>&1 || rc=$?
+  assert_equals 1 "$rc" "fm-control blocked without supervision"
+  pass "fm-control.sh lifecycle calls need the supervision flow"
+}
+
 test_existing_bridges_are_seeded_and_shown_configured
 test_existing_safe_aliases_remain_configurable
 test_idle_summary_requires_reports_not_maintenance
@@ -383,3 +397,4 @@ test_allowed_flow_passes_and_others_stay_blocked
 test_approving_the_request_opens_the_flow_and_tells_the_first_mate
 test_unreadable_record_closes_every_bridge
 test_skill_placement_only_considers_allowed_bridges
+test_lifecycle_control_is_supervision
