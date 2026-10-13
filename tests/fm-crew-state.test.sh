@@ -86,6 +86,7 @@ case "${1:-}" in
     case "${1:-}" in
       status)
         shift
+        [ "${FM_FAKE_STATUS_FAIL:-0}" != 1 ] || exit 1
         [ -z "${FM_FAKE_STATUS_OBSERVED:-}" ] || : > "$FM_FAKE_STATUS_OBSERVED"
         if [ -n "${FM_FAKE_STATUS_HOLD:-}" ]; then
           snapshot=$(cat "$FM_FAKE_AXI_STATUS_FILE")
@@ -122,7 +123,7 @@ make_no_timeout_toolbin() {  # <dir> -> echoes toolbin path
   local dir=$1 tb="$1/notimeoutbin" tool real
   mkdir -p "$tb"
   # curl and jq reach the stream hub the pane read comes from.
-  for tool in bash git grep sed head cut tail dirname perl curl jq awk tr cat; do
+  for tool in bash git grep sed head cut tail dirname perl curl jq awk tr cat date; do
     real=$(command -v "$tool" || true)
     [ -n "$real" ] || fail "missing tool for no-timeout path: $tool"
     ln -s "$real" "$tb/$tool"
@@ -1510,7 +1511,50 @@ EOF
   local out; out=$(run_crew_state "$d" feat-f)
   assert_contains "$out" "state: working" "this branch's own run attributed via the runs list"
   assert_contains "$out" "source: run-step" "runs-list-resolved run -> run-step source"
+  assert_contains "$out" "run=ledger; worktree=$d/wt" "coarse evidence identifies the ledger and this task's copy"
+  assert_not_contains "$out" "run=01RUN" "another branch's run identity is not attributed to this task"
   pass "cross-branch run is attributed via the real runs list"
+}
+
+test_same_branch_rejected_response_uses_ledger_evidence() {
+  reset_fakes
+  local d old_head current_head fixture out record
+  d=$(new_case same-branch-rejected-response)
+  make_repo_on_branch "$d/wt" fm/feat-rejected
+  old_head=$(git -C "$d/wt" rev-parse HEAD)
+  git -C "$d/wt" commit -q --allow-empty -m 'local work advances'
+  current_head=$(git -C "$d/wt" rev-parse --short=7 HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/rejected.meta" $(fm_test_stream_task "$d/state" "rejected") "worktree=$d/wt" "kind=ship"
+  FM_FAKE_RUN_HEAD="$old_head"
+  FM_FAKE_RUNS_LIST="  running    fm/feat-rejected ${current_head}  2026-07-30 22:05"
+  for fixture in run_failed run_running run_parked; do
+    FM_FAKE_AXI_STATUS=$($fixture fm/feat-rejected)
+    out=$(run_crew_state "$d" rejected)
+    assert_contains "$out" "state: working" "the current ledger run wins over a rejected $fixture response"
+    assert_contains "$out" "validating (background run)" "rejected same-branch response detail is not reused"
+    assert_contains "$out" "run=ledger; worktree=$d/wt" "same-branch fallback attributes the ledger"
+    assert_not_contains "$out" "run=01RUN" "the rejected same-branch run ID is not emitted"
+    PATH="$d/fakebin:$PATH" FM_STATE_OVERRIDE="$d/state" "$CREW_STATE" --publish rejected >/dev/null
+    record=$(<"$d/state/rejected.crew-state")
+    assert_contains "$record" "verdict=working" "published state comes from the selected ledger run"
+    assert_contains "$record" $'step_status=running\nrun=\npr=' "publication omits rejected run identity and artifacts"
+    assert_contains "$record" $'step=\n' "publication omits rejected step detail"
+  done
+  FM_FAKE_AXI_STATUS=$(run_parked fm/feat-rejected | grep -v '^  head:')
+  out=$(run_crew_state "$d" rejected)
+  assert_contains "$out" "state: working" "a headless response cannot replace the selected ledger run"
+  assert_contains "$out" "run=ledger; worktree=$d/wt" "a missing response head cannot prove full attribution"
+  assert_not_contains "$out" "run=01RUN" "a headless rejected response has no attributed identity"
+  FM_FAKE_RUN_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  FM_FAKE_AXI_STATUS=$(run_fixing fm/feat-rejected)
+  FM_FAKE_RUNS_LIST=$(printf '  running    fm/feat-rejected bbbbbbb  2026-07-30 22:05\n  failed     fm/feat-rejected %s  2026-07-29 20:00' "$current_head")
+  out=$(run_crew_state "$d" rejected)
+  assert_contains "$out" "state: working" "the anchored continuation remains current with a different response head"
+  assert_contains "$out" "validating (background run)" "a different unfetched response head does not supply full detail"
+  assert_contains "$out" "run=ledger; worktree=$d/wt" "only the selected anchored ledger row is attributed"
+  assert_not_contains "$out" "run=01RUN" "the rejected unfetched run ID is not emitted"
+  pass "same-branch rejected responses use the selected ledger's evidence and publication"
 }
 
 # The runs list is newest-first; a branch with an OLDER completed run must not
@@ -1630,6 +1674,8 @@ EOF
   out=$(run_crew_state "$d" corpse)
   assert_contains "$out" "state: working" "the live run outranks the terminal corpse bound to the same worktree"
   assert_contains "$out" "source: run-step" "the live run is still an attributed run-step verdict"
+  assert_contains "$out" "run=ledger; worktree=$d/wt" "live sibling evidence identifies the ledger, not the superseded response"
+  assert_not_contains "$out" "run=01RUN" "the terminal run identity is not attributed to its live replacement"
   assert_not_contains "$out" "state: failed" "a dead run at the worktree commit must not report a healthy task as failed"
   pass "a live run outranks a terminal run bound to the same worktree"
 }
@@ -2042,7 +2088,8 @@ test_no_timeout_uses_perl_bound() {
   cat > "$d/fakebin/no-mistakes" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${FM_FAKE_NM_CALLS:-/dev/null}"
-while :; do :; done
+# Block without competing for CPU with the bounded reader and its probe.
+/bin/sleep 30
 SH
   chmod +x "$d/fakebin/no-mistakes"
   toolbin=$(make_no_timeout_toolbin "$d")
@@ -2055,12 +2102,16 @@ SH
   start=$SECONDS
   out=$(FM_FAKE_NM_CALLS="$calls_file" PATH="$d/fakebin:$toolbin" FM_STATE_OVERRIDE="$d/state" FM_CREW_STATE_NM_TIMEOUT=1 "$CREW_STATE" feat-timeout)
   elapsed=$((SECONDS - start))
-  assert_contains "$out" "state: working" "timed-out no-mistakes falls back to pane"
-  assert_contains "$out" "source: pane" "timed-out no-mistakes -> pane source"
+  assert_contains "$out" "state: unknown" "timed-out run observation cannot establish working"
+  assert_contains "$out" "source: run-step" "timeout retains the unavailable observation source"
+  assert_contains "$out" "run unavailable or unreadable" "timeout names the unavailable evidence"
+  assert_not_contains "$out" "source: pane" "busy worker activity cannot establish an unavailable validation outcome"
+  assert_not_contains "$out" "state: working" "pane activity must not mask a dead validation run"
+  assert_not_contains "$out" "state: stopped" "timeout is not proof the task stopped"
   [ "$elapsed" -lt 5 ] || fail "perl timeout did not bound no-mistakes calls (elapsed ${elapsed}s)"
   calls=$(awk 'END { print NR + 0 }' "$calls_file" 2>/dev/null || echo 0)
   [ "$calls" -eq 1 ] || fail "empty no-mistakes status triggered extra lookups ($calls calls)"
-  pass "no timeout command uses perl bound"
+  pass "bounded timeout intentionally reports unknown rather than inferring validation from pane activity"
 }
 
 # (i) kind=scout skips the run lookup entirely (its deliverable is a report).
@@ -2575,6 +2626,7 @@ EOF
   assert_contains "$out" "source: run-step" "active run with an unfetched pipeline head still attributes"
   assert_contains "$out" "state: working" "active fix round reads working, not the older failed row"
   assert_contains "$out" "validating (fixing)" "full run detail survives the unfetched pipeline head"
+  assert_contains "$out" "run=01RUN; worktree=$d/wt" "a response matching the selected continuation retains its run identity"
   assert_not_contains "$out" "state: failed" "the older failed row must never answer for the active run"
   pass "active fix round with an unfetched pipeline head reads working"
 }
@@ -2715,6 +2767,7 @@ test_daemon_killed_run_without_live_crew_names_its_cause
 test_daemon_killed_run_with_frozen_busy_record_and_stale_agent_stays_failed
 test_merit_failure_carries_recorded_error
 test_cross_branch_attribution_via_runs_list
+test_same_branch_rejected_response_uses_ledger_evidence
 test_coarse_socket_refusal_reports_blocked
 test_coarse_failed_ledger_with_daemon_down_reports_unknown
 test_cross_branch_attribution_picks_most_recent_row
@@ -2833,5 +2886,55 @@ test_stream_crew_reads_busy_idle_missing_and_unreachable() {
 }
 
 test_stream_crew_reads_busy_idle_missing_and_unreachable
+
+test_consolidated_evidence_and_failures() {
+  reset_fakes
+  local d out now
+  d=$(new_case consolidated-evidence)
+  make_repo_on_branch "$d/wt" fm/consolidated
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/consolidated.meta" "worktree=$d/wt" "kind=ship" "harness=deck"
+  printf 'blocked: obsolete gate\n' > "$d/state/consolidated.status"
+  FM_FAKE_AXI_STATUS=$(run_running fm/consolidated)
+  now=$(date +%s)
+  cat > "$d/state/consolidated.external-wait" <<EOF
+version: 1
+task: consolidated
+declared_epoch: $now
+until_epoch: $((now + 600))
+until: future
+reason: provider delay
+declared_by: supervisor
+EOF
+  out=$(run_crew_state "$d" consolidated)
+  assert_contains "$out" 'state: working' 'run-step still outranks old blocked event and declaration'
+  assert_contains "$out" 'declared-wait: active' 'declaration is independent evidence'
+  assert_contains "$out" 'status-log superseded' 'old event is superseded'
+  assert_contains "$out" 'run=01RUN' 'evidence identifies the observed run'
+  assert_contains "$out" "meta=$d/state/consolidated.meta" 'evidence identifies metadata'
+  assert_contains "$out" "wait=$d/state/consolidated.external-wait" 'evidence identifies declaration'
+  assert_contains "$out" 'observed=' 'observation has a timestamp'
+  # An interrupted response contains attribution but not a state. Never infer working.
+  FM_FAKE_AXI_STATUS=$(printf 'run:\n  id: "PARTIAL"\n  branch: fm/consolidated\n  head: "%s"\n' "$FM_FAKE_RUN_HEAD")
+  out=$(run_crew_state "$d" consolidated)
+  assert_contains "$out" 'state: unknown' 'partial response is unknown, not working'
+  assert_contains "$out" 'partial record' 'unknown names the incomplete observation'
+  assert_contains "$out" 'run=PARTIAL' 'unknown retains run attribution'
+  FM_FAKE_STATUS_FAIL=1
+  export FM_FAKE_STATUS_FAIL
+  out=$(run_crew_state "$d" consolidated)
+  unset FM_FAKE_STATUS_FAIL
+  assert_contains "$out" 'state: unknown' 'failed run read cannot fall back to stale log'
+  assert_contains "$out" 'run unavailable or unreadable' 'failed read carries its reason'
+  assert_not_contains "$out" 'state: blocked' 'failed read never promotes old event'
+  assert_not_contains "$out" 'state: stopped' 'unavailable is not stopped'
+  rm "$d/state/consolidated.meta"
+  out=$(run_crew_state "$d" consolidated)
+  assert_contains "$out" 'state: unknown' 'missing metadata is unknown'
+  assert_contains "$out" "meta=$d/state/consolidated.meta" 'missing record carries reference'
+  pass 'consolidated state: precedence, independent wait evidence, interrupted response and unavailable run'
+}
+
+test_consolidated_evidence_and_failures
 
 echo "all fm-crew-state tests passed"

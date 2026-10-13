@@ -35,7 +35,12 @@ make_tools() { # <world>
 line="state: ${FM_FAKE_CREW_STATE:-unknown} · source: run-step"
 [ -z "${FM_FAKE_CREW_STATE_DETAIL:-}" ] || line="$line · $FM_FAKE_CREW_STATE_DETAIL"
 [ -z "${FM_FAKE_CREW_STATE_ERROR:-}" ] || line="$line · run-error: $FM_FAKE_CREW_STATE_ERROR"
+# The real reader always appends these, and observed= changes on every read.
+line="$line · declared-wait: inactive · evidence: meta=fake; observed=${FM_FAKE_CREW_STATE_OBSERVED:-$(date +%s).$$.$RANDOM}"
 printf '%s\n' "$line"
+if [ -n "${FM_FAKE_CREW_STATE_LOG:-}" ]; then
+  printf '%s\n' "$line" >> "$FM_FAKE_CREW_STATE_LOG"
+fi
 SH
   cat > "$fake/tmux" <<'SH'
 #!/usr/bin/env bash
@@ -153,9 +158,16 @@ reap() { kill "$1" 2>/dev/null || true; wait "$1" 2>/dev/null || true; }
 # The main retains a terminal presentation receipt until the corresponding wake
 # is handled and acknowledged.
 test_main_direct_terminal_presentation_receipt() {
-  local err seq generation
+  local err seq generation observed
   make_world main-direct; write_child "$MAIN" child 'done: PR https://example.test/owner/repo/pull/1 checks green'
-  FM_FAKE_CREW_STATE='done' FM_FAKE_CREW_STATE_DETAIL='run completed' run_reconcile "$MAIN" --startup
+  for observed in 1800000000 1800000001; do
+    FM_FAKE_CREW_STATE='done' FM_FAKE_CREW_STATE_DETAIL='run completed' \
+      FM_FAKE_CREW_STATE_OBSERVED="$observed" FM_FAKE_CREW_STATE_LOG="$WORLD/state-reads" \
+      run_reconcile "$MAIN" --startup
+    grep -Fq "observed=$observed" "$WORLD/state-reads" \
+      || fail "main rescan did not read observation $observed"
+    [ "$(outcome_count "$MAIN" pending)" = 1 ] || fail "main rescan did not retain exactly one presentation receipt"
+  done
   [ "$(wake_count "$MAIN" 'inactive-outcome:')" = 1 ] || fail "main did not queue terminal presentation"
   grep -Fq 'detail=run completed' "$MAIN/state/.wake-queue" \
     || fail "main presentation dropped the successful terminal detail"
@@ -170,6 +182,14 @@ test_main_direct_terminal_presentation_receipt() {
   [ -n "$seq" ] && [ -n "$generation" ] || fail "main presentation did not require durable acknowledgement"
   FM_HOME="$MAIN" FM_STATE_OVERRIDE="$MAIN/state" "$DRAIN" --ack-through "$seq" --recovery-generation "$generation"
   [ "$(outcome_count "$MAIN" presented)" = 1 ] || fail "acknowledged presentation did not receive its own receipt"
+  FM_FAKE_CREW_STATE='done' FM_FAKE_CREW_STATE_DETAIL='run completed' \
+    FM_FAKE_CREW_STATE_OBSERVED=1800000002 FM_FAKE_CREW_STATE_LOG="$WORLD/state-reads" \
+    run_reconcile "$MAIN" --startup
+  grep -Fq 'observed=1800000002' "$WORLD/state-reads" \
+    || fail "acknowledged outcome rescan did not read the changed observation"
+  [ "$(outcome_count "$MAIN" presented)" = 1 ] || fail "rescan changed the acknowledged presentation receipt"
+  [ "$(outcome_count "$MAIN" pending)" = 0 ] || fail "changed observation time recreated an acknowledged outcome"
+  [ "$(wake_count "$MAIN" 'inactive-outcome:')" = 0 ] || fail "changed observation time notified an acknowledged outcome again"
   pass "main direct terminal presentation has a durable receipt"
 }
 
@@ -413,10 +433,17 @@ test_secondmate_remote_route_ledger_delivery() {
 # The inactive publication must preserve that distinction while carrying the
 # infrastructure cause to the parent.
 test_inactive_delivery_carries_the_run_recorded_error() {
+  local observed
   make_world inactive-error; bind_secondmate local
   write_child "$MATE" child 'working: mid-validation'
-  FM_FAKE_CREW_STATE='failed' FM_FAKE_CREW_STATE_DETAIL='run failed' \
-    FM_FAKE_CREW_STATE_ERROR='daemon shutting down' run_reconcile "$MATE" --startup
+  for observed in 1800000000 1800000001; do
+    FM_FAKE_CREW_STATE='failed' FM_FAKE_CREW_STATE_DETAIL='run failed' \
+      FM_FAKE_CREW_STATE_ERROR='daemon shutting down' FM_FAKE_CREW_STATE_OBSERVED="$observed" \
+      FM_FAKE_CREW_STATE_LOG="$WORLD/state-reads" run_reconcile "$MATE" --startup
+    grep -Fq "observed=$observed" "$WORLD/state-reads" \
+      || fail "failed outcome rescan did not read observation $observed"
+    [ "$(outcome_count "$MATE" reported)" = 1 ] || fail "failed outcome rescan did not retain exactly one receipt"
+  done
   grep -Fq "failed [key=inactive-outcome-mate-child-failed]: inactive terminal child=child fingerprint=" \
     "$MAIN/state/mate.status" \
     || fail "the inactive path did not deliver its terminal line: $(cat "$MAIN/state/mate.status" 2>/dev/null)"
@@ -424,21 +451,35 @@ test_inactive_delivery_carries_the_run_recorded_error() {
     || fail "the parent line did not preserve the detail/error split: $(cat "$MAIN/state/mate.status" 2>/dev/null)"
   ! grep -Fq "error=run failed" "$MAIN/state/mate.status" \
     || fail "the parent line mislabeled the generic detail as an error: $(cat "$MAIN/state/mate.status" 2>/dev/null)"
-  [ "$(outcome_count "$MATE" reported)" = 1 ] || fail "the inactive delivery left no durable receipt"
+  [ "$(outcome_count "$MATE" reported)" = 1 ] || fail "repeated failed outcome did not retain exactly one durable receipt"
+  [ "$(outcome_count "$MATE" pending)" = 0 ] || fail "repeated failed outcome left an unreported receipt"
+  [ "$(wc -l < "$MAIN/state/mate.status" | tr -d ' ')" = 1 ] \
+    || fail "changed observation time duplicated the failed outcome's parent notification"
   pass "an inactive terminal delivery carries the run's distinct recorded error"
 }
 
 # A successful terminal detail remains ordinary detail and creates no error
 # field on the parent line.
 test_inactive_successful_terminal_detail_is_not_an_error() {
+  local observed
   make_world inactive-success-detail; bind_secondmate local
   write_child "$MATE" child 'working: mid-validation'
-  FM_FAKE_CREW_STATE='done' FM_FAKE_CREW_STATE_DETAIL='run completed' \
-    run_reconcile "$MATE" --startup
+  for observed in 1800000000 1800000001; do
+    FM_FAKE_CREW_STATE='done' FM_FAKE_CREW_STATE_DETAIL='run completed' \
+      FM_FAKE_CREW_STATE_OBSERVED="$observed" FM_FAKE_CREW_STATE_LOG="$WORLD/state-reads" \
+      run_reconcile "$MATE" --startup
+    grep -Fq "observed=$observed" "$WORLD/state-reads" \
+      || fail "completed outcome rescan did not read observation $observed"
+    [ "$(outcome_count "$MATE" reported)" = 1 ] || fail "completed outcome rescan did not retain exactly one receipt"
+  done
   grep -Fq "detail=run completed" "$MAIN/state/mate.status" \
     || fail "the parent line dropped a successful terminal detail: $(cat "$MAIN/state/mate.status" 2>/dev/null)"
   ! grep -Fq 'error=' "$MAIN/state/mate.status" \
     || fail "a successful terminal detail was published as an error: $(cat "$MAIN/state/mate.status" 2>/dev/null)"
+  [ "$(outcome_count "$MATE" reported)" = 1 ] || fail "repeated completed outcome did not retain exactly one durable receipt"
+  [ "$(outcome_count "$MATE" pending)" = 0 ] || fail "repeated completed outcome left an unreported receipt"
+  [ "$(wc -l < "$MAIN/state/mate.status" | tr -d ' ')" = 1 ] \
+    || fail "changed observation time duplicated the completed outcome's parent notification"
   pass "a successful terminal detail is never published as an error"
 }
 
@@ -773,7 +814,9 @@ SH
   [ "$elapsed" -le 3 ] || fail "stalled state read exceeded aggregate scan budget (${elapsed}s)"
 
   write_child "$MAIN" b 'done: green'
-  FM_INACTIVE_RECONCILE_BUDGET_SECS=1 run_reconcile "$MAIN" --startup
+  # The first scan pins the stalled-read bound. Give the resumed scan enough
+  # budget to publish, so process startup cost is not confused with starvation.
+  FM_INACTIVE_RECONCILE_BUDGET_SECS=5 run_reconcile "$MAIN" --startup
   grep -Fq 'child=b state=done' "$MAIN/state/.wake-queue" \
     || fail "next bounded scan did not resume with the following child"
   pass "stalled state reads are bounded without starving later children"

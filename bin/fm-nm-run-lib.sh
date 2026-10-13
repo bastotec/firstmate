@@ -2,7 +2,7 @@
 # Shared no-mistakes axi run attribution primitives.
 #
 # ONE owner for the no-mistakes run-attribution primitives used by
-# fm-crew-state.sh (read-only current-state reporting) and fm-teardown.sh
+# fm-task-state-lib.sh (current-state derivation) and fm-teardown.sh
 # (pre-teardown run abort, see its "Fix 1" header comment). Both bind a run
 # by strict branch-and-head identity first, and both then recognize a provable
 # pipeline-owned continuation through fm_nm_runs_status_for_worktree below:

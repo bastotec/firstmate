@@ -2186,7 +2186,10 @@ test_pipeline_inconclusive_read_keeps_watching() {
   before=$(wc -l < "$dir/nm-queries.log")
   touch "$dir/nm-unreadable"
   line=$(PATH="$dir/fakebin:$PATH" FM_TEST_NM_RUN="$dir/nm-run" FM_STATE_OVERRIDE="$dir/state" "$ROOT/bin/fm-crew-state.sh" t1)
-  assert_not_contains "$line" 'source: run-step' "the unreadable fixture still yielded a run-step"
+  # An unavailable validation outcome is explicitly unknown; idle pane activity
+  # cannot establish that the run stopped or left working.
+  assert_contains "$line" 'state: unknown · source: run-step' "the unreadable run did not remain explicitly unknown"
+  assert_contains "$line" 'run unavailable or unreadable' "the unknown observation lost its unavailable-evidence reason"
   printf '%s\n' "$line" > "$dir/inconclusive-state.out"
   # At least three more polls (1s apart), however slow a loaded host makes each
   # state read; a watch that stopped never gets there.

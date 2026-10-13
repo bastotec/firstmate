@@ -37,8 +37,9 @@
 # - This record is supervision state, never worker progress: the script writes
 #   only this file and its archive, and never touches state/<id>.status.
 # - It never suppresses a genuinely new event. Only the watcher's stale/wedge
-#   absorb paths read it (bin/fm-watch.sh); the status-signal scan, check
-#   results, terminal outcomes, and PR-merge polls never do, so all of those
+#   absorb paths use it to defer escalation (bin/fm-watch.sh). The current-state
+#   interface in bin/fm-task-state-lib.sh also observes it independently of the
+#   task outcome; status signals, check results, terminal outcomes, and PR merges
 #   still wake the supervisor immediately while the wait holds.
 # - It must not outlive the wait: it expires at its stated time, and `clear`
 #   removes it the moment the external condition clears. Both restore ordinary
