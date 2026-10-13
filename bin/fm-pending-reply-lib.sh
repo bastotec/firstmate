@@ -759,6 +759,12 @@ fm_pending_reply_observe_busy() {  # <state-dir> <corr_id> <busy_state>
       fi
       ;;
     idle)
+      # An idle mate that has not yet taken the request out of its inbox only
+      # finished an earlier turn; counting that as the request's turn sent the
+      # repost request before the mate ever read the original.
+      if [ -z "$completed" ] && fm_pending_reply_request_unread "$state" "$(fm_pending_reply_get "$rec" task_id)" "$corr"; then
+        return 0
+      fi
       if [ -z "$completed" ]; then
         # Prefer a busy->idle transition. Also accept a pure idle after delivery
         # when the first observation already missed the busy window (fast turns).
@@ -776,6 +782,20 @@ fm_pending_reply_observe_busy() {  # <state-dir> <corr_id> <busy_state>
       ;;
   esac
   return 0
+}
+
+# 0 when this home's steering inbox for <task_id> still holds an unhandled
+# record carrying <corr_id>. Only a local secondmate's inbox lives here; for a
+# remote mate the directory is absent and this returns 1.
+fm_pending_reply_request_unread() {  # <state-dir> <task_id> <corr_id>
+  local dir=$1/$2.inbox f token
+  [ -n "$2" ] && [ -d "$dir" ] || return 1
+  token=$(fm_pending_reply_corr_token "$3")
+  for f in "$dir"/*.msg; do
+    [ -f "$f" ] || continue
+    grep -qF "$token" "$f" 2>/dev/null && return 0
+  done
+  return 1
 }
 
 fm_pending_reply_fallback_idle_eligible() {  # <record-path>

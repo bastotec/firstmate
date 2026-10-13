@@ -1641,6 +1641,11 @@ age_of() {  # seconds since file mtime; "due immediately" if missing
 scan_signals() {
   local f sig sf
   for f in "$STATE"/*.status "$STATE"/*.turn-ended; do
+    # A remote secondmate's own parent channel is outgoing: its lines are this
+    # mate's reports, so they never wake this same mate (bin/fm-parent-channel-lib.sh).
+    case "$f" in
+      */parent-replies.status) [ -e "$FM_HOME/.fm-secondmate-parent" ] && continue ;;
+    esac
     if [ ! -e "$f" ]; then
       case "$f" in *.status) [ -L "$f" ] || continue ;; *) continue ;; esac
     fi

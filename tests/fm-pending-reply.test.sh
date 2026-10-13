@@ -128,6 +128,30 @@ test_normal_correlated_reply_resolves_once() {
   pass "normal correlated reply resolves once (idempotent)"
 }
 
+test_unread_request_is_not_a_completed_turn() {
+  local home state corr rec
+  home=$(setup_parent unread-request)
+  state="$home/state"
+  corr=$(fm_pending_reply_create "$home" "$state" "hibit" "status of phase 7")
+  fm_pending_reply_mark_delivered "$state" "$corr"
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  mkdir -p "$state/hibit.inbox/handled"
+  printf 'corr=%s status of phase 7\n' "$corr" > "$state/hibit.inbox/001.msg"
+  # The mate finishes an earlier turn while the request still waits in its inbox.
+  fm_pending_reply_observe_busy "$state" "$corr" busy
+  fm_pending_reply_observe_busy "$state" "$corr" idle
+  [ -z "$(fm_pending_reply_get "$rec" request_turn_completed_epoch)" ] \
+    || fail "an idle mate with the request still unread has not completed the request's turn"
+  if fm_pending_reply_send_recovery "$state" "$corr" 2>/dev/null; then
+    fail "no repost may go out while the original request is unread"
+  fi
+  mv "$state/hibit.inbox/001.msg" "$state/hibit.inbox/handled/001.msg"
+  fm_pending_reply_observe_busy "$state" "$corr" idle
+  [ -n "$(fm_pending_reply_get "$rec" request_turn_completed_epoch)" ] \
+    || fail "once the mate handled the request, idle completes its turn"
+  pass "an unread request is not a completed turn, so it gets no early repost"
+}
+
 test_completed_turn_no_report_triggers_one_recovery() {
   local home state corr hook_log rec
   home=$(setup_parent one-recovery)
@@ -1617,5 +1641,6 @@ test_mechanical_helper_writes_parent_channel
 test_remote_parent_replies_is_not_wrong_home
 test_local_parent_replies_is_wrong_home_evidence
 test_escalated_undelivered_correlation_stays_retryable
+test_unread_request_is_not_a_completed_turn
 
 printf 'ok - all pending-reply tests passed\n'

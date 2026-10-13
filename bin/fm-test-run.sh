@@ -323,7 +323,8 @@ family_for_basename() {
     fm-watch-triage.test.sh|fm-watch-triage-stale.test.sh|fm-watch-triage-declared-wait.test.sh|\
     fm-watch-triage-resurface.test.sh|fm-watch-triage-events.test.sh|\
     fm-external-wait.test.sh|fm-task-inbox.test.sh|\
-    fm-watcher-lock.test.sh|fm-inactive-reconcile.test.sh)
+    fm-watcher-lock.test.sh|fm-inactive-reconcile.test.sh|\
+    fm-watch-parent-channel-echo.test.sh)
       printf '%s\n' watcher-wake-lock
       ;;
     fm-backlog-handoff.test.sh|fm-on.test.sh|fm-remote-backlog-handoff.test.sh|\
