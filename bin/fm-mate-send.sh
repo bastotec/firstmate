@@ -8,13 +8,10 @@
 # Local homes write the parent spool; remote homes append their parent channel.
 # Exit 0 prints "queued: corr=<corr> to=<target>", not confirmation of delivery.
 # Each invocation mints a new corr; rerunning sends a new message, not a retry.
-# Delivery follows on the parent's next watcher poll, subject to bridge gates.
+# bin/fm-mate-route.sh owns delivery timing, retries, and failure bounces.
 # Receiver-specific replies are named in the carrier (bin/fm-operational-input.sh).
-# Refused/failed deliveries are bounced with the corr and reason, and logged.
-# Cross-machine delivery requires the bridge's "messages" flow (bin/fm-bridge.sh).
-# A remote sender also needs "reports" for the existing parent-channel pull.
-# A denied reports flow leaves the message queued until allowed; bin/fm-on.sh
-# raises the bridge approval request. No messages-gated retrieval path is added.
+# For bridge prerequisites and queued remote-channel retrieval, see the
+# BRIDGES contract in bin/fm-mate-mail-lib.sh.
 # Text has a fixed 4000-byte cap; point at a data/*.md file for more.
 # A file pointer does not transfer the file (see bin/fm-mate-mail-lib.sh).
 # Workers cannot use this path; they report to their own mate instead.

@@ -5,7 +5,7 @@
 #   --decision-answer requires an exact task id and keyed answer, resolves
 #   regular metadata under the supervision lease and metadata lock, and refuses
 #   harness-native text rather than leaving the durable inbox plane.
-#   It accepts one exact answer argument, never --key or fire-and-forget,
+#   It accepts one exact answer argument, never key mode or fire-and-forget,
 #   and has no legacy label fallback or explicit endpoint escape hatch.
 #   Without this flag the legacy selector and typed-plane behavior is unchanged.
 #   For ordinary sends, <target> may be an exact task id, a legacy fm-<id>
@@ -20,6 +20,9 @@
 # bin/fm-primary-steer.sh owns its publication and delivery-check contract.
 # Special keys instead of text: fm-send.sh <target> --key Enter
 # Supported keys: Escape, Enter, C-c and C-u.
+# For task and explicit backend targets, `--` ends option parsing: every
+# following argument is message text, even `--key` or another option spelling.
+# This does not enable options or `--` for the reserved chat-primary selector.
 #
 # Two data planes:
 #
@@ -103,8 +106,8 @@
 # live-charter-compatible from-firstmate carrier owned by
 # bin/fm-operational-input.sh so the secondmate
 # routes its reply via its status file or a status-pointed doc instead of
-# stranding it in chat the main firstmate never reads; the from-captain exception
-# is described below. On the inbox plane the
+# stranding it in chat the main firstmate never reads; the from-captain and
+# from-mate cases are described below. On the inbox plane the
 # marker travels verbatim inside the recorded body. A crewmate/scout target,
 # an explicit backend-target escape-hatch target, and the --key path are never
 # marked - their behavior is unchanged.
@@ -134,8 +137,8 @@
 # to acknowledge the message (AGENTS.md section 9).
 #
 # Captain-direct echo guard: bin/fm-captain-direct-lib.sh owns echo matching and
-# its fixed windows. A matching later steer from this home to the same
-# secondmate is not sent. fm-send prints
+# its fixed windows. A matching later ordinary firstmate steer from this home
+# to the same secondmate is not sent. fm-send prints
 # `suppressed=captain-direct-echo corr=<id>` on stdout and why on stderr, logs
 # it to state/captain-direct.log, and exits 0: this is a deliberate no-op, not a
 # refusal inviting a rephrased retry. --correction sends it anyway (logged),
@@ -150,7 +153,6 @@
 # bin/fm-operational-input.sh instead of the from-firstmate mark, and creates no
 # pending-reply expectation. The mate-mail corr is the delivery id, so a retry
 # deduplicates onto the same local or remote record.
-# Fleet Town adopting --from-captain is a follow-up in its own repository.
 #
 # Parent-owned pending-reply expectation: every newly marked secondmate request
 # except an explicit --fire-and-forget delivery receives a privacy-safe
@@ -464,9 +466,7 @@ DELIVERY_TASK_ID=
 [ -z "$TARGET_META" ] || DELIVERY_TASK_ID=$(fm_send_id_from_meta "$TARGET_META")
 shift
 
-# Collect --resolve-key flags (answerer-closes; see the header contract). They
-# must precede --key or the message text; everything after the last flag is the
-# message exactly as before, so ordinary sends are byte-identical.
+# The header owns option parsing and the explicit message-text boundary.
 RESOLVE_KEYS=
 FIRE_AND_FORGET_ID=
 FROM_CAPTAIN=0
@@ -583,11 +583,8 @@ if [ "$DECISION_ANSWER" = 1 ]; then
   fi
 fi
 
-# Classify a from-firstmate -> secondmate request. Only a task selector resolved
-# through this home's meta whose authoritative kind is secondmate is marked: the
-# secondmate then routes its reply via the status path (see fm-marker-lib.sh).
-# An explicit backend target (the escape hatch for endpoints outside this home)
-# and any crewmate/scout target are left unmarked, and so is the --key path.
+# Identify secondmate task selectors; the header owns carrier selection and
+# reply tracking, including the from-mate exception to firstmate marking.
 MARK_FROM_FIRSTMATE=0
 PENDING_REPLY_CORR=
 PENDING_REPLY_CREATED=0
@@ -876,10 +873,7 @@ else
     fm_message_mark_captain_direct "$MESSAGE" MESSAGE
   fi
   if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ -n "$FROM_MATE" ]; then
-    # A peer message carries the from-mate tag instead of the from-firstmate
-    # mark: it is not a first-mate request and expects no parent reply. The
-    # mate-mail corr doubles as the delivery id, so the tagged body is stable
-    # and a retried delivery deduplicates onto the same record.
+    # The header's from-mate contract owns the carrier and delivery identity.
     fm_message_mark_from_mate "$FROM_MATE" "$FIRE_AND_FORGET_ID" "$MESSAGE" MESSAGE secondmate \
       || { echo "error: could not tag the peer message from $FROM_MATE; nothing was sent" >&2; exit 1; }
     FM_SEND_IDEMPOTENT=1
