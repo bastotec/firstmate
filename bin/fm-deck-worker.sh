@@ -61,7 +61,8 @@
 # every turn; its results become later turns, with queued stdin serialized
 # alongside them. pre_complete checks lock ownership instead of worker evidence.
 # The driver postcondition does not park without an owned watcher or a pending
-# result. A failed watcher exits loudly rather than leaving an idle host blind.
+# result. Unrecoverable watcher failures stop the driver rather than leaving an
+# idle host blind; the recovery exceptions are defined below.
 #
 # HOME HOST INVARIANTS (--secondmate)
 # The driver, not a turn-scoped Deck process, owns the home session lock.
@@ -78,8 +79,9 @@
 # Startup, lock, watcher, and event-capture failures publish failure status and
 # stop the driver, except a successor watcher that does not confirm startup in
 # time or dies first, and a refused handling-delivery confirmation: the driver
-# logs that refusal to stderr, stops the remaining arm child, starts a fresh
-# watcher with no predecessor claim, and continues the turn without publishing
+# logs the condition to stderr, stops the remaining arm child, clears the handoff
+# claims, and starts a fresh watcher with no predecessor claim. If that start
+# fails, the driver stops; otherwise it continues the turn without publishing
 # failed status. Wakes remain durable in the home queue for bin/fm-wake-drain.sh;
 # this recovery does not fix the cause of a successor watcher's death.
 # A failed turn is recorded and published the same way but does NOT stop the
@@ -124,7 +126,8 @@
 #                           Deck itself if it has not exited (default 15)
 #   FM_DECK_WATCH_CONFIRM_SECS  how long a secondmate host waits for a
 #                           successor watcher to confirm startup before it
-#                           starts a fresh one instead (default 15)
+#                           starts a fresh one instead (seconds; default 15;
+#                           empty, zero, or nonnumeric values use the default)
 #   FM_DECK_MCP_CONFIG     when set, pass a non-empty value as-is to every
 #                           `deck run --mcp-config`, even if the path is missing;
 #                           an empty value disables MCP. When unset, use
@@ -400,12 +403,8 @@ watch_wait_handling_successor() {
   watch_restart_unclaimed "successor watcher did not confirm startup within ${WATCH_CONFIRM_SECS}s"
 }
 
-# A successor watcher that is slow to start, or dies before confirming, is not a
-# reason to end the host: it gets the same recovery as a refused handling
-# confirmation below. The arm is stopped and a fresh watcher starts with no
-# predecessor claim; the wakes it would have carried stay durable in the home
-# queue for bin/fm-wake-drain.sh. Only a failure to start that fresh watcher
-# stops the driver.
+# The header owns the nonfatal replacement contract shared with refused
+# handling-delivery confirmation below.
 watch_restart_unclaimed() {  # <reason>
   printf 'fm-deck-worker: warning: %s; starting a fresh watcher\n' "$1" >&2
   WATCH_HANDLING_GENERATION=''

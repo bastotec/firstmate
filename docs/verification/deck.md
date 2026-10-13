@@ -40,6 +40,7 @@ It also exercises an exact queued `/quit` ahead of pending watcher work after co
 The driver header owns the bounded grace that admits the delayed exit.
 The `test_secondmate_survives_a_refused_handling_confirmation` case in that suite injects a refusal through a fake `fm-watch-arm.sh` while running the real driver.
 Its assertions cover stderr-only diagnostics, retirement of the refused watcher, a replacement with no predecessor claim, absence of `failed:` status, delivery of the original and replacement wakes in the same Deck session, and clean `/quit`; the driver header owns the recovery contract.
+The `test_secondmate_host_survives_an_unconfirmed_successor_watcher` case injects both a silent successor and one that exits before confirmation, then asserts a stderr replacement warning, no corresponding failure status, two subsequent wake turns, and clean `/quit`.
 The driver refuses to run Deck when it cannot record `turn-start`, and a failed closing busy-state write publishes failure evidence and makes the turn fail.
 Turn-lifecycle and progress-refresh failures retain `fm-busy-event.sh`'s underlying stderr in both the pane and the appended `failed:` status, including stale-generation diagnostics.
 The evidence gate snapshots the status log's byte offset at turn start and searches a bounded appended suffix for a complete `done`, `needs-decision`, `blocked`, `failed`, or `working` line.
