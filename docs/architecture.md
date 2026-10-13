@@ -42,7 +42,7 @@ A terminal record closes the pending recovery episode at that turn boundary: a s
 `fm_turn_failed_superseded_line` in `bin/fm-classify-lib.sh` owns the discrimination from those two ordered records in the append-only status log.
 The unique record id binds the marker to the exact failure even when unrelated status writers append concurrently or a later failure reuses the same driver generation.
 The later generation-and-record-tagged working record keeps that supersession durable after the replay goes idle.
-Only the exact `turn-failed` backstop participates; silent successful turns, interrupted turns, unstamped legacy lines, mismatched generations, and ordinary `failed:` lines keep their existing semantics.
+Only the exact stamped `turn-failed` backstop participates; the fail-closed unstamped fallback used when record-id minting fails cannot be superseded, and silent successful turns, interrupted turns, legacy lines, mismatched generations, and ordinary `failed:` lines keep their existing semantics.
 A superseded failure leaves the actionable status span and is acknowledged if the outcome backstop encounters it, while away-mode staleness reads the later working record through its ordinary non-terminal path.
 
 ### Stale panes and the wedge ladder
