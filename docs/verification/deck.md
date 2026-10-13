@@ -27,11 +27,11 @@ Deck's own tests pin the original hook contract (`cargo test --locked`, 85 tests
 `tests/fm-deck-harness.test.sh` drives the real driver against a fake `deck` that logs its arguments, honours `--session`, and runs `pre_complete` plus `pre_tool_use` / `post_tool_use` with the tool event on stdin:
 
 ```sh
-bin/fm-test-run.sh tests/fm-deck-harness.test.sh
+bin/fm-test-run.sh tests/fm-deck-harness.test.sh tests/fm-deck-turn-failure-supersession.test.sh
 ```
 
-The suite prints one `ok - ...` line per case; its case names are the current coverage list.
-Its validation-record case exercises a run starting during a blocking tool call after the pre-tool hook fired.
+These suites print one `ok - ...` line per case; their case names are the current coverage list.
+The Deck harness's validation-record case exercises a run starting during a blocking tool call after the pre-tool hook fired.
 [`tests/fm-crew-state.test.sh`](../../tests/fm-crew-state.test.sh) covers publication, serialized observations, follower ownership, grace expiry and re-arming, and detached publication with polling disabled; [`bin/fm-task-state-lib.sh`'s header](../../bin/fm-task-state-lib.sh) owns those contracts.
 
 The spawn-side effort restrictions owned by [Harness support](../configuration.md#harness-support) are pinned by `tests/fm-bootstrap.test.sh`, `tests/fm-deck-harness.test.sh`, and `tests/fm-control-relaunch.test.sh`.
@@ -50,6 +50,8 @@ Turn-lifecycle and progress-refresh failures retain `fm-busy-event.sh`'s underly
 The evidence gate snapshots the status log's byte offset at turn start and searches a bounded appended suffix for a complete `done`, `needs-decision`, `blocked`, `failed`, or `working` line.
 Firstmate-owned bookkeeping lines such as `resolved:` and `note:` do not satisfy the gate or the driver's postcondition.
 Those reads, the driver's fallback append, and turn-end publication use Python 3 descriptor-bound I/O, reject symlinks and non-regular or multiply linked files, and never touch an unsafe target.
+`tests/fm-deck-turn-failure-supersession.test.sh` pins ordered, captured-endpoint classification for exact recovery-generation-stamped `turn-failed` records, including mismatched generations, repeated failures, and supersession that remains durable after the recovery episode moves.
+The Deck harness proves that the producer stamps the failure's actual append offset after Firstmate bookkeeping and binds a later turn's worker-authored `working:` evidence to the same recovery generation.
 The terminal regression drives two real `fm-send.sh` steers through the Python stream hub and PTY agent, confirming each submit from the cleared composer after the turn finishes while proving no transient rendered working row remains.
 The finished-turn row renders its UTC completion time from `run_finished.finished_at` and falls back to the timestamp-less wording when the field is absent, while the idle prompt notes the UTC idle instant beside its bare `❯` row.
 
