@@ -19,24 +19,38 @@
 #   mate-message corr=<16 hex> to=<mate-id|primary> [re=<16 hex>]: <escaped text>
 # appended to the mate's own state/parent-replies.status. The text escapes
 # backslash as \\, newline as \n and tab as \t, so one message is one line.
+# Well-formed peer lines are diverted into the spool before ordinary report
+# document fetches or status mirroring. A data/*.md pointer in a peer message
+# does not fetch, rewrite, or transfer that file to the receiver.
 #
 # SPOOL (primary home):
 #   state/mate-mail/pending/<from>@<corr>.msg    waiting for the router
 #   state/mate-mail/{delivered,refused,failed}/  terminal, same name
 #   state/mate-mail/pending/<from>@<corr>.tries  "<count> <first-epoch>"
+# Pending sidecars with the same <from>@<corr> stem:
+#   .publishing          primary publication attempted; check its steering inbox
+#   .woken-delivered     successful no-chat primary delivery wake
+#   .woken-undelivered   refused/failed notification wake, never delivery proof
+#   .undelivered         terminal outcome and reason, one line each; retry only
+#                        that bookkeeping, not delivery
+# The router removes these sidecars after archiving the message.
 # Record:
 #   schema=fm-mate-mail.v1
 #   from=<id>  to=<id|primary>  corr=<16 hex>  re=<16 hex or empty>  at=<utc>
 #   --
 #   <exact text>
 # A name already present in any of the four directories is a duplicate, so a
-# replayed remote delta or a re-run send never queues a message twice.
+# replayed remote delta never queues the same sender/corr twice.
 #
-# LOG (primary home): state/mate-messages.log, one JSON object per line,
-#   {at, from, to, corr, re, outcome: delivered|refused|failed, reason, text}
-# It is the first mate's oversight copy and Fleet Town's thread source. The
-# router writes it (and any check wake) before archiving a record, at most once
-# per sender/corr, so an interrupted pass completes its bookkeeping on retry.
+# LOG (primary home): state/mate-messages.log, one complete JSON object per
+# terminal message,
+#   {at, from, to, corr, re, outcome: delivered|refused|failed, reason, text, sent_at}
+# `at` is the log time and `sent_at` is the spool record's original time.
+# It is the first mate's oversight copy. The router writes it (and any check
+# wake) before archiving a record, at most once per sender/corr, so an
+# interrupted pass completes its bookkeeping on retry. Only complete valid
+# records count as logged; an incomplete tail is left on its own line before
+# the logger appends the complete record.
 #
 # BRIDGES. The router requires the `messages` flow on the sender's and the
 # target's bridge. A remote sender's channel is also pulled under the `reports`

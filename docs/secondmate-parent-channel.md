@@ -44,11 +44,7 @@ A missed-reply escalation includes the complete first sighting path and line num
 
 ## Peer messages
 
-A second mate may message another second mate, or the first mate, with `bin/fm-mate-send.sh`.
-Remote homes never call back to the parent, so a peer message rides the sender's parent channel up to the main home, and `bin/fm-mate-route.sh` delivers it from there on the next watcher poll, through the same durable inbox and bridge gates (`messages` flow) as any first-mate steer.
-That single route is also the first mate's oversight: every delivered, refused, or failed message is one line in the main home's `state/mate-messages.log`, and only a refused or failed one wakes the first mate and is bounced to its sender.
-A peer message is a spool record, never a status line, so it does not wake the first mate or open a decision.
-[`bin/fm-mate-mail-lib.sh`](../bin/fm-mate-mail-lib.sh) owns the wire line, spool, and log; `tests/fm-mate-mail.test.sh` covers them.
+[`AGENTS.md` section 9](../AGENTS.md#9-escalation-and-captain-etiquette) owns when to message a peer; the [`fm-mate-send.sh` header](../bin/fm-mate-send.sh) owns usage, and [`fm-mate-mail-lib.sh`](../bin/fm-mate-mail-lib.sh) owns the parent-channel diversion, bridge prerequisites, spool, and oversight log.
 
 ## What is deliberately not built
 
@@ -67,6 +63,7 @@ A peer message is a spool record, never a status line, so it does not wake the f
 `tests/fm-send-secondmate-marker.test.sh` covers the captain-direct tag for secondmate and worker targets, its refusals, and a correlated line resolving a captain message's pending reply.
 `tests/fm-captain-direct-echo.test.sh` covers the parent's one FYI note per captain-direct delivery, the echo guard that holds back a parent steer repeating it (and `--correction`), and a captain-direct pending reply that never reposts or escalates.
 `tests/fm-pending-reply.test.sh` covers helper-selected local routing, remote-channel classification, same-basename restatement before false escalation, readable wrong-home diagnostics, and the rule that arbitrary mate-home sightings never acknowledge a reply.
+[`tests/fm-mate-mail.test.sh`](../tests/fm-mate-mail.test.sh) covers peer routing, diversion before document fetch, bridge refusals, and interrupted delivery and terminal bookkeeping.
 
 ## Live verification
 

@@ -99,9 +99,10 @@
 # fm-send-secondmate-harness-invocation-r1 owns that behavior.
 #
 # From-firstmate marker: when the resolved target is a task selector whose meta
-# records kind=secondmate, the message uses the live-charter-compatible
-# from-firstmate carrier owned by bin/fm-operational-input.sh so an ordinary
-# request's reply returns via its status file or a status-pointed doc instead of
+# records kind=secondmate, an ordinary firstmate request uses the
+# live-charter-compatible from-firstmate carrier owned by
+# bin/fm-operational-input.sh so the secondmate
+# routes its reply via its status file or a status-pointed doc instead of
 # stranding it in chat the main firstmate never reads; the from-captain exception
 # is described below. On the inbox plane the
 # marker travels verbatim inside the recorded body. A crewmate/scout target,
@@ -118,7 +119,7 @@
 # leading "/" reaches the agent as text, never as a harness command. The flag
 # is refused with --key, --decision-answer, --fire-and-forget, and an explicit
 # backend target, none of which is a captain message to a task.
-# docs/stream-backend.md "Command path" owns captain-direct native delivery
+# docs/stream-backend.md "Command path" owns direct-source native delivery
 # timing, compatibility, and fallback; durable send and reply tracking below
 # do not depend on native publication.
 # The old "From the captain, directly:" prose prefix is not detected.
@@ -197,8 +198,9 @@
 # reply-bearing doorbell surfaces through the parent's pending-reply recovery
 # and escalation, whose recovery request re-rings the remote doorbell when it
 # is enqueued; fire-and-forget delivery deliberately arms neither mechanism,
-# and the pending-reply header owns the captain-direct exception. Internal
-# semantic callers may set FM_SEND_EXPECTED_SPAWN_GEN or
+# and the pending-reply header owns the captain-direct exception. Deck's
+# direct-source wake retry is separate (bin/fm-deck-worker.sh owns it).
+# Internal semantic callers may set FM_SEND_EXPECTED_SPAWN_GEN or
 # FM_SEND_EXPECTED_REMOTE_HOST to require that sampled identity to still match
 # during the final locked remote-route validation; unset or empty guards do not
 # change ordinary sends.

@@ -4,19 +4,20 @@
 # Usage (from a second mate's own home, FM_HOME set):
 #   fm-mate-send.sh <mate-id>|primary [--reply-to <corr>] <text...>
 #
-# The message is queued durably on the sender's parent channel and the first
-# mate's router delivers it (bin/fm-mate-mail-lib.sh owns the design):
-#   - local route: the spool record is written straight into the parent home;
-#   - remote route: one wire line is appended to this home's
-#     state/parent-replies.status, which the parent already mirrors.
-# Exit 0 means queued, and prints "queued: corr=<corr> to=<target>". Delivery
-# follows on the parent's next watcher poll; the receiver sees
-# "[fm-from-mate:<this-mate>]" and the corr, and may answer with --reply-to.
-# A refused or failed delivery comes back to this mate as a first-mate message
-# naming the corr and the reason, and is logged for the first mate; nothing is
-# dropped silently. Cross-machine delivery must pass the bridge's "messages"
-# flow (bin/fm-bridge.sh); a remote sender's channel is also pulled under the
-# "reports" flow, like every report it sends the first mate.
+# bin/fm-mate-mail-lib.sh owns routing, the parent-channel wire, spool, and log.
+# Local homes write the parent spool; remote homes append their parent channel.
+# Exit 0 prints "queued: corr=<corr> to=<target>", not confirmation of delivery.
+# Each invocation mints a new corr; rerunning sends a new message, not a retry.
+# Delivery follows on the parent's next watcher poll, subject to bridge gates.
+# The receiver sees "[fm-from-mate:<this-mate>]" and the corr; reply with --reply-to.
+# Refused/failed deliveries are bounced with the corr and reason, and logged.
+# Cross-machine delivery requires the bridge's "messages" flow (bin/fm-bridge.sh).
+# A remote sender also needs "reports" for the existing parent-channel pull.
+# A denied reports flow leaves the message queued until allowed; bin/fm-on.sh
+# raises the bridge approval request. No messages-gated retrieval path is added.
+# Text has a fixed 4000-byte cap; point at a data/*.md file for more.
+# A file pointer does not transfer the file (see bin/fm-mate-mail-lib.sh).
+# Workers cannot use this path; they report to their own mate instead.
 #
 # Exit codes: 0 queued; 1 refused (bad target, worker caller, main home,
 # empty or oversized text); 2 usage; 4 the queue write failed (resend).

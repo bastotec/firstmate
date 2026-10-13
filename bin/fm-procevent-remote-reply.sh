@@ -25,10 +25,11 @@
 # in code.
 #
 # `self-announcing` declares this adapter's one-announcement contract to the
-# runner: every byte autohandle applies lands in the parent's state/<id>.status
-# stream, whose ordinary signal-scan announcement is durable, so a fully
-# autohandled capture needs - and gets - no `check` wake of its own. One remote
-# note therefore produces exactly one firstmate wake, through the same signal
+# runner: ordinary status lines autohandle applies land in the parent's
+# state/<id>.status stream, whose signal-scan announcement is durable, while
+# peer lines use the exception below. A fully autohandled capture needs - and
+# gets - no `check` wake of its own. One remote status note therefore produces
+# exactly one firstmate wake, through the same signal
 # classification a local secondmate's own status append gets, and a replayed
 # capture whose every line is already mirrored (the at-most-once append) adds
 # no bytes and stays completely quiet. Only a capture autohandle could NOT
@@ -40,7 +41,7 @@
 # state/<id>.status, and every parent consumer - the open-decision fold, wake
 # classification, crew-state reconciliation, and pending-reply resolution - reads
 # that one stream. A remote secondmate must present the same model, so ingest
-# mirrors every content-bearing line at most once, omits blank separators, and
+# mirrors every content-bearing status line at most once, omits blank separators, and
 # leaves every semantic judgement to those same shared consumers. Correlation is
 # a per-line property that fm-pending-reply-lib.sh consumes; it is never a gate
 # on the stream. Gating on it here made a remote mate's own progress lines and
@@ -48,9 +49,9 @@
 # and rejecting one line failed the whole delta, so the cursor could never
 # advance past it. No single line can stop or wedge the stream.
 #
-# One exception to the mirror: a `mate-message` line is a peer message bound for
-# another mate, so ingest spools it for bin/fm-mate-route.sh instead
-# (bin/fm-mate-mail-lib.sh owns that contract).
+# The peer-message exception to mirroring and document enrichment is owned by
+# bin/fm-mate-mail-lib.sh. Malformed peer lines fall through to the ordinary
+# mirror so they remain visible instead of being silently discarded.
 #
 # What remains here is only what crossing a machine boundary genuinely adds:
 #   - cursor continuity and identity (offset plus prefix digest)

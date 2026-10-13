@@ -11,12 +11,12 @@
 #     Deck session (`--session`), so context carries across steers;
 #   - stream Bridge orders bypass stdin through bin/fm_stream_deck.py's native
 #     receiver; docs/stream-backend.md "Command path" owns compatibility and limits;
-#   - captain-direct delivery and its fallback are documented in
-#     docs/stream-backend.md "Command path"; bin/fm_stream_deck.py project_captain
+#   - direct-source delivery (captain-direct and from-mate) and its fallback are
+#     documented in docs/stream-backend.md "Command path"; bin/fm_stream_deck.py project_captain
 #     owns native publication eligibility. A recognized stdin doorbell for this
 #     task's own empty inbox starts no turn (doorbell_without_work), so a record
 #     already taken mid-turn and acknowledged need not start another model turn;
-#     idle captain sources wake out of band while one stdin reader retains and
+#     idle direct sources wake out of band while one stdin reader retains and
 #     repaints partial human input, without sending terminal keys;
 #   - each turn's events render as readable text in the pane (fm-peek reads it);
 #   - it is the semantic busy source for the task: turn start and turn end are
@@ -103,12 +103,13 @@
 # dying. A driver that could not record or publish that failure still stops, and
 # so does a driver whose launch brief never reached a session even after one
 # repeat.
-# An idle captain-wake turn that returns a recoverable failure restores the
-# previous attempted-source floor, allowing a still-pending ordinary inbox
-# record to wake again after backoff without another captain message. The delay
-# doubles on consecutive failed captain-wake turns, capped at 300 seconds;
+# An idle direct-source wake turn (captain-direct or from-mate) that returns a
+# recoverable failure restores the previous attempted-source floor, allowing a
+# still-pending ordinary inbox record to wake again after backoff without
+# another message. The delay doubles on consecutive failed direct-source wake
+# turns, capped at 300 seconds;
 # FM_DECK_CAPTAIN_RETRY_SECS sets its initial value (see ENVIRONMENT).
-# A successful captain-wake turn resets the backoff and keeps the advanced floor,
+# A successful direct-source wake turn resets the backoff and keeps the advanced floor,
 # even if the model did not acknowledge the source, preserving the anti-spin
 # guard. Native Deck acknowledgement is not ordinary inbox acknowledgement;
 # bin/fm_stream_deck.py project_captain owns that distinction. The regression is
@@ -157,7 +158,7 @@
 #                           sized for a single question, not a coding task)
 #   FM_DECK_DEADLINE_SECS   wall-clock bound per turn (default 3600)
 #   FM_DECK_CAPTAIN_RETRY_SECS  initial delay after a recoverably failed idle
-#                           captain wake (seconds; default 30; empty or
+#                           direct-source wake (seconds; default 30; empty or
 #                           nonnumeric values use the default; 0 allows an
 #                           immediate retry)
 #   FM_DECK_PIPELINE_POLL_SECS  idle-prompt poll interval for a ship worker's
@@ -658,7 +659,7 @@ RENDER='
 
 # One stdin owner preserves complete and partial human lines across native
 # turns, watcher wakes and pipeline waits, including on stock Bash 3.2.
-# It observes captain sources too, avoiding a cold Python process in each
+# It observes direct sources too, avoiding a cold Python process in each
 # idle dispatch poll while leaving source acknowledgement to the model.
 python3 -c '
 import os, pathlib, select, signal, sys
@@ -1003,7 +1004,7 @@ pipeline_arm() {
   printf '\n⛵ no-mistakes run %s still working; the next turn starts when it changes state.\n' "${run:-(id unavailable)}"
 }
 
-# 0 when queued stdin, EOF or a new captain source arrives within <secs>,
+# 0 when queued stdin, EOF or a new direct source arrives within <secs>,
 # 1 on timeout, 3 when interrupted.
 stdin_ready_within() {  # <secs>
   python3 -c '
@@ -1108,7 +1109,7 @@ doorbell_without_work() {  # <line>
   return 0
 }
 
-# Observe new captain sources without reading or submitting the human composer.
+# Observe new direct sources without reading or submitting the human composer.
 # The header owns the attempted-source anti-spin guard and failed-wake retry
 # contract; a failed turn alone cannot prove the model handled its source.
 IDLE_CAPTAIN_FLOOR=0

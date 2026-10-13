@@ -85,6 +85,9 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-captain-direct-lib.sh` | Parent-side captain-direct delivery ledger, FYI wording, and echo matching |
 | `fm-pending-reply-lib.sh` | Parent-owned secondmate pending-reply expectations, recovery, and keyed escalation lifecycle |
 | `fm-secondmate-report.sh` | Optional helper that resolves the parent channel itself and appends a correlated status or document-pointer report |
+| [`fm-mate-send.sh`](../bin/fm-mate-send.sh) | Queue a second mate's message to a peer or the first mate from its own home |
+| [`fm-mate-route.sh`](../bin/fm-mate-route.sh) | Deliver queued mate messages on primary watcher polls |
+| [`fm-mate-mail-lib.sh`](../bin/fm-mate-mail-lib.sh) | Own the peer-message wire, spool, and oversight-log contract |
 | `fm-extension.mjs`       | Bind, inspect, verify, and strictly invoke trusted external process-event adapter packages |
 | `fm-extension-launch-barrier.mjs` | Publish one exact static core-owned invocation group before package code runs |
 | `fm-extension.sh`        | Expose extension binding commands through the tracked shell and remote-home command boundary |

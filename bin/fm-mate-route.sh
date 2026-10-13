@@ -20,8 +20,10 @@
 # Every terminal outcome is one line in state/mate-messages.log. A refused or
 # failed message is also bounced to its sender as a first-mate message naming
 # the corr and reason, and queues one `check:` wake keyed mate-mail:<corr>, so
-# nothing is dropped silently. Delivered messages wake nobody: the first mate's
-# copy is the log line. Mate messages never page the captain.
+# nothing is dropped silently. Delivered peer-to-peer messages queue no
+# oversight wake; primary-directed messages use the delivery path above.
+# Message content is not captain-direct; denied bridge flows still require
+# the separate captain approval described above.
 #
 # Exit 0 after a pass (including an empty or busy one); 1 when this is not a
 # main home.
