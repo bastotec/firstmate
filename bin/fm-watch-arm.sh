@@ -44,11 +44,15 @@
 # Every observed watcher cycle appends one tab-separated lifecycle record to
 # state/.watch-cycle-exits.log. The arm layer owns that bounded ledger; it records
 # arm/watcher identities, timestamps, exit/signal classification, beacon age,
-# lock identity before and after close, and successor disposition. Handling-successor
-# children retain stderr alongside stdout and surface it even when the arm is
-# interrupted, before removing the temporary capture. The separate
+# lock identity before and after close, and successor disposition. The separate
 # state/.watch-triage.log remains exclusively the watcher's absorbed-wake debug
 # log and is never written here.
+#
+# Handling-successor children capture stderr alongside stdout. On child exit,
+# arm interruption, or the arm's startup-confirmation timeout, the arm prints
+# that temporary capture to stdout before removing it. Interruption and timeout
+# stop and wait for the child first, preserving termination diagnostics too.
+# Non-handoff starts keep their existing stdout-only capture and cleanup order.
 #
 # --restart: stop ONLY this FM_HOME's watcher (the pid recorded in THIS home's
 # state/.watch.lock) and own a fresh cycle, or attach if a verified live peer

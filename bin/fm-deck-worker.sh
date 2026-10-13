@@ -84,6 +84,9 @@
 # fails, the driver stops; otherwise it continues the turn without publishing
 # failed status. Wakes remain durable in the home queue for bin/fm-wake-drain.sh;
 # this recovery does not fix the cause of a successor watcher's death.
+# For unconfirmed successor startup, the driver surfaces the completed arm
+# capture after stopping and waiting for the arm, before a fresh start reuses it;
+# bin/fm-watch-arm.sh's header owns handling-child diagnostic capture.
 # A failed turn is recorded and published the same way but does NOT stop the
 # driver: a persistent supervisor outlives a gateway, quota, or model failure and
 # returns to its prompt, keeping its Deck session where one exists, so the next
