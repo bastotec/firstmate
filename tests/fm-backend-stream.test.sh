@@ -1299,7 +1299,9 @@ home = pathlib.Path(os.environ['FM_HOME'])
 with (home / 'turns').open('a') as log:
     log.write(json.dumps(sys.argv[2]) + '\n')
 print(json.dumps({'type': 'run_started', 'session': 'fixture-session'}), flush=True)
-print(json.dumps({'type': 'text_delta', 'text': 'FIXTURE-TURN-DELIVERED'}), flush=True)
+marker = ('FIXTURE-STEER-TURN-DELIVERED' if 'Firstmate instruction waiting:' in sys.argv[2]
+          else 'FIXTURE-TURN-DELIVERED')
+print(json.dumps({'type': 'text_delta', 'text': marker}), flush=True)
 print(json.dumps({'type': 'run_finished', 'output': 'ready', 'turns': 1}), flush=True)
 PY
   chmod +x "$fakebin/deck"
@@ -1329,15 +1331,12 @@ PY
   assert_present "$CASE_DIR/home/state/$id.inbox/001.msg" "unacknowledged steer must remain durable"
   assert_grep 'fixture durable instruction' "$CASE_DIR/home/state/$id.inbox/001.msg" "steer body was lost"
   local waited=0
-  while ! grep -q 'Firstmate instruction waiting:' "$home/turns" && [ "$waited" -lt 100 ]; do
-    sleep 0.1
-    waited=$((waited + 1))
-  done
+  # The log can precede publication of the turn's screen, leaving the old idle
+  # prompt visible. First observe this turn's output, then its idle composer.
+  wait_for_capture "$target" FIXTURE-STEER-TURN-DELIVERED \
+    || fail "doorbell turn output was never published"
   assert_grep 'Firstmate instruction waiting:' "$home/turns" "doorbell did not become a serialized Deck turn"
   # Genuine, unsubmitted input must still prevent lifecycle command injection.
-  # The doorbell turn may still be rendering when its log line lands; a fast
-  # publisher (the Rust agent) shows that mid-turn screen, so wait for idle.
-  waited=0
   while [ "$(with_stream_env fm_backend_composer_state stream "$target")" != empty ] && [ "$waited" -lt 100 ]; do
     sleep 0.1
     waited=$((waited + 1))
