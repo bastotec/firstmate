@@ -128,6 +128,30 @@ test_normal_correlated_reply_resolves_once() {
   pass "normal correlated reply resolves once (idempotent)"
 }
 
+test_unread_request_is_not_a_completed_turn() {
+  local home state corr rec
+  home=$(setup_parent unread-request)
+  state="$home/state"
+  corr=$(fm_pending_reply_create "$home" "$state" "hibit" "status of phase 7")
+  fm_pending_reply_mark_delivered "$state" "$corr"
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  mkdir -p "$state/hibit.inbox/handled"
+  printf 'corr=%s status of phase 7\n' "$corr" > "$state/hibit.inbox/001.msg"
+  # The mate finishes an earlier turn while the request still waits in its inbox.
+  fm_pending_reply_observe_busy "$state" "$corr" busy
+  fm_pending_reply_observe_busy "$state" "$corr" idle
+  [ -z "$(fm_pending_reply_get "$rec" request_turn_completed_epoch)" ] \
+    || fail "an idle mate with the request still unread has not completed the request's turn"
+  if fm_pending_reply_send_recovery "$state" "$corr" 2>/dev/null; then
+    fail "no repost may go out while the original request is unread"
+  fi
+  mv "$state/hibit.inbox/001.msg" "$state/hibit.inbox/handled/001.msg"
+  fm_pending_reply_observe_busy "$state" "$corr" idle
+  [ -n "$(fm_pending_reply_get "$rec" request_turn_completed_epoch)" ] \
+    || fail "once the mate handled the request, idle completes its turn"
+  pass "an unread request is not a completed turn, so it gets no early repost"
+}
+
 test_completed_turn_no_report_triggers_one_recovery() {
   local home state corr hook_log rec
   home=$(setup_parent one-recovery)
@@ -1173,7 +1197,7 @@ test_tick_end_to_end_missed_then_escalate() {
 }
 
 test_remote_repost_waits_for_the_reply_channel() {
-  local home state corr hook_log rec lines
+  local home state corr hook_log rec lines migrated=${1:-0}
   home=$(setup_parent remote-repost)
   state="$home/state"
   hook_log="$TMP_ROOT/remote-repost.log"
@@ -1187,14 +1211,23 @@ test_remote_repost_waits_for_the_reply_channel() {
   export -f remote_repost_hook
   export FM_PENDING_REPLY_SEND_HOOK=remote_repost_hook
 
+  corr=$(fm_pending_reply_create "$home" "$state" "ios" "status of the iOS build")
+  fm_pending_reply_mark_delivered "$state" "$corr"
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  if [ "$migrated" = 1 ]; then
+    mkdir -p "$state/ios.inbox"
+    printf 'corr=%s status of the iOS build\n' "$corr" > "$state/ios.inbox/001.msg"
+    fm_pending_reply_observe_busy "$state" "$corr" idle
+    [ -z "$(fm_pending_reply_get "$rec" request_turn_completed_epoch)" ] \
+      || fail "the request must remain incomplete while still local and unread"
+  fi
   fm_write_meta "$state/ios.meta" \
     "window=127.0.0.1-9:0123456789abcdef0123456789abcdef" "harness=deck" "kind=secondmate" "mode=secondmate" \
     "remote_host=remote-mac" "remote_root=/remote/root" "remote_backend=stream"
-  corr=$(fm_pending_reply_create "$home" "$state" "ios" "status of the iOS build")
-  fm_pending_reply_mark_delivered "$state" "$corr"
   fm_pending_reply_observe_busy "$state" "$corr" busy
   fm_pending_reply_observe_busy "$state" "$corr" idle
-  rec=$(fm_pending_reply_path "$state" "$corr")
+  [ -n "$(fm_pending_reply_get "$rec" request_turn_completed_epoch)" ] \
+    || fail "a remote mate's idle turn must complete despite any retained local inbox"
 
   # The mate's turn ended, but nothing proves the parent has read the remote
   # reply log since: a repost here would nag for a reply already written there.
@@ -1227,7 +1260,12 @@ test_remote_repost_waits_for_the_reply_channel() {
     *) fail "the recovery message must ask for a repost"$'\n'"$(cat "$hook_log")" ;;
   esac
   unset FM_PENDING_REPLY_SEND_HOOK
-  pass "a remote repost waits for the reply channel and still fires on a real miss"
+  if [ "$migrated" = 1 ]; then
+    [ -f "$state/ios.inbox/001.msg" ] || fail "the migrated local inbox fixture must remain unread"
+    pass "a migrated remote mate ignores retained local inbox records but waits for its reply mirror"
+  else
+    pass "a remote repost waits for the reply channel and still fires on a real miss"
+  fi
 }
 
 test_mirrored_remote_reply_never_triggers_a_repost() {
@@ -1609,6 +1647,7 @@ test_correlations_reuse_only_for_matching_open_task
 test_tick_end_to_end_missed_then_escalate
 test_failed_send_discards_undelivered_expectation
 test_remote_repost_waits_for_the_reply_channel
+test_remote_repost_waits_for_the_reply_channel 1
 test_mirrored_remote_reply_never_triggers_a_repost
 test_same_basename_self_home_corr_resolves_on_tick
 test_same_basename_reply_resolves_after_recovery_failure
@@ -1617,5 +1656,6 @@ test_mechanical_helper_writes_parent_channel
 test_remote_parent_replies_is_not_wrong_home
 test_local_parent_replies_is_wrong_home_evidence
 test_escalated_undelivered_correlation_stays_retryable
+test_unread_request_is_not_a_completed_turn
 
 printf 'ok - all pending-reply tests passed\n'
