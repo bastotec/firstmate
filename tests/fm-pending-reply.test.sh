@@ -1057,6 +1057,40 @@ test_tick_skips_terminal_and_reuses_target_observation() {
   pass "tick skips terminal records and reuses target observations"
 }
 
+# The watcher ticks every record on every cycle and resolved records are never
+# pruned, so a home with a long history had cycles of tens of minutes while the
+# tick took a lock and forked for each settled record. Only a resolved record
+# whose escalation is still open may cost anything.
+test_tick_skips_settled_resolved_records() {
+  (
+    local home state corr rec i calls_log open_corr
+    home=$(setup_parent settled-history)
+    state="$home/state"
+    calls_log="$home/close-calls.log"
+    : > "$calls_log"
+    # shellcheck disable=SC2030,SC2031
+    export FM_PENDING_REPLY_NOW=10100
+    for i in $(seq 1 40); do
+      corr=$(fm_pending_reply_create "$home" "$state" "mate$i" "request $i")
+      rec=$(fm_pending_reply_path "$state" "$corr")
+      fm_pending_reply_set "$rec" phase resolved || fail "resolved fixture $i"
+      if [ "$i" = 7 ]; then
+        fm_pending_reply_set "$rec" escalated_epoch 10050 || fail "escalated fixture"
+        open_corr=$corr
+      elif [ "$i" = 8 ]; then
+        fm_pending_reply_set "$rec" escalated_epoch 10050 || fail "closed fixture"
+        fm_pending_reply_set "$rec" escalation_closed_epoch 10060 || fail "closed fixture"
+      fi
+    done
+    # shellcheck disable=SC2329
+    fm_pending_reply_close_escalation() { printf '%s\n' "$2" >> "$calls_log"; }
+    fm_pending_reply_tick "$state" || fail "tick over settled history failed"
+    [ "$(cat "$calls_log")" = "$open_corr" ] \
+      || fail "only the record with an open escalation should be closed, got: $(tr '\n' ' ' < "$calls_log")"
+  ) || fail "settled-record skip regression failed"
+  pass "tick skips settled resolved records and retries only an open escalation"
+}
+
 test_correlations_reuse_only_for_matching_open_task() {
   local dir fb log home state got corr1 corr2 corr3 rec
   dir="$TMP_ROOT/corr-reuse"; mkdir -p "$dir"
@@ -1570,6 +1604,7 @@ test_busy_idle_observation_via_backend_abstraction
 test_unknown_backend_state_uses_capture_fallback
 test_capture_fallback_uses_recorded_harness
 test_tick_skips_terminal_and_reuses_target_observation
+test_tick_skips_settled_resolved_records
 test_correlations_reuse_only_for_matching_open_task
 test_tick_end_to_end_missed_then_escalate
 test_failed_send_discards_undelivered_expectation
