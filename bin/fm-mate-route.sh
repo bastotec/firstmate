@@ -102,20 +102,40 @@ wake_once() {
   return "$status"
 }
 
+try_bounce() {
+  local marker=$1 note
+  mate_meta "$FM_MM_FROM" >/dev/null || return 1
+  note=$(cat "$marker" && printf x) || return 1
+  note=${note%x}
+  FM_HOME="$FM_HOME" "$SEND_BIN" "$FM_MM_FROM" --fire-and-forget "$(bounce_id "$FM_MM_CORR")" \
+    "$note" >/dev/null 2>&1 || return 1
+  rm -f "$marker"
+}
+
+for bounce in "$DIR/refused/"*.bounce "$DIR/failed/"*.bounce; do
+  [ -f "$bounce" ] || continue
+  fm_mate_mail_read "${bounce%.bounce}.msg" || continue
+  try_bounce "$bounce" || true
+done
+
 # Close <record> as <outcome> (refused|failed) with REASON: bounce, wake and
 # log first, then archive. The bounce is idempotent on its delivery id, and the
 # log check makes a retried pass skip bookkeeping an interrupted pass finished.
 close_undelivered() {  # <record> <outcome>
-  local record=$1 outcome=$2 name note bounce_note=''
+  local record=$1 outcome=$2 name note bounce bounce_note=''
   name=${record##*/}
   if [ ! -f "${record%.msg}.undelivered" ]; then
     printf '%s\n%s\n' "$outcome" "$REASON" > "${record%.msg}.undelivered.tmp" \
       && mv "${record%.msg}.undelivered.tmp" "${record%.msg}.undelivered" || return 1
   fi
   note="Your message corr=$FM_MM_CORR to $FM_MM_TO was $outcome: $REASON"
+  bounce="$DIR/$outcome/${name%.msg}.bounce"
+  mkdir -p "$DIR/$outcome" || return 1
   if mate_meta "$FM_MM_FROM" >/dev/null; then
-    FM_HOME="$FM_HOME" "$SEND_BIN" "$FM_MM_FROM" --fire-and-forget "$(bounce_id "$FM_MM_CORR")" \
-      "$note" >/dev/null 2>&1 || bounce_note=' (the sender could not be told)'
+    if [ ! -f "$bounce" ]; then
+      printf '%s' "$note" > "$bounce.tmp" && mv "$bounce.tmp" "$bounce" || return 1
+    fi
+    try_bounce "$bounce" || bounce_note=' (the sender could not be told)'
   else
     bounce_note=' (the sender is not a recorded second mate)'
   fi
@@ -162,19 +182,18 @@ attempt_exhausted() {  # <record>
 primary_holds() {  # <tagged-prefix>
   python3 - "$SCRIPT_DIR" "$FM_HOME" "$1" <<'PY' 2>/dev/null
 import sys
-from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-from fm_primary_chat import read_record
-record = read_record(sys.argv[2]) or {}
-steer = Path(record.get('steer_dir') or '/nonexistent')
+from fm_primary_chat import paths
+_, _, _, root = paths(sys.argv[2])
 needle = sys.argv[3].encode()
-for sub in ('', 'handled', 'rejected'):
-    for msg in (steer / sub).glob('*.msg') if (steer / sub).is_dir() else ():
-        try:
-            if needle in msg.read_bytes():
-                sys.exit(0)
-        except OSError:
-            pass
+for steer in root.glob('*/steer'):
+    for sub in ('', 'handled', 'rejected'):
+        for msg in (steer / sub).glob('*.msg'):
+            try:
+                if needle in msg.read_bytes():
+                    sys.exit(0)
+            except OSError:
+                pass
 sys.exit(1)
 PY
 }
@@ -182,7 +201,7 @@ PY
 deliver_primary() {  # <record>
   local tagged rc=0 marker="${1%.msg}.publishing"
   [ ! -e "${1%.msg}.woken-delivered" ] || { DELIVERED_HOW=wake; return 0; }
-  fm_message_mark_from_mate "$FM_MM_FROM" "$FM_MM_CORR" "$FM_MM_TEXT" tagged || return 1
+  fm_message_mark_from_mate "$FM_MM_FROM" "$FM_MM_CORR" "$FM_MM_TEXT" tagged primary || return 1
   if [ -e "$marker" ] && primary_holds "[fm-from-mate:$FM_MM_FROM]${FM_OPERATIONAL_MARK}corr=$FM_MM_CORR "; then
     DELIVERED_HOW=chat; return 0
   fi
@@ -209,8 +228,6 @@ ls -tr "$DIR/pending" 2>/dev/null | grep '\.msg$' | while IFS= read -r name; do
     fm_mate_mail_log "$STATE" failed "$REASON" || true
     continue
   fi
-  # A pass that logged this message but stopped before archiving it finished
-  # every side effect already: archive it under its logged outcome.
   if done_as=$(fm_mate_mail_logged "$STATE" "$FM_MM_FROM" "$FM_MM_CORR"); then
     mkdir -p "$DIR/$done_as" && mv "$record" "$DIR/$done_as/$name" || true
     rm -f "${record%.msg}.tries" "${record%.msg}.publishing" \

@@ -866,7 +866,7 @@ else
     # mark: it is not a first-mate request and expects no parent reply. The
     # mate-mail corr doubles as the delivery id, so the tagged body is stable
     # and a retried delivery deduplicates onto the same record.
-    fm_message_mark_from_mate "$FROM_MATE" "$FIRE_AND_FORGET_ID" "$MESSAGE" MESSAGE \
+    fm_message_mark_from_mate "$FROM_MATE" "$FIRE_AND_FORGET_ID" "$MESSAGE" MESSAGE secondmate \
       || { echo "error: could not tag the peer message from $FROM_MATE; nothing was sent" >&2; exit 1; }
     FM_SEND_IDEMPOTENT=1
   elif [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ -n "$FIRE_AND_FORGET_ID" ]; then

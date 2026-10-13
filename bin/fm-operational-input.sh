@@ -58,6 +58,7 @@ FM_CAPTAIN_DIRECT_NOTE='The captain wrote this to you himself and reads your con
 # never carries the from-firstmate mark. bin/fm-mate-mail-lib.sh owns routing.
 FM_FROM_MATE_LABEL_PREFIX='[fm-from-mate:'
 FM_FROM_MATE_NOTE='A peer second mate sent you this directly; the first mate sees a copy. Answer only if useful, with bin/fm-mate-send.sh <sender> --reply-to <corr> "<text>"; never relay it to the captain yourself.'
+FM_FROM_MATE_PRIMARY_NOTE='A second mate sent you this directly. Answer only if useful, with bin/fm-send.sh <sender> "<text>"; never relay it to the captain yourself.'
 
 fm_operational_kind_is_current() {  # <kind>
   case " $FM_OPERATIONAL_KINDS " in
@@ -239,13 +240,18 @@ fm_message_mark_captain_direct() {  # <message> <result-var>
 # Tag a peer message from <sender> carrying the mate-mail <corr>. The result is
 # stable for the same inputs, so a retried delivery deduplicates onto the same
 # inbox record.
-fm_message_mark_from_mate() {  # <sender-id> <corr> <message> <result-var>
-  local sender=${1-} corr=${2-} message=${3-} result_var=${4-}
+fm_message_mark_from_mate() {
+  local sender=${1-} corr=${2-} message=${3-} result_var=${4-} receiver=${5-} note
   [ -n "$result_var" ] && [ -n "$message" ] || return 2
+  case "$receiver" in
+    primary) note=$FM_FROM_MATE_PRIMARY_NOTE ;;
+    secondmate) note=$FM_FROM_MATE_NOTE ;;
+    *) return 2 ;;
+  esac
   case "$sender" in ''|.*|*[!A-Za-z0-9._-]*) return 2 ;; esac
   printf '%s' "$corr" | grep -Eq '^[a-f0-9]{16}$' || return 2
   printf -v "$result_var" '%s%s]%scorr=%s %s\n\n%s' "$FM_FROM_MATE_LABEL_PREFIX" "$sender" \
-    "$FM_OPERATIONAL_MARK" "$corr" "$FM_FROM_MATE_NOTE" "$message"
+    "$FM_OPERATIONAL_MARK" "$corr" "$note" "$message"
 }
 
 fm_operational_read_stdin() {  # <result-var>

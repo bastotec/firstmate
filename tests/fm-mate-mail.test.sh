@@ -106,6 +106,8 @@ test_router_delivers_tagged_without_reply_tracking() {
     "[fm-from-mate:dave]"$'\xE2\x81\xA3'"corr=$corr "*"can you take the flaky test?") ;;
     *) fail "delivered body is not tagged from dave: $body" ;;
   esac
+  case "$body" in *'bin/fm-mate-send.sh <sender> --reply-to <corr> "<text>"'*) ;;
+    *) fail "secondmate reply instruction is wrong: $body" ;; esac
   case "$body" in *"$FM_FROMFIRST_LABEL"*) fail "a peer message must not carry the from-firstmate mark" ;; esac
   grep -q '^delivery=fire-and-forget$' "$rec" || fail "a peer message is fire-and-forget"
   [ -z "$(ls -A "$parent/state/pending-replies" 2>/dev/null)" ] || fail "a peer message must not create a pending reply"
@@ -234,8 +236,8 @@ test_remote_ingest_diverts_wire_line_to_spool() {
 test_primary_publication_is_not_repeated() {
   local parent corr send steer
   parent=$(make_fleet primary dave cadia)
-  steer="$parent/steer"
-  mkdir -p "$steer"
+  python3 "$ROOT/bin/fm_primary_chat.py" prepare --home "$parent" --session A >/dev/null || fail "could not prepare primary session"
+  steer="$parent/state/primary-chat/A/steer"
   printf '{"steer_dir": "%s"}\n' "$steer" > "$parent/state/primary-chat.json"
   send="$parent/fakebin/send-primary"
   # The stub publishes like the chat primary, then the pass is interrupted
@@ -250,6 +252,97 @@ test_primary_publication_is_not_repeated() {
   [ "$(find "$steer" -name '*.msg' | wc -l | tr -d ' ')" = 1 ] || fail "the first mate got the same message twice"
   [ -f "$parent/state/mate-mail/delivered/dave@$corr.msg" ] || fail "an already-published message should close as delivered"
   pass "fm-mate-route: a message already in the first mate's chat is not published again"
+}
+
+test_failed_bounces_are_retried_after_archiving() {
+  local parent corr send outcome target archive marker body expected_id
+  for outcome in refused failed; do
+    parent=$(make_fleet bounce-retry dave cadia)
+    send="$parent/fakebin/send-bounce"
+    cat > "$send" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = dave ]; then
+  printf '%s\n' "$3" >> "$FM_HOME/bounce.calls"
+  [ -f "$FM_HOME/accept-bounce" ] || exit 1
+  exec "${FM_REAL_SEND_BIN:?}" "$@"
+fi
+exit 1
+SH
+    chmod +x "$send"
+    target=nobody
+    [ "$outcome" != failed ] || target=cadia
+    corr=$(mate_send "$parent" dave "$target" "please answer" | sed -n 's/.*corr=\([a-f0-9]*\).*/\1/p')
+    if [ "$outcome" = failed ]; then
+      printf '9 %s\n' "$(date +%s)" > "$parent/state/mate-mail/pending/dave@$corr.tries"
+    fi
+    run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" FM_REAL_SEND_BIN="$ROOT/bin/fm-send.sh" >/dev/null || fail "router pass failed"
+    archive="$parent/state/mate-mail/$outcome/dave@$corr.msg"
+    marker="${archive%.msg}.bounce"
+    [ -f "$archive" ] && [ -f "$marker" ] || fail "failed bounce must remain owed beside the archive"
+    [ ! -e "$parent/state/dave.inbox/001.msg" ] || fail "unavailable sender must not receive a bounce"
+    mv "$archive" "$parent/state/mate-mail/pending/"
+    run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" FM_REAL_SEND_BIN="$ROOT/bin/fm-send.sh" >/dev/null || fail "logged recovery failed"
+    [ -f "$archive" ] && [ -f "$marker" ] || fail "logged recovery lost the bounce obligation"
+    run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" FM_REAL_SEND_BIN="$ROOT/bin/fm-send.sh" >/dev/null || fail "offline bounce retry failed"
+    [ -f "$marker" ] || fail "a bounce retry failure must keep the obligation"
+    : > "$parent/accept-bounce"
+    run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" FM_REAL_SEND_BIN="$ROOT/bin/fm-send.sh" >/dev/null || fail "bounce recovery failed"
+    [ ! -e "$marker" ] || fail "successful bounce must clear the obligation"
+    body=$(record_body "$parent/state/dave.inbox/001.msg")
+    case "$body" in *"corr=$corr to $target was $outcome:"*) ;; *) fail "wrong recovered bounce: $body" ;; esac
+    expected_id=$(printf 'bounce:%s' "$corr" | shasum -a 256 | cut -c1-16)
+    [ "$(sort -u "$parent/bounce.calls")" = "$expected_id" ] || fail "bounce retries must preserve delivery id"
+    run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" FM_REAL_SEND_BIN="$ROOT/bin/fm-send.sh" >/dev/null || fail "final router pass failed"
+    [ "$(wc -l < "$parent/bounce.calls" | tr -d ' ')" = 3 ] || fail "settled bounce should not be retried"
+    [ ! -e "$parent/state/dave.inbox/002.msg" ] || fail "bounce must be delivered once"
+    [ "$(grep -c "\"corr\": \"$corr\"" "$parent/state/mate-messages.log")" = 1 ] || fail "bounce retry duplicated the log"
+    [ "$(grep -c "mate-mail:$corr" "$parent/state/.wake-queue")" = 1 ] || fail "bounce retry duplicated the wake"
+  done
+  pass "fm-mate-route: archived failed bounces survive logged recovery and retry until delivered"
+}
+
+test_primary_session_change_retains_publication_evidence() {
+  local parent corr send old_steer new_steer sub body
+  for sub in pending handled rejected; do
+    parent=$(make_fleet primary-session dave cadia)
+    send="$parent/fakebin/send-primary"
+    cat > "$send" <<'SH'
+#!/usr/bin/env bash
+python3 - "${FM_TEST_BIN_DIR:?}" "$FM_HOME" "$2" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from fm_primary_chat import publish_body, read_record
+publish_body(Path(read_record(sys.argv[2])['steer_dir']), sys.argv[3])
+PY
+SH
+    chmod +x "$send"
+    python3 "$ROOT/bin/fm_primary_chat.py" prepare --home "$parent" --session A >/dev/null || fail "could not prepare session A"
+    python3 "$ROOT/bin/fm_primary_chat.py" record write --home "$parent" --session A --host-pid "$$" || fail "could not record session A"
+    old_steer="$parent/state/primary-chat/A/steer"
+    corr=$(mate_send "$parent" dave primary "help with the dependency" | sed -n 's/.*corr=\([a-f0-9]*\).*/\1/p')
+    mkdir "$parent/state/mate-messages.log"
+    run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" FM_TEST_BIN_DIR="$ROOT/bin" >/dev/null || fail "publication pass failed"
+    [ -f "$old_steer/1.msg" ] || fail "message was not published in session A"
+    body=$(cat "$old_steer/1.msg")
+    case "$body" in *'bin/fm-send.sh <sender> "<text>"'*) ;; *) fail "primary reply instruction is wrong: $body" ;; esac
+    case "$body" in *'bin/fm-mate-send.sh'*) fail "primary must not be told to use the secondmate send command" ;; esac
+    [ -f "$parent/state/mate-mail/pending/dave@$corr.msg" ] || fail "logging failure must leave publication pending"
+    if [ "$sub" != pending ]; then
+      mkdir "$old_steer/$sub"
+      mv "$old_steer/1.msg" "$old_steer/$sub/"
+    fi
+    python3 "$ROOT/bin/fm_primary_chat.py" prepare --home "$parent" --session B >/dev/null || fail "could not prepare session B"
+    python3 "$ROOT/bin/fm_primary_chat.py" record write --home "$parent" --session B --host-pid "$$" || fail "could not record session B"
+    new_steer="$parent/state/primary-chat/B/steer"
+    rmdir "$parent/state/mate-messages.log"
+    run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" FM_TEST_BIN_DIR="$ROOT/bin" >/dev/null || fail "publication recovery failed"
+    [ ! -e "$new_steer/1.msg" ] || fail "session change duplicated publication from $sub"
+    [ "$(find "$parent/state/primary-chat" -name '*.msg' | wc -l | tr -d ' ')" = 1 ] || fail "session change must retain exactly one publication"
+    [ -f "$parent/state/mate-mail/delivered/dave@$corr.msg" ] || fail "prior publication was not archived"
+    [ "$(fm_mate_mail_logged "$parent/state" dave "$corr")" = delivered ] || fail "prior publication was not logged"
+  done
+  pass "fm-mate-route: retained sessions prevent duplicate primary publication and carry primary reply instructions"
 }
 
 test_interrupted_bookkeeping_completes_once() {
@@ -420,6 +513,8 @@ test_live_router_lock_is_not_stolen() {
 }
 
 test_local_mate_queues_in_parent_spool
+test_failed_bounces_are_retried_after_archiving
+test_primary_session_change_retains_publication_evidence
 test_wake_survives_failed_logging_and_queue_consumption
 test_failed_primary_bookkeeping_never_becomes_delivery
 test_incomplete_log_does_not_finish_bookkeeping
