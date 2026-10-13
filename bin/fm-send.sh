@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Steer a task by durable record: write the message into the task's steering
 # inbox and ring a constant doorbell line into its terminal, best-effort.
-# Usage: fm-send.sh [--decision-answer] <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] [--from-captain | --correction] <text...>
+# Usage: fm-send.sh [--decision-answer] <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] [--from-captain | --from-mate <sender> | --correction] <text...>
 #   --decision-answer requires an exact task id and keyed answer, resolves
 #   regular metadata under the supervision lease and metadata lock, and refuses
 #   harness-native text rather than leaving the durable inbox plane.
@@ -141,6 +141,15 @@
 # for the one fix a later report from the mate shows is really needed; it cannot
 # accompany --from-captain. A --resolve-key answer is never held back, so
 # decision bookkeeping still closes.
+#
+# From-mate tag: --from-mate <sender> --fire-and-forget <corr> delivers a peer
+# message between second mates on the first mate's behalf (bin/fm-mate-route.sh
+# is the caller; bin/fm-mate-mail-lib.sh owns routing). The target must be a
+# recorded secondmate; the text gets the from-mate tag owned by
+# bin/fm-operational-input.sh instead of the from-firstmate mark, and creates no
+# pending-reply expectation. The mate-mail corr is the delivery id, so a retry
+# deduplicates onto the same local or remote record.
+# Fleet Town adopting --from-captain is a follow-up in its own repository.
 #
 # Parent-owned pending-reply expectation: every newly marked secondmate request
 # except an explicit --fire-and-forget delivery receives a privacy-safe
@@ -460,6 +469,7 @@ RESOLVE_KEYS=
 FIRE_AND_FORGET_ID=
 FROM_CAPTAIN=0
 CORRECTION=0
+FROM_MATE=
 fm_send_add_resolve_key() {  # <key>
   local k=$1
   case "$k" in
@@ -506,6 +516,12 @@ while :; do
       CORRECTION=1
       shift
       ;;
+    --from-mate)
+      [ $# -ge 2 ] || { echo "error: --from-mate requires a sender mate id" >&2; exit 1; }
+      [ -z "$FROM_MATE" ] || { echo "error: duplicate --from-mate" >&2; exit 1; }
+      FROM_MATE=$2
+      shift 2
+      ;;
     *) break ;;
   esac
 done
@@ -525,6 +541,20 @@ if [ "$FROM_CAPTAIN" = 1 ]; then
   case "${1:-}" in
     --key) echo "error: --from-captain needs message text, not --key; nothing was sent" >&2; exit 1 ;;
     '') echo "error: --from-captain needs message text; nothing was sent" >&2; exit 1 ;;
+  esac
+fi
+if [ -n "$FROM_MATE" ]; then
+  case "$FROM_MATE" in
+    .*|*[!A-Za-z0-9._-]*)
+      echo "error: --from-mate '$FROM_MATE' is not a valid mate id; nothing was sent" >&2
+      exit 1 ;;
+  esac
+  if [ "$DECISION_ANSWER" = 1 ] || [ "$FROM_CAPTAIN" = 1 ] || [ "$CORRECTION" = 1 ] || [ -z "$FIRE_AND_FORGET_ID" ] || [ -n "$RESOLVE_KEYS" ]; then
+    echo "error: --from-mate needs --fire-and-forget <mate-mail corr> and cannot accompany --decision-answer, --from-captain, --correction or --resolve-key; nothing was sent" >&2
+    exit 1
+  fi
+  case "${1:-}" in
+    --key|'') echo "error: --from-mate needs message text; nothing was sent" >&2; exit 1 ;;
   esac
 fi
 if [ "$DECISION_ANSWER" = 1 ]; then
@@ -561,7 +591,7 @@ fi
 
 # Captain-direct echo guard (see the header): never deliver the captain's own
 # message to a secondmate a second time.
-if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ "$FROM_CAPTAIN" != 1 ] && [ -z "$RESOLVE_KEYS" ] \
+if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ "$FROM_CAPTAIN" != 1 ] && [ -z "$FROM_MATE" ] && [ -z "$RESOLVE_KEYS" ] \
   && [ "${1:-}" != "--key" ] && [ -n "$*" ]; then
   if echo_corr=$(fm_captain_direct_echo_corr "$STATE" "$TARGET_TASK_ID" "$*"); then
     if [ "$CORRECTION" = 1 ]; then
@@ -829,7 +859,15 @@ else
     PENDING_REPLY_REQUEST="from the captain: $MESSAGE"
     fm_message_mark_captain_direct "$MESSAGE" MESSAGE
   fi
-  if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ -n "$FIRE_AND_FORGET_ID" ]; then
+  if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ -n "$FROM_MATE" ]; then
+    # A peer message carries the from-mate tag instead of the from-firstmate
+    # mark: it is not a first-mate request and expects no parent reply. The
+    # mate-mail corr doubles as the delivery id, so the tagged body is stable
+    # and a retried delivery deduplicates onto the same record.
+    fm_message_mark_from_mate "$FROM_MATE" "$FIRE_AND_FORGET_ID" "$MESSAGE" MESSAGE \
+      || { echo "error: could not tag the peer message from $FROM_MATE; nothing was sent" >&2; exit 1; }
+    FM_SEND_IDEMPOTENT=1
+  elif [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ -n "$FIRE_AND_FORGET_ID" ]; then
     fm_message_mark_from_firstmate "$MESSAGE" MESSAGE
     MESSAGE="${FM_FROMFIRST_MARK}delivery=${FIRE_AND_FORGET_ID} ${MESSAGE#"$FM_FROMFIRST_MARK"}"
     FM_SEND_IDEMPOTENT=1

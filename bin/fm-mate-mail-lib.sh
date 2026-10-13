@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# fm-mate-mail-lib.sh - peer messages between second mates, routed by the first mate.
+#
+# WHY. The captain's rule (2026-10-13): any second mate may message any other
+# second mate, or the first mate, when it chooses to. Remote homes never call
+# back to this Mac (the primary pulls their parent channel), so a peer message
+# cannot go mate to mate directly. Every message therefore rides the sender's
+# existing parent channel up to the primary home, and the primary's router
+# (bin/fm-mate-route.sh, run on every watcher poll) delivers it with
+# bin/fm-send.sh --from-mate. Routing through the primary is also what gives the
+# first mate its copy: one log line per message, no relay by the model.
+#
+# This library owns the wire line, the spool record, and the log. Callers:
+#   bin/fm-mate-send.sh            a mate queues one message
+#   bin/fm-procevent-remote-reply.sh  diverts a remote mate's wire line to the spool
+#   bin/fm-mate-route.sh           delivers, refuses, or fails each spooled message
+#
+# WIRE LINE (remote route only; a local mate writes the spool record directly):
+#   mate-message corr=<16 hex> to=<mate-id|primary> [re=<16 hex>]: <escaped text>
+# appended to the mate's own state/parent-replies.status. The text escapes
+# backslash as \\, newline as \n and tab as \t, so one message is one line.
+#
+# SPOOL (primary home):
+#   state/mate-mail/pending/<from>@<corr>.msg    waiting for the router
+#   state/mate-mail/{delivered,refused,failed}/  terminal, same name
+#   state/mate-mail/pending/<from>@<corr>.tries  "<count> <first-epoch>"
+# Record:
+#   schema=fm-mate-mail.v1
+#   from=<id>  to=<id|primary>  corr=<16 hex>  re=<16 hex or empty>  at=<utc>
+#   --
+#   <exact text>
+# A name already present in any of the four directories is a duplicate, so a
+# replayed remote delta or a re-run send never queues a message twice.
+#
+# LOG (primary home): state/mate-messages.log, one JSON object per line,
+#   {at, from, to, corr, re, outcome: delivered|refused|failed, reason, text}
+# It is the first mate's oversight copy and Fleet Town's thread source.
+#
+# Sourced. No side effects on source. Bash 3.2 compatible.
+
+FM_MATE_MAIL_MAX_BYTES=${FM_MATE_MAIL_MAX_BYTES:-4000}
+
+fm_mate_mail_id_valid() {  # <id>
+  local LC_ALL=C
+  case "${1-}" in ''|.*|*/*|*@*|*[!A-Za-z0-9._-]*) return 1 ;; esac
+}
+
+fm_mate_mail_corr_valid() {  # <corr>
+  printf '%s' "${1-}" | grep -Eq '^[a-f0-9]{16}$'
+}
+
+fm_mate_mail_new_corr() {
+  LC_ALL=C od -An -N8 -tx1 /dev/urandom | tr -d ' \n'
+}
+
+fm_mate_mail_escape() {  # <text>
+  printf '%s' "$1" | LC_ALL=C tr -d '\r' | perl -0777 -pe 's/\\/\\\\/g; s/\n/\\n/g; s/\t/\\t/g'
+}
+
+fm_mate_mail_unescape() {  # <escaped>
+  printf '%s' "$1" | perl -0777 -pe 's/\\(\\|n|t)/$1 eq "n" ? "\n" : $1 eq "t" ? "\t" : "\\"/ge'
+}
+
+# Print the wire line for one message.
+fm_mate_mail_line() {  # <corr> <to> <re> <text>
+  printf 'mate-message corr=%s to=%s%s: %s' "$1" "$2" "${3:+ re=$3}" "$(fm_mate_mail_escape "$4")"
+}
+
+# 0 when <line> is a wire line (well formed or not); the router decides the rest.
+fm_mate_mail_is_line() {  # <line>
+  case "${1-}" in 'mate-message '*) return 0 ;; esac
+  return 1
+}
+
+# Parse a wire line into FM_MM_CORR, FM_MM_TO, FM_MM_RE, FM_MM_TEXT.
+fm_mate_mail_parse_line() {  # <line>
+  local line=${1-} head
+  FM_MM_CORR='' FM_MM_TO='' FM_MM_RE='' FM_MM_TEXT=''
+  case "$line" in 'mate-message '*': '*) ;; *) return 1 ;; esac
+  head=${line%%: *}
+  FM_MM_TEXT=$(fm_mate_mail_unescape "${line#*: }")
+  FM_MM_CORR=$(printf '%s\n' "$head" | sed -n 's/.* corr=\([a-f0-9]\{16\}\)\( .*\)\{0,1\}$/\1/p')
+  FM_MM_TO=$(printf '%s\n' "$head" | sed -n 's/.* to=\([^ ]*\).*/\1/p')
+  FM_MM_RE=$(printf '%s\n' "$head" | sed -n 's/.* re=\([a-f0-9]\{16\}\).*/\1/p')
+  fm_mate_mail_corr_valid "$FM_MM_CORR" || return 1
+  [ "$FM_MM_TO" = primary ] || fm_mate_mail_id_valid "$FM_MM_TO" || return 1
+  [ -n "$FM_MM_TEXT" ]
+}
+
+fm_mate_mail_dir() {  # <state>
+  printf '%s/mate-mail\n' "$1"
+}
+
+# Spool one message into <state> (the primary home's state dir).
+# Returns 0 spooled, 1 duplicate, 2 malformed, 3 write failed.
+fm_mate_mail_spool() {  # <state> <from> <to> <corr> <re> <text>
+  local state=$1 from=$2 to=$3 corr=$4 re=$5 text=$6 dir name sub tmp
+  fm_mate_mail_id_valid "$from" || return 2
+  [ "$to" = primary ] || fm_mate_mail_id_valid "$to" || return 2
+  fm_mate_mail_corr_valid "$corr" || return 2
+  [ -z "$re" ] || fm_mate_mail_corr_valid "$re" || return 2
+  [ -n "$text" ] || return 2
+  dir=$(fm_mate_mail_dir "$state")
+  name="$from@$corr.msg"
+  for sub in pending delivered refused failed; do
+    [ ! -e "$dir/$sub/$name" ] || return 1
+  done
+  mkdir -p "$dir/pending" || return 3
+  tmp="$dir/pending/.$name.$$"
+  {
+    printf 'schema=fm-mate-mail.v1\nfrom=%s\nto=%s\ncorr=%s\nre=%s\nat=%s\n--\n' \
+      "$from" "$to" "$corr" "$re" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '%s' "$text"
+  } > "$tmp" || { rm -f "$tmp"; return 3; }
+  mv "$tmp" "$dir/pending/$name" || { rm -f "$tmp"; return 3; }
+}
+
+# Spool a wire line received from remote mate <from>. Same return codes.
+fm_mate_mail_spool_line() {  # <state> <from> <line>
+  fm_mate_mail_parse_line "$3" || return 2
+  fm_mate_mail_spool "$1" "$2" "$FM_MM_TO" "$FM_MM_CORR" "$FM_MM_RE" "$FM_MM_TEXT"
+}
+
+# Read one spool record into FM_MM_FROM, FM_MM_TO, FM_MM_CORR, FM_MM_RE,
+# FM_MM_AT and FM_MM_TEXT.
+fm_mate_mail_read() {  # <record>
+  local f=$1
+  [ -f "$f" ] && [ ! -L "$f" ] || return 1
+  FM_MM_FROM=$(sed -n '1,/^--$/s/^from=//p' "$f")
+  FM_MM_TO=$(sed -n '1,/^--$/s/^to=//p' "$f")
+  FM_MM_CORR=$(sed -n '1,/^--$/s/^corr=//p' "$f")
+  FM_MM_RE=$(sed -n '1,/^--$/s/^re=//p' "$f")
+  FM_MM_AT=$(sed -n '1,/^--$/s/^at=//p' "$f")
+  FM_MM_TEXT=$(sed '1,/^--$/d' "$f"; printf x)
+  FM_MM_TEXT=${FM_MM_TEXT%x}
+  [ "$(sed -n 1p "$f")" = schema=fm-mate-mail.v1 ] || return 1
+  fm_mate_mail_id_valid "$FM_MM_FROM" && fm_mate_mail_corr_valid "$FM_MM_CORR"
+}
+
+# Append one oversight line to <state>/mate-messages.log.
+fm_mate_mail_log() {  # <state> <outcome> <reason>  (reads FM_MM_*)
+  local state=$1 outcome=$2 reason=$3
+  python3 -c '
+import json, sys, datetime
+keys = ["from", "to", "corr", "re", "outcome", "reason", "text"]
+row = {"at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+row.update(dict(zip(keys, sys.argv[2:])))
+row["sent_at"] = sys.argv[9]
+with open(sys.argv[1], "a", encoding="utf-8") as log:
+    log.write(json.dumps(row, ensure_ascii=False) + "\n")
+' "$state/mate-messages.log" "$FM_MM_FROM" "$FM_MM_TO" "$FM_MM_CORR" "$FM_MM_RE" \
+    "$outcome" "$reason" "$FM_MM_TEXT" "${FM_MM_AT:-}"
+}

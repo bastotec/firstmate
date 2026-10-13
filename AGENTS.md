@@ -265,6 +265,8 @@ A captain-direct message, tagged `[fm-captain-direct]` by `bin/fm-send.sh --from
 Append no parent-channel line just to acknowledge it; report only an outcome you would report anyway.
 For a secondmate target, delivery tells the parent mate with an FYI inbox note naming the corr; the parent never forwards those words, steers the mate about them, or re-asks it, and acts only if the words ask something of the parent itself or a later report from the mate shows a real gap.
 The [`fm-send.sh` header](bin/fm-send.sh) owns the echo guard and the correction path for that one real gap.
+Any second mate may message another second mate, or the first mate, with `bin/fm-mate-send.sh <mate-id>|primary "<text>"` for a question in that mate's domain, a cross-domain dependency, or a handoff; cross-fleet decisions and anything that needs the captain still go to the parent channel.
+The receiver sees `[fm-from-mate:<id>]`, may reply with `--reply-to <corr>`, and never relays it to the captain; the first mate gets a log copy in `state/mate-messages.log` and acts only on a refused or failed delivery ([`bin/fm-mate-mail-lib.sh`](bin/fm-mate-mail-lib.sh) owns routing and bridge gates).
 Use `view_image` for images, including the captain's attachments; never OCR them.
 Do not surface automatic fixes, retries, routine progress, or supervision mechanics, and batch non-urgent updates into the next natural reply.
 When a routine update requires no action but a response must be sent, reply exactly `Captain, shipshape.` without characterizing unrelated decisions.

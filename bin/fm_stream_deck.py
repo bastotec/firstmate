@@ -344,8 +344,12 @@ class Receiver:
         return None, 'Deck application pending'
 
 
+# Direct sources: text the captain wrote to this agent himself, and peer
+# messages from another second mate (bin/fm-operational-input.sh owns both
+# carriers). Each wakes an idle agent and reaches a live turn natively.
 CAPTAIN_DIRECT = re.compile(
-    '\\A(?:\\[fm-from-firstmate\\]⁣(?:corr=\\S+ )?)?\\[fm-captain-direct\\]⁣')
+    '\\A(?:(?:\\[fm-from-firstmate\\]⁣(?:corr=\\S+ )?)?\\[fm-captain-direct\\]'
+    '|\\[fm-from-mate:[A-Za-z0-9._-]+\\])⁣')
 
 
 def project_captain(state, task):

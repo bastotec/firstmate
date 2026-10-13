@@ -50,6 +50,15 @@ FM_CAPTAIN_DIRECT_LABEL='[fm-captain-direct]'
 FM_CAPTAIN_DIRECT_MARK="${FM_CAPTAIN_DIRECT_LABEL}${FM_OPERATIONAL_MARK}"
 FM_CAPTAIN_DIRECT_NOTE='The captain wrote this to you himself and reads your conversation, so answer him there, once. Your parent mate was already told, so append no parent-channel line just to acknowledge it. If this same corr= reaches you again, it is a duplicate: do not answer him a second time.'
 
+# The from-mate carrier tags a peer message one second mate (or the first
+# mate's router on its behalf) sent to another through bin/fm-mate-send.sh.
+# Like captain-direct it is a provenance tag, not an operational-input kind:
+# "[fm-from-mate:<sender-id>]" + U+2063, then "corr=<16 hex> ", a fixed reply
+# note, a blank line, and the sender's text. It is never captain-direct and
+# never carries the from-firstmate mark. bin/fm-mate-mail-lib.sh owns routing.
+FM_FROM_MATE_LABEL_PREFIX='[fm-from-mate:'
+FM_FROM_MATE_NOTE='A peer second mate sent you this directly; the first mate sees a copy. Answer only if useful, with bin/fm-mate-send.sh <sender> --reply-to <corr> "<text>"; never relay it to the captain yourself.'
+
 fm_operational_kind_is_current() {  # <kind>
   case " $FM_OPERATIONAL_KINDS " in
     *" $1 "*) return 0 ;;
@@ -225,6 +234,18 @@ fm_message_mark_captain_direct() {  # <message> <result-var>
   else
     printf -v "$result_var" '%s%s\n\n%s' "$FM_CAPTAIN_DIRECT_MARK" "$FM_CAPTAIN_DIRECT_NOTE" "$message"
   fi
+}
+
+# Tag a peer message from <sender> carrying the mate-mail <corr>. The result is
+# stable for the same inputs, so a retried delivery deduplicates onto the same
+# inbox record.
+fm_message_mark_from_mate() {  # <sender-id> <corr> <message> <result-var>
+  local sender=${1-} corr=${2-} message=${3-} result_var=${4-}
+  [ -n "$result_var" ] && [ -n "$message" ] || return 2
+  case "$sender" in ''|.*|*[!A-Za-z0-9._-]*) return 2 ;; esac
+  printf '%s' "$corr" | grep -Eq '^[a-f0-9]{16}$' || return 2
+  printf -v "$result_var" '%s%s]%scorr=%s %s\n\n%s' "$FM_FROM_MATE_LABEL_PREFIX" "$sender" \
+    "$FM_OPERATIONAL_MARK" "$corr" "$FM_FROM_MATE_NOTE" "$message"
 }
 
 fm_operational_read_stdin() {  # <result-var>

@@ -42,6 +42,14 @@ A missed-reply escalation includes the complete first sighting path and line num
 
 [`AGENTS.md` section 9](../AGENTS.md#9-escalation-and-captain-etiquette) owns the captain-direct reply rule, the [`fm-send.sh` header](../bin/fm-send.sh) owns its delivery and reply tracking, and [`fm-operational-input.sh`](../bin/fm-operational-input.sh) owns the carrier and its compatibility note.
 
+## Peer messages
+
+A second mate may message another second mate, or the first mate, with `bin/fm-mate-send.sh`.
+Remote homes never call back to the parent, so a peer message rides the sender's parent channel up to the main home, and `bin/fm-mate-route.sh` delivers it from there on the next watcher poll, through the same durable inbox and bridge gates (`messages` flow) as any first-mate steer.
+That single route is also the first mate's oversight: every delivered, refused, or failed message is one line in the main home's `state/mate-messages.log`, and only a refused or failed one wakes the first mate and is bounced to its sender.
+A peer message is a spool record, never a status line, so it does not wake the first mate or open a decision.
+[`bin/fm-mate-mail-lib.sh`](../bin/fm-mate-mail-lib.sh) owns the wire line, spool, and log; `tests/fm-mate-mail.test.sh` covers them.
+
 ## What is deliberately not built
 
 - No mirror of the mate's chat: chat can mix outcomes with other conversation, so choosing which sentence is an outcome would itself be model behavior.

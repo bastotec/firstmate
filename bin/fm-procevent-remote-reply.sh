@@ -48,6 +48,10 @@
 # and rejecting one line failed the whole delta, so the cursor could never
 # advance past it. No single line can stop or wedge the stream.
 #
+# One exception to the mirror: a `mate-message` line is a peer message bound for
+# another mate, so ingest spools it for bin/fm-mate-route.sh instead
+# (bin/fm-mate-mail-lib.sh owns that contract).
+#
 # What remains here is only what crossing a machine boundary genuinely adds:
 #   - cursor continuity and identity (offset plus prefix digest)
 #   - data/*.md pointers fetched through the path-confined remote file reader and
@@ -85,6 +89,8 @@ DOCUMENT_LOCAL_FAILURE=2
 . "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
 # shellcheck source=bin/fm-pending-reply-lib.sh
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
+# shellcheck source=bin/fm-mate-mail-lib.sh
+. "$SCRIPT_DIR/fm-mate-mail-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 usage() { sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
@@ -395,6 +401,18 @@ cmd_ingest() {
         || { fm_lock_release "$lock"; die "could not store referenced remote document: $doc"; }
       rewritten=${rewritten//"$doc"/"$local_doc"}
     done < <(printf '%s\n' "$line" | grep -Eo 'data/[A-Za-z0-9._/-]+\.md' | awk '!seen[$0]++')
+    if fm_mate_mail_is_line "$rewritten"; then
+      # A peer message rides this channel only to reach the first mate's
+      # router; it goes to the spool, never into the mate's status stream
+      # (bin/fm-mate-mail-lib.sh). A malformed one is mirrored as-is so the
+      # first mate can see it; a duplicate is already spooled or routed.
+      append_rc=0
+      fm_mate_mail_spool_line "$STATE" "$id" "$rewritten" || append_rc=$?
+      case "$append_rc" in
+        0|1) continue ;;
+        3) fm_lock_release "$lock"; die "cannot spool a peer message from $id" ;;
+      esac
+    fi
     append_rc=0
     append_status_once "$status_file" "$rewritten" || append_rc=$?
     [ "$append_rc" -ne 2 ] || { fm_lock_release "$lock"; die "cannot append remote reply"; }
