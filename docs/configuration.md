@@ -38,6 +38,7 @@ config/
   effort-policy.json      optional per-turn reasoning effort switch and level ("Turn effort")
   deck-mcp.json           optional Deck MCP servers ("Harness support")
   model-policy.json       home-local route policy for in-place switches (bin/fm_model_switch.py owns validation and policy semantics)
+  power-host              optional ssh alias whose proxai quota table feeds the fleet report; absent = workload (bin/fm_report.py)
   shared-skills           optional skills repo shipped to connected machines; primary home only (bin/fm-machine.sh header)
   machine-tunnels         optional gateway host whose model gateway and stream hub machine setup forwards (bin/fm-machine.sh header)
   bridges.json            home-local cross-machine permissions ("Bridge gates"; bin/fm-bridge.py owns schema)
@@ -92,6 +93,7 @@ state/
   captain-direct/ captain-direct.log  parent-side captain-direct delivery ledger and echo-guard log (bin/fm-captain-direct-lib.sh)
   mate-mail/             primary-home peer-message spool and routing bookkeeping (bin/fm-mate-mail-lib.sh owns layout)
   mate-messages.log      primary-home peer-message oversight log (bin/fm-mate-mail-lib.sh owns fields)
+  crew-time.log           per-home busy-state history for crew time; bin/fm-busy-event.sh appends, bin/fm_report.py reads and trims
   home-summary.json       this home's ledger (bin/fm-home-summary-refresh.sh)
   machine-pending/<m>.json  a machine being connected: its checklist and planned second mates; bin/fm-machine-blocker.sh owns format and lifecycle
   machine-skills/<m>.tsv  each machine's `deck skills` inventory; bin/fm-machine-skills.sh owns format and refresh

@@ -279,8 +279,8 @@ A message with NO marker is the captain typing directly into your pane: treat it
 A request arriving through the instruction inbox below follows the same marker and reply rules.
 
 # Peer messages
-A message tagged \`[fm-from-mate:<id>]\` comes from another second mate, not from the main firstmate or the captain: answer it only if useful, with \`bin/fm-mate-send.sh <id> --reply-to <corr> "<text>"\`, never on the parent channel.
-You may message a peer yourself the same way (\`bin/fm-mate-send.sh <mate-id>|primary "<text>"\`) for a question in its domain, a cross-domain dependency, or a handoff; anything that needs the captain or a cross-fleet decision goes to the parent channel instead.
+A message tagged \`[fm-from-mate:<id>]\` comes from another second mate, not from the main firstmate or the captain: load \`mate-messaging\` from this home's \`.agents/skills/\` and answer only if useful, never on the parent channel.
+You may message peers and read any mate's report yourself under the \`mate-messaging\` and \`mate-reports\` skills; anything that needs the captain or a cross-fleet decision goes to the parent channel instead.
 
 $INBOX_SECTION
 

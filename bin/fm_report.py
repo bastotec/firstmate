@@ -1,0 +1,460 @@
+#!/usr/bin/env python3
+"""fm_report.py - the fleet and per-mate report, computed from firstmate's own records.
+
+bin/fm-report.sh is the entry point and owns routing between homes; this file
+owns the data, the JSON shape and the text rendering. Fleet Town's report
+button, a second mate reading a peer's report, and Ziggy all read this one
+generator, so a report is the same whether or not Fleet Town is open.
+
+Sources (read-only; no agent turn and no model token is spent):
+  - Each home's published state/home-summary.json (bin/fm-home-summary-refresh.sh):
+    crew working now, open decisions, holds, and landed work with completion
+    dates. A local home's file is read in place; a remote home's is fetched
+    once over the existing route (bin/fm-on.sh, bridge files and reports
+    flows) with the parent-side cached copy as fallback. The main home's own
+    summary gives the first mate's crew and shipped work.
+  - state/crew-time.log in every home (bin/fm-busy-event.sh appends one
+    "<epoch>\t<task>\t<busy|idle|unknown|retired>" line per busy-state change;
+    remote homes publish its intervals as crew_time in their home summary).
+  - For the fleet scope only, proxai's quota table on the power host
+    (config/power-host, default workload): `proxai quotas --detail --short`.
+
+Commands:
+  fm_report.py crew-time <state-dir> [--days N]
+      {since, intervals: [[task, start_epoch, end_epoch], ...]} for the last N
+      days (default 8), merged and bounded; used by the home summary.
+  fm_report.py report --home <main-home> --scope <fleet|primary|mate-id> [--days N] [--json]
+      The report. --json prints the stable shape below; otherwise markdown.
+
+JSON shape (schema fm-report.v1; new fields may be added, none removed):
+  {schema, as_of, scope, scope_name, days, window: {from, to},
+   headline, summary,
+   shipped: [{title, pr, mate, task, date}],
+   waiting: [{what, on, since, mate, task}],
+   crew: [{agent, task, status, doing, mate}],
+   time_worked: [{agent, task, mate, seconds}],
+   crew_seconds, crew_time_since,
+   mates: [{id, name, domain, machine, freshness, shipped, crew, waiting, crew_seconds}]   (fleet)
+   power: [{provider, pct_left, refills_at, tightest}], power_error           (fleet)
+   gaps: [<what could not be read, in words>]}
+"""
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import hashlib
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+CREW_LOG = 'crew-time.log'
+CREW_LOG_MAX = 2 * 1024 * 1024
+MERGE_GAP = 60
+FETCH_TIMEOUT = int(os.environ.get('FM_REPORT_FETCH_TIMEOUT', '20'))
+MAX_INTERVALS = 600  # keeps the published home summary well under its 256 KiB read bound
+
+
+# --- crew time -------------------------------------------------------------
+
+def read_crew_log(state_dir):
+    path = Path(state_dir) / CREW_LOG
+    rows = []
+    try:
+        with open(path, encoding='utf-8', errors='replace') as fh:
+            for line in fh:
+                parts = line.rstrip('\n').split('\t')
+                if len(parts) != 3 or not parts[0].isdigit():
+                    continue
+                rows.append((int(parts[0]), parts[1], parts[2]))
+    except OSError:
+        pass
+    return rows
+
+
+def crew_intervals(rows, start, now):
+    """Busy intervals per task, clipped to [start, now], merged across small gaps."""
+    rows = sorted(rows)
+    open_since = {}
+    out = []
+    for ts, task, state in rows:
+        if state == 'busy':
+            open_since.setdefault(task, ts)
+        elif task in open_since:
+            out.append([task, open_since.pop(task), ts])
+    for task, since in open_since.items():
+        out.append([task, since, now])
+    clipped = []
+    for task, a, b in out:
+        a, b = max(a, start), min(b, now)
+        if b > a:
+            clipped.append([task, a, b])
+    clipped.sort(key=lambda r: (r[0], r[1]))
+    merged = []
+    for row in clipped:
+        if merged and merged[-1][0] == row[0] and row[1] - merged[-1][2] <= MERGE_GAP:
+            merged[-1][2] = max(merged[-1][2], row[2])
+        else:
+            merged.append(row)
+    merged.sort(key=lambda r: r[2])
+    return merged[-MAX_INTERVALS:]
+
+
+def trim_crew_log(state_dir, keep_from):
+    path = Path(state_dir) / CREW_LOG
+    try:
+        if path.stat().st_size <= CREW_LOG_MAX:
+            return
+        keep = [r for r in read_crew_log(state_dir) if r[0] >= keep_from]
+        tmp = path.with_name(path.name + '.%d.tmp' % os.getpid())
+        tmp.write_text(''.join('%d\t%s\t%s\n' % r for r in keep), encoding='utf-8')
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def crew_time(state_dir, days=8, now=None):
+    now = int(now or time.time())
+    start = now - days * 86400
+    rows = read_crew_log(state_dir)
+    trim_crew_log(state_dir, start)
+    since = min((r[0] for r in rows), default=None)
+    return {'since': since, 'intervals': crew_intervals(rows, start, now)}
+
+
+# --- helpers -----------------------------------------------------------------
+
+def local_midnight(now, days_back):
+    day = dt.datetime.fromtimestamp(now).date() - dt.timedelta(days=days_back)
+    return int(dt.datetime.combine(day, dt.time()).timestamp()), day
+
+
+def iso(epoch):
+    return dt.datetime.fromtimestamp(epoch, dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+def words_for(seconds):
+    m = int(seconds) // 60
+    return '%dh%02dm' % (m // 60, m % 60) if m >= 60 else '%dm' % m
+
+
+def registry(home):
+    """{id: {domain, machine}} from data/secondmates.md."""
+    out = {}
+    try:
+        text = (Path(home) / 'data' / 'secondmates.md').read_text(encoding='utf-8')
+    except OSError:
+        return out
+    for line in text.splitlines():
+        m = re.match(r'^- ([A-Za-z0-9][A-Za-z0-9._-]*) - ', line)
+        if not m:
+            continue
+        scope = re.search(r'scope: (.*?)(?:; projects:|; added|\)$)', line)
+        host = re.search(r'\(host: ([^;]+);', line)
+        mhome = re.search(r'home: ([^;]+);', line)
+        out[m.group(1)] = {
+            'domain': (scope.group(1).strip() if scope else '')[:300],
+            'machine': host.group(1).strip() if host else 'this Mac',
+            'host': host.group(1).strip() if host else None,
+            'home': mhome.group(1).strip() if mhome else None,
+        }
+    return out
+
+
+def resolve_scope(raw, mates):
+    s = raw.strip().lower()
+    if s in ('fleet', 'all', 'everyone'):
+        return 'fleet'
+    if s in ('primary', 'first-mate', 'first mate', 'firstmate', 'main'):
+        return 'primary'
+    slug = re.sub(r'[\s_]+', '-', s)
+    for mid in mates:
+        if mid.lower() in (s, slug):
+            return mid
+    return None
+
+
+def summary_valid(doc, home):
+    return (isinstance(doc, dict) and doc.get('schema') == 'fm-secondmate-home-summary.v1'
+            and (home is None or doc.get('home') == home))
+
+
+def read_json(path):
+    try:
+        with open(path, encoding='utf-8') as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def cached_summary(main_home, mid, host, home):
+    """The parent-side copy bin/fm-fleet-snapshot.sh keeps of a remote home's summary."""
+    key = hashlib.sha256(('%s\n%s\n%s\n' % (mid, host, home)).encode()).hexdigest()
+    doc = read_json(Path(main_home) / 'state' / 'secondmate-summary-cache' / (key + '.json'))
+    return doc if summary_valid(doc, home) else None
+
+
+def fetch_summary(main_home, mid, info):
+    """(summary, source) for one second mate, read-only; (None, why) when unreadable.
+
+    A local home's own state/home-summary.json is read in place. A remote one is
+    fetched once over the existing route (bin/fm-on.sh, bridge files+reports
+    flows), falling back to the parent-side cached copy.
+    """
+    home = info.get('home')
+    if not info.get('host'):
+        doc = read_json(Path(home or '/nonexistent') / 'state' / 'home-summary.json')
+        return (doc, 'local') if summary_valid(doc, home) else (None, 'no readable home summary')
+    env = dict(os.environ, FM_HOME=str(main_home))
+    env.pop('FM_STATE_OVERRIDE', None)
+    try:
+        run = subprocess.run([str(SCRIPT_DIR / 'fm-on.sh'), mid, 'fm-remote-file.sh', 'get',
+                              'state/home-summary.json', '262144'], env=env, capture_output=True,
+                             text=True, timeout=FETCH_TIMEOUT, stdin=subprocess.DEVNULL)
+        doc = json.loads(run.stdout) if run.returncode == 0 else None
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        doc = None
+    if summary_valid(doc, home):
+        return doc, 'remote'
+    doc = cached_summary(main_home, mid, info.get('host'), home)
+    return (doc, 'cached') if doc else (None, 'remote summary unreadable and no cached copy')
+
+
+# --- power -------------------------------------------------------------------
+
+POWER_ROW = re.compile(
+    r'^  (?P<acct>\S+)?\s+(?P<state>[A-Z]+)\s+(?P<used>\d+)%\s+(?P<label>.*?)'
+    r'(?:\s{2,}(?P<resets>[A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}Z))?\s*$')
+
+
+def parse_power(text):
+    providers, provider, account = {}, None, None
+    for line in text.splitlines():
+        if not line.strip() or line.startswith(('proxai', 'ACCOUNT')):
+            continue
+        if not line.startswith(' '):
+            provider = line.strip()
+            providers.setdefault(provider, {})
+            continue
+        lead = re.match(r'^  (\S+)', line)
+        if lead:
+            account = lead.group(1)
+        m = POWER_ROW.match(line)
+        if not m or provider is None:
+            continue
+        if m.group('acct'):
+            account = m.group('acct')
+        if 'model' in m.group('label'):
+            continue
+        providers[provider].setdefault(account, []).append(
+            (int(m.group('used')), m.group('label').strip(), m.group('resets') or ''))
+    out = []
+    for name, accounts in providers.items():
+        if not accounts:
+            continue
+        lefts, tight = [], None
+        for acct, windows in accounts.items():
+            used, label, resets = max(windows, key=lambda w: w[0])
+            lefts.append(100 - used)
+            if tight is None or 100 - used < tight[0]:
+                tight = (100 - used, '%s %s' % (acct, label), resets)
+        out.append({'provider': name, 'pct_left': round(sum(lefts) / len(lefts)),
+                    'refills_at': tight[2] or None, 'tightest': tight[1]})
+    return out
+
+
+def read_power(home):
+    host = 'workload'
+    try:
+        host = (Path(home) / 'config' / 'power-host').read_text().strip() or host
+    except OSError:
+        pass
+    if os.environ.get('FM_REPORT_POWER_FILE'):
+        return parse_power(Path(os.environ['FM_REPORT_POWER_FILE']).read_text()), None
+    try:
+        run = subprocess.run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host,
+                              'COLUMNS=200 ~/.local/bin/proxai quotas --detail --short'],
+                             capture_output=True, text=True, timeout=40)
+    except (OSError, subprocess.TimeoutExpired):
+        return [], 'proxai on %s did not answer in time' % host
+    power = parse_power(run.stdout)
+    return power, (None if power else 'proxai on %s gave no quota table' % host)
+
+
+# --- the report --------------------------------------------------------------
+
+def home_rows(rec, mate, start_day, crew_since_holder):
+    """shipped, waiting, crew and crew intervals from one home summary record."""
+    shipped = []
+    for row in rec.get('landed') or []:
+        date = ((row.get('completion') or {}).get('date') or '')
+        if date and date >= start_day.isoformat():
+            shipped.append({'title': row.get('title') or row.get('id'), 'pr': row.get('pr_url'),
+                            'mate': mate, 'task': row.get('id'), 'date': date})
+    waiting = []
+    for row in rec.get('decisions_open') or []:
+        waiting.append({'what': row.get('title') or row.get('summary') or row.get('id'), 'on': 'the captain',
+                        'since': row.get('since'), 'mate': mate, 'task': row.get('id')})
+    for row in rec.get('holds') or []:
+        on = row.get('blocked_by') or 'the captain'
+        waiting.append({'what': row.get('title') or row.get('id'), 'on': on, 'since': row.get('since'),
+                        'mate': mate, 'task': row.get('id')})
+    crew = []
+    for row in rec.get('active_children') or []:
+        crew.append({'agent': row.get('id'), 'task': row.get('name') or row.get('id'),
+                     'status': row.get('state'), 'doing': row.get('doing'), 'mate': mate})
+        if row.get('state') in ('blocked', 'needs-decision', 'paused'):
+            waiting.append({'what': row.get('name') or row.get('id'), 'on': mate, 'since': None,
+                            'mate': mate, 'task': row.get('id')})
+    ct = rec.get('crew_time') or {}
+    if ct.get('since'):
+        crew_since_holder.append(ct['since'])
+    return shipped, waiting, crew, ct.get('intervals') or []
+
+
+def worked(intervals, mate, start, now, names):
+    totals = {}
+    for task, a, b in intervals:
+        a, b = max(int(a), start), min(int(b), now)
+        if b > a:
+            totals[task] = totals.get(task, 0) + (b - a)
+    return [{'agent': t, 'task': names.get(t, t), 'mate': mate, 'seconds': s}
+            for t, s in sorted(totals.items(), key=lambda kv: -kv[1])]
+
+
+def build(home, scope_raw, days, now=None):
+    now = int(now or time.time())
+    days = max(1, int(days))
+    start, start_day = local_midnight(now, days - 1)
+    reg = registry(home)
+    mates = sorted(reg)
+    scope = resolve_scope(scope_raw, mates)
+    if scope is None:
+        raise LookupError('no second mate named %r (second mates: %s; or fleet, primary)' % (scope_raw, ', '.join(mates)))
+    gaps, since = [], []
+    wanted = mates if scope == 'fleet' else ([scope] if scope != 'primary' else [])
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        fetched = dict(zip(wanted, pool.map(lambda m: fetch_summary(home, m, reg[m]), wanted)))
+
+    def part(mid, rec, name, domain, machine, source):
+        if rec is None:
+            gaps.append('%s: %s' % (name, source))
+            rec = {}
+        elif source == 'cached':
+            gaps.append('%s: live summary unreachable, using the copy from %s' % (name, rec.get('generated')))
+        s, w, c, iv = home_rows(rec, mid, start_day, since)
+        t = worked(iv, mid, start, now, {x['agent']: x['task'] for x in c})
+        age = now - int(rec.get('generated_epoch') or now)
+        return {'id': mid, 'name': name, 'domain': domain, 'machine': machine,
+                'freshness': source if rec else 'unreadable', 'summary_age_seconds': age if rec else None,
+                'shipped': s, 'waiting': w, 'crew': c, 'time_worked': t,
+                'crew_seconds': sum(x['seconds'] for x in t)}
+
+    def mate_part(mid):
+        doc, source = fetched[mid]
+        return part(mid, doc, mid.replace('-', ' '), reg[mid]['domain'], reg[mid]['machine'], source)
+
+    def primary_part():
+        doc = read_json(Path(home) / 'state' / 'home-summary.json')
+        if not summary_valid(doc, None):
+            doc = None
+        else:
+            doc = dict(doc, crew_time=crew_time(Path(home) / 'state', days=max(days, 8), now=now))
+        return part('primary', doc, 'first mate', 'the whole fleet', 'this Mac',
+                    'local' if doc else 'no readable home summary')
+
+    parts = [primary_part()] + [mate_part(m) for m in mates] if scope == 'fleet' else \
+        [primary_part() if scope == 'primary' else mate_part(scope)]
+    flat = lambda key: [x for p in parts for x in p[key]]
+    rep = {
+        'schema': 'fm-report.v1', 'as_of': iso(now), 'scope': scope,
+        'scope_name': 'the fleet' if scope == 'fleet' else parts[0]['name'],
+        'days': days, 'window': {'from': iso(start), 'to': iso(now)},
+        'shipped': flat('shipped'), 'waiting': flat('waiting'), 'crew': flat('crew'),
+        'time_worked': sorted(flat('time_worked'), key=lambda x: -x['seconds']),
+        'crew_seconds': sum(p['crew_seconds'] for p in parts),
+        'crew_time_since': iso(min(since)) if since else None,
+        'gaps': gaps,
+    }
+    if scope == 'fleet':
+        rep['mates'] = [{k: p[k] for k in ('id', 'name', 'domain', 'machine', 'freshness', 'crew_seconds')}
+                        | {'shipped': len(p['shipped']), 'crew': len(p['crew']), 'waiting': len(p['waiting'])}
+                        for p in parts]
+        rep['power'], rep['power_error'] = read_power(home)
+    else:
+        rep['domain'] = parts[0]['domain']
+        rep['machine'] = parts[0]['machine']
+    period = 'today' if days == 1 else 'the last %d days' % days
+    rep['headline'] = '%s, %s: %d shipped, %d working now, %s crew time, %d waiting.' % (
+        rep['scope_name'][0].upper() + rep['scope_name'][1:], period, len(rep['shipped']),
+        len(rep['crew']), words_for(rep['crew_seconds']), len(rep['waiting']))
+    power = rep.get('power') or []
+    low = min(power, key=lambda p: p['pct_left']) if power else None
+    rep['summary'] = rep['headline'] + (
+        ' Tightest power: %s at %d%%.' % (low['provider'], low['pct_left']) if low else '')
+    return rep
+
+
+def markdown(rep):
+    out = ['# %s report - %s' % (rep['scope_name'], 'today' if rep['days'] == 1 else '%d days' % rep['days']),
+           '', rep['headline'], '']
+    if rep.get('domain'):
+        out += ['Domain: %s (%s)' % (rep['domain'], rep.get('machine')), '']
+    if rep.get('mates'):
+        out += ['## Mates'] + ['- %s (%s): %d shipped, %d working, %d waiting, %s crew time%s' % (
+            m['name'], m['machine'], m['shipped'], m['crew'], m['waiting'], words_for(m['crew_seconds']),
+            '' if m['freshness'] in ('fresh', None) else ', summary ' + str(m['freshness']))
+            for m in rep['mates']] + ['']
+    out += ["## What's waiting"] + (['- %s - on %s%s%s' % (
+        w['what'], w['on'], ' (%s)' % w['mate'] if rep['scope'] == 'fleet' else '',
+        ', since ' + w['since'] if w.get('since') else '') for w in rep['waiting']] or ['- nothing']) + ['']
+    out += ['## The crew right now'] + (['- %s: %s - %s%s' % (
+        c['agent'], c['task'], c['status'] or 'unknown', ' (%s)' % c['mate'] if rep['scope'] == 'fleet' else '')
+        for c in rep['crew']] or ['- nobody working']) + ['']
+    out += ['## What shipped'] + (['- %s%s%s' % (s['title'], ' - ' + s['pr'] if s.get('pr') else '',
+                                                  ' (%s)' % s['mate'] if rep['scope'] == 'fleet' else '')
+                                   for s in rep['shipped']] or ['- nothing yet']) + ['']
+    out += ['## Time worked'] + (['- %s: %s' % (t['agent'], words_for(t['seconds'])) for t in rep['time_worked']]
+                                 or ['- none recorded']) + ['']
+    if rep.get('power') or rep.get('power_error'):
+        out += ['## Power'] + ['- %s: %d%% left%s (tightest: %s)' % (
+            p['provider'], p['pct_left'], ', refills ' + p['refills_at'] if p['refills_at'] else '', p['tightest'])
+            for p in rep.get('power') or []] + (['- unread: ' + rep['power_error']] if rep.get('power_error') else []) + ['']
+    foot = 'Crew time comes from firstmate\'s own busy records%s.' % (
+        ' since ' + rep['crew_time_since'] if rep.get('crew_time_since') else ' (none recorded yet)')
+    out += ['_As of %s. %s%s_' % (rep['as_of'], foot, (' Unread: ' + '; '.join(rep['gaps'])) if rep['gaps'] else '')]
+    return '\n'.join(out) + '\n'
+
+
+def main(argv):
+    p = argparse.ArgumentParser(prog='fm_report.py')
+    sub = p.add_subparsers(dest='cmd', required=True)
+    c = sub.add_parser('crew-time')
+    c.add_argument('state')
+    c.add_argument('--days', type=int, default=8)
+    r = sub.add_parser('report')
+    r.add_argument('--home', required=True)
+    r.add_argument('--scope', required=True)
+    r.add_argument('--days', type=int, default=1)
+    r.add_argument('--json', action='store_true')
+    a = p.parse_args(argv)
+    if a.cmd == 'crew-time':
+        print(json.dumps(crew_time(a.state, a.days)))
+        return 0
+    try:
+        rep = build(a.home, a.scope, a.days)
+    except LookupError as e:
+        print('error: %s' % e.args[0], file=sys.stderr)
+        return 1
+    except (RuntimeError, subprocess.TimeoutExpired, ValueError) as e:
+        print('error: %s' % e, file=sys.stderr)
+        return 1
+    sys.stdout.write(json.dumps(rep, indent=1) + '\n' if a.json else markdown(rep))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

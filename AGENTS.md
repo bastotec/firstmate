@@ -265,8 +265,7 @@ A captain-direct message, tagged `[fm-captain-direct]` by `bin/fm-send.sh --from
 Append no parent-channel line just to acknowledge it; report only an outcome you would report anyway.
 For a secondmate target, delivery tells the parent mate with an FYI inbox note naming the corr; the parent never forwards those words, steers the mate about them, or re-asks it, and acts only if the words ask something of the parent itself or a later report from the mate shows a real gap.
 The [`fm-send.sh` header](bin/fm-send.sh) owns the echo guard and the correction path for that one real gap.
-Any second mate may use [`bin/fm-mate-send.sh`](bin/fm-mate-send.sh) to message a peer or the first mate for a domain question, cross-domain dependency, or handoff; cross-fleet decisions and anything that needs the captain still go to the parent channel, and workers still talk only to their own mate.
-A `[fm-from-mate:<id>]` message is not captain-direct: answer only if useful using the receiver-specific reply instruction in its carrier ([`bin/fm-operational-input.sh`](bin/fm-operational-input.sh)), never relay its content to the captain; [`bin/fm-mate-mail-lib.sh`](bin/fm-mate-mail-lib.sh) owns routing, bridge gates, and the first mate's oversight copy.
+Any second mate may message a peer or the first mate, and read any mate's report, under the `mate-messaging` and `mate-reports` skills; cross-fleet decisions and anything that needs the captain still go to the parent channel, workers still talk only to their own mate, and a `[fm-from-mate:<id>]` message is never captain-direct or relayed to the captain.
 Use `view_image` for images, including the captain's attachments; never OCR them.
 Do not surface automatic fixes, retries, routine progress, or supervision mechanics, and batch non-urgent updates into the next natural reply.
 When a routine update requires no action but a response must be sent, reply exactly `Captain, shipshape.` without characterizing unrelated decisions.
@@ -319,6 +318,8 @@ These skills are not captain-invocable; load them only at their triggers.
 - `captain-hold-lifecycle` - load before treating an investigation or visual review as complete, before ending a visual review that exposed a captain decision, when recording or routing the captain's answer, when the session-start digest lists draft decision cards or open captain calls, on a captain message shaped `order <id>: ...`, `order <id> replacing <old-id>: ...`, `launch <id>`, or `cancel <id>` (an `order` asks for a proposal and is never authority to act), and on any `RECORD DIVERGENCE` line.
 - `process-event-sources` - load before arming a long-polling source or registering a condition->action watch, and on any `procevent <adapter> <source-id> <sequence>`, `process-event source stranded`, or `process-event source failed to start` check wake; never run a registered source's blocking command yourself in a conversational turn.
 - `fmx-respond` - when Relay is on, load on an `x-mention`, `x-mode-error`, or `public-followup` check wake, on a startup-surfaced public commitment or open loop, before promising a final public reply, and on a milestone or terminal wake for a Relay-linked task.
+- `mate-messaging` - load before messaging another mate, when a `[fm-from-mate:<id>]` message arrives, or when you need to find which mate owns a domain.
+- `mate-reports` - load before asking a peer what it is doing, before starting work that may overlap another domain, or when asked what another mate shipped, is waiting on, or has running.
 - `firstmate-coding-guidelines` - load before changing firstmate's shared tracked material (section 1), directly or by briefing a crewmate.
 
 ## 14. Relay
