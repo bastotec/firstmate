@@ -541,7 +541,7 @@ _fm_recovery_marker_write_locked() {
 # a LIVE watcher's outstanding acknowledgement depends on.
 _fm_recovery_marker_publish() {
   local marker=$1 kind=${2:-downtime} posture=${3:-preserve} lock saved_token generation='' status=pending
-  local completion completion_pid origin=downtime
+  local completion completion_pid origin=downtime prior_driver=0
   case "$kind" in handling|downtime) ;; *) return 1 ;; esac
   case "$posture" in preserve|fresh) ;; *) return 1 ;; esac
   lock="${marker}.lock"
@@ -569,14 +569,25 @@ _fm_recovery_marker_publish() {
     fi
     FM_RECOVERY_MARKER_TOKEN=$saved_token
   fi
-  if [ "$posture" = fresh ] && [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
+  if [ "$posture" = fresh ]; then
     completion="${marker%/*}/.session-start-complete"
     completion_pid=
     if [ -f "$completion" ] && [ ! -L "$completion" ]; then
       IFS= read -r completion_pid < "$completion" || completion_pid=
       case "$completion_pid" in ''|*[!0-9]*) completion_pid= ;; esac
     fi
-    if [ -z "$completion_pid" ]; then
+    if [ -n "$completion_pid" ]; then
+      prior_driver=1
+    else
+      saved_token=$FM_RECOVERY_MARKER_TOKEN
+      if fm_recovery_marker_read "$marker"; then
+        case "${FM_RECOVERY_MARKER_TOKEN##*:}" in
+          driver-baseline.[0-9]*.[0-9]*.*|driver-relaunch.[0-9]*.[0-9]*.*) prior_driver=1 ;;
+        esac
+      fi
+      FM_RECOVERY_MARKER_TOKEN=$saved_token
+    fi
+    if [ "$prior_driver" -eq 0 ]; then
       if ! _fm_recovery_marker_write_locked "$marker" "$kind" "" acked driver-baseline; then
         fm_lock_release "$lock"
         return 1
@@ -584,8 +595,8 @@ _fm_recovery_marker_publish() {
       fm_lock_release "$lock"
       return 0
     fi
+    origin=driver-relaunch
   fi
-  [ "$posture" != fresh ] || origin=driver-relaunch
   if ! _fm_recovery_marker_write_locked "$marker" "$kind" "$generation" "$status" "$origin"; then
     fm_lock_release "$lock"
     return 1

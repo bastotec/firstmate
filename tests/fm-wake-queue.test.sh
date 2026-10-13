@@ -927,6 +927,53 @@ test_unconsumable_rows_are_retired_instead_of_wedging_the_queue() {
   pass "structurally unusable rows are retired, leaving every remaining row presentable and acknowledgeable"
 }
 
+test_prelaunch_wake_preserves_first_launch_baseline() {
+  local dir state marker lib prelaunch generation
+  dir=$(make_case prelaunch-wake-first-launch)
+  state="$dir/state"
+  marker="$state/.watcher-down"
+  lib="$ROOT/bin/fm-wake-lib.sh"
+
+  FM_HOME="$dir" "$ROOT/bin/fm-inbox.sh" note "wake before first launch" \
+    > "$dir/inbox.out" 2> "$dir/inbox.err" \
+    || fail "prelaunch inbox wake failed: $(cat "$dir/inbox.err")"
+  case "$(cat "$marker")" in
+    pending:downtime:downtime.*) ;;
+    *) fail "prelaunch wake did not create an ordinary downtime episode: $(cat "$marker")" ;;
+  esac
+  prelaunch=$(recovery_marker_generation "$marker")
+
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_publish_fresh "$2"' \
+    _ "$lib" "$marker" \
+    || fail "first launch over a prelaunch wake failed"
+  case "$(cat "$marker")" in
+    acked:downtime:driver-baseline.*) ;;
+    *) fail "prelaunch wake made the first launch impersonate a relaunch: $(cat "$marker")" ;;
+  esac
+  generation=$(recovery_marker_generation "$marker")
+  [ "$generation" != "$prelaunch" ] \
+    || fail "first-launch baseline reused the prelaunch wake generation"
+  if FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_generation_is_driver_loss "$2"' \
+      _ "$lib" "$generation"; then
+    fail "first launch after a prelaunch wake was classified as driver loss"
+  fi
+
+  FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-wake-drain.sh" \
+    > "$dir/drain.out" 2> "$dir/drain.err" \
+    || fail "startup drain could not present the queued prelaunch wake: $(cat "$dir/drain.err")"
+  case "$(cat "$marker")" in
+    pending:handling:downtime.*) ;;
+    *) fail "startup drain did not reopen the prelaunch wake as ordinary downtime: $(cat "$marker")" ;;
+  esac
+  generation=$(recovery_marker_generation "$marker")
+  if FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_generation_is_driver_loss "$2"' \
+      _ "$lib" "$generation"; then
+    fail "startup drain classified a prelaunch wake as driver loss"
+  fi
+
+  pass "a queued prelaunch wake preserves true first-launch semantics"
+}
+
 test_driver_relaunch_publication_mints_a_fresh_generation() {
   local dir state marker lib baseline gen1 gen2 token
   dir=$(make_case driver-relaunch-fresh-generation)
@@ -1051,6 +1098,7 @@ test_recovery_generation_origin_distinguishes_driver_loss() {
     fail "live-watcher recovery was classified as driver loss"
   fi
 
+  printf '123\n' > "$state/.session-start-complete"
   FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_publish_fresh "$2"' \
     _ "$lib" "$marker" || fail "driver relaunch could not reopen the episode"
   relaunched=$(recovery_marker_generation "$marker")
@@ -1070,6 +1118,7 @@ test_stale_generation_is_not_resurrected_by_watcher_cleanup() {
   # A relaunch mints the current generation; the previous driver's watcher
   # cleanup (an ordinary downtime publication) must resolve against the LIVE
   # episode rather than resurrecting the stale generation as current.
+  printf '123\n' > "$state/.session-start-complete"
   FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_publish "$2" downtime' \
     _ "$lib" "$marker" \
     || fail "could not open the previous driver's episode"
@@ -1848,6 +1897,7 @@ test_slow_annotation_does_not_block_append_and_deleted_file_fails_open
 test_uncountable_queue_still_raises_the_pending_alarm
 test_unconsumable_rows_are_retired_instead_of_wedging_the_queue
 test_wake_publish_requires_atomic_recovery_evidence
+test_prelaunch_wake_preserves_first_launch_baseline
 test_driver_relaunch_publication_mints_a_fresh_generation
 test_recovery_generation_origin_distinguishes_driver_loss
 test_stale_generation_is_not_resurrected_by_watcher_cleanup
