@@ -7,6 +7,9 @@ set -u
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+# shellcheck source=bin/fm-classify-lib.sh
+. "$ROOT/bin/fm-classify-lib.sh"
+
 APPROVAL="$ROOT/bin/fm-approval.sh"
 TMP_ROOT=$(fm_test_tmproot fm-approval-tests)
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
@@ -580,6 +583,185 @@ test_worker_requests_go_to_the_mate_first() {
   pass "a worker's gated call goes to its mate first; the mate answers or escalates"
 }
 
+test_worker_answers_close_the_decision_without_relying_on_steering() {
+  local w id out kind verdict mode rc
+  for kind in ship scout; do
+    for verdict in approve deny; do
+      for mode in steer no-steer failed-steer; do
+        w=$(world "close-$kind-$verdict-$mode")
+        ap "$w" enable slack-send >/dev/null
+        printf 'kind=%s\n' "$kind" > "$w/home/state/w1.meta"
+        gate "$w" w1 run_command "$SLACK" >/dev/null || true
+        id=$(pending_ids "$w")
+        assert_contains "$(status_open_decisions "$w/home/state/w1.status")" "$id" "approval decision initially open"
+        printf 'needs-decision [key=unrelated]: keep this open\n' >> "$w/home/state/w1.status"
+        if [ "$kind" = scout ]; then
+          ap "$w" escalate "$id" >/dev/null || fail "escalate before answering"
+        fi
+        rc=0
+        case "$mode" in
+          no-steer) out=$(ap "$w" answer "$id" "--$verdict" --no-steer --json) || rc=$? ;;
+          failed-steer)
+            printf '#!/usr/bin/env bash\nexit 1\n' > "$w/bin/fm-send.sh"
+            out=$(ap "$w" answer "$id" "--$verdict" --json 2>&1) || rc=$?
+            ;;
+          *) out=$(ap "$w" answer "$id" "--$verdict" --json) || rc=$? ;;
+        esac
+        if [ "$mode" = failed-steer ]; then
+          assert_equals 4 "$rc" "failed steer reports the recorded answer"
+        else
+          assert_equals 0 "$rc" "answer succeeds: $out"
+        fi
+        assert_equals $'unrelated\tneeds-decision\tkeep this open' "$(status_open_decisions "$w/home/state/w1.status")" "only answered approval closes"
+        assert_grep "resolved [key=$id]: approval request" "$w/home/state/w1.status" "answer closes its exact key"
+        if [ "$mode" = no-steer ]; then
+          assert_absent "$w/bin/sent.log" "no-steer performs bookkeeping without sending"
+          assert_equals false "$(printf '%s' "$out" | jq -r .steered)" "no-steer JSON preserved"
+        fi
+      done
+    done
+  done
+  pass "worker approvals and denials close their keyed decisions on every delivery route"
+}
+
+test_workers_cannot_escalate_their_own_home_requests() {
+  local w other id rc out kind
+  for kind in ship scout; do
+    w=$(world "guard-$kind")
+    ap "$w" enable slack-send >/dev/null
+    printf 'kind=%s\n' "$kind" > "$w/home/state/w1.meta"
+    gate "$w" w1 run_command "$SLACK" >/dev/null || true
+    id=$(pending_ids "$w")
+    rc=0
+    out=$(FM_TASK_ID=w1 FM_APPROVAL_HOME="$w/home" ap "$w" escalate "$id" 2>&1) || rc=$?
+    assert_equals 3 "$rc" "owning-home worker is refused"
+    assert_contains "$out" 'workers never raise captain-facing items' "guard explains refusal"
+    assert_equals mate "$(jq -r .audience "$w/home/state/approvals/$id.json")" "refusal leaves the mate responsible"
+    assert_equals 0 "$(jq -s '[.[] | select(.event=="escalated")] | length' "$w/home/state/approvals.log")" "refusal has no escalation side effect"
+    other=$(world "guard-other-$kind")
+    ap "$other" enable slack-send >/dev/null
+    printf 'kind=ship\n' > "$other/home/state/other.meta"
+    gate "$other" other run_command "$SLACK" >/dev/null || true
+    id=$(pending_ids "$other")
+    FM_TASK_ID=w1 ap "$other" escalate "$id" >/dev/null || fail "worker marker must not block another home's operator"
+    assert_equals captain "$(jq -r .audience "$other/home/state/approvals/$id.json")" "other-home operation passes"
+  done
+  pass "escalation uses the existing owning-home worker refusal"
+}
+
+test_escalation_audit_failure_is_retryable() {
+  local w id rc out timestamp
+  w=$(world escalation-audit)
+  ap "$w" enable slack-send >/dev/null
+  printf 'kind=ship\n' > "$w/home/state/w1.meta"
+  gate "$w" w1 run_command "$SLACK" >/dev/null || true
+  id=$(pending_ids "$w")
+  mv "$w/home/state/approvals.log" "$w/home/state/previous.log"
+  mkdir "$w/home/state/approvals.log"
+  rc=0; out=$(ap "$w" escalate "$id" 2>&1) || rc=$?
+  assert_equals 1 "$rc" "audit failure is not reported as success"
+  assert_contains "$out" 'retry escalate' "audit failure remains actionable"
+  assert_equals captain "$(jq -r .audience "$w/home/state/approvals/$id.json")" "published escalation is preserved"
+  timestamp=$(jq -r .escalated "$w/home/state/approvals/$id.json")
+  rmdir "$w/home/state/approvals.log"
+  mv "$w/home/state/previous.log" "$w/home/state/approvals.log"
+  NOW=1760000010 ap "$w" escalate "$id" >/dev/null || fail "audit retry failed"
+  ap "$w" escalate "$id" >/dev/null || fail "completed escalation retry failed"
+  assert_equals 1 "$(jq -s '[.[] | select(.event=="escalated")] | length' "$w/home/state/approvals.log")" "successful retry audits once"
+  assert_equals "$timestamp" "$(jq -r 'select(.event=="escalated") | .escalated' "$w/home/state/approvals.log")" "retry audits the original escalation time"
+  assert_equals "$timestamp" "$(jq -r .escalated "$w/home/state/approvals/$id.json")" "retry preserves escalation metadata"
+  pass "a failed escalation audit remains visible and a retry completes it"
+}
+
+test_overlapping_escalation_and_answer_do_not_recreate_pending() {
+  local w id
+  w=$(world escalation-race)
+  ap "$w" enable slack-send >/dev/null
+  printf 'kind=ship\n' > "$w/home/state/w1.meta"
+  gate "$w" w1 run_command "$SLACK" >/dev/null || true
+  id=$(pending_ids "$w")
+  python3 - "$ROOT/bin/fm-approval.py" "$w" "$id" <<'PY' || fail "overlapping escalation and answer"
+import contextlib
+import fcntl
+import importlib.util
+import io
+import json
+import multiprocessing
+import os
+import sys
+from multiprocessing.connection import wait
+from pathlib import Path
+from unittest.mock import patch
+
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location('approval', sys.argv[1])
+approval = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(approval)
+w, rid = Path(sys.argv[2]), sys.argv[3]
+home = w / 'home'
+os.environ['FM_HOME'] = str(home)
+os.environ['FM_APPROVAL_POLICY'] = str(w / 'agents' / 'approvals.json')
+ctx = multiprocessing.get_context('fork')
+read, resume = ctx.Event(), ctx.Event()
+lock_notice, lock_sender = ctx.Pipe(duplex=False)
+pending = home / 'state' / 'approvals' / f'{rid}.json'
+read_json = approval.read_json
+real_flock = fcntl.flock
+
+def notify_lock(fd, operation):
+    lock_sender.send('locking')
+    return real_flock(fd, operation)
+
+def pause_read(path):
+    rec = read_json(path)
+    if path == pending:
+        read.set()
+        if not resume.wait(10):
+            raise RuntimeError('escalation was not released')
+    return rec
+
+def escalate():
+    with patch.object(approval, 'read_json', side_effect=pause_read), \
+         contextlib.redirect_stdout(io.StringIO()):
+        rc = approval.main(['escalate', rid])
+    (w / 'escalate-result').write_text(str(rc))
+
+def answer():
+    with patch.object(fcntl, 'flock', side_effect=notify_lock), \
+         contextlib.redirect_stdout(io.StringIO()):
+        rc = approval.main(['answer', rid, '--deny', '--no-steer'])
+    (w / 'answer-result').write_text(str(rc))
+
+escalator, answerer = ctx.Process(target=escalate), ctx.Process(target=answer)
+escalator.start()
+try:
+    assert read.wait(10), 'escalation did not read the pending record'
+    answerer.start()
+    assert wait([lock_notice, answerer.sentinel], timeout=10), 'answer neither locked nor finished'
+finally:
+    resume.set()
+    escalator.join(10)
+    if answerer.pid is not None:
+        answerer.join(10)
+    for process in (escalator, answerer):
+        if process.is_alive():
+            process.terminate()
+            process.join()
+assert escalator.exitcode == answerer.exitcode == 0
+assert (w / 'escalate-result').read_text() == '0'
+assert (w / 'answer-result').read_text() == '0'
+assert not pending.exists(), 'escalation resurrected an answered request'
+answered = json.loads((pending.parent / 'answered' / pending.name).read_text())
+assert answered['status'] == 'denied'
+assert answered['audience'] == 'captain', 'answer did not preserve the concurrent escalation'
+with contextlib.redirect_stderr(io.StringIO()):
+    assert approval.main(['escalate', rid]) == 3
+    assert approval.main(['answer', rid, '--approve', '--no-steer']) == 3
+PY
+  assert_equals '' "$(status_open_decisions "$w/home/state/w1.status")" "overlapping answer closes the approval decision"
+  pass "escalation and answer share one request transition boundary"
+}
+
 test_no_policy_or_no_gates_lets_everything_through
 test_policy_without_gates_supports_all_policy_commands
 test_matching_call_is_blocked_and_filed_other_calls_pass
@@ -600,3 +782,7 @@ test_audit_append_failure_rolls_back_policy
 test_machine_approvals_local_and_remote
 test_policy_save_keeps_keys_it_is_not_given
 test_worker_requests_go_to_the_mate_first
+test_worker_answers_close_the_decision_without_relying_on_steering
+test_workers_cannot_escalate_their_own_home_requests
+test_escalation_audit_failure_is_retryable
+test_overlapping_escalation_and_answer_do_not_recreate_pending

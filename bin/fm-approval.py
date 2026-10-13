@@ -82,8 +82,10 @@ shown separately. Replay those arguments unchanged, including any relative cwd;
 the displayed effective cwd is not a replacement for the original cwd argument.
 --deny steers "denied". Either way the request leaves the pending set
 (moved to state/approvals/answered/). A request already answered is refused (exit 3).
-A failed steer leaves the answer recorded and exits 4 with the reason. --no-steer records
-only; --json prints {id, status, agent, steer, steered} so a caller with its own route to
+Worker answers append a matching `resolved [key=<id>]` status record, including with
+--no-steer, independently of message delivery. A failed status closure or steer leaves
+the answer recorded and exits 4 with the reason. --no-steer records only;
+--json prints {id, status, agent, steer, steered} so a caller with its own route to
 the agent (Fleet Town's command service) can deliver the exact steer text itself.
 A second mate's agent id names its task in the parent home, so its own home cannot
 steer it with fm-send: answer such a request with --no-steer and steer from the parent.
@@ -127,10 +129,12 @@ bin/fm-machine-approvals.sh's header owns named-machine local/SSH transport and
 its attribution default.
 
 Exit: 0 ok/allowed; 2 blocked (gate) or usage error; 1 other failure; 3 already
-answered or unknown request, or stale policy-save; 4 answer recorded but steering failed.
+answered or unknown request, or stale policy-save; 4 answer recorded but closure or steering failed.
 FM_APPROVAL_NOW (epoch seconds) overrides the clock and FM_APPROVAL_SEND overrides
 the fm-send.sh path, for tests.
 """
+from contextlib import contextmanager
+import fcntl
 import fnmatch
 import hashlib
 import json
@@ -314,6 +318,16 @@ def approvals_dir(home):
     return Path(home) / 'state' / 'approvals'
 
 
+@contextmanager
+def request_lock(home, rid):
+    directory = approvals_dir(home)
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd = os.open(directory / f'.{rid}.lock', os.O_RDWR | os.O_CREAT, 0o600)
+    with os.fdopen(fd, 'r+') as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        yield
+
+
 def read_json(path):
     try:
         with open(path, encoding='utf-8') as f:
@@ -440,11 +454,15 @@ def tell_mate(home, rec):
     line = (f'needs-decision [key={rec["id"]}]: approval gate {rec["gate"]} for {rec["tool"]} '
             f'({call_text(rec)[:200]}); answer with bin/fm-approval.sh answer {rec["id"]} '
             f'--approve|--deny, or bin/fm-approval.sh escalate {rec["id"]} to ask the captain\n')
-    r = subprocess.run([sys.executable, str(SCRIPT_DIR / 'fm-state-io.py'), 'root-append',
-                        str(Path(home) / 'state'), f'{rec["agent"]}.status'],
-                       input=line.replace('\n', ' ').rstrip() + '\n', text=True, capture_output=True)
+    r = append_worker_status(home, rec, line)
     if r.returncode != 0:
         audit(home, 'mate-wake-failed', rec, detail=(r.stderr or r.stdout).strip()[:300])
+
+
+def append_worker_status(home, rec, line):
+    return subprocess.run([sys.executable, str(SCRIPT_DIR / 'fm-state-io.py'), 'root-append',
+                           str(Path(home) / 'state'), f'{rec["agent"]}.status'],
+                          input=line.replace('\n', ' ').rstrip() + '\n', text=True, capture_output=True)
 
 
 def blocked_message(rec, again=False):
@@ -475,14 +493,21 @@ def escalate_main(argv):
     if not home:
         raise Refuse('escalate needs FM_HOME (the home that owns the request)', 2)
     path = approvals_dir(home) / f'{argv[0]}.json'
-    rec = read_json(path)
-    if not isinstance(rec, dict) or rec.get('status') != 'pending':
-        raise Refuse(f'no pending request {argv[0]} in {home}', 3)
-    if rec.get('audience') != 'captain':
-        rec['audience'] = 'captain'
-        rec['escalated'] = iso(now())
-        write_private(path, json.dumps(rec, indent=2, ensure_ascii=False) + '\n')
-        audit(home, 'escalated', rec)
+    with request_lock(home, argv[0]):
+        rec = read_json(path)
+        if not isinstance(rec, dict) or rec.get('status') != 'pending':
+            raise Refuse(f'no pending request {argv[0]} in {home}', 3)
+        try:
+            if rec.get('audience') != 'captain':
+                rec['audience'] = 'captain'
+                rec['escalated'] = iso(now())
+                write_private(path, json.dumps(rec, indent=2, ensure_ascii=False) + '\n')
+            if rec.get('escalated') and not rec.get('escalation_audited'):
+                audit(home, 'escalated', rec, escalated=rec['escalated'])
+                rec['escalation_audited'] = True
+                write_private(path, json.dumps(rec, indent=2, ensure_ascii=False) + '\n')
+        except OSError as e:
+            raise Refuse(f'escalation of {argv[0]} is incomplete; retry escalate to finish the audit: {e}') from e
     print(f'escalated {argv[0]}: the captain sees it in Fleet Town')
     return 0
 
@@ -516,6 +541,11 @@ def answer_main(argv):
     home = os.environ.get('FM_HOME')
     if not home:
         raise Refuse('answer needs FM_HOME (the home that owns the request)', 2)
+    with request_lock(home, rid):
+        return answer_request(home, rid, verdict, steer, as_json)
+
+
+def answer_request(home, rid, verdict, steer, as_json):
     d = approvals_dir(home)
     path = d / f'{rid}.json'
     answered = d / 'answered'
@@ -556,6 +586,11 @@ def answer_main(argv):
         write_private(d / 'grants' / f'{rec["key"]}.{rid}.json', canonical(grant) + '\n')
     write_private(claimed, json.dumps(rec, indent=2, ensure_ascii=False) + '\n')
     audit(home, rec['status'], rec)
+    if is_worker(home, rec['agent']):
+        r = append_worker_status(home, rec, f'resolved [key={rid}]: approval request {rec["status"]}')
+        if r.returncode != 0:
+            raise Refuse(f'{rec["status"]} {rid}, but closing the worker decision failed: '
+                         f'{(r.stderr or r.stdout).strip()}', 4)
 
     if bridge:
         args = rec.get('args') or {}
