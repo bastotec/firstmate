@@ -33,9 +33,9 @@ Its bare turn-ended signal is absorbed only by the authoritative proof, because 
 
 ### A superseded Deck turn-failure is attention, not failure
 
-A Deck driver turn that fails without appending a status line is backstopped with `failed: deck turn ended without a status line (turn-failed recovery-gen=<generation> id=<record-id>)`.
+An ordinary Deck worker turn that fails without appending a status line is backstopped with `failed: deck turn ended without a status line (turn-failed recovery-gen=<generation> id=<record-id>)`.
 The wrapper opens that task-local recovery episode without changing watcher-continuity state, and a replay reuses its generation.
-The Deck prompt routes status writes through `fm-state-io.py root-append`; that operation takes an exclusive `flock` on the status-file descriptor, reads the pending generation, and writes the worker's first `working:` line plus its `working [recovery-gen=<generation>]:` binding in one `O_APPEND` write before releasing the lock.
+The ordinary worker's Deck prompt routes status writes through `fm-state-io.py root-append`; that operation takes an exclusive `flock` on the status-file descriptor, reads the pending generation, and writes the worker's first `working:` line plus its `working [recovery-gen=<generation>]:` binding in one `O_APPEND` write before releasing the lock.
 A `done:`, `failed:`, `blocked:`, or `needs-decision:` record appended under that lock therefore cannot interleave between the working line and its binding, and an attempted working append after a terminal record in the same recovery episode is discarded so the terminal record stays last.
 `fm_turn_failed_superseded_line` in `bin/fm-classify-lib.sh` owns the discrimination from those two ordered records in the append-only status log.
 The unique record id identifies the exact failure even when unrelated status writers append concurrently, and the later generation-tagged working record keeps its supersession durable after the replay goes idle.
