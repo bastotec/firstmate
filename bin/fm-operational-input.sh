@@ -50,11 +50,11 @@ FM_CAPTAIN_DIRECT_LABEL='[fm-captain-direct]'
 FM_CAPTAIN_DIRECT_MARK="${FM_CAPTAIN_DIRECT_LABEL}${FM_OPERATIONAL_MARK}"
 FM_CAPTAIN_DIRECT_NOTE='The captain wrote this to you himself and reads your conversation, so answer him there, once. Your parent mate was already told, so append no parent-channel line just to acknowledge it. If this same corr= reaches you again, it is a duplicate: do not answer him a second time.'
 
-# The from-mate carrier tags a peer message one second mate (or the first
-# mate's router on its behalf) sent to another through bin/fm-mate-send.sh.
+# The from-mate carrier tags a message a second mate sent to a peer or the
+# first mate through bin/fm-mate-send.sh, delivered by the first mate's router.
 # Like captain-direct it is a provenance tag, not an operational-input kind:
-# "[fm-from-mate:<sender-id>]" + U+2063, then "corr=<16 hex> ", a fixed reply
-# note, a blank line, and the sender's text. It is never captain-direct and
+# "[fm-from-mate:<sender-id>]" + U+2063, then "corr=<16 hex> ", a receiver-specific
+# reply note, a blank line, and the sender's text. It is never captain-direct and
 # never carries the from-firstmate mark. bin/fm-mate-mail-lib.sh owns routing.
 FM_FROM_MATE_LABEL_PREFIX='[fm-from-mate:'
 FM_FROM_MATE_NOTE='A peer second mate sent you this directly; the first mate sees a copy. Answer only if useful, with bin/fm-mate-send.sh <sender> --reply-to <corr> "<text>"; never relay it to the captain yourself.'

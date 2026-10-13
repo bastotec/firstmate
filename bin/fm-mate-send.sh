@@ -9,7 +9,7 @@
 # Exit 0 prints "queued: corr=<corr> to=<target>", not confirmation of delivery.
 # Each invocation mints a new corr; rerunning sends a new message, not a retry.
 # Delivery follows on the parent's next watcher poll, subject to bridge gates.
-# The receiver sees "[fm-from-mate:<this-mate>]" and the corr; reply with --reply-to.
+# Receiver-specific replies are named in the carrier (bin/fm-operational-input.sh).
 # Refused/failed deliveries are bounced with the corr and reason, and logged.
 # Cross-machine delivery requires the bridge's "messages" flow (bin/fm-bridge.sh).
 # A remote sender also needs "reports" for the existing parent-channel pull.

@@ -6,9 +6,9 @@
 # back to this Mac (the primary pulls their parent channel), so a peer message
 # cannot go mate to mate directly. Every message therefore rides the sender's
 # existing parent channel up to the primary home, and the primary's router
-# (bin/fm-mate-route.sh, run on every watcher poll) delivers it with
-# bin/fm-send.sh --from-mate. Routing through the primary is also what gives the
-# first mate its copy: one log line per message, no relay by the model.
+# (bin/fm-mate-route.sh) delivers it; that script's header owns delivery and
+# retry policy. Routing through the primary is also what gives the first mate
+# its copy: one log line per message, no relay by the model.
 #
 # This library owns the wire line, the spool record, and the log. Callers:
 #   bin/fm-mate-send.sh            a mate queues one message
@@ -18,7 +18,8 @@
 # WIRE LINE (remote route only; a local mate writes the spool record directly):
 #   mate-message corr=<16 hex> to=<mate-id|primary> [re=<16 hex>]: <escaped text>
 # appended to the mate's own state/parent-replies.status. The text escapes
-# backslash as \\, newline as \n and tab as \t, so one message is one line.
+# backslash as \\, newline as \n and tab as \t, stripping carriage returns,
+# so one message is one line.
 # Well-formed peer lines are diverted into the spool before ordinary report
 # document fetches or status mirroring. A data/*.md pointer in a peer message
 # does not fetch, rewrite, or transfer that file to the receiver.
@@ -33,7 +34,12 @@
 #   .woken-undelivered   refused/failed notification wake, never delivery proof
 #   .undelivered         terminal outcome and reason, one line each; retry only
 #                        that bookkeeping, not delivery
-# The router removes these sidecars after archiving the message.
+# The router removes these pending sidecars after archiving the message.
+# An owed bounce survives beside the archive as:
+#   state/mate-mail/{refused,failed}/<from>@<corr>.bounce
+# It contains the sender-facing refusal/failure note; successful bounce
+# delivery removes it. The watcher also routes when only these obligations
+# remain, without requiring a new pending message.
 # Record:
 #   schema=fm-mate-mail.v1
 #   from=<id>  to=<id|primary>  corr=<16 hex>  re=<16 hex or empty>  at=<utc>
@@ -46,7 +52,8 @@
 # terminal message,
 #   {at, from, to, corr, re, outcome: delivered|refused|failed, reason, text, sent_at}
 # `at` is the log time and `sent_at` is the spool record's original time.
-# It is the first mate's oversight copy. The router writes it (and any check
+# It is the first mate's oversight copy. Refused/failed outcomes queue one
+# `check:` wake keyed mate-mail:<corr>. The router writes the log (and any check
 # wake) before archiving a record, at most once per sender/corr, so an
 # interrupted pass completes its bookkeeping on retry. Only complete valid
 # records count as logged; an incomplete tail is left on its own line before

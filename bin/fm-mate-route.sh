@@ -3,9 +3,8 @@
 #
 # Usage: fm-mate-route.sh run
 #
-# Runs in a main home (the first mate's), detached from every watcher poll.
-# bin/fm-mate-mail-lib.sh owns the design, spool, and log. For each pending
-# message, oldest first:
+# Runs detached in a main home on watcher polls with pending messages or owed
+# bounces. bin/fm-mate-mail-lib.sh owns the design, spool, and log. Pending messages, oldest first:
 #   1. The sender must be a recorded second mate of this home, and the target
 #      `primary` or another recorded second mate; otherwise it is refused.
 #   2. A sender or target on another machine must have the bridge's `messages`
@@ -13,15 +12,17 @@
 #      captain's approval request (bin/fm-bridge.sh block) and refuses.
 #   3. Delivery: to a mate, bin/fm-send.sh <to> --fire-and-forget <corr>
 #      --from-mate <from> (idempotent on the corr, local or remote); to the first
-#      mate, bin/fm-send.sh primary with the same tag, or a `check:` wake row when
-#      no Deck chat primary is running.
+#      mate, bin/fm-send.sh primary with the same tag (primary_holds owns retained
+#      session deduplication), or a `check:` wake when no Deck chat primary runs.
 #   4. A delivery that fails is retried on later polls with the same corr, and
 #      fails for good after 10 attempts or 1800 seconds.
-# Every terminal outcome is one line in state/mate-messages.log. A refused or
-# failed message is also bounced to its sender as a first-mate message naming
-# the corr and reason, and queues one `check:` wake keyed mate-mail:<corr>, so
-# nothing is dropped silently. Delivered peer-to-peer messages queue no
-# oversight wake; primary-directed messages use the delivery path above.
+# Terminal bookkeeping follows bin/fm-mate-mail-lib.sh's log and wake ordering.
+# A refused or failed message is also bounced to its sender as a first-mate
+# message naming the corr and reason. An unsuccessful bounce stays owed beside
+# the archived message and is retried on later polls with the same delivery id
+# until successful, without repeating the log or wake.
+# Delivered peer-to-peer messages queue no oversight wake; primary-directed
+# messages use the delivery path above.
 # Message content is not captain-direct; denied bridge flows still require
 # the separate captain approval described above.
 #
@@ -118,9 +119,9 @@ for bounce in "$DIR/refused/"*.bounce "$DIR/failed/"*.bounce; do
   try_bounce "$bounce" || true
 done
 
-# Close <record> as <outcome> (refused|failed) with REASON: bounce, wake and
-# log first, then archive. The bounce is idempotent on its delivery id, and the
-# log check makes a retried pass skip bookkeeping an interrupted pass finished.
+# Close <record> as <outcome> (refused|failed) with REASON: attempt the bounce,
+# wake and log before archiving, retaining any owed bounce beside the archive.
+# The log check makes a retried pass skip completed terminal bookkeeping.
 close_undelivered() {  # <record> <outcome>
   local record=$1 outcome=$2 name note bounce bounce_note=''
   name=${record##*/}
@@ -177,8 +178,8 @@ attempt_exhausted() {  # <record>
   [ "$count" -ge "$MAX_TRIES" ] || [ $((now - first)) -ge "$MAX_AGE" ]
 }
 
-# 0 when the Deck chat primary's steering inbox already holds <tagged-prefix>,
-# so a pass interrupted after publication never publishes the message twice.
+# 0 when a retained Deck chat primary session's steering records already hold
+# <tagged-prefix>, so an interrupted pass never republishes after a session switch.
 primary_holds() {  # <tagged-prefix>
   python3 - "$SCRIPT_DIR" "$FM_HOME" "$1" <<'PY' 2>/dev/null
 import sys
