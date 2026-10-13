@@ -129,7 +129,7 @@ test_status_protocol_uses_deck_append_boundary() {
   [ "$(sed -n '2p' "$status")" = 'working: replay resumed' ] \
     || fail "Deck status command lost the worker-authored line"
   [ "$(sed -n '3p' "$status")" = \
-      'working [recovery-gen=deck-brief]: deck turn reported working' ] \
+      'working [recovery-gen=deck-brief id=record-brief]: deck turn reported working' ] \
     || fail "Deck status command bypassed recovery binding"
   pass "fm-brief.sh: generated status protocol selects the Deck append boundary"
 }

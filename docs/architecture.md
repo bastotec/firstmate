@@ -35,12 +35,13 @@ Its bare turn-ended signal is absorbed only by the authoritative proof, because 
 
 An ordinary Deck worker turn that fails without appending a status line is backstopped with `failed: deck turn ended without a status line (turn-failed recovery-gen=<driver-generation> id=<record-id>)`.
 The wrapper opens that task-local recovery episode under its driver incarnation's busy generation.
-The ordinary worker's Deck prompt routes status writes through `fm-state-io.py root-append`; that operation takes an exclusive `flock` on the status-file descriptor, verifies the pending generation is the current driver's generation, and writes the worker's first `working:` line plus its `working [recovery-gen=<generation>]:` binding in one `O_APPEND` write before releasing the lock.
+The ordinary worker's Deck prompt routes status writes through `fm-state-io.py root-append`; that operation takes an exclusive `flock` on the status-file descriptor, verifies the pending generation is the current driver's generation, and writes the worker's first `working:` line plus its `working [recovery-gen=<generation> id=<record-id>]:` binding in one `O_APPEND` write before releasing the lock.
 A fresh driver generation therefore cannot supersede a failure retained from an older incarnation.
 A `done:`, `failed:`, `blocked:`, or `needs-decision:` record appended under that lock therefore cannot interleave between the working line and its binding.
 A terminal record closes the pending recovery episode at that turn boundary: a stale working append later in the same turn is discarded so the terminal record stays last, while a new turn's working append proceeds without a stale recovery binding.
 `fm_turn_failed_superseded_line` in `bin/fm-classify-lib.sh` owns the discrimination from those two ordered records in the append-only status log.
-The unique record id identifies the exact failure even when unrelated status writers append concurrently, and the later generation-tagged working record keeps its supersession durable after the replay goes idle.
+The unique record id binds the marker to the exact failure even when unrelated status writers append concurrently or a later failure reuses the same driver generation.
+The later generation-and-record-tagged working record keeps that supersession durable after the replay goes idle.
 Only the exact `turn-failed` backstop participates; silent successful turns, interrupted turns, unstamped legacy lines, mismatched generations, and ordinary `failed:` lines keep their existing semantics.
 A superseded failure leaves the actionable status span and is acknowledged if the outcome backstop encounters it, while away-mode staleness reads the later working record through its ordinary non-terminal path.
 

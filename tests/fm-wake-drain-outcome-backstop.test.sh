@@ -231,7 +231,7 @@ test_superseded_turn_failure_advances_the_outcome_receipt() {
   printf '%s\n' \
     'failed: deck turn ended without a status line (turn-failed recovery-gen=deck-replay id=record-replay)' \
     'working: replay resumed' \
-    'working [recovery-gen=deck-replay]: deck turn reported working' > "$status"
+    'working [recovery-gen=deck-replay id=record-replay]: deck turn reported working' > "$status"
   endpoint=$(wc -c < "$status" | tr -d '[:space:]')
 
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" \

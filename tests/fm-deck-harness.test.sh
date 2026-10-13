@@ -605,17 +605,19 @@ test_driver_backstops_silent_and_failed_turns() {
 }
 
 test_replayed_working_turn_records_recovery_supersession() {
-  local dir="$TMP_ROOT/recovery-supersession" failure generation
+  local dir="$TMP_ROOT/recovery-supersession" failure generation record_id
   make_fake_deck "$dir"
   run_worker "$dir" $'write-working\n/quit\n' 'fail-turn' \
     || fail "the replay fixture did not return to its prompt"
   failure=$(sed -n '1p' "$dir/state/t1.status")
   generation=${failure#*recovery-gen=}; generation=${generation%% *}
+  record_id=${failure#* id=}; record_id=${record_id%)}
   [ "$generation" = "$(cat "$dir/gen")" ] \
     || fail "the failed turn was not bound to its driver generation: $failure"
   [ "$(sed -n '2p' "$dir/state/t1.status")" = 'working: replay resumed' ] \
     || fail "the replay did not append its worker working status"
-  [ "$(sed -n '3p' "$dir/state/t1.status")" = "working [recovery-gen=$generation]: deck turn reported working" ] \
+  [ "$(sed -n '3p' "$dir/state/t1.status")" = \
+      "working [recovery-gen=$generation id=$record_id]: deck turn reported working" ] \
     || fail "the wrapper did not bind the replayed working status to its recovery generation"
   FM_TEST_DECK_STATUS="$dir/state/t1.status" FM_TEST_DECK_FAILURE="$failure" \
     bash -c '. "$1"; fm_turn_failed_superseded_line "$FM_TEST_DECK_STATUS" "$FM_TEST_DECK_FAILURE"' \
@@ -668,7 +670,8 @@ test_bookkeeping_before_failed_turn_keeps_unique_recovery_identity() {
     || fail "a Deck turn failure fabricated watcher downtime"
   [ "$(sed -n '3p' "$dir/state/t1.status")" = 'working: replay resumed' ] \
     || fail "the replay did not append its worker working status"
-  [ "$(sed -n '4p' "$dir/state/t1.status")" = "working [recovery-gen=$generation]: deck turn reported working" ] \
+  [ "$(sed -n '4p' "$dir/state/t1.status")" = \
+      "working [recovery-gen=$generation id=$record_id]: deck turn reported working" ] \
     || fail "the replay did not bind working evidence after bookkeeping"
   if FM_TEST_DECK_STATUS="$dir/state/t1.status" \
       bash -c '. "$1"; status_span_has_actionable "$FM_TEST_DECK_STATUS" 0' \

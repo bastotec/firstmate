@@ -21,9 +21,11 @@ WORKER_STATUS_RE = re.compile(
 )
 TURN_FAILURE_RE = re.compile(
     rb"^failed: deck turn ended without a status line "
-    rb"\(turn-failed recovery-gen=([A-Za-z0-9._-]+) id=[A-Za-z0-9._-]+\)$"
+    rb"\(turn-failed recovery-gen=([A-Za-z0-9._-]+) id=([A-Za-z0-9._-]+)\)$"
 )
-RECOVERY_WORKING_RE = re.compile(rb"^working \[recovery-gen=([A-Za-z0-9._-]+)\]:")
+RECOVERY_WORKING_RE = re.compile(
+    rb"^working \[recovery-gen=([A-Za-z0-9._-]+) id=([A-Za-z0-9._-]+)\]:"
+)
 TERMINAL_STATUS_RE = re.compile(rb"^(?:done|needs-decision|blocked|failed)(?::|[ \t][^:\r\n]*:)")
 WORKING_STATUS_RE = re.compile(rb"^working(?::|[ \t][^:\r\n]*:)")
 
@@ -91,7 +93,7 @@ def write_all(fd: int, payload: bytes) -> None:
 def recovery_status_payload(
     existing: bytes, payload: bytes, turn_offset=None, driver_generation=None
 ) -> bytes:
-    generation = None
+    recovery = None
     terminal = False
     cursor = 0
     for line in existing.split(b"\n")[:-1]:
@@ -101,22 +103,22 @@ def recovery_status_payload(
         marker = RECOVERY_WORKING_RE.match(line)
         if failure:
             if driver_generation is None or failure.group(1) == driver_generation:
-                generation = failure.group(1)
+                recovery = failure.groups()
                 terminal = False
             else:
-                generation = None
+                recovery = None
                 terminal = False
-        elif marker and marker.group(1) == generation:
-            generation = None
+        elif marker and marker.groups() == recovery:
+            recovery = None
             terminal = False
-        elif generation is not None and TERMINAL_STATUS_RE.match(line):
+        elif recovery is not None and TERMINAL_STATUS_RE.match(line):
             if turn_offset is not None and line_offset >= turn_offset:
                 terminal = True
             else:
-                generation = None
+                recovery = None
                 terminal = False
 
-    if generation is None:
+    if recovery is None:
         return payload
 
     output = bytearray()
@@ -128,26 +130,31 @@ def recovery_status_payload(
         if failure:
             output.extend(raw_line)
             if driver_generation is None or failure.group(1) == driver_generation:
-                generation = failure.group(1)
+                recovery = failure.groups()
                 terminal = False
             else:
-                generation = None
+                recovery = None
                 terminal = False
-        elif marker and marker.group(1) == generation:
+        elif marker and marker.groups() == recovery:
             output.extend(raw_line)
-            generation = None
+            recovery = None
             terminal = False
-        elif generation is not None and WORKING_STATUS_RE.match(line):
+        elif recovery is not None and WORKING_STATUS_RE.match(line):
             if not terminal:
                 output.extend(raw_line)
-                output.extend(b"working [recovery-gen=" + generation +
-                              b"]: deck turn reported working\n")
-                generation = None
+                output.extend(
+                    b"working [recovery-gen="
+                    + recovery[0]
+                    + b" id="
+                    + recovery[1]
+                    + b"]: deck turn reported working\n"
+                )
+                recovery = None
             elif not complete:
                 output.extend(raw_line)
         else:
             output.extend(raw_line)
-            if generation is not None and TERMINAL_STATUS_RE.match(line):
+            if recovery is not None and TERMINAL_STATUS_RE.match(line):
                 terminal = True
     return bytes(output)
 

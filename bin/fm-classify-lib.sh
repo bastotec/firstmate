@@ -157,11 +157,11 @@ status_is_terminal_verb() {
 #     (turn-failed recovery-gen=<generation> id=<record-id>)
 # The next turn in that driver incarnation reuses its busy generation. Its first
 # worker-authored `working:` record is immediately followed by
-# `working [recovery-gen=<generation>]:`. The locked append path compares that
-# generation with the current driver generation, so a relaunch cannot close an
-# older incarnation's episode. The random record id identifies one failure
-# independently of concurrent status writers, while the ordered generation
-# marker keeps supersession durable.
+# `working [recovery-gen=<generation> id=<record-id>]:`. The locked append path
+# compares that generation with the current driver generation, so a relaunch
+# cannot close an older incarnation's episode. The random record id identifies
+# one failure independently of concurrent status writers, while the ordered
+# generation-and-record marker keeps supersession durable.
 fm_turn_failed_superseded_line() {  # <status-file> <status-line> [captured-endpoint]
   local f=$1 line=$2 limit=${3:-} note rest gen record_id size
   [ "$(status_line_verb "$line")" = failed ] || return 1
@@ -182,10 +182,10 @@ fm_turn_failed_superseded_line() {  # <status-file> <status-line> [captured-endp
   case "$limit" in ''|*[!0-9]*) return 1 ;; esac
   LC_ALL=C perl -e '
     use bytes;
-    my ($path, $limit, $target, $generation) = @ARGV;
+    my ($path, $limit, $target, $generation, $record_id) = @ARGV;
     open my $file, "<", $path or exit 1;
     binmode $file;
-    my $prefix = "working [recovery-gen=$generation]:";
+    my $prefix = "working [recovery-gen=$generation id=$record_id]:";
     my $found = 0;
     while (tell($file) < $limit) {
       my $line = <$file>;
@@ -198,7 +198,7 @@ fm_turn_failed_superseded_line() {  # <status-file> <status-line> [captured-endp
       }
     }
     exit 1;
-  ' "$f" "$limit" "$line" "$gen"
+  ' "$f" "$limit" "$line" "$gen" "$record_id"
 }
 
 # 0 if the given (last) status line matches a captain-relevant verb.
