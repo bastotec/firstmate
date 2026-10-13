@@ -61,7 +61,8 @@
 # every turn; its results become later turns, with queued stdin serialized
 # alongside them. pre_complete checks lock ownership instead of worker evidence.
 # The driver postcondition does not park without an owned watcher or a pending
-# result. A failed watcher exits loudly rather than leaving an idle host blind.
+# result. Unrecoverable watcher failures stop the driver rather than leaving an
+# idle host blind; the recovery exceptions are defined below.
 #
 # HOME HOST INVARIANTS (--secondmate)
 # The driver, not a turn-scoped Deck process, owns the home session lock.
@@ -76,9 +77,11 @@
 # /quit after clear/re-read retries (tests/fm-deck-harness.test.sh).
 # Supervision uses child processes and stdin, never backend-specific injection.
 # Startup, lock, watcher, and event-capture failures publish failure status and
-# stop the driver, except a refused handling-delivery confirmation: the driver
-# logs that refusal to stderr, stops the remaining arm child, starts a fresh
-# watcher with no predecessor claim, and continues the turn without publishing
+# stop the driver, except a successor watcher that does not confirm startup in
+# time or dies first, and a refused handling-delivery confirmation: the driver
+# logs the condition to stderr, stops the remaining arm child, clears the handoff
+# claims, and starts a fresh watcher with no predecessor claim. If that start
+# fails, the driver stops; otherwise it continues the turn without publishing
 # failed status. Wakes remain durable in the home queue for bin/fm-wake-drain.sh;
 # this recovery does not fix the cause of a successor watcher's death.
 # A failed turn is recorded and published the same way but does NOT stop the
@@ -91,8 +94,9 @@
 # repeat.
 #
 # SECOND MATE TURN STOP (--secondmate)
-# Ctrl+C, an exact queued /quit during a turn, watcher failure, and cleanup all
-# request SIGTERM on the background Deck process. Deck's SIGTERM is cooperative
+# Ctrl+C, an exact queued /quit during a turn, unrecoverable watcher failure,
+# and cleanup all request SIGTERM on the background Deck process.
+# Deck's SIGTERM is cooperative
 # (deck src/stop.rs): it prevents new calls but lets a running tool finish.
 # After the tool grace, or at the hard kill bound if earlier, the driver cancels
 # each direct child sharing Deck's process group. Shell tools and hooks inherit
@@ -121,6 +125,10 @@
 #                           cancelling running tool and hook trees (default 1)
 #   FM_DECK_STOP_KILL_SECS  secondmate stop bound in seconds before killing
 #                           Deck itself if it has not exited (default 15)
+#   FM_DECK_WATCH_CONFIRM_SECS  how long a secondmate host waits for a
+#                           successor watcher to confirm startup before it
+#                           starts a fresh one instead (seconds; default 15;
+#                           empty, zero, or nonnumeric values use the default)
 #   FM_DECK_MCP_CONFIG     when set, pass a non-empty value as-is to every
 #                           `deck run --mcp-config`, even if the path is missing;
 #                           an empty value disables MCP. When unset, use
@@ -188,6 +196,8 @@ STOP_TOOL_GRACE=${FM_DECK_STOP_TOOL_GRACE_SECS:-1}
 STOP_KILL=${FM_DECK_STOP_KILL_SECS:-15}
 case "$STOP_TOOL_GRACE" in ''|*[!0-9]*) STOP_TOOL_GRACE=1 ;; esac
 case "$STOP_KILL" in ''|*[!0-9]*) STOP_KILL=15 ;; esac
+WATCH_CONFIRM_SECS=${FM_DECK_WATCH_CONFIRM_SECS:-15}
+case "$WATCH_CONFIRM_SECS" in ''|*[!0-9]*|0) WATCH_CONFIRM_SECS=15 ;; esac
 # Match the stream backend's config-directory resolution, not the parent task's
 # --state directory: a secondmate host and its workers use its own home.
 if [ "${FM_DECK_MCP_CONFIG+set}" = set ]; then
@@ -366,7 +376,7 @@ host_lock_owned() {
 # is merely a doorbell for the durable home queue, never an acknowledgement.
 watch_wait_handling_successor() {
   local deadline line
-  deadline=$(( $(date +%s) + 15 ))
+  deadline=$(( $(date +%s) + WATCH_CONFIRM_SECS ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
     line=$(sed -n 's/^watcher: started pid=\([0-9][0-9]*\).* recovery-generation=\([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1 \2/p' "$WORK/watch.out" 2>/dev/null | tail -1)
     if [ -n "$line" ]; then
@@ -386,13 +396,27 @@ watch_wait_handling_successor() {
       wait "$WATCH_PID" 2>/dev/null || true
       WATCH_PID=''
       cat "$WORK/watch.out"
-      host_failure 'successor watcher exited before confirming startup'
-      return 1
+      watch_restart_unclaimed 'successor watcher exited before confirming startup'
+      return
     fi
     sleep 0.05
   done
-  host_failure 'successor watcher did not confirm startup'
-  return 1
+  watch_restart_unclaimed "successor watcher did not confirm startup within ${WATCH_CONFIRM_SECS}s"
+}
+
+# The header owns the nonfatal replacement contract shared with refused
+# handling-delivery confirmation below.
+watch_restart_unclaimed() {  # <reason>
+  printf 'fm-deck-worker: warning: %s; starting a fresh watcher\n' "$1" >&2
+  WATCH_HANDLING_GENERATION=''
+  WATCH_HANDLING_WATCHER_PID=''
+  WATCH_PREDECESSOR_ARM_PID=''
+  if [ -n "$WATCH_PID" ]; then
+    kill -TERM "$WATCH_PID" 2>/dev/null || true
+    wait "$WATCH_PID" 2>/dev/null || true
+    WATCH_PID=''
+  fi
+  watch_start
 }
 
 watch_confirm_handling_delivery() {

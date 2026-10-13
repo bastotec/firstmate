@@ -11,7 +11,7 @@ The driver header owns the exact child and hand-off mechanics; [the separate cha
 
 ## Actionable wake ordering
 
-The Deck `run` home driver starts and verifies one singleton successor before handling a wake, through the arm layer's handling-successor handshake.
+Before handling a wake, the Deck `run` home driver attempts the arm layer's handling-successor handshake; [the driver header](../bin/fm-deck-worker.sh) owns the nonfatal fresh-watcher fallback for unconfirmed or refused handoffs and its confirmation timeout.
 It accumulates watcher results that arrive while a Deck turn runs and delivers them through the next serialized inbox turn rather than injecting into the active turn.
 
 The recovery-episode contract below owns once-per-generation announcement.
