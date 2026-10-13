@@ -260,7 +260,7 @@ ls -tr "$DIR/pending" 2>/dev/null | grep '\.msg$' | while IFS= read -r name; do
     err="the first mate's chat did not accept it"
   else
     if err=$(FM_HOME="$FM_HOME" "$SEND_BIN" "$FM_MM_TO" --fire-and-forget "$FM_MM_CORR" \
-      --from-mate "$FM_MM_FROM" "$FM_MM_TEXT" 2>&1 >/dev/null); then
+      --from-mate "$FM_MM_FROM" -- "$FM_MM_TEXT" 2>&1 >/dev/null); then
       close_delivered "$record" inbox; continue
     fi
     err=$(printf '%s' "$err" | grep -v '^$' | tail -1)

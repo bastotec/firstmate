@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Steer a task by durable record: write the message into the task's steering
 # inbox and ring a constant doorbell line into its terminal, best-effort.
-# Usage: fm-send.sh [--decision-answer] <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] [--from-captain | --from-mate <sender> | --correction] <text...>
+# Usage: fm-send.sh [--decision-answer] <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] [--from-captain | --from-mate <sender> | --correction] [--] <text...>
 #   --decision-answer requires an exact task id and keyed answer, resolves
 #   regular metadata under the supervision lease and metadata lock, and refuses
 #   harness-native text rather than leaving the durable inbox plane.
@@ -472,6 +472,7 @@ FIRE_AND_FORGET_ID=
 FROM_CAPTAIN=0
 CORRECTION=0
 FROM_MATE=
+END_OPTIONS=0
 fm_send_add_resolve_key() {  # <key>
   local k=$1
   case "$k" in
@@ -524,9 +525,18 @@ while :; do
       FROM_MATE=$2
       shift 2
       ;;
+    --)
+      END_OPTIONS=1
+      shift
+      break
+      ;;
     *) break ;;
   esac
 done
+KEY_MODE=0
+if [ "$END_OPTIONS" = 0 ] && [ "${1:-}" = --key ]; then
+  KEY_MODE=1
+fi
 
 if [ "$TARGET_BACKEND" != remote ]; then
   fm_backend_validate "$TARGET_BACKEND" || exit 1
@@ -540,10 +550,11 @@ if [ "$FROM_CAPTAIN" = 1 ]; then
     echo "error: --from-captain needs a task target and cannot accompany --decision-answer or --fire-and-forget; nothing was sent" >&2
     exit 1
   fi
-  case "${1:-}" in
-    --key) echo "error: --from-captain needs message text, not --key; nothing was sent" >&2; exit 1 ;;
-    '') echo "error: --from-captain needs message text; nothing was sent" >&2; exit 1 ;;
-  esac
+  if [ "$KEY_MODE" = 1 ]; then
+    echo "error: --from-captain needs message text, not --key; nothing was sent" >&2
+    exit 1
+  fi
+  [ -n "${1:-}" ] || { echo "error: --from-captain needs message text; nothing was sent" >&2; exit 1; }
 fi
 if [ -n "$FROM_MATE" ]; then
   case "$FROM_MATE" in
@@ -555,18 +566,21 @@ if [ -n "$FROM_MATE" ]; then
     echo "error: --from-mate needs --fire-and-forget <mate-mail corr> and cannot accompany --decision-answer, --from-captain, --correction or --resolve-key; nothing was sent" >&2
     exit 1
   fi
-  case "${1:-}" in
-    --key|'') echo "error: --from-mate needs message text; nothing was sent" >&2; exit 1 ;;
-  esac
+  if [ "$KEY_MODE" = 1 ] || [ -z "${1:-}" ]; then
+    echo "error: --from-mate needs message text; nothing was sent" >&2
+    exit 1
+  fi
 fi
 if [ "$DECISION_ANSWER" = 1 ]; then
   if [ -z "$RESOLVE_KEYS" ] || [ -n "$FIRE_AND_FORGET_ID" ] || [ "$#" -ne 1 ]; then
     echo "error: --decision-answer requires keyed resolution and one exact answer, without fire-and-forget" >&2
     exit 1
   fi
-  case "$1" in
-    --*) echo "error: decision answer cannot be a send option; nothing was sent" >&2; exit 1 ;;
-  esac
+  if [ "$END_OPTIONS" = 0 ]; then
+    case "$1" in
+      --*) echo "error: decision answer cannot be a send option; nothing was sent" >&2; exit 1 ;;
+    esac
+  fi
 fi
 
 # Classify a from-firstmate -> secondmate request. Only a task selector resolved
@@ -594,7 +608,7 @@ fi
 # Captain-direct echo guard (see the header): never deliver the captain's own
 # message to a secondmate a second time.
 if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ "$FROM_CAPTAIN" != 1 ] && [ -z "$FROM_MATE" ] && [ -z "$RESOLVE_KEYS" ] \
-  && [ "${1:-}" != "--key" ] && [ -n "$*" ]; then
+  && [ "$KEY_MODE" = 0 ] && [ -n "$*" ]; then
   if echo_corr=$(fm_captain_direct_echo_corr "$STATE" "$TARGET_TASK_ID" "$*"); then
     if [ "$CORRECTION" = 1 ]; then
       fm_captain_direct_log "$STATE" "correction-sent corr=$echo_corr task=$TARGET_TASK_ID"
@@ -695,7 +709,7 @@ if [ -n "$RESOLVE_KEYS" ]; then
     echo "error: --resolve-key needs a task selector resolved through this home's metadata; an explicit backend target has no decision ledger here" >&2
     exit 1
   fi
-  if [ "${1:-}" = "--key" ]; then
+  if [ "$KEY_MODE" = 1 ]; then
     echo "error: --resolve-key cannot accompany --key; answering a decision requires a text answer" >&2
     exit 1
   fi
@@ -800,7 +814,7 @@ fm_send_feed_resolved_holds() {  # <answer-text>
 # failed backend send is still surfaced below as a hard
 # error with the attempted resolution attached.
 
-if [ "${1:-}" = "--key" ]; then
+if [ "$KEY_MODE" = 1 ]; then
   [ -z "$FIRE_AND_FORGET_ID" ] \
     || { echo "error: --fire-and-forget cannot accompany --key" >&2; exit 1; }
   case "$*" in

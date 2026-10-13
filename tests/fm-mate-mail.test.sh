@@ -120,6 +120,34 @@ test_router_delivers_tagged_without_reply_tracking() {
   pass "fm-mate-route: delivers tagged, fire-and-forget, logged, with no reply tracking or wake"
 }
 
+test_router_preserves_option_shaped_text() {
+  local parent corr text body expected rc
+  parent=$(make_fleet option-text dave cadia)
+  env PATH="$parent/fakebin:$PATH" FM_ROOT_OVERRIDE="$parent" FM_HOME="$parent" FM_SEND_LOG="$parent/send.log" \
+    "$ROOT/bin/fm-send.sh" cadia --from-mate dave --fire-and-forget 0123456789abcdef --key Enter >/dev/null 2>&1; rc=$?
+  expect_code 1 "$rc" "an unbounded --key is still an option, not peer text"
+  [ ! -e "$parent/state/cadia.inbox/001.msg" ] || fail "a refused key send must not enqueue"
+  for text in "--resolve-key=build is the flag you need" "--resolve-key build" \
+    "--fire-and-forget 0123456789abcdef" "--fire-and-forget=0123456789abcdef" \
+    "--from-mate cadia" "--from-captain" "--correction" "--key Enter" "--"; do
+    parent=$(make_fleet option-text dave cadia)
+    corr=$(mate_send "$parent" dave cadia "$text" | sed -n 's/.*corr=\([a-f0-9]*\).*/\1/p')
+    [ -n "$corr" ] || fail "option-shaped text must be accepted by the sender"
+    run_route "$parent" >/dev/null || fail "router pass failed"
+    [ -f "$parent/state/cadia.inbox/001.msg" ] || fail "option-shaped text was not delivered: $text"
+    body=$(record_body "$parent/state/cadia.inbox/001.msg")
+    fm_message_mark_from_mate dave "$corr" "$text" expected secondmate || fail "could not build expected carrier"
+    [ "$body" = "$expected" ] || fail "option-shaped peer text was changed: $body"
+    [ -f "$parent/state/mate-mail/delivered/dave@$corr.msg" ] || fail "option-shaped text was left pending"
+    [ "$(fm_mate_mail_logged "$parent/state" dave "$corr")" = delivered ] || fail "option-shaped text was not logged as delivered"
+    [ -z "$(ls -A "$parent/state/pending-replies" 2>/dev/null)" ] || fail "peer text must not arm a pending reply"
+    [ ! -s "$parent/state/.wake-queue" ] || fail "delivered peer text must not wake the first mate"
+    run_route "$parent" >/dev/null || fail "second router pass failed"
+    [ ! -e "$parent/state/cadia.inbox/002.msg" ] || fail "option-shaped text was delivered twice"
+  done
+  pass "fm-mate-route: option-shaped peer text stays opaque through fm-send"
+}
+
 test_unknown_target_is_refused_and_bounced() {
   local parent corr body
   parent=$(make_fleet unknown dave cadia)
@@ -542,6 +570,7 @@ test_remote_ingest_diverts_wire_line_to_spool
 test_deck_wakes_idle_mate_on_peer_message
 test_remote_wire_line_round_trips
 test_router_delivers_tagged_without_reply_tracking
+test_router_preserves_option_shaped_text
 test_unknown_target_is_refused_and_bounced
 test_blocked_bridge_is_refused
 test_failing_delivery_retries_then_fails
