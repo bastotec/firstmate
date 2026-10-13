@@ -18,6 +18,20 @@ export DECK_STATE="$TMP_ROOT/deck" FM_CREW_WORK_ROOT="$TMP_ROOT/work"
 SPEC="$ROOT/bin/fm-specialist.sh"
 REC="$HOME_DIR/state/specialists/amigo-tech.json"
 
+assert_specialist_private() {
+  python3 - "$HOME_DIR" "$1" <<'PY' || fail "existing specialist permissions must be private"
+import stat
+import sys
+from pathlib import Path
+home = Path(sys.argv[1])
+state = home / "state/specialists" / sys.argv[2]
+data = home / "data/specialists" / sys.argv[2]
+for path, mode in ((state, 0o700), (data, 0o700),
+                   (state / "history.jsonl", 0o600), (data / "memory.md", 0o600)):
+    assert stat.S_IMODE(path.stat().st_mode) == mode, path
+PY
+}
+
 out=$("$SPEC" create amigo-tech --subject "Amigo Tech, a Docana customer" --project docana 2>&1) \
   || fail "create failed: $out"
 assert_contains "$out" "created specialist amigo-tech" "create reports the specialist"
@@ -44,9 +58,21 @@ res1=$(cat "$(jq -r .last_job.result "$REC")")
 assert_contains "$res1" "turns-in-session: 1" "first job opens the session"
 assert_grep "learned in $job1" "$HOME_DIR/data/specialists/amigo-tech/memory.md" "job 1 updated memory"
 pass "first job runs on the specialist session and updates memory"
+python3 - "$HOME_DIR/state/specialists/amigo-tech/jobs/$job1" <<'PY' || fail "specialist job artifacts must be private"
+import stat
+import sys
+from pathlib import Path
+for name in ("brief.md", "prompt.md", "result.md"):
+    path = Path(sys.argv[1]) / name
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600, path
+PY
+pass "specialist briefs, prompts and results are private"
 
+chmod 755 "$HOME_DIR/state/specialists/amigo-tech" "$HOME_DIR/data/specialists/amigo-tech"
+chmod 644 "$HOME_DIR/state/specialists/amigo-tech/history.jsonl" "$HOME_DIR/data/specialists/amigo-tech/memory.md"
 out=$("$SPEC" job amigo-tech --brief-file <(printf 'Why did their bot stop replying?\n') --wait 2>&1) \
   || fail "job 2 failed: $out"
+assert_specialist_private amigo-tech
 job2=$(jq -r .last_job.id "$REC")
 res2=$(cat "$(jq -r .last_job.result "$REC")")
 assert_not_equals "$job1" "$job2" "the second job is a new job"
@@ -86,7 +112,10 @@ expect_code 3 "$("$SPEC" retire amigo-tech >/dev/null 2>&1; echo $?)" "retire re
 pid=$(jq -r .current_job.pid "$REC")
 fm_test_kill_tree "$pid" >/dev/null 2>&1 || kill -9 "$pid" 2>/dev/null
 for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+chmod 755 "$HOME_DIR/state/specialists/amigo-tech" "$HOME_DIR/data/specialists/amigo-tech"
+chmod 644 "$HOME_DIR/state/specialists/amigo-tech/history.jsonl" "$HOME_DIR/data/specialists/amigo-tech/memory.md"
 assert_equals idle "$("$SPEC" status amigo-tech --json | jq -r .status)" "a dead runner is reconciled to idle"
+assert_specialist_private amigo-tech
 assert_equals interrupted "$(jq -r .last_job.outcome "$REC")" "the killed job is recorded as interrupted"
 interrupted_job=$(jq -r .last_job.id "$REC")
 assert_grep "specialist:amigo-tech:$interrupted_job" "$HOME_DIR/state/.wake-queue" "reconciliation wakes the owner of the interrupted job"
@@ -135,21 +164,56 @@ assert_equals failed "$(jq -r .last_job.outcome "$MEM_REC")" "launch exceptions 
 assert_grep "specialist:memory-check:$failed_job" "$HOME_DIR/state/.wake-queue" "launch exceptions wake the owner"
 pass "preflight and runtime launch failure keep owned records coherent"
 
-STUB_MODE=hang "$SPEC" job memory-check --brief "Reused runner pid" >/dev/null 2>&1 || fail "start reused-pid job"
-stale_job=$(jq -r .current_job.id "$MEM_REC")
-pid=$(jq -r .current_job.pid "$MEM_REC")
-fm_test_kill_tree "$pid" >/dev/null 2>&1 || kill -9 "$pid" 2>/dev/null
-unrelated=$(python3 -c 'import subprocess,sys; p=subprocess.Popen([sys.executable,"-c","import time; time.sleep(120)"],start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); print(p.pid)')
-fm_test_track_helper_pid "$unrelated"
-jq --argjson pid "$unrelated" '.current_job.pid=$pid' "$MEM_REC" > "$TMP_ROOT/reused.json"
-mv "$TMP_ROOT/reused.json" "$MEM_REC"
-assert_equals idle "$("$SPEC" list --json | jq -r '.[] | select(.name == "memory-check") | .status')" "a reused live pid cannot keep a specialist busy"
-kill -0 "$unrelated" 2>/dev/null || fail "reconciliation must not signal an unrelated process group"
-assert_equals interrupted "$(jq -r .last_job.outcome "$MEM_REC")" "a reused runner pid finalizes the interrupted job"
-assert_grep "specialist:memory-check:$stale_job" "$HOME_DIR/state/.wake-queue" "reused-pid reconciliation emits a completion wake"
-"$SPEC" job memory-check --brief "Recovery succeeded" --wait >/dev/null 2>&1 || fail "reused pid must not block new work"
-kill "$unrelated" 2>/dev/null || true
-pass "runner identity prevents stale pids from blocking work or authorizing signals"
+for identity_case in mismatched-pid reused-nonleader; do
+  STUB_MODE=hang "$SPEC" job memory-check --brief "Reused runner pid" >/dev/null 2>&1 || fail "start reused-pid job"
+  stale_job=$(jq -r .current_job.id "$MEM_REC")
+  pid=$(jq -r .current_job.pid "$MEM_REC")
+  fm_test_kill_tree "$pid" >/dev/null 2>&1 || kill -9 "$pid" 2>/dev/null
+  unrelated=$(python3 - "$identity_case" <<'PY'
+import subprocess
+import sys
+worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"],
+                          start_new_session=sys.argv[1] == "mismatched-pid",
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+print(worker.pid)
+PY
+)
+  fm_test_track_helper_pid "$unrelated"
+  jq --argjson pid "$unrelated" --arg identity_case "$identity_case" \
+    '.current_job.pid=$pid | if $identity_case == "reused-nonleader" then .current_job.identity.pid=$pid else . end' \
+    "$MEM_REC" > "$TMP_ROOT/reused.json"
+  mv "$TMP_ROOT/reused.json" "$MEM_REC"
+  if [ "$identity_case" = reused-nonleader ]; then
+    python3 - "$ROOT" "$MEM_REC" <<'PY' || fail "nonleader reuse must differ from an unreadable snapshot"
+import importlib.util
+import json
+import os
+import sys
+from pathlib import Path
+from unittest.mock import patch
+spec = importlib.util.spec_from_file_location("fm_crew", Path(sys.argv[1]) / "bin/fm_crew.py")
+crew = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(crew)
+rec = json.loads(Path(sys.argv[2]).read_text())
+cur = rec["current_job"]
+assert cur["identity"]["pid"] == cur["pid"]
+assert os.getpgid(cur["pid"]) != cur["pid"], "the reused process must not lead its group"
+specialist = crew.Specialist(Path(rec["home"]), rec["name"])
+with patch.object(crew, "process_identity", return_value=None):
+    assert crew.target_state(cur["pid"], cur["identity"]) == "unknown"
+    assert specialist.runner_alive(cur), "an unreadable live runner must remain busy"
+assert crew.target_state(cur["pid"], cur["identity"]) == "unrelated"
+assert not specialist.runner_alive(cur), "a nonleader reuse must not remain busy"
+PY
+  fi
+  assert_equals idle "$("$SPEC" list --json | jq -r '.[] | select(.name == "memory-check") | .status')" "a reused live pid cannot keep a specialist busy"
+  kill -0 "$unrelated" 2>/dev/null || fail "reconciliation must not signal an unrelated process group"
+  assert_equals interrupted "$(jq -r .last_job.outcome "$MEM_REC")" "a reused runner pid finalizes the interrupted job"
+  assert_grep "specialist:memory-check:$stale_job" "$HOME_DIR/state/.wake-queue" "reused-pid reconciliation emits a completion wake"
+  "$SPEC" job memory-check --brief "Recovery succeeded" --wait >/dev/null 2>&1 || fail "reused pid must not block new work"
+  kill "$unrelated" 2>/dev/null || true
+  pass "$identity_case cannot block work or authorize signals"
+done
 
 STUB_MODE=hang "$SPEC" job memory-check --brief "Orphaned Deck child" >/dev/null 2>&1 || fail "start orphaned-child job"
 pid=$(jq -r .current_job.pid "$MEM_REC")

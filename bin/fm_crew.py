@@ -13,7 +13,7 @@ specialist is a record, not an endpoint, and is intentionally persistent.
       {"version":1,"kind":"specialist","persistent":true,"name","subject",
        "home","session","memory","skills_dir","workdir","projects":[...],
        "status":"idle"|"running"|"retired","created","jobs":N,
-       "current_job":{"id","pid","started"}|null,
+       "current_job":{"id","pid","identity","started"}|null,
        "last_job":{"id","brief","started","finished","outcome","result"}|null,
        "memory_summary"}
   state/specialists/<name>/history.jsonl one line per finished job
@@ -45,6 +45,16 @@ if that request fails, a separate cleanup escalation wake names the failure.
   data/groups/<gid>/members/<key>.md     retained completed member results
 
 Both raise one `check:` wake in the owning home when a job or group ends.
+Record replacement fsyncs the file before rename and its directory afterward.
+Generated artifacts and child-written results inherit a private 077 umask;
+retained member copies are explicitly 0600.
+Reading an existing specialist record tightens its state/data directories to
+0700 and its existing history and memory files to 0600 before new writes.
+Runner and group target ownership uses the recorded PID and start time plus
+current process-group leadership, not argv, so exec does not invalidate it.
+An unreadable live identity stays uncertain; an observed mismatch is unrelated.
+Specialist liveness keeps an uncertain live runner busy; legacy jobs without
+recorded identity use the home/name/job argv suffix instead.
 The CLI headers own reconciliation, waiting, and explicit cleanup behavior.
 All generated Deck prompts use stdin, not argv, so report size is not limited
 by the operating system's per-argument bound.
@@ -79,6 +89,7 @@ import secrets
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -243,24 +254,27 @@ def process_arguments(pid) -> list[str]:
 
 
 def process_identity(pid: int, deck: bool = False) -> dict | None:
-    """A process we started, told apart from a later reuse of its pid: its start time,
-    and that it still leads the process group we gave it. The argument snapshot is not
-    used: on macOS an interpreter's exec changes it, and right after exec it can be empty."""
+    """A process snapshot with its start time and process group. The argument snapshot
+    is not used: on macOS an interpreter's exec changes it, and right after exec it can be empty."""
     try:
         out = subprocess.run(["ps", "-o", "lstart=,pgid=", "-p", str(pid)], capture_output=True, text=True,
                              env=dict(os.environ, LC_ALL="C"))
     except (OSError, subprocess.SubprocessError):
         return None
     fields = out.stdout.strip().rsplit(None, 1)
-    if len(fields) != 2 or fields[1] != str(pid):
+    if out.returncode or len(fields) != 2 or not fields[1].isdigit():
         return None
-    return {"started": fields[0], "deck": deck}
+    return {"started": fields[0], "deck": deck, "pid": pid, "pgid": int(fields[1])}
 
 
 def target_state(pid, identity) -> str:
     if not pid_alive(pid):
         return "unknown" if group_alive(pid) else "stopped"
+    if identity and identity.get("pid", pid) != pid:
+        return "unrelated"
     actual = process_identity(pid, bool(identity and identity.get("deck")))
+    if actual and actual["pgid"] != pid:
+        return "unrelated"
     if not actual or not identity:
         return "unknown"
     return "owned" if actual["started"] == identity.get("started") else "unrelated"
@@ -377,7 +391,14 @@ class Specialist:
     def record(self) -> dict:
         if not self.exists():
             die(f"no specialist {self.name!r} in this home", 3)
-        return read_json(self.record_path)
+        rec = read_json(self.record_path)
+        for directory in (self.state, self.data):
+            if directory.is_dir() and stat.S_IMODE(directory.stat().st_mode) != 0o700:
+                directory.chmod(0o700)
+        for path in (self.history_path, Path(rec["memory"])):
+            if path.is_file() and stat.S_IMODE(path.stat().st_mode) != 0o600:
+                path.chmod(0o600)
+        return rec
 
     def save(self, rec: dict) -> None:
         write_json(self.record_path, rec)
@@ -412,6 +433,10 @@ class Specialist:
         pid = cur.get("pid")
         if not pid_alive(pid):
             return False
+        identity = cur.get("identity")
+        if identity:
+            # An unreadable snapshot is not proof that this live runner ended.
+            return target_state(pid, identity) in ("owned", "unknown")
         arguments = process_arguments(pid)
         # argv[0] and how the interpreter names this script can change across exec.
         expected = ["_spec-run", self.name, cur["id"], "--home", str(self.h)]
@@ -581,11 +606,12 @@ def cmd_spec_job(args) -> None:
             jdir / "runner.log",
         )
         rec["status"] = "running"
-        rec["current_job"] = {"id": job, "pid": pid, "started": now()}
+        cur = {"id": job, "pid": pid, "started": now(), "identity": process_identity(pid)}
+        rec["current_job"] = cur
         sp.save(rec)
     print(f"started job {job} for specialist {args.name}")
     if args.wait:
-        if not wait_for(lambda: not sp.runner_alive({"pid": pid, "id": job}), args.wait_timeout):
+        if not wait_for(lambda: not sp.runner_alive(cur), args.wait_timeout):
             die(f"job {job} wait timed out; the job is still running", 1)
         rec = sp.reconcile()
         last = rec.get("last_job") or {}
@@ -1011,12 +1037,12 @@ def cleanup_group(g: Group, reason: str) -> bool:
     """Stop owned member, merger, and orchestrator groups; retain run files if any survive."""
     rec = g.record()
     targets = {m["pid"]: m.get("identity") for m in rec["members"] if isinstance(m.get("pid"), int)}
+    merger = rec.get("merger_pid")
+    if isinstance(merger, int):
+        targets[merger] = rec.get("merger_identity")
     orch = rec.get("orchestrator_pid")
     if isinstance(orch, int) and orch != os.getpid():
         targets[orch] = rec.get("orchestrator_identity")
-    merger_pid = rec.get("merger_pid")
-    if isinstance(merger_pid, int):
-        targets[merger_pid] = rec.get("merger_identity")
     states = {pid: target_state(pid, identity) for pid, identity in targets.items()}
     owned = {pid for pid, state in states.items() if state == "owned"}
     unknown = {pid for pid, state in states.items() if state == "unknown"}
@@ -1045,6 +1071,7 @@ def cleanup_group(g: Group, reason: str) -> bool:
         if m.get("result") and Path(m["result"]).is_file() and Path(m["result"]) != keep:
             keep.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(m["result"], keep)
+            keep.chmod(0o600)
     work = work_root(g.h) / "groups" / g.gid
     if not survivors:
         shutil.rmtree(work, ignore_errors=True)
@@ -1055,7 +1082,7 @@ def cleanup_group(g: Group, reason: str) -> bool:
         if orch not in survivors:
             r["orchestrator_pid"] = None
             r["orchestrator_identity"] = None
-        if merger_pid not in survivors:
+        if merger not in survivors:
             r["merger_pid"] = None
             r["merger_identity"] = None
         for m in r["members"]:
@@ -1167,6 +1194,9 @@ def cmd_group_list(args) -> None:
 
 
 def main() -> None:
+    # Briefs, logs, reports and model-written results all carry private context.
+    # Children inherit this mask even when the launch environment is filtered.
+    os.umask(0o077)
     p = argparse.ArgumentParser(prog="fm_crew.py")
     sub = p.add_subparsers(dest="cmd", required=True)
 

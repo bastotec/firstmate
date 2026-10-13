@@ -26,6 +26,37 @@ export FM_HOME="$HOME_DIR" FM_DECK_BIN="$ROOT/tests/assets/deck-crew-stub.py"
 export DECK_STATE="$TMP_ROOT/deck" FM_CREW_WORK_ROOT="$TMP_ROOT/work" STUB_RUNNING_DIR="$TMP_ROOT/running"
 GROUP="$ROOT/bin/fm-group.sh"
 
+# Observe durability at the syscall boundary while running the public CLI.
+mkdir -p "$TMP_ROOT/instrument"
+cat > "$TMP_ROOT/instrument/sitecustomize.py" <<'PY'
+import json
+import os
+import stat
+
+real_sync = os.fsync
+real_replace = os.replace
+
+def log(event):
+    with open(os.environ["SYNC_LOG"], "a") as fh:
+        fh.write(json.dumps(event) + "\n")
+
+def sync(fd):
+    log("directory" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
+    return real_sync(fd)
+
+def replace(src, dst):
+    log("replace")
+    return real_replace(src, dst)
+
+os.fsync = sync
+os.replace = replace
+PY
+SYNC_LOG="$TMP_ROOT/sync.log" PYTHONPATH="$TMP_ROOT/instrument" \
+  "$ROOT/bin/fm-specialist.sh" create durable --subject "private" >/dev/null || fail "durable record creation"
+assert_equals '["file","replace","directory"]' "$(jq -sc . "$TMP_ROOT/sync.log")" \
+  "record file is synced before rename and parent directory afterward"
+pass "record replacement is durable"
+
 python3 - "$ROOT" "$HOME_DIR" <<'PY' || fail "a transiently empty argument snapshot must not strand cleanup"
 import importlib.util
 import subprocess
@@ -42,18 +73,20 @@ worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"]
 reaper = threading.Thread(target=worker.wait)
 reaper.start()
 try:
-    real_arguments = crew.PROCESS_API.process_arguments
-    reads = [0]
-
-    def exec_snapshot(pid):
-        reads[0] += 1
-        # /proc cmdline and the macOS argument API may be empty during exec.
-        return None if reads[0] == 1 else real_arguments(pid)
-
-    with patch.object(crew.PROCESS_API, "process_arguments", exec_snapshot):
+    with patch.object(crew.PROCESS_API, "process_arguments", return_value=None):
+        empty_argv = crew.process_arguments(worker.pid)
         identity = crew.process_identity(worker.pid)
+        assert empty_argv == [], "the transient snapshot must be empty"
+        assert crew.target_state(worker.pid, identity) == "owned", "empty argv changed ownership"
+    with patch.object(crew.PROCESS_API, "process_arguments", return_value=["changed", "argv"]):
+        changed_argv = crew.process_arguments(worker.pid)
+        changed = crew.process_identity(worker.pid)
+        assert changed_argv != empty_argv, "argv snapshots must diverge"
+        assert changed == identity, "exec must preserve the kernel identity"
+        assert crew.target_state(worker.pid, identity) == "owned", "exec changed ownership"
     group = crew.Group(Path(sys.argv[2]), "identity-exec")
-    group.save({"orchestrator_pid": None, "members": [{"key": "m1", "pid": worker.pid,
+    group.save({"id": "identity-exec", "title": "Exec identity", "status": "running",
+                "orchestrator_pid": None, "members": [{"key": "m1", "pid": worker.pid,
                 "identity": identity, "status": "running", "result": None}]})
     assert crew.cleanup_group(group, "requested"), "a transient snapshot left a live cleanup survivor"
     assert group.record()["cleanup"]["survivors"] == []
@@ -95,6 +128,33 @@ assert_grep "angle: security" "$report" "member results are appended to the repo
 assert_grep "angle: docs" "$report" "every angle is in the report"
 assert_present "$HOME_DIR/data/groups/pr-review/members/m3.md" "member results are kept after cleanup"
 pass "results merge into one report"
+python3 - "$report" "$HOME_DIR/data/groups/pr-review/members/m3.md" <<'PY' || fail "retained results must be private"
+import stat
+import sys
+from pathlib import Path
+for name in sys.argv[1:]:
+    assert stat.S_IMODE(Path(name).stat().st_mode) == 0o600, name
+PY
+pass "retained report and member results are private"
+
+# A cleanup interrupted while presenting its card must not poison inventory.
+printf '{"title":"leftover cleanup card"}\n' > "$HOME_DIR/state/groups/.leftover.card.json"
+"$GROUP" list >/dev/null || fail "list with a leftover cleanup card"
+assert_equals false "$("$GROUP" list --json | jq 'any(.[]; .title == "leftover cleanup card")')" \
+  "JSON inventory excludes cleanup cards"
+pass "leftover cleanup cards do not enter the group inventory"
+
+# Run real hooks through Deck's shell boundary with literal shell metacharacters.
+export PWN_TARGET="$TMP_ROOT/PWNED"
+odd_home="$TMP_ROOT/\$(touch \$PWN_TARGET)-\$HOME-\`touch \$PWN_TARGET\`-'quoted'"
+mkdir -p "$odd_home"
+FM_HOME="$odd_home" STUB_MODE=lazy "$GROUP" start literal-lazy --brief x --angle a --wait >/dev/null 2>&1 \
+  && fail "a missing literal result must refuse completion"
+FM_HOME="$odd_home" "$GROUP" start literal-ok --brief x --angle a --wait >/dev/null 2>&1 \
+  || fail "literal result paths must pass their hooks"
+assert_absent "$TMP_ROOT/PWNED" "hook must not execute command substitution"
+[ -z "$(find "$TMP_ROOT/work" -name PWNED -o -name PWNED2)" ] || fail "hook executed a path as shell code"
+pass "result hooks quote each argument and refuse missing literal results"
 
 assert_absent "$HOME_DIR/state/groups/pr-review" "cleanup removed the run files"
 [ -z "$(find "$TMP_ROOT/work" -path "*/groups/pr-review" 2>/dev/null)" ] || fail "cleanup removed member workdirs"
@@ -111,6 +171,14 @@ for _ in $(seq 1 50); do
   sleep 0.1
 done
 assert_equals 2 "$(jq '[.members[] | select(.status == "running")] | length' "$REC2")" "two members run, one waits"
+python3 - "$HOME_DIR/state/groups/stuck" <<'PY' || fail "active group artifacts must be private"
+import stat
+import sys
+from pathlib import Path
+for name in ("brief.md", "members/m1/prompt.md", "members/m2/prompt.md"):
+    path = Path(sys.argv[1]) / name
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600, path
+PY
 orch=$(jq -r .orchestrator_pid "$REC2")
 out=$("$GROUP" cleanup stuck 2>&1) || fail "cleanup of a running group failed: $out"
 assert_contains "$out" "no member processes left" "cleanup reports a clean group"
@@ -169,6 +237,8 @@ done
 assert_equals merging "$(jq -r .status "$HANG_REC")" "the merger is active before cancellation"
 merger=$(live_stubs "$HOME_DIR")
 [ -n "$merger" ] || fail "the hanging merge must have a live process"
+orch=$(jq -r .orchestrator_pid "$HANG_REC")
+kill -9 "$orch" || fail "stop orchestrator without its merger"
 "$GROUP" cleanup merge-hangs >/dev/null 2>&1 || fail "cleanup hanging merger"
 assert_equals "" "$(live_stubs "$HOME_DIR")" "cleanup stops the merger as well as the orchestrator"
 assert_equals cancelled "$(jq -r .status "$HANG_REC")" "an interrupted merge is cancelled"

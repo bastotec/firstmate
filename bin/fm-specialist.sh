@@ -25,8 +25,8 @@
 # Jobs produce knowledge, not project changes: hand a change
 # a job recommends to a ship. Retire refuses a running job and keeps its record,
 # memory, history, and Deck session while removing its neutral workdir.
-# Status, history, list, job, and retire reconcile an interrupted runner by its
-# home/name/job identity and emit its completion wake; they are not read-only.
+# Status, history, list, job, and retire reconcile interrupted runners using
+# bin/fm_crew.py's liveness rules and emit completion wakes; they are not read-only.
 # --wait exits nonzero on failure or timeout (default 3660 seconds); a timeout
 # does not cancel the job. Inspect it with status before submitting another.
 # bin/fm_crew.py's docstring owns runtime tuning and workdir placement;
