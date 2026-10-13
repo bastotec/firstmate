@@ -63,6 +63,7 @@ state/
   <id>.status             crewmate "<state>: <note>" wake events, not current state (bin/fm-task-state-lib.sh owns derivation)
   <id>.agent-diagnostics{,.1,.2}  stream-agent diagnostic records (`primary-chat.agent-diagnostics` for the statusless primary); format and limits are owned by docs/stream-backend.md; task-owned files are removed by teardown
   <id>.turn-ended         touched by bin/fm-deck-worker.sh at turn end
+  <id>.deck-session       secondmate conversation binding; bin/fm-deck-worker.sh header owns format, resume eligibility, and retirement
   <id>.model <id>.deck-caps  in-place model choice and live driver capability (bin/fm-control.sh owns public behavior; bin/fm_model_switch.py owns capability checks)
   <id>.progress           in-turn native activity, read for the busy-age bound only (bin/fm-busy-event.sh)
   <id>.crew-state         local ship task's validation record for file watchers; bin/fm-task-state-lib.sh "PUBLISHED RECORD" owns fields, refreshes, and cleanup
@@ -348,6 +349,7 @@ Lifecycle access to a backlog, task record, or pending-close record must resolve
 ## Harness support
 
 Deck is the only harness: the primary runs as the chat host [`bin/fm-deck-chat.sh`](../bin/fm-deck-chat.sh), and ship workers, scouts, and secondmates run under the worker driver [`bin/fm-deck-worker.sh`](../bin/fm-deck-worker.sh).
+The worker driver header owns secondmate session continuity across relaunches, its fresh-session opt-out, and bounded watcher-cycle retry controls.
 Specialists and task groups use direct Deck runs rather than stream endpoints; the [`fm-specialist.sh`](../bin/fm-specialist.sh) and [`fm-group.sh`](../bin/fm-group.sh) headers own their launch contracts.
 The harness profiles and driver-specific MCP wiring below apply to `fm-spawn.sh` launches, not those direct runs.
 `config/crew-harness` holds the crewmate and scout adapter; absent or `default` means deck, and any other name is refused ([`bin/fm-harness.sh`](../bin/fm-harness.sh)).

@@ -1927,6 +1927,7 @@ EOF
   log="$TMP_ROOT/teardown-fake/tmux.log"
   lease="$TMP_ROOT/teardown-fake/lease"
   printf 'domain\n' > "$lease"
+  printf 'retired-session\n%s\n' "$subhome" > "$home/state/domain.deck-session"
   PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
     FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" \
     "$ROOT/bin/fm-teardown.sh" domain >/dev/null 2>/dev/null \
@@ -1935,6 +1936,7 @@ EOF
   [ ! -e "$lease" ] || fail "teardown left the secondmate home lease held after retirement"
   [ ! -d "$subhome" ] || fail "teardown did not remove the retired secondmate home"
   [ ! -e "$home/state/domain.meta" ] || fail "teardown did not clear parent meta"
+  [ ! -e "$home/state/domain.deck-session" ] || fail "teardown left the retired conversation binding"
   grep -F -- '- domain ' "$home/data/secondmates.md" >/dev/null && fail "teardown did not remove secondmate registry route"
   pass "secondmate teardown retires empty homes and releases routing"
 }
@@ -1970,6 +1972,7 @@ EOF
     registry_before="$TMP_ROOT/teardown-binding-$case_name.registry.before"
     cp "$home/state/domain.meta" "$meta_before"
     cp "$home/data/secondmates.md" "$registry_before"
+    printf 'retained-session\n%s\n' "$sub" > "$home/state/domain.deck-session"
     fakebin=$(make_fake_tmux "$TMP_ROOT/teardown-binding-$case_name-fake")
     log="$TMP_ROOT/teardown-binding-$case_name-fake/tmux.log"
     err="$TMP_ROOT/teardown-binding-$case_name.err"
@@ -1981,6 +1984,7 @@ EOF
     [ -d "$sub" ] || fail "secondmate teardown removed the home after $case_name refusal"
     cmp -s "$meta_before" "$home/state/domain.meta" || fail "secondmate teardown changed metadata after $case_name refusal"
     cmp -s "$registry_before" "$home/data/secondmates.md" || fail "secondmate teardown changed registry after $case_name refusal"
+    [ -f "$home/state/domain.deck-session" ] || fail "refused teardown removed the conversation binding"
     any_endpoint_closed_in "$home" "${subhome:-}" && fail "secondmate teardown killed an endpoint before $case_name refusal"
   done
   pass "secondmate teardown refuses ambiguous and identity-mismatched registry bindings"

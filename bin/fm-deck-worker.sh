@@ -57,12 +57,12 @@
 #       --deck <deck-binary> [--model <route>] [--secondmate] -- <first-prompt>
 # --secondmate requires FM_HOME and hosts that home, leaving --state pointed
 # at the parent task state for busy/progress and failure publication.
-# Startup runs once before the first turn. A tracked watcher stays armed through
+# Startup runs once before the first turn. A tracked watcher is supervised through
 # every turn; its results become later turns, with queued stdin serialized
 # alongside them. pre_complete checks lock ownership instead of worker evidence.
-# The driver postcondition does not park without an owned watcher or a pending
-# result. Unrecoverable watcher failures stop the driver rather than leaving an
-# idle host blind; the recovery exceptions are defined below.
+# The driver keeps an owned watcher, a pending result, or a scheduled retry.
+# Unrecoverable watcher failures stop the driver rather than leaving an idle
+# host blind; the recovery exceptions are defined below.
 #
 # HOME HOST INVARIANTS (--secondmate)
 # The driver, not a turn-scoped Deck process, owns the home session lock.
@@ -77,13 +77,21 @@
 # /quit after clear/re-read retries (tests/fm-deck-harness.test.sh).
 # Supervision uses child processes and stdin, never backend-specific injection.
 # Startup, lock, watcher, and event-capture failures publish failure status and
-# stop the driver, except a successor watcher that does not confirm startup in
-# time or dies first, and a refused handling-delivery confirmation: the driver
-# logs the condition to stderr, stops the remaining arm child, clears the handoff
-# claims, and starts a fresh watcher with no predecessor claim. If that start
-# fails, the driver stops; otherwise it continues the turn without publishing
-# failed status. Wakes remain durable in the home queue for bin/fm-wake-drain.sh;
-# this recovery does not fix the cause of a successor watcher's death.
+# stop the driver, with these watcher recovery exceptions:
+# - A watcher cycle that fails or ends without a result logs a stderr warning,
+#   clears handoff claims, and schedules a fresh watcher with no predecessor
+#   claim after as many seconds as consecutive failed cycles, without publishing
+#   failure status. A successful result resets the count; reaching
+#   FM_DECK_WATCH_FAILURE_LIMIT stops the host
+#   with failure status. The retry deadline never blocks input or turn-stop
+#   handling, and no watcher starts while turn cancellation is pending.
+# - A successor watcher that does not confirm startup in time or dies first,
+#   or a refused handling-delivery confirmation, logs the condition to stderr,
+#   stops the remaining arm child, clears handoff claims, and starts a fresh
+#   watcher with no predecessor claim. If that start fails, the driver stops;
+#   otherwise it continues the turn without publishing failed status.
+# Wakes remain durable in the home queue for bin/fm-wake-drain.sh; these retries
+# do not fix the cause of a watcher's death.
 # For unconfirmed successor startup, the driver surfaces the completed arm
 # capture after stopping and waiting for the arm, before a fresh start reuses it;
 # bin/fm-watch-arm.sh's header owns handling-child diagnostic capture.
@@ -106,6 +114,23 @@
 # bin/fm_stream_deck.py project_captain owns that distinction. The regression is
 # test_secondmate_retries_a_captain_wake_whose_turn_failed in
 # tests/fm-deck-harness.test.sh.
+#
+# SECOND MATE SESSION CONTINUITY (--secondmate)
+# As soon as run_started names the session, including during the startup turn,
+# the host atomically records its session id on line 1 and FM_HOME on line 2 of
+# <state>/<id>.deck-session in the parent task state. Write failure warns on
+# stderr without stopping the host. Automatic revive and update restart reuse
+# that conversation only when the record is a non-symlink file, its id contains
+# only letters, digits, dot, underscore, or dash, its home exactly matches the
+# current FM_HOME, and Deck's session file exists at
+# ${XDG_STATE_HOME:-$HOME/.local/state}/deck/sessions/<session-id>.json.
+# Otherwise, or with FM_DECK_FRESH_SESSION=1, the host starts a new conversation
+# and records the new binding. A legacy id-only record cannot authorize resume.
+# Every host start still supplies the charter and newly collected startup
+# digest; conversation continuity never replaces reconciliation from disk.
+# bin/fm-teardown.sh removes the binding on secondmate retirement, including
+# forced descendant cleanup, but ordinary exit and relaunch preserve it.
+# Ship and scout drivers do not persist sessions across relaunches.
 #
 # SECOND MATE TURN STOP (--secondmate)
 # Ctrl+C, an exact queued /quit during a turn, unrecoverable watcher failure,
@@ -143,6 +168,12 @@
 #                           cancelling running tool and hook trees (default 1)
 #   FM_DECK_STOP_KILL_SECS  secondmate stop bound in seconds before killing
 #                           Deck itself if it has not exited (default 15)
+#   FM_DECK_WATCH_FAILURE_LIMIT  consecutive failed watcher cycles after which a
+#                           secondmate host stops (default 5); fewer are
+#                           retried with a fresh watcher; empty, zero, or
+#                           nonnumeric values use the default
+#   FM_DECK_FRESH_SESSION   1 makes a secondmate host start a new Deck session
+#                           instead of resuming the one it recorded
 #   FM_DECK_WATCH_CONFIRM_SECS  how long a secondmate host waits for a
 #                           successor watcher to confirm startup before it
 #                           starts a fresh one instead (seconds; default 15;
@@ -219,6 +250,8 @@ STOP_TOOL_GRACE=${FM_DECK_STOP_TOOL_GRACE_SECS:-1}
 STOP_KILL=${FM_DECK_STOP_KILL_SECS:-15}
 case "$STOP_TOOL_GRACE" in ''|*[!0-9]*) STOP_TOOL_GRACE=1 ;; esac
 case "$STOP_KILL" in ''|*[!0-9]*) STOP_KILL=15 ;; esac
+WATCH_FAILURE_LIMIT=${FM_DECK_WATCH_FAILURE_LIMIT:-5}
+case "$WATCH_FAILURE_LIMIT" in ''|*[!0-9]*|0) WATCH_FAILURE_LIMIT=5 ;; esac
 WATCH_CONFIRM_SECS=${FM_DECK_WATCH_CONFIRM_SECS:-15}
 case "$WATCH_CONFIRM_SECS" in ''|*[!0-9]*|0) WATCH_CONFIRM_SECS=15 ;; esac
 # Match the stream backend's config-directory resolution, not the parent task's
@@ -485,6 +518,8 @@ watch_confirm_handling_delivery() {
 watch_start() {
   local predecessor=$WATCH_PREDECESSOR_ARM_PID
   [ -z "$WATCH_PID" ] || return 0
+  [ -z "$STOP_REQUESTED_AT" ] || return 0
+  [ "$(date +%s)" -ge "$WATCH_RETRY_AT" ] || return 0
   host_lock_owned || return 1
   if [ -e "$FM_HOME/state/.afk" ]; then
     host_failure 'daemon-owned away/quiet mode is unsupported; clear it through the owning supervisor before relaunch'
@@ -539,13 +574,16 @@ watch_effort() {
     | "$SCRIPT_DIR/fm-effort-policy.sh" classify --home "$FM_HOME" 2>/dev/null
 }
 
+# Returns 2 for a failed or empty cycle; watch_maintain applies the header's
+# bounded retry contract without consuming the durable wake queue.
+WATCH_LAST_FAILURE=''
 watch_result() {
   local rc predecessor=$WATCH_PID
   wait "$WATCH_PID"; rc=$?
   WATCH_PID=''
   cat "$WORK/watch.out"
-  [ "$rc" -eq 0 ] || { host_failure "watcher failed (exit $rc)"; return 1; }
-  [ -s "$WORK/watch.out" ] || { host_failure 'watcher ended without a result'; return 1; }
+  [ "$rc" -eq 0 ] || { WATCH_LAST_FAILURE="watcher failed (exit $rc)"; return 2; }
+  [ -s "$WORK/watch.out" ] || { WATCH_LAST_FAILURE='watcher ended without a result'; return 2; }
   host_lock_owned || return 1
   {
     cat "$WORK/watch.out"
@@ -554,11 +592,35 @@ watch_result() {
   WATCH_PREDECESSOR_ARM_PID=$predecessor
 }
 
+# Keep retry timing advisory so the turn loop can still process input and
+# escalate cancellation while no watcher runs; the header owns retry policy.
+WATCH_FAILURES=0 WATCH_RETRY_AT=0
 watch_maintain() {
-  while [ -n "$WATCH_PID" ] && ! kill -0 "$WATCH_PID" 2>/dev/null; do
-    watch_result || return 1
-    watch_start || return 1
-  done
+  local rc
+  if [ -n "$WATCH_PID" ] && ! kill -0 "$WATCH_PID" 2>/dev/null; then
+    rc=0
+    watch_result || rc=$?
+    if [ "$rc" -eq 2 ]; then
+      WATCH_FAILURES=$((WATCH_FAILURES + 1))
+      if [ "$WATCH_FAILURES" -ge "$WATCH_FAILURE_LIMIT" ]; then
+        host_failure "$WATCH_LAST_FAILURE, $WATCH_FAILURES times in a row"
+        return 1
+      fi
+      printf 'fm-deck-worker: warning: %s; starting a fresh watcher (%s/%s)\n' \
+        "$WATCH_LAST_FAILURE" "$WATCH_FAILURES" "$WATCH_FAILURE_LIMIT" >&2
+      WATCH_PREDECESSOR_ARM_PID=''
+      WATCH_HANDLING_GENERATION=''
+      WATCH_HANDLING_WATCHER_PID=''
+      WATCH_RETRY_AT=$(( $(date +%s) + WATCH_FAILURES ))
+      return 0
+    elif [ "$rc" -ne 0 ]; then
+      return 1
+    else
+      WATCH_FAILURES=0
+      WATCH_RETRY_AT=0
+    fi
+  fi
+  watch_start
 }
 
 # The evidence gate: the turn may finish only after it appended a worker status
@@ -662,6 +724,40 @@ $(cat "$WORK/startup")"
 fi
 
 SESSION=''
+# The header owns home-bound resume eligibility and the fresh-session opt-out.
+SESSION_RECORD=''
+if [ "$SECONDMATE" = 1 ]; then
+  SESSION_RECORD="$STATE/$ID.deck-session"
+  if [ "${FM_DECK_FRESH_SESSION:-0}" != 1 ] && [ -f "$SESSION_RECORD" ] && [ ! -L "$SESSION_RECORD" ]; then
+    recorded_session=$(head -n 1 "$SESSION_RECORD" 2>/dev/null || true)
+    recorded_home=$(sed -n '2p' "$SESSION_RECORD" 2>/dev/null || true)
+    case "$recorded_session" in
+      ''|*[!A-Za-z0-9._-]*) ;;
+      *)
+        if [ "$recorded_home" = "$FM_HOME" ] && [ -f "${XDG_STATE_HOME:-$HOME/.local/state}/deck/sessions/$recorded_session.json" ]; then
+          SESSION=$recorded_session
+        fi
+        ;;
+    esac
+  fi
+fi
+session_record() {
+  [ -n "$SESSION_RECORD" ] && [ -n "$SESSION" ] || return 0
+  [ "$(cat "$SESSION_RECORD" 2>/dev/null || true)" != "$(printf '%s\n%s' "$SESSION" "$FM_HOME")" ] || return 0
+  printf '%s\n%s\n' "$SESSION" "$FM_HOME" > "$SESSION_RECORD.tmp.$$" && mv -f "$SESSION_RECORD.tmp.$$" "$SESSION_RECORD" \
+    || printf 'fm-deck-worker: warning: could not record Deck session %s\n' "$SESSION" >&2
+}
+session_observe() {
+  local started
+  if [ -z "$SESSION" ]; then
+    started=$(jq -r 'select(.type == "run_started") | .session' "$EVENTS" 2>/dev/null | head -1)
+    case "$started" in
+      ''|*[!A-Za-z0-9._-]*) return 0 ;;
+      *) SESSION=$started ;;
+    esac
+  fi
+  session_record
+}
 # run_turn's code for a turn that failed in a way a persistent supervisor is
 # expected to outlive. Only home-host mode returns it; a crewmate or scout
 # driver keeps its existing all-or-nothing turn contract.
@@ -750,6 +846,7 @@ $prompt"
     TURN_PID=$!
     STOP_REQUESTED_AT=''
     while kill -0 "$TURN_PID" 2>/dev/null; do
+      [ -n "$SESSION" ] || session_observe
       escalate_turn_stop
       # /quit typed while the turn runs is an exit request, not a later turn:
       # stop the turn now, and the prompt loop reads the queued /quit next.
@@ -771,6 +868,7 @@ $prompt"
     STOP_REQUESTED_AT=''
     wait "$TURN_RENDER_PID" 2>/dev/null || true
     TURN_RENDER_PID=''
+    session_observe
     if [ "$monitor_failed" -eq 0 ]; then
       watch_maintain || monitor_failed=1
     fi
@@ -795,9 +893,7 @@ $prompt"
     printf '\033[u\033[J'
     jq -rj "$RENDER" "$EVENTS" 2>/dev/null
   fi
-  if [ -z "$SESSION" ]; then
-    SESSION=$(jq -r 'select(.type == "run_started") | .session' "$EVENTS" 2>/dev/null | head -1)
-  fi
+  session_observe
   if [ "$INTERRUPTED" = 1 ]; then
     printf '\nInterrupted.\n'
     event=interrupted

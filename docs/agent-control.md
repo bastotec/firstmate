@@ -61,7 +61,7 @@ An agent found gone during that gate is reported stopped instead, since a dead e
 Removing a worktree, independently closing an endpoint, or discarding work stays with [`bin/fm-teardown.sh`](../bin/fm-teardown.sh), which owns the landed-work test.
 
 **`resume` is not a verb.**
-Deck's driver starts a new session from the brief on disk.
+The [Deck driver header](../bin/fm-deck-worker.sh) owns session continuity and fresh-session eligibility by worker role.
 `relaunch` covers the same need on every adapter, because the brief on disk - not a harness-private session - is the durable instruction.
 
 ## Transactional relaunch

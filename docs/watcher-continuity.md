@@ -5,7 +5,7 @@ Must-work continuity lives above that process boundary instead of depending on t
 
 ## Ownership
 
-In a Deck `run` home, the persistent `fm-deck-worker.sh` driver owns one tracked arm child, replaces it whenever it exits during a Deck turn, and retains its result for a serialized durable-inbox turn.
+In a Deck `run` home, the persistent `fm-deck-worker.sh` driver owns one tracked arm child, replaces completed cycles subject to the header's bounded retry policy, and retains successful results for a serialized durable-inbox turn.
 The driver header owns the exact child and hand-off mechanics; [the separate chat host header](../bin/fm-deck-chat.sh) owns steering-based continuity for `deck chat` primaries.
 [`supervision-protocols/deck.md`](supervision-protocols/deck.md) owns the model's handling duty for both hosts.
 

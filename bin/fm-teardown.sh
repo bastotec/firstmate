@@ -154,6 +154,8 @@
 # releases its durable treehouse lease so the pool slot is freed,
 # never left leased forever. If the treehouse return fails, teardown leaves the
 # leased home and state in place instead of hiding a still-held lease.
+# bin/fm-deck-worker.sh's SECOND MATE SESSION CONTINUITY header owns the
+# conversation binding retired with a secondmate and its forced descendants.
 # Usage: fm-teardown.sh <task-id> [--force] [--legacy-record]
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
@@ -914,6 +916,7 @@ remote_secondmate_teardown() {
     || { echo "error: remote pending-reply cleanup failed; preserving the local route for retry" >&2; return 1; }
   handoff_wake_retire \
     || { echo "error: remote receiver wake cleanup failed; preserving the local route for retry" >&2; return 1; }
+  rm -f -- "$STATE/$ID.deck-session" || return 1
   tmp="$SECONDMATE_REG.tmp.$$"
   grep -vE "^- $ID( |$)" "$SECONDMATE_REG" > "$tmp" || true
   mv -f -- "$tmp" "$SECONDMATE_REG"
@@ -2955,7 +2958,7 @@ cleanup_firstmate_home_children() {
     status_retire_presentation_task "$sub_state" "$child_id" || return 1
     retire_wake_gate_task_state "$sub_state" "$child_id" || return 1
     fm_backlog_atomic_transition remove "$sub_state/$child_id.meta" "task record" "$sub_state" || return 1
-    rm -f "$sub_state/$child_id.turn-ended" "$sub_state/$child_id.progress" \
+    rm -f "$sub_state/$child_id.turn-ended" "$sub_state/$child_id.progress" "$sub_state/$child_id.deck-session" \
       "$sub_state/$child_id.reconcile-nudged" "$sub_state/$child_id.crew-state" \
       "$sub_state/.$child_id.crew-state-follow.rearm"
     fm_lock_remove_path "$sub_state/.$child_id.crew-state-follow" || true
@@ -3328,6 +3331,7 @@ if [ "$KIND" = secondmate ]; then
   fi
   handoff_wake_retire_stage_commit \
     || { echo "error: receiver wake cleanup failed; preserving the secondmate route for retry" >&2; exit 1; }
+  rm -f -- "$STATE/$ID.deck-session"
   remove_secondmate_registry_entry "$ID"
 fi
 # Remove the per-task temp root (/tmp/fm-<id>/, incl. its gotmp/) recorded by spawn.
