@@ -639,8 +639,7 @@ The region, model, and profile files are read as their first non-blank, non-`#` 
 
 Some machines should not rely on `AGENTS.md` alone for actions the captain wants to see first, such as Slack, PR comments or email.
 After hook installation, every Deck agent in that machine account passes through [`bin/fm-approval.sh`](../bin/fm-approval.sh); unapproved matching calls become pending requests in their owning home rather than executing.
-A worker's gated call goes to its mate first (a keyed `needs-decision` line on the worker's status); the mate answers it or runs `bin/fm-approval.sh escalate <id>` to put it in front of the captain, so workers never page him directly.
-This repository provides the approval commands, records, and machine-policy editing backend; Fleet Town's Machine panel, removal confirmation, card display, and answer routing require the separate firstmate-ui integration.
+This repository provides the approval commands, records, and machine-policy editing backend; Fleet Town's Machine panel, removal confirmation, card display, audience filtering, and answer routing require the separate firstmate-ui integration.
 The policy stays on the machine, outside home inheritance and dotfiles synchronization; the captain manages presets and custom gates through the CLI or the machine-policy transport.
 Nothing is gated until the captain enables a gate:
 
@@ -654,7 +653,7 @@ FM_HOME=<home> bin/fm-approval.sh answer <id> --approve  # or --deny
 ```
 
 [`bin/fm-machine-approvals.sh`](../bin/fm-machine-approvals.sh)'s header owns local/SSH policy editing commands and machine selection for Fleet Town's integration.
-[`bin/fm-approval.py`](../bin/fm-approval.py)'s header owns policy defaults and validation, locked saves, stale-editor refusal, change auditing, automatic hook installation, matching limits, request and grant lifetimes, exact-call replay, routing (including secondmate `--no-steer --json` answers), and exit codes.
+[`bin/fm-approval.py`](../bin/fm-approval.py)'s header owns policy defaults and validation, locked saves, stale-editor refusal, change auditing, automatic hook installation, matching limits, request and grant lifetimes, exact-call replay, mate-first worker routing and escalation, answer bookkeeping (including secondmate `--no-steer --json` answers), and exit codes.
 The gate is command-text/tool-name matching, not a sandbox; do not treat it as protection against every way to reach a service.
 [`tests/fm-approval.test.sh`](../tests/fm-approval.test.sh) covers the approval contract, and [`tests/fm-machine.test.sh`](../tests/fm-machine.test.sh) covers machine setup and policy-repair reporting.
 

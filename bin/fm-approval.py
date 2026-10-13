@@ -45,14 +45,14 @@ Usage:
   fm-approval.sh policy-audit [--limit N] [--json]   who changed the policy, what and when
 
 gate. Reads Deck's event ({"tool_name", "args", "session_id", ...}). A call no gate
-matches exits 0 at once. A matching call is allowed only by a grant the captain issued
-for exactly this call: same agent, same tool, same arguments, same working directory
+matches exits 0 at once. A matching call is allowed only by a grant issued through
+answer --approve for exactly this call: same agent, same tool, same arguments, same working directory
 (the key is sha256 over tool, canonical args and effective cwd), not yet used and not
 expired. Using a grant consumes it (one call, once). Otherwise the call is blocked with
-exit 2 and stderr tells the model: blocked pending captain approval, the request id,
+exit 2 and stderr tells the model: blocked pending approval, the request id,
 do not retry or work around it, wait to be told. A request is filed in the owning home
 as state/approvals/<id>.json (mode 0600, atomic) with id, machine, home, agent,
-session, tool, args, cwd, gate, key, requested; an identical call already pending
+session, tool, args, cwd, gate, key, requested, audience; an identical call already pending
 reuses that request instead of filing another. Requests never expire and nothing is
 ever approved automatically. A policy that exists but cannot be read, parsed or
 validated blocks every call (fail closed) with the reason, and so does a gated call with no home to file
@@ -65,9 +65,20 @@ Workers never page the captain. A request from a ship or scout worker of the own
 home (state/<agent>.meta names kind=ship or scout) is filed with "audience": "mate":
 the gate appends a `needs-decision [key=<id>]: approval gate ...` line to that worker's
 status (through bin/fm-state-io.py), which wakes its mate, and tells the worker its mate
-decides. The mate answers it within its authority, or runs `escalate <id>`, which sets
-"audience": "captain" (audited as escalated) so Fleet Town shows it to him. Every other
-request ("primary", a second mate, session:<id>) is "audience": "captain" from the start.
+decides. The mate answers it within its authority, or runs `escalate <id>` for captain
+presentation. Every other request ("primary", a second mate, session:<id>) is
+"audience": "captain" from the start. docs/configuration.md's Approval gates section
+owns the separate Fleet Town integration limits.
+
+escalate. Run in the owning home (FM_HOME); the shell entry point refuses an
+owning-home worker through bin/fm-worker-guard-lib.sh (exit 3). Escalation and answer
+share a per-request lock; an unknown or no-longer-pending request is refused (exit 3).
+Escalation sets audience to captain and records the original escalated timestamp,
+then appends an escalated audit event and saves escalation_audited: true. Repeating
+a completed escalation is a no-op. An audit failure exits 1 with an incomplete
+escalation diagnostic, leaving the published captain audience in place; while the
+request is still pending, retry escalate after repairing the audit destination to
+finish the audit using the original timestamp.
 
 The owning home is FM_APPROVAL_HOME (the Deck hosts export it with FM_APPROVAL_AGENT:
 the task id, or `primary` for the first mate), else the policy's "home". Agents with
@@ -104,6 +115,12 @@ Policy management (enable, disable, policy-save) is one locked read-modify-write
 the policy file and appends one JSON line to ~/.agents/approvals-audit.log with
 {at, by, before, after, added, removed, changed}: the policy's sha256 before and
 after (or "none") and the sorted gate ids added, removed and edited.
+A failure before the audit entry is written and flushed restores the prior policy
+(or removes a newly created one); a failed restoration reports its recovery copy.
+Once the audit entry is flushed, the saved policy is retained even if syncing or
+closing the log fails: exit 1 reports "saved and audited" rather than undoing the
+change behind its audit entry. A sync failure means disk durability is unconfirmed,
+not that the policy is unchanged; reload policy-show before another save.
 The lock dir is ~/.agents/.approvals.lock, refused after ten seconds busy; both
 lock and audit stay beside the policy when FM_APPROVAL_POLICY overrides its path.
 `by` is --by TEXT or defaults to "<user>@<short-hostname> (cli)".
