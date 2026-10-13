@@ -8,7 +8,9 @@ only its required plain-text/canonical-sequence projection.
 An endpoint-scoped lifecycle lock serializes publication with driver start/end.
 No projection is ever carried into the next turn. Only Deck's handled file
 confirms application; inbox publication, run liveness and PTY writes do not.
-Driver CLI: fm_stream_deck.py start|end STATE ID ENDPOINT [TURN SUPPORTED].
+Driver CLI: fm_stream_deck.py start|end STATE ID ENDPOINT [TURN SUPPORTED [SET_MODEL]].
+SET_MODEL 1 records that this turn's Deck takes `deck-control: set_model`
+(bin/fm_model_switch.py publishes it only into such a turn).
 start prints the turn projection path; end retires the active descriptor.
 fm_stream_deck.py captain STATE ID flushes eligible captain-direct records and
 bound Bridge orders; project_captain owns eligibility and acknowledgement rules.
@@ -101,12 +103,12 @@ class Receiver:
         except FileNotFoundError:
             return None
 
-    def start(self, turn, supported):
+    def start(self, turn, supported, set_model=False):
         with self.locked():
             projection = self.root / turn
             projection.mkdir(mode=0o700)
             atomic_write(self.root / 'active.json', json.dumps({
-                'turn': turn, 'supported': supported, 'active': True}))
+                'turn': turn, 'supported': supported, 'set_model': set_model, 'active': True}))
             return str(projection)
 
     def end(self):
@@ -148,7 +150,7 @@ class Receiver:
         sync_dir(record.parent)
         return record
 
-    def publish(self, active):
+    def publish(self, active, before=None):
         """Flush both native sources in sequence under the lifecycle lock."""
         projection = self.root / active['turn']
         visible = [int(p.stem) for sub in ('', 'handled', 'rejected')
@@ -184,6 +186,8 @@ class Receiver:
                 candidates.append((int(source.stem), body, guidance))
         published = 0
         for number, body, guidance in sorted(candidates):
+            if before is not None and number >= before:
+                break
             if number <= floor:
                 continue
             if not body.strip() or len(guidance.encode('utf-8')) > 65536:
@@ -405,7 +409,7 @@ def main():
     action, state, task, endpoint, *args = sys.argv[1:]
     receiver = Receiver(state, task, endpoint)
     if action == 'start':
-        print(receiver.start(args[0], args[1] == '1'))
+        print(receiver.start(args[0], args[1] == '1', args[2:3] == ['1']))
     elif action == 'end':
         receiver.end()
     else:

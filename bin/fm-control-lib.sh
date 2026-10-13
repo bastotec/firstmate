@@ -45,12 +45,13 @@ exit
 relaunch
 recover-missing
 reincarnate
+model
 EOF
 }
 
 fm_control_verb_allowed() {  # <verb>
   case "${1-}" in
-    interrupt|exit|relaunch|recover-missing|reincarnate) return 0 ;;
+    interrupt|exit|relaunch|recover-missing|reincarnate|model) return 0 ;;
   esac
   return 1
 }

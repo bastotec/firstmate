@@ -13,6 +13,7 @@
 #                                         [--harness <name>] [--model <name>]
 #                                         [--effort <level>] [--unless-held-stopped]
 #                                         (--note <text> | --note-file <path>)
+#        fm-control.sh <task-id> model <route>
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
 # DATA plane: conversational text for the agent to read, always routing-marked
@@ -58,8 +59,16 @@
 #              axis for the replacement. With no explicit axis, a secondmate
 #              re-resolves its durable config/secondmate-harness pin (harness
 #              plus its optional model and effort tokens) exactly as any other
-#              respawn does, while a ship or scout keeps the exact adapter
-#              already recorded for it.
+#              respawn does, except that an in-place model choice takes precedence
+#              on an unchanged harness when --model is omitted, while a ship or
+#              scout keeps the exact adapter already recorded for it.
+#              At replacement-record publication on an unchanged harness, an
+#              explicit non-default --model replaces model_choice= with the launch owner's resolved
+#              route (not a fallback chain or the preflight selection);
+#              --model default or a harness change clears it, otherwise it is
+#              preserved. This also applies to the primary's remote task record
+#              when the successful host route is published. recover-missing
+#              retains its recorded-profile semantics described below.
 #              --note is required for a ship or scout, whose replacement
 #              inherits the local copy but none of the conversation; a
 #              secondmate reconciles its own home's records at startup, so its
@@ -117,6 +126,27 @@
 #              and naming it for such a harness still refuses with "deck has no
 #              effort control".
 #
+#   model      Switch a running Deck agent to another gateway route in place:
+#              no restart, same driver process, same conversation. The route
+#              must be a plain route the captain's model policy
+#              ($CONFIG/model-policy.json, using this home's resolved config
+#              directory) permits and the gateway lists.
+#              The choice is saved as the record's model= and model_choice= (a later
+#              relaunch follows the precedence described above)
+#              and in state/<id>.model, which the Deck driver reads before
+#              every turn; a running turn also gets Deck's
+#              `deck-control: set_model` control at its next safe point when
+#              its Deck accepts it (bin/fm_model_switch.py owns the checks and
+#              that publication). A handled task-inbox record marks the thread
+#              as `[fm-control] model switch: <was> -> <now>` and reserves the
+#              control's sequence without colliding with captain records.
+#              Reservation failure exits 1 before saving the choice.
+#              Prints `model <id> -> <route> (live|next-turn)` on publication,
+#              not confirmed application by Deck.
+#              Exit 3 when the driver predates in-place switching (its
+#              state/<id>.deck-caps is missing or stale): relaunch with --model
+#              instead. docs/remote-secondmates.md "Lifecycle control" owns
+#              routing and policy checks for remotely placed secondmates.
 #   reincarnate Continue a retired-backend ship or scout on a fresh stream
 #              endpoint in the SAME clean worktree, using recover-missing's
 #              transaction and fm-spawn --relaunch. Requires a supported
@@ -284,6 +314,12 @@ RAW_ID=${1:-}
 VERB=${2:-}
 [ -n "$RAW_ID" ] && [ -n "$VERB" ] || { usage >&2; exit 2; }
 shift 2
+MODEL_ROUTE=
+if [ "$VERB" = model ]; then
+  [ "$#" -eq 1 ] && [ -n "$1" ] || { echo "error: usage: fm-control.sh <task-id> model <route>" >&2; exit 2; }
+  MODEL_ROUTE=$1
+  shift
+fi
 
 if ! fm_control_verb_allowed "$VERB"; then
   {
@@ -421,6 +457,50 @@ held_stop_record() {  # <verb> - after success or an unknown remote exit
 if [ "$UNLESS_HELD_STOPPED" = 1 ] && [ -e "$STATE/$ID.held-stopped" ]; then
   die "task $ID was stopped on purpose (state/$ID.held-stopped); relaunch it without --unless-held-stopped to bring it back"
 fi
+
+# --- in-place model switch ---------------------------------------------------
+
+model_meta_write() {  # <route>: model= in this record, under its lock
+  local route=$1 lock tmp rc=0
+  lock=$(fm_meta_lock_path "$META") || return 1
+  fm_lock_acquire_wait "$lock" || return 1
+  tmp="$META.model.${BASHPID:-$$}"
+  { awk -F= '$1 != "model" && $1 != "model_choice"' "$META"; printf 'model=%s\nmodel_choice=%s\n' "$route" "$route"; } > "$tmp" || rc=1
+  if [ "$rc" -eq 0 ] && ! fm_backlog_atomic_transition publish "$tmp" "$META" "task record" "$STATE"; then
+    rc=1
+  fi
+  rm -f "$tmp" 2>/dev/null || true
+  fm_lock_release "$lock" || true
+  return "$rc"
+}
+
+model_switch() {
+  local switcher="$SCRIPT_DIR/fm_model_switch.py" host rc where prior
+  python3 "$switcher" check "$MODEL_ROUTE" --policy "$CONFIG/model-policy.json" || exit 1
+  host=$(fm_meta_get "$META" remote_host)
+  if [ -n "$host" ]; then
+    rc=0
+    "$SCRIPT_DIR/fm-on.sh" "$ID" fm-remote-secondmate-control.sh model "$ID" "$MODEL_ROUTE" < /dev/null || rc=$?
+    [ "$rc" -ne 255 ] || echo "error: remote secondmate $ID on $host is unreachable or the switch outcome is unknown" >&2
+    [ "$rc" -eq 0 ] || exit "$rc"
+    model_meta_write "$MODEL_ROUTE" || die "task $ID switched on $host, but this record's model= could not be updated"
+    exit 0
+  fi
+  [ "$(fm_control_harness_family "$(fm_meta_get "$META" harness)" 2>/dev/null)" = deck ] \
+    || die "task $ID is not a Deck agent; in-place model switching is Deck's"
+  python3 "$switcher" supported "$STATE" "$ID" || {
+    echo "error: task $ID's Deck driver predates in-place model switching (or is not running); relaunch it with --model $MODEL_ROUTE" >&2
+    exit 3
+  }
+  prior=$(fm_meta_get "$META" model)
+  where=$(python3 "$switcher" publish "$STATE" "$ID" "$prior" "$MODEL_ROUTE") \
+    || die "task $ID's model switch record or live control could not be written"
+  model_meta_write "$MODEL_ROUTE" || die "task $ID's record could not be updated"
+  echo "model $ID -> $MODEL_ROUTE ($where)"
+  exit 0
+}
+
+[ "$VERB" != model ] || model_switch
 
 if [ -n "$(fm_meta_get "$META" remote_host)" ]; then
   # shellcheck source=bin/fm-remote-control-lib.sh
@@ -946,6 +1026,8 @@ relaunch_rollback() {
 }
 
 resolve_relaunch_profile() {
+  local model_choice
+  model_choice=$(fm_meta_get "$META" model_choice)
   PRIOR_HARNESS=$HARNESS
   PRIOR_RECORDED_HARNESS=$RECORDED_HARNESS
   PRIOR_MODEL=$(fm_meta_get "$META" model)
@@ -961,10 +1043,9 @@ resolve_relaunch_profile() {
   CONFIG_EFFORT=
   if [ "$KIND" = secondmate ] && [ "$VERB" = relaunch ] \
      && [ "$HARNESS_SET" = 0 ]; then
-    # A secondmate's harness, model, and effort are a durable configured pin
-    # that every respawn re-resolves (the secondmate-provisioning contract), so
-    # a relaunch with no explicit harness picks up a newly configured one
-    # instead of freezing whatever this incarnation happens to run. Crewmates
+    # Re-resolve the secondmate pin so a relaunch can pick up a configured
+    # harness change; the model-choice precedence in this script's header
+    # still applies after resolution. Crewmates
     # and scouts deliberately do NOT resolve config here: their harness comes
     # from firstmate's own dispatch-profile judgment at intake, and silently
     # re-resolving it would bypass that consultation.
@@ -1011,6 +1092,8 @@ resolve_relaunch_profile() {
   # caller names them too.
   if [ "$MODEL_SET" = 1 ]; then
     TARGET_MODEL=$NEW_MODEL
+  elif [ "$VERB" = relaunch ] && [ "$TARGET_HARNESS" = "$PRIOR_HARNESS" ] && [ -n "$model_choice" ]; then
+    TARGET_MODEL=$model_choice
   elif [ "$HARNESS_SET" = 0 ] && [ -n "$CONFIG_HARNESS" ]; then
     TARGET_MODEL=${CONFIG_MODEL:-default}
   elif [ "$TARGET_HARNESS" = "$PRIOR_HARNESS" ]; then
@@ -1153,8 +1236,16 @@ do_relaunch() {
   local exit_result state note_line
   local -a spawn_args
 
+  local -x FM_CONTROL_MODEL_CHOICE_ACTION=keep
   require_state_verified_backend relaunch "the agent actually stopped"
   resolve_relaunch_profile
+  if [ "$VERB" = relaunch ]; then
+    if [ "$TARGET_HARNESS" != "$PRIOR_HARNESS" ] || { [ "$MODEL_SET" = 1 ] && [ "$NEW_MODEL" = default ]; }; then
+      FM_CONTROL_MODEL_CHOICE_ACTION=clear
+    elif [ "$MODEL_SET" = 1 ]; then
+      FM_CONTROL_MODEL_CHOICE_ACTION=replace
+    fi
+  fi
 
   case "$KIND" in
     ship|scout)

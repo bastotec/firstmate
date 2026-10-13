@@ -31,19 +31,25 @@ CLI. Both call this file, which owns the on-disk layout:
   state/primary-chat/model                the model route the captain chose for the
                                           primary (`model ROUTE`); the keeper starts
                                           the host on it, over its own --model
-  state/primary-chat/switch               "<request epoch> <route>": a model switch
+  state/primary-chat/switch               "<request epoch> <route>": a fallback switch
                                           waiting for a live, idle primary; the keeper
                                           atomically claims and removes this request
                                           before ending the host, leaving newer requests
                                           pending, and restarts on the claimed route
-  state/primary-chat/switches             successful switch starts that change route:
-                                          "<completion epoch> <from route|default> <to route>"
-                                          (last 1000), for the thread to mark where it was
+  state/primary-chat/switches             route changes recorded on in-place control
+                                          publication or successful fallback host start:
+                                          "<record epoch> <from route|default> <to route>"
+                                          (last 1000), for the thread to mark where it was;
+                                          in-place entries are not application receipts
 
 Record (state/primary-chat.json):
   {"version":1,"home":ABS,"session":ID,"steer_dir":ABS,"events_file":ABS,
-   "endpoint":"<hub-tag>:<endpoint-id>"|null,"host_pid":N,"started_at":EPOCH,"model":ROUTE}
-model is the host's launch route, or "" when no explicit model was passed.
+   "endpoint":"<hub-tag>:<endpoint-id>"|null,"host_pid":N,"started_at":EPOCH,
+   "model":ROUTE,"set_model":BOOL}
+model is the host's launch route ("" when omitted), updated on in-place control
+publication; it is not an application receipt.
+set_model records whether this host's `deck chat --help` advertises set_model;
+a missing field in an older record means unsupported.
 A clean host exit adds "stopped_at". A record is live only when it has no
 stopped_at and host_alive(host_pid, home) validates the host identity below.
 
@@ -57,6 +63,7 @@ Subcommands:
       2 rejected (rejected/SEQ.msg or steer_rejected), 3 no live host
   prepare --home H [--session ID]   create dirs, persist and print the session
   record write --home H --session ID --host-pid N [--endpoint T] [--model ROUTE] [--startup-file F]
+               [--set-model]   (the host's deck takes `deck-control: set_model`)
       publishes startup before making the host visible, retaining pending messages
   record stop --home H --host-pid N
   record pid --home H        print the live host pid; exit 3 when none
@@ -102,6 +109,9 @@ import sys
 import tempfile
 import threading
 import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from fm_model_switch import policy_permits
 
 BIN = Path(__file__).resolve().parent
 MAX_BODY = 65536
@@ -389,7 +399,7 @@ def record_write(args):
         'version': 1, 'home': str(home), 'session': args.session,
         'steer_dir': str(base / 'steer'), 'events_file': str(base / 'events.ndjson'),
         'endpoint': args.endpoint or None, 'host_pid': args.host_pid,
-        'model': args.model,
+        'model': args.model, 'set_model': bool(getattr(args, 'set_model', False)),
         'started_at': int(time.time())}, sort_keys=True) + '\n')
     return 0
 
@@ -689,6 +699,38 @@ def keeper_view(root):
     return None
 
 
+def note_switch(root, was, now):
+    """Append one line to state/primary-chat/switches (the thread's divider marks)."""
+    path = Path(root) / 'switches'
+    try:
+        lines = path.read_text().splitlines()[-999:]
+    except OSError:
+        lines = []
+    lines.append('%d %s %s' % (int(time.time()), was or 'default', now or 'default'))
+    try:
+        atomic_write(path, '\n'.join(lines) + '\n')
+    except OSError:
+        pass
+
+
+def switch_in_place(root, record, route):
+    """A live host whose deck takes `set_model`: send it the control, keep the
+    session and the process. Deck applies it at once while idle, else at its
+    next safe point, and checks the route against the gateway and policy itself."""
+    atomic_write(Path(root) / 'model', route + '\n')
+    try:
+        (Path(root) / 'switch').unlink()
+    except FileNotFoundError:
+        pass
+    seq = publish_body(Path(record['steer_dir']), 'deck-control: set_model %s\n' % route)
+    was = record.get('model') or ''
+    record['model'] = route
+    atomic_write(Path(root).parent / 'primary-chat.json', json.dumps(record, sort_keys=True) + '\n')
+    if was != route:
+        note_switch(root, was, route)
+    return seq
+
+
 def set_model(args):
     home, state, _, root = paths(args.home)
     if not args.route:
@@ -697,12 +739,25 @@ def set_model(args):
     if not MODEL_RE.match(args.route):
         print('error: not a model route: %s' % args.route, file=sys.stderr)
         return 2
-    if keeper_view(root) is None:
+    policy = Path(os.environ.get('FM_CONFIG_OVERRIDE') or home / 'config') / 'model-policy.json'
+    if not policy_permits(args.route, policy):
+        print('error: %s is blocked by the model policy' % args.route, file=sys.stderr)
+        return 1
+    if not root.is_dir():
         print('error: no service keeper runs this primary; restart it with --model %s' % args.route,
               file=sys.stderr)
         return 1
     with open(root / '.model.lock', 'a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        record = live_record(home)
+        if record and record.get('set_model'):
+            seq = switch_in_place(root, record, args.route)
+            print('primary: switched to %s in place (steer seq %d)' % (args.route, seq))
+            return 0
+        if keeper_view(root) is None:
+            print('error: no service keeper runs this primary; restart it with --model %s' % args.route,
+                  file=sys.stderr)
+            return 1
         atomic_write(root / 'model', args.route + '\n')
         atomic_write(root / 'switch', '%d %s\n' % (int(time.time()), args.route))
     print('primary: switching to %s %s' % (args.route, 'now' if primary_idle(state) else 'after the turn under way'))
@@ -761,16 +816,7 @@ class Keeper:
             claimed.unlink()
 
     def note_switch(self, was, now):
-        path = self.root / 'switches'
-        try:
-            lines = path.read_text().splitlines()[-999:]
-        except OSError:
-            lines = []
-        lines.append('%d %s %s' % (int(time.time()), was or 'default', now or 'default'))
-        try:
-            atomic_write(path, '\n'.join(lines) + '\n')
-        except OSError:
-            pass
+        note_switch(self.root, was, now)
 
     def log(self, message):
         path = self.root / 'service.log'
@@ -1009,6 +1055,7 @@ def main(argv):
     write.add_argument('--endpoint', default='')
     write.add_argument('--model', default='')
     write.add_argument('--startup-file')
+    write.add_argument('--set-model', action='store_true')
     stop = record.add_parser('stop')
     record.add_parser('pid').add_argument('--home', required=True)
     for command in (write, stop):

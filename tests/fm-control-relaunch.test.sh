@@ -109,7 +109,8 @@ fake_hooks() {  # <case-dir>
 #!/usr/bin/env bash
 case "\$1" in
   /exit|/quit)
-    [ -z '${FM_FAKE_PROTOCOL_FIRST:-}' ] || : > '${FM_FAKE_PROTOCOL_FIRST:-}' ;;
+    [ -z '${FM_FAKE_PROTOCOL_FIRST:-}' ] || : > '${FM_FAKE_PROTOCOL_FIRST:-}'
+    [ -z '${FM_FAKE_MODEL_COOLDOWN_CLEAR:-}' ] || rm -f '${FM_FAKE_MODEL_COOLDOWN_CLEAR:-}' ;;
   *'encode launch-brief'*)
     if [ -n '${FM_FAKE_PRIOR_PID:-}' ] && [ -n '${FM_FAKE_PRIOR_LIVE_MARKER:-}' ]; then
       prior_stat=\$(ps -o stat= -p '${FM_FAKE_PRIOR_PID:-}' 2>/dev/null | tr -d '[:space:]')
@@ -858,6 +859,128 @@ test_secondmate_relaunch_picks_up_the_configured_harness_pin() {
   pass "fm-control relaunch: a secondmate relaunch re-resolves its durable configured harness pin"
 }
 
+test_secondmate_relaunch_preserves_an_in_place_model_choice() {
+  local dir home out rc route
+  dir=$(new_case model-choice smchoice)
+  TASK_TMPS+=("/tmp/fm-smchoice")
+  home="$dir/home"
+  mkdir -p "$home/config" "$home/data/smchoice" "$dir/gateway"
+  printf 'deck example/pinned\n' > "$home/config/secondmate-harness"
+  printf '{"data":[{"id":"example/chosen"},{"id":"example/changed"}]}\n' > "$dir/gateway/models"
+  printf '# secondmate brief\n' > "$home/data/smchoice/brief.md"
+  fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
+  mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
+  printf 'smchoice\n' > "$dir/smhome/.fm-secondmate-home"
+  printf '# agents\n' > "$dir/smhome/AGENTS.md"
+  {
+    fm_test_fake_dir_task "$dir/fake" "$home/state" smchoice
+    printf '%s\n' "worktree=$dir/smhome" "project=$dir/smhome" 'harness=deck' \
+      'kind=secondmate' 'mode=secondmate' 'yolo=off' 'model=example/pinned' \
+      'effort=default' "home=$dir/smhome"
+  } > "$home/state/smchoice.meta"
+  printf '%s\n' fm-smchoice > "$dir/fake/windows"
+  printf '%s' "$dir/smhome" > "$dir/fake/cwd"
+  printf 'pid=%s\nmodel_switch=1\n' "$$" > "$home/state/smchoice.deck-caps"
+  for route in example/chosen example/changed; do
+    out=$(PROXAI_BASE_URL="file://$dir/gateway" PROXAI_API_KEY=test-key \
+      run_control "$dir" smchoice model "$route"); rc=$?
+    expect_code 0 "$rc" "the in-place choice should succeed: $out"
+    assert_equals "$route" "$(meta_field "$dir" smchoice model)" "model= follows the in-place choice"
+    assert_equals "$route" "$(meta_field "$dir" smchoice model_choice)" "model_choice records the captain's choice"
+    assert_equals 1 "$(grep -c '^model_choice=' "$home/state/smchoice.meta")" "a repeated switch replaces its choice"
+    assert_equals "$route" "$(cat "$home/state/smchoice.model")" "the next turn follows the choice"
+  done
+  rm "$home/state/smchoice.model"
+  out=$(run_control "$dir" smchoice relaunch); rc=$?
+  expect_code 0 "$rc" "a chosen secondmate model should relaunch: $out"
+  assert_equals example/changed "$(journal_field "$dir" smchoice to_model)" "the in-place choice wins over the configured model"
+  assert_equals example/changed "$(meta_field "$dir" smchoice model)" "the replacement launches on the chosen route"
+  assert_equals example/changed "$(meta_field "$dir" smchoice model_choice)" "relaunch preserves the choice"
+  out=$(run_control "$dir" smchoice relaunch --harness deck); rc=$?
+  expect_code 0 "$rc" "explicitly retaining the harness keeps the choice: $out"
+  assert_equals example/changed "$(journal_field "$dir" smchoice to_model)" "an unchanged explicit harness keeps the choice"
+  out=$(run_control "$dir" smchoice relaunch --model example/explicit); rc=$?
+  expect_code 0 "$rc" "an explicit model overrides the choice: $out"
+  assert_equals example/explicit "$(meta_field "$dir" smchoice model)" "an explicit --model wins"
+  out=$(run_control "$dir" smchoice relaunch); rc=$?
+  expect_code 0 "$rc" "an ordinary relaunch after an explicit model: $out"
+  assert_equals example/explicit "$(journal_field "$dir" smchoice to_model)" "an explicit --model becomes the kept choice"
+  out=$(run_control "$dir" smchoice relaunch --model default); rc=$?
+  expect_code 0 "$rc" "an explicit model reset overrides the choice: $out"
+  assert_equals default "$(meta_field "$dir" smchoice model)" "an explicit default keeps its reset semantics"
+  [ -z "$(meta_field "$dir" smchoice model_choice)" ] || fail "an explicit default clears the choice"
+  out=$(run_control "$dir" smchoice relaunch); rc=$?
+  expect_code 0 "$rc" "an ordinary relaunch after a reset: $out"
+  assert_equals example/pinned "$(journal_field "$dir" smchoice to_model)" "after a reset the configured pin applies again"
+  pass "fm-control model/relaunch: a secondmate's in-place choice overrides its pin only without an explicit model"
+}
+
+test_relaunch_model_choice_follows_launch_resolution() {
+  local dir out rc
+  dir=$(new_case choice-resolution rlchoice)
+  add_ship_task "$dir" rlchoice deck
+  FM_HOME="$dir/home" "$ROOT/bin/fm-record-model-refusal.sh" rlchoice example/first >/dev/null \
+    || fail "could not seed the preflight cooldown"
+  out=$(FM_FAKE_MODEL_COOLDOWN_CLEAR="$dir/home/state/model-chain/crew-rlchoice.state" \
+    run_control "$dir" rlchoice relaunch --model example/first,example/second --note "cooldown expires during shutdown"); rc=$?
+  expect_code 0 "$rc" "the model chain relaunch succeeds: $out"
+  assert_equals example/second "$(journal_field "$dir" rlchoice to_model)" "preflight observes the cooled first route"
+  assert_equals example/first "$(meta_field "$dir" rlchoice model)" "launch resolution observes the expired cooldown"
+  assert_equals example/first "$(meta_field "$dir" rlchoice model_choice)" "the saved choice follows the launched model"
+  assert_grep 'example/first' "$dir/fake/literal" "the launch command uses the resolved route"
+  out=$(run_control "$dir" rlchoice relaunch --note "keep the launched choice"); rc=$?
+  expect_code 0 "$rc" "an ordinary relaunch keeps the replacement choice: $out"
+  assert_equals example/first "$(meta_field "$dir" rlchoice model)" "a later relaunch keeps the actual launch choice"
+  pass "fm-control relaunch: model_choice follows launch resolution rather than preflight"
+}
+
+test_remote_relaunch_publishes_the_model_choice_with_the_route() {
+  local dir action route expected harness out rc wanted_rc
+  local -a args
+  dir=$(new_case remote-choice rlremotechoice)
+  cp -R "$ROOT/bin" "$dir/bin"
+  cat > "$dir/bin/fm-on.sh" <<'SH'
+#!/usr/bin/env bash
+[ "$2" != fm-remote-doctor.sh ] || exit 0
+case "$3" in
+  relaunch) exit "${FM_TEST_REMOTE_RELAUNCH_RC:-0}" ;;
+  route)
+    printf '%s\n' backend=stream 'target=fixture:0123456789abcdef0123456789abcdef' \
+      stream_hub=http://fixture:8328 stream_endpoint_id=0123456789abcdef0123456789abcdef \
+      harness=deck "model=$FM_TEST_REMOTE_MODEL" effort=default ;;
+  *) exit 2 ;;
+esac
+SH
+  chmod +x "$dir/bin/fm-on.sh"
+  for action in replace keep reset harness failure; do
+    harness=deck route=example/prior expected=example/prior wanted_rc=0
+    args=()
+    case "$action" in
+      replace) args=(--model 'example/first,example/second'); route=example/second; expected=$route ;;
+      reset) args=(--model default); route=default; expected='' ;;
+      harness) args=(--harness deck); harness=claude; route=default; expected='' ;;
+      failure) args=(--model example/new); wanted_rc=1 ;;
+    esac
+    printf '%s\n' window=remote:rlremotechoice kind=secondmate mode=secondmate yolo=off \
+      "harness=$harness" model=example/prior model_choice=example/prior effort=default \
+      remote_host=fixture remote_backend=stream 'remote_target=fixture:0123456789abcdef0123456789abcdef' \
+      stream_hub=http://fixture:8328 stream_endpoint_id=0123456789abcdef0123456789abcdef \
+      x_keep=preserved > "$dir/home/state/rlremotechoice.meta"
+    rc=0
+    out=$(FM_HOME="$dir/home" FM_TEST_REMOTE_MODEL="$route" FM_TEST_REMOTE_RELAUNCH_RC="$wanted_rc" \
+      "$dir/bin/fm-control.sh" rlremotechoice relaunch "${args[@]+"${args[@]}"}" 2>&1) || rc=$?
+    expect_code "$wanted_rc" "$rc" "remote $action outcome: $out"
+    assert_equals "$route" "$(meta_field "$dir" rlremotechoice model)" "remote $action publishes the host's model"
+    assert_equals "$expected" "$(meta_field "$dir" rlremotechoice model_choice)" "remote $action publishes the matching choice"
+    assert_equals preserved "$(meta_field "$dir" rlremotechoice x_keep)" "remote $action preserves unrelated metadata"
+    if [ "$wanted_rc" = 0 ]; then
+      assert_equals deck "$(meta_field "$dir" rlremotechoice harness)" "remote $action publishes the host's harness"
+      assert_contains "$out" 'rebound rlremotechoice' "remote $action confirms publication"
+    fi
+  done
+  pass "fm-control remote relaunch: host route publication replaces, keeps, or clears model_choice"
+}
+
 test_secondmate_relaunch_onto_deck() {
   local dir home out rc
   dir=$(new_case deckpin smdeck)
@@ -1242,20 +1365,31 @@ test_prepublication_failure_keeps_concurrent_durable_metadata() {
 }
 
 test_post_publication_launch_failure_keeps_the_new_record() {
-  local dir out rc
-  dir=$(new_case published rl24)
-  add_ship_task "$dir" rl24 deck
-  printf 'deck' > "$dir/fake/becomes"
-  out=$(FM_FAKE_LAUNCH_TRANSPORT_FAIL_AFTER_START=1 \
-    run_control "$dir" rl24 relaunch --harness deck --note "keep the published record"); rc=$?
-  expect_code 1 "$rc" "a post-publication launch failure should fail closed"$'\n'"$out"
-  [ "$(meta_field "$dir" rl24 harness)" = deck ] \
-    || fail "a published replacement record must not be rewritten to the prior harness"
-  [ -n "$(meta_field "$dir" rl24 control_relaunch_tx)" ] \
-    || fail "the published replacement record should identify its relaunch transaction"
-  [ "$(journal_field "$dir" rl24 rollback)" = none-new-record-kept ] \
-    || fail "the journal should record that the published replacement record was kept"
-  pass "fm-control relaunch: post-publication failure keeps the new durable record"
+  local dir out rc route
+  for route in example/replacement default; do
+    dir=$(new_case published rl24)
+    add_ship_task "$dir" rl24 deck
+    awk -F= '$1 != "model"' "$dir/home/state/rl24.meta" > "$dir/prior.meta"
+    printf 'model=example/prior\nmodel_choice=example/prior\n' >> "$dir/prior.meta"
+    mv "$dir/prior.meta" "$dir/home/state/rl24.meta"
+    printf 'deck' > "$dir/fake/becomes"
+    out=$(FM_FAKE_LAUNCH_TRANSPORT_FAIL_AFTER_START=1 \
+      run_control "$dir" rl24 relaunch --harness deck --model "$route" --note "keep the published record"); rc=$?
+    expect_code 1 "$rc" "a post-publication launch failure should fail closed"$'\n'"$out"
+    [ "$(meta_field "$dir" rl24 harness)" = deck ] \
+      || fail "a published replacement record must not be rewritten to the prior harness"
+    [ -n "$(meta_field "$dir" rl24 control_relaunch_tx)" ] \
+      || fail "the published replacement record should identify its relaunch transaction"
+    [ "$(journal_field "$dir" rl24 rollback)" = none-new-record-kept ] \
+      || fail "the journal should record that the published replacement record was kept"
+    assert_equals "$route" "$(meta_field "$dir" rl24 model)" "the retained record names the launched model"
+    if [ "$route" = default ]; then
+      [ -z "$(meta_field "$dir" rl24 model_choice)" ] || fail "the retained reset record kept a stale choice"
+    else
+      assert_equals "$route" "$(meta_field "$dir" rl24 model_choice)" "the retained record replaces its choice"
+    fi
+  done
+  pass "fm-control relaunch: post-publication failure keeps the new durable record and model choice"
 }
 
 test_stop_transport_failure_reconciles_a_dead_agent() {
@@ -1772,6 +1906,9 @@ test_relaunch_refuses_a_held_in_flight_item_before_stopping() {
 # fm-model-chain sources these fixture helpers without running this suite.
 [ "${FM_MODEL_CHAIN_TEST_SKIP_RUN:-0}" != 1 ] || return 0
 
+test_secondmate_relaunch_preserves_an_in_place_model_choice
+test_relaunch_model_choice_follows_launch_resolution
+test_remote_relaunch_publishes_the_model_choice_with_the_route
 test_secondmate_relaunch_onto_deck
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text

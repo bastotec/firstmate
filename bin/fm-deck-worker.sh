@@ -136,6 +136,9 @@
 #                           non-empty FM_CONFIG_OVERRIDE, else FM_HOME/config,
 #                           else the tracked code root's config/ directory.
 #                           Resolution happens once at driver startup.
+#   DECK_MODEL_POLICY     Deck's policy path, passed through when non-empty.
+#                           When empty, export model-policy.json from the same
+#                           config-directory resolution as MCP, if it exists.
 #   FM_STREAM_ENDPOINT_ID  set by the owning stream agent, enabling receiver
 #                           start/end registration for each driver turn
 #   PROXAI_BASE_URL, PROXAI_MODEL, PROXAI_API_KEY_FILE, PROXAI_API_KEY
@@ -209,6 +212,20 @@ fi
 if [ -z "${PROXAI_API_KEY_FILE:-}${PROXAI_API_KEY:-}" ] && [ -f "$HOME/.config/proxai/client.key" ]; then
   export PROXAI_API_KEY_FILE="$HOME/.config/proxai/client.key"
 fi
+# The captain's model policy also binds Deck's own `set_model` check.
+if [ -z "${DECK_MODEL_POLICY:-}" ]; then
+  MODEL_POLICY="${FM_CONFIG_OVERRIDE:-${FM_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}/config}/model-policy.json"
+  [ ! -f "$MODEL_POLICY" ] || export DECK_MODEL_POLICY="$MODEL_POLICY"
+fi
+# In-place model switches (bin/fm-control.sh `model`): this driver reads
+# state/<id>.model before every turn, and says so with its pid, so the control
+# plane knows a switch needs no relaunch.
+# The launch's --model is authoritative at start, so an older switch file
+# never overrides it. bin/fm-control.sh's header owns relaunch profile selection.
+MODEL_FILE="$STATE/$ID.model"
+rm -f "$MODEL_FILE"
+printf 'pid=%s\nmodel_switch=1\n' "$$" > "$STATE/.$ID.deck-caps.$$" \
+  && mv -f "$STATE/.$ID.deck-caps.$$" "$STATE/$ID.deck-caps" || true
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/fm-deck-worker.XXXXXX") || exit 2
 TURN_MARK="$WORK/turn-start"
@@ -641,6 +658,12 @@ run_turn() {  # <prompt>
   [ "$SECONDMATE" != 1 ] || watch_confirm_handling_delivery || return 1
   [ -z "$effort" ] || prompt="deck-effort: $effort
 $prompt"
+  local switched
+  switched=$(head -1 "$MODEL_FILE" 2>/dev/null || true)
+  case "$switched" in
+    ''|*[!A-Za-z0-9._:@/-]*) ;;
+    *) MODEL=$switched ;;
+  esac
   local -a args=(run "$prompt" --max-turns "$MAX_TURNS" --deadline-secs "$DEADLINE" --hook "pre_complete=$EVIDENCE_HOOK")
   [ -z "$PRE_TOOL_HOOK" ] || args+=(--hook "pre_tool_use=$PRE_TOOL_HOOK")
   [ -z "$PROGRESS_HOOK" ] || args+=(--hook "post_tool_use=$PROGRESS_HOOK")
@@ -648,11 +671,13 @@ $prompt"
   [ -z "$MCP_CONFIG" ] || args+=(--mcp-config "$MCP_CONFIG")
   [ -z "$SESSION" ] || args+=(--session "$SESSION")
   if [ -n "${FM_STREAM_ENDPOINT_ID:-}" ]; then
-    local steer_supported=0 steer_turn steer_dir
-    "$DECK" run --help 2>/dev/null | grep -q -- '--steer-dir' && steer_supported=1
+    local steer_supported=0 set_model=0 steer_turn steer_dir deck_help
+    deck_help=$("$DECK" run --help 2>/dev/null || true)
+    case "$deck_help" in *--steer-dir*) steer_supported=1 ;; esac
+    case "$deck_help" in *set_model*) set_model=1 ;; esac
     steer_turn=$(python3 -c 'import uuid; print(uuid.uuid4().hex)')
     if steer_dir=$(python3 "$SCRIPT_DIR/fm_stream_deck.py" start "$STATE" "$ID" \
-        "$FM_STREAM_ENDPOINT_ID" "$steer_turn" "$steer_supported"); then
+        "$FM_STREAM_ENDPOINT_ID" "$steer_turn" "$steer_supported" "$set_model"); then
       [ "$steer_supported" = 0 ] || args+=(--steer-dir "$steer_dir")
       # Attempt native publication before Deck's first safe point.
       [ "$steer_supported" = 0 ] || python3 "$SCRIPT_DIR/fm_stream_deck.py" captain "$STATE" "$ID" >/dev/null 2>&1 || true

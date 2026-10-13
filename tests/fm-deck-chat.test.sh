@@ -42,7 +42,8 @@ cat > "$LAB/tools/deck" <<'EOF'
 import json, os, pathlib, re, signal, subprocess, sys, time
 argv = sys.argv[1:]
 if argv[:1] == ['chat'] and '--help' in argv:
-    print('--steer-dir <DIR>\n--events <FILE>\n--session <SESSION>')
+    print('--steer-dir <DIR>\n--events <FILE>\n--session <SESSION>'
+          + ('\ndeck-control: set_model ROUTE' if os.environ.get('FAKE_DECK_SET_MODEL') == '1' else ''))
     sys.exit(0)
 if argv[:2] == ['run', '--help']:
     print('--effort <LEVEL>' if os.environ.get('FAKE_DECK_EFFORT') == '1' else '--steer-dir <DIR>')
@@ -53,7 +54,8 @@ def opt(name):
 steer, events = pathlib.Path(opt('--steer-dir')), pathlib.Path(opt('--events'))
 hook = next(a.split('=', 1)[1] for a in argv if a.startswith('pre_complete='))
 log = pathlib.Path(os.environ['FAKE_DECK_LOG'])
-log.write_text(json.dumps({'argv': argv, 'pid': os.getpid(), 'cwd': os.getcwd()}))
+log.write_text(json.dumps({'argv': argv, 'pid': os.getpid(), 'cwd': os.getcwd(),
+                           'model_policy': os.environ.get('DECK_MODEL_POLICY')}))
 with open(str(log) + '.starts', 'a') as handle:
     handle.write(json.dumps({'argv': argv, 'pid': os.getpid()}) + '\n')
 stop = []
@@ -1279,6 +1281,102 @@ PY
   pass "primary keeper: adoption uses the host model or argv, falls back to its argument, and retains 1000 switch records"
 }
 
+test_model_switches_in_place() {
+  local home host before out rc
+  home=$(new_home model-in-place)
+  printf '{"blocked":["fake/blocked"]}\n' > "$home/config/model-policy.json"
+  FAKE_DECK_SET_MODEL=1 FAKE_DECK_LOG="$LAB/deck-in-place.log" env -u DECK_MODEL_POLICY "$BIN/fm-deck-chat.sh" --home "$home" --model fake/captain \
+    </dev/null > "$LAB/host-in-place.out" 2>&1 &
+  host=$!
+  fm_test_track_helper_pid "$host"
+  wait_for 10 "the in-place host registers" "$STEER" status --home "$home"
+  before=$(record_field "$home/state/primary-chat.json" host_pid)
+  wait_for 10 "deck starts with the home policy" test -s "$LAB/deck-in-place.log"
+  python3 - "$LAB/deck-in-place.log" "$home" <<'PY' || fail "deck did not inherit the home policy"
+import json, pathlib, sys
+assert json.loads(pathlib.Path(sys.argv[1]).read_text())['model_policy'] == sys.argv[2] + '/config/model-policy.json'
+PY
+  cp "$home/state/primary-chat.json" "$LAB/before-policy-record.json"
+  for policy in '{"blocked":["fake/blocked"]}' '{"allowed":["fake/captain"]}' 'invalid'; do
+    printf '%s\n' "$policy" > "$home/config/model-policy.json"
+    rc=0; out=$("$BIN/fm-deck-chat.sh" model fake/blocked --home "$home" 2>&1) || rc=$?
+    expect_code 1 "$rc" "the primary refuses a policy-blocked route"
+    assert_contains "$out" 'blocked by the model policy' "the refusal names policy"
+    cmp -s "$home/state/primary-chat.json" "$LAB/before-policy-record.json" || fail "a blocked switch rewrote the host record"
+    assert_absent "$home/state/primary-chat/model" "a blocked switch saved a model"
+    assert_absent "$home/state/primary-chat/switches" "a blocked switch logged success"
+    assert_absent "$home/state/primary-chat/switch" "a blocked switch requested a restart"
+  done
+  printf '{"blocked":["fake/blocked"]}\n' > "$home/config/model-policy.json"
+  python3 - "$home" <<'PY' || fail "a blocked switch published steering"
+import json, pathlib, sys
+record = json.loads((pathlib.Path(sys.argv[1]) / 'state/primary-chat.json').read_text())
+steer = pathlib.Path(record['steer_dir'])
+assert not any('deck-control: set_model' in p.read_text()
+               for directory in (steer, steer / 'handled') for p in directory.glob('*.msg'))
+PY
+  # no keeper serves this home: an in-place switch does not need one
+  out=$("$BIN/fm-deck-chat.sh" model fake/other --home "$home") || fail "in-place model failed: $out"
+  assert_contains "$out" 'primary: switched to fake/other in place' "a deck that takes set_model switches in place"
+  wait_for 10 "deck takes the control" grep -q 'deck-control: set_model fake/other' "$LAB/deck-in-place.log.turns"
+  assert_equals fake/other "$(cat "$home/state/primary-chat/model")" "a later restart uses the choice"
+  assert_equals fake/other "$(record_field "$home/state/primary-chat.json" model)" "the record follows the switch"
+  assert_contains "$(tail -1 "$home/state/primary-chat/switches")" 'fake/captain fake/other' "the thread marks the switch"
+  [ ! -e "$home/state/primary-chat/switch" ] || fail "no keeper restart is requested"
+  assert_equals "$before" "$(record_field "$home/state/primary-chat.json" host_pid)" "the same host keeps running"
+  kill -0 "$before" 2>/dev/null || fail "the host process is still alive"
+  assert_equals 1 "$(wc -l < "$LAB/deck-in-place.log.starts" | tr -d ' ')" "deck was started once"
+  python3 - "$BIN" "$home" <<'PY' || fail "parallel primary switches diverged"
+import fcntl, json, pathlib, subprocess, sys
+bin_dir, home = map(pathlib.Path, sys.argv[1:])
+root = home / 'state/primary-chat'
+record_path = home / 'state/primary-chat.json'
+children = []
+with (root / '.model.lock').open('a') as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    for route in ('fake/parallel-a', 'fake/parallel-b'):
+        child = subprocess.Popen([sys.executable, '-c', '''
+import argparse, fcntl, sys
+sys.path.insert(0, sys.argv[1])
+import fm_primary_chat as primary
+flock = fcntl.flock
+def observed_flock(fd, operation):
+    if operation == fcntl.LOCK_EX:
+        print('waiting', flush=True)
+    return flock(fd, operation)
+fcntl.flock = observed_flock
+raise SystemExit(primary.set_model(argparse.Namespace(home=sys.argv[2], route=sys.argv[3])))
+''', str(bin_dir), str(home), route], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        children.append(child)
+        assert child.stdout.readline().strip() == 'waiting', 'switch never requested the model lock'
+    record = json.loads(record_path.read_text())
+    record['model'] = 'fake/locked'
+    record_path.write_text(json.dumps(record))
+    (root / 'model').write_text('fake/locked\n')
+for child in children:
+    out, err = child.communicate(timeout=10)
+    assert child.returncode == 0, (out, err)
+record = json.loads(record_path.read_text())
+lines = [line.split()[1:] for line in (root / 'switches').read_text().splitlines()]
+assert len(lines) == 3, lines
+first, second = lines[-2:]
+assert first[0] == 'fake/locked', lines
+assert second[0] == first[1], lines
+assert {first[1], second[1]} == {'fake/parallel-a', 'fake/parallel-b'}, lines
+assert record['model'] == second[1] == (root / 'model').read_text().strip(), record
+steer = pathlib.Path(record['steer_dir'])
+messages = [p for directory in (steer, steer / 'handled') for p in directory.glob('*.msg')]
+controls = [(int(p.stem), p.read_text()) for p in messages
+            if p.read_text().startswith('deck-control: set_model fake/parallel-')]
+assert len(controls) == 2, controls
+assert [body.strip().split()[-1] for _, body in sorted(controls)] == [first[1], second[1]], controls
+PY
+  kill -TERM "$host"
+  wait_for 10 "the in-place host exits" dead "$host"
+  wait "$host" 2>/dev/null || true
+  pass "fm-deck-chat.sh model: a host whose deck takes set_model switches in place, without a restart"
+}
+
 test_service_keeper_alerts() {
   local home keeper
   if ! start_test_hub "$LAB/alert-hub"; then
@@ -1343,4 +1441,5 @@ test_task_named_primary_blocks_the_host
 test_away_mode_pauses_the_watcher
 test_service_keeper
 test_service_model_tracking
+test_model_switches_in_place
 test_service_keeper_alerts

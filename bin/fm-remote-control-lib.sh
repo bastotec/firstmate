@@ -72,13 +72,14 @@ fm_remote_route_binding_lines() {
 # Rewrite <meta>'s binding (and harness/model/effort) from the parsed route,
 # keeping every other line, under the record lock and one atomic publish.
 fm_remote_route_rebind_meta() {  # <meta> <state-dir>
-  local meta=$1 state=$2 lock tmp rc=0
+  local meta=$1 state=$2 choice_action=${3:-keep} lock tmp rc=0
   lock=$(fm_meta_lock_path "$meta") || return 1
   fm_lock_acquire_wait "$lock" || return 1
   tmp="$meta.rebind.${BASHPID:-$$}"
   {
-    awk -F= '
+    awk -F= -v choice_action="$choice_action" '
       BEGIN {
+        if (choice_action != "keep") owned["model_choice"] = 1
         split("harness model effort remote_backend remote_target remote_herdr_session remote_stream_hub remote_stream_endpoint_id", keys, " ")
         for (i in keys) owned[keys[i]] = 1
       }
@@ -86,6 +87,9 @@ fm_remote_route_rebind_meta() {  # <meta> <state-dir>
     ' "$meta"
     echo "harness=$FM_REMOTE_ROUTE_HARNESS"
     echo "model=$FM_REMOTE_ROUTE_MODEL"
+    if [ "$choice_action" = replace ] && [ "$FM_REMOTE_ROUTE_MODEL" != default ]; then
+      echo "model_choice=$FM_REMOTE_ROUTE_MODEL"
+    fi
     echo "effort=$FM_REMOTE_ROUTE_EFFORT"
     fm_remote_route_binding_lines
   } > "$tmp" || rc=1
@@ -138,7 +142,7 @@ fm_remote_recover_missing() {  # <host>
 
 # shellcheck disable=SC2153 # META, STATE, ID, VERB, and NEW_* are fm-control.sh's parsed globals.
 fm_remote_control_run() {
-  local host harness model effort prior_harness out rc route
+  local host harness model effort prior_harness out rc route choice_action=keep
   local -a args
   host=$(fm_meta_get "$META" remote_host)
   case "$VERB" in
@@ -198,7 +202,12 @@ fm_remote_control_run() {
     echo "error: remote secondmate $ID was relaunched on $host, but its new route could not be read (${FM_REMOTE_ROUTE_ERROR:-exit $rc}); this record still names the previous endpoint" >&2
     return 1
   fi
-  if ! fm_remote_route_rebind_meta "$META" "$STATE"; then
+  if [ "$FM_REMOTE_ROUTE_HARNESS" != "$prior_harness" ] || { [ "$MODEL_SET" = 1 ] && [ "$NEW_MODEL" = default ]; }; then
+    choice_action=clear
+  elif [ "$MODEL_SET" = 1 ]; then
+    choice_action=replace
+  fi
+  if ! fm_remote_route_rebind_meta "$META" "$STATE" "$choice_action"; then
     printf '%s\n' "$out"
     echo "error: remote secondmate $ID was relaunched on $host as $FM_REMOTE_ROUTE_BACKEND $FM_REMOTE_ROUTE_TARGET, but this record could not be updated" >&2
     return 1

@@ -5,6 +5,7 @@
 #   fm-remote-secondmate-control.sh launch <id> <harness> <model|-> <effort|-> stream [traceparent]
 #   fm-remote-secondmate-control.sh relaunch <id> <harness> <model|default|-> <effort|default|->
 #   fm-remote-secondmate-control.sh control <id> <interrupt|exit>
+#   fm-remote-secondmate-control.sh model <id> <route>
 #   fm-remote-secondmate-control.sh state <id>
 #   fm-remote-secondmate-control.sh route <id>
 #   fm-remote-secondmate-control.sh send <id> <message> [fire-and-forget]
@@ -465,6 +466,20 @@ cmd_control() {
     "$SCRIPT_DIR/fm-control.sh" "$id" "$verb"
 }
 
+# The in-place model switch (bin/fm-control.sh `model`), run here where the
+# mate's Deck driver lives; fm-on.sh classifies it as supervision.
+cmd_model() {
+  local id=$1 route=$2
+  validate_id "$id"
+  validate_home "$id"
+  case "$route" in ''|*[!A-Za-z0-9._:@/-]*) die "invalid model route: $route" ;; esac
+  remote_endpoint_require "$id"
+  FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
+    FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
+    FM_CONFIG_OVERRIDE="$TARGET_HOME/config" \
+    "$SCRIPT_DIR/fm-control.sh" "$id" model "$route"
+}
+
 cmd_send() {
   local id=$1 message=$2 delivery_mode=${3:-} rec ring_rc=0 meta meta_lock harness
   validate_id "$id"
@@ -637,6 +652,7 @@ case "${1:-}" in
   launch) shift; [ "$#" -ge 5 ] && [ "$#" -le 6 ] || usage; cmd_launch "$@" ;;
   relaunch) shift; [ "$#" -eq 4 ] || usage; cmd_relaunch "$@" ;;
   control) shift; [ "$#" -eq 2 ] || usage; cmd_control "$@" ;;
+  model) shift; [ "$#" -eq 2 ] || usage; cmd_model "$@" ;;
   state) shift; [ "$#" -eq 1 ] || usage; validate_id "$1"; validate_home "$1"; state_value "$1" ;;
   route) shift; [ "$#" -eq 1 ] || usage; cmd_route "$1" ;;
   send) shift; [ "$#" -ge 2 ] && [ "$#" -le 3 ] || usage; cmd_send "$@" ;;

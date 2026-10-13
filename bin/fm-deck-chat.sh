@@ -78,13 +78,24 @@
 #       `fm-deck-chat.sh`): that terminal is its only screen. `deck chat
 #       --local` skips this launcher.
 #   fm-deck-chat.sh model [ROUTE] [--home H]
-#       Request a syntax-checked gateway route for the serviced primary.
-#       Once the primary is idle the keeper ends the host and starts it again
+#       Switch the primary to a gateway route after checking syntax and the
+#       home's model policy (FM_CONFIG_OVERRIDE, else <home>/config).
+#       A policy refusal exits 1 before saving or publishing a choice, on either
+#       the in-place or keeper path.
+#       When the live host's deck takes `deck-control: set_model` (recorded at
+#       start), the route goes to it as a steering control: same process, same session,
+#       applied at once while idle or at the turn's next safe point (deck
+#       checks it against the gateway and the model policy and reports
+#       model_switched or model_switch_refused in its events); prints
+#       "switched to ROUTE in place" on publication, not confirmed application.
+#       This path needs no keeper. Otherwise, for the serviced primary:
+#       once the primary is idle the keeper ends the host and starts it again
 #       on the same session, resuming the conversation as any keeper restart
 #       does; it never goes through `stop`. Prints whether the switch is
 #       requested now or after the turn under way, not a completion receipt.
-#       Exit 1 when no keeper serves this home (verified by its singleton lock);
-#       restart a terminal-run host with --model by hand instead. Exit 2 for a
+#       The fallback exits 1 when no keeper serves this home (verified by its
+#       singleton lock); restart an unsupported terminal-run host with --model
+#       by hand instead. Exit 2 for a
 #       malformed route. Without ROUTE, prints the stored choice, else the live
 #       keeper's --model, else "default"; this is the configured choice, not
 #       necessarily the live host's model while a switch is pending.
@@ -131,6 +142,10 @@
 #   FM_LAUNCHCTL, FM_LAUNCH_AGENTS_DIR
 #                          launchctl and LaunchAgents directory (tests); with
 #                          FM_LAUNCHCTL set the service commands run off macOS
+#   DECK_MODEL_POLICY      Deck's policy path; non-empty is passed through,
+#                          else use model-policy.json in FM_CONFIG_OVERRIDE
+#                          or <home>/config when it exists. This does not
+#                          replace the home-policy check by `model ROUTE`.
 #   PROXAI_*               deck's endpoint settings; ~/.config/proxai/client.key
 #                          is used when no key is set, as for deck workers
 #
@@ -498,6 +513,10 @@ fi
 if [ -z "${PROXAI_API_KEY_FILE:-}${PROXAI_API_KEY:-}" ] && [ -f "$HOME/.config/proxai/client.key" ]; then
   export PROXAI_API_KEY_FILE="$HOME/.config/proxai/client.key"
 fi
+if [ -z "${DECK_MODEL_POLICY:-}" ]; then
+  MODEL_POLICY="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/model-policy.json"
+  [ ! -f "$MODEL_POLICY" ] || export DECK_MODEL_POLICY="$MODEL_POLICY"
+fi
 
 WORK='' GEN='' RECORDED=0 SUP_PID='' DECK_PID=''
 # shellcheck disable=SC2329 # Invoked by the EXIT trap.
@@ -564,8 +583,11 @@ else
   printf 'The session start digest is too large for one message. Read all of %s before anything else.\n' \
     "$STATE/primary-chat/startup-digest.txt" >> "$WORK/first"
 fi
-python3 "$PRIMARY_CHAT" record write --home "$FM_HOME" --session "$SESSION" --host-pid $$ \
-  --endpoint "$ENDPOINT" --model "$MODEL" --startup-file "$WORK/first" || die 'could not publish startup and write state/primary-chat.json'
+record_args=(record write --home "$FM_HOME" --session "$SESSION" --host-pid $$
+  --endpoint "$ENDPOINT" --model "$MODEL" --startup-file "$WORK/first")
+# A deck that takes `deck-control: set_model` lets `model ROUTE` switch in place.
+"$DECK" chat --help 2>/dev/null | grep -q set_model && record_args+=(--set-model)
+python3 "$PRIMARY_CHAT" "${record_args[@]}" || die 'could not publish startup and write state/primary-chat.json'
 RECORDED=1
 
 sup_args=(supervise --home "$FM_HOME" --host-pid $$ --gen "$GEN" --events-offset "$EVENTS_OFFSET")
