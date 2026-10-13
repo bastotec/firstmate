@@ -429,6 +429,13 @@ That protection covers only the gap between a replacement's registration and its
 Readers wait one ordinary rejoin window before answering an unresolved Bridge order; if no endpoint appears, the order remains pending without a membership nack, and an identical resend can try placement again.
 The cheap presence probe behind capture, current-path and endpoint-addressed input answers from the first reply and pays no rejoin wait.
 
+The session-start fleet digest uses a settled form of that probe: it retries only an HTTP 404 from the task-description route (`no_such_endpoint` on a supported hub), with up to six one-second waits for a first-attempt rejoin.
+A successful description matching the recorded task's label renders `endpoint: alive`; continued 404s after the last wait or any other probe refusal render `endpoint: dead`, with no retry for a non-404 refusal even if it follows an initial 404.
+These are endpoint-presence labels, not proof that the worker process is alive or stopped; `fm_backend_agent_state` in `bin/fm-backend.sh` owns recovery classification.
+It launches every task's settled read together, so the retry waits overlap rather than adding six seconds per endpoint.
+HTTP request time is additional to those waits; [`fm-session-start.sh`'s header](../bin/fm-session-start.sh) owns the overall startup deadline.
+`tests/fm-session-start.test.sh` pins a worker returning during the window, an absence lasting through it, and overlapping waits across missing endpoints.
+
 The recovery-grade worker classifier waits its own bounded six-second window (`FM_BACKEND_STREAM_MISSING_GRACE_SECS` in `bin/backends/stream.sh`), after which it can report `missing` while a live agent remains in a longer backoff; that verdict produces no Bridge membership nack.
 That window is derived from both ends, and both matter.
 The lower bound is what it has to outlast, which is three terms, not one.
@@ -441,7 +448,7 @@ Callers bound this classifier: `fm-fleet-snapshot.sh` gives 10s to a whole crew-
 Widening is not available - the 10s caller bound leaves no room - so the constant stands at 6 and the thin margin is part of what it costs.
 
 So what the window covers is precisely one case: a rejoin that succeeds on the first attempt the agent makes after a restart.
-It does not cover a rejoin delayed behind a failed attempt.
+Neither the classifier nor the digest's settled presence probe covers a rejoin delayed behind a failed attempt.
 An attempt that times out or meets a hub still coming up doubles that agent's re-registration backoff and pushes the next attempt out by it (both agents back off from 2s to 60s with jitter), which can be far longer than this window; the endpoint is then reported `missing` while its worker is healthy and still coming back.
 That verdict is not retried into harmlessness later: `fm-watch.sh` treats `missing` like `dead` and escalates the pending steer, and `fm_task_inbox_due_action` stays quiet for an escalated record, so the steer leaves the delivery ladder rather than being rung again.
 Widening the window to cover the backoff ladder is not available here - it would blow the 10s caller bound above - so that cost is real and stands.
@@ -500,8 +507,9 @@ While it is down, unreachable, or restarting:
 - Hub-backed watching, new steering, capture, and kill requests are unavailable.
   Same-machine interactive attach has its own local transport ([Interactive attach](#interactive-attach)), but it does not restore fleet-wide supervision.
   Already-reserved native Deck orders continue local reconciliation under the [Command path](#command-path) contract.
-- Every endpoint reads stale, which is `unreadable`, never `dead`.
+- Recovery-grade state reads of unreachable or stale endpoints answer `unreadable`, never `dead`.
   Supervision must not treat that as evidence a worker died, because it is evidence of nothing at all.
+  The session-start digest uses presence labels instead; [When the hub restarts](#when-the-hub-restarts) owns their meaning and limits.
 - Status lines keep working, because each agent writes them on its own machine.
 
 A hub that was merely unreachable comes back to the same endpoints, and agents pick up where they left off.

@@ -9,10 +9,10 @@
 # those calls is individually bounded, so one unreachable host could consume the
 # whole FM_SESSION_START_TIMEOUT budget and truncate the digest outright, turning
 # a slow network into a startup that never printed the work queue at all.
-# This script runs exactly that work OFF the blocking path: the digest is
-# composed from bounded local reads while these checks run concurrently in a
-# detached worker, and their result is reported back inline when it finishes in
-# time, or as a durable wake when it does not. The locked startup's bounded
+# This script runs exactly that work OFF the blocking path in a detached worker;
+# bin/fm-session-start.sh's header owns the digest's remaining blocking reads.
+# The result is reported back inline when it finishes in time, or as a durable
+# wake when it does not. The locked startup's bounded
 # inactive-outcome scan also runs here because its local current-state reads can
 # be just as slow; that scan publishes its own findings to the durable wake queue.
 #

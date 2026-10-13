@@ -54,6 +54,25 @@ FM_BACKEND_STREAM_AGENT_BIN="${FM_STREAM_AGENT_BIN:-$(dirname -- "${BASH_SOURCE[
 # docs/stream-backend.md "When the hub restarts" owns this rejoin grace window's full known-incomplete record.
 FM_BACKEND_STREAM_MISSING_GRACE_SECS=6
 
+# fm_backend_stream_target_settled: retry target_ready's 404 status through the
+# shared rejoin grace window; every other status and stdout pass through.
+# docs/stream-backend.md "When the hub restarts" owns the user-visible reason
+# and limits.
+fm_backend_stream_target_settled() {  # <target> [expected-label]
+  local target=$1 expected=${2:-} waited=0 status
+  while :; do
+    if fm_backend_stream_target_ready "$target" "$expected"; then
+      return 0
+    else
+      status=$?
+    fi
+    [ "$status" -eq 3 ] || return "$status"
+    [ "$waited" -lt "$FM_BACKEND_STREAM_MISSING_GRACE_SECS" ] || return "$status"
+    sleep 1
+    waited=$((waited + 1))
+  done
+}
+
 # The last HTTP status fm_backend_stream_api saw. Initialised at source time so
 # an error path that runs before any request - a missing token, an unreachable
 # hub - can report it without tripping `set -u` in a caller.
@@ -430,17 +449,13 @@ fm_backend_stream_parse_target() {  # <target>
 # when an expected label is given, is the one that carries it. The label check
 # keeps a recycled or mistaken endpoint id from being steered as this task.
 #
-# This probe answers from the first reply and takes no grace window, because
-# its callers - capture, current-path, input - need an answer now and ask again
-# when refused. So its 404 can be transient: the hub's registry is in memory,
-# and after a hub restart every endpoint is unknown until its agent registers
-# again seconds later. Never treat a 404 here as authoritative absence; the
-# settled answer to that question is fm_backend_stream_agent_state's `missing`,
-# which is the verdict that outlasts the re-registration window.
+# This probe answers from the first reply because capture, current-path, and
+# input need an immediate answer. Use fm_backend_stream_target_settled for a
+# settled presence answer and fm_backend_stream_agent_state for recovery.
 fm_backend_stream_target_ready() {  # <target> [expected-label]
   local target=$1 expected=${2:-} out label
   fm_backend_stream_parse_target "$target" >/dev/null 2>&1 || return 1
-  out=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || return 1
+  out=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT" 2>/dev/null) || return $?
   [ -n "$expected" ] || return 0
   label=$(printf '%s' "$out" | jq -r '.task.label // empty' 2>/dev/null)
   [ "$label" = "$expected" ]

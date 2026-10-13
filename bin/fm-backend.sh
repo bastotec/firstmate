@@ -524,11 +524,19 @@ fm_backend_composer_holds_only() {  # <backend> <target> <expected-label> <text>
 # fm_backend_target_exists: cheap, READ-ONLY existence check - does the
 # recorded TARGET endpoint still exist? A record on a retired backend never
 # does, as far as firstmate can tell. Exists as one shared primitive so callers
-# that only need a fast alive/dead read (recovery digests, the session-start
-# fleet digest) do not re-derive it inline.
+# that need an immediate endpoint-presence read do not re-derive it inline.
 fm_backend_target_exists() {  # <backend> <target> [expected-label]
   fm_backend_source "$1" 2>/dev/null || return 1
   fm_backend_stream_target_ready "$2" "${3:-}"
+}
+
+# fm_backend_target_settled_exists: backend-neutral dispatch for the settled
+# endpoint-presence read used by the session-start fleet digest.
+# bin/backends/stream.sh owns its mechanics; docs/stream-backend.md owns its
+# user-visible rejoin behavior and limits.
+fm_backend_target_settled_exists() {  # <backend> <target> [expected-label]
+  fm_backend_source "$1" 2>/dev/null || return 1
+  fm_backend_stream_target_settled "$2" "${3:-}"
 }
 
 # fm_backend_agent_state: the single recovery-grade agent/endpoint state

@@ -53,9 +53,9 @@
 #   6. fleet digest   - a compact data/backlog.md identity/metadata listing,
 #                       every state/*.meta, a bounded state/*.status tail,
 #                       the away posture (state/.afk-contract and the legacy
-#                       state/.afk daemon flag), and a cheap per-task
-#                       endpoint-liveness read:
-#                       read-only, always runs.
+#                       state/.afk daemon flag), and a per-task endpoint-
+#                       liveness read that settles transient stream rejoin
+#                       absence: read-only, always runs.
 #   7. network checks - the result of the deferred network stage started back at
 #                       step 1, harvested WITHOUT waiting for it.
 #   8. context digest - data/projects.md, data/secondmates.md, data/captain.md,
@@ -68,14 +68,13 @@
 # Those nine names are also the runtime-bound stage list below, so a truncated
 # startup can name exactly which of them never ran.
 #
-# NO NETWORK ON THE BLOCKING PATH. This digest runs on a session-open hook that
+# DEFERRED CHECKS STAY OFF THE BLOCKING PATH. This digest runs on a session-open hook that
 # blocks session initialization, so anything it waits for is time the captain
 # waits before the first turn - and every external-network call it used to make
 # was individually unbounded. One unreachable remote secondmate could burn the
 # entire FM_SESSION_START_TIMEOUT and truncate the digest, so a slow network
 # could cost the work queue itself.
-# So no step between here and the last line below makes an external-network
-# call. The five that did - `gh auth status`, secondmate liveness, secondmate
+# The five deferred checks - `gh auth status`, secondmate liveness, secondmate
 # convergence, pending remote handoff delivery, and the fleet-sync fetch - are
 # started as one detached bounded worker right after the lock (step 1) and
 # harvested at step 7 without ever blocking on it. The bounded inactive-outcome
@@ -83,9 +82,10 @@
 # be slow. bin/fm-startup-network.sh owns that stage and its safety argument;
 # bin/fm-bootstrap.sh and bin/fm-inactive-reconcile.sh remain the owners of the
 # work itself and still run it.
-# The digest is therefore composed from bounded local reads and local
-# subprocesses only, while slow network or inactive-state reconciliation delays
-# a reported check rather than startup.
+# The digest still waits for per-task endpoint-presence HTTP reads, including
+# when the configured stream hub is remote; docs/stream-backend.md owns their
+# rejoin behavior and limits. Slow deferred checks or inactive-state
+# reconciliation delay a reported check rather than startup.
 # What this deliberately trades: on a slow network the digest prints "IN
 # PROGRESS" and names exactly which checks are not yet confirmed, instead of
 # waiting for them. It never reports an unconfirmed check as passed.
@@ -170,10 +170,10 @@
 # RUNTIME BOUND: the primary host (bin/fm-deck-chat.sh) runs the digest before
 # it launches the session and blocks on it, so an unbounded digest is not
 # merely slow - it can strand a whole session start behind one hung
-# subprocess. Every remaining step is local, but
-# local is not the same as bounded: tool version probes, the backlog listing,
-# and the per-task endpoint reads are all unbounded subprocesses. So the whole
-# digest still runs as ONE bounded child of this script
+# subprocess. Local tool version probes and the backlog listing have no
+# individual deadline; endpoint HTTP reads have per-request timeouts, but those
+# do not bound the whole fleet stage. So the whole digest still runs as ONE
+# bounded child of this script
 # (FM_SESSION_START_TIMEOUT, default 120s). The deferred network stage
 # deliberately sits OUTSIDE that bound,
 # in its own process group under its own aggregate deadline, so a truncated
@@ -665,23 +665,53 @@ section "FLEET STATE"
 print_backlog_compact "$DATA/backlog.md" "data/backlog.md"
 
 subsection "Work under way (state/*.meta)"
-META_FOUND=0
+FLEET_METAS=()
+FLEET_ENDPOINT_WINDOWS=()
+FLEET_ENDPOINT_BACKENDS=()
+FLEET_ENDPOINT_PIDS=()
+FLEET_ENDPOINT_RESULTS=()
 for meta in "$STATE"/*.meta; do
   [ -f "$meta" ] || continue
+  index=${#FLEET_METAS[@]}
+  FLEET_METAS+=("$meta")
+  id=$(basename "$meta" .meta)
+  window=$(fm_meta_get "$meta" window)
+  FLEET_ENDPOINT_WINDOWS[index]=$window
+  if [ -n "$window" ]; then
+    target=$(fm_backend_target_of_meta "$meta")
+    backend=$(fm_backend_of_meta "$meta")
+    FLEET_ENDPOINT_BACKENDS[index]=$backend
+    fm_backend_target_settled_exists "$backend" "${target:-$window}" "fm-$id" >/dev/null 2>&1 &
+    FLEET_ENDPOINT_PIDS[index]=$!
+  else
+    FLEET_ENDPOINT_BACKENDS[index]=
+    FLEET_ENDPOINT_PIDS[index]=
+    FLEET_ENDPOINT_RESULTS[index]=unknown
+  fi
+done
+
+for ((index = 0; index < ${#FLEET_METAS[@]}; index++)); do
+  pid=${FLEET_ENDPOINT_PIDS[$index]}
+  [ -n "$pid" ] || continue
+  if wait "$pid"; then
+    FLEET_ENDPOINT_RESULTS[index]=alive
+  else
+    FLEET_ENDPOINT_RESULTS[index]=dead
+  fi
+done
+
+META_FOUND=0
+for ((index = 0; index < ${#FLEET_METAS[@]}; index++)); do
   META_FOUND=1
+  meta=${FLEET_METAS[$index]}
   id=$(basename "$meta" .meta)
   printf '\n--- %s ---\n' "$id"
   cat "$meta"
 
-  window=$(fm_meta_get "$meta" window)
-  target=$(fm_backend_target_of_meta "$meta")
+  window=${FLEET_ENDPOINT_WINDOWS[$index]}
   if [ -n "$window" ]; then
-    backend=$(fm_backend_of_meta "$meta")
-    if fm_backend_target_exists "$backend" "${target:-$window}" "fm-$id"; then
-      printf 'endpoint: alive (backend=%s window=%s)\n' "$backend" "$window"
-    else
-      printf 'endpoint: dead (backend=%s window=%s)\n' "$backend" "$window"
-    fi
+    backend=${FLEET_ENDPOINT_BACKENDS[$index]}
+    printf 'endpoint: %s (backend=%s window=%s)\n' "${FLEET_ENDPOINT_RESULTS[$index]}" "$backend" "$window"
   else
     printf 'endpoint: unknown (no window recorded)\n'
   fi
