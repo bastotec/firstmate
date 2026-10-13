@@ -1222,6 +1222,17 @@ if [ "${1:-}" = --handling-delivered ]; then
   exit 0
 fi
 trap 'exit 143' TERM INT
+if [ "${1:-}" = --restart ] && [ -f "$FM_HOME/successor-silent" ]; then
+  rm -f "$FM_HOME/successor-silent"
+  : > "$FM_HOME/successor-was-silent"
+  sleep 30
+  exit 0
+fi
+if [ "${1:-}" = --restart ] && [ -f "$FM_HOME/successor-dies" ]; then
+  rm -f "$FM_HOME/successor-dies"
+  : > "$FM_HOME/successor-died"
+  exit 3
+fi
 printf '%s\n' "$$" >> "$FM_HOME/watch-starts"
 printf 'arm=%s predecessor=%s\n' "$$" "${FM_WATCH_PREDECESSOR_ARM_PID:-none}" >> "$FM_HOME/watch-arms"
 if [ -n "${FM_WATCH_PREDECESSOR_ARM_PID:-}" ] && [ ! -f "$FM_HOME/generationless-next-watch" ]; then
@@ -1264,7 +1275,8 @@ if records:
             break
         time.sleep(.05)
     assert len(starts) >= 2, 'next watcher cycle did not start before wake handling'
-    assert delivered or (home / 'handling-refused').exists(), 'successor watcher handling was not confirmed before wake handling'
+    unconfirmed = (home / 'successor-was-silent').exists() or (home / 'successor-died').exists()
+    assert delivered or (home / 'handling-refused').exists() or unconfirmed, 'successor watcher handling was not confirmed before wake handling'
     (home / 'wake-turn-active').touch()
     time.sleep(2)
     successor = int((home / 'watch-starts').read_text().splitlines()[-1])
@@ -1459,6 +1471,62 @@ with (root/'pane').open('w') as output:
 PYTHON
   done
   pass "Deck secondmate stops a turn inside a long tool on Ctrl+C or /quit, and a stuck Deck at its bound"
+}
+
+# A successor watcher that is slow to confirm or dies before confirming used to
+# end the host ("successor watcher did not confirm startup"), taking the second
+# mate down with it. The host now starts a fresh watcher and keeps serving wakes.
+test_secondmate_host_survives_an_unconfirmed_successor_watcher() {
+  local dir case
+  for case in silent dies; do
+    dir="$TMP_ROOT/host-successor-$case"
+    make_secondmate_host_fixture "$dir"
+    FM_DECK_WATCH_CONFIRM_SECS=1 python3 - "$dir" "$case" <<'PYTHON' || fail "Deck secondmate host died on an unconfirmed successor watcher ($case)"
+import json, os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1]); case = sys.argv[2]
+home = root / 'home'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+       str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'),
+       '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+def rows():
+    path = home/'turns'
+    return [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+def idle():
+    path = root/'parent/host.busy-state'
+    return path.exists() and 'state=idle' in path.read_text()
+def wait_for(check, label, bound=60):
+    deadline = time.monotonic() + bound
+    while time.monotonic() < deadline:
+        if check(): return
+        if p.poll() is not None: raise AssertionError(label+': host exited: '+(root/'pane').read_text())
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text())
+marker = {'silent': 'successor-silent', 'dies': 'successor-dies'}[case]
+seen = {'silent': 'successor-was-silent', 'dies': 'successor-died'}[case]
+with (root/'pane').open('w') as output:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+                         env=env, text=True, start_new_session=True)
+    try:
+        wait_for(lambda: len(rows()) == 1 and idle(), 'startup turn')
+        (home/marker).touch()
+        (home/'trigger').touch()
+        wait_for(lambda: (home/seen).exists(), 'successor attempt')
+        wait_for(lambda: len(rows()) == 2 and idle(), 'wake turn after the unconfirmed successor')
+        (home/'trigger').touch()
+        wait_for(lambda: len(rows()) == 3 and idle(), 'later wake still served')
+        status = (root/'parent/host.status').read_text() if (root/'parent/host.status').exists() else ''
+        assert 'did not confirm startup' not in status and 'exited before confirming' not in status, status
+        assert 'starting a fresh watcher' in (root/'pane').read_text()
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        assert p.wait(timeout=60) == 0
+    finally:
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGKILL); p.wait()
+PYTHON
+  done
+  pass "Deck secondmate host starts a fresh watcher when a successor is slow or dies, and keeps serving wakes"
 }
 
 test_secondmate_mcp_config_on_startup_steer_and_wake() {
@@ -2463,6 +2531,7 @@ test_idle_interrupt_does_not_echo_fake_input
 test_secondmate_host_serializes_wakes_and_steering
 test_secondmate_routine_wakes_think_less
 test_secondmate_stops_a_turn_inside_a_long_tool
+test_secondmate_host_survives_an_unconfirmed_successor_watcher
 test_secondmate_mcp_config_on_startup_steer_and_wake
 test_secondmate_queued_exit_behind_composer_clears_beats_watcher_turn
 test_secondmate_survives_a_failed_turn
