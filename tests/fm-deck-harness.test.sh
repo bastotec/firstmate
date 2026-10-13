@@ -648,6 +648,24 @@ test_bookkeeping_before_failed_turn_keeps_unique_recovery_identity() {
   pass "fm-deck-worker: bookkeeping preserves task-local recovery identity"
 }
 
+test_terminal_replay_closes_recovery_before_later_turn() {
+  local dir="$TMP_ROOT/recovery-terminal-boundary"
+  make_fake_deck "$dir"
+  run_worker "$dir" $'write-status\nwrite-working\n/quit\n' 'fail-turn' \
+    || fail "the terminal replay fixture did not return to its prompt"
+  case $(sed -n '1p' "$dir/state/t1.status") in
+    'failed: deck turn ended without a status line (turn-failed recovery-gen='*' id=record-'*')') ;;
+    *) fail "the initial turn did not record its recovery failure" ;;
+  esac
+  [ "$(sed -n '2p' "$dir/state/t1.status")" = 'done: wrote evidence' ] \
+    || fail "the replay did not retain its terminal status"
+  [ "$(sed -n '3p' "$dir/state/t1.status")" = 'working: replay resumed' ] \
+    || fail "the later turn lost its working status"
+  [ "$(wc -l < "$dir/state/t1.status" | tr -d '[:space:]')" = 3 ] \
+    || fail "the later turn received a stale recovery marker"
+  pass "fm-deck-worker: terminal replay closes recovery before a later turn"
+}
+
 test_idle_interrupt_does_not_echo_fake_input() {
   local dir="$TMP_ROOT/idle-interrupt" gen
   make_fake_deck "$dir"
@@ -2716,6 +2734,7 @@ test_status_checks_and_fallbacks_refuse_unsafe_paths
 test_driver_backstops_silent_and_failed_turns
 test_replayed_working_turn_records_recovery_supersession
 test_bookkeeping_before_failed_turn_keeps_unique_recovery_identity
+test_terminal_replay_closes_recovery_before_later_turn
 test_doorbell_for_an_empty_own_inbox_starts_no_turn
 test_idle_captain_preserves_partial_input
 test_stale_captain_cue_does_not_dispatch_an_acknowledged_source

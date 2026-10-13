@@ -177,6 +177,8 @@ fm_turn_failed_pending_generation() {  # <status-file> <captured-endpoint>
         $pending{$1} = ++$sequence;
       } elsif ($line =~ m{^working \[recovery-gen=([A-Za-z0-9._-]+)\]:}) {
         delete $pending{$1};
+      } elsif ($line =~ m{^(?:done|needs-decision|blocked|failed)(?::|[ \t][^:\r\n]*:)}) {
+        %pending = ();
       }
     }
     my ($latest) = sort { $pending{$b} <=> $pending{$a} } keys %pending;

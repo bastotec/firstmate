@@ -170,11 +170,18 @@ test_pending_generation_tracks_the_task_local_episode() {
   endpoint=$(wc -c < "$status" | tr -d '[:space:]')
   fm_turn_failed_pending_generation "$status" "$endpoint" >/dev/null \
     && fail "working evidence did not close the task-local recovery episode"
-  pass "pending recovery generations are derived from task status"
+
+  status="$dir/state/terminal.status"
+  append_failure "$status" deck-terminal record-terminal
+  printf 'done: replay completed\n' >> "$status"
+  endpoint=$(wc -c < "$status" | tr -d '[:space:]')
+  fm_turn_failed_pending_generation "$status" "$endpoint" >/dev/null \
+    && fail "terminal evidence did not close the task-local recovery episode"
+  pass "pending recovery generations close on working or terminal evidence"
 }
 
 test_working_binding_is_atomic_with_status_append() {
-  local dir status offset failure endpoint
+  local dir status offset turn_offset failure endpoint
   dir=$(new_case binding-order)
   status="$dir/state/task.status"
   append_failure "$status" deck-bind record-bind
@@ -194,17 +201,28 @@ test_working_binding_is_atomic_with_status_append() {
 
   status="$dir/state/late.status"
   append_failure "$status" deck-late record-late
+  turn_offset=$(wc -c < "$status" | tr -d '[:space:]')
   printf 'done: replay completed\n' \
     | python3 "$ROOT/bin/fm-state-io.py" root-append "$dir/state" late.status \
     || fail "the terminal status was not appended"
   offset=$(wc -c < "$status" | tr -d '[:space:]')
   printf 'working: stale replay update\n' \
-    | python3 "$ROOT/bin/fm-state-io.py" root-append "$dir/state" late.status \
+    | FM_DECK_STATUS_NAME=late.status FM_DECK_STATUS_TURN_OFFSET="$turn_offset" \
+      python3 "$ROOT/bin/fm-state-io.py" root-append "$dir/state" late.status \
     || fail "the late working append boundary failed"
   [ "$(wc -c < "$status" | tr -d '[:space:]')" = "$offset" ] \
     || fail "a working record was appended after the terminal truth"
   [ "$(tail -1 "$status")" = 'done: replay completed' ] \
     || fail "late recovery binding displaced the terminal status"
+
+  printf 'working: next turn resumed\n' \
+    | FM_DECK_STATUS_NAME=late.status FM_DECK_STATUS_TURN_OFFSET="$offset" \
+      python3 "$ROOT/bin/fm-state-io.py" root-append "$dir/state" late.status \
+    || fail "the next turn working append boundary failed"
+  [ "$(tail -1 "$status")" = 'working: next turn resumed' ] \
+    || fail "the closed recovery episode discarded later working evidence"
+  [ "$(wc -l < "$status" | tr -d '[:space:]')" = 3 ] \
+    || fail "the next turn fabricated a recovery marker"
   pass "working supersession shares the locked status append"
 }
 

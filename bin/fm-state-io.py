@@ -88,10 +88,13 @@ def write_all(fd: int, payload: bytes) -> None:
         view = view[written:]
 
 
-def recovery_status_payload(existing: bytes, payload: bytes) -> bytes:
+def recovery_status_payload(existing: bytes, payload: bytes, turn_offset=None) -> bytes:
     generation = None
     terminal = False
+    cursor = 0
     for line in existing.split(b"\n")[:-1]:
+        line_offset = cursor
+        cursor += len(line) + 1
         failure = TURN_FAILURE_RE.match(line)
         marker = RECOVERY_WORKING_RE.match(line)
         if failure:
@@ -101,7 +104,11 @@ def recovery_status_payload(existing: bytes, payload: bytes) -> bytes:
             generation = None
             terminal = False
         elif generation is not None and TERMINAL_STATUS_RE.match(line):
-            terminal = True
+            if turn_offset is not None and line_offset >= turn_offset:
+                terminal = True
+            else:
+                generation = None
+                terminal = False
 
     if generation is None:
         return payload
@@ -150,7 +157,17 @@ def append_record(dir_fd: int, name: str, payload: bytes) -> None:
                 if not chunk:
                     break
                 existing.extend(chunk)
-            payload = recovery_status_payload(bytes(existing), payload)
+            turn_offset = None
+            if name == os.environ.get("FM_DECK_STATUS_NAME"):
+                raw_offset = os.environ.get("FM_DECK_STATUS_TURN_OFFSET")
+                if raw_offset is not None:
+                    try:
+                        turn_offset = int(raw_offset)
+                    except ValueError:
+                        raise UnsafeStatePath("invalid Deck turn status offset")
+                    if turn_offset < 0 or turn_offset > len(existing):
+                        raise UnsafeStatePath("invalid Deck turn status offset")
+            payload = recovery_status_payload(bytes(existing), payload, turn_offset)
         if payload and os.write(fd, payload) != len(payload):
             raise OSError("short state append")
         os.fsync(fd)

@@ -703,6 +703,8 @@ $prompt"
     return 1
   fi
   status_before=$(cat "$TURN_MARK" 2>/dev/null || printf '0\n')
+  FM_DECK_STATUS_TURN_OFFSET=$status_before
+  export FM_DECK_STATUS_TURN_OFFSET
   turn_recovery_gen=''
   if [ "$SECONDMATE" != 1 ]; then
     turn_recovery_gen=$(fm_turn_failed_pending_generation "$STATUS_FILE" "$status_before" 2>/dev/null || true)
