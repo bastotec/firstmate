@@ -89,6 +89,7 @@ state/
   terminal-outcomes/      inactive terminal-outcome receipts (bin/fm-inactive-reconcile.sh)
   model-chain/            per-lane model cooldowns ("Model fallback chains")
   pending-replies/        parent-owned secondmate pending replies (bin/fm-pending-reply-lib.sh)
+  captain-direct/ captain-direct.log  parent-side captain-direct delivery ledger and echo-guard log (bin/fm-captain-direct-lib.sh)
   home-summary.json       this home's ledger (bin/fm-home-summary-refresh.sh)
   machine-pending/<m>.json  a machine being connected: its checklist and planned second mates; bin/fm-machine-blocker.sh owns format and lifecycle
   machine-skills/<m>.tsv  each machine's `deck skills` inventory; bin/fm-machine-skills.sh owns format and refresh
@@ -795,7 +796,7 @@ FM_COMPOSER_GHOST_LUMA_MAX=128 # max truecolor luminance (0-255) stripped as gho
 FM_SEND_RETRIES=3          # fm-send typed-plane Enter retries
 FM_SEND_SLEEP=0.4          # seconds between fm-send submit checks
 FM_SEND_SETTLE=1           # seconds fm-send waits after a submit; 0 disables
-FM_PENDING_REPLY_GRACE_SECS=120   # time after a marked request before an unreported turn gets one recovery repost
+FM_PENDING_REPLY_GRACE_SECS=120   # pending-reply grace; bin/fm-pending-reply-lib.sh owns recovery and captain-direct settlement
 FM_ASK_TRIAGE_THRESHOLD=0.60      # possible-ask flag threshold ("Possible-ask ranking")
 # auto-land and watched-tool extras ("Auto-land", "Watched tool updates")
 FM_AUTOLAND_MERGE_BUDGET=12       # seconds of merge work per auto-land tick before no further merge starts

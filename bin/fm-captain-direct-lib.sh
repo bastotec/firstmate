@@ -6,7 +6,8 @@
 # conversation. The parent mate is told so it knows what the captain said to
 # its mates, but it must never deliver those words again: a parent steer that
 # restates or "reconciles" the captain's message makes the mate answer the
-# captain a second time (captain direction 2026-10-13).
+# captain a second time. AGENTS.md section 9 owns the reply and parent-action
+# rule; tests/fm-captain-direct-echo.test.sh covers enforcement.
 #
 # This library owns three things:
 #   1. A durable ledger of recent captain-direct deliveries in the parent home,
@@ -17,10 +18,14 @@
 #      has the message, and says not to forward, steer, or re-ask.
 #   3. The echo guard (fm_captain_direct_echo_corr): a parent steer to the same
 #      mate that carries that corr within the ledger's 7 days, or within 2 hours
-#      shares a 6-word run with the captain's words or talks about the captain's
-#      direct message, is an echo. bin/fm-send.sh does not
-#      send it unless the caller passes --correction.
-# Every guard decision is appended to state/captain-direct.log.
+#      shares a 6-word run with the captain's words or mentions "captain" together
+#      with "direct"/"directly" (case-insensitive), is an echo. The heuristic is
+#      deliberately broad; false positives are bounded by time and mate scope,
+#      with the correction bypass owned by bin/fm-send.sh along with output.
+# Expired ledger entries are pruned on recording and echo lookup.
+# Guard logging is best-effort in state/captain-direct.log.
+# Retention and heuristic windows are fixed; FM_CAPTAIN_DIRECT_NOW overrides
+# only the clock for deterministic tests.
 #
 # No side effects on source. set -u safe.
 

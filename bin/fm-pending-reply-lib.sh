@@ -4,11 +4,21 @@
 # When the main firstmate delivers a reply-bearing marked from-firstmate request
 # to a secondmate, this library records a durable parent-owned pending-reply
 # expectation BEFORE delivery, embeds a privacy-safe correlation id in the
-# outbound message, and later resolves that expectation only from a correlated
-# parent status line or status-pointed document - never from transport success,
-# chat content, or unrelated status activity.
+# outbound message, and later resolves an ordinary expectation only from a
+# correlated parent status line or status-pointed document - never from transport
+# success, chat content, or unrelated status activity.
 #
-# Safety property (captain direction 2026-07-22): a secondmate agent may ignore
+# Captain-direct exception: a request_summary equal to "from the captain:" or
+# beginning "from the captain: " identifies the captain's own message, answered
+# in the mate's conversation (AGENTS.md section 9). It never gets a recovery
+# repost or escalation, including while delivery is unknown: repeating those
+# words could cause a second captain-facing reply. A correlated parent report
+# still resolves it; otherwise it resolves after grace following confirmed
+# delivery, with resolved_via=captain-direct. Unknown delivery stays retryable
+# under the same correlation until confirmed or resolved by a correlated report.
+# Regression: tests/fm-captain-direct-echo.test.sh.
+#
+# Safety property for ordinary requests (captain direction 2026-07-22): a secondmate agent may ignore
 # the marker and answer only in its visible conversation. The parent must notice
 # the missing correlated report without scraping that conversation, send exactly
 # one automatic recovery request asking for a repost through the parent channel,
@@ -34,7 +44,8 @@
 #   request_summary=        short sanitized summary (no secrets by design)
 #   created_epoch=          when the expectation was created
 #   delivered_epoch=        when the marked request was confirmed delivered
-#                           (empty until delivery; delivery never resolves)
+#                           (empty until delivery; the captain-direct exception
+#                           above settles after grace, not at delivery)
 #   phase=                  awaiting_report | delivery_unknown | recovery_sending |
 #                           recovery_sent | recovery_failed | recovery_unknown |
 #                           escalated | resolved
@@ -1471,13 +1482,7 @@ fm_pending_reply_tick_one() {  # <state-dir> <corr_id> <busy_state> [secondmate-
   return 0
 }
 
-# A captain-direct record (bin/fm-send.sh --from-captain) tracks the captain's
-# own message, which the mate answers in its conversation where he reads it, so
-# a missing parent line is not a missed report. It never gets the recovery
-# request: that request repeats the captain's words, and the mate answers the
-# captain a second time (captain direction 2026-10-13). It never escalates
-# either. A correlated parent line still resolves it; otherwise it resolves on
-# its own once grace has passed after delivery, with resolved_via=captain-direct.
+# Recognize the sanitized summary prefix; the header owns the captain-direct exception.
 fm_pending_reply_is_captain_direct() {  # <record-path>
   case "$(fm_pending_reply_get "$1" request_summary)" in
     'from the captain:'|'from the captain: '*) return 0 ;;

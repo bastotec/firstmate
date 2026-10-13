@@ -100,9 +100,10 @@
 #
 # From-firstmate marker: when the resolved target is a task selector whose meta
 # records kind=secondmate, the message uses the live-charter-compatible
-# from-firstmate carrier owned by bin/fm-operational-input.sh so the secondmate
-# routes its reply via its status file or a status-pointed doc instead of
-# stranding it in chat the main firstmate never reads. On the inbox plane the
+# from-firstmate carrier owned by bin/fm-operational-input.sh so an ordinary
+# request's reply returns via its status file or a status-pointed doc instead of
+# stranding it in chat the main firstmate never reads; the from-captain exception
+# is described below. On the inbox plane the
 # marker travels verbatim inside the recorded body. A crewmate/scout target,
 # an explicit backend-target escape-hatch target, and the --key path are never
 # marked - their behavior is unchanged.
@@ -112,8 +113,7 @@
 # captain-direct tag owned by bin/fm-operational-input.sh, so the agent answers
 # him in its own conversation (AGENTS.md section 9). A secondmate target still
 # gets the from-firstmate mark, corr token and pending-reply expectation in
-# front of the tag. Delivery queues the parent's FYI note; the mate appends no
-# parent-channel line just to acknowledge it. A worker target gets the tag alone
+# front of the tag. A worker target gets the tag alone
 # and no expectation. The tagged text always rides the inbox plane, so a
 # leading "/" reaches the agent as text, never as a harness command. The flag
 # is refused with --key, --decision-answer, --fire-and-forget, and an explicit
@@ -125,24 +125,31 @@
 # Once a captain message to a secondmate is delivered, this home records it and
 # queues one FYI inbox note for its own first mate naming the corr
 # (bin/fm-captain-direct-lib.sh owns the ledger and the wording), and stdout
-# carries `corr=<id>` and `first_mate=told|failed` so the caller does not write
-# a second note.
+# carries `corr=<id>` and `first_mate=told|failed`. `told` means that the note
+# is queued or already handled; `failed` means notification could not be queued,
+# not that delivery to the mate failed. Callers skip their own note only on
+# `told`. A same-corr resend repairs a missing note without duplicating an
+# existing queued or handled note. The mate appends no parent-channel line just
+# to acknowledge the message (AGENTS.md section 9).
 #
-# Captain-direct echo guard: a later steer from this home to the same secondmate
-# that repeats or reconciles a captain message it already received (names its
-# corr, restates a run of his words, or talks about his direct message, within
-# the window bin/fm-captain-direct-lib.sh owns) is not sent. fm-send prints
+# Captain-direct echo guard: bin/fm-captain-direct-lib.sh owns echo matching and
+# its fixed windows. A matching later steer from this home to the same
+# secondmate is not sent. fm-send prints
 # `suppressed=captain-direct-echo corr=<id>` on stdout and why on stderr, logs
-# it to state/captain-direct.log, and exits 0. --correction sends it anyway,
-# for the one fix a later report from the mate shows is really needed; a
-# --resolve-key answer is never held back, so decision bookkeeping still closes.
+# it to state/captain-direct.log, and exits 0: this is a deliberate no-op, not a
+# refusal inviting a rephrased retry. --correction sends it anyway (logged),
+# for the one fix a later report from the mate shows is really needed; it cannot
+# accompany --from-captain. A --resolve-key answer is never held back, so
+# decision bookkeeping still closes.
 #
 # Parent-owned pending-reply expectation: every newly marked secondmate request
 # except an explicit --fire-and-forget delivery receives a privacy-safe
 # correlation id and a durable parent record under state/pending-replies/ before
 # delivery (bin/fm-pending-reply-lib.sh). Delivery
-# success and reply success are separate facts: delivery never resolves the
-# expectation. On the inbox plane the durable enqueue IS delivery to the task's
+# success and reply success are separate facts: delivery itself never resolves
+# the expectation. bin/fm-pending-reply-lib.sh's header owns the captain-direct
+# exception to ordinary report-based resolution, recovery, and escalation.
+# On the inbox plane the durable enqueue IS delivery to the task's
 # record, so the expectation is marked delivered at enqueue time; when that
 # bookkeeping commit fails after its durable recovery marker is stored, the
 # send remains successful and watcher reconciliation owns the repair, and when
@@ -178,9 +185,10 @@
 # hit is completion-unknown and exits through this same unconfirmed contract
 # instead of waiting out a busy remote queue.
 # The remote host runs no re-ring ladder of its own: a swallowed ordinary
-# doorbell surfaces through the parent's pending-reply recovery and escalation,
-# whose recovery request re-rings the remote doorbell when it is enqueued;
-# fire-and-forget delivery deliberately arms neither mechanism. Internal
+# reply-bearing doorbell surfaces through the parent's pending-reply recovery
+# and escalation, whose recovery request re-rings the remote doorbell when it
+# is enqueued; fire-and-forget delivery deliberately arms neither mechanism,
+# and the pending-reply header owns the captain-direct exception. Internal
 # semantic callers may set FM_SEND_EXPECTED_SPAWN_GEN or
 # FM_SEND_EXPECTED_REMOTE_HOST to require that sampled identity to still match
 # during the final locked remote-route validation; unset or empty guards do not
@@ -1036,8 +1044,8 @@ else
     fi
     fm_lock_release "$INBOX_META_LOCK"
     # Enqueue IS durable delivery to the task's record: mark the pending
-    # expectation delivered now, without resolving it - only a correlated
-    # parent report acknowledges the request.
+    # expectation delivered now, without resolving it; the pending-reply
+    # header owns ordinary report resolution and the captain-direct exception.
     if [ -n "$PENDING_REPLY_CORR" ]; then
       if fm_pending_reply_confirm_delivery "$STATE" "$PENDING_REPLY_CORR"; then
         :
@@ -1136,7 +1144,7 @@ else
       ;;
   esac
   # Delivery confirmed. Mark the pending expectation delivered without resolving
-  # it: only a correlated parent report acknowledges the request.
+  # it: the pending-reply header owns report resolution and its exceptions.
   if [ -n "$PENDING_REPLY_CORR" ]; then
     if fm_pending_reply_confirm_delivery "$STATE" "$PENDING_REPLY_CORR"; then
       :
