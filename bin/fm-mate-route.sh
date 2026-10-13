@@ -87,7 +87,7 @@ bounce_id() {  # <corr>
 }
 
 wake_once() {
-  local marker="${1%.msg}.woken" key="mate-mail:$FM_MM_CORR" status=0
+  local marker=$1 key="mate-mail:$FM_MM_CORR" status=0
   [ ! -e "$marker" ] || return 0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
   if ! fm_wake_queued_keys_locked check | grep -Fxq "$key"; then
@@ -106,6 +106,10 @@ wake_once() {
 close_undelivered() {  # <record> <outcome>
   local record=$1 outcome=$2 name note bounce_note=''
   name=${record##*/}
+  if [ ! -f "${record%.msg}.undelivered" ]; then
+    printf '%s\n%s\n' "$outcome" "$REASON" > "${record%.msg}.undelivered.tmp" \
+      && mv "${record%.msg}.undelivered.tmp" "${record%.msg}.undelivered" || return 1
+  fi
   note="Your message corr=$FM_MM_CORR to $FM_MM_TO was $outcome: $REASON"
   if mate_meta "$FM_MM_FROM" >/dev/null; then
     FM_HOME="$FM_HOME" "$SEND_BIN" "$FM_MM_FROM" --fire-and-forget "$(bounce_id "$FM_MM_CORR")" \
@@ -114,13 +118,14 @@ close_undelivered() {  # <record> <outcome>
     bounce_note=' (the sender is not a recorded second mate)'
   fi
   if ! fm_mate_mail_logged "$STATE" "$FM_MM_FROM" "$FM_MM_CORR" >/dev/null; then
-    wake_once "$record" \
+    wake_once "${record%.msg}.woken-undelivered" \
       "check: second mate message $FM_MM_CORR from $FM_MM_FROM to $FM_MM_TO was $outcome: $REASON$bounce_note" \
       || return 1
     fm_mate_mail_log "$STATE" "$outcome" "$REASON$bounce_note" || return 1
   fi
   mkdir -p "$DIR/$outcome" && mv "$record" "$DIR/$outcome/$name" || return 1
-  rm -f "${record%.msg}.tries" "${record%.msg}.publishing" "${record%.msg}.woken"
+  rm -f "${record%.msg}.tries" "${record%.msg}.publishing" \
+    "${record%.msg}.woken-delivered" "${record%.msg}.woken-undelivered" "${record%.msg}.undelivered"
   printf '%s: %s %s -> %s: %s%s\n' "$outcome" "$FM_MM_CORR" "$FM_MM_FROM" "$FM_MM_TO" "$REASON" "$bounce_note"
 }
 
@@ -130,7 +135,8 @@ close_delivered() {  # <record> <how>
     fm_mate_mail_log "$STATE" delivered "$2" || return 1
   fi
   mkdir -p "$DIR/delivered" && mv "$record" "$DIR/delivered/$name" || return 1
-  rm -f "${record%.msg}.tries" "${record%.msg}.publishing" "${record%.msg}.woken"
+  rm -f "${record%.msg}.tries" "${record%.msg}.publishing" \
+    "${record%.msg}.woken-delivered" "${record%.msg}.woken-undelivered" "${record%.msg}.undelivered"
   printf 'delivered: %s %s -> %s\n' "$FM_MM_CORR" "$FM_MM_FROM" "$FM_MM_TO"
 }
 
@@ -173,7 +179,7 @@ PY
 
 deliver_primary() {  # <record>
   local tagged rc=0 marker="${1%.msg}.publishing"
-  [ ! -e "${1%.msg}.woken" ] || { DELIVERED_HOW=wake; return 0; }
+  [ ! -e "${1%.msg}.woken-delivered" ] || { DELIVERED_HOW=wake; return 0; }
   fm_message_mark_from_mate "$FM_MM_FROM" "$FM_MM_CORR" "$FM_MM_TEXT" tagged || return 1
   if [ -e "$marker" ] && primary_holds "[fm-from-mate:$FM_MM_FROM]${FM_OPERATIONAL_MARK}corr=$FM_MM_CORR "; then
     DELIVERED_HOW=chat; return 0
@@ -183,7 +189,7 @@ deliver_primary() {  # <record>
   [ "$rc" -ne 0 ] || { DELIVERED_HOW=chat; return 0; }
   [ "$rc" -eq 3 ] || return 1
   # No Deck chat primary is running: the first mate reads its wake queue.
-  wake_once "$1" \
+  wake_once "${1%.msg}.woken-delivered" \
     "check: message from second mate $FM_MM_FROM (corr $FM_MM_CORR${FM_MM_RE:+, re $FM_MM_RE}): $(printf '%s' "$FM_MM_TEXT" | tr '\n\t' '  ' | cut -c1-400)" \
     || return 1
   DELIVERED_HOW=wake
@@ -205,8 +211,15 @@ ls -tr "$DIR/pending" 2>/dev/null | grep '\.msg$' | while IFS= read -r name; do
   # every side effect already: archive it under its logged outcome.
   if done_as=$(fm_mate_mail_logged "$STATE" "$FM_MM_FROM" "$FM_MM_CORR"); then
     mkdir -p "$DIR/$done_as" && mv "$record" "$DIR/$done_as/$name" || true
-    rm -f "${record%.msg}.tries" "${record%.msg}.publishing" "${record%.msg}.woken"
+    rm -f "${record%.msg}.tries" "${record%.msg}.publishing" \
+      "${record%.msg}.woken-delivered" "${record%.msg}.woken-undelivered" "${record%.msg}.undelivered"
     continue
+  fi
+  if [ -f "${record%.msg}.undelivered" ]; then
+    IFS= read -r done_as < "${record%.msg}.undelivered"
+    case "$done_as" in refused|failed) ;; *) continue ;; esac
+    REASON=$(sed '1d' "${record%.msg}.undelivered")
+    close_undelivered "$record" "$done_as"; continue
   fi
   if ! mate_meta "$FM_MM_FROM" >/dev/null; then
     REASON="the sender $FM_MM_FROM is not a recorded second mate of this fleet"

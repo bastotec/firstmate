@@ -267,7 +267,7 @@ test_interrupted_bookkeeping_completes_once() {
 }
 
 test_wake_survives_failed_logging_and_queue_consumption() {
-  local parent corr send record target outcome
+  local parent corr send record target outcome marker
   for target in nobody primary; do
     parent=$(make_fleet wake-resume dave cadia)
     send="$parent/fakebin/send-no-primary"
@@ -275,27 +275,85 @@ test_wake_survives_failed_logging_and_queue_consumption() {
     chmod +x "$send"
     corr=$(mate_send "$parent" dave "$target" "remember this" | sed -n 's/.*corr=\([a-f0-9]*\).*/\1/p')
     record="$parent/state/mate-mail/pending/dave@$corr.msg"
+    marker="${record%.msg}.woken-undelivered"
+    [ "$target" != primary ] || marker="${record%.msg}.woken-delivered"
     mkdir "$parent/state/mate-messages.log"
     run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" >/dev/null || fail "router pass failed"
     [ -f "$record" ] || fail "logging failure must keep the message pending"
-    [ -f "${record%.msg}.woken" ] || fail "successful wake needs a durable marker"
+    [ -f "$marker" ] || fail "successful wake needs a durable marker"
     [ "$(grep -c "mate-mail:$corr" "$parent/state/.wake-queue")" = 1 ] || fail "expected one wake before logging"
-    rm "${record%.msg}.woken"
+    rm "$marker"
     run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" >/dev/null || fail "router pass failed"
-    [ -f "${record%.msg}.woken" ] || fail "a queued wake must recover its marker"
+    [ -f "$marker" ] || fail "a queued wake must recover its marker"
     [ "$(grep -c "mate-mail:$corr" "$parent/state/.wake-queue")" = 1 ] || fail "queued wake was repeated"
     : > "$parent/state/.wake-queue"
     rmdir "$parent/state/mate-messages.log"
     run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" >/dev/null || fail "router pass failed"
     [ ! -s "$parent/state/.wake-queue" ] || fail "an already-consumed wake was repeated"
     [ "$(cat "$parent/state/.wake-queue.seq")" = 1 ] || fail "retry allocated another wake sequence"
-    [ ! -e "${record%.msg}.woken" ] || fail "terminalization must remove the wake marker"
+    [ ! -e "$marker" ] || fail "terminalization must remove the wake marker"
     outcome=refused
     [ "$target" != primary ] || outcome=delivered
     [ -f "$parent/state/mate-mail/$outcome/dave@$corr.msg" ] || fail "record was not archived after logging recovered"
     [ "$(fm_mate_mail_logged "$parent/state" dave "$corr")" = "$outcome" ] || fail "terminal outcome not logged"
   done
   pass "fm-mate-route: refused and primary wakes survive logging failure without duplication"
+}
+
+test_failed_primary_bookkeeping_never_becomes_delivery() {
+  local parent corr send record body pass_number
+  parent=$(make_fleet failed-primary dave cadia)
+  send="$parent/fakebin/send-primary-fail"
+  cat > "$send" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = primary ]; then
+  printf 'attempt\n' >> "$FM_HOME/primary.calls"
+  if [ -f "$FM_HOME/accept-primary" ]; then
+    printf '%s' "$2" > "$FM_HOME/primary.published"
+    exit 0
+  fi
+  exit 1
+fi
+exec "${FM_REAL_SEND_BIN:?}" "$@"
+SH
+  chmod +x "$send"
+  corr=$(mate_send "$parent" dave primary "the primary never received this" | sed -n 's/.*corr=\([a-f0-9]*\).*/\1/p')
+  record="$parent/state/mate-mail/pending/dave@$corr.msg"
+  mkdir "$parent/state/mate-messages.log"
+  for pass_number in 1 2 3 4 5 6 7 8 9 10; do
+    run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" FM_REAL_SEND_BIN="$ROOT/bin/fm-send.sh" >/dev/null \
+      || fail "router pass $pass_number failed"
+  done
+  [ -f "$record" ] || fail "failed logging must leave the message pending"
+  [ -f "${record%.msg}.woken-undelivered" ] || fail "failure notification must have its own wake marker"
+  [ ! -e "${record%.msg}.woken-delivered" ] || fail "failure notification is not delivery"
+  body=$(record_body "$parent/state/dave.inbox/001.msg")
+  case "$body" in *"corr=$corr to primary was failed: delivery kept failing"*) ;; *) fail "failure was not bounced: $body" ;; esac
+  [ "$(grep -c "mate-mail:$corr" "$parent/state/.wake-queue")" = 1 ] || fail "failure must queue one notification"
+  rmdir "$parent/state/mate-messages.log"
+  : > "$parent/accept-primary"
+  run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" FM_REAL_SEND_BIN="$ROOT/bin/fm-send.sh" >/dev/null \
+    || fail "router recovery pass failed"
+  [ -f "$parent/state/mate-mail/failed/dave@$corr.msg" ] || fail "failure must remain failed after logging recovers"
+  [ ! -e "$parent/state/mate-mail/delivered/dave@$corr.msg" ] || fail "failure must not be archived as delivery"
+  [ "$(fm_mate_mail_logged "$parent/state" dave "$corr")" = failed ] || fail "failure outcome must be preserved"
+  [ "$(wc -l < "$parent/primary.calls" | tr -d ' ')" = 10 ] || fail "terminal failure must not retry primary publication"
+  [ ! -e "$parent/primary.published" ] || fail "terminal bookkeeping must not publish a failed message"
+  [ ! -e "$parent/state/dave.inbox/002.msg" ] || fail "failure bounce must not be repeated"
+  [ "$(grep -c "mate-mail:$corr" "$parent/state/.wake-queue")" = 1 ] || fail "failure notification must not be repeated"
+  [ ! -e "${record%.msg}.woken-undelivered" ] || fail "archiving must remove the failure wake marker"
+  [ ! -e "${record%.msg}.undelivered" ] || fail "archiving must remove unfinished terminal bookkeeping"
+  python3 - "$parent/state/mate-messages.log" "$corr" <<'PY' || fail "failure oversight record was not preserved"
+import json, sys
+with open(sys.argv[1]) as log:
+    rows = [json.loads(line) for line in log]
+assert len(rows) == 1
+assert rows[0]["corr"] == sys.argv[2]
+assert rows[0]["outcome"] == "failed"
+assert rows[0]["reason"] == "delivery kept failing (the first mate's chat did not accept it)"
+assert rows[0]["text"] == "the primary never received this"
+PY
+  pass "fm-mate-route: interrupted primary failure stays failed without retrying publication"
 }
 
 test_incomplete_log_does_not_finish_bookkeeping() {
@@ -363,6 +421,7 @@ test_live_router_lock_is_not_stolen() {
 
 test_local_mate_queues_in_parent_spool
 test_wake_survives_failed_logging_and_queue_consumption
+test_failed_primary_bookkeeping_never_becomes_delivery
 test_incomplete_log_does_not_finish_bookkeeping
 test_logged_requires_complete_json_record
 test_live_router_lock_is_not_stolen
