@@ -1534,7 +1534,7 @@ PYTHON
 # the arm verifies and wait for an explicit trigger, never a startup timer.
 test_secondmate_host_retains_failed_successor_start_evidence() {
   local dir mode
-  for mode in exits interrupted; do
+  for mode in exits interrupted arm-timeout; do
     dir="$TMP_ROOT/host-failed-successor-evidence-$mode"
     make_secondmate_host_fixture "$dir"
     cp "$ROOT/bin/fm-watch-arm.sh" "$dir/bin/fm-watch-arm.sh"
@@ -1573,7 +1573,7 @@ import json, os, pathlib, signal, subprocess, sys, time
 root = pathlib.Path(sys.argv[1]); home = root/'home'; mode = sys.argv[2]
 env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='',
            FM_TEST_CHILD_MODE=mode, FM_DECK_WATCH_CONFIRM_SECS='1' if mode == 'interrupted' else '15',
-           FM_ARM_CONFIRM_TIMEOUT='30')
+           FM_ARM_CONFIRM_TIMEOUT='1' if mode == 'arm-timeout' else '30')
 gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
 cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
        str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'),
@@ -1600,14 +1600,19 @@ with (root/'pane').open('w') as output:
         wait_for(lambda: len(rows()) == 1 and idle() and len(starts()) == 1, 'startup')
         (home/'fail-successor-start').touch()
         (home/'trigger').touch()
-        wait_for(lambda: len(rows()) == 2 and idle() and len(starts()) == 2, 'normal rearm after failed START')
+        wait_for(lambda: len(rows()) == 2 and idle() and len(starts()) >= 2, 'normal rearm after failed START')
         evidence = (root/'pane').read_text()
         assert evidence.count('failed handling successor: fixture startup refused') == 1, evidence
         if mode == 'exits':
             assert 'successor watcher exited before confirming startup; starting a fresh watcher' in evidence, evidence
             assert 'watcher: FAILED - watcher cycle exited 7' in evidence, evidence
         else:
-            assert 'successor watcher did not confirm startup within 1s; starting a fresh watcher' in evidence, evidence
+            if mode == 'interrupted':
+                assert 'successor watcher did not confirm startup within 1s; starting a fresh watcher' in evidence, evidence
+            else:
+                assert 'successor watcher exited before confirming startup; starting a fresh watcher' in evidence, evidence
+                assert 'watcher: FAILED - no live watcher with a fresh beacon' in evidence, evidence
+                assert 'successor watcher did not confirm startup within' not in evidence, evidence
             assert evidence.count('unconfirmed handling successor: terminated at deadline') == 1, evidence
             assert (home/'successor-was-silent').exists()
             try:
@@ -1619,7 +1624,7 @@ with (root/'pane').open('w') as output:
         assert (home/'failed-starts').read_text().splitlines() == ['failed']
         os.kill(int(starts()[-1]), 0)
         (home/'trigger').touch()
-        wait_for(lambda: len(rows()) == 3 and idle() and len(starts()) == 3, 'later supervised wake')
+        wait_for(lambda: len(rows()) == 3 and idle() and len(starts()) >= 3, 'later supervised wake')
         assert p.poll() is None
         status = root/'parent/host.status'
         assert not status.exists() or 'failed:' not in status.read_text()

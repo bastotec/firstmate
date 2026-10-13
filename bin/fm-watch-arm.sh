@@ -674,10 +674,18 @@ while :; do
 done
 
 trap - HUP TERM INT
-print_watch_output "$child_out"
-cleanup_child
-wait "$child" 2>/dev/null
-rc=$?
+if [ -n "${FM_WATCH_PREDECESSOR_ARM_PID:-}" ]; then
+  kill -TERM "$child" 2>/dev/null || true
+  wait "$child" 2>/dev/null
+  rc=$?
+  print_watch_output "$child_out"
+  cleanup_child
+else
+  print_watch_output "$child_out"
+  cleanup_child
+  wait "$child" 2>/dev/null
+  rc=$?
+fi
 cycle_log_append "$rc" "$(cycle_signal_name "$rc")" confirmation-timeout none
 echo "watcher: FAILED - no live watcher with a fresh beacon"
 exit 1
