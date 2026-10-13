@@ -79,6 +79,11 @@ unset _fm_classify_nounset
 # "working: rebased onto merged #76").
 FM_CLASSIFY_CAPTAIN_RE_DEFAULT='done:|needs-decision:|blocked:|failed:|PR ready|checks green|ready in branch|merged'
 
+status_file_is_incoming() {
+  local home=$1 state=$2 file=$3
+  [ "$file" != "$state/parent-replies.status" ] || [ ! -e "$home/.fm-secondmate-parent" ]
+}
+
 # The deliberate-external-wait verb. A crew (or firstmate steering it) appends
 #   paused: <reason>
 # to declare it is intentionally idling on a KNOWN external dependency - an

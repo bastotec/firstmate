@@ -785,10 +785,10 @@ fm_pending_reply_observe_busy() {  # <state-dir> <corr_id> <busy_state>
 }
 
 # 0 when this home's steering inbox for <task_id> still holds an unhandled
-# record carrying <corr_id>. Only a local secondmate's inbox lives here; for a
-# remote mate the directory is absent and this returns 1.
+# record carrying <corr_id>.
 fm_pending_reply_request_unread() {  # <state-dir> <task_id> <corr_id>
   local dir=$1/$2.inbox f token
+  fm_pending_reply_target_is_remote "$1" "$2" && return 1
   [ -n "$2" ] && [ -d "$dir" ] || return 1
   token=$(fm_pending_reply_corr_token "$3")
   for f in "$dir"/*.msg; do

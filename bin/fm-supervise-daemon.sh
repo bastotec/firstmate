@@ -1150,6 +1150,7 @@ housekeeping() {  # <state>
     _now > "$state/.subsuper-last-scan"
     local event record rest endpoint ident rc
     for f in "$state"/*.status; do
+      status_file_is_incoming "$FM_HOME" "$state" "$f" || continue
       [ -e "$f" ] || [ -L "$f" ] || continue
       task=$(basename "$f"); task="${task%.status}"
       record=$(status_span_first_actionable_record "$f" \

@@ -1197,7 +1197,7 @@ test_tick_end_to_end_missed_then_escalate() {
 }
 
 test_remote_repost_waits_for_the_reply_channel() {
-  local home state corr hook_log rec lines
+  local home state corr hook_log rec lines migrated=${1:-0}
   home=$(setup_parent remote-repost)
   state="$home/state"
   hook_log="$TMP_ROOT/remote-repost.log"
@@ -1211,14 +1211,23 @@ test_remote_repost_waits_for_the_reply_channel() {
   export -f remote_repost_hook
   export FM_PENDING_REPLY_SEND_HOOK=remote_repost_hook
 
+  corr=$(fm_pending_reply_create "$home" "$state" "ios" "status of the iOS build")
+  fm_pending_reply_mark_delivered "$state" "$corr"
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  if [ "$migrated" = 1 ]; then
+    mkdir -p "$state/ios.inbox"
+    printf 'corr=%s status of the iOS build\n' "$corr" > "$state/ios.inbox/001.msg"
+    fm_pending_reply_observe_busy "$state" "$corr" idle
+    [ -z "$(fm_pending_reply_get "$rec" request_turn_completed_epoch)" ] \
+      || fail "the request must remain incomplete while still local and unread"
+  fi
   fm_write_meta "$state/ios.meta" \
     "window=127.0.0.1-9:0123456789abcdef0123456789abcdef" "harness=deck" "kind=secondmate" "mode=secondmate" \
     "remote_host=remote-mac" "remote_root=/remote/root" "remote_backend=stream"
-  corr=$(fm_pending_reply_create "$home" "$state" "ios" "status of the iOS build")
-  fm_pending_reply_mark_delivered "$state" "$corr"
   fm_pending_reply_observe_busy "$state" "$corr" busy
   fm_pending_reply_observe_busy "$state" "$corr" idle
-  rec=$(fm_pending_reply_path "$state" "$corr")
+  [ -n "$(fm_pending_reply_get "$rec" request_turn_completed_epoch)" ] \
+    || fail "a remote mate's idle turn must complete despite any retained local inbox"
 
   # The mate's turn ended, but nothing proves the parent has read the remote
   # reply log since: a repost here would nag for a reply already written there.
@@ -1251,7 +1260,12 @@ test_remote_repost_waits_for_the_reply_channel() {
     *) fail "the recovery message must ask for a repost"$'\n'"$(cat "$hook_log")" ;;
   esac
   unset FM_PENDING_REPLY_SEND_HOOK
-  pass "a remote repost waits for the reply channel and still fires on a real miss"
+  if [ "$migrated" = 1 ]; then
+    [ -f "$state/ios.inbox/001.msg" ] || fail "the migrated local inbox fixture must remain unread"
+    pass "a migrated remote mate ignores retained local inbox records but waits for its reply mirror"
+  else
+    pass "a remote repost waits for the reply channel and still fires on a real miss"
+  fi
 }
 
 test_mirrored_remote_reply_never_triggers_a_repost() {
@@ -1633,6 +1647,7 @@ test_correlations_reuse_only_for_matching_open_task
 test_tick_end_to_end_missed_then_escalate
 test_failed_send_discards_undelivered_expectation
 test_remote_repost_waits_for_the_reply_channel
+test_remote_repost_waits_for_the_reply_channel 1
 test_mirrored_remote_reply_never_triggers_a_repost
 test_same_basename_self_home_corr_resolves_on_tick
 test_same_basename_reply_resolves_after_recovery_failure
