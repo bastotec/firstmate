@@ -2020,7 +2020,9 @@ def wait_for(check, label, proc=None):
         time.sleep(.1)
     raise AssertionError(label+': '+(root/'pane').read_text() if (root/'pane').exists() else label)
 
-# The previous driver left an open episode, the state a real crash leaves.
+# The previous driver completed startup, then left an open episode: the state a
+# later real crash leaves.
+(home/'state/.session-start-complete').write_text('123\n')
 preserve_publish()
 previous = generation()
 assert previous, 'fixture did not open the previous driver episode'
@@ -2089,6 +2091,8 @@ root = pathlib.Path(sys.argv[1])
 home = root / 'home'
 marker = home / 'state/.watcher-down'
 lib = str(root/'bin/fm-wake-lib.sh')
+# Make this a duplicate relaunch rather than concurrent true-first launches.
+(home/'state/.session-start-complete').write_text('123\n')
 subprocess.run(['bash', '-c', '. "$1"; fm_recovery_marker_publish "$2" downtime', '_', lib, str(marker)],
                check=True, env=dict(os.environ, FM_STATE_OVERRIDE=str(home/'state')))
 arrivals = root / 'lock-arrivals'
