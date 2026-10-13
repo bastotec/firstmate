@@ -42,10 +42,6 @@
 # state/*.meta remains reserved for workers the secondmate supervises.
 # Retirement closes only this secondmate's own endpoint, never a sibling's.
 #
-# The host-local spawn skips bin/fm-guard.sh: it would check the watcher of
-# this host's code-root home, which no one runs on a remote host, and print a
-# "watcher still down" warning that is never true of the mate's own home.
-#
 # Relaunch is not a second lifecycle implementation: it runs the ORDINARY local
 # control plane here, because from this host the mate is a plain local
 # secondmate. cmd_relaunch below owns why the parent must hand it the profile.
@@ -370,7 +366,7 @@ cmd_launch() {
   if ! out=$(FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
     FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
     FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_SKIP_SECONDMATE_INHERIT=1 \
-    FM_SKIP_SECONDMATE_SYNC=1 FM_SPAWN_NO_GUARD=1 \
+    FM_SKIP_SECONDMATE_SYNC=1 \
     "$SCRIPT_DIR/fm-spawn.sh" "${ARGS[@]}" 2>&1); then
     [ -z "$out" ] || printf '%s\n' "$out" >&2
     die "remote host-local secondmate launch failed"
@@ -444,7 +440,7 @@ EOF
   out=$(FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
     FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
     FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_SKIP_SECONDMATE_INHERIT=1 \
-    FM_SKIP_SECONDMATE_SYNC=1 FM_SPAWN_NO_GUARD=1 \
+    FM_SKIP_SECONDMATE_SYNC=1 \
     "$SCRIPT_DIR/fm-control.sh" "${control_args[@]}") || rc=$?
   if [ "$rc" -ne 0 ]; then
     [ -z "$out" ] || printf '%s\n' "$out"
