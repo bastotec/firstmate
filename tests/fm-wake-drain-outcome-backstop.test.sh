@@ -6,6 +6,8 @@ set -u
 
 # shellcheck source=tests/wake-helpers.sh
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
+# shellcheck source=bin/fm-classify-lib.sh
+. "$ROOT/bin/fm-classify-lib.sh"
 
 DRAIN="$ROOT/bin/fm-wake-drain.sh"
 TMP_ROOT=$(fm_test_tmproot fm-wake-drain-outcome-backstop-tests)
@@ -220,6 +222,29 @@ test_backstop_output_is_bounded() {
   pass "the outcome backstop caps each item and its total task output deterministically"
 }
 
+test_superseded_turn_failure_advances_the_outcome_receipt() {
+  local dir state status out endpoint receipt
+  dir=$(make_case superseded-turn-failure)
+  state="$dir/state"
+  status="$state/deck-task.status"
+  out="$dir/drain.out"
+  printf '%s\n' \
+    'failed: deck turn ended without a status line (turn-failed recovery-gen=deck-replay id=record-replay)' \
+    'working: replay resumed' \
+    'working [recovery-gen=deck-replay id=record-replay]: deck turn reported working' > "$status"
+  endpoint=$(wc -c < "$status" | tr -d '[:space:]')
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" \
+    || fail "drain failed while acknowledging a superseded turn failure"
+  [ ! -s "$out" ] \
+    || fail "a superseded turn failure produced captain-facing output: $(cat "$out")"
+  receipt=$(FM_STATE_OVERRIDE="$state" status_outcome_backstop_cursor_offset "$status") \
+    || fail "the superseded failure receipt could not be read"
+  [ "$receipt" = "$endpoint" ] \
+    || fail "the superseded failure receipt stopped at $receipt instead of $endpoint"
+  pass "superseded turn failures advance the outcome receipt"
+}
+
 test_uncovered_keyless_captain_events_surface_on_the_next_main_drain
 test_routine_latest_events_stay_silent
 test_successful_backstop_is_idempotent_without_consuming_delayed_annotation
@@ -228,3 +253,4 @@ test_receipt_commit_failure_repeats_the_already_presented_backstop
 test_rejected_decision_line_surfaces_once_through_backstop
 test_overbound_routine_event_stays_silent
 test_backstop_output_is_bounded
+test_superseded_turn_failure_advances_the_outcome_receipt

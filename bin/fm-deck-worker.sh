@@ -190,6 +190,8 @@ command -v python3 >/dev/null 2>&1 || { echo "fm-deck-worker: python3 is require
 HOST_ROLE=secondmate
 STATUS_FILE="$STATE/$ID.status"
 TURNEND_FILE="$STATE/$ID.turn-ended"
+export FM_DECK_STATUS_IO="$STATE_IO" FM_DECK_STATUS_STATE="$STATE" FM_DECK_STATUS_NAME="$ID.status"
+export FM_DECK_STATUS_DRIVER_GEN="$GEN"
 MAX_TURNS=${FM_DECK_MAX_TURNS:-200}
 DEADLINE=${FM_DECK_DEADLINE_SECS:-3600}
 case "$MAX_TURNS" in ''|*[!0-9]*) MAX_TURNS=200 ;; esac
@@ -357,6 +359,10 @@ status_size() {
 
 status_append() {
   python3 "$STATE_IO" root-append "$STATE" "$ID.status"
+}
+
+deck_recovery_token() {  # <prefix>
+  python3 -c 'import secrets, sys; print(sys.argv[1] + secrets.token_hex(16))' "$1"
 }
 
 status_has_worker_evidence() {
@@ -652,6 +658,7 @@ TURN_RECOVERABLE=3
 LAUNCH_UNDELIVERED=0
 run_turn() {  # <prompt>
   local prompt=$1 rc event status_before monitor_failed=0 deck_rc tee_rc jq_rc published=0
+  local failure_id
   local -a turn_pipeline
   # The effort applies to this turn only, whatever path it ends by.
   local effort=$TURN_EFFORT
@@ -694,6 +701,9 @@ $prompt"
     printf 'fm-deck-worker: status path is not a safe regular file: %s\n' "$STATUS_FILE" >&2
     return 1
   fi
+  status_before=$(cat "$TURN_MARK" 2>/dev/null || printf '0\n')
+  FM_DECK_STATUS_TURN_OFFSET=$status_before
+  export FM_DECK_STATUS_TURN_OFFSET
   record_busy_event busy turn-start || return 1
   # The rendered working row is transient: save its screen position so a
   # completed turn can replace it with the final event rendering. A later steer
@@ -801,12 +811,22 @@ $prompt"
     fi
     host_lock_owned || return 1
   elif ! status_has_worker_evidence "$status_before"; then
-    if ! printf 'failed: deck turn ended without a status line (%s)\n' "$event" | status_append; then
+    if [ "$event" = turn-failed ]; then
+      failure_id=$(deck_recovery_token record- 2>/dev/null || true)
+      if [ -n "$failure_id" ]; then
+        printf 'failed: deck turn ended without a status line (turn-failed recovery-gen=%s id=%s)\n' \
+          "$GEN" "$failure_id" | status_append
+      else
+        printf 'failed: deck turn ended without a status line (turn-failed)\n' | status_append
+      fi
+    else
+      printf 'failed: deck turn ended without a status line (%s)\n' "$event" | status_append
+    fi || {
       printf 'fm-deck-worker: could not safely append required turn evidence to %s\n' "$STATUS_FILE" >&2
       record_busy_event idle turn-failed || return 1
       publish_turnend || true
       return 1
-    fi
+    }
   fi
   record_busy_event idle "$event" || return 1
   IDLE_SINCE=$(date -u +%Y-%m-%dT%H:%MZ)

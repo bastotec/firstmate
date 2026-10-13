@@ -2,6 +2,7 @@
 """Descriptor-bound I/O for wake-gate and root-level state records."""
 
 import errno
+import fcntl
 import os
 import re
 import secrets
@@ -18,6 +19,15 @@ MAX_STATUS_DELTA_BYTES = 65536
 WORKER_STATUS_RE = re.compile(
     rb"^(?:done|needs-decision|blocked|failed|working)(?::|[ \t][^:\r\n]*:)"
 )
+TURN_FAILURE_RE = re.compile(
+    rb"^failed: deck turn ended without a status line "
+    rb"\(turn-failed recovery-gen=([A-Za-z0-9._-]+) id=([A-Za-z0-9._-]+)\)$"
+)
+RECOVERY_WORKING_RE = re.compile(
+    rb"^working \[recovery-gen=([A-Za-z0-9._-]+) id=([A-Za-z0-9._-]+)\]:"
+)
+TERMINAL_STATUS_RE = re.compile(rb"^(?:done|needs-decision|blocked|failed)(?::|[ \t][^:\r\n]*:)")
+WORKING_STATUS_RE = re.compile(rb"^working(?::|[ \t][^:\r\n]*:)")
 
 
 def require_nofollow() -> int:
@@ -80,13 +90,112 @@ def write_all(fd: int, payload: bytes) -> None:
         view = view[written:]
 
 
+def recovery_status_payload(
+    existing: bytes, payload: bytes, turn_offset=None, driver_generation=None
+) -> bytes:
+    recovery = None
+    terminal = False
+    cursor = 0
+    for line in existing.split(b"\n")[:-1]:
+        line_offset = cursor
+        cursor += len(line) + 1
+        failure = TURN_FAILURE_RE.match(line)
+        marker = RECOVERY_WORKING_RE.match(line)
+        if failure:
+            if driver_generation is None or failure.group(1) == driver_generation:
+                recovery = failure.groups()
+                terminal = False
+            else:
+                recovery = None
+                terminal = False
+        elif marker and marker.groups() == recovery:
+            recovery = None
+            terminal = False
+        elif recovery is not None and TERMINAL_STATUS_RE.match(line):
+            if turn_offset is not None and line_offset >= turn_offset:
+                terminal = True
+            else:
+                recovery = None
+                terminal = False
+
+    if recovery is None:
+        return payload
+
+    output = bytearray()
+    for raw_line in payload.splitlines(keepends=True):
+        complete = raw_line.endswith(b"\n")
+        line = raw_line.rstrip(b"\r\n") if complete else raw_line
+        failure = TURN_FAILURE_RE.match(line)
+        marker = RECOVERY_WORKING_RE.match(line)
+        if failure:
+            output.extend(raw_line)
+            if driver_generation is None or failure.group(1) == driver_generation:
+                recovery = failure.groups()
+                terminal = False
+            else:
+                recovery = None
+                terminal = False
+        elif marker and marker.groups() == recovery:
+            output.extend(raw_line)
+            recovery = None
+            terminal = False
+        elif recovery is not None and WORKING_STATUS_RE.match(line):
+            if not terminal:
+                output.extend(raw_line)
+                output.extend(
+                    b"working [recovery-gen="
+                    + recovery[0]
+                    + b" id="
+                    + recovery[1]
+                    + b"]: deck turn reported working\n"
+                )
+                recovery = None
+            elif not complete:
+                output.extend(raw_line)
+        else:
+            output.extend(raw_line)
+            if recovery is not None and TERMINAL_STATUS_RE.match(line):
+                terminal = True
+    return bytes(output)
+
+
 def append_record(dir_fd: int, name: str, payload: bytes) -> None:
-    flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK | require_nofollow()
+    flags = os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK | require_nofollow()
     flags |= getattr(os, "O_CLOEXEC", 0)
     fd = os.open(name, flags, 0o600, dir_fd=dir_fd)
     try:
         require_regular_single_link(fd)
-        if os.write(fd, payload) != len(payload):
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        if name.endswith(".status") and b"working" in payload:
+            os.lseek(fd, 0, os.SEEK_SET)
+            existing = bytearray()
+            while True:
+                chunk = os.read(fd, 65536)
+                if not chunk:
+                    break
+                existing.extend(chunk)
+            turn_offset = None
+            driver_generation = None
+            if name == os.environ.get("FM_DECK_STATUS_NAME"):
+                raw_offset = os.environ.get("FM_DECK_STATUS_TURN_OFFSET")
+                if raw_offset is not None:
+                    try:
+                        turn_offset = int(raw_offset)
+                    except ValueError:
+                        raise UnsafeStatePath("invalid Deck turn status offset")
+                    if turn_offset < 0 or turn_offset > len(existing):
+                        raise UnsafeStatePath("invalid Deck turn status offset")
+                raw_generation = os.environ.get("FM_DECK_STATUS_DRIVER_GEN")
+                if raw_generation is None:
+                    driver_generation = b""
+                elif not re.fullmatch(r"[A-Za-z0-9._-]+", raw_generation):
+                    raise UnsafeStatePath("invalid Deck driver generation")
+                else:
+                    driver_generation = raw_generation.encode("ascii")
+            payload = recovery_status_payload(
+                bytes(existing), payload, turn_offset, driver_generation
+            )
+        if payload and os.write(fd, payload) != len(payload):
             raise OSError("short state append")
         os.fsync(fd)
     finally:
@@ -155,13 +264,13 @@ def record_size(dir_fd: int, name: str) -> int:
         os.close(fd)
 
 
-def has_worker_status_after(dir_fd: int, name: str, offset: int) -> bool:
+def first_worker_status_after(dir_fd: int, name: str, offset: int):
     flags = os.O_RDONLY | os.O_NONBLOCK | require_nofollow()
     flags |= getattr(os, "O_CLOEXEC", 0)
     try:
         fd = os.open(name, flags, dir_fd=dir_fd)
     except FileNotFoundError:
-        return False
+        return None
     try:
         require_regular_single_link(fd)
         size = os.fstat(fd).st_size
@@ -169,7 +278,7 @@ def has_worker_status_after(dir_fd: int, name: str, offset: int) -> bool:
             raise UnsafeStatePath("invalid status offset")
         delta_size = size - offset
         if delta_size > MAX_STATUS_DELTA_BYTES:
-            return False
+            return None
         os.lseek(fd, offset, os.SEEK_SET)
         payload = bytearray()
         while len(payload) < delta_size:
@@ -177,7 +286,10 @@ def has_worker_status_after(dir_fd: int, name: str, offset: int) -> bool:
             if not chunk:
                 break
             payload.extend(chunk)
-        return any(WORKER_STATUS_RE.match(line) for line in bytes(payload).split(b"\n")[:-1])
+        return next(
+            (line for line in bytes(payload).split(b"\n")[:-1] if WORKER_STATUS_RE.match(line)),
+            None,
+        )
     finally:
         os.close(fd)
 
@@ -256,10 +368,11 @@ def main() -> int:
         "root-touch",
         "root-worker-status-after",
     )
-    if len(sys.argv) not in (4, 5) or sys.argv[1] not in operations:
+    if len(sys.argv) < 4 or sys.argv[1] not in operations:
         return 2
     operation, directory, name = sys.argv[1:4]
-    if (operation == "root-worker-status-after") != (len(sys.argv) == 5):
+    expected_args = 5 if operation == "root-worker-status-after" else 4
+    if len(sys.argv) != expected_args:
         return 2
     validate_name(name)
     if operation.startswith("root-"):
@@ -278,7 +391,7 @@ def main() -> int:
                 offset = int(sys.argv[4])
             except ValueError:
                 return 2
-            return 0 if has_worker_status_after(dir_fd, name, offset) else 1
+            return 0 if first_worker_status_after(dir_fd, name, offset) is not None else 1
         elif operation == "root-touch":
             touch_record(dir_fd, name)
         elif operation == "remove":

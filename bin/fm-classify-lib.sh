@@ -150,6 +150,57 @@ status_is_terminal_verb() {
   esac
 }
 
+# --- Deck turn-failure supersession -----------------------------------------
+#
+# A silent failed Deck turn opens a task-local recovery episode:
+#   failed: deck turn ended without a status line
+#     (turn-failed recovery-gen=<generation> id=<record-id>)
+# The next turn in that driver incarnation reuses its busy generation. Its first
+# worker-authored `working:` record is immediately followed by
+# `working [recovery-gen=<generation> id=<record-id>]:`. The locked append path
+# compares that generation with the current driver generation, so a relaunch
+# cannot close an older incarnation's episode. The random record id identifies
+# one failure independently of concurrent status writers, while the ordered
+# generation-and-record marker keeps supersession durable.
+fm_turn_failed_superseded_line() {  # <status-file> <status-line> [captured-endpoint]
+  local f=$1 line=$2 limit=${3:-} note rest gen record_id size
+  [ "$(status_line_verb "$line")" = failed ] || return 1
+  note=$(status_line_note "$line")
+  rest=${note#'deck turn ended without a status line (turn-failed recovery-gen='}
+  [ "$rest" != "$note" ] || return 1
+  gen=${rest%% id=*}
+  record_id=${rest#"$gen id="}
+  record_id=${record_id%)}
+  [ "$note" = "deck turn ended without a status line (turn-failed recovery-gen=$gen id=$record_id)" ] || return 1
+  case "$gen" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  case "$record_id" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 1
+  if [ -z "$limit" ]; then
+    size=$(_fm_status_file_size "$f") || return 1
+    limit=${size//[[:space:]]/}
+  fi
+  case "$limit" in ''|*[!0-9]*) return 1 ;; esac
+  LC_ALL=C perl -e '
+    use bytes;
+    my ($path, $limit, $target, $generation, $record_id) = @ARGV;
+    open my $file, "<", $path or exit 1;
+    binmode $file;
+    my $prefix = "working [recovery-gen=$generation id=$record_id]:";
+    my $found = 0;
+    while (tell($file) < $limit) {
+      my $line = <$file>;
+      last unless defined $line && tell($file) <= $limit;
+      $line =~ s/[\r\n]+\z//;
+      if (!$found && $line eq $target) {
+        $found = 1;
+      } elsif ($found && index($line, $prefix) == 0) {
+        exit 0;
+      }
+    }
+    exit 1;
+  ' "$f" "$limit" "$line" "$gen" "$record_id"
+}
+
 # 0 if the given (last) status line matches a captain-relevant verb.
 # Verb-aware by default: terminal verbs always match; nonterminal progress verbs
 # (working, resolved, captain-held) and paused never match from free-text prose;
@@ -171,6 +222,36 @@ status_is_captain_relevant() {
     esac
   fi
   printf '%s' "$line" | grep -qiE "${FM_CAPTAIN_RE:-$FM_CLASSIFY_CAPTAIN_RE_DEFAULT}"
+}
+
+fm_status_span_only_superseded_turn_failures() {  # <status-file> <start-offset> <captured-endpoint> <identity>
+  local f=$1 start=$2 limit=$3 expected_ident=$4 scratch line saw=0 failed=0 ident size
+  case "$start" in ''|*[!0-9]*) return 1 ;; esac
+  case "$limit" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$start" -lt "$limit" ] || return 1
+  [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 1
+  ident=$(_fm_open_decisions_file_ident "$f") || return 1
+  size=$(_fm_status_file_size "$f") || return 1
+  size=${size//[[:space:]]/}
+  [ "$ident" = "$expected_ident" ] && [ "$size" -ge "$limit" ] || return 1
+  scratch=$(_fm_status_span_scratch "$f") || return 1
+  _fm_status_read_span "$f" "$start" "$((limit - start))" > "$scratch" 2>/dev/null || {
+    rm -f "$scratch"
+    return 1
+  }
+  while IFS= read -r line || [ -n "$line" ]; do
+    status_is_captain_relevant "$line" || continue
+    if fm_turn_failed_superseded_line "$f" "$line" "$limit"; then
+      saw=1
+    else
+      failed=1
+      break
+    fi
+  done < "$scratch"
+  rm -f "$scratch"
+  ident=$(_fm_open_decisions_file_ident "$f") || return 1
+  [ "$ident" = "$expected_ident" ] || return 1
+  [ "$failed" -eq 0 ] && [ "$saw" -eq 1 ]
 }
 
 # 0 if a status line's leading verb is the pause verb (paused: <reason>). A pure
@@ -1804,6 +1885,10 @@ status_span_first_actionable_record() {  # <status-file> <start-offset> [record-
       continue
     fi
     status_is_captain_relevant "$line" || continue
+    # The one reclassification this span performs: an exact Deck turn-failed
+    # backstop leaves the actionable span only after a later working record in
+    # the captured log binds itself to the same recovery generation.
+    fm_turn_failed_superseded_line "$f" "$line" "$size" && continue
     verb=$(status_line_verb "$line")
     case "$verb" in
       needs-decision|blocked)
