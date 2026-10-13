@@ -38,9 +38,9 @@
 # code root from origin. Because this home is a standalone clone, the target
 # commit is imported here first and the fast-forward itself is the shared one in
 # bin/fm-ff-lib.sh, so the clean, ancestry, and branch guards have a single owner.
-# A private parent-route state directory stores only the remote secondmate
-# agent's endpoint record; the home's own
-# state/*.meta remains reserved for workers the secondmate supervises.
+# A private parent-route state directory stores the remote secondmate agent's
+# endpoint record and replacement-proof state; the home's own state/*.meta
+# remains reserved for workers the secondmate supervises.
 # Retirement closes only this secondmate's own endpoint, never a sibling's.
 #
 # Relaunch is not a second lifecycle implementation: it runs the ORDINARY local
@@ -54,10 +54,21 @@
 # launch, and any the old endpoint still hosts. A launch refuses before starting
 # anything while the recorded previous agent is still running outside its
 # endpoint, and any proof that cannot be made within the bound is a failure,
-# never a success; FM_REMOTE_AGENT_IDENTITY_WAIT (seconds, default 30) sets that
-# bound. The proved identity is kept in the private parent-route state directory
-# for the next relaunch, and retire removes it. An already-alive endpoint is
-# reused without a relaunch.
+# never a success. The proved identity is kept in the private parent-route
+# state directory for the next relaunch.
+#
+# Slow hosts learn a per-mate bound rather than enlarging every mate's timeout.
+# Both replacement verification and the wait for previous identities to exit
+# use min(FM_REMOTE_AGENT_IDENTITY_WAIT_MAX, max(FM_REMOTE_AGENT_IDENTITY_WAIT,
+# 2 * recorded seconds)), with defaults of 300 and 30 seconds respectively.
+# Each wait gets its own deadline; this is not a total lifecycle deadline.
+# On success, verification records whole elapsed seconds from the beginning of
+# the launch or relaunch verb, including delegated control-plane time, in
+# this remote home's state/parent-route/<id>.agent-start-secs (best-effort).
+# A verification timeout records its window instead, so the next attempt can
+# double it up to the cap; a missing or invalid record contributes zero.
+# Retire removes both the proved identity and the timing record.
+# An already-alive endpoint is reused without a relaunch or a timing update.
 #
 # The optional launch traceparent is the per-task W3C trace-context carrier the
 # PARENT home resolved for this secondmate; this host only delivers it to the
@@ -180,6 +191,28 @@ print_route() { # <id>
 # bin/fm-wake-lib.sh's fm_pid_identity, reduced to one checksum word so a
 # recycled pid never reads as the same process.
 AGENT_IDENTITY_WAIT=${FM_REMOTE_AGENT_IDENTITY_WAIT:-30}
+AGENT_IDENTITY_WAIT_MAX=${FM_REMOTE_AGENT_IDENTITY_WAIT_MAX:-300}
+case "$AGENT_IDENTITY_WAIT" in ''|*[!0-9]*|0) AGENT_IDENTITY_WAIT=30 ;; esac
+case "$AGENT_IDENTITY_WAIT_MAX" in ''|*[!0-9]*|0) AGENT_IDENTITY_WAIT_MAX=300 ;; esac
+
+# The header owns the adaptive window and host-local timing record contract.
+agent_start_record() { printf '%s/%s.agent-start-secs\n' "$CONTROL_STATE" "$1"; }
+
+agent_identity_wait() {  # <id>
+  local learned wait
+  learned=$(head -n 1 "$(agent_start_record "$1")" 2>/dev/null || true)
+  case "$learned" in ''|*[!0-9]*) learned=0 ;; esac
+  wait=$((learned * 2))
+  [ "$wait" -ge "$AGENT_IDENTITY_WAIT" ] || wait=$AGENT_IDENTITY_WAIT
+  [ "$wait" -le "$AGENT_IDENTITY_WAIT_MAX" ] || wait=$AGENT_IDENTITY_WAIT_MAX
+  printf '%s\n' "$wait"
+}
+
+agent_start_learn() {  # <id> <seconds>
+  local file
+  file=$(agent_start_record "$1")
+  printf '%s\n' "$2" > "$file.tmp.$$" 2>/dev/null && mv -f "$file.tmp.$$" "$file" 2>/dev/null || true
+}
 AGENT_IDENTITY_POLL=${FM_REMOTE_AGENT_IDENTITY_POLL:-0.5}
 
 identity_path() { printf '%s/%s.agent-identity\n' "$CONTROL_STATE" "$1"; }
@@ -232,7 +265,7 @@ EOF
 # allowing the bound for one whose endpoint was just removed to exit.
 require_identities_gone() {  # <id> <identity-lines>
   local pid deadline
-  deadline=$(( $(date +%s) + AGENT_IDENTITY_WAIT ))
+  deadline=$(( $(date +%s) + $(agent_identity_wait "$1") ))
   while pid=$(live_identity "$2"); do
     [ "$(date +%s)" -lt "$deadline" ] \
       || die "the previous agent process for $1 (pid $pid) is still running without its endpoint; refusing to start a second agent beside it - stop that process, then launch again"
@@ -248,8 +281,10 @@ verify_replacement() {  # <id> <harness> <old-identity-lines> [<old-backend> <ol
   # <harness> is accepted for the callers' stable argument order; no supported
   # harness carries a posture flag the proof must check.
   local id=$1 old=$3 old_backend=${4:-} old_target=${5:-}
-  local deadline reason new fresh pid token leftover file
-  deadline=$(( $(date +%s) + AGENT_IDENTITY_WAIT ))
+  local deadline reason new fresh pid token leftover file wait started
+  wait=$(agent_identity_wait "$id")
+  started=$(date +%s)
+  deadline=$(( started + wait ))
   while :; do
     reason=
     remote_endpoint_require "$id"
@@ -282,10 +317,13 @@ EOF
       if ! { printf '%s' "$fresh" > "$file.tmp.$$" && mv -f "$file.tmp.$$" "$file"; }; then
         die "relaunch of $id proved its new agent but could not record that agent's identity"
       fi
+      agent_start_learn "$id" "$(( $(date +%s) - ${LAUNCH_STARTED:-$started} ))"
       return 0
     fi
-    [ "$(date +%s)" -lt "$deadline" ] \
-      || die "relaunch of $id not verified within ${AGENT_IDENTITY_WAIT}s: $reason; not reporting it as relaunched"
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      agent_start_learn "$id" "$wait"
+      die "relaunch of $id not verified within ${wait}s: $reason; not reporting it as relaunched"
+    fi
     sleep "$AGENT_IDENTITY_POLL"
   done
 }
@@ -302,6 +340,7 @@ cmd_route() {
 }
 
 cmd_launch() {
+  LAUNCH_STARTED=$(date +%s)
   local id=$1 harness=$2 model=$3 effort=$4 selected_backend=$5 traceparent=${6:-}
   local current meta out kill_out old old_backend='' old_target='' pid
 
@@ -391,6 +430,7 @@ cmd_launch() {
 # re-resolve it here would silently drift the mate onto another runtime. `default`
 # explicitly clears an absent parent pin; `-` remains its compatibility spelling.
 cmd_relaunch() {
+  LAUNCH_STARTED=$(date +%s)
   local id=$1 harness=$2 model=$3 effort=$4 old old_backend old_target current recorded outside pid token out rc
   local -a control_args
   [ "$#" -eq 4 ] || usage
@@ -646,6 +686,7 @@ cmd_retire() {
       "$SCRIPT_DIR/fm-teardown.sh" "$id"
   fi
   rm -f -- "$(identity_path "$id")"
+  rm -f -- "$(agent_start_record "$id")"
 }
 
 case "${1:-}" in

@@ -271,7 +271,7 @@ The reconcile touches only a real directory this host provably owns; a symlink, 
 Startup liveness recovery uses the [automatic-recovery admission rules](stream-backend.md#secondmate-lifecycle) before the normal spawn command, so a stopped-on-purpose mate stays down and recovery passes the same readiness gate rather than a weaker one; a missing stream endpoint follows the startup skip rule there.
 A dead remote endpoint is removed before that relaunch, and a removal the backend cannot confirm refuses the launch instead of risking a duplicate mate beside a worker that may still be running.
 A launch that starts an agent reports success only after the host proves, by process identity, that it replaced the previous one: the new endpoint hosts an agent process that did not exist before, and every previous agent process is gone.
-A previous agent still running after its endpoint was removed refuses the launch rather than gaining a twin, and a proof that cannot be made within the bound is reported as a failed launch; [`bin/fm-remote-secondmate-control.sh`](../bin/fm-remote-secondmate-control.sh) owns that contract.
+A previous agent still running after its endpoint was removed refuses the launch rather than gaining a twin, and a proof that cannot be made within the adaptive per-mate bound is reported as a failure; the [`bin/fm-remote-secondmate-control.sh` header](../bin/fm-remote-secondmate-control.sh) owns the proof contract, host-local timing record, and timeout settings for launch and relaunch.
 An endpoint that is already alive is reused rather than relaunched.
 
 A persistent remote route's parent metadata intentionally has no local spawn-generation marker and identifies the route by its recorded host instead.
