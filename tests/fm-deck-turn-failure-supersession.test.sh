@@ -73,9 +73,11 @@ test_unbound_and_different_generation_working_lines_do_not_supersede() {
   record='record-mismatch'
   append_failure "$status" "$generation" "$record"
   failure=$(failure_line "$generation" "$record")
-  printf 'working: unbound replay line\n' >> "$status"
-  printf 'working [recovery-gen=%s]: legacy recovery marker\n' "$generation" >> "$status"
-  printf '%s\n' "$(recovery_line other-generation "$record" 'unrelated recovery')" >> "$status"
+  {
+    printf 'working: unbound replay line\n'
+    printf 'working [recovery-gen=%s]: legacy recovery marker\n' "$generation"
+    printf '%s\n' "$(recovery_line other-generation "$record" 'unrelated recovery')"
+  } >> "$status"
 
   fm_turn_failed_superseded_line "$status" "$failure" \
     && fail "an unbound or different-generation working line superseded the failure"
