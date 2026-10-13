@@ -133,8 +133,13 @@
 #              directory) permits and the gateway lists.
 #              The choice is saved as the record's model= and model_choice= (a later
 #              relaunch follows the precedence described above)
-#              and in state/<id>.model, which the Deck driver reads before
-#              every turn; a running turn also gets Deck's
+#              and in state/<id>.model. Before every turn, the Deck driver uses
+#              that file's first line if it is a non-empty plain route; otherwise
+#              it uses its launch --model, never a retained earlier switch.
+#              The driver removes the switch file at startup so the launch
+#              choice wins. Removing it later changes subsequent turns only,
+#              not the saved model= or model_choice= used for relaunch.
+#              A running turn also gets Deck's
 #              `deck-control: set_model` control at its next safe point when
 #              its Deck accepts it (bin/fm_model_switch.py owns the checks and
 #              that publication). A handled task-inbox record marks the thread
