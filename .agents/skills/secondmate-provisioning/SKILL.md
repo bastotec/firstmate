@@ -73,6 +73,7 @@ Remote provisioning does the same on its own host ([`docs/remote-secondmates.md`
 A home seeded before that gate existed still carries the old route and says so through the session-start `HOME_ROUTE` line; repointing it is a migration, not a seed.
 
 Before provisioning on a machine that is not registered yet, resolve the intended remote code root and run `bin/fm-machine.sh check <alias> <remote-root>`; when any item is `human`, follow `AGENTS.md` section 9 using `bin/fm-machine-blocker.sh raise <alias> --root <remote-root> --for "create <Name>" --secondmate <id>=<Name>` and paste its reply block into the same reply.
+Before setup, review the [bridge-permission prerequisites](../../../docs/configuration.md#bridge-gates-configbridgesjson) with the captain.
 Once no human steps remain, either on the initial check or on the watch's passing re-check, run the captain-consented `bin/fm-machine.sh setup <alias> <remote-root>` before registering, provisioning or launching, because automatic setup items may still remain.
 Never run setup over a machine whose dotfiles have local changes without the captain's say; inspect them first and obtain any missing setup consent before proceeding.
 Handle setup's result as its header specifies: continue only on complete success; on incomplete setup re-check and escalate the remaining human steps through `AGENTS.md` section 9, and on failure report the evidence without registering or provisioning.
@@ -85,7 +86,8 @@ bin/fm-remote-home-seed.sh <id> <ssh-alias> <remote-root> <remote-home> {<projec
 ```
 
 You resolve each project's origin yourself - from the captain, the project registry, a clone that exists elsewhere, `gh-axi`, or an explicit paste - and name it as `<project>=<origin-url>`; the seed validates and transports what you supply.
-A remote seed therefore creates nothing in this home beyond the route, the charter brief, and a launch record once it is launched: never clone a project into `projects/`, initialize no-mistakes here, or run a fleet sync just to seed a remote secondmate.
+Never clone a project into `projects/`, initialize no-mistakes here, or run a fleet sync just to seed a remote secondmate.
+[`docs/remote-secondmates.md`](../../../docs/remote-secondmates.md#provision-a-route) owns the primary-home effects and bridge-permission prerequisites.
 A bare `<project>` remains a convenience for a project this home already has cloned, whose configured origin is read instead.
 [`docs/remote-secondmates.md`](../../../docs/remote-secondmates.md#provision-a-route) owns the rest of the operator contract, and [`bin/fm-project-origin-lib.sh`](../../../bin/fm-project-origin-lib.sh) owns the accepted origin forms.
 Pass `--no-projects` in the project position to seed the project-less home described above; the same mutual-exclusion and fail-loud-on-omission rules apply.

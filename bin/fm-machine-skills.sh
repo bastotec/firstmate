@@ -4,6 +4,7 @@
 # Usage:
 #   fm-machine-skills.sh refresh [<machine>[:<root>]...]
 #   fm-machine-skills.sh roots
+#   fm-machine-skills.sh discover
 #   fm-machine-skills.sh list [<machine>]
 #   fm-machine-skills.sh where <skill>...
 #   fm-machine-skills.sh check <machine|secondmate-id> <skill>...
@@ -15,13 +16,13 @@
 # root (machines.md first, then the first secondmates.md route on that host).
 #
 # refresh runs `deck skills` in the machine's Firstmate checkout (this home's
-# root for local; `ssh <alias>` in the code root, with the remote runtime's
-# operator PATH, for a remote) and replaces
+# root for local; fm-on.sh runs this script's discover in the code root for a remote) and replaces
 # state/machine-skills/<machine>.tsv atomically. The file starts with one
 # `# machine=<m> root=<root> refreshed=<UTC ISO time> count=<n>` line, then one
 # `<name>\t<scope>\t<path>` line per skill (scope is deck's repo|global).
-# list, where and check read only these recorded files, not live discovery;
+# list, where and check use these recorded inventories, not live discovery;
 # they impose no age limit, so consult refreshed before relying on a result.
+# where and check also consult bridge policy as described below.
 # With no machine named, refresh attempts all of them; an unreachable machine
 # or failed or empty discovery keeps its previous file and prints
 # `refresh <m>=failed: <reason>`. Other machines are still attempted, but any
@@ -29,6 +30,8 @@
 # `<alias>:<root>` refreshes a machine not registered yet (bin/fm-machine.sh
 # setup runs before register). bin/fm-machine.sh setup and bin/fm-update.sh
 # call it. roots prints `<machine>\t<root>` for every known machine.
+# discover runs `deck skills` in this code root without recording an inventory;
+# it is the receiving command for remote refresh.
 #
 # list prints the recorded inventory: `machine=<m> count=<n> refreshed=<t>`
 # per machine, followed by `skill <name> <scope>` lines when one is named.
@@ -40,6 +43,8 @@
 # machine=<m>` and exits 0, or `place=refuse: <m> lacks <skills>; <where>` and
 # exits 1, where <where> names the machines that have them all, or says none
 # does. A machine with no recorded inventory is refused (refresh it first).
+# A machine whose bridge does not allow placement (bin/fm-bridge.py) is refused
+# by check and left out of where.
 # A target that names both a known machine and a secondmate on a different
 # machine is refused as ambiguous; coincident bindings remain usable.
 #
@@ -50,8 +55,8 @@
 # It exits 0 when nothing is required or missing, else prints `refuse: ...`
 # and exits 1. Missing-skill diagnostics include the inventory's `where` answer;
 # invalid names or failed discovery refuse without suggesting a placement.
-# A home with no inventory of its own answers where from
-# $FM_SECONDMATE_PARENT_HOME's, when set, else asks the primary.
+# A home with no inventory of its own answers where using both the inventory
+# and bridge policy of $FM_SECONDMATE_PARENT_HOME, when set, else asks the primary.
 # bin/fm-spawn.sh runs this for ship/scout launches and relaunches using the
 # resolved worker Deck executable in the actual task worktree, after allocation
 # and any fresh-spawn base refresh, before worker launch. This applies in both
@@ -68,7 +73,6 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 INV="$STATE/machine-skills"
 DECK_BIN=${FM_DECK_BIN:-deck}
-SSH_BIN=${FM_SSH_BIN:-ssh}
 
 # shellcheck source=bin/fm-secondmate-registry-lib.sh
 . "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
@@ -76,11 +80,6 @@ SSH_BIN=${FM_SSH_BIN:-ssh}
 usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 valid_name() { case "$1" in ''|-*|*[!A-Za-z0-9._-]*) return 1 ;; esac; }
-sq() {
-  printf "'"
-  printf '%s' "$1" | sed "s/'/'\\\\''/g"
-  printf "'"
-}
 
 # Print "<machine>\t<root>" for every known machine, local first.
 machines() {
@@ -121,14 +120,8 @@ deck_skills_on() { # <machine> <root>
   if [ "$1" = local ]; then
     (cd "$2" && "$DECK_BIN" skills < /dev/null)
   else
-    # shellcheck disable=SC2029 # quoted for the remote shell on purpose.
-    {
-      cat "$SCRIPT_DIR/fm-remote-job-lib.sh"
-      # shellcheck disable=SC2016 # Expanded by the remote shell, not this one.
-      printf '\n%s\n' 'PATH=$(fm_remote_job_compose_operator_path "$HOME") && exec env -i HOME="$HOME" PATH="$PATH" deck skills < /dev/null'
-    } | "$SSH_BIN" -o BatchMode=yes -o ConnectTimeout=8 -o ForwardAgent=no \
-      -o ClearAllForwardings=yes -o 'SendEnv=-*' -o UpdateHostKeys=no \
-      -o StrictHostKeyChecking=yes "$1" "cd $(sq "$2") && bash -s"
+    FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$SCRIPT_DIR/.." \
+      "$SCRIPT_DIR/fm-on.sh" --machine-root "$2" "$1" fm-machine-skills.sh discover
   fi
 }
 
@@ -198,12 +191,18 @@ cmd_list() {
 }
 
 # Machines whose inventory has every named skill, space-separated.
+# Placement must cross an allowed bridge (bin/fm-bridge.py): local always may.
+placement_allowed() { # <machine>
+  [ "$1" = local ] || FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-bridge.sh" check "$1" placement >/dev/null 2>&1
+}
+
 machines_with() {
   local f m s ok found=
   for f in "$INV"/*.tsv; do
     [ -f "$f" ] || continue
     m=$(basename "$f" .tsv)
     ok=1
+    placement_allowed "$m" || continue
     for s in "$@"; do has_skill "$m" "$s" || { ok=0; break; }; done
     [ "$ok" -eq 0 ] || found="$found $m"
   done
@@ -240,6 +239,7 @@ cmd_check() { # <machine|secondmate-id> <skill>...
     fi
   fi
   [ -f "$INV/$m.tsv" ] || { printf 'place=refuse: %s has no recorded skill inventory; run bin/fm-machine-skills.sh refresh %s\n' "$m" "$m"; return 1; }
+  placement_allowed "$m" || { printf 'place=refuse: the bridge to %s does not allow placement; the captain allows it with bin/fm-bridge.sh allow %s placement or in Fleet Town\n' "$m" "$m"; return 1; }
   for s in "$@"; do has_skill "$m" "$s" || missing="${missing:+$missing, }$s"; done
   if [ -z "$missing" ]; then
     printf 'place=ok machine=%s\n' "$m"
@@ -255,7 +255,7 @@ brief_skills() { # <brief>
 }
 
 cmd_brief_check() { # <brief> <project-dir>
-  local brief=$1 dir=$2 out s missing=''
+  local brief=$1 dir=$2 out s missing='' FM_HOME=$FM_HOME
   local -a need=()
   [ -f "$brief" ] || { printf 'refuse: no brief at %s\n' "$brief"; return 1; }
   while IFS= read -r s; do
@@ -274,7 +274,8 @@ cmd_brief_check() { # <brief> <project-dir>
   [ -n "$missing" ] || return 0
   # A local secondmate answers "where" from its primary's inventory.
   if ! ls "$INV"/*.tsv >/dev/null 2>&1 && [ -n "${FM_SECONDMATE_PARENT_HOME:-}" ]; then
-    INV="$FM_SECONDMATE_PARENT_HOME/state/machine-skills"
+    FM_HOME=$FM_SECONDMATE_PARENT_HOME
+    INV="$FM_HOME/state/machine-skills"
   fi
   printf 'refuse: this machine lacks the skills the brief needs (%s); %s\n' "$missing" "$(where_text "${need[@]}")"
   return 1
@@ -287,6 +288,7 @@ main() {
   case "$sub" in
     refresh) cmd_refresh "$@" ;;
     roots) [ "$#" -eq 0 ] || usage; machines ;;
+    discover) [ "$#" -eq 0 ] || usage; (cd "$FM_ROOT" && "$DECK_BIN" skills < /dev/null) ;;
     list) [ "$#" -le 1 ] || usage; cmd_list "$@" ;;
     where) [ "$#" -ge 1 ] || usage; cmd_where "$@" ;;
     check) [ "$#" -ge 2 ] || usage; cmd_check "$@" ;;

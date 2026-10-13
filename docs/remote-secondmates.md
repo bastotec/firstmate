@@ -20,6 +20,7 @@ Do not enable agent forwarding for Firstmate.
 Use its read-only `check` before confirming `setup` to perform supported machine preparation and list the remaining human steps; its header also explains the scratch route's home-readiness limits.
 For optional model-gateway and stream-hub forwarding via `config/machine-tunnels`, see the same header's Tunnels contract.
 When an approved action waits on those human steps, [`bin/fm-machine-blocker.sh`](../bin/fm-machine-blocker.sh) provides the `Blocked on you:` reply and self-closing needs-you card; its header owns the commands, re-check lifecycle, and pending-machine record intended for Fleet Town to consume.
+Before provisioning, migrating, or operating a remote home, configure the [bridge permissions](configuration.md#bridge-gates-configbridgesjson); SSH reachability alone is not permission to use the machine.
 
 ### Skills per machine
 
@@ -28,7 +29,7 @@ Optional shared-skills provisioning ships the captain's skills repo over SSH and
 Setup records the connected machine's inventory, while [`bin/fm-update.sh`](../bin/fm-update.sh) attempts to refresh the local machine and all registered remote machines without provisioning shared skills again.
 These inventories describe discovery in each machine's Firstmate code root, not every project or secondmate home on that host.
 A routing check uses the recorded inventory, which can be stale after a failed refresh; a passing result is not proof that a project's worker has those skills.
-For a skill-dependent task, declare its required skills in the brief and check the destination inventory before routing it to a second mate.
+For a skill-dependent task, declare its required skills in the brief and use the destination placement check before routing it to a second mate; inventory alone does not establish bridge permission.
 Ship and scout launches, including relaunches, additionally verify those requirements with live discovery in the actual worker worktree and refuse missing skills before the worker starts.
 The [`fm-machine-skills.sh` header](../bin/fm-machine-skills.sh) owns brief syntax, inventory format and freshness limits, discovery and placement commands, and refusal diagnostics.
 
@@ -104,7 +105,7 @@ bin/fm-on.sh <secondmate-id|ssh-alias> fm-remote-doctor.sh
 ```
 
 That run is read-only; route seeding and existing-home migration run the same check.
-For an unregistered machine, use the [machine entry point](../bin/fm-machine.sh) rather than `fm-on.sh`, which requires a recorded remote route.
+For an unregistered machine, use the [machine entry point](../bin/fm-machine.sh), which handles preparation and its scratch readiness route; `fm-on.sh`'s header owns the separate machine-root operation lane.
 The doctor checks stream tools, Linux logout survival, the GUI login session on macOS, and the remote job worker (including its Aqua scope on macOS).
 For an absent destination home, the home-specific credential and hub checks report `skip`, allowing seeding and migration to provision it first.
 Once that home exists, the doctor also requires its stream credential and authenticated hub protocol check before launch or relaunch.
@@ -159,7 +160,8 @@ The primary validates every resolved origin before transport, and the receiving 
 The project's registered delivery mode still comes from this machine's `data/projects.md`, so an unregistered or `local-only` project is refused rather than provisioned.
 
 The seed records `host:`, `root:`, and `home:` in `data/secondmates.md`, gates the host on readiness, sends a bounded manifest, and lets the remote host clone its own Firstmate home and project origins.
-In the primary home, its durable registration effects are limited to that route and the charter brief under `data/<id>`; launch records are created only when the secondmate is launched.
+The route and charter brief under `data/<id>` are retained in the primary home, while launch records are created only when the secondmate is launched.
+The [bridge gate](configuration.md#bridge-gates-configbridgesjson) also maintains its policy, audit and approval records, including when provisioning is refused.
 That home is cloned from the host's own Firstmate copy, so provisioning repoints it at the route that copy delivers to; otherwise a validated change to the firstmate repo made from that home would be pushed into a directory on its own host and never open a pull request.
 The parent's sync still imports a commit into the home from that copy by path, before trying `origin`, so nothing about handing it a commit changes.
 Readiness starts with a read-only check; when that check reports a gap, it runs `--fix` and then a second read-only check whose verdict decides, so the operator never has to run the repair by hand and a repair is never trusted on its own word.

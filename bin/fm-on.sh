@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Execute one tracked Firstmate command in a configured remote secondmate home.
+# Execute one tracked Firstmate command in a remote home or machine operation lane.
 #
 # Usage:
-#   fm-on.sh [--stdin] <secondmate-id|unambiguous-ssh-alias> <fm-command> [args...]
+#   fm-on.sh [--stdin] [--machine-root <root>] <secondmate-id|ssh-alias> <fm-command> [args...]
 #
-# Routes come only from remote records in data/secondmates.md. A record names an
+# --machine-root selects a machine's code root and its sibling <root>.machine-home
+# as the operation lane; machine commands do not require a secondmate route.
+# Otherwise routes come from remote records in data/secondmates.md. A record names an
 # SSH config alias, remote Firstmate code root, and remote FM_HOME. A host alias
 # may be used directly only when exactly one record selects it; an ambiguous
 # alias is refused. The command must be a genuine executable in this checkout's
-# bin/fm-*.sh namespace. No per-command table exists.
+# bin/fm-*.sh namespace; there is no command authorization allowlist.
+# The bridge classification table below selects the required flow permissions.
 #
 # argv is encoded as one NUL-delimited stream and passed through the fixed
 # fm-remote-entrypoint.sh. The remote command's stdin is /dev/null by default,
@@ -20,11 +23,19 @@
 # remote completion and must be reconciled by the semantic caller, never
 # blindly repeated by this layer.
 #
-# The SSH alias keeps normal public-key and strict host-key policy in ~/.ssh.
-# BatchMode makes an unknown host key or a password prompt fail at once instead
-# of asking on the controlling terminal, which inside a pane is an agent's
-# composer: a prompt there swallows the next typed line.
-# It neither relaxes the host-key policy nor adds known_hosts entries.
+# The SSH alias keeps its public-key configuration in ~/.ssh, but every call
+# forces StrictHostKeyChecking=yes and UpdateHostKeys=no, including the doctor.
+# BatchMode makes a password prompt fail at once instead of asking on the
+# controlling terminal, which inside a pane is an agent's composer: a prompt
+# there swallows the next typed line. Unknown host keys are refused, and this
+# transport never adds or refreshes known_hosts entries.
+# Before any ssh, the command's flow (supervision, reports, messages, placement, files,
+# maintenance; the readiness doctor is never gated) must be allowed on the bridge to
+# that host by bin/fm-bridge.sh check. A refused flow exits 1 with `bridge-blocked:` on
+# stderr, nothing sent; bin/fm-bridge.py owns refusal auditing and request publication.
+# The classification table below is the single owner of which remote command
+# requires which flows; an unlisted command counts as maintenance.
+# A command assigned multiple flows must pass every permission check.
 # This command explicitly disables agent forwarding, forwarding setup, and
 # configured SendEnv patterns. The remote entrypoint executes the selected
 # command under an empty environment with only its fixed runtime values.
@@ -56,10 +67,14 @@ encode_base64() {
 }
 
 STDIN_MODE=closed
-if [ "${1:-}" = --stdin ]; then
-  STDIN_MODE=caller
-  shift
-fi
+MACHINE_ROOT=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --stdin) STDIN_MODE=caller; shift ;;
+    --machine-root) [ "$#" -ge 2 ] || usage; MACHINE_ROOT=$2; shift 2 ;;
+    *) break ;;
+  esac
+done
 [ "$#" -ge 2 ] || usage
 ROUTE=$1
 COMMAND=$2
@@ -76,25 +91,30 @@ LOCAL_COMMAND="$FM_ROOT/bin/$COMMAND"
   || die "remote command is not a genuine tracked executable in this Firstmate checkout: $COMMAND"
 git -C "$FM_ROOT" ls-files --error-unmatch "bin/$COMMAND" >/dev/null 2>&1 \
   || die "remote command is not tracked by this Firstmate checkout: $COMMAND"
-[ -f "$REG" ] && [ ! -L "$REG" ] || die "no safe secondmate registry at $REG"
-
 MATCHES=0
 HOST=
 ROOT=
 HOME_PATH=
-while IFS= read -r line || [ -n "$line" ]; do
-  case "$line" in '- '*) ;; *) continue ;; esac
-  secondmate_registry_parse_line "$line" || die "malformed secondmate registry entry: $line"
-  [ "$SECONDMATE_REGISTRY_REMOTE" -eq 1 ] || continue
-  if [ "$SECONDMATE_REGISTRY_ID" = "$ROUTE" ] || [ "$SECONDMATE_REGISTRY_HOST" = "$ROUTE" ]; then
-    MATCHES=$((MATCHES + 1))
-    HOST=$SECONDMATE_REGISTRY_HOST
-    ROOT=$SECONDMATE_REGISTRY_ROOT
-    HOME_PATH=$SECONDMATE_REGISTRY_HOME
-  fi
-done < "$REG"
-[ "$MATCHES" -gt 0 ] || die "no remote secondmate or SSH alias matches '$ROUTE'"
-[ "$MATCHES" -eq 1 ] || die "remote route '$ROUTE' is ambiguous across $MATCHES configured secondmates; use a secondmate id"
+if [ -n "$MACHINE_ROOT" ]; then
+  HOST=$ROUTE
+  ROOT=$MACHINE_ROOT
+  HOME_PATH="${MACHINE_ROOT%/}.machine-home"
+else
+  [ -f "$REG" ] && [ ! -L "$REG" ] || die "no safe secondmate registry at $REG"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in '- '*) ;; *) continue ;; esac
+    secondmate_registry_parse_line "$line" || die "malformed secondmate registry entry: $line"
+    [ "$SECONDMATE_REGISTRY_REMOTE" -eq 1 ] || continue
+    if [ "$SECONDMATE_REGISTRY_ID" = "$ROUTE" ] || [ "$SECONDMATE_REGISTRY_HOST" = "$ROUTE" ]; then
+      MATCHES=$((MATCHES + 1))
+      HOST=$SECONDMATE_REGISTRY_HOST
+      ROOT=$SECONDMATE_REGISTRY_ROOT
+      HOME_PATH=$SECONDMATE_REGISTRY_HOME
+    fi
+  done < "$REG"
+  [ "$MATCHES" -gt 0 ] || die "no remote secondmate or SSH alias matches '$ROUTE'"
+  [ "$MATCHES" -eq 1 ] || die "remote route '$ROUTE' is ambiguous across $MATCHES configured secondmates; use a secondmate id"
+fi
 case "$HOST" in ''|-*|*[!A-Za-z0-9._-]*) die "configured SSH alias is unsafe: $HOST" ;; esac
 case "$ROOT" in /*) ;; *) die "configured remote root is not absolute: $ROOT" ;; esac
 case "$HOME_PATH" in /*) ;; *) die "configured remote home is not absolute: $HOME_PATH" ;; esac
@@ -102,6 +122,38 @@ case "$ROOT$HOME_PATH" in *$'\n'*|*$'\r'*|*$'\t'*) die "configured remote root o
 for configured_path in "$ROOT" "$HOME_PATH"; do
   case "/$configured_path/" in */../*|*/./*) die "configured remote root or home contains traversal components" ;; esac
   case "$configured_path" in *'//'*) die "configured remote root or home contains an empty path component" ;; esac
+done
+
+# Bridge gate (bin/fm-bridge.py owns flows, defaults and the refused-flow request):
+# classify this command's flow and refuse before anything crosses the bridge.
+FLOW=maintenance
+case "$COMMAND" in
+  fm-remote-doctor.sh) FLOW= ;;
+  fm-remote-secondmate-control.sh)
+    case "${1:-}" in
+      send|key) FLOW=messages ;;
+      launch) FLOW=placement ;;
+      sync|update) FLOW=maintenance ;;
+      *) FLOW=supervision ;;
+    esac ;;
+  fm-retire-endpoint.sh) FLOW=supervision ;;
+  fm-backlog-receive.sh) FLOW=placement ;;
+  fm-idle-sweep.sh)
+    [ "${1:-}" != summary ] || FLOW=reports ;;
+  fm-remote-file.sh)
+    FLOW=files
+    if [ "${1:-}" = get ] && [ "${2:-}" = state/home-summary.json ]; then
+      FLOW='files reports'
+    fi ;;
+  fm-remote-delta-read.sh|fm-procevent-remote-reply.sh|fm-public-followup-collect.sh|fm-x-followup.sh|fm-crew-state.sh|fm-peek.sh) FLOW=reports ;;
+esac
+for FLOW in $FLOW; do
+  if ! BRIDGE_ANSWER=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-bridge.sh" check "$HOST" "$FLOW" 2>&1); then
+    REQUEST=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-bridge.sh" block "$HOST" "$FLOW" --what "$COMMAND ${1:-}" 2>/dev/null) || REQUEST=
+    printf 'bridge-blocked: %s; nothing was sent to %s. The captain must allow %s on that bridge%s.\n' \
+      "${BRIDGE_ANSWER#deny: }" "$HOST" "$FLOW" "${REQUEST:+ (request $REQUEST is waiting for him in Fleet Town)}" >&2
+    exit 1
+  fi
 done
 
 ROOT_B64=$(printf '%s' "$ROOT" | encode_base64)
@@ -120,6 +172,8 @@ SSH_ARGS=(
   -o ForwardAgent=no
   -o ClearAllForwardings=yes
   -o 'SendEnv=-*'
+  -o UpdateHostKeys=no
+  -o StrictHostKeyChecking=yes
   -o "ServerAliveInterval=$ALIVE_INTERVAL"
   -o "ServerAliveCountMax=$ALIVE_COUNT_MAX"
   -- "$HOST" fm-remote-entrypoint.sh "$PROTOCOL" "$ROOT_B64" "$HOME_B64" "$ARGV_B64"

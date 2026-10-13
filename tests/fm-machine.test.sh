@@ -88,6 +88,10 @@ case "$1" in
   fm-remote-entrypoint.sh)
     printf 'entrypoint root=%s home=%s argv=%s\n' "$(printf '%s' "$3" | base64 -d)" "$(printf '%s' "$4" | base64 -d)" \
       "$(printf '%s' "$5" | base64 -d | tr '\0' ' ')" >> "$FAKE_SSH_LOG"
+    if [ "$(printf '%s' "$5" | base64 -d | tr '\0' ' ')" = 'fm-machine-skills.sh discover ' ]; then
+      cd "$(printf '%s' "$3" | base64 -d)" || exit 255
+      HOME="$FAKE_ACCOUNT" PATH="$FAKE_ACCOUNT/.local/bin:$FAKE_RBIN:/usr/bin:/bin" exec deck skills
+    fi
     if [ "${FAKE_DOCTOR_UNAVAILABLE:-0}" = 1 ]; then
       echo 'ssh: doctor transport failed' >&2
       exit 255
@@ -246,6 +250,8 @@ git -C "$NETFM" remote add origin https://example.com/acme/firstmate.git
 RROOT="$FAKE_ACCOUNT/firstmate"
 
 machine() { FM_HOME="$FMH" FM_ROOT_OVERRIDE="${FM_ROOT_OVERRIDE:-$NETFM}" "$ROOT/bin/fm-machine.sh" "$@"; }
+
+FM_HOME="$FMH" "$ROOT/bin/fm-bridge.sh" allow box maintenance >/dev/null
 
 # --- check ---
 before=$(cat "$FM_KNOWN_HOSTS")

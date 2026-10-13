@@ -30,15 +30,14 @@
 # second mate on that machine (and, for local, the primary) picks it up on its
 # next restart; new crewmates get it at launch.
 #
-# A remote machine is reached with `ssh -o BatchMode=yes <alias>` (FM_SSH_BIN
-# overrides ssh). Refusals print `refuse: <reason>` and exit 1; usage errors 2.
+# A remote machine is reached through fm-on.sh (FM_SSH_BIN overrides ssh).
+# Refusals print `refuse: <reason>` and exit 1; usage errors 2.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
-SSH_BIN=${FM_SSH_BIN:-ssh}
 MAX_BYTES=65536
 
 # shellcheck source=bin/fm-secondmate-registry-lib.sh
@@ -104,18 +103,20 @@ valid_machine() {
   [ "$1" = local ] || "$SCRIPT_DIR/fm-machine-skills.sh" roots 2>/dev/null | cut -f1 | grep -qxF -- "$1"
 }
 
-on_machine() { # <machine> <script> [args...]; stdin passes through
-  local m=$1 script=$2
+on_machine() {
+  local m=$1 operation=$2 root
+  local -a input=()
   shift 2
   if [ "$m" = local ]; then
-    sh -c "$script" sh "$@"
+    case "$operation" in
+      read) sh -c "$READ_SH" sh ;;
+      write) sh -c "$WRITE_SH" sh "$@" ;;
+    esac
   else
-    local b64 arg cmd
-    b64=$(printf '%s' "$script" | base64 | tr -d '\n')
-    cmd="sh -c \"\$(printf %s $b64 | base64 -d)\" sh"
-    for arg in "$@"; do cmd="$cmd '$arg'"; done
-    # shellcheck disable=SC2029 # built for the remote shell on purpose.
-    "$SSH_BIN" -o BatchMode=yes -o ConnectTimeout=8 -o ForwardAgent=no -o ClearAllForwardings=yes "$m" "$cmd"
+    root=$("$SCRIPT_DIR/fm-machine-skills.sh" roots | awk -F '\t' -v m="$m" '$1 == m { print $2; exit }')
+    [ "$operation" != write ] || input=(--stdin)
+    FM_HOME="$FM_HOME" FM_ROOT_OVERRIDE="$SCRIPT_DIR/.." \
+      "$SCRIPT_DIR/fm-on.sh" "${input[@]+"${input[@]}"}" --machine-root "$root" "$m" fm-machine-instructions.sh "$operation-local" "$@"
   fi
 }
 
@@ -159,7 +160,7 @@ print(json.dumps({"machine": m, "path": "~/.agents/AGENTS.md", "present": presen
 cmd_show() { # <machine> [--json]
   local m=$1 as_json=${2:-} out head present sha tmp
   valid_machine "$m" || refuse "not a known machine: $m"
-  out=$(on_machine "$m" "$READ_SH" && printf x) || refuse "could not read ~/.agents/AGENTS.md on $m"
+  out=$(on_machine "$m" read && printf x) || refuse "could not read ~/.agents/AGENTS.md on $m"
   out=${out%x}
   head=${out%%$'\n'*}
   case "$head" in
@@ -200,7 +201,7 @@ cmd_save() { # <machine> --expect <sha|none> [--json]
   [ "$(wc -c < "$tmp")" -le "$MAX_BYTES" ] || refuse "the instructions are over $MAX_BYTES bytes"
   [ "$(tr -d '\000' < "$tmp" | wc -c)" -eq "$(wc -c < "$tmp")" ] || refuse "the instructions contain a NUL byte"
   set +e
-  out=$(on_machine "$m" "$WRITE_SH" "$expect" < "$tmp" 2>&1)
+  out=$(on_machine "$m" write "$expect" < "$tmp" 2>&1)
   rc=$?
   set -e
   case "$out" in
@@ -216,9 +217,14 @@ cmd_save() { # <machine> --expect <sha|none> [--json]
   fi
 }
 
-[ "$#" -ge 2 ] || usage
+[ "$#" -ge 1 ] || usage
 sub=$1
 shift
+case "$sub" in
+  read-local) [ "$#" -eq 0 ] || usage; on_machine local read; exit ;;
+  write-local) [ "$#" -eq 1 ] || usage; on_machine local write "$1"; exit ;;
+esac
+[ "$#" -ge 1 ] || usage
 case "$sub" in
   show) [ "$#" -le 2 ] || usage; [ "$#" -eq 1 ] || [ "$2" = --json ] || usage; cmd_show "$@" ;;
   save) cmd_save "$@" ;;

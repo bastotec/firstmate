@@ -457,7 +457,7 @@ PY
 }
 
 test_machine_approvals_local_and_remote() {
-  local w fmh out rc
+  local w fmh out rc before sha crossings
   w=$(world machine)
   fmh="$w/fmh"
   mkdir -p "$fmh/data" "$w/remote-home/.agents"
@@ -466,10 +466,12 @@ test_machine_approvals_local_and_remote() {
   # shellcheck disable=SC2016 # the fake's own variables expand when it runs.
   {
     printf '#!/usr/bin/env bash\n'
-    printf 'while [ "$#" -gt 1 ]; do case "$1" in -o) shift 2 ;; *) break ;; esac; done\n'
+    printf 'while [ "$#" -gt 1 ]; do case "$1" in -o) shift 2 ;; --) shift; break ;; *) break ;; esac; done\n'
     printf 'printf "%%s\\n" "$1" >> %q\n' "$w/ssh.log"
     printf 'shift\n'
-    printf 'HOME=%q exec bash -c "$*"\n' "$w/remote-home"
+    printf 'root=$(printf "%%s" "$3" | base64 -d)\n'
+    printf 'args=(); while IFS= read -r -d "" arg; do args+=("$arg"); done < <(printf "%%s" "$5" | base64 -d)\n'
+    printf 'HOME=%q FM_HOME=%q exec bash "$root/bin/${args[0]}" "${args[@]:1}"\n' "$w/remote-home" "$w/remote-home"
   } > "$w/bin/ssh"
   chmod +x "$w/bin/ssh"
   mm() { FM_HOME="$fmh" FM_SSH_BIN="$w/bin/ssh" FM_APPROVAL_POLICY='' FM_DECK_HOOKS='' "$ROOT/bin/fm-machine-approvals.sh" "$@"; }
@@ -499,7 +501,24 @@ test_machine_approvals_local_and_remote() {
   assert_equals 3 "$rc" "remote conflict exits 3"
   rc=0; mm show nowhere >/dev/null 2>&1 || rc=$?
   assert_equals 1 "$rc" "unknown machine refused"
-  pass "fm-machine-approvals shows, saves and audits a remote machine over ssh"
+  before=$(cat "$w/remote-home/.agents/approvals.json")
+  sha=$(mm show box | jq -r .sha)
+  crossings=$(wc -l < "$w/ssh.log" | tr -d ' ')
+  FM_HOME="$fmh" "$ROOT/bin/fm-bridge.sh" deny box maintenance >/dev/null
+  rc=0
+  out=$(printf '{"gates":[]}' | mm save box --expect "$sha" 2>&1) || rc=$?
+  assert_equals 1 "$rc" "denied maintenance refuses policy save"
+  assert_contains "$out" bridge-blocked: "save reports the bridge refusal"
+  assert_equals "$before" "$(cat "$w/remote-home/.agents/approvals.json")" "denied save preserves remote policy"
+  assert_equals "$crossings" "$(wc -l < "$w/ssh.log" | tr -d ' ')" "denied save never reaches SSH"
+  assert_equals bridge:maintenance "$(jq -r .gate "$fmh"/state/approvals/ap-*.json)" "maintenance approval requested"
+  assert_grep '"event":"blocked"' "$fmh/state/bridges.log" "policy refusal audited"
+  printf 'broken' > "$fmh/config/bridges.json"
+  rc=0
+  out=$(printf '{"gates":[]}' | mm save box --expect "$sha" 2>&1) || rc=$?
+  assert_equals 1 "$rc" "unreadable bridge policy refuses policy save"
+  assert_equals "$crossings" "$(wc -l < "$w/ssh.log" | tr -d ' ')" "unreadable bridge policy sends nothing"
+  pass "fm-machine-approvals shows, saves and audits only over an allowed bridge"
 }
 
 test_policy_save_keeps_keys_it_is_not_given() {
