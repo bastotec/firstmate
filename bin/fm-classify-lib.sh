@@ -152,81 +152,76 @@ status_is_terminal_verb() {
 
 # --- Deck turn-failure supersession -----------------------------------------
 #
-# The Deck wrapper reserves the watcher's durable recovery generation before it
-# records an otherwise silent failed turn:
+# A silent failed Deck turn opens a task-local recovery episode:
 #   failed: deck turn ended without a status line
-#     (turn-failed recovery-gen=<generation> at=<byte-offset>)
-# If a later turn in that recovery episode reports `working:`, the wrapper
-# appends a `working [recovery-gen=<generation>]:` record after it. The pair is
-# durable and ordered in the append-only status log, so classification does not
-# depend on the task's current busy snapshot or on whether the replay later went
-# idle. The byte offset identifies one failure even when an episode repeats the
-# same backstop text.
-fm_turn_failed_generation_pending() {  # <status-file> <recovery-generation> <captured-endpoint>
-  local f=$1 gen=$2 limit=$3
-  case "$gen" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+#     (turn-failed recovery-gen=<generation> id=<record-id>)
+# The next turn reuses that generation. Its first worker-authored `working:`
+# record is immediately followed by `working [recovery-gen=<generation>]:`.
+# The random record id identifies one failure independently of concurrent status
+# writers, while the ordered generation marker keeps supersession durable.
+fm_turn_failed_pending_generation() {  # <status-file> <captured-endpoint>
+  local f=$1 limit=$2
   case "$limit" in ''|*[!0-9]*) return 1 ;; esac
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 1
   LC_ALL=C perl -e '
     use bytes;
-    my ($path, $generation, $limit) = @ARGV;
+    my ($path, $limit) = @ARGV;
     open my $file, "<", $path or exit 1;
     binmode $file;
-    my $failure = "failed: deck turn ended without a status line (turn-failed recovery-gen=$generation at=";
-    my $working = "working [recovery-gen=$generation]:";
-    my $pending = 0;
+    my (%pending, $sequence);
     while (tell($file) < $limit) {
-      my $start = tell($file);
       my $line = <$file>;
       last unless defined $line && tell($file) <= $limit;
       $line =~ s/[\r\n]+\z//;
-      if (index($line, $failure) == 0 && $line eq "$failure$start)") {
-        $pending = 1;
-      } elsif (index($line, $working) == 0) {
-        $pending = 0;
+      if ($line =~ m{^failed: deck turn ended without a status line \(turn-failed recovery-gen=([A-Za-z0-9._-]+) id=[A-Za-z0-9._-]+\)$}) {
+        $pending{$1} = ++$sequence;
+      } elsif ($line =~ m{^working \[recovery-gen=([A-Za-z0-9._-]+)\]:}) {
+        delete $pending{$1};
       }
     }
-    exit($pending ? 0 : 1);
-  ' "$f" "$gen" "$limit"
+    my ($latest) = sort { $pending{$b} <=> $pending{$a} } keys %pending;
+    exit 1 unless defined $latest;
+    print $latest;
+  ' "$f" "$limit"
 }
 
 fm_turn_failed_superseded_line() {  # <status-file> <status-line> [captured-endpoint]
-  local f=$1 line=$2 limit=${3:-} note rest gen at size
+  local f=$1 line=$2 limit=${3:-} note rest gen record_id size
   [ "$(status_line_verb "$line")" = failed ] || return 1
   note=$(status_line_note "$line")
   rest=${note#'deck turn ended without a status line (turn-failed recovery-gen='}
   [ "$rest" != "$note" ] || return 1
-  gen=${rest%% at=*}
-  at=${rest#"$gen at="}
-  at=${at%)}
-  [ "$note" = "deck turn ended without a status line (turn-failed recovery-gen=$gen at=$at)" ] || return 1
+  gen=${rest%% id=*}
+  record_id=${rest#"$gen id="}
+  record_id=${record_id%)}
+  [ "$note" = "deck turn ended without a status line (turn-failed recovery-gen=$gen id=$record_id)" ] || return 1
   case "$gen" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
-  case "$at" in ''|*[!0-9]*) return 1 ;; esac
+  case "$record_id" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 1
   if [ -z "$limit" ]; then
     size=$(_fm_status_file_size "$f") || return 1
     limit=${size//[[:space:]]/}
   fi
   case "$limit" in ''|*[!0-9]*) return 1 ;; esac
-  [ "$at" -lt "$limit" ] || return 1
   LC_ALL=C perl -e '
     use bytes;
-    my ($path, $offset, $limit, $target, $generation) = @ARGV;
+    my ($path, $limit, $target, $generation) = @ARGV;
     open my $file, "<", $path or exit 1;
     binmode $file;
-    seek($file, $offset, 0) or exit 1;
-    my $line = <$file>;
-    exit 1 unless defined $line && tell($file) <= $limit;
-    $line =~ s/[\r\n]+\z//;
-    exit 1 unless $line eq $target;
     my $prefix = "working [recovery-gen=$generation]:";
-    while (defined($line = <$file>)) {
-      last if tell($file) > $limit;
+    my $found = 0;
+    while (tell($file) < $limit) {
+      my $line = <$file>;
+      last unless defined $line && tell($file) <= $limit;
       $line =~ s/[\r\n]+\z//;
-      exit 0 if index($line, $prefix) == 0;
+      if (!$found && $line eq $target) {
+        $found = 1;
+      } elsif ($found && index($line, $prefix) == 0) {
+        exit 0;
+      }
     }
     exit 1;
-  ' "$f" "$at" "$limit" "$line" "$gen"
+  ' "$f" "$limit" "$line" "$gen"
 }
 
 # 0 if the given (last) status line matches a captain-relevant verb.
@@ -250,6 +245,36 @@ status_is_captain_relevant() {
     esac
   fi
   printf '%s' "$line" | grep -qiE "${FM_CAPTAIN_RE:-$FM_CLASSIFY_CAPTAIN_RE_DEFAULT}"
+}
+
+fm_status_span_only_superseded_turn_failures() {  # <status-file> <start-offset> <captured-endpoint> <identity>
+  local f=$1 start=$2 limit=$3 expected_ident=$4 scratch line saw=0 failed=0 ident size
+  case "$start" in ''|*[!0-9]*) return 1 ;; esac
+  case "$limit" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$start" -lt "$limit" ] || return 1
+  [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 1
+  ident=$(_fm_open_decisions_file_ident "$f") || return 1
+  size=$(_fm_status_file_size "$f") || return 1
+  size=${size//[[:space:]]/}
+  [ "$ident" = "$expected_ident" ] && [ "$size" -ge "$limit" ] || return 1
+  scratch=$(_fm_status_span_scratch "$f") || return 1
+  _fm_status_read_span "$f" "$start" "$((limit - start))" > "$scratch" 2>/dev/null || {
+    rm -f "$scratch"
+    return 1
+  }
+  while IFS= read -r line || [ -n "$line" ]; do
+    status_is_captain_relevant "$line" || continue
+    if fm_turn_failed_superseded_line "$f" "$line" "$limit"; then
+      saw=1
+    else
+      failed=1
+      break
+    fi
+  done < "$scratch"
+  rm -f "$scratch"
+  ident=$(_fm_open_decisions_file_ident "$f") || return 1
+  [ "$ident" = "$expected_ident" ] || return 1
+  [ "$failed" -eq 0 ] && [ "$saw" -eq 1 ]
 }
 
 # 0 if a status line's leading verb is the pause verb (paused: <reason>). A pure

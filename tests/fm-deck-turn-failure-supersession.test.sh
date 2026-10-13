@@ -6,9 +6,6 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-# shellcheck source=bin/fm-wake-lib.sh
-. "$ROOT/bin/fm-wake-lib.sh"
-
 # shellcheck source=bin/fm-classify-lib.sh
 . "$ROOT/bin/fm-classify-lib.sh"
 
@@ -20,27 +17,22 @@ new_case() {  # <name>
   printf '%s' "$d"
 }
 
-failure_line() {  # <generation> <offset>
-  printf 'failed: deck turn ended without a status line (turn-failed recovery-gen=%s at=%s)' "$1" "$2"
+failure_line() {  # <generation> <record-id>
+  printf 'failed: deck turn ended without a status line (turn-failed recovery-gen=%s id=%s)' "$1" "$2"
 }
 
-append_failure() {  # <status-file> <generation>
-  local offset
-  offset=$(wc -c < "$1" 2>/dev/null | tr -d '[:space:]')
-  case "$offset" in ''|*[!0-9]*) offset=0 ;; esac
-  printf '%s\n' "$(failure_line "$2" "$offset")" >> "$1"
-  printf '%s' "$offset"
+append_failure() {  # <status-file> <generation> <record-id>
+  printf '%s\n' "$(failure_line "$2" "$3")" >> "$1"
 }
 
 test_later_working_in_the_same_recovery_generation_supersedes() {
-  local dir status generation offset failure endpoint
+  local dir status generation record failure endpoint
   dir=$(new_case same-generation)
   status="$dir/state/task.status"
-  : > "$status"
-  generation=$(fm_recovery_marker_reserve_generation "$dir/state/.watcher-down") \
-    || fail "could not reserve a recovery generation"
-  offset=$(append_failure "$status" "$generation")
-  failure=$(failure_line "$generation" "$offset")
+  generation=deck-same
+  record=record-one
+  append_failure "$status" "$generation" "$record"
+  failure=$(failure_line "$generation" "$record")
   printf 'working: replay resumed\n' >> "$status"
   printf 'working [recovery-gen=%s]: deck turn reported working\n' "$generation" >> "$status"
   endpoint=$(wc -c < "$status" | tr -d '[:space:]')
@@ -53,14 +45,14 @@ test_later_working_in_the_same_recovery_generation_supersedes() {
 }
 
 test_original_turn_state_cannot_supersede_before_replay() {
-  local dir status generation offset failure
+  local dir status generation record failure
   dir=$(new_case no-replay)
   status="$dir/state/task.status"
+  generation=deck-original
+  record=record-original
   printf 'working: original turn started\n' > "$status"
-  generation=$(fm_recovery_marker_reserve_generation "$dir/state/.watcher-down") \
-    || fail "could not reserve a recovery generation"
-  offset=$(append_failure "$status" "$generation")
-  failure=$(failure_line "$generation" "$offset")
+  append_failure "$status" "$generation" "$record"
+  failure=$(failure_line "$generation" "$record")
 
   fm_turn_failed_superseded_line "$status" "$failure" \
     && fail "working evidence before the failure superseded it"
@@ -70,14 +62,13 @@ test_original_turn_state_cannot_supersede_before_replay() {
 }
 
 test_unbound_and_different_generation_working_lines_do_not_supersede() {
-  local dir status generation offset failure other
+  local dir status generation record failure
   dir=$(new_case mismatched-working)
   status="$dir/state/task.status"
-  : > "$status"
-  generation=$(fm_recovery_marker_reserve_generation "$dir/state/.watcher-down") \
-    || fail "could not reserve a recovery generation"
-  offset=$(append_failure "$status" "$generation")
-  failure=$(failure_line "$generation" "$offset")
+  generation=deck-mismatch
+  record=record-mismatch
+  append_failure "$status" "$generation" "$record"
+  failure=$(failure_line "$generation" "$record")
   printf 'working: unbound replay line\n' >> "$status"
   printf 'working [recovery-gen=other-generation]: unrelated recovery\n' >> "$status"
 
@@ -85,49 +76,40 @@ test_unbound_and_different_generation_working_lines_do_not_supersede() {
     && fail "an unbound or different-generation working line superseded the failure"
   status_span_has_actionable "$status" 0 \
     || fail "a generation-mismatched failure was absorbed"
-
-  other=$(fm_recovery_marker_reserve_generation "$dir/state/.other-watcher-down") \
-    || fail "could not reserve the comparison generation"
-  [ "$other" != "$generation" ] || fail "the fixture did not create distinct generations"
   pass "only recovery-bound working evidence can supersede a failure"
 }
 
-test_supersession_survives_idle_and_later_recovery_episodes() {
-  local dir status generation offset failure
-  dir=$(new_case durable)
+test_supersession_is_independent_of_watcher_recovery_state() {
+  local dir status generation record failure
+  dir=$(new_case task-local)
   status="$dir/state/task.status"
-  : > "$status"
-  generation=$(fm_recovery_marker_reserve_generation "$dir/state/.watcher-down") \
-    || fail "could not reserve a recovery generation"
-  offset=$(append_failure "$status" "$generation")
-  failure=$(failure_line "$generation" "$offset")
+  generation=deck-local
+  record=record-local
+  append_failure "$status" "$generation" "$record"
+  failure=$(failure_line "$generation" "$record")
   printf 'working [recovery-gen=%s]: replay stayed healthy\n' "$generation" >> "$status"
 
-  fm_recovery_marker_ack "$dir/state/.watcher-down" "$generation" \
-    || fail "could not close the original recovery episode"
-  fm_recovery_marker_reserve_generation "$dir/state/.watcher-down" >/dev/null \
-    || fail "could not open a later recovery episode"
-  rm -f "$dir/state/.watcher-down"
-
+  [ ! -e "$dir/state/.watcher-down" ] \
+    || fail "the task-local fixture unexpectedly created watcher recovery state"
   fm_turn_failed_superseded_line "$status" "$failure" \
-    || fail "supersession depended on the live recovery marker"
+    || fail "supersession depended on watcher recovery state"
   status_span_has_actionable "$status" 0 \
-    && fail "the old failure resurfaced after the recovery episode moved"
-  pass "ordered status evidence keeps supersession durable"
+    && fail "the task-local superseded failure resurfaced"
+  pass "Deck recovery identity stays task-local"
 }
 
 test_only_exact_turn_failed_records_participate() {
   local dir status generation line
   dir=$(new_case exact-event)
   status="$dir/state/task.status"
-  generation=$(fm_recovery_marker_reserve_generation "$dir/state/.watcher-down") \
-    || fail "could not reserve a recovery generation"
+  generation=deck-exact
 
   for line in \
     'failed: deck turn ended without a status line (turn-end)' \
     'failed: deck turn ended without a status line (interrupted)' \
-    "failed: deck turn ended without a status line (turn-end recovery-gen=$generation at=0)" \
-    "failed: deck turn ended without a status line (arbitrary recovery-gen=$generation at=0)" \
+    "failed: deck turn ended without a status line (turn-end recovery-gen=$generation id=record)" \
+    "failed: deck turn ended without a status line (arbitrary recovery-gen=$generation id=record)" \
+    "failed: deck turn ended without a status line (turn-failed recovery-gen=$generation at=0)" \
     'failed: deck turn ended without a status line (turn-failed)' \
     'failed: tests failed'; do
     printf '%s\nworking [recovery-gen=%s]: later work\n' "$line" "$generation" > "$status"
@@ -137,35 +119,32 @@ test_only_exact_turn_failed_records_participate() {
   pass "turn-end, interrupted, legacy, and foreign failures stay failed"
 }
 
-test_failure_offset_identifies_the_exact_repeated_record() {
-  local dir status generation first_offset second_offset first second
+test_record_identity_disambiguates_repeated_failures() {
+  local dir status generation first second
   dir=$(new_case repeated)
   status="$dir/state/task.status"
-  : > "$status"
-  generation=$(fm_recovery_marker_reserve_generation "$dir/state/.watcher-down") \
-    || fail "could not reserve a recovery generation"
-  first_offset=$(append_failure "$status" "$generation")
-  first=$(failure_line "$generation" "$first_offset")
+  generation=deck-repeated
+  append_failure "$status" "$generation" record-first
+  first=$(failure_line "$generation" record-first)
   printf 'working [recovery-gen=%s]: first replay resumed\n' "$generation" >> "$status"
-  second_offset=$(append_failure "$status" "$generation")
-  second=$(failure_line "$generation" "$second_offset")
+  append_failure "$status" "$generation" record-second
+  second=$(failure_line "$generation" record-second)
 
   fm_turn_failed_superseded_line "$status" "$first" \
     || fail "the first repeated failure lost its later working evidence"
   fm_turn_failed_superseded_line "$status" "$second" \
     && fail "the later repeated failure borrowed the first failure's evidence"
-  pass "byte offsets keep repeated failures independently ordered"
+  pass "record identities keep repeated failures independently ordered"
 }
 
 test_captured_endpoint_bounds_supersession_evidence() {
-  local dir status generation offset failure failure_endpoint full_endpoint
+  local dir status generation record failure failure_endpoint full_endpoint
   dir=$(new_case endpoint)
   status="$dir/state/task.status"
-  : > "$status"
-  generation=$(fm_recovery_marker_reserve_generation "$dir/state/.watcher-down") \
-    || fail "could not reserve a recovery generation"
-  offset=$(append_failure "$status" "$generation")
-  failure=$(failure_line "$generation" "$offset")
+  generation=deck-endpoint
+  record=record-endpoint
+  append_failure "$status" "$generation" "$record"
+  failure=$(failure_line "$generation" "$record")
   failure_endpoint=$(wc -c < "$status" | tr -d '[:space:]')
   printf 'working [recovery-gen=%s]: replay resumed\n' "$generation" >> "$status"
   full_endpoint=$(wc -c < "$status" | tr -d '[:space:]')
@@ -177,12 +156,59 @@ test_captured_endpoint_bounds_supersession_evidence() {
   pass "supersession respects the classifier's captured endpoint"
 }
 
+test_pending_generation_tracks_the_task_local_episode() {
+  local dir status endpoint generation
+  dir=$(new_case pending-generation)
+  status="$dir/state/task.status"
+  append_failure "$status" deck-pending record-pending
+  endpoint=$(wc -c < "$status" | tr -d '[:space:]')
+  generation=$(fm_turn_failed_pending_generation "$status" "$endpoint") \
+    || fail "the task-local failure did not open a recovery episode"
+  [ "$generation" = deck-pending ] \
+    || fail "the pending recovery generation changed: $generation"
+  printf 'working [recovery-gen=deck-pending]: replay resumed\n' >> "$status"
+  endpoint=$(wc -c < "$status" | tr -d '[:space:]')
+  fm_turn_failed_pending_generation "$status" "$endpoint" >/dev/null \
+    && fail "working evidence did not close the task-local recovery episode"
+  pass "pending recovery generations are derived from task status"
+}
+
+test_binding_happens_after_working_but_never_after_terminal_status() {
+  local dir status offset rc=0
+  dir=$(new_case binding-order)
+  status="$dir/state/task.status"
+  append_failure "$status" deck-bind record-bind
+  offset=$(wc -c < "$status" | tr -d '[:space:]')
+  printf 'working: replay resumed\n' >> "$status"
+  python3 "$ROOT/bin/fm-state-io.py" root-bind-working-recovery \
+    "$dir/state" task.status "$offset" deck-bind \
+    || fail "working evidence was not bound through the status I/O interface"
+  printf 'done: replay completed\n' >> "$status"
+  [ "$(sed -n '3p' "$status")" = 'working [recovery-gen=deck-bind]: deck turn reported working' ] \
+    || fail "the recovery marker did not precede the replay terminal status"
+  [ "$(sed -n '4p' "$status")" = 'done: replay completed' ] \
+    || fail "the terminal status moved ahead of its recovery marker"
+
+  status="$dir/state/late.status"
+  append_failure "$status" deck-late record-late
+  offset=$(wc -c < "$status" | tr -d '[:space:]')
+  printf 'working: replay resumed\ndone: replay completed\n' >> "$status"
+  python3 "$ROOT/bin/fm-state-io.py" root-bind-working-recovery \
+    "$dir/state" late.status "$offset" deck-late >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 3 ] || fail "late recovery binding returned $rc instead of refusing"
+  [ "$(tail -1 "$status")" = 'done: replay completed' ] \
+    || fail "recovery binding appended synthetic working evidence after a terminal status"
+  pass "recovery binding preserves working-before-terminal order"
+}
+
 test_later_working_in_the_same_recovery_generation_supersedes
 test_original_turn_state_cannot_supersede_before_replay
 test_unbound_and_different_generation_working_lines_do_not_supersede
-test_supersession_survives_idle_and_later_recovery_episodes
+test_supersession_is_independent_of_watcher_recovery_state
 test_only_exact_turn_failed_records_participate
-test_failure_offset_identifies_the_exact_repeated_record
+test_record_identity_disambiguates_repeated_failures
 test_captured_endpoint_bounds_supersession_evidence
+test_pending_generation_tracks_the_task_local_episode
+test_binding_happens_after_working_but_never_after_terminal_status
 
 echo "fm-deck-turn-failure-supersession: all cases passed"

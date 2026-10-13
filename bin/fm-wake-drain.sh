@@ -227,16 +227,17 @@ print_status_outcome_backstop_section() {  # <task-and-endpoint-snapshot>
     [ -n "$task" ] || continue
     receipt=$(status_outcome_backstop_cursor_offset "$STATE/$task.status") || { rc=1; break; }
     [ "$receipt" -lt "$endpoint" ] || continue
+    if fm_status_span_only_superseded_turn_failures \
+        "$STATE/$task.status" "$receipt" "$endpoint" "$ident"; then
+      STATUS_OUTCOME_BACKSTOP_ACKNOWLEDGED="$STATUS_OUTCOME_BACKSTOP_ACKNOWLEDGED$task$(printf '\t')$endpoint
+"
+      continue
+    fi
     status_snapshot_latest_event "$STATE/$task.status" "$endpoint" "$ident" || continue
     event=$FM_STATUS_SNAPSHOT_EVENT_LINE
     event_endpoint=$FM_STATUS_SNAPSHOT_EVENT_ENDPOINT
     [ "$receipt" -lt "$event_endpoint" ] || continue
     status_is_captain_relevant "$event" || continue
-    if fm_turn_failed_superseded_line "$STATE/$task.status" "$event" "$endpoint"; then
-      STATUS_OUTCOME_BACKSTOP_ACKNOWLEDGED="$STATUS_OUTCOME_BACKSTOP_ACKNOWLEDGED$task$(printf '\t')$event_endpoint
-"
-      continue
-    fi
     verb=$(status_line_verb "$event")
     case "$verb" in
       needs-decision|blocked)

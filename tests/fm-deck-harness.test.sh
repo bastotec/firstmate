@@ -591,7 +591,7 @@ test_driver_backstops_silent_and_failed_turns() {
   make_fake_deck "$failed"
   run_worker "$failed" $'/quit\n' 'fail-turn' || fail "the failed-turn driver did not remain available for /quit"
   case $(cat "$failed/state/t1.status") in
-    'failed: deck turn ended without a status line (turn-failed recovery-gen='*' at=0)') ;;
+    'failed: deck turn ended without a status line (turn-failed recovery-gen='*' id=record-'*')') ;;
     *) fail "a provider-failed turn did not receive the exact fallback status: $(cat "$failed/state/t1.status")" ;;
   esac
   [ -f "$failed/state/t1.turn-ended" ] || fail "the provider-failed turn did not publish turn-ended after its fallback status"
@@ -619,8 +619,8 @@ test_replayed_working_turn_records_recovery_supersession() {
   pass "fm-deck-worker: replayed working evidence supersedes its recovery failure"
 }
 
-test_bookkeeping_before_failed_turn_uses_the_failure_append_offset() {
-  local dir="$TMP_ROOT/recovery-supersession-bookkeeping" failure generation offset expected
+test_bookkeeping_before_failed_turn_keeps_unique_recovery_identity() {
+  local dir="$TMP_ROOT/recovery-supersession-bookkeeping" failure generation record_id
   make_fake_deck "$dir"
   run_worker "$dir" $'write-working\n/quit\n' 'resolve-only fail-turn' \
     || fail "the bookkeeping replay fixture did not return to its prompt"
@@ -628,10 +628,10 @@ test_bookkeeping_before_failed_turn_uses_the_failure_append_offset() {
     || fail "the failed turn did not retain its preceding bookkeeping record"
   failure=$(sed -n '2p' "$dir/state/t1.status")
   generation=${failure#*recovery-gen=}; generation=${generation%% *}
-  offset=${failure##* at=}; offset=${offset%)}
-  expected=$(printf 'resolved [key=choice]: answered: yes\n' | wc -c | tr -d '[:space:]')
-  [ "$offset" = "$expected" ] \
-    || fail "the failure stamped turn start $offset instead of append offset $expected: $failure"
+  record_id=${failure#* id=}; record_id=${record_id%)}
+  case "$record_id" in record-[A-Za-z0-9._-]*) ;; *) fail "the failure has no unique record identity: $failure" ;; esac
+  [ ! -e "$dir/state/.watcher-down" ] \
+    || fail "a Deck turn failure fabricated watcher downtime"
   [ "$(sed -n '3p' "$dir/state/t1.status")" = 'working: replay resumed' ] \
     || fail "the replay did not append its worker working status"
   [ "$(sed -n '4p' "$dir/state/t1.status")" = "working [recovery-gen=$generation]: deck turn reported working" ] \
@@ -639,9 +639,9 @@ test_bookkeeping_before_failed_turn_uses_the_failure_append_offset() {
   if FM_TEST_DECK_STATUS="$dir/state/t1.status" \
       bash -c '. "$1"; status_span_has_actionable "$FM_TEST_DECK_STATUS" 0' \
         _ "$ROOT/bin/fm-classify-lib.sh"; then
-    fail "the correctly offset replayed failure remained actionable"
+    fail "the uniquely identified replayed failure remained actionable"
   fi
-  pass "fm-deck-worker: turn-failure offsets follow preceding bookkeeping"
+  pass "fm-deck-worker: bookkeeping preserves task-local recovery identity"
 }
 
 test_idle_interrupt_does_not_echo_fake_input() {
@@ -2711,7 +2711,7 @@ test_idle_prompt_notes_the_utc_idle_instant
 test_status_checks_and_fallbacks_refuse_unsafe_paths
 test_driver_backstops_silent_and_failed_turns
 test_replayed_working_turn_records_recovery_supersession
-test_bookkeeping_before_failed_turn_uses_the_failure_append_offset
+test_bookkeeping_before_failed_turn_keeps_unique_recovery_identity
 test_doorbell_for_an_empty_own_inbox_starts_no_turn
 test_idle_captain_preserves_partial_input
 test_stale_captain_cue_does_not_dispatch_an_acknowledged_source

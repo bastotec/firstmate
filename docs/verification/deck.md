@@ -50,8 +50,8 @@ Turn-lifecycle and progress-refresh failures retain `fm-busy-event.sh`'s underly
 The evidence gate snapshots the status log's byte offset at turn start and searches a bounded appended suffix for a complete `done`, `needs-decision`, `blocked`, `failed`, or `working` line.
 Firstmate-owned bookkeeping lines such as `resolved:` and `note:` do not satisfy the gate or the driver's postcondition.
 Those reads, the driver's fallback append, and turn-end publication use Python 3 descriptor-bound I/O, reject symlinks and non-regular or multiply linked files, and never touch an unsafe target.
-`tests/fm-deck-turn-failure-supersession.test.sh` pins ordered, captured-endpoint classification for exact recovery-generation-stamped `turn-failed` records, including mismatched generations, repeated failures, and supersession that remains durable after the recovery episode moves.
-The Deck harness proves that the producer stamps the failure's actual append offset after Firstmate bookkeeping and binds a later turn's worker-authored `working:` evidence to the same recovery generation.
+`tests/fm-deck-turn-failure-supersession.test.sh` pins ordered, captured-endpoint classification for exact task-local recovery-generation and record-id stamped `turn-failed` records, including mismatched generations, repeated failures, and durable supersession.
+The Deck harness proves that Firstmate bookkeeping does not satisfy the worker-evidence gate, a silent failed turn creates no watcher-downtime marker, and a later turn's worker-authored `working:` evidence binds to the same task-local recovery generation.
 The terminal regression drives two real `fm-send.sh` steers through the Python stream hub and PTY agent, confirming each submit from the cleared composer after the turn finishes while proving no transient rendered working row remains.
 The finished-turn row renders its UTC completion time from `run_finished.finished_at` and falls back to the timestamp-less wording when the field is absent, while the idle prompt notes the UTC idle instant beside its bare `❯` row.
 

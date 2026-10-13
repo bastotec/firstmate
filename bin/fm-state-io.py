@@ -93,26 +93,6 @@ def append_record(dir_fd: int, name: str, payload: bytes) -> None:
         os.close(fd)
 
 
-def append_turn_failure_record(dir_fd: int, name: str, generation: str) -> None:
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", generation):
-        raise UnsafeStatePath("invalid recovery generation")
-    flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK | require_nofollow()
-    flags |= getattr(os, "O_CLOEXEC", 0)
-    fd = os.open(name, flags, 0o600, dir_fd=dir_fd)
-    try:
-        require_regular_single_link(fd)
-        offset = os.fstat(fd).st_size
-        payload = (
-            "failed: deck turn ended without a status line "
-            f"(turn-failed recovery-gen={generation} at={offset})\n"
-        ).encode()
-        if os.write(fd, payload) != len(payload):
-            raise OSError("short state append")
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-
-
 def append_private_record(dir_fd: int, name: str, payload: bytes) -> None:
     flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK | require_nofollow()
     flags |= getattr(os, "O_CLOEXEC", 0)
@@ -175,7 +155,7 @@ def record_size(dir_fd: int, name: str) -> int:
         os.close(fd)
 
 
-def first_worker_status_after(dir_fd: int, name: str, offset: int) -> bytes | None:
+def first_worker_status_after(dir_fd: int, name: str, offset: int):
     flags = os.O_RDONLY | os.O_NONBLOCK | require_nofollow()
     flags |= getattr(os, "O_CLOEXEC", 0)
     try:
@@ -201,6 +181,54 @@ def first_worker_status_after(dir_fd: int, name: str, offset: int) -> bytes | No
             (line for line in bytes(payload).split(b"\n")[:-1] if WORKER_STATUS_RE.match(line)),
             None,
         )
+    finally:
+        os.close(fd)
+
+
+def bind_working_recovery(dir_fd: int, name: str, offset: int, generation: str) -> int:
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", generation):
+        raise UnsafeStatePath("invalid recovery generation")
+    flags = os.O_RDWR | os.O_APPEND | os.O_NONBLOCK | require_nofollow()
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(name, flags, dir_fd=dir_fd)
+    except FileNotFoundError:
+        return 1
+    try:
+        require_regular_single_link(fd)
+        size = os.fstat(fd).st_size
+        if offset < 0 or offset > size:
+            raise UnsafeStatePath("invalid status offset")
+        delta_size = size - offset
+        if delta_size > MAX_STATUS_DELTA_BYTES:
+            return 3
+        os.lseek(fd, offset, os.SEEK_SET)
+        payload = bytearray()
+        while len(payload) < delta_size:
+            chunk = os.read(fd, delta_size - len(payload))
+            if not chunk:
+                break
+            payload.extend(chunk)
+        lines = bytes(payload).split(b"\n")[:-1]
+        worker_lines = [line for line in lines if WORKER_STATUS_RE.match(line)]
+        if not worker_lines:
+            return 1
+        marker = f"working [recovery-gen={generation}]:".encode()
+        if worker_lines[0].startswith(marker):
+            return 0
+        if not worker_lines[0].startswith((b"working:", b"working ")):
+            return 3
+        if any(
+            line.startswith((b"done:", b"done ", b"needs-decision:", b"needs-decision ",
+                             b"blocked:", b"blocked ", b"failed:", b"failed "))
+            for line in worker_lines[1:]
+        ):
+            return 3
+        if any(line.startswith(marker) for line in worker_lines[1:]):
+            return 0
+        write_all(fd, marker + b" deck turn reported working\n")
+        os.fsync(fd)
+        return 0
     finally:
         os.close(fd)
 
@@ -274,24 +302,19 @@ def main() -> int:
         "replace",
         "remove",
         "root-append",
-        "root-append-turn-failed",
-        "root-first-worker-status-after",
+        "root-bind-working-recovery",
         "root-private-append",
         "root-size",
         "root-touch",
         "root-worker-status-after",
     )
-    if len(sys.argv) not in (4, 5) or sys.argv[1] not in operations:
+    if len(sys.argv) < 4 or sys.argv[1] not in operations:
         return 2
     operation, directory, name = sys.argv[1:4]
-    if operation in (
-        "root-append-turn-failed",
-        "root-first-worker-status-after",
-        "root-worker-status-after",
-    ):
-        if len(sys.argv) != 5:
-            return 2
-    elif len(sys.argv) != 4:
+    expected_args = 6 if operation == "root-bind-working-recovery" else (
+        5 if operation == "root-worker-status-after" else 4
+    )
+    if len(sys.argv) != expected_args:
         return 2
     validate_name(name)
     if operation.startswith("root-"):
@@ -305,20 +328,18 @@ def main() -> int:
             sys.stdout.buffer.write(read_record(dir_fd, name))
         elif operation == "root-size":
             print(record_size(dir_fd, name))
-        elif operation == "root-append-turn-failed":
-            append_turn_failure_record(dir_fd, name, sys.argv[4])
-        elif operation in ("root-first-worker-status-after", "root-worker-status-after"):
+        elif operation == "root-bind-working-recovery":
             try:
                 offset = int(sys.argv[4])
             except ValueError:
                 return 2
-            first = first_worker_status_after(dir_fd, name, offset)
-            if operation == "root-first-worker-status-after":
-                if first is None:
-                    return 1
-                sys.stdout.buffer.write(first)
-                return 0
-            return 0 if first is not None else 1
+            return bind_working_recovery(dir_fd, name, offset, sys.argv[5])
+        elif operation == "root-worker-status-after":
+            try:
+                offset = int(sys.argv[4])
+            except ValueError:
+                return 2
+            return 0 if first_worker_status_after(dir_fd, name, offset) is not None else 1
         elif operation == "root-touch":
             touch_record(dir_fd, name)
         elif operation == "remove":

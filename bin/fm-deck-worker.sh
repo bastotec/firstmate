@@ -159,6 +159,7 @@ STATE_IO="$SCRIPT_DIR/fm-state-io.py"
 
 ID='' STATE='' GEN='' DECK='' MODEL=''
 SECONDMATE=0 WATCH_PID='' WATCH_PREDECESSOR_ARM_PID='' INPUT_PID='' TURN_PID='' TURN_RENDER_PID=''
+TURN_RECOVERY_MONITOR_PID=''
 WATCH_HANDLING_GENERATION='' WATCH_HANDLING_WATCHER_PID=''
 # shellcheck source=bin/fm-session-lock-lib.sh
 . "$SCRIPT_DIR/fm-session-lock-lib.sh"
@@ -312,6 +313,10 @@ cleanup() {
     kill -TERM "$TURN_RENDER_PID" 2>/dev/null || true
     wait "$TURN_RENDER_PID" 2>/dev/null || true
   fi
+  if [ -n "$TURN_RECOVERY_MONITOR_PID" ]; then
+    kill -TERM "$TURN_RECOVERY_MONITOR_PID" 2>/dev/null || true
+    wait "$TURN_RECOVERY_MONITOR_PID" 2>/dev/null || true
+  fi
   if [ -n "$INPUT_PID" ]; then
     kill -TERM "$INPUT_PID" 2>/dev/null || true
     wait "$INPUT_PID" 2>/dev/null || true
@@ -359,6 +364,41 @@ status_size() {
 
 status_append() {
   python3 "$STATE_IO" root-append "$STATE" "$ID.status"
+}
+
+deck_recovery_token() {  # <prefix>
+  python3 -c 'import secrets, sys; print(sys.argv[1] + secrets.token_hex(16))' "$1"
+}
+
+turn_recovery_monitor_start() {  # <status-offset> <recovery-generation>
+  local offset=$1 generation=$2
+  [ -n "$generation" ] || return 0
+  (
+    trap 'exit 0' HUP INT TERM
+    while :; do
+      rc=0
+      python3 "$STATE_IO" root-bind-working-recovery \
+        "$STATE" "$ID.status" "$offset" "$generation" >/dev/null 2>&1 || rc=$?
+      case "$rc" in
+        0|3) exit 0 ;;
+        1) sleep 0.02 ;;
+        *) exit 1 ;;
+      esac
+    done
+  ) &
+  TURN_RECOVERY_MONITOR_PID=$!
+}
+
+turn_recovery_monitor_finish() {
+  local waited=0
+  [ -n "$TURN_RECOVERY_MONITOR_PID" ] || return 0
+  while kill -0 "$TURN_RECOVERY_MONITOR_PID" 2>/dev/null && [ "$waited" -lt 20 ]; do
+    sleep 0.01
+    waited=$((waited + 1))
+  done
+  kill -TERM "$TURN_RECOVERY_MONITOR_PID" 2>/dev/null || true
+  wait "$TURN_RECOVERY_MONITOR_PID" 2>/dev/null || true
+  TURN_RECOVERY_MONITOR_PID=''
 }
 
 status_has_worker_evidence() {
@@ -654,7 +694,7 @@ TURN_RECOVERABLE=3
 LAUNCH_UNDELIVERED=0
 run_turn() {  # <prompt>
   local prompt=$1 rc event status_before monitor_failed=0 deck_rc tee_rc jq_rc published=0
-  local first_status recovery_gen turn_recovery_gen
+  local recovery_gen failure_id turn_recovery_gen
   local -a turn_pipeline
   # The effort applies to this turn only, whatever path it ends by.
   local effort=$TURN_EFFORT
@@ -662,7 +702,6 @@ run_turn() {  # <prompt>
   [ "$SECONDMATE" != 1 ] || host_lock_owned || return 1
   [ "$SECONDMATE" != 1 ] || watch_start || return 1
   [ "$SECONDMATE" != 1 ] || watch_confirm_handling_delivery || return 1
-  turn_recovery_gen=$(fm_recovery_marker_generation "$STATE/.watcher-down" 2>/dev/null || true)
   [ -z "$effort" ] || prompt="deck-effort: $effort
 $prompt"
   local switched
@@ -698,7 +737,13 @@ $prompt"
     printf 'fm-deck-worker: status path is not a safe regular file: %s\n' "$STATUS_FILE" >&2
     return 1
   fi
+  status_before=$(cat "$TURN_MARK" 2>/dev/null || printf '0\n')
+  turn_recovery_gen=''
+  if [ "$SECONDMATE" != 1 ]; then
+    turn_recovery_gen=$(fm_turn_failed_pending_generation "$STATUS_FILE" "$status_before" 2>/dev/null || true)
+  fi
   record_busy_event busy turn-start || return 1
+  turn_recovery_monitor_start "$status_before" "$turn_recovery_gen"
   # The rendered working row is transient: save its screen position so a
   # completed turn can replace it with the final event rendering. A later steer
   # therefore starts from a genuinely idle pane.
@@ -763,6 +808,7 @@ $prompt"
     "$DECK" "${args[@]}" </dev/null | tee "$EVENTS" | jq --unbuffered -rj "$RENDER" 2>/dev/null
     turn_pipeline=("${PIPESTATUS[@]}")
   fi
+  turn_recovery_monitor_finish
   deck_stream_end
   [ -z "$effort" ] || "$SCRIPT_DIR/fm-effort-policy.sh" observe --home "$FM_HOME" < "$EVENTS" 2>/dev/null || true
   rc=${turn_pipeline[0]}
@@ -786,17 +832,6 @@ $prompt"
     event=turn-failed
   fi
   status_before=$(cat "$TURN_MARK" 2>/dev/null || printf '0\n')
-  if [ -n "$turn_recovery_gen" ]; then
-    first_status=$(python3 "$STATE_IO" root-first-worker-status-after "$STATE" "$ID.status" "$status_before" 2>/dev/null || true)
-    case "$first_status" in
-      "working [recovery-gen=$turn_recovery_gen]:"*) ;;
-      working:*|working\ \[*\]:*)
-        if fm_turn_failed_generation_pending "$STATUS_FILE" "$turn_recovery_gen" "$status_before"; then
-          printf 'working [recovery-gen=%s]: deck turn reported working\n' "$turn_recovery_gen" | status_append || true
-        fi
-        ;;
-    esac
-  fi
   if [ "$SECONDMATE" = 1 ]; then
     if [ "$event" = turn-end ] && ! jq -es 'any(.[]; .type == "run_finished") and (all(.[]; .type != "run_failed"))' "$EVENTS" >/dev/null; then
       event=turn-failed
@@ -817,9 +852,12 @@ $prompt"
     host_lock_owned || return 1
   elif ! status_has_worker_evidence "$status_before"; then
     if [ "$event" = turn-failed ]; then
-      recovery_gen=$(fm_recovery_marker_reserve_generation "$STATE/.watcher-down" 2>/dev/null || true)
-      if [ -n "$recovery_gen" ]; then
-        python3 "$STATE_IO" root-append-turn-failed "$STATE" "$ID.status" "$recovery_gen"
+      recovery_gen=$turn_recovery_gen
+      [ -n "$recovery_gen" ] || recovery_gen=$(deck_recovery_token deck- 2>/dev/null || true)
+      failure_id=$(deck_recovery_token record- 2>/dev/null || true)
+      if [ -n "$recovery_gen" ] && [ -n "$failure_id" ]; then
+        printf 'failed: deck turn ended without a status line (turn-failed recovery-gen=%s id=%s)\n' \
+          "$recovery_gen" "$failure_id" | status_append
       else
         printf 'failed: deck turn ended without a status line (turn-failed)\n' | status_append
       fi

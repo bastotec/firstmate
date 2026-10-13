@@ -33,10 +33,11 @@ Its bare turn-ended signal is absorbed only by the authoritative proof, because 
 
 ### A superseded Deck turn-failure is attention, not failure
 
-A Deck driver turn that fails without appending a status line is backstopped with `failed: deck turn ended without a status line (turn-failed recovery-gen=<generation> at=<byte-offset>)`.
-The wrapper reserves a watcher recovery generation for that record, opening a pending episode when no active generation exists, and when a later turn in that episode first reports `working:`, it appends a `working [recovery-gen=<generation>]:` record after the worker's line.
+A Deck driver turn that fails without appending a status line is backstopped with `failed: deck turn ended without a status line (turn-failed recovery-gen=<generation> id=<record-id>)`.
+The wrapper opens that task-local recovery episode without changing watcher-continuity state, and a replay reuses its generation.
+While the replay is active, its first worker-authored `working:` record is followed by a `working [recovery-gen=<generation>]:` record before a later terminal status can be bound.
 `fm_turn_failed_superseded_line` in `bin/fm-classify-lib.sh` owns the discrimination from those two ordered records in the append-only status log.
-The byte offset identifies the exact failure, and the later generation-tagged working record keeps its supersession durable after the replay goes idle or the recovery marker moves to another episode.
+The unique record id identifies the exact failure even when unrelated status writers append concurrently, and the later generation-tagged working record keeps its supersession durable after the replay goes idle.
 Only the exact `turn-failed` backstop participates; silent successful turns, interrupted turns, unstamped legacy lines, mismatched generations, and ordinary `failed:` lines keep their existing semantics.
 A superseded failure leaves the actionable status span and is acknowledged if the outcome backstop encounters it, while away-mode staleness reads the later working record through its ordinary non-terminal path.
 
