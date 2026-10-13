@@ -253,7 +253,9 @@ jobs:
   macos-stock-bash:
     name: Stock macOS Bash snapshot compatibility
     runs-on: macos-latest
-    timeout-minutes: 10
+    # Hang tripwire with margin over healthy main runs of 9-9.5 minutes.
+    # tests/fm-ci-workflow.test.sh guards the authorized lane bounds.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - name: Run snapshot consumers with stock Bash
