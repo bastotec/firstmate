@@ -38,9 +38,9 @@
 # code root from origin. Because this home is a standalone clone, the target
 # commit is imported here first and the fast-forward itself is the shared one in
 # bin/fm-ff-lib.sh, so the clean, ancestry, and branch guards have a single owner.
-# A private parent-route state directory stores only the remote secondmate
-# agent's endpoint record; the home's own
-# state/*.meta remains reserved for workers the secondmate supervises.
+# A private parent-route state directory stores the remote secondmate agent's
+# endpoint record and replacement-proof state; the home's own state/*.meta
+# remains reserved for workers the secondmate supervises.
 # Retirement closes only this secondmate's own endpoint, never a sibling's.
 #
 # Relaunch is not a second lifecycle implementation: it runs the ORDINARY local
@@ -54,11 +54,21 @@
 # launch, and any the old endpoint still hosts. A launch refuses before starting
 # anything while the recorded previous agent is still running outside its
 # endpoint, and any proof that cannot be made within the bound is a failure,
-# never a success; FM_REMOTE_AGENT_IDENTITY_WAIT (seconds, default 30) is the
-# floor of that bound, which adapts per mate to this host's measured start time
-# (agent_identity_wait below). The proved identity is kept in the private parent-route state directory
-# for the next relaunch, and retire removes it. An already-alive endpoint is
-# reused without a relaunch.
+# never a success. The proved identity is kept in the private parent-route
+# state directory for the next relaunch.
+#
+# Slow hosts learn a per-mate bound rather than enlarging every mate's timeout.
+# Both replacement verification and the wait for previous identities to exit
+# use min(FM_REMOTE_AGENT_IDENTITY_WAIT_MAX, max(FM_REMOTE_AGENT_IDENTITY_WAIT,
+# 2 * recorded seconds)), with defaults of 300 and 30 seconds respectively.
+# Each wait gets its own deadline; this is not a total lifecycle deadline.
+# On success, verification records whole elapsed seconds from the beginning of
+# the launch or relaunch verb, including delegated control-plane time, in
+# this remote home's state/parent-route/<id>.agent-start-secs (best-effort).
+# A verification timeout records its window instead, so the next attempt can
+# double it up to the cap; a missing or invalid record contributes zero.
+# Retire removes both the proved identity and the timing record.
+# An already-alive endpoint is reused without a relaunch or a timing update.
 #
 # The optional launch traceparent is the per-task W3C trace-context carrier the
 # PARENT home resolved for this secondmate; this host only delivers it to the
@@ -185,13 +195,7 @@ AGENT_IDENTITY_WAIT_MAX=${FM_REMOTE_AGENT_IDENTITY_WAIT_MAX:-300}
 case "$AGENT_IDENTITY_WAIT" in ''|*[!0-9]*|0) AGENT_IDENTITY_WAIT=30 ;; esac
 case "$AGENT_IDENTITY_WAIT_MAX" in ''|*[!0-9]*|0) AGENT_IDENTITY_WAIT_MAX=300 ;; esac
 
-# The proof window adapts to the host. A slow machine (a login shell that takes
-# long to start the Deck host) can need far more than the default, and a proof
-# that times out on a healthy start reads as a failed revival. So each mate's
-# last proven start time is recorded here, and the window is twice that, never
-# below FM_REMOTE_AGENT_IDENTITY_WAIT nor above FM_REMOTE_AGENT_IDENTITY_WAIT_MAX.
-# A proof that runs out records the window it had, so the next attempt waits
-# twice as long.
+# The header owns the adaptive window and host-local timing record contract.
 agent_start_record() { printf '%s/%s.agent-start-secs\n' "$CONTROL_STATE" "$1"; }
 
 agent_identity_wait() {  # <id>
