@@ -57,6 +57,7 @@ Subcommands:
       2 rejected (rejected/SEQ.msg or steer_rejected), 3 no live host
   prepare --home H [--session ID]   create dirs, persist and print the session
   record write --home H --session ID --host-pid N [--endpoint T] [--model ROUTE] [--startup-file F]
+               [--set-model]   (the host's deck takes `deck-control: set_model`)
       publishes startup before making the host visible, retaining pending messages
   record stop --home H --host-pid N
   record pid --home H        print the live host pid; exit 3 when none
@@ -389,7 +390,7 @@ def record_write(args):
         'version': 1, 'home': str(home), 'session': args.session,
         'steer_dir': str(base / 'steer'), 'events_file': str(base / 'events.ndjson'),
         'endpoint': args.endpoint or None, 'host_pid': args.host_pid,
-        'model': args.model,
+        'model': args.model, 'set_model': bool(getattr(args, 'set_model', False)),
         'started_at': int(time.time())}, sort_keys=True) + '\n')
     return 0
 
@@ -689,6 +690,38 @@ def keeper_view(root):
     return None
 
 
+def note_switch(root, was, now):
+    """Append one line to state/primary-chat/switches (the thread's divider marks)."""
+    path = Path(root) / 'switches'
+    try:
+        lines = path.read_text().splitlines()[-999:]
+    except OSError:
+        lines = []
+    lines.append('%d %s %s' % (int(time.time()), was or 'default', now or 'default'))
+    try:
+        atomic_write(path, '\n'.join(lines) + '\n')
+    except OSError:
+        pass
+
+
+def switch_in_place(root, record, route):
+    """A live host whose deck takes `set_model`: send it the control, keep the
+    session and the process. Deck applies it at once while idle, else at its
+    next safe point, and checks the route against the gateway and policy itself."""
+    with open(Path(root) / '.model.lock', 'a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        atomic_write(Path(root) / 'model', route + '\n')
+        try:
+            (Path(root) / 'switch').unlink()
+        except FileNotFoundError:
+            pass
+        seq = publish_body(Path(record['steer_dir']), 'deck-control: set_model %s\n' % route)
+    was = record.get('model') or ''
+    if was != route:
+        note_switch(root, was, route)
+    return seq
+
+
 def set_model(args):
     home, state, _, root = paths(args.home)
     if not args.route:
@@ -697,6 +730,13 @@ def set_model(args):
     if not MODEL_RE.match(args.route):
         print('error: not a model route: %s' % args.route, file=sys.stderr)
         return 2
+    record = live_record(home)
+    if record and record.get('set_model'):
+        seq = switch_in_place(root, record, args.route)
+        record['model'] = args.route
+        atomic_write(paths(args.home)[2], json.dumps(record, sort_keys=True) + '\n')
+        print('primary: switched to %s in place (steer seq %d)' % (args.route, seq))
+        return 0
     if keeper_view(root) is None:
         print('error: no service keeper runs this primary; restart it with --model %s' % args.route,
               file=sys.stderr)
@@ -761,16 +801,7 @@ class Keeper:
             claimed.unlink()
 
     def note_switch(self, was, now):
-        path = self.root / 'switches'
-        try:
-            lines = path.read_text().splitlines()[-999:]
-        except OSError:
-            lines = []
-        lines.append('%d %s %s' % (int(time.time()), was or 'default', now or 'default'))
-        try:
-            atomic_write(path, '\n'.join(lines) + '\n')
-        except OSError:
-            pass
+        note_switch(self.root, was, now)
 
     def log(self, message):
         path = self.root / 'service.log'
@@ -1009,6 +1040,7 @@ def main(argv):
     write.add_argument('--endpoint', default='')
     write.add_argument('--model', default='')
     write.add_argument('--startup-file')
+    write.add_argument('--set-model', action='store_true')
     stop = record.add_parser('stop')
     record.add_parser('pid').add_argument('--home', required=True)
     for command in (write, stop):

@@ -42,7 +42,8 @@ cat > "$LAB/tools/deck" <<'EOF'
 import json, os, pathlib, re, signal, subprocess, sys, time
 argv = sys.argv[1:]
 if argv[:1] == ['chat'] and '--help' in argv:
-    print('--steer-dir <DIR>\n--events <FILE>\n--session <SESSION>')
+    print('--steer-dir <DIR>\n--events <FILE>\n--session <SESSION>'
+          + ('\ndeck-control: set_model ROUTE' if os.environ.get('FAKE_DECK_SET_MODEL') == '1' else ''))
     sys.exit(0)
 if argv[:2] == ['run', '--help']:
     print('--effort <LEVEL>' if os.environ.get('FAKE_DECK_EFFORT') == '1' else '--steer-dir <DIR>')
@@ -1279,6 +1280,32 @@ PY
   pass "primary keeper: adoption uses the host model or argv, falls back to its argument, and retains 1000 switch records"
 }
 
+test_model_switches_in_place() {
+  local home host before out
+  home=$(new_home model-in-place)
+  FAKE_DECK_SET_MODEL=1 FAKE_DECK_LOG="$LAB/deck-in-place.log" "$BIN/fm-deck-chat.sh" --home "$home" --model fake/captain \
+    </dev/null > "$LAB/host-in-place.out" 2>&1 &
+  host=$!
+  fm_test_track_helper_pid "$host"
+  wait_for 10 "the in-place host registers" "$STEER" status --home "$home"
+  before=$(record_field "$home/state/primary-chat.json" host_pid)
+  # no keeper serves this home: an in-place switch does not need one
+  out=$("$BIN/fm-deck-chat.sh" model fake/other --home "$home") || fail "in-place model failed: $out"
+  assert_contains "$out" 'primary: switched to fake/other in place' "a deck that takes set_model switches in place"
+  wait_for 10 "deck takes the control" grep -q 'deck-control: set_model fake/other' "$LAB/deck-in-place.log.turns"
+  assert_equals fake/other "$(cat "$home/state/primary-chat/model")" "a later restart uses the choice"
+  assert_equals fake/other "$(record_field "$home/state/primary-chat.json" model)" "the record follows the switch"
+  assert_contains "$(tail -1 "$home/state/primary-chat/switches")" 'fake/captain fake/other' "the thread marks the switch"
+  [ ! -e "$home/state/primary-chat/switch" ] || fail "no keeper restart is requested"
+  assert_equals "$before" "$(record_field "$home/state/primary-chat.json" host_pid)" "the same host keeps running"
+  kill -0 "$before" 2>/dev/null || fail "the host process is still alive"
+  assert_equals 1 "$(wc -l < "$LAB/deck-in-place.log.starts" | tr -d ' ')" "deck was started once"
+  kill -TERM "$host"
+  wait_for 10 "the in-place host exits" dead "$host"
+  wait "$host" 2>/dev/null || true
+  pass "fm-deck-chat.sh model: a host whose deck takes set_model switches in place, without a restart"
+}
+
 test_service_keeper_alerts() {
   local home keeper
   if ! start_test_hub "$LAB/alert-hub"; then
@@ -1343,4 +1370,5 @@ test_task_named_primary_blocks_the_host
 test_away_mode_pauses_the_watcher
 test_service_keeper
 test_service_model_tracking
+test_model_switches_in_place
 test_service_keeper_alerts

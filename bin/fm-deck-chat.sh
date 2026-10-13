@@ -78,8 +78,14 @@
 #       `fm-deck-chat.sh`): that terminal is its only screen. `deck chat
 #       --local` skips this launcher.
 #   fm-deck-chat.sh model [ROUTE] [--home H]
-#       Request a syntax-checked gateway route for the serviced primary.
-#       Once the primary is idle the keeper ends the host and starts it again
+#       Switch the primary to a syntax-checked gateway route. When the live
+#       host's deck takes `deck-control: set_model` (recorded at start), the
+#       route goes to it as a steering control: same process, same session,
+#       applied at once while idle or at the turn's next safe point (deck
+#       checks it against the gateway and the model policy and reports
+#       model_switched or model_switch_refused in its events); prints
+#       "switched to ROUTE in place". Otherwise, for the serviced primary:
+#       once the primary is idle the keeper ends the host and starts it again
 #       on the same session, resuming the conversation as any keeper restart
 #       does; it never goes through `stop`. Prints whether the switch is
 #       requested now or after the turn under way, not a completion receipt.
@@ -564,8 +570,11 @@ else
   printf 'The session start digest is too large for one message. Read all of %s before anything else.\n' \
     "$STATE/primary-chat/startup-digest.txt" >> "$WORK/first"
 fi
-python3 "$PRIMARY_CHAT" record write --home "$FM_HOME" --session "$SESSION" --host-pid $$ \
-  --endpoint "$ENDPOINT" --model "$MODEL" --startup-file "$WORK/first" || die 'could not publish startup and write state/primary-chat.json'
+record_args=(record write --home "$FM_HOME" --session "$SESSION" --host-pid $$
+  --endpoint "$ENDPOINT" --model "$MODEL" --startup-file "$WORK/first")
+# A deck that takes `deck-control: set_model` lets `model ROUTE` switch in place.
+"$DECK" chat --help 2>/dev/null | grep -q set_model && record_args+=(--set-model)
+python3 "$PRIMARY_CHAT" "${record_args[@]}" || die 'could not publish startup and write state/primary-chat.json'
 RECORDED=1
 
 sup_args=(supervise --home "$FM_HOME" --host-pid $$ --gen "$GEN" --events-offset "$EVENTS_OFFSET")

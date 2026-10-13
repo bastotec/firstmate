@@ -13,6 +13,7 @@
 #                                         [--harness <name>] [--model <name>]
 #                                         [--effort <level>] [--unless-held-stopped]
 #                                         (--note <text> | --note-file <path>)
+#        fm-control.sh <task-id> model <route>
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
 # DATA plane: conversational text for the agent to read, always routing-marked
@@ -117,6 +118,21 @@
 #              and naming it for such a harness still refuses with "deck has no
 #              effort control".
 #
+#   model      Switch a running Deck agent to another gateway route in place:
+#              no restart, same driver process, same conversation. The route
+#              must be a plain route the captain's model policy
+#              (config/model-policy.json) permits and the gateway lists. The
+#              choice is saved as the record's model= (a later relaunch uses
+#              it) and in state/<id>.model, which the Deck driver reads before
+#              every turn; a running turn also gets Deck's
+#              `deck-control: set_model` control at its next safe point when
+#              its Deck accepts it (bin/fm_model_switch.py owns the checks and
+#              that publication). Prints `model <id> -> <route> (live|next-turn)`.
+#              Exit 3 when the driver predates in-place switching (its
+#              state/<id>.deck-caps is missing or stale): relaunch with --model
+#              instead. A remote second mate runs this on its host over
+#              bin/fm-on.sh (fm-remote-secondmate-control.sh model), after the
+#              policy check here, and this record's model= follows on success.
 #   reincarnate Continue a retired-backend ship or scout on a fresh stream
 #              endpoint in the SAME clean worktree, using recover-missing's
 #              transaction and fm-spawn --relaunch. Requires a supported
@@ -284,6 +300,12 @@ RAW_ID=${1:-}
 VERB=${2:-}
 [ -n "$RAW_ID" ] && [ -n "$VERB" ] || { usage >&2; exit 2; }
 shift 2
+MODEL_ROUTE=
+if [ "$VERB" = model ]; then
+  [ "$#" -eq 1 ] && [ -n "$1" ] || { echo "error: usage: fm-control.sh <task-id> model <route>" >&2; exit 2; }
+  MODEL_ROUTE=$1
+  shift
+fi
 
 if ! fm_control_verb_allowed "$VERB"; then
   {
@@ -421,6 +443,58 @@ held_stop_record() {  # <verb> - after success or an unknown remote exit
 if [ "$UNLESS_HELD_STOPPED" = 1 ] && [ -e "$STATE/$ID.held-stopped" ]; then
   die "task $ID was stopped on purpose (state/$ID.held-stopped); relaunch it without --unless-held-stopped to bring it back"
 fi
+
+# --- in-place model switch ---------------------------------------------------
+
+model_meta_write() {  # <route>: model= in this record, under its lock
+  local route=$1 lock tmp rc=0
+  lock=$(fm_meta_lock_path "$META") || return 1
+  fm_lock_acquire_wait "$lock" || return 1
+  tmp="$META.model.${BASHPID:-$$}"
+  { awk -F= '$1 != "model"' "$META"; echo "model=$route"; } > "$tmp" || rc=1
+  if [ "$rc" -eq 0 ] && ! fm_backlog_atomic_transition publish "$tmp" "$META" "task record" "$STATE"; then
+    rc=1
+  fi
+  rm -f "$tmp" 2>/dev/null || true
+  fm_lock_release "$lock" || true
+  return "$rc"
+}
+
+model_switch() {
+  local switcher="$SCRIPT_DIR/fm_model_switch.py" host rc rec seq where tmp prior
+  python3 "$switcher" check "$MODEL_ROUTE" --policy "${FM_CONFIG_OVERRIDE:-$FM_ROOT/config}/model-policy.json" || exit 1
+  host=$(fm_meta_get "$META" remote_host)
+  if [ -n "$host" ]; then
+    rc=0
+    "$SCRIPT_DIR/fm-on.sh" "$ID" fm-remote-secondmate-control.sh model "$ID" "$MODEL_ROUTE" < /dev/null || rc=$?
+    [ "$rc" -ne 255 ] || echo "error: remote secondmate $ID on $host is unreachable or the switch outcome is unknown" >&2
+    [ "$rc" -eq 0 ] || exit "$rc"
+    model_meta_write "$MODEL_ROUTE" || die "task $ID switched on $host, but this record's model= could not be updated"
+    exit 0
+  fi
+  [ "$(fm_control_harness_family "$(fm_meta_get "$META" harness)" 2>/dev/null)" = deck ] \
+    || die "task $ID is not a Deck agent; in-place model switching is Deck's"
+  python3 "$switcher" supported "$STATE" "$ID" || {
+    echo "error: task $ID's Deck driver predates in-place model switching (or is not running); relaunch it with --model $MODEL_ROUTE" >&2
+    exit 3
+  }
+  prior=$(fm_meta_get "$META" model)
+  model_meta_write "$MODEL_ROUTE" || die "task $ID's record could not be updated"
+  tmp="$STATE/.$ID.model.$$"
+  { printf '%s\n' "$MODEL_ROUTE" > "$tmp" && mv -f "$tmp" "$STATE/$ID.model"; } \
+    || die "state/$ID.model could not be written"
+  # shellcheck source=bin/fm-task-inbox-lib.sh
+  . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
+  where=next-turn
+  if rec=$(fm_task_inbox_write_handled "$STATE" "$ID" "[fm-control] model switch: ${prior:-default} -> $MODEL_ROUTE") \
+    && seq=$(fm_task_inbox_seq_of "${rec##*/}"); then
+    where=$(python3 "$switcher" publish "$STATE" "$ID" "$seq" "$MODEL_ROUTE") || where=next-turn
+  fi
+  echo "model $ID -> $MODEL_ROUTE ($where)"
+  exit 0
+}
+
+[ "$VERB" != model ] || model_switch
 
 if [ -n "$(fm_meta_get "$META" remote_host)" ]; then
   # shellcheck source=bin/fm-remote-control-lib.sh

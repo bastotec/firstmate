@@ -253,6 +253,7 @@ Steering, peek, crew-state, the parent channel, and liveness run through host ve
 ### Lifecycle control
 
 `bin/fm-control.sh <id> interrupt|exit|relaunch` on the primary runs the same control plane on the host (`fm-remote-secondmate-control.sh control|relaunch`), so every postcondition is checked where the agent runs.
+`bin/fm-control.sh <id> model <route>` checks the captain's model policy on the primary, then switches in place on the host (`fm-remote-secondmate-control.sh model`, the bridge's supervision flow) and records the route in the primary's record on success.
 Before relaunch reaches host lifecycle control, the primary checks readiness with the same check/repair/recheck sequence as launch; a remaining gap or SSH exit 255 refuses without stopping the mate.
 An ordinary primary `fm-control.sh` relaunch keeps the recorded profile unless flags replace it, resets unnamed model and effort axes when the harness changes, and rewrites the parent's binding and resolved harness, model, and effort from the host's route after success.
 If that route read or parent publication fails after host success, the primary reports failure with the old parent binding retained; reconcile on the same host rather than assuming no replacement launched.

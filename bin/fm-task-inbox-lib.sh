@@ -175,6 +175,36 @@ fm_task_inbox_write() {  # <state-dir> <task-id> <text> [delivery-mode]
   printf '%s' "$rec"
 }
 
+# Reserve the next sequence with a record that is already acknowledged: it is
+# written straight into handled/, so no agent ever reads it. Used when the
+# sequence itself is the point - bin/fm-control.sh `model` publishes a Deck
+# control at that number, which then can never collide with a captain record.
+# Prints the record path.
+fm_task_inbox_write_handled() {  # <state-dir> <task-id> <text>
+  local state=$1 task=$2 text=$3 dir lock seq tmp rec status=0
+  dir=$(fm_task_inbox_dir "$state" "$task")
+  mkdir -p "$dir/handled" || return 1
+  lock="$dir/.seq.lock"
+  fm_task_inbox_lock_acquire "$lock" || return 1
+  seq=$(fm_task_inbox_next_seq "$dir")
+  rec="$dir/handled/$seq.msg"
+  if tmp=$(mktemp "$dir/handled/.staging.XXXXXX"); then
+    {
+      printf 'schema=%s\n' "$FM_TASK_INBOX_SCHEMA"
+      printf 'at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      printf -- '--\n'
+      printf '%s' "$text"
+    } > "$tmp" || status=1
+    [ "$status" -ne 0 ] || mv "$tmp" "$rec" || status=1
+    [ "$status" -eq 0 ] || rm -f "$tmp"
+  else
+    status=1
+  fi
+  fm_lock_release "$lock"
+  [ "$status" -eq 0 ] || return 1
+  printf '%s' "$rec"
+}
+
 # Durably enqueue one steer at most once: when a record with the exact same
 # body already exists - unhandled or already acknowledged in handled/ - no new
 # record is written and the existing record's path is printed instead.
