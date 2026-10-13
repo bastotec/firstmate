@@ -173,32 +173,39 @@ test_pending_generation_tracks_the_task_local_episode() {
   pass "pending recovery generations are derived from task status"
 }
 
-test_binding_happens_after_working_but_never_after_terminal_status() {
-  local dir status offset rc=0
+test_working_binding_is_atomic_with_status_append() {
+  local dir status offset failure endpoint
   dir=$(new_case binding-order)
   status="$dir/state/task.status"
   append_failure "$status" deck-bind record-bind
-  offset=$(wc -c < "$status" | tr -d '[:space:]')
-  printf 'working: replay resumed\n' >> "$status"
-  python3 "$ROOT/bin/fm-state-io.py" root-bind-working-recovery \
-    "$dir/state" task.status "$offset" deck-bind \
-    || fail "working evidence was not bound through the status I/O interface"
-  printf 'done: replay completed\n' >> "$status"
+  failure=$(failure_line deck-bind record-bind)
+  printf 'working: replay resumed\ndone: replay completed\n' \
+    | python3 "$ROOT/bin/fm-state-io.py" root-append "$dir/state" task.status \
+    || fail "the working and terminal burst was not appended"
+  [ "$(sed -n '2p' "$status")" = 'working: replay resumed' ] \
+    || fail "the worker-authored working line was not preserved"
   [ "$(sed -n '3p' "$status")" = 'working [recovery-gen=deck-bind]: deck turn reported working' ] \
-    || fail "the recovery marker did not precede the replay terminal status"
+    || fail "the recovery marker was not written in the working append"
   [ "$(sed -n '4p' "$status")" = 'done: replay completed' ] \
-    || fail "the terminal status moved ahead of its recovery marker"
+    || fail "the terminal status did not remain last"
+  endpoint=$(wc -c < "$status" | tr -d '[:space:]')
+  fm_turn_failed_superseded_line "$status" "$failure" "$endpoint" \
+    || fail "the atomic working append did not supersede its failure"
 
   status="$dir/state/late.status"
   append_failure "$status" deck-late record-late
+  printf 'done: replay completed\n' \
+    | python3 "$ROOT/bin/fm-state-io.py" root-append "$dir/state" late.status \
+    || fail "the terminal status was not appended"
   offset=$(wc -c < "$status" | tr -d '[:space:]')
-  printf 'working: replay resumed\ndone: replay completed\n' >> "$status"
-  python3 "$ROOT/bin/fm-state-io.py" root-bind-working-recovery \
-    "$dir/state" late.status "$offset" deck-late >/dev/null 2>&1 || rc=$?
-  [ "$rc" -eq 3 ] || fail "late recovery binding returned $rc instead of refusing"
+  printf 'working: stale replay update\n' \
+    | python3 "$ROOT/bin/fm-state-io.py" root-append "$dir/state" late.status \
+    || fail "the late working append boundary failed"
+  [ "$(wc -c < "$status" | tr -d '[:space:]')" = "$offset" ] \
+    || fail "a working record was appended after the terminal truth"
   [ "$(tail -1 "$status")" = 'done: replay completed' ] \
-    || fail "recovery binding appended synthetic working evidence after a terminal status"
-  pass "recovery binding preserves working-before-terminal order"
+    || fail "late recovery binding displaced the terminal status"
+  pass "working supersession shares the locked status append"
 }
 
 test_later_working_in_the_same_recovery_generation_supersedes
@@ -209,6 +216,6 @@ test_only_exact_turn_failed_records_participate
 test_record_identity_disambiguates_repeated_failures
 test_captured_endpoint_bounds_supersession_evidence
 test_pending_generation_tracks_the_task_local_episode
-test_binding_happens_after_working_but_never_after_terminal_status
+test_working_binding_is_atomic_with_status_append
 
 echo "fm-deck-turn-failure-supersession: all cases passed"

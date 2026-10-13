@@ -76,6 +76,10 @@ with open(sys.argv[1], 'a') as output:
     output.write(json.dumps(sys.argv[2:]) + '\n')
 PYTHON
 prompt=$2; session=''; gate=''; progress=''; pre_tool=''
+append_status() {
+  printf '%s\n' "$1" | python3 "$FM_DECK_STATUS_IO" root-append \
+    "$FM_DECK_STATUS_STATE" "$FM_DECK_STATUS_NAME"
+}
 while [ $# -gt 0 ]; do
   case "$1" in
     --session) session=$2; shift 2 ;;
@@ -95,13 +99,13 @@ case "$prompt" in
     ln -s "$FM_TEST_EXTERNAL" "$FM_TEST_STATUS"
     ;;
   *write-status*replace-busy-gen*)
-    printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS"
+    append_status 'done: wrote evidence'
     "$FM_TEST_BUSY_EVENT" arm "$(dirname "$FM_TEST_STATUS")" t1 >/dev/null
     ;;
-  *legacy-finish-write-status*) printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS" ;;
-  *write-working*) printf 'working: replay resumed\n' >> "$FM_TEST_STATUS" ;;
-  *write-status*|*'changed state while this session was idle'*) printf 'done: wrote evidence\n' >> "$FM_TEST_STATUS" ;;
-  *resolve-only*) printf 'resolved [key=choice]: answered: yes\n' >> "$FM_TEST_STATUS" ;;
+  *legacy-finish-write-status*) append_status 'done: wrote evidence' ;;
+  *write-working*) append_status 'working: replay resumed' ;;
+  *write-status*|*'changed state while this session was idle'*) append_status 'done: wrote evidence' ;;
+  *resolve-only*) append_status 'resolved [key=choice]: answered: yes' ;;
   *sleep*)
     bash -c 'printf "%s\n" "$$" > "$1/interrupt-ready"; exec sleep 30' _ "$dir"
     ;;
@@ -116,7 +120,7 @@ if [ -n "$gate" ]; then
     printf '{"type":"completion_blocked","attempt":1,"reason":"status evidence required"}\n'
     case "$prompt" in
       *recover-after-refusal*)
-        printf 'done: recovered after refusal\n' >> "$FM_TEST_STATUS"
+        append_status 'done: recovered after refusal'
         if bash -c "$gate" </dev/null 2>>"$dir/gate.err"; then echo pass >> "$dir/gate.log"; fi
         ;;
     esac
@@ -157,6 +161,8 @@ test_turns_share_one_session_and_carry_the_hooks() {
   grep -c -- '--hook pre_complete=' "$dir/argv.log" | grep -qx 4 || fail "every run must carry the evidence gate"
   grep -c -- '--hook post_tool_use=' "$dir/argv.log" | grep -qx 4 || fail "every run must carry the progress hook"
   grep -c -- '--model codex/gpt-5.6-luna' "$dir/argv.log" | grep -qx 4 || fail "every run must carry the model"
+  grep -c -- 'Deck status append boundary: append every status line' "$dir/argv.log" | grep -qx 4 \
+    || fail "every worker turn must carry the locked status append boundary"
   assert_grep 'echo: /exit' "$dir/pane.out" "/exit must be delivered as an ordinary Deck prompt"
   assert_grep 'echo: second' "$dir/pane.out" "the pane did not render the turn's text"
   pass "fm-deck-worker: the brief and later prompts are turns of one Deck session with hooks and model"
