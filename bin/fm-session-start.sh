@@ -68,14 +68,13 @@
 # Those nine names are also the runtime-bound stage list below, so a truncated
 # startup can name exactly which of them never ran.
 #
-# NO NETWORK ON THE BLOCKING PATH. This digest runs on a session-open hook that
+# DEFERRED CHECKS STAY OFF THE BLOCKING PATH. This digest runs on a session-open hook that
 # blocks session initialization, so anything it waits for is time the captain
 # waits before the first turn - and every external-network call it used to make
 # was individually unbounded. One unreachable remote secondmate could burn the
 # entire FM_SESSION_START_TIMEOUT and truncate the digest, so a slow network
 # could cost the work queue itself.
-# So no step between here and the last line below makes an external-network
-# call. The five that did - `gh auth status`, secondmate liveness, secondmate
+# The five deferred checks - `gh auth status`, secondmate liveness, secondmate
 # convergence, pending remote handoff delivery, and the fleet-sync fetch - are
 # started as one detached bounded worker right after the lock (step 1) and
 # harvested at step 7 without ever blocking on it. The bounded inactive-outcome
@@ -83,9 +82,10 @@
 # be slow. bin/fm-startup-network.sh owns that stage and its safety argument;
 # bin/fm-bootstrap.sh and bin/fm-inactive-reconcile.sh remain the owners of the
 # work itself and still run it.
-# The digest is therefore composed from bounded local reads and local
-# subprocesses only, while slow network or inactive-state reconciliation delays
-# a reported check rather than startup.
+# The digest still waits for per-task endpoint-presence HTTP reads, including
+# when the configured stream hub is remote; docs/stream-backend.md owns their
+# rejoin behavior and limits. Slow deferred checks or inactive-state
+# reconciliation delay a reported check rather than startup.
 # What this deliberately trades: on a slow network the digest prints "IN
 # PROGRESS" and names exactly which checks are not yet confirmed, instead of
 # waiting for them. It never reports an unconfirmed check as passed.
@@ -170,10 +170,10 @@
 # RUNTIME BOUND: the primary host (bin/fm-deck-chat.sh) runs the digest before
 # it launches the session and blocks on it, so an unbounded digest is not
 # merely slow - it can strand a whole session start behind one hung
-# subprocess. Every remaining step is local, but
-# local is not the same as bounded: tool version probes, the backlog listing,
-# and the per-task endpoint reads are all unbounded subprocesses. So the whole
-# digest still runs as ONE bounded child of this script
+# subprocess. Local tool version probes and the backlog listing have no
+# individual deadline; endpoint HTTP reads have per-request timeouts, but those
+# do not bound the whole fleet stage. So the whole digest still runs as ONE
+# bounded child of this script
 # (FM_SESSION_START_TIMEOUT, default 120s). The deferred network stage
 # deliberately sits OUTSIDE that bound,
 # in its own process group under its own aggregate deadline, so a truncated
