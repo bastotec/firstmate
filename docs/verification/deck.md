@@ -52,10 +52,15 @@ The finished-turn row renders its UTC completion time from `run_finished.finishe
 
 `bin/fm-deck-stop.py` owns the task-bound local driver stop proof used by both control-plane exit and the shared spawn-relaunch boundary; endpoint classification remains required independently.
 The portable regression runs the driver, Deck executable, and state beneath paths containing spaces and proves that TERM removes the active Deck process before the stop boundary returns.
-Its fake Deck uses the binary's default TERM behavior: an active in-process tool is interrupted rather than allowed to complete, and no later tool starts.
+Its fake Deck uses Python's default TERM behavior, not Deck's cooperative-stop behavior: the fixture's active in-process tool is interrupted rather than allowed to complete, and no later tool starts.
 A second fixture ignores TERM and proves the bounded wait escalates the surviving isolated process group to KILL.
 Physical-state-alias and stale-generation relaunch regressions, including the valueless `--secondmate` driver flag, are in `tests/fm-deck-harness.test.sh` and `tests/fm-control-relaunch.test.sh`.
 This driver-only path does not alter backend transport or endpoint classifiers.
+
+The separate `test_secondmate_stops_a_turn_inside_a_long_tool` fixture models Deck's cooperative SIGTERM while running real child processes under the secondmate driver.
+It asserts bounded exit for Ctrl+C and mid-turn `/quit`, cancellation after shell exec replacement, freeze-and-rescan handling of a late-fork race, and the hard fallback for a TERM-resistant model call even when the tool grace exceeds the kill bound.
+Its MCP-like child leads a separate process group and must remain alive in every case; cooperative cases must acknowledge the stop after the tool returns.
+These are portable fixture assertions, not additional live Deck evidence; the [driver header](../../bin/fm-deck-worker.sh) owns the stop contract.
 
 ## Live check
 

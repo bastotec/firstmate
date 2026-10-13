@@ -1296,6 +1296,33 @@ if prompt == 'slow-steer':
     (home / 'in-turn').touch()
     while not (home / 'release').exists():
         time.sleep(.1)
+if prompt in ('long-tool', 'exec-tool', 'stuck-model'):
+    # Real Deck's SIGTERM is a cooperative stop: it lets a running tool
+    # finish and only then stops. `stuck-model` ignores it outright, the way a
+    # model call that never returns would.
+    import signal
+    stop = []
+    signal.signal(signal.SIGTERM, signal.SIG_IGN if prompt == 'stuck-model' else (lambda *_: stop.append(1)))
+    mcp = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, start_new_session=True)
+    (home / 'mcp-pid').write_text(str(mcp.pid))
+    command = 'python3 "$FM_HOME/fork-tool.py"; echo finished' if (home / 'fork-tool.py').exists() else 'sleep 300; echo slept'
+    if prompt == 'exec-tool':
+        command = 'exec sleep 300'
+    tool = subprocess.Popen(['bash', '-lc', command])
+    (home / 'tool-pid').write_text(str(tool.pid))
+    if prompt != 'stuck-model':
+        tool.wait()
+        (home / 'tool-returncode').write_text(str(tool.returncode))
+        print(json.dumps({'type': 'tool_result', 'id': 'c1', 'name': 'run_command', 'duration_ms': 1,
+                          'output': 'killed' if tool.returncode else 'slept'}), flush=True)
+        if stop:
+            (home / 'graceful-stop').touch()
+            print(json.dumps({'type': 'run_stopped', 'reason': 'graceful stop requested'}), flush=True)
+            sys.exit(1)
+    else:
+        time.sleep(300)
 for i, arg in enumerate(args):
     if arg == '--hook' and args[i+1].startswith('pre_complete='):
         result = subprocess.run(args[i+1].split('=', 1)[1], shell=True)
@@ -1304,6 +1331,134 @@ for i, arg in enumerate(args):
 print(json.dumps({'type': 'run_finished', 'turns': 1}), flush=True)
 PYTHON
   chmod +x "$dir/bin/fm-session-start.sh" "$dir/bin/fm-watch-arm.sh" "$dir/deck"
+}
+
+# Deck lets a running tool finish on SIGTERM, so a secondmate inside a long
+# shell command used to hold Ctrl+C and /quit until that command ended, and a
+# relaunch gave up on it after 30s. The driver now kills the running command's
+# process tree once the stop is requested, and kills a Deck that still does not
+# stop at its bound, so both reach the prompt and exit within seconds.
+test_secondmate_stops_a_turn_inside_a_long_tool() {
+  local dir case
+  for case in ctrl-c quit-only exec-tool fork-race stuck-model; do
+    dir="$TMP_ROOT/host-stop-$case"
+    make_secondmate_host_fixture "$dir"
+    if [ "$case" = fork-race ]; then
+      cat > "$dir/home/fork-tool.py" <<'PYTHON'
+import os, pathlib, subprocess, time
+home = pathlib.Path(os.environ['FM_HOME'])
+(home / 'fork-parent-pid').write_text(str(os.getpid()))
+while not (home / 'launch-fork').exists():
+    time.sleep(.01)
+child = subprocess.Popen(['sleep', '300'])
+(home / 'late-pid').write_text(str(child.pid))
+child.wait()
+PYTHON
+      cat > "$dir/bin/ps" <<'SH'
+#!/bin/bash
+if [ "$*" != '-A -o pid= -o ppid=' ]; then
+  exec "$FM_TEST_SYSTEM_PS" "$@"
+fi
+"$FM_TEST_SYSTEM_PS" "$@" > "$FM_HOME/snapshot"
+count=0
+[ ! -f "$FM_HOME/snapshots" ] || read -r count < "$FM_HOME/snapshots"
+count=$((count + 1))
+printf '%s\n' "$count" > "$FM_HOME/snapshots"
+if [ "$count" -eq 2 ]; then
+  : > "$FM_HOME/launch-fork"
+  read -r pid < "$FM_HOME/fork-parent-pid"
+  deadline=$((SECONDS + 2))
+  while [ ! -f "$FM_HOME/late-pid" ]; do
+    case "$("$FM_TEST_SYSTEM_PS" -o stat= -p "$pid")" in
+      *T*) : > "$FM_HOME/fork-prevented"; break ;;
+    esac
+    [ "$SECONDS" -lt "$deadline" ] || exit 1
+    sleep 0.01
+  done
+fi
+cat "$FM_HOME/snapshot"
+SH
+      chmod +x "$dir/bin/ps"
+    fi
+    FM_TEST_SYSTEM_PS="$FM_TEST_SYSTEM_PS" FM_DECK_STOP_KILL_SECS=4 python3 - "$dir" "$case" <<'PYTHON' || fail "Deck secondmate did not stop a turn inside a long tool ($case)"
+import os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1]); case = sys.argv[2]
+home = root / 'home'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='',
+           PATH=str(root/'bin') + os.pathsep + os.environ['PATH'])
+if case == 'stuck-model':
+    env['FM_DECK_STOP_TOOL_GRACE_SECS'] = '30'
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+       str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'),
+       '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+def idle():
+    path = root/'parent/host.busy-state'
+    return path.exists() and 'state=idle' in path.read_text()
+def wait_for(check, label, bound=60):
+    deadline = time.monotonic() + bound
+    while time.monotonic() < deadline:
+        if check(): return
+        if p.poll() is not None: raise AssertionError(label+': '+(root/'pane').read_text())
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text())
+def alive(pid):
+    result = subprocess.run([os.environ['FM_TEST_SYSTEM_PS'], '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True)
+    return result.returncode == 0 and bool(result.stdout.strip()) and 'Z' not in result.stdout
+prompt = case if case in ('exec-tool', 'stuck-model') else 'long-tool'
+with (root/'pane').open('w') as output:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+                         env=env, text=True, start_new_session=True)
+    try:
+        wait_for(idle, 'startup turn')
+        p.stdin.write(prompt + '\n'); p.stdin.flush()
+        wait_for(lambda: (home/'tool-pid').exists(), 'long turn start')
+        tool = int((home/'tool-pid').read_text())
+        mcp = int((home/'mcp-pid').read_text())
+        assert alive(mcp), 'MCP fixture did not start'
+        assert os.getpgid(mcp) == mcp, 'MCP fixture did not create its own process group'
+        assert os.getpgid(tool) == os.getpgid(p.pid), 'tool did not inherit the worker process group'
+        if case == 'exec-tool':
+            def exec_completed():
+                command = subprocess.check_output([os.environ['FM_TEST_SYSTEM_PS'], '-o', 'comm=', '-p', str(tool)], text=True).strip()
+                return pathlib.Path(command).name == 'sleep'
+            wait_for(exec_completed, 'tool exec replacement')
+        if case == 'fork-race':
+            wait_for(lambda: (home/'fork-parent-pid').exists(), 'forking tool start')
+        started = time.monotonic()
+        if case == 'ctrl-c':
+            os.killpg(p.pid, signal.SIGINT)
+        elif case == 'stuck-model':
+            os.kill(p.pid, signal.SIGINT)
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        rc = p.wait(timeout=20)
+        took = time.monotonic() - started
+        assert rc == 0, (rc, (root/'pane').read_text())
+        assert took < (8 if case == 'stuck-model' else 5), (took, (root/'pane').read_text())
+        assert not alive(tool), 'the long tool survived its stopped turn'
+        assert alive(mcp), 'stopping Deck killed its MCP server'
+        if case != 'stuck-model':
+            assert (home/'graceful-stop').exists(), 'Deck did not acknowledge the cooperative stop'
+        if case == 'exec-tool':
+            assert int((home/'tool-returncode').read_text()) == -signal.SIGKILL, 'exec-replaced tool was not cancelled'
+        if case == 'fork-race':
+            assert (home/'launch-fork').exists(), 'the fork race was not exercised'
+            assert (home/'fork-prevented').exists() or (home/'late-pid').exists(), 'the fork probe never responded'
+            assert not alive(int((home/'fork-parent-pid').read_text())), 'the forking tool survived'
+            if (home/'late-pid').exists():
+                assert not alive(int((home/'late-pid').read_text())), 'a late-forked descendant survived'
+        print(f'{case}: exited {took:.1f}s after the stop request')
+    finally:
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGKILL); p.wait()
+        for name in ('tool-pid', 'fork-parent-pid', 'late-pid', 'mcp-pid'):
+            path = home / name
+            if path.exists():
+                try: os.kill(int(path.read_text()), signal.SIGKILL)
+                except ProcessLookupError: pass
+PYTHON
+  done
+  pass "Deck secondmate stops a turn inside a long tool on Ctrl+C or /quit, and a stuck Deck at its bound"
 }
 
 test_secondmate_mcp_config_on_startup_steer_and_wake() {
@@ -2307,6 +2462,7 @@ test_stream_deck_ring_rings_live_driver
 test_idle_interrupt_does_not_echo_fake_input
 test_secondmate_host_serializes_wakes_and_steering
 test_secondmate_routine_wakes_think_less
+test_secondmate_stops_a_turn_inside_a_long_tool
 test_secondmate_mcp_config_on_startup_steer_and_wake
 test_secondmate_queued_exit_behind_composer_clears_beats_watcher_turn
 test_secondmate_survives_a_failed_turn
