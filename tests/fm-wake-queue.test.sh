@@ -927,6 +927,118 @@ test_unconsumable_rows_are_retired_instead_of_wedging_the_queue() {
   pass "structurally unusable rows are retired, leaving every remaining row presentable and acknowledgeable"
 }
 
+test_driver_relaunch_publication_mints_a_fresh_generation() {
+  local dir state marker lib gen1 gen2 token
+  dir=$(make_case driver-relaunch-fresh-generation)
+  state="$dir/state"
+  marker="$state/.watcher-down"
+  lib="$ROOT/bin/fm-wake-lib.sh"
+
+  # A first launch has no episode, and a fresh publication must not open one:
+  # minting over a clean home would make the first watcher start announce a
+  # recovery that never happened.
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_publish_fresh "$2"' \
+    _ "$lib" "$marker" \
+    || fail "fresh publication refused a home with no episode"
+  [ ! -e "$marker" ] || fail "fresh publication opened an episode on a first launch"
+
+  # An ordinary downtime publication preserves a pending generation for a LIVE
+  # watcher's outstanding acknowledgement.
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_publish "$2" downtime' \
+    _ "$lib" "$marker" \
+    || fail "could not open a pending episode"
+  token=$(cat "$marker")
+  gen1=$(recovery_marker_generation "$marker")
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_publish "$2" downtime' \
+    _ "$lib" "$marker" \
+    || fail "ordinary republication failed"
+  [ "$(cat "$marker")" = "$token" ] \
+    || fail "ordinary downtime publication stopped preserving a pending generation"
+
+  # Every driver relaunch mints its own generation over any existing episode,
+  # so the relaunched driver can never re-present the previous driver's
+  # generation alongside its launch brief.
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_publish_fresh "$2"' \
+    _ "$lib" "$marker" \
+    || fail "driver-relaunch publication failed"
+  gen2=$(recovery_marker_generation "$marker")
+  [ -n "$gen2" ] || fail "driver-relaunch publication left no generation"
+  [ "$gen1" != "$gen2" ] \
+    || fail "driver relaunch re-presented the previous driver's generation"
+  case "$(cat "$marker")" in
+    pending:downtime:*) ;;
+    *) fail "driver-relaunch publication did not reopen a pending episode: $(cat "$marker")" ;;
+  esac
+
+  # The same minting holds over an announced episode and over a retired
+  # (acked) one: an acknowledged episode never freezes the generation, and a
+  # relaunch always opens an episode of its own.
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_arm_check "$2"' \
+    _ "$lib" "$marker" \
+    || fail "could not announce the pending episode"
+  [ "$(cat "$marker")" = "announced:downtime:$gen2" ] \
+    || fail "arm check did not announce the pending episode: $(cat "$marker")"
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_publish_fresh "$2"' \
+    _ "$lib" "$marker" \
+    || fail "driver-relaunch publication over an announced episode failed"
+  [ "$(recovery_marker_generation "$marker")" != "$gen2" ] \
+    || fail "driver relaunch reused an announced episode's generation"
+  case "$(cat "$marker")" in
+    pending:downtime:*) ;;
+    *) fail "relaunched driver left the old episode's announcement current: $(cat "$marker")" ;;
+  esac
+  gen1=$(recovery_marker_generation "$marker")
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_ack "$2" "$3"' \
+    _ "$lib" "$marker" "$gen1" \
+    || fail "could not retire the announced episode"
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_publish_fresh "$2"' \
+    _ "$lib" "$marker" \
+    || fail "driver-relaunch publication over an acked episode failed"
+  [ "$(recovery_marker_generation "$marker")" != "$gen1" ] \
+    || fail "driver relaunch reused a retired episode's generation"
+  case "$(cat "$marker")" in
+    pending:downtime:*) ;;
+    *) fail "relaunched driver did not open its own episode after retirement: $(cat "$marker")" ;;
+  esac
+  pass "every driver relaunch publishes a fresh recovery generation"
+}
+
+test_stale_generation_is_not_resurrected_by_watcher_cleanup() {
+  local dir state marker lib stale current
+  dir=$(make_case relaunch-then-watcher-close)
+  state="$dir/state"
+  marker="$state/.watcher-down"
+  lib="$ROOT/bin/fm-wake-lib.sh"
+
+  # A relaunch mints the current generation; the previous driver's watcher
+  # cleanup (an ordinary downtime publication) must resolve against the LIVE
+  # episode rather than resurrecting the stale generation as current.
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_publish "$2" downtime' \
+    _ "$lib" "$marker" \
+    || fail "could not open the previous driver's episode"
+  stale=$(recovery_marker_generation "$marker")
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_publish_fresh "$2"' \
+    _ "$lib" "$marker" \
+    || fail "could not publish the relaunched driver's generation"
+  current=$(recovery_marker_generation "$marker")
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_publish "$2" downtime' \
+    _ "$lib" "$marker" \
+    || fail "the previous driver's watcher cleanup publication failed"
+  [ "$(recovery_marker_generation "$marker")" = "$current" ] \
+    || fail "watcher cleanup resurrected a stale generation as current"
+  # A stale-generation acknowledgement retires nothing: it fails closed against
+  # the newer episode instead of consuming it.
+  set +e
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_ack "$2" "$3"' \
+    _ "$lib" "$marker" "$stale" >/dev/null 2>&1
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a stale-generation acknowledgement retired a newer episode"
+  [ "$(recovery_marker_generation "$marker")" = "$current" ] \
+    || fail "a stale acknowledgement moved the current generation"
+  pass "watcher cleanup never resurrects a stale generation as current"
+}
+
 test_wake_publish_requires_atomic_recovery_evidence() {
   local dir state fakebin real_mv rc out
   dir=$(make_case wake-publish-recovery-evidence)
@@ -1679,6 +1791,8 @@ test_slow_annotation_does_not_block_append_and_deleted_file_fails_open
 test_uncountable_queue_still_raises_the_pending_alarm
 test_unconsumable_rows_are_retired_instead_of_wedging_the_queue
 test_wake_publish_requires_atomic_recovery_evidence
+test_driver_relaunch_publication_mints_a_fresh_generation
+test_stale_generation_is_not_resurrected_by_watcher_cleanup
 test_legacy_generationless_wake_is_adopted
 test_stale_recovery_generation_cannot_touch_a_newer_episode
 test_stale_ack_that_consumes_nothing_names_the_current_wake

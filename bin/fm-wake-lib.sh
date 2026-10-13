@@ -531,16 +531,21 @@ _fm_recovery_marker_write_locked() {
 # already-announced generation announced so it cannot be re-presented until a
 # new down stretch mints a new generation.
 # docs/watcher-continuity.md owns the recovery contract and sequence-safety rationale.
+# <preserve|fresh> selects the relaunch posture: a driver-relaunch publication
+# passes fresh so every relaunch mints its own generation, while the ordinary
+# watcher-close and queue-append publications keep the default preserve posture
+# a LIVE watcher's outstanding acknowledgement depends on.
 _fm_recovery_marker_publish() {
-  local marker=$1 kind=${2:-downtime} lock saved_token generation='' status=pending
+  local marker=$1 kind=${2:-downtime} posture=${3:-preserve} lock saved_token generation='' status=pending
   case "$kind" in handling|downtime) ;; *) return 1 ;; esac
+  case "$posture" in preserve|fresh) ;; *) return 1 ;; esac
   lock="${marker}.lock"
   fm_lock_acquire_wait "$lock" || return 1
   if [ -d "$marker" ] && [ ! -L "$marker" ]; then
     fm_lock_release "$lock"
     return 1
   fi
-  if [ "$kind" = downtime ]; then
+  if [ "$kind" = downtime ] && [ "$posture" = preserve ]; then
     # Read inline rather than in a command substitution: this runs inside the
     # marker-lock critical section, so it must not add a subshell fork there.
     # The token is restored because publishing owns no snapshot of its own.
@@ -558,6 +563,15 @@ _fm_recovery_marker_publish() {
       esac
     fi
     FM_RECOVERY_MARKER_TOKEN=$saved_token
+  fi
+  if [ "$posture" = fresh ]; then
+    # A relaunch mints its generation only over an existing episode: a home
+    # with no marker is a first launch, and publishing one there would make
+    # the first watcher start announce a recovery that never happened.
+    if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
+      fm_lock_release "$lock"
+      return 0
+    fi
   fi
   if ! _fm_recovery_marker_write_locked "$marker" "$kind" "$generation" "$status"; then
     fm_lock_release "$lock"
@@ -740,6 +754,9 @@ fm_recovery_transition() {
     publish)
       _fm_recovery_marker_publish "$marker" "${target:-downtime}"
       ;;
+    publish-fresh)
+      _fm_recovery_marker_publish "$marker" "${target:-downtime}" fresh
+      ;;
     acknowledge)
       _fm_recovery_marker_ack "$marker" "$target"
       ;;
@@ -788,6 +805,17 @@ fm_recovery_marker_begin_handling() {
 
 fm_recovery_marker_arm_check() {
   fm_recovery_transition "$1" arm-check
+}
+
+# Driver-relaunch publication: mints a new pending downtime generation whenever
+# an episode marker exists, replacing the preserved one, so a relaunched driver
+# can never re-present the previous driver's generation alongside its launch
+# brief. Absent marker stays absent: a first launch has no episode to open.
+# The outstanding acknowledgement of the replaced generation is not stranded,
+# because acknowledgement is sequence-bound for queue rows and only the episode
+# retirement is generation-bound (docs/watcher-continuity.md).
+fm_recovery_marker_publish_fresh() {
+  fm_recovery_transition "$1" publish-fresh downtime
 }
 
 fm_recovery_marker_reopen_announced() {
