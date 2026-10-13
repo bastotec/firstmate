@@ -1529,6 +1529,115 @@ PYTHON
   pass "Deck secondmate host starts a fresh watcher when a successor is slow or dies, and keeps serving wakes"
 }
 
+# Exercise the real arm capture, not the fixture arm, with deterministic child
+# death before START. Normal fake cycles publish the same identity-bound beacon
+# the arm verifies and wait for an explicit trigger, never a startup timer.
+test_secondmate_host_retains_failed_successor_start_evidence() {
+  local dir mode
+  for mode in exits interrupted arm-timeout; do
+    dir="$TMP_ROOT/host-failed-successor-evidence-$mode"
+    make_secondmate_host_fixture "$dir"
+    cp "$ROOT/bin/fm-watch-arm.sh" "$dir/bin/fm-watch-arm.sh"
+    cat > "$dir/bin/fm-watch.sh" <<'SH'
+#!/usr/bin/env bash
+. "$(dirname "$0")/fm-wake-lib.sh"
+if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" = 1 ] && [ -f "$FM_HOME/fail-successor-start" ]; then
+  rm "$FM_HOME/fail-successor-start"
+  printf 'failed handling successor: fixture startup refused\n' >&2
+  printf 'failed\n' >> "$FM_HOME/failed-starts"
+  if [ "$FM_TEST_CHILD_MODE" = exits ]; then
+    : > "$FM_HOME/successor-died"
+    exit 7
+  fi
+  trap 'printf "unconfirmed handling successor: terminated at deadline\n" >&2; exit 143' TERM
+  printf '%s\n' "$$" > "$FM_HOME/unconfirmed-child"
+  : > "$FM_HOME/successor-was-silent"
+  while :; do sleep 0.1; done
+fi
+mkdir -p "$STATE/.watch.lock"
+printf '%s\n' "$$" > "$STATE/.watch.lock/pid"
+fm_pid_identity "$$" > "$STATE/.watch.lock/pid-identity"
+printf '%s\n' "$FM_HOME" > "$STATE/.watch.lock/fm-home"
+printf '%s\n' "$0" > "$STATE/.watch.lock/watcher-path"
+touch "$STATE/.last-watcher-beat"
+printf '%s\n' "$$" >> "$FM_HOME/watch-starts"
+trap 'rm -rf "$STATE/.watch.lock"' EXIT
+trap 'exit 143' TERM INT
+while [ ! -f "$FM_HOME/trigger" ]; do sleep 0.1; done
+rm "$FM_HOME/trigger"
+printf 'check: example\n'
+SH
+    chmod +x "$dir/bin/fm-watch.sh"
+    python3 - "$dir" "$mode" <<'PYTHON' || fail "Deck host lost failed successor evidence or supervision ($mode)"
+import json, os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1]); home = root/'home'; mode = sys.argv[2]
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='',
+           FM_TEST_CHILD_MODE=mode, FM_DECK_WATCH_CONFIRM_SECS='1' if mode == 'interrupted' else '15',
+           FM_ARM_CONFIRM_TIMEOUT='1' if mode == 'arm-timeout' else '30')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+       str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'),
+       '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+def rows():
+    path = home/'turns'
+    return [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+def idle():
+    path = root/'parent/host.busy-state'
+    return path.exists() and 'state=idle' in path.read_text()
+def starts():
+    path = home/'watch-starts'
+    return path.read_text().splitlines() if path.exists() else []
+def wait_for(check, label):
+    for _ in range(600):
+        if check(): return
+        assert p.poll() is None, label+': host exited: '+(root/'pane').read_text()
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text())
+with (root/'pane').open('w') as output:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+                         env=env, text=True, start_new_session=True)
+    try:
+        wait_for(lambda: len(rows()) == 1 and idle() and len(starts()) == 1, 'startup')
+        (home/'fail-successor-start').touch()
+        (home/'trigger').touch()
+        wait_for(lambda: len(rows()) == 2 and idle() and len(starts()) >= 2, 'normal rearm after failed START')
+        evidence = (root/'pane').read_text()
+        assert evidence.count('failed handling successor: fixture startup refused') == 1, evidence
+        if mode == 'exits':
+            assert 'successor watcher exited before confirming startup; starting a fresh watcher' in evidence, evidence
+            assert 'watcher: FAILED - watcher cycle exited 7' in evidence, evidence
+        else:
+            if mode == 'interrupted':
+                assert 'successor watcher did not confirm startup within 1s; starting a fresh watcher' in evidence, evidence
+            else:
+                assert 'successor watcher exited before confirming startup; starting a fresh watcher' in evidence, evidence
+                assert 'watcher: FAILED - no live watcher with a fresh beacon' in evidence, evidence
+                assert 'successor watcher did not confirm startup within' not in evidence, evidence
+            assert evidence.count('unconfirmed handling successor: terminated at deadline') == 1, evidence
+            assert (home/'successor-was-silent').exists()
+            try:
+                os.kill(int((home/'unconfirmed-child').read_text()), 0)
+            except ProcessLookupError:
+                pass
+            else:
+                raise AssertionError('unconfirmed child survived replacement')
+        assert (home/'failed-starts').read_text().splitlines() == ['failed']
+        os.kill(int(starts()[-1]), 0)
+        (home/'trigger').touch()
+        wait_for(lambda: len(rows()) == 3 and idle() and len(starts()) >= 3, 'later supervised wake')
+        assert p.poll() is None
+        status = root/'parent/host.status'
+        assert not status.exists() or 'failed:' not in status.read_text()
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        assert p.wait(timeout=60) == 0
+    finally:
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGKILL); p.wait()
+PYTHON
+  done
+  pass "Deck host retains failed and interrupted handling child stderr and serves later wakes"
+}
+
 test_secondmate_mcp_config_on_startup_steer_and_wake() {
   local dir="$TMP_ROOT/host-mcp"
   make_secondmate_host_fixture "$dir"
@@ -2532,6 +2641,7 @@ test_secondmate_host_serializes_wakes_and_steering
 test_secondmate_routine_wakes_think_less
 test_secondmate_stops_a_turn_inside_a_long_tool
 test_secondmate_host_survives_an_unconfirmed_successor_watcher
+test_secondmate_host_retains_failed_successor_start_evidence
 test_secondmate_mcp_config_on_startup_steer_and_wake
 test_secondmate_queued_exit_behind_composer_clears_beats_watcher_turn
 test_secondmate_survives_a_failed_turn

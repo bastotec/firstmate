@@ -1102,6 +1102,106 @@ test_arm_reports_an_unparseable_wake_library_as_a_broken_install() {
   pass "watch-arm: an unparseable wake library is a broken install, not a resource problem"
 }
 
+test_handling_child_stderr_is_retained() {
+  local dir mode rc i
+  for mode in exits interrupted; do
+    dir=$(make_case "handling-stderr-$mode")
+    mkdir -p "$dir/bin" "$dir/home"
+    cp -R "$ROOT/bin/." "$dir/bin/"
+    cat > "$dir/bin/fm-watch.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'handling successor startup diagnostic\n' >&2
+if [ "$FM_TEST_CHILD_MODE" = exits ]; then exit 7; fi
+trap 'exit 143' TERM
+: > "$FM_HOME/child-ready"
+while :; do sleep 0.1; done
+SH
+    chmod +x "$dir/bin/fm-watch.sh"
+    FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/state" FM_WATCH_PREDECESSOR_ARM_PID=4242 \
+      FM_TEST_CHILD_MODE="$mode" FM_ARM_CONFIRM_TIMEOUT=30 \
+      "$dir/bin/fm-watch-arm.sh" > "$dir/arm.out" 2> "$dir/arm.err" &
+    ARM_PID=$!
+    if [ "$mode" = interrupted ]; then
+      i=0
+      while [ "$i" -lt 100 ] && [ ! -f "$dir/home/child-ready" ]; do
+        sleep 0.1
+        i=$((i + 1))
+      done
+      [ -f "$dir/home/child-ready" ] || fail "handling child did not reach startup"
+      kill -TERM "$ARM_PID" || fail "could not interrupt handling arm"
+    fi
+    wait "$ARM_PID"
+    rc=$?
+    if [ "$mode" = exits ]; then
+      [ "$rc" -eq 7 ] || fail "handling child exit was not propagated: $rc"
+      grep -F 'watcher: FAILED' "$dir/arm.out" >/dev/null || fail "missing failed arm result"
+    else
+      [ "$rc" -eq 143 ] || fail "arm interruption was not propagated: $rc"
+    fi
+    grep -Fx 'handling successor startup diagnostic' "$dir/arm.out" >/dev/null \
+      || fail "handling child stderr did not survive $mode cycle"
+    [ ! -s "$dir/arm.err" ] || fail "handling stderr escaped the capture"
+    [ -s "$dir/state/.watch-cycle-exits.log" ] || fail "cycle close was not recorded"
+    [ -z "$(find "$dir/state" -name '.watch-arm-output.*' -print)" ] \
+      || fail "cycle capture was not cleaned up"
+  done
+  pass "watch-arm: handling child stderr survives failed and interrupted startup cycles"
+}
+
+test_handling_inspection_failure_retains_completed_capture() {
+  local dir rc child_pid
+  dir=$(make_case handling-inspection-failure)
+  mkdir -p "$dir/bin" "$dir/home"
+  cp -R "$ROOT/bin/." "$dir/bin/"
+  cat >> "$dir/bin/fm-wake-lib.sh" <<'SH'
+
+fm_recovery_marker_snapshot() {
+  printf '%s\n' "$1" > "$FM_HOME/inspection-attempt"
+  return 1
+}
+SH
+  cat > "$dir/bin/fm-watch.sh" <<'SH'
+#!/usr/bin/env bash
+. "${BASH_SOURCE[0]%/*}/fm-wake-lib.sh"
+printf 'handling successor startup diagnostic\n' >&2
+trap 'sleep 0.1; printf "handling successor termination diagnostic\n" >&2; exit 143' TERM
+fm_lock_try_acquire "$STATE/.watch.lock" || exit 2
+printf '%s\n' "$$" > "$FM_HOME/child-pid"
+printf '%s\n' "$FM_HOME" > "$STATE/.watch.lock/fm-home"
+printf '%s\n' "${BASH_SOURCE[0]}" > "$STATE/.watch.lock/watcher-path"
+fm_pid_identity "$$" > "$STATE/.watch.lock/pid-identity"
+touch "$STATE/.last-watcher-beat"
+while :; do sleep 0.1; done
+SH
+  chmod +x "$dir/bin/fm-watch.sh"
+  FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/state" FM_WATCH_PREDECESSOR_ARM_PID=4242 \
+    FM_ARM_CONFIRM_TIMEOUT=5 "$dir/bin/fm-watch-arm.sh" > "$dir/arm.out" 2> "$dir/arm.err" &
+  ARM_PID=$!
+  wait_for_exit "$ARM_PID" 150
+  rc=$?
+  expect_code 1 "$rc" "handling-state inspection failure must stop the arm"
+  [ "$(cat "$dir/home/inspection-attempt" 2>/dev/null)" = "$dir/state/.watcher-down" ] \
+    || fail "the arm did not attempt handling-state inspection"
+  grep -Fx 'watcher: FAILED - established successor could not inspect handling state' "$dir/arm.out" >/dev/null \
+    || fail "inspection failure did not report its typed result: $(cat "$dir/arm.out")"
+  ! grep -q '^watcher: started' "$dir/arm.out" \
+    || fail "inspection failure falsely confirmed startup"
+  [ "$(grep -Fxc 'handling successor startup diagnostic' "$dir/arm.out")" -eq 1 ] \
+    || fail "inspection failure lost or duplicated startup stderr"
+  [ "$(grep -Fxc 'handling successor termination diagnostic' "$dir/arm.out")" -eq 1 ] \
+    || fail "inspection failure lost or duplicated termination stderr"
+  [ ! -s "$dir/arm.err" ] || fail "handling diagnostics escaped the capture: $(cat "$dir/arm.err")"
+  child_pid=$(cat "$dir/home/child-pid")
+  ! is_live_non_zombie "$child_pid" || fail "inspection failure left the successor running"
+  grep -q 'reason=handling-handoff-failed' "$dir/state/.watch-cycle-exits.log" \
+    || fail "inspection failure was not recorded in the lifecycle ledger"
+  [ -z "$(find "$dir/state" -name '.watch-arm-output.*' -print)" ] \
+    || fail "inspection failure did not remove the completed capture"
+  pass "watch-arm: handling inspection failure retains startup and termination diagnostics"
+}
+
+test_handling_child_stderr_is_retained
+test_handling_inspection_failure_retains_completed_capture
 test_attached_arm_reports_the_delivered_wake
 test_attached_arm_reports_the_delivered_wake_after_drain
 test_arm_refuses_an_unusable_launch_confirm_window

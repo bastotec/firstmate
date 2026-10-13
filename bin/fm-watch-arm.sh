@@ -48,6 +48,13 @@
 # state/.watch-triage.log remains exclusively the watcher's absorbed-wake debug
 # log and is never written here.
 #
+# Handling-successor children capture stderr alongside stdout. On child exit,
+# arm interruption, startup-confirmation timeout, or handling-state inspection
+# failure, the arm prints that temporary capture to stdout before removing it.
+# Interruption, timeout, and inspection failure stop and wait for the child first,
+# preserving termination diagnostics too.
+# Non-handoff starts keep their existing stdout-only capture and cleanup order.
+#
 # --restart: stop ONLY this FM_HOME's watcher (the pid recorded in THIS home's
 # state/.watch.lock) and own a fresh cycle, or attach if a verified live peer
 # wins the singleton while the duplicate child stands down. It
@@ -549,6 +556,9 @@ handle_arm_signal() {
     wait "$child" 2>/dev/null || true
   fi
   cycle_log_append "$rc" "$signal" arm-interrupted none
+  if [ -n "$child" ] && [ -n "${FM_WATCH_PREDECESSOR_ARM_PID:-}" ]; then
+    print_watch_output "$child_out"
+  fi
   cleanup_child
   exit "$rc"
 }
@@ -562,7 +572,7 @@ child_out=$(mktemp "$STATE/.watch-arm-output.XXXXXX") || {
   exit 1
 }
 if [ -n "${FM_WATCH_PREDECESSOR_ARM_PID:-}" ]; then
-  FM_WATCH_HANDLING_SUCCESSOR=1 "$WATCH" >"$child_out" &
+  FM_WATCH_HANDLING_SUCCESSOR=1 "$WATCH" >"$child_out" 2>&1 &
 else
   "$WATCH" >"$child_out" &
 fi
@@ -634,8 +644,10 @@ while :; do
     if [ "$HEALTHY_PID" = "$child" ]; then
       cycle_refresh_lock_before
       if ! handling_generation=$(handling_successor_generation); then
-        cleanup_child
+        kill -TERM "$child" 2>/dev/null || true
         wait "$child" 2>/dev/null || true
+        print_watch_output "$child_out"
+        cleanup_child
         cycle_log_append 1 none handling-handoff-failed none
         echo "watcher: FAILED - established successor could not inspect handling state"
         exit 1
@@ -669,10 +681,18 @@ while :; do
 done
 
 trap - HUP TERM INT
-print_watch_output "$child_out"
-cleanup_child
-wait "$child" 2>/dev/null
-rc=$?
+if [ -n "${FM_WATCH_PREDECESSOR_ARM_PID:-}" ]; then
+  kill -TERM "$child" 2>/dev/null || true
+  wait "$child" 2>/dev/null
+  rc=$?
+  print_watch_output "$child_out"
+  cleanup_child
+else
+  print_watch_output "$child_out"
+  cleanup_child
+  wait "$child" 2>/dev/null
+  rc=$?
+fi
 cycle_log_append "$rc" "$(cycle_signal_name "$rc")" confirmation-timeout none
 echo "watcher: FAILED - no live watcher with a fresh beacon"
 exit 1
