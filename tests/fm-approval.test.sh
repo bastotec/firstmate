@@ -650,7 +650,7 @@ test_workers_cannot_escalate_their_own_home_requests() {
 }
 
 test_escalation_audit_failure_is_retryable() {
-  local w id rc out timestamp
+  local w id rc out
   w=$(world escalation-audit)
   ap "$w" enable slack-send >/dev/null
   printf 'kind=ship\n' > "$w/home/state/w1.meta"
@@ -660,17 +660,17 @@ test_escalation_audit_failure_is_retryable() {
   mkdir "$w/home/state/approvals.log"
   rc=0; out=$(ap "$w" escalate "$id" 2>&1) || rc=$?
   assert_equals 1 "$rc" "audit failure is not reported as success"
-  assert_contains "$out" 'retry escalate' "audit failure remains actionable"
-  assert_equals captain "$(jq -r .audience "$w/home/state/approvals/$id.json")" "published escalation is preserved"
-  timestamp=$(jq -r .escalated "$w/home/state/approvals/$id.json")
+  assert_contains "$out" 'not recorded, so not made' "says nothing changed"
+  assert_equals mate "$(jq -r .audience "$w/home/state/approvals/$id.json")" "no unaudited escalation is published"
+  assert_equals null "$(jq -r .escalated "$w/home/state/approvals/$id.json")" "no escalation time without its audit"
   rmdir "$w/home/state/approvals.log"
   mv "$w/home/state/previous.log" "$w/home/state/approvals.log"
-  NOW=1760000010 ap "$w" escalate "$id" >/dev/null || fail "audit retry failed"
-  ap "$w" escalate "$id" >/dev/null || fail "completed escalation retry failed"
-  assert_equals 1 "$(jq -s '[.[] | select(.event=="escalated")] | length' "$w/home/state/approvals.log")" "successful retry audits once"
-  assert_equals "$timestamp" "$(jq -r 'select(.event=="escalated") | .escalated' "$w/home/state/approvals.log")" "retry audits the original escalation time"
-  assert_equals "$timestamp" "$(jq -r .escalated "$w/home/state/approvals/$id.json")" "retry preserves escalation metadata"
-  pass "a failed escalation audit remains visible and a retry completes it"
+  ap "$w" escalate "$id" >/dev/null || fail "escalate after repair failed"
+  ap "$w" escalate "$id" >/dev/null || fail "repeating a completed escalation failed"
+  assert_equals captain "$(jq -r .audience "$w/home/state/approvals/$id.json")" "escalated once the audit works"
+  assert_equals 1 "$(jq -s '[.[] | select(.event=="escalated")] | length' "$w/home/state/approvals.log")" "audited exactly once"
+  assert_equals "$(jq -r .escalated "$w/home/state/approvals/$id.json")" "$(jq -r 'select(.event=="escalated") | .escalated' "$w/home/state/approvals.log")" "file and audit agree on the time"
+  pass "a failed escalation audit changes nothing; escalating again after repair records it once"
 }
 
 test_overlapping_escalation_and_answer_do_not_recreate_pending() {

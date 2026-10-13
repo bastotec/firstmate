@@ -72,13 +72,11 @@ owns the separate Fleet Town integration limits.
 
 escalate. Run in the owning home (FM_HOME); the shell entry point refuses an
 owning-home worker through bin/fm-worker-guard-lib.sh (exit 3). Escalation and answer
-share a per-request lock; an unknown or no-longer-pending request is refused (exit 3).
-Escalation sets audience to captain and records the original escalated timestamp,
-then appends an escalated audit event and saves escalation_audited: true. Repeating
-a completed escalation is a no-op. An audit failure exits 1 with an incomplete
-escalation diagnostic, leaving the published captain audience in place; while the
-request is still pending, retry escalate after repairing the audit destination to
-finish the audit using the original timestamp.
+share a per-request lock, as does the gate's own filing of the request; an unknown or
+no-longer-pending request is refused (exit 3). Escalation appends the escalated audit
+event first and only then sets audience to captain with an escalated timestamp: if the
+audit cannot be written, nothing changes and it exits 1. Repeating a completed
+escalation is a no-op.
 
 The owning home is FM_APPROVAL_HOME (the Deck hosts export it with FM_APPROVAL_AGENT:
 the task id, or `primary` for the first mate), else the policy's "home". Agents with
@@ -447,10 +445,13 @@ def gate_main():
         'cwd': cwd, 'gate': gate['id'], 'gate_description': gate.get('description') or '',
         'key': key, 'requested': iso(t), 'audience': 'mate' if is_worker(home, agent) else 'captain',
     }
-    write_private(approvals_dir(home) / f'{rid}.json', json.dumps(rec, indent=2, ensure_ascii=False) + '\n')
-    audit(home, 'requested', rec, gate=gate['id'], audience=rec['audience'])
-    if rec['audience'] == 'mate':
-        tell_mate(home, rec)
+    # Publication, its audit and the mate's wake happen under the request's lock, so an
+    # answer (which takes the same lock) cannot close the decision before it opens.
+    with request_lock(home, rid):
+        write_private(approvals_dir(home) / f'{rid}.json', json.dumps(rec, indent=2, ensure_ascii=False) + '\n')
+        audit(home, 'requested', rec, gate=gate['id'], audience=rec['audience'])
+        if rec['audience'] == 'mate':
+            tell_mate(home, rec)
     return block(blocked_message(rec))
 
 
@@ -503,7 +504,9 @@ def blocked_message(rec, again=False):
 
 
 def escalate_main(argv):
-    """A mate hands a worker's request to the captain: audience becomes captain."""
+    """A mate hands a worker's request to the captain: audience becomes captain.
+    The escalated audit entry is written before the request changes, so the captain
+    never sees an escalation the log does not record."""
     if len(argv) != 1 or not REQ_RE.match(argv[0]):
         raise Refuse('usage: fm-approval.sh escalate <request-id>', 2)
     home = os.environ.get('FM_HOME')
@@ -514,17 +517,14 @@ def escalate_main(argv):
         rec = read_json(path)
         if not isinstance(rec, dict) or rec.get('status') != 'pending':
             raise Refuse(f'no pending request {argv[0]} in {home}', 3)
-        try:
-            if rec.get('audience') != 'captain':
-                rec['audience'] = 'captain'
-                rec['escalated'] = iso(now())
-                write_private(path, json.dumps(rec, indent=2, ensure_ascii=False) + '\n')
-            if rec.get('escalated') and not rec.get('escalation_audited'):
+        if rec.get('audience') != 'captain':
+            rec['audience'] = 'captain'
+            rec['escalated'] = iso(now())
+            try:
                 audit(home, 'escalated', rec, escalated=rec['escalated'])
-                rec['escalation_audited'] = True
-                write_private(path, json.dumps(rec, indent=2, ensure_ascii=False) + '\n')
-        except OSError as e:
-            raise Refuse(f'escalation of {argv[0]} is incomplete; retry escalate to finish the audit: {e}') from e
+            except OSError as e:
+                raise Refuse(f'escalation of {argv[0]} not recorded, so not made: {e}') from e
+            write_private(path, json.dumps(rec, indent=2, ensure_ascii=False) + '\n')
     print(f'escalated {argv[0]}: the captain sees it in Fleet Town')
     return 0
 
