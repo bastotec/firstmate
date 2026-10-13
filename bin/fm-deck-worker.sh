@@ -683,16 +683,18 @@ run_turn() {  # <prompt>
   [ "$SECONDMATE" != 1 ] || watch_confirm_handling_delivery || return 1
   [ -z "$effort" ] || prompt="deck-effort: $effort
 $prompt"
-  local switched
+  # This turn's route: an in-place switch while the file is there, else the
+  # launch --model (never a stale copy of an earlier switch).
+  local switched model=$MODEL
   switched=$(head -1 "$MODEL_FILE" 2>/dev/null || true)
   case "$switched" in
     ''|*[!A-Za-z0-9._:@/-]*) ;;
-    *) MODEL=$switched ;;
+    *) model=$switched ;;
   esac
   local -a args=(run "$prompt" --max-turns "$MAX_TURNS" --deadline-secs "$DEADLINE" --hook "pre_complete=$EVIDENCE_HOOK")
   [ -z "$PRE_TOOL_HOOK" ] || args+=(--hook "pre_tool_use=$PRE_TOOL_HOOK")
   [ -z "$PROGRESS_HOOK" ] || args+=(--hook "post_tool_use=$PROGRESS_HOOK")
-  [ -z "$MODEL" ] || args+=(--model "$MODEL")
+  [ -z "$model" ] || args+=(--model "$model")
   [ -z "$MCP_CONFIG" ] || args+=(--mcp-config "$MCP_CONFIG")
   [ -z "$SESSION" ] || args+=(--session "$SESSION")
   if [ -n "${FM_STREAM_ENDPOINT_ID:-}" ]; then

@@ -1395,6 +1395,7 @@ if records and not (home / 'captain-wakes').exists():
 with (home / 'turns').open('a') as f:
     f.write(json.dumps({'prompt': prompt, 'session': session,
                         'resumed': '--session' in args, 'inbox': body,
+                        'model': args[args.index('--model') + 1] if '--model' in args else None,
                         'mcp_config_arguments': [args[i + 1] for i, arg in enumerate(args)
                                                  if arg == '--mcp-config']}) + '\n')
 for record in records:
@@ -1635,6 +1636,54 @@ with (root/'pane').open('w') as output:
             os.killpg(p.pid, 9); p.wait()
 PYTHON
   pass "Deck secondmate retries a captain wake whose turn failed before the model ran"
+}
+
+# state/<id>.model (bin/fm-control.sh `model`) sets each turn's route while it
+# exists; without it a turn runs on the launch --model, not an earlier switch.
+test_secondmate_turn_model_follows_the_switch_file() {
+  local dir="$TMP_ROOT/host-model-file"
+  make_secondmate_host_fixture "$dir"
+  python3 - "$dir" <<'PYTHON' || fail "the turn model did not follow state/<id>.model"
+import json, os, pathlib, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+home = root / 'home'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+       str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'),
+       '--gen', gen, '--deck', str(root/'deck'), '--model', 'launch/route', '--', 'charter']
+def rows():
+    path = home/'turns'
+    return [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+def idle():
+    path = root/'parent/host.busy-state'
+    return path.exists() and 'state=idle' in path.read_text()
+def wait_for(check, label, bound=30):
+    deadline = time.monotonic() + bound
+    while time.monotonic() < deadline:
+        if check(): return
+        if p.poll() is not None: raise AssertionError(label+': '+(root/'pane').read_text())
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text())
+with (root/'pane').open('w') as output:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+                         env=env, text=True, start_new_session=True)
+    try:
+        wait_for(lambda: idle() and len(rows()) == 1, 'startup turn')
+        (root/'parent/host.model').write_text('switched/route\n')
+        p.stdin.write('one\n'); p.stdin.flush()
+        wait_for(lambda: idle() and len(rows()) == 2, 'switched turn')
+        (root/'parent/host.model').unlink()
+        p.stdin.write('two\n'); p.stdin.flush()
+        wait_for(lambda: idle() and len(rows()) == 3, 'turn after the switch file is gone')
+        assert [r['model'] for r in rows()] == ['launch/route', 'switched/route', 'launch/route'], rows()
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        assert p.wait(timeout=20) == 0, (root/'pane').read_text()
+    finally:
+        if p.poll() is None:
+            os.killpg(p.pid, 9); p.wait()
+PYTHON
+  pass "Deck secondmate turns follow state/<id>.model, and the launch model without it"
 }
 
 # A successor watcher that is slow to confirm or dies before confirming used to
@@ -2805,6 +2854,7 @@ test_secondmate_host_serializes_wakes_and_steering
 test_secondmate_routine_wakes_think_less
 test_secondmate_stops_a_turn_inside_a_long_tool
 test_secondmate_retries_a_captain_wake_whose_turn_failed
+test_secondmate_turn_model_follows_the_switch_file
 test_secondmate_host_survives_an_unconfirmed_successor_watcher
 test_secondmate_host_retains_failed_successor_start_evidence
 test_secondmate_mcp_config_on_startup_steer_and_wake
