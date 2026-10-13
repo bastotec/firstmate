@@ -93,7 +93,7 @@ test_ship_modes_generate_clean_briefs() {
 test_status_protocol_uses_deck_append_boundary() {
   local home id brief status command
   home="$TMP_ROOT/status-protocol-home"
-  id=status-protocol
+  id='status-protocol'
   mkdir -p "$home/state"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode local-only >/dev/null 2>&1 \
     || fail "status protocol brief should scaffold"
