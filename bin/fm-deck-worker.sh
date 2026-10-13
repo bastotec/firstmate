@@ -819,8 +819,7 @@ $prompt"
     if [ "$event" = turn-failed ]; then
       recovery_gen=$(fm_recovery_marker_reserve_generation "$STATE/.watcher-down" 2>/dev/null || true)
       if [ -n "$recovery_gen" ]; then
-        printf 'failed: deck turn ended without a status line (turn-failed recovery-gen=%s at=%s)\n' \
-          "$recovery_gen" "$status_before" | status_append
+        python3 "$STATE_IO" root-append-turn-failed "$STATE" "$ID.status" "$recovery_gen"
       else
         printf 'failed: deck turn ended without a status line (turn-failed)\n' | status_append
       fi

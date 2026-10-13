@@ -93,6 +93,26 @@ def append_record(dir_fd: int, name: str, payload: bytes) -> None:
         os.close(fd)
 
 
+def append_turn_failure_record(dir_fd: int, name: str, generation: str) -> None:
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", generation):
+        raise UnsafeStatePath("invalid recovery generation")
+    flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK | require_nofollow()
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(name, flags, 0o600, dir_fd=dir_fd)
+    try:
+        require_regular_single_link(fd)
+        offset = os.fstat(fd).st_size
+        payload = (
+            "failed: deck turn ended without a status line "
+            f"(turn-failed recovery-gen={generation} at={offset})\n"
+        ).encode()
+        if os.write(fd, payload) != len(payload):
+            raise OSError("short state append")
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def append_private_record(dir_fd: int, name: str, payload: bytes) -> None:
     flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK | require_nofollow()
     flags |= getattr(os, "O_CLOEXEC", 0)
@@ -254,6 +274,7 @@ def main() -> int:
         "replace",
         "remove",
         "root-append",
+        "root-append-turn-failed",
         "root-first-worker-status-after",
         "root-private-append",
         "root-size",
@@ -263,7 +284,11 @@ def main() -> int:
     if len(sys.argv) not in (4, 5) or sys.argv[1] not in operations:
         return 2
     operation, directory, name = sys.argv[1:4]
-    if operation in ("root-first-worker-status-after", "root-worker-status-after"):
+    if operation in (
+        "root-append-turn-failed",
+        "root-first-worker-status-after",
+        "root-worker-status-after",
+    ):
         if len(sys.argv) != 5:
             return 2
     elif len(sys.argv) != 4:
@@ -280,6 +305,8 @@ def main() -> int:
             sys.stdout.buffer.write(read_record(dir_fd, name))
         elif operation == "root-size":
             print(record_size(dir_fd, name))
+        elif operation == "root-append-turn-failed":
+            append_turn_failure_record(dir_fd, name, sys.argv[4])
         elif operation in ("root-first-worker-status-after", "root-worker-status-after"):
             try:
                 offset = int(sys.argv[4])

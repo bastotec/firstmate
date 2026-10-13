@@ -619,6 +619,31 @@ test_replayed_working_turn_records_recovery_supersession() {
   pass "fm-deck-worker: replayed working evidence supersedes its recovery failure"
 }
 
+test_bookkeeping_before_failed_turn_uses_the_failure_append_offset() {
+  local dir="$TMP_ROOT/recovery-supersession-bookkeeping" failure generation offset expected
+  make_fake_deck "$dir"
+  run_worker "$dir" $'write-working\n/quit\n' 'resolve-only fail-turn' \
+    || fail "the bookkeeping replay fixture did not return to its prompt"
+  [ "$(sed -n '1p' "$dir/state/t1.status")" = 'resolved [key=choice]: answered: yes' ] \
+    || fail "the failed turn did not retain its preceding bookkeeping record"
+  failure=$(sed -n '2p' "$dir/state/t1.status")
+  generation=${failure#*recovery-gen=}; generation=${generation%% *}
+  offset=${failure##* at=}; offset=${offset%)}
+  expected=$(printf 'resolved [key=choice]: answered: yes\n' | wc -c | tr -d '[:space:]')
+  [ "$offset" = "$expected" ] \
+    || fail "the failure stamped turn start $offset instead of append offset $expected: $failure"
+  [ "$(sed -n '3p' "$dir/state/t1.status")" = 'working: replay resumed' ] \
+    || fail "the replay did not append its worker working status"
+  [ "$(sed -n '4p' "$dir/state/t1.status")" = "working [recovery-gen=$generation]: deck turn reported working" ] \
+    || fail "the replay did not bind working evidence after bookkeeping"
+  if FM_TEST_DECK_STATUS="$dir/state/t1.status" \
+      bash -c '. "$1"; status_span_has_actionable "$FM_TEST_DECK_STATUS" 0' \
+        _ "$ROOT/bin/fm-classify-lib.sh"; then
+    fail "the correctly offset replayed failure remained actionable"
+  fi
+  pass "fm-deck-worker: turn-failure offsets follow preceding bookkeeping"
+}
+
 test_idle_interrupt_does_not_echo_fake_input() {
   local dir="$TMP_ROOT/idle-interrupt" gen
   make_fake_deck "$dir"
@@ -2686,6 +2711,7 @@ test_idle_prompt_notes_the_utc_idle_instant
 test_status_checks_and_fallbacks_refuse_unsafe_paths
 test_driver_backstops_silent_and_failed_turns
 test_replayed_working_turn_records_recovery_supersession
+test_bookkeeping_before_failed_turn_uses_the_failure_append_offset
 test_doorbell_for_an_empty_own_inbox_starts_no_turn
 test_idle_captain_preserves_partial_input
 test_stale_captain_cue_does_not_dispatch_an_acknowledged_source
