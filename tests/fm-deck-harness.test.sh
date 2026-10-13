@@ -1324,6 +1324,11 @@ if [ "${1:-}" = --handling-delivered ]; then
   exit 0
 fi
 trap 'exit 143' TERM INT
+if [ -f "$FM_HOME/watch-fail-once" ]; then
+  rm -f "$FM_HOME/watch-fail-once"
+  : > "$FM_HOME/watch-failed"
+  exit 1
+fi
 if [ "${1:-}" = --restart ] && [ -f "$FM_HOME/successor-silent" ]; then
   rm -f "$FM_HOME/successor-silent"
   : > "$FM_HOME/successor-was-silent"
@@ -1802,6 +1807,75 @@ PYTHON
   pass "Deck host retains failed and interrupted handling child stderr and serves later wakes"
 }
 
+# A watcher cycle that fails used to end the host ("watcher failed (exit 1)"),
+# and every automatic revive then opened a new Deck session, so a second mate
+# lost its conversation each time. The host now restarts its watcher, and a new
+# host resumes the session the previous one recorded.
+test_secondmate_host_survives_a_failed_watcher_and_resumes_its_session() {
+  local dir="$TMP_ROOT/host-watch-fail-resume"
+  make_secondmate_host_fixture "$dir"
+  python3 - "$dir" <<'PYTHON' || fail "Deck secondmate host did not survive a failed watcher or resume its session"
+import json, os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+home = root / 'home'
+sessions = root / 'deck-sessions'
+sessions.mkdir()
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='',
+           DECK_SESSIONS_DIR=str(sessions))
+def host():
+    gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+    cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+           str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'),
+           '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+    return subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=(root/'pane').open('a'), stderr=subprocess.STDOUT,
+                            env=env, text=True, start_new_session=True)
+def rows():
+    path = home/'turns'
+    return [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+def idle():
+    path = root/'parent/host.busy-state'
+    return path.exists() and 'state=idle' in path.read_text()
+def wait_for(check, label, bound=60):
+    deadline = time.monotonic() + bound
+    while time.monotonic() < deadline:
+        if check(): return
+        if p.poll() is not None: raise AssertionError(label+': host exited: '+(root/'pane').read_text())
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text())
+p = host()
+try:
+    wait_for(lambda: len(rows()) == 1 and idle(), 'startup turn')
+    assert not rows()[0]['resumed'], rows()[0]
+    assert (root/'parent/host.deck-session').read_text().strip() == 'host-session'
+    (home/'watch-fail-once').touch()
+    (home/'trigger').touch()
+    wait_for(lambda: (home/'watch-failed').exists(), 'failed watcher cycle')
+    (home/'trigger').touch()
+    wait_for(lambda: len(rows()) == 2 and idle(), 'wake served after the failed watcher')
+    assert 'watcher failed' not in (root/'parent/host.status').read_text()
+    p.stdin.write('/quit\n'); p.stdin.flush()
+    assert p.wait(timeout=60) == 0
+    # The next host resumes the recorded session while Deck still has it.
+    (sessions/'host-session.json').write_text('{}')
+    p = host()
+    wait_for(lambda: len(rows()) == 3 and idle(), 'relaunched host startup turn')
+    assert rows()[2]['resumed'] and rows()[2]['session'] == 'host-session', rows()[2]
+    p.stdin.write('/quit\n'); p.stdin.flush()
+    assert p.wait(timeout=60) == 0
+    # A session Deck no longer has is not resumed.
+    (sessions/'host-session.json').unlink()
+    p = host()
+    wait_for(lambda: len(rows()) == 4 and idle(), 'host startup without a stored session')
+    assert not rows()[3]['resumed'], rows()[3]
+    p.stdin.write('/quit\n'); p.stdin.flush()
+    assert p.wait(timeout=60) == 0
+finally:
+    if p.poll() is None:
+        os.killpg(p.pid, signal.SIGKILL); p.wait()
+PYTHON
+  pass "Deck secondmate host restarts a failed watcher and resumes its recorded Deck session"
+}
+
 test_secondmate_mcp_config_on_startup_steer_and_wake() {
   local dir="$TMP_ROOT/host-mcp"
   make_secondmate_host_fixture "$dir"
@@ -2051,7 +2125,9 @@ with (root/'pane').open('w') as output:
             except subprocess.TimeoutExpired:
                 os.killpg(p.pid, signal.SIGKILL); p.wait()
 for key in ['FM_TEST_START_FAIL', 'FM_TEST_WATCH_FAIL']:
-    failure_env = dict(env, **{key: '1'})
+    # A watcher that fails every cycle still stops the host once its retry
+    # budget is spent; a budget of one makes the first failure decisive.
+    failure_env = dict(env, **{key: '1', 'FM_DECK_WATCH_FAILURE_LIMIT': '1'})
     (root/'parent/host.status').unlink(missing_ok=True)
     (home/'trigger').touch()
     with (root/'failure-pane').open('w') as output:
@@ -2807,6 +2883,7 @@ test_secondmate_stops_a_turn_inside_a_long_tool
 test_secondmate_retries_a_captain_wake_whose_turn_failed
 test_secondmate_host_survives_an_unconfirmed_successor_watcher
 test_secondmate_host_retains_failed_successor_start_evidence
+test_secondmate_host_survives_a_failed_watcher_and_resumes_its_session
 test_secondmate_mcp_config_on_startup_steer_and_wake
 test_secondmate_queued_exit_behind_composer_clears_beats_watcher_turn
 test_secondmate_survives_a_failed_turn
