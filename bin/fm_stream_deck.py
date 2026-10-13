@@ -12,8 +12,8 @@ Driver CLI: fm_stream_deck.py start|end STATE ID ENDPOINT [TURN SUPPORTED [SET_M
 SET_MODEL 1 records that this turn's Deck takes `deck-control: set_model`
 (bin/fm_model_switch.py publishes it only into such a turn).
 start prints the turn projection path; end retires the active descriptor.
-fm_stream_deck.py captain STATE ID flushes eligible captain-direct records and
-bound Bridge orders; project_captain owns eligibility and acknowledgement rules.
+fm_stream_deck.py captain STATE ID flushes eligible direct sources and bound
+Bridge orders; project_captain owns eligibility and acknowledgement rules.
 with_deck_images owns how a captain attachment becomes a Deck image part.
 """
 import contextlib
@@ -344,8 +344,12 @@ class Receiver:
         return None, 'Deck application pending'
 
 
+# Direct sources: text the captain wrote to this agent himself, and peer
+# messages from another second mate (bin/fm-operational-input.sh owns both
+# carriers). Each wakes an idle agent and reaches a live turn natively.
 CAPTAIN_DIRECT = re.compile(
-    '\\A(?:\\[fm-from-firstmate\\]⁣(?:corr=\\S+ )?)?\\[fm-captain-direct\\]⁣')
+    '\\A(?:(?:\\[fm-from-firstmate\\]⁣(?:corr=\\S+ )?)?\\[fm-captain-direct\\]'
+    '|\\[fm-from-mate:[A-Za-z0-9._-]+\\])⁣')
 
 
 def project_captain(state, task):
@@ -359,12 +363,13 @@ def project_captain(state, task):
     the task inbox's handled/ acknowledges it, not publication or movement of the
     native projection. The doorbell remains the fallback for unhandled sources.
 
-    Both publication paths flush eligible captain records and Bridge orders
-    bound to the active execution and turn in sequence under the lifecycle lock.
+    Both publication paths flush eligible direct sources (captain-direct and
+    from-mate records) and Bridge orders bound to the active execution and turn
+    in sequence under the lifecycle lock.
     No sequence is published below one already visible in that turn, because
     Deck silently drops a late lower sequence. Guidance, including source paths
     and attachment expansion from with_deck_images, must fit Deck's 64 KiB
-    UTF-8 byte ceiling. Native-ineligible captain records
+    UTF-8 byte ceiling. Native-ineligible direct sources
     retain their ordinary inbox fallback without blocking later eligible sources;
     an ineligible bound Bridge order stops the flush rather than being overtaken.
     Prints the total number of native projections published, including Bridge
@@ -387,7 +392,7 @@ def project_captain(state, task):
 
 
 def idle_captain_sequence(state, task, floor):
-    """Newest pending captain source; observation never acknowledges it."""
+    """Newest pending direct source; observation never acknowledges it."""
     newest = int(floor)
     for source in (Path(state) / (task + '.inbox')).glob('*.msg'):
         if not source.stem.isdigit():

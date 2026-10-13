@@ -277,15 +277,15 @@ Native text must be nonblank and fit below Deck's 64 KiB projection ceiling, wit
 `bin/fm_stream_deck.py` owns Deck's durable source, original-turn binding, idempotency, reconciliation, and refusal mechanics.
 In `command` mode, the owning agent's report that its worker ended produces an authoritative membership nack, while unresolved membership or application produces no record and remains pending.
 
-Captain-direct messages (`fm-send --from-captain`) use the durable task inbox rather than the Bridge order journal.
-With a stream-hosted driver and a Deck build supporting `--steer-dir`, ringing attempts native publication into a live turn, and each new turn also attempts publication of pending captain messages before its first model call.
+Captain-direct messages (`fm-send --from-captain`) and peer mate messages ([`fm-mate-send.sh`](../bin/fm-mate-send.sh)) are direct sources in the durable task inbox rather than the Bridge order journal.
+With a stream-hosted driver and a Deck build supporting `--steer-dir`, ringing attempts native publication into a live turn, and each new turn also attempts publication of pending direct sources before its first model call.
 Published messages reach the model at its next safe point without interrupting or restarting the turn; [`project_captain`](../bin/fm_stream_deck.py) owns publication eligibility, sequencing limits, and acknowledgement rules.
 Native publication is best-effort: unsupported builds, skipped records, and publication failures retain the ordinary inbox path rather than refusing the durable send.
 Captain images in native steering follow [`with_deck_images`](../bin/fm_stream_deck.py), also used by [primary steering](../bin/fm-primary-steer.sh); Bridge-order bodies are not transformed.
 Remote attachments must already be staged on the receiving host before sending; native publication does not copy attachment bytes.
-An idle driver observes new captain records out of band and starts a turn without waiting for Enter, including while its composer holds human text.
+An idle driver observes new direct-source records out of band and starts a turn without waiting for Enter, including while its composer holds human text.
 The draft remains pending and is repainted after the turn; the fallback terminal ring never overwrites or submits it.
-The [`fm-send.sh` header](../bin/fm-send.sh) owns delivery status and reply tracking, and the [driver header](../bin/fm-deck-worker.sh) owns failed idle captain-wake retries, their backoff control, the attempted-source anti-spin guard, and suppression of redundant empty-inbox doorbells.
+The [`fm-send.sh` header](../bin/fm-send.sh) owns delivery status and reply tracking, and the [driver header](../bin/fm-deck-worker.sh) owns failed idle direct-source wake retries, their backoff control, the attempted-source anti-spin guard, and suppression of redundant empty-inbox doorbells.
 
 The hub places Bridge orders only to endpoints whose agent advertises reliable result acknowledgement and the native steering receiver.
 An agent requires the hub's `idempotent_command_results` capability before registering, so an older running hub is rejected with a restart-or-upgrade diagnostic.

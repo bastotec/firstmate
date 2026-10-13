@@ -42,6 +42,10 @@ A missed-reply escalation includes the complete first sighting path and line num
 
 [`AGENTS.md` section 9](../AGENTS.md#9-escalation-and-captain-etiquette) owns the captain-direct reply rule, the [`fm-send.sh` header](../bin/fm-send.sh) owns its delivery and reply tracking, and [`fm-operational-input.sh`](../bin/fm-operational-input.sh) owns the carrier and its compatibility note.
 
+## Peer messages
+
+[`AGENTS.md` section 9](../AGENTS.md#9-escalation-and-captain-etiquette) owns when to message a peer; the [`fm-mate-send.sh` header](../bin/fm-mate-send.sh) owns usage, and [`fm-mate-mail-lib.sh`](../bin/fm-mate-mail-lib.sh) owns the parent-channel diversion, bridge prerequisites, spool, and oversight log.
+
 ## What is deliberately not built
 
 - No mirror of the mate's chat: chat can mix outcomes with other conversation, so choosing which sentence is an outcome would itself be model behavior.
@@ -59,6 +63,7 @@ A missed-reply escalation includes the complete first sighting path and line num
 `tests/fm-send-secondmate-marker.test.sh` covers the captain-direct tag for secondmate and worker targets, its refusals, and a correlated line resolving a captain message's pending reply.
 `tests/fm-captain-direct-echo.test.sh` covers the parent's one FYI note per captain-direct delivery, the echo guard that holds back a parent steer repeating it (and `--correction`), and a captain-direct pending reply that never reposts or escalates.
 `tests/fm-pending-reply.test.sh` covers helper-selected local routing, remote-channel classification, same-basename restatement before false escalation, readable wrong-home diagnostics, and the rule that arbitrary mate-home sightings never acknowledge a reply.
+[`tests/fm-mate-mail.test.sh`](../tests/fm-mate-mail.test.sh) covers peer routing, diversion before document fetch, bridge refusals, and interrupted delivery and terminal bookkeeping.
 
 ## Live verification
 

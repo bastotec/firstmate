@@ -1722,7 +1722,7 @@ procevent_surface_after_output() {
 }
 
 procevent_surface_queued() {
-  local key reason captured="" stranded="" unstarted="" notes="" revive="" idle="" idle_audit="" idle_left=""
+  local key reason captured="" stranded="" unstarted="" notes="" revive="" idle="" idle_audit="" idle_left="" mates=""
   PROCEVENT_SURFACED=
   [ -s "$FM_WAKE_QUEUE" ] || return 0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
@@ -1734,7 +1734,7 @@ procevent_surface_queued() {
         notes="$notes ${key#inbox:}"
         continue
         ;;
-      procevent:*|secondmate-revive:*|idle-sweep:*|idle-sweep-audit:*|idle-sweep-unhandled:*) ;;
+      procevent:*|secondmate-revive:*|idle-sweep:*|idle-sweep-audit:*|idle-sweep-unhandled:*|mate-mail:*) ;;
       *) continue ;;
     esac
     [ -e "$(procevent_surfaced_marker "$key")" ] && continue
@@ -1749,6 +1749,7 @@ procevent_surface_queued() {
         revive="$revive ${key%%:*}"
         ;;
       idle-sweep:*) idle=1 ;;
+      mate-mail:*) mates="$mates ${key#mate-mail:}" ;;
       idle-sweep-unhandled:*) idle_left=1 ;;
       idle-sweep-audit:*)
         key=${key#idle-sweep-audit:}
@@ -1772,6 +1773,10 @@ procevent_surface_queued() {
   if [ -n "$idle" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
     reason="$reason idle workers need a decision"
+  fi
+  if [ -n "$mates" ]; then
+    [ "$reason" = "check:" ] || reason="$reason;"
+    reason="$reason second mate message needs a look (state/mate-messages.log):$mates"
   fi
   if [ -n "$idle_left" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
@@ -2216,6 +2221,22 @@ idle_sweep_detached() {
     "$SCRIPT_DIR/fm-idle-sweep.sh" scan </dev/null >/dev/null 2>&1 &
 }
 
+# Peer messages between second mates queue in this main home's spool and are
+# delivered off the beacon's path (bin/fm-mate-route.sh); a refused or failed
+# one queues its own check wake.
+mate_route_detached() {
+  local record
+  [ ! -e "$FM_HOME/.fm-secondmate-home" ] || return 0
+  for record in "$STATE/mate-mail/pending/"*.msg \
+    "$STATE/mate-mail/refused/"*.bounce "$STATE/mate-mail/failed/"*.bounce; do
+    [ -f "$record" ] || continue
+    FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+      "$SCRIPT_DIR/fm-mate-route.sh" run </dev/null >/dev/null 2>&1 &
+    return 0
+  done
+  return 0
+}
+
 PR_POLL_CONTROL_LOCK=
 
 pr_poll_control_release() {
@@ -2384,6 +2405,8 @@ while :; do
   # Finished workers are cleaned up and idle ones become decisions here, so a
   # home never keeps them waiting for a model turn (bin/fm-idle-sweep.sh).
   idle_sweep_detached
+
+  mate_route_detached
 
   # A live secondmate endpoint does not prove that its own wake loop is alive.
   # Observe the foreign queue before the rest of this cycle so an aged row wakes

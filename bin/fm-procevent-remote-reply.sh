@@ -25,10 +25,11 @@
 # in code.
 #
 # `self-announcing` declares this adapter's one-announcement contract to the
-# runner: every byte autohandle applies lands in the parent's state/<id>.status
-# stream, whose ordinary signal-scan announcement is durable, so a fully
-# autohandled capture needs - and gets - no `check` wake of its own. One remote
-# note therefore produces exactly one firstmate wake, through the same signal
+# runner: ordinary status lines autohandle applies land in the parent's
+# state/<id>.status stream, whose signal-scan announcement is durable, while
+# peer lines use the exception below. A fully autohandled capture needs - and
+# gets - no `check` wake of its own. One remote status note therefore produces
+# exactly one firstmate wake, through the same signal
 # classification a local secondmate's own status append gets, and a replayed
 # capture whose every line is already mirrored (the at-most-once append) adds
 # no bytes and stays completely quiet. Only a capture autohandle could NOT
@@ -40,13 +41,17 @@
 # state/<id>.status, and every parent consumer - the open-decision fold, wake
 # classification, crew-state reconciliation, and pending-reply resolution - reads
 # that one stream. A remote secondmate must present the same model, so ingest
-# mirrors every content-bearing line at most once, omits blank separators, and
+# mirrors every content-bearing status line at most once, omits blank separators, and
 # leaves every semantic judgement to those same shared consumers. Correlation is
 # a per-line property that fm-pending-reply-lib.sh consumes; it is never a gate
 # on the stream. Gating on it here made a remote mate's own progress lines and
 # newly raised decisions - which carry no corr= by contract - unrepresentable,
 # and rejecting one line failed the whole delta, so the cursor could never
 # advance past it. No single line can stop or wedge the stream.
+#
+# The peer-message exception to mirroring and document enrichment is owned by
+# bin/fm-mate-mail-lib.sh. Malformed peer lines fall through to the ordinary
+# mirror so they remain visible instead of being silently discarded.
 #
 # What remains here is only what crossing a machine boundary genuinely adds:
 #   - cursor continuity and identity (offset plus prefix digest)
@@ -85,6 +90,8 @@ DOCUMENT_LOCAL_FAILURE=2
 . "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
 # shellcheck source=bin/fm-pending-reply-lib.sh
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
+# shellcheck source=bin/fm-mate-mail-lib.sh
+. "$SCRIPT_DIR/fm-mate-mail-lib.sh"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 usage() { sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
@@ -377,6 +384,19 @@ cmd_ingest() {
   [ "$status" = delta ] && [ "$payload_bytes" -gt 0 ] || { fm_lock_release "$lock"; die "delta result has no payload"; }
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
+    if fm_mate_mail_is_line "$line"; then
+      # A peer message rides this channel only to reach the first mate's
+      # router; it goes to the spool before any document fetch, never into the
+      # mate's status stream (bin/fm-mate-mail-lib.sh). A malformed one is
+      # mirrored as-is so the first mate can see it; a duplicate is already
+      # spooled or routed.
+      append_rc=0
+      fm_mate_mail_spool_line "$STATE" "$id" "$line" || append_rc=$?
+      case "$append_rc" in
+        0|1) continue ;;
+        3) fm_lock_release "$lock"; die "cannot spool a peer message from $id" ;;
+      esac
+    fi
     rewritten=$line
     while IFS= read -r doc; do
       [ -n "$doc" ] || continue

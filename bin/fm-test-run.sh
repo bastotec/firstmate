@@ -626,6 +626,8 @@ portable_serial_weight_hints() {
 # 37401433503, 37413095868, and 37527983434 (2026-10-04/06). The last two ran
 # the shards' family phases at three workers, so they carry their contention;
 # 37527983434 is the first stream-only run, after the tmux/herdr removal.
+# The mate-mail hint is from green serial shard 3 of run 38445663105
+# (2026-10-13); every serial shard passed in that run.
 # The five tests/fm-watch-triage*.test.sh suites were one 694233 ms script
 # before run 37413095868; their hints start from each suite's share of that,
 # from the per-case output timestamps of run 37401433503's serial shard 1.
@@ -679,6 +681,7 @@ tests/fm-lint-workflows.test.sh 1203
 tests/fm-live-gate.test.sh 2469
 tests/fm-mail-check.test.sh 8405
 tests/fm-mail.test.sh 11718
+tests/fm-mate-mail.test.sh 26523
 tests/fm-model-chain.test.sh 30090
 tests/fm-nm-test-contract.test.sh 1135
 tests/fm-no-mistakes-required.test.sh 5288

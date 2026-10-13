@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Steer a task by durable record: write the message into the task's steering
 # inbox and ring a constant doorbell line into its terminal, best-effort.
-# Usage: fm-send.sh [--decision-answer] <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] [--from-captain | --correction] <text...>
+# Usage: fm-send.sh [--decision-answer] <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] [--from-captain | --from-mate <sender> | --correction] [--] <text...>
 #   --decision-answer requires an exact task id and keyed answer, resolves
 #   regular metadata under the supervision lease and metadata lock, and refuses
 #   harness-native text rather than leaving the durable inbox plane.
-#   It accepts one exact answer argument, never --key or fire-and-forget,
+#   It accepts one exact answer argument, never key mode or fire-and-forget,
 #   and has no legacy label fallback or explicit endpoint escape hatch.
 #   Without this flag the legacy selector and typed-plane behavior is unchanged.
 #   For ordinary sends, <target> may be an exact task id, a legacy fm-<id>
@@ -20,6 +20,9 @@
 # bin/fm-primary-steer.sh owns its publication and delivery-check contract.
 # Special keys instead of text: fm-send.sh <target> --key Enter
 # Supported keys: Escape, Enter, C-c and C-u.
+# For task and explicit backend targets, `--` ends option parsing: every
+# following argument is message text, even `--key` or another option spelling.
+# This does not enable options or `--` for the reserved chat-primary selector.
 #
 # Two data planes:
 #
@@ -99,11 +102,12 @@
 # fm-send-secondmate-harness-invocation-r1 owns that behavior.
 #
 # From-firstmate marker: when the resolved target is a task selector whose meta
-# records kind=secondmate, the message uses the live-charter-compatible
-# from-firstmate carrier owned by bin/fm-operational-input.sh so an ordinary
-# request's reply returns via its status file or a status-pointed doc instead of
-# stranding it in chat the main firstmate never reads; the from-captain exception
-# is described below. On the inbox plane the
+# records kind=secondmate, an ordinary firstmate request uses the
+# live-charter-compatible from-firstmate carrier owned by
+# bin/fm-operational-input.sh so the secondmate
+# routes its reply via its status file or a status-pointed doc instead of
+# stranding it in chat the main firstmate never reads; the from-captain and
+# from-mate cases are described below. On the inbox plane the
 # marker travels verbatim inside the recorded body. A crewmate/scout target,
 # an explicit backend-target escape-hatch target, and the --key path are never
 # marked - their behavior is unchanged.
@@ -118,7 +122,7 @@
 # leading "/" reaches the agent as text, never as a harness command. The flag
 # is refused with --key, --decision-answer, --fire-and-forget, and an explicit
 # backend target, none of which is a captain message to a task.
-# docs/stream-backend.md "Command path" owns captain-direct native delivery
+# docs/stream-backend.md "Command path" owns direct-source native delivery
 # timing, compatibility, and fallback; durable send and reply tracking below
 # do not depend on native publication.
 # The old "From the captain, directly:" prose prefix is not detected.
@@ -133,14 +137,22 @@
 # to acknowledge the message (AGENTS.md section 9).
 #
 # Captain-direct echo guard: bin/fm-captain-direct-lib.sh owns echo matching and
-# its fixed windows. A matching later steer from this home to the same
-# secondmate is not sent. fm-send prints
+# its fixed windows. A matching later ordinary firstmate steer from this home
+# to the same secondmate is not sent. fm-send prints
 # `suppressed=captain-direct-echo corr=<id>` on stdout and why on stderr, logs
 # it to state/captain-direct.log, and exits 0: this is a deliberate no-op, not a
 # refusal inviting a rephrased retry. --correction sends it anyway (logged),
 # for the one fix a later report from the mate shows is really needed; it cannot
 # accompany --from-captain. A --resolve-key answer is never held back, so
 # decision bookkeeping still closes.
+#
+# From-mate tag: --from-mate <sender> --fire-and-forget <corr> delivers a peer
+# message between second mates on the first mate's behalf (bin/fm-mate-route.sh
+# is the caller; bin/fm-mate-mail-lib.sh owns routing). The target must be a
+# recorded secondmate; the text gets the from-mate tag owned by
+# bin/fm-operational-input.sh instead of the from-firstmate mark, and creates no
+# pending-reply expectation. The mate-mail corr is the delivery id, so a retry
+# deduplicates onto the same local or remote record.
 #
 # Parent-owned pending-reply expectation: every newly marked secondmate request
 # except an explicit --fire-and-forget delivery receives a privacy-safe
@@ -188,8 +200,9 @@
 # reply-bearing doorbell surfaces through the parent's pending-reply recovery
 # and escalation, whose recovery request re-rings the remote doorbell when it
 # is enqueued; fire-and-forget delivery deliberately arms neither mechanism,
-# and the pending-reply header owns the captain-direct exception. Internal
-# semantic callers may set FM_SEND_EXPECTED_SPAWN_GEN or
+# and the pending-reply header owns the captain-direct exception. Deck's
+# direct-source wake retry is separate (bin/fm-deck-worker.sh owns it).
+# Internal semantic callers may set FM_SEND_EXPECTED_SPAWN_GEN or
 # FM_SEND_EXPECTED_REMOTE_HOST to require that sampled identity to still match
 # during the final locked remote-route validation; unset or empty guards do not
 # change ordinary sends.
@@ -453,13 +466,13 @@ DELIVERY_TASK_ID=
 [ -z "$TARGET_META" ] || DELIVERY_TASK_ID=$(fm_send_id_from_meta "$TARGET_META")
 shift
 
-# Collect --resolve-key flags (answerer-closes; see the header contract). They
-# must precede --key or the message text; everything after the last flag is the
-# message exactly as before, so ordinary sends are byte-identical.
+# The header owns option parsing and the explicit message-text boundary.
 RESOLVE_KEYS=
 FIRE_AND_FORGET_ID=
 FROM_CAPTAIN=0
 CORRECTION=0
+FROM_MATE=
+END_OPTIONS=0
 fm_send_add_resolve_key() {  # <key>
   local k=$1
   case "$k" in
@@ -506,9 +519,24 @@ while :; do
       CORRECTION=1
       shift
       ;;
+    --from-mate)
+      [ $# -ge 2 ] || { echo "error: --from-mate requires a sender mate id" >&2; exit 1; }
+      [ -z "$FROM_MATE" ] || { echo "error: duplicate --from-mate" >&2; exit 1; }
+      FROM_MATE=$2
+      shift 2
+      ;;
+    --)
+      END_OPTIONS=1
+      shift
+      break
+      ;;
     *) break ;;
   esac
 done
+KEY_MODE=0
+if [ "$END_OPTIONS" = 0 ] && [ "${1:-}" = --key ]; then
+  KEY_MODE=1
+fi
 
 if [ "$TARGET_BACKEND" != remote ]; then
   fm_backend_validate "$TARGET_BACKEND" || exit 1
@@ -522,26 +550,41 @@ if [ "$FROM_CAPTAIN" = 1 ]; then
     echo "error: --from-captain needs a task target and cannot accompany --decision-answer or --fire-and-forget; nothing was sent" >&2
     exit 1
   fi
-  case "${1:-}" in
-    --key) echo "error: --from-captain needs message text, not --key; nothing was sent" >&2; exit 1 ;;
-    '') echo "error: --from-captain needs message text; nothing was sent" >&2; exit 1 ;;
+  if [ "$KEY_MODE" = 1 ]; then
+    echo "error: --from-captain needs message text, not --key; nothing was sent" >&2
+    exit 1
+  fi
+  [ -n "${1:-}" ] || { echo "error: --from-captain needs message text; nothing was sent" >&2; exit 1; }
+fi
+if [ -n "$FROM_MATE" ]; then
+  case "$FROM_MATE" in
+    .*|*[!A-Za-z0-9._-]*)
+      echo "error: --from-mate '$FROM_MATE' is not a valid mate id; nothing was sent" >&2
+      exit 1 ;;
   esac
+  if [ "$DECISION_ANSWER" = 1 ] || [ "$FROM_CAPTAIN" = 1 ] || [ "$CORRECTION" = 1 ] || [ -z "$FIRE_AND_FORGET_ID" ] || [ -n "$RESOLVE_KEYS" ]; then
+    echo "error: --from-mate needs --fire-and-forget <mate-mail corr> and cannot accompany --decision-answer, --from-captain, --correction or --resolve-key; nothing was sent" >&2
+    exit 1
+  fi
+  if [ "$KEY_MODE" = 1 ] || [ -z "${1:-}" ]; then
+    echo "error: --from-mate needs message text; nothing was sent" >&2
+    exit 1
+  fi
 fi
 if [ "$DECISION_ANSWER" = 1 ]; then
   if [ -z "$RESOLVE_KEYS" ] || [ -n "$FIRE_AND_FORGET_ID" ] || [ "$#" -ne 1 ]; then
     echo "error: --decision-answer requires keyed resolution and one exact answer, without fire-and-forget" >&2
     exit 1
   fi
-  case "$1" in
-    --*) echo "error: decision answer cannot be a send option; nothing was sent" >&2; exit 1 ;;
-  esac
+  if [ "$END_OPTIONS" = 0 ]; then
+    case "$1" in
+      --*) echo "error: decision answer cannot be a send option; nothing was sent" >&2; exit 1 ;;
+    esac
+  fi
 fi
 
-# Classify a from-firstmate -> secondmate request. Only a task selector resolved
-# through this home's meta whose authoritative kind is secondmate is marked: the
-# secondmate then routes its reply via the status path (see fm-marker-lib.sh).
-# An explicit backend target (the escape hatch for endpoints outside this home)
-# and any crewmate/scout target are left unmarked, and so is the --key path.
+# Identify secondmate task selectors; the header owns carrier selection and
+# reply tracking, including the from-mate exception to firstmate marking.
 MARK_FROM_FIRSTMATE=0
 PENDING_REPLY_CORR=
 PENDING_REPLY_CREATED=0
@@ -561,8 +604,8 @@ fi
 
 # Captain-direct echo guard (see the header): never deliver the captain's own
 # message to a secondmate a second time.
-if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ "$FROM_CAPTAIN" != 1 ] && [ -z "$RESOLVE_KEYS" ] \
-  && [ "${1:-}" != "--key" ] && [ -n "$*" ]; then
+if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ "$FROM_CAPTAIN" != 1 ] && [ -z "$FROM_MATE" ] && [ -z "$RESOLVE_KEYS" ] \
+  && [ "$KEY_MODE" = 0 ] && [ -n "$*" ]; then
   if echo_corr=$(fm_captain_direct_echo_corr "$STATE" "$TARGET_TASK_ID" "$*"); then
     if [ "$CORRECTION" = 1 ]; then
       fm_captain_direct_log "$STATE" "correction-sent corr=$echo_corr task=$TARGET_TASK_ID"
@@ -663,7 +706,7 @@ if [ -n "$RESOLVE_KEYS" ]; then
     echo "error: --resolve-key needs a task selector resolved through this home's metadata; an explicit backend target has no decision ledger here" >&2
     exit 1
   fi
-  if [ "${1:-}" = "--key" ]; then
+  if [ "$KEY_MODE" = 1 ]; then
     echo "error: --resolve-key cannot accompany --key; answering a decision requires a text answer" >&2
     exit 1
   fi
@@ -768,7 +811,7 @@ fm_send_feed_resolved_holds() {  # <answer-text>
 # failed backend send is still surfaced below as a hard
 # error with the attempted resolution attached.
 
-if [ "${1:-}" = "--key" ]; then
+if [ "$KEY_MODE" = 1 ]; then
   [ -z "$FIRE_AND_FORGET_ID" ] \
     || { echo "error: --fire-and-forget cannot accompany --key" >&2; exit 1; }
   case "$*" in
@@ -829,7 +872,12 @@ else
     PENDING_REPLY_REQUEST="from the captain: $MESSAGE"
     fm_message_mark_captain_direct "$MESSAGE" MESSAGE
   fi
-  if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ -n "$FIRE_AND_FORGET_ID" ]; then
+  if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ -n "$FROM_MATE" ]; then
+    # The header's from-mate contract owns the carrier and delivery identity.
+    fm_message_mark_from_mate "$FROM_MATE" "$FIRE_AND_FORGET_ID" "$MESSAGE" MESSAGE secondmate \
+      || { echo "error: could not tag the peer message from $FROM_MATE; nothing was sent" >&2; exit 1; }
+    FM_SEND_IDEMPOTENT=1
+  elif [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ -n "$FIRE_AND_FORGET_ID" ]; then
     fm_message_mark_from_firstmate "$MESSAGE" MESSAGE
     MESSAGE="${FM_FROMFIRST_MARK}delivery=${FIRE_AND_FORGET_ID} ${MESSAGE#"$FM_FROMFIRST_MARK"}"
     FM_SEND_IDEMPOTENT=1

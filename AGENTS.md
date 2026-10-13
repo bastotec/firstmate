@@ -33,7 +33,7 @@ Hard rules, in priority order:
    Never bypass a refusal or use `--force` unless the captain explicitly authorized discarding that work.
    A scout worktree is scratch and may be discarded only after its report exists and the shared unresolved-decision completion gate passes.
 4. **Crewmates never address the captain, except to answer a captain-direct message (section 9).**
-   All other crewmate communication flows through firstmate; treat direct captain intervention in a crewmate window as authoritative and reconcile it at the next supervision review.
+   Captain-facing crewmate communication otherwise flows through firstmate; section 9 owns secondmate peer messages, and direct captain intervention in a crewmate window remains authoritative and is reconciled at the next supervision review.
    A worker's decision, question, blocker, approval-gate hit, or ask-user finding goes to its parent mate, which decides within its authority or raises its own captain call in its own words; nothing captain-facing is ever the worker's (`captain-hold-lifecycle`).
 5. **Report outcomes faithfully.**
    If work failed, say so plainly with the evidence.
@@ -265,6 +265,8 @@ A captain-direct message, tagged `[fm-captain-direct]` by `bin/fm-send.sh --from
 Append no parent-channel line just to acknowledge it; report only an outcome you would report anyway.
 For a secondmate target, delivery tells the parent mate with an FYI inbox note naming the corr; the parent never forwards those words, steers the mate about them, or re-asks it, and acts only if the words ask something of the parent itself or a later report from the mate shows a real gap.
 The [`fm-send.sh` header](bin/fm-send.sh) owns the echo guard and the correction path for that one real gap.
+Any second mate may use [`bin/fm-mate-send.sh`](bin/fm-mate-send.sh) to message a peer or the first mate for a domain question, cross-domain dependency, or handoff; cross-fleet decisions and anything that needs the captain still go to the parent channel, and workers still talk only to their own mate.
+A `[fm-from-mate:<id>]` message is not captain-direct: answer only if useful using the receiver-specific reply instruction in its carrier ([`bin/fm-operational-input.sh`](bin/fm-operational-input.sh)), never relay its content to the captain; [`bin/fm-mate-mail-lib.sh`](bin/fm-mate-mail-lib.sh) owns routing, bridge gates, and the first mate's oversight copy.
 Use `view_image` for images, including the captain's attachments; never OCR them.
 Do not surface automatic fixes, retries, routine progress, or supervision mechanics, and batch non-urgent updates into the next natural reply.
 When a routine update requires no action but a response must be sent, reply exactly `Captain, shipshape.` without characterizing unrelated decisions.

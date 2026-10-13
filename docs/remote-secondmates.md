@@ -297,7 +297,8 @@ Marked requests keep the existing correlation contract.
 The remote charter appends replies to `state/parent-replies.status` in the remote home.
 It also names that home's own host-local steering inbox rather than the parent's state path, so the inbox a mate is told to read is the one its steers are delivered into (`bin/fm-remote-secondmate-control.sh` owns that directory).
 The remote home's own outcome publishers append there too, through the channel contract in `bin/fm-parent-channel-lib.sh` ([secondmate-parent-channel.md](secondmate-parent-channel.md)).
-A process-event source ([`bin/fm-procevent-remote-reply.sh`](../bin/fm-procevent-remote-reply.sh)) reads that log non-destructively from a cursor, fetches only referenced `data/*.md` documents through the confined reader, and mirrors every content-bearing line at most once into the primary status channel as soon as it is captured.
+A process-event source ([`bin/fm-procevent-remote-reply.sh`](../bin/fm-procevent-remote-reply.sh)) reads that log non-destructively from a cursor, fetches only referenced `data/*.md` documents in ordinary reports through the confined reader, and mirrors every content-bearing status line at most once into the primary status channel as soon as it is captured.
+For the peer-message exception and its bridge prerequisites, see [`fm-mate-mail-lib.sh`](../bin/fm-mate-mail-lib.sh).
 The mirror carries the mate's whole status and decision model: progress lines and newly raised `needs-decision` lines reach the parent's open-decision fold exactly as a correlated answer does.
 Correlation settles a pending request and closes its open escalation decision, but it never gates the stream, so no single line can stop the relay or hold the cursor back.
 Transport normalization rewrites NUL, every other C0 control except tab and newline, and DEL to `?`, while printable ASCII and all high bytes, including UTF-8, pass through unchanged.
