@@ -667,9 +667,6 @@ run_turn() {  # <prompt>
   [ "$SECONDMATE" != 1 ] || host_lock_owned || return 1
   [ "$SECONDMATE" != 1 ] || watch_start || return 1
   [ "$SECONDMATE" != 1 ] || watch_confirm_handling_delivery || return 1
-  if [ "$SECONDMATE" != 1 ]; then
-    prompt="$prompt [Deck status append boundary: append every status line with one command shaped exactly as printf '%s\\n' 'working: concise status' | python3 $(q "$STATE_IO") root-append $(q "$STATE") $(q "$ID.status"); replace only the quoted status text, and do not write $(q "$STATUS_FILE") directly with >>, tee, or another command.]"
-  fi
   [ -z "$effort" ] || prompt="deck-effort: $effort
 $prompt"
   local switched

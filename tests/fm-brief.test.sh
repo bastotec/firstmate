@@ -90,6 +90,49 @@ test_ship_modes_generate_clean_briefs() {
   pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
 }
 
+test_status_protocol_uses_deck_append_boundary() {
+  local home id brief status command
+  home="$TMP_ROOT/status-protocol-home"
+  id=status-protocol
+  mkdir -p "$home/state"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode local-only >/dev/null 2>&1 \
+    || fail "status protocol brief should scaffold"
+  brief="$home/data/$id/brief.md"
+  command=$(awk '
+    /^4\. Report status by appending one line:$/ {
+      getline
+      sub(/^   `/, "")
+      sub(/`$/, "")
+      print
+      exit
+    }
+  ' "$brief")
+  [ -n "$command" ] || fail "generated brief did not expose its status command"
+  command=$(printf '%s\n' "$command" \
+    | sed 's/{state}/working/g; s/{one short line}/replay resumed/g')
+  status="$home/state/$id.status"
+
+  (
+    unset FM_DECK_STATUS_IO FM_DECK_STATUS_STATE FM_DECK_STATUS_NAME
+    bash -c "$command"
+  ) || fail "non-Deck status command failed"
+  [ "$(cat "$status")" = 'working: replay resumed' ] \
+    || fail "non-Deck status append behavior changed"
+
+  printf '%s\n' \
+    'failed: deck turn ended without a status line (turn-failed recovery-gen=deck-brief id=record-brief)' \
+    > "$status"
+  FM_DECK_STATUS_IO="$ROOT/bin/fm-state-io.py" \
+    FM_DECK_STATUS_STATE="$home/state" FM_DECK_STATUS_NAME="$id.status" \
+    bash -c "$command" || fail "Deck status command failed"
+  [ "$(sed -n '2p' "$status")" = 'working: replay resumed' ] \
+    || fail "Deck status command lost the worker-authored line"
+  [ "$(sed -n '3p' "$status")" = \
+      'working [recovery-gen=deck-brief]: deck turn reported working' ] \
+    || fail "Deck status command bypassed recovery binding"
+  pass "fm-brief.sh: generated status protocol selects the Deck append boundary"
+}
+
 # A ship task's delivery mode is firstmate's per-task decision, so a missing or
 # unusable value must stop the scaffold instead of silently defaulting. The
 # no-mistakes-prod-only row is the conditional registry policy: it is never a task
@@ -824,6 +867,7 @@ test_script_parses
 test_stock_shell_generates_briefs
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
+test_status_protocol_uses_deck_append_boundary
 test_ship_mode_is_required_and_closed_set
 test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply

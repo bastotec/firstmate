@@ -161,8 +161,6 @@ test_turns_share_one_session_and_carry_the_hooks() {
   grep -c -- '--hook pre_complete=' "$dir/argv.log" | grep -qx 4 || fail "every run must carry the evidence gate"
   grep -c -- '--hook post_tool_use=' "$dir/argv.log" | grep -qx 4 || fail "every run must carry the progress hook"
   grep -c -- '--model codex/gpt-5.6-luna' "$dir/argv.log" | grep -qx 4 || fail "every run must carry the model"
-  grep -c -- 'Deck status append boundary: append every status line' "$dir/argv.log" | grep -qx 4 \
-    || fail "every worker turn must carry the locked status append boundary"
   assert_grep 'echo: /exit' "$dir/pane.out" "/exit must be delivered as an ordinary Deck prompt"
   assert_grep 'echo: second' "$dir/pane.out" "the pane did not render the turn's text"
   pass "fm-deck-worker: the brief and later prompts are turns of one Deck session with hooks and model"
