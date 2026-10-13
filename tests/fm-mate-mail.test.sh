@@ -255,7 +255,7 @@ test_primary_publication_is_not_repeated() {
 }
 
 test_failed_bounces_are_retried_after_archiving() {
-  local parent corr send outcome target archive marker body expected_id
+  local parent corr send outcome target archive marker body expected_id watcher_pid i
   for outcome in refused failed; do
     parent=$(make_fleet bounce-retry dave cadia)
     send="$parent/fakebin/send-bounce"
@@ -285,9 +285,25 @@ SH
     [ -f "$archive" ] && [ -f "$marker" ] || fail "logged recovery lost the bounce obligation"
     run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" FM_REAL_SEND_BIN="$ROOT/bin/fm-send.sh" >/dev/null || fail "offline bounce retry failed"
     [ -f "$marker" ] || fail "a bounce retry failure must keep the obligation"
+    [ -z "$(ls -A "$parent/state/mate-mail/pending")" ] || fail "bounce recovery must start with an empty pending queue"
     : > "$parent/accept-bounce"
-    run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" FM_REAL_SEND_BIN="$ROOT/bin/fm-send.sh" >/dev/null || fail "bounce recovery failed"
-    [ ! -e "$marker" ] || fail "successful bounce must clear the obligation"
+    touch "$parent/state/.last-secondmate-revive" "$parent/state/.last-idle-sweep" "$parent/state/home-summary.json"
+    env FM_ROOT_OVERRIDE="$parent" FM_HOME="$parent" FM_STATE_OVERRIDE="$parent/state" \
+      FM_MATE_ROUTE_SEND_BIN="$send" FM_REAL_SEND_BIN="$ROOT/bin/fm-send.sh" \
+      FM_SEND_LOG="$parent/send.log" FM_SEND_SETTLE=0 FM_WATCH_HANDLING_SUCCESSOR=1 \
+      FM_POLL=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+      "$ROOT/bin/fm-watch.sh" > "$parent/watch.out" 2>&1 &
+    watcher_pid=$!
+    fm_test_track_helper_pid "$watcher_pid"
+    i=0
+    while [ "$i" -lt 200 ]; do
+      [ ! -e "$marker" ] && [ -f "$parent/state/dave.inbox/001.msg" ] && break
+      sleep 0.1
+      i=$((i + 1))
+    done
+    kill "$watcher_pid" 2>/dev/null || true
+    wait "$watcher_pid" 2>/dev/null || true
+    [ ! -e "$marker" ] || fail "watcher must retry an owed bounce with empty pending/: $(cat "$parent/watch.out")"
     body=$(record_body "$parent/state/dave.inbox/001.msg")
     case "$body" in *"corr=$corr to $target was $outcome:"*) ;; *) fail "wrong recovered bounce: $body" ;; esac
     expected_id=$(printf 'bounce:%s' "$corr" | shasum -a 256 | cut -c1-16)
@@ -298,7 +314,7 @@ SH
     [ "$(grep -c "\"corr\": \"$corr\"" "$parent/state/mate-messages.log")" = 1 ] || fail "bounce retry duplicated the log"
     [ "$(grep -c "mate-mail:$corr" "$parent/state/.wake-queue")" = 1 ] || fail "bounce retry duplicated the wake"
   done
-  pass "fm-mate-route: archived failed bounces survive logged recovery and retry until delivered"
+  pass "fm-mate-route: archived bounces survive logged recovery and retry through the watcher with empty pending/"
 }
 
 test_primary_session_change_retains_publication_evidence() {

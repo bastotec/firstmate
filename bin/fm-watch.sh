@@ -2223,12 +2223,18 @@ idle_sweep_detached() {
 
 # Peer messages between second mates queue in this main home's spool and are
 # delivered off the beacon's path (bin/fm-mate-route.sh); a refused or failed
-# one queues its own check wake. An empty spool costs one directory read.
+# one queues its own check wake.
 mate_route_detached() {
+  local record
   [ ! -e "$FM_HOME/.fm-secondmate-home" ] || return 0
-  [ -n "$(ls -A "$STATE/mate-mail/pending" 2>/dev/null)" ] || return 0
-  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
-    "$SCRIPT_DIR/fm-mate-route.sh" run </dev/null >/dev/null 2>&1 &
+  for record in "$STATE/mate-mail/pending/"*.msg \
+    "$STATE/mate-mail/refused/"*.bounce "$STATE/mate-mail/failed/"*.bounce; do
+    [ -f "$record" ] || continue
+    FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+      "$SCRIPT_DIR/fm-mate-route.sh" run </dev/null >/dev/null 2>&1 &
+    return 0
+  done
+  return 0
 }
 
 PR_POLL_CONTROL_LOCK=
