@@ -83,6 +83,8 @@ fi
 META_TMP=
 META_LOCK=
 META_LOCK_HELD=0
+CONTROL_LOCK=
+CONTROL_LOCK_HELD=0
 pr_check_cleanup() {
   fm_pr_poll_cleanup
   [ -z "$META_TMP" ] || rm -f -- "$META_TMP"
@@ -90,12 +92,29 @@ pr_check_cleanup() {
     fm_lock_release "$META_LOCK" || true
     META_LOCK_HELD=0
   fi
+  if [ "$CONTROL_LOCK_HELD" = 1 ]; then
+    fm_lock_release "$CONTROL_LOCK" || true
+    CONTROL_LOCK_HELD=0
+  fi
 }
 trap pr_check_cleanup EXIT
 trap 'exit 1' HUP INT TERM
 fm_pr_poll_prepare "$STATE" "$ID" "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" "$SCRIPT_DIR/fm-pr-poll.sh" \
   || { echo "error: could not prepare PR poll" >&2; exit 1; }
 
+# The task control lock covers the metadata rewrite, poll publication,
+# parent-channel ready report, and final success output so a direct registration
+# cannot interleave with lifecycle cleanup or PR unbind.
+# fm-pr-merge.sh already owns that lock when it records metadata and passes a
+# task-matched inheritance marker; every other invocation acquires it here.
+CONTROL_LOCK="$STATE/.control-$ID.lock"
+if [ "${FM_PR_MERGE_HOLDS_CONTROL_LOCK:-}" != "$ID" ]; then
+  fm_lock_acquire_wait "$CONTROL_LOCK" || {
+    echo "error: could not take the task $ID control lock" >&2
+    exit 1
+  }
+  CONTROL_LOCK_HELD=1
+fi
 META_LOCK=$(fm_meta_lock_path "$META") || exit 1
 fm_lock_acquire_wait "$META_LOCK"
 META_LOCK_HELD=1
@@ -153,3 +172,7 @@ case "$READY_RC" in
   *) printf 'actionable: PR %s is registered but its ready line did not reach the parent channel (rc=%s)\n' "$URL" "$READY_RC" >&2 ;;
 esac
 printf 'armed: state/%s.check.sh\n' "$ID"
+if [ "$CONTROL_LOCK_HELD" = 1 ]; then
+  fm_lock_release "$CONTROL_LOCK"
+  CONTROL_LOCK_HELD=0
+fi

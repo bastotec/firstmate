@@ -819,7 +819,10 @@ METHODS
 }
 
 record_pr_metadata() {
-  if ! "$SCRIPT_DIR/fm-pr-check.sh" "$ID" "$URL"; then
+  # This merge path already owns the task control lock. Name that ownership so
+  # fm-pr-check uses the existing critical section instead of reacquiring it.
+  if ! FM_PR_MERGE_HOLDS_CONTROL_LOCK="$ID" \
+    "$SCRIPT_DIR/fm-pr-check.sh" "$ID" "$URL"; then
     return 1
   fi
   grep -qxF "pr=$URL" "$META" || {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Descriptor-bound I/O for wake-gate records and root-level status files."""
+"""Descriptor-bound I/O for wake-gate and root-level state records."""
 
 import errno
 import os
@@ -89,6 +89,32 @@ def append_record(dir_fd: int, name: str, payload: bytes) -> None:
         if os.write(fd, payload) != len(payload):
             raise OSError("short state append")
         os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def append_private_record(dir_fd: int, name: str, payload: bytes) -> None:
+    flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NONBLOCK | require_nofollow()
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(name, flags, 0o600, dir_fd=dir_fd)
+    try:
+        info = os.fstat(fd)
+        directory_info = os.fstat(dir_fd)
+        require_regular_single_link(fd)
+        if stat.S_IMODE(info.st_mode) != 0o600 or info.st_dev != directory_info.st_dev:
+            raise UnsafeStatePath("state target is not a private file on the state device")
+        if os.write(fd, payload) != len(payload):
+            raise OSError("short state append")
+        os.fsync(fd)
+        path_info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        if (
+            path_info.st_dev != info.st_dev
+            or path_info.st_ino != info.st_ino
+            or not stat.S_ISREG(path_info.st_mode)
+            or path_info.st_nlink != 1
+            or stat.S_IMODE(path_info.st_mode) != 0o600
+        ):
+            raise UnsafeStatePath("state target changed during append")
     finally:
         os.close(fd)
 
@@ -225,6 +251,7 @@ def main() -> int:
         "replace",
         "remove",
         "root-append",
+        "root-private-append",
         "root-size",
         "root-touch",
         "root-worker-status-after",
@@ -260,6 +287,8 @@ def main() -> int:
             payload = sys.stdin.buffer.read()
             if operation in ("append", "root-append"):
                 append_record(dir_fd, name, payload)
+            elif operation == "root-private-append":
+                append_private_record(dir_fd, name, payload)
             else:
                 replace_record(dir_fd, name, payload)
         return 0

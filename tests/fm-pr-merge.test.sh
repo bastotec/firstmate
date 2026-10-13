@@ -472,15 +472,26 @@ test_expected_base_is_required_when_supplied() {
 }
 
 test_verified_merge_records_pr_and_head() {
-  local case_dir rc
+  local case_dir rc merge_pid i=0
   case_dir=$(make_case records-before-merge)
   mkdir -p "$case_dir/wt"
   add_gh_mocks "$case_dir" deadbeefcafefeed0000000000000000deadbeef
   : > "$case_dir/gh-axi.log"
 
-  set +e
   run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/9 \
-    > "$case_dir/stdout" 2> "$case_dir/stderr"
+    > "$case_dir/stdout" 2> "$case_dir/stderr" &
+  merge_pid=$!
+  while [ "$i" -lt 200 ] && kill -0 "$merge_pid" 2>/dev/null; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  if kill -0 "$merge_pid" 2>/dev/null; then
+    fm_test_kill_tree "$merge_pid"
+    wait "$merge_pid" 2>/dev/null || true
+    fail "records-before-merge: fm-pr-merge deadlocked while recording PR metadata"
+  fi
+  set +e
+  wait "$merge_pid"
   rc=$?
   set -e
 

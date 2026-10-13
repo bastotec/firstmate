@@ -82,6 +82,7 @@ state/
   <id>.pr-poll <id>.pr-poll-registration <id>.pr-poll-retirement <id>.pr-poll-merge-notified  PR merge poll records (bin/fm-pr-lib.sh)
   <id>.merge-authority    accepted merge authority (bin/fm-merge-authority-lib.sh)
   endpoint-retirements.log  endpoint retirement and leftover-close assertions (operator or owning mate); written only by bin/fm-retire-endpoint.sh
+  pr-unbinds.log          wrong-PR metadata clear assertions; written only by bin/fm-pr-unbind.sh
   terminal-outcomes/      inactive terminal-outcome receipts (bin/fm-inactive-reconcile.sh)
   model-chain/            per-lane model cooldowns ("Model fallback chains")
   pending-replies/        parent-owned secondmate pending replies (bin/fm-pending-reply-lib.sh)
