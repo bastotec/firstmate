@@ -199,6 +199,26 @@ fm_pending_reply_summarize() {  # <text>
   printf '%s' "$cleaned"
 }
 
+# Read the fields the per-poll tick needs from one record without forking:
+# the tick visits every record on every watcher cycle, and a grep|tail|cut
+# pipeline per field made that cycle grow with the record count until the
+# watcher stopped beating for tens of minutes. Later lines win, like
+# fm_pending_reply_get. Sets PR_CORR PR_TASK PR_PHASE PR_ESCALATED PR_ESC_CLOSED.
+_fm_pending_reply_scan_fields() {  # <record-path>
+  local line
+  PR_CORR='' PR_TASK='' PR_PHASE='' PR_ESCALATED='' PR_ESC_CLOSED=''
+  [ -f "$1" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      corr_id=*) PR_CORR=${line#corr_id=} ;;
+      task_id=*) PR_TASK=${line#task_id=} ;;
+      phase=*) PR_PHASE=${line#phase=} ;;
+      escalated_epoch=*) PR_ESCALATED=${line#escalated_epoch=} ;;
+      escalation_closed_epoch=*) PR_ESC_CLOSED=${line#escalation_closed_epoch=} ;;
+    esac
+  done < "$1"
+}
+
 fm_pending_reply_get() {  # <record-path> <key>
   local rec=$1 key=$2
   [ -f "$rec" ] || return 0
@@ -1104,10 +1124,21 @@ fm_pending_reply_escalation_line() {  # <status-file> <record-path> <corr_id>
   [ -f "$status_file" ] || return 0
   [ "$(fm_pending_reply_get "$rec" corr_id)" = "$corr" ] || return 0
   own_key=$(fm_pending_reply_escalation_key "$corr")
+  # The payloads are fixed per record, so build them once; the scan itself then
+  # runs in this shell without a fork per line, which on a long-lived mate's
+  # status log was the difference between milliseconds and minutes.
+  local -a payloads=()
+  for kind in missed delivery-unknown recovery-delivery; do
+    payload=$(fm_pending_reply_escalation_payload "$rec" "$kind") || continue
+    payloads+=("$payload")
+  done
+  [ "${#payloads[@]}" -gt 0 ] || return 0
+  local _FM_VERB
   while IFS= read -r line || [ -n "$line" ]; do
-    [ "$(status_line_verb "$line")" = blocked ] || continue
-    for kind in missed delivery-unknown recovery-delivery; do
-      payload=$(fm_pending_reply_escalation_payload "$rec" "$kind") || continue
+    case "$line" in *blocked*) ;; *) continue ;; esac
+    _fm_status_line_verb_into "$line"
+    [ "$_FM_VERB" = blocked ] || continue
+    for payload in "${payloads[@]}"; do
       case "$line" in
         "blocked [key=$own_key]: $payload"|"blocked: $payload") found=$line; break ;;
         "blocked [key=$own_key]: $payload "*|"blocked: $payload "*) found=$line; break ;;
@@ -1446,14 +1477,18 @@ fm_pending_reply_tick() {  # <state-dir>
     case "$(basename "$rec")" in
       .*) continue ;;
     esac
-    corr=$(fm_pending_reply_get "$rec" corr_id)
-    [ -n "$corr" ] || corr=$(basename "$rec")
-    task_id=$(fm_pending_reply_get "$rec" task_id)
-    phase=$(fm_pending_reply_get "$rec" phase)
+    _fm_pending_reply_scan_fields "$rec"
+    corr=$PR_CORR
+    [ -n "$corr" ] || corr=${rec##*/}
+    task_id=$PR_TASK
+    phase=$PR_PHASE
     if [ "$phase" = resolved ]; then
-      # Cheap no-op unless an escalation for this record is still open; this is
+      # Only a record whose escalation is still open has anything to do; this is
       # the retry that makes the close converge after a transient write failure.
-      fm_pending_reply_close_escalation "$state" "$corr" || true
+      # Every other resolved record is skipped without a lock or a fork.
+      if [ -n "$PR_ESCALATED" ] && [ -z "$PR_ESC_CLOSED" ]; then
+        fm_pending_reply_close_escalation "$state" "$corr" || true
+      fi
       continue
     fi
     fm_pending_reply_reconcile_delivery "$state" "$corr" || true
