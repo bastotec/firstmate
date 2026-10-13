@@ -20,8 +20,8 @@ The model does not re-arm after ordinary wakes.
 A periodic beat is that continuity, not a failure: the driver may replace only its watcher child, so a fresh watcher pid can appear carrying the SAME recovery-generation without restarting the home agent or its Deck session.
 The driver replays any unacked durable inbox record as that turn's instruction.
 When no launch brief is re-presented and the drain shows no unhandled event, handling the replayed instruction is the whole duty; there is no driver failure or supervisor restart to repair.
-A re-presented launch brief or session reset is the definitive driver-loss signal and always warrants the recorded recovery path; a NEW recovery-generation also supports that diagnosis, while generation sameness is only supporting evidence of a beat and never proof that no failure occurred.
-`_fm_recovery_marker_publish` in `bin/fm-wake-lib.sh` preserves a pending or announced generation across downtime publication, so a real driver loss can still show the same generation.
+A re-presented launch brief or session reset is a definitive driver-loss signal and always warrants the recorded recovery path; a NEW recovery-generation is equally definitive, while generation sameness alone is reliable evidence of a healthy beat.
+Every deck driver relaunch publishes a fresh recovery generation before its first turn (`fm_recovery_marker_publish_fresh` in `bin/fm-deck-worker.sh`, owned by `_fm_recovery_marker_publish` in `bin/fm-wake-lib.sh`), so same-generation plus launch-brief can no longer occur: the launch brief always arrives with a new generation, and a same-generation watcher cycle is always a beat within one driver's lifetime.
 Terminal arm-output classification (`started`, `attached`, or `FAILED`) remains defense in depth for the manual recovery path.
 The Deck driver uses `&` only for an owned child whose PID it monitors and waits during cleanup, never for an untracked replacement watcher.
 
@@ -32,14 +32,16 @@ Deck `run` home hosts check the driver-owned postcondition before each turn comp
 A recovery episode is one generation of `state/.watcher-down`, and it is retired only by the generation-bound acknowledgement the drain prints as `WAKE_ACK_REQUIRED`.
 An unacknowledged downtime generation is announced at most once: the first recovery marks that generation announced, and later arms wait until a new down stretch mints a new generation.
 A non-successor watcher start after an announced-but-unacked episode is a new down stretch and mints a fresh generation so buried decisions still resurface once.
-Every watcher close and every durable queue append publishes downtime, so a downtime republication of any pending episode reuses its generation instead of minting a new one, and an already-announced generation stays announced.
-That reuse keeps a watcher close inside the handling window from orphaning the acknowledgement already presented and trapping later arms in repeated recovery presentation.
+Every watcher close and every durable queue append publishes downtime; those ordinary publications preserve a pending episode's generation and keep an already-announced generation announced, so a watcher close inside the handling window cannot orphan the acknowledgement already presented or trap later arms in repeated recovery presentation.
+A deck driver relaunch is the exception that mints: `fm_recovery_marker_publish_fresh` opens a new pending generation over any existing episode before the relaunched driver's first turn, so the re-presented launch brief never carries the previous driver's generation and an outstanding acknowledgement of the replaced generation is not stranded - queue-row consumption stays sequence-bound, and only episode retirement is generation-bound.
+A live watcher's pending generation still resolves without duplication: within one driver's lifetime the handling-successor path carries the generation across watcher replacements, and the duplicate-launch guard mints nothing while the previous driver still holds the home session lock, so only a genuine relaunch boundary - the previous driver gone - publishes a fresh generation.
 An acknowledgement carries two separable facts: queue-row consumption is bound to the monotonic `--ack-through` sequence, while only retiring the episode is bound to `--recovery-generation`.
 A generation mismatch therefore does not block consumption of rows through that sequence; it is a non-fatal result that names its own remedy - re-drain, then acknowledge the newer episode.
 The acknowledgement retires the marker only when no rows remain after sequence-bound consumption.
 A concurrently appended wake has a higher sequence, remains queued, and keeps the episode pending for presentation.
 Consequently, an empty-queue downtime publication during handling can be retired by the outstanding acknowledgement without a dedicated recovery turn.
 An acknowledged episode does not freeze the generation, because the next downtime after it opens an episode of its own.
+A deck driver relaunch mints over any of these states - pending, announced, or acknowledged - and a duplicate launch while the previous driver still holds the home session lock mints nothing, so a stale generation is never resurrected as current.
 
 ## Queue acknowledgement
 
@@ -76,6 +78,9 @@ Only the watcher process touches `state/.last-watcher-beat`; no helper process c
 ## Regression coverage
 
 `tests/fm-watch-arm.test.sh` covers durable queue replay, real remote parent-replies ingestion into the authoritative status log, decision-only OPEN DECISIONS recovery, interrupted handling replay, generation-bound acknowledgement, a persistent live successor after recovery, a watcher close inside the handling window that must leave the printed acknowledgement valid, the self-healing moved-generation acknowledgement that consumes its handled rows and names its remedy, and a bootstrap that binds to its own home without forking and types a refused fork apart from a broken install.
+`tests/fm-wake-queue.test.sh` covers the relaunch publication contract: every driver relaunch mints a fresh generation over a pending, announced, or acknowledged episode, a first launch opens no episode, and a watcher-close publication after a relaunch resolves against the live episode without resurrecting the stale generation.
+`tests/fm-deck-harness.test.sh` covers the driver side: a relaunched secondmate mints its fresh generation before its first turn, the startup drain names that generation, and a duplicate launch over a live lock holder mints nothing.
+Before the relaunch publication landed, generation sameness was only supporting evidence because downtime publication preserved the generation across watcher cleanup; the relaunch publication closes that limit, and the transition needs no migration - the next relaunch of any driver mints the first fresh generation.
 `tests/fm-watch-recovery-loop.test.sh` covers the once-per-generation announcement bound, a handling successor that must surface a real crew event instead of going blind, and a multi-poll foreign-queue continuity window with an observation clock unrelated to filesystem mtimes.
 The continuity-window case preserves singleton ownership and the acknowledged recovery generation through healthy queue progress, then requires exactly one durable stall notification without modifying the foreign row.
 `tests/fm-watch-triage-events.test.sh` covers the in-place code reload (same pid and lock, one watcher, startup-overlap detection, full-tree settling, post-reload recovery, and an unparseable change refused) and the main captain-inbox path: an unread note's row survives acknowledgement, is surfaced again at once, and has bounded interval repeats.
