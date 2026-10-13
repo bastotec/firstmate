@@ -95,6 +95,17 @@
 # dying. A driver that could not record or publish that failure still stops, and
 # so does a driver whose launch brief never reached a session even after one
 # repeat.
+# An idle captain-wake turn that returns a recoverable failure restores the
+# previous attempted-source floor, allowing a still-pending ordinary inbox
+# record to wake again after backoff without another captain message. The delay
+# doubles on consecutive failed captain-wake turns, capped at 300 seconds;
+# FM_DECK_CAPTAIN_RETRY_SECS sets its initial value (see ENVIRONMENT).
+# A successful captain-wake turn resets the backoff and keeps the advanced floor,
+# even if the model did not acknowledge the source, preserving the anti-spin
+# guard. Native Deck acknowledgement is not ordinary inbox acknowledgement;
+# bin/fm_stream_deck.py project_captain owns that distinction. The regression is
+# test_secondmate_retries_a_captain_wake_whose_turn_failed in
+# tests/fm-deck-harness.test.sh.
 #
 # SECOND MATE TURN STOP (--secondmate)
 # Ctrl+C, an exact queued /quit during a turn, unrecoverable watcher failure,
@@ -120,6 +131,10 @@
 #   FM_DECK_MAX_TURNS       model calls per turn (default 200; Deck's own 24 is
 #                           sized for a single question, not a coding task)
 #   FM_DECK_DEADLINE_SECS   wall-clock bound per turn (default 3600)
+#   FM_DECK_CAPTAIN_RETRY_SECS  initial delay after a recoverably failed idle
+#                           captain wake (seconds; default 30; empty or
+#                           nonnumeric values use the default; 0 allows an
+#                           immediate retry)
 #   FM_DECK_PIPELINE_POLL_SECS  idle-prompt poll interval for a ship worker's
 #                           still-working no-mistakes run (default 45)
 #   FM_DECK_PIPELINE_WAIT_SECS  bound on one such wait (default 21600; 0
@@ -985,10 +1000,8 @@ doorbell_without_work() {  # <line>
 }
 
 # Observe new captain sources without reading or submitting the human composer.
-# Remember attempted idle sources so a missing model acknowledgement cannot spin.
-# A turn that failed (a gateway outage, say) never reached the model, so its
-# source is retried after a growing backoff (FM_DECK_CAPTAIN_RETRY_SECS, doubling,
-# capped at 5 minutes) instead of waiting for the next captain message.
+# The header owns the attempted-source anti-spin guard and failed-wake retry
+# contract; a failed turn alone cannot prove the model handled its source.
 IDLE_CAPTAIN_FLOOR=0
 IDLE_CAPTAIN_RETRY_AT=0
 IDLE_CAPTAIN_BACKOFF=0

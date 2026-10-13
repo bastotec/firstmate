@@ -285,7 +285,7 @@ Captain images in native steering follow [`with_deck_images`](../bin/fm_stream_d
 Remote attachments must already be staged on the receiving host before sending; native publication does not copy attachment bytes.
 An idle driver observes new captain records out of band and starts a turn without waiting for Enter, including while its composer holds human text.
 The draft remains pending and is repainted after the turn; the fallback terminal ring never overwrites or submits it.
-The [`fm-send.sh` header](../bin/fm-send.sh) owns delivery status and reply tracking, and the [driver header](../bin/fm-deck-worker.sh) owns suppression of redundant empty-inbox doorbells.
+The [`fm-send.sh` header](../bin/fm-send.sh) owns delivery status and reply tracking, and the [driver header](../bin/fm-deck-worker.sh) owns failed idle captain-wake retries, their backoff control, the attempted-source anti-spin guard, and suppression of redundant empty-inbox doorbells.
 
 The hub places Bridge orders only to endpoints whose agent advertises reliable result acknowledgement and the native steering receiver.
 An agent requires the hub's `idempotent_command_results` capability before registering, so an older running hub is rejected with a restart-or-upgrade diagnostic.

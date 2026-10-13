@@ -115,6 +115,8 @@ bin/fm-test-run.sh tests/fm-deck-harness.test.sh tests/fm-supervision-instructio
 ```
 
 `fm-deck-harness` exercises a wake arriving during a running steer, the durable doorbell and handled record, rearming, partial typed input across an idle timeout, stable session identity, interrupt survival, and explicit startup, provider, and watcher failure reporting.
+Its `test_secondmate_retries_a_captain_wake_whose_turn_failed` case injects one provider failure, asserts the ordinary captain record remains pending, then checks a retry handles it without another message, logs the configured one-second delay, and does not repeat after acknowledgement.
+This is portable fixture coverage, not live gateway-failure evidence; the [driver header](../../bin/fm-deck-worker.sh) owns the retry contract.
 The dispatch and relaunch suites exercise the configured Deck secondmate pin, charter preservation, home selection, semantic busy generation, and migration of an existing secondmate through the normal control entry point.
 The remote suites exercise Deck readiness, host launch acceptance over the stream host runtime, and replacement-proved relaunch.
 The secondmate invariants and driver-specific turn-end postcondition are owned by `bin/fm-deck-worker.sh`'s header; the emitted operating instructions are owned by [`../supervision-protocols/deck.md`](../supervision-protocols/deck.md).
