@@ -1029,6 +1029,37 @@ test_driver_relaunch_publication_mints_a_fresh_generation() {
   pass "every driver relaunch publishes a fresh recovery generation"
 }
 
+test_recovery_generation_origin_distinguishes_driver_loss() {
+  local dir state marker lib before reopened relaunched
+  dir=$(make_case recovery-generation-origin)
+  state="$dir/state"
+  marker="$state/.watcher-down"
+  lib="$ROOT/bin/fm-wake-lib.sh"
+
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_recovery_marker_publish "$2" downtime
+    fm_recovery_marker_arm_check "$2"
+  ' _ "$lib" "$marker" || fail "could not announce the initial recovery episode"
+  before=$(recovery_marker_generation "$marker")
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_reopen_announced "$2"' \
+    _ "$lib" "$marker" || fail "live-watcher recovery could not reopen the episode"
+  reopened=$(recovery_marker_generation "$marker")
+  [ "$reopened" != "$before" ] || fail "live-watcher recovery did not mint a fresh generation"
+  if FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_generation_is_driver_loss "$2"' \
+      _ "$lib" "$reopened"; then
+    fail "live-watcher recovery was classified as driver loss"
+  fi
+
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_marker_publish_fresh "$2"' \
+    _ "$lib" "$marker" || fail "driver relaunch could not reopen the episode"
+  relaunched=$(recovery_marker_generation "$marker")
+  [ "$relaunched" != "$reopened" ] || fail "driver relaunch did not mint a fresh generation"
+  FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_recovery_generation_is_driver_loss "$2"' \
+    _ "$lib" "$relaunched" || fail "driver relaunch was not classified as driver loss"
+  pass "recovery generation origin distinguishes watcher recovery from driver loss"
+}
+
 test_stale_generation_is_not_resurrected_by_watcher_cleanup() {
   local dir state marker lib stale current
   dir=$(make_case relaunch-then-watcher-close)
@@ -1818,6 +1849,7 @@ test_uncountable_queue_still_raises_the_pending_alarm
 test_unconsumable_rows_are_retired_instead_of_wedging_the_queue
 test_wake_publish_requires_atomic_recovery_evidence
 test_driver_relaunch_publication_mints_a_fresh_generation
+test_recovery_generation_origin_distinguishes_driver_loss
 test_stale_generation_is_not_resurrected_by_watcher_cleanup
 test_legacy_generationless_wake_is_adopted
 test_stale_recovery_generation_cannot_touch_a_newer_episode

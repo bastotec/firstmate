@@ -489,6 +489,9 @@ FM_RECOVERY_MARKER_TOKEN=
 FM_RECOVERY_MARKER_ACTION='none'
 
 # Token grammar (one owner): <pending|announced|acked>:<handling|downtime>:<generation>
+# Newly minted generations are <origin>.<unique-id>, where origin is downtime,
+# arm-check, watcher-reopen, driver-baseline, or driver-relaunch.
+# Legacy generations without an origin prefix remain valid.
 # docs/watcher-continuity.md owns the recovery-episode contract, including the
 # once-per-generation announcement rule for unacknowledged downtime.
 fm_recovery_marker_read() {
@@ -513,11 +516,12 @@ _fm_atomic_replace() {
 }
 
 _fm_recovery_marker_write_locked() {
-  local marker=$1 kind=$2 generation=${3:-} status=${4:-pending} tmp
+  local marker=$1 kind=$2 generation=${3:-} status=${4:-pending} origin=${5:-downtime} tmp
   case "$kind" in handling|downtime) ;; *) return 1 ;; esac
   case "$status" in pending|announced|acked) ;; *) return 1 ;; esac
+  case "$origin" in downtime|arm-check|watcher-reopen|driver-baseline|driver-relaunch) ;; *) return 1 ;; esac
   tmp=$(mktemp "${marker}.tmp.XXXXXX") || return 1
-  [ -n "$generation" ] || generation="$(fm_current_pid).$(date +%s).${tmp##*.}"
+  [ -n "$generation" ] || generation="$origin.$(fm_current_pid).$(date +%s).${tmp##*.}"
   if ! printf '%s:%s:%s\n' "$status" "$kind" "$generation" > "$tmp" \
     || ! chmod 0600 "$tmp" \
     || ! _fm_atomic_replace "$tmp" "$marker"; then
@@ -537,7 +541,7 @@ _fm_recovery_marker_write_locked() {
 # a LIVE watcher's outstanding acknowledgement depends on.
 _fm_recovery_marker_publish() {
   local marker=$1 kind=${2:-downtime} posture=${3:-preserve} lock saved_token generation='' status=pending
-  local completion completion_pid
+  local completion completion_pid origin=downtime
   case "$kind" in handling|downtime) ;; *) return 1 ;; esac
   case "$posture" in preserve|fresh) ;; *) return 1 ;; esac
   lock="${marker}.lock"
@@ -573,7 +577,7 @@ _fm_recovery_marker_publish() {
       case "$completion_pid" in ''|*[!0-9]*) completion_pid= ;; esac
     fi
     if [ -z "$completion_pid" ]; then
-      if ! _fm_recovery_marker_write_locked "$marker" "$kind" "" acked; then
+      if ! _fm_recovery_marker_write_locked "$marker" "$kind" "" acked driver-baseline; then
         fm_lock_release "$lock"
         return 1
       fi
@@ -581,7 +585,8 @@ _fm_recovery_marker_publish() {
       return 0
     fi
   fi
-  if ! _fm_recovery_marker_write_locked "$marker" "$kind" "$generation" "$status"; then
+  [ "$posture" != fresh ] || origin=driver-relaunch
+  if ! _fm_recovery_marker_write_locked "$marker" "$kind" "$generation" "$status" "$origin"; then
     fm_lock_release "$lock"
     return 1
   fi
@@ -670,7 +675,7 @@ _fm_recovery_marker_arm_check() {
   fi
   if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
     if [ -s "$FM_WAKE_QUEUE" ]; then
-      if ! _fm_recovery_marker_write_locked "$marker" downtime "" announced; then
+      if ! _fm_recovery_marker_write_locked "$marker" downtime "" announced arm-check; then
         fm_lock_release "$lock"
         fm_lock_release "$FM_WAKE_QUEUE_LOCK"
         return 1
@@ -689,7 +694,7 @@ _fm_recovery_marker_arm_check() {
         return 1
       }
     if ! mv -- "$marker" "$quarantine/marker" \
-      || ! _fm_recovery_marker_write_locked "$marker" downtime "" announced; then
+      || ! _fm_recovery_marker_write_locked "$marker" downtime "" announced arm-check; then
       rmdir "$quarantine" 2>/dev/null || true
       fm_lock_release "$lock"
       fm_lock_release "$FM_WAKE_QUEUE_LOCK"
@@ -719,7 +724,7 @@ _fm_recovery_marker_arm_check() {
       ;;
     acked:*)
       if [ -s "$FM_WAKE_QUEUE" ]; then
-        if ! _fm_recovery_marker_write_locked "$marker" downtime "" announced; then
+        if ! _fm_recovery_marker_write_locked "$marker" downtime "" announced arm-check; then
           fm_lock_release "$lock"
           fm_lock_release "$FM_WAKE_QUEUE_LOCK"
           return 1
@@ -747,7 +752,7 @@ _fm_recovery_marker_reopen_announced() {
   fi
   case "$FM_RECOVERY_MARKER_TOKEN" in
     announced:*)
-      if ! _fm_recovery_marker_write_locked "$marker" downtime ""; then
+      if ! _fm_recovery_marker_write_locked "$marker" downtime "" pending watcher-reopen; then
         fm_lock_release "$lock"
         return 1
       fi
@@ -822,6 +827,13 @@ fm_recovery_marker_arm_check() {
 # episode and acknowledgement semantics.
 fm_recovery_marker_publish_fresh() {
   fm_recovery_transition "$1" publish-fresh downtime
+}
+
+fm_recovery_generation_is_driver_loss() {
+  case "${1:-}" in
+    driver-relaunch.[0-9]*.[0-9]*.*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 fm_recovery_marker_reopen_announced() {
