@@ -112,8 +112,8 @@
 # captain-direct tag owned by bin/fm-operational-input.sh, so the agent answers
 # him in its own conversation (AGENTS.md section 9). A secondmate target still
 # gets the from-firstmate mark, corr token and pending-reply expectation in
-# front of the tag, so the mate also appends one correlated line to its parent
-# channel and the first mate is notified. A worker target gets the tag alone
+# front of the tag. Delivery queues the parent's FYI note; the mate appends no
+# parent-channel line just to acknowledge it. A worker target gets the tag alone
 # and no expectation. The tagged text always rides the inbox plane, so a
 # leading "/" reaches the agent as text, never as a harness command. The flag
 # is refused with --key, --decision-answer, --fire-and-forget, and an explicit
@@ -570,17 +570,21 @@ fi
 # After a captain message reaches a secondmate: record it for the echo guard and
 # tell this home's first mate once, FYI only (see the header).
 fm_send_captain_direct_delivered() {
-  local mate note told=told
+  local mate note f told=told
   [ "$FROM_CAPTAIN" = 1 ] && [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ -n "$PENDING_REPLY_CORR" ] || return 0
-  # A same-corr resend lands on the same record, so the first mate was already told.
-  if [ -f "$(fm_captain_direct_dir "$STATE")/$PENDING_REPLY_CORR" ]; then
-    printf 'corr=%s\nfirst_mate=told\n' "$PENDING_REPLY_CORR"
-    return 0
+  if [ ! -f "$(fm_captain_direct_dir "$STATE")/$PENDING_REPLY_CORR" ]; then
+    fm_captain_direct_record "$STATE" "$TARGET_TASK_ID" "$PENDING_REPLY_CORR" "$RESOLVE_ANSWER_TEXT" \
+      || echo "warning: the captain's message was delivered, but its echo-guard record could not be written under $STATE/captain-direct" >&2
   fi
-  fm_captain_direct_record "$STATE" "$TARGET_TASK_ID" "$PENDING_REPLY_CORR" "$RESOLVE_ANSWER_TEXT" \
-    || echo "warning: the captain's message was delivered, but its echo-guard record could not be written under $STATE/captain-direct" >&2
   mate=$TARGET_TASK_ID
   note=$(fm_captain_direct_note_text "$mate" "$PENDING_REPLY_CORR" "$RESOLVE_ANSWER_TEXT")
+  for f in "$STATE/inbox/"*.note "$STATE/inbox/handled/"*.note; do
+    [ -f "$f" ] || continue
+    if grep -Fqx -- "${note%%$'\n'*}" "$f"; then
+      printf 'corr=%s\nfirst_mate=told\n' "$PENDING_REPLY_CORR"
+      return 0
+    fi
+  done
   if ! printf '%s' "$note" | FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-inbox.sh" note - >/dev/null 2>&1; then
     told=failed
     echo "warning: the captain's message was delivered, but the first mate's FYI note could not be queued" >&2

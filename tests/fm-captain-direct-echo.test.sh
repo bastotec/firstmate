@@ -163,8 +163,153 @@ test_pending_reply_never_reposts() {
   pass "captain-direct: the pending reply never reposts or escalates"
 }
 
+test_notification_failure_retry() {
+  local n id
+  setup notification-failure
+  : > "$HOME_DIR/state/inbox"
+  deliver_captain
+  assert_contains "$(cat "$OUT")" "first_mate=failed" "an unqueued FYI must report failure"
+  [ -f "$HOME_DIR/state/captain-direct/$CORR" ] || fail "the delivery ledger must exist despite notification failure"
+  rm "$HOME_DIR/state/inbox"
+  FM_PENDING_REPLY_EXISTING_CORR="$CORR" run_send "$FB" "$HOME_DIR" "$LOG" "$OUT" \
+    domain --from-captain "$CAPTAIN_TEXT" || fail "notification retry should succeed"
+  assert_contains "$(cat "$OUT")" "first_mate=told" "retry must queue the missing FYI"
+  n=$(find "$HOME_DIR/state/inbox" -maxdepth 1 -name '*.note' | wc -l | tr -d ' ')
+  [ "$n" = 1 ] || fail "retry must queue exactly one FYI, got $n"
+  FM_PENDING_REPLY_EXISTING_CORR="$CORR" run_send "$FB" "$HOME_DIR" "$LOG" "$OUT" \
+    domain --from-captain "$CAPTAIN_TEXT" || fail "queued-note retry should succeed"
+  n=$(find "$HOME_DIR/state/inbox" -maxdepth 1 -name '*.note' | wc -l | tr -d ' ')
+  [ "$n" = 1 ] || fail "queued FYI must not be duplicated"
+  id=$(find "$HOME_DIR/state/inbox" -maxdepth 1 -name '*.note')
+  id=${id##*/}; id=${id%.note}
+  FM_HOME="$HOME_DIR" "$ROOT/bin/fm-inbox.sh" drain --ack "$id" >/dev/null || fail "FYI acknowledgement failed"
+  FM_PENDING_REPLY_EXISTING_CORR="$CORR" run_send "$FB" "$HOME_DIR" "$LOG" "$OUT" \
+    domain --from-captain "$CAPTAIN_TEXT" || fail "handled-note retry should succeed"
+  assert_contains "$(cat "$OUT")" "first_mate=told" "handled FYI still proves notification"
+  n=$(find "$HOME_DIR/state/inbox" -name '*.note' | wc -l | tr -d ' ')
+  [ "$n" = 1 ] || fail "handled FYI must not be duplicated"
+  pass "captain-direct: retry repairs a missing FYI without duplicating queued or handled notes"
+}
+
+test_non_ascii_captain_message() {
+  local rec delivered before
+  setup non-ascii
+  run_send "$FB" "$HOME_DIR" "$LOG" "$OUT" domain --from-captain "👍" || fail "emoji delivery failed"
+  CORR=$(sed -n 's/^corr=//p' "$OUT")
+  rec=$(fm_pending_reply_path "$HOME_DIR/state" "$CORR")
+  [ "$(fm_pending_reply_get "$rec" request_summary)" = 'from the captain:' ] || fail "expected sanitized emoji-only summary"
+  delivered=$(fm_pending_reply_get "$rec" delivered_epoch)
+  before=$(inbox_count)
+  FM_PENDING_REPLY_NOW=$((delivered + 600)) fm_pending_reply_tick_one "$HOME_DIR/state" "$CORR" idle
+  FM_PENDING_REPLY_NOW=$((delivered + 1200)) fm_pending_reply_maybe_escalate "$HOME_DIR/state" "$CORR" || true
+  [ "$(fm_pending_reply_get "$rec" resolved_via)" = captain-direct ] || fail "emoji-only message must settle as captain-direct"
+  [ -z "$(fm_pending_reply_get "$rec" recovery_attempted_epoch)" ] || fail "emoji-only message must not attempt recovery"
+  [ -z "$(fm_pending_reply_get "$rec" escalated_epoch)" ] || fail "emoji-only message must not escalate"
+  [ "$(inbox_count)" = "$before" ] || fail "emoji-only message must not repost"
+  pass "captain-direct: non-ASCII-only message settles without recovery or escalation"
+}
+
+test_ledger_retention() {
+  setup retention
+  FM_CAPTAIN_DIRECT_NOW=1000000 deliver_captain
+  FM_CAPTAIN_DIRECT_NOW=1604800 expect_suppressed "corr at the retention boundary" "Follow up on corr=$CORR please."
+  FM_CAPTAIN_DIRECT_NOW=1604801 expect_sent "corr after retention" "Follow up on corr=$CORR please."
+  [ ! -e "$HOME_DIR/state/captain-direct/$CORR" ] || fail "echo lookup must prune an expired ledger entry"
+  [ ! -e "$HOME_DIR/state/captain-direct/$CORR.text" ] || fail "echo lookup must prune expired captain words"
+  pass "captain-direct: correlation matching expires after seven days without another captain send"
+}
+
+setup_remote() {
+  local rh target eid
+  setup "$1"
+  rh="$TMP_ROOT/$1/remote"
+  eid=0123456789abcdef0123456789abcdef
+  target="127.0.0.1-9:$eid"
+  mkdir -p "$rh/state/parent-route" "$rh/bin" "$HOME_DIR/data"
+  printf 'domain\n' > "$rh/.fm-secondmate-home"
+  printf '# remote fixture\n' > "$rh/AGENTS.md"
+  fm_write_meta "$rh/state/parent-route/domain.meta" \
+    "window=$target" "worktree=-" "project=-" "backend=stream" "stream_hub=http://127.0.0.1:9" \
+    "stream_endpoint_id=$eid" "endpoint_task_id=domain" "harness=deck"
+  fm_write_meta "$HOME_DIR/state/domain.meta" \
+    "window=$target" "endpoint_task_id=domain" "harness=deck" "kind=secondmate" \
+    "mode=secondmate" "remote_host=remote-mac" "remote_root=/remote/root" \
+    "remote_backend=stream" "remote_stream_hub=http://127.0.0.1:9" \
+    "remote_stream_endpoint_id=$eid" "remote_target=$target"
+  printf '%s\n' "- domain - test domain (host: remote-mac; root: /remote/root; home: $rh; scope: testing; projects: alpha; added 2026-08-02)" \
+    > "$HOME_DIR/data/secondmates.md"
+  cat > "$FB/fake-ssh" <<'SH'
+#!/usr/bin/env bash
+set -u
+while [ "$#" -gt 0 ]; do
+  case "$1" in -o) shift 2 ;; --) shift; break ;; *) exit 90 ;; esac
+done
+shift 2
+remote_home=$(perl -MMIME::Base64=decode_base64 -e 'print decode_base64($ARGV[0])' "$3")
+args=()
+while IFS= read -r -d '' a; do args+=("$a"); done \
+  < <(perl -MMIME::Base64=decode_base64 -e 'print decode_base64($ARGV[0])' "$4")
+env -u FM_STREAM_HUB -u FM_STREAM_TOKEN FM_HOME="$remote_home" FM_ROOT_OVERRIDE="$FM_REMOTE_CODE_ROOT" \
+  "$FM_REMOTE_CODE_ROOT/bin/${args[0]}" "${args[@]:1}" || exit $?
+[ "${FM_FAKE_SSH_AMBIGUOUS:-0}" = 0 ] || exit 255
+SH
+  chmod +x "$FB/fake-ssh"
+}
+
+remote_send() {
+  env PATH="$FB:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$HOME_DIR" FM_SEND_LOG="$LOG" FM_SEND_SETTLE=0 \
+    FM_SSH_BIN="$FB/fake-ssh" FM_REMOTE_CODE_ROOT="$ROOT" \
+    "$SEND" domain --from-captain "$CAPTAIN_TEXT" > "$OUT" 2> "$OUT.err"
+}
+
+test_unknown_delivery_never_escalates() {
+  local rec rh count created before
+  setup_remote unknown-delivery
+  rh="$TMP_ROOT/unknown-delivery/remote"
+  if FM_FAKE_SSH_AMBIGUOUS=1 remote_send; then
+    fail "lost remote completion must report an unconfirmed send"
+  fi
+  rec=$(find "$HOME_DIR/state/pending-replies" -maxdepth 1 -type f ! -name '.*' | head -1)
+  [ -n "$rec" ] || fail "unconfirmed captain send must keep its pending record: $(cat "$OUT.err")"
+  CORR=${rec##*/}
+  created=$(fm_pending_reply_get "$rec" created_epoch)
+  [ "$(fm_pending_reply_get "$rec" phase)" = delivery_unknown ] || fail "expected unknown delivery"
+  [ -z "$(fm_pending_reply_get "$rec" delivered_epoch)" ] || fail "unknown delivery must not be confirmed"
+  count=$(find "$rh/state/parent-route/domain.inbox" -name '*.msg' | wc -l | tr -d ' ')
+  [ "$count" = 1 ] || fail "ambiguous remote attempts must deduplicate"
+  FM_PENDING_REPLY_NOW=$((created + 1200)) fm_pending_reply_tick_one "$HOME_DIR/state" "$CORR" unknown
+  FM_PENDING_REPLY_NOW=$((created + 2400)) fm_pending_reply_maybe_escalate "$HOME_DIR/state" "$CORR" || true
+  [ "$(fm_pending_reply_get "$rec" phase)" = delivery_unknown ] || fail "captain record must remain retryable while unconfirmed"
+  [ -z "$(fm_pending_reply_get "$rec" recovery_attempted_epoch)" ] || fail "unconfirmed captain send must never recover"
+  [ -z "$(fm_pending_reply_get "$rec" escalated_epoch)" ] || fail "unconfirmed captain send must never escalate"
+  [ ! -s "$HOME_DIR/state/domain.status" ] || fail "unconfirmed captain send must not open a blocked decision"
+  FM_PENDING_REPLY_EXISTING_CORR="$CORR" remote_send || fail "same-corr remote resend failed: $(cat "$OUT.err")"
+  assert_contains "$(cat "$OUT")" "corr=$CORR" "resend must preserve correlation"
+  assert_contains "$(cat "$OUT")" "first_mate=told" "confirmed resend must notify the parent"
+  count=$(find "$rh/state/parent-route/domain.inbox" -name '*.msg' | wc -l | tr -d ' ')
+  [ "$count" = 1 ] || fail "same-corr remote resend must not duplicate delivery"
+  printf 'working: corr=%s handled captain direction\n' "$CORR" > "$HOME_DIR/state/domain.status"
+  fm_pending_reply_tick_one "$HOME_DIR/state" "$CORR" idle
+  [ "$(fm_pending_reply_get "$rec" resolved_via)" = status ] || fail "correlated resolution must win after resend"
+  before=$(find "$HOME_DIR/state/pending-replies" -maxdepth 1 -type f ! -name '.*' | sort)
+  if FM_FAKE_SSH_AMBIGUOUS=1 remote_send; then
+    fail "second lost remote completion must be unconfirmed"
+  fi
+  rec=$(find "$HOME_DIR/state/pending-replies" -maxdepth 1 -type f ! -name '.*' | sort | grep -Fvx "$before")
+  [ -n "$rec" ] || fail "expected another unknown-delivery record"
+  CORR=${rec##*/}
+  printf 'working: corr=%s handled captain direction\n' "$CORR" >> "$HOME_DIR/state/domain.status"
+  fm_pending_reply_tick_one "$HOME_DIR/state" "$CORR" unknown
+  [ "$(fm_pending_reply_get "$rec" resolved_via)" = status ] || fail "correlated line must resolve even an unconfirmed delivery"
+  pass "captain-direct: unknown delivery never escalates, resends safely, and resolves from correlated reports"
+}
+
 test_delivery_tells_first_mate_once
 test_echoes_are_suppressed
 test_corrections_and_unrelated_steers_are_sent
 test_correction_refused_with_from_captain
 test_pending_reply_never_reposts
+test_notification_failure_retry
+test_non_ascii_captain_message
+test_ledger_retention
+test_unknown_delivery_never_escalates

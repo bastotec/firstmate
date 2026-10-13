@@ -1242,6 +1242,10 @@ _fm_pending_reply_maybe_escalate_locked() {  # <state-dir> <corr_id>
   local delivered task_id meta sm_home remote_host
   rec=$(fm_pending_reply_path "$state" "$corr")
   [ -f "$rec" ] || return 1
+  if fm_pending_reply_is_captain_direct "$rec"; then
+    _fm_pending_reply_try_resolve_locked "$state" "$corr" || true
+    return 0
+  fi
   phase=$(fm_pending_reply_get "$rec" phase)
   if [ "$phase" = delivery_unknown ]; then
     _fm_pending_reply_reconcile_delivery_locked "$state" "$corr" || true
@@ -1399,6 +1403,12 @@ fm_pending_reply_tick_one() {  # <state-dir> <corr_id> <busy_state> [secondmate-
   fm_pending_reply_reconcile_delivery "$state" "$corr" || true
   phase=$(fm_pending_reply_get "$rec" phase)
   delivered=$(fm_pending_reply_get "$rec" delivered_epoch)
+  if fm_pending_reply_is_captain_direct "$rec"; then
+    if ! fm_pending_reply_try_resolve "$state" "$corr"; then
+      fm_pending_reply_settle_captain_direct "$state" "$corr" || true
+    fi
+    return 0
+  fi
   if [ -z "$delivered" ]; then
     case "$phase" in
       delivery_unknown) fm_pending_reply_maybe_escalate "$state" "$corr" 2>/dev/null || true ;;
@@ -1408,10 +1418,6 @@ fm_pending_reply_tick_one() {  # <state-dir> <corr_id> <busy_state> [secondmate-
   fi
   # Correlated parent report always wins and is idempotent.
   if fm_pending_reply_try_resolve "$state" "$corr"; then
-    return 0
-  fi
-  if fm_pending_reply_is_captain_direct "$rec"; then
-    fm_pending_reply_settle_captain_direct "$state" "$corr" || true
     return 0
   fi
   phase=$(fm_pending_reply_get "$rec" phase)
@@ -1474,7 +1480,7 @@ fm_pending_reply_tick_one() {  # <state-dir> <corr_id> <busy_state> [secondmate-
 # its own once grace has passed after delivery, with resolved_via=captain-direct.
 fm_pending_reply_is_captain_direct() {  # <record-path>
   case "$(fm_pending_reply_get "$1" request_summary)" in
-    'from the captain: '*) return 0 ;;
+    'from the captain:'|'from the captain: '*) return 0 ;;
   esac
   return 1
 }
