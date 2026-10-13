@@ -253,9 +253,8 @@ jobs:
   macos-stock-bash:
     name: Stock macOS Bash snapshot compatibility
     runs-on: macos-latest
-    # Hang tripwire with margin. Healthy runs on main take 9-9.5 minutes, so
-    # the old 10-minute cap cancelled green work (main run 38361446061; PR #170
-    # twice, after all 82 assertions passed).
+    # Hang tripwire with margin over healthy main runs of 9-9.5 minutes.
+    # tests/fm-ci-workflow.test.sh guards the authorized lane bounds.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
