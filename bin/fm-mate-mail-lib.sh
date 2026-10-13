@@ -149,10 +149,25 @@ fm_mate_mail_read() {  # <record>
   fm_mate_mail_id_valid "$FM_MM_FROM" && fm_mate_mail_corr_valid "$FM_MM_CORR"
 }
 
-# 0 when <state>/mate-messages.log already has a line for <from>/<corr>.
+# Print the outcome and return 0 for a complete log record for <from>/<corr>.
 fm_mate_mail_logged() {  # <state> <from> <corr>
   [ -f "$1/mate-messages.log" ] || return 1
-  grep -F "\"from\": \"$2\"" "$1/mate-messages.log" 2>/dev/null | grep -Fq "\"corr\": \"$3\""
+  python3 - "$1/mate-messages.log" "$2" "$3" <<'PY'
+import json, sys
+keys = ("at", "from", "to", "corr", "re", "outcome", "reason", "text")
+with open(sys.argv[1], "rb") as log:
+    for line in log:
+        try:
+            row = json.loads(line)
+        except (ValueError, UnicodeDecodeError):
+            continue
+        if not isinstance(row, dict) or not all(isinstance(row.get(k), str) for k in keys):
+            continue
+        if row["from"] == sys.argv[2] and row["corr"] == sys.argv[3] and row["outcome"] in ("delivered", "refused", "failed"):
+            print(row["outcome"])
+            sys.exit(0)
+sys.exit(1)
+PY
 }
 
 # Append one oversight line to <state>/mate-messages.log.
@@ -164,8 +179,13 @@ keys = ["from", "to", "corr", "re", "outcome", "reason", "text"]
 row = {"at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
 row.update(dict(zip(keys, sys.argv[2:])))
 row["sent_at"] = sys.argv[9]
-with open(sys.argv[1], "a", encoding="utf-8") as log:
-    log.write(json.dumps(row, ensure_ascii=False) + "\n")
+with open(sys.argv[1], "a+b") as log:
+    log.seek(0, 2)
+    if log.tell():
+        log.seek(-1, 2)
+        if log.read(1) != b"\n":
+            log.write(b"\n")
+    log.write((json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8"))
 ' "$state/mate-messages.log" "$FM_MM_FROM" "$FM_MM_TO" "$FM_MM_CORR" "$FM_MM_RE" \
     "$outcome" "$reason" "$FM_MM_TEXT" "${FM_MM_AT:-}"
 }

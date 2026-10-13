@@ -156,9 +156,10 @@ test_failing_delivery_retries_then_fails() {
   printf '#!/usr/bin/env bash\n[ "$1" = dave ] && exit 0\necho "error: transport lost" >&2\nexit 1\n' > "$send"
   chmod +x "$send"
   corr=$(mate_send "$parent" dave cadia "ping" | sed -n 's/.*corr=\([a-f0-9]*\).*/\1/p')
-  run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" FM_MATE_ROUTE_MAX_TRIES=2 || fail "router pass failed"
+  run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" || fail "router pass failed"
   [ -f "$parent/state/mate-mail/pending/dave@$corr.msg" ] || fail "a first failure should stay queued"
-  run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" FM_MATE_ROUTE_MAX_TRIES=2 || fail "router pass failed"
+  printf '9 %s\n' "$(date +%s)" > "$parent/state/mate-mail/pending/dave@$corr.tries"
+  run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" || fail "router pass failed"
   [ -f "$parent/state/mate-mail/failed/dave@$corr.msg" ] || fail "exhausted retries should fail the message"
   grep -q 'delivery kept failing (error: transport lost)' "$parent/state/mate-messages.log" || fail "failure reason not logged"
   pass "fm-mate-route: a failing delivery retries, then fails for good with the reason"
@@ -265,7 +266,106 @@ test_interrupted_bookkeeping_completes_once() {
   pass "fm-mate-route: an interrupted pass finishes its bookkeeping without repeating it"
 }
 
+test_wake_survives_failed_logging_and_queue_consumption() {
+  local parent corr send record target outcome
+  for target in nobody primary; do
+    parent=$(make_fleet wake-resume dave cadia)
+    send="$parent/fakebin/send-no-primary"
+    printf '#!/usr/bin/env bash\nexit 3\n' > "$send"
+    chmod +x "$send"
+    corr=$(mate_send "$parent" dave "$target" "remember this" | sed -n 's/.*corr=\([a-f0-9]*\).*/\1/p')
+    record="$parent/state/mate-mail/pending/dave@$corr.msg"
+    mkdir "$parent/state/mate-messages.log"
+    run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" >/dev/null || fail "router pass failed"
+    [ -f "$record" ] || fail "logging failure must keep the message pending"
+    [ -f "${record%.msg}.woken" ] || fail "successful wake needs a durable marker"
+    [ "$(grep -c "mate-mail:$corr" "$parent/state/.wake-queue")" = 1 ] || fail "expected one wake before logging"
+    rm "${record%.msg}.woken"
+    run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" >/dev/null || fail "router pass failed"
+    [ -f "${record%.msg}.woken" ] || fail "a queued wake must recover its marker"
+    [ "$(grep -c "mate-mail:$corr" "$parent/state/.wake-queue")" = 1 ] || fail "queued wake was repeated"
+    : > "$parent/state/.wake-queue"
+    rmdir "$parent/state/mate-messages.log"
+    run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" >/dev/null || fail "router pass failed"
+    [ ! -s "$parent/state/.wake-queue" ] || fail "an already-consumed wake was repeated"
+    [ "$(cat "$parent/state/.wake-queue.seq")" = 1 ] || fail "retry allocated another wake sequence"
+    [ ! -e "${record%.msg}.woken" ] || fail "terminalization must remove the wake marker"
+    outcome=refused
+    [ "$target" != primary ] || outcome=delivered
+    [ -f "$parent/state/mate-mail/$outcome/dave@$corr.msg" ] || fail "record was not archived after logging recovered"
+    [ "$(fm_mate_mail_logged "$parent/state" dave "$corr")" = "$outcome" ] || fail "terminal outcome not logged"
+  done
+  pass "fm-mate-route: refused and primary wakes survive logging failure without duplication"
+}
+
+test_incomplete_log_does_not_finish_bookkeeping() {
+  local parent corr record
+  parent=$(make_fleet partial-log dave cadia)
+  corr=$(mate_send "$parent" dave nobody "the full oversight copy" | sed -n 's/.*corr=\([a-f0-9]*\).*/\1/p')
+  printf '{"from": "dave", "corr": "%s", "text": "partial' "$corr" > "$parent/state/mate-messages.log"
+  fm_mate_mail_logged "$parent/state" dave "$corr" >/dev/null && fail "a partial JSON append is not a completed record"
+  run_route "$parent" >/dev/null || fail "router pass failed"
+  [ -f "$parent/state/mate-mail/refused/dave@$corr.msg" ] || fail "a partial log must not turn refusal into delivery"
+  [ -f "$parent/state/dave.inbox/001.msg" ] || fail "partial logging must not skip the bounce"
+  [ "$(grep -c "mate-mail:$corr" "$parent/state/.wake-queue")" = 1 ] || fail "partial logging must not skip the wake"
+  [ "$(fm_mate_mail_logged "$parent/state" dave "$corr")" = refused ] || fail "complete refusal was not logged"
+  python3 - "$parent/state/mate-messages.log" "$corr" <<'PY' || fail "oversight record must start on a fresh line"
+import json, sys
+with open(sys.argv[1]) as log:
+    lines = log.readlines()
+assert len(lines) == 2
+row = json.loads(lines[1])
+assert row["corr"] == sys.argv[2]
+assert row["outcome"] == "refused"
+assert row["text"] == "the full oversight copy"
+PY
+  record="$parent/state/mate-mail/refused/dave@$corr.msg"
+  mv "$record" "$parent/state/mate-mail/pending/"
+  run_route "$parent" >/dev/null || fail "router pass failed"
+  [ "$(wc -l < "$parent/state/mate-messages.log" | tr -d ' ')" = 2 ] || fail "recovered log was appended twice"
+  pass "fm-mate-route: truncated log tails neither finish bookkeeping nor corrupt the retry"
+}
+
+test_logged_requires_complete_json_record() {
+  local parent corr=0123456789abcdef
+  parent=$(make_fleet log-contract dave cadia)
+  printf '{"from":"dave","corr":"%s","outcome":"delivered"}\n' "$corr" > "$parent/state/mate-messages.log"
+  fm_mate_mail_logged "$parent/state" dave "$corr" >/dev/null && fail "missing oversight fields cannot finish bookkeeping"
+  fm_mate_mail_spool "$parent/state" dave cadia "$corr" '' "complete text" || fail "could not spool"
+  fm_mate_mail_read "$parent/state/mate-mail/pending/dave@$corr.msg" || fail "could not read spool"
+  fm_mate_mail_log "$parent/state" failed "transport lost" || fail "could not log"
+  [ "$(fm_mate_mail_logged "$parent/state" dave "$corr")" = failed ] || fail "logger must return the valid outcome"
+  fm_mate_mail_logged "$parent/state" cadia "$corr" >/dev/null && fail "log matching must include the sender"
+  pass "fm-mate-mail: only complete valid oversight records return their outcome"
+}
+
+test_live_router_lock_is_not_stolen() {
+  local parent corr lock dead_pid
+  parent=$(make_fleet lock dave cadia)
+  corr=$(mate_send "$parent" dave cadia "wait for the active router" | sed -n 's/.*corr=\([a-f0-9]*\).*/\1/p')
+  lock="$parent/state/mate-mail/.route.lock"
+  mkdir "$lock"
+  printf '%s\n' "$$" > "$lock/pid"
+  touch -t 200001010000 "$lock"
+  run_route "$parent" >/dev/null || fail "a busy router should skip its pass"
+  [ "$(cat "$lock/pid")" = "$$" ] || fail "live lock owner was replaced"
+  [ ! -e "$parent/state/cadia.inbox/001.msg" ] || fail "busy router must not deliver"
+  [ -f "$parent/state/mate-mail/pending/dave@$corr.msg" ] || fail "busy router must leave the message queued"
+  bash -c 'exit 0' &
+  dead_pid=$!
+  wait "$dead_pid"
+  printf '%s\n' "$dead_pid" > "$lock/pid"
+  run_route "$parent" >/dev/null || fail "a dead router lock should be recovered"
+  [ -f "$parent/state/cadia.inbox/001.msg" ] || fail "dead-owner recovery must deliver"
+  [ ! -e "$lock" ] || fail "router must release its own lock"
+  pass "fm-mate-route: old live locks stay held, dead locks are recovered"
+}
+
 test_local_mate_queues_in_parent_spool
+test_wake_survives_failed_logging_and_queue_consumption
+test_incomplete_log_does_not_finish_bookkeeping
+test_logged_requires_complete_json_record
+test_live_router_lock_is_not_stolen
 test_primary_publication_is_not_repeated
 test_interrupted_bookkeeping_completes_once
 test_remote_ingest_diverts_wire_line_to_spool

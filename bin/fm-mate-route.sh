@@ -16,16 +16,15 @@
 #      mate, bin/fm-send.sh primary with the same tag, or a `check:` wake row when
 #      no Deck chat primary is running.
 #   4. A delivery that fails is retried on later polls with the same corr, and
-#      fails for good after FM_MATE_ROUTE_MAX_TRIES (default 10) attempts or
-#      FM_MATE_ROUTE_MAX_AGE seconds (default 1800).
+#      fails for good after 10 attempts or 1800 seconds.
 # Every terminal outcome is one line in state/mate-messages.log. A refused or
 # failed message is also bounced to its sender as a first-mate message naming
 # the corr and reason, and queues one `check:` wake keyed mate-mail:<corr>, so
 # nothing is dropped silently. Delivered messages wake nobody: the first mate's
 # copy is the log line. Mate messages never page the captain.
 #
-# Exit 0 after a pass (including an empty one); 1 when this is not a main home
-# or the pass could not lock.
+# Exit 0 after a pass (including an empty or busy one); 1 when this is not a
+# main home.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -42,8 +41,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
 SEND_BIN=${FM_MATE_ROUTE_SEND_BIN:-$SCRIPT_DIR/fm-send.sh}
 BRIDGE_BIN=${FM_MATE_ROUTE_BRIDGE_BIN:-$SCRIPT_DIR/fm-bridge.sh}
-MAX_TRIES=${FM_MATE_ROUTE_MAX_TRIES:-10}
-MAX_AGE=${FM_MATE_ROUTE_MAX_AGE:-1800}
+MAX_TRIES=10
+MAX_AGE=1800
 
 [ "${1:-}" = run ] || { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 [ ! -e "$FM_HOME/.fm-secondmate-home" ] || { echo "error: mate messages are routed by the main home" >&2; exit 1; }
@@ -51,12 +50,8 @@ MAX_AGE=${FM_MATE_ROUTE_MAX_AGE:-1800}
 DIR=$(fm_mate_mail_dir "$STATE")
 [ -d "$DIR/pending" ] || exit 0
 LOCK="$DIR/.route.lock"
-if ! mkdir "$LOCK" 2>/dev/null; then
-  # A pass that died mid-way leaves its lock; one older than ten minutes is stale.
-  [ -n "$(find "$LOCK" -maxdepth 0 -mmin +10 2>/dev/null)" ] || exit 1
-  rm -rf "$LOCK" && mkdir "$LOCK" 2>/dev/null || exit 1
-fi
-trap 'rm -rf "$LOCK"' EXIT
+fm_lock_try_acquire "$LOCK" || exit 0
+trap 'fm_lock_release "$LOCK"' EXIT
 
 mate_meta() {  # <id> -> meta path when <id> is a recorded second mate
   local meta="$STATE/$1.meta"
@@ -91,6 +86,20 @@ bounce_id() {  # <corr>
   printf 'bounce:%s' "$1" | shasum -a 256 | cut -c1-16
 }
 
+wake_once() {
+  local marker="${1%.msg}.woken" key="mate-mail:$FM_MM_CORR" status=0
+  [ ! -e "$marker" ] || return 0
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
+  if ! fm_wake_queued_keys_locked check | grep -Fxq "$key"; then
+    fm_wake_append_locked check "$key" "$2" || status=$?
+  fi
+  if [ "$status" -eq 0 ]; then
+    : > "$marker" || status=$?
+  fi
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  return "$status"
+}
+
 # Close <record> as <outcome> (refused|failed) with REASON: bounce, wake and
 # log first, then archive. The bounce is idempotent on its delivery id, and the
 # log check makes a retried pass skip bookkeeping an interrupted pass finished.
@@ -104,24 +113,24 @@ close_undelivered() {  # <record> <outcome>
   else
     bounce_note=' (the sender is not a recorded second mate)'
   fi
-  if ! fm_mate_mail_logged "$STATE" "$FM_MM_FROM" "$FM_MM_CORR"; then
-    fm_wake_append check "mate-mail:$FM_MM_CORR" \
+  if ! fm_mate_mail_logged "$STATE" "$FM_MM_FROM" "$FM_MM_CORR" >/dev/null; then
+    wake_once "$record" \
       "check: second mate message $FM_MM_CORR from $FM_MM_FROM to $FM_MM_TO was $outcome: $REASON$bounce_note" \
       || return 1
     fm_mate_mail_log "$STATE" "$outcome" "$REASON$bounce_note" || return 1
   fi
   mkdir -p "$DIR/$outcome" && mv "$record" "$DIR/$outcome/$name" || return 1
-  rm -f "${record%.msg}.tries" "${record%.msg}.publishing"
+  rm -f "${record%.msg}.tries" "${record%.msg}.publishing" "${record%.msg}.woken"
   printf '%s: %s %s -> %s: %s%s\n' "$outcome" "$FM_MM_CORR" "$FM_MM_FROM" "$FM_MM_TO" "$REASON" "$bounce_note"
 }
 
 close_delivered() {  # <record> <how>
   local record=$1 name=${1##*/}
-  if ! fm_mate_mail_logged "$STATE" "$FM_MM_FROM" "$FM_MM_CORR"; then
+  if ! fm_mate_mail_logged "$STATE" "$FM_MM_FROM" "$FM_MM_CORR" >/dev/null; then
     fm_mate_mail_log "$STATE" delivered "$2" || return 1
   fi
   mkdir -p "$DIR/delivered" && mv "$record" "$DIR/delivered/$name" || return 1
-  rm -f "${record%.msg}.tries" "${record%.msg}.publishing"
+  rm -f "${record%.msg}.tries" "${record%.msg}.publishing" "${record%.msg}.woken"
   printf 'delivered: %s %s -> %s\n' "$FM_MM_CORR" "$FM_MM_FROM" "$FM_MM_TO"
 }
 
@@ -164,6 +173,7 @@ PY
 
 deliver_primary() {  # <record>
   local tagged rc=0 marker="${1%.msg}.publishing"
+  [ ! -e "${1%.msg}.woken" ] || { DELIVERED_HOW=wake; return 0; }
   fm_message_mark_from_mate "$FM_MM_FROM" "$FM_MM_CORR" "$FM_MM_TEXT" tagged || return 1
   if [ -e "$marker" ] && primary_holds "[fm-from-mate:$FM_MM_FROM]${FM_OPERATIONAL_MARK}corr=$FM_MM_CORR "; then
     DELIVERED_HOW=chat; return 0
@@ -173,7 +183,7 @@ deliver_primary() {  # <record>
   [ "$rc" -ne 0 ] || { DELIVERED_HOW=chat; return 0; }
   [ "$rc" -eq 3 ] || return 1
   # No Deck chat primary is running: the first mate reads its wake queue.
-  fm_wake_append check "mate-mail:$FM_MM_CORR" \
+  wake_once "$1" \
     "check: message from second mate $FM_MM_FROM (corr $FM_MM_CORR${FM_MM_RE:+, re $FM_MM_RE}): $(printf '%s' "$FM_MM_TEXT" | tr '\n\t' '  ' | cut -c1-400)" \
     || return 1
   DELIVERED_HOW=wake
@@ -193,13 +203,9 @@ ls -tr "$DIR/pending" 2>/dev/null | grep '\.msg$' | while IFS= read -r name; do
   fi
   # A pass that logged this message but stopped before archiving it finished
   # every side effect already: archive it under its logged outcome.
-  if fm_mate_mail_logged "$STATE" "$FM_MM_FROM" "$FM_MM_CORR"; then
-    done_as=$(grep -F "\"from\": \"$FM_MM_FROM\"" "$STATE/mate-messages.log" \
-      | grep -F "\"corr\": \"$FM_MM_CORR\"" | tail -1 \
-      | sed -n 's/.*"outcome": "\([a-z]*\)".*/\1/p')
-    case "$done_as" in delivered|refused|failed) ;; *) done_as=delivered ;; esac
+  if done_as=$(fm_mate_mail_logged "$STATE" "$FM_MM_FROM" "$FM_MM_CORR"); then
     mkdir -p "$DIR/$done_as" && mv "$record" "$DIR/$done_as/$name" || true
-    rm -f "${record%.msg}.tries" "${record%.msg}.publishing"
+    rm -f "${record%.msg}.tries" "${record%.msg}.publishing" "${record%.msg}.woken"
     continue
   fi
   if ! mate_meta "$FM_MM_FROM" >/dev/null; then
