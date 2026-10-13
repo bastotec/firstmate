@@ -150,7 +150,7 @@ class Receiver:
         sync_dir(record.parent)
         return record
 
-    def publish(self, active):
+    def publish(self, active, before=None):
         """Flush both native sources in sequence under the lifecycle lock."""
         projection = self.root / active['turn']
         visible = [int(p.stem) for sub in ('', 'handled', 'rejected')
@@ -186,6 +186,8 @@ class Receiver:
                 candidates.append((int(source.stem), body, guidance))
         published = 0
         for number, body, guidance in sorted(candidates):
+            if before is not None and number >= before:
+                break
             if number <= floor:
                 continue
             if not body.strip() or len(guidance.encode('utf-8')) > 65536:

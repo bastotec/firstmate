@@ -708,15 +708,15 @@ def switch_in_place(root, record, route):
     """A live host whose deck takes `set_model`: send it the control, keep the
     session and the process. Deck applies it at once while idle, else at its
     next safe point, and checks the route against the gateway and policy itself."""
-    with open(Path(root) / '.model.lock', 'a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        atomic_write(Path(root) / 'model', route + '\n')
-        try:
-            (Path(root) / 'switch').unlink()
-        except FileNotFoundError:
-            pass
-        seq = publish_body(Path(record['steer_dir']), 'deck-control: set_model %s\n' % route)
+    atomic_write(Path(root) / 'model', route + '\n')
+    try:
+        (Path(root) / 'switch').unlink()
+    except FileNotFoundError:
+        pass
+    seq = publish_body(Path(record['steer_dir']), 'deck-control: set_model %s\n' % route)
     was = record.get('model') or ''
+    record['model'] = route
+    atomic_write(Path(root).parent / 'primary-chat.json', json.dumps(record, sort_keys=True) + '\n')
     if was != route:
         note_switch(root, was, route)
     return seq
@@ -730,19 +730,21 @@ def set_model(args):
     if not MODEL_RE.match(args.route):
         print('error: not a model route: %s' % args.route, file=sys.stderr)
         return 2
-    record = live_record(home)
-    if record and record.get('set_model'):
-        seq = switch_in_place(root, record, args.route)
-        record['model'] = args.route
-        atomic_write(paths(args.home)[2], json.dumps(record, sort_keys=True) + '\n')
-        print('primary: switched to %s in place (steer seq %d)' % (args.route, seq))
-        return 0
-    if keeper_view(root) is None:
+    if not root.is_dir():
         print('error: no service keeper runs this primary; restart it with --model %s' % args.route,
               file=sys.stderr)
         return 1
     with open(root / '.model.lock', 'a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        record = live_record(home)
+        if record and record.get('set_model'):
+            seq = switch_in_place(root, record, args.route)
+            print('primary: switched to %s in place (steer seq %d)' % (args.route, seq))
+            return 0
+        if keeper_view(root) is None:
+            print('error: no service keeper runs this primary; restart it with --model %s' % args.route,
+                  file=sys.stderr)
+            return 1
         atomic_write(root / 'model', args.route + '\n')
         atomic_write(root / 'switch', '%d %s\n' % (int(time.time()), args.route))
     print('primary: switching to %s %s' % (args.route, 'now' if primary_idle(state) else 'after the turn under way'))

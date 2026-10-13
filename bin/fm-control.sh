@@ -461,8 +461,8 @@ model_meta_write() {  # <route>: model= in this record, under its lock
 }
 
 model_switch() {
-  local switcher="$SCRIPT_DIR/fm_model_switch.py" host rc rec seq where tmp prior
-  python3 "$switcher" check "$MODEL_ROUTE" --policy "${FM_CONFIG_OVERRIDE:-$FM_ROOT/config}/model-policy.json" || exit 1
+  local switcher="$SCRIPT_DIR/fm_model_switch.py" host rc where prior
+  python3 "$switcher" check "$MODEL_ROUTE" --policy "$CONFIG/model-policy.json" || exit 1
   host=$(fm_meta_get "$META" remote_host)
   if [ -n "$host" ]; then
     rc=0
@@ -479,17 +479,9 @@ model_switch() {
     exit 3
   }
   prior=$(fm_meta_get "$META" model)
+  where=$(python3 "$switcher" publish "$STATE" "$ID" "$prior" "$MODEL_ROUTE") \
+    || die "task $ID's model switch record or live control could not be written"
   model_meta_write "$MODEL_ROUTE" || die "task $ID's record could not be updated"
-  tmp="$STATE/.$ID.model.$$"
-  { printf '%s\n' "$MODEL_ROUTE" > "$tmp" && mv -f "$tmp" "$STATE/$ID.model"; } \
-    || die "state/$ID.model could not be written"
-  # shellcheck source=bin/fm-task-inbox-lib.sh
-  . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
-  where=next-turn
-  if rec=$(fm_task_inbox_write_handled "$STATE" "$ID" "[fm-control] model switch: ${prior:-default} -> $MODEL_ROUTE") \
-    && seq=$(fm_task_inbox_seq_of "${rec##*/}"); then
-    where=$(python3 "$switcher" publish "$STATE" "$ID" "$seq" "$MODEL_ROUTE") || where=next-turn
-  fi
   echo "model $ID -> $MODEL_ROUTE ($where)"
   exit 0
 }

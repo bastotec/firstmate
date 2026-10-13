@@ -1300,6 +1300,51 @@ test_model_switches_in_place() {
   assert_equals "$before" "$(record_field "$home/state/primary-chat.json" host_pid)" "the same host keeps running"
   kill -0 "$before" 2>/dev/null || fail "the host process is still alive"
   assert_equals 1 "$(wc -l < "$LAB/deck-in-place.log.starts" | tr -d ' ')" "deck was started once"
+  python3 - "$BIN" "$home" <<'PY' || fail "parallel primary switches diverged"
+import fcntl, json, pathlib, subprocess, sys
+bin_dir, home = map(pathlib.Path, sys.argv[1:])
+root = home / 'state/primary-chat'
+record_path = home / 'state/primary-chat.json'
+children = []
+with (root / '.model.lock').open('a') as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    for route in ('fake/parallel-a', 'fake/parallel-b'):
+        child = subprocess.Popen([sys.executable, '-c', '''
+import argparse, fcntl, sys
+sys.path.insert(0, sys.argv[1])
+import fm_primary_chat as primary
+flock = fcntl.flock
+def observed_flock(fd, operation):
+    if operation == fcntl.LOCK_EX:
+        print('waiting', flush=True)
+    return flock(fd, operation)
+fcntl.flock = observed_flock
+raise SystemExit(primary.set_model(argparse.Namespace(home=sys.argv[2], route=sys.argv[3])))
+''', str(bin_dir), str(home), route], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        children.append(child)
+        assert child.stdout.readline().strip() == 'waiting', 'switch never requested the model lock'
+    record = json.loads(record_path.read_text())
+    record['model'] = 'fake/locked'
+    record_path.write_text(json.dumps(record))
+    (root / 'model').write_text('fake/locked\n')
+for child in children:
+    out, err = child.communicate(timeout=10)
+    assert child.returncode == 0, (out, err)
+record = json.loads(record_path.read_text())
+lines = [line.split()[1:] for line in (root / 'switches').read_text().splitlines()]
+assert len(lines) == 3, lines
+first, second = lines[-2:]
+assert first[0] == 'fake/locked', lines
+assert second[0] == first[1], lines
+assert {first[1], second[1]} == {'fake/parallel-a', 'fake/parallel-b'}, lines
+assert record['model'] == second[1] == (root / 'model').read_text().strip(), record
+steer = pathlib.Path(record['steer_dir'])
+messages = [p for directory in (steer, steer / 'handled') for p in directory.glob('*.msg')]
+controls = [(int(p.stem), p.read_text()) for p in messages
+            if p.read_text().startswith('deck-control: set_model fake/parallel-')]
+assert len(controls) == 2, controls
+assert [body.strip().split()[-1] for _, body in sorted(controls)] == [first[1], second[1]], controls
+PY
   kill -TERM "$host"
   wait_for 10 "the in-place host exits" dead "$host"
   wait "$host" 2>/dev/null || true

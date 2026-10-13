@@ -6,24 +6,27 @@ and a live turn takes Deck's `deck-control: set_model <route>` steering control
 at its next safe point, so a switch needs no restart. bin/fm-control.sh's header
 owns the public contract; this file owns the checks and the live publication.
 
-  check ROUTE [--policy FILE]
+  check ROUTE --policy FILE
       exit 0 when ROUTE is a plain gateway route the captain's model policy
       permits (config/model-policy.json, the same globs Fleet Town writes) and
       the gateway lists in /models; else exit 1 with the reason on stderr.
   supported STATE ID
       exit 0 when the task's live Deck driver advertises in-place switching
       (state/<id>.deck-caps names model_switch=1 and a live pid), else exit 3.
-  publish STATE ID SEQ ROUTE
-      put the control into every live Deck turn of the task whose Deck accepts
-      it, as sequence SEQ (reserved in the task inbox by the caller so the
-      projection never collides with a captain record). Prints `live` when a
-      running turn will take it at its next safe point, else `next-turn`.
+  publish STATE ID WAS ROUTE
+      reserve a handled task-inbox switch record under the receiver locks, save
+      state/<id>.model for the next turn, then put the control into every live
+      Deck turn of the task whose Deck accepts it, at that sequence. Prints
+      `live` when a running turn will take it at its next safe point, else
+      `next-turn`; reservation failure exits 1.
 """
+import contextlib
 import fnmatch
 import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 import urllib.request
 
@@ -69,7 +72,7 @@ def gateway_routes():
 def check(route, policy):
     if not ROUTE_RE.match(route):
         return 'not a model route: %s' % route
-    if policy and not policy_permits(route, policy):
+    if not policy_permits(route, policy):
         return '%s is blocked by the model policy' % route
     try:
         routes = gateway_routes()
@@ -99,33 +102,40 @@ def supported(state, task):
         return False
 
 
-def publish(state, task, seq, route):
+def publish(state, task, was, route):
     body = 'deck-control: set_model %s\n' % route
     live = False
     inbox = Path(state) / (task + '.inbox')
-    for root in sorted(inbox.glob('deck-*')):
-        receiver = Receiver(state, task, root.name[len('deck-'):])
-        with receiver.locked():
+    receivers = [Receiver(state, task, root.name[len('deck-'):])
+                 for root in sorted(inbox.glob('deck-*'))]
+    with contextlib.ExitStack() as locks:
+        for receiver in receivers:
+            locks.enter_context(receiver.locked())
+        library = str(Path(__file__).with_name('fm-task-inbox-lib.sh'))
+        result = subprocess.run(['bash', '-c',
+            '. "$1"; fm_task_inbox_write_handled "$2" "$3" "$4"',
+            'model-switch', library, str(state), task,
+            '[fm-control] model switch: %s -> %s' % (was or 'default', route)],
+            capture_output=True, text=True, check=True)
+        seq = int(Path(result.stdout.strip()).stem)
+        atomic_write(Path(state) / (task + '.model'), route + '\n')
+        for receiver in receivers:
             active = receiver.active()
             if not (active and active.get('active') and active.get('supported') and active.get('set_model')):
                 continue
             projection = receiver.root / active['turn']
             if not projection.is_dir():
                 continue
-            # Flush pending captain records first, so none is overtaken.
-            receiver.publish(active)
-            floor = max([int(p.stem) for sub in ('', 'handled', 'rejected')
-                         for p in (projection / sub).glob('*.msg') if p.stem.isdigit()], default=0)
-            if seq <= floor:
-                continue
+            receiver.publish(active, before=seq)
             atomic_write(projection / ('%d.msg' % seq), body)
+            receiver.publish(active)
             live = True
     return 'live' if live else 'next-turn'
 
 
 def main(argv):
-    if argv[:1] == ['check'] and len(argv) in (2, 4) and (len(argv) == 2 or argv[2] == '--policy'):
-        reason = check(argv[1], argv[3] if len(argv) == 4 else None)
+    if argv[:1] == ['check'] and len(argv) == 4 and argv[2] == '--policy':
+        reason = check(argv[1], argv[3])
         if reason:
             print('error: %s' % reason, file=sys.stderr)
             return 1
@@ -133,7 +143,11 @@ def main(argv):
     if argv[:1] == ['supported'] and len(argv) == 3:
         return 0 if supported(argv[1], argv[2]) else 3
     if argv[:1] == ['publish'] and len(argv) == 5:
-        print(publish(argv[1], argv[2], int(argv[3]), argv[4]))
+        try:
+            print(publish(argv[1], argv[2], argv[3], argv[4]))
+        except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+            print('error: model switch could not be published (%s)' % exc, file=sys.stderr)
+            return 1
         return 0
     print(__doc__, file=sys.stderr)
     return 2

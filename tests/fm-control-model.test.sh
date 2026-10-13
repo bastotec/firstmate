@@ -58,7 +58,7 @@ live_turn() {  # <case-dir> <set_model 0|1>: an active Deck turn on endpoint e1
 }
 
 run_model() {  # <case-dir> <route>
-  env FM_HOME="$1/home" FM_CONFIG_OVERRIDE="$1/home/config" \
+  env -u FM_CONFIG_OVERRIDE FM_HOME="$1/home" \
     PROXAI_BASE_URL="http://127.0.0.1:$PORT/v1" PROXAI_API_KEY=test-key \
     "$CONTROL" t1 model "$2" 2>&1
 }
@@ -136,6 +136,83 @@ test_usage_needs_exactly_one_route() {
   assert_eq "$rc" 2 "a missing route is a usage error"
   env FM_HOME="$dir/home" "$CONTROL" t1 model a/b c/d > /dev/null 2>&1; rc=$?
   assert_eq "$rc" 2 "two routes are a usage error"
+}
+
+test_check_requires_policy() {
+  local rc
+  python3 "$ROOT/bin/fm_model_switch.py" check codex/gpt-6.1-sol > /dev/null 2>&1; rc=$?
+  assert_eq "$rc" 2 "a policy-free check is a usage error"
+}
+
+test_reservation_failure_keeps_the_model_unchanged() {
+  local dir out rc
+  dir=$(new_case reservation-failure)
+  driver_caps "$dir"
+  live_turn "$dir" 1
+  printf 'zai/glm-5.3-flash\n' > "$dir/home/state/t1.model"
+  printf 'not a directory\n' > "$dir/home/state/t1.inbox/handled"
+  out=$(run_model "$dir" codex/gpt-6.1-sol); rc=$?
+  assert_eq "$rc" 1 "a failed handled-record reservation is an error: $out"
+  assert_eq "$(meta_model "$dir")" zai/glm-5.3-flash "failed reservation leaves model= unchanged"
+  assert_eq "$(cat "$dir/home/state/t1.model")" zai/glm-5.3-flash "failed reservation leaves the next-turn model unchanged"
+  assert_eq "$(find "$dir/home/state/t1.inbox/deck-e1/turn1" -name '*.msg' | wc -l | tr -d ' ')" 0 "failed reservation publishes no control"
+}
+
+test_concurrent_captain_cannot_overtake_reserved_control() {
+  local dir
+  dir=$(new_case concurrent-captain)
+  driver_caps "$dir"
+  live_turn "$dir" 1
+  python3 - "$ROOT/bin" "$dir/home/state" <<'PY' || fail "concurrent captain publication overtook a model control"
+import pathlib, subprocess, sys
+bin_dir, state = map(pathlib.Path, sys.argv[1:])
+sys.path.insert(0, str(bin_dir))
+import fm_model_switch as switch
+library = str(bin_dir / 'fm-task-inbox-lib.sh')
+real_run = subprocess.run
+children = []
+def enqueue(body):
+    return real_run(['bash', '-c', '. "$1"; fm_task_inbox_write "$2" t1 "$3"',
+                     'captain', library, str(state), '[fm-captain-direct]\u2063' + body],
+                    capture_output=True, text=True, check=True)
+enqueue('earlier captain')
+def reserve_then_enqueue(*args, **kwargs):
+    result = real_run(*args, **kwargs)
+    enqueue('newer captain')
+    child = subprocess.Popen([sys.executable, '-c', '''
+import fcntl, pathlib, sys
+sys.path.insert(0, sys.argv[1])
+from fm_stream_deck import project_captain
+state = pathlib.Path(sys.argv[2])
+with (state / 't1.inbox/deck-e1/.lifecycle.lock').open('a') as lock:
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print('locked', flush=True)
+    else:
+        print('unlocked', flush=True)
+project_captain(state, 't1')
+''', str(bin_dir), str(state)], stdout=subprocess.PIPE, text=True)
+    children.append(child)
+    assert child.stdout.readline().strip() == 'locked', 'reservation released the receiver lock'
+    return result
+switch.subprocess.run = reserve_then_enqueue
+try:
+    assert switch.publish(state, 't1', 'zai/glm-5.3-flash', 'codex/gpt-6.1-sol') == 'live'
+finally:
+    switch.subprocess.run = real_run
+    for child in children:
+        child.communicate(timeout=10)
+        assert child.returncode == 0
+projection = state / 't1.inbox/deck-e1/turn1'
+assert 'earlier captain' in (projection / '1.msg').read_text()
+assert (projection / '2.msg').read_text() == 'deck-control: set_model codex/gpt-6.1-sol\n'
+assert 'newer captain' in (projection / '3.msg').read_text()
+assert (state / 't1.model').read_text() == 'codex/gpt-6.1-sol\n'
+assert (state / 't1.inbox/001.msg').is_file()
+assert (state / 't1.inbox/003.msg').is_file()
+assert '[fm-control] model switch: zai/glm-5.3-flash -> codex/gpt-6.1-sol' in (state / 't1.inbox/handled/002.msg').read_text()
+PY
 }
 
 for t in $(declare -F | awk '{print $3}' | grep '^test_'); do
