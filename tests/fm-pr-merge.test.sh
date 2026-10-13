@@ -3251,16 +3251,31 @@ test_a_control_lock_wait_ends_when_its_state_directory_vanishes() {
   case_dir=$(make_case vanished-control-lock)
   mkdir -p "$case_dir/wt"
   add_gh_mocks "$case_dir" 6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a
+  cat > "$case_dir/fakebin/sleep" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = 0.1 ] && [ -n "${FM_TEST_CONTROL_WAIT_READY:-}" ]; then
+  printf 'ready\n' > "$FM_TEST_CONTROL_WAIT_READY"
+fi
+exec /bin/sleep "$@"
+SH
+  chmod +x "$case_dir/fakebin/sleep"
   hold_control_lock "$case_dir" "$case_dir/holder.ready" "$case_dir/release-holder"
   holder_pid=$!
   await_file "$case_dir/holder.ready" \
     || { kill "$holder_pid" 2>/dev/null || true; fail "vanished-control-lock: the fixture never took the control lock"; }
 
-  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/76 \
-    > "$case_dir/stdout" 2> "$case_dir/stderr" &
+  FM_TEST_CONTROL_WAIT_READY="$case_dir/wait.ready" \
+    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/76 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr" &
   merge_pid=$!
-  sleep 0.5
-  rm -rf "$case_dir/state"
+  await_file "$case_dir/wait.ready" || {
+    fm_test_kill_tree "$merge_pid"
+    : > "$case_dir/release-holder"
+    wait "$holder_pid" 2>/dev/null || true
+    fail "vanished-control-lock: the merge never waited for the control lock"
+  }
+  # Rename atomically: recursive deletion races with the waiter's lock files.
+  mv "$case_dir/state" "$case_dir/retired-state"
   i=0
   while [ "$i" -lt 100 ] && kill -0 "$merge_pid" 2>/dev/null; do
     sleep 0.05
