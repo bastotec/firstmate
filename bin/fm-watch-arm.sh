@@ -49,9 +49,10 @@
 # log and is never written here.
 #
 # Handling-successor children capture stderr alongside stdout. On child exit,
-# arm interruption, or the arm's startup-confirmation timeout, the arm prints
-# that temporary capture to stdout before removing it. Interruption and timeout
-# stop and wait for the child first, preserving termination diagnostics too.
+# arm interruption, startup-confirmation timeout, or handling-state inspection
+# failure, the arm prints that temporary capture to stdout before removing it.
+# Interruption, timeout, and inspection failure stop and wait for the child first,
+# preserving termination diagnostics too.
 # Non-handoff starts keep their existing stdout-only capture and cleanup order.
 #
 # --restart: stop ONLY this FM_HOME's watcher (the pid recorded in THIS home's
