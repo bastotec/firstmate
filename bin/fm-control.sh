@@ -59,8 +59,9 @@
 #              axis for the replacement. With no explicit axis, a secondmate
 #              re-resolves its durable config/secondmate-harness pin (harness
 #              plus its optional model and effort tokens) exactly as any other
-#              respawn does, while a ship or scout keeps the exact adapter
-#              already recorded for it.
+#              respawn does, except that an in-place model choice takes precedence
+#              on an unchanged harness when --model is omitted, while a ship or
+#              scout keeps the exact adapter already recorded for it.
 #              --note is required for a ship or scout, whose replacement
 #              inherits the local copy but none of the conversation; a
 #              secondmate reconciles its own home's records at startup, so its
@@ -122,8 +123,9 @@
 #              no restart, same driver process, same conversation. The route
 #              must be a plain route the captain's model policy
 #              (config/model-policy.json) permits and the gateway lists. The
-#              choice is saved as the record's model= (a later relaunch uses
-#              it) and in state/<id>.model, which the Deck driver reads before
+#              choice is saved as the record's model= and model_choice= (a later
+#              same-harness relaunch uses it unless --model is passed)
+#              and in state/<id>.model, which the Deck driver reads before
 #              every turn; a running turn also gets Deck's
 #              `deck-control: set_model` control at its next safe point when
 #              its Deck accepts it (bin/fm_model_switch.py owns the checks and
@@ -451,7 +453,7 @@ model_meta_write() {  # <route>: model= in this record, under its lock
   lock=$(fm_meta_lock_path "$META") || return 1
   fm_lock_acquire_wait "$lock" || return 1
   tmp="$META.model.${BASHPID:-$$}"
-  { awk -F= '$1 != "model"' "$META"; echo "model=$route"; } > "$tmp" || rc=1
+  { awk -F= '$1 != "model" && $1 != "model_choice"' "$META"; printf 'model=%s\nmodel_choice=%s\n' "$route" "$route"; } > "$tmp" || rc=1
   if [ "$rc" -eq 0 ] && ! fm_backlog_atomic_transition publish "$tmp" "$META" "task record" "$STATE"; then
     rc=1
   fi
@@ -1012,6 +1014,8 @@ relaunch_rollback() {
 }
 
 resolve_relaunch_profile() {
+  local model_choice
+  model_choice=$(fm_meta_get "$META" model_choice)
   PRIOR_HARNESS=$HARNESS
   PRIOR_RECORDED_HARNESS=$RECORDED_HARNESS
   PRIOR_MODEL=$(fm_meta_get "$META" model)
@@ -1077,6 +1081,8 @@ resolve_relaunch_profile() {
   # caller names them too.
   if [ "$MODEL_SET" = 1 ]; then
     TARGET_MODEL=$NEW_MODEL
+  elif [ "$VERB" = relaunch ] && [ "$TARGET_HARNESS" = "$PRIOR_HARNESS" ] && [ -n "$model_choice" ]; then
+    TARGET_MODEL=$model_choice
   elif [ "$HARNESS_SET" = 0 ] && [ -n "$CONFIG_HARNESS" ]; then
     TARGET_MODEL=${CONFIG_MODEL:-default}
   elif [ "$TARGET_HARNESS" = "$PRIOR_HARNESS" ]; then

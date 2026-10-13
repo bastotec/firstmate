@@ -73,7 +73,7 @@ The steps below describe `relaunch`; [missing-terminal recovery](#recovering-a-m
 
 1. **Resolve the profile.**
    For `recover-missing`, an explicit `--harness`, `--model`, or `--effort` wins with the same precedence as `relaunch` - a rescue that names a replacement runtime is one transaction, not a failed recovery followed by a relaunch.
-   For local records, a `kind=secondmate` task otherwise re-resolves its durable `config/secondmate-harness` pin, including that file's optional model and effort tokens, exactly as every other respawn does - so setting the pin and relaunching is the ordinary way to move a secondmate's runtime.
+   For local records, a `kind=secondmate` task otherwise re-resolves its durable `config/secondmate-harness` pin, subject to the in-place model-choice precedence owned by the [`fm-control.sh` header](../bin/fm-control.sh).
    Invalid static harness configuration refuses with the resolver's diagnostic before the existing worker is stopped; only a successful empty resolution may fall back to its recorded harness, and an explicit supported `--harness` bypasses the configured pin.
    A ship or scout keeps the harness already recorded for it, because that harness comes from firstmate's dispatch-profile judgment at intake and must not be silently re-read from configuration.
    A harness change resets model and effort unless they are named too, because a model chosen for one adapter does not transfer to another.

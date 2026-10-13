@@ -858,6 +858,55 @@ test_secondmate_relaunch_picks_up_the_configured_harness_pin() {
   pass "fm-control relaunch: a secondmate relaunch re-resolves its durable configured harness pin"
 }
 
+test_secondmate_relaunch_preserves_an_in_place_model_choice() {
+  local dir home out rc route
+  dir=$(new_case model-choice smchoice)
+  TASK_TMPS+=("/tmp/fm-smchoice")
+  home="$dir/home"
+  mkdir -p "$home/config" "$home/data/smchoice" "$dir/gateway"
+  printf 'deck example/pinned\n' > "$home/config/secondmate-harness"
+  printf '{"data":[{"id":"example/chosen"},{"id":"example/changed"}]}\n' > "$dir/gateway/models"
+  printf '# secondmate brief\n' > "$home/data/smchoice/brief.md"
+  fm_git_worktree "$dir/proj" "$dir/smhome" sm-branch
+  mkdir -p "$dir/smhome/state" "$dir/smhome/data" "$dir/smhome/bin"
+  printf 'smchoice\n' > "$dir/smhome/.fm-secondmate-home"
+  printf '# agents\n' > "$dir/smhome/AGENTS.md"
+  {
+    fm_test_fake_dir_task "$dir/fake" "$home/state" smchoice
+    printf '%s\n' "worktree=$dir/smhome" "project=$dir/smhome" 'harness=deck' \
+      'kind=secondmate' 'mode=secondmate' 'yolo=off' 'model=example/pinned' \
+      'effort=default' "home=$dir/smhome"
+  } > "$home/state/smchoice.meta"
+  printf '%s\n' fm-smchoice > "$dir/fake/windows"
+  printf '%s' "$dir/smhome" > "$dir/fake/cwd"
+  printf 'pid=%s\nmodel_switch=1\n' "$$" > "$home/state/smchoice.deck-caps"
+  for route in example/chosen example/changed; do
+    out=$(PROXAI_BASE_URL="file://$dir/gateway" PROXAI_API_KEY=test-key \
+      run_control "$dir" smchoice model "$route"); rc=$?
+    expect_code 0 "$rc" "the in-place choice should succeed: $out"
+    assert_equals "$route" "$(meta_field "$dir" smchoice model)" "model= follows the in-place choice"
+    assert_equals "$route" "$(meta_field "$dir" smchoice model_choice)" "model_choice records the captain's choice"
+    assert_equals 1 "$(grep -c '^model_choice=' "$home/state/smchoice.meta")" "a repeated switch replaces its choice"
+    assert_equals "$route" "$(cat "$home/state/smchoice.model")" "the next turn follows the choice"
+  done
+  rm "$home/state/smchoice.model"
+  out=$(run_control "$dir" smchoice relaunch); rc=$?
+  expect_code 0 "$rc" "a chosen secondmate model should relaunch: $out"
+  assert_equals example/changed "$(journal_field "$dir" smchoice to_model)" "the in-place choice wins over the configured model"
+  assert_equals example/changed "$(meta_field "$dir" smchoice model)" "the replacement launches on the chosen route"
+  assert_equals example/changed "$(meta_field "$dir" smchoice model_choice)" "relaunch preserves the choice"
+  out=$(run_control "$dir" smchoice relaunch --harness deck); rc=$?
+  expect_code 0 "$rc" "explicitly retaining the harness keeps the choice: $out"
+  assert_equals example/changed "$(journal_field "$dir" smchoice to_model)" "an unchanged explicit harness keeps the choice"
+  out=$(run_control "$dir" smchoice relaunch --model example/explicit); rc=$?
+  expect_code 0 "$rc" "an explicit model overrides the choice: $out"
+  assert_equals example/explicit "$(meta_field "$dir" smchoice model)" "an explicit --model wins"
+  out=$(run_control "$dir" smchoice relaunch --model default); rc=$?
+  expect_code 0 "$rc" "an explicit model reset overrides the choice: $out"
+  assert_equals default "$(meta_field "$dir" smchoice model)" "an explicit default keeps its reset semantics"
+  pass "fm-control model/relaunch: a secondmate's in-place choice overrides its pin only without an explicit model"
+}
+
 test_secondmate_relaunch_onto_deck() {
   local dir home out rc
   dir=$(new_case deckpin smdeck)
@@ -1772,6 +1821,7 @@ test_relaunch_refuses_a_held_in_flight_item_before_stopping() {
 # fm-model-chain sources these fixture helpers without running this suite.
 [ "${FM_MODEL_CHAIN_TEST_SKIP_RUN:-0}" != 1 ] || return 0
 
+test_secondmate_relaunch_preserves_an_in_place_model_choice
 test_secondmate_relaunch_onto_deck
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text
