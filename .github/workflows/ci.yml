@@ -253,7 +253,10 @@ jobs:
   macos-stock-bash:
     name: Stock macOS Bash snapshot compatibility
     runs-on: macos-latest
-    timeout-minutes: 10
+    # Hang tripwire with margin. Healthy runs on main take 9-9.5 minutes, so
+    # the old 10-minute cap cancelled green work (main run 38361446061; PR #170
+    # twice, after all 82 assertions passed).
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - name: Run snapshot consumers with stock Bash
