@@ -31,6 +31,14 @@ Every unreadable or ambiguous input surfaces the wake without clearing prior sta
 A `kind=secondmate` task's status signal is its parent-directed reply stream and is never absorbed as provably working.
 Its bare turn-ended signal is absorbed only by the authoritative proof, because an active secondmate does not enter the staleness backbone that would resurface deferred churn evidence.
 
+### A superseded Deck turn-failure is attention, not failure
+
+A Deck driver turn that ends without appending a status line is backstopped with `failed: deck turn ended without a status line (<event> gen=<busy-gen>)`.
+That line is evidence the turn produced no report, not evidence the work failed: the driver returns to its prompt and replays the turn on the next wake in the same incarnation, so before this rule the same healthy task raised a false failure wake three times in one evening (2026-10-12) while supervision hand-appended corrections.
+`fm_turn_failed_superseded_line` in `bin/fm-classify-lib.sh` owns the discrimination: the failure is superseded exactly when the task's current busy record shows that same generation mid-turn again (`state=busy event=turn-start`), the replayed turn having opened.
+A superseded line leaves the actionable status span, is skipped by the wake drain's outcome backstop, and reads as the ordinary non-terminal stale path in away mode, while the current-state interface already reports the resumed turn as working through its busy record.
+A genuinely different generation after a driver loss, an unstamped legacy line, an interrupted turn (the captain's own Ctrl+C), and every ordinary `failed:` line keep the failed semantics, so the wake still fires where supervision genuinely needs it.
+
 ### Stale panes and the wedge ladder
 
 Stale panes take the same current-state read before the status log is trusted, so an active run or a proven busy worker outranks an old captain-relevant log line.

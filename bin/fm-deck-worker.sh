@@ -801,7 +801,7 @@ $prompt"
     fi
     host_lock_owned || return 1
   elif ! status_has_worker_evidence "$status_before"; then
-    if ! printf 'failed: deck turn ended without a status line (%s)\n' "$event" | status_append; then
+    if ! printf 'failed: deck turn ended without a status line (%s gen=%s)\n' "$event" "$GEN" | status_append; then
       printf 'fm-deck-worker: could not safely append required turn evidence to %s\n' "$STATUS_FILE" >&2
       record_busy_event idle turn-failed || return 1
       publish_turnend || true

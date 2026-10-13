@@ -48,6 +48,14 @@
 # bin/ script (which sets its own SCRIPT_DIR) or directly by a test.
 _FM_CLASSIFY_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null)" || _FM_CLASSIFY_LIB_DIR="."
 
+# The semantic busy-state contract, sourced at load time so the Deck
+# turn-failure supersession below can read a task's busy record. That library
+# declares no `set -u` and sources nothing itself, so loading it here cannot
+# impose state on consumers or complete a cycle.
+# shellcheck source=bin/fm-busy-lib.sh
+# shellcheck disable=SC1091
+. "$_FM_CLASSIFY_LIB_DIR/fm-busy-lib.sh"
+
 # The crew current-state reader used for the "provably working" decision.
 # Overridable so tests can stub the run-step/pane verdict without a real worktree
 # or no-mistakes install; absent, it points at the real sibling script.
@@ -148,6 +156,75 @@ status_is_terminal_verb() {
     done|needs-decision|blocked|failed) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# --- Deck turn-failure supersession -----------------------------------------
+#
+# A Deck driver turn that ends without appending a status line is backstopped by
+# bin/fm-deck-worker.sh with the literal line
+#   failed: deck turn ended without a status line (<event> gen=<busy-gen>)
+# That is evidence the TURN produced no report, not evidence the WORK failed: the
+# driver returns to its prompt and replays the turn on the next wake in the SAME
+# incarnation (same busy-state generation), so the 2026-10-12 incidents recorded
+# a false `failed:` wake three times in one evening on a healthy task while
+# supervision hand-appended corrections. The cure the captain selected: when the
+# same generation later shows the task working, the turn-failed record reads as
+# paused/attention, not failed.
+#
+# The discriminator is the driver incarnation generation, not prose. The driver
+# stamps the failure line with the busy-state generation it is running under, the
+# same generation bin/fm-spawn.sh arms into the busy contract and every Deck
+# turn presents through bin/fm-busy-event.sh (a written record whose gen no
+# longer matches the armed sidecar is a stale incarnation and classifies
+# unknown there, which is why the comparison is against the ARMED gen). The
+# failure is superseded exactly when the task's current busy record shows that
+# same generation mid-turn again: state=busy event=turn-start, the replayed
+# turn having opened. The driver's turn lifecycle - one turn at a time - is what
+# minted both, so a same-gen busy turn-start proves the failure line describes a
+# superseded turn, while a different generation (a genuinely new incarnation
+# after driver loss) keeps the failed semantics untouched.
+#
+# fm_turn_failed_superseded_line takes the status file's path alongside the line
+# so it can read that busy record; it never writes. The event token is accepted
+# from the failure line's parentheses (turn-end, turn-failed, interrupted).
+# interruption is excluded: an interrupted turn is the captain's own Ctrl+C, a
+# deliberate stop that needs no cure, and superseding it would hide the
+# operator's own act.
+fm_turn_failed_superseded_line() {  # <status-file> <status-line>
+  local f=$1 line=$2 note gen record task r_state _r_source r_event _r_seq
+  [ "$(status_line_verb "$line")" = failed ] || return 1
+  note=$(status_line_note "$line")
+  case "$note" in
+    'deck turn ended without a status line ('*')') ;;
+    *) return 1 ;;
+  esac
+  case "$note" in
+    'deck turn ended without a status line (interrupted'*) return 1 ;;
+  esac
+  note=${note%)}
+  gen=${note##*gen=}
+  case "$gen" in
+    ''|*[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  case "$f" in
+    *.status) ;;
+    *) return 1 ;;
+  esac
+  task=$(basename "$f"); task=${task%.status}
+  record=$(fm_busy_record_read "$(_fm_classify_state_dir "$f")" "$task") || return 1
+  read -r r_state _r_source r_event _r_seq <<< "$record"
+  [ "$r_state" = busy ] || return 1
+  [ "$r_event" = turn-start ] || return 1
+  [ "$(fm_busy_current_gen "$(_fm_classify_state_dir "$f")" "$task")" = "$gen" ] || return 1
+  return 0
+}
+
+# Directory holding a status file: its parent, except that a root-level file has
+# no state directory of its own.
+_fm_classify_state_dir() {  # <status-file-path>
+  local dir=${1%/*}
+  [ "$dir" != "$1" ] || dir=
+  printf '%s' "$dir"
 }
 
 # 0 if the given (last) status line matches a captain-relevant verb.
@@ -1804,6 +1881,12 @@ status_span_first_actionable_record() {  # <status-file> <start-offset> [record-
       continue
     fi
     status_is_captain_relevant "$line" || continue
+    # The one reclassification this span performs: a Deck driver's
+    # turn-without-status backstop line is captain-relevant evidence when the
+    # task is genuinely down, but the same busy generation later opening a turn
+    # proves that failure described a replayed turn, not dead work. See the
+    # "Deck turn-failure supersession" block above fm_turn_failed_superseded_line.
+    fm_turn_failed_superseded_line "$f" "$line" && continue
     verb=$(status_line_verb "$line")
     case "$verb" in
       needs-decision|blocked)

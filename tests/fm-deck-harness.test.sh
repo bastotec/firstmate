@@ -418,8 +418,10 @@ test_bookkeeping_lines_do_not_satisfy_turn_evidence() {
   [ "$(cat "$dir/gate.log")" = refused ] || fail "a resolved line satisfied Deck's pre-complete evidence gate"
   [ "$(sed -n 1p "$dir/state/t1.status")" = 'resolved [key=choice]: answered: yes' ] \
     || fail "the fixture did not append its Firstmate-owned bookkeeping line"
-  [ "$(sed -n 2p "$dir/state/t1.status")" = 'failed: deck turn ended without a status line (turn-end)' ] \
-    || fail "the wrapper postcondition treated a resolved line as worker evidence"
+  case $(sed -n 2p "$dir/state/t1.status") in
+    'failed: deck turn ended without a status line (turn-end gen='"$(cat "$dir/gen")"')') ;;
+    *) fail "the wrapper postcondition treated a resolved line as worker evidence: $(sed -n 2p "$dir/state/t1.status")" ;;
+  esac
   pass "fm-deck-worker: Firstmate bookkeeping cannot satisfy worker evidence"
 }
 
@@ -582,15 +584,19 @@ test_driver_backstops_silent_and_failed_turns() {
   local silent="$TMP_ROOT/postcondition-silent" failed="$TMP_ROOT/postcondition-failed"
   make_fake_deck "$silent"
   run_worker "$silent" $'/quit\n' || fail "the silent-turn driver did not exit cleanly"
-  [ "$(cat "$silent/state/t1.status")" = 'failed: deck turn ended without a status line (turn-end)' ] \
-    || fail "a silently completed turn did not receive the exact fallback status: $(cat "$silent/state/t1.status")"
+  case $(cat "$silent/state/t1.status") in
+    'failed: deck turn ended without a status line (turn-end gen='"$(cat "$silent/gen")"')') ;;
+    *) fail "a silently completed turn did not receive the exact fallback status: $(cat "$silent/state/t1.status")" ;;
+  esac
   assert_not_contains "$(cat "$silent/pane.out")" "No such file or directory" "a missing status log leaked a turn-start read error into the pane"
   [ -f "$silent/state/t1.turn-ended" ] || fail "the silent turn did not publish turn-ended after its fallback status"
 
   make_fake_deck "$failed"
   run_worker "$failed" $'/quit\n' 'fail-turn' || fail "the failed-turn driver did not remain available for /quit"
-  [ "$(cat "$failed/state/t1.status")" = 'failed: deck turn ended without a status line (turn-failed)' ] \
-    || fail "a provider-failed turn did not receive the exact fallback status: $(cat "$failed/state/t1.status")"
+  case $(cat "$failed/state/t1.status") in
+    'failed: deck turn ended without a status line (turn-failed gen='"$(cat "$failed/gen")"')') ;;
+    *) fail "a provider-failed turn did not receive the exact fallback status: $(cat "$failed/state/t1.status")" ;;
+  esac
   [ -f "$failed/state/t1.turn-ended" ] || fail "the provider-failed turn did not publish turn-ended after its fallback status"
   assert_not_contains "$(cat "$failed/pane.out")" 'waiting at the prompt for the next wake' \
     "a crewmate turn failure took the persistent secondmate's survival path"
@@ -678,8 +684,10 @@ test_ctrl_c_cancels_the_turn_and_returns_to_the_prompt() {
   kill -INT -- -"$pid" 2>/dev/null || fail "could not signal the Deck worker process group"
   for _ in $(seq 50); do grep -q 'event=interrupted' "$dir/state/t1.busy-state" 2>/dev/null && break; sleep 0.1; done
   assert_grep 'event=interrupted' "$dir/state/t1.busy-state" "Ctrl+C did not close the turn as interrupted"
-  [ "$(cat "$dir/state/t1.status")" = 'failed: deck turn ended without a status line (interrupted)' ] \
-    || fail "an interrupted turn did not receive the exact fallback status: $(cat "$dir/state/t1.status")"
+  case $(cat "$dir/state/t1.status") in
+    'failed: deck turn ended without a status line (interrupted gen='"$gen"')') ;;
+    *) fail "an interrupted turn did not receive the exact fallback status: $(cat "$dir/state/t1.status")" ;;
+  esac
   for _ in $(seq 50); do [ -f "$dir/state/t1.turn-ended" ] && break; sleep 0.1; done
   [ -f "$dir/state/t1.turn-ended" ] || fail "the interrupted turn did not publish turn-ended after its fallback status"
   kill -0 "$pid" 2>/dev/null || fail "the driver exited on Ctrl+C instead of returning to its prompt"
