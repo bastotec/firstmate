@@ -402,6 +402,7 @@ test_audit_append_failure_rolls_back_policy() {
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import sys
 from pathlib import Path
@@ -452,8 +453,31 @@ for initial in (None, b'{"gates":[]}\n', b'{\r\n  "gates": []\r\n}\r\n'):
     with patch.object(sys, 'stdin', io.StringIO('{"gates":[]}')), \
          contextlib.redirect_stdout(io.StringIO()):
         assert approval.main(['policy-save', '--expect', before]) == 0
+
+# A sync failure after the entry is written keeps the audited policy: the log
+# never describes a change that was rolled back.
+policy.write_bytes(b'{"gates":[]}\n')
+log.write_bytes(b'')
+before = approval.policy_sha()
+new = '{"gates":[{"id":"x","tool":"run_command","pattern":"wacli"}]}'
+real_fsync = os.fsync
+def fail_log_sync(fd):
+    if log.exists() and os.fstat(fd).st_ino == log.stat().st_ino:
+        raise OSError('injected sync failure')
+    return real_fsync(fd)
+with patch.object(approval.os, 'fsync', side_effect=fail_log_sync), \
+     patch.object(sys, 'stdin', io.StringIO(new)), \
+     contextlib.redirect_stderr(io.StringIO()) as stderr:
+    rc = approval.main(['policy-save', '--expect', before])
+assert rc == 1, rc
+assert 'saved and audited' in stderr.getvalue(), stderr.getvalue()
+entries = [json.loads(line) for line in log.read_text().splitlines()]
+assert len(entries) == 1 and entries[0]['added'] == ['x'], entries
+assert entries[0]['after'] == approval.policy_sha(), 'log and policy disagree'
+assert json.loads(policy.read_text())['gates'][0]['id'] == 'x'
+assert not (policy.parent / '.approvals.lock').exists()
 PY
-  pass "audit append failure restores existing policy bytes or removes a new policy"
+  pass "audit append failure restores the policy; a later sync failure keeps the audited one"
 }
 
 test_machine_approvals_local_and_remote() {
@@ -533,6 +557,29 @@ test_policy_save_keeps_keys_it_is_not_given() {
   pass "policy-save keeps top-level keys the editor did not send"
 }
 
+test_worker_requests_go_to_the_mate_first() {
+  local w id out rc
+  w=$(world worker)
+  ap "$w" enable slack-send >/dev/null
+  printf 'kind=ship\n' > "$w/home/state/w1.meta"
+  rc=0; out=$(gate "$w" w1 run_command "$SLACK") || rc=$?
+  assert_equals 2 "$rc" "worker call blocked"
+  assert_contains "$out" "went to your mate" "worker told its mate decides"
+  id=$(pending_ids "$w")
+  assert_equals mate "$(jq -r .audience "$w/home/state/approvals/$id.json")" "worker request is for the mate"
+  assert_grep "key=$id]: approval gate slack-send" "$w/home/state/w1.status" "mate woken through the worker status"
+  out=$(ap "$w" escalate "$id") || fail "escalate failed"
+  assert_equals captain "$(jq -r .audience "$w/home/state/approvals/$id.json")" "escalated to the captain"
+  assert_grep '"event":"escalated"' "$w/home/state/approvals.log" "escalation audited"
+  ap "$w" answer "$id" --approve >/dev/null || fail "mate could not answer"
+  rc=0; ap "$w" escalate "$id" >/dev/null 2>&1 || rc=$?
+  assert_equals 3 "$rc" "answered request cannot be escalated"
+  gate "$w" primary run_command '{"command":"agent-slack message send C9 x"}' >/dev/null || true
+  id=$(pending_ids "$w")
+  assert_equals captain "$(jq -r .audience "$w/home/state/approvals/$id.json")" "the first mate's request goes to the captain"
+  pass "a worker's gated call goes to its mate first; the mate answers or escalates"
+}
+
 test_no_policy_or_no_gates_lets_everything_through
 test_policy_without_gates_supports_all_policy_commands
 test_matching_call_is_blocked_and_filed_other_calls_pass
@@ -552,3 +599,4 @@ test_failed_policy_save_preserves_policy
 test_audit_append_failure_rolls_back_policy
 test_machine_approvals_local_and_remote
 test_policy_save_keeps_keys_it_is_not_given
+test_worker_requests_go_to_the_mate_first

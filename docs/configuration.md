@@ -639,6 +639,7 @@ The region, model, and profile files are read as their first non-blank, non-`#` 
 
 Some machines should not rely on `AGENTS.md` alone for actions the captain wants to see first, such as Slack, PR comments or email.
 After hook installation, every Deck agent in that machine account passes through [`bin/fm-approval.sh`](../bin/fm-approval.sh); unapproved matching calls become pending requests in their owning home rather than executing.
+A worker's gated call goes to its mate first (a keyed `needs-decision` line on the worker's status); the mate answers it or runs `bin/fm-approval.sh escalate <id>` to put it in front of the captain, so workers never page him directly.
 This repository provides the approval commands, records, and machine-policy editing backend; Fleet Town's Machine panel, removal confirmation, card display, and answer routing require the separate firstmate-ui integration.
 The policy stays on the machine, outside home inheritance and dotfiles synchronization; the captain manages presets and custom gates through the CLI or the machine-policy transport.
 Nothing is gated until the captain enables a gate:

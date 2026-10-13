@@ -33,6 +33,7 @@ Usage:
   fm-approval.sh answer <request-id> --approve|--deny [--no-steer] [--json]
   fm-approval.sh list [--json]                 this home's pending requests
   fm-approval.sh show <request-id>
+  fm-approval.sh escalate <request-id>         a mate hands a worker's request to the captain
   fm-approval.sh presets
   fm-approval.sh policy [--json]               this machine's policy (or that none exists)
   fm-approval.sh enable <preset>... [--machine NAME] [--home DIR] [--by TEXT]
@@ -60,6 +61,14 @@ the installed entry sets "fail_closed": true, which a Deck with fail-closed hook
 by blocking instead (an older Deck ignores the key). The gate never waits: it files and
 returns.
 
+Workers never page the captain. A request from a ship or scout worker of the owning
+home (state/<agent>.meta names kind=ship or scout) is filed with "audience": "mate":
+the gate appends a `needs-decision [key=<id>]: approval gate ...` line to that worker's
+status (through bin/fm-state-io.py), which wakes its mate, and tells the worker its mate
+decides. The mate answers it within its authority, or runs `escalate <id>`, which sets
+"audience": "captain" (audited as escalated) so Fleet Town shows it to him. Every other
+request ("primary", a second mate, session:<id>) is "audience": "captain" from the start.
+
 The owning home is FM_APPROVAL_HOME (the Deck hosts export it with FM_APPROVAL_AGENT:
 the task id, or `primary` for the first mate), else the policy's "home". Agents with
 no FM_APPROVAL_AGENT are identified as session:<deck session id>; they can be
@@ -85,7 +94,8 @@ refuses a flow) answers differently: --approve runs `fm-bridge.sh allow <machine
 first mate the flow is open and to retry what was blocked; --deny leaves it closed.
 If the allow fails the request stays pending.
 
-Every event (requested, repeated, approved, denied, used, expired-grant, steer-failed)
+Every event (requested, repeated, approved, denied, used, expired-grant, steer-failed,
+escalated, mate-wake-failed)
 is appended to state/approvals.log as one JSON line {at, event, id, agent, machine, tool, key, ...}.
 
 Policy management (enable, disable, policy-save) is one locked read-modify-write of
@@ -404,11 +414,37 @@ def gate_main():
         'version': 1, 'id': rid, 'status': 'pending', 'machine': machine, 'home': str(home),
         'agent': agent, 'session': event.get('session_id'), 'tool': tool, 'args': args,
         'cwd': cwd, 'gate': gate['id'], 'gate_description': gate.get('description') or '',
-        'key': key, 'requested': iso(t),
+        'key': key, 'requested': iso(t), 'audience': 'mate' if is_worker(home, agent) else 'captain',
     }
     write_private(approvals_dir(home) / f'{rid}.json', json.dumps(rec, indent=2, ensure_ascii=False) + '\n')
-    audit(home, 'requested', rec, gate=gate['id'])
+    audit(home, 'requested', rec, gate=gate['id'], audience=rec['audience'])
+    if rec['audience'] == 'mate':
+        tell_mate(home, rec)
     return block(blocked_message(rec))
+
+
+def is_worker(home, agent):
+    """A ship or scout worker of this home: its task record names kind=ship|scout."""
+    if not agent or agent == 'primary' or agent.startswith('session:') or not ID_RE.match(agent):
+        return False
+    try:
+        meta = (Path(home) / 'state' / f'{agent}.meta').read_text(encoding='utf-8')
+    except OSError:
+        return False
+    kinds = [line[5:].strip() for line in meta.splitlines() if line.startswith('kind=')]
+    return bool(kinds) and kinds[-1] in ('ship', 'scout')
+
+
+def tell_mate(home, rec):
+    """Wake the worker's mate with a keyed needs-decision line on the worker's status."""
+    line = (f'needs-decision [key={rec["id"]}]: approval gate {rec["gate"]} for {rec["tool"]} '
+            f'({call_text(rec)[:200]}); answer with bin/fm-approval.sh answer {rec["id"]} '
+            f'--approve|--deny, or bin/fm-approval.sh escalate {rec["id"]} to ask the captain\n')
+    r = subprocess.run([sys.executable, str(SCRIPT_DIR / 'fm-state-io.py'), 'root-append',
+                        str(Path(home) / 'state'), f'{rec["agent"]}.status'],
+                       input=line.replace('\n', ' ').rstrip() + '\n', text=True, capture_output=True)
+    if r.returncode != 0:
+        audit(home, 'mate-wake-failed', rec, detail=(r.stderr or r.stdout).strip()[:300])
 
 
 def blocked_message(rec, again=False):
@@ -417,13 +453,38 @@ def blocked_message(rec, again=False):
              if not rec['agent'].startswith('session:') else
              'Nothing can message you about it, so end your turn now and say you are waiting on '
              'captain approval for request {id}. ')
-    return (f'{lead}: this machine requires the captain\'s approval for this call '
-            f'("{rec["gate"]}"). Request {rec["id"]} is waiting for him in Fleet Town. '
+    if rec.get('audience') == 'mate':
+        where = (f'Request {rec["id"]} went to your mate, who decides or asks the captain; do not '
+                 'ask the captain yourself. ')
+    else:
+        where = f'Request {rec["id"]} is waiting for him in Fleet Town. '
+    return (f'{lead}: this machine requires approval for this call '
+            f'("{rec["gate"]}"). ' + where +
             'Do not retry it, rephrase it, or reach the same effect another way. '
             + steer.format(id=rec['id']) +
             'When approved, run exactly the same call once (same command, arguments and working '
             'directory); anything different is blocked again. Meanwhile continue other work that '
             'does not depend on it, or wait.')
+
+
+def escalate_main(argv):
+    """A mate hands a worker's request to the captain: audience becomes captain."""
+    if len(argv) != 1 or not REQ_RE.match(argv[0]):
+        raise Refuse('usage: fm-approval.sh escalate <request-id>', 2)
+    home = os.environ.get('FM_HOME')
+    if not home:
+        raise Refuse('escalate needs FM_HOME (the home that owns the request)', 2)
+    path = approvals_dir(home) / f'{argv[0]}.json'
+    rec = read_json(path)
+    if not isinstance(rec, dict) or rec.get('status') != 'pending':
+        raise Refuse(f'no pending request {argv[0]} in {home}', 3)
+    if rec.get('audience') != 'captain':
+        rec['audience'] = 'captain'
+        rec['escalated'] = iso(now())
+        write_private(path, json.dumps(rec, indent=2, ensure_ascii=False) + '\n')
+        audit(home, 'escalated', rec)
+    print(f'escalated {argv[0]}: the captain sees it in Fleet Town')
+    return 0
 
 
 def call_text(rec):
@@ -595,6 +656,8 @@ def commit_policy(change, by, expect=None):
                  'changed': sorted(i for i in set(new) & set(old) if new[i] != old[i])}
         backup = path.with_name(f'.{path.name}.rollback.{secrets.token_hex(4)}')
         replaced = False
+        committed = False
+        sync_error = None
         rollback_failed = False
         try:
             if before != 'none':
@@ -608,8 +671,16 @@ def commit_policy(change, by, expect=None):
                 replaced = True
                 f.write(canonical(entry) + '\n')
                 f.flush()
-                os.fsync(f.fileno())
+                # The entry is in the log now: from here the policy stays as audited,
+                # and a failed sync is reported, never rolled back behind the entry.
+                committed = True
+                try:
+                    os.fsync(f.fileno())
+                except OSError as e:
+                    sync_error = e
         except (OSError, Refuse) as e:
+            if committed:
+                raise Refuse(f'policy saved and audited, but closing the audit log failed: {e}') from e
             if replaced:
                 try:
                     if before == 'none':
@@ -624,6 +695,9 @@ def commit_policy(change, by, expect=None):
         finally:
             if not rollback_failed:
                 backup.unlink(missing_ok=True)
+        if sync_error is not None:
+            raise Refuse(f'policy saved and audited ({entry["after"]}), but the audit log could not be '
+                         f'synced to disk: {sync_error}')
     return entry
 
 
@@ -877,6 +951,8 @@ def main(argv):
                     print(json.dumps(rec, indent=2, ensure_ascii=False))
                     return 0
             raise Refuse(f'no request {rest[0]}', 3)
+        if cmd == 'escalate':
+            return escalate_main(rest)
         if cmd == 'presets':
             for name, p in PRESETS.items():
                 print(f'{name}\t{p["description"]}')
