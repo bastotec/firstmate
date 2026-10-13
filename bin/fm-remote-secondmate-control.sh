@@ -313,7 +313,7 @@ EOF
       if ! { printf '%s' "$fresh" > "$file.tmp.$$" && mv -f "$file.tmp.$$" "$file"; }; then
         die "relaunch of $id proved its new agent but could not record that agent's identity"
       fi
-      agent_start_learn "$id" "$(( $(date +%s) - started ))"
+      agent_start_learn "$id" "$(( $(date +%s) - ${LAUNCH_STARTED:-$started} ))"
       return 0
     fi
     if [ "$(date +%s)" -ge "$deadline" ]; then
@@ -336,6 +336,7 @@ cmd_route() {
 }
 
 cmd_launch() {
+  LAUNCH_STARTED=$(date +%s)
   local id=$1 harness=$2 model=$3 effort=$4 selected_backend=$5 traceparent=${6:-}
   local current meta out kill_out old old_backend='' old_target='' pid
 
@@ -425,6 +426,7 @@ cmd_launch() {
 # re-resolve it here would silently drift the mate onto another runtime. `default`
 # explicitly clears an absent parent pin; `-` remains its compatibility spelling.
 cmd_relaunch() {
+  LAUNCH_STARTED=$(date +%s)
   local id=$1 harness=$2 model=$3 effort=$4 old old_backend old_target current recorded outside pid token out rc
   local -a control_args
   [ "$#" -eq 4 ] || usage

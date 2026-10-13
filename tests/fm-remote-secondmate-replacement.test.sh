@@ -314,7 +314,7 @@ fi
 assert_contains "$out" "not verified within 4s" "the window after a timed-out proof did not double: $out"
 [ $(( $(date +%s) - began )) -ge 4 ] || fail "the doubled window did not wait its full bound"
 # The real control plane genuinely replaces it.
-real_control
+fake_control "sleep 2; exec '$CODE/bin/fm-control-real.sh' \"\$@\""
 out=$(control relaunch "$SM_ID" deck default default 2>&1) || fail "a proved relaunch failed: $out"
 assert_contains "$out" "relaunched $SM_ID" "a proved relaunch did not report success"
 replacement=$(endpoint_agent)
@@ -324,7 +324,9 @@ alive "$current" && fail "the old agent is still running after a proved relaunch
 grep -q "^$replacement " "$IDENTITY" || fail "the relaunch did not record the replacement's identity"
 learned=$(cat "$START_RECORD" 2>/dev/null)
 case "$learned" in ''|*[!0-9]*) fail "a proved relaunch did not record its start time: $learned" ;; esac
+[ "$learned" -ge 2 ] || fail "a proved relaunch discarded the delegated control-plane time: $learned"
 [ "$learned" -lt 30 ] || fail "a proved relaunch recorded the window instead of its measured start: $learned"
+real_control
 pass "the relaunch verb reports success only after the old agent is gone and a new one is running, and its proof window adapts to the measured start"
 
 # --- 6. A relaunch whose endpoint is gone is not refused as unidentifiable ---
