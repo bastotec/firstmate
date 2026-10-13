@@ -244,7 +244,7 @@ test_steer_contract_without_a_host() {
 }
 
 test_host_lifecycle() {
-  local home other host second rc=0 out first_watch session linked="$LAB/linked-code"
+  local home other host second rc=0 out first_watch session initial_recovery linked="$LAB/linked-code"
   ln -s "$LAB/bundle" "$linked"
   home=$(new_home 'host backup')
   echo 'export FM_CHECK_INTERVAL=30' > "$home/config/x-mode.env"
@@ -253,6 +253,11 @@ test_host_lifecycle() {
   host=$!
   fm_test_track_helper_pid "$host"
   wait_for 10 "the host registers" "$STEER" status --home "$home"
+  initial_recovery=$(cat "$home/state/.watcher-down")
+  case "$initial_recovery" in
+    acked:downtime:*) ;;
+    *) fail "the primary's first launch opened a recovery episode: $initial_recovery" ;;
+  esac
   other=$(new_home host)
   python3 "$BIN/fm_primary_chat.py" prepare --home "$other" --session s1 >/dev/null
   python3 "$BIN/fm_primary_chat.py" record write --home "$other" --session s1 --host-pid "$host"
@@ -321,6 +326,8 @@ test_host_lifecycle() {
   assert_grep 'another live firstmate session holds the lock' "$LAB/host2.out" "the refusal names the lock"
   assert_absent "$LAB/deck2.log" "the refused host never starts deck"
   assert_equals "$host" "$(cat "$home/state/.lock")" "the lock stays with the first host"
+  assert_equals "$initial_recovery" "$(cat "$home/state/.watcher-down")" \
+    "the refused duplicate does not mint a recovery generation"
   "$STEER" status --home "$home" >/dev/null || fail "the first host stays registered"
 
   # A clean stop releases everything and marks the record stopped.
@@ -341,6 +348,13 @@ test_host_lifecycle() {
   host=$!
   fm_test_track_helper_pid "$host"
   wait_for 10 "the restarted digest turn" turns_with "$LAB/deck3.log" 'fixture session digest'
+  out=$(cat "$home/state/.watcher-down")
+  case "$out" in
+    pending:downtime:*) ;;
+    *) fail "the restarted primary did not publish a pending recovery generation: $out" ;;
+  esac
+  assert_not_equals "${initial_recovery##*:}" "${out##*:}" \
+    "the restarted primary reused its first-launch recovery generation"
   assert_contains "$(cat "$LAB/deck3.log")" "\"--session\", \"$session\"" "the restart resumes the session"
   assert_contains "$(turns_with "$LAB/deck3.log" 'fixture session digest')" '"seq": 5' "the sequence continues"
   kill -TERM "$host"

@@ -2490,6 +2490,146 @@ PYTHON
   pass "fm-deck-worker: a secondmate replaces its watcher when the successor refuses its handoff"
 }
 
+test_secondmate_relaunch_publishes_a_fresh_recovery_generation() {
+  local dir="$TMP_ROOT/host-relaunch-generation"
+  make_secondmate_host_fixture "$dir"
+  python3 - "$dir" <<'PYTHON' || fail "a relaunched Deck secondmate reused the previous driver's recovery generation"
+import os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+home = root / 'home'
+marker = home / 'state/.watcher-down'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker', str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'), '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+lib = str(root/'bin/fm-wake-lib.sh')
+
+def marker_token():
+    return marker.read_text().strip() if marker.exists() else ''
+
+def generation():
+    return marker_token().rsplit(':', 1)[-1] if marker.exists() else ''
+
+def preserve_publish():
+    subprocess.run(['bash', '-c', '. "$1"; fm_recovery_marker_publish "$2" downtime', '_', lib, str(marker)],
+                   check=True, env=dict(env, FM_STATE_OVERRIDE=str(home/'state')))
+
+def wait_for(check, label, proc=None):
+    for _ in range(300):
+        if check(): return
+        if proc is not None and proc.poll() is not None:
+            raise AssertionError(label+' - host exited: '+(root/'pane').read_text())
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text() if (root/'pane').exists() else label)
+
+# The previous driver completed startup, then left an open episode: the state a
+# later real crash leaves.
+(home/'state/.session-start-complete').write_text('123\n')
+preserve_publish()
+previous = generation()
+assert previous, 'fixture did not open the previous driver episode'
+
+# The relaunch: the driver mints its own generation before its first turn.
+with (root/'pane').open('w') as output:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, env=env, text=True, start_new_session=True)
+    try:
+        wait_for(lambda: marker.exists() and generation() != previous, 'relaunch never minted a fresh generation', p)
+        fresh = generation()
+        assert marker_token().startswith('pending:'), marker_token()
+        wait_for(lambda: (home/'state/.session-start-complete').exists(), 'session start never completed', p)
+        # A duplicate launch while this live driver holds the home session lock
+        # mints nothing: minting over a live driver's home would turn a refused
+        # duplicate into a false driver-loss signal.
+        duplicate = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, env=env, timeout=60)
+        assert duplicate.returncode != 0, 'a duplicate launch over a live lock holder succeeded'
+        assert generation() == fresh, \
+            'a duplicate launch minted over the live driver episode: '+marker_token()
+        # The startup drain names the relaunched driver's generation, so its
+        # first turn retires the episode without a dedicated recovery turn.
+        drain = subprocess.run([str(root/'bin/fm-wake-drain.sh')], capture_output=True, text=True,
+                               env=dict(env, FM_STATE_OVERRIDE=str(home/'state')), timeout=60)
+        ack_line = [l for l in drain.stderr.splitlines() if l.startswith('WAKE_ACK_REQUIRED:')]
+        assert ack_line and fresh in ack_line[0], \
+            'startup drain did not name the relaunched generation: %r' % (ack_line,)
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        assert p.wait(timeout=20) == 0, 'the relaunched driver did not stop on /quit'
+    finally:
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGTERM)
+            try:
+                p.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                os.killpg(p.pid, signal.SIGKILL); p.wait()
+PYTHON
+  pass "fm-deck-worker: every secondmate relaunch publishes a fresh recovery generation"
+}
+
+test_concurrent_secondmate_duplicate_mints_once() {
+  local dir="$TMP_ROOT/host-concurrent-relaunch-generation" real_mv
+  make_secondmate_host_fixture "$dir"
+  real_mv=$(command -v mv) || fail "could not find mv for the concurrent relaunch fixture"
+  mv "$dir/bin/fm-lock.sh" "$dir/bin/fm-lock.real.sh"
+  cat > "$dir/bin/fm-lock.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$$" >> "$FM_TEST_LOCK_ARRIVALS"
+for _ in $(seq 1 200); do
+  [ "$(wc -l < "$FM_TEST_LOCK_ARRIVALS" | tr -d ' ')" -ge 2 ] && exec "$(dirname "$0")/fm-lock.real.sh" "$@"
+  sleep 0.05
+done
+exit 1
+SH
+  mkdir "$dir/fakebin"
+  cat > "$dir/fakebin/mv" <<'SH'
+#!/usr/bin/env bash
+last=${!#}
+[ "$last" != "$FM_TEST_MARKER" ] || printf '%s\n' "$$" >> "$FM_TEST_MARKER_WRITES"
+exec "$FM_TEST_REAL_MV" "$@"
+SH
+  chmod +x "$dir/bin/fm-lock.sh" "$dir/fakebin/mv"
+  FM_TEST_REAL_MV="$real_mv" python3 - "$dir" <<'PYTHON' \
+    || fail "concurrent Deck secondmate duplicates minted more than one recovery generation"
+import os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+home = root / 'home'
+marker = home / 'state/.watcher-down'
+lib = str(root/'bin/fm-wake-lib.sh')
+# Make this a duplicate relaunch rather than concurrent true-first launches.
+(home/'state/.session-start-complete').write_text('123\n')
+subprocess.run(['bash', '-c', '. "$1"; fm_recovery_marker_publish "$2" downtime', '_', lib, str(marker)],
+               check=True, env=dict(os.environ, FM_STATE_OVERRIDE=str(home/'state')))
+arrivals = root / 'lock-arrivals'
+writes = root / 'marker-writes'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='',
+           FM_TEST_LOCK_ARRIVALS=str(arrivals), FM_TEST_MARKER=str(marker),
+           FM_TEST_MARKER_WRITES=str(writes), PATH=str(root/'fakebin')+os.pathsep+os.environ['PATH'])
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker', str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'), '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+procs = [subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                          env=env, text=True, start_new_session=True) for _ in range(2)]
+try:
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        if sum(p.poll() is None for p in procs) == 1 and (home/'state/.session-start-complete').exists():
+            break
+        time.sleep(.05)
+    else:
+        raise AssertionError('concurrent launches did not settle to one lock owner')
+    rows = writes.read_text().splitlines() if writes.exists() else []
+    assert len(rows) == 1, 'concurrent launches published %d recovery generations' % len(rows)
+    winner = next(p for p in procs if p.poll() is None)
+    winner.stdin.write('/quit\n'); winner.stdin.flush()
+    assert winner.wait(timeout=20) == 0, 'winning driver did not stop on /quit'
+finally:
+    for p in procs:
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGTERM)
+            try:
+                p.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                os.killpg(p.pid, signal.SIGKILL); p.wait()
+PYTHON
+  pass "fm-deck-worker: concurrent duplicate relaunches publish one recovery generation"
+}
+
 test_secondmate_repeats_its_launch_brief_after_a_session_less_failure() {
   local dir="$TMP_ROOT/host-no-session"
   make_secondmate_host_fixture "$dir"
@@ -3042,6 +3182,8 @@ test_secondmate_mcp_config_on_startup_steer_and_wake
 test_secondmate_queued_exit_behind_composer_clears_beats_watcher_turn
 test_secondmate_survives_a_failed_turn
 test_secondmate_survives_a_refused_handling_confirmation
+test_secondmate_relaunch_publishes_a_fresh_recovery_generation
+test_concurrent_secondmate_duplicate_mints_once
 test_secondmate_repeats_its_launch_brief_after_a_session_less_failure
 test_secondmate_stops_when_a_repeated_launch_brief_opens_no_session
 test_secondmate_stops_when_a_failed_turn_cannot_be_recorded

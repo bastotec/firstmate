@@ -701,6 +701,17 @@ INPUT_PID=$!
 if [ "$SECONDMATE" = 1 ]; then
   [ -n "${FM_HOME:-}" ] && [ -d "$FM_HOME" ] || { host_failure 'requires an explicit home'; exit 2; }
   cd "$FM_HOME" || exit 2
+  if ! "$SCRIPT_DIR/fm-lock.sh" >&2; then
+    host_failure 'home session lock is held by another session'; exit 1
+  fi
+  host_lock_owned || exit 1
+  if [ ! -e "$FM_HOME/state/.afk" ] && ! FM_STATE_OVERRIDE="$FM_HOME/state" bash -c '
+      # shellcheck disable=SC1090,SC1091
+      . "$1"
+      fm_recovery_marker_publish_fresh "$STATE/.watcher-down"
+    ' _ "$SCRIPT_DIR/fm-wake-lib.sh"; then
+    host_failure 'could not publish a fresh recovery generation'; exit 1
+  fi
   # Startup is executed exactly once by the stable host, not by a short-lived
   # Deck run. The complete digest is supplied to the first model turn.
   if ! "$SCRIPT_DIR/fm-session-start.sh" > "$WORK/startup" 2>&1; then
