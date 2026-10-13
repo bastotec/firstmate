@@ -78,9 +78,12 @@
 #       `fm-deck-chat.sh`): that terminal is its only screen. `deck chat
 #       --local` skips this launcher.
 #   fm-deck-chat.sh model [ROUTE] [--home H]
-#       Switch the primary to a syntax-checked gateway route. When the live
-#       host's deck takes `deck-control: set_model` (recorded at start), the
-#       route goes to it as a steering control: same process, same session,
+#       Switch the primary to a gateway route after checking syntax and the
+#       home's model policy (FM_CONFIG_OVERRIDE, else <home>/config).
+#       A policy refusal exits 1 before saving or publishing a choice, on either
+#       the in-place or keeper path.
+#       When the live host's deck takes `deck-control: set_model` (recorded at
+#       start), the route goes to it as a steering control: same process, same session,
 #       applied at once while idle or at the turn's next safe point (deck
 #       checks it against the gateway and the model policy and reports
 #       model_switched or model_switch_refused in its events); prints
@@ -139,6 +142,10 @@
 #   FM_LAUNCHCTL, FM_LAUNCH_AGENTS_DIR
 #                          launchctl and LaunchAgents directory (tests); with
 #                          FM_LAUNCHCTL set the service commands run off macOS
+#   DECK_MODEL_POLICY      Deck's policy path; non-empty is passed through,
+#                          else use model-policy.json in FM_CONFIG_OVERRIDE
+#                          or <home>/config when it exists. This does not
+#                          replace the home-policy check by `model ROUTE`.
 #   PROXAI_*               deck's endpoint settings; ~/.config/proxai/client.key
 #                          is used when no key is set, as for deck workers
 #

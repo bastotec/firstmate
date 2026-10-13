@@ -17,8 +17,9 @@ owns the public contract; this file owns the checks and the live publication.
       reserve a handled task-inbox switch record under the receiver locks, save
       state/<id>.model for the next turn, then put the control into every live
       Deck turn of the task whose Deck accepts it, at that sequence. Prints
-      `live` when a running turn will take it at its next safe point, else
-      `next-turn`; reservation failure exits 1.
+      `live` when the control was published into a supporting running turn,
+      else `next-turn`; neither confirms application by Deck.
+      Reservation failure exits 1.
 """
 import contextlib
 import fnmatch

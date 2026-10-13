@@ -62,6 +62,13 @@
 #              respawn does, except that an in-place model choice takes precedence
 #              on an unchanged harness when --model is omitted, while a ship or
 #              scout keeps the exact adapter already recorded for it.
+#              At replacement-record publication on an unchanged harness, an
+#              explicit non-default --model replaces model_choice= with the launch owner's resolved
+#              route (not a fallback chain or the preflight selection);
+#              --model default or a harness change clears it, otherwise it is
+#              preserved. This also applies to the primary's remote task record
+#              when the successful host route is published. recover-missing
+#              retains its recorded-profile semantics described below.
 #              --note is required for a ship or scout, whose replacement
 #              inherits the local copy but none of the conversation; a
 #              secondmate reconciles its own home's records at startup, so its
@@ -122,8 +129,9 @@
 #   model      Switch a running Deck agent to another gateway route in place:
 #              no restart, same driver process, same conversation. The route
 #              must be a plain route the captain's model policy
-#              (config/model-policy.json) permits and the gateway lists. The
-#              choice is saved as the record's model= and model_choice= (a later
+#              ($CONFIG/model-policy.json, using this home's resolved config
+#              directory) permits and the gateway lists.
+#              The choice is saved as the record's model= and model_choice= (a later
 #              relaunch follows the precedence described above)
 #              and in state/<id>.model, which the Deck driver reads before
 #              every turn; a running turn also gets Deck's

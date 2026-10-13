@@ -210,9 +210,8 @@ fi
 # In-place model switches (bin/fm-control.sh `model`): this driver reads
 # state/<id>.model before every turn, and says so with its pid, so the control
 # plane knows a switch needs no relaunch.
-# The launch's --model is authoritative at start (a relaunch reads the
-# record's model=, which every switch also updates), so an older switch file
-# never overrides it.
+# The launch's --model is authoritative at start, so an older switch file
+# never overrides it. bin/fm-control.sh's header owns relaunch profile selection.
 MODEL_FILE="$STATE/$ID.model"
 rm -f "$MODEL_FILE"
 printf 'pid=%s\nmodel_switch=1\n' "$$" > "$STATE/.$ID.deck-caps.$$" \
