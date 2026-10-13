@@ -56,7 +56,7 @@ Those reads, the driver's fallback append, and turn-end publication use Python 3
 The Deck harness proves that Firstmate bookkeeping does not satisfy the worker-evidence gate, a silent failed turn creates no watcher-downtime marker, a later turn in the same driver incarnation binds worker-authored `working:` evidence to that driver's recovery generation through the locked status append, and a fresh driver incarnation cannot bind an older failure.
 The focused supersession suite sends a working-plus-terminal burst through that executable append boundary and proves its single write orders the generated binding before the terminal record.
 It also proves that a stale same-turn working append after a terminal leaves the terminal bytes unchanged, while the next turn's working append is retained without a stale recovery marker.
-`tests/fm-wake-drain-outcome-backstop.test.sh` proves that a captured span containing only a superseded turn failure advances its outcome receipt without captain-facing output.
+`tests/fm-wake-drain-outcome-backstop.test.sh` proves that a captured span whose only captain-relevant event is a superseded turn failure advances its outcome receipt without captain-facing output.
 The terminal regression drives two real `fm-send.sh` steers through the Python stream hub and PTY agent, confirming each submit from the cleared composer after the turn finishes while proving no transient rendered working row remains.
 The finished-turn row renders its UTC completion time from `run_finished.finished_at` and falls back to the timestamp-less wording when the field is absent, while the idle prompt notes the UTC idle instant beside its bare `❯` row.
 
