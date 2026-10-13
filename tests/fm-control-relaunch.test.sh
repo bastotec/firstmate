@@ -956,7 +956,7 @@ SH
     harness=deck route=example/prior expected=example/prior wanted_rc=0
     args=()
     case "$action" in
-      replace) args=(--model example/first,example/second); route=example/second; expected=$route ;;
+      replace) args=(--model 'example/first,example/second'); route=example/second; expected=$route ;;
       reset) args=(--model default); route=default; expected='' ;;
       harness) args=(--harness deck); harness=claude; route=default; expected='' ;;
       failure) args=(--model example/new); wanted_rc=1 ;;
