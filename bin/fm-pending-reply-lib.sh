@@ -29,6 +29,16 @@
 # state/<task_id>.status onto the parent channel is a repair of the
 # FM_HOME-relative mixup, not acknowledgement of an arbitrary mate-home file.
 #
+# Turn-completion evidence: an idle observation cannot complete the original or
+# recovery turn while this parent's state/<task_id>.inbox/*.msg still carries
+# the correlation unhandled for a LOCAL target. That idle may belong to an
+# earlier turn, not the delivered request. Once the record is handled, ordinary
+# busy/idle completion, grace, one-recovery, and escalation rules apply.
+# Remote targets bypass this inbox check even if migration retained local
+# records; their missing-report evidence still requires the mirror watermark
+# owned by the remote reply-channel freshness section below.
+# Regression: tests/fm-pending-reply.test.sh (unread request and migrated target).
+#
 # Record location (parent FM_HOME):
 #   state/pending-replies/<corr_id>
 # One more durable input, owned by bin/fm-procevent-remote-reply.sh and read
@@ -759,9 +769,7 @@ fm_pending_reply_observe_busy() {  # <state-dir> <corr_id> <busy_state>
       fi
       ;;
     idle)
-      # An idle mate that has not yet taken the request out of its inbox only
-      # finished an earlier turn; counting that as the request's turn sent the
-      # repost request before the mate ever read the original.
+      # Apply the header's turn-completion evidence rule before accepting idle.
       if [ -z "$completed" ] && fm_pending_reply_request_unread "$state" "$(fm_pending_reply_get "$rec" task_id)" "$corr"; then
         return 0
       fi
@@ -784,8 +792,8 @@ fm_pending_reply_observe_busy() {  # <state-dir> <corr_id> <busy_state>
   return 0
 }
 
-# 0 when this home's steering inbox for <task_id> still holds an unhandled
-# record carrying <corr_id>.
+# Local unread-record predicate for the header's turn-completion evidence rule;
+# a remote target returns 1 even when a retained local inbox exists.
 fm_pending_reply_request_unread() {  # <state-dir> <task_id> <corr_id>
   local dir=$1/$2.inbox f token
   fm_pending_reply_target_is_remote "$1" "$2" && return 1

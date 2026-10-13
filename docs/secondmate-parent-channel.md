@@ -3,6 +3,8 @@
 This note records why a secondmate home's captain-facing outcomes are delivered by scripts instead of by the mate model, and which script delivers each one.
 `bin/fm-parent-channel-lib.sh` owns the channel contract: where the channel lives, how a line is appended, and the return codes every publisher shares.
 [`remote-secondmates.md`](remote-secondmates.md) owns the transport that carries the remote form of the channel back to the parent.
+[`status_file_is_incoming` in `bin/fm-classify-lib.sh`](../bin/fm-classify-lib.sh) owns the home-scoped outgoing-channel exclusion shared by the watcher's signal and heartbeat scans and the away daemon's catch-all scan.
+[`bin/fm-pending-reply-lib.sh`](../bin/fm-pending-reply-lib.sh) owns marked-request turn-completion evidence, recovery, and escalation.
 
 ## The problem
 
@@ -62,7 +64,8 @@ A missed-reply escalation includes the complete first sighting path and line num
 `tests/fm-brief.test.sh` pins the charter's channel rule.
 `tests/fm-send-secondmate-marker.test.sh` covers the captain-direct tag for secondmate and worker targets, its refusals, and a correlated line resolving a captain message's pending reply.
 `tests/fm-captain-direct-echo.test.sh` covers the parent's one FYI note per captain-direct delivery, the echo guard that holds back a parent steer repeating it (and `--correction`), and a captain-direct pending reply that never reposts or escalates.
-`tests/fm-pending-reply.test.sh` covers helper-selected local routing, remote-channel classification, same-basename restatement before false escalation, readable wrong-home diagnostics, and the rule that arbitrary mate-home sightings never acknowledge a reply.
+`tests/fm-pending-reply.test.sh` covers helper-selected local routing, remote-channel classification, same-basename restatement before false escalation, readable wrong-home diagnostics, the rule that arbitrary mate-home sightings never acknowledge a reply, unread local requests not completing a turn, and migrated remote targets ignoring retained local inbox records while still waiting for the reply mirror.
+`tests/fm-watch-parent-channel-echo.test.sh` covers outgoing-channel exclusion in signal, heartbeat, and daemon catch-all scans without suppressing child reports, the parent's mirror, or an ordinary same-named file in a home with no parent record.
 [`tests/fm-mate-mail.test.sh`](../tests/fm-mate-mail.test.sh) covers peer routing, diversion before document fetch, bridge refusals, and interrupted delivery and terminal bookkeeping.
 
 ## Live verification
