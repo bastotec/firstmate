@@ -613,6 +613,9 @@ trap ':' INT
 trap '[ -z "$DECK_PID" ] || kill -TERM "$DECK_PID" 2>/dev/null' HUP TERM
 # The machine's approval gate (bin/fm-approval.py) files the first mate's blocked calls here.
 export FM_APPROVAL_HOME="$FM_HOME" FM_APPROVAL_AGENT=primary
+# Its fm-send calls return once a steer is durable; the doorbell rings in the
+# background (fm_task_inbox_ring_maybe_async in bin/fm-task-inbox-lib.sh).
+export FM_SEND_RING_ASYNC=1
 "$DECK" "${args[@]}" <&0 &
 DECK_PID=$!
 rc=0

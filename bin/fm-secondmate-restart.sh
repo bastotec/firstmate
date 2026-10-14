@@ -2,7 +2,13 @@
 # Restart second mates onto the current instruction surface and launch-time
 # wiring, persisting their open records first.
 #
-# Usage: fm-secondmate-restart.sh <secondmate-id>... [--help]
+# Usage: fm-secondmate-restart.sh [--background] <secondmate-id>... [--help]
+#
+# --background arms this same pass as a one-shot process-event job
+# (bin/fm-procevent-when.sh, condition /usr/bin/true) and returns at once; its
+# per-mate lines and summary arrive later as that job's notification. A pass
+# waits up to FM_SECONDMATE_PERSIST_WAIT per mate, far past an interactive
+# command limit, so a mate's own turn always uses --background.
 #
 # This is the executable half of /updatefirstmate's reload step. A running agent
 # holds AGENTS.md and every skill it has loaded frozen from launch, and no
@@ -97,6 +103,12 @@ PERSIST_POLL=${FM_SECONDMATE_PERSIST_POLL:-5}
 case "$PERSIST_WAIT" in ''|*[!0-9]*) echo "error: FM_SECONDMATE_PERSIST_WAIT must be a non-negative integer: $PERSIST_WAIT" >&2; exit 2 ;; esac
 case "$PERSIST_POLL" in ''|*[!0-9]*|0) echo "error: FM_SECONDMATE_PERSIST_POLL must be a positive integer: $PERSIST_POLL" >&2; exit 2 ;; esac
 
+BACKGROUND=0
+if [ "${1:-}" = --background ]; then
+  BACKGROUND=1
+  shift
+fi
+
 IDS=()
 for arg in "$@"; do
   case "$arg" in
@@ -112,6 +124,18 @@ for arg in "$@"; do
   IDS+=("$id")
 done
 [ "${#IDS[@]}" -gt 0 ] || { usage >&2; exit 2; }
+
+if [ "$BACKGROUND" = 1 ]; then
+  name="secondmate-restart-$(date -u +%Y%m%dT%H%M%S)-$$"
+  if ! FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-procevent-when.sh" arm "$name" --stable 1 --interval 1 \
+    --action-timeout $(( (PERSIST_WAIT + 600) * ${#IDS[@]} )) \
+    --condition /usr/bin/true --action "$SCRIPT_DIR/fm-secondmate-restart.sh" "${IDS[@]}"; then
+    echo "error: could not schedule the background restart pass; nothing was restarted" >&2
+    exit 1
+  fi
+  echo "scheduled: restart of ${IDS[*]} runs in the background as when-$name; its outcome arrives as a notification"
+  exit 0
+fi
 
 # Per-mate pass state, kept as parallel indexed arrays so this stays bash-3.2
 # safe. PLAN is the phase the mate reached: persist-sent, or fallback with the

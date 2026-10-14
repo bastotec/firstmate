@@ -66,8 +66,9 @@ Do not infer those lists from a capped notification summary, assume skipped home
 3. **Restart every second mate the updater named.**
    Pass the whole `restart-secondmates:` list to one command (skip this step entirely when it says `none`):
    ```sh
-   FM_HOME=<this-firstmate-home> bin/fm-secondmate-restart.sh <fm-id>...
+   FM_HOME=<this-firstmate-home> bin/fm-secondmate-restart.sh --background <fm-id>...
    ```
+   The pass waits on each mate and outlasts any command limit, so it always runs in the background; its per-mate lines arrive later as a process-event notification.
    Include `FM_HOME=<this-firstmate-home>` unless `FM_HOME` is already set to the active firstmate home.
    This is automatic and needs no per-mate confirmation from the captain.
    Local and remote mates go in the same list; the command owns the transport, the profile each replacement runs on, and the wait.

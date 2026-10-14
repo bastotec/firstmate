@@ -340,7 +340,27 @@ test_unwritable_inbox_fails_loudly() {
   pass "fm-send inbox: an unwritable record is a loud local failure that leaves no false expectation"
 }
 
+test_async_ring_returns_before_the_doorbell() {
+  local dir err rc rec i typed
+  dir=$(setup_case async-ring); err="$dir/send.err"
+  # A slow fake sleep keeps the background ring busy, so a synchronous ring
+  # would still be running when fm-send returns.
+  printf '#!/usr/bin/env bash\n/bin/sleep 1\n' > "$dir/fakebin/sleep"; chmod +x "$dir/fakebin/sleep"
+  run_send "$dir" "$err" FM_SEND_RING_ASYNC=1 -- t1 "async please"; rc=$?
+  expect_code 0 "$rc" "an async-ring steer should exit 0 once the record is durable"
+  rec="$dir/home/state/t1.inbox/001.msg"
+  [ -f "$rec" ] || fail "the steer must be durable before fm-send returns"
+  [ ! -s "$dir/home/state/t1.inbox/.ring.log" ] || fail "the ring must still be running in the background"
+  for i in $(seq 1 100); do [ -s "$dir/home/state/t1.inbox/.ring.log" ] && break; /bin/sleep 0.1; done
+  assert_contains "$(cat "$dir/home/state/t1.inbox/.ring.log")" "ring=0 record=001.msg" "the background ring must log its outcome"
+  typed=$(cat "$dir/send.log")
+  assert_contains "$typed" "Firstmate instruction waiting" "the background ring must still type the doorbell"
+  case "$(cat "$err")" in *doorbell*) fail "an async ring must not print ring outcomes: $(cat "$err")" ;; esac
+  pass "fm-send inbox: FM_SEND_RING_ASYNC returns once durable and rings in the background"
+}
+
 test_text_steer_rides_inbox
+test_async_ring_returns_before_the_doorbell
 test_multiline_steer_is_legal
 test_resend_enqueues_new_sequence
 test_pending_composer_skips_ring_advisorily

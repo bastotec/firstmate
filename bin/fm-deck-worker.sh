@@ -636,6 +636,9 @@ CREW_STATE_FOLLOW="FM_STATE_OVERRIDE=$(q "$STATE") $(q "$SCRIPT_DIR/fm-crew-stat
 # own home for a secondmate host, else the home whose state holds this task.
 if [ "$SECONDMATE" = 1 ]; then
   export FM_APPROVAL_HOME="$FM_HOME"
+  # A second mate's fm-send returns once a steer is durable; the doorbell rings
+  # in the background (fm_task_inbox_ring_maybe_async).
+  export FM_SEND_RING_ASYNC=1
 else
   FM_APPROVAL_HOME=$(cd "$STATE/.." && pwd) && export FM_APPROVAL_HOME
 fi

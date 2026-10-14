@@ -874,4 +874,20 @@ test_result_published_while_reaping_is_honored
 test_already_current_mate_restarts_end_to_end
 test_already_current_removed_backend_is_unreached
 
+test_background_pass_is_scheduled_and_returns_at_once() {
+  local home out spec
+  home=$(mktemp -d "$TMP_ROOT/background.XXXXXX")
+  mkdir -p "$home/state"
+  out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$home" "$RESTART" --background fm-alpha beta 2>&1) \
+    || fail "a background restart pass must schedule and exit 0: $out"
+  assert_contains "$out" "scheduled: restart of alpha beta runs in the background" "it must say the pass was scheduled"
+  spec=$(ls "$home/state/when/"when-secondmate-restart-*.spec 2>/dev/null | head -1)
+  [ -n "$spec" ] || fail "the pass must be armed as a one-shot process-event job"
+  assert_contains "$(cat "$spec")" "$RESTART" "the job must run this restart command"
+  assert_contains "$(sed -n '/^argv:/,$p' "$spec")" $'alpha\nbeta' "the job must carry the named mates"
+  pass "a background restart pass is scheduled as a process-event job and returns at once"
+}
+
+test_background_pass_is_scheduled_and_returns_at_once
+
 echo "# all fm-secondmate-restart tests passed"
