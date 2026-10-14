@@ -881,7 +881,7 @@ test_background_pass_is_scheduled_and_returns_at_once() {
   out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$home" "$RESTART" --background fm-alpha beta 2>&1) \
     || fail "a background restart pass must schedule and exit 0: $out"
   assert_contains "$out" "scheduled: restart of alpha beta runs in the background" "it must say the pass was scheduled"
-  spec=$(ls "$home/state/when/"when-secondmate-restart-*.spec 2>/dev/null | head -1)
+  spec=$(find "$home/state/when" -name 'when-secondmate-restart-*.spec' -print -quit 2>/dev/null)
   [ -n "$spec" ] || fail "the pass must be armed as a one-shot process-event job"
   assert_contains "$(cat "$spec")" "$RESTART" "the job must run this restart command"
   assert_contains "$(sed -n '/^argv:/,$p' "$spec")" $'alpha\nbeta' "the job must carry the named mates"
@@ -897,7 +897,7 @@ test_background_pass_preserves_persistence_settings() {
   out=$(FM_TEST_PERSIST_WAIT=0 run_restart "$dir" --background sm1) \
     || fail "the background pass must arm: $out"
   assert_absent "$dir/home/state/sm1.inbox" "arming must not start the persist request inline"
-  spec=$(ls "$dir/home/state/when/"when-secondmate-restart-*.spec | head -1)
+  spec=$(find "$dir/home/state/when" -name 'when-secondmate-restart-*.spec' -print -quit)
   sid=${spec##*/}
   sid=${sid%.spec}
   out=$(env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \

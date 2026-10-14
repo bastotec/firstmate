@@ -151,6 +151,7 @@ test_worker_does_not_inherit_async_ring() {
   local dir="$TMP_ROOT/ring-env"
   [ "${FM_SEND_RING_ASYNC+x}" != x ] || fail "the test library retained the supervisor's async ring setting"
   make_fake_deck "$dir"
+  # shellcheck disable=SC2016 # The worker tool expands these variables, not this test shell.
   FM_SEND_RING_ASYNC=1 \
     FM_TEST_TOOL_COMMAND='printf "%s\n" "${FM_SEND_RING_ASYNC-unset}" >> "$FM_TEST_STATUS.ring-env"' \
     run_worker "$dir" $'write-status again\n/quit\n' write-status \
