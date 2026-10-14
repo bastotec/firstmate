@@ -339,7 +339,7 @@ family_for_basename() {
     fm-secondmate-safety.test.sh|fm-secondmate-sync.test.sh|\
     fm-startup-memory-budget.test.sh|fm-stow-cascade.test.sh|\
     fm-send-secondmate-marker.test.sh|fm-shared-captain-inheritance.test.sh|\
-    fm-captain-direct-echo.test.sh)
+    fm-captain-direct-echo.test.sh|fm-captain-lane.test.sh)
       printf '%s\n' secondmate
       ;;
     fm-backlog-atomicity.test.sh|\

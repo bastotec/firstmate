@@ -1316,8 +1316,9 @@ EOF
 # parent status unwritable so the driver cannot record that failure.
 make_secondmate_host_fixture() {  # <dir>
   local dir=$1
-  mkdir -p "$dir/home/state" "$dir/home/config" "$dir/parent" "$dir/bin"
+  mkdir -p "$dir/home/state" "$dir/home/config" "$dir/parent" "$dir/bin" "$dir/.agents/skills"
   cp -R "$ROOT/bin/." "$dir/bin/"
+  cp -R "$ROOT/.agents/skills/captain-thread" "$dir/.agents/skills/"
   cat > "$dir/bin/fm-session-start.sh" <<'SH'
 #!/usr/bin/env bash
 printf 'startup\n' >> "$FM_HOME/startups"
@@ -1420,6 +1421,7 @@ with (home / 'turns').open('a') as f:
     f.write(json.dumps({'prompt': prompt, 'session': session,
                         'resumed': '--session' in args, 'inbox': body,
                         'model': args[args.index('--model') + 1] if '--model' in args else None,
+                        'no_project_context': '--no-project-context' in args,
                         'mcp_config_arguments': [args[i + 1] for i, arg in enumerate(args)
                                                  if arg == '--mcp-config']}) + '\n')
 for record in records:
@@ -1439,7 +1441,8 @@ if (home / 'fail-turn').exists():
         status.symlink_to(home / 'external-status')
     print(json.dumps({'type': 'run_failed', 'error': 'injected'}), flush=True)
     sys.exit(9)
-if prompt == 'slow-steer' or (home / 'hold-turn').exists():
+captain_lane_turn = prompt.startswith('The captain wrote') or 'captain thread of this second mate' in prompt
+if prompt == 'slow-steer' or ((home / 'hold-turn').exists() and not captain_lane_turn):
     (home / 'in-turn').touch()
     while not (home / 'release').exists():
         time.sleep(.1)
@@ -1660,6 +1663,88 @@ with (root/'pane').open('w') as output:
             os.killpg(p.pid, 9); p.wait()
 PYTHON
   pass "Deck secondmate retries a captain wake whose turn failed before the model ran"
+}
+
+test_split_secondmate_answers_the_captain_beside_a_busy_supervisor() {
+  local dir="$TMP_ROOT/host-split"
+  make_secondmate_host_fixture "$dir"
+  : > "$dir/home/config/primary-split"
+  python3 - "$dir" <<'PYTHON' || fail "a split second mate did not answer the captain beside its busy supervisor"
+import json, os, pathlib, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+home = root / 'home'
+xdg = root / 'xdg'
+(xdg / 'deck/sessions').mkdir(parents=True)
+(xdg / 'deck/sessions/captain-session.json').write_text('{}')
+(xdg / 'deck/sessions/supervisor-session.json').write_text('{}')
+(root / 'parent/host.deck-session').write_text('captain-session\n%s\n' % home)
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='',
+           XDG_STATE_HOME=str(xdg), FAKE_NEW_SESSION='supervisor-session')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+       str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'),
+       '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+inbox = root / 'parent/host.inbox'
+def rows():
+    path = home/'turns'
+    return [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+def wait_for(check, label, bound=40):
+    deadline = time.monotonic() + bound
+    while time.monotonic() < deadline:
+        if check(): return
+        if p.poll() is not None: raise AssertionError(label+': '+(root/'pane').read_text())
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text())
+def write(text):
+    subprocess.check_call(['bash', '-c', '. "$1"; fm_task_inbox_write "$2" host "$3" >/dev/null', 'w',
+                           str(root/'bin/fm-task-inbox-lib.sh'), str(root/'parent'), text])
+with (root/'pane').open('w') as output:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+                         env=env, text=True, start_new_session=True)
+    try:
+        wait_for(lambda: len(rows()) == 1, 'startup turn')
+        first = rows()[0]
+        assert first['session'] == 'supervisor-session' and not first['resumed'], first
+        assert 'Records tagged [fm-captain-direct] in the inbox belong to the captain thread' in first['prompt']
+        wait_for(lambda: (root/'parent/host.supervisor-session').exists(), 'the supervisor session is recorded')
+        assert (root/'parent/host.deck-session').read_text().startswith('captain-session'), 'the captain session record moved'
+        assert (root/'parent/host.captain-lane').exists(), 'the captain lane marker is missing'
+        # The supervisor is held mid-turn while the captain writes.
+        (home/'hold-turn').touch()
+        p.stdin.write('slow-steer\n'); p.stdin.flush()
+        wait_for(lambda: (home/'in-turn').exists(), 'the supervisor turn is running')
+        write('[fm-from-firstmate]\u2063corr=0123456789abcdef [fm-captain-direct]\u2063note\n\ncheck the build')
+        try:
+            wait_for(lambda: any('check the build' in r['prompt'] for r in rows()), 'the captain lane answered')
+        except AssertionError:
+            log = root / 'parent/host.captain-lane.log'
+            raise AssertionError('lane log: ' + (log.read_text() if log.exists() else 'none'))
+        lane = next(r for r in rows() if 'check the build' in r['prompt'])
+        assert lane['session'] == 'captain-session' and lane['resumed'], lane
+        assert lane['no_project_context'], lane
+        assert 'Hand every order to the supervisor' in lane['prompt'], 'the contract did not lead the first captain turn'
+        wait_for(lambda: not list(inbox.glob('*.msg')), 'the captain record is acknowledged')
+        assert not (home/'release').exists(), 'the captain waited for the supervisor'
+        # His order reaches the supervisor through the hand-off.
+        (home/'captain-wakes').touch()
+        subprocess.check_call([str(root/'bin/fm-captain-handoff.sh'), 'merge the PR'],
+                              env=dict(env, FM_CAPTAIN_LANE_STATE=str(root/'parent'), FM_CAPTAIN_LANE_ID='host'),
+                              stdout=subprocess.DEVNULL)
+        (home/'hold-turn').unlink()
+        (home/'release').touch()
+        wait_for(lambda: any('[fm-captain-thread]' in r['inbox'] and 'merge the PR' in r['inbox'] for r in rows()),
+                 'the hand-off woke the supervisor')
+        hand = next(r for r in rows() if '[fm-captain-thread]' in r['inbox'])
+        assert hand['session'] == 'supervisor-session', hand
+        assert not any('check the build' in r['inbox'] for r in rows()), 'a supervisor turn took the captain record'
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        assert p.wait(timeout=20) == 0, (root/'pane').read_text()
+        assert not (root/'parent/host.captain-lane').exists(), 'the lane marker outlived the host'
+    finally:
+        if p.poll() is None:
+            os.killpg(p.pid, 9); p.wait()
+PYTHON
+  pass "Deck secondmate in a split home answers the captain beside a busy supervisor and hands his order over"
 }
 
 # state/<id>.model (bin/fm-control.sh `model`) sets each turn's route while it
@@ -3207,6 +3292,7 @@ test_secondmate_host_serializes_wakes_and_steering
 test_secondmate_routine_wakes_think_less
 test_secondmate_stops_a_turn_inside_a_long_tool
 test_secondmate_retries_a_captain_wake_whose_turn_failed
+test_split_secondmate_answers_the_captain_beside_a_busy_supervisor
 test_secondmate_turn_model_follows_the_switch_file
 test_secondmate_host_survives_an_unconfirmed_successor_watcher
 test_secondmate_host_retains_failed_successor_start_evidence

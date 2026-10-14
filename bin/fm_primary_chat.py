@@ -48,7 +48,7 @@ CLI. Both call this file, which owns the on-disk layout:
                                           in-place entries are not application receipts
 
 Split mode is enabled by the presence of primary-split in FM_CONFIG_OVERRIDE,
-else <home>/config; it is intended for primary homes, not secondmates.
+else <home>/config; it is intended for primary homes; a second mate's split is bin/fm-captain-lane.sh.
 Two hosts serve one home:
   - captain (default): keeps all primary names above, the persisted conversation
     and chosen model, the primary busy id, stream label primary-chat and keeper

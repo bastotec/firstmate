@@ -27,7 +27,7 @@ A new generation with any other origin - `downtime`, `watcher-reopen`, `arm-chec
 A healthy acknowledge-then-append cycle also mints a fresh `downtime` generation, so generation change alone must never be read as breakage.
 Generation sameness remains reliable evidence of a healthy beat because every brief-bearing driver relaunch after the true first launch mints fresh.
 Every supervising Deck home driver claims and verifies the home session lock, then invokes `fm_recovery_marker_publish_fresh` before session start (`bin/fm-deck-chat.sh` and `bin/fm-deck-worker.sh`, owned by `_fm_recovery_marker_publish` in `bin/fm-wake-lib.sh`).
-The [split captain thread](../bin/fm_primary_chat.py) is outside this recovery-generation lifecycle.
+Captain-thread lifecycle is owned separately by [`fm_primary_chat.py`](../bin/fm_primary_chat.py) for split primaries and the [`fm-captain-lane.sh` header](../bin/fm-captain-lane.sh) for split secondmates.
 A secondmate launch during daemon-owned away or quiet mode is refused before presenting its brief and skips relaunch publication so it does not replace the daemon's generation.
 A true first launch records an acknowledged baseline without opening a recovery episode, even when an ordinary prelaunch wake already created a non-driver generation; its startup drain then reopens queued work under the normal `downtime` origin.
 Every later brief-bearing launch replaces that baseline or existing episode with a pending fresh generation, and an established home with no marker is recognized by its durable completed-startup record.

@@ -615,4 +615,24 @@ for publisher in ('captain', 'bridge'):
         assert receiver.find('too-large') is None
         assert oversized.read_bytes() == before
 print('PASS oversized captain fallback preserves eligible native ordering and Bridge confirmation through both publishers')
+
+# A split second mate's captain lane keeps the captain's words from its supervisor.
+state = lab / 'captain-lane'
+receiver = Receiver(str(state), 'task', 'd'*32)
+projection = pathlib.Path(receiver.start('lane', True))
+def lane_source(body):
+    return pathlib.Path(subprocess.check_output(['bash', '-c', '. "$1"; fm_task_inbox_write "$2" "$3" "$4"',
+        'lane-test', str(root/'bin/fm-task-inbox-lib.sh'), str(state), 'task', body]).decode().strip())
+captain_words = lane_source('[fm-from-firstmate]' + mark + 'corr=0123456789abcdef [fm-captain-direct]' + mark + 'note\n\nhis words')
+peer = lane_source('[fm-from-mate:dave]' + mark + 'corr=0123456789abcdef note\n\npeer words')
+assert idle_captain_sequence(state, 'task', 0) == int(peer.stem), 'without a lane every direct source wakes'
+(state / 'task.captain-lane').write_text('')
+handoff = lane_source('[fm-captain-thread]' + mark + 'merge it')
+assert idle_captain_sequence(state, 'task', 0) == int(handoff.stem)
+(state / 'task.inbox' / handoff.name).rename(state / 'task.inbox' / 'handled' / handoff.name)
+assert idle_captain_sequence(state, 'task', 0) == int(peer.stem), 'the captain words must not wake the supervisor'
+assert int(subprocess.check_output(cli + ['captain', str(state), 'task'])) == 1
+assert sorted(int(p.stem) for p in projection.glob('*.msg')) == [int(peer.stem)], 'only the peer message is projected'
+assert captain_words.exists(), 'the captain words stay for the lane'
+print('PASS a captain lane keeps the captain words from the supervisor and passes hand-offs and peer messages')
 PY

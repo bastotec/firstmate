@@ -175,7 +175,7 @@ class Receiver:
                         body = body.split('\n', 2)[2]
                     except (ValueError, KeyError, IndexError):
                         continue
-                elif directory != self.inbox or not CAPTAIN_DIRECT.match(body):
+                elif directory != self.inbox or not supervisor_direct(body, captain_lane(self.state, self.task)):
                     continue
                 if not bridge:
                     body = with_deck_images(body)
@@ -352,6 +352,28 @@ CAPTAIN_DIRECT = re.compile(
     '|\\[fm-from-mate:[A-Za-z0-9._-]+\\])⁣')
 
 
+# A second mate split into a captain thread and a supervisor (its home's
+# config/primary-split; bin/fm-deck-worker.sh writes <state>/<task>.captain-lane
+# while its captain lane runs) keeps the captain's own words for that lane: the
+# supervisor's native and idle direct sources are then peer messages and the
+# captain thread's hand-offs, never captain-direct records.
+CAPTAIN_ONLY = re.compile(
+    '\\A(?:\\[fm-from-firstmate\\]⁣(?:corr=\\S+ )?)?\\[fm-captain-direct\\]⁣')
+HANDOFF = re.compile('\\A\\[fm-captain-thread\\]⁣')
+
+
+def captain_lane(state, task):
+    return (Path(state) / (task + '.captain-lane')).is_file()
+
+
+def supervisor_direct(body, lane):
+    """A direct source the supervisor's turn takes: every one without a captain
+    lane; with one, peer messages and captain-thread hand-offs only."""
+    if not lane:
+        return bool(CAPTAIN_DIRECT.match(body))
+    return bool(HANDOFF.match(body)) or (bool(CAPTAIN_DIRECT.match(body)) and not CAPTAIN_ONLY.match(body))
+
+
 def project_captain(state, task):
     """Best-effort ordered publication of native sources into live Deck turns.
 
@@ -401,7 +423,7 @@ def idle_captain_sequence(state, task, floor):
             body = source.read_bytes().decode('utf-8').split('\n--\n', 1)[1]
         except (FileNotFoundError, IndexError, UnicodeDecodeError):
             continue
-        if CAPTAIN_DIRECT.match(body):
+        if supervisor_direct(body, captain_lane(state, task)):
             newest = max(newest, int(source.stem))
     return newest
 

@@ -51,6 +51,13 @@ fn captain_source(bytes: &[u8]) -> Option<&str> {
     header.strip_prefix("[fm-captain-direct]\u{2063}")?;
     Some(body)
 }
+/// A split second mate's captain-thread hand-off ([fm-captain-thread]), which
+/// reaches the supervisor's turn like a captain source while its lane runs.
+fn handoff_source(bytes: &[u8]) -> Option<&str> {
+    let body = std::str::from_utf8(bytes).ok()?.split_once("\n--\n")?.1;
+    body.strip_prefix("[fm-captain-thread]\u{2063}")?;
+    Some(body)
+}
 /// Mirrors the attachment mapping owned by bin/fm_stream_deck.py::with_deck_images.
 fn with_deck_images(text: &str) -> String {
     let lines: Vec<_> = text.split('\n').collect();
@@ -531,7 +538,13 @@ impl Receiver {
                 })
                 .collect::<io::Result<Vec<_>>>()?;
             // Like the driver's publisher, flush pending captain sources before
-            // exposing a newer Bridge sequence to Deck's next safe point.
+            // exposing a newer Bridge sequence to Deck's next safe point. A
+            // split second mate's captain lane owns them while
+            // <state>/<task>.captain-lane exists (bin/fm_stream_deck.py).
+            let lane = self
+                .state
+                .join(format!("{}.captain-lane", self.task))
+                .is_file();
             for entry in fs::read_dir(&self.inbox)? {
                 let source = entry?.path();
                 if source.extension().is_none_or(|s| s != "msg") {
@@ -549,7 +562,12 @@ impl Receiver {
                     Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
                     Err(e) => return Err(e),
                 };
-                if let Some(body) = captain_source(&bytes) {
+                let source_body = if lane {
+                    handoff_source(&bytes)
+                } else {
+                    captain_source(&bytes)
+                };
+                if let Some(body) = source_body {
                     let body = with_deck_images(body);
                     if body.trim().is_empty() || self.guidance(&source, &body).len() > 65536 {
                         continue;
@@ -780,6 +798,95 @@ mod tests {
             receiver.inbox.join("001.msg").is_file(),
             "publication acknowledged the ordinary source"
         );
+    }
+    #[test]
+    fn captain_lane_keeps_captain_sources_out_of_the_supervisor_turn() {
+        let lab = Lab::new();
+        let receiver = lab.receiver();
+        start(&receiver, "original");
+        fs::write(
+            receiver
+                .state
+                .join(format!("{}.captain-lane", receiver.task)),
+            "",
+        )
+        .unwrap();
+        let body =
+            "[fm-from-firstmate]\u{2063}corr=test [fm-captain-direct]\u{2063}note\n\nHis words.\n";
+        fs::write(
+            receiver.inbox.join("001.msg"),
+            format!("schema=fm-task-inbox.v1\nat=x\n--\n{body}"),
+        )
+        .unwrap();
+        let mut reservation = json!({});
+        assert!(matches!(
+            receiver
+                .apply(
+                    "later",
+                    &receiver.endpoint,
+                    "Apply the later correction.",
+                    || true,
+                    false,
+                    &mut reservation,
+                    "later-command",
+                    false
+                )
+                .unwrap(),
+            Decision::Pending(_)
+        ));
+        let published: Vec<_> = fs::read_dir(receiver.root.join("original"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|s| s == "msg"))
+            .map(|e| fs::read_to_string(e.path()).unwrap())
+            .collect();
+        assert!(
+            published.iter().all(|text| !text.contains("His words.")),
+            "the captain's words reached the supervisor: {published:?}"
+        );
+        assert!(receiver.inbox.join("001.msg").is_file());
+        let next = ["", "handled"]
+            .iter()
+            .flat_map(|sub| fs::read_dir(receiver.inbox.join(sub)).into_iter().flatten())
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                e.path()
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .and_then(|s| s.parse::<u64>().ok())
+            })
+            .max()
+            .unwrap_or(0)
+            + 1;
+        fs::write(
+            receiver.inbox.join(format!("{next:03}.msg")),
+            "schema=fm-task-inbox.v1\nat=x\n--\n[fm-captain-thread]\u{2063}merge it\n",
+        )
+        .unwrap();
+        let mut reservation = json!({});
+        let _ = receiver
+            .apply(
+                "newest",
+                &receiver.endpoint,
+                "Apply the newest correction.",
+                || true,
+                false,
+                &mut reservation,
+                "newest-command",
+                false,
+            )
+            .unwrap();
+        let published: Vec<_> = fs::read_dir(receiver.root.join("original"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|s| s == "msg"))
+            .map(|e| fs::read_to_string(e.path()).unwrap())
+            .collect();
+        assert!(
+            published.iter().any(|text| text.contains("merge it")),
+            "the hand-off did not reach the supervisor: {published:?}"
+        );
+        assert!(published.iter().all(|text| !text.contains("His words.")));
     }
     #[test]
     fn newer_bridge_order_flushes_captain_images_only() {

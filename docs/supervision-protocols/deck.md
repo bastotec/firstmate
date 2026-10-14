@@ -1,7 +1,7 @@
 Mode: Deck home-host-owned wake input.
 
 `bin/fm-deck-worker.sh --secondmate` and the supervising `deck chat` host `bin/fm-deck-chat.sh` own startup, the session lock lifetime, and watcher continuity; each script's header owns the mechanism and invariants.
-[`bin/fm_primary_chat.py`](../../bin/fm_primary_chat.py) owns split-mode role responsibilities; this protocol does not apply to the captain thread.
+Split-mode responsibilities are owned by [`bin/fm_primary_chat.py`](../../bin/fm_primary_chat.py) for primaries and the [`fm-captain-lane.sh` header](../../bin/fm-captain-lane.sh) for secondmates; this protocol does not apply to either captain thread.
 Startup input is already in the first turn: read the complete session-start digest once, following any supplied file pointer before acting, and do not run session start again.
 Under `bin/fm-deck-worker.sh`, when a turn dies before Deck opens a session, that digest reaches no conversation, so the driver repeats the same launch brief once underneath the next wake; it is still the one digest, and running session start yourself is still wrong.
 On every watcher turn, drain `bin/fm-wake-drain.sh` before investigating or steering.

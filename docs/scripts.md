@@ -70,12 +70,14 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-stream-bridge.py`    | Adapt stream hub listings and composer orders to the Bridge UI's live wire format   |
 | [`fm-ui-host-control.py`](../bin/fm-ui-host-control.py) | Route private UI actions and expose browser-safe `targets` discovery ([stream-backend.md](stream-backend.md#private-host-control-routing)) |
 | [`fm-deck-chat.sh`](../bin/fm-deck-chat.sh) | Host primary-home Deck chats and their keepers ([role responsibilities](../bin/fm_primary_chat.py)) |
-| [`fm-deck-worker.sh`](../bin/fm-deck-worker.sh) | Endpoint-resident driver that runs one Deck conversation as a crewmate or secondmate (`--secondmate`), turning steers into turns |
+| [`fm-deck-worker.sh`](../bin/fm-deck-worker.sh) | Endpoint-resident crewmate or secondmate driver (`--secondmate`); its header owns split captain-lane hosting |
 | `fm-deck-stop.py`        | Stop the local Deck drivers of one exact task at a lifecycle boundary |
 | `fm_stream_deck.py`      | Apply stream hub orders to a Deck worker's durable task inbox |
 | `fm_model_switch.py`     | Checks and live publication for `fm-control.sh <task> model`, the in-place Deck model switch |
 | [`fm-primary-steer.sh`](../bin/fm-primary-steer.sh) | Publish to and read the steering inbox of a `deck chat` primary (`fm_primary_chat.py` owns the layout) |
-| [`fm-captain-note.sh`](../bin/fm-captain-note.sh) | A split home's supervisor reaches the captain through the captain thread |
+| [`fm-captain-note.sh`](../bin/fm-captain-note.sh) | A split primary home's supervisor reaches the captain through the captain thread |
+| [`fm-captain-handoff.sh`](../bin/fm-captain-handoff.sh) | A captain thread hands the captain's order or question to its own supervisor |
+| [`fm-captain-lane.sh`](../bin/fm-captain-lane.sh) | A split second mate's captain thread, run beside its supervisor by the home host |
 | [`fm-effort-policy.sh`](../bin/fm-effort-policy.sh) | Decide from a turn's source whether a Deck supervisor turn may run at a lower reasoning effort ([configuration](configuration.md#turn-effort-configeffort-policyjson)) |
 | `fm-config-push.sh`      | Push declared inherited local material to live local or remote secondmates and send the placement-specific config reread when changed |
 | `fm-project-mode.sh`     | Resolve a project's registered delivery posture from `data/projects.md` for fleet sync and home seeding |
@@ -83,6 +85,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-review-diff.sh`      | Review a crewmate branch or resolved PR head against the authoritative base          |
 | `fm-marker-lib.sh`       | Compatibility entry point for the from-firstmate carrier owned by `fm-operational-input.sh` |
 | `fm-task-inbox-lib.sh`   | Single owner of durable steering-inbox records, acknowledgement, doorbells, and the delivery-attempt ladder |
+| `fm-process-tree-lib.sh` | Cancels a Deck turn's tool trees the way the second-mate host stops a turn, shared with the captain lane |
 | `fm-captain-direct-lib.sh` | Parent-side captain-direct delivery ledger, FYI wording, and echo matching |
 | `fm-pending-reply-lib.sh` | Parent-owned secondmate pending-reply expectations, recovery, and keyed escalation lifecycle |
 | `fm-secondmate-report.sh` | Optional helper that resolves the parent channel itself and appends a correlated status or document-pointer report |

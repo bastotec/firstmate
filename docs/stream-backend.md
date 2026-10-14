@@ -280,6 +280,7 @@ In `command` mode, the owning agent's report that its worker ended produces an a
 Captain-direct messages (`fm-send --from-captain`) and peer mate messages ([`fm-mate-send.sh`](../bin/fm-mate-send.sh)) are direct sources in the durable task inbox rather than the Bridge order journal.
 With a stream-hosted driver and a Deck build supporting `--steer-dir`, ringing attempts native publication into a live turn, and each new turn also attempts publication of pending direct sources before its first model call.
 Published messages reach the model at its next safe point without interrupting or restarting the turn; [`project_captain`](../bin/fm_stream_deck.py) owns publication eligibility, sequencing limits, and acknowledgement rules.
+For split secondmates (`config/primary-split`), the [`fm-captain-lane.sh` header](../bin/fm-captain-lane.sh) owns the captain-direct exception to supervisor delivery.
 Native publication is best-effort: unsupported builds, skipped records, and publication failures retain the ordinary inbox path rather than refusing the durable send.
 Captain images in native steering follow [`with_deck_images`](../bin/fm_stream_deck.py), also used by [primary steering](../bin/fm-primary-steer.sh); Bridge-order bodies are not transformed.
 Remote attachments must already be staged on the receiving host before sending; native publication does not copy attachment bytes.

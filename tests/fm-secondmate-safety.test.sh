@@ -1928,6 +1928,8 @@ EOF
   lease="$TMP_ROOT/teardown-fake/lease"
   printf 'domain\n' > "$lease"
   printf 'retired-session\n%s\n' "$subhome" > "$home/state/domain.deck-session"
+  printf 'retired-supervisor\n%s\n' "$subhome" > "$home/state/domain.supervisor-session"
+  : > "$home/state/domain.captain-lane"
   PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
     FM_FAKE_TREEHOUSE_LEASE_FILE="$lease" \
     "$ROOT/bin/fm-teardown.sh" domain >/dev/null 2>/dev/null \
@@ -1937,6 +1939,8 @@ EOF
   [ ! -d "$subhome" ] || fail "teardown did not remove the retired secondmate home"
   [ ! -e "$home/state/domain.meta" ] || fail "teardown did not clear parent meta"
   [ ! -e "$home/state/domain.deck-session" ] || fail "teardown left the retired conversation binding"
+  [ ! -e "$home/state/domain.supervisor-session" ] || fail "teardown left the retired supervisor binding"
+  [ ! -e "$home/state/domain.captain-lane" ] || fail "teardown left the captain lane marker"
   grep -F -- '- domain ' "$home/data/secondmates.md" >/dev/null && fail "teardown did not remove secondmate registry route"
   pass "secondmate teardown retires empty homes and releases routing"
 }
