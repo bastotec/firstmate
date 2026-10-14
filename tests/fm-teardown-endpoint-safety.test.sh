@@ -1177,8 +1177,279 @@ SH
   pass "fm-retire-endpoint: after lock contention only unchanged records retire; replacements and vanished records leave the backlog untouched"
 }
 
-test_record_only_retirement_revalidates_after_control_lock_wait
+# --- Record-only retirement of a record whose pool slot was reassigned -------
+#
+# The four-proof gate: a record with no worktree= but a recorded
+# worktree_reassigned_by=<other-id> may retire record-only ONLY with positive
+# proof that its former slot was reassigned to a live matching owner, its work
+# landed per its own merged PR with final branch coverage, and its worker
+# stopped on recorded evidence. Anything less keeps today's identity refusal,
+# and the reassigned slot's current owner - its claim, its copy, its processes
+# - is never touched in either case.
+
+# A landed-evidence fixture: a project clone whose default branch carries the
+# task branch's content, a merged PR recorded on the dead record, and forge
+# stubs answering for that PR. <case> is prepared with make_case +
+# mark_case_as_treehouse_pool; the dead task's worktree is already gone (that
+# is the premise), so the branch lives only in the project's refs.
+seed_reassigned_landed_pr() {  # <case> <pr-url> [pr-state]
+  local dir=$1 pr_url=$2 pr_state=${3:-MERGED} default
+  default=$(git -C "$dir/project" symbolic-ref --quiet --short HEAD)
+  git -C "$dir/project" checkout -q -B fm/dead-task
+  printf 'landed work\n' > "$dir/project/landed.txt"
+  git -C "$dir/project" add landed.txt
+  git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+    commit -qm 'dead task work'
+  # Squash-land the branch's content on the default branch, then delete the
+  # branch: the common flow where the branch's own commits are reachable
+  # nowhere. A bare origin carries the landed default branch, because
+  # teardown's default-branch resolution reads origin/HEAD. The worktree
+  # checkout stays on the pool's detached fixture commit, so seeding never
+  # disturbs the claimant's copy.
+  git -C "$dir/project" checkout -q "$default"
+  git -C "$dir/project" merge --squash -q fm/dead-task >/dev/null
+  git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+    commit -qm 'squash land dead task'
+  git -C "$dir/project" branch -q -D fm/dead-task
+  git init -q --bare "$dir/origin.git"
+  git -C "$dir/project" remote add origin "$dir/origin.git"
+  git -C "$dir/project" push -q origin "$default"
+  git -C "$dir/project" remote set-head origin "$default" 2>/dev/null || true
+  git -C "$dir/project" fetch -q origin 2>/dev/null || true
+  cat > "$dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+case "\${1:-} \${2:-}" in
+  "pr view")
+    case " \$* " in
+      *"state,headRefOid,headRefName"*)
+        printf '%s\t%s\t%s\n' '$pr_state' '$(git -C "$dir/project" rev-parse HEAD)' 'fm/dead-task'
+        exit 0 ;;
+      *"--json state "*)
+        printf '%s\n' '$pr_state'
+        exit 0 ;;
+    esac
+    ;;
+esac
+echo "error: pull request not found" >&2
+exit 1
+SH
+  cat > "$dir/fakebin/gh-axi" <<SH
+#!/usr/bin/env bash
+case "\${1:-} \${2:-}" in
+  "pr view")
+    printf '%s\n' 'pull_request:' '  state: $pr_state'
+    exit 0 ;;
+esac
+exit 0
+SH
+  chmod +x "$dir/fakebin/gh" "$dir/fakebin/gh-axi"
+}
+
+# The dead record shape: endpoint identity intact, worktree= gone, the handover
+# recorded. The fake endpoint is closed by its agent, which is the recorded
+# stop evidence proof (d) reads.
+write_reassigned_meta() {  # <case> <id> <claimant> [extra-meta...]
+  local dir=$1 id=$2 claimant=$3
+  shift 3
+  fm_write_meta "$dir/home/state/$id.meta" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
+    "project=$dir/project" "kind=ship" "mode=no-mistakes" \
+    "spawn_gen=gen-$id" "worktree_reassigned_by=$claimant" "$@"
+}
+
+# The claimant's record: a live task holding the slot the pool handed it.
+write_claimant_meta() {  # <case> <claimant>
+  local dir=$1 claimant=$2
+  fm_write_meta "$dir/home/state/$claimant.meta" \
+    $(fm_test_stream_task "$dir/home/state" "$claimant") \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout" \
+    "spawn_gen=gen-$claimant"
+}
+
+assert_reassigned_slot_owner_untouched() {  # <case> <claimant>
+  local dir=$1 claimant=$2
+  assert_present "$dir/pool/1/.fm-slot-owner" \
+    "the reassigned slot's owner claim was removed"
+  assert_contains "$(cat "$dir/pool/1/.fm-slot-owner")" "task=$claimant" \
+    "the reassigned slot's owner claim was rewritten"
+  assert_present "$dir/pool/1/project/.git" \
+    "the reassigned slot's checkout was removed"
+  assert_present "$dir/home/state/$claimant.meta" \
+    "the reassigned slot's owner lost its own task record"
+  ! grep -Fq "treehouse <return>" "$dir/runtime.log" \
+    || fail "the reassigned slot was returned to the pool: $(cat "$dir/runtime.log")"
+}
+
+test_reassigned_slot_record_retires_only_on_all_four_proofs() {
+  local dir id=dead-task claimant=live-claimant target rc
+
+  # All four proofs hold: the record retires, record-only.
+  dir=$(make_case reassign-full)
+  mark_case_as_treehouse_pool "$dir"
+  seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/7"
+  write_reassigned_meta "$dir" "$id" "$claimant" \
+    "pr=https://github.com/example/repo/pull/7"
+  write_claimant_meta "$dir" "$claimant"
+  claim_pool_slot "$dir" "$claimant" "$dir/home"
+  target=$(fm_test_stream_target_of "$dir/home/state" "$id")
+  fm_test_fake_stream_set "$target" '{"closed_by": "agent"}'
+
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  [ "$rc" -eq 0 ] || fail "a fully proved reassigned-slot record did not retire: $(cat "$dir/stderr")"
+  assert_absent "$dir/home/state/$id.meta" \
+    "a fully proved reassigned-slot record kept its task record"
+  assert_reassigned_slot_owner_untouched "$dir" "$claimant"
+  assert_contains "$(cat "$dir/stderr")" "$claimant" \
+    "the record-only retirement should name the slot's current owner"
+  assert_contains "$(cat "$dir/stdout")" "record-only" \
+    "the completion line should say the retirement was record-only"
+
+  # Proof (d) missing - the endpoint is not provably stopped - keeps the
+  # refusal and retires nothing.
+  dir=$(make_case reassign-live-endpoint)
+  mark_case_as_treehouse_pool "$dir"
+  seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/7"
+  write_reassigned_meta "$dir" "$id" "$claimant" \
+    "pr=https://github.com/example/repo/pull/7"
+  write_claimant_meta "$dir" "$claimant"
+  claim_pool_slot "$dir" "$claimant" "$dir/home"
+  target=$(fm_test_stream_target_of "$dir/home/state" "$id")
+  fm_test_fake_stream_foreground "$target" deck
+
+  set +e
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a reassigned-slot record with a live endpoint retired anyway"
+  assert_present "$dir/home/state/$id.meta" \
+    "a reassigned-slot record with a live endpoint lost its task record"
+  assert_contains "$(cat "$dir/stderr")" "missing-worktree-identity refusal" \
+    "the missing-stop refusal should say the identity refusal stands"
+  assert_reassigned_slot_owner_untouched "$dir" "$claimant"
+
+  # Proof (c) missing - the PR is not merged - keeps the refusal.
+  dir=$(make_case reassign-open-pr)
+  mark_case_as_treehouse_pool "$dir"
+  seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/8" OPEN
+  write_reassigned_meta "$dir" "$id" "$claimant" \
+    "pr=https://github.com/example/repo/pull/8"
+  write_claimant_meta "$dir" "$claimant"
+  claim_pool_slot "$dir" "$claimant" "$dir/home"
+  target=$(fm_test_stream_target_of "$dir/home/state" "$id")
+  fm_test_fake_stream_set "$target" '{"closed_by": "agent"}'
+
+  set +e
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a reassigned-slot record with an open PR retired anyway"
+  assert_present "$dir/home/state/$id.meta" \
+    "a reassigned-slot record with an open PR lost its task record"
+  assert_reassigned_slot_owner_untouched "$dir" "$claimant"
+
+  # Proof (c) again, its stricter half: a merged PR whose branch later gained
+  # an unlanded commit is NOT proof the branch's final tip landed. The branch
+  # is recreated from the same base with the landed content plus an extra
+  # unlanded commit, pushed to origin so the branch tip is discoverable; the
+  # forge still answers for the PR head, so only coverage can refuse.
+  dir=$(make_case reassign-later-branch-commit)
+  mark_case_as_treehouse_pool "$dir"
+  pr_tip=$(git -C "$dir/project" rev-parse HEAD)
+  seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/9"
+  write_reassigned_meta "$dir" "$id" "$claimant" \
+    "pr=https://github.com/example/repo/pull/9"
+  write_claimant_meta "$dir" "$claimant"
+  claim_pool_slot "$dir" "$claimant" "$dir/home"
+  target=$(fm_test_stream_target_of "$dir/home/state" "$id")
+  fm_test_fake_stream_set "$target" '{"closed_by": "agent"}'
+  git -C "$dir/project" checkout -q -B fm/dead-task "$pr_tip"
+  printf 'unlanded later work\n' > "$dir/project/landed.txt"
+  git -C "$dir/project" add landed.txt
+  git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+    commit -qm 'later branch commit that never landed'
+  git -C "$dir/project" push -q origin fm/dead-task
+
+  set +e
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a merged PR with a later unlanded branch commit retired anyway"
+  assert_present "$dir/home/state/$id.meta" \
+    "a merged PR with a later unlanded branch commit lost its task record"
+  assert_contains "$(cat "$dir/stderr")" "final tip is not covered" \
+    "the refusal should name final branch coverage as the missing proof"
+  assert_reassigned_slot_owner_untouched "$dir" "$claimant"
+
+  # Proof (b) missing - the slot's live claim names a third task - keeps the
+  # refusal, and the recorded handover alone authorizes nothing.
+  dir=$(make_case reassign-claim-mismatch)
+  mark_case_as_treehouse_pool "$dir"
+  seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/7"
+  write_reassigned_meta "$dir" "$id" "$claimant" \
+    "pr=https://github.com/example/repo/pull/7"
+  write_claimant_meta "$dir" "$claimant"
+  claim_pool_slot "$dir" "a-third-task" "$dir/home"
+  target=$(fm_test_stream_target_of "$dir/home/state" "$id")
+  fm_test_fake_stream_set "$target" '{"closed_by": "agent"}'
+
+  set +e
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a recorded handover with a mismatched live claim retired anyway"
+  assert_present "$dir/home/state/$id.meta" \
+    "a recorded handover with a mismatched live claim lost its task record"
+  assert_contains "$(cat "$dir/stderr")" "current owner does not match" \
+    "the refusal should name the live owner mismatch"
+  assert_contains "$(cat "$dir/pool/1/.fm-slot-owner")" "task=a-third-task" \
+    "the mismatched live claim was rewritten"
+  assert_present "$dir/home/state/$claimant.meta" \
+    "the recorded claimant lost its own task record on another's refusal"
+
+  # Proof (a) missing - a record with no worktree= and no recorded handover -
+  # keeps today's unconditional identity refusal.
+  dir=$(make_case reassign-no-handover)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$id.meta" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
+    "project=$dir/project" "kind=ship" "mode=no-mistakes" "spawn_gen=gen-$id"
+
+  set +e
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a record with no worktree and no handover retired anyway"
+  assert_present "$dir/home/state/$id.meta" \
+    "a record with no worktree and no handover lost its task record"
+  assert_contains "$(cat "$dir/stderr")" "missing, empty, or ambiguous worktree identity" \
+    "a record with no handover should keep the plain identity refusal"
+
+  # --force lifts none of the four proofs.
+  dir=$(make_case reassign-force)
+  mark_case_as_treehouse_pool "$dir"
+  seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/7" OPEN
+  write_reassigned_meta "$dir" "$id" "$claimant" \
+    "pr=https://github.com/example/repo/pull/7"
+  write_claimant_meta "$dir" "$claimant"
+  claim_pool_slot "$dir" "$claimant" "$dir/home"
+
+  set +e
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+  FM_RUNTIME_LOG="$dir/runtime.log" PATH="$dir/fakebin:$PATH" \
+    "$TEARDOWN" "$id" --force > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "--force retired a reassigned-slot record without its proofs"
+  assert_present "$dir/home/state/$id.meta" \
+    "--force lost a reassigned-slot record without its proofs"
+  assert_reassigned_slot_owner_untouched "$dir" "$claimant"
+
+  pass "fm-teardown: a reassigned-slot record retires record-only on all four proofs and refuses without any of them"
+}
+
 test_invalid_endpoint_records_refuse_before_mutation
+test_reassigned_slot_record_retires_only_on_all_four_proofs
 test_control_lock_contention_refuses_before_mutation
 test_non_pool_teardown_ignores_task_set_lock
 test_metadata_lock_serializes_destructive_cleanup

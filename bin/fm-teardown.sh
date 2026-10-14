@@ -121,6 +121,16 @@
 # absent claim - a slot taken before claims existed, or already returned - keeps
 # exactly the record-scan protection it had before, because refusing it would
 # strand every task in flight across that change on no evidence at all.
+# The one record shape that may have no worktree= at all is a recorded slot
+# handover: worktree_reassigned_by=<other-id>, written by supervision when the
+# pool slot was handed to another task. The recorded handover is never ownership
+# of the current slot - it only names the task whose live slot claim must
+# independently confirm it. Retirement through that path is record-only and
+# demands four positive proofs (genuinely absent worktree, matching live slot
+# owner, landed work with final branch coverage per the task's merged PR, and
+# recorded stop evidence); anything less keeps this identity refusal, so there
+# is still no line an operator could clear to reach the slot with. The
+# reassigned-slot proof block above teardown's slot checks owns the full gate.
 # Why Treehouse's own state cannot answer this for crewmate slots, and why the
 # claim file sits on top of it, is owned by bin/fm-wake-lib.sh's slot-owner
 # claim comment.
@@ -960,7 +970,16 @@ fi
 # This is the first cleanup authorization check. It is metadata-only and must
 # complete before fm-guard, a backend command, file removal, branch deletion,
 # worktree return, registry change, or process termination can run.
+# FM_BACKEND_VALIDATE_REASSIGNMENT_CANDIDATE lets exactly one record shape past
+# the worktree-identity refusal - no worktree= plus a recorded
+# worktree_reassigned_by=<other-id> - as a CANDIDATE only: the four-proof gate
+# below independently verifies the handover against the slot's live owner
+# claim, the landed-work contract, and recorded stop evidence, and anything
+# short of all four keeps the refusal. Every other caller of the same
+# validation keeps its unconditional refusal.
+FM_BACKEND_VALIDATE_REASSIGNMENT_CANDIDATE=1
 fm_backend_validate_task_endpoint "$META" "$ID" || exit 1
+FM_BACKEND_VALIDATE_REASSIGNMENT_CANDIDATE=
 BACKEND=$FM_BACKEND_VALIDATED_BACKEND
 T=$FM_BACKEND_VALIDATED_TARGET
 WT=$(fm_meta_get "$META" worktree)
@@ -1388,6 +1407,167 @@ work_is_landed() {
   local branch=$1
   pr_is_merged "$branch" && return 0
   content_in_default
+}
+
+# --- Record-only retirement of a record whose pool slot was reassigned --------
+#
+# A record whose pool slot was handed to another task carries
+# worktree_reassigned_by=<other-id> in place of the worktree= identity it can no
+# longer honestly claim. The recorded handover is never ownership of the current
+# slot: it only names the task whose LIVE slot claim must independently confirm
+# the handover, and the slot itself - its current owner's processes, copy, and
+# claim - is never touched by this path. Retirement is record-only: no teardown,
+# deletion, process stop, or slot return for the current owner, and the old branch
+# and work data are preserved, because every branch- and slot-touching step below
+# is keyed off teardown_owns_worktree, which this proof turns off.
+#
+# Four positive proofs gate it, and anything less keeps the worktree-identity
+# refusal (a) names:
+#   (a) the record genuinely has no worktree of its own - no worktree= line and
+#       exactly one worktree_reassigned_by= naming another task
+#       (fm_backend_reassignment_slot_candidate, read at the endpoint gate);
+#   (b) the slot was reassigned and its CURRENT owner is present and matches -
+#       the claimant's own record in this home names the slot, that path is a
+#       Treehouse pool slot of this record's project, and the slot's live owner
+#       claim names exactly the claimant;
+#   (c) the work landed per the task-specific landed-evidence contract with
+#       final branch coverage - the recorded PR reads merged from the live forge
+#       AND the branch's final tip is covered by the up-to-date default branch,
+#       because a merely merged PR is not proof that later branch commits landed;
+#   (d) the worker stopped on recorded evidence - the backend's recovery-grade
+#       classifier (fm_backend_agent_state) answers dead or missing for the
+#       recorded endpoint. An operator's assertion of stopped status never
+#       substitutes for the landed-work proof in (c).
+# --force does not lift any of these: it authorizes discarding unlanded work, and
+# this record has no worktree of its own left to discard.
+TEARDOWN_REASSIGNED_SLOT=0
+TEARDOWN_REASSIGNED_TO=
+
+teardown_reassigned_refusal() {  # <missing-proof> <reason>
+  echo "REFUSED: task $ID's record names a reassigned pool slot but $1, so it keeps its missing-worktree-identity refusal; nothing was changed - not even with --force." >&2
+  echo "$2" >&2
+  echo "Reconcile the record (bin/fm-crew-state.sh $ID) or take it to the captain; a record-only retirement needs all four proofs." >&2
+  exit 1
+}
+
+# The merged PR's head commit and branch name, read from the live forge through
+# the project clone. Prints "<head>$TAB<branch>"; returns 1 when the PR cannot be
+# read as merged, which is proof (c)'s first half.
+teardown_reassigned_pr_head() {  # <pr-url>
+  local url=$1 view state head branch
+  view=$( cd "$PROJ" && gh pr view "$url" \
+      --json state,headRefOid,headRefName \
+      -q '.state + "\t" + .headRefOid + "\t" + .headRefName' 2>/dev/null ) || return 1
+  state=${view%%$'\t'*}
+  [ "$state" != "$view" ] || return 1
+  case "$state" in MERGED|merged) ;; *) return 1 ;; esac
+  view=${view#*$'\t'}
+  head=${view%%$'\t'*}
+  branch=${view#*$'\t'}
+  [ -n "$head" ] && [ -n "$branch" ] && [ "$head" != "$view" ] || return 1
+  printf '%s\t%s' "$head" "$branch"
+}
+
+# The same 3-way containment content_in_default applies to a worktree HEAD, for
+# an explicit commit: <commit> introduces nothing the default branch does not
+# already contain exactly when merging the two yields the default branch's tree.
+teardown_reassigned_content_in_default() {  # <commit> <default-ref>
+  local commit=$1 ref=$2 default_tree merged_tree
+  default_tree=$(git -C "$PROJ" rev-parse --quiet --verify "$ref^{tree}" 2>/dev/null) || return 1
+  [ -n "$default_tree" ] || return 1
+  merged_tree=$(git -C "$PROJ" merge-tree --write-tree "$ref" "$commit" 2>/dev/null) || return 1
+  merged_tree=$(printf '%s\n' "$merged_tree" | head -1)
+  [ "$merged_tree" = "$default_tree" ]
+}
+
+# Final branch coverage (proof (c)'s second half): every commit the task's branch
+# carried - the merged PR's head AND anything the branch gained after it - must
+# be covered by the up-to-date default branch. Ancestry proves it outright;
+# otherwise the branch's final tip must satisfy the same merge-tree containment
+# content_in_default uses, so a squash merge whose branch later gained an
+# unlanded commit refuses. Prints nothing; returns 0 only on coverage.
+teardown_reassigned_branch_covered() {  # <pr-head> <branch>
+  local pr_head=$1 branch=$2 default ref tip
+  default=$(default_branch) || return 1
+  git -C "$PROJ" fetch --quiet origin \
+    "+refs/heads/$default:refs/remotes/origin/$default" >/dev/null 2>&1 || return 1
+  ref="refs/remotes/origin/$default"
+  if git -C "$PROJ" fetch --quiet origin \
+      "+refs/heads/$branch:refs/remotes/origin/$branch" >/dev/null 2>&1 \
+     && tip=$(git -C "$PROJ" rev-parse --quiet --verify \
+        "refs/remotes/origin/$branch^{commit}" 2>/dev/null) \
+     && [ -n "$tip" ]; then
+    :
+  else
+    # The branch was deleted after its merge - the common squash flow - so the
+    # PR head is the branch's final tip. Fetch it through the pull ref so a
+    # deleted branch is still provable, the way ensure_commit_object does.
+    tip=$pr_head
+    git -C "$PROJ" cat-file -e "$tip^{commit}" 2>/dev/null \
+      || git -C "$PROJ" fetch --quiet origin "$pr_head" >/dev/null 2>&1 \
+      || return 1
+    git -C "$PROJ" cat-file -e "$tip^{commit}" 2>/dev/null || return 1
+  fi
+  git -C "$PROJ" merge-base --is-ancestor "$tip" "$ref" 2>/dev/null && return 0
+  teardown_reassigned_content_in_default "$tip" "$ref"
+}
+
+# The four-proof gate itself. Runs only for a record the endpoint gate accepted
+# as a reassignment candidate, after the completion-claim gate has resolved
+# PR_URL, and before any destructive step: everything it needs is read-only. On
+# success it marks the slot reassigned (never this task's) and returns 0; every
+# missing proof exits 1 with the reason, which no retirement path proceeds past.
+teardown_verify_reassigned_slot_record() {
+  local claimant=$FM_BACKEND_VALIDATED_REASSIGNED_TO
+  local claimant_meta claimant_wt slot verdict pr_head_branch pr_head branch
+  [ "$KIND" = ship ] || teardown_reassigned_refusal \
+    "it is a $KIND record, and a record-only reassignment retirement takes only ship records" \
+    "A scout's work product is its report and a secondmate has its own retirement path; neither has the landed-PR evidence this retirement rests on."
+  # (b): the claimant's own record in this home names the slot, the path is a
+  # pool slot of this record's project, and the slot's LIVE claim names exactly
+  # the claimant. A absent, unreadable, or third-party claim proves nothing.
+  claimant_meta="$STATE/$claimant.meta"
+  [ -f "$claimant_meta" ] && [ ! -L "$claimant_meta" ] || teardown_reassigned_refusal \
+    "the recorded claimant $claimant has no record in this home to locate the slot it took" \
+    "Without the claimant's record the reassigned slot cannot be located, so its current owner cannot be proved."
+  claimant_wt=$(fm_backend_meta_exact_value "$claimant_meta" worktree) || teardown_reassigned_refusal \
+    "the recorded claimant $claimant's record has no readable worktree to locate the slot it took" \
+    "The claimant's own worktree record is the only pointer to the reassigned slot."
+  slot=$(canonical_existing_dir "$claimant_wt") || teardown_reassigned_refusal \
+    "the slot recorded for claimant $claimant is no longer present at $claimant_wt" \
+    "The reassigned slot must be readable to prove its current owner."
+  fm_treehouse_pool_slot "$PROJ" "$slot" || teardown_reassigned_refusal \
+    "the slot recorded for claimant $claimant is not a live pool slot of this task's project" \
+    "Only a slot of the same project's pool can prove this record's slot was reassigned."
+  fm_backend_reassignment_slot_owner "$slot" "$claimant" "$ID" || teardown_reassigned_refusal \
+    "the slot's current owner does not match the recorded reassignment ($FM_BACKEND_REASSIGNMENT_REFUSAL)" \
+    "The live owner claim - not the recorded worktree_reassigned_by line - is what proves the handover."
+  # (c): landed per the task-specific contract, with final branch coverage.
+  [ -n "$PR_URL" ] || teardown_reassigned_refusal \
+    "no PR is recorded for it, so nothing can prove its work landed" \
+    "Record-bookkeeping retirement of a reassigned slot rests on the task's own merged-PR evidence."
+  pr_head_branch=$(teardown_reassigned_pr_head "$PR_URL") || teardown_reassigned_refusal \
+    "its recorded PR $PR_URL cannot be read as merged from the live forge" \
+    "A merged PR is the landed-work evidence this retirement rests on; an open, closed-unmerged, or unreadable PR retires nothing."
+  pr_head=${pr_head_branch%%$'\t'*}
+  branch=${pr_head_branch#*$'\t'}
+  teardown_reassigned_branch_covered "$pr_head" "$branch" || teardown_reassigned_refusal \
+    "its branch's final tip is not covered by the up-to-date default branch" \
+    "A merely merged PR is not proof that later branch commits landed; the branch and its work data are preserved."
+  # (d): the worker stopped on recorded evidence, never an operator's assertion.
+  verdict=$(fm_backend_agent_state "$BACKEND" "$T")
+  case "$verdict" in
+    dead|missing) ;;
+    *)
+      teardown_reassigned_refusal \
+        "its recorded endpoint reads '$verdict', not stopped, on the backend's own evidence" \
+        "Recorded evidence of a stopped worker - a dead or missing endpoint - is required; an operator's assertion of stopped status cannot substitute for it."
+      ;;
+  esac
+  TEARDOWN_REASSIGNED_SLOT=1
+  TEARDOWN_REASSIGNED_TO=$claimant
+  echo "warning: task $ID's pool slot was reassigned to task $claimant, which holds it (home ${FM_TREEHOUSE_SLOT_OWNER_HOME:-unknown}); the slot, its current owner, and $ID's branch are left untouched and only $ID's own records are retired." >&2
+  return 0
 }
 
 # Stage only the completion arguments permitted by the header's content and
@@ -2105,6 +2285,7 @@ require_exclusive_worktree_slot_record() {
 
 require_exclusive_task_worktree_slot() {
   local slot
+  [ "$TEARDOWN_REASSIGNED_SLOT" != 1 ] || return 0
   slot=$(teardown_live_slot_path) || return 0
   require_exclusive_worktree_slot_record "$META" "$ID" "$STATE" "$slot"
 }
@@ -2138,11 +2319,16 @@ require_owned_worktree_slot_record() {  # <task-id> <worktree>
 # The one ownership determination for this task's recorded slot. Every later
 # step that would read or touch $WT consults teardown_owns_worktree, so a
 # reassigned slot is skipped consistently rather than by each step's own guess.
+# A record retired through the reassigned-slot proof has no slot of its own at
+# all: the proof already established the slot belongs to another task, so both
+# slot checks below are skipped for it exactly as they are for a reassigned
+# slot, and no scan of a slot this record no longer names can refuse it.
 TEARDOWN_SLOT_REASSIGNED=0
 TEARDOWN_SLOT_REASSIGNED_TO=
 TEARDOWN_SLOT_REASSIGNED_HOME=
 require_owned_task_worktree_slot() {
   local slot rc=0
+  [ "$TEARDOWN_REASSIGNED_SLOT" != 1 ] || return 0
   slot=$(teardown_live_slot_path) || return 0
   require_owned_worktree_slot_record "$ID" "$slot" || rc=$?
   case "$rc" in
@@ -3117,6 +3303,14 @@ if [ "$KIND" != secondmate ] && [ -n "$PR_URL" ]; then
   fi
 fi
 
+# A record accepted as a reassignment candidate at the endpoint gate above runs
+# its four-proof gate here, after the completion-claim gate resolved PR_URL and
+# before any destructive step. Everything the proof reads is read-only, and a
+# record that fails any proof keeps its refusal with every record intact.
+if [ -n "$FM_BACKEND_VALIDATED_REASSIGNED_TO" ]; then
+  teardown_verify_reassigned_slot_record
+fi
+
 # A public commitment is not kept until its final reply lands in the ORIGINAL
 # thread, and this cleanup removes the task records that make the promise
 # reconcilable. Refuse while this home still owes a public reply for exactly this
@@ -3402,8 +3596,10 @@ if [ -d "$STATE" ]; then
 fi
 if [ "$TEARDOWN_LEGACY_ACCEPTED" = 1 ]; then
   echo "teardown $ID complete (window $T, worktree $WT, legacy record accepted without spawn_gen: endpoint $TEARDOWN_LEGACY_ENDPOINT, incarnation $TEARDOWN_META_SPAWN_GEN)"
+elif [ "$TEARDOWN_REASSIGNED_SLOT" = 1 ]; then
+  echo "teardown $ID complete (record-only; its pool slot belongs to task $TEARDOWN_REASSIGNED_TO and was never touched, and its branch and work data are preserved)"
 elif teardown_owns_worktree; then
-  echo "teardown $ID complete (window $T, worktree $WT)"
+  echo "teardown $ID complete (window $T; pool slot $WT left to task $TEARDOWN_SLOT_REASSIGNED_TO${TEARDOWN_SLOT_REASSIGNED_HOME:+ (home $TEARDOWN_SLOT_REASSIGNED_HOME)}, which it was reassigned to)"
 else
   echo "teardown $ID complete (window $T; pool slot $WT left to task $TEARDOWN_SLOT_REASSIGNED_TO${TEARDOWN_SLOT_REASSIGNED_HOME:+ (home $TEARDOWN_SLOT_REASSIGNED_HOME)}, which it was reassigned to)"
 fi
