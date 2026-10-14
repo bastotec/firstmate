@@ -51,7 +51,8 @@
 #   parent_home=            absolute parent FM_HOME
 #   parent_status=          absolute path of parent state/<task_id>.status
 #   parent_status_scan_signature=
-#   request_summary=        short sanitized summary (no secrets by design)
+#   request_summary=        sanitized request excerpt, not secret-redacted;
+#                           fm_pending_reply_summarize below owns filtering and limits
 #   created_epoch=          when the expectation was created
 #   delivered_epoch=        when the marked request was confirmed delivered
 #                           (empty until delivery; the captain-direct exception
