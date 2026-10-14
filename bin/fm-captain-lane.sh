@@ -120,10 +120,12 @@ PY
 }
 
 contract_sent=0
-retry_at=0 backoff=0
+retry_at=0 backoff=0 stuck=
 while kill -0 "$HOST_PID" 2>/dev/null; do
   rec=$(next_record) || rec=''
-  if [ -z "$rec" ] || [ "$(date +%s)" -lt "$retry_at" ]; then
+  # A record answered but not acknowledged is never answered twice; it waits
+  # until something moves it.
+  if [ -z "$rec" ] || [ "$rec" = "$stuck" ] || [ "$(date +%s)" -lt "$retry_at" ]; then
     sleep "$POLL"
     continue
   fi
@@ -163,7 +165,8 @@ $prompt"
     backoff=0 retry_at=0
     if [ -f "$rec" ]; then
       if ! { mkdir -p "$INBOX/handled" && mv -f "$rec" "$INBOX/handled/${rec##*/}"; }; then
-        log "could not acknowledge $rec"
+        log "answered but could not acknowledge $rec; it is not answered again"
+        stuck=$rec
       fi
     fi
   else
