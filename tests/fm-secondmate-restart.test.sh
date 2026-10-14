@@ -890,4 +890,28 @@ test_background_pass_is_scheduled_and_returns_at_once() {
 
 test_background_pass_is_scheduled_and_returns_at_once
 
+test_background_pass_preserves_persistence_settings() {
+  local dir out spec sid
+  dir=$(new_case background-settings)
+  add_local_mate "$dir" sm1
+  out=$(FM_TEST_PERSIST_WAIT=0 run_restart "$dir" --background sm1) \
+    || fail "the background pass must arm: $out"
+  assert_absent "$dir/home/state/sm1.inbox" "arming must not start the persist request inline"
+  spec=$(ls "$dir/home/state/when/"when-secondmate-restart-*.spec | head -1)
+  sid=${spec##*/}
+  sid=${sid%.spec}
+  out=$(env PATH="$dir/fakebin:$PATH" FM_HOME="$dir/home" FM_FAKE_DIR="$dir/fake" \
+    FM_SECONDMATE_PERSIST_WAIT=invalid FM_SECONDMATE_PERSIST_POLL=invalid \
+    "$ROOT/bin/fm-procevent-when.sh" run "$sid" 2>&1) \
+    || fail "the deferred pass must run: $out"
+  assert_contains "$out" "status: action-failed" "an unanswered mate must finish with the normal fallback"
+  assert_contains "$out" "action_exit: 3" "watcher settings must not replace the captured persistence settings"
+  assert_contains "$out" "did not confirm within 0s" "the deferred pass must use the requested wait bound"
+  assert_contains "$out" "summary: 0 of 1 restarted, 1 nudged, 0 unreached" "the pass must finish and account for the mate"
+  assert_no_grep '^/quit$' "$dir/fake/literal" "an unanswered mate must not be restarted"
+  pass "a background pass preserves its wait and poll settings across the watcher boundary"
+}
+
+test_background_pass_preserves_persistence_settings
+
 echo "# all fm-secondmate-restart tests passed"

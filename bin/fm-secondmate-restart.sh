@@ -2,7 +2,7 @@
 # Restart second mates onto the current instruction surface and launch-time
 # wiring, persisting their open records first.
 #
-# Usage: fm-secondmate-restart.sh [--background] <secondmate-id>... [--help]
+# Usage: fm-secondmate-restart.sh [--background] [--persist-wait seconds] [--persist-poll seconds] <secondmate-id>... [--help]
 #
 # --background arms this same pass as a one-shot process-event job
 # (bin/fm-procevent-when.sh, condition /usr/bin/true) and returns at once; its
@@ -100,14 +100,24 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
 PERSIST_WAIT=${FM_SECONDMATE_PERSIST_WAIT:-900}
 PERSIST_POLL=${FM_SECONDMATE_PERSIST_POLL:-5}
+BACKGROUND=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --background) BACKGROUND=1 ;;
+    --persist-wait|--persist-poll)
+      [ "$#" -ge 2 ] || { echo "error: $1 requires seconds" >&2; exit 2; }
+      case "$1" in
+        --persist-wait) PERSIST_WAIT=$2 ;;
+        --persist-poll) PERSIST_POLL=$2 ;;
+      esac
+      shift
+      ;;
+    *) break ;;
+  esac
+  shift
+done
 case "$PERSIST_WAIT" in ''|*[!0-9]*) echo "error: FM_SECONDMATE_PERSIST_WAIT must be a non-negative integer: $PERSIST_WAIT" >&2; exit 2 ;; esac
 case "$PERSIST_POLL" in ''|*[!0-9]*|0) echo "error: FM_SECONDMATE_PERSIST_POLL must be a positive integer: $PERSIST_POLL" >&2; exit 2 ;; esac
-
-BACKGROUND=0
-if [ "${1:-}" = --background ]; then
-  BACKGROUND=1
-  shift
-fi
 
 IDS=()
 for arg in "$@"; do
@@ -129,7 +139,8 @@ if [ "$BACKGROUND" = 1 ]; then
   name="secondmate-restart-$(date -u +%Y%m%dT%H%M%S)-$$"
   if ! FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-procevent-when.sh" arm "$name" --stable 1 --interval 1 \
     --action-timeout $(( (PERSIST_WAIT + 600) * ${#IDS[@]} )) \
-    --condition /usr/bin/true --action "$SCRIPT_DIR/fm-secondmate-restart.sh" "${IDS[@]}"; then
+    --condition /usr/bin/true --action "$SCRIPT_DIR/fm-secondmate-restart.sh" \
+    --persist-wait "$PERSIST_WAIT" --persist-poll "$PERSIST_POLL" "${IDS[@]}"; then
     echo "error: could not schedule the background restart pass; nothing was restarted" >&2
     exit 1
   fi
