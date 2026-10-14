@@ -117,16 +117,23 @@
 # tests/fm-deck-harness.test.sh.
 #
 # SECOND MATE SESSION CONTINUITY (--secondmate)
-# As soon as run_started names the session, including during the startup turn,
-# the host atomically records its session id on line 1 and FM_HOME on line 2 of
-# <state>/<id>.deck-session in the parent task state. Write failure warns on
-# stderr without stopping the host. Automatic revive and update restart reuse
-# that conversation only when the record is a non-symlink file, its id contains
-# only letters, digits, dot, underscore, or dash, its home exactly matches the
-# current FM_HOME, and Deck's session file exists at
-# ${XDG_STATE_HOME:-$HOME/.local/state}/deck/sessions/<session-id>.json.
+# Once run_started has named the session and Deck has written that session's
+# file (Deck saves a conversation at its first appended completion), including
+# during the startup turn, the host atomically records its session id on line 1
+# and FM_HOME on line 2 of <state>/<id>.deck-session in the parent task state.
+# The host checks during each turn-loop iteration until recorded, and once more
+# after stopping Deck during cleanup to catch a late save before TERM/HUP exit.
+# A run stopped during its first model call can name a session with no file;
+# it never replaces the record of the previous saved conversation.
+# Write failure warns on stderr without stopping the host.
+# Local and remote relaunches (fm-control relaunch, revive, update restart, and
+# model-switch fallback) reuse that conversation only when the record is a
+# non-symlink file, its id contains only letters, digits, dot, underscore, or
+# dash, its home exactly matches the current FM_HOME, and Deck's session file
+# exists at ${XDG_STATE_HOME:-$HOME/.local/state}/deck/sessions/<session-id>.json.
 # Otherwise, or with FM_DECK_FRESH_SESSION=1, the host starts a new conversation
-# and records the new binding. A legacy id-only record cannot authorize resume.
+# and records the new binding only once saved. A legacy id-only record cannot
+# authorize resume.
 # Every host start still supplies the charter and newly collected startup
 # digest; conversation continuity never replaces reconciliation from disk.
 # bin/fm-teardown.sh removes the binding on secondmate retirement, including
@@ -357,6 +364,9 @@ stop_turn() {  # stop the running Deck turn and wait for it, bounded
 cleanup() {
   deck_stream_end
   stop_turn
+  # Deck may have saved this turn's session after the loop last looked; record
+  # it before the turn's files go.
+  session_observe 2>/dev/null || true
   if [ -n "$TURN_RENDER_PID" ]; then
     kill -TERM "$TURN_RENDER_PID" 2>/dev/null || true
     wait "$TURN_RENDER_PID" 2>/dev/null || true
@@ -741,7 +751,9 @@ fi
 
 SESSION=''
 # The header owns home-bound resume eligibility and the fresh-session opt-out.
+DECK_SESSIONS="${XDG_STATE_HOME:-$HOME/.local/state}/deck/sessions"
 SESSION_RECORD=''
+SESSION_RECORDED=''
 if [ "$SECONDMATE" = 1 ]; then
   SESSION_RECORD="$STATE/$ID.deck-session"
   if [ "${FM_DECK_FRESH_SESSION:-0}" != 1 ] && [ -f "$SESSION_RECORD" ] && [ ! -L "$SESSION_RECORD" ]; then
@@ -750,18 +762,24 @@ if [ "$SECONDMATE" = 1 ]; then
     case "$recorded_session" in
       ''|*[!A-Za-z0-9._-]*) ;;
       *)
-        if [ "$recorded_home" = "$FM_HOME" ] && [ -f "${XDG_STATE_HOME:-$HOME/.local/state}/deck/sessions/$recorded_session.json" ]; then
+        if [ "$recorded_home" = "$FM_HOME" ] && [ -f "$DECK_SESSIONS/$recorded_session.json" ]; then
           SESSION=$recorded_session
+          SESSION_RECORDED=$recorded_session
         fi
         ;;
     esac
   fi
 fi
+# The header's session-continuity contract owns the saved-file guard and rationale.
 session_record() {
   [ -n "$SESSION_RECORD" ] && [ -n "$SESSION" ] || return 0
-  [ "$(cat "$SESSION_RECORD" 2>/dev/null || true)" != "$(printf '%s\n%s' "$SESSION" "$FM_HOME")" ] || return 0
-  printf '%s\n%s\n' "$SESSION" "$FM_HOME" > "$SESSION_RECORD.tmp.$$" && mv -f "$SESSION_RECORD.tmp.$$" "$SESSION_RECORD" \
-    || printf 'fm-deck-worker: warning: could not record Deck session %s\n' "$SESSION" >&2
+  [ "$SESSION_RECORDED" != "$SESSION" ] || return 0
+  [ -f "$DECK_SESSIONS/$SESSION.json" ] || return 0
+  if printf '%s\n%s\n' "$SESSION" "$FM_HOME" > "$SESSION_RECORD.tmp.$$" && mv -f "$SESSION_RECORD.tmp.$$" "$SESSION_RECORD"; then
+    SESSION_RECORDED=$SESSION
+  else
+    printf 'fm-deck-worker: warning: could not record Deck session %s\n' "$SESSION" >&2
+  fi
 }
 session_observe() {
   local started
@@ -864,7 +882,7 @@ $prompt"
     TURN_PID=$!
     STOP_REQUESTED_AT=''
     while kill -0 "$TURN_PID" 2>/dev/null; do
-      [ -n "$SESSION" ] || session_observe
+      session_observe
       escalate_turn_stop
       # /quit typed while the turn runs is an exit request, not a later turn:
       # stop the turn now, and the prompt loop reads the queued /quit next.
