@@ -1465,7 +1465,8 @@ teardown_reassigned_pr_head() {  # <pr-url>
 
 teardown_reassigned_content_in_default() {
   local commit=$1 ref=$2 pr_head=$3 covered=$1 default_tree merged_tree
-  while ! git -C "$PROJ" merge-base --is-ancestor "$covered" "$pr_head" 2>/dev/null \
+  while ! git -C "$PROJ" merge-base --is-ancestor "$covered" "$ref" 2>/dev/null \
+      && ! git -C "$PROJ" merge-base --is-ancestor "$covered" "$pr_head" 2>/dev/null \
       && ! patches_are_in_pr_head "$PROJ" "$covered" "$pr_head" "$pr_head"; do
     covered=$(git -C "$PROJ" rev-parse --quiet --verify "$covered^1" 2>/dev/null) || return 1
   done

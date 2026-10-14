@@ -1197,13 +1197,19 @@ SH
 # mark_case_as_treehouse_pool; the dead task's worktree is already gone (that
 # is the premise), so the branch lives only in the project's refs.
 seed_reassigned_landed_pr() {  # <case> <pr-url> [pr-state]
-  local dir=$1 pr_url=$2 pr_state=${3:-MERGED} replay=${4:-0} default pr_head
+  local dir=$1 pr_url=$2 pr_state=${3:-MERGED} replay=${4:-0} multi_commit=${5:-0} default pr_head
   default=$(git -C "$dir/project" symbolic-ref --quiet --short HEAD)
   git -C "$dir/project" checkout -q -B fm/dead-task
   printf 'landed work\n' > "$dir/project/landed.txt"
   git -C "$dir/project" add landed.txt
   git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
     commit -qm 'dead task work'
+  if [ "$multi_commit" = 1 ]; then
+    printf 'second task patch\n' > "$dir/project/task.txt"
+    git -C "$dir/project" add task.txt
+    git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+      commit -qm 'second dead task commit'
+  fi
   pr_head=$(git -C "$dir/project" rev-parse HEAD)
   if [ "$replay" = 1 ]; then
     git -C "$dir/project" checkout -q "$default"
@@ -1473,18 +1479,21 @@ test_reassigned_slot_record_retires_only_on_all_four_proofs() {
 
 test_reassigned_record_coverage_and_preservation() {
   local dir id=dead-task claimant=live-claimant target rc scenario pr_head default
-  local real_git local_tip unrelated_tip replay followup
+  local real_git local_tip unrelated_tip replay followup multi_commit
   real_git=$(command -v git)
   for scenario in local-only local-ahead remote-ahead fetch-failed remote-unreadable \
       local-unreadable evolved-deleted evolved-retained evolved-remote preserved missing-worker \
       replayed-local replayed-remote replayed-local-extra replayed-remote-extra \
       fork-ahead fork-covered fork-fetch-failed fork-unreadable \
-      followup-local followup-remote followup-replayed-local followup-replayed-remote followup-unlanded; do
+      followup-local followup-remote followup-replayed-local followup-replayed-remote followup-unlanded \
+      followup-default-local followup-default-remote followup-default-unlanded; do
     dir=$(make_case "reassign-$scenario")
     mark_case_as_treehouse_pool "$dir"
     replay=0
+    multi_commit=0
     case "$scenario" in replayed-*|followup-replayed-*) replay=1 ;; esac
-    seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/7" MERGED "$replay"
+    case "$scenario" in followup-default-*) multi_commit=1 ;; esac
+    seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/7" MERGED "$replay" "$multi_commit"
     pr_head=$(cat "$dir/pr-head")
     default=$(git -C "$dir/project" symbolic-ref --quiet --short HEAD)
     write_reassigned_meta "$dir" "$id" "$claimant" \
@@ -1526,9 +1535,16 @@ test_reassigned_record_coverage_and_preservation() {
         fi
         ;;
       followup-*)
-        if [ "$replay" = 0 ]; then
-          git -C "$dir/project" branch fm/dead-task "$pr_head"
-        fi
+        case "$scenario" in
+          followup-default-*)
+            git -C "$dir/project" branch fm/dead-task "$default"
+            ;;
+          *)
+            if [ "$replay" = 0 ]; then
+              git -C "$dir/project" branch fm/dead-task "$pr_head"
+            fi
+            ;;
+        esac
         git -C "$dir/project" checkout -q fm/dead-task
         printf 'follow-up work\n' > "$dir/project/followup.txt"
         git -C "$dir/project" add followup.txt
@@ -1537,7 +1553,7 @@ test_reassigned_record_coverage_and_preservation() {
         followup=$(git -C "$dir/project" rev-parse HEAD)
         local_tip=$followup
         git -C "$dir/project" checkout -q "$default"
-        if [ "$scenario" != followup-unlanded ]; then
+        if [ "$scenario" != followup-unlanded ] && [ "$scenario" != followup-default-unlanded ]; then
           git -C "$dir/project" merge --squash -q fm/dead-task >/dev/null
           git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
             commit -qm 'squash land follow-up'
@@ -1647,7 +1663,8 @@ SH
     set -e
     case "$scenario" in
       evolved-*|preserved|replayed-local|replayed-remote|fork-covered|\
-          followup-local|followup-remote|followup-replayed-local|followup-replayed-remote)
+          followup-local|followup-remote|followup-replayed-local|followup-replayed-remote|\
+          followup-default-local|followup-default-remote)
         [ "$rc" -eq 0 ] || fail "$scenario refused landed work: $(cat "$dir/stderr")"
         assert_absent "$dir/home/state/$id.meta" "$scenario kept the old record"
         ;;
