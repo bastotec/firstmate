@@ -1456,6 +1456,8 @@ test_split_home_captain_thread_and_supervisor() {
   printf 'deck-effort: low\nThe home watcher has an actionable wake. stale split wake\n' > "$steer/1.msg"
   printf 'From the captain, directly: held before the split\n' > "$steer/2.msg"
   printf 'plain fm-send primary text\n' > "$steer/3.msg"
+  printf 'You are the primary firstmate, hosted by bin/fm-deck-chat.sh. old split digest\n' > "$steer/4.msg"
+  printf '[fm-from-mate:dave]\342\201\243corr=0123456789abcdef peer note before the split\n' > "$steer/5.msg"
   FAKE_DECK_LOG="$LAB/cap.log" "$BIN/fm-deck-chat.sh" --home "$home" < /dev/null > "$LAB/cap.out" 2>&1 &
   cap=$!
   fm_test_track_helper_pid "$cap"
@@ -1475,6 +1477,9 @@ test_split_home_captain_thread_and_supervisor() {
   wait_for 10 "plain primary input is kept for the captain thread" turns_with "$LAB/cap.log" 'plain fm-send primary text'
   if turns_with "$LAB/cap.log" 'stale split wake' >/dev/null; then fail "a stale wake must never reach the captain thread"; fi
   assert_grep 'stale split wake' "$(dirname "$steer")/split-archived/1.msg" "the stale wake is archived beside the inbox"
+  if turns_with "$LAB/cap.log" 'old split digest' >/dev/null; then fail "an old startup digest must never reach the captain thread"; fi
+  wait_for 10 "a waiting peer message goes on to the supervisor" turns_with "$LAB/sup.log" 'peer note before the split'
+  if turns_with "$LAB/cap.log" 'peer note before the split' >/dev/null; then fail "a peer message must not reach the captain thread"; fi
   rc=0; FAKE_DECK_LOG="$LAB/cap2.log" "$BIN/fm-deck-chat.sh" --home "$home" < /dev/null > "$LAB/cap2.out" 2>&1 || rc=$?
   expect_code 1 "$rc" "a second captain-thread host is refused"
   assert_grep 'another captain-thread host is running' "$LAB/cap2.out" "the refusal says why"

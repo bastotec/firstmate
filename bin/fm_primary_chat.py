@@ -72,6 +72,8 @@ Subcommands:
       exit 0 delivered (steer_acked >= SEQ or handled/SEQ.msg), 1 pending,
       2 rejected (rejected/SEQ.msg or steer_rejected), 3 no live host
   prepare --home H [--session ID]   create dirs, persist and print the session
+  handover --home H --file F   publish F into the role's current session inbox
+      without a live host (the split-start hand-over of a peer message)
   record write --home H --session ID --host-pid N [--endpoint T] [--model ROUTE] [--startup-file F]
                [--set-model]   (the host's deck takes `deck-control: set_model`)
       publishes startup before making the host visible, retaining pending messages
@@ -444,6 +446,26 @@ def record_write(args):
         'endpoint': args.endpoint or None, 'host_pid': args.host_pid,
         'model': args.model, 'set_model': bool(getattr(args, 'set_model', False)),
         'started_at': int(time.time())}, sort_keys=True) + '\n')
+    return 0
+
+
+def handover(args):
+    """Publish a file into this role's current session inbox, live host or not
+    (deck reads waiting input when it starts). Used by the split-start hand-over."""
+    _, _, _, root = paths(args.home)
+    try:
+        session = (root / 'session').read_text().strip()
+    except OSError:
+        session = ''
+    if not session:
+        rc = prepare(argparse.Namespace(home=args.home, session=''))
+        if rc:
+            return rc
+        session = (root / 'session').read_text().strip()
+    body = read_body(argparse.Namespace(text=None, file=args.file))
+    if body is None:
+        return 2
+    print('seq=%d' % publish_body(root / session / 'steer', body))
     return 0
 
 
@@ -1135,6 +1157,9 @@ def main(argv):
     supervise.add_argument('--events-offset', type=int, required=True)
     supervise.add_argument('--effort-headers', action='store_true',
                            help='mark routine wakes for a lower reasoning effort (bin/fm-effort-policy.sh)')
+    hand = sub.add_parser('handover')
+    hand.add_argument('--home', required=True)
+    hand.add_argument('--file', required=True)
     model = sub.add_parser('model')
     model.add_argument('--home', default=default_home())
     model.add_argument('route', nargs='?', default='')
@@ -1152,6 +1177,8 @@ def main(argv):
                 'delivered': steer_delivered}[args.action](args)
     if args.cmd == 'prepare':
         return prepare(args)
+    if args.cmd == 'handover':
+        return handover(args)
     if args.cmd == 'record':
         return {'write': record_write, 'stop': record_stop, 'pid': record_pid}[args.action](args)
     if args.cmd == 'service':
