@@ -192,16 +192,14 @@ fm_backend_reassignment_slot_candidate() {  # <meta> <task-id>
   return 0
 }
 
-# fm_backend_reassignment_slot_owner: the live current owner of the slot the
-# recorded project's pool handed to the recorded claimant. Returns 0 and sets
-# FM_TREEHOUSE_SLOT_OWNER (mine|other|absent|unsafe, read against the DEAD
-# record's id so `other` is the expected proof), FM_TREEHOUSE_SLOT_OWNER_ID and
-# FM_TREEHOUSE_SLOT_OWNER_HOME only when the slot's claim names exactly the
-# recorded claimant. Every other answer - absent, unreadable, a third task,
-# the dead task itself - returns 1 with the reason in
-# FM_BACKEND_REASSIGNMENT_REFUSAL, because none of them proves this record's
-# slot was genuinely reassigned to the named task. The slot directory comes
-# from the caller, since only it knows which pool root it reads.
+# fm_backend_reassignment_slot_owner: prove the slot's live claim matches the
+# recorded claimant, reading against the old task's id (`other` is required).
+# fm_treehouse_slot_owner_state in bin/fm-wake-lib.sh owns the
+# FM_TREEHOUSE_SLOT_OWNER, FM_TREEHOUSE_SLOT_OWNER_ID, and
+# FM_TREEHOUSE_SLOT_OWNER_HOME output contract, including on refusal here.
+# Returns 0 only for the matching claimant; every other answer returns 1 with
+# the reason in FM_BACKEND_REASSIGNMENT_REFUSAL. The slot directory comes from
+# the caller, since only it knows which pool root it reads.
 # shellcheck disable=SC2034 # Output global, read by the sourcing caller.
 FM_BACKEND_REASSIGNMENT_REFUSAL=
 fm_backend_reassignment_slot_owner() {  # <slot-dir> <claimant-id> <task-id>
@@ -247,16 +245,10 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
     return 1
   }
   worktree=$(fm_backend_meta_exact_value "$meta" worktree) || {
-    # One record shape may honestly have no worktree of its own: its pool slot
-    # was handed to another task, and supervision recorded that handover in
-    # place of the worktree identity (worktree_reassigned_by=<other-id>). This
-    # is a CANDIDATE reading only, never acceptance: fm_backend_source stream
-    # is unavailable this early in sourcing, so the caller - bin/fm-teardown.sh
-    # for real cleanup, which is the only path that may retire such a record -
-    # re-proves the handover against the slot's LIVE owner claim under the full
-    # four-part proof in teardown's reassigned-slot gate. Recording a handover
-    # never reads as ownership of the current slot: this branch merely declines
-    # to refuse on identity alone so that gate can demand its proof.
+    # This opt-in admits only a candidate, not cleanup authorization or current
+    # slot ownership. Metadata alone cannot prove the handover, landed work, or
+    # stopped worker; bin/fm-teardown.sh's record-only reassigned-slot gate owns
+    # those proofs and must pass before any destructive step.
     if [ "${FM_BACKEND_VALIDATE_REASSIGNMENT_CANDIDATE:-0}" = 1 ] \
        && fm_backend_reassignment_slot_candidate "$meta" "$id"; then
       FM_BACKEND_VALIDATED_REASSIGNED_TO=$FM_BACKEND_REASSIGNED_TO

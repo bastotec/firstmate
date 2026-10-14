@@ -205,8 +205,8 @@ A selector containing `:` is an explicit `<hub-tag>:<endpoint-id>` escape hatch.
 Otherwise an exact task id matching `state/<id>.meta` wins before the legacy `fm-<id>` label fallback, so task ids that start with `fm-` route to their own metadata.
 A metadata-routed selector returns the recorded target (`window=`) and carries secondmate-marker and recorded-harness context; explicit escape hatches do not.
 For explicit targets no metadata names, [`fm-send.sh`'s header](../bin/fm-send.sh) owns live-endpoint verification on this home's hub, and the constrained host-decision answer mode.
-`fm-teardown.sh <id>` validates the complete metadata-only endpoint identity before any runtime dispatch or cleanup, and preserves and refuses missing, duplicate, malformed, backend-inconsistent, or task-mismatched endpoint records.
-Retired tmux records still require the exact `fm-<id>` window shape, and retired Herdr records their task binding and consistent session, workspace, tab, and pane fields, so continuation and retirement cannot target a mismatched record.
+[`fm-backend.sh`'s endpoint-validation contract](../bin/fm-backend.sh) owns the metadata identity checks before teardown can dispatch runtime commands or mutate task state, including retired-backend bindings.
+[`fm-teardown.sh`'s record-only reassigned-slot gate](../bin/fm-teardown.sh) owns the narrowly guarded missing-worktree exception; [endpoint retirement](stream-backend.md#retiring-an-endpoint-record-without-a-confirmed-stop) explains its operator-facing limits.
 `config/backend` is inherited under the primary-authoritative contract owned by [`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md).
 
 ## Away-mode supervisor backend (FM_SUPERVISOR_BACKEND / FM_SUPERVISOR_TARGET)
