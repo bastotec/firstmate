@@ -223,6 +223,7 @@ test_accented_captain_message_keeps_its_letters() {
   [ "$(fm_pending_reply_summarize "$(printf 'é%.0s' $(seq 1 200))" | perl -CSD -ne 'print length')" = 120 ] \
     || fail "the cap must count characters"
   # plain ASCII stays as typed, backticks and carets included
+  # shellcheck disable=SC2016 # Literal backticks are the input under test.
   [ "$(fm_pending_reply_summarize 'run `npm test` ^2')" = 'run `npm test` ^2' ] \
     || fail "ASCII backticks or carets were dropped"
   pass "captain-direct: an accented message keeps its letters in the pending-reply summary"
