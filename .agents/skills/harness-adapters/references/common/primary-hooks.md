@@ -11,7 +11,7 @@ The [chat host header](../../../../../bin/fm-deck-chat.sh) owns startup and clea
 
 ## Turn end
 
-The home-host headers own Deck's `pre_complete` lock check: [`bin/fm-deck-worker.sh`](../../../../../bin/fm-deck-worker.sh) for secondmates and [`bin/fm-deck-chat.sh`](../../../../../bin/fm-deck-chat.sh) for primaries.
+The home-host headers own Deck's `pre_complete` lock check: [`bin/fm-deck-worker.sh`](../../../../../bin/fm-deck-worker.sh) for secondmates and [`bin/fm-deck-chat.sh`](../../../../../bin/fm-deck-chat.sh) for the lock-holding primary host (the supervisor in a split home); a split home's captain thread runs no lock check.
 `../../../bin/fm-busy-lib.sh` remains the semantic busy owner; the deck tool reference names only its source and evidence.
 Validate any turn-end change against the real harness in a scratch project or throwaway home, and record the evidence in `../../../docs/verification/supervision.md`.
 
