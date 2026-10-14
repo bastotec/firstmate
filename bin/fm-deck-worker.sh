@@ -69,7 +69,10 @@
 # Watcher results pass through the durable execution steering inbox and its ordinary
 # doorbell, retained until acknowledged after a serialized next turn;
 # the durable wake queue is acknowledged only by the model after handling.
-# Exactly one Deck turn runs at a time, including stdin and watcher turns.
+# Exactly one supervisor Deck turn runs at a time, including stdin and watcher
+# turns. A split home (config/primary-split) also runs its captain lane beside
+# them: the CAPTAIN LANE block below owns it, and bin/fm-captain-lane.sh's header
+# owns what the lane does.
 # Before a pending watcher turn, consume queued composer clears and stale own
 # doorbells, waiting up to five seconds from the first such line for following
 # input. An exact /quit reached there stops the host before watcher work; real
@@ -361,6 +364,33 @@ stop_turn() {  # stop the running Deck turn and wait for it, bounded
   wait "$TURN_PID" 2>/dev/null || true
 }
 
+# CAPTAIN LANE (--secondmate in a split home, config/primary-split): the
+# captain's own words go to bin/fm-captain-lane.sh, a child that runs them as
+# turns of the mate's existing session (<state>/<id>.deck-session) beside the
+# supervisor, whose own session moves to <state>/<id>.supervisor-session.
+# <state>/<id>.captain-lane marks the lane for bin/fm_stream_deck.py while it
+# may run; a dead lane is restarted on the next loop pass.
+MATE_SPLIT=0 LANE_PID=''
+LANE_MARK="$STATE/$ID.captain-lane"
+lane_start() {
+  [ "$MATE_SPLIT" = 1 ] || return 0
+  if [ -n "$LANE_PID" ] && kill -0 "$LANE_PID" 2>/dev/null; then return 0; fi
+  [ -z "$LANE_PID" ] || printf 'fm-deck-worker: captain lane pid %s exited; restarting it\n' "$LANE_PID" >&2
+  : > "$LANE_MARK" || { printf 'fm-deck-worker: cannot write %s\n' "$LANE_MARK" >&2; return 1; }
+  local -a lane=(--state "$STATE" --id "$ID" --deck "$DECK" --model-file "$MODEL_FILE")
+  [ -z "$MODEL" ] || lane+=(--model "$MODEL")
+  [ -z "$MCP_CONFIG" ] || lane+=(--mcp-config "$MCP_CONFIG")
+  "$SCRIPT_DIR/fm-captain-lane.sh" "${lane[@]}" </dev/null 2>>"$STATE/$ID.captain-lane.log" >/dev/null &
+  LANE_PID=$!
+}
+lane_stop() {
+  [ -n "$LANE_PID" ] || return 0
+  kill -TERM "$LANE_PID" 2>/dev/null || true
+  wait "$LANE_PID" 2>/dev/null || true
+  LANE_PID=''
+  rm -f "$LANE_MARK"
+}
+
 cleanup() {
   deck_stream_end
   stop_turn
@@ -379,6 +409,7 @@ cleanup() {
     kill -TERM "$WATCH_PID" 2>/dev/null || true
     wait "$WATCH_PID" 2>/dev/null || true
   fi
+  lane_stop
   [ -z "$TTY_SETTINGS" ] || stty "$TTY_SETTINGS" 2>/dev/null || true
   rm -rf -- "$WORK"
 }
@@ -738,6 +769,14 @@ if [ "$SECONDMATE" = 1 ]; then
     cat "$WORK/startup" >&2
     host_failure 'session start did not publish a complete digest'; exit 1
   fi
+  [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/primary-split" ] || MATE_SPLIT=1
+  if [ "$MATE_SPLIT" = 1 ]; then
+    PROMPT="$PROMPT
+
+This home runs split (config/primary-split): you are its supervisor, and a separate captain thread answers the captain. Records tagged [fm-captain-direct] in the inbox belong to the captain thread: never read, answer or move them. Records tagged [fm-captain-thread] are the captain's orders and questions the captain thread hands you; act on them as his, and report outcomes through your parent channel as usual."
+  else
+    rm -f "$LANE_MARK"
+  fi
   PROMPT="$PROMPT
 
 The execution steering inbox is $STATE/$ID.inbox. It belongs to this $HOST_ROLE. The host writes watcher instructions there through the ordinary durable steering contract. After reading the digest, handle any pending inbox records in numeric order and move each handled record to handled/.
@@ -755,7 +794,10 @@ DECK_SESSIONS="${XDG_STATE_HOME:-$HOME/.local/state}/deck/sessions"
 SESSION_RECORD=''
 SESSION_RECORDED=''
 if [ "$SECONDMATE" = 1 ]; then
+  # In a split home the mate's existing session is the captain thread's; the
+  # supervisor keeps its own.
   SESSION_RECORD="$STATE/$ID.deck-session"
+  [ "$MATE_SPLIT" != 1 ] || SESSION_RECORD="$STATE/$ID.supervisor-session"
   if [ "${FM_DECK_FRESH_SESSION:-0}" != 1 ] && [ -f "$SESSION_RECORD" ] && [ ! -L "$SESSION_RECORD" ]; then
     recorded_session=$(head -n 1 "$SESSION_RECORD" 2>/dev/null || true)
     recorded_home=$(sed -n '2p' "$SESSION_RECORD" 2>/dev/null || true)
@@ -1126,7 +1168,18 @@ doorbell_without_work() {  # <line>
   canonical=$(fm_task_inbox_doorbell_line "$own/0.msg") || return 1
   [ "$line" = "$canonical" ] || return 1
   for f in "$own"/*.msg; do
-    [ -e "$f" ] && return 1
+    [ -e "$f" ] || continue
+    # With a captain lane, the captain's own records are its work, not the
+    # supervisor's.
+    if [ "$MATE_SPLIT" = 1 ] && python3 -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from fm_stream_deck import CAPTAIN_ONLY
+body = open(sys.argv[2], "rb").read().decode("utf-8", "replace").split("\n--\n", 1)
+sys.exit(0 if len(body) == 2 and CAPTAIN_ONLY.match(body[1]) else 1)' "$SCRIPT_DIR" "$f" 2>/dev/null; then
+      continue
+    fi
+    return 1
   done
   return 0
 }
@@ -1157,6 +1210,7 @@ idle_captain_ready() {
   return 1
 }
 
+lane_start || { host_failure 'could not start the captain lane'; exit 1; }
 drive_turn "$PROMPT"
 input_seq=0
 show_prompt=1
@@ -1164,6 +1218,7 @@ while :; do
   if [ "$SECONDMATE" = 1 ]; then
     watch_start || exit 1
     watch_maintain || exit 1
+    lane_start || { host_failure 'could not restart the captain lane'; exit 1; }
     # Drain start-nothing input with the bounded lifecycle grace owned by the
     # HOME HOST INVARIANTS above, before allowing automatic watcher dispatch.
     composer_grace_until=0

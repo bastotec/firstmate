@@ -50,6 +50,15 @@ FM_CAPTAIN_DIRECT_LABEL='[fm-captain-direct]'
 FM_CAPTAIN_DIRECT_MARK="${FM_CAPTAIN_DIRECT_LABEL}${FM_OPERATIONAL_MARK}"
 FM_CAPTAIN_DIRECT_NOTE='The captain wrote this to you himself and reads your conversation, so answer him there, once. Your parent mate was already told, so append no parent-channel line just to acknowledge it. If this same corr= reaches you again, it is a duplicate: do not answer him a second time.'
 
+# The captain-thread carrier tags an order a split second mate's captain thread
+# hands to its own supervisor (bin/fm-captain-handoff.sh): "[fm-captain-thread]"
+# + U+2063, then the captain's words. Like captain-direct it is a provenance
+# tag; bin/fm_stream_deck.py delivers it to the supervisor's turn like a peer
+# message and never to the captain thread.
+FM_CAPTAIN_THREAD_LABEL='[fm-captain-thread]'
+# shellcheck disable=SC2034 # Public source-library variable used by callers.
+FM_CAPTAIN_THREAD_MARK="${FM_CAPTAIN_THREAD_LABEL}${FM_OPERATIONAL_MARK}"
+
 # The from-mate carrier tags a message a second mate sent to a peer or the
 # first mate through bin/fm-mate-send.sh, delivered by the first mate's router.
 # Like captain-direct it is a provenance tag, not an operational-input kind:

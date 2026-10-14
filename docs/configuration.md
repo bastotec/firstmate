@@ -37,7 +37,7 @@ config/
   wake-gate-key-var wake-gate-mode  optional wake-gate opt-in and mode ("Wake gate")
   effort-policy.json      optional per-turn reasoning effort switch and level ("Turn effort")
   deck-mcp.json           optional Deck MCP servers ("Harness support")
-  primary-split           optional presence flag; primary home only: a captain thread and a separate supervisor (bin/fm_primary_chat.py header)
+  primary-split           optional presence flag: a captain thread and a separate supervisor (first mate: bin/fm_primary_chat.py header; second mate: bin/fm-captain-lane.sh header)
   model-policy.json       home-local route policy for in-place switches (bin/fm_model_switch.py owns validation and policy semantics)
   power-host              optional ssh alias for fleet quota reads (bin/fm_report.py owns default and bridge flow)
   shared-skills           optional skills repo shipped to connected machines; primary home only (bin/fm-machine.sh header)
@@ -66,6 +66,7 @@ state/
   <id>.agent-diagnostics{,.1,.2}  stream-agent diagnostic records (`primary-chat.agent-diagnostics` for the statusless primary); format and limits are owned by docs/stream-backend.md; task-owned files are removed by teardown
   <id>.turn-ended         touched by bin/fm-deck-worker.sh at turn end
   <id>.deck-session       secondmate conversation binding; bin/fm-deck-worker.sh header owns format, resume eligibility, and retirement
+  <id>.supervisor-session <id>.captain-lane <id>.captain-lane.log  a split second mate's supervisor session, captain-lane marker and lane log (bin/fm-captain-lane.sh header)
   <id>.model <id>.deck-caps  in-place model choice and live driver capability (bin/fm-control.sh owns public behavior; bin/fm_model_switch.py owns capability checks)
   <id>.progress           in-turn native activity, read for the busy-age bound only (bin/fm-busy-event.sh)
   <id>.crew-state         local ship task's validation record for file watchers; bin/fm-task-state-lib.sh "PUBLISHED RECORD" owns fields, refreshes, and cleanup
