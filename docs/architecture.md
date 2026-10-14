@@ -285,7 +285,7 @@ It never writes a skill, and in a primary home it cascades to every registered s
 
 ## Local clones stay fresh
 
-Locked session start, PR-based teardown, and merged-PR wakes fast-forward remote-backed project clones only when the clone is safe to move.
+Locked session start, PR-based teardown subject to [its preservation guards](../bin/fm-teardown.sh), and merged-PR wakes fast-forward remote-backed project clones only when the clone is safe to move.
 Dirty clones, non-default branches, detached HEADs with unique commits, and diverged defaults are reported as `STUCK:` and left untouched.
 A stale `.git/packed-refs.lock` is removed only when the shared staleness proof shows it abandoned ([configuration.md](configuration.md#toolchain)).
 
