@@ -6,8 +6,8 @@ Load this before changing session startup, turn-end handling, watcher supervisio
 ## Session start
 
 `../../../AGENTS.md` section 3 remains the behavioral owner.
-`../../../bin/fm-deck-chat.sh` runs `../../../bin/fm-session-start.sh` once per host start and hands its digest to the Deck session.
-There is no separate primary hook layer: the host itself owns startup, supervision, and cleanup for its whole lifetime.
+The [chat host header](../../../../../bin/fm-deck-chat.sh) owns startup and cleanup, including when it runs session start; there is no separate primary hook layer.
+[`bin/fm_primary_chat.py`](../../../../../bin/fm_primary_chat.py) owns split-mode role responsibilities.
 
 ## Turn end
 

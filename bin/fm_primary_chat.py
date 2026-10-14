@@ -6,6 +6,11 @@ CLI. Both call this file, which owns the on-disk layout:
 
   state/primary-chat.json                 the host record (0600, atomic)
   state/primary-chat/session              the persisted deck session id
+  state/primary-chat/.session.lock        per-role session selection lock, shared
+                                          by prepare and split-start handover
+  state/primary-chat/host.lock            split captain host singleton (flock)
+  state/primary-chat/<session>/split-archived/  pending operational input removed
+                                          from the captain inbox at split start
   state/primary-chat/<session>/steer/     deck's --steer-dir (one per session,
                                           because deck's seq space is per session)
       .seq  .publish.lock                publisher bookkeeping (deck ignores
@@ -42,15 +47,30 @@ CLI. Both call this file, which owns the on-disk layout:
                                           (last 1000), for the thread to mark where it was;
                                           in-place entries are not application receipts
 
-Split mode (config/primary-split): two hosts serve one home. The captain role
-keeps every name above (the captain's own conversation, no session lock, no
-watcher, no project context). The supervisor role (fm-deck-chat.sh --role
-supervisor, keeper dev.firstmate.supervisor.<hash>) uses supervisor-chat.json,
-supervisor-chat/, supervisor.busy-state and the same layout, holds the session
-lock and owns the watcher. Outside split mode the supervisor role resolves to
-the captain role, so `fm-send supervisor` and other operational publishers
-always reach whoever supervises. FM_CHAT_ROLE or --role (before the
-subcommand) picks the role.
+Split mode is enabled by the presence of primary-split in FM_CONFIG_OVERRIDE,
+else <home>/config; it is intended for primary homes, not secondmates.
+Two hosts serve one home:
+  - captain (default): keeps all primary names above, the persisted conversation
+    and chosen model, the primary busy id, stream label primary-chat and keeper
+    dev.firstmate.primary.<hash>. It takes no home session lock, runs no session
+    start or watcher, and uses --no-project-context. Its positional first prompt
+    on every start is .agents/skills/captain-thread/SKILL.md, the sole captain
+    contract, queued ahead of pending steering; the host never moves pending
+    captain input. Known operational input is archived in split-archived/;
+    peer messages and unconsumed startup digests are handed to the supervisor's
+    persisted inbox before archiving, even without a live supervisor host.
+  - supervisor (fm-deck-chat.sh --role supervisor): uses supervisor-chat.json,
+    supervisor-chat/, supervisor.busy-state, stream label supervisor-chat and
+    keeper dev.firstmate.supervisor.<hash>. Its initial session id is
+    firstmate-supervisor-<timestamp>. It holds the home session lock, runs
+    session start, owns the watcher and reads AGENTS.md.
+Each role has its own session and model choice; captain host.lock prevents a
+second captain host without competing for the supervisor's home session lock.
+Outside split mode operational publishers selecting supervisor resolve to the
+one primary. The shell host instead refuses non-keeper supervisor modes, and
+a supervisor keeper waits for the switch without starting a host.
+FM_CHAT_ROLE or --role (before the subcommand) picks the role in this module;
+bin/fm-deck-chat.sh's header owns operator setup and lifecycle commands.
 
 Record (state/primary-chat.json):
   {"version":1,"home":ABS,"session":ID,"steer_dir":ABS,"events_file":ABS,
@@ -73,23 +93,25 @@ Subcommands:
       2 rejected (rejected/SEQ.msg or steer_rejected), 3 no live host
   prepare --home H [--session ID]   create dirs, persist and print the session
   handover --home H --file F   publish F into the role's current session inbox
-      without a live host (the split-start hand-over of a peer message)
+      without a live host (split-start transfer of peer messages and startup digests)
   record write --home H --session ID --host-pid N [--endpoint T] [--model ROUTE] [--startup-file F]
                [--set-model]   (the host's deck takes `deck-control: set_model`)
       publishes startup before making the host visible, retaining pending messages
   record stop --home H --host-pid N
   record pid --home H        print the live host pid; exit 3 when none
   supervise --home H --host-pid N --gen G --events-offset N [--effort-headers]
-      events -> busy-state (state/primary.busy-state, source deck-wrapper) and
-      the watcher child (bin/fm-watch-arm.sh) whose wakes become steer
-      publishes; a failed watcher is restarted with backoff, never fatal.
-      Paused while state/.afk exists (the away daemon owns the watcher then).
+      events -> the role's busy-state (source deck-wrapper); only the supervising
+      role (see split mode above) runs the watcher child (bin/fm-watch-arm.sh),
+      whose wakes become steer publications. A failed watcher is restarted with
+      backoff, never fatal. Watching pauses while state/.afk exists (the away
+      daemon owns the watcher then).
       With --effort-headers, each wake gets the lowered `deck-effort:` header
       bin/fm-effort-policy.sh classify picks, and a lowered turn's tool output
       goes to its observe check as each tool result is processed.
   service --home H --deck-chat PATH [--model ROUTE]
       the keeper a launchd agent runs (bin/fm-deck-chat.sh install-service):
-      adopts a live host and waits while any live harness holds the session lock.
+      adopts a live host; roles bound to the home session lock wait while any
+      live harness holds it (see split mode above).
       For ordinary recovery, while captain-start is younger than
       FM_DECK_CHAT_SERVICE_START_GRACE, publishes waiting with detail "captain start
       in progress", even if it never observed the stopped marker. Once grace and
@@ -143,11 +165,7 @@ def default_home():
     return os.environ.get('FM_HOME') or str(BIN.parent)
 
 
-# Split mode (config/primary-split) runs two deck chat hosts in one home: the
-# captain thread (role captain, today's primary names, the captain's own
-# conversation) and the supervisor (role supervisor, every wake and the
-# session lock). Without the switch only the captain role exists and it does
-# both jobs, as before. FM_CHAT_ROLE or the global --role picks the role.
+# Role-dependent names for the layout documented in the module header.
 ROLES = {
     'captain': {'record': 'primary-chat.json', 'root': 'primary-chat', 'busy': 'primary',
                 'session': 'firstmate-primary', 'label': 'primary-chat'},
@@ -207,8 +225,11 @@ def host_alive(pid, home, role=None):
     """True when pid is a live fm-deck-chat host for exactly this home.
 
     The host re-execs with argv[0] fm-deck-chat, the physical script path,
-    and --home <canonical home> last. The terminal home suffix prevents a
-    whitespace-delimited path prefix from accepting another home's host;
+    and --home <canonical home> last. A supervisor has --role supervisor
+    immediately before --home; its presence must match the resolved role so
+    a captain and supervisor in the same home cannot accept each other's pid.
+    The terminal home suffix prevents a whitespace-delimited path prefix from
+    accepting another home's host;
     resolving the script path keeps symlinked launches consistent with BIN.
     Steering reads, publications and stop all use this identity check.
     Regression coverage: tests/fm-deck-chat.test.sh.
@@ -744,7 +765,7 @@ MODEL_RE = re.compile(r'\A[a-z0-9][a-z0-9._-]{0,63}(?:/[A-Za-z0-9][A-Za-z0-9._:-
 
 
 def chosen_model(root, fallback=''):
-    """The model the captain chose for the primary (state/primary-chat/model), else `fallback`."""
+    """The configured model for this role's root, else `fallback`."""
     try:
         model = (Path(root) / 'model').read_text().strip()
     except OSError:
@@ -778,7 +799,7 @@ def keeper_view(root):
 
 
 def note_switch(root, was, now):
-    """Append one line to state/primary-chat/switches (the thread's divider marks)."""
+    """Record one route change under this role's root (the thread's divider marks)."""
     path = Path(root) / 'switches'
     try:
         lines = path.read_text().splitlines()[-999:]
@@ -853,7 +874,7 @@ def env_seconds(name, default):
 
 
 class Keeper:
-    """Keeps one home's primary host running; see the `service` docstring entry."""
+    """Keeps one role's host running; see the `service` docstring entry."""
 
     def __init__(self, args):
         self.home, self.state, _, _ = paths(args.home)

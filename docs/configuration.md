@@ -203,13 +203,15 @@ Retired tmux records still require the exact `fm-<id>` window shape, and retired
 
 ## Away-mode supervisor backend (FM_SUPERVISOR_BACKEND / FM_SUPERVISOR_TARGET)
 
-The `/afk` sub-supervisor (`bin/fm-supervise-daemon.sh`) delivers escalation digests to the primary, a deck-chat host (`bin/fm-deck-chat.sh`), over the stream backend.
+The `/afk` sub-supervisor (`bin/fm-supervise-daemon.sh`) delivers escalation digests to the supervising deck-chat host (`bin/fm-deck-chat.sh`) over the stream backend.
+[`bin/fm_primary_chat.py`](../bin/fm_primary_chat.py) owns split-mode role resolution.
 `FM_SUPERVISOR_BACKEND` may only name `stream`; any other value refuses at daemon startup.
 `FM_SUPERVISOR_TARGET=<hub-tag>:<endpoint-id>` overrides the target.
 Otherwise [`bin/fm-supervisor-target-lib.sh`](../bin/fm-supervisor-target-lib.sh) uses the stream endpoint this process runs in (`FM_STREAM_ENDPOINT_ID` with `FM_STREAM_HUB`), else the live deck-chat record's endpoint from `bin/fm-primary-steer.sh status`, else `-` so delivery uses steering alone.
 Both discovery sources are logged at startup, so a wrong-but-resolving fallback is detectable.
 
-A digest goes to the primary through `bin/fm-primary-steer.sh publish --kind away` (`FM_PRIMARY_STEER_BIN` overrides the client), keeping the typed operational-input prefix so the primary reads it as internal.
+A digest goes to the supervising host through `bin/fm-primary-steer.sh publish --kind away` (`FM_PRIMARY_STEER_BIN` overrides the client), keeping the typed operational-input prefix so the receiving session reads it as internal.
+The daemon selects `FM_CHAT_ROLE=supervisor` for all steer calls below, including status and delivery checks.
 `fm-primary-steer.sh status` is the busy guard: anything but `idle` defers.
 Submit proof is `fm-primary-steer.sh delivered <seq>` within the `FM_INJECT_CONFIRM_RETRIES` x `FM_INJECT_CONFIRM_SLEEP` budget.
 An unacknowledged digest stays buffered, a changed or unreadable session drops its pending binding and keeps the buffer for republication, and a growing digest may repeat older events rather than lose them; `inject_msg_stream` in the daemon owns those mechanics.

@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # fm-deck-chat.sh - host a `deck chat` primary for one firstmate home.
 #
-# The captain talks to the primary in deck's own terminal UI; this host is the
-# process around it that firstmate's supervision contracts need:
+# The captain talks to the primary in deck's own terminal UI. The lifecycle
+# below describes the default unsplit host, or the supervisor in a split home;
+# bin/fm_primary_chat.py owns role selection, record names and the captain
+# thread's exclusions. This host provides the supervision lifecycle:
 #   - it is the session-lock owner: it runs as argv[0] `fm-deck-chat`, which
 #     bin/fm-session-lock-lib.sh accepts as a harness, takes the lock with
 #     bin/fm-lock.sh before anything else (so a second primary of ANY harness
@@ -124,17 +126,20 @@
 #       Raise the keeper's primary-down alert through the away-mode wedge alarm
 #       channels (config/wedge-alarm; docs/wedge-alarm.md), titled
 #       "firstmate: primary DOWN".
-# --role supervisor (every mode, before --home) runs the split home's supervisor
-#   instead of the captain's primary: bin/fm_primary_chat.py's header owns split
-#   mode (config/primary-split), the role names and what each role holds. A
-#   supervisor host refuses to start outside split mode, and its keeper
-#   (install-service --role supervisor, label dev.firstmate.supervisor.<hash>)
-#   waits for the switch. In split mode the captain role takes no session lock,
-#   runs no session start and no watcher, reads no project context, and starts
-#   each run with .agents/skills/captain-thread/SKILL.md as its first message.
+# --role supervisor (every mode, before --home) selects the supervisor;
+#   omitted means captain. bin/fm_primary_chat.py's header owns split mode,
+#   role names, keeper labels and what each role holds.
+#   To enable split mode in a primary home, stop the existing primary before
+#   creating config/primary-split (under FM_CONFIG_OVERRIDE when set), then
+#   start both roles, using --role supervisor for the second host.
+#   Keep the captain's chosen model on the default role; the supervisor has
+#   an independent model choice. For macOS recovery, install-service once
+#   per role; installing only the default role does not start a supervisor.
+#   Stop both hosts before removing the switch. The supervisor keeper waits
+#   while it is absent; all non-keeper supervisor modes refuse outside split.
 # --home defaults to FM_HOME, else this checkout. --session defaults to the id
-# persisted in state/primary-chat/session (created on first run), so every
-# restart resumes the same deck session.
+# persisted in the role's session file (created on first run; layout owned by
+# bin/fm_primary_chat.py), so every restart resumes that role's deck session.
 #
 # ENVIRONMENT
 #   FM_DECK_BIN            deck executable (default: deck on PATH)

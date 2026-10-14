@@ -2,6 +2,8 @@
 # fm-primary-steer.sh - publish to and read the steering inbox of a `deck chat`
 # primary hosted by bin/fm-deck-chat.sh. The inbox is deck's --steer-dir
 # (~/Projects/deck docs/steering.md); bin/fm_primary_chat.py owns the layout.
+# FM_CHAT_ROLE selects the host for every subcommand; bin/fm_primary_chat.py's
+# header owns role names, defaults and split-mode resolution.
 #
 # Usage (every subcommand takes --home H; default FM_HOME, else this checkout):
 #   fm-primary-steer.sh publish (--text TEXT | --file F) [--kind wake|away|captain|other]
@@ -17,8 +19,7 @@
 #   fm-primary-steer.sh delivered <seq>
 #       Exit 0 delivered (steer_acked >= seq or handled/<seq>.msg); 1 pending;
 #       2 rejected (rejected/<seq>.msg or steer_rejected); 3 no live primary.
-# Callers that shell out to this script honor FM_PRIMARY_STEER_BIN, so tests
-# can substitute it.
+# Callers honor FM_PRIMARY_STEER_BIN to substitute this client in tests.
 # Attachment mapping is owned by bin/fm_stream_deck.py::with_deck_images.
 # If the mapped body exceeds 65536 UTF-8 bytes, publish the original body
 # instead; the original must still satisfy the publish limit above.
