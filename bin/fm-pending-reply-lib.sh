@@ -207,9 +207,11 @@ fm_pending_reply_text_has_corr() {  # <text> <corr_id>
   return 1
 }
 
-# Sanitize a short request summary: single line, bounded, no control chars. Letters, accents
-# and punctuation in any language stay ("você", "física"): Fleet Town shows this line as the
-# captain's words. Control, format and private-use characters and symbols such as emoji go.
+# Preserve Unicode letters, accents and punctuation in the request summary because
+# Fleet Town shows it as the captain's words. Perl removes control, format,
+# private-use and unassigned characters, plus other/modifier symbols (including emoji).
+# If Perl fails or is unavailable, fall back to the legacy printable-ASCII filter.
+# Regression: tests/fm-captain-direct-echo.test.sh.
 fm_pending_reply_summarize() {  # <text>
   local text=$1 cleaned
   cleaned=$(printf '%s' "$text" | perl -CSD -0777 -pe 's/[\t\r\n]/ /g; s/[\p{C}\p{So}\p{Sk}]//g; s/\A\s+//; s/\s+\z//' 2>/dev/null) ||
