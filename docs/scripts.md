@@ -75,6 +75,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm_stream_deck.py`      | Apply stream hub orders to a Deck worker's durable task inbox |
 | `fm_model_switch.py`     | Checks and live publication for `fm-control.sh <task> model`, the in-place Deck model switch |
 | [`fm-primary-steer.sh`](../bin/fm-primary-steer.sh) | Publish to and read the steering inbox of a `deck chat` primary (`fm_primary_chat.py` owns the layout) |
+| [`fm-captain-note.sh`](../bin/fm-captain-note.sh) | A split home's supervisor reaches the captain through the captain thread |
 | [`fm-effort-policy.sh`](../bin/fm-effort-policy.sh) | Decide from a turn's source whether a Deck supervisor turn may run at a lower reasoning effort ([configuration](configuration.md#turn-effort-configeffort-policyjson)) |
 | `fm-config-push.sh`      | Push declared inherited local material to live local or remote secondmates and send the placement-specific config reread when changed |
 | `fm-project-mode.sh`     | Resolve a project's registered delivery posture from `data/projects.md` for fleet sync and home seeding |

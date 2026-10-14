@@ -12,6 +12,8 @@ LAB=$(fm_test_tmproot fm-deck-chat)
 BIN="$LAB/bundle/bin"
 mkdir -p "$LAB/bundle" "$LAB/tools"
 cp -R "$ROOT/bin" "$BIN"
+mkdir -p "$LAB/bundle/.agents/skills"
+cp -R "$ROOT/.agents/skills/captain-thread" "$LAB/bundle/.agents/skills/"
 STEER="$BIN/fm-primary-steer.sh"
 export FM_DECK_CHAT_WATCH_BACKOFF=0.2
 
@@ -52,7 +54,7 @@ assert argv[0] == 'chat', argv
 def opt(name):
     return argv[argv.index(name) + 1]
 steer, events = pathlib.Path(opt('--steer-dir')), pathlib.Path(opt('--events'))
-hook = next(a.split('=', 1)[1] for a in argv if a.startswith('pre_complete='))
+hook = next((a.split('=', 1)[1] for a in argv if a.startswith('pre_complete=')), 'true')
 log = pathlib.Path(os.environ['FAKE_DECK_LOG'])
 log.write_text(json.dumps({'argv': argv, 'pid': os.getpid(), 'cwd': os.getcwd(),
                            'model_policy': os.environ.get('DECK_MODEL_POLICY')}))
@@ -1434,7 +1436,65 @@ if [ -n "${FM_TEST_DECK_CHAT_CASES:-}" ]; then
   exit 0
 fi
 
+test_split_home_captain_thread_and_supervisor() {
+  local home sup cap out rc
+  home=$(new_home split)
+  : > "$home/config/primary-split"
+  FAKE_DECK_LOG="$LAB/sup.log" "$BIN/fm-deck-chat.sh" --role supervisor --home "$home" < /dev/null > "$LAB/sup.out" 2>&1 &
+  sup=$!
+  fm_test_track_helper_pid "$sup"
+  wait_for 10 "the supervisor registers" env FM_CHAT_ROLE=supervisor "$STEER" status --home "$home"
+  assert_equals "$sup" "$(cat "$home/state/.lock")" "the supervisor holds the session lock"
+  wait_for 10 "the supervisor's digest turn" turns_with "$LAB/sup.log" 'fixture session digest'
+  assert_contains "$(turns_with "$LAB/sup.log" 'fixture session digest')" 'You are the supervisor' "the supervisor is told its role"
+  assert_contains "$(cat "$home/state/supervisor-chat/session")" 'firstmate-supervisor-' "the supervisor has its own session"
+  wait_for 10 "the supervisor's watcher" watch_count "$home" 1
+  wait_for 10 "the supervisor's busy-state" grep -q 'state=idle ' "$home/state/supervisor.busy-state"
+
+  FAKE_DECK_LOG="$LAB/cap.log" "$BIN/fm-deck-chat.sh" --home "$home" < /dev/null > "$LAB/cap.out" 2>&1 &
+  cap=$!
+  fm_test_track_helper_pid "$cap"
+  wait_for 10 "the captain thread registers" env FM_CHAT_ROLE=captain "$STEER" status --home "$home"
+  assert_equals "$sup" "$(cat "$home/state/.lock")" "the captain thread leaves the lock with the supervisor"
+  assert_equals 1 "$(wc -l < "$home/session-start.runs" | tr -d ' ')" "only the supervisor runs session start"
+  wait_for 10 "the captain thread's deck starts" test -s "$LAB/cap.log"
+  out=$(cat "$LAB/cap.log")
+  assert_contains "$out" '"--no-project-context"' "the captain thread reads no project context"
+  case "$out" in *pre_complete=*) fail "the captain thread must not check the session lock" ;; esac
+  wait_for 10 "the captain thread's contract turn" turns_with "$LAB/cap.log" 'captain thread'
+  assert_contains "$(turns_with "$LAB/cap.log" 'captain thread')" 'Hand every order to the supervisor' "the contract is its first message"
+  sleep 1
+  assert_equals 1 "$(wc -l < "$home/watch.pids" | tr -d ' ')" "the captain thread arms no watcher"
+
+  out=$(FM_HOME="$home" "$BIN/fm-send.sh" primary 'how is the fleet?')
+  assert_contains "$out" 'seq=' "fm-send primary publishes"
+  wait_for 10 "the captain's message reaches the thread" turns_with "$LAB/cap.log" 'how is the fleet?'
+  FM_HOME="$home" "$BIN/fm-send.sh" supervisor 'merge the PR' >/dev/null
+  wait_for 10 "the order reaches the supervisor" turns_with "$LAB/sup.log" 'merge the PR'
+  FM_HOME="$home" FM_CHAT_ROLE=supervisor "$BIN/fm-captain-note.sh" 'the PR merged' >/dev/null
+  wait_for 10 "the note reaches the captain thread" turns_with "$LAB/cap.log" '[fm-supervisor-note] the PR merged'
+  echo 'wake: split fixture' > "$home/wake.trigger"
+  wait_for 10 "the wake reaches the supervisor" turns_with "$LAB/sup.log" 'wake: split fixture'
+  if turns_with "$LAB/cap.log" 'wake: split fixture' >/dev/null; then fail "a wake must never reach the captain thread"; fi
+  if turns_with "$LAB/sup.log" 'how is the fleet?' >/dev/null; then fail "the captain's message must not reach the supervisor"; fi
+
+  "$BIN/fm-deck-chat.sh" stop --home "$home" >/dev/null
+  wait_for 10 "the captain thread exits" dead "$cap"
+  alive "$sup" || fail "stopping the captain thread leaves the supervisor running"
+  "$BIN/fm-deck-chat.sh" stop --role supervisor --home "$home" >/dev/null
+  wait_for 10 "the supervisor exits" dead "$sup"
+  assert_absent "$home/state/.lock" "the supervisor releases the lock"
+
+  rm -f "$home/config/primary-split"
+  rc=0; FM_HOME="$home" "$BIN/fm-captain-note.sh" 'anything' 2>/dev/null || rc=$?
+  expect_code 2 "$rc" "a captain note is refused outside split mode"
+  rc=0; FAKE_DECK_LOG="$LAB/sup2.log" "$BIN/fm-deck-chat.sh" --role supervisor --home "$home" < /dev/null > "$LAB/sup2.out" 2>&1 || rc=$?
+  expect_code 1 "$rc" "a supervisor host refuses to start outside split mode"
+  pass "fm-deck-chat.sh: a split home runs a captain thread and a supervisor, each with its own inputs"
+}
+
 test_steer_contract_without_a_host
+test_split_home_captain_thread_and_supervisor
 test_stop_marker
 test_service_install
 test_service_alert

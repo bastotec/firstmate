@@ -50,7 +50,8 @@ fm_supervisor_primary_chat_endpoint() {
   local bin status endpoint
   bin=${FM_PRIMARY_STEER_BIN:-$FM_SUPERVISOR_TARGET_LIB_DIR/fm-primary-steer.sh}
   [ -x "$bin" ] || return 1
-  status=$("$bin" status --home "${FM_HOME:-$FM_SUPERVISOR_TARGET_LIB_DIR/..}" </dev/null 2>/dev/null) || return 1
+  # The supervisor role is the split home's supervisor, else the one primary.
+  status=$(FM_CHAT_ROLE=supervisor "$bin" status --home "${FM_HOME:-$FM_SUPERVISOR_TARGET_LIB_DIR/..}" </dev/null 2>/dev/null) || return 1
   endpoint=$(printf '%s' "$status" | jq -r '.endpoint // empty' 2>/dev/null) || return 1
   printf '%s' "${endpoint:--}"
 }

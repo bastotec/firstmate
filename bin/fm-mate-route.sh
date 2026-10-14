@@ -191,7 +191,7 @@ primary_holds() {  # <tagged-prefix>
 import sys
 sys.path.insert(0, sys.argv[1])
 from fm_primary_chat import paths
-_, _, _, root = paths(sys.argv[2])
+_, _, _, root = paths(sys.argv[2], 'supervisor')
 needle = sys.argv[3].encode()
 for steer in root.glob('*/steer'):
     for sub in ('', 'handled', 'rejected'):
@@ -213,7 +213,8 @@ deliver_primary() {  # <record>
     DELIVERED_HOW=chat; return 0
   fi
   : > "$marker" || return 1
-  FM_HOME="$FM_HOME" "$SEND_BIN" primary "$tagged" >/dev/null 2>&1 || rc=$?
+  # A peer message is supervision input: the supervisor of a split home takes it.
+  FM_HOME="$FM_HOME" "$SEND_BIN" supervisor "$tagged" >/dev/null 2>&1 || rc=$?
   [ "$rc" -ne 0 ] || { DELIVERED_HOW=chat; return 0; }
   [ "$rc" -eq 3 ] || return 1
   # No Deck chat primary is running: the first mate reads its wake queue.

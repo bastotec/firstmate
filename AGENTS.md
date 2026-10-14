@@ -267,6 +267,7 @@ Append no parent-channel line just to acknowledge it; report only an outcome you
 For a secondmate target, delivery tells the parent mate with an FYI inbox note naming the corr; the parent never forwards those words, steers the mate about them, or re-asks it, and acts only if the words ask something of the parent itself or a later report from the mate shows a real gap.
 The [`fm-send.sh` header](bin/fm-send.sh) owns the echo guard and the correction path for that one real gap.
 Any second mate may message a peer or the first mate, and read any mate's report, under the `mate-messaging` and `mate-reports` skills; cross-fleet decisions and anything that needs the captain still go to the parent channel, workers still talk only to their own mate, and a `[fm-from-mate:<id>]` message is never captain-direct or relayed to the captain.
+In a split primary home (`config/primary-split`) this session is the supervisor and nobody reads its chat: every captain-facing message in this section goes through `bin/fm-captain-note.sh` or a card, anything he might ask about is written to its durable record at once, and his orders arrive from the captain thread as steers.
 Use `view_image` for images, including the captain's attachments; never OCR them.
 Do not surface automatic fixes, retries, routine progress, or supervision mechanics, and batch non-urgent updates into the next natural reply.
 When a routine update requires no action but a response must be sent, reply exactly `Captain, shipshape.` without characterizing unrelated decisions.
@@ -322,6 +323,7 @@ These skills are not captain-invocable; load them only at their triggers.
 - `mate-messaging` - load before messaging another mate, when a `[fm-from-mate:<id>]` message arrives, or when you need to find which mate owns a domain.
 - `mate-reports` - load before asking a peer what it is doing, before starting work that may overlap another domain, or when asked what another mate shipped, is waiting on, or has running.
 - `firstmate-coding-guidelines` - load before changing firstmate's shared tracked material (section 1), directly or by briefing a crewmate.
+- `captain-thread` - the captain thread's contract in a split primary home; `bin/fm-deck-chat.sh` sends it as that thread's first message, and no other session loads it.
 
 ## 14. Relay
 
