@@ -75,4 +75,21 @@ test_unacknowledged_answer_is_never_repeated() {
   pass "fm-captain-lane: an answered record is never answered again, and its acknowledgement is retried"
 }
 
+test_unwritable_answer_list_takes_no_turn() {
+  setup
+  : > "$DIR/state/mate.captain-lane.answered"
+  chmod 444 "$DIR/state/mate.captain-lane.answered"
+  write_captain 'held question'
+  start_lane
+  sleep 3
+  [ "$(turns_with 'held question')" = 0 ] || fail "a turn ran although its answer could not be recorded"
+  chmod 644 "$DIR/state/mate.captain-lane.answered"
+  wait_until 150 answered_at_least 'held question' 1 || fail "the lane did not resume once it could record"
+  sleep 1
+  stop_lane
+  [ "$(turns_with 'held question')" = 1 ] || fail "the held question was answered more than once"
+  pass "fm-captain-lane: no turn runs while its answer cannot be recorded"
+}
+
 test_unacknowledged_answer_is_never_repeated
+test_unwritable_answer_list_takes_no_turn

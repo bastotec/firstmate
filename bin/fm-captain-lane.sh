@@ -105,6 +105,7 @@ ANSWERED="$STATE/$ID.captain-lane.answered"
 acknowledge_answered() {
   local name keep=''
   [ -s "$ANSWERED" ] || return 0
+  [ -r "$ANSWERED" ] && [ -w "$ANSWERED" ] || return 1
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     if [ -f "$INBOX/$name" ] && ! { mkdir -p "$INBOX/handled" && mv -f "$INBOX/$name" "$INBOX/handled/$name"; }; then
@@ -124,8 +125,10 @@ sys.path.insert(0, sys.argv[1])
 from fm_stream_deck import CAPTAIN_ONLY
 try:
     answered = set(Path(sys.argv[3]).read_text().split())
-except OSError:
+except FileNotFoundError:
     answered = set()
+except OSError:
+    sys.exit(3)  # an unreadable list answers nothing: wait rather than repeat
 found = []
 for source in Path(sys.argv[2]).glob('*.msg'):
     if not source.stem.isdigit() or source.name in answered:
@@ -142,9 +145,25 @@ PY
 }
 
 contract_sent=0
-retry_at=0 backoff=0
+retry_at=0 backoff=0 unrecorded=''
 while kill -0 "$HOST_PID" 2>/dev/null; do
-  acknowledge_answered
+  # Fail closed: an answer that could be neither recorded nor acknowledged
+  # holds every later turn until it is recorded, and no turn starts unless its
+  # answer could be recorded.
+  if [ -n "$unrecorded" ]; then
+    if printf '%s\n' "$unrecorded" >> "$ANSWERED" 2>/dev/null; then
+      unrecorded=''
+    else
+      sleep "$POLL"
+      continue
+    fi
+  fi
+  acknowledge_answered || true
+  if ! { : >> "$ANSWERED"; } 2>/dev/null; then
+    log "cannot write $ANSWERED; taking no captain turns until it can"
+    sleep 5
+    continue
+  fi
   rec=$(next_record) || rec=''
   if [ -z "$rec" ] || [ "$(date +%s)" -lt "$retry_at" ]; then
     sleep "$POLL"
@@ -187,11 +206,13 @@ $prompt"
     if [ -f "$rec" ]; then
       # Durable before the move, so neither a failed move nor a restart answers
       # it twice.
-      if ! printf '%s\n' "${rec##*/}" >> "$ANSWERED"; then
-        log "could not record $rec as answered"
+      if printf '%s\n' "${rec##*/}" >> "$ANSWERED" 2>/dev/null; then
+        acknowledge_answered || true
+        [ ! -f "$rec" ] || log "answered $rec but could not move it to handled/ yet; retrying"
+      elif ! { mkdir -p "$INBOX/handled" && mv -f "$rec" "$INBOX/handled/${rec##*/}"; } 2>/dev/null; then
+        log "answered $rec but could neither record nor move it; holding later turns"
+        unrecorded=${rec##*/}
       fi
-      acknowledge_answered
-      [ ! -f "$rec" ] || log "answered $rec but could not move it to handled/ yet; retrying"
     fi
   else
     backoff=$(( backoff ? backoff * 2 : RETRY ))
