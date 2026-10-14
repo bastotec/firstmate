@@ -634,6 +634,58 @@ assert "1 working now" in d["headline"], d["headline"]
   pass "fm-report: a mate's report comes from records, read-only, from the main or a local mate home"
 }
 
+test_report_keeps_independent_waits_and_names_bad_crew_time() {
+  local parent json empty
+  parent=$(make_fleet report-gaps dave cadia)
+  seed_report_home "$parent" dave "$(date +%Y-%m-%d)"
+  seed_report_home "$parent" cadia "$(date +%Y-%m-%d)"
+  python3 - "$parent/homes/dave/state/home-summary.json" "$parent/homes/cadia/state/home-summary.json" <<'PY'
+import json, sys
+dave, cadia = sys.argv[1:]
+d = json.load(open(dave))
+d["decisions_open"] += [{"id": "dave-w3", "key": "ci", "verb": "needs-decision", "summary": "Retry CI?", "source": "status"},
+                        {"id": "h1", "key": "h1", "verb": "captain-hold", "summary": "Approve the release", "source": "backlog"},
+                        {"id": "dave-w4", "key": "ci", "verb": "needs-decision", "summary": "Retry omitted worker CI?", "source": "status"}]
+d["holds"] += [{"id": "dave-w4", "title": "Wait for omitted worker CI", "blocked_by": None, "source": "child-state", "reason": "CI until 18:00Z"}]
+json.dump(d, open(dave, "w"))
+c = json.load(open(cadia))
+c["crew_time"]["intervals"] = [["cadia-w1", 100]]
+json.dump(c, open(cadia, "w"))
+PY
+  json=$(FM_HOME="$parent" "$ROOT/bin/fm-report.sh" dave --json) || fail "report with an open decision on a paused worker failed"
+  printf '%s' "$json" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+w = sorted((x["task"], x["what"], x["on"]) for x in d["waiting"])
+assert ("dave-w3", "Retry CI?", "dave") in w and ("dave-w3", "Wait for CI", "an external wait: CI until 18:00Z") in w, w
+assert ("h1", "Approve the release", "the captain") in w and ("h1", "Ship the release", "w9") in w, w
+assert [x for x in w if x[0] == "dave-w4"] == [("dave-w4", "Retry omitted worker CI?", "dave"), ("dave-w4", "Wait for omitted worker CI", "dave")], w
+assert not any(c["agent"] == "dave-w4" for c in d["crew"]), d["crew"]
+assert [x for x in w if x[0] == "dave-w2"] == [("dave-w2", "Which API shape?", "dave"), ("dave-w2", "Which database?", "dave")], w
+' || fail "an open decision must not hide an independent pause or dependency: $json"
+  json=$(FM_HOME="$parent" "$ROOT/bin/fm-report.sh" cadia --json) || fail "a malformed crew_time must not abort the report"
+  printf '%s' "$json" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert any(g.startswith("cadia: ") for g in d["gaps"]) and d["crew_seconds"] == 0, d["gaps"]
+' || fail "a malformed crew_time should name its home in gaps: $json"
+  cp "$parent/homes/dave/state/home-summary.json" "$parent/state/home-summary.json"
+  mkdir "$parent/state/crew-time.log"
+  json=$(FM_HOME="$parent" "$ROOT/bin/fm-report.sh" primary --json) || fail "an unreadable crew log must not abort the report"
+  printf '%s' "$json" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert any(g.startswith("first mate: crew time unreadable (state/crew-time.log could not be read") for g in d["gaps"]), d["gaps"]
+' || fail "an unreadable crew log should be named in gaps: $json"
+  python3 "$ROOT/bin/fm_report.py" crew-time "$parent/state" | grep -q '"error": "state/crew-time.log could not be read' \
+    || fail "published crew time should carry the unreadable log"
+  empty="$TMP_ROOT/crew-empty-$RANDOM"
+  mkdir -p "$empty"
+  [ "$(python3 "$ROOT/bin/fm_report.py" crew-time "$empty")" = '{"since": null, "intervals": []}' ] \
+    || fail "an absent crew log is an empty history"
+  pass "fm-report: open decisions keep independent waits, and bad crew time is a named gap"
+}
+
 test_fleet_report_reads_power() {
   local parent json
   parent=$(make_fleet fleet dave)
@@ -720,6 +772,7 @@ PY
 test_local_mate_queues_in_parent_spool
 test_crew_time_survives_teardown
 test_report_reads_local_mates_without_their_turns
+test_report_keeps_independent_waits_and_names_bad_crew_time
 test_fleet_report_reads_power
 test_remote_report_request_is_answered_in_code
 test_report_answer_is_resent_unchanged_and_failures_explain

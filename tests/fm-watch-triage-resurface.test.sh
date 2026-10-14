@@ -113,10 +113,12 @@ test_failed_wake_append_does_not_arm_the_captain_hold_throttle() {
   mkdir -p "$state/.wake-queue"
   printf 'idle, elapsed 1s\n' > "$capture"
   hold_watch_launch "$dir" "$out" "$capture"
-  wait_for_exit "$HOLD_WATCH_PID" 100
+  # This exercises append refusal, not startup latency. Allow the same loaded-
+  # runner budget as wait_poll_cycle before requiring the nonzero exit.
+  wait_for_exit "$HOLD_WATCH_PID" 300
   rc=$?
   rmdir "$state/.wake-queue"
-  [ "$rc" -ne 124 ] || fail "the watcher did not exit when its durable queue could not be written"
+  [ "$rc" -ne 124 ] || fail "the watcher did not exit when its durable queue could not be written: $(cat "$out")"
   [ "$rc" -ne 0 ] || fail "the watcher reported success despite an unwritable durable queue"
   [ -e "$state/.paused-resurfaced-$(hold_key "$state")" ] \
     && fail "a wake that never reached the durable queue still armed the re-surface throttle"
