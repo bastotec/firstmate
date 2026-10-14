@@ -69,12 +69,13 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-stream-agent.py`     | Python reference agent for the stream backend rollback path |
 | `fm-stream-bridge.py`    | Adapt stream hub listings and composer orders to the Bridge UI's live wire format   |
 | [`fm-ui-host-control.py`](../bin/fm-ui-host-control.py) | Route private UI actions and expose browser-safe `targets` discovery ([stream-backend.md](stream-backend.md#private-host-control-routing)) |
-| [`fm-deck-chat.sh`](../bin/fm-deck-chat.sh) | Host a `deck chat` primary: session lock, startup digest, watcher wakes as steers, busy-state, and the launchd service that restarts it |
+| [`fm-deck-chat.sh`](../bin/fm-deck-chat.sh) | Host primary-home Deck chats and their keepers ([role responsibilities](../bin/fm_primary_chat.py)) |
 | [`fm-deck-worker.sh`](../bin/fm-deck-worker.sh) | Endpoint-resident driver that runs one Deck conversation as a crewmate or secondmate (`--secondmate`), turning steers into turns |
 | `fm-deck-stop.py`        | Stop the local Deck drivers of one exact task at a lifecycle boundary |
 | `fm_stream_deck.py`      | Apply stream hub orders to a Deck worker's durable task inbox |
 | `fm_model_switch.py`     | Checks and live publication for `fm-control.sh <task> model`, the in-place Deck model switch |
 | [`fm-primary-steer.sh`](../bin/fm-primary-steer.sh) | Publish to and read the steering inbox of a `deck chat` primary (`fm_primary_chat.py` owns the layout) |
+| [`fm-captain-note.sh`](../bin/fm-captain-note.sh) | A split home's supervisor reaches the captain through the captain thread |
 | [`fm-effort-policy.sh`](../bin/fm-effort-policy.sh) | Decide from a turn's source whether a Deck supervisor turn may run at a lower reasoning effort ([configuration](configuration.md#turn-effort-configeffort-policyjson)) |
 | `fm-config-push.sh`      | Push declared inherited local material to live local or remote secondmates and send the placement-specific config reread when changed |
 | `fm-project-mode.sh`     | Resolve a project's registered delivery posture from `data/projects.md` for fleet sync and home seeding |
@@ -129,7 +130,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-wake-drain.sh`       | Present and acknowledge this home's claimed wake rows alongside status, outcome-backstop, decision, divergence, recovery, and supervision checks |
 | `fm-wake-lib.sh`         | Shared durable wake queue, recovery generations, portable locks, and watcher identity/health helpers |
 | `fm-classify-lib.sh`     | Shared wake classification, durable keyed-decision folds and scans, unread status selection, and bounded latest-event snapshots |
-| `fm-send.sh`             | Send task text, keys, or typed harness invocations, or publish primary chat input (routing contract: [script header](../bin/fm-send.sh)) |
+| `fm-send.sh`             | Send task text, keys, or typed harness invocations, or publish captain/supervisor chat input (routing contract: [script header](../bin/fm-send.sh)) |
 | `fm-control.sh`          | Agent lifecycle control plane: allowlisted verbs for an exact task id ([local transactions](agent-control.md#verbs), [remote routing](remote-secondmates.md#lifecycle-control)) |
 | `fm-control-lib.sh`      | One executable owner of the control-plane verb allowlist, per-harness interrupt/exit mechanics, and per-backend capability |
 | `fm-busy-lib.sh`         | Single owner of the semantic busy-state contract: verdicts, source attribution, and per-harness sources |

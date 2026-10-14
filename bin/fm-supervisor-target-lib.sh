@@ -14,15 +14,15 @@
 # bin/fm-supervise-daemon.sh, so tests/fm-daemon.test.sh keeps exercising the
 # same discovery interface after the daemon sources this file.
 #
-# The primary is a deck-chat host (bin/fm-deck-chat.sh), addressed as
+# The selected deck-chat host (bin/fm-deck-chat.sh) is addressed as
 # "<hub-tag>:<endpoint-id>" when it runs on a stream endpoint. Two signals
 # select it:
 #   - FM_STREAM_ENDPOINT_ID + FM_STREAM_HUB, which the stream agent sets in its
 #     own child's environment;
-#   - a live deck-chat primary, as bin/fm-primary-steer.sh status reports it
-#     from state/primary-chat.json. Its endpoint may be null (a host not on a
-#     stream endpoint); the target is then "-" and only the steer path can
-#     deliver.
+#   - a live deck-chat host, as FM_CHAT_ROLE=supervisor
+#     bin/fm-primary-steer.sh status reports it. bin/fm_primary_chat.py owns
+#     role resolution and record names. Its endpoint may be null (a host not
+#     on a stream endpoint); the target is then "-" and only steering delivers.
 
 FM_SUPERVISOR_TARGET_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -41,16 +41,17 @@ fm_supervisor_stream_env_target() {
   printf '%s:%s' "$tag" "$FM_STREAM_ENDPOINT_ID"
 }
 
-# The endpoint of a LIVE deck-chat primary for this home, as the steer client
-# reports it (`fm-primary-steer.sh status`; FM_PRIMARY_STEER_BIN overrides it).
-# The client owns what "live" means for state/primary-chat.json - not stopped,
-# and host_pid a running fm-deck-chat - so this never re-derives it. Prints the
-# endpoint, or "-" when the host has none; returns 1 when there is no live host.
+# The endpoint of the LIVE supervising deck-chat host for this home, as the
+# steer client reports it (FM_PRIMARY_STEER_BIN overrides the client).
+# The client's role selection and liveness check own record identity, so this
+# never re-derives it. Prints the endpoint, or "-" when the host has none;
+# returns 1 when there is no live host.
 fm_supervisor_primary_chat_endpoint() {
   local bin status endpoint
   bin=${FM_PRIMARY_STEER_BIN:-$FM_SUPERVISOR_TARGET_LIB_DIR/fm-primary-steer.sh}
   [ -x "$bin" ] || return 1
-  status=$("$bin" status --home "${FM_HOME:-$FM_SUPERVISOR_TARGET_LIB_DIR/..}" </dev/null 2>/dev/null) || return 1
+  # The supervisor role is the split home's supervisor, else the one primary.
+  status=$(FM_CHAT_ROLE=supervisor "$bin" status --home "${FM_HOME:-$FM_SUPERVISOR_TARGET_LIB_DIR/..}" </dev/null 2>/dev/null) || return 1
   endpoint=$(printf '%s' "$status" | jq -r '.endpoint // empty' 2>/dev/null) || return 1
   printf '%s' "${endpoint:--}"
 }

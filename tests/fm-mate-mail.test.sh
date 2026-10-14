@@ -443,7 +443,7 @@ test_failed_primary_bookkeeping_never_becomes_delivery() {
   send="$parent/fakebin/send-primary-fail"
   cat > "$send" <<'SH'
 #!/usr/bin/env bash
-if [ "$1" = primary ]; then
+if [ "$1" = primary ] || [ "$1" = supervisor ]; then
   printf 'attempt\n' >> "$FM_HOME/primary.calls"
   if [ -f "$FM_HOME/accept-primary" ]; then
     printf '%s' "$2" > "$FM_HOME/primary.published"

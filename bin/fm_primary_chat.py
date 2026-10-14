@@ -6,6 +6,11 @@ CLI. Both call this file, which owns the on-disk layout:
 
   state/primary-chat.json                 the host record (0600, atomic)
   state/primary-chat/session              the persisted deck session id
+  state/primary-chat/.session.lock        per-role session selection lock, shared
+                                          by prepare and split-start handover
+  state/primary-chat/host.lock            split captain host singleton (flock)
+  state/primary-chat/<session>/split-archived/  pending operational input removed
+                                          from the captain inbox at split start
   state/primary-chat/<session>/steer/     deck's --steer-dir (one per session,
                                           because deck's seq space is per session)
       .seq  .publish.lock                publisher bookkeeping (deck ignores
@@ -42,6 +47,31 @@ CLI. Both call this file, which owns the on-disk layout:
                                           (last 1000), for the thread to mark where it was;
                                           in-place entries are not application receipts
 
+Split mode is enabled by the presence of primary-split in FM_CONFIG_OVERRIDE,
+else <home>/config; it is intended for primary homes, not secondmates.
+Two hosts serve one home:
+  - captain (default): keeps all primary names above, the persisted conversation
+    and chosen model, the primary busy id, stream label primary-chat and keeper
+    dev.firstmate.primary.<hash>. It takes no home session lock, runs no session
+    start or watcher, and uses --no-project-context. Its positional first prompt
+    on every start is .agents/skills/captain-thread/SKILL.md, the sole captain
+    contract, queued ahead of pending steering; the host never moves pending
+    captain input. Known operational input is archived in split-archived/;
+    peer messages and unconsumed startup digests are handed to the supervisor's
+    persisted inbox before archiving, even without a live supervisor host.
+  - supervisor (fm-deck-chat.sh --role supervisor): uses supervisor-chat.json,
+    supervisor-chat/, supervisor.busy-state, stream label supervisor-chat and
+    keeper dev.firstmate.supervisor.<hash>. Its initial session id is
+    firstmate-supervisor-<timestamp>. It holds the home session lock, runs
+    session start, owns the watcher and reads AGENTS.md.
+Each role has its own session and model choice; captain host.lock prevents a
+second captain host without competing for the supervisor's home session lock.
+Outside split mode operational publishers selecting supervisor resolve to the
+one primary. The shell host instead refuses non-keeper supervisor modes, and
+a supervisor keeper waits for the switch without starting a host.
+FM_CHAT_ROLE or --role (before the subcommand) picks the role in this module;
+bin/fm-deck-chat.sh's header owns operator setup and lifecycle commands.
+
 Record (state/primary-chat.json):
   {"version":1,"home":ABS,"session":ID,"steer_dir":ABS,"events_file":ABS,
    "endpoint":"<hub-tag>:<endpoint-id>"|null,"host_pid":N,"started_at":EPOCH,
@@ -62,22 +92,26 @@ Subcommands:
       exit 0 delivered (steer_acked >= SEQ or handled/SEQ.msg), 1 pending,
       2 rejected (rejected/SEQ.msg or steer_rejected), 3 no live host
   prepare --home H [--session ID]   create dirs, persist and print the session
+  handover --home H --file F   publish F into the role's current session inbox
+      without a live host (split-start transfer of peer messages and startup digests)
   record write --home H --session ID --host-pid N [--endpoint T] [--model ROUTE] [--startup-file F]
                [--set-model]   (the host's deck takes `deck-control: set_model`)
       publishes startup before making the host visible, retaining pending messages
   record stop --home H --host-pid N
   record pid --home H        print the live host pid; exit 3 when none
   supervise --home H --host-pid N --gen G --events-offset N [--effort-headers]
-      events -> busy-state (state/primary.busy-state, source deck-wrapper) and
-      the watcher child (bin/fm-watch-arm.sh) whose wakes become steer
-      publishes; a failed watcher is restarted with backoff, never fatal.
-      Paused while state/.afk exists (the away daemon owns the watcher then).
+      events -> the role's busy-state (source deck-wrapper); only the supervising
+      role (see split mode above) runs the watcher child (bin/fm-watch-arm.sh),
+      whose wakes become steer publications. A failed watcher is restarted with
+      backoff, never fatal. Watching pauses while state/.afk exists (the away
+      daemon owns the watcher then).
       With --effort-headers, each wake gets the lowered `deck-effort:` header
       bin/fm-effort-policy.sh classify picks, and a lowered turn's tool output
       goes to its observe check as each tool result is processed.
   service --home H --deck-chat PATH [--model ROUTE]
       the keeper a launchd agent runs (bin/fm-deck-chat.sh install-service):
-      adopts a live host and waits while any live harness holds the session lock.
+      adopts a live host; roles bound to the home session lock wait while any
+      live harness holds it (see split mode above).
       For ordinary recovery, while captain-start is younger than
       FM_DECK_CHAT_SERVICE_START_GRACE, publishes waiting with detail "captain start
       in progress", even if it never observed the stopped marker. Once grace and
@@ -131,10 +165,37 @@ def default_home():
     return os.environ.get('FM_HOME') or str(BIN.parent)
 
 
-def paths(home):
+# Role-dependent names for the layout documented in the module header.
+ROLES = {
+    'captain': {'record': 'primary-chat.json', 'root': 'primary-chat', 'busy': 'primary',
+                'session': 'firstmate-primary', 'label': 'primary-chat'},
+    'supervisor': {'record': 'supervisor-chat.json', 'root': 'supervisor-chat', 'busy': 'supervisor',
+                   'session': 'firstmate-supervisor', 'label': 'supervisor-chat'},
+}
+ROLE = 'captain'
+
+
+def split_mode(home):
+    config = Path(os.environ.get('FM_CONFIG_OVERRIDE') or Path(home) / 'config')
+    return (config / 'primary-split').exists()
+
+
+def role_for(home, role=None):
+    """The role a call lands on: the supervisor exists only in split mode, so
+    outside it the supervisor role is the one primary."""
+    role = role or ROLE
+    return role if role == 'captain' or split_mode(home) else 'captain'
+
+
+def names(home, role=None):
+    return ROLES[role_for(home, role)]
+
+
+def paths(home, role=None):
     home = Path(home).resolve()
     state = home / 'state'
-    return home, state, state / 'primary-chat.json', state / 'primary-chat'
+    n = names(home, role)
+    return home, state, state / n['record'], state / n['root']
 
 
 def atomic_write(path, data, mode=0o600):
@@ -152,20 +213,23 @@ def atomic_write(path, data, mode=0o600):
             os.unlink(tmp)
 
 
-def read_record(home):
-    _, _, record, _ = paths(home)
+def read_record(home, role=None):
+    _, _, record, _ = paths(home, role)
     try:
         return json.loads(record.read_text())
     except (OSError, ValueError):
         return None
 
 
-def host_alive(pid, home):
+def host_alive(pid, home, role=None):
     """True when pid is a live fm-deck-chat host for exactly this home.
 
     The host re-execs with argv[0] fm-deck-chat, the physical script path,
-    and --home <canonical home> last. The terminal home suffix prevents a
-    whitespace-delimited path prefix from accepting another home's host;
+    and --home <canonical home> last. A supervisor has --role supervisor
+    immediately before --home; its presence must match the resolved role so
+    a captain and supervisor in the same home cannot accept each other's pid.
+    The terminal home suffix prevents a whitespace-delimited path prefix from
+    accepting another home's host;
     resolving the script path keeps symlinked launches consistent with BIN.
     Steering reads, publications and stop all use this identity check.
     Regression coverage: tests/fm-deck-chat.test.sh.
@@ -185,14 +249,16 @@ def host_alive(pid, home):
     if len(fields) != 2 or fields[0].startswith('Z'):
         return False
     args = fields[1]
-    home = str(Path(home).resolve())
+    home_path = str(Path(home).resolve())
+    supervisor = ' --role supervisor --home ' in args
     return (args.startswith('fm-deck-chat %s ' % (BIN / 'fm-deck-chat.sh'))
-            and args.endswith(' --home ' + home))
+            and args.endswith(' --home ' + home_path)
+            and supervisor == (role_for(home, role) == 'supervisor'))
 
 
-def live_record(home):
-    record = read_record(home)
-    if not record or record.get('stopped_at') or not host_alive(record.get('host_pid'), home):
+def live_record(home, role=None):
+    record = read_record(home, role)
+    if not record or record.get('stopped_at') or not host_alive(record.get('host_pid'), home, role):
         return None
     return record
 
@@ -359,6 +425,14 @@ def prepare(args):
     home, state, _, root = paths(args.home)
     state.mkdir(exist_ok=True)
     root.mkdir(mode=0o700, exist_ok=True)
+    # A host start and a split-start handover can pick the role's first session
+    # at once; one lock makes them agree on it.
+    with open(root / '.session.lock', 'a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _prepare_locked(args, home, root)
+
+
+def _prepare_locked(args, home, root):
     session = args.session
     if not session:
         try:
@@ -366,7 +440,7 @@ def prepare(args):
         except OSError:
             session = ''
     if not session:
-        session = 'firstmate-primary-%s' % time.strftime('%Y%m%d-%H%M%S')
+        session = '%s-%s' % (names(home)['session'], time.strftime('%Y%m%d-%H%M%S'))
     if not SESSION_RE.match(session):
         print('error: invalid deck session id: %s' % session, file=sys.stderr)
         return 2
@@ -404,6 +478,26 @@ def record_write(args):
     return 0
 
 
+def handover(args):
+    """Publish a file into this role's current session inbox, live host or not
+    (deck reads waiting input when it starts). Used by the split-start hand-over."""
+    _, _, _, root = paths(args.home)
+    try:
+        session = (root / 'session').read_text().strip()
+    except OSError:
+        session = ''
+    if not session:
+        rc = prepare(argparse.Namespace(home=args.home, session=''))
+        if rc:
+            return rc
+        session = (root / 'session').read_text().strip()
+    body = read_body(argparse.Namespace(text=None, file=args.file))
+    if body is None:
+        return 2
+    print('seq=%d' % publish_body(root / session / 'steer', body))
+    return 0
+
+
 def record_stop(args):
     _, _, path, _ = paths(args.home)
     record = read_record(args.home)
@@ -419,6 +513,10 @@ def record_stop(args):
 class Supervisor:
     def __init__(self, args):
         self.home, self.state, _, self.root = paths(args.home)
+        self.busy_name = names(self.home)['busy']
+        # In split mode only the supervisor watches; the captain thread's host
+        # keeps its busy-state and nothing else.
+        self.watching = role_for(self.home) == 'supervisor' or not split_mode(self.home)
         self.host_pid = args.host_pid
         self.gen = args.gen
         record = read_record(self.home)
@@ -456,7 +554,7 @@ class Supervisor:
     # -- events -> busy-state
     def busy(self, state, event):
         result = subprocess.run(
-            [str(BIN / 'fm-busy-event.sh'), 'apply', str(self.state), 'primary', state,
+            [str(BIN / 'fm-busy-event.sh'), 'apply', str(self.state), self.busy_name, state,
              '--gen', self.gen, '--source', 'deck-wrapper', '--event', event],
             capture_output=True, text=True)
         if result.returncode != 0:
@@ -641,8 +739,9 @@ class Supervisor:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, lambda *_: self.stop.set())
         signal.signal(signal.SIGHUP, lambda *_: self.stop.set())
-        threads = [threading.Thread(target=self.follow_events, daemon=True),
-                   threading.Thread(target=self.run_watch, daemon=True)]
+        threads = [threading.Thread(target=self.follow_events, daemon=True)]
+        if self.watching:
+            threads.append(threading.Thread(target=self.run_watch, daemon=True))
         for thread in threads:
             thread.start()
         self.log('supervisor started for host pid %d' % self.host_pid)
@@ -666,7 +765,7 @@ MODEL_RE = re.compile(r'\A[a-z0-9][a-z0-9._-]{0,63}(?:/[A-Za-z0-9][A-Za-z0-9._:-
 
 
 def chosen_model(root, fallback=''):
-    """The model the captain chose for the primary (state/primary-chat/model), else `fallback`."""
+    """The configured model for this role's root, else `fallback`."""
     try:
         model = (Path(root) / 'model').read_text().strip()
     except OSError:
@@ -674,10 +773,10 @@ def chosen_model(root, fallback=''):
     return model if MODEL_RE.match(model) else fallback
 
 
-def primary_idle(state):
-    """True when state/primary.busy-state says the primary is between turns."""
+def primary_idle(state, busy='primary'):
+    """True when state/<busy>.busy-state says the host is between turns."""
     try:
-        text = (Path(state) / 'primary.busy-state').read_text()
+        text = (Path(state) / ('%s.busy-state' % busy)).read_text()
     except OSError:
         return True
     return re.search(r'(?:^|\s)state=idle(?:\s|$)', text) is not None
@@ -700,7 +799,7 @@ def keeper_view(root):
 
 
 def note_switch(root, was, now):
-    """Append one line to state/primary-chat/switches (the thread's divider marks)."""
+    """Record one route change under this role's root (the thread's divider marks)."""
     path = Path(root) / 'switches'
     try:
         lines = path.read_text().splitlines()[-999:]
@@ -725,7 +824,8 @@ def switch_in_place(root, record, route):
     seq = publish_body(Path(record['steer_dir']), 'deck-control: set_model %s\n' % route)
     was = record.get('model') or ''
     record['model'] = route
-    atomic_write(Path(root).parent / 'primary-chat.json', json.dumps(record, sort_keys=True) + '\n')
+    # The record beside the resolved role's directory (<root>.json).
+    atomic_write(Path(root).parent / (Path(root).name + '.json'), json.dumps(record, sort_keys=True) + '\n')
     if was != route:
         note_switch(root, was, route)
     return seq
@@ -760,7 +860,8 @@ def set_model(args):
             return 1
         atomic_write(root / 'model', args.route + '\n')
         atomic_write(root / 'switch', '%d %s\n' % (int(time.time()), args.route))
-    print('primary: switching to %s %s' % (args.route, 'now' if primary_idle(state) else 'after the turn under way'))
+    print('primary: switching to %s %s' % (args.route, 'now' if primary_idle(state, names(home)['busy'])
+                                            else 'after the turn under way'))
     return 0
 
 
@@ -773,10 +874,13 @@ def env_seconds(name, default):
 
 
 class Keeper:
-    """Keeps one home's primary host running; see the `service` docstring entry."""
+    """Keeps one role's host running; see the `service` docstring entry."""
 
     def __init__(self, args):
-        self.home, self.state, _, self.root = paths(args.home)
+        self.home, self.state, _, _ = paths(args.home)
+        # A keeper serves one role for its whole life, whatever the switch says now.
+        self.role = ROLE
+        self.root = self.state / ROLES[ROLE]['root']
         self.deck_chat = args.deck_chat
         self.model = args.model
         self.stop = threading.Event()
@@ -880,7 +984,7 @@ class Keeper:
             return rc, out.read().decode('utf-8', 'replace')
 
     def start(self, model=None):
-        argv = ['--stream', '--home', str(self.home)]
+        argv = ['--stream'] + (['--role', 'supervisor'] if self.role == 'supervisor' else []) + ['--home', str(self.home)]
         if model is None:
             model = chosen_model(self.root, self.model)
         if model:
@@ -895,15 +999,17 @@ class Keeper:
         return rc == 0
 
     def alert(self, down_for):
-        summary = ('firstmate primary for %s has been down %ds despite the service; '
-                   'see %s' % (self.home, down_for, self.root / 'service.log'))
+        summary = ('firstmate %s for %s has been down %ds despite the service; '
+                   'see %s' % ('supervisor' if self.role == 'supervisor' else 'primary',
+                               self.home, down_for, self.root / 'service.log'))
         try:
             (self.root / 'service-down').write_text(
                 '%s %s\n' % (time.strftime('%Y-%m-%dT%H:%M:%S%z'), summary))
         except OSError:
             pass
         self.log('ALERT: ' + summary)
-        rc, out = self.run_deck_chat(['service-alert', '--home', str(self.home), '--summary', summary], 120)
+        rc, out = self.run_deck_chat(['service-alert'] + (['--role', 'supervisor'] if self.role == 'supervisor' else [])
+                                     + ['--home', str(self.home), '--summary', summary], 120)
         if rc != 0:
             self.log('service-alert exit %d: %s' % (rc, out.strip()[-300:]))
 
@@ -943,13 +1049,21 @@ class Keeper:
         switch_from = None
         while not self.stop.is_set():
             now = time.time()
+            if ROLE == 'supervisor' and not split_mode(self.home):
+                # Without config/primary-split the one primary supervises; a
+                # supervisor keeper waits for the switch instead of starting a
+                # second captain-role host.
+                self.publish('waiting', 'split mode is off (no config/primary-split)')
+                self.stop.wait(self.poll)
+                continue
             if self.stopped_on_purpose():
                 if live_record(self.home):
                     self.log('stopped on purpose; stopping a late-registered host')
-                    self.run_deck_chat(['stop', '--home', str(self.home)], 60)
+                    self.run_deck_chat(['stop'] + (['--role', 'supervisor'] if self.role == 'supervisor' else [])
+                                       + ['--home', str(self.home)], 60)
                 if outage is not None or was_down:
                     self.log('stopped on purpose; not restarting')
-                self.publish('stopped', 'state/primary-chat/stopped present')
+                self.publish('stopped', 'state/%s/stopped present' % names(self.home)['root'])
                 outage, up_since, alerted, was_down, delay = None, None, False, False, 0.0
                 switch_model = None
                 self.recovered()
@@ -959,7 +1073,7 @@ class Keeper:
             if record:
                 self.adopt(record)
             model = (self.claim_switch() if record and switch_model is None
-                     and primary_idle(self.state) else None)
+                     and primary_idle(self.state, names(self.home)['busy']) else None)
             if model is not None:
                 switch_model, switch_from = model, self.running
                 self.log('switching the primary to %s: restarting its host on the same session' % model)
@@ -986,7 +1100,9 @@ class Keeper:
                 self.stop.wait(self.poll)
                 continue
             up_since = None
-            holder = self.lock_holder()
+            # The captain thread of a split home never takes the session lock.
+            lock_bound = self.role == 'supervisor' or not split_mode(self.home)
+            holder = self.lock_holder() if lock_bound else None
             if holder:
                 self.publish('waiting', 'session lock held by live harness pid %s' % holder)
                 self.stop.wait(self.poll)
@@ -1033,7 +1149,9 @@ class Keeper:
 
 
 def main(argv):
+    global ROLE
     parser = argparse.ArgumentParser(prog='fm_primary_chat.py')
+    parser.add_argument('--role', choices=sorted(ROLES), default=os.environ.get('FM_CHAT_ROLE') or 'captain')
     sub = parser.add_subparsers(dest='cmd', required=True)
     steer = sub.add_parser('steer').add_subparsers(dest='action', required=True)
     publish = steer.add_parser('publish')
@@ -1068,6 +1186,9 @@ def main(argv):
     supervise.add_argument('--events-offset', type=int, required=True)
     supervise.add_argument('--effort-headers', action='store_true',
                            help='mark routine wakes for a lower reasoning effort (bin/fm-effort-policy.sh)')
+    hand = sub.add_parser('handover')
+    hand.add_argument('--home', required=True)
+    hand.add_argument('--file', required=True)
     model = sub.add_parser('model')
     model.add_argument('--home', default=default_home())
     model.add_argument('route', nargs='?', default='')
@@ -1076,6 +1197,7 @@ def main(argv):
     service.add_argument('--deck-chat', required=True)
     service.add_argument('--model', default='')
     args = parser.parse_args(argv)
+    ROLE = args.role
     if args.cmd == 'steer':
         if not Path(args.home).is_dir():
             print('error: home not found: %s' % args.home, file=sys.stderr)
@@ -1084,6 +1206,8 @@ def main(argv):
                 'delivered': steer_delivered}[args.action](args)
     if args.cmd == 'prepare':
         return prepare(args)
+    if args.cmd == 'handover':
+        return handover(args)
     if args.cmd == 'record':
         return {'write': record_write, 'stop': record_stop, 'pid': record_pid}[args.action](args)
     if args.cmd == 'service':

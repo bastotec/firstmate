@@ -37,6 +37,7 @@ config/
   wake-gate-key-var wake-gate-mode  optional wake-gate opt-in and mode ("Wake gate")
   effort-policy.json      optional per-turn reasoning effort switch and level ("Turn effort")
   deck-mcp.json           optional Deck MCP servers ("Harness support")
+  primary-split           optional presence flag; primary home only: a captain thread and a separate supervisor (bin/fm_primary_chat.py header)
   model-policy.json       home-local route policy for in-place switches (bin/fm_model_switch.py owns validation and policy semantics)
   power-host              optional ssh alias for fleet quota reads (bin/fm_report.py owns default and bridge flow)
   shared-skills           optional skills repo shipped to connected machines; primary home only (bin/fm-machine.sh header)
@@ -101,6 +102,7 @@ state/
   reconcile-notify/       one-shot Bearings reconcile requests (bin/fm-secondmate-reconcile.sh)
   primary-chat.json       live deck-chat primary record (bin/fm_primary_chat.py owns fields)
   primary-chat/           primary session, steering, keeper, model choice and switch records (bin/fm_primary_chat.py owns layout)
+  supervisor-chat.json supervisor-chat/  the same records for a split home's supervisor (bin/fm_primary_chat.py owns layout)
   specialists/<name>.json specialists/<name>/  persistent specialist record, job history and job files; idle is intended, not a leak (bin/fm_crew.py)
   groups/<gid>.json groups/<gid>/  task group record and its run files until cleanup (bin/fm_crew.py)
   procevent/ procevent-inbox/ when/  process-event sources and results (docs/process-event-sources.md)
@@ -201,13 +203,15 @@ Retired tmux records still require the exact `fm-<id>` window shape, and retired
 
 ## Away-mode supervisor backend (FM_SUPERVISOR_BACKEND / FM_SUPERVISOR_TARGET)
 
-The `/afk` sub-supervisor (`bin/fm-supervise-daemon.sh`) delivers escalation digests to the primary, a deck-chat host (`bin/fm-deck-chat.sh`), over the stream backend.
+The `/afk` sub-supervisor (`bin/fm-supervise-daemon.sh`) delivers escalation digests to the supervising deck-chat host (`bin/fm-deck-chat.sh`) over the stream backend.
+[`bin/fm_primary_chat.py`](../bin/fm_primary_chat.py) owns split-mode role resolution.
 `FM_SUPERVISOR_BACKEND` may only name `stream`; any other value refuses at daemon startup.
 `FM_SUPERVISOR_TARGET=<hub-tag>:<endpoint-id>` overrides the target.
 Otherwise [`bin/fm-supervisor-target-lib.sh`](../bin/fm-supervisor-target-lib.sh) uses the stream endpoint this process runs in (`FM_STREAM_ENDPOINT_ID` with `FM_STREAM_HUB`), else the live deck-chat record's endpoint from `bin/fm-primary-steer.sh status`, else `-` so delivery uses steering alone.
 Both discovery sources are logged at startup, so a wrong-but-resolving fallback is detectable.
 
-A digest goes to the primary through `bin/fm-primary-steer.sh publish --kind away` (`FM_PRIMARY_STEER_BIN` overrides the client), keeping the typed operational-input prefix so the primary reads it as internal.
+A digest goes to the supervising host through `bin/fm-primary-steer.sh publish --kind away` (`FM_PRIMARY_STEER_BIN` overrides the client), keeping the typed operational-input prefix so the receiving session reads it as internal.
+The daemon selects `FM_CHAT_ROLE=supervisor` for all steer calls below, including status and delivery checks.
 `fm-primary-steer.sh status` is the busy guard: anything but `idle` defers.
 Submit proof is `fm-primary-steer.sh delivered <seq>` within the `FM_INJECT_CONFIRM_RETRIES` x `FM_INJECT_CONFIRM_SLEEP` budget.
 An unacknowledged digest stays buffered, a changed or unreadable session drops its pending binding and keeps the buffer for republication, and a growing digest may repeat older events rather than lose them; `inject_msg_stream` in the daemon owns those mechanics.

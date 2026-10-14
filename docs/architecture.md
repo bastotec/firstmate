@@ -118,7 +118,8 @@ Optional Relay integrates with the watcher only after explicit opt-in; [`relay.m
 ### Session start and watcher arming
 
 At session start, `bin/fm-session-start.sh` emits one supervision block rendered by `bin/fm-supervision-instructions.sh` from [`supervision-protocols/deck.md`](supervision-protocols/deck.md), which owns the handling duty for the [Deck chat host](../bin/fm-deck-chat.sh) primary and Deck-hosted secondmate homes.
-The chat host's supervisor child owns the primary's watcher and a secondmate's `bin/fm-deck-worker.sh` driver owns its own, so neither depends on the model remembering to re-arm.
+The supervising chat host's child owns the primary home's watcher and a secondmate's `bin/fm-deck-worker.sh` driver owns its own, so neither depends on the model remembering to re-arm.
+[`bin/fm_primary_chat.py`](../bin/fm_primary_chat.py) owns split-mode host responsibilities; the captain thread does not participate in this supervision cycle.
 `bin/fm-watch-arm.sh` forks the watcher as a tracked child, verifies a fresh liveness beacon, and prints an honest `started`, `attached`, or nonzero `FAILED`.
 Its `--restart` signals only the watcher in the current home's `state/.watch.lock`, so restarting one home cannot kill sibling watchers.
 

@@ -1295,14 +1295,18 @@ fm_daemon_steer() {  # <subcommand> [args...]
   [ -x "$bin" ] || return 3
   local sub=$1
   shift
-  "$bin" "$sub" --home "$FM_HOME" "$@" </dev/null 2>/dev/null
+  # In a split home (config/primary-split) the supervisor, not the captain
+  # thread, takes away-mode escalations; otherwise the role names the primary.
+  FM_CHAT_ROLE=supervisor "$bin" "$sub" --home "$FM_HOME" "$@" </dev/null 2>/dev/null
 }
 
 # fm_daemon_steer_session: read the publishing session, failing closed on an
 # absent, unreadable, or invalid identifier.
 fm_daemon_steer_session() {
+  local record="$FM_HOME/state/primary-chat.json"
+  [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/primary-split" ] || record="$FM_HOME/state/supervisor-chat.json"
   jq -er '.session | select(type == "string" and length > 0) | select(test("^[A-Za-z0-9_.-]+$"))' \
-    "$FM_HOME/state/primary-chat.json" 2>/dev/null
+    "$record" 2>/dev/null
 }
 
 # Poll delivery within the confirmation budget: 0 acked, 1 pending,
