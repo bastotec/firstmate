@@ -556,7 +556,173 @@ test_live_router_lock_is_not_stolen() {
   pass "fm-mate-route: old live locks stay held, dead locks are recovered"
 }
 
+# A registry line and a published home summary for local mate <id> in <parent>.
+seed_report_home() {  # <parent> <id> <shipped-date>
+  local parent=$1 id=$2 date=$3 home="$1/homes/$2"
+  mkdir -p "$parent/data"
+  printf -- '- %s - charter (home: %s; scope: %s things; projects: ; added 2026-10-01)\n' "$id" "$home" "$id" \
+    >> "$parent/data/secondmates.md"
+  python3 - "$home" "$date" "$id" > "$home/state/home-summary.json" <<'PY'
+import json, sys, time
+home, date, mid = sys.argv[1:]
+w = mid + "-w1"
+print(json.dumps({"schema": "fm-secondmate-home-summary.v1", "home": home, "generated": "2026-10-13T00:00:00Z",
+  "generated_epoch": int(time.time()), "valid": True,
+  "active_children": [{"id": w, "kind": "ship", "state": "working", "name": "Fix the flaky test", "doing": "running tests"}],
+  "endpoints": [{"id": w, "state": "working"}, {"id": mid + "-w2", "state": "parked"}, {"id": mid + "-w3", "state": "paused"}],
+  "decisions_open": [{"id": mid + "-w2", "key": "api", "verb": "needs-decision", "summary": "Which API shape?", "source": "status"},
+                     {"id": mid + "-w2", "key": "db", "verb": "needs-decision", "summary": "Which database?", "source": "status"},
+                     {"id": "c1", "key": "c1", "verb": "captain-hold", "summary": "Approve the launch", "source": "backlog"}],
+  "holds": [{"id": "h1", "title": "Ship the release", "blocked_by": "w9", "source": "backlog"},
+            {"id": mid + "-w2", "title": "Ask about the API", "blocked_by": None, "source": "child-state", "reason": "parked"},
+            {"id": mid + "-w3", "title": "Wait for CI", "blocked_by": None, "source": "child-state", "reason": "CI until 18:00Z"}],
+  "queued": [{"id": "h1", "title": "Ship the release", "since": "2026-10-12"}],
+  "landed": [{"id": "l1", "title": "Adds the cache", "kind": "ship", "pr_url": "https://example.test/pull/7",
+              "outcome": "merged", "completion": {"verb": "merged", "date": date}}],
+  "omitted": [], "counts": {}, "crew_time": {"since": 1, "intervals": [[w, 1, 2]]}}))
+PY
+}
+
+test_crew_time_survives_teardown() {
+  local state="$TMP_ROOT/crew-$RANDOM" out
+  mkdir -p "$state"
+  "$ROOT/bin/fm-busy-event.sh" arm "$state" w1 >/dev/null || fail "arm failed"
+  "$ROOT/bin/fm-busy-event.sh" apply "$state" w1 idle --current-gen --source deck-wrapper --event turn-end || fail "apply failed"
+  "$ROOT/bin/fm-busy-event.sh" retire "$state" w1 --current-gen || fail "retire failed"
+  [ "$(cut -f2,3 "$state/crew-time.log" | tr '\t\n' ': ')" = "w1:busy w1:idle w1:retired " ] \
+    || fail "crew-time history wrong: $(cat "$state/crew-time.log")"
+  printf '100\tw2\tbusy\n130\tw2\tidle\n150\tw2\tbusy\n400\tw2\tretired\n' > "$state/crew-time.log"
+  out=$(python3 -c 'import sys,json; sys.path.insert(0, sys.argv[1]); import fm_report as r; print(json.dumps(r.crew_time(sys.argv[2], 1, now=500)["intervals"]))' \
+    "$ROOT/bin" "$state")
+  [ "$out" = '[["w2", 100, 130], ["w2", 150, 400]]' ] || fail "busy time counts only busy spells and closes at retirement: $out"
+  printf '100\tw3\tbusy\n200\tw3\tidle\n200\tw3\tbusy\n' > "$state/crew-time.log"
+  out=$(python3 -c 'import sys,json; sys.path.insert(0, sys.argv[1]); import fm_report as r; print(json.dumps(r.crew_time(sys.argv[2], 1, now=300)["intervals"]))' \
+    "$ROOT/bin" "$state")
+  [ "$out" = '[["w3", 100, 300]]' ] || fail "same-second events must keep their writer order: $out"
+  pass "crew time: busy-state events leave a history that outlives the worker"
+}
+
+test_report_reads_local_mates_without_their_turns() {
+  local parent today json rc
+  parent=$(make_fleet report dave cadia)
+  today=$(date +%Y-%m-%d)
+  seed_report_home "$parent" dave "$today"
+  seed_report_home "$parent" cadia 2020-01-01
+  json=$(FM_HOME="$parent" "$ROOT/bin/fm-report.sh" dave --json) || fail "a main home should report a local mate"
+  printf '%s' "$json" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d["schema"] == "fm-report.v1" and d["scope"] == "dave" and d["days"] == 1, d
+assert [s["pr"] for s in d["shipped"]] == ["https://example.test/pull/7"], d["shipped"]
+assert d["crew"][0]["task"] == "Fix the flaky test", d["crew"]
+assert sorted((x["task"], x["what"]) for x in d["waiting"]) == [("c1", "Approve the launch"), ("dave-w2", "Which API shape?"), ("dave-w2", "Which database?"), ("dave-w3", "Wait for CI"), ("h1", "Ship the release")], d["waiting"]
+w = {x["task"]: x for x in d["waiting"]}
+assert w["c1"]["on"] == "the captain" and w["dave-w2"]["on"] == "dave" and w["h1"]["on"] == "w9", w
+assert w["dave-w3"]["on"] == "an external wait: CI until 18:00Z", w["dave-w3"]
+assert w["h1"]["since"] == "2026-10-12", w["h1"]
+assert [(c["agent"], c["status"]) for c in d["crew"]] == [("dave-w1", "working"), ("dave-w2", "parked"), ("dave-w3", "paused")], d["crew"]
+assert "1 working now" in d["headline"], d["headline"]
+' || fail "report JSON shape wrong: $json"
+  FM_HOME="$parent/homes/cadia" "$ROOT/bin/fm-report.sh" dave | grep -q 'Adds the cache' \
+    || fail "a local mate should read a peer's report through the main home's records"
+  FM_HOME="$parent" "$ROOT/bin/fm-report.sh" cadia --days 7 --json | grep -q '"shipped": \[\]' \
+    || fail "work landed before the window must not count"
+  FM_HOME="$parent" "$ROOT/bin/fm-report.sh" nobody >/dev/null 2>&1; rc=$?
+  expect_code 1 "$rc" "an unknown mate is refused"
+  [ ! -e "$parent/homes/dave/state/dave-w1.inbox" ] && [ -z "$(ls "$parent/state/"*.inbox 2>/dev/null)" ] \
+    || fail "reading a report must not message anyone"
+  pass "fm-report: a mate's report comes from records, read-only, from the main or a local mate home"
+}
+
+test_fleet_report_reads_power() {
+  local parent json
+  parent=$(make_fleet fleet dave)
+  seed_report_home "$parent" dave "$(date +%Y-%m-%d)"
+  mkdir -p "$parent/config"
+  printf '{"version": 1, "bridges": {"workload": {"allow": ["reports", "maintenance"], "seeded": false}}}\n' \
+    > "$parent/config/bridges.json"
+  # The real quota command over a fake ssh transport.
+  cat > "$parent/fakebin/ssh" <<'SH'
+#!/usr/bin/env bash
+case "$*" in *"proxai quotas"*) ;; *) exit 99 ;; esac
+printf 'proxai quotas\n\nACCOUNT  STATE  USED  WINDOW  RESETS\nzai\n  personal  OK         77%%  weekly (1/2 credits)                      Oct 14 02:25Z\n'
+SH
+  chmod +x "$parent/fakebin/ssh"
+  json=$(PATH="$parent/fakebin:$PATH" FM_HOME="$parent" "$ROOT/bin/fm-report.sh" fleet --json) \
+    || fail "fleet report failed"
+  printf '%s' "$json" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d["power"] == [{"provider": "zai", "pct_left": 23, "refills_at": "Oct 14 02:25Z", "tightest": "personal weekly (1/2 credits)"}], d["power"]
+assert [m["id"] for m in d["mates"]] == ["primary", "dave"], d["mates"]
+assert d["mates"][1]["working"] == 1 and d["mates"][1]["crew"] == 3, d["mates"][1]
+assert "Tightest power: zai at 23%" in d["summary"], d["summary"]
+' || fail "fleet report shape wrong: $json"
+  printf '{"version": 1, "bridges": {"workload": {"allow": ["reports"], "seeded": false}}}\n' \
+    > "$parent/config/bridges.json"
+  PATH="$parent/fakebin:$PATH" FM_HOME="$parent" "$ROOT/bin/fm-report.sh" fleet --json | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d["power"] == [] and "does not allow maintenance" in d["power_error"], (d["power"], d["power_error"])
+' || fail "a bridge without maintenance must block the quota read"
+  pass "fm-report: the fleet report adds each mate and the power left per provider, behind the bridge"
+}
+
+test_remote_report_request_is_answered_in_code() {
+  local parent home corr body
+  parent=$(make_fleet answer dave)
+  seed_report_home "$parent" dave "$(date +%Y-%m-%d)"
+  home="$TMP_ROOT/remote-report-$RANDOM"
+  mkdir -p "$home/state"
+  printf 'schema=fm-secondmate-parent.v1\nroute=remote\nparent_host=mac\n' > "$home/.fm-secondmate-parent"
+  printf 'dave\n' > "$home/.fm-secondmate-home"
+  FM_HOME="$home" "$ROOT/bin/fm-report.sh" dave --days 7 | grep -q '^requested: corr=' \
+    || fail "a remote home should queue a report request"
+  fm_mate_mail_spool_line "$parent/state" dave "$(cat "$home/state/parent-replies.status")" \
+    || fail "the request should spool like a peer message"
+  corr=$(sed -n 's/.*corr=\([a-f0-9]\{16\}\).*/\1/p' "$home/state/parent-replies.status")
+  run_route "$parent" >/dev/null || fail "router pass failed"
+  body=$(record_body "$parent/state/dave.inbox/001.msg")
+  case "$body" in *"The report you asked for (corr=$corr)"*"Adds the cache"*) ;;
+    *) fail "the report should come back to the requester: $body" ;; esac
+  grep -q '"reason": "answered"' "$parent/state/mate-messages.log" || fail "the answer should be logged"
+  [ ! -s "$parent/state/.wake-queue" ] || fail "an answered request must not wake the first mate"
+  pass "fm-mate-route: a remote mate's report request is answered from records, with no model turn"
+}
+
+test_report_answer_is_resent_unchanged_and_failures_explain() {
+  local parent send corr
+  parent=$(make_fleet answer2 dave)
+  seed_report_home "$parent" dave "$(date +%Y-%m-%d)"
+  send="$parent/fakebin/send-capture"
+  # shellcheck disable=SC2016 # the stub expands its own arguments
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n--end--\\n" "${!#}" >> "%s/answers"\n[ -e "%s/ok" ] || { echo "error: transport lost" >&2; exit 1; }\n' "$parent" "$parent" > "$send"
+  chmod +x "$send"
+  fm_mate_mail_spool "$parent/state" dave primary 1111111111111111 '' "fm-request report scope=dave days=1" || fail "spool failed"
+  run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" >/dev/null || fail "router pass failed"
+  sleep 1
+  touch "$parent/ok"
+  run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" >/dev/null || fail "router pass failed"
+  python3 - "$parent/answers" <<'PY' || fail "a retried answer must be byte-identical to the first"
+import sys
+parts = [p for p in open(sys.argv[1]).read().split("\n--end--\n") if p]
+assert len(parts) == 2 and parts[0] == parts[1], len(parts)
+PY
+  fm_mate_mail_spool "$parent/state" dave primary 2222222222222222 '' "fm-request report scope=nobody days=1" || fail "spool failed"
+  printf '9 %s\n' "$(date +%s)" > "$parent/state/mate-mail/pending/dave@2222222222222222.tries"
+  run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" >/dev/null || fail "router pass failed"
+  corr=2222222222222222
+  grep "\"corr\": \"$corr\"" "$parent/state/mate-messages.log" | grep -q "no second mate named" \
+    || fail "a failed report request should carry the generator's reason: $(cat "$parent/state/mate-messages.log")"
+  pass "fm-mate-route: a report answer is resent unchanged, and a failed one says why"
+}
+
 test_local_mate_queues_in_parent_spool
+test_crew_time_survives_teardown
+test_report_reads_local_mates_without_their_turns
+test_fleet_report_reads_power
+test_remote_report_request_is_answered_in_code
+test_report_answer_is_resent_unchanged_and_failures_explain
 test_failed_bounces_are_retried_after_archiving
 test_primary_session_change_retains_publication_evidence
 test_wake_survives_failed_logging_and_queue_consumption

@@ -149,7 +149,16 @@ write_record() {  # <gen> <seq>
   tmp="$REC.tmp.$$"
   printf 'v1 gen=%s seq=%s state=%s source=%s event=%s ts=%s\n' \
     "$1" "$2" "$NEW_STATE" "$SOURCE" "$EVENT" "$(date +%s)" > "$tmp" || return 1
-  mv -f "$tmp" "$REC"
+  mv -f "$tmp" "$REC" || return 1
+  crew_time_append "$NEW_STATE"
+}
+
+# Crew time history: one best-effort "<epoch>\t<id>\t<state>" line per event in
+# the home's state/crew-time.log, which outlives the task's own record so a
+# report can still count a worker torn down hours ago (bin/fm_report.py owns
+# the reading). A failed append never fails the event.
+crew_time_append() {  # <busy|idle|unknown|retired>
+  printf '%s\t%s\t%s\n' "$(date +%s)" "$ID" "$1" >> "$STATE/crew-time.log" 2>/dev/null || true
 }
 
 old_umask=$(umask)
@@ -208,6 +217,7 @@ if [ "$GEN" != "$CURRENT" ]; then
   exit 1
 fi
 if [ "$CMD" = retire ]; then
+  crew_time_append retired
   rm -f "$GEN_FILE" "$REC" "$STATE/$ID.progress" || {
     lock_release
     umask "$old_umask"

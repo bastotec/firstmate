@@ -46,7 +46,7 @@ A missed-reply escalation includes the complete first sighting path and line num
 
 ## Peer messages
 
-[`AGENTS.md` section 9](../AGENTS.md#9-escalation-and-captain-etiquette) owns when to message a peer; the [`fm-mate-send.sh` header](../bin/fm-mate-send.sh) owns usage, and [`fm-mate-mail-lib.sh`](../bin/fm-mate-mail-lib.sh) owns the parent-channel diversion, bridge prerequisites, spool, and oversight log.
+The [`mate-messaging` skill](../.agents/skills/mate-messaging/SKILL.md) owns when to message a peer; the [`fm-mate-send.sh` header](../bin/fm-mate-send.sh) owns usage, and [`fm-mate-mail-lib.sh`](../bin/fm-mate-mail-lib.sh) owns the parent-channel diversion, bridge prerequisites, spool, and oversight log.
 
 ## What is deliberately not built
 
