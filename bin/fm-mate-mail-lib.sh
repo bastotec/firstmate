@@ -30,6 +30,8 @@
 #   state/mate-mail/pending/<from>@<corr>.tries  "<count> <first-epoch>"
 # Pending sidecars with the same <from>@<corr> stem:
 #   .publishing          primary publication attempted; check its steering inbox
+#   .answer              first successful fm-request answer, atomically kept
+#                        for byte-identical delivery retries (fm-mate-route.sh)
 #   .woken-delivered     successful no-chat primary delivery wake
 #   .woken-undelivered   refused/failed notification wake, never delivery proof
 #   .undelivered         terminal outcome and reason, one line each; retry only

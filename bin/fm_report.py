@@ -13,16 +13,22 @@ Sources (read-only; no agent turn and no model token is spent):
     once over the existing route (bin/fm-on.sh, bridge files and reports
     flows) with the parent-side cached copy as fallback. The main home's own
     summary gives the first mate's crew and shipped work.
-  - state/crew-time.log in every home (bin/fm-busy-event.sh appends one
-    "<epoch>\t<task>\t<busy|idle|unknown|retired>" line per busy-state change;
-    remote homes publish its intervals as crew_time in their home summary).
+  - state/crew-time.log in every home (bin/fm-busy-event.sh owns its append
+    format and best-effort writes). The primary reads its log directly;
+    other homes publish busy intervals as crew_time in their home summary.
+    Readers never trim the log. Time counts only busy spells, with no smoothing.
   - For the fleet scope only, proxai's quota table on the power host
-    (config/power-host, default workload): `proxai quotas --detail --short`.
+    (config/power-host, default workload): `proxai quotas --detail --short`,
+    gated on the bridge's maintenance flow. Unavailable power is named in
+    power_error, separately from home-data gaps.
 
 Commands:
   fm_report.py crew-time <state-dir>
       {since, intervals: [[task, start_epoch, end_epoch], ...]} for the last 8
-      days, merged and bounded; used by the home summary.
+      days, merged and capped at the latest 600 intervals; used by the home
+      summary. Older producers may omit crew_time or publish null. Reports
+      name missing crew time, a hit cap, or a window exceeding this coverage
+      in gaps; the footer dates the earliest recorded history.
   fm_report.py report --home <main-home> --scope <fleet|primary|mate-id> [--days N] [--json]
       The report. --json prints the stable shape below; otherwise markdown.
 
@@ -36,6 +42,7 @@ JSON shape (schema fm-report.v1; new fields may be added, none removed):
    crew_seconds, crew_time_since,
    mates: [{id, name, domain, machine, freshness, shipped, crew, working, waiting, crew_seconds}]   (fleet)
    power: [{provider, pct_left, refills_at, tightest}], power_error           (fleet)
+   domain, machine                                                       (non-fleet)
    gaps: [<what could not be read, in words>]}
 """
 import argparse

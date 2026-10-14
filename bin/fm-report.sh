@@ -2,7 +2,7 @@
 # fm-report.sh - read the fleet's or one mate's report, read-only.
 #
 # Usage: fm-report.sh <mate-id|fleet|primary> [--days N] [--json]
-#
+# Mate names with spaces are accepted as dashed ids ("docana delivery"); no other aliases.
 # The same report as Fleet Town's Report button (headline, what's waiting, the
 # crew right now, what shipped, time worked, and power for the fleet), computed
 # from firstmate's own records by bin/fm_report.py, whose header owns the data

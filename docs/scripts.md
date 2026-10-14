@@ -88,7 +88,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | [`fm-mate-send.sh`](../bin/fm-mate-send.sh) | Queue a second mate's message to a peer or the first mate from its own home |
 | [`fm-mate-route.sh`](../bin/fm-mate-route.sh) | Deliver queued mate messages on primary watcher polls |
 | [`fm-mate-mail-lib.sh`](../bin/fm-mate-mail-lib.sh) | Own the peer-message wire, spool, and oversight-log contract |
-| [`fm-report.sh`](../bin/fm-report.sh) | Print the fleet's or one mate's report (today or N days, text or `--json`), read-only, from any home |
+| [`fm-report.sh`](../bin/fm-report.sh) | Read or request the fleet's or one mate's report from any home; its header owns usage and routing |
 | [`fm_report.py`](../bin/fm_report.py) | Own the report's data sources, `fm-report.v1` JSON shape, crew-time intervals, and text rendering |
 | [`fm-mates.sh`](../bin/fm-mates.sh) | List the fleet's second mates (id, machine, domain) from any home |
 | `fm-extension.mjs`       | Bind, inspect, verify, and strictly invoke trusted external process-event adapter packages |

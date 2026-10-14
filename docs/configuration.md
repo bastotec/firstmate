@@ -38,7 +38,7 @@ config/
   effort-policy.json      optional per-turn reasoning effort switch and level ("Turn effort")
   deck-mcp.json           optional Deck MCP servers ("Harness support")
   model-policy.json       home-local route policy for in-place switches (bin/fm_model_switch.py owns validation and policy semantics)
-  power-host              optional ssh alias whose proxai quota table feeds the fleet report; absent = workload (bin/fm_report.py)
+  power-host              optional ssh alias for fleet quota reads (bin/fm_report.py owns default and bridge flow)
   shared-skills           optional skills repo shipped to connected machines; primary home only (bin/fm-machine.sh header)
   machine-tunnels         optional gateway host whose model gateway and stream hub machine setup forwards (bin/fm-machine.sh header)
   bridges.json            home-local cross-machine permissions ("Bridge gates"; bin/fm-bridge.py owns schema)

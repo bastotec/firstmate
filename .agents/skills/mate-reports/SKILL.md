@@ -12,28 +12,21 @@ metadata:
 # mate-reports
 
 Every mate can read every other mate's report, the same one Fleet Town's Report button shows, computed from firstmate's own records.
-Reading costs the reported mate nothing: no message, no turn, no tokens.
+Reading spends no agent turn or model tokens on the reported mate.
 
 ## Read
 
-```sh
-bin/fm-report.sh <mate-id>            # today
-bin/fm-report.sh <mate-id> --days 7   # the last seven days
-bin/fm-report.sh fleet                # every mate, plus the fleet's power left per provider
-bin/fm-report.sh primary              # the first mate's own crew
-bin/fm-report.sh <mate-id> --json     # the stable fm-report.v1 shape (bin/fm_report.py owns it)
-```
-
-Ids come from `bin/fm-mates.sh list` (`mate-messaging` skill).
-On the first mate's machine the report prints now.
-On another machine the request rides your parent channel and the report arrives in your inbox as a first-mate message, usually within a minute.
+The [`fm-report.sh` header](../../../bin/fm-report.sh) owns usage, scope names, time windows, and local versus remote request routing.
+Use it for one mate, the first mate, or the fleet; choose markdown for reading or JSON for a consumer.
+Find mate ids through [`mate-messaging`](../mate-messaging/SKILL.md).
+[`fm_report.py`](../../../bin/fm_report.py) owns the data sources and stable JSON shape.
 
 ## What it says
 
-- Headline: shipped, working now, crew time, and waiting, for the period.
+- Headline: shipped and crew time for the period; working and waiting from the latest records.
 - What's waiting: open decisions on the captain, holds and what they wait on, and crew stuck on their mate.
 - The crew right now: each worker, its task, and its current state.
-- What shipped: landed work with its PR, by completion date.
+- What shipped: landed work with its PR, included by completion date within the period.
 - Time worked: busy time per worker from the busy-state records, counted only since those records began (the footer says since when).
 - Power (fleet only): each provider's share left and when its tightest window refills.
 
