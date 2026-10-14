@@ -640,6 +640,7 @@ if [ "$SECONDMATE" = 1 ]; then
   # in the background (fm_task_inbox_ring_maybe_async).
   export FM_SEND_RING_ASYNC=1
 else
+  unset FM_SEND_RING_ASYNC
   FM_APPROVAL_HOME=$(cd "$STATE/.." && pwd) && export FM_APPROVAL_HOME
 fi
 export FM_APPROVAL_AGENT="$ID"

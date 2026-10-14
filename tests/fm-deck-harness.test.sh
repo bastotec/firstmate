@@ -147,6 +147,19 @@ run_worker() {
       --deck "$dir/deck" --model codex/gpt-5.6-luna -- "$prompt" > "$dir/pane.out" 2>&1
 }
 
+test_worker_does_not_inherit_async_ring() {
+  local dir="$TMP_ROOT/ring-env"
+  [ "${FM_SEND_RING_ASYNC+x}" != x ] || fail "the test library retained the supervisor's async ring setting"
+  make_fake_deck "$dir"
+  FM_SEND_RING_ASYNC=1 \
+    FM_TEST_TOOL_COMMAND='printf "%s\n" "${FM_SEND_RING_ASYNC-unset}" >> "$FM_TEST_STATUS.ring-env"' \
+    run_worker "$dir" $'write-status again\n/quit\n' write-status \
+    || fail "the worker did not exit cleanly: $(cat "$dir/pane.out")"
+  [ "$(cat "$dir/state/t1.status.ring-env")" = $'unset\nunset' ] \
+    || fail "worker tools inherited the supervisor's async ring setting"
+  pass "fm-deck-worker: ordinary worker tools keep synchronous rings across turns"
+}
+
 test_turns_share_one_session_and_carry_the_hooks() {
   local dir="$TMP_ROOT/session"
   make_fake_deck "$dir"
@@ -3187,6 +3200,7 @@ test_concurrent_secondmate_duplicate_mints_once
 test_secondmate_repeats_its_launch_brief_after_a_session_less_failure
 test_secondmate_stops_when_a_repeated_launch_brief_opens_no_session
 test_secondmate_stops_when_a_failed_turn_cannot_be_recorded
+test_worker_does_not_inherit_async_ring
 test_turns_share_one_session_and_carry_the_hooks
 test_turns_carry_the_home_mcp_config
 test_mcp_config_directory_precedence_and_scout_scope
