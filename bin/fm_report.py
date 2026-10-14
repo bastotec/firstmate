@@ -26,12 +26,15 @@ Commands:
   fm_report.py crew-time <state-dir>
       {since, intervals: [[task, start_epoch, end_epoch], ...]} for the last 8
       days, merged and capped at the latest 600 intervals; used by the home
-      summary. An absent log is an empty history; a log that exists but cannot
-      be read adds error (in words) with no intervals. Older producers may omit
-      crew_time or publish null. Reports name missing or unreadable crew time,
-      a hit cap, or a window exceeding this coverage in gaps; the footer dates
-      the earliest recorded history. A summary whose crew_time is not this
-      shape is unreadable, and its home is named in gaps.
+      summary. An absent log is an empty history; any other log read OSError
+      adds error (in words) with no intervals and still exits 0 so publication
+      continues. Older producers may omit crew_time or publish null. Otherwise,
+      intervals must be [str, int, int] triples, since may be absent, null or an
+      int, and error may be absent, null or a str; bools are not ints. Reports
+      name missing or unreadable crew time, a hit cap, or a window exceeding
+      this coverage in gaps; the footer dates the earliest recorded history.
+      A malformed crew_time makes its whole summary unreadable; remote reads
+      fall back to a valid cached summary, and gaps names the affected home.
   fm_report.py report --home <main-home> --scope <fleet|primary|mate-id> [--days N] [--json]
       The report. --json prints the stable shape below; otherwise markdown.
 
@@ -182,7 +185,7 @@ SUMMARY_LISTS = ('active_children', 'decisions_open', 'holds', 'queued', 'landed
 
 
 def summary_valid(doc, home):
-    """The fields this report reads, with the types bin/fm-fleet-snapshot.sh's validator requires."""
+    """Validate report inputs, including the crew-time contract in this file's header."""
     if not (isinstance(doc, dict) and doc.get('schema') == 'fm-secondmate-home-summary.v1'
             and (home is None or doc.get('home') == home)):
         return False
@@ -365,6 +368,8 @@ def home_rows(rec, mate, start_day, crew_since_holder, gaps):
         # A hold is the same question as an open decision only when it waits on
         # that decision: a parked or blocked worker's decision, or a captain hold
         # with no dependency. A dependency or an external pause is its own wait.
+        # Endpoints are bounded independently of holds; missing state cannot
+        # prove redundancy, so keep that hold even with an open status decision.
         if row.get('source') == 'child-state' and states.get(tid) in ('parked', 'blocked'):
             same = 'status'
         elif row.get('source') == 'backlog' and not row.get('blocked_by'):
