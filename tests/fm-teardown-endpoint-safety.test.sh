@@ -1059,6 +1059,8 @@ test_own_and_absent_slot_claims_still_tear_down() {
   run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr" \
     || fail "teardown of a task holding its own slot claim failed: $(cat "$dir/stderr")"
   assert_absent "$dir/home/state/$id.meta" "own-claim teardown left the task record"
+  assert_contains "$(cat "$dir/stdout")" ", worktree $dir/worktree)" \
+    "own-claim teardown should report normal worktree completion"
   assert_absent "$dir/pool/1/.fm-slot-owner" "own-claim teardown left its spent slot claim behind"
   grep -Fq "treehouse <return>" "$dir/runtime.log" \
     || fail "own-claim teardown did not return its own pool slot: $(cat "$dir/runtime.log")"
@@ -1072,6 +1074,8 @@ test_own_and_absent_slot_claims_still_tear_down() {
   run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr" \
     || fail "teardown of an unclaimed slot failed: $(cat "$dir/stderr")"
   assert_absent "$dir/home/state/$id.meta" "unclaimed-slot teardown left the task record"
+  assert_contains "$(cat "$dir/stdout")" ", worktree $dir/worktree)" \
+    "unclaimed-slot teardown should report normal worktree completion"
   grep -Fq "treehouse <return>" "$dir/runtime.log" \
     || fail "unclaimed-slot teardown did not return its pool slot: $(cat "$dir/runtime.log")"
 
@@ -1193,13 +1197,14 @@ SH
 # mark_case_as_treehouse_pool; the dead task's worktree is already gone (that
 # is the premise), so the branch lives only in the project's refs.
 seed_reassigned_landed_pr() {  # <case> <pr-url> [pr-state]
-  local dir=$1 pr_url=$2 pr_state=${3:-MERGED} default
+  local dir=$1 pr_url=$2 pr_state=${3:-MERGED} default pr_head
   default=$(git -C "$dir/project" symbolic-ref --quiet --short HEAD)
   git -C "$dir/project" checkout -q -B fm/dead-task
   printf 'landed work\n' > "$dir/project/landed.txt"
   git -C "$dir/project" add landed.txt
   git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
     commit -qm 'dead task work'
+  pr_head=$(git -C "$dir/project" rev-parse HEAD)
   # Squash-land the branch's content on the default branch, then delete the
   # branch: the common flow where the branch's own commits are reachable
   # nowhere. A bare origin carries the landed default branch, because
@@ -1222,7 +1227,7 @@ case "\${1:-} \${2:-}" in
   "pr view")
     case " \$* " in
       *"state,headRefOid,headRefName"*)
-        printf '%s\t%s\t%s\n' '$pr_state' '$(git -C "$dir/project" rev-parse HEAD)' 'fm/dead-task'
+        printf '%s\t%s\t%s\n' '$pr_state' '$pr_head' 'fm/dead-task'
         exit 0 ;;
       *"--json state "*)
         printf '%s\n' '$pr_state'
@@ -1448,6 +1453,7 @@ test_reassigned_slot_record_retires_only_on_all_four_proofs() {
   pass "fm-teardown: a reassigned-slot record retires record-only on all four proofs and refuses without any of them"
 }
 
+test_record_only_retirement_revalidates_after_control_lock_wait
 test_invalid_endpoint_records_refuse_before_mutation
 test_reassigned_slot_record_retires_only_on_all_four_proofs
 test_control_lock_contention_refuses_before_mutation

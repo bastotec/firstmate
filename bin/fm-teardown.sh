@@ -3599,7 +3599,7 @@ if [ "$TEARDOWN_LEGACY_ACCEPTED" = 1 ]; then
 elif [ "$TEARDOWN_REASSIGNED_SLOT" = 1 ]; then
   echo "teardown $ID complete (record-only; its pool slot belongs to task $TEARDOWN_REASSIGNED_TO and was never touched, and its branch and work data are preserved)"
 elif teardown_owns_worktree; then
-  echo "teardown $ID complete (window $T; pool slot $WT left to task $TEARDOWN_SLOT_REASSIGNED_TO${TEARDOWN_SLOT_REASSIGNED_HOME:+ (home $TEARDOWN_SLOT_REASSIGNED_HOME)}, which it was reassigned to)"
+  echo "teardown $ID complete (window $T, worktree $WT)"
 else
   echo "teardown $ID complete (window $T; pool slot $WT left to task $TEARDOWN_SLOT_REASSIGNED_TO${TEARDOWN_SLOT_REASSIGNED_HOME:+ (home $TEARDOWN_SLOT_REASSIGNED_HOME)}, which it was reassigned to)"
 fi
