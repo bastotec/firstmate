@@ -26,9 +26,12 @@ Commands:
   fm_report.py crew-time <state-dir>
       {since, intervals: [[task, start_epoch, end_epoch], ...]} for the last 8
       days, merged and capped at the latest 600 intervals; used by the home
-      summary. Older producers may omit crew_time or publish null. Reports
-      name missing crew time, a hit cap, or a window exceeding this coverage
-      in gaps; the footer dates the earliest recorded history.
+      summary. An absent log is an empty history; a log that exists but cannot
+      be read adds error (in words) with no intervals. Older producers may omit
+      crew_time or publish null. Reports name missing or unreadable crew time,
+      a hit cap, or a window exceeding this coverage in gaps; the footer dates
+      the earliest recorded history. A summary whose crew_time is not this
+      shape is unreadable, and its home is named in gaps.
   fm_report.py report --home <main-home> --scope <fleet|primary|mate-id> [--days N] [--json]
       The report. --json prints the stable shape below; otherwise markdown.
 
@@ -69,6 +72,7 @@ MAX_INTERVALS = 600  # keeps the published home summary well under its 256 KiB r
 # --- crew time -------------------------------------------------------------
 
 def read_crew_log(state_dir):
+    """(rows, error): an absent log is an empty history; an unreadable one names why."""
     path = Path(state_dir) / CREW_LOG
     rows = []
     try:
@@ -78,9 +82,11 @@ def read_crew_log(state_dir):
                 if len(parts) != 3 or not parts[0].isdigit():
                     continue
                 rows.append((int(parts[0]), parts[1], parts[2]))
-    except OSError:
-        pass
-    return rows
+    except FileNotFoundError:
+        return [], None
+    except OSError as e:
+        return [], 'state/%s could not be read (%s)' % (CREW_LOG, e.strerror or type(e).__name__)
+    return rows, None
 
 
 def crew_intervals(rows, start, now):
@@ -114,9 +120,12 @@ def crew_intervals(rows, start, now):
 def crew_time(state_dir, days=8, now=None):
     now = int(now or time.time())
     start = now - days * 86400
-    rows = read_crew_log(state_dir)
+    rows, error = read_crew_log(state_dir)
     since = min((r[0] for r in rows), default=None)
-    return {'since': since, 'intervals': crew_intervals(rows, start, now)}
+    out = {'since': since, 'intervals': crew_intervals(rows, start, now)}
+    if error:
+        out['error'] = error
+    return out
 
 
 # --- helpers -----------------------------------------------------------------
@@ -181,8 +190,22 @@ def summary_valid(doc, home):
         return False
     if not all(isinstance(doc.get(k), list) and all(isinstance(r, dict) for r in doc[k]) for k in SUMMARY_LISTS):
         return False
-    ct = doc.get('crew_time')
-    return ct is None or (isinstance(ct, dict) and isinstance(ct.get('intervals'), list))
+    return crew_time_valid(doc.get('crew_time'))
+
+
+def is_int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def crew_time_valid(ct):
+    """null from older producers, or the shape crew_time() publishes."""
+    if ct is None:
+        return True
+    return (isinstance(ct, dict) and (ct.get('since') is None or is_int(ct['since']))
+            and (ct.get('error') is None or isinstance(ct['error'], str))
+            and isinstance(ct.get('intervals'), list)
+            and all(isinstance(r, list) and len(r) == 3 and isinstance(r[0], str)
+                    and is_int(r[1]) and is_int(r[2]) for r in ct['intervals']))
 
 
 def read_json(path):
@@ -325,7 +348,7 @@ def home_rows(rec, mate, start_day, crew_since_holder, gaps):
     names.update({h.get('id'): h.get('title') for h in rec.get('holds') or [] if h.get('title')})
     title = lambda tid: names.get(tid) or (queued.get(tid) or {}).get('title') or tid
     states = {e.get('id'): e.get('state') for e in rec.get('endpoints') or []}
-    waiting, decided = [], set()
+    waiting, decided = [], {}
 
     def wait(tid, what, on):
         waiting.append({'what': what, 'on': on, 'since': (queued.get(tid) or {}).get('since'),
@@ -334,13 +357,22 @@ def home_rows(rec, mate, start_day, crew_since_holder, gaps):
     for row in rec.get('decisions_open') or []:
         # A backlog captain hold waits on the captain; a worker's open decision on
         # its own mate. Each key is its own question.
-        decided.add(row.get('id'))
+        decided.setdefault(row.get('id'), set()).add(row.get('source'))
         on = 'the captain' if row.get('source') == 'backlog' else mate
         wait(row.get('id'), row.get('summary') or title(row.get('id')), on)
     for row in rec.get('holds') or []:
         tid = row.get('id')
-        if tid in decided:
-            continue  # the same wait, already listed as its open decision
+        # A hold is the same question as an open decision only when it waits on
+        # that decision: a parked or blocked worker's decision, or a captain hold
+        # with no dependency. A dependency or an external pause is its own wait.
+        if row.get('source') == 'child-state' and states.get(tid) != 'paused':
+            same = 'status'
+        elif row.get('source') == 'backlog' and not row.get('blocked_by'):
+            same = 'backlog'
+        else:
+            same = None
+        if same and same in decided.get(tid, ()):
+            continue
         if row.get('blocked_by'):
             on = row['blocked_by']
         elif row.get('source') == 'child-state' and states.get(tid) == 'paused':
@@ -399,6 +431,8 @@ def build(home, scope_raw, days, now=None):
             ct = rec.get('crew_time') or {}
             if rec.get('crew_time') is None:
                 gaps.append('%s: crew time unavailable (its firstmate predates crew-time records)' % name)
+            elif ct.get('error'):
+                gaps.append('%s: crew time unreadable (%s)' % (name, ct['error']))
             elif len(ct.get('intervals') or []) >= MAX_INTERVALS:
                 gaps.append('%s: crew time is partial (only its latest %d busy spells are published)' % (name, MAX_INTERVALS))
             elif start < int(rec.get('generated_epoch') or now) - CREW_DAYS * 86400:
