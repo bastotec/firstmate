@@ -531,7 +531,10 @@ impl Receiver {
                 })
                 .collect::<io::Result<Vec<_>>>()?;
             // Like the driver's publisher, flush pending captain sources before
-            // exposing a newer Bridge sequence to Deck's next safe point.
+            // exposing a newer Bridge sequence to Deck's next safe point. A
+            // split second mate's captain lane owns them while
+            // <state>/<task>.captain-lane exists (bin/fm_stream_deck.py).
+            let lane = self.state.join(format!("{}.captain-lane", self.task)).is_file();
             for entry in fs::read_dir(&self.inbox)? {
                 let source = entry?.path();
                 if source.extension().is_none_or(|s| s != "msg") {
@@ -549,7 +552,7 @@ impl Receiver {
                     Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
                     Err(e) => return Err(e),
                 };
-                if let Some(body) = captain_source(&bytes) {
+                if let Some(body) = captain_source(&bytes).filter(|_| !lane) {
                     let body = with_deck_images(body);
                     if body.trim().is_empty() || self.guidance(&source, &body).len() > 65536 {
                         continue;
@@ -780,6 +783,50 @@ mod tests {
             receiver.inbox.join("001.msg").is_file(),
             "publication acknowledged the ordinary source"
         );
+    }
+    #[test]
+    fn captain_lane_keeps_captain_sources_out_of_the_supervisor_turn() {
+        let lab = Lab::new();
+        let receiver = lab.receiver();
+        start(&receiver, "original");
+        fs::write(
+            receiver.state.join(format!("{}.captain-lane", receiver.task)),
+            "",
+        )
+        .unwrap();
+        let body = "[fm-from-firstmate]\u{2063}corr=test [fm-captain-direct]\u{2063}note\n\nHis words.\n";
+        fs::write(
+            receiver.inbox.join("001.msg"),
+            format!("schema=fm-task-inbox.v1\nat=x\n--\n{body}"),
+        )
+        .unwrap();
+        let mut reservation = json!({});
+        assert!(matches!(
+            receiver
+                .apply(
+                    "later",
+                    &receiver.endpoint,
+                    "Apply the later correction.",
+                    || true,
+                    false,
+                    &mut reservation,
+                    "later-command",
+                    false
+                )
+                .unwrap(),
+            Decision::Pending(_)
+        ));
+        let published: Vec<_> = fs::read_dir(receiver.root.join("original"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|s| s == "msg"))
+            .map(|e| fs::read_to_string(e.path()).unwrap())
+            .collect();
+        assert!(
+            published.iter().all(|text| !text.contains("His words.")),
+            "the captain's words reached the supervisor: {published:?}"
+        );
+        assert!(receiver.inbox.join("001.msg").is_file());
     }
     #[test]
     fn newer_bridge_order_flushes_captain_images_only() {

@@ -29,6 +29,9 @@ if [ -n "${FM_CAPTAIN_LANE_STATE:-}" ] && [ -n "${FM_CAPTAIN_LANE_ID:-}" ]; then
     echo "error: the hand-over could not be recorded in $FM_CAPTAIN_LANE_STATE/$FM_CAPTAIN_LANE_ID.inbox" >&2
     exit 1
   }
+  # Reach a running supervisor turn at its next safe point now, best-effort; an
+  # idle supervisor wakes on the record anyway (bin/fm_stream_deck.py).
+  python3 "$SCRIPT_DIR/fm_stream_deck.py" captain "$FM_CAPTAIN_LANE_STATE" "$FM_CAPTAIN_LANE_ID" >/dev/null 2>&1 || true
   printf 'handed-over=%s\n' "$rec"
   exit 0
 fi

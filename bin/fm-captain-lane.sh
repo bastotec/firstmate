@@ -24,11 +24,10 @@
 #   - a finished turn moves the record to handled/ itself; a failed turn keeps
 #     it and retries after 30 s, doubling to 300 s.
 # The lane writes its Deck events to <work>/events.ndjson and its own log lines
-# to stderr. It exits when the host goes away.
-#
-# Environment: FM_CAPTAIN_LANE_POLL (seconds, default 1),
-# FM_CAPTAIN_LANE_RETRY_SECS (default 30), FM_CAPTAIN_LANE_DEADLINE (per-turn
-# deadline seconds, default 900).
+# to stderr. It exits when the host goes away, and a TERM stops its running
+# Deck turn first (bounded), so a replacement lane never runs beside it.
+# Attachments map to Deck image parts as on the native path
+# (bin/fm_stream_deck.py with_deck_images).
 set -u
 SCRIPT_DIR=$(CDPATH='' cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 STATE='' ID='' DECK='' MODEL='' MODEL_FILE='' MCP_CONFIG=''
@@ -47,17 +46,24 @@ done
   echo 'fm-captain-lane: needs --state, --id, --deck and FM_HOME' >&2; exit 2; }
 cd "$FM_HOME" || exit 2
 HOST_PID=$PPID
-POLL=${FM_CAPTAIN_LANE_POLL:-1}
-RETRY=${FM_CAPTAIN_LANE_RETRY_SECS:-30}
-case "$RETRY" in ''|*[!0-9]*) RETRY=30 ;; esac
-DEADLINE=${FM_CAPTAIN_LANE_DEADLINE:-900}
-case "$DEADLINE" in ''|*[!0-9]*) DEADLINE=900 ;; esac
+POLL=0.5 RETRY=30 DEADLINE=900
 INBOX="$STATE/$ID.inbox"
 RECORD="$STATE/$ID.deck-session"
 DECK_SESSIONS="${XDG_STATE_HOME:-$HOME/.local/state}/deck/sessions"
 CONTRACT="$SCRIPT_DIR/../.agents/skills/captain-thread/SKILL.md"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/fm-captain-lane.XXXXXX") || exit 1
-trap 'rm -rf -- "$WORK"' EXIT
+DECK_PID=''
+stop_deck() {
+  [ -n "$DECK_PID" ] || return 0
+  kill -TERM "$DECK_PID" 2>/dev/null || true
+  local i=0
+  while kill -0 "$DECK_PID" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+  kill -KILL "$DECK_PID" 2>/dev/null || true
+  wait "$DECK_PID" 2>/dev/null || true
+  DECK_PID=''
+}
+trap 'stop_deck; rm -rf -- "$WORK"' EXIT
+trap 'exit 143' TERM HUP
 export FM_CAPTAIN_LANE_STATE=$STATE FM_CAPTAIN_LANE_ID=$ID
 # Ctrl+C in the host's pane stops the supervisor's turn, never the captain's.
 trap '' INT
@@ -105,6 +111,10 @@ while kill -0 "$HOST_PID" 2>/dev/null; do
   fi
   body=$(bash -c '. "$1"; fm_task_inbox_body "$2"' _ "$SCRIPT_DIR/fm-task-inbox-lib.sh" "$rec" 2>/dev/null) || body=''
   [ -n "$body" ] || { log "could not read $rec"; sleep "$POLL"; continue; }
+  if imaged=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from fm_stream_deck import with_deck_images; sys.stdout.write(with_deck_images(sys.argv[2]))' "$SCRIPT_DIR" "$body" 2>/dev/null) \
+      && [ -n "$imaged" ]; then
+    body=$imaged
+  fi
   prompt="The captain wrote to this second mate directly (record $rec):
 
 $body"
@@ -124,7 +134,10 @@ $prompt"
   if session=$(session_of); then args+=(--session "$session"); else session=''; fi
   : > "$WORK/events.ndjson"
   rc=0
-  "$DECK" "${args[@]}" </dev/null > "$WORK/events.ndjson" 2>"$WORK/deck.err" || rc=$?
+  "$DECK" "${args[@]}" </dev/null > "$WORK/events.ndjson" 2>"$WORK/deck.err" &
+  DECK_PID=$!
+  wait "$DECK_PID" || rc=$?
+  DECK_PID=''
   if [ -z "$session" ]; then
     started=$(jq -r 'select(.type == "run_started") | .session' "$WORK/events.ndjson" 2>/dev/null | head -1)
     case "$started" in

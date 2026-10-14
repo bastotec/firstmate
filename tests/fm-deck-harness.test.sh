@@ -1679,7 +1679,7 @@ xdg = root / 'xdg'
 (xdg / 'deck/sessions/supervisor-session.json').write_text('{}')
 (root / 'parent/host.deck-session').write_text('captain-session\n%s\n' % home)
 env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='',
-           XDG_STATE_HOME=str(xdg), FAKE_NEW_SESSION='supervisor-session', FM_CAPTAIN_LANE_POLL='0.2')
+           XDG_STATE_HOME=str(xdg), FAKE_NEW_SESSION='supervisor-session')
 gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
 cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
        str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'),
