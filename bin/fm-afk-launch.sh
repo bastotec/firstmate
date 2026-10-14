@@ -22,10 +22,9 @@
 # with its own tracked background tool; otherwise this launches the daemon as a
 # detached session leader and records its exact identity.
 #
-# Correct supervisor targeting: capture the primary's stream endpoint or
-# steer-only target before detaching, using discover_supervisor_target, and
-# pass FM_SUPERVISOR_TARGET/FM_SUPERVISOR_BACKEND explicitly so delivery stays
-# bound to that primary.
+# Correct supervisor targeting: bin/fm-supervisor-target-lib.sh owns discovery.
+# Capture its target before detaching and pass FM_SUPERVISOR_TARGET and
+# FM_SUPERVISOR_BACKEND explicitly so delivery stays bound to that host.
 #
 # Usage:
 #   fm-afk-launch.sh propose [--words-file <path> | --words <text>]
@@ -41,7 +40,7 @@
 #                              ids that may merge-when-green while away.
 #   fm-afk-launch.sh confirm   Promote the required proposal and print the entry
 #                              announcement.
-#   fm-afk-launch.sh start     Capture the primary target, then (unless the daemon
+#   fm-afk-launch.sh start     Capture the supervisor target, then (unless the daemon
 #                              is already running) launch and record a detached
 #                              daemon process. Idempotent: an already-running
 #                              daemon just refreshes state/.afk; a recorded-but-
@@ -480,9 +479,9 @@ fm_afk_launch_start() {
   local captain_target captain_backend backup artifact had_afk=0 result
   fm_afk_launch_catchup_pending && return 1
   fm_afk_launch_record_require || return 1
-  # Capture the captain pane FIRST, before creating anything.
-  # A stream primary may have no endpoint ("-"): the steer path needs none, and
-  # the daemon's startup check refuses when neither a deck-chat primary nor an
+  # Capture the supervisor target FIRST, before creating anything.
+  # A supervising host may have no endpoint ("-"): the steer path needs none,
+  # and the daemon's startup check refuses when neither that host nor an
   # endpoint answers, which rolls this launch back.
   captain_target=$(discover_supervisor_target) || true
   captain_backend=$(discover_supervisor_backend) || true

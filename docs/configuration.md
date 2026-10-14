@@ -207,7 +207,7 @@ The `/afk` sub-supervisor (`bin/fm-supervise-daemon.sh`) delivers escalation dig
 [`bin/fm_primary_chat.py`](../bin/fm_primary_chat.py) owns split-mode role resolution.
 `FM_SUPERVISOR_BACKEND` may only name `stream`; any other value refuses at daemon startup.
 `FM_SUPERVISOR_TARGET=<hub-tag>:<endpoint-id>` overrides the target.
-Otherwise [`bin/fm-supervisor-target-lib.sh`](../bin/fm-supervisor-target-lib.sh) uses the stream endpoint this process runs in (`FM_STREAM_ENDPOINT_ID` with `FM_STREAM_HUB`), else the live deck-chat record's endpoint from `bin/fm-primary-steer.sh status`, else `-` so delivery uses steering alone.
+Otherwise [`bin/fm-supervisor-target-lib.sh`](../bin/fm-supervisor-target-lib.sh) uses the stream endpoint this process runs in (`FM_STREAM_ENDPOINT_ID` with `FM_STREAM_HUB`), else the live supervising deck-chat host's endpoint from `FM_CHAT_ROLE=supervisor bin/fm-primary-steer.sh status` (`state/supervisor-chat.json` in a split home, else the one primary), else `-` so delivery uses steering alone.
 Both discovery sources are logged at startup, so a wrong-but-resolving fallback is detectable.
 
 A digest goes to the supervising host through `bin/fm-primary-steer.sh publish --kind away` (`FM_PRIMARY_STEER_BIN` overrides the client), keeping the typed operational-input prefix so the receiving session reads it as internal.
@@ -217,7 +217,7 @@ Submit proof is `fm-primary-steer.sh delivered <seq>` within the `FM_INJECT_CONF
 An unacknowledged digest stays buffered, a changed or unreadable session drops its pending binding and keeps the buffer for republication, and a growing digest may repeat older events rather than lose them; `inject_msg_stream` in the daemon owns those mechanics.
 The steer body is capped at 60,000 UTF-8 bytes, keeping the prefix and the complete events that fit and reporting the omitted count; the full buffer is first appended to `state/.subsuper-escalations.overflow`, which survives buffer clearing.
 Max-defer and the wedge alarm fire as for typed delivery.
-When the steer client reports no deck-chat primary (exit 3), the digest is typed into the recorded stream endpoint with the same composer guard and submit proof as `fm-send.sh`.
+When the steer client reports no live supervising deck-chat host (exit 3; in a split home, no supervisor even if the captain thread runs), the digest is typed into the recorded stream endpoint with the same composer guard and submit proof as `fm-send.sh`.
 `bin/fm-afk-launch.sh start` runs the daemon as a detached process in its own session with output in `state/.afk-daemon.out`, and never signals a recorded process whose identity no longer matches; its header owns the launch record.
 
 ## Away-mode wedge alarm channels (config/wedge-alarm)
