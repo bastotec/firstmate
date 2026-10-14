@@ -156,7 +156,7 @@ write_record() {  # <gen> <seq>
 # Crew time history: one best-effort "<epoch>\t<id>\t<state>" line per event in
 # the home's state/crew-time.log, which outlives the task's own record so a
 # report can still count a worker torn down hours ago (bin/fm_report.py owns
-# the reading and trimming). A failed append never fails the event.
+# the reading). A failed append never fails the event.
 crew_time_append() {  # <busy|idle|unknown|retired>
   printf '%s\t%s\t%s\n' "$(date +%s)" "$ID" "$1" >> "$STATE/crew-time.log" 2>/dev/null || true
 }

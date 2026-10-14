@@ -93,7 +93,7 @@ state/
   captain-direct/ captain-direct.log  parent-side captain-direct delivery ledger and echo-guard log (bin/fm-captain-direct-lib.sh)
   mate-mail/             primary-home peer-message spool and routing bookkeeping (bin/fm-mate-mail-lib.sh owns layout)
   mate-messages.log      primary-home peer-message oversight log (bin/fm-mate-mail-lib.sh owns fields)
-  crew-time.log           per-home busy-state history for crew time; bin/fm-busy-event.sh appends, bin/fm_report.py reads and trims
+  crew-time.log           per-home busy-state history for crew time; append-only; bin/fm-busy-event.sh appends, bin/fm_report.py reads
   home-summary.json       this home's ledger (bin/fm-home-summary-refresh.sh)
   machine-pending/<m>.json  a machine being connected: its checklist and planned second mates; bin/fm-machine-blocker.sh owns format and lifecycle
   machine-skills/<m>.tsv  each machine's `deck skills` inventory; bin/fm-machine-skills.sh owns format and refresh

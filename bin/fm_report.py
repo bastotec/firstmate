@@ -52,8 +52,8 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 CREW_LOG = 'crew-time.log'
-CREW_LOG_MAX = 2 * 1024 * 1024
 MERGE_GAP = 60
+STALE_AFTER = 900  # three home-summary refresh intervals
 FETCH_TIMEOUT = int(os.environ.get('FM_REPORT_FETCH_TIMEOUT', '20'))
 MAX_INTERVALS = 600  # keeps the published home summary well under its 256 KiB read bound
 
@@ -77,7 +77,7 @@ def read_crew_log(state_dir):
 
 def crew_intervals(rows, start, now):
     """Busy intervals per task, clipped to [start, now], merged across small gaps."""
-    rows = sorted(rows)
+    rows = sorted(rows, key=lambda r: r[0])  # stable: same-second events keep writer order
     open_since = {}
     out = []
     for ts, task, state in rows:
@@ -103,24 +103,10 @@ def crew_intervals(rows, start, now):
     return merged[-MAX_INTERVALS:]
 
 
-def trim_crew_log(state_dir, keep_from):
-    path = Path(state_dir) / CREW_LOG
-    try:
-        if path.stat().st_size <= CREW_LOG_MAX:
-            return
-        keep = [r for r in read_crew_log(state_dir) if r[0] >= keep_from]
-        tmp = path.with_name(path.name + '.%d.tmp' % os.getpid())
-        tmp.write_text(''.join('%d\t%s\t%s\n' % r for r in keep), encoding='utf-8')
-        os.replace(tmp, path)
-    except OSError:
-        pass
-
-
 def crew_time(state_dir, days=8, now=None):
     now = int(now or time.time())
     start = now - days * 86400
     rows = read_crew_log(state_dir)
-    trim_crew_log(state_dir, start)
     since = min((r[0] for r in rows), default=None)
     return {'since': since, 'intervals': crew_intervals(rows, start, now)}
 
@@ -142,38 +128,31 @@ def words_for(seconds):
 
 
 def registry(home):
-    """{id: {domain, machine}} from data/secondmates.md."""
+    """{id: {domain, machine, host, home}} from data/secondmates.md, parsed by
+    bin/fm-secondmate-registry-lib.sh, the registry's one parser."""
+    path = Path(home) / 'data' / 'secondmates.md'
+    if not path.is_file():
+        return {}
+    script = ('. "$1"; while IFS= read -r line || [ -n "$line" ]; do '
+              'secondmate_registry_parse_line "$line" 2>/dev/null || continue; '
+              'printf "%s\\t%s\\t%s\\t%s\\n" "$SECONDMATE_REGISTRY_ID" "$SECONDMATE_REGISTRY_HOST" '
+              '"$SECONDMATE_REGISTRY_HOME" "$SECONDMATE_REGISTRY_SCOPE"; done < "$2"')
+    run = subprocess.run(['bash', '-c', script, '_', str(SCRIPT_DIR / 'fm-secondmate-registry-lib.sh'), str(path)],
+                         capture_output=True, text=True, timeout=30)
     out = {}
-    try:
-        text = (Path(home) / 'data' / 'secondmates.md').read_text(encoding='utf-8')
-    except OSError:
-        return out
-    for line in text.splitlines():
-        m = re.match(r'^- ([A-Za-z0-9][A-Za-z0-9._-]*) - ', line)
-        if not m:
-            continue
-        scope = re.search(r'scope: (.*?)(?:; projects:|; added|\)$)', line)
-        host = re.search(r'\(host: ([^;]+);', line)
-        mhome = re.search(r'home: ([^;]+);', line)
-        out[m.group(1)] = {
-            'domain': (scope.group(1).strip() if scope else '')[:300],
-            'machine': host.group(1).strip() if host else 'this Mac',
-            'host': host.group(1).strip() if host else None,
-            'home': mhome.group(1).strip() if mhome else None,
-        }
+    for line in run.stdout.splitlines():
+        mid, host, mhome, scope = (line.split('\t') + ['', '', '', ''])[:4]
+        if mid:
+            out[mid] = {'domain': scope.strip()[:300], 'machine': host or 'this Mac',
+                        'host': host or None, 'home': mhome or None}
     return out
 
 
 def resolve_scope(raw, mates):
-    s = raw.strip().lower()
-    if s in ('fleet', 'all', 'everyone'):
-        return 'fleet'
-    if s in ('primary', 'first-mate', 'first mate', 'firstmate', 'main'):
-        return 'primary'
-    slug = re.sub(r'[\s_]+', '-', s)
-    for mid in mates:
-        if mid.lower() in (s, slug):
-            return mid
+    """fleet, primary, or an exact mate id; spaces read as dashes ("docana delivery")."""
+    s = raw.strip().replace(' ', '-')
+    if s in ('fleet', 'primary') or s in mates:
+        return s
     return None
 
 
@@ -286,29 +265,58 @@ def read_power(home):
 
 # --- the report --------------------------------------------------------------
 
+def landed_rows(rows):
+    """Landed rows that pass bin/fm-landed-lib.sh's evidence rule, the same filter
+    bin/fm-fleet-snapshot.sh applies to fresh and cached summaries."""
+    if not rows:
+        return []
+    script = '. "$1"; jq -c "$FM_LANDED_JQ_DEFS"\' map(landed_completion | select(landed_summary_record))\''
+    try:
+        run = subprocess.run(['bash', '-c', script, '_', str(SCRIPT_DIR / 'fm-landed-lib.sh')],
+                             input=json.dumps(rows), capture_output=True, text=True, timeout=30)
+        return json.loads(run.stdout) if run.returncode == 0 else []
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return []
+
+
 def home_rows(rec, mate, start_day, crew_since_holder):
-    """shipped, waiting, crew and crew intervals from one home summary record."""
+    """shipped, waiting, crew and crew intervals from one published home summary."""
     shipped = []
-    for row in rec.get('landed') or []:
+    for row in landed_rows(rec.get('landed') or []):
         date = ((row.get('completion') or {}).get('date') or '')
         if date and date >= start_day.isoformat():
             shipped.append({'title': row.get('title') or row.get('id'), 'pr': row.get('pr_url'),
                             'mate': mate, 'task': row.get('id'), 'date': date})
-    waiting = []
+    queued = {q.get('id'): q for q in rec.get('queued') or []}
+    names = {c.get('id'): c.get('name') for c in rec.get('active_children') or [] if c.get('name')}
+    names.update({h.get('id'): h.get('title') for h in rec.get('holds') or [] if h.get('title')})
+    title = lambda tid: names.get(tid) or (queued.get(tid) or {}).get('title') or tid
+    waiting, seen = [], set()
+
+    def wait(tid, what, on):
+        if tid in seen:
+            return
+        seen.add(tid)
+        waiting.append({'what': what, 'on': on, 'since': (queued.get(tid) or {}).get('since'),
+                        'mate': mate, 'task': tid})
+
     for row in rec.get('decisions_open') or []:
-        waiting.append({'what': row.get('title') or row.get('summary') or row.get('id'), 'on': 'the captain',
-                        'since': row.get('since'), 'mate': mate, 'task': row.get('id')})
+        # A backlog captain hold waits on the captain; a worker's open decision on its own mate.
+        on = 'the captain' if row.get('source') == 'backlog' else mate
+        wait(row.get('id'), row.get('summary') or title(row.get('id')), on)
     for row in rec.get('holds') or []:
-        on = row.get('blocked_by') or 'the captain'
-        waiting.append({'what': row.get('title') or row.get('id'), 'on': on, 'since': row.get('since'),
-                        'mate': mate, 'task': row.get('id')})
+        if row.get('blocked_by'):
+            on = row['blocked_by']
+        elif row.get('source') == 'child-state':
+            on = mate
+        else:
+            on = 'a hold: ' + (row.get('reason') or 'held')
+        wait(row.get('id'), row.get('title') or title(row.get('id')), on)
     crew = []
-    for row in rec.get('active_children') or []:
-        crew.append({'agent': row.get('id'), 'task': row.get('name') or row.get('id'),
-                     'status': row.get('state'), 'doing': row.get('doing'), 'mate': mate})
-        if row.get('state') in ('blocked', 'needs-decision', 'paused'):
-            waiting.append({'what': row.get('name') or row.get('id'), 'on': mate, 'since': None,
-                            'mate': mate, 'task': row.get('id')})
+    for row in rec.get('endpoints') or []:
+        crew.append({'agent': row.get('id'), 'task': title(row.get('id')), 'status': row.get('state'),
+                     'doing': next((c.get('doing') for c in rec.get('active_children') or []
+                                    if c.get('id') == row.get('id')), None), 'mate': mate})
     ct = rec.get('crew_time') or {}
     if ct.get('since'):
         crew_since_holder.append(ct['since'])
@@ -343,8 +351,16 @@ def build(home, scope_raw, days, now=None):
         if rec is None:
             gaps.append('%s: %s' % (name, source))
             rec = {}
-        elif source == 'cached':
-            gaps.append('%s: live summary unreachable, using the copy from %s' % (name, rec.get('generated')))
+        else:
+            if source == 'cached':
+                gaps.append('%s: live summary unreachable, using the copy from %s' % (name, rec.get('generated')))
+            elif now - int(rec.get('generated_epoch') or now) > STALE_AFTER:
+                gaps.append('%s: summary is from %s' % (name, rec.get('generated')))
+            if rec.get('valid') is False and rec.get('reason'):
+                gaps.append('%s: summary incomplete (%s)' % (name, rec['reason']))
+            for o in rec.get('omitted') or []:
+                if o.get('surface') in ('landed', 'endpoints', 'decisions_open'):
+                    gaps.append('%s: %d more %s not listed' % (name, o.get('count', 0), o['surface'].replace('_', ' ')))
         s, w, c, iv = home_rows(rec, mid, start_day, since)
         t = worked(iv, mid, start, now, {x['agent']: x['task'] for x in c})
         age = now - int(rec.get('generated_epoch') or now)
@@ -390,7 +406,7 @@ def build(home, scope_raw, days, now=None):
     period = 'today' if days == 1 else 'the last %d days' % days
     rep['headline'] = '%s, %s: %d shipped, %d working now, %s crew time, %d waiting.' % (
         rep['scope_name'][0].upper() + rep['scope_name'][1:], period, len(rep['shipped']),
-        len(rep['crew']), words_for(rep['crew_seconds']), len(rep['waiting']))
+        sum(1 for c in rep['crew'] if c['status'] == 'working'), words_for(rep['crew_seconds']), len(rep['waiting']))
     power = rep.get('power') or []
     low = min(power, key=lambda p: p['pct_left']) if power else None
     rep['summary'] = rep['headline'] + (

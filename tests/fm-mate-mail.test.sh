@@ -563,15 +563,21 @@ seed_report_home() {  # <parent> <id> <shipped-date>
   printf -- '- %s - charter (home: %s; scope: %s things; projects: ; added 2026-10-01)\n' "$id" "$home" "$id" \
     >> "$parent/data/secondmates.md"
   python3 - "$home" "$date" "$id" > "$home/state/home-summary.json" <<'PY'
-import json, sys
+import json, sys, time
 home, date, mid = sys.argv[1:]
+w = mid + "-w1"
 print(json.dumps({"schema": "fm-secondmate-home-summary.v1", "home": home, "generated": "2026-10-13T00:00:00Z",
-  "generated_epoch": 0, "active_children": [{"id": mid + "-w1", "kind": "ship", "state": "working",
-  "name": "Fix the flaky test", "doing": "running tests"}], "decisions_open": [],
-  "holds": [{"id": "h1", "title": "Ship the release", "blocked_by": "w9", "since": "2026-10-12"}],
-  "landed": [{"id": "l1", "title": "Adds the cache", "pr_url": "https://example.test/pull/7",
-  "completion": {"verb": "merged", "date": date}}],
-  "crew_time": {"since": 1, "intervals": [[mid + "-w1", 1, 2]]}}))
+  "generated_epoch": int(time.time()), "valid": True,
+  "active_children": [{"id": w, "kind": "ship", "state": "working", "name": "Fix the flaky test", "doing": "running tests"}],
+  "endpoints": [{"id": w, "state": "working"}, {"id": mid + "-w2", "state": "parked"}],
+  "decisions_open": [{"id": mid + "-w2", "key": "api", "verb": "needs-decision", "summary": "Which API shape?", "source": "status"},
+                     {"id": "c1", "key": "c1", "verb": "captain-hold", "summary": "Approve the launch", "source": "backlog"}],
+  "holds": [{"id": "h1", "title": "Ship the release", "blocked_by": "w9", "source": "backlog"},
+            {"id": mid + "-w2", "title": "Ask about the API", "blocked_by": None, "source": "child-state", "reason": "parked"}],
+  "queued": [{"id": "h1", "title": "Ship the release", "since": "2026-10-12"}],
+  "landed": [{"id": "l1", "title": "Adds the cache", "kind": "ship", "pr_url": "https://example.test/pull/7",
+              "outcome": "merged", "completion": {"verb": "merged", "date": date}}],
+  "omitted": [], "crew_time": {"since": 1, "intervals": [[w, 1, 2]]}}))
 PY
 }
 
@@ -587,6 +593,10 @@ test_crew_time_survives_teardown() {
   out=$(python3 -c 'import sys,json; sys.path.insert(0, sys.argv[1]); import fm_report as r; print(json.dumps(r.crew_time(sys.argv[2], 1, now=500)["intervals"]))' \
     "$ROOT/bin" "$state")
   [ "$out" = '[["w2", 100, 400]]' ] || fail "intervals should merge short gaps and close at retirement: $out"
+  printf '100\tw3\tbusy\n200\tw3\tidle\n200\tw3\tbusy\n' > "$state/crew-time.log"
+  out=$(python3 -c 'import sys,json; sys.path.insert(0, sys.argv[1]); import fm_report as r; print(json.dumps(r.crew_time(sys.argv[2], 1, now=300)["intervals"]))' \
+    "$ROOT/bin" "$state")
+  [ "$out" = '[["w3", 100, 300]]' ] || fail "same-second events must keep their writer order: $out"
   pass "crew time: busy-state events leave a history that outlives the worker"
 }
 
@@ -603,7 +613,12 @@ d = json.load(sys.stdin)
 assert d["schema"] == "fm-report.v1" and d["scope"] == "dave" and d["days"] == 1, d
 assert [s["pr"] for s in d["shipped"]] == ["https://example.test/pull/7"], d["shipped"]
 assert d["crew"][0]["task"] == "Fix the flaky test", d["crew"]
-assert d["waiting"][0]["on"] == "w9", d["waiting"]
+w = {x["task"]: x for x in d["waiting"]}
+assert sorted(w) == ["c1", "dave-w2", "h1"], d["waiting"]
+assert w["c1"]["on"] == "the captain" and w["dave-w2"]["on"] == "dave" and w["h1"]["on"] == "w9", w
+assert w["h1"]["since"] == "2026-10-12", w["h1"]
+assert [(c["agent"], c["status"]) for c in d["crew"]] == [("dave-w1", "working"), ("dave-w2", "parked")], d["crew"]
+assert "1 working now" in d["headline"], d["headline"]
 ' || fail "report JSON shape wrong: $json"
   FM_HOME="$parent/homes/cadia" "$ROOT/bin/fm-report.sh" dave | grep -q 'Adds the cache' \
     || fail "a local mate should read a peer's report through the main home's records"
@@ -656,11 +671,39 @@ test_remote_report_request_is_answered_in_code() {
   pass "fm-mate-route: a remote mate's report request is answered from records, with no model turn"
 }
 
+test_report_answer_is_resent_unchanged_and_failures_explain() {
+  local parent send corr
+  parent=$(make_fleet answer2 dave)
+  seed_report_home "$parent" dave "$(date +%Y-%m-%d)"
+  send="$parent/fakebin/send-capture"
+  # shellcheck disable=SC2016 # the stub expands its own arguments
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n--end--\\n" "${!#}" >> "%s/answers"\n[ -e "%s/ok" ] || { echo "error: transport lost" >&2; exit 1; }\n' "$parent" "$parent" > "$send"
+  chmod +x "$send"
+  fm_mate_mail_spool "$parent/state" dave primary 1111111111111111 '' "fm-request report scope=dave days=1" || fail "spool failed"
+  run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" >/dev/null || fail "router pass failed"
+  sleep 1
+  touch "$parent/ok"
+  run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" >/dev/null || fail "router pass failed"
+  python3 - "$parent/answers" <<'PY' || fail "a retried answer must be byte-identical to the first"
+import sys
+parts = [p for p in open(sys.argv[1]).read().split("\n--end--\n") if p]
+assert len(parts) == 2 and parts[0] == parts[1], len(parts)
+PY
+  fm_mate_mail_spool "$parent/state" dave primary 2222222222222222 '' "fm-request report scope=nobody days=1" || fail "spool failed"
+  printf '9 %s\n' "$(date +%s)" > "$parent/state/mate-mail/pending/dave@2222222222222222.tries"
+  run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" >/dev/null || fail "router pass failed"
+  corr=2222222222222222
+  grep "\"corr\": \"$corr\"" "$parent/state/mate-messages.log" | grep -q "no second mate named" \
+    || fail "a failed report request should carry the generator's reason: $(cat "$parent/state/mate-messages.log")"
+  pass "fm-mate-route: a report answer is resent unchanged, and a failed one says why"
+}
+
 test_local_mate_queues_in_parent_spool
 test_crew_time_survives_teardown
 test_report_reads_local_mates_without_their_turns
 test_fleet_report_reads_power
 test_remote_report_request_is_answered_in_code
+test_report_answer_is_resent_unchanged_and_failures_explain
 test_failed_bounces_are_retried_after_archiving
 test_primary_session_change_retains_publication_evidence
 test_wake_survives_failed_logging_and_queue_consumption

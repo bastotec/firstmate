@@ -37,7 +37,6 @@ JSON=
 while [ $# -gt 0 ]; do
   case "$1" in
     --days) [ $# -ge 2 ] || usage; DAYS=$2; shift 2 ;;
-    --days=*) DAYS=${1#--days=}; shift ;;
     --json) JSON=--json; shift ;;
     *) usage ;;
   esac

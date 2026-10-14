@@ -153,7 +153,7 @@ close_undelivered() {  # <record> <outcome>
     fm_mate_mail_log "$STATE" "$outcome" "$REASON$bounce_note" || return 1
   fi
   mkdir -p "$DIR/$outcome" && mv "$record" "$DIR/$outcome/$name" || return 1
-  rm -f "${record%.msg}.tries" "${record%.msg}.publishing" \
+  rm -f "${record%.msg}.tries" "${record%.msg}.publishing" "${record%.msg}.answer" \
     "${record%.msg}.woken-delivered" "${record%.msg}.woken-undelivered" "${record%.msg}.undelivered"
   printf '%s: %s %s -> %s: %s%s\n' "$outcome" "$FM_MM_CORR" "$FM_MM_FROM" "$FM_MM_TO" "$REASON" "$bounce_note"
 }
@@ -164,7 +164,7 @@ close_delivered() {  # <record> <how>
     fm_mate_mail_log "$STATE" delivered "$2" || return 1
   fi
   mkdir -p "$DIR/delivered" && mv "$record" "$DIR/delivered/$name" || return 1
-  rm -f "${record%.msg}.tries" "${record%.msg}.publishing" \
+  rm -f "${record%.msg}.tries" "${record%.msg}.publishing" "${record%.msg}.answer" \
     "${record%.msg}.woken-delivered" "${record%.msg}.woken-undelivered" "${record%.msg}.undelivered"
   printf 'delivered: %s %s -> %s\n' "$FM_MM_CORR" "$FM_MM_FROM" "$FM_MM_TO"
 }
@@ -225,7 +225,8 @@ deliver_primary() {  # <record>
 
 # A read-only request a remote mate cannot run itself (bin/fm-report.sh,
 # bin/fm-mates.sh): "fm-request report scope=<s> days=<n> [json]" or
-# "fm-request mates [json]". Prints the answer text; nonzero when malformed.
+# "fm-request mates". Prints the answer text; nonzero when malformed or when
+# the generator fails (its diagnostic is still printed).
 answer_request() {
   local kind scope='' days=1 json='' word words
   read -r -a words <<< "$FM_MM_TEXT"
@@ -247,8 +248,9 @@ answer_request() {
       FM_HOME="$FM_HOME" "$REPORT_BIN" "$scope" --days "$days" ${json:+"$json"} 2>&1
       ;;
     mates)
+      [ -z "$json" ] || return 1
       printf 'The second mates you asked for (corr=%s); message one with bin/fm-mate-send.sh <id> "<text>":\n\n' "$FM_MM_CORR"
-      FM_HOME="$FM_HOME" "$MATES_BIN" list ${json:+"$json"} 2>&1
+      FM_HOME="$FM_HOME" "$MATES_BIN" list 2>&1
       ;;
     *) return 1 ;;
   esac
@@ -268,7 +270,7 @@ ls -tr "$DIR/pending" 2>/dev/null | grep '\.msg$' | while IFS= read -r name; do
   fi
   if done_as=$(fm_mate_mail_logged "$STATE" "$FM_MM_FROM" "$FM_MM_CORR"); then
     mkdir -p "$DIR/$done_as" && mv "$record" "$DIR/$done_as/$name" || true
-    rm -f "${record%.msg}.tries" "${record%.msg}.publishing" \
+    rm -f "${record%.msg}.tries" "${record%.msg}.publishing" "${record%.msg}.answer" \
       "${record%.msg}.woken-delivered" "${record%.msg}.woken-undelivered" "${record%.msg}.undelivered"
     continue
   fi
@@ -294,13 +296,25 @@ ls -tr "$DIR/pending" 2>/dev/null | grep '\.msg$' | while IFS= read -r name; do
   err=
   if [ "$FM_MM_TO" = primary ] && [ "${FM_MM_TEXT#fm-request }" != "$FM_MM_TEXT" ]; then
     # Answered in code from records: no model turn on either side.
-    if answer=$(answer_request) \
-      && err=$(FM_HOME="$FM_HOME" "$SEND_BIN" "$FM_MM_FROM" --fire-and-forget "$(bounce_id "answer:$FM_MM_CORR")" \
-        -- "$answer" 2>&1 >/dev/null); then
-      close_delivered "$record" answered; continue
+    # The first answer is kept beside the record and resent unchanged, so a
+    # retry after an unconfirmed delivery deduplicates onto the same inbox record.
+    answer_file="${record%.msg}.answer"
+    answer=
+    if [ -f "$answer_file" ]; then
+      answer=$(cat "$answer_file"; printf x); answer=${answer%x}
+    elif answer=$(answer_request); then
+      printf '%s' "$answer" > "$answer_file" || answer=
+    else
+      err=$(printf '%s' "${answer:-malformed request}" | grep -v '^$' | tail -1)
+      answer=
     fi
-    [ -n "${answer:-}" ] || err="malformed request"
-    err=$(printf '%s' "$err" | grep -v '^$' | tail -1)
+    if [ -n "$answer" ]; then
+      if err=$(FM_HOME="$FM_HOME" "$SEND_BIN" "$FM_MM_FROM" --fire-and-forget "$(bounce_id "answer:$FM_MM_CORR")" \
+          -- "$answer" 2>&1 >/dev/null); then
+        close_delivered "$record" answered; rm -f "$answer_file"; continue
+      fi
+      err=$(printf '%s' "$err" | grep -v '^$' | tail -1)
+    fi
   elif [ "$FM_MM_TO" = primary ]; then
     deliver_primary "$record" && { close_delivered "$record" "$DELIVERED_HOW"; continue; }
     err="the first mate's chat did not accept it"
