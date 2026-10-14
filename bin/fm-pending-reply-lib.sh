@@ -215,7 +215,7 @@ fm_pending_reply_text_has_corr() {  # <text> <corr_id>
 # Regression: tests/fm-captain-direct-echo.test.sh.
 fm_pending_reply_summarize() {  # <text>
   local text=$1 cleaned
-  cleaned=$(printf '%s' "$text" | perl -CSD -0777 -pe 's/[\t\r\n]/ /g; s/[\p{C}\p{So}\p{Sk}]//g; s/\A\s+//; s/\s+\z//' 2>/dev/null) ||
+  cleaned=$(printf '%s' "$text" | perl -CSD -0777 -pe 's/[\t\r\n]/ /g; s/[\p{C}\p{So}]|(?![\x00-\x7f])\p{Sk}//g; s/\A\s+//; s/\s+\z//' 2>/dev/null) ||
     cleaned=$(printf '%s' "$text" | tr '\t\r\n' '   ' | tr -cd '\11\12\15\40-\176' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
   # Drop an already-present marker/corr prefix so the durable summary stays short.
   cleaned=${cleaned#"$FM_FROMFIRST_MARK"}
