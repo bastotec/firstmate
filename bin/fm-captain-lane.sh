@@ -21,8 +21,11 @@
 #     .agents/skills/captain-thread/SKILL.md as its contract;
 #   - FM_CAPTAIN_LANE_STATE/FM_CAPTAIN_LANE_ID let bin/fm-captain-handoff.sh hand
 #     his orders to the supervisor;
-#   - a finished turn moves the record to handled/ itself; a failed turn keeps
-#     it and retries after 30 s, doubling to 300 s.
+#   - a finished turn first lists the record in <state>/<id>.captain-lane.answered,
+#     then moves it to handled/ and drops it from the list; a listed record is
+#     never answered again, its move is retried on every pass, and later
+#     records go on meanwhile. A failed turn keeps the record and retries after
+#     30 s, doubling to 300 s.
 # The lane writes its Deck events to <work>/events.ndjson and its own log lines
 # to stderr. It exits when the host goes away, and a TERM stops its running
 # Deck turn first (bounded), so a replacement lane never runs beside it.
@@ -97,16 +100,35 @@ session_of() {
   printf '%s' "$id"
 }
 
-# The oldest pending record that carries the captain's own words.
+ANSWERED="$STATE/$ID.captain-lane.answered"
+# Retry acknowledging records already answered; keep the ones still unmoved.
+acknowledge_answered() {
+  local name keep=''
+  [ -s "$ANSWERED" ] || return 0
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    if [ -f "$INBOX/$name" ] && ! { mkdir -p "$INBOX/handled" && mv -f "$INBOX/$name" "$INBOX/handled/$name"; }; then
+      keep="$keep$name"$'\n'
+    fi
+  done < "$ANSWERED"
+  printf '%s' "$keep" > "$ANSWERED.tmp.$$" && mv -f "$ANSWERED.tmp.$$" "$ANSWERED"
+}
+
+# The oldest pending record that carries the captain's own words and was not
+# already answered.
 next_record() {
-  python3 - "$SCRIPT_DIR" "$INBOX" <<'PY'
+  python3 - "$SCRIPT_DIR" "$INBOX" "$ANSWERED" <<'PY'
 import sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 from fm_stream_deck import CAPTAIN_ONLY
+try:
+    answered = set(Path(sys.argv[3]).read_text().split())
+except OSError:
+    answered = set()
 found = []
 for source in Path(sys.argv[2]).glob('*.msg'):
-    if not source.stem.isdigit():
+    if not source.stem.isdigit() or source.name in answered:
         continue
     try:
         body = source.read_bytes().decode('utf-8').split('\n--\n', 1)[1]
@@ -120,12 +142,11 @@ PY
 }
 
 contract_sent=0
-retry_at=0 backoff=0 stuck=
+retry_at=0 backoff=0
 while kill -0 "$HOST_PID" 2>/dev/null; do
+  acknowledge_answered
   rec=$(next_record) || rec=''
-  # A record answered but not acknowledged is never answered twice; it waits
-  # until something moves it.
-  if [ -z "$rec" ] || [ "$rec" = "$stuck" ] || [ "$(date +%s)" -lt "$retry_at" ]; then
+  if [ -z "$rec" ] || [ "$(date +%s)" -lt "$retry_at" ]; then
     sleep "$POLL"
     continue
   fi
@@ -164,10 +185,13 @@ $prompt"
     contract_sent=1
     backoff=0 retry_at=0
     if [ -f "$rec" ]; then
-      if ! { mkdir -p "$INBOX/handled" && mv -f "$rec" "$INBOX/handled/${rec##*/}"; }; then
-        log "answered but could not acknowledge $rec; it is not answered again"
-        stuck=$rec
+      # Durable before the move, so neither a failed move nor a restart answers
+      # it twice.
+      if ! printf '%s\n' "${rec##*/}" >> "$ANSWERED"; then
+        log "could not record $rec as answered"
       fi
+      acknowledge_answered
+      [ ! -f "$rec" ] || log "answered $rec but could not move it to handled/ yet; retrying"
     fi
   else
     backoff=$(( backoff ? backoff * 2 : RETRY ))
