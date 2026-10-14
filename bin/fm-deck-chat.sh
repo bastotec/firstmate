@@ -174,6 +174,9 @@ q() { printf '%q' "$1"; }
 
 # shellcheck source=bin/fm-gate-refuse-lib.sh
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
+# shellcheck source=bin/fm-operational-input.sh
+. "$SCRIPT_DIR/fm-operational-input.sh"
+OPERATIONAL_PREFIX=$FM_OPERATIONAL_PREFIX
 
 MODE=run
 case "${1:-}" in
@@ -619,15 +622,19 @@ GEN=$("$BUSY_EVENT" arm "$STATE" "$BUSY_NAME" --state idle --source deck-wrapper
 
 if [ "$LOCK_BOUND" = 0 ]; then
   # Input waiting from before this start (an unsplit primary's wakes, say) must
-  # not reach the captain thread, and its contract must come first: the
-  # captain's own messages and supervisor notes are held and published again
-  # after the contract; everything else goes to split-archived/ beside the
-  # inbox, because the durable wake queue, not this preview, owns that work.
-  mkdir -p "$WORK/held" "$STEER_DIR/../split-archived" || die 'cannot prepare the inbox hand-over'
+  # not reach the captain thread, and its contract must come first. Known
+  # operational input (watcher wakes, away-mode and other operational records,
+  # peer messages, model controls) goes to split-archived/ beside the inbox,
+  # because the durable wake queue, not this preview, owns that work; anything
+  # else is the captain's and moves to split-held/, durable until it is
+  # published again after the contract (a start that dies first finishes it).
+  ARCHIVED="$STEER_DIR/../split-archived" HELD="$STEER_DIR/../split-held"
+  mkdir -p "$ARCHIVED" "$HELD" || die 'cannot prepare the inbox hand-over'
   for msg in $(cd "$STEER_DIR" && find . -maxdepth 1 -name '[1-9]*.msg' | sed 's|^\./||' | grep -E '^[1-9][0-9]*\.msg$' | sort -n); do
-    case "$(head -c 40 "$STEER_DIR/$msg")" in
-      'From the captain'*|'[fm-supervisor-note]'*) mv -f "$STEER_DIR/$msg" "$WORK/held/$msg" ;;
-      *) mv -f "$STEER_DIR/$msg" "$STEER_DIR/../split-archived/$msg" ;;
+    case "$(head -c 64 "$STEER_DIR/$msg")" in
+      'The home watcher has an actionable wake'*|"$OPERATIONAL_PREFIX"*|'[fm-from-mate:'*|'deck-control:'*)
+        mv -f "$STEER_DIR/$msg" "$ARCHIVED/$msg" ;;
+      *) mv -f "$STEER_DIR/$msg" "$HELD/$(date +%s)-$msg" ;;
     esac || die "cannot move pending input $msg"
   done
   # The captain thread's contract travels as its first message, because it runs
@@ -668,9 +675,10 @@ record_args=(record write --home "$FM_HOME" --session "$SESSION" --host-pid $$
 python3 "$PRIMARY_CHAT" "${record_args[@]}" || die "could not publish startup and write state/$RECORD_NAME"
 RECORDED=1
 if [ "$LOCK_BOUND" = 0 ]; then
-  for msg in $(cd "$WORK/held" && find . -maxdepth 1 -name '*.msg' | sed 's|^\./||' | sort -n); do
-    python3 "$PRIMARY_CHAT" steer publish --home "$FM_HOME" --kind captain --file "$WORK/held/$msg" >/dev/null \
-      || die "could not publish held captain input $msg again"
+  for msg in $(cd "$HELD" && find . -maxdepth 1 -name '*.msg' | sed 's|^\./||' | sort -t- -k1,1n -k2,2n); do
+    python3 "$PRIMARY_CHAT" steer publish --home "$FM_HOME" --kind captain --file "$HELD/$msg" >/dev/null \
+      || die "could not publish held captain input $msg again; it stays in $HELD"
+    rm -f "$HELD/$msg"
   done
 fi
 

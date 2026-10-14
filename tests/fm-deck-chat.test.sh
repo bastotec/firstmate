@@ -1447,6 +1447,7 @@ test_split_home_captain_thread_and_supervisor() {
   steer=$(FM_CHAT_ROLE=captain python3 "$BIN/fm_primary_chat.py" prepare --home "$home" | sed -n 's/^steer_dir=//p')
   printf 'The home watcher has an actionable wake. stale split wake\n' > "$steer/1.msg"
   printf 'From the captain, directly: held before the split\n' > "$steer/2.msg"
+  printf 'plain fm-send primary text\n' > "$steer/3.msg"
   FAKE_DECK_LOG="$LAB/cap.log" "$BIN/fm-deck-chat.sh" --home "$home" < /dev/null > "$LAB/cap.out" 2>&1 &
   cap=$!
   fm_test_track_helper_pid "$cap"
@@ -1463,7 +1464,9 @@ test_split_home_captain_thread_and_supervisor() {
   [ "$(turns_with "$LAB/cap.log" 'captain thread' | python3 -c 'import json,sys; print(json.loads(sys.stdin.readline())["seq"])')" -lt \
     "$(turns_with "$LAB/cap.log" 'held before the split' | python3 -c 'import json,sys; print(json.loads(sys.stdin.readline())["seq"])')" ] \
     || fail "the contract must come before the held captain message"
+  wait_for 10 "plain primary input is kept for the captain thread" turns_with "$LAB/cap.log" 'plain fm-send primary text'
   if turns_with "$LAB/cap.log" 'stale split wake' >/dev/null; then fail "a stale wake must never reach the captain thread"; fi
+  [ -z "$(ls "$(dirname "$steer")/split-held")" ] || fail "held input must be removed once published again"
   assert_grep 'stale split wake' "$(dirname "$steer")/split-archived/1.msg" "the stale wake is archived beside the inbox"
   rc=0; FAKE_DECK_LOG="$LAB/cap2.log" "$BIN/fm-deck-chat.sh" --home "$home" < /dev/null > "$LAB/cap2.out" 2>&1 || rc=$?
   expect_code 1 "$rc" "a second captain-thread host is refused"
