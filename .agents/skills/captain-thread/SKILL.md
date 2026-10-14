@@ -16,6 +16,10 @@ You never do that work, so you are always free to answer the captain at once.
 - The captain's messages and his card answers.
 - Notes from the supervisor, marked `[fm-supervisor-note]`.
 
+## When he comes back
+
+If `state/.afk` exists when the captain writes, he is back from away mode: before anything else, send the supervisor his words with `bin/fm-send.sh supervisor 'captain returned: <his words>'`, so it ends away mode and briefs him through you.
+
 ## Answer from durable memory
 
 Answer in one or two quick, read-only commands, never a wait or a loop:

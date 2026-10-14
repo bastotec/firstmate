@@ -213,6 +213,14 @@ esac
 export FM_CHAT_ROLE=$ROLE
 SPLIT=0
 [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/primary-split" ] || SPLIT=1
+# Outside split mode there is no supervisor host to start, stop, attach to or
+# switch; only its keeper (install, uninstall, service-run, alert) may exist,
+# and it waits for the switch.
+case "$MODE" in
+  install-service|uninstall-service|service-run|service-alert) ;;
+  *) [ "$ROLE" != supervisor ] || [ "$SPLIT" = 1 ] \
+       || die 'the supervisor exists only in split mode (config/primary-split)' ;;
+esac
 [ "$MODE" = open ] && [ ! -d "$STATE" ] || fm_refuse_if_gate_agent
 command -v python3 >/dev/null 2>&1 || die 'python3 is required' 2
 
@@ -624,24 +632,26 @@ if [ "$LOCK_BOUND" = 0 ]; then
   # Input waiting from before this start (an unsplit primary's wakes, say) must
   # not reach the captain thread: known operational input (watcher wakes, with
   # or without a deck-effort header, operational records, peer messages, model
-  # controls, an unconsumed startup digest) moves to split-archived/ beside the
-  # inbox, because the durable wake queue, not this preview, owns that work;
-  # a peer message is handed to the supervisor first. Everything else is the
-  # captain's and stays where it is, in its order.
+  # controls) moves to split-archived/ beside the inbox, because the durable
+  # wake queue, not this preview, owns that work; a peer message or an
+  # unconsumed startup digest is handed to the supervisor first. Everything
+  # else is the captain's and stays where it is, in its order.
   ARCHIVED="$STEER_DIR/../split-archived"
   mkdir -p "$ARCHIVED" || die 'cannot prepare the inbox hand-over'
   for msg in $(cd "$STEER_DIR" && find . -maxdepth 1 -name '[1-9]*.msg' | sed 's|^\./||' | grep -E '^[1-9][0-9]*\.msg$' | sort -n); do
     head=$(head -c 160 "$STEER_DIR/$msg")
     case "$head" in 'deck-effort: '*) head=${head#*$'\n'} ;; esac
     case "$head" in
-      'The home watcher has an actionable wake'*|"$OPERATIONAL_PREFIX"*|'deck-control:'*|\
-      'You are the primary firstmate, hosted by'*|'You are the supervisor of the primary firstmate'*)
+      'The home watcher has an actionable wake'*|"$OPERATIONAL_PREFIX"*|'deck-control:'*)
         mv -f "$STEER_DIR/$msg" "$ARCHIVED/$msg" || die "cannot archive pending input $msg" ;;
-      '[fm-from-mate:'*)
-        # A peer message's delivery is not backed by the wake queue: it goes on
+      '[fm-from-mate:'*|'You are the primary firstmate, hosted by'*|'You are the supervisor of the primary firstmate'*)
+        # A peer message or a startup digest is not backed by the wake queue
+        # (a digest's one-shot presentations are already committed): it goes on
         # to the supervisor's inbox, which its deck reads when it starts.
-        FM_CHAT_ROLE=supervisor python3 "$PRIMARY_CHAT" handover --home "$FM_HOME" --file "$STEER_DIR/$msg" >/dev/null \
-          && mv -f "$STEER_DIR/$msg" "$ARCHIVED/$msg" || die "cannot hand pending peer message $msg to the supervisor" ;;
+        if ! FM_CHAT_ROLE=supervisor python3 "$PRIMARY_CHAT" handover --home "$FM_HOME" --file "$STEER_DIR/$msg" >/dev/null; then
+          die "cannot hand pending input $msg to the supervisor"
+        fi
+        mv -f "$STEER_DIR/$msg" "$ARCHIVED/$msg" || die "cannot archive pending input $msg" ;;
     esac
   done
   # The captain thread's contract is its first message on every start, because

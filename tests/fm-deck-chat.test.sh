@@ -1479,6 +1479,7 @@ test_split_home_captain_thread_and_supervisor() {
   assert_grep 'stale split wake' "$(dirname "$steer")/split-archived/1.msg" "the stale wake is archived beside the inbox"
   if turns_with "$LAB/cap.log" 'old split digest' >/dev/null; then fail "an old startup digest must never reach the captain thread"; fi
   wait_for 10 "a waiting peer message goes on to the supervisor" turns_with "$LAB/sup.log" 'peer note before the split'
+  wait_for 10 "a waiting startup digest goes on to the supervisor" turns_with "$LAB/sup.log" 'old split digest'
   if turns_with "$LAB/cap.log" 'peer note before the split' >/dev/null; then fail "a peer message must not reach the captain thread"; fi
   rc=0; FAKE_DECK_LOG="$LAB/cap2.log" "$BIN/fm-deck-chat.sh" --home "$home" < /dev/null > "$LAB/cap2.out" 2>&1 || rc=$?
   expect_code 1 "$rc" "a second captain-thread host is refused"
@@ -1511,6 +1512,8 @@ test_split_home_captain_thread_and_supervisor() {
   expect_code 2 "$rc" "a captain note is refused outside split mode"
   rc=0; FAKE_DECK_LOG="$LAB/sup2.log" "$BIN/fm-deck-chat.sh" --role supervisor --home "$home" < /dev/null > "$LAB/sup2.out" 2>&1 || rc=$?
   expect_code 1 "$rc" "a supervisor host refuses to start outside split mode"
+  rc=0; "$BIN/fm-deck-chat.sh" stop --role supervisor --home "$home" 2>/dev/null || rc=$?
+  expect_code 1 "$rc" "stop --role supervisor refuses outside split mode"
   pass "fm-deck-chat.sh: a split home runs a captain thread and a supervisor, each with its own inputs"
 }
 
