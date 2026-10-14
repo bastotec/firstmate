@@ -303,7 +303,8 @@ ls -tr "$DIR/pending" 2>/dev/null | grep '\.msg$' | while IFS= read -r name; do
     if [ -f "$answer_file" ]; then
       answer=$(cat "$answer_file"; printf x); answer=${answer%x}
     elif answer=$(answer_request); then
-      printf '%s' "$answer" > "$answer_file" || answer=
+      { printf '%s' "$answer" > "$answer_file.tmp" && mv "$answer_file.tmp" "$answer_file"; } \
+        || { rm -f "$answer_file.tmp"; answer=; err="could not keep the answer for retry"; }
     else
       err=$(printf '%s' "${answer:-malformed request}" | grep -v '^$' | tail -1)
       answer=
@@ -311,7 +312,7 @@ ls -tr "$DIR/pending" 2>/dev/null | grep '\.msg$' | while IFS= read -r name; do
     if [ -n "$answer" ]; then
       if err=$(FM_HOME="$FM_HOME" "$SEND_BIN" "$FM_MM_FROM" --fire-and-forget "$(bounce_id "answer:$FM_MM_CORR")" \
           -- "$answer" 2>&1 >/dev/null); then
-        close_delivered "$record" answered; rm -f "$answer_file"; continue
+        close_delivered "$record" answered; continue
       fi
       err=$(printf '%s' "$err" | grep -v '^$' | tail -1)
     fi

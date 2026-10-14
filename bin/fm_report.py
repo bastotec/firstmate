@@ -34,7 +34,7 @@ JSON shape (schema fm-report.v1; new fields may be added, none removed):
    crew: [{agent, task, status, doing, mate}],
    time_worked: [{agent, task, mate, seconds}],
    crew_seconds, crew_time_since,
-   mates: [{id, name, domain, machine, freshness, shipped, crew, waiting, crew_seconds}]   (fleet)
+   mates: [{id, name, domain, machine, freshness, shipped, crew, working, waiting, crew_seconds}]   (fleet)
    power: [{provider, pct_left, refills_at, tightest}], power_error           (fleet)
    gaps: [<what could not be read, in words>]}
 """
@@ -52,7 +52,8 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 CREW_LOG = 'crew-time.log'
-MERGE_GAP = 60
+REGISTRY_ERRORS = []
+CREW_DAYS = 8  # what each home publishes as crew_time
 STALE_AFTER = 900  # three home-summary refresh intervals
 FETCH_TIMEOUT = int(os.environ.get('FM_REPORT_FETCH_TIMEOUT', '20'))
 MAX_INTERVALS = 600  # keeps the published home summary well under its 256 KiB read bound
@@ -76,7 +77,7 @@ def read_crew_log(state_dir):
 
 
 def crew_intervals(rows, start, now):
-    """Busy intervals per task, clipped to [start, now], merged across small gaps."""
+    """Busy intervals per task, clipped to [start, now]; overlapping or touching ones merge."""
     rows = sorted(rows, key=lambda r: r[0])  # stable: same-second events keep writer order
     open_since = {}
     out = []
@@ -95,7 +96,7 @@ def crew_intervals(rows, start, now):
     clipped.sort(key=lambda r: (r[0], r[1]))
     merged = []
     for row in clipped:
-        if merged and merged[-1][0] == row[0] and row[1] - merged[-1][2] <= MERGE_GAP:
+        if merged and merged[-1][0] == row[0] and row[1] <= merged[-1][2]:
             merged[-1][2] = max(merged[-1][2], row[2])
         else:
             merged.append(row)
@@ -134,15 +135,20 @@ def registry(home):
     if not path.is_file():
         return {}
     script = ('. "$1"; while IFS= read -r line || [ -n "$line" ]; do '
-              'secondmate_registry_parse_line "$line" 2>/dev/null || continue; '
+              'if ! secondmate_registry_parse_line "$line" 2>/dev/null; then '
+              'case "$line" in "- "*" - "*) printf "!\\t%s\\n" "${line:0:80}" ;; esac; continue; fi; '
               'printf "%s\\t%s\\t%s\\t%s\\n" "$SECONDMATE_REGISTRY_ID" "$SECONDMATE_REGISTRY_HOST" '
               '"$SECONDMATE_REGISTRY_HOME" "$SECONDMATE_REGISTRY_SCOPE"; done < "$2"')
     run = subprocess.run(['bash', '-c', script, '_', str(SCRIPT_DIR / 'fm-secondmate-registry-lib.sh'), str(path)],
                          capture_output=True, text=True, timeout=30)
     out = {}
+    if run.returncode != 0:
+        REGISTRY_ERRORS.append('the second-mate registry could not be read')
     for line in run.stdout.splitlines():
         mid, host, mhome, scope = (line.split('\t') + ['', '', '', ''])[:4]
-        if mid:
+        if mid == '!':
+            REGISTRY_ERRORS.append('unreadable registry record: ' + host)
+        elif mid:
             out[mid] = {'domain': scope.strip()[:300], 'machine': host or 'this Mac',
                         'host': host or None, 'home': mhome or None}
     return out
@@ -253,6 +259,15 @@ def read_power(home):
         pass
     if os.environ.get('FM_REPORT_POWER_FILE'):
         return parse_power(Path(os.environ['FM_REPORT_POWER_FILE']).read_text()), None
+    # A quota read is a budget probe, which bin/fm-bridge.py files under maintenance.
+    env = dict(os.environ, FM_HOME=str(home))
+    try:
+        gate = subprocess.run([str(SCRIPT_DIR / 'fm-bridge.sh'), 'check', host, 'maintenance'],
+                              env=env, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return [], 'could not check the %s bridge' % host
+    if gate.returncode != 0:
+        return [], 'the %s bridge does not allow maintenance (quota reads)' % host
     try:
         run = subprocess.run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host,
                               'COLUMNS=200 ~/.local/bin/proxai quotas --detail --short'],
@@ -291,27 +306,32 @@ def home_rows(rec, mate, start_day, crew_since_holder):
     names = {c.get('id'): c.get('name') for c in rec.get('active_children') or [] if c.get('name')}
     names.update({h.get('id'): h.get('title') for h in rec.get('holds') or [] if h.get('title')})
     title = lambda tid: names.get(tid) or (queued.get(tid) or {}).get('title') or tid
-    waiting, seen = [], set()
+    states = {e.get('id'): e.get('state') for e in rec.get('endpoints') or []}
+    waiting, decided = [], set()
 
     def wait(tid, what, on):
-        if tid in seen:
-            return
-        seen.add(tid)
         waiting.append({'what': what, 'on': on, 'since': (queued.get(tid) or {}).get('since'),
                         'mate': mate, 'task': tid})
 
     for row in rec.get('decisions_open') or []:
-        # A backlog captain hold waits on the captain; a worker's open decision on its own mate.
+        # A backlog captain hold waits on the captain; a worker's open decision on
+        # its own mate. Each key is its own question.
+        decided.add(row.get('id'))
         on = 'the captain' if row.get('source') == 'backlog' else mate
         wait(row.get('id'), row.get('summary') or title(row.get('id')), on)
     for row in rec.get('holds') or []:
+        tid = row.get('id')
+        if tid in decided:
+            continue  # the same wait, already listed as its open decision
         if row.get('blocked_by'):
             on = row['blocked_by']
+        elif row.get('source') == 'child-state' and states.get(tid) == 'paused':
+            on = 'an external wait: ' + (row.get('reason') or 'paused')
         elif row.get('source') == 'child-state':
             on = mate
         else:
             on = 'a hold: ' + (row.get('reason') or 'held')
-        wait(row.get('id'), row.get('title') or title(row.get('id')), on)
+        wait(tid, row.get('title') or title(tid), on)
     crew = []
     for row in rec.get('endpoints') or []:
         crew.append({'agent': row.get('id'), 'task': title(row.get('id')), 'status': row.get('state'),
@@ -342,7 +362,7 @@ def build(home, scope_raw, days, now=None):
     scope = resolve_scope(scope_raw, mates)
     if scope is None:
         raise LookupError('no second mate named %r (second mates: %s; or fleet, primary)' % (scope_raw, ', '.join(mates)))
-    gaps, since = [], []
+    gaps, since = list(REGISTRY_ERRORS), []
     wanted = mates if scope == 'fleet' else ([scope] if scope != 'primary' else [])
     with ThreadPoolExecutor(max_workers=8) as pool:
         fetched = dict(zip(wanted, pool.map(lambda m: fetch_summary(home, m, reg[m]), wanted)))
@@ -358,8 +378,16 @@ def build(home, scope_raw, days, now=None):
                 gaps.append('%s: summary is from %s' % (name, rec.get('generated')))
             if rec.get('valid') is False and rec.get('reason'):
                 gaps.append('%s: summary incomplete (%s)' % (name, rec['reason']))
+            ct = rec.get('crew_time') or {}
+            if len(ct.get('intervals') or []) >= MAX_INTERVALS:
+                gaps.append('%s: crew time is partial (only its latest %d busy spells are published)' % (name, MAX_INTERVALS))
+            elif start < int(rec.get('generated_epoch') or now) - CREW_DAYS * 86400:
+                gaps.append('%s: crew time covers only the last %d days' % (name, CREW_DAYS))
+            counts = rec.get('counts') or {}
+            if counts.get('holds', 0) > len(rec.get('holds') or []):
+                gaps.append('%s: %d more holds not listed' % (name, counts['holds'] - len(rec.get('holds') or [])))
             for o in rec.get('omitted') or []:
-                if o.get('surface') in ('landed', 'endpoints', 'decisions_open'):
+                if o.get('surface') in ('landed', 'endpoints', 'decisions_open', 'queued'):
                     gaps.append('%s: %d more %s not listed' % (name, o.get('count', 0), o['surface'].replace('_', ' ')))
         s, w, c, iv = home_rows(rec, mid, start_day, since)
         t = worked(iv, mid, start, now, {x['agent']: x['task'] for x in c})
@@ -378,7 +406,7 @@ def build(home, scope_raw, days, now=None):
         if not summary_valid(doc, None):
             doc = None
         else:
-            doc = dict(doc, crew_time=crew_time(Path(home) / 'state', days=max(days, 8), now=now))
+            doc = dict(doc, crew_time=crew_time(Path(home) / 'state', days=CREW_DAYS, now=now))
         return part('primary', doc, 'first mate', 'the whole fleet', 'this Mac',
                     'local' if doc else 'no readable home summary')
 
@@ -397,7 +425,8 @@ def build(home, scope_raw, days, now=None):
     }
     if scope == 'fleet':
         rep['mates'] = [{k: p[k] for k in ('id', 'name', 'domain', 'machine', 'freshness', 'crew_seconds')}
-                        | {'shipped': len(p['shipped']), 'crew': len(p['crew']), 'waiting': len(p['waiting'])}
+                        | {'shipped': len(p['shipped']), 'crew': len(p['crew']), 'waiting': len(p['waiting']),
+                           'working': sum(1 for c in p['crew'] if c['status'] == 'working')}
                         for p in parts]
         rep['power'], rep['power_error'] = read_power(home)
     else:
@@ -421,7 +450,7 @@ def markdown(rep):
         out += ['Domain: %s (%s)' % (rep['domain'], rep.get('machine')), '']
     if rep.get('mates'):
         out += ['## Mates'] + ['- %s (%s): %d shipped, %d working, %d waiting, %s crew time%s' % (
-            m['name'], m['machine'], m['shipped'], m['crew'], m['waiting'], words_for(m['crew_seconds']),
+            m['name'], m['machine'], m['shipped'], m['working'], m['waiting'], words_for(m['crew_seconds']),
             '' if m['freshness'] in ('fresh', None) else ', summary ' + str(m['freshness']))
             for m in rep['mates']] + ['']
     out += ["## What's waiting"] + (['- %s - on %s%s%s' % (

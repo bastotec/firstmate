@@ -569,11 +569,13 @@ w = mid + "-w1"
 print(json.dumps({"schema": "fm-secondmate-home-summary.v1", "home": home, "generated": "2026-10-13T00:00:00Z",
   "generated_epoch": int(time.time()), "valid": True,
   "active_children": [{"id": w, "kind": "ship", "state": "working", "name": "Fix the flaky test", "doing": "running tests"}],
-  "endpoints": [{"id": w, "state": "working"}, {"id": mid + "-w2", "state": "parked"}],
+  "endpoints": [{"id": w, "state": "working"}, {"id": mid + "-w2", "state": "parked"}, {"id": mid + "-w3", "state": "paused"}],
   "decisions_open": [{"id": mid + "-w2", "key": "api", "verb": "needs-decision", "summary": "Which API shape?", "source": "status"},
+                     {"id": mid + "-w2", "key": "db", "verb": "needs-decision", "summary": "Which database?", "source": "status"},
                      {"id": "c1", "key": "c1", "verb": "captain-hold", "summary": "Approve the launch", "source": "backlog"}],
   "holds": [{"id": "h1", "title": "Ship the release", "blocked_by": "w9", "source": "backlog"},
-            {"id": mid + "-w2", "title": "Ask about the API", "blocked_by": None, "source": "child-state", "reason": "parked"}],
+            {"id": mid + "-w2", "title": "Ask about the API", "blocked_by": None, "source": "child-state", "reason": "parked"},
+            {"id": mid + "-w3", "title": "Wait for CI", "blocked_by": None, "source": "child-state", "reason": "CI until 18:00Z"}],
   "queued": [{"id": "h1", "title": "Ship the release", "since": "2026-10-12"}],
   "landed": [{"id": "l1", "title": "Adds the cache", "kind": "ship", "pr_url": "https://example.test/pull/7",
               "outcome": "merged", "completion": {"verb": "merged", "date": date}}],
@@ -592,7 +594,7 @@ test_crew_time_survives_teardown() {
   printf '100\tw2\tbusy\n130\tw2\tidle\n150\tw2\tbusy\n400\tw2\tretired\n' > "$state/crew-time.log"
   out=$(python3 -c 'import sys,json; sys.path.insert(0, sys.argv[1]); import fm_report as r; print(json.dumps(r.crew_time(sys.argv[2], 1, now=500)["intervals"]))' \
     "$ROOT/bin" "$state")
-  [ "$out" = '[["w2", 100, 400]]' ] || fail "intervals should merge short gaps and close at retirement: $out"
+  [ "$out" = '[["w2", 100, 130], ["w2", 150, 400]]' ] || fail "busy time counts only busy spells and closes at retirement: $out"
   printf '100\tw3\tbusy\n200\tw3\tidle\n200\tw3\tbusy\n' > "$state/crew-time.log"
   out=$(python3 -c 'import sys,json; sys.path.insert(0, sys.argv[1]); import fm_report as r; print(json.dumps(r.crew_time(sys.argv[2], 1, now=300)["intervals"]))' \
     "$ROOT/bin" "$state")
@@ -613,11 +615,12 @@ d = json.load(sys.stdin)
 assert d["schema"] == "fm-report.v1" and d["scope"] == "dave" and d["days"] == 1, d
 assert [s["pr"] for s in d["shipped"]] == ["https://example.test/pull/7"], d["shipped"]
 assert d["crew"][0]["task"] == "Fix the flaky test", d["crew"]
+assert sorted((x["task"], x["what"]) for x in d["waiting"]) == [("c1", "Approve the launch"), ("dave-w2", "Which API shape?"), ("dave-w2", "Which database?"), ("dave-w3", "Wait for CI"), ("h1", "Ship the release")], d["waiting"]
 w = {x["task"]: x for x in d["waiting"]}
-assert sorted(w) == ["c1", "dave-w2", "h1"], d["waiting"]
 assert w["c1"]["on"] == "the captain" and w["dave-w2"]["on"] == "dave" and w["h1"]["on"] == "w9", w
+assert w["dave-w3"]["on"] == "an external wait: CI until 18:00Z", w["dave-w3"]
 assert w["h1"]["since"] == "2026-10-12", w["h1"]
-assert [(c["agent"], c["status"]) for c in d["crew"]] == [("dave-w1", "working"), ("dave-w2", "parked")], d["crew"]
+assert [(c["agent"], c["status"]) for c in d["crew"]] == [("dave-w1", "working"), ("dave-w2", "parked"), ("dave-w3", "paused")], d["crew"]
 assert "1 working now" in d["headline"], d["headline"]
 ' || fail "report JSON shape wrong: $json"
   FM_HOME="$parent/homes/cadia" "$ROOT/bin/fm-report.sh" dave | grep -q 'Adds the cache' \
@@ -644,6 +647,7 @@ import json, sys
 d = json.load(sys.stdin)
 assert d["power"] == [{"provider": "zai", "pct_left": 23, "refills_at": "Oct 14 02:25Z", "tightest": "personal weekly (1/2 credits)"}], d["power"]
 assert [m["id"] for m in d["mates"]] == ["primary", "dave"], d["mates"]
+assert d["mates"][1]["working"] == 1 and d["mates"][1]["crew"] == 3, d["mates"][1]
 assert "Tightest power: zai at 23%" in d["summary"], d["summary"]
 ' || fail "fleet report shape wrong: $json"
   pass "fm-report: the fleet report adds each mate and the power left per provider"
