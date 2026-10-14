@@ -622,23 +622,23 @@ GEN=$("$BUSY_EVENT" arm "$STATE" "$BUSY_NAME" --state idle --source deck-wrapper
 
 if [ "$LOCK_BOUND" = 0 ]; then
   # Input waiting from before this start (an unsplit primary's wakes, say) must
-  # not reach the captain thread, and its contract must come first. Known
-  # operational input (watcher wakes, away-mode and other operational records,
-  # peer messages, model controls) goes to split-archived/ beside the inbox,
-  # because the durable wake queue, not this preview, owns that work; anything
-  # else is the captain's and moves to split-held/, durable until it is
-  # published again after the contract (a start that dies first finishes it).
-  ARCHIVED="$STEER_DIR/../split-archived" HELD="$STEER_DIR/../split-held"
-  mkdir -p "$ARCHIVED" "$HELD" || die 'cannot prepare the inbox hand-over'
+  # not reach the captain thread: known operational input (watcher wakes, with
+  # or without a deck-effort header, operational records, peer messages, model
+  # controls) moves to split-archived/ beside the inbox, because the durable
+  # wake queue, not this preview, owns that work. Everything else is the
+  # captain's and stays where it is, in its order.
+  ARCHIVED="$STEER_DIR/../split-archived"
+  mkdir -p "$ARCHIVED" || die 'cannot prepare the inbox hand-over'
   for msg in $(cd "$STEER_DIR" && find . -maxdepth 1 -name '[1-9]*.msg' | sed 's|^\./||' | grep -E '^[1-9][0-9]*\.msg$' | sort -n); do
-    case "$(head -c 64 "$STEER_DIR/$msg")" in
+    head=$(head -c 160 "$STEER_DIR/$msg")
+    case "$head" in 'deck-effort: '*) head=${head#*$'\n'} ;; esac
+    case "$head" in
       'The home watcher has an actionable wake'*|"$OPERATIONAL_PREFIX"*|'[fm-from-mate:'*|'deck-control:'*)
-        mv -f "$STEER_DIR/$msg" "$ARCHIVED/$msg" ;;
-      *) mv -f "$STEER_DIR/$msg" "$HELD/$(date +%s)-$msg" ;;
-    esac || die "cannot move pending input $msg"
+        mv -f "$STEER_DIR/$msg" "$ARCHIVED/$msg" || die "cannot archive pending input $msg" ;;
+    esac
   done
-  # The captain thread's contract travels as its first message, because it runs
-  # without the home's project context (AGENTS.md is the supervisor's contract).
+  # The captain thread's contract is its first message on every start, because
+  # it runs without the home's project context (AGENTS.md is the supervisor's).
   CONTRACT="$SCRIPT_DIR/../.agents/skills/captain-thread/SKILL.md"
   [ -r "$CONTRACT" ] || die "the captain thread contract is missing: $CONTRACT"
   {
@@ -669,18 +669,15 @@ else
 fi
 fi
 record_args=(record write --home "$FM_HOME" --session "$SESSION" --host-pid $$
-  --endpoint "$ENDPOINT" --model "$MODEL" --startup-file "$WORK/first")
+  --endpoint "$ENDPOINT" --model "$MODEL")
+# The captain thread's contract is deck chat's own first prompt (below), so it
+# comes before any input already waiting; every other host publishes its
+# startup as the next steer.
+[ "$LOCK_BOUND" = 0 ] || record_args+=(--startup-file "$WORK/first")
 # A deck that takes `deck-control: set_model` lets `model ROUTE` switch in place.
 "$DECK" chat --help 2>/dev/null | grep -q set_model && record_args+=(--set-model)
 python3 "$PRIMARY_CHAT" "${record_args[@]}" || die "could not publish startup and write state/$RECORD_NAME"
 RECORDED=1
-if [ "$LOCK_BOUND" = 0 ]; then
-  for msg in $(cd "$HELD" && find . -maxdepth 1 -name '*.msg' | sed 's|^\./||' | sort -t- -k1,1n -k2,2n); do
-    python3 "$PRIMARY_CHAT" steer publish --home "$FM_HOME" --kind captain --file "$HELD/$msg" >/dev/null \
-      || die "could not publish held captain input $msg again; it stays in $HELD"
-    rm -f "$HELD/$msg"
-  done
-fi
 
 sup_args=(supervise --home "$FM_HOME" --host-pid $$ --gen "$GEN" --events-offset "$EVENTS_OFFSET")
 # Routine wakes think less when this deck takes per-turn effort (bin/fm-effort-policy.sh).
@@ -708,6 +705,7 @@ export FM_APPROVAL_HOME="$FM_HOME" FM_APPROVAL_AGENT=primary
 # Its fm-send calls return once a steer is durable; the doorbell rings in the
 # background (fm_task_inbox_ring_maybe_async in bin/fm-task-inbox-lib.sh).
 export FM_SEND_RING_ASYNC=1
+[ "$LOCK_BOUND" = 1 ] || args+=("$(cat "$WORK/first")")
 "$DECK" "${args[@]}" <&0 &
 DECK_PID=$!
 rc=0

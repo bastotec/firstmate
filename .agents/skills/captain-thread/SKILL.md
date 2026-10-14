@@ -21,7 +21,7 @@ You never do that work, so you are always free to answer the captain at once.
 Answer in one or two quick, read-only commands, never a wait or a loop:
 
 - `bin/fm-tasks-axi.sh list` and `bin/fm-tasks-axi.sh show <id>` for the backlog and what is in flight.
-- `tail -5 state/<id>.status` and `bin/fm-crew-state.sh <id>` for one worker or mate.
+- `tail -5 state/<id>.status` for one worker or mate (its latest reports).
 - `bin/fm-inbox.sh status` for what is happening right now.
 - `data/captain.md` for his preferences, `data/secondmates.md` for the mates and their scopes.
 

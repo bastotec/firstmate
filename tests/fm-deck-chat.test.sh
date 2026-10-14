@@ -66,6 +66,14 @@ def emit(**event):
     with open(events, 'a') as handle:
         handle.write(json.dumps(event) + '\n')
 emit(type='idle')
+VALUED = ('--session', '--steer-dir', '--events', '--hook', '--mcp-config', '--model')
+if len(argv) > 1 and not argv[-1].startswith('--') and argv[-2] not in VALUED:
+    # deck chat's positional first prompt runs as the first turn
+    emit(type='run_started', session=opt('--session'), model='fake')
+    with open(str(log) + '.turns', 'a') as handle:
+        handle.write(json.dumps({'seq': 0, 'text': argv[-1], 'hook_rc': 0}) + '\n')
+    emit(type='run_finished', turns=1)
+    emit(type='idle')
 while not stop:
     for seq in sorted(int(p.name[:-4]) for p in steer.iterdir() if re.fullmatch(r'[1-9][0-9]*\.msg', p.name)):
         source = steer / ('%d.msg' % seq)
@@ -1442,10 +1450,10 @@ test_split_home_captain_thread_and_supervisor() {
   wait_for 10 "the supervisor's watcher" watch_count "$home" 1
   wait_for 10 "the supervisor's busy-state" grep -q 'state=idle ' "$home/state/supervisor.busy-state"
 
-  # Input left in the captain's inbox from before the split: a stale wake is
-  # archived, and the captain's own message comes back after the contract.
+  # Input left in the captain's inbox from before the split: a stale wake (with
+  # an effort header) is archived, and the captain's own input stays, after the contract.
   steer=$(FM_CHAT_ROLE=captain python3 "$BIN/fm_primary_chat.py" prepare --home "$home" | sed -n 's/^steer_dir=//p')
-  printf 'The home watcher has an actionable wake. stale split wake\n' > "$steer/1.msg"
+  printf 'deck-effort: low\nThe home watcher has an actionable wake. stale split wake\n' > "$steer/1.msg"
   printf 'From the captain, directly: held before the split\n' > "$steer/2.msg"
   printf 'plain fm-send primary text\n' > "$steer/3.msg"
   FAKE_DECK_LOG="$LAB/cap.log" "$BIN/fm-deck-chat.sh" --home "$home" < /dev/null > "$LAB/cap.out" 2>&1 &
@@ -1466,7 +1474,6 @@ test_split_home_captain_thread_and_supervisor() {
     || fail "the contract must come before the held captain message"
   wait_for 10 "plain primary input is kept for the captain thread" turns_with "$LAB/cap.log" 'plain fm-send primary text'
   if turns_with "$LAB/cap.log" 'stale split wake' >/dev/null; then fail "a stale wake must never reach the captain thread"; fi
-  [ -z "$(ls "$(dirname "$steer")/split-held")" ] || fail "held input must be removed once published again"
   assert_grep 'stale split wake' "$(dirname "$steer")/split-archived/1.msg" "the stale wake is archived beside the inbox"
   rc=0; FAKE_DECK_LOG="$LAB/cap2.log" "$BIN/fm-deck-chat.sh" --home "$home" < /dev/null > "$LAB/cap2.out" 2>&1 || rc=$?
   expect_code 1 "$rc" "a second captain-thread host is refused"
