@@ -1450,7 +1450,7 @@ teardown_reassigned_refusal() {  # <missing-proof> <reason>
 }
 
 teardown_reassigned_pr_head() {  # <pr-url>
-  local url=$1 view state head branch remote
+  local url=$1 view state head branch remote origin
   view=$( cd "$PROJ" && gh pr view "$url" \
       --json state,headRefOid,headRefName,headRepository,url \
       -q 'select(.headRepository.nameWithOwner != null and .headRepository.nameWithOwner != "") | .state + "\t" + .headRefOid + "\t" + .headRefName + "\t" + (.url | split("/")[:3] | join("/")) + "/" + .headRepository.nameWithOwner + ".git"' 2>/dev/null ) || return 1
@@ -1464,6 +1464,12 @@ teardown_reassigned_pr_head() {  # <pr-url>
   branch=${view%%$'\t'*}
   remote=${view#*$'\t'}
   [ -n "$head" ] && [ -n "$branch" ] && [ -n "$remote" ] && [ "$branch" != "$view" ] || return 1
+  origin=$(git -C "$PROJ" remote get-url origin 2>/dev/null) || return 1
+  case "$origin" in
+    ssh://*) remote="${origin%/*/*}/${remote#*://*/}" ;;
+    *://*) ;;
+    *:*) remote="${origin%%:*}:${remote#*://*/}" ;;
+  esac
   printf '%s\t%s\t%s' "$head" "$branch" "$remote"
 }
 
@@ -1482,7 +1488,7 @@ teardown_reassigned_content_in_default() {
 }
 
 teardown_reassigned_branch_covered() {
-  local pr_head=$1 branch=$2 head_remote=$3 default ref tip remote_rc=0 local_rc=0
+  local pr_head=$1 branch=$2 head_remote=$3 default ref tip remote_tip remote_rc=0 local_rc=0
   local tips=("$pr_head")
   default=$(default_branch) || return 1
   git -C "$PROJ" fetch --quiet origin \
@@ -1502,15 +1508,15 @@ teardown_reassigned_branch_covered() {
     1) ;;
     *) return 1 ;;
   esac
-  git -C "$PROJ" ls-remote --exit-code --heads "$head_remote" "refs/heads/$branch" \
-    >/dev/null 2>&1 || remote_rc=$?
+  remote_tip=$(git -C "$PROJ" ls-remote --exit-code --heads "$head_remote" "refs/heads/$branch" \
+    2>/dev/null) || remote_rc=$?
   case "$remote_rc" in
     0)
+      tip=${remote_tip%%$'\t'*}
+      [ -n "$tip" ] && [ "$remote_tip" = "$tip"$'\t'"refs/heads/$branch" ] || return 1
       git -C "$PROJ" fetch --quiet --no-tags "$head_remote" \
-        "refs/heads/$branch" >/dev/null 2>&1 || return 1
-      tip=$(git -C "$PROJ" rev-parse --quiet --verify \
-        'FETCH_HEAD^{commit}' 2>/dev/null) || return 1
-      [ -n "$tip" ] || return 1
+        "$tip" >/dev/null 2>&1 || return 1
+      git -C "$PROJ" cat-file -e "$tip^{commit}" 2>/dev/null || return 1
       tips+=("$tip")
       ;;
     2) ;;

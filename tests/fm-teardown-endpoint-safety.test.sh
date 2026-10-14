@@ -1484,7 +1484,8 @@ test_reassigned_record_coverage_and_preservation() {
   for scenario in local-only local-ahead remote-ahead fetch-failed remote-unreadable \
       local-unreadable evolved-deleted evolved-retained evolved-remote preserved missing-worker \
       replayed-local replayed-remote replayed-local-extra replayed-remote-extra \
-      fork-ahead fork-covered fork-fetch-failed fork-unreadable \
+      fork-ahead fork-covered fork-fetch-failed fork-unreadable fork-fetch-raced \
+      fork-scp-covered fork-ssh-covered fork-alias-covered fork-ssh-ahead \
       followup-local followup-remote followup-replayed-local followup-replayed-remote followup-unlanded \
       followup-default-local followup-default-remote followup-default-unlanded; do
     dir=$(make_case "reassign-$scenario")
@@ -1520,7 +1521,8 @@ test_reassigned_record_coverage_and_preservation() {
         git init -q --bare "$dir/fork.git"
         printf '%s\n' "$dir/fork.git" > "$dir/head-remote"
         git -C "$dir/project" checkout -qb fm/dead-task "$pr_head"
-        if [ "$scenario" = fork-ahead ]; then
+        if [ "$scenario" = fork-ahead ] || [ "$scenario" = fork-fetch-raced ] \
+            || [ "$scenario" = fork-ssh-ahead ]; then
           printf 'unlanded fork work\n' > "$dir/project/fork.txt"
           git -C "$dir/project" add fork.txt
           git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
@@ -1636,8 +1638,37 @@ test_reassigned_record_coverage_and_preservation() {
         fm_test_fake_stream_set "$target" '{"forget": true}'
         ;;
     esac
+    case "$scenario" in
+      fork-scp-covered|fork-ssh-covered|fork-alias-covered|fork-ssh-ahead)
+        case "$scenario" in
+          fork-scp-covered)
+            git -C "$dir/project" remote set-url origin git@forge-alias:example/repo.git
+            ;;
+          fork-alias-covered)
+            git -C "$dir/project" remote set-url origin forge-alias:example/repo.git
+            ;;
+          *)
+            git -C "$dir/project" remote set-url origin ssh://git@forge-alias:2222/example/repo.git
+            ;;
+        esac
+        printf '%s\n' https://github.com/contributor/repo.git > "$dir/head-remote"
+        cat > "$dir/fakebin/ssh" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> '$dir/ssh.log'
+case "\${!#}" in
+  "git-upload-pack 'example/repo.git'"|"git-upload-pack '/example/repo.git'") exec '$real_git' upload-pack '$dir/origin.git' ;;
+  "git-upload-pack 'contributor/repo.git'"|"git-upload-pack '/contributor/repo.git'") exec '$real_git' upload-pack '$dir/fork.git' ;;
+  *) exit 128 ;;
+esac
+SH
+        chmod +x "$dir/fakebin/ssh"
+        git -C "$dir/project" config core.sshCommand "$dir/fakebin/ssh"
+        git -C "$dir/project" config ssh.variant ssh
+        ;;
+    esac
     if [ "$scenario" = fetch-failed ] || [ "$scenario" = remote-unreadable ] \
-        || [ "$scenario" = preserved ] || [ "$scenario" = fork-fetch-failed ]; then
+        || [ "$scenario" = preserved ] || [ "$scenario" = fork-fetch-failed ] \
+        || [ "$scenario" = fork-fetch-raced ]; then
       cat > "$dir/fakebin/git" <<SH
 #!/usr/bin/env bash
 case " \$* " in
@@ -1647,7 +1678,17 @@ case " \$* " in
 esac
 case '$scenario' in
   fetch-failed|fork-fetch-failed)
-    case " \$* " in *" fetch "*"refs/heads/fm/dead-task"*) exit 128 ;; esac
+    case " \$* " in *" fetch "*" --no-tags "*) exit 128 ;; esac
+    ;;
+  fork-fetch-raced)
+    case " \$* " in
+      *" fetch "*"$dir/fork.git"*)
+        '$real_git' "\$@" || exit \$?
+        '$real_git' -C '$dir/project' fetch --quiet origin '$default' || exit \$?
+        printf 'fetch-head-replaced\n' >> '$dir/runtime.log'
+        exit 0
+        ;;
+    esac
     ;;
   remote-unreadable)
     case " \$* " in *" ls-remote "*) exit 128 ;; esac
@@ -1663,6 +1704,7 @@ SH
     set -e
     case "$scenario" in
       evolved-*|preserved|replayed-local|replayed-remote|fork-covered|\
+          fork-scp-covered|fork-ssh-covered|fork-alias-covered|\
           followup-local|followup-remote|followup-replayed-local|followup-replayed-remote|\
           followup-default-local|followup-default-remote)
         [ "$rc" -eq 0 ] || fail "$scenario refused landed work: $(cat "$dir/stderr")"
@@ -1693,6 +1735,24 @@ SH
       ! grep -q 'fleet-prune' "$dir/runtime.log" \
         || fail "$scenario ran fleet synchronization and pruning"
     fi
+    case "$scenario" in
+      fork-fetch-raced)
+        assert_contains "$(cat "$dir/runtime.log")" "fetch-head-replaced" \
+          "$scenario did not replace shared fetch evidence"
+        ;;
+      fork-scp-covered|fork-ssh-covered|fork-alias-covered|fork-ssh-ahead)
+        assert_contains "$(cat "$dir/ssh.log")" "forge-alias" \
+          "$scenario did not preserve the configured SSH host"
+        assert_contains "$(cat "$dir/ssh.log")" "contributor/repo.git" \
+          "$scenario did not read the PR's fork through SSH"
+        case "$scenario" in
+          fork-ssh-*)
+            assert_contains "$(cat "$dir/ssh.log")" "-p 2222" \
+              "$scenario did not preserve the configured SSH port"
+            ;;
+        esac
+        ;;
+    esac
     assert_reassigned_slot_owner_untouched "$dir" "$claimant"
   done
   pass "reassigned retirement requires readable final tips and positive stop evidence while preserving branches"
