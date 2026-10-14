@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # fm-supervisor-target-lib.sh - the single owner of supervisor-pane discovery.
 #
-# The away-mode daemon (bin/fm-supervise-daemon.sh) must know which pane runs
-# firstmate itself, both to inject escalations into it and, for the daemon, to
-# validate that target at startup. The script-owned away launcher
-# (bin/fm-afk-launch.sh) must resolve the SAME captain pane BEFORE it creates a
-# separate, non-visible terminal for the daemon, so it can pass that pane in as
-# FM_SUPERVISOR_TARGET (otherwise the daemon, running in its own terminal, would
-# auto-discover its OWN pane and inject there instead of into the captain's).
+# The away-mode daemon (bin/fm-supervise-daemon.sh) must know which endpoint runs
+# the supervising host, both to inject escalations into it and to validate that
+# target at startup. The script-owned away launcher (bin/fm-afk-launch.sh) must
+# resolve the SAME supervisor target BEFORE detaching the daemon, so it can pass
+# FM_SUPERVISOR_TARGET explicitly rather than rediscover from the daemon's
+# environment.
 #
 # Because both callers need the identical resolution, it lives here once. The
 # function names are preserved from when this logic lived inline in
@@ -75,7 +74,8 @@ discover_supervisor_source() {
 #      "<hub-tag>:<endpoint-id>" target.
 #   2. FM_STREAM_ENDPOINT_ID + FM_STREAM_HUB - this process runs inside a stream
 #      endpoint; compose its "<hub-tag>:<endpoint-id>" target.
-#   3. a live deck-chat primary (steer status) - its endpoint, or "-" when null.
+#   3. a live supervising deck-chat host (fm_supervisor_primary_chat_endpoint)
+#      - its endpoint, or "-" when null.
 #   4. "-" - nothing found. Returns 1 so the caller can warn; only the steer
 #      path could deliver, and it has no live host either.
 discover_supervisor_target() {

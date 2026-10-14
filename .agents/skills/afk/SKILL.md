@@ -124,7 +124,7 @@ So a guard false-positive becomes a visible stall, never an unbounded silent no-
 
 ### Submit model
 
-For typed-pane delivery (a stream endpoint with no registered deck-chat primary), the digest is typed **once** as a literal, non-submitting send, then submitted with Enter and **verified** through the stream adapter's submit primitive.
+For typed-pane delivery, the digest is typed **once** as a literal, non-submitting send, then submitted with Enter and **verified** through the stream adapter's submit primitive.
 Enter is retried (Enter only, never a retype) until a proven cleared composer from the shared classifier confirms the submit landed.
 A bordered-empty or ghost-only composer is recognized as empty rather than mistaken for a swallowed Enter.
 `fm-send.sh` uses the same primitive only on its typed plane and exits non-zero when that plane's Enter is positively swallowed; ordinary local text steers use the durable inbox and do not treat doorbell submission as delivery proof.

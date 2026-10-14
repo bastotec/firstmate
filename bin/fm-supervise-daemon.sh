@@ -318,9 +318,8 @@ _collapse_newlines() {  # <text>
 }
 
 # discover_supervisor_target / discover_supervisor_backend are owned by
-# bin/fm-supervisor-target-lib.sh (sourced above). fm_super_main below calls
-# them exactly as before; the away launcher reuses the identical resolution to
-# pass the captain pane in as FM_SUPERVISOR_TARGET.
+# bin/fm-supervisor-target-lib.sh (sourced above); the away launcher uses the
+# same resolution as fm_super_main.
 
 # --- classification helpers (PURE: no side effects, testable) ---------------
 # last_status_line, status_is_captain_relevant, window_to_task, and the
@@ -1230,8 +1229,8 @@ inject_msg() {  # <message> [state]
   inject_msg_stream "$msg" "$state" "$target"
 }
 
-# inject_msg_pane: the typed-input delivery into the primary's stream endpoint
-# when no deck-chat primary is registered. <message> is already encoded. Busy guard, composer guard, then a verified type-once submit.
+# inject_msg_pane: typed-input fallback into the recorded supervisor endpoint.
+# <message> is already encoded. Busy guard, composer guard, then a verified type-once submit.
 inject_msg_pane() {  # <encoded-message> <backend> <target>
   local msg=$1 backend=$2 target=$3 harness retries sleep_s verdict composer
   harness=$(fm_daemon_primary_harness)
@@ -1271,16 +1270,16 @@ inject_msg_pane() {  # <encoded-message> <backend> <target>
 }
 
 # --- stream primary: delivery through the deck-chat steer dir ---------------
-# A deck-chat primary takes input through its steer dir, not a composer, so
-# bin/fm-primary-steer.sh (FM_PRIMARY_STEER_BIN overrides it) owns publishing,
-# the busy read, and the delivery proof. Exit 3 means no registered deck-chat
-# primary; delivery then uses inject_msg_pane with the recorded stream endpoint.
-# docs/configuration.md "Away-mode supervisor backend" owns operator behavior.
+# The supervising deck-chat host takes input through its steer dir, not a
+# composer, so bin/fm-primary-steer.sh (FM_PRIMARY_STEER_BIN overrides it) owns
+# publishing, the busy read, and the delivery proof.
+# docs/configuration.md "Away-mode supervisor backend" owns operator routing
+# and the exit-3 endpoint fallback.
 #
 # Pending format: state/.subsuper-steer-pending holds one TAB-separated
 # seq<TAB>digest-hash<TAB>deck-session record. The hash covers the full encoded
 # digest, before truncation. Delivery proof is `delivered <seq>`, checked only
-# while state/primary-chat.json names the publishing session, both before and
+# while fm_daemon_steer_session names the publishing session, both before and
 # after the call. A changed or unreadable session discards the binding, not
 # the escalation buffer. A slow acknowledgement re-checks rather than publishes
 # again; an expanded digest waits for the prior sequence to settle, then may
@@ -1291,7 +1290,7 @@ FM_SUPERVISOR_STEER_PENDING=".subsuper-steer-pending"
 
 fm_daemon_steer() {  # <subcommand> [args...]
   local bin=${FM_PRIMARY_STEER_BIN:-$FM_DAEMON_DIR/fm-primary-steer.sh}
-  # A missing client is the same as no registered deck-chat primary.
+  # A missing client takes the same fallback as no live supervising host.
   [ -x "$bin" ] || return 3
   local sub=$1
   shift
@@ -1310,7 +1309,7 @@ fm_daemon_steer_session() {
 }
 
 # Poll delivery within the confirmation budget: 0 acked, 1 pending,
-# 2 rejected, 3 no registered primary or session binding changed.
+# 2 rejected, 3 no live supervising host or session binding changed.
 fm_daemon_steer_wait_delivered() {
   local seq=$1 session=$2 retries sleep_s attempt=0 rc
   retries=${FM_INJECT_CONFIRM_RETRIES:-$INJECT_CONFIRM_RETRIES_DEFAULT}
@@ -1328,7 +1327,7 @@ fm_daemon_steer_wait_delivered() {
 }
 
 # supervisor_reachable: the startup and pane-gone check. Either a
-# live deck-chat primary (steer status present) or the recorded endpoint counts.
+# live supervising deck-chat host (steer status present) or the recorded endpoint counts.
 supervisor_reachable() {  # <backend> <target>
   local backend=$1 target=$2
   fm_daemon_steer status >/dev/null
