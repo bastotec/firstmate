@@ -360,6 +360,9 @@ stop_turn() {  # stop the running Deck turn and wait for it, bounded
 cleanup() {
   deck_stream_end
   stop_turn
+  # Deck may have saved this turn's session after the loop last looked; record
+  # it before the turn's files go.
+  session_observe 2>/dev/null || true
   if [ -n "$TURN_RENDER_PID" ]; then
     kill -TERM "$TURN_RENDER_PID" 2>/dev/null || true
     wait "$TURN_RENDER_PID" 2>/dev/null || true
