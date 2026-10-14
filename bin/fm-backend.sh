@@ -169,22 +169,9 @@ fm_backend_endpoint_atom_valid() {  # <value>
   esac
 }
 
-# The reassigned-slot record shape and its proof, shared by
-# bin/fm-teardown.sh's cleanup gate and bin/fm-retire-endpoint.sh's own guard.
-#
-# A record whose pool slot was handed to another task carries the handover in
-# place of the worktree identity it can no longer honestly claim: supervision
-# rewrites the record as `worktree_reassigned_by=<other-task-id>`, dropping
-# `worktree=`. Two invariants make that line proof rather than a claim:
-#   - it names ANOTHER task, never this one - `worktree_reassigned_by=<this
-#     id>` is a malformed record, not a self-handover;
-#   - the slot's CURRENT owner is read live from the claim the taking task
-#     wrote into the slot (bin/fm-wake-lib.sh's fm_treehouse_slot_owner_state).
-# The recorded reassignment is never read as ownership of anything: it only
-# names whose live claim must independently confirm the handover, so a stale or
-# forged line can never reach the slot through it. The current owner is
-# evidence here and never a target; every slot-touching step stays keyed off
-# teardown_owns_worktree, which this proof sets to "not this task's".
+# The reassigned-slot helpers report candidate identity and live-claim evidence
+# only; bin/fm-teardown.sh's record-only reassigned-slot block owns authorization.
+# A match never grants ownership of the current slot.
 #
 # fm_backend_reassignment_slot_candidate: does <meta> carry the recorded
 # handover shape at all (no worktree= of its own, exactly one non-empty

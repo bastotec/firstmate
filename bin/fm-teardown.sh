@@ -4,7 +4,7 @@
 # clear volatile state, and transition this home's backlog item for ship and
 # scout tasks before reporting success (a secondmate teardown transitions none,
 # since secondmates are not backlog items), then refresh/prune the project's
-# clone for PR-based ship tasks.
+# clone for PR-based ship tasks, except record-only reassigned-slot retirement.
 # Removing state/<id>.meta and landing the backlog transition are one step, not
 # two: bin/fm-backlog-transition-lib.sh owns that invariant, and both halves run
 # under the task's own meta lock before this script reports success. The
@@ -113,24 +113,18 @@
 # never the other task's claim. Skipping the inspection discards nothing of this
 # task's: whatever unlanded work it had in that slot was already destroyed when
 # the pool handed the slot on. Refusing instead would strand the record, because
-# bin/fm-backend.sh's endpoint validation refuses an empty or missing worktree=
-# unconditionally, so there is no line an operator could clear to get past it.
+# bin/fm-backend.sh's endpoint validation refuses an empty worktree=; a missing
+# field can proceed only through the record-only reassigned-slot gate below,
+# never by clearing an identity line to claim ownership of the slot.
 # A claim that cannot be read proves nothing either way and refuses; inspect or
 # repair the claim file at the printed path and re-run - never remove it, since
 # an absent claim proceeds and would return a slot that may be another task's. An
 # absent claim - a slot taken before claims existed, or already returned - keeps
 # exactly the record-scan protection it had before, because refusing it would
 # strand every task in flight across that change on no evidence at all.
-# The one record shape that may have no worktree= at all is a recorded slot
-# handover: worktree_reassigned_by=<other-id>, written by supervision when the
-# pool slot was handed to another task. The recorded handover is never ownership
-# of the current slot - it only names the task whose live slot claim must
-# independently confirm it. Retirement through that path is record-only and
-# demands four positive proofs (genuinely absent worktree, matching live slot
-# owner, landed work with final branch coverage per the task's merged PR, and
-# recorded stop evidence); anything less keeps this identity refusal, so there
-# is still no line an operator could clear to reach the slot with. The
-# reassigned-slot proof block above teardown's slot checks owns the full gate.
+# The record-only reassigned-slot proof block below owns the missing-worktree
+# exception and its preservation guarantees; tests/fm-teardown-endpoint-safety.test.sh
+# covers its acceptance, refusal, replayed-patch coverage, and branch preservation.
 # Why Treehouse's own state cannot answer this for crewmate slots, and why the
 # claim file sits on top of it, is owned by bin/fm-wake-lib.sh's slot-owner
 # claim comment.
@@ -970,13 +964,9 @@ fi
 # This is the first cleanup authorization check. It is metadata-only and must
 # complete before fm-guard, a backend command, file removal, branch deletion,
 # worktree return, registry change, or process termination can run.
-# FM_BACKEND_VALIDATE_REASSIGNMENT_CANDIDATE lets exactly one record shape past
-# the worktree-identity refusal - no worktree= plus a recorded
-# worktree_reassigned_by=<other-id> - as a CANDIDATE only: the four-proof gate
-# below independently verifies the handover against the slot's live owner
-# claim, the landed-work contract, and recorded stop evidence, and anything
-# short of all four keeps the refusal. Every other caller of the same
-# validation keeps its unconditional refusal.
+# The opt-in only admits a missing-worktree candidate; it authorizes no cleanup.
+# bin/fm-backend.sh owns candidate validation, and the record-only reassigned-slot
+# gate below must authorize retirement before any destructive step.
 FM_BACKEND_VALIDATE_REASSIGNMENT_CANDIDATE=1
 fm_backend_validate_task_endpoint "$META" "$ID" || exit 1
 FM_BACKEND_VALIDATE_REASSIGNMENT_CANDIDATE=
@@ -1411,18 +1401,18 @@ work_is_landed() {
 
 # --- Record-only retirement of a record whose pool slot was reassigned --------
 #
-# A record whose pool slot was handed to another task carries
-# worktree_reassigned_by=<other-id> in place of the worktree= identity it can no
-# longer honestly claim. The recorded handover is never ownership of the current
-# slot: it only names the task whose LIVE slot claim must independently confirm
-# the handover, and the slot itself - its current owner's processes, copy, and
-# claim - is never touched by this path. Retirement is record-only: no teardown,
-# deletion, process stop, or slot return for the current owner, and the old branch
-# and work data are preserved, because every branch- and slot-touching step below
-# is keyed off teardown_owns_worktree, which this proof turns off.
+# This gate takes only ship records. A record whose pool slot was handed to
+# another task carries worktree_reassigned_by=<other-id> in place of the worktree=
+# identity it can no longer honestly claim. The recorded handover is never
+# ownership of the current slot: it only names the task whose LIVE slot claim
+# must independently confirm the handover. The slot itself - its current owner's
+# processes, copy, and claim - is never touched by this path. Branch and slot
+# cleanup is skipped because there is no owned worktree, and fleet synchronization
+# and pruning are skipped explicitly to preserve the old branch, work data, and
+# unrelated work. The old task's own endpoint and bookkeeping still use the normal guards.
 #
 # Four positive proofs gate it, and anything less keeps the worktree-identity
-# refusal (a) names:
+# refusal:
 #   (a) the record genuinely has no worktree of its own - no worktree= line and
 #       exactly one worktree_reassigned_by= naming another task
 #       (fm_backend_reassignment_slot_candidate, read at the endpoint gate);
@@ -1431,11 +1421,18 @@ work_is_landed() {
 #       Treehouse pool slot of this record's project, and the slot's live owner
 #       claim names exactly the claimant;
 #   (c) the work landed per the task-specific landed-evidence contract with
-#       final branch coverage - the recorded PR reads merged from the live forge;
+#       final branch coverage - the resolved task PR reads merged from the live
+#       forge, and its head plus every retained local and existing remote task
+#       branch tip is covered. Ancestry or equivalent patch ids in the merged PR
+#       head prove task work landed, including pipeline-replayed commits after
+#       later default-branch evolution. Additional work must be an ancestor of
+#       the freshly fetched default branch or produce exactly its tree in a
+#       conflict-free 3-way merge. Unreadable branch state or a failed fetch
+#       refuses; only confirmed remote branch absence permits omitting its tip;
 #   (d) the worker stopped on recorded evidence - the backend's recovery-grade
-#       classifier (fm_backend_agent_state) answers dead for the
-#       recorded endpoint. An operator's assertion of stopped status never
-#       substitutes for the landed-work proof in (c).
+#       classifier (fm_backend_agent_state) answers dead for the recorded
+#       endpoint. Registry absence (missing) proves no stop, and an operator's
+#       assertion substitutes for neither this proof nor the landed-work proof.
 # --force does not lift any of these: it authorizes discarding unlanded work, and
 # this record has no worktree of its own left to discard.
 TEARDOWN_REASSIGNED_SLOT=0
