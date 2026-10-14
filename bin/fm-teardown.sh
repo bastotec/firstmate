@@ -1300,34 +1300,34 @@ ensure_commit_object() {
 }
 
 patch_id_for_commit() {
-  local commit=$1
-  git -C "$WT" show --pretty=medium --no-ext-diff "$commit" 2>/dev/null \
+  local repo=$1 commit=$2
+  git -C "$repo" show --pretty=medium --no-ext-diff "$commit" 2>/dev/null \
     | git patch-id --stable 2>/dev/null \
     | awk 'NR == 1 { print $1 }'
 }
 
-unpushed_patches_are_in_pr_head() {
-  local pr_head=$1 current base pr_patch_ids commit patch_id unpushed
-  current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
-  base=$(git -C "$WT" merge-base "$current" "$pr_head" 2>/dev/null) || return 1
+patches_are_in_pr_head() {
+  local repo=$1 current=$2 pr_head=$3 excluded=$4
+  local base pr_patch_ids commit patch_id commits
+  base=$(git -C "$repo" merge-base "$current" "$pr_head" 2>/dev/null) || return 1
   pr_patch_ids=$(
-    git -C "$WT" log --format=%H "$base..$pr_head" -- 2>/dev/null \
+    git -C "$repo" log --format=%H "$base..$pr_head" -- 2>/dev/null \
       | while IFS= read -r commit; do
-          patch_id_for_commit "$commit"
+          patch_id_for_commit "$repo" "$commit"
         done \
       | sed '/^$/d' \
       | sort -u
   ) || return 1
   [ -n "$pr_patch_ids" ] || return 1
-  unpushed=$(git -C "$WT" log --format=%H HEAD --not --remotes -- 2>/dev/null) || return 1
-  [ -n "$unpushed" ] || return 1
+  commits=$(git -C "$repo" log --format=%H "$current" --not "$excluded" -- 2>/dev/null) || return 1
+  [ -n "$commits" ] || return 1
   while IFS= read -r commit; do
     [ -n "$commit" ] || continue
-    patch_id=$(patch_id_for_commit "$commit") || return 1
+    patch_id=$(patch_id_for_commit "$repo" "$commit") || return 1
     [ -n "$patch_id" ] || return 1
     printf '%s\n' "$pr_patch_ids" | grep -qxF "$patch_id" || return 1
   done <<EOF
-$unpushed
+$commits
 EOF
 }
 
@@ -1361,7 +1361,7 @@ pr_is_merged() {
   current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
   if git -C "$WT" merge-base --is-ancestor "$current" "$head" 2>/dev/null; then
     landed=1
-  elif unpushed_patches_are_in_pr_head "$head"; then
+  elif patches_are_in_pr_head "$WT" "$current" "$head" --remotes; then
     landed=1
   fi
   [ "$landed" = 1 ] || return 1
@@ -1515,6 +1515,7 @@ teardown_reassigned_branch_covered() {  # <pr-head> <branch>
   esac
   for tip in "${tips[@]}"; do
     git -C "$PROJ" merge-base --is-ancestor "$tip" "$pr_head" 2>/dev/null && continue
+    patches_are_in_pr_head "$PROJ" "$tip" "$pr_head" "$pr_head" && continue
     git -C "$PROJ" merge-base --is-ancestor "$tip" "$ref" 2>/dev/null && continue
     teardown_reassigned_content_in_default "$tip" "$ref" || return 1
   done

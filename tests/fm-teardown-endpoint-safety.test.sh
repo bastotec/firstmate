@@ -1197,7 +1197,7 @@ SH
 # mark_case_as_treehouse_pool; the dead task's worktree is already gone (that
 # is the premise), so the branch lives only in the project's refs.
 seed_reassigned_landed_pr() {  # <case> <pr-url> [pr-state]
-  local dir=$1 pr_url=$2 pr_state=${3:-MERGED} default pr_head
+  local dir=$1 pr_url=$2 pr_state=${3:-MERGED} replay=${4:-0} default pr_head
   default=$(git -C "$dir/project" symbolic-ref --quiet --short HEAD)
   git -C "$dir/project" checkout -q -B fm/dead-task
   printf 'landed work\n' > "$dir/project/landed.txt"
@@ -1205,6 +1205,17 @@ seed_reassigned_landed_pr() {  # <case> <pr-url> [pr-state]
   git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
     commit -qm 'dead task work'
   pr_head=$(git -C "$dir/project" rev-parse HEAD)
+  if [ "$replay" = 1 ]; then
+    git -C "$dir/project" checkout -q "$default"
+    printf 'new default work\n' > "$dir/project/default.txt"
+    git -C "$dir/project" add default.txt
+    git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+      commit -qm 'default advanced before pipeline replay'
+    git -C "$dir/project" checkout -qb replayed-pr
+    git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+      cherry-pick "$pr_head" >/dev/null
+    pr_head=$(git -C "$dir/project" rev-parse HEAD)
+  fi
   printf '%s\n' "$pr_head" > "$dir/pr-head"
   # Squash-land the branch's content on the default branch, then delete the
   # branch: the common flow where the branch's own commits are reachable
@@ -1213,10 +1224,15 @@ seed_reassigned_landed_pr() {  # <case> <pr-url> [pr-state]
   # checkout stays on the pool's detached fixture commit, so seeding never
   # disturbs the claimant's copy.
   git -C "$dir/project" checkout -q "$default"
-  git -C "$dir/project" merge --squash -q fm/dead-task >/dev/null
+  if [ "$replay" = 1 ]; then
+    git -C "$dir/project" merge --squash -q replayed-pr >/dev/null
+    git -C "$dir/project" branch -q -D replayed-pr
+  else
+    git -C "$dir/project" merge --squash -q fm/dead-task >/dev/null
+    git -C "$dir/project" branch -q -D fm/dead-task
+  fi
   git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
     commit -qm 'squash land dead task'
-  git -C "$dir/project" branch -q -D fm/dead-task
   git init -q --bare "$dir/origin.git"
   git -C "$dir/project" remote add origin "$dir/origin.git"
   git -C "$dir/project" push -q origin "$default"
@@ -1456,13 +1472,16 @@ test_reassigned_slot_record_retires_only_on_all_four_proofs() {
 
 test_reassigned_record_coverage_and_preservation() {
   local dir id=dead-task claimant=live-claimant target rc scenario pr_head default
-  local real_git local_tip unrelated_tip
+  local real_git local_tip unrelated_tip replay
   real_git=$(command -v git)
   for scenario in local-only local-ahead remote-ahead fetch-failed remote-unreadable \
-      local-unreadable evolved-deleted evolved-retained evolved-remote preserved missing-worker; do
+      local-unreadable evolved-deleted evolved-retained evolved-remote preserved missing-worker \
+      replayed-local replayed-remote replayed-local-extra replayed-remote-extra; do
     dir=$(make_case "reassign-$scenario")
     mark_case_as_treehouse_pool "$dir"
-    seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/7"
+    replay=0
+    case "$scenario" in replayed-*) replay=1 ;; esac
+    seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/7" MERGED "$replay"
     pr_head=$(cat "$dir/pr-head")
     default=$(git -C "$dir/project" symbolic-ref --quiet --short HEAD)
     write_reassigned_meta "$dir" "$id" "$claimant" \
@@ -1500,6 +1519,29 @@ test_reassigned_record_coverage_and_preservation() {
             local_tip=$pr_head
             ;;
         esac
+        ;;
+      replayed-*)
+        if [ "$scenario" = replayed-local-extra ] || [ "$scenario" = replayed-remote-extra ]; then
+          git -C "$dir/project" checkout -q fm/dead-task
+          printf 'unlanded replay follow-up\n' > "$dir/project/later.txt"
+          git -C "$dir/project" add later.txt
+          git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+            commit -qm 'unlanded work after replay'
+          git -C "$dir/project" checkout -q "$default"
+        fi
+        local_tip=$(git -C "$dir/project" rev-parse refs/heads/fm/dead-task)
+        case "$scenario" in
+          replayed-remote*)
+            git -C "$dir/project" push -q origin fm/dead-task
+            git -C "$dir/project" branch -q -D fm/dead-task
+            local_tip=
+            ;;
+        esac
+        printf 'default evolved after squash landing\n' > "$dir/project/landed.txt"
+        git -C "$dir/project" add landed.txt
+        git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+          commit -qm 'subsequent default work'
+        git -C "$dir/project" push -q origin "$default"
         ;;
       local-unreadable)
         mkdir -p "$dir/project/.git/refs/heads/fm"
@@ -1553,7 +1595,7 @@ SH
     rc=$?
     set -e
     case "$scenario" in
-      evolved-*|preserved)
+      evolved-*|preserved|replayed-local|replayed-remote)
         [ "$rc" -eq 0 ] || fail "$scenario refused landed work: $(cat "$dir/stderr")"
         assert_absent "$dir/home/state/$id.meta" "$scenario kept the old record"
         ;;
