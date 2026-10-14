@@ -903,6 +903,33 @@ _fm_status_file_size() {  # <status-file>
   fi
 }
 
+# Identity and size from ONE stat call, as "<ident>\t<size>", for hot paths
+# that need both (the drain reads them for every status file several times).
+# Test reader overrides keep the two separate calls so each stays injectable.
+_fm_status_file_ident_size() {  # <status-file>
+  local f=$1 fields ident epoch birth size
+  if [ -n "${FM_STATUS_IDENTITY_READER:-}" ] || [ -n "${FM_STATUS_SIZE_READER:-}" ]; then
+    ident=$(_fm_open_decisions_file_ident "$f") || return 1
+    size=$(_fm_status_file_size "$f") || return 1
+    printf '%s\t%s' "$ident" "${size//[[:space:]]/}"
+    return 0
+  fi
+  if _fm_classify_is_darwin; then
+    fields=$(LC_ALL=C /usr/bin/stat -f $'%d:%i\t%B\t%FB\t%z' "$f" 2>/dev/null) || return 1
+  else
+    fields=$(LC_ALL=C stat -c $'%d:%i\t%W\t%w\t%s' "$f" 2>/dev/null) || return 1
+  fi
+  case "$fields" in *$'\n'*) return 1 ;; esac
+  ident=${fields%%$'\t'*}; fields=${fields#*$'\t'}
+  epoch=${fields%%$'\t'*}; fields=${fields#*$'\t'}
+  birth=${fields%%$'\t'*}; size=${fields#*$'\t'}
+  case "$epoch" in ''|0|-) birth='' ;; esac
+  case "$birth" in -) birth='' ;; esac
+  case "$ident$birth" in *$'\t'*|'') return 1 ;; esac
+  case "$size" in ''|*[!0-9]*) return 1 ;; esac
+  if [ -n "$birth" ]; then printf 'strong:%s:%s\t%s' "$ident" "$birth" "$size"; else printf 'weak:%s\t%s' "$ident" "$size"; fi
+}
+
 _fm_status_file_mtime() {  # <status-file>
   local f=$1
   if _fm_classify_is_darwin; then
@@ -1200,9 +1227,9 @@ EOF
     offset=0
     ident=$(_fm_open_decisions_file_ident "$f") || return 1
   fi
-  cur_ident=$(_fm_open_decisions_file_ident "$f") || return 1
-  size=$(_fm_status_file_size "$f") || return 1
-  size=${size//[[:space:]]/}
+  cur_ident=$(_fm_status_file_ident_size "$f") || return 1
+  size=${cur_ident#*$'\t'}
+  cur_ident=${cur_ident%%$'\t'*}
   case "$size:$offset" in *[!0-9:]*) return 1 ;; esac
   if [ "$ident" != "$cur_ident" ] || [ "$offset" -gt "$size" ]; then offset=0; fi
   printf '%s' "$offset"
@@ -1224,9 +1251,9 @@ status_outcome_backstop_cursor_offset() {  # <status-file>
     case "$presented:$row_backstop" in *[!0-9:]*) return 1 ;; esac
     [ -n "$presented" ] && [ -n "$ident" ] || return 1
     if [ "$row_task" = "$task" ]; then
-      current=$(_fm_open_decisions_file_ident "$f") || return 1
-      size=$(_fm_status_file_size "$f") || return 1
-      size=${size//[[:space:]]/}
+      current=$(_fm_status_file_ident_size "$f") || return 1
+      size=${current#*$'\t'}
+      current=${current%%$'\t'*}
       case "$size" in ''|*[!0-9]*) return 1 ;; esac
       [ "$ident" = "$current" ] || { printf '0'; return 0; }
       backstop=${row_backstop:-0}

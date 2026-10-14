@@ -26,6 +26,8 @@ if [ -n "${FM_TEST_LIB_SOURCED:-}" ]; then
 fi
 FM_TEST_LIB_SOURCED=1
 
+unset FM_SEND_RING_ASYNC
+
 # Pin the fixture umask. Firstmate's state-root and process-event contracts
 # refuse group- or world-writable state directories, and a permissive ambient
 # umask (e.g. 0002) makes every `mkdir state` fixture fail that contract before

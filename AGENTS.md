@@ -202,6 +202,7 @@ When implementation is separately authorized, promote the scout through `bin/fm-
 Whenever work is under way, keep exactly one live supervision cycle using the emitted protocol; Relay may require it with no fleet work.
 Never substitute another wait shape, use shell `&`, or create a second cycle beside a healthy one; use the protocol's repair action only when the live cycle is missing or failed.
 No turn ends blind while work is under way, including turns described as holding or waiting.
+Never run a long operation inline: a second-mate restart pass goes through `bin/fm-secondmate-restart.sh --background`, and anything else that waits minutes goes through `bin/fm-procevent-when.sh`, so its outcome arrives as a notification.
 
 At the start of every wake-handling turn, drain the durable wake queue before peeking, reading beyond the reason line, steering, or starting work; session start is the only exception, because its digest already presented or deliberately left the queue.
 Treat the drain's sections as follows:

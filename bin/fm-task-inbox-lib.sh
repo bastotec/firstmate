@@ -368,6 +368,28 @@ fm_task_inbox_ring() {  # <backend> <target> <record-path> [expected-label] [har
   return 0
 }
 
+# Ring in the background when FM_SEND_RING_ASYNC=1, so an interactive caller
+# returns as soon as the record is durable: the ring is best-effort and its
+# verdict is never delivery proof, and the watcher's re-ring ladder owns a lost
+# one. The outcome is appended to <state>/<task>.inbox/.ring.log instead of
+# stderr. Returns 4 when it detached; otherwise rings in the foreground and
+# returns fm_task_inbox_ring's code. The live first mate and second mate hosts
+# set the variable; tests and other callers keep the synchronous ring.
+fm_task_inbox_ring_maybe_async() {  # <backend> <target> <record-path> [expected-label] [harness] [state-dir] [task-id]
+  local log
+  if [ "${FM_SEND_RING_ASYNC:-0}" != 1 ] || [ -z "${6:-}" ] || [ -z "${7:-}" ] || [ ! -d "$6/$7.inbox" ]; then
+    fm_task_inbox_ring "$@"
+    return
+  fi
+  log="$6/$7.inbox/.ring.log"
+  (
+    rc=0
+    fm_task_inbox_ring "$@" || rc=$?
+    printf '%s ring=%s record=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rc" "${3##*/}" >> "$log" 2>/dev/null
+  ) </dev/null >/dev/null 2>&1 &
+  return 4
+}
+
 fm_task_inbox_is_fire_and_forget() {  # <record-path>
   local rec=$1
   if [ ! -f "$rec" ]; then

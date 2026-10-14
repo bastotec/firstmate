@@ -64,9 +64,10 @@
 # bin/fm-task-inbox-lib.sh owns the record format, the doorbell line, and the
 # re-ring ladder. The composer pre-check before the ring is ADVISORY only: when
 # the composer visibly holds pending text other than the doorbell itself the
-# ring is skipped with a notice and the watcher re-rings an ordinary record
-# later (fm_task_inbox_ring owns the exception); no composer verdict is
-# delivery proof on this plane, and a failed ring never fails the send.
+# ring is skipped and the watcher re-rings an ordinary record later
+# (fm_task_inbox_ring owns the exception); no composer verdict is delivery
+# proof on this plane, and a failed ring never fails the send. Ring scheduling
+# and diagnostics are owned by fm_task_inbox_ring_maybe_async in that library.
 #
 # TYPED - the LOCAL text that must reach the terminal itself: a harness-native
 # invocation (a leading "/") must reach
@@ -1124,7 +1125,7 @@ else
     # because the watcher owns loss detection from here, either through its
     # bounded re-ring ladder or direct unavailable-endpoint recovery.
     ring_rc=0
-    fm_task_inbox_ring "$TARGET_BACKEND" "$T" "$INBOX_RECORD" "$EXPECTED_LABEL" "$TARGET_HARNESS" "$STATE" "$INBOX_TASK_ID" || ring_rc=$?
+    fm_task_inbox_ring_maybe_async "$TARGET_BACKEND" "$T" "$INBOX_RECORD" "$EXPECTED_LABEL" "$TARGET_HARNESS" "$STATE" "$INBOX_TASK_ID" || ring_rc=$?
     case "$ring_rc" in
       1) echo "fm-send: doorbell skipped (composer visibly holds pending text); the steer is durably recorded at $INBOX_RECORD and the watcher will re-ring" >&2 ;;
       2) echo "fm-send: the steer is durably delivered at $INBOX_RECORD; the doorbell did not reach $T and the watcher will re-ring" >&2 ;;
