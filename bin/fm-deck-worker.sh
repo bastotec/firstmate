@@ -121,15 +121,19 @@
 # file (Deck saves a conversation at its first appended completion), including
 # during the startup turn, the host atomically records its session id on line 1
 # and FM_HOME on line 2 of <state>/<id>.deck-session in the parent task state.
-# A run stopped before Deck saved anything never replaces the record, which keeps
-# naming the last conversation that exists. Write failure warns on
-# stderr without stopping the host. Automatic revive and update restart reuse
-# that conversation only when the record is a non-symlink file, its id contains
-# only letters, digits, dot, underscore, or dash, its home exactly matches the
-# current FM_HOME, and Deck's session file exists at
-# ${XDG_STATE_HOME:-$HOME/.local/state}/deck/sessions/<session-id>.json.
+# The host checks during each turn-loop iteration until recorded, and once more
+# after stopping Deck during cleanup to catch a late save before TERM/HUP exit.
+# A run stopped during its first model call can name a session with no file;
+# it never replaces the record of the previous saved conversation.
+# Write failure warns on stderr without stopping the host.
+# Local and remote relaunches (fm-control relaunch, revive, update restart, and
+# model-switch fallback) reuse that conversation only when the record is a
+# non-symlink file, its id contains only letters, digits, dot, underscore, or
+# dash, its home exactly matches the current FM_HOME, and Deck's session file
+# exists at ${XDG_STATE_HOME:-$HOME/.local/state}/deck/sessions/<session-id>.json.
 # Otherwise, or with FM_DECK_FRESH_SESSION=1, the host starts a new conversation
-# and records the new binding. A legacy id-only record cannot authorize resume.
+# and records the new binding only once saved. A legacy id-only record cannot
+# authorize resume.
 # Every host start still supplies the charter and newly collected startup
 # digest; conversation continuity never replaces reconciliation from disk.
 # bin/fm-teardown.sh removes the binding on secondmate retirement, including
@@ -766,11 +770,7 @@ if [ "$SECONDMATE" = 1 ]; then
     esac
   fi
 fi
-# A session is recorded only once Deck has written its file: Deck saves a
-# conversation when the first completion is appended, so a run killed during
-# its first model call leaves an id with nothing behind it. Recording that id
-# would replace the last session that does exist, and the next host would start
-# fresh; waiting keeps the record on a session that can be resumed.
+# The header's session-continuity contract owns the saved-file guard and rationale.
 session_record() {
   [ -n "$SESSION_RECORD" ] && [ -n "$SESSION" ] || return 0
   [ "$SESSION_RECORDED" != "$SESSION" ] || return 0
