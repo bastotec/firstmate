@@ -117,9 +117,12 @@
 # tests/fm-deck-harness.test.sh.
 #
 # SECOND MATE SESSION CONTINUITY (--secondmate)
-# As soon as run_started names the session, including during the startup turn,
-# the host atomically records its session id on line 1 and FM_HOME on line 2 of
-# <state>/<id>.deck-session in the parent task state. Write failure warns on
+# Once run_started has named the session and Deck has written that session's
+# file (Deck saves a conversation at its first appended completion), including
+# during the startup turn, the host atomically records its session id on line 1
+# and FM_HOME on line 2 of <state>/<id>.deck-session in the parent task state.
+# A run stopped before Deck saved anything never replaces the record, which keeps
+# naming the last conversation that exists. Write failure warns on
 # stderr without stopping the host. Automatic revive and update restart reuse
 # that conversation only when the record is a non-symlink file, its id contains
 # only letters, digits, dot, underscore, or dash, its home exactly matches the
@@ -741,7 +744,9 @@ fi
 
 SESSION=''
 # The header owns home-bound resume eligibility and the fresh-session opt-out.
+DECK_SESSIONS="${XDG_STATE_HOME:-$HOME/.local/state}/deck/sessions"
 SESSION_RECORD=''
+SESSION_RECORDED=''
 if [ "$SECONDMATE" = 1 ]; then
   SESSION_RECORD="$STATE/$ID.deck-session"
   if [ "${FM_DECK_FRESH_SESSION:-0}" != 1 ] && [ -f "$SESSION_RECORD" ] && [ ! -L "$SESSION_RECORD" ]; then
@@ -750,18 +755,28 @@ if [ "$SECONDMATE" = 1 ]; then
     case "$recorded_session" in
       ''|*[!A-Za-z0-9._-]*) ;;
       *)
-        if [ "$recorded_home" = "$FM_HOME" ] && [ -f "${XDG_STATE_HOME:-$HOME/.local/state}/deck/sessions/$recorded_session.json" ]; then
+        if [ "$recorded_home" = "$FM_HOME" ] && [ -f "$DECK_SESSIONS/$recorded_session.json" ]; then
           SESSION=$recorded_session
+          SESSION_RECORDED=$recorded_session
         fi
         ;;
     esac
   fi
 fi
+# A session is recorded only once Deck has written its file: Deck saves a
+# conversation when the first completion is appended, so a run killed during
+# its first model call leaves an id with nothing behind it. Recording that id
+# would replace the last session that does exist, and the next host would start
+# fresh; waiting keeps the record on a session that can be resumed.
 session_record() {
   [ -n "$SESSION_RECORD" ] && [ -n "$SESSION" ] || return 0
-  [ "$(cat "$SESSION_RECORD" 2>/dev/null || true)" != "$(printf '%s\n%s' "$SESSION" "$FM_HOME")" ] || return 0
-  printf '%s\n%s\n' "$SESSION" "$FM_HOME" > "$SESSION_RECORD.tmp.$$" && mv -f "$SESSION_RECORD.tmp.$$" "$SESSION_RECORD" \
-    || printf 'fm-deck-worker: warning: could not record Deck session %s\n' "$SESSION" >&2
+  [ "$SESSION_RECORDED" != "$SESSION" ] || return 0
+  [ -f "$DECK_SESSIONS/$SESSION.json" ] || return 0
+  if printf '%s\n%s\n' "$SESSION" "$FM_HOME" > "$SESSION_RECORD.tmp.$$" && mv -f "$SESSION_RECORD.tmp.$$" "$SESSION_RECORD"; then
+    SESSION_RECORDED=$SESSION
+  else
+    printf 'fm-deck-worker: warning: could not record Deck session %s\n' "$SESSION" >&2
+  fi
 }
 session_observe() {
   local started
@@ -864,7 +879,7 @@ $prompt"
     TURN_PID=$!
     STOP_REQUESTED_AT=''
     while kill -0 "$TURN_PID" 2>/dev/null; do
-      [ -n "$SESSION" ] || session_observe
+      session_observe
       escalate_turn_stop
       # /quit typed while the turn runs is an exit request, not a later turn:
       # stop the turn now, and the prompt loop reads the queued /quit next.

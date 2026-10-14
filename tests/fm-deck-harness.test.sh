@@ -1388,7 +1388,7 @@ if args[:2] == ['run', '--help']:
     print('--steer-dir <DIR>\n--effort <LEVEL>' if (home / 'effort-support').exists() else '--steer-dir <DIR>')
     sys.exit(0)
 prompt = args[1]
-session = args[args.index('--session') + 1] if '--session' in args else 'host-session'
+session = args[args.index('--session') + 1] if '--session' in args else os.environ.get('FAKE_NEW_SESSION', 'host-session')
 inbox = pathlib.Path(__file__).parent / 'parent/host.inbox'
 records = list(sorted(inbox.glob('*.msg'))) if 'Firstmate instruction waiting:' in prompt else []
 body = ''.join(record.read_text() for record in records)
@@ -1915,7 +1915,12 @@ def wait_for(check, label, bound=60):
 p = host()
 try:
     binding = root/'parent/host.deck-session'
-    wait_for(lambda: (home/'in-turn').exists() and binding.exists(), 'session recorded during startup')
+    wait_for(lambda: (home/'in-turn').exists(), 'startup turn running')
+    time.sleep(.5)
+    assert not binding.exists(), 'a session Deck has not saved yet was recorded'
+    # Deck saves the conversation; the host records it while the turn still runs.
+    (sessions/'host-session.json').write_text('{}')
+    wait_for(lambda: binding.exists(), 'session recorded during startup')
     assert not idle(), 'startup already finished before its session was recorded'
     assert binding.read_text().splitlines() == ['host-session', str(home)]
     (home/'hold-turn').unlink()
@@ -1956,11 +1961,26 @@ try:
     assert not rows()[4]['resumed'], rows()[4]
     p.stdin.write('/quit\n'); p.stdin.flush()
     assert p.wait(timeout=60) == 0
+    # A new conversation that Deck never saved (a run stopped during its first
+    # model call) must not replace the record of the one that exists.
+    env['FAKE_NEW_SESSION'] = 'unsaved-session'
+    p = host()
+    wait_for(lambda: len(rows()) == 6 and idle(), 'fresh unsaved session')
+    assert rows()[5]['session'] == 'unsaved-session', rows()[5]
+    assert binding.read_text().splitlines()[0] == 'host-session', binding.read_text()
+    p.stdin.write('/quit\n'); p.stdin.flush()
+    assert p.wait(timeout=60) == 0
+    del env['FAKE_NEW_SESSION']
     del env['FM_DECK_FRESH_SESSION']
+    p = host()
+    wait_for(lambda: len(rows()) == 7 and idle(), 'host after an unsaved session')
+    assert rows()[6]['resumed'] and rows()[6]['session'] == 'host-session', rows()[6]
+    p.stdin.write('/quit\n'); p.stdin.flush()
+    assert p.wait(timeout=60) == 0
     binding.write_text('host-session\n')
     p = host()
-    wait_for(lambda: len(rows()) == 6 and idle(), 'unbound legacy session')
-    assert not rows()[5]['resumed'], rows()[5]
+    wait_for(lambda: len(rows()) == 8 and idle(), 'unbound legacy session')
+    assert not rows()[7]['resumed'], rows()[7]
     assert binding.read_text().splitlines() == ['host-session', str(home)]
     p.stdin.write('/quit\n'); p.stdin.flush()
     assert p.wait(timeout=60) == 0
