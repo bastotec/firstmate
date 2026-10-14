@@ -1445,38 +1445,39 @@ teardown_reassigned_refusal() {  # <missing-proof> <reason>
   exit 1
 }
 
-# The merged PR's head commit and branch name, read from the live forge through
-# the project clone. Prints "<head>$TAB<branch>"; returns 1 when the PR cannot be
-# read as merged, which is proof (c)'s first half.
 teardown_reassigned_pr_head() {  # <pr-url>
-  local url=$1 view state head branch
+  local url=$1 view state head branch remote
   view=$( cd "$PROJ" && gh pr view "$url" \
-      --json state,headRefOid,headRefName \
-      -q '.state + "\t" + .headRefOid + "\t" + .headRefName' 2>/dev/null ) || return 1
+      --json state,headRefOid,headRefName,headRepository,url \
+      -q 'select(.headRepository.nameWithOwner != null and .headRepository.nameWithOwner != "") | .state + "\t" + .headRefOid + "\t" + .headRefName + "\t" + (.url | split("/")[:3] | join("/")) + "/" + .headRepository.nameWithOwner + ".git"' 2>/dev/null ) || return 1
   state=${view%%$'\t'*}
   [ "$state" != "$view" ] || return 1
   case "$state" in MERGED|merged) ;; *) return 1 ;; esac
   view=${view#*$'\t'}
   head=${view%%$'\t'*}
-  branch=${view#*$'\t'}
-  [ -n "$head" ] && [ -n "$branch" ] && [ "$head" != "$view" ] || return 1
-  printf '%s\t%s' "$head" "$branch"
+  [ "$head" != "$view" ] || return 1
+  view=${view#*$'\t'}
+  branch=${view%%$'\t'*}
+  remote=${view#*$'\t'}
+  [ -n "$head" ] && [ -n "$branch" ] && [ -n "$remote" ] && [ "$branch" != "$view" ] || return 1
+  printf '%s\t%s\t%s' "$head" "$branch" "$remote"
 }
 
-# The same 3-way containment content_in_default applies to a worktree HEAD, for
-# an explicit commit: <commit> introduces nothing the default branch does not
-# already contain exactly when merging the two yields the default branch's tree.
-teardown_reassigned_content_in_default() {  # <commit> <default-ref>
-  local commit=$1 ref=$2 default_tree merged_tree
+teardown_reassigned_content_in_default() {
+  local commit=$1 ref=$2 pr_head=$3 covered=$1 default_tree merged_tree
+  while ! git -C "$PROJ" merge-base --is-ancestor "$covered" "$pr_head" 2>/dev/null \
+      && ! patches_are_in_pr_head "$PROJ" "$covered" "$pr_head" "$pr_head"; do
+    covered=$(git -C "$PROJ" rev-parse --quiet --verify "$covered^1" 2>/dev/null) || return 1
+  done
   default_tree=$(git -C "$PROJ" rev-parse --quiet --verify "$ref^{tree}" 2>/dev/null) || return 1
   [ -n "$default_tree" ] || return 1
-  merged_tree=$(git -C "$PROJ" merge-tree --write-tree "$ref" "$commit" 2>/dev/null) || return 1
+  merged_tree=$(git -C "$PROJ" merge-tree --write-tree --merge-base="$covered" "$ref" "$commit" 2>/dev/null) || return 1
   merged_tree=$(printf '%s\n' "$merged_tree" | head -1)
   [ "$merged_tree" = "$default_tree" ]
 }
 
-teardown_reassigned_branch_covered() {  # <pr-head> <branch>
-  local pr_head=$1 branch=$2 default ref tip remote_rc=0 local_rc=0
+teardown_reassigned_branch_covered() {
+  local pr_head=$1 branch=$2 head_remote=$3 default ref tip remote_rc=0 local_rc=0
   local tips=("$pr_head")
   default=$(default_branch) || return 1
   git -C "$PROJ" fetch --quiet origin \
@@ -1496,14 +1497,14 @@ teardown_reassigned_branch_covered() {  # <pr-head> <branch>
     1) ;;
     *) return 1 ;;
   esac
-  git -C "$PROJ" ls-remote --exit-code --heads origin "refs/heads/$branch" \
+  git -C "$PROJ" ls-remote --exit-code --heads "$head_remote" "refs/heads/$branch" \
     >/dev/null 2>&1 || remote_rc=$?
   case "$remote_rc" in
     0)
-      git -C "$PROJ" fetch --quiet origin \
-        "+refs/heads/$branch:refs/remotes/origin/$branch" >/dev/null 2>&1 || return 1
+      git -C "$PROJ" fetch --quiet --no-tags "$head_remote" \
+        "refs/heads/$branch" >/dev/null 2>&1 || return 1
       tip=$(git -C "$PROJ" rev-parse --quiet --verify \
-        "refs/remotes/origin/$branch^{commit}" 2>/dev/null) || return 1
+        'FETCH_HEAD^{commit}' 2>/dev/null) || return 1
       [ -n "$tip" ] || return 1
       tips+=("$tip")
       ;;
@@ -1514,7 +1515,7 @@ teardown_reassigned_branch_covered() {  # <pr-head> <branch>
     git -C "$PROJ" merge-base --is-ancestor "$tip" "$pr_head" 2>/dev/null && continue
     patches_are_in_pr_head "$PROJ" "$tip" "$pr_head" "$pr_head" && continue
     git -C "$PROJ" merge-base --is-ancestor "$tip" "$ref" 2>/dev/null && continue
-    teardown_reassigned_content_in_default "$tip" "$ref" || return 1
+    teardown_reassigned_content_in_default "$tip" "$ref" "$pr_head" || return 1
   done
   return 0
 }
@@ -1526,7 +1527,7 @@ teardown_reassigned_branch_covered() {  # <pr-head> <branch>
 # missing proof exits 1 with the reason, which no retirement path proceeds past.
 teardown_verify_reassigned_slot_record() {
   local claimant=$FM_BACKEND_VALIDATED_REASSIGNED_TO
-  local claimant_meta claimant_wt slot verdict pr_head_branch pr_head branch
+  local claimant_meta claimant_wt slot verdict pr_head_branch pr_head branch head_remote
   [ "$KIND" = ship ] || teardown_reassigned_refusal \
     "it is a $KIND record, and a record-only reassignment retirement takes only ship records" \
     "A scout's work product is its report and a secondmate has its own retirement path; neither has the landed-PR evidence this retirement rests on."
@@ -1557,8 +1558,10 @@ teardown_verify_reassigned_slot_record() {
     "its recorded PR $PR_URL cannot be read as merged from the live forge" \
     "A merged PR is the landed-work evidence this retirement rests on; an open, closed-unmerged, or unreadable PR retires nothing."
   pr_head=${pr_head_branch%%$'\t'*}
-  branch=${pr_head_branch#*$'\t'}
-  teardown_reassigned_branch_covered "$pr_head" "$branch" || teardown_reassigned_refusal \
+  pr_head_branch=${pr_head_branch#*$'\t'}
+  branch=${pr_head_branch%%$'\t'*}
+  head_remote=${pr_head_branch#*$'\t'}
+  teardown_reassigned_branch_covered "$pr_head" "$branch" "$head_remote" || teardown_reassigned_refusal \
     "its branch's final tip is not covered by the up-to-date default branch" \
     "A merely merged PR is not proof that later branch commits landed; the branch and its work data are preserved."
   # (d): the worker stopped on recorded evidence, never an operator's assertion.

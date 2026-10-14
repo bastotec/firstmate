@@ -1238,13 +1238,14 @@ seed_reassigned_landed_pr() {  # <case> <pr-url> [pr-state]
   git -C "$dir/project" push -q origin "$default"
   git -C "$dir/project" remote set-head origin "$default" 2>/dev/null || true
   git -C "$dir/project" fetch -q origin 2>/dev/null || true
+  printf '%s\n' "$dir/origin.git" > "$dir/head-remote"
   cat > "$dir/fakebin/gh" <<SH
 #!/usr/bin/env bash
 case "\${1:-} \${2:-}" in
   "pr view")
     case " \$* " in
-      *"state,headRefOid,headRefName"*)
-        printf '%s\t%s\t%s\n' '$pr_state' '$pr_head' 'fm/dead-task'
+      *"state,headRefOid,headRefName,headRepository,url"*)
+        printf '%s\t%s\t%s\t%s\n' '$pr_state' '$pr_head' 'fm/dead-task' "\$(cat '$dir/head-remote')"
         exit 0 ;;
       *"--json state "*)
         printf '%s\n' '$pr_state'
@@ -1472,15 +1473,17 @@ test_reassigned_slot_record_retires_only_on_all_four_proofs() {
 
 test_reassigned_record_coverage_and_preservation() {
   local dir id=dead-task claimant=live-claimant target rc scenario pr_head default
-  local real_git local_tip unrelated_tip replay
+  local real_git local_tip unrelated_tip replay followup
   real_git=$(command -v git)
   for scenario in local-only local-ahead remote-ahead fetch-failed remote-unreadable \
       local-unreadable evolved-deleted evolved-retained evolved-remote preserved missing-worker \
-      replayed-local replayed-remote replayed-local-extra replayed-remote-extra; do
+      replayed-local replayed-remote replayed-local-extra replayed-remote-extra \
+      fork-ahead fork-covered fork-fetch-failed fork-unreadable \
+      followup-local followup-remote followup-replayed-local followup-replayed-remote followup-unlanded; do
     dir=$(make_case "reassign-$scenario")
     mark_case_as_treehouse_pool "$dir"
     replay=0
-    case "$scenario" in replayed-*) replay=1 ;; esac
+    case "$scenario" in replayed-*|followup-replayed-*) replay=1 ;; esac
     seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/7" MERGED "$replay"
     pr_head=$(cat "$dir/pr-head")
     default=$(git -C "$dir/project" symbolic-ref --quiet --short HEAD)
@@ -1504,6 +1507,54 @@ test_reassigned_record_coverage_and_preservation() {
         ;;
     esac
     case "$scenario" in
+      fork-*)
+        git init -q --bare "$dir/fork.git"
+        printf '%s\n' "$dir/fork.git" > "$dir/head-remote"
+        git -C "$dir/project" checkout -qb fm/dead-task "$pr_head"
+        if [ "$scenario" = fork-ahead ]; then
+          printf 'unlanded fork work\n' > "$dir/project/fork.txt"
+          git -C "$dir/project" add fork.txt
+          git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+            commit -qm 'unlanded fork follow-up'
+        fi
+        git -C "$dir/project" push -q "$dir/fork.git" fm/dead-task
+        git -C "$dir/project" checkout -q "$default"
+        git -C "$dir/project" branch -f fm/dead-task "$pr_head"
+        local_tip=$pr_head
+        if [ "$scenario" = fork-unreadable ]; then
+          printf '%s\n' "$dir/unreadable-fork.git" > "$dir/head-remote"
+        fi
+        ;;
+      followup-*)
+        if [ "$replay" = 0 ]; then
+          git -C "$dir/project" branch fm/dead-task "$pr_head"
+        fi
+        git -C "$dir/project" checkout -q fm/dead-task
+        printf 'follow-up work\n' > "$dir/project/followup.txt"
+        git -C "$dir/project" add followup.txt
+        git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+          commit -qm 'task follow-up'
+        followup=$(git -C "$dir/project" rev-parse HEAD)
+        local_tip=$followup
+        git -C "$dir/project" checkout -q "$default"
+        if [ "$scenario" != followup-unlanded ]; then
+          git -C "$dir/project" merge --squash -q fm/dead-task >/dev/null
+          git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+            commit -qm 'squash land follow-up'
+        fi
+        case "$scenario" in
+          *-remote)
+            git -C "$dir/project" push -q origin fm/dead-task
+            git -C "$dir/project" branch -q -D fm/dead-task
+            local_tip=
+            ;;
+        esac
+        printf 'default evolved after squash landing\n' > "$dir/project/landed.txt"
+        git -C "$dir/project" add landed.txt
+        git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+          commit -qm 'subsequent default work'
+        git -C "$dir/project" push -q origin "$default"
+        ;;
       local-only|local-ahead|remote-ahead|fetch-failed)
         git -C "$dir/project" checkout -q fm/dead-task
         printf 'unlanded later work\n' > "$dir/project/later.txt"
@@ -1570,7 +1621,7 @@ test_reassigned_record_coverage_and_preservation() {
         ;;
     esac
     if [ "$scenario" = fetch-failed ] || [ "$scenario" = remote-unreadable ] \
-        || [ "$scenario" = preserved ]; then
+        || [ "$scenario" = preserved ] || [ "$scenario" = fork-fetch-failed ]; then
       cat > "$dir/fakebin/git" <<SH
 #!/usr/bin/env bash
 case " \$* " in
@@ -1579,8 +1630,8 @@ case " \$* " in
     ;;
 esac
 case '$scenario' in
-  fetch-failed)
-    case " \$* " in *" fetch "*"+refs/heads/fm/dead-task:"*) exit 128 ;; esac
+  fetch-failed|fork-fetch-failed)
+    case " \$* " in *" fetch "*"refs/heads/fm/dead-task"*) exit 128 ;; esac
     ;;
   remote-unreadable)
     case " \$* " in *" ls-remote "*) exit 128 ;; esac
@@ -1595,7 +1646,8 @@ SH
     rc=$?
     set -e
     case "$scenario" in
-      evolved-*|preserved|replayed-local|replayed-remote)
+      evolved-*|preserved|replayed-local|replayed-remote|fork-covered|\
+          followup-local|followup-remote|followup-replayed-local|followup-replayed-remote)
         [ "$rc" -eq 0 ] || fail "$scenario refused landed work: $(cat "$dir/stderr")"
         assert_absent "$dir/home/state/$id.meta" "$scenario kept the old record"
         ;;
