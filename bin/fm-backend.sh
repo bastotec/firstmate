@@ -195,7 +195,8 @@ fm_backend_reassignment_slot_candidate() {  # <meta> <task-id>
   local meta=$1 id=$2 count
   FM_BACKEND_REASSIGNED_TO=
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
-  [ -n "$(fm_backend_meta_exact_value "$meta" worktree)" ] && return 1
+  count=$(grep -c '^worktree=' "$meta" 2>/dev/null || true)
+  [ "$count" -eq 0 ] || return 1
   count=$(grep -c '^worktree_reassigned_by=' "$meta" 2>/dev/null || true)
   [ "$count" -eq 1 ] || return 1
   FM_BACKEND_REASSIGNED_TO=$(fm_backend_meta_exact_value "$meta" worktree_reassigned_by) || return 1
@@ -376,8 +377,6 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
   FM_BACKEND_VALIDATED_BACKEND=$backend
   # shellcheck disable=SC2034 # Output globals are consumed by sourcing callers.
   FM_BACKEND_VALIDATED_TARGET=$window
-  # shellcheck disable=SC2034 # Output globals are consumed by sourcing callers.
-  FM_BACKEND_VALIDATED_WORKTREE=$worktree
   return 0
 }
 

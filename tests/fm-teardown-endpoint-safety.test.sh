@@ -1205,6 +1205,7 @@ seed_reassigned_landed_pr() {  # <case> <pr-url> [pr-state]
   git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
     commit -qm 'dead task work'
   pr_head=$(git -C "$dir/project" rev-parse HEAD)
+  printf '%s\n' "$pr_head" > "$dir/pr-head"
   # Squash-land the branch's content on the default branch, then delete the
   # branch: the common flow where the branch's own commits are reachable
   # nowhere. A bare origin carries the landed default branch, because
@@ -1453,9 +1454,143 @@ test_reassigned_slot_record_retires_only_on_all_four_proofs() {
   pass "fm-teardown: a reassigned-slot record retires record-only on all four proofs and refuses without any of them"
 }
 
+test_reassigned_record_coverage_and_preservation() {
+  local dir id=dead-task claimant=live-claimant target rc scenario pr_head default
+  local real_git local_tip unrelated_tip
+  real_git=$(command -v git)
+  for scenario in local-only local-ahead remote-ahead fetch-failed remote-unreadable \
+      local-unreadable evolved-deleted evolved-retained evolved-remote preserved missing-worker; do
+    dir=$(make_case "reassign-$scenario")
+    mark_case_as_treehouse_pool "$dir"
+    seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/7"
+    pr_head=$(cat "$dir/pr-head")
+    default=$(git -C "$dir/project" symbolic-ref --quiet --short HEAD)
+    write_reassigned_meta "$dir" "$id" "$claimant" \
+      "pr=https://github.com/example/repo/pull/7"
+    write_claimant_meta "$dir" "$claimant"
+    claim_pool_slot "$dir" "$claimant" "$dir/home"
+    target=$(fm_test_stream_target_of "$dir/home/state" "$id")
+    fm_test_fake_stream_set "$target" '{"closed_by": "agent"}'
+    local_tip=
+    unrelated_tip=
+    case "$scenario" in
+      local-only|local-ahead|remote-ahead|fetch-failed|evolved-retained|evolved-remote|preserved)
+        git -C "$dir/project" branch fm/dead-task "$pr_head"
+        local_tip=$pr_head
+        ;;
+    esac
+    case "$scenario" in
+      local-ahead|remote-ahead|fetch-failed|evolved-remote|preserved)
+        git -C "$dir/project" push -qu origin fm/dead-task
+        ;;
+    esac
+    case "$scenario" in
+      local-only|local-ahead|remote-ahead|fetch-failed)
+        git -C "$dir/project" checkout -q fm/dead-task
+        printf 'unlanded later work\n' > "$dir/project/later.txt"
+        git -C "$dir/project" add later.txt
+        git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+          commit -qm 'later unlanded work'
+        local_tip=$(git -C "$dir/project" rev-parse HEAD)
+        git -C "$dir/project" checkout -q "$default"
+        case "$scenario" in
+          remote-ahead|fetch-failed)
+            git -C "$dir/project" push -q origin fm/dead-task
+            git -C "$dir/project" branch -f fm/dead-task "$pr_head"
+            local_tip=$pr_head
+            ;;
+        esac
+        ;;
+      local-unreadable)
+        mkdir -p "$dir/project/.git/refs/heads/fm"
+        printf '%040d\n' 1 > "$dir/project/.git/refs/heads/fm/dead-task"
+        ;;
+      evolved-*)
+        printf 'default evolved after squash landing\n' > "$dir/project/landed.txt"
+        git -C "$dir/project" add landed.txt
+        git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+          commit -qm 'subsequent default work'
+        git -C "$dir/project" push -q origin "$default"
+        ;;
+      preserved)
+        git -C "$dir/project" checkout -qb fm/unrelated
+        printf 'unrelated unlanded work\n' > "$dir/project/unrelated.txt"
+        git -C "$dir/project" add unrelated.txt
+        git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+          commit -qm 'unrelated work'
+        unrelated_tip=$(git -C "$dir/project" rev-parse HEAD)
+        git -C "$dir/project" push -qu origin fm/unrelated
+        git -C "$dir/project" checkout -q "$default"
+        git -C "$dir/project" push -q origin --delete fm/dead-task fm/unrelated
+        ;;
+      missing-worker)
+        fm_test_fake_stream_set "$target" '{"forget": true}'
+        ;;
+    esac
+    if [ "$scenario" = fetch-failed ] || [ "$scenario" = remote-unreadable ] \
+        || [ "$scenario" = preserved ]; then
+      cat > "$dir/fakebin/git" <<SH
+#!/usr/bin/env bash
+case " \$* " in
+  *" --prune "*)
+    printf 'fleet-prune\n' >> '$dir/runtime.log'
+    ;;
+esac
+case '$scenario' in
+  fetch-failed)
+    case " \$* " in *" fetch "*"+refs/heads/fm/dead-task:"*) exit 128 ;; esac
+    ;;
+  remote-unreadable)
+    case " \$* " in *" ls-remote "*) exit 128 ;; esac
+    ;;
+esac
+exec '$real_git' "\$@"
+SH
+      chmod +x "$dir/fakebin/git"
+    fi
+    set +e
+    run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+    rc=$?
+    set -e
+    case "$scenario" in
+      evolved-*|preserved)
+        [ "$rc" -eq 0 ] || fail "$scenario refused landed work: $(cat "$dir/stderr")"
+        assert_absent "$dir/home/state/$id.meta" "$scenario kept the old record"
+        ;;
+      *)
+        [ "$rc" -ne 0 ] || fail "$scenario retired without positive proof"
+        assert_present "$dir/home/state/$id.meta" "$scenario lost the old record"
+        case "$scenario" in
+          missing-worker)
+            assert_contains "$(cat "$dir/stderr")" "reads 'missing', not stopped" \
+              "$scenario did not require positive stop evidence"
+            ;;
+          *)
+            assert_contains "$(cat "$dir/stderr")" "final tip is not covered" \
+              "$scenario did not enforce final branch coverage"
+            ;;
+        esac
+        ;;
+    esac
+    if [ -n "$local_tip" ]; then
+      [ "$(git -C "$dir/project" rev-parse refs/heads/fm/dead-task)" = "$local_tip" ] \
+        || fail "$scenario changed or deleted the retained branch"
+    fi
+    if [ -n "$unrelated_tip" ]; then
+      [ "$(git -C "$dir/project" rev-parse refs/heads/fm/unrelated)" = "$unrelated_tip" ] \
+        || fail "$scenario changed or deleted unrelated work"
+      ! grep -q 'fleet-prune' "$dir/runtime.log" \
+        || fail "$scenario ran fleet synchronization and pruning"
+    fi
+    assert_reassigned_slot_owner_untouched "$dir" "$claimant"
+  done
+  pass "reassigned retirement requires readable final tips and positive stop evidence while preserving branches"
+}
+
 test_record_only_retirement_revalidates_after_control_lock_wait
 test_invalid_endpoint_records_refuse_before_mutation
 test_reassigned_slot_record_retires_only_on_all_four_proofs
+test_reassigned_record_coverage_and_preservation
 test_control_lock_contention_refuses_before_mutation
 test_non_pool_teardown_ignores_task_set_lock
 test_metadata_lock_serializes_destructive_cleanup

@@ -35,3 +35,25 @@ for shape in missing empty; do
 done
 
 pass "endpoint validation refuses missing or empty worktree without aborting unset-opt-in callers"
+
+for shape in missing empty duplicate; do
+  fm_write_meta "$meta" "window=firstmate:fm-task" "project=project" \
+    "worktree_reassigned_by=other"
+  case "$shape" in
+    empty) printf 'worktree=\n' >> "$meta" ;;
+    duplicate) printf 'worktree=\nworktree=\n' >> "$meta" ;;
+  esac
+  bash -eu -c '
+    . "$1/bin/fm-backend.sh"
+    FM_BACKEND_VALIDATE_REASSIGNMENT_CANDIDATE=1
+    if fm_backend_validate_task_endpoint "$2" task; then
+      [ "$3" = missing ] || exit 1
+      [ "$FM_BACKEND_VALIDATED_REASSIGNED_TO" = other ] || exit 1
+    else
+      [ "$3" != missing ] || exit 1
+    fi
+  ' _ "$ROOT" "$meta" "$shape" \
+    || fail "reassignment candidate validation mishandled $shape worktree"
+done
+
+pass "reassignment candidate validation requires an absent worktree field"

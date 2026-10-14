@@ -1431,11 +1431,9 @@ work_is_landed() {
 #       Treehouse pool slot of this record's project, and the slot's live owner
 #       claim names exactly the claimant;
 #   (c) the work landed per the task-specific landed-evidence contract with
-#       final branch coverage - the recorded PR reads merged from the live forge
-#       AND the branch's final tip is covered by the up-to-date default branch,
-#       because a merely merged PR is not proof that later branch commits landed;
+#       final branch coverage - the recorded PR reads merged from the live forge;
 #   (d) the worker stopped on recorded evidence - the backend's recovery-grade
-#       classifier (fm_backend_agent_state) answers dead or missing for the
+#       classifier (fm_backend_agent_state) answers dead for the
 #       recorded endpoint. An operator's assertion of stopped status never
 #       substitutes for the landed-work proof in (c).
 # --force does not lift any of these: it authorizes discarding unlanded work, and
@@ -1480,36 +1478,47 @@ teardown_reassigned_content_in_default() {  # <commit> <default-ref>
   [ "$merged_tree" = "$default_tree" ]
 }
 
-# Final branch coverage (proof (c)'s second half): every commit the task's branch
-# carried - the merged PR's head AND anything the branch gained after it - must
-# be covered by the up-to-date default branch. Ancestry proves it outright;
-# otherwise the branch's final tip must satisfy the same merge-tree containment
-# content_in_default uses, so a squash merge whose branch later gained an
-# unlanded commit refuses. Prints nothing; returns 0 only on coverage.
 teardown_reassigned_branch_covered() {  # <pr-head> <branch>
-  local pr_head=$1 branch=$2 default ref tip
+  local pr_head=$1 branch=$2 default ref tip remote_rc=0 local_rc=0
+  local tips=("$pr_head")
   default=$(default_branch) || return 1
   git -C "$PROJ" fetch --quiet origin \
     "+refs/heads/$default:refs/remotes/origin/$default" >/dev/null 2>&1 || return 1
   ref="refs/remotes/origin/$default"
-  if git -C "$PROJ" fetch --quiet origin \
-      "+refs/heads/$branch:refs/remotes/origin/$branch" >/dev/null 2>&1 \
-     && tip=$(git -C "$PROJ" rev-parse --quiet --verify \
-        "refs/remotes/origin/$branch^{commit}" 2>/dev/null) \
-     && [ -n "$tip" ]; then
-    :
-  else
-    # The branch was deleted after its merge - the common squash flow - so the
-    # PR head is the branch's final tip. Fetch it through the pull ref so a
-    # deleted branch is still provable, the way ensure_commit_object does.
-    tip=$pr_head
-    git -C "$PROJ" cat-file -e "$tip^{commit}" 2>/dev/null \
-      || git -C "$PROJ" fetch --quiet origin "$pr_head" >/dev/null 2>&1 \
-      || return 1
-    git -C "$PROJ" cat-file -e "$tip^{commit}" 2>/dev/null || return 1
-  fi
-  git -C "$PROJ" merge-base --is-ancestor "$tip" "$ref" 2>/dev/null && return 0
-  teardown_reassigned_content_in_default "$tip" "$ref"
+  git -C "$PROJ" cat-file -e "$pr_head^{commit}" 2>/dev/null \
+    || git -C "$PROJ" fetch --quiet origin "$pr_head" >/dev/null 2>&1 \
+    || return 1
+  git -C "$PROJ" cat-file -e "$pr_head^{commit}" 2>/dev/null || return 1
+  git -C "$PROJ" show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null || local_rc=$?
+  case "$local_rc" in
+    0)
+      tip=$(git -C "$PROJ" rev-parse --quiet --verify "refs/heads/$branch^{commit}" 2>/dev/null) || return 1
+      [ -n "$tip" ] || return 1
+      tips+=("$tip")
+      ;;
+    1) ;;
+    *) return 1 ;;
+  esac
+  git -C "$PROJ" ls-remote --exit-code --heads origin "refs/heads/$branch" \
+    >/dev/null 2>&1 || remote_rc=$?
+  case "$remote_rc" in
+    0)
+      git -C "$PROJ" fetch --quiet origin \
+        "+refs/heads/$branch:refs/remotes/origin/$branch" >/dev/null 2>&1 || return 1
+      tip=$(git -C "$PROJ" rev-parse --quiet --verify \
+        "refs/remotes/origin/$branch^{commit}" 2>/dev/null) || return 1
+      [ -n "$tip" ] || return 1
+      tips+=("$tip")
+      ;;
+    2) ;;
+    *) return 1 ;;
+  esac
+  for tip in "${tips[@]}"; do
+    git -C "$PROJ" merge-base --is-ancestor "$tip" "$pr_head" 2>/dev/null && continue
+    git -C "$PROJ" merge-base --is-ancestor "$tip" "$ref" 2>/dev/null && continue
+    teardown_reassigned_content_in_default "$tip" "$ref" || return 1
+  done
+  return 0
 }
 
 # The four-proof gate itself. Runs only for a record the endpoint gate accepted
@@ -1557,11 +1566,11 @@ teardown_verify_reassigned_slot_record() {
   # (d): the worker stopped on recorded evidence, never an operator's assertion.
   verdict=$(fm_backend_agent_state "$BACKEND" "$T")
   case "$verdict" in
-    dead|missing) ;;
+    dead) ;;
     *)
       teardown_reassigned_refusal \
         "its recorded endpoint reads '$verdict', not stopped, on the backend's own evidence" \
-        "Recorded evidence of a stopped worker - a dead or missing endpoint - is required; an operator's assertion of stopped status cannot substitute for it."
+        "Recorded evidence of a stopped worker - a dead endpoint - is required; an operator's assertion of stopped status cannot substitute for it."
       ;;
   esac
   TEARDOWN_REASSIGNED_SLOT=1
@@ -2285,7 +2294,6 @@ require_exclusive_worktree_slot_record() {
 
 require_exclusive_task_worktree_slot() {
   local slot
-  [ "$TEARDOWN_REASSIGNED_SLOT" != 1 ] || return 0
   slot=$(teardown_live_slot_path) || return 0
   require_exclusive_worktree_slot_record "$META" "$ID" "$STATE" "$slot"
 }
@@ -2319,16 +2327,11 @@ require_owned_worktree_slot_record() {  # <task-id> <worktree>
 # The one ownership determination for this task's recorded slot. Every later
 # step that would read or touch $WT consults teardown_owns_worktree, so a
 # reassigned slot is skipped consistently rather than by each step's own guess.
-# A record retired through the reassigned-slot proof has no slot of its own at
-# all: the proof already established the slot belongs to another task, so both
-# slot checks below are skipped for it exactly as they are for a reassigned
-# slot, and no scan of a slot this record no longer names can refuse it.
 TEARDOWN_SLOT_REASSIGNED=0
 TEARDOWN_SLOT_REASSIGNED_TO=
 TEARDOWN_SLOT_REASSIGNED_HOME=
 require_owned_task_worktree_slot() {
   local slot rc=0
-  [ "$TEARDOWN_REASSIGNED_SLOT" != 1 ] || return 0
   slot=$(teardown_live_slot_path) || return 0
   require_owned_worktree_slot_record "$ID" "$slot" || rc=$?
   case "$rc" in
@@ -3586,7 +3589,8 @@ else
 fi
 fm_lock_release "$META_LOCK"
 META_LOCK_HELD=0
-if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only ]; then
+if [ "$TEARDOWN_REASSIGNED_SLOT" != 1 ] \
+  && [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only ]; then
   "$FM_ROOT/bin/fm-fleet-sync.sh" "$PROJ" || true
 fi
 # A secondmate retirement may remove the home containing an overridden control
