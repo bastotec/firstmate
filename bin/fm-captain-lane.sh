@@ -52,17 +52,35 @@ RECORD="$STATE/$ID.deck-session"
 DECK_SESSIONS="${XDG_STATE_HOME:-$HOME/.local/state}/deck/sessions"
 CONTRACT="$SCRIPT_DIR/../.agents/skills/captain-thread/SKILL.md"
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/fm-captain-lane.XXXXXX") || exit 1
+# shellcheck source=bin/fm-process-tree-lib.sh
+. "$SCRIPT_DIR/fm-process-tree-lib.sh"
 DECK_PID=''
+# The host's turn-stop semantics (bin/fm-deck-worker.sh "SECOND MATE TURN
+# STOP"): cooperative TERM, the running tool trees cancelled after a one-second
+# grace, and Deck itself killed at ten seconds.
 stop_deck() {
   [ -n "$DECK_PID" ] || return 0
   kill -TERM "$DECK_PID" 2>/dev/null || true
   local i=0
-  while kill -0 "$DECK_PID" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+  while kill -0 "$DECK_PID" 2>/dev/null && [ "$i" -lt 100 ]; do
+    [ "$i" -ne 10 ] || fm_cancel_tool_trees "$DECK_PID"
+    sleep 0.1
+    i=$((i + 1))
+  done
   kill -KILL "$DECK_PID" 2>/dev/null || true
   wait "$DECK_PID" 2>/dev/null || true
   DECK_PID=''
 }
-trap 'stop_deck; rm -rf -- "$WORK"' EXIT
+# Bind a newly created session as soon as Deck has saved it, on every exit too.
+record_session() {
+  local started
+  [ -z "$(session_of 2>/dev/null)" ] || return 0
+  started=$(jq -r 'select(.type == "run_started") | .session' "$WORK/events.ndjson" 2>/dev/null | head -1)
+  case "$started" in ''|*[!A-Za-z0-9._-]*) return 0 ;; esac
+  [ -f "$DECK_SESSIONS/$started.json" ] || return 0
+  printf '%s\n%s\n' "$started" "$FM_HOME" > "$RECORD.tmp.$$" && mv -f "$RECORD.tmp.$$" "$RECORD"
+}
+trap 'stop_deck; record_session; rm -rf -- "$WORK"' EXIT
 trap 'exit 143' TERM HUP
 export FM_CAPTAIN_LANE_STATE=$STATE FM_CAPTAIN_LANE_ID=$ID
 # Ctrl+C in the host's pane stops the supervisor's turn, never the captain's.
@@ -138,13 +156,7 @@ $prompt"
   DECK_PID=$!
   wait "$DECK_PID" || rc=$?
   DECK_PID=''
-  if [ -z "$session" ]; then
-    started=$(jq -r 'select(.type == "run_started") | .session' "$WORK/events.ndjson" 2>/dev/null | head -1)
-    case "$started" in
-      ''|*[!A-Za-z0-9._-]*) ;;
-      *) printf '%s\n%s\n' "$started" "$FM_HOME" > "$RECORD.tmp.$$" && mv -f "$RECORD.tmp.$$" "$RECORD" ;;
-    esac
-  fi
+  [ -n "$session" ] || record_session
   if [ "$rc" -eq 0 ] && jq -es 'any(.[]; .type == "run_finished") and all(.[]; .type != "run_failed")' \
       "$WORK/events.ndjson" >/dev/null 2>&1; then
     contract_sent=1

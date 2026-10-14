@@ -217,6 +217,8 @@ STATE_IO="$SCRIPT_DIR/fm-state-io.py"
 ID='' STATE='' GEN='' DECK='' MODEL=''
 SECONDMATE=0 WATCH_PID='' WATCH_PREDECESSOR_ARM_PID='' INPUT_PID='' TURN_PID='' TURN_RENDER_PID=''
 WATCH_HANDLING_GENERATION='' WATCH_HANDLING_WATCHER_PID=''
+# shellcheck source=bin/fm-process-tree-lib.sh
+. "$SCRIPT_DIR/fm-process-tree-lib.sh"
 # shellcheck source=bin/fm-session-lock-lib.sh
 . "$SCRIPT_DIR/fm-session-lock-lib.sh"
 # shellcheck source=bin/fm-nm-run-lib.sh
@@ -317,38 +319,12 @@ request_turn_stop() {
   kill -TERM "$TURN_PID" 2>/dev/null || true
 }
 
-kill_tree() {  # <pid>: SIGKILL <pid> and every process descended from it
-  local tree=$1 next pid changed seen=$'\n'
-  kill -STOP "$1" 2>/dev/null || return 0
-  seen+="$1"$'\n'
-  while :; do
-    changed=0
-    next=$(ps -A -o pid= -o ppid= 2>/dev/null \
-      | awk -v parents=" $(printf '%s' "$tree" | tr '\n' ' ') " 'index(parents, " " $2 " ") { print $1 }')
-    for pid in $next; do
-      case "$seen" in *$'\n'"$pid"$'\n'*) continue ;; esac
-      kill -STOP "$pid" 2>/dev/null || true
-      tree="$tree $pid"
-      seen+="$pid"$'\n'
-      changed=1
-    done
-    [ "$changed" -eq 1 ] || break
-  done
-  for pid in $tree; do kill -KILL "$pid" 2>/dev/null || true; done
-}
-
 escalate_turn_stop() {
-  local elapsed child turn_pgid child_pgid
+  local elapsed
   [ -n "$TURN_PID" ] && [ -n "$STOP_REQUESTED_AT" ] || return 0
   elapsed=$(( $(date +%s) - STOP_REQUESTED_AT ))
   [ "$elapsed" -ge "$STOP_TOOL_GRACE" ] || [ "$elapsed" -ge "$STOP_KILL" ] || return 0
-  turn_pgid=$(ps -o pgid= -p "$TURN_PID" 2>/dev/null | tr -d '[:space:]')
-  for child in $(pgrep -P "$TURN_PID" 2>/dev/null); do
-    child_pgid=$(ps -o pgid= -p "$child" 2>/dev/null | tr -d '[:space:]')
-    if [ -n "$turn_pgid" ] && [ "$child_pgid" = "$turn_pgid" ]; then
-      kill_tree "$child"
-    fi
-  done
+  fm_cancel_tool_trees "$TURN_PID"
   if [ "$elapsed" -ge "$STOP_KILL" ]; then
     kill -KILL "$TURN_PID" 2>/dev/null || true
   fi
@@ -938,6 +914,8 @@ $prompt"
         request_turn_stop
         continue
       fi
+      # A captain lane that dies mid-turn comes back now, not after the turn.
+      lane_start || printf 'fm-deck-worker: could not restart the captain lane\n' >&2
       sleep 0.1
     done
     wait "$TURN_PID" 2>/dev/null

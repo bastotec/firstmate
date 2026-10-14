@@ -534,7 +534,10 @@ impl Receiver {
             // exposing a newer Bridge sequence to Deck's next safe point. A
             // split second mate's captain lane owns them while
             // <state>/<task>.captain-lane exists (bin/fm_stream_deck.py).
-            let lane = self.state.join(format!("{}.captain-lane", self.task)).is_file();
+            let lane = self
+                .state
+                .join(format!("{}.captain-lane", self.task))
+                .is_file();
             for entry in fs::read_dir(&self.inbox)? {
                 let source = entry?.path();
                 if source.extension().is_none_or(|s| s != "msg") {
@@ -790,11 +793,14 @@ mod tests {
         let receiver = lab.receiver();
         start(&receiver, "original");
         fs::write(
-            receiver.state.join(format!("{}.captain-lane", receiver.task)),
+            receiver
+                .state
+                .join(format!("{}.captain-lane", receiver.task)),
             "",
         )
         .unwrap();
-        let body = "[fm-from-firstmate]\u{2063}corr=test [fm-captain-direct]\u{2063}note\n\nHis words.\n";
+        let body =
+            "[fm-from-firstmate]\u{2063}corr=test [fm-captain-direct]\u{2063}note\n\nHis words.\n";
         fs::write(
             receiver.inbox.join("001.msg"),
             format!("schema=fm-task-inbox.v1\nat=x\n--\n{body}"),
