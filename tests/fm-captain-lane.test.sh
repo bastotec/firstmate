@@ -91,5 +91,21 @@ test_unwritable_answer_list_takes_no_turn() {
   pass "fm-captain-lane: no turn runs while its answer cannot be recorded"
 }
 
+test_interrupted_turn_gets_one_recovery_turn() {
+  setup
+  write_captain 'interrupted question'
+  write_captain 'abandoned question'
+  printf 'started 001.msg\nrecovering 002.msg\n' > "$DIR/state/mate.captain-lane.answered"
+  start_lane
+  wait_until 100 answered_at_least 'interrupted question' 1 || fail "the interrupted record got no recovery turn"
+  sleep 2
+  stop_lane
+  assert_contains "$(cat "$DIR/turns")" "was interrupted before its end was recorded" "the recovery turn must check the conversation first"
+  [ "$(turns_with 'interrupted question')" = 1 ] || fail "the recovery turn ran more than once"
+  [ "$(turns_with 'abandoned question')" = 0 ] || fail "a record already in recovery was run again"
+  pass "fm-captain-lane: an interrupted turn gets one recovery turn, and never a second"
+}
+
 test_unacknowledged_answer_is_never_repeated
 test_unwritable_answer_list_takes_no_turn
+test_interrupted_turn_gets_one_recovery_turn
