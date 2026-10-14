@@ -348,6 +348,9 @@ stop_turn() {  # stop the running Deck turn and wait for it, bounded
 # may run; a dead lane is restarted on the next loop pass.
 MATE_SPLIT=0 LANE_PID=''
 LANE_MARK="$STATE/$ID.captain-lane"
+# FM_DECK_FRESH_SESSION=1 resets the captain thread too: every lane start asks
+# for a new session until the binding no longer names the one this host found.
+LANE_OLD_BINDING=$(head -n 1 "$STATE/$ID.deck-session" 2>/dev/null || true)
 lane_start() {
   [ "$MATE_SPLIT" = 1 ] || return 0
   if [ -n "$LANE_PID" ] && kill -0 "$LANE_PID" 2>/dev/null; then return 0; fi
@@ -356,7 +359,12 @@ lane_start() {
   local -a lane=(--state "$STATE" --id "$ID" --deck "$DECK" --model-file "$MODEL_FILE")
   [ -z "$MODEL" ] || lane+=(--model "$MODEL")
   [ -z "$MCP_CONFIG" ] || lane+=(--mcp-config "$MCP_CONFIG")
-  "$SCRIPT_DIR/fm-captain-lane.sh" "${lane[@]}" </dev/null 2>>"$STATE/$ID.captain-lane.log" >/dev/null &
+  local fresh=0
+  if [ "${FM_DECK_FRESH_SESSION:-0}" = 1 ] \
+      && [ "$(head -n 1 "$STATE/$ID.deck-session" 2>/dev/null || true)" = "$LANE_OLD_BINDING" ]; then
+    fresh=1
+  fi
+  FM_DECK_FRESH_SESSION=$fresh "$SCRIPT_DIR/fm-captain-lane.sh" "${lane[@]}" </dev/null 2>>"$STATE/$ID.captain-lane.log" >/dev/null &
   LANE_PID=$!
 }
 lane_stop() {

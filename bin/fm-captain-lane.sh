@@ -77,14 +77,17 @@ stop_deck() {
   DECK_PID=''
 }
 # Bind a newly created session as soon as Deck has saved it, on every exit too.
+# With FM_DECK_FRESH_SESSION=1 the lane ignores the existing binding and
+# replaces it with the first session it opens.
+fresh=${FM_DECK_FRESH_SESSION:-0}
 record_session() {
   local started
-  [ -z "$(session_of 2>/dev/null)" ] || return 0
+  if [ "$fresh" != 1 ]; then [ -z "$(session_of 2>/dev/null)" ] || return 0; fi
   started=$(jq -r 'select(.type == "run_started") | .session' "$WORK/events.ndjson" 2>/dev/null | head -1)
   [ -n "$started" ] || started=${observed:-}
   case "$started" in ''|*[!A-Za-z0-9._-]*) return 0 ;; esac
   [ -f "$DECK_SESSIONS/$started.json" ] || return 0
-  printf '%s\n%s\n' "$started" "$FM_HOME" > "$RECORD.tmp.$$" && mv -f "$RECORD.tmp.$$" "$RECORD"
+  printf '%s\n%s\n' "$started" "$FM_HOME" > "$RECORD.tmp.$$" && mv -f "$RECORD.tmp.$$" "$RECORD" && fresh=0
 }
 trap 'stop_deck; record_session; rm -rf -- "$WORK"' EXIT
 trap 'exit 143' TERM HUP
@@ -235,7 +238,8 @@ $prompt"
   [ -z "$MCP_CONFIG" ] || args+=(--mcp-config "$MCP_CONFIG")
   # The bound session, else the one this lane already opened (its binding may
   # not have been written yet).
-  session=$(session_of) || session=''
+  session=''
+  [ "$fresh" = 1 ] || session=$(session_of) || session=''
   if [ -z "$session" ] && [ -n "$observed" ] && [ -f "$DECK_SESSIONS/$observed.json" ]; then session=$observed; fi
   [ -z "$session" ] || args+=(--session "$session")
   : > "$WORK/events.ndjson"
@@ -243,9 +247,11 @@ $prompt"
   "$DECK" "${args[@]}" </dev/null > "$WORK/events.ndjson" 2>"$WORK/deck.err" &
   DECK_PID=$!
   # A host that goes away mid-turn takes this turn with it, so its replacement
-  # never runs beside it.
+  # never runs beside it. A new session is bound as soon as Deck saves it, so a
+  # kill mid-turn never loses the conversation a recovery turn must check.
   while kill -0 "$DECK_PID" 2>/dev/null; do
     kill -0 "$HOST_PID" 2>/dev/null || exit 0
+    [ -n "$session" ] || record_session
     sleep 0.2
   done
   wait "$DECK_PID" || rc=$?

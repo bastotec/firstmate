@@ -19,7 +19,7 @@ setup() {  # -> sets DIR
 import json, os, sys
 prompt = sys.argv[2]
 with open(os.environ['FAKE_TURNS'], 'a') as f:
-    f.write(json.dumps({'prompt': prompt}) + '\n')
+    f.write(json.dumps({'prompt': prompt, 'args': sys.argv[3:]}) + '\n')
 print(json.dumps({'type': 'run_started', 'session': 'cap'}))
 print(json.dumps({'type': 'run_finished', 'turns': 1}))
 PY
@@ -137,7 +137,43 @@ PY
   pass "fm-captain-lane: a host that goes away mid-turn takes the captain turn with it"
 }
 
+test_new_session_is_bound_while_its_turn_runs() {
+  setup
+  cat > "$DIR/deck" <<'PY'
+#!/usr/bin/env python3
+import json, os, sys, time
+with open(os.environ['FAKE_TURNS'], 'a') as f:
+    f.write(json.dumps({'prompt': sys.argv[2]}) + '\n')
+print(json.dumps({'type': 'run_started', 'session': 'cap'}), flush=True)
+time.sleep(60)
+PY
+  write_captain 'long question'
+  start_lane
+  wait_until 100 test -s "$DIR/state/mate.deck-session" || fail "the new session was not bound during its turn"
+  assert_contains "$(head -n 1 "$DIR/state/mate.deck-session")" "cap" "the binding must name the opened session"
+  stop_lane
+  pass "fm-captain-lane: a new captain session is bound while its first turn still runs"
+}
+
+test_fresh_session_opt_out_replaces_the_binding() {
+  setup
+  : > "$DIR/xdg/deck/sessions/old.json"
+  printf 'old\n%s\n' "$DIR/home" > "$DIR/state/mate.deck-session"
+  write_captain 'fresh question'
+  FM_DECK_FRESH_SESSION=1 start_lane
+  wait_until 100 answered_at_least 'fresh question' 1 || fail "the lane never answered"
+  wait_until 50 grep -q '^cap$' "$DIR/state/mate.deck-session" || fail "the fresh session did not replace the binding"
+  write_captain 'next question'
+  wait_until 100 answered_at_least 'next question' 1 || fail "the lane never answered the next record"
+  stop_lane
+  assert_not_contains "$(grep -F 'fresh question' "$DIR/turns")" '"old"' "a fresh lane must not resume the old session"
+  assert_contains "$(grep -F 'next question' "$DIR/turns")" '"cap"' "later turns must keep the fresh session"
+  pass "fm-captain-lane: FM_DECK_FRESH_SESSION=1 starts a new captain conversation and binds it"
+}
+
 test_unacknowledged_answer_is_never_repeated
+test_new_session_is_bound_while_its_turn_runs
+test_fresh_session_opt_out_replaces_the_binding
 test_unwritable_answer_list_takes_no_turn
 test_interrupted_turn_gets_one_recovery_turn
 test_failed_turn_retries_with_the_conversation_check
