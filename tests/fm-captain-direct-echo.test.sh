@@ -209,6 +209,22 @@ test_non_ascii_captain_message() {
   pass "captain-direct: non-ASCII-only message settles without recovery or escalation"
 }
 
+test_accented_captain_message_keeps_its_letters() {
+  local rec
+  setup accented
+  run_send "$FB" "$HOME_DIR" "$LOG" "$OUT" domain --from-captain "Mas você tem certeza de que essa conta pessoa física dá para fazer pagamento via API? 👍" \
+    || fail "accented delivery failed"
+  CORR=$(sed -n 's/^corr=//p' "$OUT")
+  rec=$(fm_pending_reply_path "$HOME_DIR/state" "$CORR")
+  # Fleet Town shows this summary as the captain's words: accents stay, the emoji goes, and the
+  # 120-character cap counts characters, so no letter is cut in half
+  [ "$(fm_pending_reply_get "$rec" request_summary)" = 'from the captain: Mas você tem certeza de que essa conta pessoa física dá para fazer pagamento via API?' ] \
+    || fail "accents were stripped: $(fm_pending_reply_get "$rec" request_summary)"
+  [ "$(fm_pending_reply_summarize "$(printf 'é%.0s' $(seq 1 200))" | perl -CSD -ne 'print length')" = 120 ] \
+    || fail "the cap must count characters"
+  pass "captain-direct: an accented message keeps its letters in the pending-reply summary"
+}
+
 test_ledger_retention() {
   setup retention
   FM_CAPTAIN_DIRECT_NOW=1000000 deliver_captain
@@ -311,5 +327,6 @@ test_correction_refused_with_from_captain
 test_pending_reply_never_reposts
 test_notification_failure_retry
 test_non_ascii_captain_message
+test_accented_captain_message_keeps_its_letters
 test_ledger_retention
 test_unknown_delivery_never_escalates

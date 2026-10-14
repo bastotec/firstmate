@@ -207,16 +207,19 @@ fm_pending_reply_text_has_corr() {  # <text> <corr_id>
   return 1
 }
 
-# Sanitize a short request summary: single line, bounded, no control chars.
+# Sanitize a short request summary: single line, bounded, no control chars. Letters, accents
+# and punctuation in any language stay ("você", "física"): Fleet Town shows this line as the
+# captain's words. Control, format and private-use characters and symbols such as emoji go.
 fm_pending_reply_summarize() {  # <text>
   local text=$1 cleaned
-  cleaned=$(printf '%s' "$text" | tr '\t\r\n' '   ' | tr -cd '\11\12\15\40-\176' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  cleaned=$(printf '%s' "$text" | perl -CSD -0777 -pe 's/[\t\r\n]/ /g; s/[\p{C}\p{So}\p{Sk}]//g; s/\A\s+//; s/\s+\z//' 2>/dev/null) ||
+    cleaned=$(printf '%s' "$text" | tr '\t\r\n' '   ' | tr -cd '\11\12\15\40-\176' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
   # Drop an already-present marker/corr prefix so the durable summary stays short.
   cleaned=${cleaned#"$FM_FROMFIRST_MARK"}
   cleaned=$(printf '%s' "$cleaned" | sed -E "s/^corr=[A-Fa-f0-9]{16}[[:space:]]*//")
-  if [ "${#cleaned}" -gt 120 ]; then
-    cleaned="${cleaned:0:117}..."
-  fi
+  # 120 characters at most, counted as characters (never cutting one in half)
+  cleaned=$(printf '%s' "$cleaned" | perl -CSD -0777 -pe 's/\A(.{117}).{4,}\z/$1.../s' 2>/dev/null) ||
+    { [ "${#cleaned}" -gt 120 ] && cleaned="${cleaned:0:117}..."; }
   printf '%s' "$cleaned"
 }
 
