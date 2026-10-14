@@ -105,9 +105,12 @@ session_of() {
 
 # The lane's journal: one "<state> <record>" line per step, the last line for a
 # record winning: started (its turn is about to run), answered (its turn
-# finished), failed (its turn failed; it may run again), recovering (its one
-# recovery turn after an interrupted start). Every step is written before the
-# lane acts on it, so no restart repeats an answered turn.
+# finished), failed (its turn failed), recovering (its one recovery turn after
+# an interrupted start). Every step is written before the lane acts on it, so
+# no restart repeats an answered turn: a record left started gets one recovery
+# turn, a failed one is retried after backoff, both with a prompt that first
+# checks the conversation for an earlier answer, and a record whose recovery
+# was itself interrupted is never run again.
 ANSWERED="$STATE/$ID.captain-lane.answered"
 journal() {  # <state> <record-name>
   printf '%s %s\n' "$1" "$2" >> "$ANSWERED" 2>/dev/null
@@ -172,7 +175,7 @@ for source in Path(sys.argv[2]).glob('*.msg'):
     except (OSError, IndexError, UnicodeDecodeError):
         continue
     if CAPTAIN_ONLY.match(body):
-        found.append((int(source.stem), 'recover' if state == 'started' else 'new', str(source)))
+        found.append((int(source.stem), {'started': 'recover', 'failed': 'retry'}.get(state, 'new'), str(source)))
 if found:
     number, mode, path = min(found)
     print(mode, path)
@@ -209,8 +212,8 @@ while kill -0 "$HOST_PID" 2>/dev/null; do
   prompt="The captain wrote to this second mate directly (record $rec):
 
 $body"
-  if [ "$mode" = recover ]; then
-    prompt="An earlier turn on this message was interrupted before its end was recorded. Read your last messages in this conversation first: if you already answered it, reply with nothing new and stop.
+  if [ "$mode" != new ]; then
+    prompt="An earlier turn on this message was interrupted or failed before its end was recorded. Read your last messages in this conversation first: if you already answered it, reply with nothing new and stop.
 
 $prompt"
   fi
@@ -239,6 +242,12 @@ $prompt"
   rc=0
   "$DECK" "${args[@]}" </dev/null > "$WORK/events.ndjson" 2>"$WORK/deck.err" &
   DECK_PID=$!
+  # A host that goes away mid-turn takes this turn with it, so its replacement
+  # never runs beside it.
+  while kill -0 "$DECK_PID" 2>/dev/null; do
+    kill -0 "$HOST_PID" 2>/dev/null || exit 0
+    sleep 0.2
+  done
   wait "$DECK_PID" || rc=$?
   DECK_PID=''
   if [ -z "$session" ]; then

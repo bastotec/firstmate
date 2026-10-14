@@ -44,6 +44,7 @@ stop_lane() {
 }
 
 turns_with() { local n; n=$(grep -c -F -- "$1" "$DIR/turns" 2>/dev/null) || n=0; printf '%s' "${n:-0}"; }
+deck_gone() { ! pgrep -f "$DIR/deck" >/dev/null; }
 answered_at_least() { [ "$(turns_with "$1")" -ge "$2" ]; }
 
 wait_until() {  # <ticks> <command...>
@@ -100,12 +101,44 @@ test_interrupted_turn_gets_one_recovery_turn() {
   wait_until 100 answered_at_least 'interrupted question' 1 || fail "the interrupted record got no recovery turn"
   sleep 2
   stop_lane
-  assert_contains "$(cat "$DIR/turns")" "was interrupted before its end was recorded" "the recovery turn must check the conversation first"
+  assert_contains "$(cat "$DIR/turns")" "was interrupted or failed before its end was recorded" "the recovery turn must check the conversation first"
   [ "$(turns_with 'interrupted question')" = 1 ] || fail "the recovery turn ran more than once"
   [ "$(turns_with 'abandoned question')" = 0 ] || fail "a record already in recovery was run again"
   pass "fm-captain-lane: an interrupted turn gets one recovery turn, and never a second"
 }
 
+test_failed_turn_retries_with_the_conversation_check() {
+  setup
+  write_captain 'failed question'
+  printf 'recovering 001.msg\nfailed 001.msg\n' > "$DIR/state/mate.captain-lane.answered"
+  start_lane
+  wait_until 100 answered_at_least 'failed question' 1 || fail "a failed record was not retried"
+  stop_lane
+  assert_contains "$(cat "$DIR/turns")" "was interrupted or failed before its end was recorded" "a retry must check the conversation first"
+  pass "fm-captain-lane: a failed turn, recovery or not, retries with the conversation check"
+}
+
+test_host_exit_stops_a_running_captain_turn() {
+  setup
+  cat > "$DIR/deck" <<'PY'
+#!/usr/bin/env python3
+import json, os, sys, time
+with open(os.environ['FAKE_TURNS'], 'a') as f:
+    f.write(json.dumps({'prompt': sys.argv[2]}) + '\n')
+print(json.dumps({'type': 'run_started', 'session': 'cap'}), flush=True)
+time.sleep(60)
+PY
+  write_captain 'slow question'
+  start_lane
+  wait_until 100 answered_at_least 'slow question' 1 || fail "the lane never started the turn"
+  kill -KILL "$HOST" 2>/dev/null || true
+  wait "$HOST" 2>/dev/null || true
+  wait_until 50 deck_gone || fail "the captain turn outlived its host"
+  pass "fm-captain-lane: a host that goes away mid-turn takes the captain turn with it"
+}
+
 test_unacknowledged_answer_is_never_repeated
 test_unwritable_answer_list_takes_no_turn
 test_interrupted_turn_gets_one_recovery_turn
+test_failed_turn_retries_with_the_conversation_check
+test_host_exit_stops_a_running_captain_turn
