@@ -20,9 +20,9 @@ Sources (read-only; no agent turn and no model token is spent):
     (config/power-host, default workload): `proxai quotas --detail --short`.
 
 Commands:
-  fm_report.py crew-time <state-dir> [--days N]
-      {since, intervals: [[task, start_epoch, end_epoch], ...]} for the last N
-      days (default 8), merged and bounded; used by the home summary.
+  fm_report.py crew-time <state-dir>
+      {since, intervals: [[task, start_epoch, end_epoch], ...]} for the last 8
+      days, merged and bounded; used by the home summary.
   fm_report.py report --home <main-home> --scope <fleet|primary|mate-id> [--days N] [--json]
       The report. --json prints the stable shape below; otherwise markdown.
 
@@ -162,9 +162,20 @@ def resolve_scope(raw, mates):
     return None
 
 
+SUMMARY_LISTS = ('active_children', 'decisions_open', 'holds', 'queued', 'landed', 'endpoints', 'omitted')
+
+
 def summary_valid(doc, home):
-    return (isinstance(doc, dict) and doc.get('schema') == 'fm-secondmate-home-summary.v1'
-            and (home is None or doc.get('home') == home))
+    """The fields this report reads, with the types bin/fm-fleet-snapshot.sh's validator requires."""
+    if not (isinstance(doc, dict) and doc.get('schema') == 'fm-secondmate-home-summary.v1'
+            and (home is None or doc.get('home') == home)):
+        return False
+    if not isinstance(doc.get('generated_epoch'), int) or not isinstance(doc.get('counts'), dict):
+        return False
+    if not all(isinstance(doc.get(k), list) and all(isinstance(r, dict) for r in doc[k]) for k in SUMMARY_LISTS):
+        return False
+    ct = doc.get('crew_time')
+    return ct is None or (isinstance(ct, dict) and isinstance(ct.get('intervals'), list))
 
 
 def read_json(path):
@@ -257,8 +268,6 @@ def read_power(home):
         host = (Path(home) / 'config' / 'power-host').read_text().strip() or host
     except OSError:
         pass
-    if os.environ.get('FM_REPORT_POWER_FILE'):
-        return parse_power(Path(os.environ['FM_REPORT_POWER_FILE']).read_text()), None
     # A quota read is a budget probe, which bin/fm-bridge.py files under maintenance.
     env = dict(os.environ, FM_HOME=str(home))
     try:
@@ -289,15 +298,17 @@ def landed_rows(rows):
     try:
         run = subprocess.run(['bash', '-c', script, '_', str(SCRIPT_DIR / 'fm-landed-lib.sh')],
                              input=json.dumps(rows), capture_output=True, text=True, timeout=30)
-        return json.loads(run.stdout) if run.returncode == 0 else []
+        return json.loads(run.stdout) if run.returncode == 0 else None
     except (OSError, ValueError, subprocess.TimeoutExpired):
-        return []
+        return None
 
 
-def home_rows(rec, mate, start_day, crew_since_holder):
+def home_rows(rec, mate, start_day, crew_since_holder, gaps):
     """shipped, waiting, crew and crew intervals from one published home summary."""
-    shipped = []
-    for row in landed_rows(rec.get('landed') or []):
+    shipped, landed = [], landed_rows(rec.get('landed') or [])
+    if landed is None:
+        gaps.append('%s: shipped work could not be checked against the landed evidence rule' % mate)
+    for row in landed or []:
         date = ((row.get('completion') or {}).get('date') or '')
         if date and date >= start_day.isoformat():
             shipped.append({'title': row.get('title') or row.get('id'), 'pr': row.get('pr_url'),
@@ -379,7 +390,9 @@ def build(home, scope_raw, days, now=None):
             if rec.get('valid') is False and rec.get('reason'):
                 gaps.append('%s: summary incomplete (%s)' % (name, rec['reason']))
             ct = rec.get('crew_time') or {}
-            if len(ct.get('intervals') or []) >= MAX_INTERVALS:
+            if rec.get('crew_time') is None:
+                gaps.append('%s: crew time unavailable (its firstmate predates crew-time records)' % name)
+            elif len(ct.get('intervals') or []) >= MAX_INTERVALS:
                 gaps.append('%s: crew time is partial (only its latest %d busy spells are published)' % (name, MAX_INTERVALS))
             elif start < int(rec.get('generated_epoch') or now) - CREW_DAYS * 86400:
                 gaps.append('%s: crew time covers only the last %d days' % (name, CREW_DAYS))
@@ -389,7 +402,7 @@ def build(home, scope_raw, days, now=None):
             for o in rec.get('omitted') or []:
                 if o.get('surface') in ('landed', 'endpoints', 'decisions_open', 'queued'):
                     gaps.append('%s: %d more %s not listed' % (name, o.get('count', 0), o['surface'].replace('_', ' ')))
-        s, w, c, iv = home_rows(rec, mid, start_day, since)
+        s, w, c, iv = home_rows(rec, mid, start_day, since, gaps)
         t = worked(iv, mid, start, now, {x['agent']: x['task'] for x in c})
         age = now - int(rec.get('generated_epoch') or now)
         return {'id': mid, 'name': name, 'domain': domain, 'machine': machine,
@@ -479,7 +492,6 @@ def main(argv):
     sub = p.add_subparsers(dest='cmd', required=True)
     c = sub.add_parser('crew-time')
     c.add_argument('state')
-    c.add_argument('--days', type=int, default=8)
     r = sub.add_parser('report')
     r.add_argument('--home', required=True)
     r.add_argument('--scope', required=True)
@@ -487,7 +499,7 @@ def main(argv):
     r.add_argument('--json', action='store_true')
     a = p.parse_args(argv)
     if a.cmd == 'crew-time':
-        print(json.dumps(crew_time(a.state, a.days)))
+        print(json.dumps(crew_time(a.state, CREW_DAYS)))
         return 0
     try:
         rep = build(a.home, a.scope, a.days)

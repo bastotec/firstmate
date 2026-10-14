@@ -579,7 +579,7 @@ print(json.dumps({"schema": "fm-secondmate-home-summary.v1", "home": home, "gene
   "queued": [{"id": "h1", "title": "Ship the release", "since": "2026-10-12"}],
   "landed": [{"id": "l1", "title": "Adds the cache", "kind": "ship", "pr_url": "https://example.test/pull/7",
               "outcome": "merged", "completion": {"verb": "merged", "date": date}}],
-  "omitted": [], "crew_time": {"since": 1, "intervals": [[w, 1, 2]]}}))
+  "omitted": [], "counts": {}, "crew_time": {"since": 1, "intervals": [[w, 1, 2]]}}))
 PY
 }
 
@@ -638,9 +638,17 @@ test_fleet_report_reads_power() {
   local parent json
   parent=$(make_fleet fleet dave)
   seed_report_home "$parent" dave "$(date +%Y-%m-%d)"
-  printf 'proxai quotas\n\nACCOUNT  STATE  USED  WINDOW  RESETS\nzai\n  personal  OK         77%%  weekly (1/2 credits)                      Oct 14 02:25Z\n' \
-    > "$parent/power.txt"
-  json=$(FM_HOME="$parent" FM_REPORT_POWER_FILE="$parent/power.txt" "$ROOT/bin/fm-report.sh" fleet --json) \
+  mkdir -p "$parent/config"
+  printf '{"version": 1, "bridges": {"workload": {"allow": ["reports", "maintenance"], "seeded": false}}}\n' \
+    > "$parent/config/bridges.json"
+  # The real quota command over a fake ssh transport.
+  cat > "$parent/fakebin/ssh" <<'SH'
+#!/usr/bin/env bash
+case "$*" in *"proxai quotas"*) ;; *) exit 99 ;; esac
+printf 'proxai quotas\n\nACCOUNT  STATE  USED  WINDOW  RESETS\nzai\n  personal  OK         77%%  weekly (1/2 credits)                      Oct 14 02:25Z\n'
+SH
+  chmod +x "$parent/fakebin/ssh"
+  json=$(PATH="$parent/fakebin:$PATH" FM_HOME="$parent" "$ROOT/bin/fm-report.sh" fleet --json) \
     || fail "fleet report failed"
   printf '%s' "$json" | python3 -c '
 import json, sys
@@ -650,7 +658,14 @@ assert [m["id"] for m in d["mates"]] == ["primary", "dave"], d["mates"]
 assert d["mates"][1]["working"] == 1 and d["mates"][1]["crew"] == 3, d["mates"][1]
 assert "Tightest power: zai at 23%" in d["summary"], d["summary"]
 ' || fail "fleet report shape wrong: $json"
-  pass "fm-report: the fleet report adds each mate and the power left per provider"
+  printf '{"version": 1, "bridges": {"workload": {"allow": ["reports"], "seeded": false}}}\n' \
+    > "$parent/config/bridges.json"
+  PATH="$parent/fakebin:$PATH" FM_HOME="$parent" "$ROOT/bin/fm-report.sh" fleet --json | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d["power"] == [] and "does not allow maintenance" in d["power_error"], (d["power"], d["power_error"])
+' || fail "a bridge without maintenance must block the quota read"
+  pass "fm-report: the fleet report adds each mate and the power left per provider, behind the bridge"
 }
 
 test_remote_report_request_is_answered_in_code() {
