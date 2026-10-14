@@ -1427,17 +1427,8 @@ test_service_keeper_alerts() {
   pass "fm-deck-chat.sh service-run: a primary that stays down raises one alert and clears it on recovery"
 }
 
-if [ -n "${FM_TEST_DECK_CHAT_CASES:-}" ]; then
-  for test_case in $FM_TEST_DECK_CHAT_CASES; do
-    case "$test_case" in test_*) ;; *) fail "invalid test case: $test_case" ;; esac
-    declare -F "$test_case" >/dev/null || fail "unknown test case: $test_case"
-    "$test_case"
-  done
-  exit 0
-fi
-
 test_split_home_captain_thread_and_supervisor() {
-  local home sup cap out rc
+  local home sup cap out rc steer
   home=$(new_home split)
   : > "$home/config/primary-split"
   FAKE_DECK_LOG="$LAB/sup.log" "$BIN/fm-deck-chat.sh" --role supervisor --home "$home" < /dev/null > "$LAB/sup.out" 2>&1 &
@@ -1451,6 +1442,11 @@ test_split_home_captain_thread_and_supervisor() {
   wait_for 10 "the supervisor's watcher" watch_count "$home" 1
   wait_for 10 "the supervisor's busy-state" grep -q 'state=idle ' "$home/state/supervisor.busy-state"
 
+  # Input left in the captain's inbox from before the split: a stale wake is
+  # archived, and the captain's own message comes back after the contract.
+  steer=$(FM_CHAT_ROLE=captain python3 "$BIN/fm_primary_chat.py" prepare --home "$home" | sed -n 's/^steer_dir=//p')
+  printf 'The home watcher has an actionable wake. stale split wake\n' > "$steer/1.msg"
+  printf 'From the captain, directly: held before the split\n' > "$steer/2.msg"
   FAKE_DECK_LOG="$LAB/cap.log" "$BIN/fm-deck-chat.sh" --home "$home" < /dev/null > "$LAB/cap.out" 2>&1 &
   cap=$!
   fm_test_track_helper_pid "$cap"
@@ -1463,6 +1459,16 @@ test_split_home_captain_thread_and_supervisor() {
   case "$out" in *pre_complete=*) fail "the captain thread must not check the session lock" ;; esac
   wait_for 10 "the captain thread's contract turn" turns_with "$LAB/cap.log" 'captain thread'
   assert_contains "$(turns_with "$LAB/cap.log" 'captain thread')" 'Hand every order to the supervisor' "the contract is its first message"
+  wait_for 10 "the held captain message" turns_with "$LAB/cap.log" 'held before the split'
+  [ "$(turns_with "$LAB/cap.log" 'captain thread' | python3 -c 'import json,sys; print(json.loads(sys.stdin.readline())["seq"])')" -lt \
+    "$(turns_with "$LAB/cap.log" 'held before the split' | python3 -c 'import json,sys; print(json.loads(sys.stdin.readline())["seq"])')" ] \
+    || fail "the contract must come before the held captain message"
+  if turns_with "$LAB/cap.log" 'stale split wake' >/dev/null; then fail "a stale wake must never reach the captain thread"; fi
+  assert_grep 'stale split wake' "$(dirname "$steer")/split-archived/1.msg" "the stale wake is archived beside the inbox"
+  rc=0; FAKE_DECK_LOG="$LAB/cap2.log" "$BIN/fm-deck-chat.sh" --home "$home" < /dev/null > "$LAB/cap2.out" 2>&1 || rc=$?
+  expect_code 1 "$rc" "a second captain-thread host is refused"
+  assert_grep 'another captain-thread host is running' "$LAB/cap2.out" "the refusal says why"
+  assert_absent "$LAB/cap2.log" "the refused host never starts deck"
   sleep 1
   assert_equals 1 "$(wc -l < "$home/watch.pids" | tr -d ' ')" "the captain thread arms no watcher"
 
@@ -1492,6 +1498,15 @@ test_split_home_captain_thread_and_supervisor() {
   expect_code 1 "$rc" "a supervisor host refuses to start outside split mode"
   pass "fm-deck-chat.sh: a split home runs a captain thread and a supervisor, each with its own inputs"
 }
+
+if [ -n "${FM_TEST_DECK_CHAT_CASES:-}" ]; then
+  for test_case in $FM_TEST_DECK_CHAT_CASES; do
+    case "$test_case" in test_*) ;; *) fail "invalid test case: $test_case" ;; esac
+    declare -F "$test_case" >/dev/null || fail "unknown test case: $test_case"
+    "$test_case"
+  done
+  exit 0
+fi
 
 test_steer_contract_without_a_host
 test_split_home_captain_thread_and_supervisor

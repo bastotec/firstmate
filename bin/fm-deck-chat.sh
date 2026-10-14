@@ -386,7 +386,7 @@ fcntl.flock(open(sys.argv[1], "a"), fcntl.LOCK_EX | fcntl.LOCK_NB)' "$STATE/$ROO
       fi
     else
       printf 'fm-deck-chat: no live primary and no keeper; starting one in a stream endpoint\n' >&2
-      "$SCRIPT_DIR/fm-deck-chat.sh" --stream --home "$FM_HOME" >/dev/null || exit $?
+      "$SCRIPT_DIR/fm-deck-chat.sh" --stream ${ROLE_ARGS[@]+"${ROLE_ARGS[@]}"} --home "$FM_HOME" >/dev/null || exit $?
     fi
   fi
   MODE=attach
@@ -573,6 +573,15 @@ LOCK_BOUND=1
 # The busy-state id belongs to this host; a task with that id would share its
 # records, so the host refuses to start next to one.
 [ ! -e "$STATE/$BUSY_NAME.meta" ] || die "a task named $BUSY_NAME exists in this home (state/$BUSY_NAME.meta); not starting"
+if [ "$LOCK_BOUND" = 0 ]; then
+  # Without the session lock, one captain-thread host per home is enforced by
+  # an flock this host keeps on fd 9 for its whole life (the lock belongs to
+  # the open file, so it outlives the perl that takes it).
+  { [ -d "$STATE/$ROOT_NAME" ] || mkdir -m 700 "$STATE/$ROOT_NAME"; } || die "cannot create $STATE/$ROOT_NAME" 2
+  exec 9>>"$STATE/$ROOT_NAME/host.lock" || die "cannot open $STATE/$ROOT_NAME/host.lock" 2
+  perl -MFcntl=:flock -e 'open(my $f, "<&=", 9) or exit 2; flock($f, LOCK_EX | LOCK_NB) or exit 1' \
+    || die 'another captain-thread host is running for this home; not starting'
+fi
 if [ "$LOCK_BOUND" = 1 ]; then
   "$SCRIPT_DIR/fm-lock.sh" >&2 || die 'the home session lock is held by another session; not starting'
   if ! FM_STATE_OVERRIDE="$STATE" bash -c '
@@ -609,6 +618,18 @@ GEN=$("$BUSY_EVENT" arm "$STATE" "$BUSY_NAME" --state idle --source deck-wrapper
   || die "could not arm the $BUSY_NAME busy-state record"
 
 if [ "$LOCK_BOUND" = 0 ]; then
+  # Input waiting from before this start (an unsplit primary's wakes, say) must
+  # not reach the captain thread, and its contract must come first: the
+  # captain's own messages and supervisor notes are held and published again
+  # after the contract; everything else goes to split-archived/ beside the
+  # inbox, because the durable wake queue, not this preview, owns that work.
+  mkdir -p "$WORK/held" "$STEER_DIR/../split-archived" || die 'cannot prepare the inbox hand-over'
+  for msg in $(cd "$STEER_DIR" && find . -maxdepth 1 -name '[1-9]*.msg' | sed 's|^\./||' | grep -E '^[1-9][0-9]*\.msg$' | sort -n); do
+    case "$(head -c 40 "$STEER_DIR/$msg")" in
+      'From the captain'*|'[fm-supervisor-note]'*) mv -f "$STEER_DIR/$msg" "$WORK/held/$msg" ;;
+      *) mv -f "$STEER_DIR/$msg" "$STEER_DIR/../split-archived/$msg" ;;
+    esac || die "cannot move pending input $msg"
+  done
   # The captain thread's contract travels as its first message, because it runs
   # without the home's project context (AGENTS.md is the supervisor's contract).
   CONTRACT="$SCRIPT_DIR/../.agents/skills/captain-thread/SKILL.md"
@@ -646,6 +667,12 @@ record_args=(record write --home "$FM_HOME" --session "$SESSION" --host-pid $$
 "$DECK" chat --help 2>/dev/null | grep -q set_model && record_args+=(--set-model)
 python3 "$PRIMARY_CHAT" "${record_args[@]}" || die "could not publish startup and write state/$RECORD_NAME"
 RECORDED=1
+if [ "$LOCK_BOUND" = 0 ]; then
+  for msg in $(cd "$WORK/held" && find . -maxdepth 1 -name '*.msg' | sed 's|^\./||' | sort -n); do
+    python3 "$PRIMARY_CHAT" steer publish --home "$FM_HOME" --kind captain --file "$WORK/held/$msg" >/dev/null \
+      || die "could not publish held captain input $msg again"
+  done
+fi
 
 sup_args=(supervise --home "$FM_HOME" --host-pid $$ --gen "$GEN" --events-offset "$EVENTS_OFFSET")
 # Routine wakes think less when this deck takes per-turn effort (bin/fm-effort-policy.sh).

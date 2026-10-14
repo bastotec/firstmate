@@ -773,7 +773,8 @@ def switch_in_place(root, record, route):
     seq = publish_body(Path(record['steer_dir']), 'deck-control: set_model %s\n' % route)
     was = record.get('model') or ''
     record['model'] = route
-    atomic_write(Path(root).parent / ROLES[ROLE]['record'], json.dumps(record, sort_keys=True) + '\n')
+    # The record beside the resolved role's directory (<root>.json).
+    atomic_write(Path(root).parent / (Path(root).name + '.json'), json.dumps(record, sort_keys=True) + '\n')
     if was != route:
         note_switch(root, was, route)
     return seq

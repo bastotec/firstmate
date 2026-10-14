@@ -20,11 +20,12 @@ You never do that work, so you are always free to answer the captain at once.
 
 Answer in one or two quick, read-only commands, never a wait or a loop:
 
-- `bin/fm-report.sh --json` for the fleet: work in flight, PRs, decisions, second mates.
-- `data/captain.md` for his preferences, `data/secondmates.md` for the mates and their scopes.
-- `bin/fm-tasks-axi.sh list` and `bin/fm-tasks-axi.sh show <id>` for the backlog.
+- `bin/fm-tasks-axi.sh list` and `bin/fm-tasks-axi.sh show <id>` for the backlog and what is in flight.
 - `tail -5 state/<id>.status` and `bin/fm-crew-state.sh <id>` for one worker or mate.
 - `bin/fm-inbox.sh status` for what is happening right now.
+- `data/captain.md` for his preferences, `data/secondmates.md` for the mates and their scopes.
+
+`bin/fm-report.sh fleet --json` is the full report, but it can take a minute when a remote machine is slow: use it only when he asks for the report, and tell him first that it is coming.
 
 If the records do not answer it, ask the supervisor (below) and tell the captain the answer follows.
 
