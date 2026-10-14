@@ -6,9 +6,13 @@
 #
 # --background arms this same pass as a one-shot process-event job
 # (bin/fm-procevent-when.sh, condition /usr/bin/true) and returns at once; its
-# per-mate lines and summary arrive later as that job's notification. A pass
-# waits up to FM_SECONDMATE_PERSIST_WAIT per mate, far past an interactive
-# command limit, so a mate's own turn always uses --background.
+# per-mate lines and summary arrive later as that job's notification. Exit 0
+# with --background confirms scheduling only, not a completed restart; the
+# notification carries the pass's outcome. A pass waits up to
+# FM_SECONDMATE_PERSIST_WAIT per mate, far past an interactive command limit,
+# so a mate's own turn always uses --background. The --persist-wait and
+# --persist-poll options override the corresponding environment knobs below;
+# the background job captures both values at scheduling time.
 #
 # This is the executable half of /updatefirstmate's reload step. A running agent
 # holds AGENTS.md and every skill it has loaded frozen from launch, and no
@@ -66,9 +70,9 @@
 #   FM_SECONDMATE_PERSIST_WAIT  seconds to wait for one mate's persist answer (900)
 #   FM_SECONDMATE_PERSIST_POLL  seconds between checks of that answer (5)
 #
-# Exit status: 0 every named mate restarted; 3 at least one was nudged or left
-# unreached and every mate was still accounted for; 1 the input itself is
-# unusable; 2 invalid use.
+# Foreground exit status: 0 every named mate restarted; 3 at least one was nudged
+# or left unreached and every mate was still accounted for; 1 the input itself
+# is unusable; 2 invalid use.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

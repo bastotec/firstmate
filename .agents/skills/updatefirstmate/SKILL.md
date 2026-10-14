@@ -26,7 +26,8 @@ That is why **every live second mate is restarted after a successful update, inc
 Launch-time wiring is not derivable from a file diff, so an unchanged tracked surface is not evidence the running agent is already on the current behavior.
 The only live mates that do not restart are the ones whose home the update pass had to skip, and the ones whose runtime cannot prove a restart; the updater keeps both cases honest and neither is reported as a reload.
 
-**One-time rollout note:** the update that carries this change is still executed by the previous release, which restarts only the mates whose `AGENTS.md` or `.agents/skills/` moved on that pass. After it completes, run `bin/fm-secondmate-restart.sh --background <fm-id>...` once with every live second mate ID, not only the ones that release named; later updates follow the normal flow below.
+**One-time rollout note:** the update that carries this change is still executed by the previous release, which restarts only the mates whose `AGENTS.md` or `.agents/skills/` moved on that pass.
+After it completes, run `bin/fm-secondmate-restart.sh --background <fm-id>...` once with every live second mate ID, not only the ones that release named; later updates follow the normal flow below.
 
 The primary update is fast-forward only, while each secondmate uses the same guarded convergence path plus one narrow recovery for squash-merged local history.
 For a remote route, it updates the configured Firstmate code root on that host from its own origin, then guardedly fast-forwards the persistent home to that code-root commit.
@@ -46,7 +47,8 @@ Do not infer those lists from a capped notification summary, assume skipped home
    FM_HOME=<this-firstmate-home> bin/fm-procevent-when.sh arm "updatefirstmate-$(date -u +%Y%m%dT%H%M%S)-$$" \
      --stable 1 --interval 1 --condition /usr/bin/true --action bin/fm-update.sh
    ```
-   This one-shot runs on the watcher's next cycle, never inline. Resume steps 2-5 from its notification's captured output only after `status: fired` and `action_exit: 0`; report any failure without assuming the update completed.
+   This one-shot runs on the watcher's next cycle, never inline.
+   Resume steps 2-5 from its notification's captured output only after `status: fired` and `action_exit: 0`; report any failure without assuming the update completed.
    It fast-forwards this firstmate repo's default branch from origin, then updates every registered local or remote secondmate home through its placement-specific guarded path.
    It prints one status line per target (`updated <old>..<new>` / `reconciled redundant divergence <old>..<new>` / `already current` / `skipped: <reason>`) and native-preparation summaries when applicable, followed by three action lines that tell you exactly what to do next:
    - `reread-firstmate: yes|no`
@@ -70,7 +72,8 @@ Do not infer those lists from a capped notification summary, assume skipped home
    ```sh
    FM_HOME=<this-firstmate-home> bin/fm-secondmate-restart.sh --background <fm-id>...
    ```
-   The pass waits on each mate and outlasts any command limit, so it always runs in the background; its per-mate lines arrive later as a process-event notification.
+   The pass can outlast an interactive command limit, so it always runs in the background; its per-mate lines arrive later as a process-event notification.
+   Scheduling is not a restart outcome: continue with step 4 while it runs, but defer step 5's final report until its captured outcome arrives.
    Include `FM_HOME=<this-firstmate-home>` unless `FM_HOME` is already set to the active firstmate home.
    This is automatic and needs no per-mate confirmation from the captain.
    Local and remote mates go in the same list; the command owns the transport, the profile each replacement runs on, and the wait.
