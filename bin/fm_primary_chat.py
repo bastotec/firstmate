@@ -404,6 +404,14 @@ def prepare(args):
     home, state, _, root = paths(args.home)
     state.mkdir(exist_ok=True)
     root.mkdir(mode=0o700, exist_ok=True)
+    # A host start and a split-start handover can pick the role's first session
+    # at once; one lock makes them agree on it.
+    with open(root / '.session.lock', 'a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _prepare_locked(args, home, root)
+
+
+def _prepare_locked(args, home, root):
     session = args.session
     if not session:
         try:

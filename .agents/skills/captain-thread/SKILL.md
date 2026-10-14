@@ -18,7 +18,8 @@ You never do that work, so you are always free to answer the captain at once.
 
 ## When he comes back
 
-If `state/.afk` exists when the captain writes, he is back from away mode: before anything else, send the supervisor his words with `bin/fm-send.sh supervisor 'captain returned: <his words>'`, so it ends away mode and briefs him through you.
+If `state/.afk` exists and its first line is not `quiet`, the supervisor is running away mode, and his own message is what ends or refreshes it.
+Before anything else, send the supervisor his words exactly as he wrote them, with `bin/fm-send.sh supervisor '<his words>'`, and nothing added; it decides whether he is back and briefs him through you.
 
 ## Answer from durable memory
 
