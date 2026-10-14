@@ -210,7 +210,8 @@ fm_pending_reply_text_has_corr() {  # <text> <corr_id>
 
 # Preserve Unicode letters, accents and punctuation in the request summary because
 # Fleet Town shows it as the captain's words. Perl removes control, format,
-# private-use and unassigned characters, plus other/modifier symbols (including emoji).
+# private-use and unassigned characters, other symbols (including emoji), and
+# non-ASCII modifier symbols; ASCII backticks and carets are preserved.
 # If Perl fails or is unavailable, fall back to the legacy printable-ASCII filter.
 # Regression: tests/fm-captain-direct-echo.test.sh.
 fm_pending_reply_summarize() {  # <text>
