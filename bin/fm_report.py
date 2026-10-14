@@ -365,7 +365,7 @@ def home_rows(rec, mate, start_day, crew_since_holder, gaps):
         # A hold is the same question as an open decision only when it waits on
         # that decision: a parked or blocked worker's decision, or a captain hold
         # with no dependency. A dependency or an external pause is its own wait.
-        if row.get('source') == 'child-state' and states.get(tid) != 'paused':
+        if row.get('source') == 'child-state' and states.get(tid) in ('parked', 'blocked'):
             same = 'status'
         elif row.get('source') == 'backlog' and not row.get('blocked_by'):
             same = 'backlog'

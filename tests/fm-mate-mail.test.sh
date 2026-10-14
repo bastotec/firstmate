@@ -644,7 +644,9 @@ import json, sys
 dave, cadia = sys.argv[1:]
 d = json.load(open(dave))
 d["decisions_open"] += [{"id": "dave-w3", "key": "ci", "verb": "needs-decision", "summary": "Retry CI?", "source": "status"},
-                        {"id": "h1", "key": "h1", "verb": "captain-hold", "summary": "Approve the release", "source": "backlog"}]
+                        {"id": "h1", "key": "h1", "verb": "captain-hold", "summary": "Approve the release", "source": "backlog"},
+                        {"id": "dave-w4", "key": "ci", "verb": "needs-decision", "summary": "Retry omitted worker CI?", "source": "status"}]
+d["holds"] += [{"id": "dave-w4", "title": "Wait for omitted worker CI", "blocked_by": None, "source": "child-state", "reason": "CI until 18:00Z"}]
 json.dump(d, open(dave, "w"))
 c = json.load(open(cadia))
 c["crew_time"]["intervals"] = [["cadia-w1", 100]]
@@ -657,6 +659,8 @@ d = json.load(sys.stdin)
 w = sorted((x["task"], x["what"], x["on"]) for x in d["waiting"])
 assert ("dave-w3", "Retry CI?", "dave") in w and ("dave-w3", "Wait for CI", "an external wait: CI until 18:00Z") in w, w
 assert ("h1", "Approve the release", "the captain") in w and ("h1", "Ship the release", "w9") in w, w
+assert [x for x in w if x[0] == "dave-w4"] == [("dave-w4", "Retry omitted worker CI?", "dave"), ("dave-w4", "Wait for omitted worker CI", "dave")], w
+assert not any(c["agent"] == "dave-w4" for c in d["crew"]), d["crew"]
 assert [x for x in w if x[0] == "dave-w2"] == [("dave-w2", "Which API shape?", "dave"), ("dave-w2", "Which database?", "dave")], w
 ' || fail "an open decision must not hide an independent pause or dependency: $json"
   json=$(FM_HOME="$parent" "$ROOT/bin/fm-report.sh" cadia --json) || fail "a malformed crew_time must not abort the report"
