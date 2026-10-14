@@ -66,9 +66,9 @@
 # replayed, a runtime refusal only --override-runtime-refusal proceeds past,
 # and a missing worktree identity - unless the record carries a recorded slot
 # handover (worktree_reassigned_by) and passes cleanup's four-proof
-# record-only reassigned-slot gate, which bin/fm-teardown.sh owns and
-# --finished never rides: it takes only records on a retired backend, so a
-# stream record with a reassigned slot stays the operator's path.
+# record-only reassigned-slot gate, which bin/fm-teardown.sh owns.
+# --finished never reaches that gate: its ship preflight requires an owned
+# worktree.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

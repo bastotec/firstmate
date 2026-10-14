@@ -1423,12 +1423,16 @@ work_is_landed() {
 #   (c) the work landed per the task-specific landed-evidence contract with
 #       final branch coverage - the resolved task PR reads merged from the live
 #       forge, and its head plus every retained local and existing remote task
-#       branch tip is covered. Ancestry or equivalent patch ids in the merged PR
-#       head prove task work landed, including pipeline-replayed commits after
-#       later default-branch evolution. Additional work must be an ancestor of
-#       the freshly fetched default branch or produce exactly its tree in a
-#       conflict-free 3-way merge. Unreadable branch state or a failed fetch
-#       refuses; only confirmed remote branch absence permits omitting its tip;
+#       branch tip is covered. The remote tip comes from the PR's actual head
+#       repository, including a fork; origin supplies the freshly fetched default
+#       branch. Default-branch ancestry or merged-PR ancestry/equivalent patch ids
+#       prove coverage, including pipeline-replayed commits after later default
+#       evolution. Otherwise, a first-parent walk finds a prefix covered by either
+#       proof, so already-proved work is not rechecked. Only the remaining work
+#       is checked in a conflict-free 3-way merge using that prefix as the merge
+#       base; the result must equal the current default tree. Unreadable branch
+#       state or a failed fetch refuses; only confirmed remote branch absence
+#       permits omitting its tip;
 #   (d) the worker stopped on recorded evidence - the backend's recovery-grade
 #       classifier (fm_backend_agent_state) answers dead for the recorded
 #       endpoint. Registry absence (missing) proves no stop, and an operator's
@@ -1523,9 +1527,10 @@ teardown_reassigned_branch_covered() {
 
 # The four-proof gate itself. Runs only for a record the endpoint gate accepted
 # as a reassignment candidate, after the completion-claim gate has resolved
-# PR_URL, and before any destructive step: everything it needs is read-only. On
-# success it marks the slot reassigned (never this task's) and returns 0; every
-# missing proof exits 1 with the reason, which no retirement path proceeds past.
+# PR_URL, and before any destructive step. Coverage fetches update Git evidence,
+# not the slot or its owner's work. On success it marks the slot reassigned
+# (never this task's) and returns 0; every missing proof exits 1 with the reason,
+# which no retirement path proceeds past.
 teardown_verify_reassigned_slot_record() {
   local claimant=$FM_BACKEND_VALIDATED_REASSIGNED_TO
   local claimant_meta claimant_wt slot verdict pr_head_branch pr_head branch head_remote
@@ -3310,8 +3315,8 @@ fi
 
 # A record accepted as a reassignment candidate at the endpoint gate above runs
 # its four-proof gate here, after the completion-claim gate resolved PR_URL and
-# before any destructive step. Everything the proof reads is read-only, and a
-# record that fails any proof keeps its refusal with every record intact.
+# before any destructive step. The proof block above owns its evidence reads
+# and fetches; a record that fails any proof keeps its refusal intact.
 if [ -n "$FM_BACKEND_VALIDATED_REASSIGNED_TO" ]; then
   teardown_verify_reassigned_slot_record
 fi
