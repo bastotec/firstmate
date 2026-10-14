@@ -13,7 +13,7 @@
 # supervisor's running turn at its next safe point or wakes it when idle
 # (bin/fm_stream_deck.py).
 #
-# Exit: 0 handed over; 2 no text; 1 the record or publication failed.
+# Exit: mate lane 0 recorded, 1 write failed, 2 no text; else fm-send's status.
 set -u
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 case "${1:-}" in

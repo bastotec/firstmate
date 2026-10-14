@@ -66,7 +66,8 @@ state/
   <id>.agent-diagnostics{,.1,.2}  stream-agent diagnostic records (`primary-chat.agent-diagnostics` for the statusless primary); format and limits are owned by docs/stream-backend.md; task-owned files are removed by teardown
   <id>.turn-ended         touched by bin/fm-deck-worker.sh at turn end
   <id>.deck-session       secondmate conversation binding; bin/fm-deck-worker.sh header owns format, resume eligibility, and retirement
-  <id>.supervisor-session <id>.captain-lane <id>.captain-lane.log <id>.captain-lane.answered  a split second mate's supervisor session, captain-lane marker, lane log and answered-record list (bin/fm-captain-lane.sh header)
+  <id>.supervisor-session <id>.captain-lane  split secondmate supervisor binding and lane marker (bin/fm-deck-worker.sh "CAPTAIN LANE")
+  <id>.captain-lane.log <id>.captain-lane.answered  captain-lane log and turn journal (bin/fm-captain-lane.sh header)
   <id>.model <id>.deck-caps  in-place model choice and live driver capability (bin/fm-control.sh owns public behavior; bin/fm_model_switch.py owns capability checks)
   <id>.progress           in-turn native activity, read for the busy-age bound only (bin/fm-busy-event.sh)
   <id>.crew-state         local ship task's validation record for file watchers; bin/fm-task-state-lib.sh "PUBLISHED RECORD" owns fields, refreshes, and cleanup

@@ -123,7 +123,8 @@
 # Once run_started has named the session and Deck has written that session's
 # file (Deck saves a conversation at its first appended completion), including
 # during the startup turn, the host atomically records its session id on line 1
-# and FM_HOME on line 2 of <state>/<id>.deck-session in the parent task state.
+# and FM_HOME on line 2 of <state>/<id>.deck-session in the parent task state
+# (or <state>/<id>.supervisor-session in split mode; see CAPTAIN LANE below).
 # The host checks during each turn-loop iteration until recorded, and once more
 # after stopping Deck during cleanup to catch a late save before TERM/HUP exit.
 # A run stopped during its first model call can name a session with no file;
@@ -183,8 +184,8 @@
 #                           secondmate host stops (default 5); fewer are
 #                           retried with a fresh watcher; empty, zero, or
 #                           nonnumeric values use the default
-#   FM_DECK_FRESH_SESSION   1 makes a secondmate host start a new Deck session
-#                           instead of resuming the one it recorded
+#   FM_DECK_FRESH_SESSION   1 starts fresh secondmate conversations instead of
+#                           resuming; see CAPTAIN LANE for the split reset
 #   FM_DECK_WATCH_CONFIRM_SECS  how long a secondmate host waits for a
 #                           successor watcher to confirm startup before it
 #                           starts a fresh one instead (seconds; default 15;

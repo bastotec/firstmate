@@ -21,13 +21,8 @@
 #     .agents/skills/captain-thread/SKILL.md as its contract;
 #   - FM_CAPTAIN_LANE_STATE/FM_CAPTAIN_LANE_ID let bin/fm-captain-handoff.sh hand
 #     his orders to the supervisor;
-#   - <state>/<id>.captain-lane.answered journals each record's steps before
-#     the lane acts on them (the journal comment below owns them): an answered
-#     record is never answered again, its move to handled/ is retried on every
-#     pass while later records go on, a record whose turn was interrupted by a
-#     restart gets one recovery turn that first checks the conversation, and no
-#     turn runs unless its start could be journaled. A failed turn keeps the
-#     record and retries after 30 s, doubling to 300 s.
+#   - <state>/<id>.captain-lane.answered is the turn journal; the journal
+#     comment below owns recovery, acknowledgement and fail-closed rules.
 # The lane writes its Deck events to <work>/events.ndjson and its own log lines
 # to stderr. It exits when the host goes away, and a TERM stops its running
 # Deck turn first (bounded), so a replacement lane never runs beside it.
@@ -109,11 +104,17 @@ session_of() {
 # The lane's journal: one "<state> <record>" line per step, the last line for a
 # record winning: started (its turn is about to run), answered (its turn
 # finished), failed (its turn failed), recovering (its one recovery turn after
-# an interrupted start). Every step is written before the lane acts on it, so
-# no restart repeats an answered turn: a record left started gets one recovery
-# turn, a failed one is retried after backoff, both with a prompt that first
-# checks the conversation for an earlier answer, and a record whose recovery
-# was itself interrupted is never run again.
+# an interrupted start). A turn starts only after started/recovering is written;
+# a successful result is journaled before acknowledgement or another turn.
+# An answered record is never run again; its move to handled/ is retried every
+# pass while later records proceed. An unreadable or unwritable journal permits
+# no turns, and an answer that cannot be journaled holds later turns until it can.
+# A record left started gets one recovery turn; a failed record keeps its inbox
+# source and retries after 30 s, doubling to 300 s. Both first ask the model to
+# check the conversation for an earlier answer: that check is model-level, not
+# deterministic proof of an interrupted answer. A record left recovering by an
+# interrupted recovery is never run again. tests/fm-captain-lane.test.sh pins
+# these journal transitions and the acknowledgement retry behavior.
 ANSWERED="$STATE/$ID.captain-lane.answered"
 journal() {  # <state> <record-name>
   printf '%s %s\n' "$1" "$2" >> "$ANSWERED" 2>/dev/null
@@ -150,7 +151,7 @@ os.replace(tmp, journal)
 PY
 }
 
-# "<new|recover> <path>": the oldest pending captain record the journal allows
+# "<new|recover|retry> <path>": the oldest pending captain record the journal allows
 # to run, or nothing. An unreadable journal allows nothing.
 next_record() {
   python3 - "$SCRIPT_DIR" "$INBOX" "$ANSWERED" <<'PY'

@@ -262,7 +262,8 @@ Reach the captain immediately for work ready for review (with the PR's recorded 
 When an action the captain approved is blocked on a step only a person can do (a `human` item from `bin/fm-machine.sh check`, a credential, a login), say so in that same reply: lead with `Blocked on you:`, give the exact numbered steps with their commands, then say what happens automatically afterwards.
 Also raise a needs-you card through `bin/fm-captain-hold.sh hold` that stays open until a re-check passes and then closes on its own; for a machine, `bin/fm-machine-blocker.sh raise` does all of this and its header owns the mechanics.
 Except for captain-direct replies below, reaching the captain from a secondmate home means appending the outcome to the parent channel your charter names, since chat there reaches no one; [`docs/secondmate-parent-channel.md`](docs/secondmate-parent-channel.md) owns which outcomes scripts deliver there without you.
-A captain-direct message, tagged `[fm-captain-direct]` by `bin/fm-send.sh --from-captain`, is the captain writing to that agent himself while reading its conversation: any second mate or worker answers him there once, addressed to him, and a repeat of a `corr=<id>` it already answered gets no second reply.
+A captain-direct message, tagged `[fm-captain-direct]` by `bin/fm-send.sh --from-captain`, is the captain writing to that agent himself while reading its conversation: an unsplit second mate or worker answers him there once, addressed to him, and a repeat of a `corr=<id>` it already answered gets no second reply.
+In a split secondmate home, those records belong only to the captain thread: the supervisor never reads, answers or moves them; [`bin/fm-captain-lane.sh`](bin/fm-captain-lane.sh) owns their handling.
 Append no parent-channel line just to acknowledge it; report only an outcome you would report anyway.
 For a secondmate target, delivery tells the parent mate with an FYI inbox note naming the corr; the parent never forwards those words, steers the mate about them, or re-asks it, and acts only if the words ask something of the parent itself or a later report from the mate shows a real gap.
 The [`fm-send.sh` header](bin/fm-send.sh) owns the echo guard and the correction path for that one real gap.
@@ -323,7 +324,7 @@ These skills are not captain-invocable; load them only at their triggers.
 - `mate-messaging` - load before messaging another mate, when a `[fm-from-mate:<id>]` message arrives, or when you need to find which mate owns a domain.
 - `mate-reports` - load before asking a peer what it is doing, before starting work that may overlap another domain, or when asked what another mate shipped, is waiting on, or has running.
 - `firstmate-coding-guidelines` - load before changing firstmate's shared tracked material (section 1), directly or by briefing a crewmate.
-- `captain-thread` - the captain thread's contract in a split primary home; `bin/fm-deck-chat.sh` sends it as that thread's first message, and no other session loads it.
+- `captain-thread` - the runtime-injected captain thread contract in a split firstmate or secondmate home; no supervisor session loads it.
 
 ## 14. Relay
 
