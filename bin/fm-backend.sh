@@ -269,7 +269,7 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
     # four-part proof in teardown's reassigned-slot gate. Recording a handover
     # never reads as ownership of the current slot: this branch merely declines
     # to refuse on identity alone so that gate can demand its proof.
-    if [ "$FM_BACKEND_VALIDATE_REASSIGNMENT_CANDIDATE" = 1 ] \
+    if [ "${FM_BACKEND_VALIDATE_REASSIGNMENT_CANDIDATE:-0}" = 1 ] \
        && fm_backend_reassignment_slot_candidate "$meta" "$id"; then
       FM_BACKEND_VALIDATED_REASSIGNED_TO=$FM_BACKEND_REASSIGNED_TO
     else
