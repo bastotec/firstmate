@@ -384,6 +384,41 @@ test_idempotent_write_follows_concurrent_ack() {
   pass "inbox: idempotent enqueue follows a record concurrently moved to handled"
 }
 
+# The dedup prescan must not hold the sequence lock: a long-lived inbox
+# accumulates hundreds of handled records and the body scan forks per record,
+# so scanning under .seq.lock serialized every overlapping write for seconds
+# (the contention shape behind the 2026-10-14 cadia send failure, where the
+# remote enqueue failed lock-acquire against a perfectly healthy inbox). A
+# prescan hit must not even wait on the lock: the safe-recovery resend lands
+# on its existing record while another writer holds the lock indefinitely.
+test_idempotent_prescan_does_not_hold_the_lock() {
+  local state rec2 count i text
+  state="$TMP_ROOT/idem-prescan/state"; mkdir -p "$state"
+  # A cadia-sized history: 300 acknowledged records for the prescan to walk.
+  for i in $(seq 1 300); do
+    inbox_lib "$state" fm_task_inbox_write "$state" t1 "history steer $i" >/dev/null
+    mv "$state/t1.inbox/$(printf '%03d' "$i").msg" "$state/t1.inbox/handled/"
+  done
+  text="the captain's re-sent message"
+  inbox_lib "$state" fm_task_inbox_write_idempotent "$state" t1 "$text" >/dev/null
+  count=$(find "$state/t1.inbox" -name '*.msg' | wc -l | tr -d ' ')
+  [ "$count" = 301 ] || fail "fixture should hold 301 records, found $count"
+  # A held lock cannot delay the resend: the prescan finds the identical body
+  # and returns without acquiring .seq.lock at all.
+  mkdir -p "$state/t1.inbox/.seq.lock"
+  echo 1 > "$state/t1.inbox/.seq.lock/pid"
+  rec2=$(FM_TASK_INBOX_LOCK_WAIT_SECS=1 inbox_lib "$state" fm_task_inbox_write_idempotent "$state" t1 "$text") \
+    || fail "an identical resend must succeed while another writer holds the lock"
+  [ "$rec2" = "$state/t1.inbox/301.msg" ] || fail "resend should dedup onto 301.msg, got $rec2"
+  rm -rf "$state/t1.inbox/.seq.lock"
+  # A NEW body still serializes on the lock: the locked re-verify window plus
+  # publish stay mutually exclusive with any other writer.
+  rec2=$(FM_TASK_INBOX_LOCK_WAIT_SECS=5 inbox_lib "$state" fm_task_inbox_write_idempotent "$state" t1 "a genuinely new steer") \
+    || fail "a new body must still enqueue under the lock"
+  [ "$rec2" = "$state/t1.inbox/302.msg" ] || fail "a new body should enqueue as 302.msg, got $rec2"
+  pass "inbox: the dedup prescan never holds or waits on the sequence lock"
+}
+
 test_handled_mv_dedups_by_sequence() {
   local state r1 r2 oldest r3
   state="$TMP_ROOT/dedup/state"; mkdir -p "$state"
@@ -805,6 +840,7 @@ test_ring_skips_dead_agent
 test_ring_submits_own_unsubmitted_doorbell
 test_idempotent_write_dedups_exact_body
 test_idempotent_write_follows_concurrent_ack
+test_idempotent_prescan_does_not_hold_the_lock
 test_handled_mv_dedups_by_sequence
 test_concurrent_writers_never_clobber
 test_writer_retries_after_a_vanished_lock_collision
