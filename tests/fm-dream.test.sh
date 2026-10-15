@@ -97,6 +97,7 @@ PY
   cat > "$d/bin/deck" <<'SH'
 #!/usr/bin/env bash
 prompt=$(cat)
+if [ -n "${STUB_DECK_SLEEP:-}" ]; then sleep "$STUB_DECK_SLEEP"; fi
 if [ -n "${STUB_DECK_FAIL:-}" ]; then
   printf '{"type":"run_failed","error":"model gateway request failed (HTTP 502)"}\n'; exit 1
 fi
@@ -145,7 +146,7 @@ SH
 #!/usr/bin/env bash
 case "$1" in
   list) case "$*" in *--fields*) echo "unexpected --fields" >&2; exit 2 ;; esac
-        printf 'count: 2\ntasks[2]{id,state,kind,repo,title}:\n  fm-old,done,ship,firstmate,"Cache the drain result in fm-wake-drain.sh"\n  fm-dupes,queued,ship,"-","Prevent duplicate worker spawns, for a task"\n' ;;
+        printf 'count: 3\ntasks[3]{id,state,kind,repo,title}:\n  fm-old,done,ship,firstmate,"Cache the drain result in fm-wake-drain.sh"\n  fm-dupes,queued,ship,"-","Prevent duplicate worker spawns, for a task"\n  fm-q,queued,ship,deck,"Handle \\"a,b\\" retry arguments in deck"\n' ;;
   add) n=$(find "$STUB_CALLS" -name 'add.*' | wc -l | tr -d ' '); printf '%s\n' "$*" > "$STUB_CALLS/add.$n"; printf '{\n  "ok": true,\n  "action": "add",\n  "task": {"id": "dream-k%s"}\n}\n' "$n" ;;
 esac
 SH
@@ -328,6 +329,20 @@ test_a_corrupt_ledger_or_missing_agent_output_files_nothing() {
   pass "a corrupt ledger or a triage agent that writes nothing files nothing and is reported"
 }
 
+test_a_terminated_run_leaves_no_agent_behind() {
+  local d pid
+  d=$(new_case term)
+  STUB_DECK_SLEEP=31.4159 run_dream "$d" --only collect skills > "$d/out.json" 2>&1 &
+  pid=$!
+  for _ in $(seq 1 50); do pgrep -f 'sleep 31.4159' >/dev/null && break; sleep 0.2; done
+  pgrep -f 'sleep 31.4159' >/dev/null || fail "the stub agent never started"
+  kill -TERM "$(pgrep -f "fm_dream.py run --home $d/home")"; wait "$pid" 2>/dev/null
+  sleep 0.5
+  if pgrep -f 'sleep 31.4159' >/dev/null; then pkill -f 'sleep 31.4159'; fail "the agent kept running after SIGTERM"; fi
+  [ -z "$(git -C "$d/dotfiles" worktree list | sed -n 2p)" ] || fail "the dreaming worktree was left behind after SIGTERM"
+  pass "a terminated run ends its agent and removes its worktree"
+}
+
 test_dry_run_files_nothing_and_pushes_nothing() {
   local d before
   d=$(new_case dry)
@@ -361,5 +376,6 @@ test_the_jev_helper_refuses_without_a_key
 test_a_gateway_blip_is_retried_once_and_succeeds
 test_unreadable_open_work_files_nothing_blind
 test_a_corrupt_ledger_or_missing_agent_output_files_nothing
+test_a_terminated_run_leaves_no_agent_behind
 test_dry_run_files_nothing_and_pushes_nothing
 test_report_shows_the_last_run

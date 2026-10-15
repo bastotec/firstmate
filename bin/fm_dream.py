@@ -60,7 +60,6 @@ bin/fm-backlog-handoff.sh, bin/fm-report.sh and bin/fm-on.sh.
 """
 import argparse
 import fcntl
-import csv
 import datetime as dt
 import glob
 import json
@@ -68,6 +67,7 @@ import os
 import re
 import sqlite3
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -375,8 +375,7 @@ def session_lines(path, since, slow, label, hide=lambda line: False):
 WORKER_BRIEF = 'FIRSTMATE_OP: v1 launch-brief'
 
 
-def first_user_text(path, chars=None):
-    doc = read_json(path)
+def first_user_text(doc, chars=None):
     for msg in (doc or {}).get('messages') or []:
         if msg.get('role') == 'user':
             return text_of(msg.get('content'))[:chars] if chars else text_of(msg.get('content'))
@@ -434,10 +433,12 @@ def local_sessions(ctx):
         path = Path(f)
         if path in bound or path.stat().st_mtime < ctx.since:
             continue
-        if read_json(path) is None:
+        doc = read_json(path)
+        if doc is None:
             UNREADABLE.append(path.name)  # cannot tell whether it was a worker's
             continue
-        brief = first_user_text(path)
+        brief = first_user_text(doc)
+        del doc
         # A worker's brief names its inbox, <home>/state/<task>.inbox: only workers
         # of this home or an included local home count, never another FM_HOME's.
         inbox = re.search(r'Your steering inbox is `([^`]+)/state/[^`/]+\.inbox`', brief)
@@ -505,7 +506,8 @@ def no_mistakes_runs(since, fleet_paths, harness, private_paths=()):
             continue
         urls = str(r.pop('repo_urls', '') or '')
         ours = any(repo == p or repo.startswith(p.rstrip('/') + '/') for p in fleet_paths) \
-            or any(re.search(r'[/:]%s(\.git)?(\s|$)' % re.escape(slug), urls) for slug in harness)
+            or any(re.search(r'(https://github\.com/|git@github\.com:|ssh://git@github\.com/)%s(\.git)?/?(\s|$)'
+                             % re.escape(slug), urls) for slug in harness)
         if stamp >= since and ours and not any(n in json.dumps(r, ensure_ascii=False, default=str) for n in private_names() + list(private_paths)):
             out.append(r)
     return out, None
@@ -819,8 +821,38 @@ def similar(a, b):
     return bool(x and y) and len(x & y) / min(len(x), len(y)) >= 0.6
 
 
+def toon_row(line):
+    """Fields of one TOON table row (comma-separated; quoted fields use backslash
+    escapes), or None when the row is malformed."""
+    fields, i, n = [], 0, len(line)
+    while i <= n:
+        if i < n and line[i] == '"':
+            i, buf = i + 1, []
+            while i < n and line[i] != '"':
+                if line[i] == '\\' and i + 1 < n:
+                    i += 1
+                    buf.append({'n': '\n', 't': '\t'}.get(line[i], line[i]))
+                else:
+                    buf.append(line[i])
+                i += 1
+            if i >= n:
+                return None
+            i += 1
+            if i < n and line[i] != ',':
+                return None
+            fields.append(''.join(buf))
+        else:
+            j = line.find(',', i)
+            j = n if j < 0 else j
+            fields.append(line[i:j])
+            i = j
+        i += 1
+    return fields
+
+
 def task_titles(out):
-    """Titles of open rows in a `tasks-axi list` table, read by its own header."""
+    """Titles of open rows in a `tasks-axi list` table, read by its own header;
+    None when a row cannot be decoded."""
     titles, cols = [], None
     for line in out.splitlines():
         head = re.match(r'^tasks\[\d+\]\{([^}]*)\}:', line)
@@ -829,9 +861,12 @@ def task_titles(out):
             continue
         if not cols or not line.startswith('  '):
             continue
-        row = dict(zip(cols, next(csv.reader([line.strip()]), [])))
+        fields = toon_row(line.strip())
+        if fields is None or len(fields) != len(cols):
+            return None
+        row = dict(zip(cols, fields))
         if row.get('state') in ('queued', 'in_flight', 'held') and row.get('title'):
-            titles.append(row['title'].split('\\n')[0].split('\n')[0])
+            titles.append(row['title'].split('\n')[0])
     return titles
 
 
@@ -860,10 +895,11 @@ def open_items(ctx, repos, owners):
             ok = r.returncode == 0 and re.search(r'^tasks\[\d+\]', r.stdout, re.M)
         except (OSError, subprocess.TimeoutExpired):
             r, ok = None, False
-        if ok:
-            titles += task_titles(r.stdout)
-        else:
+        rows = task_titles(r.stdout) if ok else None
+        if rows is None:
             unchecked.add(mid)
+        else:
+            titles += rows
     for repo, slug in sorted(repos.items()):
         if not slug:
             continue
@@ -1064,7 +1100,15 @@ def summary_line(run):
     return text
 
 
+def raise_on_signal(signum, frame):
+    """SIGTERM or SIGHUP becomes an exception, so the running subprocess group is
+    ended and the lock released the same way as on Ctrl+C."""
+    raise KeyboardInterrupt('signal %d' % signum)
+
+
 def cmd_run(args):
+    signal.signal(signal.SIGTERM, raise_on_signal)
+    signal.signal(signal.SIGHUP, raise_on_signal)
     try:
         ctx = Ctx(args.home, args.dry_run)
     except ConfigError as e:
