@@ -399,14 +399,15 @@ cmd_ingest() {
     # delivers exactly the lines this home has not seen. That recovery is
     # bounded: a log that keeps breaking is escalated and left stopped.
     if continuity_recovery_allowed "$id"; then
-      write_cursor "$id" 0 "$(empty_hash)" \
-        || { fm_lock_release "$lock"; die "cannot reset remote reply cursor for $id"; }
-      # The receipt marks this break as recovered, so a handle retried after a
-      # failed re-arm re-arms instead of refusing the reset cursor.
+      # The receipt comes first and marks this break as recovered, so a
+      # handle retried after any later failure finishes the reset and re-arm
+      # (cmd_handle_locked) instead of refusing the moved cursor.
       if [ -n "$seq" ]; then
         write_ingest_receipt "$id" "$seq" "$result" \
           || { fm_lock_release "$lock"; die "cannot commit remote reply recovery receipt"; }
       fi
+      write_cursor "$id" 0 "$(empty_hash)" \
+        || { fm_lock_release "$lock"; die "cannot reset remote reply cursor for $id"; }
       fm_lock_release "$lock"
       printf 'continuity-recovered: %s (%s); replaying from the start\n' "$id" "$reason"
       return 4
@@ -502,8 +503,14 @@ cmd_handle_locked() {
   if ingest_receipt_matches "$id" "$seq" "$result"; then
     to=$(result_field "$result" to_offset) || die "result end offset is ambiguous"
     printf 'ingested: %s appended=0 offset=%s\n' "$id" "$to"
-    # Only a recovered break leaves a receipt; finish its re-arm.
-    [ "$class" != continuity-broken ] || rc=4
+    # Only a recovered break leaves a receipt; finish its reset and re-arm.
+    if [ "$class" = continuity-broken ]; then
+      read_cursor "$id"
+      if [ "$CURSOR_OFFSET" -ne 0 ]; then
+        write_cursor "$id" 0 "$(empty_hash)" || die "cannot reset remote reply cursor for $id"
+      fi
+      rc=4
+    fi
   else
     cmd_ingest "$id" "$result" "$seq" || rc=$?
   fi

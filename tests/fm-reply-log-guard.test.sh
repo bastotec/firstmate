@@ -31,6 +31,8 @@ expect 2 run_command "echo x > /parent/state/m.status" "a truncating redirect on
 expect 2 edit_file /home/m/state/parent-replies.status "edit_file on the log is refused"
 expect 2 run_command "printf 'x\n' 1> state/parent-replies.status" "an fd-numbered truncating redirect is refused"
 expect 2 run_command "python3 -c \"open('state/parent-replies.status', 'wb').write(b'x')\"" "a binary write mode is refused"
+expect 2 run_command "python3 -c \"from pathlib import Path; open(Path('state/parent-replies.status'), 'w').write('x')\"" "a nested-path write is refused"
+expect 2 run_command "awk '!seen[\$0]++' state/parent-replies.status > /tmp/d && mv /tmp/d state/parent-replies.status # dedupe" "a move followed by a comment is refused"
 expect 0 run_command "python3 -c \"open('state/parent-replies.status', 'a').write('x')\"" "a python append is allowed"
 expect 0 run_command "printf '%s\n' 'done corr=0123456789abcdef: ok' >> state/parent-replies.status" "an append is allowed"
 expect 0 run_command "tail -3 state/parent-replies.status; grep -c corr= state/parent-replies.status 2>/dev/null" "reads are allowed"

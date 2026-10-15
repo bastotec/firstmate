@@ -12,7 +12,9 @@ mirror and every later reply stops reaching the first mate. This hook refuses
 the tool calls that rewrite a protected file: edit_file on it, and run_command
 lines that name it alongside an in-place edit, a truncating redirect, a write
 mode, a move or copy onto it, a truncate or a removal. Appending (>>) and
-reading are left alone. Exit 2 blocks the call and its stderr goes back to the
+reading are left alone. Matching shell text is best effort: the first mate's
+mirror recovers from a rewrite on its own (bin/fm-procevent-remote-reply.sh),
+and this guard only keeps the common ways from happening. Exit 2 blocks the call and its stderr goes back to the
 model; anything this hook cannot read is allowed (exit 0), because it guards a
 convention rather than a security boundary.
 """
@@ -39,13 +41,17 @@ def writes(command, name):
         r"\bperl\b[^|;&\n]*\s-[A-Za-z]*i",
         r"(?<!>)>(?!>)\s*['\"]?[^\s'\";|&]*" + n,
         r"\btee\b(?![^|;&\n]*\s(-a|--append)\b)[^|;&\n]*" + n,
-        r"\b(mv|cp|install|rsync|ln)\b[^|;&\n]*" + n + r"['\"]?\s*($|[|;&\n])",
+        r"\b(mv|cp|install|rsync|ln)\b[^|;&\n]*" + n + r"['\"]?\s*(#[^\n]*)?($|[|;&\n])",
         r"\btruncate\b",
         r"\brm\b[^|;&\n]*" + n,
-        r"\bopen\([^)]*,\s*(mode\s*=\s*)?['\"][rabt]*[wx+][rwxabt+]*['\"]",
         r"\.write_text\(|\.write_bytes\(|os\.truncate|shutil\.(move|copy)",
     ]
-    return any(re.search(p, command) for p in patterns)
+    if any(re.search(p, command) for p in patterns):
+        return True
+    # Any open() alongside a writing mode literal: argument nesting makes the
+    # mode's position unparseable by pattern, so the pair is enough.
+    return bool(re.search(r"\bopen\(", command)
+                and re.search(r",\s*(mode\s*=\s*)?['\"][rabt]*[wx+][rwxabt+]*['\"]", command))
 
 
 def main():
