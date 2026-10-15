@@ -59,6 +59,7 @@ bin/fm-backlog-handoff.sh, bin/fm-report.sh and bin/fm-on.sh.
     fm_dream.py status --home H [--json]
 """
 import argparse
+import fcntl
 import csv
 import datetime as dt
 import glob
@@ -283,11 +284,11 @@ def read_registry(home):
     rows = [(mid, row.get('home') or None, row.get('host') or None) for mid, row in fm_report.registry(home).items()]
     REGISTRY_ERRORS[:] = list(fm_report.REGISTRY_ERRORS)
     # Any other "- " record the parser skipped silently is unparsable too.
-    known = {mid for mid, _, _ in rows}
     try:
-        for line in (Path(home) / 'data' / 'secondmates.md').read_text(encoding='utf-8').splitlines():
-            if line.startswith('- ') and line[2:].split(' ', 1)[0] not in known:
-                REGISTRY_ERRORS.append('unparsable registry record')
+        records = [l for l in (Path(home) / 'data' / 'secondmates.md').read_text(encoding='utf-8').splitlines()
+                   if l.startswith('- ')]
+        if len(records) != len(rows) and not REGISTRY_ERRORS:
+            REGISTRY_ERRORS.append('%d registry record(s) not parsed' % (len(records) - len(rows)))
     except FileNotFoundError:
         pass
     except OSError:
@@ -374,11 +375,11 @@ def session_lines(path, since, slow, label, hide=lambda line: False):
 WORKER_BRIEF = 'FIRSTMATE_OP: v1 launch-brief'
 
 
-def first_user_text(path, chars=20000):
+def first_user_text(path, chars=None):
     doc = read_json(path)
     for msg in (doc or {}).get('messages') or []:
         if msg.get('role') == 'user':
-            return text_of(msg.get('content'))[:chars]
+            return text_of(msg.get('content'))[:chars] if chars else text_of(msg.get('content'))
     return ''
 
 
@@ -395,16 +396,23 @@ def local_sessions(ctx):
     ours = [str(ctx.home)] + [h for mid, h, host in reg if h and not host and mid not in ctx.excluded]
     private = set(ctx.excluded) | {h for mid, h, host in reg if mid in ctx.excluded and h}
 
-    def add(label, path):
+    def add(label, path, bound=False):
+        if bound and not path.is_file():
+            UNREADABLE.append(path.name)
+            return
         if path.is_file() and path not in seen and path not in skip and path.stat().st_mtime >= ctx.since:
             seen.add(path)
             found.append((label, path))
 
     for chat, label in (('primary-chat', 'first mate, captain thread'), ('supervisor-chat', 'supervisor')):
         try:
-            add(label, sessions / ((ctx.state / chat / 'session').read_text().strip() + '.json'))
+            sid = (ctx.state / chat / 'session').read_text().strip()
+        except FileNotFoundError:
+            continue
         except OSError:
-            pass
+            UNREADABLE.append(chat + '/session')
+            continue
+        add(label, sessions / (sid + '.json'), bound=True)
     homes = [('main', ctx.home)] + [(mid, Path(h)) for mid, h, host in reg
                                      if h and not host and mid not in ctx.excluded]
     for mid, h in homes:
@@ -413,11 +421,14 @@ def local_sessions(ctx):
             try:
                 sid = Path(f).read_text().split()[0]
             except (OSError, IndexError):
+                if name not in ctx.excluded:
+                    UNREADABLE.append(Path(f).name)
                 continue
             if name in ctx.excluded:
                 skip.add(sessions / (sid + '.json'))
                 continue
-            add('%s / %s%s' % (mid, name, ' (supervisor)' if kind == 'supervisor-session' else ''), sessions / (sid + '.json'))
+            add('%s / %s%s' % (mid, name, ' (supervisor)' if kind == 'supervisor-session' else ''),
+                sessions / (sid + '.json'), bound=True)
     bound = seen | skip
     for f in sorted(glob.glob(str(sessions / '*.json'))):
         path = Path(f)
@@ -488,7 +499,7 @@ def no_mistakes_runs(since, fleet_paths, harness, private_paths=()):
             continue
         ours = any(repo == p or repo.startswith(p.rstrip('/') + '/') for p in fleet_paths) \
             or os.path.basename(repo) in harness
-        if stamp >= since and ours and not any(n in json.dumps(r) for n in private_names() + list(private_paths)):
+        if stamp >= since and ours and not any(n in json.dumps(r, ensure_ascii=False, default=str) for n in private_names() + list(private_paths)):
             out.append(r)
     return out, None
 
@@ -549,7 +560,7 @@ def step_collect(ctx):
         if os.path.getmtime(f) >= ctx.since:
             body = Path(f).read_text(encoding='utf-8', errors='replace')
             restarts.append('- %s: %s' % (Path(f).name, ' | '.join(
-                l.strip() for l in body.splitlines() if re.match(r'\s*(status|restarted|unreached|failed)', l)
+                l.strip() for l in body.splitlines() if re.match(r'\s*(status|restarted|unreached|nudged|failed)', l)
                 and not mentions_excluded(ctx, l))[:400]))
     if restarts:
         parts += ['## Restarts and reloads', *restarts, '']
@@ -561,13 +572,13 @@ def step_collect(ctx):
         parts += ['## Fleet report', rep.get('summary') or '']
         parts += ['- waiting: %s (on %s, %s)' % (w.get('what'), w.get('on'), w.get('mate'))
                   for w in rep.get('waiting', [])
-                  if w.get('mate') not in ctx.excluded and not mentions_excluded(ctx, json.dumps(w))]
+                  if w.get('mate') not in ctx.excluded and not mentions_excluded(ctx, json.dumps(w, ensure_ascii=False))]
         parts += ['- gap: ' + g for g in rep.get('gaps', []) if not mentions_excluded(ctx, g)]
         parts += ['- crew %s: %s on %s (%s)' % (c.get('status'), c.get('agent'), c.get('task'), c.get('mate'))
                   for c in rep.get('crew', []) if c.get('status') in ('failed', 'blocked', 'stopped', 'needs-decision')
-                  and c.get('mate') not in ctx.excluded and not mentions_excluded(ctx, json.dumps(c))][:30]
+                  and c.get('mate') not in ctx.excluded and not mentions_excluded(ctx, json.dumps(c, ensure_ascii=False))][:30]
         parts += ['- shipped: %s (%s)' % (x.get('title'), x.get('mate')) for x in rep.get('shipped', [])
-                  if x.get('mate') not in ctx.excluded and not mentions_excluded(ctx, json.dumps(x))][:30]
+                  if x.get('mate') not in ctx.excluded and not mentions_excluded(ctx, json.dumps(x, ensure_ascii=False))][:30]
         parts += ['- power %s: %s%% left' % (p.get('provider'), p.get('pct_left')) for p in rep.get('power') or []]
         parts.append('')
     text = '\n'.join(parts)
@@ -898,6 +909,8 @@ def jev_scores(ctx, items):
             r = ctx.run(shlex.split(cmd), input=state, timeout=20, env=dict(os.environ, FM_WAKE_GATE_KEY_VAR=keyvar))
         except subprocess.TimeoutExpired:
             return None, 'Jev call timed out'
+        except OSError as e:
+            return None, 'Jev helper could not start (%s)' % e
         row = next((l.split('\t') for l in r.stdout.splitlines() if l.startswith('answers\t')), None)
         if r.returncode or not row:
             return None, 'Jev call failed (%s)' % (r.stdout.strip().split('\t')[-1][:60] or r.returncode)
@@ -1041,18 +1054,14 @@ def cmd_run(args):
     except ConfigError as e:
         print('fm-dream: %s' % e, file=sys.stderr)
         return 1
-    lock = ctx.dir / '.lock'
+    # The kernel holds this lock for the whole run and drops it if the run dies.
+    lock_fd = os.open(ctx.dir / '.lock', os.O_CREAT | os.O_WRONLY, 0o600)
     try:
-        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        os.write(fd, str(os.getpid()).encode())
-        os.close(fd)
-    except FileExistsError:
-        try:
-            os.kill(int(lock.read_text()), 0)
-            print('fm-dream: another run is in progress', file=sys.stderr)
-            return 1
-        except (ValueError, OSError):
-            lock.write_text(str(os.getpid()))
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(lock_fd)
+        print('fm-dream: another run is in progress', file=sys.stderr)
+        return 1
     run = {'schema': 'fm-dream.v1', 'date': ctx.day, 'started': iso(ctx.now), 'dry_run': ctx.dry_run, 'steps': {}}
     log_path = ctx.dir / 'runs' / (ctx.day + ('.dry-run' if ctx.dry_run else '') + '.json')
     try:
@@ -1092,10 +1101,7 @@ def cmd_run(args):
                          indent=1, ensure_ascii=False))
         return 0
     finally:
-        try:
-            lock.unlink()
-        except OSError:
-            pass
+        os.close(lock_fd)
 
 
 def latest(home):
