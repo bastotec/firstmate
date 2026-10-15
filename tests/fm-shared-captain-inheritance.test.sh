@@ -395,7 +395,20 @@ EOF
 
 test_first_copy_readonly_and_local_files_preserved
 test_drift_quarantine_collision_and_repeated_convergence
+test_split_switch_follows_the_first_mate() {
+  local src="$TMP_ROOT/split-src/config" dest="$TMP_ROOT/split-dest/config"
+  mkdir -p "$src" "$dest"
+  : > "$src/primary-split"
+  propagate_inheritable_config "$src" "$dest" >/dev/null 2>&1 || fail "propagation failed with the split switch set"
+  [ -e "$dest/primary-split" ] || fail "a split first mate must split its second mates too"
+  rm -f "$src/primary-split"
+  propagate_inheritable_config "$src" "$dest" >/dev/null 2>&1 || fail "propagation failed without the split switch"
+  [ ! -e "$dest/primary-split" ] || fail "an unsplit first mate leaves its second mates unsplit"
+  pass "inheritance: every second mate runs split exactly when the first mate does"
+}
+
 test_missing_source_mirrors_absence_without_losing_local_bytes
+test_split_switch_follows_the_first_mate
 test_unsafe_artifacts_and_failure_restore_readonly_mode
 test_spawn_convergence_point_copies_shared_file
 test_bootstrap_convergence_point_copies_shared_file

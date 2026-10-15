@@ -254,6 +254,29 @@ test_secondmate_marker_and_enqueue_delivery() {
   pass "fm-send inbox: a secondmate steer records marker+corr in the body and is delivered at enqueue"
 }
 
+record_stream() {  # <record> -> its stream= header value, or nothing
+  sed -n '/^--$/q; s/^stream=//p' "$1"
+}
+
+test_each_record_carries_its_stream() {
+  local dir err rc inbox
+  dir=$(setup_case streams); err="$dir/send.err"
+  fm_test_stream_secondmate_meta "$dir/home/state/domain.meta" "$dir/home" alpha echo "$dir/send.log"
+  inbox="$dir/home/state/domain.inbox"
+  run_send "$dir" "$err" -- fm-domain "a question from the first mate" || fail "a plain steer should succeed"
+  run_send "$dir" "$err" FM_SEND_STREAM=monologue -- fm-domain "an automatic nudge" || fail "a scripted steer should succeed"
+  run_send "$dir" "$err" FM_SEND_STREAM=monologue -- domain --from-captain "the captain asks" || fail "a captain message should succeed"
+  run_send "$dir" "$err" -- fm-domain "$FM_OPERATIONAL_PREFIX"'v1 away-supervisor: wake' || fail "an operational input should succeed"
+  assert_equals conversation "$(record_stream "$inbox/001.msg")" "a plain first-mate steer is conversation"
+  assert_equals monologue "$(record_stream "$inbox/002.msg")" "a scripted sender's steer is monologue"
+  assert_equals conversation "$(record_stream "$inbox/003.msg")" "the captain's words are conversation whatever the caller asks"
+  assert_equals monologue "$(record_stream "$inbox/004.msg")" "an operational input is monologue"
+  rc=0; run_send "$dir" "$err" FM_SEND_STREAM=chat -- fm-domain "bad stream" || rc=$?
+  expect_code 1 "$rc" "an unknown stream is refused"
+  [ ! -e "$inbox/005.msg" ] || fail "a refused stream must enqueue nothing"
+  pass "fm-send inbox: each record carries the stream its sender belongs to"
+}
+
 test_post_enqueue_bookkeeping_failure_is_not_retryable() {
   local dir err rc rec body
   dir=$(setup_case bookkeeping-failure); err="$dir/send.err"
@@ -370,6 +393,7 @@ test_harness_invocations_stay_typed
 test_explicit_target_stays_typed
 test_key_path_never_touches_inbox
 test_secondmate_marker_and_enqueue_delivery
+test_each_record_carries_its_stream
 test_post_enqueue_bookkeeping_failure_is_not_retryable
 test_meta_lock_contention_fails_bounded
 test_unwritable_inbox_fails_loudly

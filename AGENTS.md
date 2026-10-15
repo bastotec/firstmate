@@ -325,7 +325,7 @@ These skills are not captain-invocable; load them only at their triggers.
 - `mate-messaging` - load before messaging another mate, when a `[fm-from-mate:<id>]` message arrives, or when you need to find which mate owns a domain.
 - `mate-reports` - load before asking a peer what it is doing, before starting work that may overlap another domain, or when asked what another mate shipped, is waiting on, or has running.
 - `firstmate-coding-guidelines` - load before changing firstmate's shared tracked material (section 1), directly or by briefing a crewmate.
-- `captain-thread` - the runtime-injected captain thread contract in a split firstmate or secondmate home; no supervisor session loads it.
+- `captain-thread` - the runtime-injected conversation contract in a split firstmate or secondmate home (the supervisor is its inner monologue); no supervisor session loads it.
 
 ## 14. Relay
 

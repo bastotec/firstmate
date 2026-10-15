@@ -1707,7 +1707,8 @@ with (root/'pane').open('w') as output:
         wait_for(lambda: len(rows()) == 1, 'startup turn')
         first = rows()[0]
         assert first['session'] == 'supervisor-session' and not first['resumed'], first
-        assert 'Records tagged [fm-captain-direct] in the inbox belong to the captain thread' in first['prompt']
+        assert 'stream=conversation' in first['prompt'] and 'belong to the conversation' in first['prompt'], 'the supervisor is told the conversation records are not its own'
+        assert 'bin/fm-captain-note.sh' in first['prompt'], 'the supervisor is told how to post to the conversation'
         wait_for(lambda: (root/'parent/host.supervisor-session').exists(), 'the supervisor session is recorded')
         assert (root/'parent/host.deck-session').read_text().startswith('captain-session'), 'the captain session record moved'
         assert (root/'parent/host.captain-lane').exists(), 'the captain lane marker is missing'

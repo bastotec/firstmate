@@ -162,7 +162,8 @@ class Receiver:
                 if not source.stem.isdigit():
                     continue
                 try:
-                    body = source.read_bytes().decode('utf-8').split('\n--\n', 1)[1]
+                    record = source.read_bytes().decode('utf-8')
+                    body = record.split('\n--\n', 1)[1]
                 except (FileNotFoundError, IndexError, UnicodeDecodeError):
                     continue
                 bridge = body.startswith('[stream-order ')
@@ -175,7 +176,7 @@ class Receiver:
                         body = body.split('\n', 2)[2]
                     except (ValueError, KeyError, IndexError):
                         continue
-                elif directory != self.inbox or not supervisor_direct(body, captain_lane(self.state, self.task)):
+                elif directory != self.inbox or not supervisor_direct(record, captain_lane(self.state, self.task)):
                     continue
                 if not bridge:
                     body = with_deck_images(body)
@@ -362,16 +363,64 @@ CAPTAIN_ONLY = re.compile(
 HANDOFF = re.compile('\\A\\[fm-captain-thread\\]⁣')
 
 
+SUPERVISOR_NOTE = re.compile('\\A\\[fm-supervisor-note\\]')
+
+
+def record_stream(text):
+    """('conversation' | 'monologue', body) for one whole inbox record.
+
+    A split agent's conversation takes a party's words (the captain, the first
+    mate, another mate) and its own supervisor's notes; everything automatic is
+    its inner monologue. The `stream=` header bin/fm-send.sh records at delivery
+    decides; a record without one (written before it existed, or by a writer
+    that never sets it) is a conversation only when it carries a captain-direct,
+    peer-mate or supervisor-note tag, and otherwise monologue."""
+    head, sep, body = text.partition('\n--\n')
+    if not sep:
+        return 'monologue', ''
+    for line in head.splitlines():
+        if line in ('stream=conversation', 'stream=monologue'):
+            return line[7:], body
+    if CAPTAIN_DIRECT.match(body) or SUPERVISOR_NOTE.match(body):
+        return 'conversation', body
+    return 'monologue', body
+
+
 def captain_lane(state, task):
     return (Path(state) / (task + '.captain-lane')).is_file()
 
 
-def supervisor_direct(body, lane):
-    """A direct source the supervisor's turn takes: every one without a captain
-    lane; with one, peer messages and captain-thread hand-offs only."""
+def supervisor_direct(text, lane):
+    """Whether the supervisor's turn takes this whole inbox record as a direct
+    source: every captain-direct or peer record without a conversation lane;
+    with one, the conversation's hand-offs, and a direct record only when it
+    was delivered to the monologue."""
+    stream, body = record_stream(text)
     if not lane:
         return bool(CAPTAIN_DIRECT.match(body))
-    return bool(HANDOFF.match(body)) or (bool(CAPTAIN_DIRECT.match(body)) and not CAPTAIN_ONLY.match(body))
+    return bool(HANDOFF.match(body)) or (bool(CAPTAIN_DIRECT.match(body)) and stream == 'monologue')
+
+
+FROM_MATE = re.compile('\\A\\[fm-from-mate:([A-Za-z0-9._-]+)\\]⁣')
+
+
+def record_party(body):
+    """Who wrote a conversation record: 'captain', 'mate:<id>', 'monologue' (its
+    own supervisor's note) or 'firstmate', read from its delivery tags."""
+    if CAPTAIN_ONLY.match(body):
+        return 'captain'
+    peer = FROM_MATE.match(body)
+    if peer:
+        return 'mate:' + peer.group(1)
+    if SUPERVISOR_NOTE.match(body):
+        return 'monologue'
+    return 'firstmate'
+
+
+def conversation_record(text):
+    """A record a split agent's conversation lane takes (never its hand-offs)."""
+    stream, body = record_stream(text)
+    return stream == 'conversation' and not HANDOFF.match(body)
 
 
 def project_captain(state, task):
@@ -420,10 +469,10 @@ def idle_captain_sequence(state, task, floor):
         if not source.stem.isdigit():
             continue
         try:
-            body = source.read_bytes().decode('utf-8').split('\n--\n', 1)[1]
-        except (FileNotFoundError, IndexError, UnicodeDecodeError):
+            record = source.read_bytes().decode('utf-8')
+        except (FileNotFoundError, UnicodeDecodeError):
             continue
-        if supervisor_direct(body, captain_lane(state, task)):
+        if supervisor_direct(record, captain_lane(state, task)):
             newest = max(newest, int(source.stem))
     return newest
 

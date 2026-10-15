@@ -6,10 +6,12 @@
 #   fm-captain-lane.sh --state <task-state-dir> --id <task-id> --deck <deck>
 #       [--model <route>] [--model-file <file>] [--mcp-config <file>]
 #
-# With the mate's home split (config/primary-split), the captain's own words
-# ([fm-captain-direct] records in <state>/<id>.inbox) are this lane's alone:
-# bin/fm_stream_deck.py keeps them out of the supervisor's turns while
-# <state>/<id>.captain-lane exists, which the host writes before starting this
+# With the mate's home split (config/primary-split), its conversation is this
+# lane's alone: every record in <state>/<id>.inbox that
+# bin/fm_stream_deck.py record_stream classifies as conversation (the captain's,
+# the first mate's or another mate's words, and its supervisor's notes from
+# bin/fm-captain-note.sh). fm_stream_deck.py keeps them out of the supervisor's
+# turns, its inner monologue, while <state>/<id>.captain-lane exists, which the host writes before starting this
 # lane and removes when it stops. The lane takes them one at a time in inbox
 # order and runs each as one `deck run` turn of the mate's existing Deck
 # session (<state>/<id>.deck-session, so the conversation Fleet Town shows and
@@ -158,7 +160,7 @@ next_record() {
 import sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-from fm_stream_deck import CAPTAIN_ONLY
+from fm_stream_deck import conversation_record
 last = {}
 try:
     for line in Path(sys.argv[3]).read_text().splitlines():
@@ -175,10 +177,10 @@ for source in Path(sys.argv[2]).glob('*.msg'):
     if not source.stem.isdigit() or state in ('answered', 'recovering'):
         continue
     try:
-        body = source.read_bytes().decode('utf-8').split('\n--\n', 1)[1]
-    except (OSError, IndexError, UnicodeDecodeError):
+        record = source.read_bytes().decode('utf-8')
+    except (OSError, UnicodeDecodeError):
         continue
-    if CAPTAIN_ONLY.match(body):
+    if conversation_record(record):
         found.append((int(source.stem), {'started': 'recover', 'failed': 'retry'}.get(state, 'new'), str(source)))
 if found:
     number, mode, path = min(found)
@@ -213,7 +215,15 @@ while kill -0 "$HOST_PID" 2>/dev/null; do
       && [ -n "$imaged" ]; then
     body=$imaged
   fi
-  prompt="The captain wrote to this second mate directly (record $rec):
+  party=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from fm_stream_deck import record_party; print(record_party(sys.argv[2]))' \
+    "$SCRIPT_DIR" "$body" 2>/dev/null) || party=firstmate
+  case "$party" in
+    captain) said="The captain wrote to this second mate directly" ;;
+    mate:*) said="Another mate, ${party#mate:}, wrote to this second mate" ;;
+    monologue) said="This second mate's inner monologue (its supervisor) has something for the conversation; say it to the reader as an explicit message" ;;
+    *) said="The first mate wrote to this second mate" ;;
+  esac
+  prompt="$said (record $rec):
 
 $body"
   if [ "$mode" != new ]; then

@@ -650,6 +650,24 @@ if [ -n "$FROM_MATE" ]; then
     exit 1
   fi
 fi
+# Which of a split agent's two streams this record belongs to, recorded at
+# delivery (the stream= header, bin/fm-task-inbox-lib.sh). A party's words are
+# its conversation: the captain's (--from-captain), another mate's (--from-mate)
+# and a plain send from the first mate. Everything automatic is its inner
+# monologue: an operational input, and any send whose caller sets
+# FM_SEND_STREAM=monologue (every scripted sender does; a party's words never
+# take it). FM_SEND_STREAM=conversation asks for the conversation explicitly.
+if [ "$FROM_CAPTAIN" = 1 ] || [ -n "$FROM_MATE" ]; then
+  FM_TASK_INBOX_STREAM=conversation
+else
+  case "${FM_SEND_STREAM:-}" in
+    monologue|conversation) FM_TASK_INBOX_STREAM=$FM_SEND_STREAM ;;
+    '') FM_TASK_INBOX_STREAM=conversation ;;
+    *) echo "error: FM_SEND_STREAM must be conversation or monologue; nothing was sent" >&2; exit 1 ;;
+  esac
+  case "${1:-}" in "$FM_OPERATIONAL_PREFIX"*) FM_TASK_INBOX_STREAM=monologue ;; esac
+fi
+export FM_TASK_INBOX_STREAM
 if [ "$DECISION_ANSWER" = 1 ]; then
   if [ -z "$RESOLVE_KEYS" ] || [ -n "$FIRE_AND_FORGET_ID" ] || [ "$#" -ne 1 ]; then
     echo "error: --decision-answer requires keyed resolution and one exact answer, without fire-and-forget" >&2
@@ -1049,6 +1067,25 @@ else
       echo "error: steer not sent to remote secondmate $TARGET_REMOTE_ID: its parent task retired or changed route during target resolution" >&2
       exit "$FM_SEND_TEMPFAIL"
     fi
+    # One transport attempt; sets remote_rc. It records the stream through
+    # send-stream; a remote host whose code predates it answers "unknown
+    # command" before writing anything, and gets the plain send instead (its
+    # record then carries no stream= header until that host updates).
+    fm_send_remote_leg() {
+      local err
+      err=$(mktemp "${TMPDIR:-/tmp}/fm-send-remote.XXXXXX") || { remote_rc=1; return; }
+      remote_rc=0
+      fm_run_timed "$FM_SEND_REMOTE_BUDGET" "$SCRIPT_DIR/fm-on.sh" "$TARGET_REMOTE_ID" \
+        fm-remote-secondmate-control.sh send-stream "$FM_TASK_INBOX_STREAM" "${REMOTE_SEND_ARGS[@]}" \
+        < /dev/null 2>"$err" || remote_rc=$?
+      if [ "$remote_rc" -ne 0 ] && grep -q 'unknown command: send-stream' "$err"; then
+        remote_rc=0
+        fm_run_timed "$FM_SEND_REMOTE_BUDGET" "$SCRIPT_DIR/fm-on.sh" "$TARGET_REMOTE_ID" \
+          fm-remote-secondmate-control.sh send "${REMOTE_SEND_ARGS[@]}" < /dev/null 2>"$err" || remote_rc=$?
+      fi
+      cat "$err" >&2
+      rm -f "$err"
+    }
     remote_rc=0
     remote_completion_unknown=0
     REMOTE_SEND_ARGS=("$TARGET_REMOTE_ID" "$MESSAGE")
@@ -1060,15 +1097,12 @@ else
     # retry that would only wait out the same busy remote queue again. (A
     # remote job's own timeout also relays as 124; treating it as unconfirmed
     # stays safe because the remote enqueue deduplicates.)
-    fm_run_timed "$FM_SEND_REMOTE_BUDGET" "$SCRIPT_DIR/fm-on.sh" "$TARGET_REMOTE_ID" \
-      fm-remote-secondmate-control.sh send "${REMOTE_SEND_ARGS[@]}" < /dev/null || remote_rc=$?
+    fm_send_remote_leg
     if [ "$remote_rc" -eq 124 ]; then
       remote_completion_unknown=1
     elif [ "$remote_rc" -eq 255 ]; then
       remote_completion_unknown=1
-      remote_rc=0
-      fm_run_timed "$FM_SEND_REMOTE_BUDGET" "$SCRIPT_DIR/fm-on.sh" "$TARGET_REMOTE_ID" \
-        fm-remote-secondmate-control.sh send "${REMOTE_SEND_ARGS[@]}" < /dev/null || remote_rc=$?
+      fm_send_remote_leg
     fi
     fm_lock_release "$REMOTE_META_LOCK"
     if [ "$remote_rc" -ne 0 ] && [ "$remote_completion_unknown" -eq 1 ]; then

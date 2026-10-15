@@ -25,7 +25,7 @@ if [ -n "${FM_CAPTAIN_LANE_STATE:-}" ] && [ -n "${FM_CAPTAIN_LANE_ID:-}" ]; then
   . "$SCRIPT_DIR/fm-operational-input.sh"
   # shellcheck source=bin/fm-task-inbox-lib.sh
   . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
-  rec=$(fm_task_inbox_write "$FM_CAPTAIN_LANE_STATE" "$FM_CAPTAIN_LANE_ID" "${FM_CAPTAIN_THREAD_MARK}$*") || {
+  rec=$(FM_TASK_INBOX_STREAM=monologue fm_task_inbox_write "$FM_CAPTAIN_LANE_STATE" "$FM_CAPTAIN_LANE_ID" "${FM_CAPTAIN_THREAD_MARK}$*") || {
     echo "error: the hand-over could not be recorded in $FM_CAPTAIN_LANE_STATE/$FM_CAPTAIN_LANE_ID.inbox" >&2
     exit 1
   }

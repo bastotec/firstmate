@@ -131,7 +131,7 @@ case "$COMMAND" in
   fm-remote-doctor.sh) FLOW= ;;
   fm-remote-secondmate-control.sh)
     case "${1:-}" in
-      send|key) FLOW=messages ;;
+      send|send-stream|key) FLOW=messages ;;
       launch) FLOW=placement ;;
       sync|update) FLOW=maintenance ;;
       *) FLOW=supervision ;;

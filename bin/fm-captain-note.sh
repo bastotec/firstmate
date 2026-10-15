@@ -15,14 +15,27 @@
 # Outside split mode there is no captain thread, so it refuses (exit 2): say it
 # in your own reply instead.
 #
+# In a split second mate (its host exports FM_SPLIT_MATE_STATE and
+# FM_SPLIT_MATE_ID) the note goes the same way into the mate's conversation:
+# a stream=conversation record in its own task inbox, which its conversation
+# lane (bin/fm-captain-lane.sh) says to the reader as an explicit message.
+#
 # Exit: 0 published (prints seq= and session=); 2 not split mode or no text;
 # 3 no live captain thread (the note was not sent; raise a card instead).
 set -u
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 case "${1:-}" in
-  -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
   '') echo "error: fm-captain-note.sh needs the note text" >&2; exit 2 ;;
 esac
+if [ -n "${FM_SPLIT_MATE_STATE:-}" ] && [ -n "${FM_SPLIT_MATE_ID:-}" ]; then
+  # shellcheck source=bin/fm-task-inbox-lib.sh
+  . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
+  rec=$(FM_TASK_INBOX_STREAM=conversation fm_task_inbox_write "$FM_SPLIT_MATE_STATE" "$FM_SPLIT_MATE_ID" \
+    "[fm-supervisor-note] $*") || { echo "error: the note could not be written to the conversation" >&2; exit 3; }
+  printf 'noted=%s\n' "$rec"
+  exit 0
+fi
 FM_HOME=${FM_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}
 if [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/primary-split" ]; then
   echo "error: this home is not split (no config/primary-split); say it to the captain in your own reply" >&2
