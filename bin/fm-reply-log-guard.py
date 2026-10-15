@@ -6,17 +6,20 @@ Usage: fm-reply-log-guard.py <protected-file>...   (hook event JSON on stdin)
 
 A second mate answers its first mate by appending lines to its reply log
 (state/parent-replies.status for a remote mate, the parent status file for a
-local one). The first mate mirrors those files line by line from a byte cursor,
-so editing one in place - a typo fix, a dedupe, a rewritten line - breaks the
-mirror and every later reply stops reaching the first mate. This hook refuses
-the tool calls that rewrite a protected file: edit_file on it, and run_command
-lines that name it alongside an in-place edit, a truncating redirect, a write
-mode, a move or copy onto it, a truncate or a removal. Appending (>>) and
-reading are left alone. Matching shell text is best effort: the first mate's
-mirror recovers from a rewrite on its own (bin/fm-procevent-remote-reply.sh),
-and this guard only keeps the common ways from happening. Exit 2 blocks the call and its stderr goes back to the
-model; anything this hook cannot read is allowed (exit 0), because it guards a
-convention rather than a security boundary.
+local one). The remote mirror uses a byte cursor, so editing its source in
+place - a typo fix, a dedupe, a rewritten line - breaks continuity.
+This hook blocks common rewrite forms: edit_file on a protected file, and
+run_command lines that name it alongside an in-place edit, a truncating
+redirect, a write mode, a move or copy onto it, a truncate or a removal.
+Appending (>>) and reading are left alone.
+Matching uses protected basenames, not resolved path identity.
+Quoted text not naming the file is payload, except bare file-mode literals;
+truncate and rm count only in command position.
+Matching shell text is best effort; bin/fm-procevent-remote-reply.sh owns the
+bounded recovery guarantee when a rewrite escapes the guard.
+Exit 2 blocks the call and its stderr goes back to the model; anything this
+hook cannot read is allowed (exit 0), because it guards a convention rather
+than a security boundary.
 """
 import json
 import os

@@ -16,10 +16,18 @@
 # capture, publication, and one machine-wide source owner. Each captured delta is
 # terminal for that exact registration; `handle` validates and idempotently
 # ingests it, acknowledges the captured generation, then registers the next
-# cursor-anchored source. A continuity break (the log was rewritten in place)
-# is recovered by replaying the log from the start, at most
-# FM_REMOTE_REPLY_RECOVERY_LIMIT (3) times an hour; past that it is escalated
-# and not re-armed.
+# cursor-anchored source. Recovery requires reason truncated or prefix-changed,
+# from_offset > 0, no recorded stop, and budget remaining. It records an ingest
+# receipt, resets to offset 0 plus the empty-prefix hash, and re-arms for replay.
+# FM_REMOTE_REPLY_RECOVERY_LIMIT defaults to 3 recoveries per mate per rolling
+# hour; charges in state/remote-replies/<id>.recoveries are capture-sequence keyed
+# so retries of one break do not consume another charge.
+# Every other break escalates at most once per exact status line and atomically
+# records its sequence in state/remote-replies/<id>.stopped, never decreasing it.
+# A stop-write failure leaves the capture unacknowledged. All registration paths
+# honor the stop; after inspection, only `arm <id> --lift-stop` clears it.
+# Lifting a stop does not reset the cursor or budget. Retirement clears the stop
+# and budget records along with the cursor and ingest receipts.
 #
 # `autohandle` is the runner's own entry into that same `handle`: it takes the
 # canonical source id instead of the secondmate id and is called by the runner
@@ -329,16 +337,12 @@ normalize_payload() { # <source> <destination>
   LC_ALL=C tr '\000-\010\013-\037\177' '?' < "$1" > "$2"
 }
 
-# The one place a line enters the parent status stream. A captured generation can
-# be replayed, so every append - a mirrored line or an escalation this adapter
-# raises itself - is at most once on exact bytes.
-# Returns 0 appended, 1 already present, 2 the write itself failed.
 # At most CONTINUITY_RECOVERY_LIMIT replays per hour per mate; the attempts are
 # recorded beside the cursor.
 CONTINUITY_RECOVERY_LIMIT=${FM_REMOTE_REPLY_RECOVERY_LIMIT:-3}
 # The capture sequence an escalated break stopped the source at, or -1. While a
 # stop is recorded nothing recovers or re-arms the source; only an operator's
-# arm (cmd_arm) lifts it.
+# arm --lift-stop lifts it.
 stopped_seq() { # <id>
   local v
   v=$(cat "$CURSOR_DIR/$1.stopped" 2>/dev/null || true)
@@ -362,6 +366,10 @@ continuity_recovery_allowed() { # <id> <seq>
   mkdir -p "$CURSOR_DIR" && printf '%s %s\n' "$now" "$2" >> "$file"
 }
 
+# The one place a line enters the parent status stream. A captured generation can
+# be replayed, so every append - a mirrored line or an escalation this adapter
+# raises itself - is at most once on exact bytes.
+# Returns 0 appended, 1 already present, 2 the write itself failed.
 append_status_once() { # <status-file> <line>
   grep -Fqx -- "$2" "$1" 2>/dev/null && return 1
   printf '%s\n' "$2" >> "$1" || return 2

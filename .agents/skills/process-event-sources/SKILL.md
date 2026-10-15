@@ -53,8 +53,7 @@ External process-event bindings intentionally expose no answer operation and can
 `captain-hold-lifecycle` owns when a binding is required and what the keys must be.
 
 A configured remote secondmate reply source is armed and handled through `bin/fm-procevent-remote-reply.sh`.
-Its header owns exact commands, while the adapter owns cursor continuity, validated deduplicated status ingest, path-confined document fetch, acknowledgement, and re-arming after a good delta.
-A continuity break is escalated once and stays unarmed until an operator deliberately rebases it.
+Its header owns exact commands; [the remote reply transport contract](../../../docs/remote-secondmates.md#normal-operation) owns mirroring, bounded rewrite recovery, and operator-held continuity stops.
 
 For a recurring mid-task quota check, arm the quota adapter:
 
@@ -126,7 +125,7 @@ Two rules the commands cannot enforce for you:
 Supported by tests:
 
 - output that reached the runner is stored atomically at mode `0600` **before** any event referencing it is published;
-- the remote-reply adapter reads its append-only source non-destructively from an offset plus prefix hash, so a pre-capture retry can derive the same bytes again, while source truncation or replacement is detected rather than silently rebased;
+- the remote-reply transport's non-destructive reads and continuity handling follow [its operating contract](../../../docs/remote-secondmates.md#normal-operation);
 - proactive delivery, adapter-owned terminal retirement, and adapter-owned automatic application follow the operating contract in [`docs/process-event-sources.md`](../../../docs/process-event-sources.md);
 - a durably captured result with no handled acknowledgement remains eligible for bounded re-announcement across any number of drains and restarts, and repeat wakes retain the same source and sequence for deduplication;
 - the handled acknowledgement is generation-keyed to the exact source and sequence, private, path-safe, durable, and idempotent, and is the only thing that stops re-announcement;
