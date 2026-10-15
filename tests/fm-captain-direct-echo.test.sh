@@ -16,6 +16,10 @@
 #   5. --correction cannot accompany --from-captain.
 #   6. A captain-direct pending reply never sends the repost request and
 #      resolves on its own after grace.
+#   7. A captain message waits out a task record a relaunch holds locked and
+#      then moves to a new endpoint, within FM_SEND_CAPTAIN_WAIT_SECS; an
+#      ordinary steer still fails at the lock wait, and a hold past the bound
+#      fails with nothing enqueued.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -328,6 +332,75 @@ test_unknown_delivery_never_escalates() {
   pass "captain-direct: unknown delivery never escalates, resends safely, and resolves from correlated reports"
 }
 
+# hold_meta <seconds> [relaunch] : hold domain's metadata lock in the
+# background as bin/fm-spawn.sh --relaunch does, optionally moving the task to
+# a new endpoint before releasing it. Sets HOLDER; waits until the lock is held.
+hold_meta() {
+  local secs=$1 relaunch=${2:-} lock="$HOME_DIR/state/.meta-domain.lock"
+  (
+    # shellcheck source=/dev/null
+    . "$ROOT/bin/fm-wake-lib.sh"
+    fm_lock_try_acquire "$lock" || exit 1
+    : > "$HOME_DIR/held"
+    [ -z "$relaunch" ] || fm_test_stream_secondmate_meta "$HOME_DIR/state/domain.meta" "$HOME_DIR" alpha echo "$LOG"
+    sleep "$secs"
+    fm_lock_release "$lock"
+  ) &
+  HOLDER=$!
+  local i=0
+  while [ ! -e "$HOME_DIR/held" ] && [ "$i" -lt 100 ]; do sleep 0.05; i=$((i + 1)); done
+  [ -e "$HOME_DIR/held" ] || fail "the holder never took the metadata lock"
+}
+
+send_with_lock_waits() {  # <captain-wait> <fm-send args...>
+  local wait=$1; shift
+  env FM_ROOT_OVERRIDE="$HOME_DIR" FM_HOME="$HOME_DIR" FM_SEND_LOG="$LOG" FM_SEND_SETTLE=0 \
+    FM_TASK_INBOX_LOCK_WAIT_SECS=1 FM_SEND_CAPTAIN_WAIT_SECS="$wait" \
+    "$SEND" "$@" > "$OUT" 2> "$OUT.err"
+}
+
+test_captain_send_waits_out_a_relaunch() {
+  local start elapsed
+  setup relaunch
+  hold_meta 4 relaunch
+  start=$(date +%s)
+  send_with_lock_waits 20 domain --from-captain "$CAPTAIN_TEXT" \
+    || fail "a captain message must wait out a relaunch: $(cat "$OUT.err")"
+  elapsed=$(( $(date +%s) - start ))
+  wait "$HOLDER"
+  [ "$elapsed" -ge 3 ] || fail "the send cannot have waited for the lock (${elapsed}s)"
+  [ "$(inbox_count)" = 1 ] || fail "expected one inbox record, got $(inbox_count)"
+  assert_contains "$(cat "$OUT")" "corr=" "a delivered captain message prints its corr"
+  pass "captain-direct: a captain message waits out a relaunch and reaches the new endpoint"
+}
+
+test_ordinary_steer_keeps_the_short_lock_wait() {
+  local rc=0
+  setup ordinary
+  hold_meta 4
+  send_with_lock_waits 20 domain "routine steer" || rc=$?
+  wait "$HOLDER"
+  [ "$rc" = 1 ] || fail "an ordinary steer must fail at the lock wait as before (rc=$rc)"
+  assert_contains "$(cat "$OUT.err")" "could not be locked for final delivery validation" "the lock error must be shown"
+  [ "$(inbox_count)" = 0 ] || fail "nothing must be enqueued"
+  pass "captain-direct: an ordinary steer keeps the short lock wait"
+}
+
+test_captain_send_wait_is_bounded() {
+  local rc=0 start elapsed
+  setup bounded
+  hold_meta 8
+  start=$(date +%s)
+  send_with_lock_waits 2 domain --from-captain "$CAPTAIN_TEXT" || rc=$?
+  elapsed=$(( $(date +%s) - start ))
+  wait "$HOLDER"
+  [ "$rc" = 1 ] || fail "a hold past the bound must fail with exit 1 (rc=$rc)"
+  [ "$elapsed" -lt 7 ] || fail "the wait must stop at its bound (${elapsed}s)"
+  assert_contains "$(cat "$OUT.err")" "could not be locked for final delivery validation" "the last attempt's error must be shown"
+  [ "$(inbox_count)" = 0 ] || fail "nothing must be enqueued"
+  pass "captain-direct: the captain wait is bounded and fails as before"
+}
+
 test_delivery_tells_first_mate_once
 test_echoes_are_suppressed
 test_corrections_and_unrelated_steers_are_sent
@@ -338,3 +411,6 @@ test_non_ascii_captain_message
 test_accented_captain_message_keeps_its_letters
 test_ledger_retention
 test_unknown_delivery_never_escalates
+test_captain_send_waits_out_a_relaunch
+test_ordinary_steer_keeps_the_short_lock_wait
+test_captain_send_wait_is_bounded

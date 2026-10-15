@@ -293,6 +293,42 @@ if [ ! -d "$STATE" ]; then
   exit 1
 fi
 
+# Captain sends wait out a busy task record. A relaunch (bin/fm-spawn.sh
+# --relaunch, as a deploy's second-mate restart runs it) holds the task's
+# metadata lock for its whole restart, often longer than the inbox lock wait,
+# and then moves the task to a new endpoint, so a captain message sent in that
+# window fails although nothing is wrong. With --from-captain, an attempt that
+# fails only because the record stayed locked or changed endpoint before
+# anything was written exits 75 internally, and the send is retried from
+# scratch every second for up to FM_SEND_CAPTAIN_WAIT_SECS seconds (default 45,
+# a positive integer); only the last attempt's output is shown, and a send
+# still refused then exits 1 as before.
+FM_SEND_TEMPFAIL=1
+if [ "${FM_SEND_CAPTAIN_ATTEMPT:-0}" = 1 ]; then
+  FM_SEND_TEMPFAIL=75
+else
+  for fm_send_arg in "$@"; do
+    [ "$fm_send_arg" != -- ] || break
+    [ "$fm_send_arg" = --from-captain ] || continue
+    fm_send_wait=${FM_SEND_CAPTAIN_WAIT_SECS:-45}
+    case "$fm_send_wait" in ''|*[!0-9]*|0) fm_send_wait=45 ;; esac
+    fm_send_deadline=$(( $(date +%s) + fm_send_wait ))
+    fm_send_out=$(mktemp "${TMPDIR:-/tmp}/fm-send-out.XXXXXX") || exit 1
+    fm_send_err=$(mktemp "${TMPDIR:-/tmp}/fm-send-err.XXXXXX") || { rm -f "$fm_send_out"; exit 1; }
+    while :; do
+      fm_send_rc=0
+      FM_SEND_CAPTAIN_ATTEMPT=1 bash "${BASH_SOURCE[0]}" "$@" >"$fm_send_out" 2>"$fm_send_err" || fm_send_rc=$?
+      [ "$fm_send_rc" = 75 ] && [ "$(date +%s)" -lt "$fm_send_deadline" ] || break
+      sleep 1
+    done
+    cat "$fm_send_out"
+    cat "$fm_send_err" >&2
+    rm -f "$fm_send_out" "$fm_send_err"
+    [ "$fm_send_rc" != 75 ] || fm_send_rc=1
+    exit "$fm_send_rc"
+  done
+fi
+
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-control-lib.sh
@@ -953,7 +989,7 @@ else
         fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
       fi
       echo "error: steer not sent to remote secondmate $TARGET_REMOTE_ID: its parent task metadata could not be locked for final delivery validation" >&2
-      exit 1
+      exit "$FM_SEND_TEMPFAIL"
     fi
     CURRENT_REMOTE_ID=
     CURRENT_REMOTE_HOST=
@@ -975,7 +1011,7 @@ else
         fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
       fi
       echo "error: steer not sent to remote secondmate $TARGET_REMOTE_ID: its parent task retired or changed route during target resolution" >&2
-      exit 1
+      exit "$FM_SEND_TEMPFAIL"
     fi
     remote_rc=0
     remote_completion_unknown=0
@@ -1061,7 +1097,7 @@ else
         fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
       fi
       echo "error: steer not sent to $INBOX_TASK_ID: its task metadata could not be locked for final delivery validation" >&2
-      exit 1
+      exit "$FM_SEND_TEMPFAIL"
     fi
     CURRENT_INBOX_TARGET=
     CURRENT_INBOX_BACKEND=
@@ -1081,7 +1117,7 @@ else
         fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
       fi
       echo "error: steer not sent to $INBOX_TASK_ID: the task retired or changed endpoint during target resolution" >&2
-      exit 1
+      exit "$FM_SEND_TEMPFAIL"
     fi
     if [ "${FM_SEND_IDEMPOTENT:-0}" = 1 ]; then
       INBOX_RECORD=$(fm_task_inbox_write_idempotent "$STATE" "$INBOX_TASK_ID" "$MESSAGE" \
