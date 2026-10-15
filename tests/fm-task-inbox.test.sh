@@ -419,7 +419,7 @@ test_idempotent_prescan_does_not_hold_the_lock() {
   [ "$rec2" = "$state/t1.inbox/301.msg" ] || fail "resend should dedup onto 301.msg, got $rec2"
   rm -rf "$state/t1.inbox/.seq.lock"
   [ -n "$holder" ] && kill "$holder" 2>/dev/null || true
-  # A NEW body still serializes on the lock: the locked re-verify window plus
+  # A NEW body still serializes on the lock: the complete locked re-scan plus
   # publish stay mutually exclusive with any other writer.
   rec2=$(FM_TASK_INBOX_LOCK_WAIT_SECS=5 inbox_lib "$state" fm_task_inbox_write_idempotent "$state" t1 "a genuinely new steer") \
     || fail "a new body must still enqueue under the lock"
