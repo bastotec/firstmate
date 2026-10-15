@@ -37,12 +37,12 @@ def writes(command, name):
     patterns = [
         r"\bsed\b[^|;&\n]*\s(-[A-Za-z]*i|--in-place)",
         r"\bperl\b[^|;&\n]*\s-[A-Za-z]*i",
-        r"(?<![>&0-9])>(?!>)\s*['\"]?[^\s'\";|&]*" + n,
+        r"(?<!>)>(?!>)\s*['\"]?[^\s'\";|&]*" + n,
         r"\btee\b(?![^|;&\n]*\s(-a|--append)\b)[^|;&\n]*" + n,
         r"\b(mv|cp|install|rsync|ln)\b[^|;&\n]*" + n + r"['\"]?\s*($|[|;&\n])",
         r"\btruncate\b",
         r"\brm\b[^|;&\n]*" + n,
-        r"\bopen\([^)]*,\s*['\"](w|w\+|r\+|x)['\"]",
+        r"\bopen\([^)]*,\s*(mode\s*=\s*)?['\"][rabt]*[wx+][rwxabt+]*['\"]",
         r"\.write_text\(|\.write_bytes\(|os\.truncate|shutil\.(move|copy)",
     ]
     return any(re.search(p, command) for p in patterns)
