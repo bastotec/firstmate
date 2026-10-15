@@ -39,7 +39,8 @@ def writes(command, name):
     # Quoted text that does not name the file is payload (a reply being
     # appended, a search pattern), not command syntax.
     shell = re.sub(r"'[^']*'|\"[^\"]*\"",
-                   lambda m: m.group(0) if name in m.group(0) else "''", command)
+                   lambda m: m.group(0) if name in m.group(0)
+                   or re.fullmatch(r"['\"][rwxabt+]{1,3}['\"]", m.group(0)) else "''", command)
     patterns = [
         r"\bsed\b[^|;&\n]*\s(-[A-Za-z]*i|--in-place)",
         r"\bperl\b[^|;&\n]*\s-[A-Za-z]*i",
@@ -54,8 +55,10 @@ def writes(command, name):
         return True
     # Any open() alongside a writing mode literal: argument nesting makes the
     # mode's position unparseable by pattern, so the pair is enough.
-    return bool(re.search(r"\bopen\(", command)
-                and re.search(r",\s*(mode\s*=\s*)?['\"][rabt]*[wx+][rwxabt+]*['\"]", command))
+    # Python code itself sits in quotes that name the file, so it survives the
+    # payload filter; quoted text that does not name the file is skipped.
+    return bool(re.search(r"\bopen\(", shell)
+                and re.search(r",\s*(mode\s*=\s*)?['\"][rabt]*[wx+][rwxabt+]*['\"]", shell))
 
 
 def main():

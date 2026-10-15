@@ -2,7 +2,7 @@
 # Remote-secondmate reply adapter for the generic process-event runner.
 #
 # Usage:
-#   fm-procevent-remote-reply.sh arm <secondmate-id>
+#   fm-procevent-remote-reply.sh arm <secondmate-id> [--lift-stop]
 #   fm-procevent-remote-reply.sh handle <secondmate-id> <sequence> <result-file>
 #   fm-procevent-remote-reply.sh autohandle <source-id> <sequence> <result-file>
 #   fm-procevent-remote-reply.sh classify <result-file>
@@ -239,14 +239,20 @@ cmd_arm_locked() {
 }
 
 cmd_arm() {
-  local id=${1:-} lock
+  local id=${1:-} lift=${2:-} lock
   validate_id "$id"
   lock=$(secondmate_reply_lifecycle_lock_path "$STATE" "$id")
   (
     fm_lock_acquire_wait "$lock" || die "cannot lock remote reply lifecycle for $id"
     trap 'fm_lock_release "$lock"' EXIT
-    # An operator's arm lifts a stop a continuity escalation recorded.
-    rm -f -- "$CURSOR_DIR/$id.stopped"
+    # A stop a continuity escalation recorded holds against automatic arming
+    # (startup convergence, spawn); only an operator's --lift-stop clears it.
+    if [ "$lift" = --lift-stop ]; then
+      rm -f -- "$CURSOR_DIR/$id.stopped" || die "cannot lift the recorded stop for $id"
+    elif [ "$(stopped_seq "$id")" -ge 0 ]; then
+      printf 'stopped: %s (a continuity escalation stopped it; inspect, then arm %s --lift-stop)\n' "$id" "$id"
+      return 0
+    fi
     cmd_arm_locked "$id"
   )
 }
@@ -435,7 +441,14 @@ cmd_ingest() {
     # Record which capture stopped the source, so a stale retry of an earlier
     # recovery cannot re-arm past this stop.
     if [ -n "$seq" ] && [ "$seq" -gt "$(stopped_seq "$id")" ]; then
-      mkdir -p "$CURSOR_DIR" && printf '%s\n' "$seq" > "$CURSOR_DIR/$id.stopped"
+      # Published atomically and required: an unrecorded stop could be undone
+      # by a later retry, so the capture is not acknowledged without it.
+      if ! { mkdir -p "$CURSOR_DIR" && printf '%s\n' "$seq" > "$CURSOR_DIR/.$id.stopped.$$" \
+        && mv -f -- "$CURSOR_DIR/.$id.stopped.$$" "$CURSOR_DIR/$id.stopped"; }; then
+        rm -f -- "$CURSOR_DIR/.$id.stopped.$$"
+        fm_lock_release "$lock"
+        die "cannot record the continuity stop for $id"
+      fi
     fi
     line="blocked [key=remote-reply-continuity-$id]: remote reply continuity broke for $id ($reason)"
     append_rc=0
@@ -672,7 +685,7 @@ require_parent_lifecycle_lock() {
 }
 
 case "${1:-}" in
-  arm) shift; [ "$#" -eq 1 ] || usage; cmd_arm "$@" ;;
+  arm) shift; [ "$#" -eq 1 ] || { [ "$#" -eq 2 ] && [ "$2" = --lift-stop ]; } || usage; cmd_arm "$@" ;;
   arm-locked) shift; [ "$#" -eq 1 ] || usage; require_parent_lifecycle_lock "$1"; cmd_arm_locked "$@" ;;
   source) shift; [ "$#" -eq 1 ] || usage; cmd_source "$@" ;;
   handle) shift; [ "$#" -eq 3 ] || usage; cmd_handle "$@" ;;

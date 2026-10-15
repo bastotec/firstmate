@@ -38,6 +38,7 @@ expect 0 run_command "printf '%s\n' 'done corr=0123456789abcdef: ok' >> state/pa
 expect 0 run_command "tail -3 state/parent-replies.status; grep -c corr= state/parent-replies.status 2>/dev/null" "reads are allowed"
 expect 0 run_command "printf '%s\n' 'done: removed truncate and sed -i from the script' >> state/parent-replies.status" "an appended reply that mentions edit commands is allowed"
 expect 0 run_command "grep truncate state/parent-replies.status" "a search for an edit word is allowed"
+expect 0 run_command "printf '%s\n' 'done: replaced open(p, \"w\") with append' >> state/parent-replies.status" "an appended reply describing a python rewrite is allowed"
 expect 0 run_command "echo done: x | tee -a /parent/state/m.status" "tee -a is allowed"
 expect 0 edit_file /home/m/data/notes.md "other files are not guarded"
 out=$(printf '{"tool_name":"edit_file","args":{"path":"state/parent-replies.status"}}' | python3 "$GUARD" /home/m/state/parent-replies.status 2>&1 >/dev/null)

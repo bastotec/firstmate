@@ -529,6 +529,9 @@ assert_grep 'blocked [key=remote-reply-continuity-ios]' "$PARENT/state/ios.statu
 assert_absent "$PARENT/state/procevent/$SID.source" "a break past the recovery budget was re-armed"
 [ "$(grep -cF 'blocked [key=remote-reply-continuity-ios]' "$PARENT/state/ios.status")" -eq 1 ] \
   || fail "continuity handling duplicated the escalation"
+out=$(remote_env "$ADAPTER" arm ios 2>&1) || fail "arming a stopped reply source failed: $out"
+assert_contains "$out" "stopped: ios" "automatic arming did not report the recorded stop"
+assert_absent "$PARENT/state/procevent/$SID.source" "automatic arming lifted a recorded continuity stop"
 pass "a reply log that keeps breaking is escalated once and not rebased past its budget"
 
 rm -f "$PARENT/state/procevent-inbox/$SID.14.handled"
