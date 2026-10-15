@@ -35,9 +35,9 @@ new_case() {
   mkdir -p "$d/home/state/procevent-inbox"
   printf 'status: action-failed\nrestarted: cadia on workload (deck)\nunreached: finn-finance: SECRET RESTART DETAIL\n' \
     > "$d/home/state/procevent-inbox/when-secondmate-restart-1.1.result"
-  python3 - "$d/deck/sessions" "$recent" "$old" <<'PY'
+  python3 - "$d/deck/sessions" "$recent" "$old" "$d/home" <<'PY'
 import json, sys
-root, recent, old = sys.argv[1:4]
+root, recent, old, home = sys.argv[1:5]
 call = lambda cid, cmd: {"type": "toolcall", "id": cid, "function": {"name": "run_command", "arguments": {"command": cmd}}}
 res = lambda cid, val: {"type": "toolresult", "call": cid, "name": "run_command", "content": [{"type": "json", "value": val}]}
 msgs = [
@@ -52,7 +52,9 @@ msgs = [
 json.dump({"version": 1, "messages": msgs}, open(root + "/p-1.json", "w"))
 json.dump({"version": 1, "messages": [{"role": "user", "content": [{"type": "text", "text": "PRIVATE BANK LINE"}], "at": recent}]},
           open(root + "/s-private.json", "w"))
-brief = lambda extra: {"role": "user", "content": [{"type": "text", "text": "FIRSTMATE_OP: v1 launch-brief\ntask: %s" % extra}], "at": recent}
+brief = lambda extra, h=home: {"role": "user", "content": [{"type": "text", "text": "FIRSTMATE_OP: v1 launch-brief\ntask: %s\ninbox: %s/state/%s.inbox" % (extra, h, extra)}], "at": recent}
+json.dump({"version": 1, "messages": [brief("other-ship", "/elsewhere/firstmate"), {"role": "assistant", "content": [{"type": "text", "text": "ANOTHER HOME WORKER"}], "at": recent}]},
+          open(root + "/w-3.json", "w"))
 json.dump({"version": 1, "messages": [brief("ship-x"), {"role": "assistant", "content": [{"type": "text", "text": "WORKER DID THE THING"}], "at": recent}]},
           open(root + "/w-1.json", "w"))
 json.dump({"version": 1, "messages": [brief("finn-finance-close"), {"role": "assistant", "content": [{"type": "text", "text": "PRIVATE WORKER LINE"}], "at": recent}]},
@@ -180,6 +182,7 @@ test_collect_builds_a_private_digest_of_the_day() {
   grep -q 'WORKER DID THE THING' "$digest" || fail "an unbound worker session was not found by its launch brief"
   grep -q 'SPLIT SUPERVISOR LINE' "$digest" || fail "a split mate's supervisor session was missed"
   grep -q 'UNRELATED DECK USE' "$digest" && fail "a session that is not fleet work reached the digest"
+  grep -q 'ANOTHER HOME WORKER' "$digest" && fail "a worker of another firstmate home reached the digest"
   grep -q 'restarted: cadia on workload' "$digest" || fail "restart results missing"
   grep -q 'SECRET RESTART DETAIL' "$digest" && fail "an excluded home's restart line reached the digest"
   grep -q 'PRIVATE SEND' "$digest" && fail "a command addressed to an excluded home reached the digest"

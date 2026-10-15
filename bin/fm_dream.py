@@ -262,7 +262,13 @@ def registry(home):
     uses the registry's own parser (bin/fm-secondmate-registry-lib.sh)."""
     sys.path.insert(0, str(SCRIPT_DIR))
     import fm_report
-    return [(mid, row.get('home') or None, row.get('host') or None) for mid, row in fm_report.registry(home).items()]
+    fm_report.REGISTRY_ERRORS.clear()
+    rows = [(mid, row.get('home') or None, row.get('host') or None) for mid, row in fm_report.registry(home).items()]
+    REGISTRY_ERRORS[:] = list(fm_report.REGISTRY_ERRORS)
+    return rows
+
+
+REGISTRY_ERRORS = []  # what the last registry() read could not parse
 
 
 def deck_state():
@@ -355,6 +361,7 @@ def local_sessions(ctx):
     found, seen, skip = [], set(), set()
     sessions = deck_state() / 'sessions'
     reg = registry(ctx.home)
+    ours = [str(ctx.home)] + [h for mid, h, host in reg if h and not host and mid not in ctx.excluded]
     private = set(ctx.excluded) | {h for mid, h, host in reg if mid in ctx.excluded and h}
 
     def add(label, path):
@@ -386,7 +393,10 @@ def local_sessions(ctx):
         if path in bound or path.stat().st_mtime < ctx.since:
             continue
         brief = first_user_text(path)
-        if WORKER_BRIEF in brief and not any(word in brief for word in private):
+        # A worker's brief names its inbox, <home>/state/<task>.inbox: only workers
+        # of this home or an included local home count, never another FM_HOME's.
+        mine = any(h.rstrip('/') + '/state/' in brief for h in ours)
+        if WORKER_BRIEF in brief and mine and not any(word in brief for word in private):
             m = re.search(r'task(?: id)?[:=] *([A-Za-z0-9._-]+)', brief)
             add('worker %s' % (m.group(1) if m else path.stem), path)
     return found
@@ -513,7 +523,8 @@ def step_collect(ctx):
     if rep:
         parts += ['## Fleet report', rep.get('summary') or '']
         parts += ['- waiting: %s (on %s, %s)' % (w.get('what'), w.get('on'), w.get('mate'))
-                  for w in rep.get('waiting', []) if w.get('mate') not in ctx.excluded]
+                  for w in rep.get('waiting', [])
+                  if w.get('mate') not in ctx.excluded and not mentions_excluded(ctx, json.dumps(w))]
         parts += ['- gap: ' + g for g in rep.get('gaps', []) if not mentions_excluded(ctx, g)]
         parts += ['- crew %s: %s on %s (%s)' % (c.get('status'), c.get('agent'), c.get('task'), c.get('mate'))
                   for c in rep.get('crew', []) if c.get('status') in ('failed', 'blocked', 'stopped', 'needs-decision')
@@ -537,7 +548,10 @@ def step_collect(ctx):
     ctx.facts['counts'] = {'sessions': len(sessions), 'captain_messages': len(captain),
                            'no_mistakes_failed': len(nm), 'revives': len(revives), 'restarts': len(restarts),
                            'idle_sweep': len(sweep), 'digest_chars': len(text)}
-    unread = [g for g in (rep or {}).get('gaps', []) if 'unreadable' in g and not mentions_excluded(ctx, g)]
+    unread = ['%s: %s' % (m.get('id'), m.get('freshness')) for m in (rep or {}).get('mates', [])
+              if m.get('id') not in ctx.excluded and m.get('freshness') not in ('fresh', 'local', 'remote', 'cached', None)]
+    if (rep or {}).get('power_error'):
+        unread.append('power: %s' % rep['power_error'])
     gaps = ([nm_err] if nm_err else []) + (['fleet report unreadable'] if rep is None else []) + unread[:3]
     result = {'status': 'partial' if gaps else 'done', **ctx.facts['counts']}
     if gaps:
@@ -583,7 +597,7 @@ def deck_bin():
     return os.environ.get('FM_DREAM_DECK') or os.path.expanduser('~/.local/bin/deck')
 
 
-def run_agent(ctx, prompt, cwd, log):
+def run_agent(ctx, prompt, cwd, log, output):
     """Run one ephemeral deck agent inside the step's budget; None when it
     finished, else why not. A failed attempt (a gateway blip) is tried once more,
     judged only by its own events, while the log keeps both for diagnosis."""
@@ -592,6 +606,10 @@ def run_agent(ctx, prompt, cwd, log):
     env['DECK_SKILL_HINTS'] = '0'
     why = None
     for attempt in range(2):
+        try:
+            Path(output).unlink()  # only the attempt that succeeds may leave its output
+        except FileNotFoundError:
+            pass
         offset = os.path.getsize(log) if attempt and os.path.exists(log) else 0
         with open(log, 'a' if attempt else 'w') as fh:
             rc = ctx.run([deck_bin(), 'run', '-', '--ephemeral', '--model', ctx.model(),
@@ -644,7 +662,7 @@ def step_skills(ctx):
             summary.unlink()
         prompt = SKILLS_PROMPT.format(skills=tree / 'skills', digest=ctx.digest, recent=recent or '- none',
                                       max_skills=MAX_SKILLS, summary=summary)
-        failed = run_agent(ctx, prompt, tree, ctx.dir / ('skills-%s.log' % ctx.day))
+        failed = run_agent(ctx, prompt, tree, ctx.dir / ('skills-%s.log' % ctx.day), summary)
         if failed:
             return {'status': 'failed', 'why': failed}
         # Everything the agent left, committed or not, is judged as one change
@@ -765,6 +783,8 @@ def open_items(ctx, repos, owners):
         elif h:
             reads.append((mid, [tasks, 'list', '--limit', '500'], Path(h)))
     titles, unchecked = [], set()
+    if REGISTRY_ERRORS:
+        unchecked.add('the second-mate registry')
     for mid, argv, home in reads:
         try:
             r = ctx.run(argv, timeout=60, env=dict(os.environ, FM_HOME=str(home)))
@@ -864,7 +884,7 @@ def step_triage(ctx):
         out.unlink()
     prompt = TRIAGE_PROMPT.format(digest=ctx.digest, repos=', '.join(repos), projects=ctx.home / 'projects',
                                   open_items='\n'.join('- ' + t for t in titles[:300]) or '- none', out=out)
-    failed = run_agent(ctx, prompt, ctx.dir, ctx.dir / ('triage-%s.log' % ctx.day))
+    failed = run_agent(ctx, prompt, ctx.dir, ctx.dir / ('triage-%s.log' % ctx.day), out)
     if failed:
         ctx.facts['triage'] = []
         return {'status': 'failed', 'why': failed}
@@ -996,7 +1016,7 @@ def cmd_run(args):
     try:
         for name in args.only or STEPS:
             began = time.time()
-            why = None if ctx.dry_run else room_for(name)
+            why = room_for(name)
             if why:
                 run['steps'][name] = {'status': 'skipped', 'why': why}
             else:
