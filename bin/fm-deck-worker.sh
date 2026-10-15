@@ -342,7 +342,7 @@ stop_turn() {  # stop the running Deck turn and wait for it, bounded
 }
 
 # CAPTAIN LANE (--secondmate in a split home, config/primary-split): the
-# captain's own words go to bin/fm-captain-lane.sh, a child that runs them as
+# conversation records go to bin/fm-captain-lane.sh, a child that runs them as
 # turns of the mate's existing session (<state>/<id>.deck-session) beside the
 # supervisor, whose own session moves to <state>/<id>.supervisor-session.
 # <state>/<id>.captain-lane marks the lane for bin/fm_stream_deck.py while it

@@ -353,11 +353,8 @@ CAPTAIN_DIRECT = re.compile(
     '|\\[fm-from-mate:[A-Za-z0-9._-]+\\])⁣')
 
 
-# A second mate split into a captain thread and a supervisor (its home's
-# config/primary-split; bin/fm-deck-worker.sh writes <state>/<task>.captain-lane
-# while its captain lane runs) keeps the captain's own words for that lane: the
-# supervisor's native and idle direct sources are then peer messages and the
-# captain thread's hand-offs, never captain-direct records.
+# Delivery tags identify the party independently of the record's stream.
+# record_stream and supervisor_direct below own split-lane eligibility.
 CAPTAIN_ONLY = re.compile(
     '\\A(?:\\[fm-from-firstmate\\]⁣(?:corr=\\S+ )?)?\\[fm-captain-direct\\]⁣')
 HANDOFF = re.compile('\\A\\[fm-captain-thread\\]⁣')

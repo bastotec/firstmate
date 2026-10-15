@@ -640,7 +640,7 @@ GEN=$("$BUSY_EVENT" arm "$STATE" "$BUSY_NAME" --state idle --source deck-wrapper
 if [ "$LOCK_BOUND" = 0 ]; then
   # Input waiting from before this start (an unsplit primary's wakes, say) must
   # not reach the captain thread: known operational input (watcher wakes, with
-  # or without a deck-effort header, operational records, peer messages, model
+  # or without a deck-effort header, operational records, model
   # controls) moves to split-archived/ beside the inbox, because the durable
   # wake queue, not this preview, owns that work; an unconsumed startup digest
   # is handed to the supervisor first. Everything else, a peer message

@@ -56,9 +56,9 @@ Two hosts serve one home:
     start or watcher, and uses --no-project-context. Its positional first prompt
     on every start is .agents/skills/captain-thread/SKILL.md, the sole captain
     contract, queued ahead of pending steering; the host never moves pending
-    captain input. Known operational input is archived in split-archived/;
-    peer messages and unconsumed startup digests are handed to the supervisor's
-    persisted inbox before archiving, even without a live supervisor host.
+    conversation input, including peer messages. Known operational input is
+    archived in split-archived/; unconsumed startup digests are handed to the
+    supervisor's persisted inbox before archiving, even without a live host.
   - supervisor (fm-deck-chat.sh --role supervisor): uses supervisor-chat.json,
     supervisor-chat/, supervisor.busy-state, stream label supervisor-chat and
     keeper dev.firstmate.supervisor.<hash>. Its initial session id is

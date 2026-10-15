@@ -30,10 +30,12 @@
 # FM_HOME-relative mixup, not acknowledgement of an arbitrary mate-home file.
 #
 # Turn-completion evidence: an idle observation cannot complete the original or
-# recovery turn while this parent's state/<task_id>.inbox/*.msg still carries
-# the correlation unhandled for a LOCAL target. That idle may belong to an
-# earlier turn, not the delivered request. Once the record is handled, ordinary
-# busy/idle completion, grace, one-recovery, and escalation rules apply.
+# recovery turn while fm_pending_reply_request_unread below finds the LOCAL
+# request unread. That reader also accounts for split conversation-lane journal
+# and running-turn state; an inbox record alone is not always unread.
+# bin/fm_stream_deck.py conversation_busy backstops local and remote observations
+# that otherwise see only the supervisor endpoint. Once the request is no longer
+# unread, ordinary busy/idle completion, grace, one-recovery and escalation apply.
 # Remote targets bypass this inbox check even if migration retained local
 # records; their missing-report evidence still requires the mirror watermark
 # owned by the remote reply-channel freshness section below.

@@ -17,11 +17,22 @@
 # The reserved `primary` selector, only when state/primary.meta is absent,
 # publishes plain text to a live Deck chat host instead of either task plane
 # below: fm-send.sh primary <text...> (no options or native-key handling).
-# `primary` is the captain's conversation; the reserved `supervisor` selector
-# (no state/supervisor.meta) reaches the supervisor of a split home
-# (config/primary-split) and the one primary otherwise, so operational senders
-# use it and the captain thread hands orders through it.
-# bin/fm-primary-steer.sh owns its publication and delivery-check contract.
+# `primary` normally reaches the conversation; FM_SEND_STREAM=monologue or an
+# operational input (FM_OPERATIONAL_PREFIX) selects the supervisor instead.
+# The reserved `supervisor` selector (no state/supervisor.meta) always reaches
+# the supervisor of a split home (config/primary-split), or the one primary
+# otherwise. bin/fm-primary-steer.sh owns publication and delivery checks.
+#
+# Task-inbox stream selection is recorded at delivery, not inferred later from
+# message prose: --from-captain and --from-mate always select conversation;
+# --decision-answer selects monologue, where the waiting supervisor resolves it.
+# Other sends use FM_SEND_STREAM=conversation|monologue (default conversation),
+# except that, for these other sends, operational input selects monologue.
+# Scripted automatic senders must set FM_SEND_STREAM=monologue; leaving it unset
+# deliberately makes a missed label visible rather than hiding a party's words.
+# This applies to inbox records, not the typed plane. bin/fm-task-inbox-lib.sh
+# owns the stream= header; bin/fm_stream_deck.py record_stream owns compatibility
+# for records without it.
 # Special keys instead of text: fm-send.sh <target> --key Enter
 # Supported keys: Escape, Enter, C-c and C-u.
 # For task and explicit backend targets, `--` ends option parsing: every
@@ -204,9 +215,12 @@
 # idempotent while allowing a later identical instruction to be distinct.
 #
 # Remote secondmate delivery: the send crosses fm-on.sh to a host-local leg
-# (bin/fm-remote-secondmate-control.sh cmd_send) that writes the message as a
-# durable record into the remote home's steering inbox and rings the remote
-# doorbell, best-effort. The remote record is the delivery, exactly as it is
+# (bin/fm-remote-secondmate-control.sh send-stream) that carries the selected
+# stream, writes a durable record into the remote home's steering inbox and
+# rings the remote doorbell, best-effort. Only an "unknown command: send-stream"
+# refusal permits fallback to plain send on an older host, before any write;
+# that record has no stream header and follows record_stream's compatibility
+# rule. The remote record is the delivery, exactly as it is
 # locally: leg exit 0 means durably recorded (fm-send then exits 0, marks the
 # pending-reply expectation delivered, and closes any --resolve-key
 # decisions), and any real remote failure fails loudly with the remote leg's
@@ -654,14 +668,7 @@ if [ -n "$FROM_MATE" ]; then
     exit 1
   fi
 fi
-# Which of a split agent's two streams this record belongs to, recorded at
-# delivery (the stream= header, bin/fm-task-inbox-lib.sh). A party's words are
-# its conversation: the captain's (--from-captain), another mate's (--from-mate)
-# and a plain send from the first mate. Everything automatic is its inner
-# monologue: an operational input, a keyed --decision-answer (the supervisor
-# that raised the decision resolves it), and any send whose caller sets
-# FM_SEND_STREAM=monologue (every scripted sender does; a party's words never
-# take it). FM_SEND_STREAM=conversation asks for the conversation explicitly.
+# The header owns stream selection; record it before delivery.
 if [ "$FROM_CAPTAIN" = 1 ] || [ -n "$FROM_MATE" ]; then
   FM_TASK_INBOX_STREAM=conversation
 elif [ "$DECISION_ANSWER" = 1 ]; then
@@ -1076,10 +1083,7 @@ else
       echo "error: steer not sent to remote secondmate $TARGET_REMOTE_ID: its parent task retired or changed route during target resolution" >&2
       exit "$FM_SEND_TEMPFAIL"
     fi
-    # One transport attempt; sets remote_rc. It records the stream through
-    # send-stream; a remote host whose code predates it answers "unknown
-    # command" before writing anything, and gets the plain send instead (its
-    # record then carries no stream= header until that host updates).
+    # One transport attempt; sets remote_rc. The header owns old-host fallback.
     fm_send_remote_leg() {
       local err
       err=$(mktemp "${TMPDIR:-/tmp}/fm-send-remote.XXXXXX") || { remote_rc=1; return; }

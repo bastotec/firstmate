@@ -22,9 +22,11 @@
 #   - the first turn of each lane process carries
 #     .agents/skills/captain-thread/SKILL.md as its contract;
 #   - FM_CAPTAIN_LANE_STATE/FM_CAPTAIN_LANE_ID let bin/fm-captain-handoff.sh hand
-#     his orders to the supervisor;
+#     the conversation's orders to the supervisor;
 #   - <state>/<id>.captain-lane.answered is the turn journal; the journal
-#     comment below owns recovery, acknowledgement and fail-closed rules.
+#     comment below owns recovery, acknowledgement and fail-closed rules;
+#   - <state>/<id>.captain-lane.turn names the record whose Deck turn is running;
+#     bin/fm_stream_deck.py conversation_busy owns busy-observation semantics.
 # The lane writes its Deck events to <work>/events.ndjson and its own log lines
 # to stderr. It exits when the host goes away, and a TERM stops its running
 # Deck turn first (bounded), so a replacement lane never runs beside it.

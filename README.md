@@ -83,7 +83,7 @@ Then launch the Deck chat host; AGENTS.md takes over from there:
 bin/fm-deck-chat.sh
 ```
 
-By default, one host handles both conversation and supervision; the optional [`config/primary-split`](docs/configuration.md#operational-home-layout-and-state) separates them while keeping your existing conversation.
+By default, one host handles both conversation and supervision; the optional [`config/primary-split`](docs/configuration.md#operational-home-layout-and-state) separates an agent's conversation from its inner monologue while keeping your existing conversation.
 The [host header](bin/fm-deck-chat.sh) owns setup and lifecycle commands for both modes.
 On macOS, `bin/fm-deck-chat.sh install-service` adds a launchd agent that restarts the host in a stream endpoint after any exit except `bin/fm-deck-chat.sh stop`; the [host header](bin/fm-deck-chat.sh) owns service setup and restart-following attach.
 To change a primary's model without losing its conversation, use `bin/fm-deck-chat.sh model <route>`; the [host header](bin/fm-deck-chat.sh) owns switch timing, model readback, and refusal rules.

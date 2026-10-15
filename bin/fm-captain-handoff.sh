@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fm-captain-handoff.sh - a captain thread hands the captain's order or question
+# fm-captain-handoff.sh - a conversation hands a party's order or question
 # to its own supervisor (split homes, config/primary-split).
 #
 # Usage: fm-captain-handoff.sh [--from <party>] <text...>

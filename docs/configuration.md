@@ -38,7 +38,7 @@ config/
   dream.json              optional fleet-dreaming configuration ("Fleet dreaming")
   effort-policy.json      optional per-turn reasoning effort switch and level ("Turn effort")
   deck-mcp.json           optional Deck MCP servers ("Harness support")
-  primary-split           presence flag: the agent runs as a conversation (the captain thread) and an inner monologue (the supervisor); optional; the first mate's switch is inherited by every second mate home through bin/fm-config-inherit-lib.sh (first mate: bin/fm_primary_chat.py header; second mate: bin/fm-captain-lane.sh header)
+  primary-split           optional presence flag: conversation (captain thread) and inner monologue (supervisor); inherited (bin/fm-config-inherit-lib.sh); first mate: bin/fm_primary_chat.py header; second mate: bin/fm-captain-lane.sh header
   model-policy.json       home-local route policy for in-place switches (bin/fm_model_switch.py owns validation and policy semantics)
   power-host              optional ssh alias for fleet quota reads (bin/fm_report.py owns default and bridge flow)
   shared-skills           optional skills repo shipped to connected machines; primary home only (bin/fm-machine.sh header)

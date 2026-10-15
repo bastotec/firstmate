@@ -13,8 +13,9 @@
 #   3. Delivery: to a mate, bin/fm-send.sh <to> --fire-and-forget <corr>
 #      --from-mate <from> (idempotent on the corr, local or remote); to the first
 #      mate, bin/fm-send.sh primary with the same tag (fm-send.sh owns role
-#      routing; primary_holds owns retained session deduplication), or a `check:`
-#      wake when no supervising Deck chat host runs.
+#      routing; primary_holds owns retained session deduplication). A split home
+#      keeps the message pending while its conversation host is down; only an
+#      unsplit home with no live chat host falls back to a `check:` wake.
 #   4. A delivery that fails is retried on later polls with the same corr, and
 #      fails for good after 10 attempts or 1800 seconds.
 # Terminal bookkeeping follows bin/fm-mate-mail-lib.sh's log and wake ordering.
