@@ -149,9 +149,11 @@ def load_config(path):
     names = doc.get('exclude_homes', [])
     if not isinstance(names, list) or not all(isinstance(n, str) and n.strip() for n in names):
         raise ConfigError('%s: exclude_homes must be a list of mate ids' % path)
-    for key in ('owners', 'repos'):
-        if not isinstance(doc.get(key, {}), dict):
-            raise ConfigError('%s: %s must be an object' % (path, key))
+    owners, repos = doc.get('owners', {}), doc.get('repos', {})
+    if not isinstance(owners, dict) or not all(isinstance(v, str) and v.strip() for v in owners.values()):
+        raise ConfigError('%s: owners must map repositories to mate ids' % path)
+    if not isinstance(repos, dict) or not all(v is None or isinstance(v, str) for v in repos.values()):
+        raise ConfigError('%s: repos must map repositories to owner/name or null' % path)
     if not isinstance(doc.get('model', ''), str):
         raise ConfigError('%s: model must be a string' % path)
     return doc
@@ -300,7 +302,7 @@ def session_lines(path, since, slow, label, hide=lambda line: False):
         role = msg.get('role')
         if role == 'user':
             t = ' '.join(text_of(content).split())
-            if t:
+            if t and not hide(t):
                 who = 'steer' if t.startswith('[') else 'user'
                 lines.append('%s: %s' % (who, t[:500]))
             for c in content if isinstance(content, list) else []:
@@ -309,8 +311,10 @@ def session_lines(path, since, slow, label, hide=lambda line: False):
                 val = next((x.get('value') for x in c.get('content') or []
                             if isinstance(x, dict) and x.get('type') == 'json'), None)
                 if isinstance(val, dict) and (val.get('exit_code') not in (0, None) or val.get('timed_out')):
-                    err = ' '.join(str(val.get('stderr') or val.get('stdout') or '').split())[-240:]
-                    lines.append('tool error (%s): %s' % (calls.get(c.get('call')) or c.get('name'), err))
+                    full = ' '.join(str(val.get('stderr') or val.get('stdout') or '').split())
+                    cmd = calls.get(c.get('call')) or c.get('name') or ''
+                    if not hide(full) and not hide(str(cmd)):
+                        lines.append('tool error (%s): %s' % (cmd, full[-240:]))
             for t in msg.get('tools') or []:
                 ms = t.get('duration_ms') or 0
                 cmd = calls.get(t.get('id')) or ''
@@ -319,7 +323,7 @@ def session_lines(path, since, slow, label, hide=lambda line: False):
                     lines.append('slow command (%ds): %s' % (ms // 1000, cmd[:200]))
         elif role == 'assistant':
             t = ' '.join(text_of(content).split())
-            if t:
+            if t and not hide(t):
                 lines.append('agent: ' + t[:350])
     lines = [l for l in lines if not hide(l)]
     if not lines:
@@ -388,7 +392,7 @@ def local_sessions(ctx):
     return found
 
 
-def tail_since(path, since, limit=80):
+def tail_since(path, since, limit=80, hide=lambda line: False):
     """Lines of a log whose leading epoch or ISO stamp is newer than since (or the
     file is), at most the last limit."""
     try:
@@ -404,11 +408,12 @@ def tail_since(path, since, limit=80):
             stamp = int(m.group(1)) if m.group(1) else (parse_iso(m.group(2)) or 0)
             if stamp < since:
                 continue
-        keep.append(line[:300])
+        if not hide(line):
+            keep.append(line[:300])
     return keep[-limit:]
 
 
-def no_mistakes_runs(since, fleet_paths, harness):
+def no_mistakes_runs(since, fleet_paths, harness, private_paths=()):
     """Failed or cancelled no-mistakes runs that ended (last changed) in the window,
     only for repositories that are the fleet's own: inside the main home or an
     included local home, or a harness repository by name. Anything else (an
@@ -436,6 +441,9 @@ def no_mistakes_runs(since, fleet_paths, harness):
         stamp = r['when'] / (1000 if r['when'] and r['when'] > 1e12 else 1) if isinstance(r['when'], (int, float)) \
             else parse_iso(r['when']) or 0
         repo = str(r.get('repo_path') or '')
+        places = [repo, str(r.get('worktree_dir') or '')]
+        if any(place == p or place.startswith(p.rstrip('/') + '/') for p in private_paths for place in places if p):
+            continue
         ours = any(repo == p or repo.startswith(p.rstrip('/') + '/') for p in fleet_paths) \
             or os.path.basename(repo) in harness
         if stamp >= since and ours and not any(n in json.dumps(r) for n in private_names()):
@@ -473,19 +481,20 @@ def step_collect(ctx):
     sessions = local_sessions(ctx)
     for label, path in sessions:
         parts += session_lines(path, ctx.since, slow, label, lambda line: mentions_excluded(ctx, line))
-    captain = [l for l in tail_since(ctx.state / 'captain-direct.log', ctx.since) if not mentions_excluded(ctx, l)]
+    captain = tail_since(ctx.state / 'captain-direct.log', ctx.since, hide=lambda l: mentions_excluded(ctx, l))
     if captain:
         parts += ['## Captain-direct messages', *captain, '']
     fleet_paths = [str(ctx.home)] + [h for mid, h, host in registry(ctx.home)
                                      if h and not host and mid not in ctx.excluded]
     harness = set(ctx.config.get('repos') or DEFAULT_REPOS) | {'proxai'}
     PRIVATE_NAMES[:] = sorted(ctx.excluded | {m.replace('-', ' ') for m in ctx.excluded})
-    nm, nm_err = no_mistakes_runs(ctx.since, fleet_paths, harness)
+    private_paths = [h for mid, h, host in registry(ctx.home) if mid in ctx.excluded and h]
+    nm, nm_err = no_mistakes_runs(ctx.since, fleet_paths, harness, private_paths)
     if nm:
         parts += ['## Failed or cancelled no-mistakes runs (%d; newest 40)' % len(nm)] + [
             '- %s %s %s: %s' % (r.get('status'), r.get('branch') or '', r.get('pr_url') or '',
                                 ' '.join(str(r.get('error') or '').split())[:300]) for r in nm[:40]] + ['']
-    revives = [l for l in tail_since(ctx.state / 'secondmate-revive.log', ctx.since) if not mentions_excluded(ctx, l)]
+    revives = tail_since(ctx.state / 'secondmate-revive.log', ctx.since, hide=lambda l: mentions_excluded(ctx, l))
     if revives:
         parts += ['## Revives', *revives, '']
     restarts = []
@@ -497,16 +506,20 @@ def step_collect(ctx):
                 and not mentions_excluded(ctx, l))[:400]))
     if restarts:
         parts += ['## Restarts and reloads', *restarts, '']
-    sweep = [l for l in tail_since(ctx.state / 'idle-sweep.log', ctx.since) if not mentions_excluded(ctx, l)]
+    sweep = tail_since(ctx.state / 'idle-sweep.log', ctx.since, hide=lambda l: mentions_excluded(ctx, l))
     if sweep:
         parts += ['## Idle sweep', *sweep, '']
     rep = fleet_report(ctx)
     if rep:
-        names = ctx.excluded | {m.replace('-', ' ') for m in ctx.excluded}
         parts += ['## Fleet report', rep.get('summary') or '']
         parts += ['- waiting: %s (on %s, %s)' % (w.get('what'), w.get('on'), w.get('mate'))
                   for w in rep.get('waiting', []) if w.get('mate') not in ctx.excluded]
-        parts += ['- gap: ' + g for g in rep.get('gaps', []) if not any(g.startswith(n) for n in names)]
+        parts += ['- gap: ' + g for g in rep.get('gaps', []) if not mentions_excluded(ctx, g)]
+        parts += ['- crew %s: %s on %s (%s)' % (c.get('status'), c.get('agent'), c.get('task'), c.get('mate'))
+                  for c in rep.get('crew', []) if c.get('status') in ('failed', 'blocked', 'stopped', 'needs-decision')
+                  and c.get('mate') not in ctx.excluded and not mentions_excluded(ctx, json.dumps(c))][:30]
+        parts += ['- shipped: %s (%s)' % (x.get('title'), x.get('mate')) for x in rep.get('shipped', [])
+                  if x.get('mate') not in ctx.excluded and not mentions_excluded(ctx, json.dumps(x))][:30]
         parts += ['- power %s: %s%% left' % (p.get('provider'), p.get('pct_left')) for p in rep.get('power') or []]
         parts.append('')
     text = '\n'.join(parts)
@@ -524,7 +537,8 @@ def step_collect(ctx):
     ctx.facts['counts'] = {'sessions': len(sessions), 'captain_messages': len(captain),
                            'no_mistakes_failed': len(nm), 'revives': len(revives), 'restarts': len(restarts),
                            'idle_sweep': len(sweep), 'digest_chars': len(text)}
-    gaps = ([nm_err] if nm_err else []) + (['fleet report unreadable'] if rep is None else [])
+    unread = [g for g in (rep or {}).get('gaps', []) if 'unreadable' in g and not mentions_excluded(ctx, g)]
+    gaps = ([nm_err] if nm_err else []) + (['fleet report unreadable'] if rep is None else []) + unread[:3]
     result = {'status': 'partial' if gaps else 'done', **ctx.facts['counts']}
     if gaps:
         result['why'] = '; '.join(gaps)
@@ -639,6 +653,9 @@ def step_skills(ctx):
         git(ctx, 'reset', '-q', '--soft', base, cwd=tree)
         changed = git(ctx, 'diff', '--cached', '--name-only', '--no-renames', base, cwd=tree).split('\n')
         changed = [p for p in changed if p]
+        doc = read_json(summary)
+        if not isinstance(doc, dict) or not isinstance(doc.get('changes'), list):
+            return {'status': 'failed', 'why': 'the skills agent wrote no valid %s' % summary.name}
         if not changed:
             return {'status': 'no changes'}
         outside = [p for p in changed if not p.startswith('skills/')]
@@ -648,9 +665,8 @@ def step_skills(ctx):
         lines = sum(1 for l in diff.splitlines() if l[:1] in '+-' and l[:3] not in ('+++', '---'))
         if lines > MAX_DIFF_LINES:
             return {'status': 'rejected', 'why': '%d changed lines (cap %d)' % (lines, MAX_DIFF_LINES)}
-        doc = read_json(summary)
-        if not isinstance(doc, dict) or not isinstance(doc.get('changes'), list) or not doc['changes']:
-            return {'status': 'rejected', 'why': 'the skills agent changed skills but wrote no summary of them'}
+        if not doc['changes']:
+            return {'status': 'rejected', 'why': 'the skills agent changed skills but listed none in its summary'}
         changes = doc['changes']
         title = 'Updates skills from the fleet\'s %s sessions (fleet dreaming)' % ctx.day
         body = '\n'.join('- %s: %s (%s)' % (c.get('skill'), c.get('what'), c.get('why')) for c in changes)

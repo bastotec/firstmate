@@ -43,6 +43,7 @@ res = lambda cid, val: {"type": "toolresult", "call": cid, "name": "run_command"
 msgs = [
   {"role": "user", "content": [{"type": "text", "text": "an old line from days ago"}], "at": old},
   {"role": "user", "content": [{"type": "text", "text": "no, use fm-pr-merge.sh, not gh pr merge"}], "at": recent},
+  {"role": "user", "content": [{"type": "text", "text": "PRIVATE PREFIX " + "x" * 600 + " finn-finance"}], "at": recent},
   {"role": "assistant", "content": [call("c1", "bin/fm-wake-drain.sh"), call("c2", "bin/fm-spawn.sh x"), call("c3", "bin/fm-send.sh finn-finance 'PRIVATE SEND'")], "at": recent},
   {"role": "user", "content": [res("c1", {"exit_code": 0, "stdout": "ok"}), res("c2", {"exit_code": 1, "stderr": "spawn refused: hub unreachable"}),
                                res("c3", {"exit_code": 1, "stderr": "send failed"})],
@@ -142,7 +143,12 @@ SH
 in=$(cat)
 case "$in" in *"idle sweep"*) printf 'usage\t1\t1\t0\t1\nanswers\t0.9\t0.2\t0.4\n' ;; *) printf 'usage\t1\t1\t0\t1\nanswers\t0.9\t0.9\t0.8\n' ;; esac
 SH
-  printf '#!/usr/bin/env bash\nprintf "{\\"summary\\": \\"fleet ok\\", \\"waiting\\": [], \\"gaps\\": [], \\"power\\": []}\\n"\n' > "$d/bin/report"
+  cat > "$d/bin/report" <<'SH'
+#!/usr/bin/env bash
+printf '{"summary": "fleet ok", "waiting": [], "gaps": [], "power": [], "shipped": [],
+ "crew": [{"agent": "w-9", "task": "deploy", "status": "failed", "mate": "dave-tools"},
+          {"agent": "w-8", "task": "finn-finance-crew", "status": "failed", "mate": "finn-finance"}]}\n'
+SH
   printf '#!/usr/bin/env bash\nprintf "[]\\n"\n' > "$d/bin/gh"
   chmod +x "$d/bin/"*
   printf '%s' "$d"
@@ -177,6 +183,9 @@ test_collect_builds_a_private_digest_of_the_day() {
   grep -q 'restarted: cadia on workload' "$digest" || fail "restart results missing"
   grep -q 'SECRET RESTART DETAIL' "$digest" && fail "an excluded home's restart line reached the digest"
   grep -q 'PRIVATE SEND' "$digest" && fail "a command addressed to an excluded home reached the digest"
+  grep -q 'PRIVATE PREFIX' "$digest" && fail "a message naming an excluded home past the cut reached the digest"
+  grep -q 'crew failed: w-9 on deploy (dave-tools)' "$digest" || fail "a remote mate's failed crew row is missing"
+  grep -q 'finn-finance-crew' "$digest" && fail "an excluded mate's crew row reached the digest"
   pass "collect builds a private digest of the day and leaves excluded homes out"
 }
 
@@ -192,7 +201,7 @@ test_skills_pushes_a_guarded_change_to_main() {
 
 test_skills_rejects_changes_outside_skills_and_secrets() {
   local d mode before
-  for mode in outside secret checkpoint message binary nosummary; do
+  for mode in outside secret checkpoint message binary; do
     d=$(new_case "skills-$mode")
     before=$(git -C "$d/origin.git" rev-parse main)
     STUB_SKILLS=$mode run_dream "$d" --only collect skills > "$d/out.json" || fail "$mode: run exited nonzero"
@@ -200,6 +209,11 @@ test_skills_rejects_changes_outside_skills_and_secrets() {
     case $mode in secret|checkpoint|binary|message) grep -q 'secret-like' "$d/out.json" || fail "$mode: rejected for the wrong reason: $(cat "$d/out.json")" ;; esac
     [ "$(git -C "$d/origin.git" rev-parse main)" = "$before" ] || fail "$mode: main moved"
   done
+  d=$(new_case skills-nosummary)
+  before=$(git -C "$d/origin.git" rev-parse main)
+  STUB_SKILLS=nosummary run_dream "$d" > "$d/out.json" || fail "nosummary: run exited nonzero"
+  jq -e '.steps.skills.status == "failed"' "$d/out.json" >/dev/null || fail "edits without a summary were not a failure"
+  [ "$(git -C "$d/origin.git" rev-parse main)" = "$before" ] || fail "nosummary: main moved"
   pass "the skills step rejects changes outside skills/, secret-like text, also in agent commits and summaries"
 }
 
@@ -212,6 +226,8 @@ test_a_malformed_config_stops_the_run() {
   printf '{"exclude_homes": "finn-finance"}\n' > "$d/home/config/dream.json"
   if run_dream "$d" > "$d/out.json" 2> "$d/err"; then fail "a string exclude_homes did not stop the run"; fi
   grep -q 'exclude_homes must be a list' "$d/err" || fail "the refusal does not explain exclude_homes"
+  printf '{"owners": {"deck": ["dave-tools"]}}\n' > "$d/home/config/dream.json"
+  if run_dream "$d" > "$d/out.json" 2> "$d/err"; then fail "a list-valued owner did not stop the run"; fi
   [ -z "$(find "$d/home/state" -name 'digest-*' 2>/dev/null)" ] || fail "a digest was written without the exclusions"
   pass "a malformed or mistyped dream.json stops the run before anything is collected"
 }
