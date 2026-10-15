@@ -2295,8 +2295,58 @@ record_script_result() {
 # positive, a script that outruns it is terminated and reported as exit 124: a
 # hung script must become a bounded failure rather than an unbounded suite,
 # because an unbounded suite is what silently outruns its caller's budget.
+# Service units a suite must never touch for real. Tests that install
+# launchd or systemd units used to write the captain's own
+# ~/Library/LaunchAgents/dev.firstmate.remote-job.plist with a temp-dir worker
+# path, and a loaded label is shared with every real remote host. Every suite
+# therefore runs with its unit directories pointed at a sandbox and with
+# launchctl/systemctl shims that refuse mutating verbs, and the real unit
+# directories are fingerprinted around it: a suite that changes them fails.
+real_units_fingerprint() {
+  local d f
+  for d in "$HOME/Library/LaunchAgents" "$HOME/.config/systemd/user"; do
+    [ -d "$d" ] || continue
+    for f in "$d"/*firstmate*; do
+      [ -e "$f" ] || [ -L "$f" ] || continue
+      printf '%s\t%s\n' "$f" "$(cksum < "$f" 2>/dev/null || printf 'unreadable')"
+    done
+  done
+}
+
+SERVICE_SHIM_DIR=
+service_shims() {
+  local tool real
+  [ -z "$SERVICE_SHIM_DIR" ] || return 0
+  SERVICE_SHIM_DIR="$RUN_TMP/service-shims"
+  mkdir -p "$SERVICE_SHIM_DIR"
+  for tool in launchctl systemctl; do
+    real=$(command -v "$tool" 2>/dev/null || true)
+    printf '%s\n' "$real" > "$SERVICE_SHIM_DIR/$tool.real"
+    cat > "$SERVICE_SHIM_DIR/$tool" <<'SHIM'
+#!/usr/bin/env bash
+tool=${0##*/}
+for arg in "$@"; do
+  case "$arg" in
+    bootstrap|bootout|kickstart|load|unload|enable|disable|start|stop|restart|reload|daemon-reload|remove|submit|kill|link|mask|unmask|edit)
+      echo "$tool: refused under fm-test-run: a test must not change real services ($tool $*)" >&2
+      exit 1
+      ;;
+  esac
+done
+real=$(cat "$0.real" 2>/dev/null)
+[ -n "$real" ] || { echo "$tool: not installed" >&2; exit 127; }
+exec "$real" "$@"
+SHIM
+    chmod +x "$SERVICE_SHIM_DIR/$tool"
+  done
+}
+
 run_script_bounded() {  # <script> <out> <stream> <id>
-  local script=$1 out=$2 stream=$3 id=$4
+  local script=$1 out=$2 stream=$3 id=$4 units_before units_after sandbox
+  service_shims
+  sandbox="$RUN_TMP/service-units.$id"
+  mkdir -p "$sandbox"
+  units_before=$(real_units_fingerprint)
   # Declaring the variables local first keeps the helper's export scoped to this
   # call and its child script, so the runner's own environment is left as the
   # caller had it.
@@ -2305,6 +2355,11 @@ run_script_bounded() {  # <script> <out> <stream> <id>
   . "$ROOT/tests/git-config-helpers.sh" || return
   local rc
   : "$id"
+  # Installers write into the sandbox only when they target this real account
+  # (a suite's own fake HOME is left alone); see fm_service_unit_dir users.
+  local PATH="$SERVICE_SHIM_DIR:$PATH"
+  local FM_TEST_SERVICE_SANDBOX="$sandbox" FM_TEST_REAL_HOME="$HOME"
+  export PATH FM_TEST_SERVICE_SANDBOX FM_TEST_REAL_HOME
   set +e
   if [ "$stream" -eq 1 ]; then
     if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ]; then
@@ -2329,6 +2384,14 @@ run_script_bounded() {  # <script> <out> <stream> <id>
       "$script" "$PER_SCRIPT_TIMEOUT_SECS" >>"$out"
     [ "$stream" -eq 1 ] && tail -1 "$out"
   fi
+  units_after=$(real_units_fingerprint)
+  if [ "$units_before" != "$units_after" ]; then
+    printf 'not ok - %s changed real service units under %s or %s; tests must use the sandbox unit directories\n' \
+      "$script" "$HOME/Library/LaunchAgents" "$HOME/.config/systemd/user" >>"$out"
+    [ "$stream" -eq 1 ] && tail -1 "$out"
+    rc=1
+  fi
+  rm -rf "$sandbox"
   return "$rc"
 }
 

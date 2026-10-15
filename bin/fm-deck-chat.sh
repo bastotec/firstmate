@@ -268,6 +268,11 @@ service_prereqs() {
     LAUNCHCTL=$(command -v launchctl 2>/dev/null) || die 'launchctl not found' 2
   fi
   AGENTS_DIR=${FM_LAUNCH_AGENTS_DIR:-$HOME/Library/LaunchAgents}
+  # Under bin/fm-test-run.sh the real account's agents are replaced by the
+  # run's sandbox, so no test can install a real one.
+  if [ -z "${FM_LAUNCH_AGENTS_DIR:-}" ] && [ -n "${FM_TEST_SERVICE_SANDBOX:-}" ] && [ "$HOME" = "${FM_TEST_REAL_HOME:-}" ]; then
+    AGENTS_DIR=$FM_TEST_SERVICE_SANDBOX/Library/LaunchAgents
+  fi
   LABEL=$(service_label) || die 'could not derive the service label' 2
   PLIST="$AGENTS_DIR/$LABEL.plist"
   DOMAIN="gui/$(id -u)"

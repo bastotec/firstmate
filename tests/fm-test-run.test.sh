@@ -181,6 +181,55 @@ PROBE
   done
 }
 
+# A suite once wrote the captain's real ~/Library/LaunchAgents remote-job
+# agent with a temp-dir worker path. Every suite now runs with mutating
+# launchctl/systemctl refused, the shared installers redirected to a sandbox when
+# they target the real account, and a fingerprint of the real unit directories
+# taken around it: a suite that changes them fails. HOME is a fake here, so the
+# "real" directories under test are this case's own.
+test_suites_cannot_touch_real_service_units() {
+  local tmp repo home out rc
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-units.XXXXXX")
+  repo="$tmp/repo"
+  home="$tmp/home"
+  mkdir -p "$repo/bin" "$repo/tests" "$home/Library/LaunchAgents"
+  cp "$RUNNER" "$repo/bin/fm-test-run.sh"
+  cp "$ROOT/bin/fm-remote-job-lib.sh" "$ROOT/tests/git-config-helpers.sh" "$repo/tests/"
+  chmod +x "$repo/bin/fm-test-run.sh"
+  printf 'real\n' > "$home/Library/LaunchAgents/dev.firstmate.remote-job.plist"
+  cat >"$repo/tests/writes-unit.test.sh" <<'SUITE'
+#!/usr/bin/env bash
+printf 'leaked\n' > "$HOME/Library/LaunchAgents/dev.firstmate.remote-job.plist"
+echo "ok - wrote a unit"
+SUITE
+  cat >"$repo/tests/service-calls.test.sh" <<'SUITE'
+#!/usr/bin/env bash
+if launchctl bootstrap "gui/$(id -u)" /dev/null 2>/dev/null; then echo "not ok - launchctl bootstrap ran"; exit 1; fi
+if systemctl --user restart fm-probe.service 2>/dev/null; then echo "not ok - systemctl restart ran"; exit 1; fi
+. "$(dirname "$0")/fm-remote-job-lib.sh"
+fm_remote_job_launchagent_paths "$HOME"
+case "$FM_REMOTE_JOB_LAUNCH_AGENT_DIR" in
+  "$HOME"/*) echo "not ok - installer targeted the real account: $FM_REMOTE_JOB_LAUNCH_AGENT_DIR"; exit 1 ;;
+esac
+fm_remote_job_launchagent_paths /some/fake/home
+[ "$FM_REMOTE_JOB_LAUNCH_AGENT_DIR" = /some/fake/home/Library/LaunchAgents ] \
+  || { echo "not ok - a suite's own fake home was redirected"; exit 1; }
+echo "ok - service calls refused and installers sandboxed"
+SUITE
+  chmod +x "$repo/tests/"*.test.sh
+  git -C "$repo" init -q
+  out=$(HOME="$home" "$repo/bin/fm-test-run.sh" tests/writes-unit.test.sh 2>&1) && rc=0 || rc=$?
+  [ "$rc" -ne 0 ] || { rm -rf "$tmp"; fail "a suite that changed a real unit passed: $out"; }
+  assert_contains "$out" "changed real service units" "the runner did not name the unit change"
+  printf 'real\n' > "$home/Library/LaunchAgents/dev.firstmate.remote-job.plist"
+  out=$(HOME="$home" "$repo/bin/fm-test-run.sh" tests/service-calls.test.sh 2>&1) \
+    || { rm -rf "$tmp"; fail "service calls were not refused or installers not sandboxed: $out"; }
+  [ "$(cat "$home/Library/LaunchAgents/dev.firstmate.remote-job.plist")" = real ] \
+    || { rm -rf "$tmp"; fail "the real unit was changed"; }
+  rm -rf "$tmp"
+  pass "fm-test-run: suites cannot change or load real launchd/systemd units"
+}
+
 # A task worker's isolated placement is checked once, when the task starts.
 # Nothing re-checks it, so a worker that later changes directory into the
 # repository's primary checkout would run this branch-switching suite in the one
@@ -1920,3 +1969,4 @@ test_per_script_timeout_bounds_a_hang
 test_max_wall_ms_is_a_result_not_advice
 test_jobs_parallel_scheduler_and_failure_propagation
 test_aggregate_json
+test_suites_cannot_touch_real_service_units

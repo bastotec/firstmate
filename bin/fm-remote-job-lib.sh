@@ -851,9 +851,15 @@ fm_remote_job_reap_stale() { # <account-home>
 
 fm_remote_job_launchagent_paths() { # <account-home>
   local account_home=$1
-  FM_REMOTE_JOB_LAUNCH_AGENT_DIR="$account_home/Library/LaunchAgents"
+  local base=$account_home/Library
+  # Under bin/fm-test-run.sh a suite that targets this real account writes into
+  # the run's sandbox instead, so no test can replace the account's real agent.
+  if [ -n "${FM_TEST_SERVICE_SANDBOX:-}" ] && [ "$account_home" = "${FM_TEST_REAL_HOME:-}" ]; then
+    base=$FM_TEST_SERVICE_SANDBOX/Library
+  fi
+  FM_REMOTE_JOB_LAUNCH_AGENT_DIR="$base/LaunchAgents"
   FM_REMOTE_JOB_LAUNCH_AGENT_PLIST="$FM_REMOTE_JOB_LAUNCH_AGENT_DIR/$FM_REMOTE_JOB_LABEL.plist"
-  FM_REMOTE_JOB_LAUNCH_AGENT_LOG_DIR="$account_home/Library/Logs"
+  FM_REMOTE_JOB_LAUNCH_AGENT_LOG_DIR="$base/Logs"
   FM_REMOTE_JOB_LAUNCH_AGENT_LOG="$FM_REMOTE_JOB_LAUNCH_AGENT_LOG_DIR/$FM_REMOTE_JOB_LABEL.log"
 }
 
