@@ -60,8 +60,8 @@ Files under <home>/state/dream/:
                      dry runs use runs/<date>.dry-run.json. A run ended by
                      SIGTERM/SIGHUP is finalized as partial, keeping completed
                      steps, with the step in flight marked interrupted
-  latest.json        published only by a full, non-dry run; --only and --dry-run
-                     leave it alone. The summary bin/fm_report.py reads
+  latest.json        published by a run without --only or --dry-run, even when
+                     interrupted. The summary bin/fm_report.py reads
                      (schema fm-dream.v1):
                      {schema, date, started, finished, dry_run, status, steps: {name:
                      {status, seconds, why?}}, skills: [{skill, what, why}],
