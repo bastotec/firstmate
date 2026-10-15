@@ -231,6 +231,12 @@ cmd_arm_locked() {
   local id=${1:-} sid
   validate_id "$id"
   remote_route_exists "$id"
+  # Every registration path (startup convergence, spawn, teardown, the
+  # handler) honors a recorded continuity stop; cmd_arm --lift-stop lifts it.
+  if [ "$(stopped_seq "$id")" -ge 0 ]; then
+    printf 'stopped: %s (a continuity escalation stopped it; inspect, then arm %s --lift-stop)\n' "$id" "$id"
+    return 0
+  fi
   read_cursor "$id"
   sid=$(source_id "$id")
   "$SCRIPT_DIR/fm-procevent.sh" register remote-reply "$sid" -- \
@@ -249,9 +255,6 @@ cmd_arm() {
     # (startup convergence, spawn); only an operator's --lift-stop clears it.
     if [ "$lift" = --lift-stop ]; then
       rm -f -- "$CURSOR_DIR/$id.stopped" || die "cannot lift the recorded stop for $id"
-    elif [ "$(stopped_seq "$id")" -ge 0 ]; then
-      printf 'stopped: %s (a continuity escalation stopped it; inspect, then arm %s --lift-stop)\n' "$id" "$id"
-      return 0
     fi
     cmd_arm_locked "$id"
   )
