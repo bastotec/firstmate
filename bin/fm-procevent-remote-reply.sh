@@ -501,7 +501,7 @@ cmd_ingest() {
 }
 
 cmd_handle_locked() {
-  local id=${1:-} seq=${2:-} result=${3:-} sid class rc=0 to
+  local id=${1:-} seq=${2:-} result=${3:-} sid class rc=0 to from from_hash
   validate_id "$id"
   case "$seq" in ''|*[!0-9]*) die "sequence must be a nonnegative integer" ;; esac
   sid=$(source_id "$id")
@@ -510,13 +510,20 @@ cmd_handle_locked() {
   if ingest_receipt_matches "$id" "$seq" "$result"; then
     to=$(result_field "$result" to_offset) || die "result end offset is ambiguous"
     printf 'ingested: %s appended=0 offset=%s\n' "$id" "$to"
-    # Only a recovered break leaves a receipt; finish its reset and re-arm.
+    # Only a recovered break leaves a receipt. Finish its reset and re-arm only
+    # while the cursor is still where that break left it (its start, or the
+    # reset itself); a cursor that has since moved on belongs to later
+    # progress or a later break and is left alone.
     if [ "$class" = continuity-broken ]; then
       read_cursor "$id"
-      if [ "$CURSOR_OFFSET" -ne 0 ]; then
+      from=$(result_field "$result" from_offset) || die "result start offset is ambiguous"
+      from_hash=$(result_field "$result" from_prefix_sha256) || die "result start hash is ambiguous"
+      if [ "$CURSOR_OFFSET" -eq "$from" ] && [ "$CURSOR_HASH" = "$(printf '%s' "$from_hash" | tr 'A-F' 'a-f')" ]; then
         write_cursor "$id" 0 "$(empty_hash)" || die "cannot reset remote reply cursor for $id"
+        rc=4
+      elif [ "$CURSOR_OFFSET" -eq 0 ] && [ "$CURSOR_HASH" = "$(empty_hash)" ]; then
+        rc=4
       fi
-      rc=4
     fi
   else
     cmd_ingest "$id" "$result" "$seq" || rc=$?

@@ -36,17 +36,21 @@ def writes(command, name):
     if name not in command:
         return False
     n = re.escape(name)
+    # Quoted text that does not name the file is payload (a reply being
+    # appended, a search pattern), not command syntax.
+    shell = re.sub(r"'[^']*'|\"[^\"]*\"",
+                   lambda m: m.group(0) if name in m.group(0) else "''", command)
     patterns = [
         r"\bsed\b[^|;&\n]*\s(-[A-Za-z]*i|--in-place)",
         r"\bperl\b[^|;&\n]*\s-[A-Za-z]*i",
         r"(?<!>)>(?!>)\s*['\"]?[^\s'\";|&]*" + n,
         r"\btee\b(?![^|;&\n]*\s(-a|--append)\b)[^|;&\n]*" + n,
         r"\b(mv|cp|install|rsync|ln)\b[^|;&\n]*" + n + r"['\"]?\s*(#[^\n]*)?($|[|;&\n])",
-        r"\btruncate\b",
-        r"\brm\b[^|;&\n]*" + n,
+        r"(^|[;&|(\n]\s*|\bsudo\s+)truncate\b[^|;&\n]*" + n,
+        r"(^|[;&|(\n]\s*|\bsudo\s+)rm\b[^|;&\n]*" + n,
         r"\.write_text\(|\.write_bytes\(|os\.truncate|shutil\.(move|copy)",
     ]
-    if any(re.search(p, command) for p in patterns):
+    if any(re.search(p, shell) for p in patterns):
         return True
     # Any open() alongside a writing mode literal: argument nesting makes the
     # mode's position unparseable by pattern, so the pair is enough.
