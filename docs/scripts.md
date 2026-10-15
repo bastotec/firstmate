@@ -94,6 +94,8 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | [`fm-mate-mail-lib.sh`](../bin/fm-mate-mail-lib.sh) | Own the peer-message wire, spool, and oversight-log contract |
 | [`fm-report.sh`](../bin/fm-report.sh) | Read or request the fleet's or one mate's report from any home; its header owns usage and routing |
 | [`fm_report.py`](../bin/fm_report.py) | Own the report's data sources, `fm-report.v1` JSON shape, crew-time intervals, and text rendering |
+| [`fm-dream.sh`](../bin/fm-dream.sh) | Run, show, or schedule the fleet's nightly dreaming pass; its header owns usage and service setup |
+| [`fm_dream.py`](../bin/fm_dream.py) | Own dreaming's steps, guards, budgets, run log and the `fm-dream.v1` summary the report shows |
 | [`fm-mates.sh`](../bin/fm-mates.sh) | List the fleet's second mates (id, machine, domain) from any home |
 | `fm-extension.mjs`       | Bind, inspect, verify, and strictly invoke trusted external process-event adapter packages |
 | `fm-extension-launch-barrier.mjs` | Publish one exact static core-owned invocation group before package code runs |

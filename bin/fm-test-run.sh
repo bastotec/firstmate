@@ -651,6 +651,8 @@ portable_serial_weight_hints() {
 # (2026-10-13); every serial shard passed in that run.
 # fm-watch-parent-channel-echo was measured in green serial shard 8 of run
 # 38444133335 (2026-10-13), with three family-phase workers.
+# fm-approval was measured in green serial shard 4 of run 38683021067
+# (2026-10-15), with three family-phase workers.
 # The five tests/fm-watch-triage*.test.sh suites were one 694233 ms script
 # before run 37413095868; their hints start from each suite's share of that,
 # from the per-case output timestamps of run 37401433503's serial shard 1.
@@ -658,6 +660,7 @@ tests/fm-afk-contract.test.sh 38462
 tests/fm-afk-inject-e2e.test.sh 34977
 tests/fm-afk-launch.test.sh 38816
 tests/fm-afk-return.test.sh 38827
+tests/fm-approval.test.sh 8213
 tests/fm-ask-triage.test.sh 14351
 tests/fm-ask-user-authority.test.sh 386
 tests/fm-autoland.test.sh 123495
