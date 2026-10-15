@@ -131,6 +131,27 @@
 # timing, compatibility, and fallback; durable send and reply tracking below
 # do not depend on native publication.
 # The old "From the captain, directly:" prose prefix is not detected.
+# Captain-direct record wait: only --from-captain in the parsed options (not
+# in message text or after --) enables a whole-send retry when final validation
+# cannot lock the task metadata or finds a retired or changed endpoint/route,
+# before any delivery, for both local and remote inbox paths.
+# Each such attempt discards its newly created undelivered pending reply as
+# usual and returns internal status 75; the wrapper resolves and sends afresh
+# after a one-second pause, within FM_SEND_CAPTAIN_WAIT_SECS (default 45).
+# This setting must be a positive integer; empty, zero, or non-integer values
+# fall back to 45. No new attempt starts at or after the deadline.
+# The final-validation metadata-lock wait is capped to the time remaining
+# when that wait begins, including time already spent resolving targets/keys.
+# Other locks, including the inbox sequence lock, retain their usual
+# FM_TASK_INBOX_LOCK_WAIT_SECS wait. This bounds the record wait, not total
+# delivery time: once validation succeeds, delivery keeps its usual timing
+# and each remote transport attempt keeps FM_SEND_REMOTE_BUDGET, because
+# cutting transport short could leave delivery unknown.
+# Only the last attempt's stdout/stderr are shown; a retryable refusal still
+# present at the bound exits 1 with the same error as before, never public 75.
+# Ordinary steers retain their existing waits and exit codes.
+# tests/fm-captain-direct-echo.test.sh covers relaunch endpoint movement,
+# bounded lock refusal, and ordinary-steer/option-parsing compatibility.
 # Once a captain message to a secondmate is delivered, this home records it and
 # queues one FYI inbox note for its own first mate naming the corr
 # (bin/fm-captain-direct-lib.sh owns the ledger and the wording), and stdout
@@ -293,23 +314,9 @@ if [ ! -d "$STATE" ]; then
   exit 1
 fi
 
-# Captain sends wait out a busy task record. A relaunch (bin/fm-spawn.sh
-# --relaunch, as a deploy's second-mate restart runs it) holds the task's
-# metadata lock for its whole restart, often longer than the inbox lock wait,
-# and then moves the task to a new endpoint, so a captain message sent in that
-# window fails although nothing is wrong. With --from-captain among the options
-# (the same grammar the parser below reads: [--decision-answer] <target>, then
-# options up to the message text), an attempt that fails only because the
-# record stayed locked or changed endpoint before anything was written exits 75
-# internally, and the send is retried from scratch every second until
-# FM_SEND_CAPTAIN_WAIT_SECS seconds (default 45, a positive integer) have
-# passed. The attempt carries that deadline (FM_SEND_CAPTAIN_DEADLINE), and its
-# final-validation metadata-lock wait is capped to the time left when it starts
-# waiting (fm_send_meta_lock_wait); no attempt starts past the bound, so waiting on a locked or moving record ends within
-# about a second of it; an attempt that gets past the lock delivers on its
-# usual timing (a remote mate's transport keeps its own FM_SEND_REMOTE_BUDGET,
-# because cutting it off would leave delivery unknown). Only the last attempt's
-# output is shown, and a send still refused then exits 1 as before.
+# A relaunch holds metadata through restart and may move the endpoint, so
+# waiting for the lock alone is insufficient; retry must resolve afresh.
+# The header owns the captain-direct record-wait contract.
 fm_send_captain_flagged() {
   [ "${1:-}" != --decision-answer ] || shift
   [ $# -gt 0 ] || return 1
