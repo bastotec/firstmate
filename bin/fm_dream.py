@@ -14,30 +14,53 @@ is recorded and never stops the next:
            local mates and their workers; captain-direct; failed or cancelled
            no-mistakes runs; revive and restart results; the idle sweep; power)
            into a private digest under state/dream/ (0600, never committed),
-           plus the fleet report for remote mates. Slow fm-* commands come from
-           each run_command call joined to its result's duration_ms.
+           plus two calendar days of fleet reports for remote mates (remote deck
+           transcripts are out of scope). Slow fm-* commands come from each
+           run_command call joined to its result's duration_ms, at least SLOW_MS.
+           Unreadable sessions, no-mistakes state or fleet reports, non-live
+           included-home summaries, power errors and report gaps saying
+           incomplete/unavailable/unreadable make collect partial.
   skills   a deck agent in a fresh ~/dotfiles worktree improves skills/ from
            the digest. Same guards as Ziggy's reflection: only skills/, at most
-           MAX_DIFF_LINES changed lines, no secret-like text; committed and
-           pushed to main (rebased and retried if main moved).
+           MAX_DIFF_LINES changed lines, secret scan of all changed staged bytes
+           (including binary files and the agent's commits) and the final commit
+           message; committed and pushed to main (rebased and retried if main
+           moved). The agent must write a changes list, empty for no change;
+           MAX_SKILLS is prompt guidance, not an enforced cap.
   triage   a deck agent proposes concrete harness fixes from the digest; each
-           is deduplicated against open tasks, open PRs and what dreaming
-           raised in the last RAISED_DAYS days, scored by Jev ("worth fixing?")
-           when the wake gate's key is configured, and the best MAX_RAISED kept.
-  file     files the items triage kept in this run as queued backlog tasks and
-           hands each to its owning mate (config/dream.json "owners"; the main home
-           otherwise); an item already in raised.jsonl is never filed twice, and an
-           owner or repository whose open work could not be read gets nothing.
+           is deduplicated against open tasks in the main home and every included
+           mate's backlog, open PRs, what dreaming raised in the last RAISED_DAYS
+           days, and other proposals. If any open-work read fails or the registry
+           has an unparsable entry, the agent does not run and nothing is filed.
+           Jev scores proposals when configured; without a usable score, keep
+           the agent's order and record why. Keep at most MAX_RAISED items.
+  file     files only the items triage kept in this invocation as queued backlog
+           tasks and hands each to its configured owning mate; it never replays a
+           previous run's proposals. An unreadable raised.jsonl prevents filing,
+           and an item already in its dedupe window is not filed twice.
            Dreaming never pushes to or opens PRs on harness repositories.
 
-Before each step: skipped when the Mac has less than MIN_FREE_GB available, and
-never started while Ziggy's own dream is running (it waits up to WAIT_ZIGGY).
-Each step's budget (BUDGET) bounds every subprocess it starts, git included.
+Runs are serialized by a kernel flock held for the whole run.
+Before each step (dry runs included): skipped when the Mac has less than
+MIN_FREE_GB available, and never started while Ziggy's own dream is running
+(it waits up to WAIT_ZIGGY).
+Each step's budget (BUDGET) bounds every subprocess it starts, git included;
+subprocesses have their own process groups, and worktree cleanup has a separate
+short bound. Each agent step uses deck run --ephemeral and retries one failed
+attempt while budget remains; a nonzero exit, run_failed event or missing output
+fails an attempt, and expected output is cleared before each attempt.
+A digest with no sections skips both agent steps.
+Only clean step outcomes (CLEAN) yield a done run; other outcomes make it partial.
+--only selects steps in the supplied order; --dry-run still collects and reads
+open work, but starts no agents, pushes nothing and files nothing.
 
 Files under <home>/state/dream/:
-  runs/<date>.json   the run log (every step's status, seconds, details)
-  latest.json        the summary bin/fm_report.py reads (schema fm-dream.v1):
-                     {schema, date, started, finished, status, steps: {name:
+  runs/<date>.json   the run log (every step's status, seconds, details);
+                     dry runs use runs/<date>.dry-run.json
+  latest.json        published only by a full, non-dry run; --only and --dry-run
+                     leave it alone. The summary bin/fm_report.py reads
+                     (schema fm-dream.v1):
+                     {schema, date, started, finished, dry_run, status, steps: {name:
                      {status, seconds, why?}}, skills: [{skill, what, why}],
                      skills_commit, raised: [{title, repo, mate, key, why}],
                      slow_commands: [{command, seconds, count}], counts: {...},
@@ -45,10 +68,7 @@ Files under <home>/state/dream/:
   raised.jsonl       one line per raised item (dedupe across nights)
   digest-<date>.md   the private digest the agents read
 
-Configuration (all optional), <home>/config/dream.json:
-  {"owners": {"<repo>": "<mate-id>|primary"}, "exclude_homes": ["<mate-id>"],
-   "repos": {"<repo>": "<owner/name on GitHub>|null"}, "model": "<deck model>"}
-  A repo is the backlog's project name (proxai's is cli-proxy-native).
+Configuration: docs/configuration.md "Fleet dreaming" owns config/dream.json.
 Environment: FM_DREAM_DECK (deck binary), FM_DREAM_DOTFILES (~/dotfiles),
 FM_DREAM_JEV (Jev helper command), FM_DREAM_MIN_FREE_GB, FM_DREAM_NO_MISTAKES_DB.
 Tests only: FM_DREAM_NOW (epoch), FM_DREAM_SKIP_ZIGGY_WAIT=1, and FM_DREAM_TASKS,
@@ -874,8 +894,8 @@ def open_items(ctx, repos, owners):
     """(titles, unchecked): titles of open work to deduplicate against (this
     home's backlog and every included mate's, local ones read in place and remote
     ones over bin/fm-on.sh; open PRs on the harness repositories; what dreaming
-    raised lately), and the owners and repositories whose open work could not be
-    read, so nothing is filed for them blind."""
+    raised lately), and any sources that could not be read. Any unchecked
+    source prevents the triage agent from running and nothing is filed blind."""
     tasks = tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS')
     reads = [('primary', [tasks, 'list', '--limit', '500'], ctx.home)]
     for mid, h, host in registry(ctx.home):

@@ -21,6 +21,12 @@ Sources (read-only; no agent turn and no model token is spent):
     (config/power-host, default workload): `proxai quotas --detail --short`,
     gated on the bridge's maintenance flow. Unavailable power is named in
     power_error, separately from home-data gaps.
+  - For fleet and primary scopes, state/dream/latest.json, published by
+    bin/fm_dream.py; its header owns the fm-dream.v1 summary. The report projects
+    the fields named below and renders them as an Overnight section in markdown.
+    Only the latest published run is considered, with a six-hour grace period
+    before the report window's start so an overnight run belongs to the morning.
+    An absent, unreadable, invalid or older summary yields dream: null.
 
 Commands:
   fm_report.py crew-time <state-dir>
@@ -49,8 +55,8 @@ JSON shape (schema fm-report.v1; new fields may be added, none removed):
    mates: [{id, name, domain, machine, freshness, shipped, crew, working, waiting, crew_seconds}]   (fleet)
    power: [{provider, pct_left, refills_at, tightest}], power_error           (fleet)
    domain, machine                                                       (non-fleet)
-   dream: {date, status, summary, skills, skills_commit, raised, slow_commands}  (fleet, primary;
-          the last fleet-dreaming run when it falls in the window, else null; bin/fm_dream.py owns it)
+   dream: {date, status, summary, skills, skills_commit, raised, slow_commands, finished}
+          or null                                                        (fleet, primary)
    gaps: [<what could not be read, in words>]}
 """
 import argparse
@@ -507,8 +513,8 @@ def build(home, scope_raw, days, now=None):
 
 
 def read_dream(home, start):
-    """The last fleet-dreaming run's summary (bin/fm_dream.py), when it finished
-    inside the window; None otherwise or when unreadable."""
+    """The latest dreaming summary eligible for the report; the module header
+    owns the projection and window rules. None when absent or unreadable."""
     try:
         with open(Path(home) / 'state' / 'dream' / 'latest.json', encoding='utf-8') as fh:
             doc = json.load(fh)

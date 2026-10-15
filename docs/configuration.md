@@ -35,7 +35,7 @@ config/
   watched-tools.json      optional tool update watch list ("Watched tool updates")
   ask-triage-key-var      optional possible-ask opt-in ("Possible-ask ranking")
   wake-gate-key-var wake-gate-mode  optional wake-gate opt-in and mode ("Wake gate")
-  dream.json              optional fleet-dreaming owners, excluded homes and model ("Fleet dreaming")
+  dream.json              optional fleet-dreaming configuration ("Fleet dreaming")
   effort-policy.json      optional per-turn reasoning effort switch and level ("Turn effort")
   deck-mcp.json           optional Deck MCP servers ("Harness support")
   primary-split           optional presence flag: a captain thread and a separate supervisor (first mate: bin/fm_primary_chat.py header; second mate: bin/fm-captain-lane.sh header)
@@ -280,13 +280,27 @@ Running hosts pick up a change to the code only after a restart, and a change to
 
 ## Fleet dreaming (config/dream.json)
 
-`bin/fm-dream.sh run` is the fleet's nightly pass over its own day, and `bin/fm-dream.sh install-service` schedules it as a launchd agent at 04:15 on the main home's Mac.
-It reads the last 24 hours of local deck sessions, captain-direct messages, failed no-mistakes runs, revives, restarts, the idle sweep and the fleet report into a private digest under `state/dream/`.
-From that digest a deck agent improves the skills in `~/dotfiles/skills` (skills/ only, size-capped, secret-scanned, pushed to main), and a second one proposes harness fixes; at most three, deduplicated against open tasks, open PRs and recent dreaming items and scored by Jev when the wake gate's key is configured, are filed as queued tasks and handed to their owning mates.
+`bin/fm-dream.sh` is the fleet's optional nightly pass over its own day; its [header](../bin/fm-dream.sh) owns running, inspecting, scheduling and uninstalling the service.
+It collects a private digest, improves shared skills, and proposes harness fixes as tasks for the owning mates.
 Dreaming never pushes to or opens PRs on harness repositories; the mates' own no-mistakes and autoland rules decide what lands.
-`config/dream.json` is optional: `owners` maps a repository name to the mate that receives its items (the main home otherwise), `exclude_homes` keeps named mates' sessions out of the digest, and `model` picks the deck model (the primary's otherwise).
-The last run's summary is the `dream` field of `bin/fm-report.sh fleet --json` and the report's "Overnight" section.
-`bin/fm_dream.py`'s header owns the steps, budgets, guards and files; [`tests/fm-dream.test.sh`](../tests/fm-dream.test.sh) exercises them offline.
+[`bin/fm_dream.py`](../bin/fm_dream.py)'s header owns the sources, steps, budgets, guards and private files; [`tests/fm-dream.test.sh`](../tests/fm-dream.test.sh) exercises them offline.
+
+This section owns `config/dream.json`, a gitignored, per-home JSON object whose fields are all optional.
+An absent file means `{}`; an unreadable, malformed or mistyped configuration stops the run rather than silently dropping privacy exclusions.
+
+- `owners`: an object mapping backlog project names to nonempty mate-id strings, or `primary` for the main home; an unmapped project stays in the main home.
+  Use `cli-proxy-native` for proxai's backlog project.
+- `repos`: an object mapping those project names to GitHub `owner/name` strings, or `null` when no GitHub repository is configured.
+  A nonempty object replaces, rather than extends, the built-in mapping; absent or empty uses `DEFAULT_REPOS` in [`bin/fm_dream.py`](../bin/fm_dream.py).
+  It selects the harness proposals and open-PR reads, and the GitHub remotes used to recognize fleet no-mistakes runs outside included homes.
+  A null entry has no open-PR read or remote match.
+- `exclude_homes`: a list of nonempty mate-id strings, empty by default.
+  Excluded homes' sessions and workers stay out of the digest, as do messages, commands, errors, log lines and fleet-report rows naming them by id or registered path, checked before truncation; their paths also exclude no-mistakes runs.
+  Their backlogs are omitted from triage's open-work reads.
+  An unparsable registry entry stops a run with exclusions because the private homes cannot be reliably identified.
+- `model`: a string selecting the deck model; absent or empty uses the primary chat's recorded model, then the runner's `DEFAULT_MODEL`.
+
+The fleet and primary reports expose the last published run through `dream` and the markdown "Overnight" section; [`bin/fm_report.py`](../bin/fm_report.py)'s header owns that projection and its time window.
 
 ## Possible-ask ranking (config/ask-triage-key-var)
 
