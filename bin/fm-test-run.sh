@@ -727,6 +727,7 @@ tests/fm-remote-entrypoint.test.sh 521
 tests/fm-remote-home-migration.test.sh 176055
 tests/fm-remote-job-orphan-reap.test.sh 3437
 tests/fm-remote-job.test.sh 67836
+tests/fm-reply-log-guard.test.sh 1600
 tests/fm-remote-reply.test.sh 82927
 tests/fm-remote-secondmate-lifecycle-e2e.test.sh 405325
 tests/fm-remote-secondmate-parent-binding.test.sh 53559
