@@ -2,7 +2,7 @@
 # Remote-secondmate reply adapter for the generic process-event runner.
 #
 # Usage:
-#   fm-procevent-remote-reply.sh arm <secondmate-id>
+#   fm-procevent-remote-reply.sh arm <secondmate-id> [--lift-stop]
 #   fm-procevent-remote-reply.sh handle <secondmate-id> <sequence> <result-file>
 #   fm-procevent-remote-reply.sh autohandle <source-id> <sequence> <result-file>
 #   fm-procevent-remote-reply.sh classify <result-file>
@@ -16,7 +16,18 @@
 # capture, publication, and one machine-wide source owner. Each captured delta is
 # terminal for that exact registration; `handle` validates and idempotently
 # ingests it, acknowledges the captured generation, then registers the next
-# cursor-anchored source. A continuity break is escalated and not re-armed.
+# cursor-anchored source. Recovery requires reason truncated or prefix-changed,
+# from_offset > 0, no recorded stop, and budget remaining. It records an ingest
+# receipt, resets to offset 0 plus the empty-prefix hash, and re-arms for replay.
+# FM_REMOTE_REPLY_RECOVERY_LIMIT defaults to 3 recoveries per mate per rolling
+# hour; charges in state/remote-replies/<id>.recoveries are capture-sequence keyed
+# so retries of one break do not consume another charge.
+# Every other break escalates at most once per exact status line and atomically
+# records its sequence in state/remote-replies/<id>.stopped, never decreasing it.
+# A stop-write failure leaves the capture unacknowledged. All registration paths
+# honor the stop; after inspection, only `arm <id> --lift-stop` clears it.
+# Lifting a stop does not reset the cursor or budget. Retirement clears the stop
+# and budget records along with the cursor and ingest receipts.
 #
 # `autohandle` is the runner's own entry into that same `handle`: it takes the
 # canonical source id instead of the secondmate id and is called by the runner
@@ -228,6 +239,12 @@ cmd_arm_locked() {
   local id=${1:-} sid
   validate_id "$id"
   remote_route_exists "$id"
+  # Every registration path (startup convergence, spawn, teardown, the
+  # handler) honors a recorded continuity stop; cmd_arm --lift-stop lifts it.
+  if [ "$(stopped_seq "$id")" -ge 0 ]; then
+    printf 'stopped: %s (a continuity escalation stopped it; inspect, then arm %s --lift-stop)\n' "$id" "$id"
+    return 0
+  fi
   read_cursor "$id"
   sid=$(source_id "$id")
   "$SCRIPT_DIR/fm-procevent.sh" register remote-reply "$sid" -- \
@@ -236,12 +253,17 @@ cmd_arm_locked() {
 }
 
 cmd_arm() {
-  local id=${1:-} lock
+  local id=${1:-} lift=${2:-} lock
   validate_id "$id"
   lock=$(secondmate_reply_lifecycle_lock_path "$STATE" "$id")
   (
     fm_lock_acquire_wait "$lock" || die "cannot lock remote reply lifecycle for $id"
     trap 'fm_lock_release "$lock"' EXIT
+    # A stop a continuity escalation recorded holds against automatic arming
+    # (startup convergence, spawn); only an operator's --lift-stop clears it.
+    if [ "$lift" = --lift-stop ]; then
+      rm -f -- "$CURSOR_DIR/$id.stopped" || die "cannot lift the recorded stop for $id"
+    fi
     cmd_arm_locked "$id"
   )
 }
@@ -315,6 +337,35 @@ normalize_payload() { # <source> <destination>
   LC_ALL=C tr '\000-\010\013-\037\177' '?' < "$1" > "$2"
 }
 
+# At most CONTINUITY_RECOVERY_LIMIT replays per hour per mate; the attempts are
+# recorded beside the cursor.
+CONTINUITY_RECOVERY_LIMIT=${FM_REMOTE_REPLY_RECOVERY_LIMIT:-3}
+# The capture sequence an escalated break stopped the source at, or -1. While a
+# stop is recorded nothing recovers or re-arms the source; only an operator's
+# arm --lift-stop lifts it.
+stopped_seq() { # <id>
+  local v
+  v=$(cat "$CURSOR_DIR/$1.stopped" 2>/dev/null || true)
+  case "$v" in ''|*[!0-9]*) printf '%s\n' -1 ;; *) printf '%s\n' "$v" ;; esac
+}
+
+# Each charge is keyed to the break's capture sequence, so retrying the same
+# break never charges the budget twice.
+continuity_recovery_allowed() { # <id> <seq>
+  local file now recent=0 t s
+  file="$CURSOR_DIR/$1.recoveries"
+  now=$(date +%s)
+  if [ -f "$file" ] && [ ! -L "$file" ]; then
+    while read -r t s; do
+      case "$t" in ''|*[!0-9]*) continue ;; esac
+      [ -z "$2" ] || [ "$s" != "$2" ] || return 0
+      [ $((now - t)) -ge 3600 ] || recent=$((recent + 1))
+    done < "$file"
+  fi
+  [ "$recent" -lt "$CONTINUITY_RECOVERY_LIMIT" ] || return 1
+  mkdir -p "$CURSOR_DIR" && printf '%s %s\n' "$now" "$2" >> "$file"
+}
+
 # The one place a line enters the parent status stream. A captured generation can
 # be replayed, so every append - a mirrored line or an escalation this adapter
 # raises itself - is at most once on exact bytes.
@@ -328,7 +379,7 @@ append_status_once() { # <status-file> <line>
 cmd_ingest() {
   local id=${1:-} result=${2:-} seq=${3:-} class blank payload normalized_payload schema status path from to from_hash to_hash payload_hash payload_bytes reason
   local actual_bytes actual_hash line doc local_doc rewritten appended=0 cursor_already=0 lock status_file tmp
-  local fetch_rc append_rc undelivered=''
+  local fetch_rc append_rc undelivered='' expected
   validate_id "$id"
   [ -f "$result" ] && [ ! -L "$result" ] || die "result file is unavailable or unsafe: $result"
   class=$(classify_result "$result")
@@ -373,11 +424,50 @@ cmd_ingest() {
     die "result does not continue the current cursor for $id"
   fi
   if [ "$class" = continuity-broken ]; then
+    # The mate rewrote its reply log in place (it is meant to be append-only,
+    # and bin/fm-reply-log-guard.py refuses the usual ways). Every mirrored
+    # line is appended at most once, so replaying the log from the start
+    # delivers exactly the lines this home has not seen. That recovery is
+    # bounded: a log that keeps breaking is escalated and left stopped.
+    # Only a rewrite of a log this home had already read part of is replayed;
+    # a break at the very start (an oversized line) would just recur.
+    if [ "$(stopped_seq "$id")" -lt 0 ] \
+      && { [ "$reason" = truncated ] || [ "$reason" = prefix-changed ]; } \
+      && [ "$from" -gt 0 ] && continuity_recovery_allowed "$id" "$seq"; then
+      # The receipt comes first and marks this break as recovered, so a
+      # handle retried after any later failure finishes the reset and re-arm
+      # (cmd_handle_locked) instead of refusing the moved cursor.
+      if [ -n "$seq" ]; then
+        write_ingest_receipt "$id" "$seq" "$result" \
+          || { fm_lock_release "$lock"; die "cannot commit remote reply recovery receipt"; }
+      fi
+      write_cursor "$id" 0 "$(empty_hash)" \
+        || { fm_lock_release "$lock"; die "cannot reset remote reply cursor for $id"; }
+      fm_lock_release "$lock"
+      trap - EXIT
+      rm -rf -- "$tmp"
+      printf 'continuity-recovered: %s (%s); replaying from the start\n' "$id" "$reason"
+      return 4
+    fi
+    # Record which capture stopped the source, so a stale retry of an earlier
+    # recovery cannot re-arm past this stop.
+    if [ -n "$seq" ] && [ "$seq" -gt "$(stopped_seq "$id")" ]; then
+      # Published atomically and required: an unrecorded stop could be undone
+      # by a later retry, so the capture is not acknowledged without it.
+      if ! { mkdir -p "$CURSOR_DIR" && printf '%s\n' "$seq" > "$CURSOR_DIR/.$id.stopped.$$" \
+        && mv -f -- "$CURSOR_DIR/.$id.stopped.$$" "$CURSOR_DIR/$id.stopped"; }; then
+        rm -f -- "$CURSOR_DIR/.$id.stopped.$$"
+        fm_lock_release "$lock"
+        die "cannot record the continuity stop for $id"
+      fi
+    fi
     line="blocked [key=remote-reply-continuity-$id]: remote reply continuity broke for $id ($reason)"
     append_rc=0
     append_status_once "$status_file" "$line" || append_rc=$?
     [ "$append_rc" -ne 2 ] || { fm_lock_release "$lock"; die "cannot append continuity escalation"; }
     fm_lock_release "$lock"
+    trap - EXIT
+    rm -rf -- "$tmp"
     printf 'continuity-broken: %s (%s)\n' "$id" "$reason"
     return 3
   fi
@@ -398,6 +488,16 @@ cmd_ingest() {
       esac
     fi
     rewritten=$line
+    # A replayed line already mirrored (with its document pointers already
+    # rewritten to their local copies) is skipped before any fetch.
+    expected=$line
+    while IFS= read -r doc; do
+      [ -n "$doc" ] || continue
+      expected=${expected//"$doc"/"data/remote-secondmates/$id/$doc"}
+    done < <(printf '%s\n' "$line" | grep -Eo 'data/[A-Za-z0-9._/-]+\.md' | awk '!seen[$0]++')
+    if [ "$expected" != "$line" ] && grep -Fqx -- "$expected" "$status_file" 2>/dev/null; then
+      continue
+    fi
     while IFS= read -r doc; do
       [ -n "$doc" ] || continue
       fetch_rc=0
@@ -445,7 +545,7 @@ cmd_ingest() {
 }
 
 cmd_handle_locked() {
-  local id=${1:-} seq=${2:-} result=${3:-} sid class rc=0 to
+  local id=${1:-} seq=${2:-} result=${3:-} sid class rc=0 to from from_hash
   validate_id "$id"
   case "$seq" in ''|*[!0-9]*) die "sequence must be a nonnegative integer" ;; esac
   sid=$(source_id "$id")
@@ -454,15 +554,32 @@ cmd_handle_locked() {
   if ingest_receipt_matches "$id" "$seq" "$result"; then
     to=$(result_field "$result" to_offset) || die "result end offset is ambiguous"
     printf 'ingested: %s appended=0 offset=%s\n' "$id" "$to"
+    # Only a recovered break leaves a receipt. Finish its reset and re-arm only
+    # while the cursor is still where that break left it (its start, or the
+    # reset itself); a cursor that has since moved on belongs to later
+    # progress or a later break and is left alone.
+    if [ "$class" = continuity-broken ] && [ "$(stopped_seq "$id")" -lt 0 ]; then
+      read_cursor "$id"
+      from=$(result_field "$result" from_offset) || die "result start offset is ambiguous"
+      from_hash=$(result_field "$result" from_prefix_sha256) || die "result start hash is ambiguous"
+      if [ "$CURSOR_OFFSET" -eq "$from" ] && [ "$CURSOR_HASH" = "$(printf '%s' "$from_hash" | tr 'A-F' 'a-f')" ]; then
+        write_cursor "$id" 0 "$(empty_hash)" || die "cannot reset remote reply cursor for $id"
+        rc=4
+      elif [ "$CURSOR_OFFSET" -eq 0 ] && [ "$CURSOR_HASH" = "$(empty_hash)" ]; then
+        rc=4
+      fi
+    fi
   else
     cmd_ingest "$id" "$result" "$seq" || rc=$?
   fi
-  if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ] && [ "$rc" -ne 4 ]; then
     return "$rc"
   fi
-  if [ "$class" = delta ]; then
+  # A recorded stop holds against every retry; only cmd_arm lifts it.
+  if { [ "$class" = delta ] || [ "$rc" -eq 4 ]; } && [ "$(stopped_seq "$id")" -lt 0 ]; then
     cmd_arm_locked "$id" || return 1
   fi
+  [ "$rc" -ne 4 ] || rc=0
   "$SCRIPT_DIR/fm-procevent.sh" handled "$sid" "$seq" || return 1
   return "$rc"
 }
@@ -549,7 +666,7 @@ cmd_retire_finalize_locked() {
     fi
   fi
   rm -f -- "$(cursor_path "$id")"
-  rm -f -- "$CURSOR_DIR/$id".*.ingested
+  rm -f -- "$CURSOR_DIR/$id".*.ingested "$CURSOR_DIR/$id.stopped" "$CURSOR_DIR/$id.recoveries"
   rm -f -- "$(fm_pending_reply_remote_channel_watermark_path "$STATE" "$id")"
 }
 
@@ -579,7 +696,7 @@ require_parent_lifecycle_lock() {
 }
 
 case "${1:-}" in
-  arm) shift; [ "$#" -eq 1 ] || usage; cmd_arm "$@" ;;
+  arm) shift; [ "$#" -eq 1 ] || { [ "$#" -eq 2 ] && [ "$2" = --lift-stop ]; } || usage; cmd_arm "$@" ;;
   arm-locked) shift; [ "$#" -eq 1 ] || usage; require_parent_lifecycle_lock "$1"; cmd_arm_locked "$@" ;;
   source) shift; [ "$#" -eq 1 ] || usage; cmd_source "$@" ;;
   handle) shift; [ "$#" -eq 3 ] || usage; cmd_handle "$@" ;;

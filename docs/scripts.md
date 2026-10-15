@@ -71,6 +71,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | [`fm-ui-host-control.py`](../bin/fm-ui-host-control.py) | Route private UI actions and expose browser-safe `targets` discovery ([stream-backend.md](stream-backend.md#private-host-control-routing)) |
 | [`fm-deck-chat.sh`](../bin/fm-deck-chat.sh) | Host primary-home Deck chats and their keepers ([role responsibilities](../bin/fm_primary_chat.py)) |
 | [`fm-deck-worker.sh`](../bin/fm-deck-worker.sh) | Endpoint-resident crewmate or secondmate driver (`--secondmate`); its header owns split captain-lane hosting |
+| [`fm-reply-log-guard.py`](../bin/fm-reply-log-guard.py) | Best-effort Deck pre-tool guard against rewriting secondmate reply logs |
 | `fm-deck-stop.py`        | Stop the local Deck drivers of one exact task at a lifecycle boundary |
 | `fm_stream_deck.py`      | Apply stream hub orders to a Deck worker's durable task inbox |
 | `fm_model_switch.py`     | Checks and live publication for `fm-control.sh <task> model`, the in-place Deck model switch |

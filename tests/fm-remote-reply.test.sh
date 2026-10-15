@@ -494,30 +494,47 @@ assert_grep "offset=$replay_offset" "$PARENT/state/remote-replies/ios.cursor" \
   "the recapture did not rebuild the lost cursor"
 pass "a cursor-loss whole-log recapture is acknowledged quietly with no duplicate wake"
 
-# The adapter re-armed at the committed cursor. Truncation is detected from the
-# next blocking source and escalated once; it is never silently treated as a new
-# log or re-armed past the break.
-printf 'failed [corr=fedcba9876543210]: source was replaced\n' > "$REMOTE/state/parent-replies.status"
-remote_env "$ROOT/bin/fm-procevent.sh" start "$SID" > "$TMP_ROOT/start-two.out" 2>&1 &
-RUNNER=$!
-wait "$RUNNER" || fail "continuity break was not captured as a structured result"
+# The adapter re-armed at the committed cursor. A mate that rewrites its reply
+# log in place breaks that cursor; the break is recovered by replaying the log
+# from the start, which delivers exactly the lines this home has not mirrored.
+cp "$PARENT/state/ios.status" "$TMP_ROOT/ios-status-before-rewrite"
+{ cat "$REMOTE/state/parent-replies.status"; printf 'done [corr=fedcba9876543210]: written after an in-place edit\n'; } \
+  | sed '1s/^/edited /' > "$TMP_ROOT/rewritten" && mv "$TMP_ROOT/rewritten" "$REMOTE/state/parent-replies.status"
+remote_env "$ROOT/bin/fm-procevent.sh" start "$SID" > "$TMP_ROOT/start-two.out" 2>&1 \
+  || fail "continuity break was not captured as a structured result"
 RESULT_TWELVE=$(find "$PARENT/state/procevent-inbox" -name "$SID.12.result" -print -quit)
 [ -n "$RESULT_TWELVE" ] || fail "continuity break produced no durable result"
 [ "$(remote_env "$ADAPTER" classify "$RESULT_TWELVE")" = continuity-broken ] \
-  || fail "truncated source was not classified as a continuity break"
-set +e
-remote_env "$ADAPTER" handle ios 12 "$RESULT_TWELVE" > "$TMP_ROOT/handle-nine.out" 2>&1
-handle_rc=$?
-set -e
-[ "$handle_rc" -eq 3 ] || fail "continuity handling returned an unexpected status: $handle_rc"
-assert_grep 'blocked [key=remote-reply-continuity-ios]' "$PARENT/state/ios.status" "continuity break did not escalate"
-assert_absent "$PARENT/state/procevent/$SID.source" "continuity break was re-armed without an operator rebase"
-remote_env "$ADAPTER" ingest ios "$RESULT_TWELVE" >/dev/null 2>&1 || true
-[ "$(grep -cF 'blocked [key=remote-reply-continuity-ios]' "$PARENT/state/ios.status")" -eq 1 ] \
-  || fail "continuity replay duplicated the escalation"
-pass "truncation is detected, escalated once, and not silently rebased"
+  || fail "a rewritten source was not classified as a continuity break"
+assert_present "$PARENT/state/procevent-inbox/$SID.12.handled" "the continuity break was not handled"
+assert_present "$PARENT/state/procevent/$SID.source" "a recoverable continuity break was not re-armed"
+remote_env "$ROOT/bin/fm-procevent.sh" start "$SID" >/dev/null 2>&1 || fail "the replay was not captured"
+assert_present "$PARENT/state/procevent-inbox/$SID.13.handled" "the replay was not ingested"
+[ "$(grep -cF 'done [corr=fedcba9876543210]: written after an in-place edit' "$PARENT/state/ios.status")" -eq 1 ] \
+  || fail "the line written after the rewrite was not delivered exactly once"
+[ "$(grep -c '^edited ' "$PARENT/state/ios.status")" -eq 1 ] || fail "the edited line was not delivered exactly once"
+[ "$(wc -l < "$PARENT/state/ios.status")" -eq $(( $(wc -l < "$TMP_ROOT/ios-status-before-rewrite") + 2 )) ] \
+  || fail "the replay duplicated lines this home had already mirrored"
+assert_no_grep 'blocked [key=remote-reply-continuity-ios]' "$PARENT/state/ios.status" "a recovered break was escalated"
+pass "an in-place rewrite of the reply log is recovered by a replay that delivers only unseen lines"
 
-rm -f "$PARENT/state/procevent-inbox/$SID.12.handled"
+# A log that keeps breaking past its hourly recovery budget is escalated once and
+# left stopped rather than replayed forever.
+printf 'failed [corr=0123456789abcdef]: source was replaced\n' > "$REMOTE/state/parent-replies.status"
+FM_REMOTE_REPLY_RECOVERY_LIMIT=0 remote_env "$ROOT/bin/fm-procevent.sh" start "$SID" > "$TMP_ROOT/start-three.out" 2>&1 \
+  || fail "the second continuity break was not captured"
+RESULT_TWELVE=$(find "$PARENT/state/procevent-inbox" -name "$SID.14.result" -print -quit)
+[ -n "$RESULT_TWELVE" ] || fail "the second continuity break produced no durable result"
+assert_grep 'blocked [key=remote-reply-continuity-ios]' "$PARENT/state/ios.status" "an exhausted recovery budget did not escalate"
+assert_absent "$PARENT/state/procevent/$SID.source" "a break past the recovery budget was re-armed"
+[ "$(grep -cF 'blocked [key=remote-reply-continuity-ios]' "$PARENT/state/ios.status")" -eq 1 ] \
+  || fail "continuity handling duplicated the escalation"
+out=$(remote_env "$ADAPTER" arm ios 2>&1) || fail "arming a stopped reply source failed: $out"
+assert_contains "$out" "stopped: ios" "automatic arming did not report the recorded stop"
+assert_absent "$PARENT/state/procevent/$SID.source" "automatic arming lifted a recorded continuity stop"
+pass "a reply log that keeps breaking is escalated once and not rebased past its budget"
+
+rm -f "$PARENT/state/procevent-inbox/$SID.14.handled"
 if remote_env "$ADAPTER" retire ios > "$TMP_ROOT/retire-pending.out" 2>&1; then
   fail "remote reply retirement accepted an unhandled captured result"
 fi
@@ -525,7 +542,7 @@ assert_grep 'unhandled captured result' "$TMP_ROOT/retire-pending.out" \
   "remote reply retirement did not explain its pending-result refusal"
 assert_absent "$PARENT/state/procevent/$SID.source" \
   "refused retirement left the reply source running past its pending-result check"
-remote_env "$ADAPTER" handle ios 12 "$RESULT_TWELVE" >/dev/null 2>&1 || [ "$?" -eq 3 ] \
+FM_REMOTE_REPLY_RECOVERY_LIMIT=0 remote_env "$ADAPTER" handle ios 14 "$RESULT_TWELVE" >/dev/null 2>&1 || [ "$?" -eq 3 ] \
   || fail "pending continuity result could not be acknowledged after retirement refusal"
 remote_env "$ADAPTER" retire ios >/dev/null
 assert_absent "$PARENT/state/remote-replies/ios.cursor" "adapter retirement left its cursor"

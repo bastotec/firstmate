@@ -307,8 +307,14 @@ A referenced document the confined reader permanently refuses is mirrored with i
 Because a remote reply reaches the primary only through this asynchronous mirror, the primary treats a missing correlated report as a missed report only once the mirror has been read through the end of the remote log after that turn ended.
 A remote mate that did answer is therefore never asked to repost while its answer is still in flight, and a genuinely missing answer still gets exactly one repost once the mirror is known to be current.
 The [process-to-event operating contract](process-event-sources.md) owns automatic application, one-announcement replay deduplication, and the unhandled fallback path.
-The source log is never truncated or consumed.
-A shortened or changed prefix stops the relay and surfaces a continuity failure instead of silently resetting the cursor.
+The relay never truncates or consumes the source log, and mates must append corrections rather than edit old replies.
+The [reply-log guard](../bin/fm-reply-log-guard.py) blocks common rewrite tool calls on Deck secondmate supervisor turns, but shell-text matching is best effort, not a security boundary.
+The mirror's bounded recovery handles rewrites that escape that guard: it replays a previously read log from the start, skips already-mirrored lines, and delivers changed or new lines still present in the log.
+A replayed report whose locally rewritten form is already mirrored needs no document fetch.
+Other continuity breaks, or repeated rewrites beyond the recovery budget, escalate once and leave a durable stop that automatic startup or relaunch cannot lift.
+Inspect the break before deliberately lifting the stop; the [adapter header](../bin/fm-procevent-remote-reply.sh) owns recovery eligibility, the budget setting, and the operator command.
+Recovery cannot restore bytes lost from the remote log.
+[`tests/fm-remote-reply.test.sh`](../tests/fm-remote-reply.test.sh) covers rewrite replay and exhausted-budget stopping; [`tests/fm-reply-log-guard.test.sh`](../tests/fm-reply-log-guard.test.sh) and the secondmate wiring case in [`tests/fm-deck-harness.test.sh`](../tests/fm-deck-harness.test.sh) cover the guard.
 
 An SSH exit status of 255 always means transport failure or unknown remote completion.
 The underlying `fm-on` transport never retries automatically, but `fm-send` retries its correlation-preserving steering-inbox leg exactly once.

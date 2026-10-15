@@ -1423,7 +1423,9 @@ with (home / 'turns').open('a') as f:
                         'model': args[args.index('--model') + 1] if '--model' in args else None,
                         'no_project_context': '--no-project-context' in args,
                         'mcp_config_arguments': [args[i + 1] for i, arg in enumerate(args)
-                                                 if arg == '--mcp-config']}) + '\n')
+                                                 if arg == '--mcp-config'],
+                        'pre_tool_hooks': [args[i + 1].split('=', 1)[1] for i, arg in enumerate(args)
+                                           if arg == '--hook' and args[i + 1].startswith('pre_tool_use=')]}) + '\n')
 for record in records:
     record.rename(inbox / 'handled' / record.name)
 if not (home / 'no-session').exists():
@@ -2145,6 +2147,47 @@ with (root/'pane').open('w') as output:
 PYTHON
   done
   pass "Deck watcher backoff yields to Ctrl+C and queued /quit during a long tool"
+}
+
+# A second mate's Deck turns carry the reply-log guard as a pre_tool_use hook,
+# bound to its own parent-replies.status and parent status file, so a turn that
+# tries to rewrite either is refused.
+test_secondmate_turns_guard_the_reply_logs() {
+  local dir="$TMP_ROOT/host-reply-guard"
+  make_secondmate_host_fixture "$dir"
+  python3 - "$dir" <<'PYTHON' || fail "Deck secondmate turns did not guard the reply logs"
+import json, os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1]); home = root / 'home'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+       str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'),
+       '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+def rows():
+    path = home/'turns'
+    return [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+with (root/'pane').open('w') as output:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+                         env=env, text=True, start_new_session=True)
+    try:
+        deadline = time.monotonic() + 60
+        while not rows() and time.monotonic() < deadline:
+            time.sleep(.1)
+        hooks = rows()[0]['pre_tool_hooks']
+        assert len(hooks) == 1 and 'fm-reply-log-guard.py' in hooks[0], hooks
+        def run(event):
+            return subprocess.run(['bash', '-c', hooks[0]], input=json.dumps(event), text=True,
+                                  capture_output=True).returncode
+        assert run({'tool_name': 'edit_file', 'args': {'path': str(home/'state/parent-replies.status')}}) == 2
+        assert run({'tool_name': 'run_command', 'args': {'command': 'sed -i s/a/b/ ' + str(root/'parent/host.status')}}) == 2
+        assert run({'tool_name': 'run_command', 'args': {'command': 'echo done: ok >> state/parent-replies.status'}}) == 0
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        assert p.wait(timeout=60) == 0
+    finally:
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGKILL); p.wait()
+PYTHON
+  pass "Deck secondmate turns guard the reply logs against in-place edits"
 }
 
 test_secondmate_mcp_config_on_startup_steer_and_wake() {
@@ -3298,6 +3341,7 @@ test_secondmate_host_survives_an_unconfirmed_successor_watcher
 test_secondmate_host_retains_failed_successor_start_evidence
 test_secondmate_host_survives_a_failed_watcher_and_resumes_its_session
 test_secondmate_watcher_backoff_keeps_turn_stop_responsive
+test_secondmate_turns_guard_the_reply_logs
 test_secondmate_mcp_config_on_startup_steer_and_wake
 test_secondmate_queued_exit_behind_composer_clears_beats_watcher_turn
 test_secondmate_survives_a_failed_turn
