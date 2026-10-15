@@ -204,7 +204,7 @@ class Ctx:
                                 **{k: v for k, v in kw.items() if k in ('cwd', 'env', 'text')})
         try:
             out, err = proc.communicate(kw.get('input'), timeout=limit)
-        except subprocess.TimeoutExpired:
+        except BaseException:  # a timeout, or Ctrl+C on a supervised run: never leave the group behind
             try:
                 os.killpg(proc.pid, 9)
             except OSError:
@@ -434,6 +434,9 @@ def local_sessions(ctx):
         path = Path(f)
         if path in bound or path.stat().st_mtime < ctx.since:
             continue
+        if read_json(path) is None:
+            UNREADABLE.append(path.name)  # cannot tell whether it was a worker's
+            continue
         brief = first_user_text(path)
         # A worker's brief names its inbox, <home>/state/<task>.inbox: only workers
         # of this home or an included local home count, never another FM_HOME's.
@@ -469,8 +472,9 @@ def tail_since(path, since, limit=80, hide=lambda line: False):
 def no_mistakes_runs(since, fleet_paths, harness, private_paths=()):
     """Failed or cancelled no-mistakes runs that ended (last changed) in the window,
     only for repositories that are the fleet's own: inside the main home or an
-    included local home, or a harness repository by name. Anything else (an
-    excluded mate's project among them) never reaches the digest."""
+    included local home, or whose GitHub remote is a harness repository (owner/
+    name). Anything else (an excluded mate's project, a same-named client repo)
+    never reaches the digest."""
     db = Path(os.environ.get('FM_DREAM_NO_MISTAKES_DB') or os.path.expanduser('~/.no-mistakes/state.sqlite'))
     if not db.is_file():
         return [], None
@@ -480,8 +484,10 @@ def no_mistakes_runs(since, fleet_paths, harness, private_paths=()):
         repo_cols = {r[1] for r in con.execute('PRAGMA table_info(repos)')}
         when = 'updated_at' if 'updated_at' in cols else 'created_at'
         pick = [c for c in ('id', 'status', 'branch', 'error', 'pr_url', 'worktree_dir') if c in cols]
-        path = ', repos.working_path' if 'working_path' in repo_cols and 'repo_id' in cols else ", ''"
-        join = ' LEFT JOIN repos ON repos.id = runs.repo_id' if path != ", ''" else ''
+        path = (', repos.working_path, ' + ("COALESCE(repos.upstream_url, '') || ' ' || COALESCE(repos.fork_url, '')"
+                                           if {'upstream_url', 'fork_url'} <= repo_cols else "''")
+                if 'working_path' in repo_cols and 'repo_id' in cols else ", '', ''")
+        join = ' LEFT JOIN repos ON repos.id = runs.repo_id' if path != ", '', ''" else ''
         rows = con.execute('SELECT %s, runs.%s%s FROM runs%s WHERE runs.status IN (\'failed\', \'cancelled\') '
                            'ORDER BY runs.%s DESC LIMIT 400' % (', '.join('runs.' + c for c in pick), when, path,
                                                                  join, when)).fetchall()
@@ -490,15 +496,16 @@ def no_mistakes_runs(since, fleet_paths, harness, private_paths=()):
         return [], 'no-mistakes state unreadable (%s)' % e
     out = []
     for row in rows:
-        r = dict(zip(pick + ['when', 'repo_path'], row))
+        r = dict(zip(pick + ['when', 'repo_path', 'repo_urls'], row))
         stamp = r['when'] / (1000 if r['when'] and r['when'] > 1e12 else 1) if isinstance(r['when'], (int, float)) \
             else parse_iso(r['when']) or 0
         repo = str(r.get('repo_path') or '')
         places = [repo, str(r.get('worktree_dir') or '')]
         if any(place == p or place.startswith(p.rstrip('/') + '/') for p in private_paths for place in places if p):
             continue
+        urls = str(r.pop('repo_urls', '') or '')
         ours = any(repo == p or repo.startswith(p.rstrip('/') + '/') for p in fleet_paths) \
-            or os.path.basename(repo) in harness
+            or any(re.search(r'[/:]%s(\.git)?(\s|$)' % re.escape(slug), urls) for slug in harness)
         if stamp >= since and ours and not any(n in json.dumps(r, ensure_ascii=False, default=str) for n in private_names() + list(private_paths)):
             out.append(r)
     return out, None
@@ -539,12 +546,21 @@ def step_collect(ctx):
     sessions = local_sessions(ctx)
     for label, path in sessions:
         parts += session_lines(path, ctx.since, slow, label, lambda line: mentions_excluded(ctx, line))
-    captain = tail_since(ctx.state / 'captain-direct.log', ctx.since, hide=lambda l: mentions_excluded(ctx, l))
+    captain = []
+    for line in tail_since(ctx.state / 'captain-direct.log', ctx.since, hide=lambda l: mentions_excluded(ctx, l)):
+        corr = re.search(r'corr=([0-9a-f]+)', line)
+        try:
+            body = (ctx.state / 'captain-direct' / (corr.group(1) + '.text')).read_text(errors='replace') if corr else ''
+        except OSError:
+            body = ''
+        body = ' '.join(body.split())
+        if not mentions_excluded(ctx, body):
+            captain.append('%s: %s' % (line[:120], body[:500]) if body else line)
     if captain:
         parts += ['## Captain-direct messages', *captain, '']
     fleet_paths = [str(ctx.home)] + [h for mid, h, host in registry(ctx.home)
                                      if h and not host and mid not in ctx.excluded]
-    harness = set(ctx.config.get('repos') or DEFAULT_REPOS) | {'proxai'}
+    harness = {slug for slug in (ctx.config.get('repos') or DEFAULT_REPOS).values() if slug}
     PRIVATE_NAMES[:] = sorted(ctx.excluded | {m.replace('-', ' ') for m in ctx.excluded})
     private_paths = [h for mid, h, host in registry(ctx.home) if mid in ctx.excluded and h]
     nm, nm_err = no_mistakes_runs(ctx.since, fleet_paths, harness, private_paths)

@@ -72,12 +72,19 @@ json.dump({"version": 1, "messages": [{"role": "user", "content": [{"type": "tex
 PY
   printf '{"exclude_homes": ["finn-finance"], "owners": {"deck": "dave-tools"}, "model": "stub/model"}\n' > "$d/home/config/dream.json"
   printf '%s\tcorr-1\tcaptain: please stop opening duplicate workers\n' $((NOW - 600)) > "$d/home/state/captain-direct.log"
-  sqlite3 "$d/nm.sqlite" "CREATE TABLE repos(id TEXT, working_path TEXT);
-    INSERT INTO repos VALUES('fleet','$d/home'); INSERT INTO repos VALUES('elsewhere','/somewhere/private-project');
+  printf '%s delivered corr=abc123 task=cadia\n' "$(iso $((NOW - 500)))" >> "$d/home/state/captain-direct.log"
+  mkdir -p "$d/home/state/captain-direct"; printf 'no, merge only on green\n' > "$d/home/state/captain-direct/abc123.text"
+  sqlite3 "$d/nm.sqlite" "CREATE TABLE repos(id TEXT, working_path TEXT, upstream_url TEXT, fork_url TEXT);
+    INSERT INTO repos VALUES('fleet','$d/home','https://github.com/x/fm',NULL);
+    INSERT INTO repos VALUES('elsewhere','/somewhere/private-project','https://github.com/x/private',NULL);
+    INSERT INTO repos VALUES('client','/clients/deck','https://github.com/client/deck',NULL);
+    INSERT INTO repos VALUES('harness','/anywhere/deck','https://github.com/kunchen/deck','https://github.com/bastotec/deck.git');
     CREATE TABLE runs(id TEXT, repo_id TEXT, status TEXT, branch TEXT, error TEXT, pr_url TEXT, created_at INTEGER, updated_at INTEGER);
     INSERT INTO runs VALUES('r1','fleet','failed','fm/x','lint step timed out','',$((NOW - 9 * 86400)),$((NOW - 7200)));
     INSERT INTO runs VALUES('r0','fleet','failed','fm/old','ancient','',$((NOW - 9 * 86400)),$((NOW - 9 * 86400)));
-    INSERT INTO runs VALUES('r2','elsewhere','failed','fm/p','PRIVATE PROJECT FAILURE','',$((NOW - 3600)),$((NOW - 3600)));"
+    INSERT INTO runs VALUES('r2','elsewhere','failed','fm/p','PRIVATE PROJECT FAILURE','',$((NOW - 3600)),$((NOW - 3600)));
+    INSERT INTO runs VALUES('r3','client','failed','x','CLIENT DECK FAILURE','',$((NOW - 3600)),$((NOW - 3600)));
+    INSERT INTO runs VALUES('r4','harness','failed','y','HARNESS DECK FAILURE','',$((NOW - 3600)),$((NOW - 3600)));"
   # dotfiles: a bare origin with one skill, and a local clone
   git init -q --bare "$d/origin.git"
   git clone -q "$d/origin.git" "$d/dotfiles" 2>/dev/null
@@ -182,6 +189,9 @@ test_collect_builds_a_private_digest_of_the_day() {
   grep -q 'please stop opening duplicate workers' "$digest" || fail "captain-direct line missing"
   grep -q 'lint step timed out' "$digest" || fail "a run created long ago but failed today is missing"
   grep -q 'PRIVATE PROJECT FAILURE' "$digest" && fail "a run outside the fleet's repositories reached the digest"
+  grep -q 'CLIENT DECK FAILURE' "$digest" && fail "a same-named client repository's run reached the digest"
+  grep -q 'HARNESS DECK FAILURE' "$digest" || fail "a harness repository's run (by its GitHub remote) is missing"
+  grep -q 'no, merge only on green' "$digest" || fail "a captain-direct message body is missing"
   grep -q 'ancient\|an old line' "$digest" && fail "lines older than a day leaked in"
   grep -q 'PRIVATE BANK LINE' "$digest" && fail "an excluded home reached the digest"
   grep -q 'PRIVATE WORKER LINE' "$digest" && fail "an excluded home's worker reached the digest"
