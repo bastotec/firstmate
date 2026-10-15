@@ -53,7 +53,7 @@ msgs = [
 json.dump({"version": 1, "messages": msgs}, open(root + "/p-1.json", "w"))
 json.dump({"version": 1, "messages": [{"role": "user", "content": [{"type": "text", "text": "PRIVATE BANK LINE"}], "at": recent}]},
           open(root + "/s-private.json", "w"))
-brief = lambda extra, h=home: {"role": "user", "content": [{"type": "text", "text": "FIRSTMATE_OP: v1 launch-brief\ntask: %s\ninbox: %s/state/%s.inbox" % (extra, h, extra)}], "at": recent}
+brief = lambda extra, h=home: {"role": "user", "content": [{"type": "text", "text": "FIRSTMATE_OP: v1 launch-brief\ntask: %s\nYour steering inbox is `%s/state/%s.inbox`; this exact path." % (extra, h, extra)}], "at": recent}
 json.dump({"version": 1, "messages": [brief("other-ship", "/elsewhere/firstmate"), {"role": "assistant", "content": [{"type": "text", "text": "ANOTHER HOME WORKER"}], "at": recent}]},
           open(root + "/w-3.json", "w"))
 quoting = brief("quoting-ship", "/elsewhere/firstmate")
@@ -240,6 +240,10 @@ test_a_malformed_config_stops_the_run() {
   grep -q 'exclude_homes must be a list' "$d/err" || fail "the refusal does not explain exclude_homes"
   printf '{"owners": {"deck": ["dave-tools"]}}\n' > "$d/home/config/dream.json"
   if run_dream "$d" > "$d/out.json" 2> "$d/err"; then fail "a list-valued owner did not stop the run"; fi
+  printf '{"exclude_homes": ["finn-finance"]}\n' > "$d/home/config/dream.json"
+  printf -- '- dave-tools\n' > "$d/home/data/secondmates.md"
+  if run_dream "$d" > "$d/out.json" 2> "$d/err"; then fail "an unparsable registry entry did not stop a run with exclusions"; fi
+  grep -q 'secondmates.md has an entry that cannot be parsed' "$d/err" || fail "the registry refusal is unclear: $(cat "$d/err")"
   [ -z "$(find "$d/home/state" -name 'digest-*' 2>/dev/null)" ] || fail "a digest was written without the exclusions"
   pass "a malformed or mistyped dream.json stops the run before anything is collected"
 }

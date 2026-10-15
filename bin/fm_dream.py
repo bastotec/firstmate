@@ -176,6 +176,10 @@ class Ctx:
         self.excluded = set(self.config.get('exclude_homes') or [])
         self.private_words = None
         self.deadline = None
+        registry(self.home)  # read once, before any step's budget starts
+        if REGISTRY_ERRORS and self.excluded:
+            raise ConfigError('data/secondmates.md has an entry that cannot be parsed, so excluded homes '
+                              'cannot be told apart; fix the registry first')
 
     def left(self):
         """Seconds left in the running step's budget; TimeoutExpired once it is spent."""
@@ -259,6 +263,18 @@ def room_for(step):
 # --- collect ----------------------------------------------------------------
 
 def registry(home):
+    """The registry, read once per run (Ctx caches it before any step starts)."""
+    if CACHE.get('registry_home') == str(home):
+        return CACHE['registry']
+    rows = read_registry(home)
+    CACHE.update(registry_home=str(home), registry=rows)
+    return rows
+
+
+CACHE = {}
+
+
+def read_registry(home):
     """[(id, home path or None, host or None)], read by fm_report.registry, which
     uses the registry's own parser (bin/fm-secondmate-registry-lib.sh)."""
     sys.path.insert(0, str(SCRIPT_DIR))
@@ -266,6 +282,16 @@ def registry(home):
     fm_report.REGISTRY_ERRORS.clear()
     rows = [(mid, row.get('home') or None, row.get('host') or None) for mid, row in fm_report.registry(home).items()]
     REGISTRY_ERRORS[:] = list(fm_report.REGISTRY_ERRORS)
+    # Any other "- " record the parser skipped silently is unparsable too.
+    known = {mid for mid, _, _ in rows}
+    try:
+        for line in (Path(home) / 'data' / 'secondmates.md').read_text(encoding='utf-8').splitlines():
+            if line.startswith('- ') and line[2:].split(' ', 1)[0] not in known:
+                REGISTRY_ERRORS.append('unparsable registry record')
+    except FileNotFoundError:
+        pass
+    except OSError:
+        REGISTRY_ERRORS.append('registry unreadable')
     return rows
 
 
@@ -400,7 +426,7 @@ def local_sessions(ctx):
         brief = first_user_text(path)
         # A worker's brief names its inbox, <home>/state/<task>.inbox: only workers
         # of this home or an included local home count, never another FM_HOME's.
-        inbox = re.search(r'(/[^\s"\']+?)/state/[A-Za-z0-9._-]+\.inbox\b', brief)
+        inbox = re.search(r'Your steering inbox is `([^`]+)/state/[^`/]+\.inbox`', brief)
         mine = bool(inbox) and inbox.group(1).rstrip('/') in {h.rstrip('/') for h in ours}
         if WORKER_BRIEF in brief and mine and not any(word in brief for word in private):
             m = re.search(r'task(?: id)?[:=] *([A-Za-z0-9._-]+)', brief)
@@ -462,7 +488,7 @@ def no_mistakes_runs(since, fleet_paths, harness, private_paths=()):
             continue
         ours = any(repo == p or repo.startswith(p.rstrip('/') + '/') for p in fleet_paths) \
             or os.path.basename(repo) in harness
-        if stamp >= since and ours and not any(n in json.dumps(r) for n in private_names()):
+        if stamp >= since and ours and not any(n in json.dumps(r) for n in private_names() + list(private_paths)):
             out.append(r)
     return out, None
 
@@ -561,6 +587,8 @@ def step_collect(ctx):
                            'idle_sweep': len(sweep), 'digest_chars': len(text)}
     unread = ['%s: %s' % (m.get('id'), m.get('freshness')) for m in (rep or {}).get('mates', [])
               if m.get('id') not in ctx.excluded and m.get('freshness') not in ('fresh', 'local', 'remote', None)]
+    unread += [g for g in (rep or {}).get('gaps', [])
+               if re.search(r'incomplete|unavailable|unreadable', g) and not mentions_excluded(ctx, g)][:3]
     if (rep or {}).get('power_error'):
         unread.append('power: %s' % rep['power_error'])
     if UNREADABLE:
