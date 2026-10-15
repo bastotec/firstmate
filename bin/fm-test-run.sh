@@ -325,7 +325,7 @@ family_for_basename() {
     fm-harness-precedence.test.sh|\
     fm-deck-harness.test.sh|fm-lint.test.sh|\
     fm-lint-workflows.test.sh|\
-    fm-operational-input.test.sh|\
+    fm-operational-input.test.sh|fm-reply-log-guard.test.sh|\
     fm-harness-adapter-references.test.sh|\
     fm-send-settle.test.sh|\
     fm-supervision-instructions.test.sh|fm-supervision-lib.test.sh|fm-task-delivery.test.sh|\

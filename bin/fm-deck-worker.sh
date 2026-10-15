@@ -671,7 +671,12 @@ else
 fi
 export FM_APPROVAL_AGENT="$ID"
 PRE_TOOL_HOOK=''
-if [ "$SECONDMATE" != 1 ] && [ "$(sed -n 's/^kind=//p' "$STATE/$ID.meta" 2>/dev/null | tail -1)" = ship ]; then
+if [ "$SECONDMATE" = 1 ]; then
+  # A second mate's reply logs are append-only: its first mate mirrors them
+  # line by line, and an in-place edit breaks that mirror. The guard refuses
+  # tool calls that rewrite them and tells the model to append a correction.
+  PRE_TOOL_HOOK="python3 $(q "$SCRIPT_DIR/fm-reply-log-guard.py") $(q "$FM_HOME/state/parent-replies.status") $(q "$STATUS_FILE")"
+elif [ "$(sed -n 's/^kind=//p' "$STATE/$ID.meta" 2>/dev/null | tail -1)" = ship ]; then
   PRE_TOOL_HOOK="hook_event=\$(cat); case \"\$hook_event\" in *no-mistakes*) $CREW_STATE_FOLLOW >/dev/null 2>&1 || true ;; esac"
   PROGRESS_HOOK="hook_event=\$(cat); $PROGRESS_HOOK; case \"\$hook_event\" in *no-mistakes*) $CREW_STATE_FOLLOW >/dev/null 2>&1 || true ;; esac"
 fi

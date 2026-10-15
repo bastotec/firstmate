@@ -16,7 +16,10 @@
 # capture, publication, and one machine-wide source owner. Each captured delta is
 # terminal for that exact registration; `handle` validates and idempotently
 # ingests it, acknowledges the captured generation, then registers the next
-# cursor-anchored source. A continuity break is escalated and not re-armed.
+# cursor-anchored source. A continuity break (the log was rewritten in place)
+# is recovered by replaying the log from the start, at most
+# FM_REMOTE_REPLY_RECOVERY_LIMIT (3) times an hour; past that it is escalated
+# and not re-armed.
 #
 # `autohandle` is the runner's own entry into that same `handle`: it takes the
 # canonical source id instead of the secondmate id and is called by the runner
@@ -319,6 +322,23 @@ normalize_payload() { # <source> <destination>
 # be replayed, so every append - a mirrored line or an escalation this adapter
 # raises itself - is at most once on exact bytes.
 # Returns 0 appended, 1 already present, 2 the write itself failed.
+# At most CONTINUITY_RECOVERY_LIMIT replays per hour per mate; the attempts are
+# recorded beside the cursor.
+CONTINUITY_RECOVERY_LIMIT=${FM_REMOTE_REPLY_RECOVERY_LIMIT:-3}
+continuity_recovery_allowed() { # <id>
+  local file now recent=0 t
+  file="$CURSOR_DIR/$1.recoveries"
+  now=$(date +%s)
+  if [ -f "$file" ] && [ ! -L "$file" ]; then
+    while IFS= read -r t; do
+      case "$t" in ''|*[!0-9]*) continue ;; esac
+      [ $((now - t)) -ge 3600 ] || recent=$((recent + 1))
+    done < "$file"
+  fi
+  [ "$recent" -lt "$CONTINUITY_RECOVERY_LIMIT" ] || return 1
+  mkdir -p "$CURSOR_DIR" && printf '%s\n' "$now" >> "$file"
+}
+
 append_status_once() { # <status-file> <line>
   grep -Fqx -- "$2" "$1" 2>/dev/null && return 1
   printf '%s\n' "$2" >> "$1" || return 2
@@ -328,7 +348,7 @@ append_status_once() { # <status-file> <line>
 cmd_ingest() {
   local id=${1:-} result=${2:-} seq=${3:-} class blank payload normalized_payload schema status path from to from_hash to_hash payload_hash payload_bytes reason
   local actual_bytes actual_hash line doc local_doc rewritten appended=0 cursor_already=0 lock status_file tmp
-  local fetch_rc append_rc undelivered=''
+  local fetch_rc append_rc undelivered='' expected
   validate_id "$id"
   [ -f "$result" ] && [ ! -L "$result" ] || die "result file is unavailable or unsafe: $result"
   class=$(classify_result "$result")
@@ -373,6 +393,18 @@ cmd_ingest() {
     die "result does not continue the current cursor for $id"
   fi
   if [ "$class" = continuity-broken ]; then
+    # The mate rewrote its reply log in place (it is meant to be append-only,
+    # and bin/fm-reply-log-guard.py refuses the usual ways). Every mirrored
+    # line is appended at most once, so replaying the log from the start
+    # delivers exactly the lines this home has not seen. That recovery is
+    # bounded: a log that keeps breaking is escalated and left stopped.
+    if continuity_recovery_allowed "$id"; then
+      write_cursor "$id" 0 "$(empty_hash)" \
+        || { fm_lock_release "$lock"; die "cannot reset remote reply cursor for $id"; }
+      fm_lock_release "$lock"
+      printf 'continuity-recovered: %s (%s); replaying from the start\n' "$id" "$reason"
+      return 4
+    fi
     line="blocked [key=remote-reply-continuity-$id]: remote reply continuity broke for $id ($reason)"
     append_rc=0
     append_status_once "$status_file" "$line" || append_rc=$?
@@ -398,6 +430,16 @@ cmd_ingest() {
       esac
     fi
     rewritten=$line
+    # A replayed line already mirrored (with its document pointers already
+    # rewritten to their local copies) is skipped before any fetch.
+    expected=$line
+    while IFS= read -r doc; do
+      [ -n "$doc" ] || continue
+      expected=${expected//"$doc"/"data/remote-secondmates/$id/$doc"}
+    done < <(printf '%s\n' "$line" | grep -Eo 'data/[A-Za-z0-9._/-]+\.md' | awk '!seen[$0]++')
+    if [ "$expected" != "$line" ] && grep -Fqx -- "$expected" "$status_file" 2>/dev/null; then
+      continue
+    fi
     while IFS= read -r doc; do
       [ -n "$doc" ] || continue
       fetch_rc=0
@@ -457,12 +499,13 @@ cmd_handle_locked() {
   else
     cmd_ingest "$id" "$result" "$seq" || rc=$?
   fi
-  if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ] && [ "$rc" -ne 4 ]; then
     return "$rc"
   fi
-  if [ "$class" = delta ]; then
+  if [ "$class" = delta ] || [ "$rc" -eq 4 ]; then
     cmd_arm_locked "$id" || return 1
   fi
+  [ "$rc" -ne 4 ] || rc=0
   "$SCRIPT_DIR/fm-procevent.sh" handled "$sid" "$seq" || return 1
   return "$rc"
 }
