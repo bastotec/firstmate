@@ -14,6 +14,10 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+# Dreaming commits outside new_case's command-substitution subshell, so its
+# identity must be exported by the parent test shell too.
+fm_git_identity
+
 command -v sqlite3 >/dev/null 2>&1 || { echo "skip: sqlite3 not found"; exit 0; }
 
 DREAM="$ROOT/bin/fm_dream.py"
@@ -88,7 +92,6 @@ PY
   # dotfiles: a bare origin with one skill, and a local clone
   git init -q --bare "$d/origin.git"
   git clone -q "$d/origin.git" "$d/dotfiles" 2>/dev/null
-  fm_git_identity "$d/dotfiles" 2>/dev/null || { git -C "$d/dotfiles" config user.email t@t; git -C "$d/dotfiles" config user.name t; }
   mkdir -p "$d/dotfiles/skills/merge"
   printf -- '---\nname: merge\ndescription: merging\n---\nUse gh.\n' > "$d/dotfiles/skills/merge/SKILL.md"
   git -C "$d/dotfiles" add -A && git -C "$d/dotfiles" commit -qm init && git -C "$d/dotfiles" push -q origin HEAD:main 2>/dev/null
@@ -216,7 +219,9 @@ test_collect_builds_a_private_digest_of_the_day() {
 test_skills_pushes_a_guarded_change_to_main() {
   local d
   d=$(new_case skills)
-  run_dream "$d" --only collect skills >/dev/null || fail "run exited nonzero"
+  run_dream "$d" --only collect skills > "$d/out.json" || fail "run exited nonzero"
+  jq -e '.steps.skills.status == "merged"' "$d/out.json" >/dev/null \
+    || fail "skills step did not merge: $(jq -c .steps.skills "$d/out.json")"
   git -C "$d/origin.git" log -1 --format=%s main | grep -q 'fleet dreaming' || fail "no dreaming commit on main"
   git -C "$d/origin.git" show main:skills/merge/SKILL.md | grep -q 'fm-pr-merge.sh' || fail "skill edit not pushed"
   [ -z "$(git -C "$d/dotfiles" worktree list | sed -n 2p)" ] || fail "the dreaming worktree was left behind"
