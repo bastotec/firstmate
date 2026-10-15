@@ -523,6 +523,9 @@ if [ "$DECISION_ANSWER" != 1 ] && { [ "$RAW_TARGET" = primary ] || [ "$RAW_TARGE
   esac
   chat_role=captain
   [ "$RAW_TARGET" = primary ] || chat_role=supervisor
+  # Automatic input to the first mate belongs to its inner monologue, the
+  # supervisor of a split home (the one primary otherwise).
+  [ "${FM_SEND_STREAM:-}" != monologue ] || chat_role=supervisor
   FM_CHAT_ROLE=$chat_role exec "${FM_PRIMARY_STEER_BIN:-$SCRIPT_DIR/fm-primary-steer.sh}" publish --home "$FM_HOME" --kind other --text "$*"
 fi
 if [ "$DECISION_ANSWER" = 1 ]; then

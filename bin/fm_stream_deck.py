@@ -477,7 +477,38 @@ def idle_captain_sequence(state, task, floor):
     return newest
 
 
+def conversation_busy(state, task):
+    """True while a split agent's conversation lane has work it has not finished:
+    a conversation record still in the inbox whose turn is not journaled as
+    answered (or abandoned after a failed recovery). Supervision that watches
+    only the supervisor's endpoint for turn completion asks this too."""
+    state = Path(state)
+    if not captain_lane(state, task):
+        return False
+    last = {}
+    try:
+        for line in (state / (task + '.captain-lane.answered')).read_text().splitlines():
+            step, _, name = line.partition(' ')
+            if name:
+                last[name] = step
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return True
+    for source in (state / (task + '.inbox')).glob('*.msg'):
+        if not source.stem.isdigit() or last.get(source.name) in ('answered', 'recovering'):
+            continue
+        try:
+            if conversation_record(source.read_bytes().decode('utf-8')):
+                return True
+        except (OSError, UnicodeDecodeError):
+            continue
+    return False
+
+
 def main():
+    if sys.argv[1:2] == ['conversation-busy']:
+        sys.exit(0 if conversation_busy(sys.argv[2], sys.argv[3]) else 1)
     if sys.argv[1:2] == ['captain']:
         _, state, task = sys.argv[1:4]
         print(project_captain(state, task))

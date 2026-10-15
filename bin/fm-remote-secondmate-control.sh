@@ -590,6 +590,11 @@ cmd_observe() {
   validate_home "$id"
   remote_endpoint_require "$id"
   harness=$(fm_meta_get "$REMOTE_ENDPOINT_META" harness)
+  # A split mate's conversation runs beside the supervisor this endpoint shows.
+  if python3 "$SCRIPT_DIR/fm_stream_deck.py" conversation-busy "$CONTROL_STATE" "$id" 2>/dev/null; then
+    printf 'busy\n'
+    return 0
+  fi
   fm_pending_reply_backend_observation "$REMOTE_ENDPOINT_BACKEND" "$REMOTE_ENDPOINT_TARGET" "fm-$id" "$harness"
   printf '\n'
 }

@@ -1654,6 +1654,9 @@ fm_pending_reply_tick() {  # <state-dir>
             observation=$("$_FM_PENDING_REPLY_LIB_DIR/fm-on.sh" "$task_id" \
               fm-remote-secondmate-control.sh observe "$task_id" < /dev/null 2>/dev/null || printf 'unknown')
             case "$observation" in busy|idle|fallback-idle|unknown) ;; *) observation=unknown ;; esac
+          elif python3 "$_FM_PENDING_REPLY_LIB_DIR/fm_stream_deck.py" conversation-busy "$state" "$task_id" 2>/dev/null; then
+            # A split mate's conversation runs beside the supervisor its endpoint shows.
+            observation=busy
           else
             observation=$(fm_pending_reply_backend_observation "$backend" "$target" "$label" "$harness")
           fi

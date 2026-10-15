@@ -493,6 +493,35 @@ PY
   pass "fm-mate-route: interrupted primary failure stays failed without retrying publication"
 }
 
+test_split_home_keeps_a_peer_message_for_a_restarting_conversation() {
+  local parent corr send record
+  parent=$(make_fleet split-primary dave cadia)
+  mkdir -p "$parent/config"; : > "$parent/config/primary-split"
+  send="$parent/fakebin/send-primary-down"
+  cat > "$send" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = primary ]; then
+  printf 'attempt\n' >> "$FM_HOME/primary.calls"
+  [ -f "$FM_HOME/conversation-up" ] || exit 3
+  printf '%s' "$2" > "$FM_HOME/primary.published"
+  exit 0
+fi
+exec "${FM_REAL_SEND_BIN:?}" "$@"
+SH
+  chmod +x "$send"
+  corr=$(mate_send "$parent" dave primary "for the conversation" | sed -n 's/.*corr=\([a-f0-9]*\).*/\1/p')
+  record="$parent/state/mate-mail/pending/dave@$corr.msg"
+  run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" FM_REAL_SEND_BIN="$ROOT/bin/fm-send.sh" >/dev/null \
+    || fail "router pass failed"
+  [ -f "$record" ] || fail "a message for a restarting conversation must stay pending"
+  [ ! -e "${record%.msg}.woken-delivered" ] || fail "it must not be flattened into a supervisor wake"
+  : > "$parent/conversation-up"
+  run_route "$parent" FM_MATE_ROUTE_SEND_BIN="$send" FM_REAL_SEND_BIN="$ROOT/bin/fm-send.sh" >/dev/null \
+    || fail "router recovery pass failed"
+  assert_contains "$(cat "$parent/primary.published")" "for the conversation" "the conversation gets the message once it is back"
+  pass "fm-mate-route: a split home keeps a peer message for its restarting conversation"
+}
+
 test_incomplete_log_does_not_finish_bookkeeping() {
   local parent corr record
   parent=$(make_fleet partial-log dave cadia)
@@ -780,6 +809,7 @@ test_failed_bounces_are_retried_after_archiving
 test_primary_session_change_retains_publication_evidence
 test_wake_survives_failed_logging_and_queue_consumption
 test_failed_primary_bookkeeping_never_becomes_delivery
+test_split_home_keeps_a_peer_message_for_a_restarting_conversation
 test_incomplete_log_does_not_finish_bookkeeping
 test_logged_requires_complete_json_record
 test_live_router_lock_is_not_stolen

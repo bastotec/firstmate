@@ -642,5 +642,12 @@ assert idle_captain_sequence(state, 'task', 0) == int(monologue_peer.stem), 'a r
 assert record_stream(monologue_peer.read_text())[0] == 'monologue'
 assert record_stream(captain_words.read_text())[0] == 'conversation'
 assert record_stream('schema=x\n--\nFIRSTMATE_OP: v1 wake')[0] == 'monologue', 'an untagged record is monologue'
+from fm_stream_deck import conversation_busy
+assert conversation_busy(state, 'task'), 'unanswered conversation records keep the conversation busy'
+for done in (captain_words, peer):
+    (state / 'task.inbox' / done.name).rename(state / 'task.inbox' / 'handled' / done.name)
+assert not conversation_busy(state, 'task'), 'a monologue record alone never makes the conversation busy'
+(state / 'task.captain-lane').unlink()
+assert not conversation_busy(state, 'task'), 'no lane, no conversation work'
 print('PASS a conversation lane keeps every party record from the supervisor, and the recorded stream decides')
 PY

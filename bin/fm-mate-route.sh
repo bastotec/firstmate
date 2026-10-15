@@ -221,6 +221,9 @@ deliver_primary() {  # <record>
   FM_HOME="$FM_HOME" "$SEND_BIN" primary "$tagged" >/dev/null 2>&1 || rc=$?
   [ "$rc" -ne 0 ] || { DELIVERED_HOW=chat; return 0; }
   [ "$rc" -eq 3 ] || return 1
+  # A split home's conversation host is restarting: keep the message for it,
+  # retried on later polls, rather than flattening it into a supervisor wake.
+  [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/primary-split" ] || return 1
   # No Deck chat primary is running: the first mate reads its wake queue.
   wake_once "${1%.msg}.woken-delivered" \
     "check: message from second mate $FM_MM_FROM (corr $FM_MM_CORR${FM_MM_RE:+, re $FM_MM_RE}): $(printf '%s' "$FM_MM_TEXT" | tr '\n\t' '  ' | cut -c1-400)" \
