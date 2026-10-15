@@ -101,7 +101,7 @@ while IFS= read -r -d '' a; do rargs+=("$a"); done \
   < <(perl -MMIME::Base64=decode_base64 -e 'print decode_base64($ARGV[0])' "$argv_b64")
 cmd=${rargs[0]}
 rc=0
-env -u FM_STREAM_HUB -u FM_STREAM_TOKEN FM_HOME="$remote_home" FM_ROOT_OVERRIDE="$FM_REMOTE_CODE_ROOT" \
+env -u FM_STREAM_HUB -u FM_STREAM_TOKEN -u FM_TASK_INBOX_STREAM FM_HOME="$remote_home" FM_ROOT_OVERRIDE="$FM_REMOTE_CODE_ROOT" \
   "$FM_REMOTE_CODE_ROOT/bin/$cmd" "${rargs[@]:1}" || rc=$?
 if [ "${FM_FAKE_SSH_AMBIGUOUS:-0}" = 1 ] \
   || { [ "${FM_FAKE_SSH_AFTER_AMBIGUOUS_RC:-0}" -ne 0 ] && [ "$count" -eq 1 ]; }; then
@@ -243,6 +243,36 @@ test_remote_steer_lands_in_remote_inbox() {
   pass "fm-send remote: a text steer lands as a durable remote inbox record and exits 0 at enqueue"
 }
 
+test_remote_record_carries_its_stream_and_old_hosts_still_get_it() {
+  local dir fb ssh_log home rhome rc old rec
+  dir="$TMP_ROOT/remote-stream"; mkdir -p "$dir"
+  fb=$(make_stubs "$dir"); ssh_log="$dir/ssh.log"; : > "$ssh_log"
+  rhome=$(setup_remote_secondmate_home remote-stream)
+  home=$(setup_remote_parent_home remote-stream "$rhome")
+  rc=0
+  send_env "$fb" "$home" "$ssh_log" FM_SEND_STREAM=monologue \
+    "$SEND" rsm "an automatic nudge" >"$dir/out" 2>"$dir/err" || rc=$?
+  expect_code 0 "$rc" "a remote steer must be recorded: $(cat "$dir/err")"
+  rec=$(remote_inbox_records "$rhome" | sort | tail -1)
+  assert_equals monologue "$(sed -n '/^--$/q; s/^stream=//p' "$rec")" "the remote record carries the sender's stream"
+  # A remote host whose code predates send-stream still gets the message.
+  old="$dir/old-root"; mkdir -p "$old"; cp -R "$ROOT/bin" "$old/bin"
+  python3 - "$old/bin/fm-remote-secondmate-control.sh" <<'PY'
+import sys
+p = sys.argv[1]; s = open(p).read()
+i = s.index('  send-stream)'); j = s.index('cmd_send "$@" ;;', i) + len('cmd_send "$@" ;;\n')
+open(p, 'w').write(s[:i] + s[j:])
+PY
+  rc=0
+  send_env "$fb" "$home" "$ssh_log" FM_REMOTE_CODE_ROOT="$old" \
+    "$SEND" rsm "a message for an old host" >"$dir/out" 2>"$dir/err" || rc=$?
+  expect_code 0 "$rc" "an old remote host must still get the message: $(cat "$dir/err")"
+  rec=$(remote_inbox_records "$rhome" | sort | tail -1)
+  assert_contains "$(cat "$rec")" "a message for an old host" "the old host recorded it"
+  assert_equals "" "$(sed -n '/^--$/q; s/^stream=//p' "$rec")" "an old host writes no stream header"
+  pass "fm-send remote: a remote record carries its stream, and a host without send-stream still gets the message"
+}
+
 test_remote_rerun_is_idempotent() {
   local dir fb ssh_log home rhome rc err count pend corr expected_cmd arg quoted rec ssh_before resend_cmd
   dir="$TMP_ROOT/remote-idem"; mkdir -p "$dir"
@@ -276,7 +306,7 @@ test_remote_rerun_is_idempotent() {
     || fail "the preserved expectation must record unknown delivery: $(cat "$pend")"
   corr=$(fm_pending_reply_get "$pend" corr_id)
   printf -v quoted '%q' "$home"
-  expected_cmd="FM_HOME=$quoted FM_PENDING_REPLY_EXISTING_CORR=$corr"
+  expected_cmd="FM_HOME=$quoted FM_SEND_STREAM=conversation FM_PENDING_REPLY_EXISTING_CORR=$corr"
   for arg in "$SEND" rsm "please rename the metric"; do
     printf -v quoted '%q' "$arg"
     expected_cmd="$expected_cmd $quoted"
@@ -799,6 +829,7 @@ test_remote_captain_text_is_byte_exact() {
 }
 
 test_remote_steer_lands_in_remote_inbox
+test_remote_record_carries_its_stream_and_old_hosts_still_get_it
 test_remote_rerun_is_idempotent
 test_remote_retry_failure_preserves_ambiguous_expectation
 test_remote_fire_and_forget_never_arms_reply_recovery

@@ -30,10 +30,12 @@
 # FM_HOME-relative mixup, not acknowledgement of an arbitrary mate-home file.
 #
 # Turn-completion evidence: an idle observation cannot complete the original or
-# recovery turn while this parent's state/<task_id>.inbox/*.msg still carries
-# the correlation unhandled for a LOCAL target. That idle may belong to an
-# earlier turn, not the delivered request. Once the record is handled, ordinary
-# busy/idle completion, grace, one-recovery, and escalation rules apply.
+# recovery turn while fm_pending_reply_request_unread below finds the LOCAL
+# request unread. That reader also accounts for split conversation-lane journal
+# and running-turn state; an inbox record alone is not always unread.
+# bin/fm_stream_deck.py conversation_busy backstops local and remote observations
+# that otherwise see only the supervisor endpoint. Once the request is no longer
+# unread, ordinary busy/idle completion, grace, one-recovery and escalation apply.
 # Remote targets bypass this inbox check even if migration retained local
 # records; their missing-report evidence still requires the mirror watermark
 # owned by the remote reply-channel freshness section below.
@@ -813,7 +815,18 @@ fm_pending_reply_request_unread() {  # <state-dir> <task_id> <corr_id>
   token=$(fm_pending_reply_corr_token "$3")
   for f in "$dir"/*.msg; do
     [ -f "$f" ] || continue
-    grep -qF "$token" "$f" 2>/dev/null && return 0
+    grep -qF "$token" "$f" 2>/dev/null || continue
+    # A split mate's conversation lane may have finished with a record it left
+    # in the inbox: answered (its move to handled/ is still being retried) or
+    # abandoned after an interrupted recovery. Neither is unread unless its
+    # turn is running now (bin/fm-captain-lane.sh journal and turn marker).
+    if [ -f "$1/$2.captain-lane" ] \
+      && [ "$(cat "$1/$2.captain-lane.turn" 2>/dev/null)" != "${f##*/}" ]; then
+      case "$(awk -v n="${f##*/}" '$2 == n { s = $1 } END { print s }' "$1/$2.captain-lane.answered" 2>/dev/null)" in
+        answered|recovering) continue ;;
+      esac
+    fi
+    return 0
   done
   return 1
 }
@@ -1036,7 +1049,7 @@ fm_pending_reply_send_recovery() {  # <state-dir> <corr_id>
     if [ -z "$parent_home" ] || [ ! -d "$parent_home" ]; then
       send_status=1
     elif ! env FM_HOME="$parent_home" FM_PENDING_REPLY_EXISTING_CORR="$corr" \
-      "$_FM_PENDING_REPLY_LIB_DIR/fm-send.sh" "$task_id" "$msg"; then
+      FM_SEND_STREAM=monologue "$_FM_PENDING_REPLY_LIB_DIR/fm-send.sh" "$task_id" "$msg"; then
       send_status=1
     fi
   fi
@@ -1654,6 +1667,9 @@ fm_pending_reply_tick() {  # <state-dir>
             observation=$("$_FM_PENDING_REPLY_LIB_DIR/fm-on.sh" "$task_id" \
               fm-remote-secondmate-control.sh observe "$task_id" < /dev/null 2>/dev/null || printf 'unknown')
             case "$observation" in busy|idle|fallback-idle|unknown) ;; *) observation=unknown ;; esac
+          elif python3 "$_FM_PENDING_REPLY_LIB_DIR/fm_stream_deck.py" conversation-busy "$state" "$task_id" 2>/dev/null; then
+            # A split mate's conversation runs beside the supervisor its endpoint shows.
+            observation=busy
           else
             observation=$(fm_pending_reply_backend_observation "$backend" "$target" "$label" "$harness")
           fi

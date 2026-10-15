@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
-# fm-captain-handoff.sh - a captain thread hands the captain's order or question
+# fm-captain-handoff.sh - a conversation hands a party's order or question
 # to its own supervisor (split homes, config/primary-split).
 #
-# Usage: fm-captain-handoff.sh <text...>
+# Usage: fm-captain-handoff.sh [--from <party>] <text...>
 #        fm-captain-handoff.sh --help
+#
+# Every hand-off names who it came from, as "From <party>: <text>", because only
+# the captain's own words carry his approval (a merge, anything destructive).
+# The party is the conversation turn's sender: FM_CONVERSATION_PARTY, which a
+# second mate's conversation lane sets for each turn from the record's delivery
+# tags, else --from (captain, firstmate or mate:<id>), else "an unstated sender",
+# which the supervisor never takes as his approval.
 #
 # The first mate's captain thread publishes into the supervisor host through
 # `bin/fm-send.sh supervisor`. A split second mate's captain thread runs inside
@@ -17,15 +24,29 @@
 set -u
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 case "${1:-}" in
-  -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
   '') echo "error: fm-captain-handoff.sh needs the text to hand over" >&2; exit 2 ;;
 esac
+party=''
+if [ "$1" = --from ]; then
+  party=${2:-}
+  shift 2 2>/dev/null || { echo "error: --from needs a party" >&2; exit 2; }
+fi
+[ -z "${FM_CONVERSATION_PARTY:-}" ] || party=$FM_CONVERSATION_PARTY
+case "$party" in
+  captain) said='the captain' ;;
+  firstmate) said='the first mate' ;;
+  mate:*) case "${party#mate:}" in ''|*[!A-Za-z0-9._-]*) said='an unstated sender' ;; *) said="the mate ${party#mate:}" ;; esac ;;
+  *) said='an unstated sender' ;;
+esac
+[ -n "$*" ] || { echo "error: fm-captain-handoff.sh needs the text to hand over" >&2; exit 2; }
+set -- "From $said: $*"
 if [ -n "${FM_CAPTAIN_LANE_STATE:-}" ] && [ -n "${FM_CAPTAIN_LANE_ID:-}" ]; then
   # shellcheck source=bin/fm-operational-input.sh
   . "$SCRIPT_DIR/fm-operational-input.sh"
   # shellcheck source=bin/fm-task-inbox-lib.sh
   . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
-  rec=$(fm_task_inbox_write "$FM_CAPTAIN_LANE_STATE" "$FM_CAPTAIN_LANE_ID" "${FM_CAPTAIN_THREAD_MARK}$*") || {
+  rec=$(FM_TASK_INBOX_STREAM=monologue fm_task_inbox_write "$FM_CAPTAIN_LANE_STATE" "$FM_CAPTAIN_LANE_ID" "${FM_CAPTAIN_THREAD_MARK}$*") || {
     echo "error: the hand-over could not be recorded in $FM_CAPTAIN_LANE_STATE/$FM_CAPTAIN_LANE_ID.inbox" >&2
     exit 1
   }

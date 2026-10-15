@@ -38,7 +38,7 @@ config/
   dream.json              optional fleet-dreaming configuration ("Fleet dreaming")
   effort-policy.json      optional per-turn reasoning effort switch and level ("Turn effort")
   deck-mcp.json           optional Deck MCP servers ("Harness support")
-  primary-split           optional presence flag: a captain thread and a separate supervisor (first mate: bin/fm_primary_chat.py header; second mate: bin/fm-captain-lane.sh header)
+  primary-split           optional presence flag: conversation (captain thread) and inner monologue (supervisor); inherited (bin/fm-config-inherit-lib.sh); first mate: bin/fm_primary_chat.py header; second mate: bin/fm-captain-lane.sh header
   model-policy.json       home-local route policy for in-place switches (bin/fm_model_switch.py owns validation and policy semantics)
   power-host              optional ssh alias for fleet quota reads (bin/fm_report.py owns default and bridge flow)
   shared-skills           optional skills repo shipped to connected machines; primary home only (bin/fm-machine.sh header)
@@ -68,7 +68,7 @@ state/
   <id>.turn-ended         touched by bin/fm-deck-worker.sh at turn end
   <id>.deck-session       secondmate conversation binding; bin/fm-deck-worker.sh header owns format, resume eligibility, and retirement
   <id>.supervisor-session <id>.captain-lane  split secondmate supervisor binding and lane marker (bin/fm-deck-worker.sh "CAPTAIN LANE")
-  <id>.captain-lane.log <id>.captain-lane.answered  captain-lane log and turn journal (bin/fm-captain-lane.sh header)
+  <id>.captain-lane.log <id>.captain-lane.answered <id>.captain-lane.turn  captain-lane log, turn journal and running-turn marker (bin/fm-captain-lane.sh header)
   <id>.model <id>.deck-caps  in-place model choice and live driver capability (bin/fm-control.sh owns public behavior; bin/fm_model_switch.py owns capability checks)
   <id>.progress           in-turn native activity, read for the busy-age bound only (bin/fm-busy-event.sh)
   <id>.crew-state         local ship task's validation record for file watchers; bin/fm-task-state-lib.sh "PUBLISHED RECORD" owns fields, refreshes, and cleanup

@@ -17,11 +17,22 @@
 # The reserved `primary` selector, only when state/primary.meta is absent,
 # publishes plain text to a live Deck chat host instead of either task plane
 # below: fm-send.sh primary <text...> (no options or native-key handling).
-# `primary` is the captain's conversation; the reserved `supervisor` selector
-# (no state/supervisor.meta) reaches the supervisor of a split home
-# (config/primary-split) and the one primary otherwise, so operational senders
-# use it and the captain thread hands orders through it.
-# bin/fm-primary-steer.sh owns its publication and delivery-check contract.
+# `primary` normally reaches the conversation; FM_SEND_STREAM=monologue or an
+# operational input (FM_OPERATIONAL_PREFIX) selects the supervisor instead.
+# The reserved `supervisor` selector (no state/supervisor.meta) always reaches
+# the supervisor of a split home (config/primary-split), or the one primary
+# otherwise. bin/fm-primary-steer.sh owns publication and delivery checks.
+#
+# Task-inbox stream selection is recorded at delivery, not inferred later from
+# message prose: --from-captain and --from-mate always select conversation;
+# --decision-answer selects monologue, where the waiting supervisor resolves it.
+# Other sends use FM_SEND_STREAM=conversation|monologue (default conversation),
+# except that, for these other sends, operational input selects monologue.
+# Scripted automatic senders must set FM_SEND_STREAM=monologue; leaving it unset
+# deliberately makes a missed label visible rather than hiding a party's words.
+# This applies to inbox records, not the typed plane. bin/fm-task-inbox-lib.sh
+# owns the stream= header; bin/fm_stream_deck.py record_stream owns compatibility
+# for records without it.
 # Special keys instead of text: fm-send.sh <target> --key Enter
 # Supported keys: Escape, Enter, C-c and C-u.
 # For task and explicit backend targets, `--` ends option parsing: every
@@ -204,9 +215,12 @@
 # idempotent while allowing a later identical instruction to be distinct.
 #
 # Remote secondmate delivery: the send crosses fm-on.sh to a host-local leg
-# (bin/fm-remote-secondmate-control.sh cmd_send) that writes the message as a
-# durable record into the remote home's steering inbox and rings the remote
-# doorbell, best-effort. The remote record is the delivery, exactly as it is
+# (bin/fm-remote-secondmate-control.sh send-stream) that carries the selected
+# stream, writes a durable record into the remote home's steering inbox and
+# rings the remote doorbell, best-effort. Only an "unknown command: send-stream"
+# refusal permits fallback to plain send on an older host, before any write;
+# that record has no stream header and follows record_stream's compatibility
+# rule. The remote record is the delivery, exactly as it is
 # locally: leg exit 0 means durably recorded (fm-send then exits 0, marks the
 # pending-reply expectation delivered, and closes any --resolve-key
 # decisions), and any real remote failure fails loudly with the remote leg's
@@ -523,6 +537,10 @@ if [ "$DECISION_ANSWER" != 1 ] && { [ "$RAW_TARGET" = primary ] || [ "$RAW_TARGE
   esac
   chat_role=captain
   [ "$RAW_TARGET" = primary ] || chat_role=supervisor
+  # Automatic input to the first mate belongs to its inner monologue, the
+  # supervisor of a split home (the one primary otherwise).
+  [ "${FM_SEND_STREAM:-}" != monologue ] || chat_role=supervisor
+  case "${1:-}" in "$FM_OPERATIONAL_PREFIX"*) chat_role=supervisor ;; esac
   FM_CHAT_ROLE=$chat_role exec "${FM_PRIMARY_STEER_BIN:-$SCRIPT_DIR/fm-primary-steer.sh}" publish --home "$FM_HOME" --kind other --text "$*"
 fi
 if [ "$DECISION_ANSWER" = 1 ]; then
@@ -650,6 +668,22 @@ if [ -n "$FROM_MATE" ]; then
     exit 1
   fi
 fi
+# The header owns stream selection; record it before delivery.
+if [ "$FROM_CAPTAIN" = 1 ] || [ -n "$FROM_MATE" ]; then
+  FM_TASK_INBOX_STREAM=conversation
+elif [ "$DECISION_ANSWER" = 1 ]; then
+  # A keyed decision answer is the input the supervisor that raised the
+  # decision is waiting on: its monologue resolves it.
+  FM_TASK_INBOX_STREAM=monologue
+else
+  case "${FM_SEND_STREAM:-}" in
+    monologue|conversation) FM_TASK_INBOX_STREAM=$FM_SEND_STREAM ;;
+    '') FM_TASK_INBOX_STREAM=conversation ;;
+    *) echo "error: FM_SEND_STREAM must be conversation or monologue; nothing was sent" >&2; exit 1 ;;
+  esac
+  case "${1:-}" in "$FM_OPERATIONAL_PREFIX"*) FM_TASK_INBOX_STREAM=monologue ;; esac
+fi
+export FM_TASK_INBOX_STREAM
 if [ "$DECISION_ANSWER" = 1 ]; then
   if [ -z "$RESOLVE_KEYS" ] || [ -n "$FIRE_AND_FORGET_ID" ] || [ "$#" -ne 1 ]; then
     echo "error: --decision-answer requires keyed resolution and one exact answer, without fire-and-forget" >&2
@@ -1049,6 +1083,22 @@ else
       echo "error: steer not sent to remote secondmate $TARGET_REMOTE_ID: its parent task retired or changed route during target resolution" >&2
       exit "$FM_SEND_TEMPFAIL"
     fi
+    # One transport attempt; sets remote_rc. The header owns old-host fallback.
+    fm_send_remote_leg() {
+      local err
+      err=$(mktemp "${TMPDIR:-/tmp}/fm-send-remote.XXXXXX") || { remote_rc=1; return; }
+      remote_rc=0
+      fm_run_timed "$FM_SEND_REMOTE_BUDGET" "$SCRIPT_DIR/fm-on.sh" "$TARGET_REMOTE_ID" \
+        fm-remote-secondmate-control.sh send-stream "$FM_TASK_INBOX_STREAM" "${REMOTE_SEND_ARGS[@]}" \
+        < /dev/null 2>"$err" || remote_rc=$?
+      if [ "$remote_rc" -ne 0 ] && grep -q 'unknown command: send-stream' "$err"; then
+        remote_rc=0
+        fm_run_timed "$FM_SEND_REMOTE_BUDGET" "$SCRIPT_DIR/fm-on.sh" "$TARGET_REMOTE_ID" \
+          fm-remote-secondmate-control.sh send "${REMOTE_SEND_ARGS[@]}" < /dev/null 2>"$err" || remote_rc=$?
+      fi
+      cat "$err" >&2
+      rm -f "$err"
+    }
     remote_rc=0
     remote_completion_unknown=0
     REMOTE_SEND_ARGS=("$TARGET_REMOTE_ID" "$MESSAGE")
@@ -1060,15 +1110,12 @@ else
     # retry that would only wait out the same busy remote queue again. (A
     # remote job's own timeout also relays as 124; treating it as unconfirmed
     # stays safe because the remote enqueue deduplicates.)
-    fm_run_timed "$FM_SEND_REMOTE_BUDGET" "$SCRIPT_DIR/fm-on.sh" "$TARGET_REMOTE_ID" \
-      fm-remote-secondmate-control.sh send "${REMOTE_SEND_ARGS[@]}" < /dev/null || remote_rc=$?
+    fm_send_remote_leg
     if [ "$remote_rc" -eq 124 ]; then
       remote_completion_unknown=1
     elif [ "$remote_rc" -eq 255 ]; then
       remote_completion_unknown=1
-      remote_rc=0
-      fm_run_timed "$FM_SEND_REMOTE_BUDGET" "$SCRIPT_DIR/fm-on.sh" "$TARGET_REMOTE_ID" \
-        fm-remote-secondmate-control.sh send "${REMOTE_SEND_ARGS[@]}" < /dev/null || remote_rc=$?
+      fm_send_remote_leg
     fi
     fm_lock_release "$REMOTE_META_LOCK"
     if [ "$remote_rc" -ne 0 ] && [ "$remote_completion_unknown" -eq 1 ]; then
@@ -1092,7 +1139,7 @@ else
         resend_state=$(cd "$STATE" 2>/dev/null && pwd) || resend_state=$STATE
         printf 'FM_STATE_OVERRIDE=%q ' "$resend_state" >&2
       fi
-      printf 'FM_PENDING_REPLY_EXISTING_CORR=%q %q' "$PENDING_REPLY_CORR" "$SCRIPT_DIR/fm-send.sh" >&2
+      printf 'FM_SEND_STREAM=%q FM_PENDING_REPLY_EXISTING_CORR=%q %q' "$FM_TASK_INBOX_STREAM" "$PENDING_REPLY_CORR" "$SCRIPT_DIR/fm-send.sh" >&2
       for resend_arg in "${FM_SEND_ORIGINAL_ARGS[@]}"; do
         printf ' %q' "$resend_arg" >&2
       done

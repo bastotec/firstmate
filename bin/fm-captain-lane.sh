@@ -6,10 +6,12 @@
 #   fm-captain-lane.sh --state <task-state-dir> --id <task-id> --deck <deck>
 #       [--model <route>] [--model-file <file>] [--mcp-config <file>]
 #
-# With the mate's home split (config/primary-split), the captain's own words
-# ([fm-captain-direct] records in <state>/<id>.inbox) are this lane's alone:
-# bin/fm_stream_deck.py keeps them out of the supervisor's turns while
-# <state>/<id>.captain-lane exists, which the host writes before starting this
+# With the mate's home split (config/primary-split), its conversation is this
+# lane's alone: every record in <state>/<id>.inbox that
+# bin/fm_stream_deck.py record_stream classifies as conversation (the captain's,
+# the first mate's or another mate's words, and its supervisor's notes from
+# bin/fm-captain-note.sh). fm_stream_deck.py keeps them out of the supervisor's
+# turns, its inner monologue, while <state>/<id>.captain-lane exists, which the host writes before starting this
 # lane and removes when it stops. The lane takes them one at a time in inbox
 # order and runs each as one `deck run` turn of the mate's existing Deck
 # session (<state>/<id>.deck-session, so the conversation Fleet Town shows and
@@ -20,9 +22,11 @@
 #   - the first turn of each lane process carries
 #     .agents/skills/captain-thread/SKILL.md as its contract;
 #   - FM_CAPTAIN_LANE_STATE/FM_CAPTAIN_LANE_ID let bin/fm-captain-handoff.sh hand
-#     his orders to the supervisor;
+#     the conversation's orders to the supervisor;
 #   - <state>/<id>.captain-lane.answered is the turn journal; the journal
-#     comment below owns recovery, acknowledgement and fail-closed rules.
+#     comment below owns recovery, acknowledgement and fail-closed rules;
+#   - <state>/<id>.captain-lane.turn names the record whose Deck turn is running;
+#     bin/fm_stream_deck.py conversation_busy owns busy-observation semantics.
 # The lane writes its Deck events to <work>/events.ndjson and its own log lines
 # to stderr. It exits when the host goes away, and a TERM stops its running
 # Deck turn first (bounded), so a replacement lane never runs beside it.
@@ -84,7 +88,7 @@ record_session() {
   [ -f "$DECK_SESSIONS/$started.json" ] || return 0
   printf '%s\n%s\n' "$started" "$FM_HOME" > "$RECORD.tmp.$$" && mv -f "$RECORD.tmp.$$" "$RECORD" && fresh=0
 }
-trap 'stop_deck; record_session; rm -rf -- "$WORK"' EXIT
+trap 'stop_deck; record_session; rm -f "$STATE/$ID.captain-lane.turn"; rm -rf -- "$WORK"' EXIT
 trap 'exit 143' TERM HUP
 export FM_CAPTAIN_LANE_STATE=$STATE FM_CAPTAIN_LANE_ID=$ID
 # Ctrl+C in the host's pane stops the supervisor's turn, never the captain's.
@@ -116,6 +120,8 @@ session_of() {
 # interrupted recovery is never run again. tests/fm-captain-lane.test.sh pins
 # these journal transitions and the acknowledgement retry behavior.
 ANSWERED="$STATE/$ID.captain-lane.answered"
+TURN_MARK="$STATE/$ID.captain-lane.turn"
+rm -f "$TURN_MARK"
 journal() {  # <state> <record-name>
   printf '%s %s\n' "$1" "$2" >> "$ANSWERED" 2>/dev/null
 }
@@ -158,7 +164,7 @@ next_record() {
 import sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-from fm_stream_deck import CAPTAIN_ONLY
+from fm_stream_deck import conversation_record
 last = {}
 try:
     for line in Path(sys.argv[3]).read_text().splitlines():
@@ -175,10 +181,10 @@ for source in Path(sys.argv[2]).glob('*.msg'):
     if not source.stem.isdigit() or state in ('answered', 'recovering'):
         continue
     try:
-        body = source.read_bytes().decode('utf-8').split('\n--\n', 1)[1]
-    except (OSError, IndexError, UnicodeDecodeError):
+        record = source.read_bytes().decode('utf-8')
+    except (OSError, UnicodeDecodeError):
         continue
-    if CAPTAIN_ONLY.match(body):
+    if conversation_record(record):
         found.append((int(source.stem), {'started': 'recover', 'failed': 'retry'}.get(state, 'new'), str(source)))
 if found:
     number, mode, path = min(found)
@@ -213,7 +219,15 @@ while kill -0 "$HOST_PID" 2>/dev/null; do
       && [ -n "$imaged" ]; then
     body=$imaged
   fi
-  prompt="The captain wrote to this second mate directly (record $rec):
+  party=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from fm_stream_deck import record_party; print(record_party(sys.argv[2]))' \
+    "$SCRIPT_DIR" "$body" 2>/dev/null) || party=firstmate
+  case "$party" in
+    captain) said="The captain wrote to this second mate directly" ;;
+    mate:*) said="Another mate, ${party#mate:}, wrote to this second mate" ;;
+    monologue) said="This second mate's inner monologue (its supervisor) has something for the conversation; say it to the reader as an explicit message" ;;
+    *) said="The first mate wrote to this second mate" ;;
+  esac
+  prompt="$said (record $rec):
 
 $body"
   if [ "$mode" != new ]; then
@@ -245,7 +259,10 @@ $prompt"
   [ -z "$session" ] || args+=(--session "$session")
   : > "$WORK/events.ndjson"
   rc=0
-  "$DECK" "${args[@]}" </dev/null > "$WORK/events.ndjson" 2>"$WORK/deck.err" &
+  # <state>/<id>.captain-lane.turn names the record whose turn is running, so
+  # supervision reads a running recovery as busy (fm_stream_deck.conversation_busy).
+  printf '%s\n' "$name" > "$TURN_MARK" 2>/dev/null || true
+  FM_CONVERSATION_PARTY=$party "$DECK" "${args[@]}" </dev/null > "$WORK/events.ndjson" 2>"$WORK/deck.err" &
   DECK_PID=$!
   # A host that goes away mid-turn takes this turn with it, so its replacement
   # never runs beside it. A new session is bound as soon as Deck saves it, so a
@@ -257,6 +274,7 @@ $prompt"
   done
   wait "$DECK_PID" || rc=$?
   DECK_PID=''
+  rm -f "$TURN_MARK"
   if [ -z "$session" ]; then
     observed=$(jq -r 'select(.type == "run_started") | .session' "$WORK/events.ndjson" 2>/dev/null | head -1)
     case "$observed" in ''|*[!A-Za-z0-9._-]*) observed='' ;; esac

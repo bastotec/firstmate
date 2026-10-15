@@ -342,7 +342,7 @@ stop_turn() {  # stop the running Deck turn and wait for it, bounded
 }
 
 # CAPTAIN LANE (--secondmate in a split home, config/primary-split): the
-# captain's own words go to bin/fm-captain-lane.sh, a child that runs them as
+# conversation records go to bin/fm-captain-lane.sh, a child that runs them as
 # turns of the mate's existing session (<state>/<id>.deck-session) beside the
 # supervisor, whose own session moves to <state>/<id>.supervisor-session.
 # <state>/<id>.captain-lane marks the lane for bin/fm_stream_deck.py while it
@@ -580,7 +580,7 @@ watch_doorbell() (
   local record
   # shellcheck source=bin/fm-task-inbox-lib.sh
   . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
-  record=$(fm_task_inbox_write "$STATE" "$ID" "$WAKE_PREAMBLE
+  record=$(FM_TASK_INBOX_STREAM=monologue fm_task_inbox_write "$STATE" "$ID" "$WAKE_PREAMBLE
 $(cat "$WATCH_PENDING")") || exit 1
   fm_task_inbox_doorbell_line "$record"
 )
@@ -761,9 +761,12 @@ if [ "$SECONDMATE" = 1 ]; then
   fi
   [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/primary-split" ] || MATE_SPLIT=1
   if [ "$MATE_SPLIT" = 1 ]; then
+    # bin/fm-captain-note.sh posts the supervisor's notes into this mate's
+    # conversation through its own inbox.
+    export FM_SPLIT_MATE_STATE="$STATE" FM_SPLIT_MATE_ID="$ID"
     PROMPT="$PROMPT
 
-This home runs split (config/primary-split): you are its supervisor, and a separate captain thread answers the captain. Records tagged [fm-captain-direct] in the inbox belong to the captain thread: never read, answer or move them. Records tagged [fm-captain-thread] are the captain's orders and questions the captain thread hands you; act on them as his, and report outcomes through your parent channel as usual."
+This home runs split (config/primary-split): you are this mate's inner monologue, its supervisor, and a separate conversation answers the captain, the first mate and other mates. Inbox records whose header says stream=conversation (and, in older records without that header, ones tagged [fm-captain-direct], [fm-from-mate:...] or [fm-supervisor-note]) belong to the conversation: never read, answer or move them. Records tagged [fm-captain-thread] are orders and questions the conversation hands you, each starting with who it came from; only one from the captain carries his own approval (a merge, anything destructive), and one from the first mate is an ordinary parent instruction. Act on them, and report outcomes through your parent channel as usual. Nobody reads your own replies: when something you handle needs a party (a blocker, a decision, a finished result), post it to the conversation with bin/fm-captain-note.sh '<message>', written for the person who will read it, and end a turn with nothing to report without any reply text."
   else
     rm -f "$LANE_MARK"
   fi
@@ -1161,14 +1164,13 @@ doorbell_without_work() {  # <line>
   [ "$line" = "$canonical" ] || return 1
   for f in "$own"/*.msg; do
     [ -e "$f" ] || continue
-    # With a captain lane, the captain's own records are its work, not the
+    # With a conversation lane, conversation records are its work, not the
     # supervisor's.
     if [ "$MATE_SPLIT" = 1 ] && python3 -c '
 import sys
 sys.path.insert(0, sys.argv[1])
-from fm_stream_deck import CAPTAIN_ONLY
-body = open(sys.argv[2], "rb").read().decode("utf-8", "replace").split("\n--\n", 1)
-sys.exit(0 if len(body) == 2 and CAPTAIN_ONLY.match(body[1]) else 1)' "$SCRIPT_DIR" "$f" 2>/dev/null; then
+from fm_stream_deck import conversation_record
+sys.exit(0 if conversation_record(open(sys.argv[2], "rb").read().decode("utf-8", "replace")) else 1)' "$SCRIPT_DIR" "$f" 2>/dev/null; then
       continue
     fi
     return 1

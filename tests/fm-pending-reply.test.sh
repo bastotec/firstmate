@@ -1648,6 +1648,26 @@ test_tick_end_to_end_missed_then_escalate
 test_failed_send_discards_undelivered_expectation
 test_remote_repost_waits_for_the_reply_channel
 test_remote_repost_waits_for_the_reply_channel 1
+test_conversation_lane_records_left_in_the_inbox() {
+  local st="$TMP_ROOT/lane-unread/state"
+  mkdir -p "$st/mate.inbox"
+  printf 'schema=fm-task-inbox.v1\n--\nplease check corr=0123456789abcdef\n' > "$st/mate.inbox/001.msg"
+  fm_pending_reply_request_unread "$st" mate 0123456789abcdef || fail "a request in the inbox is unread"
+  : > "$st/mate.captain-lane"
+  printf 'started 001.msg\nrecovering 001.msg\n' > "$st/mate.captain-lane.answered"
+  if fm_pending_reply_request_unread "$st" mate 0123456789abcdef; then
+    fail "a request whose recovery was abandoned must not stay unread forever"
+  fi
+  printf '001.msg\n' > "$st/mate.captain-lane.turn"
+  fm_pending_reply_request_unread "$st" mate 0123456789abcdef || fail "a request whose turn is running is unread"
+  rm -f "$st/mate.captain-lane.turn"
+  printf 'answered 001.msg\n' >> "$st/mate.captain-lane.answered"
+  if fm_pending_reply_request_unread "$st" mate 0123456789abcdef; then
+    fail "an answered request awaiting its move to handled/ is not unread"
+  fi
+  pass "pending-reply: a conversation lane's answered or abandoned record is not unread, a running one is"
+}
+
 test_mirrored_remote_reply_never_triggers_a_repost
 test_same_basename_self_home_corr_resolves_on_tick
 test_same_basename_reply_resolves_after_recovery_failure
@@ -1657,5 +1677,6 @@ test_remote_parent_replies_is_not_wrong_home
 test_local_parent_replies_is_wrong_home_evidence
 test_escalated_undelivered_correlation_stays_retryable
 test_unread_request_is_not_a_completed_turn
+test_conversation_lane_records_left_in_the_inbox
 
 printf 'ok - all pending-reply tests passed\n'

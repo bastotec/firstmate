@@ -39,6 +39,12 @@
 #   schema=fm-task-inbox.v1
 #   at=<utc timestamp>
 #   delivery=fire-and-forget   present only when the re-ring ladder must ignore it
+#   stream=conversation|monologue
+#                              which of a split agent's two streams the record
+#                              belongs to, recorded at delivery from the
+#                              writer's FM_TASK_INBOX_STREAM (bin/fm-send.sh owns
+#                              the choice); bin/fm_stream_deck.py record_stream
+#                              classifies a record without it
 #   --
 #   <exact message text; newlines are legal; a marked secondmate request keeps
 #    its from-firstmate marker and corr token verbatim in this body>
@@ -164,6 +170,7 @@ _fm_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode]
     printf 'schema=%s\n' "$FM_TASK_INBOX_SCHEMA"
     printf 'at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     [ "$delivery_mode" != fire-and-forget ] || printf 'delivery=fire-and-forget\n'
+    case "${FM_TASK_INBOX_STREAM:-}" in conversation|monologue) printf 'stream=%s\n' "$FM_TASK_INBOX_STREAM" ;; esac
     printf -- '--\n'
     printf '%s' "$text"
   } > "$tmp" && mv "$tmp" "$rec" || status=1

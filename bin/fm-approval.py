@@ -634,7 +634,7 @@ def answer_request(home, rid, verdict, steer, as_json):
         return 0
     send = os.environ.get('FM_APPROVAL_SEND') or str(SCRIPT_DIR / 'fm-send.sh')
     target = rec['agent']
-    r = subprocess.run([send, target, text], env=dict(os.environ, FM_HOME=home),
+    r = subprocess.run([send, target, text], env=dict(os.environ, FM_HOME=home, FM_SEND_STREAM='monologue'),
                        stdin=subprocess.DEVNULL, capture_output=True, text=True)
     if r.returncode != 0:
         audit(home, 'steer-failed', rec, detail=(r.stderr or r.stdout).strip()[:500])

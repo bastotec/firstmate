@@ -32,6 +32,15 @@ write_captain() {  # <text>
     "$DIR/state" $'[fm-captain-direct]⁣note\n\n'"$1"
 }
 
+record_body() {  # <record>
+  bash -c '. "$1"; fm_task_inbox_body "$2"' _ "$ROOT/bin/fm-task-inbox-lib.sh" "$1"
+}
+
+write_record() {  # <stream|-> <text>: one inbox record as a sender delivers it
+  FM_TASK_INBOX_STREAM=${1#-} bash -c '. "$1"; fm_task_inbox_write "$2" mate "$3" >/dev/null' _ \
+    "$ROOT/bin/fm-task-inbox-lib.sh" "$DIR/state" "$2"
+}
+
 start_lane() {  # -> sets HOST (a parent that keeps the lane alive)
   bash -c 'FM_HOME="$1" XDG_STATE_HOME="$2" FAKE_TURNS="$3" "$4" --state "$5" --id mate --deck "$6" 2>>"$7" & wait' _ \
     "$DIR/home" "$DIR/xdg" "$DIR/turns" "$LANE" "$DIR/state" "$DIR/deck" "$DIR/lane.err" &
@@ -171,7 +180,57 @@ test_fresh_session_opt_out_replaces_the_binding() {
   pass "fm-captain-lane: FM_DECK_FRESH_SESSION=1 starts a new captain conversation and binds it"
 }
 
+test_conversation_takes_every_party_and_leaves_the_monologue() {
+  setup
+  write_record monologue 'automatic wake text'
+  write_record conversation 'first mate question'
+  write_record - $'[fm-from-mate:dave]\342\201\243corr=0123456789abcdef peer question'
+  write_record conversation '[fm-supervisor-note] the PR merged'
+  write_record - 'legacy untagged steer'
+  start_lane
+  wait_until 150 answered_at_least 'the PR merged' 1 || fail "the conversation did not take every party's record"
+  sleep 1
+  stop_lane
+  turns=$(cat "$DIR/turns")
+  assert_contains "$turns" "The first mate wrote to this second mate" "a first-mate record says who wrote"
+  assert_contains "$turns" "Another mate, dave, wrote to this second mate" "a peer record names the mate"
+  assert_contains "$turns" "inner monologue (its supervisor) has something for the conversation" "a supervisor note is said as an explicit message"
+  [ "$(turns_with 'automatic wake text')" = 0 ] || fail "a monologue record reached the conversation"
+  [ "$(turns_with 'legacy untagged steer')" = 0 ] || fail "an untagged legacy record reached the conversation"
+  [ -f "$DIR/state/mate.inbox/001.msg" ] || fail "the monologue record must stay for the supervisor"
+  pass "fm-captain-lane: the conversation takes the captain, first mate, peers and supervisor notes, never the monologue"
+}
+
+test_supervisor_note_reaches_the_conversation() {
+  setup
+  FM_HOME="$DIR/home" FM_SPLIT_MATE_STATE="$DIR/state" FM_SPLIT_MATE_ID=mate \
+    "$ROOT/bin/fm-captain-note.sh" 'blocked on the API key' >/dev/null || fail "a mate's supervisor note was refused"
+  start_lane
+  wait_until 100 answered_at_least 'blocked on the API key' 1 || fail "the supervisor note never reached the conversation"
+  stop_lane
+  assert_contains "$(cat "$DIR/turns")" "[fm-supervisor-note] blocked on the API key" "the note reaches the conversation as written"
+  pass "fm-captain-lane: a mate's supervisor posts to its conversation with fm-captain-note.sh"
+}
+
+test_handoff_names_its_sender() {
+  setup
+  handoff() { FM_CAPTAIN_LANE_STATE="$DIR/state" FM_CAPTAIN_LANE_ID=mate "$ROOT/bin/fm-captain-handoff.sh" "$@" >/dev/null; }
+  FM_CONVERSATION_PARTY=mate:dave handoff 'merge the PR' || fail "a peer hand-off was refused"
+  FM_CONVERSATION_PARTY=captain handoff --from mate:dave 'ship it' || fail "a captain hand-off was refused"
+  handoff --from firstmate 'audit the docs' || fail "an explicit hand-off was refused"
+  handoff 'no sender given' || fail "an unnamed hand-off was refused"
+  bodies=$(for f in "$DIR/state/mate.inbox"/*.msg; do record_body "$f"; echo; done)
+  assert_contains "$bodies" "From the mate dave: merge the PR" "a peer's order names the peer"
+  assert_contains "$bodies" "From the captain: ship it" "the conversation turn's sender wins over --from"
+  assert_contains "$bodies" "From the first mate: audit the docs" "--from names the sender"
+  assert_contains "$bodies" "From an unstated sender: no sender given" "an unnamed hand-off is never the captain's"
+  pass "fm-captain-handoff: every hand-off names who it came from"
+}
+
 test_unacknowledged_answer_is_never_repeated
+test_handoff_names_its_sender
+test_supervisor_note_reaches_the_conversation
+test_conversation_takes_every_party_and_leaves_the_monologue
 test_new_session_is_bound_while_its_turn_runs
 test_fresh_session_opt_out_replaces_the_binding
 test_unwritable_answer_list_takes_no_turn

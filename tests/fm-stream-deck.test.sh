@@ -567,7 +567,7 @@ subprocess.check_call(cli + ['end', str(lab), 'task', 'b'*32])
 assert captain() == 0, 'an ended turn gets nothing'
 print('PASS captain-direct records reach live steerable turns in sequence order only')
 
-from fm_stream_deck import idle_captain_sequence
+from fm_stream_deck import idle_captain_sequence, record_stream
 for publisher in ('captain', 'bridge'):
     for payload in ('x' * 70000, 'α' * 32730, 'image-expansion'):
         state = lab / ('%s-%s' % (publisher, len(payload)))
@@ -630,9 +630,27 @@ assert idle_captain_sequence(state, 'task', 0) == int(peer.stem), 'without a lan
 handoff = lane_source('[fm-captain-thread]' + mark + 'merge it')
 assert idle_captain_sequence(state, 'task', 0) == int(handoff.stem)
 (state / 'task.inbox' / handoff.name).rename(state / 'task.inbox' / 'handled' / handoff.name)
-assert idle_captain_sequence(state, 'task', 0) == int(peer.stem), 'the captain words must not wake the supervisor'
-assert int(subprocess.check_output(cli + ['captain', str(state), 'task'])) == 1
-assert sorted(int(p.stem) for p in projection.glob('*.msg')) == [int(peer.stem)], 'only the peer message is projected'
-assert captain_words.exists(), 'the captain words stay for the lane'
-print('PASS a captain lane keeps the captain words from the supervisor and passes hand-offs and peer messages')
+assert idle_captain_sequence(state, 'task', 0) == 0, 'conversation records must not wake the supervisor'
+assert int(subprocess.check_output(cli + ['captain', str(state), 'task'])) == 0
+assert not list(projection.glob('*.msg')), 'no conversation record is projected into the supervisor'
+assert captain_words.exists() and peer.exists(), 'the captain and peer words stay for the conversation lane'
+# A record's stream is the one recorded at delivery; a direct record delivered
+# to the monologue still reaches the supervisor.
+monologue_peer = pathlib.Path(subprocess.check_output(['bash', '-c', 'FM_TASK_INBOX_STREAM=monologue; export FM_TASK_INBOX_STREAM; . "$1"; fm_task_inbox_write "$2" "$3" "$4"',
+    'lane-test', str(root/'bin/fm-task-inbox-lib.sh'), str(state), 'task', '[fm-from-mate:dave]' + mark + 'corr=1123456789abcdef note\n\nrouted to the monologue']).decode().strip())
+assert idle_captain_sequence(state, 'task', 0) == int(monologue_peer.stem), 'a record delivered to the monologue wakes the supervisor'
+assert record_stream(monologue_peer.read_text())[0] == 'monologue'
+assert record_stream(captain_words.read_text())[0] == 'conversation'
+assert record_stream('schema=x\n--\nFIRSTMATE_OP: v1 wake')[0] == 'monologue', 'an untagged record is monologue'
+from fm_stream_deck import conversation_busy
+assert conversation_busy(state, 'task'), 'unanswered conversation records keep the conversation busy'
+for done in (captain_words, peer):
+    (state / 'task.inbox' / done.name).rename(state / 'task.inbox' / 'handled' / done.name)
+assert not conversation_busy(state, 'task'), 'a monologue record alone never makes the conversation busy'
+(state / 'task.captain-lane.turn').write_text('009.msg\n')
+assert conversation_busy(state, 'task'), 'a running turn, a recovery included, keeps the conversation busy'
+(state / 'task.captain-lane.turn').unlink()
+(state / 'task.captain-lane').unlink()
+assert not conversation_busy(state, 'task'), 'no lane, no conversation work'
+print('PASS a conversation lane keeps every party record from the supervisor, and the recorded stream decides')
 PY

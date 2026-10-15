@@ -1478,9 +1478,9 @@ test_split_home_captain_thread_and_supervisor() {
   if turns_with "$LAB/cap.log" 'stale split wake' >/dev/null; then fail "a stale wake must never reach the captain thread"; fi
   assert_grep 'stale split wake' "$(dirname "$steer")/split-archived/1.msg" "the stale wake is archived beside the inbox"
   if turns_with "$LAB/cap.log" 'old split digest' >/dev/null; then fail "an old startup digest must never reach the captain thread"; fi
-  wait_for 10 "a waiting peer message goes on to the supervisor" turns_with "$LAB/sup.log" 'peer note before the split'
+  wait_for 10 "a waiting peer message stays in the conversation" turns_with "$LAB/cap.log" 'peer note before the split'
   wait_for 10 "a waiting startup digest goes on to the supervisor" turns_with "$LAB/sup.log" 'old split digest'
-  if turns_with "$LAB/cap.log" 'peer note before the split' >/dev/null; then fail "a peer message must not reach the captain thread"; fi
+  if turns_with "$LAB/sup.log" 'peer note before the split' >/dev/null; then fail "a peer message must not reach the supervisor"; fi
   rc=0; FAKE_DECK_LOG="$LAB/cap2.log" "$BIN/fm-deck-chat.sh" --home "$home" < /dev/null > "$LAB/cap2.out" 2>&1 || rc=$?
   expect_code 1 "$rc" "a second captain-thread host is refused"
   assert_grep 'another captain-thread host is running' "$LAB/cap2.out" "the refusal says why"
@@ -1493,6 +1493,12 @@ test_split_home_captain_thread_and_supervisor() {
   wait_for 10 "the captain's message reaches the thread" turns_with "$LAB/cap.log" 'how is the fleet?'
   FM_HOME="$home" "$BIN/fm-send.sh" supervisor 'merge the PR' >/dev/null
   wait_for 10 "the order reaches the supervisor" turns_with "$LAB/sup.log" 'merge the PR'
+  FM_HOME="$home" FM_SEND_STREAM=monologue "$BIN/fm-send.sh" primary 'approved: run request r1 now' >/dev/null
+  wait_for 10 "automatic input to the first mate reaches its monologue" turns_with "$LAB/sup.log" 'approved: run request r1 now'
+  if turns_with "$LAB/cap.log" 'approved: run request r1 now' >/dev/null; then fail "automatic input must not reach the conversation"; fi
+  FM_HOME="$home" "$BIN/fm-send.sh" primary "$(printf '\342\201\243FIRSTMATE_OP: v1 operational probe')" >/dev/null
+  wait_for 10 "an operational input to the first mate reaches its monologue" turns_with "$LAB/sup.log" 'operational probe'
+  if turns_with "$LAB/cap.log" 'operational probe' >/dev/null; then fail "an operational input must not reach the conversation"; fi
   FM_HOME="$home" FM_CHAT_ROLE=supervisor "$BIN/fm-captain-note.sh" 'the PR merged' >/dev/null
   wait_for 10 "the note reaches the captain thread" turns_with "$LAB/cap.log" '[fm-supervisor-note] the PR merged'
   echo 'wake: split fixture' > "$home/wake.trigger"

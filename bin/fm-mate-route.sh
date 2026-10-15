@@ -12,9 +12,10 @@
 #      captain's approval request (bin/fm-bridge.sh block) and refuses.
 #   3. Delivery: to a mate, bin/fm-send.sh <to> --fire-and-forget <corr>
 #      --from-mate <from> (idempotent on the corr, local or remote); to the first
-#      mate, bin/fm-send.sh supervisor with the same tag (fm-send.sh owns role
-#      routing; primary_holds owns retained session deduplication), or a `check:`
-#      wake when no supervising Deck chat host runs.
+#      mate, bin/fm-send.sh primary with the same tag (fm-send.sh owns role
+#      routing; primary_holds owns retained session deduplication). A split home
+#      keeps the message pending while its conversation host is down; only an
+#      unsplit home with no live chat host falls back to a `check:` wake.
 #   4. A delivery that fails is retried on later polls with the same corr, and
 #      fails for good after 10 attempts or 1800 seconds.
 # Terminal bookkeeping follows bin/fm-mate-mail-lib.sh's log and wake ordering.
@@ -115,7 +116,7 @@ try_bounce() {
   mate_meta "$FM_MM_FROM" >/dev/null || return 1
   note=$(cat "$marker" && printf x) || return 1
   note=${note%x}
-  FM_HOME="$FM_HOME" "$SEND_BIN" "$FM_MM_FROM" --fire-and-forget "$(bounce_id "$FM_MM_CORR")" \
+  FM_HOME="$FM_HOME" FM_SEND_STREAM=monologue "$SEND_BIN" "$FM_MM_FROM" --fire-and-forget "$(bounce_id "$FM_MM_CORR")" \
     "$note" >/dev/null 2>&1 || return 1
   rm -f "$marker"
 }
@@ -192,9 +193,11 @@ primary_holds() {  # <tagged-prefix>
 import sys
 sys.path.insert(0, sys.argv[1])
 from fm_primary_chat import paths
-_, _, _, root = paths(sys.argv[2], 'supervisor')
 needle = sys.argv[3].encode()
-for steer in root.glob('*/steer'):
+# Peer messages reach the conversation (captain role) now and reached the
+# supervisor before, so a retained record of either counts.
+roots = {paths(sys.argv[2], role)[3] for role in ('captain', 'supervisor')}
+for steer in (s for root in roots for s in root.glob('*/steer')):
     for sub in ('', 'handled', 'rejected'):
         for msg in (steer / sub).glob('*.msg'):
             try:
@@ -214,10 +217,14 @@ deliver_primary() {  # <record>
     DELIVERED_HOW=chat; return 0
   fi
   : > "$marker" || return 1
-  # A peer message is supervision input: the supervisor of a split home takes it.
-  FM_HOME="$FM_HOME" "$SEND_BIN" supervisor "$tagged" >/dev/null 2>&1 || rc=$?
+  # A peer message is a party's words: a split home's conversation (the captain
+  # thread) takes it, and an unsplit home's one primary.
+  FM_HOME="$FM_HOME" "$SEND_BIN" primary "$tagged" >/dev/null 2>&1 || rc=$?
   [ "$rc" -ne 0 ] || { DELIVERED_HOW=chat; return 0; }
   [ "$rc" -eq 3 ] || return 1
+  # A split home's conversation host is restarting: keep the message for it,
+  # retried on later polls, rather than flattening it into a supervisor wake.
+  [ ! -e "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/primary-split" ] || return 1
   # No Deck chat primary is running: the first mate reads its wake queue.
   wake_once "${1%.msg}.woken-delivered" \
     "check: message from second mate $FM_MM_FROM (corr $FM_MM_CORR${FM_MM_RE:+, re $FM_MM_RE}): $(printf '%s' "$FM_MM_TEXT" | tr '\n\t' '  ' | cut -c1-400)" \
@@ -312,7 +319,7 @@ ls -tr "$DIR/pending" 2>/dev/null | grep '\.msg$' | while IFS= read -r name; do
       answer=
     fi
     if [ -n "$answer" ]; then
-      if err=$(FM_HOME="$FM_HOME" "$SEND_BIN" "$FM_MM_FROM" --fire-and-forget "$(bounce_id "answer:$FM_MM_CORR")" \
+      if err=$(FM_HOME="$FM_HOME" FM_SEND_STREAM=monologue "$SEND_BIN" "$FM_MM_FROM" --fire-and-forget "$(bounce_id "answer:$FM_MM_CORR")" \
           -- "$answer" 2>&1 >/dev/null); then
         close_delivered "$record" answered; continue
       fi
