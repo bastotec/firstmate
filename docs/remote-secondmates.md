@@ -308,7 +308,7 @@ Because a remote reply reaches the primary only through this asynchronous mirror
 A remote mate that did answer is therefore never asked to repost while its answer is still in flight, and a genuinely missing answer still gets exactly one repost once the mirror is known to be current.
 The [process-to-event operating contract](process-event-sources.md) owns automatic application, one-announcement replay deduplication, and the unhandled fallback path.
 The relay never truncates or consumes the source log, and mates must append corrections rather than edit old replies.
-The [reply-log guard](../bin/fm-reply-log-guard.py) blocks common rewrite tool calls on secondmate turns, but shell-text matching is best effort, not a security boundary.
+The [reply-log guard](../bin/fm-reply-log-guard.py) blocks common rewrite tool calls on Deck secondmate supervisor turns, but shell-text matching is best effort, not a security boundary.
 The mirror's bounded recovery handles rewrites that escape that guard: it replays a previously read log from the start, skips already-mirrored lines, and delivers changed or new lines still present in the log.
 A replayed report whose locally rewritten form is already mirrored needs no document fetch.
 Other continuity breaks, or repeated rewrites beyond the recovery budget, escalate once and leave a durable stop that automatic startup or relaunch cannot lift.
