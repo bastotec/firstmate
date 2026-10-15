@@ -80,7 +80,7 @@ function fail(reason, code) {
   process.exitCode = code;
 }
 
-function readKey() {
+export function readKey() {
   const name = process.env.FM_WAKE_GATE_KEY_VAR || '';
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return '';
   const path = process.env.FM_WAKE_GATE_SECRETS || `${homedir()}/.secrets`;

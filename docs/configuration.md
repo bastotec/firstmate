@@ -35,6 +35,7 @@ config/
   watched-tools.json      optional tool update watch list ("Watched tool updates")
   ask-triage-key-var      optional possible-ask opt-in ("Possible-ask ranking")
   wake-gate-key-var wake-gate-mode  optional wake-gate opt-in and mode ("Wake gate")
+  dream.json              optional fleet-dreaming owners, excluded homes and model ("Fleet dreaming")
   effort-policy.json      optional per-turn reasoning effort switch and level ("Turn effort")
   deck-mcp.json           optional Deck MCP servers ("Harness support")
   primary-split           optional presence flag: a captain thread and a separate supervisor (first mate: bin/fm_primary_chat.py header; second mate: bin/fm-captain-lane.sh header)
@@ -276,6 +277,16 @@ It needs a Deck that takes `--effort`; with an older Deck nothing changes.
 Running hosts pick up a change to the code only after a restart, and a change to the file at the next wake.
 `bin/fm-effort-policy.sh`'s header owns the exact rules, including checks of outstanding durable wakes and open decisions, escalation triggers, and state files.
 [`tests/fm-effort-policy.test.sh`](../tests/fm-effort-policy.test.sh), [`tests/fm-deck-chat.test.sh`](../tests/fm-deck-chat.test.sh), and [`tests/fm-deck-harness.test.sh`](../tests/fm-deck-harness.test.sh) exercise classification and host integration without model calls.
+
+## Fleet dreaming (config/dream.json)
+
+`bin/fm-dream.sh run` is the fleet's nightly pass over its own day, and `bin/fm-dream.sh install-service` schedules it as a launchd agent at 04:15 on the main home's Mac.
+It reads the last 24 hours of local deck sessions, captain-direct messages, failed no-mistakes runs, revives, restarts, the idle sweep and the fleet report into a private digest under `state/dream/`.
+From that digest a deck agent improves the skills in `~/dotfiles/skills` (skills/ only, size-capped, secret-scanned, pushed to main), and a second one proposes harness fixes; at most three, deduplicated against open tasks, open PRs and recent dreaming items and scored by Jev when the wake gate's key is configured, are filed as queued tasks and handed to their owning mates.
+Dreaming never pushes to or opens PRs on harness repositories; the mates' own no-mistakes and autoland rules decide what lands.
+`config/dream.json` is optional: `owners` maps a repository name to the mate that receives its items (the main home otherwise), `exclude_homes` keeps named mates' sessions out of the digest, and `model` picks the deck model (the primary's otherwise).
+The last run's summary is the `dream` field of `bin/fm-report.sh fleet --json` and the report's "Overnight" section.
+`bin/fm_dream.py`'s header owns the steps, budgets, guards and files; [`tests/fm-dream.test.sh`](../tests/fm-dream.test.sh) exercises them offline.
 
 ## Possible-ask ranking (config/ask-triage-key-var)
 

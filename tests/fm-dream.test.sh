@@ -1,0 +1,295 @@
+#!/usr/bin/env bash
+# tests/fm-dream.test.sh - fleet dreaming (bin/fm-dream.sh, bin/fm_dream.py) and
+# its report section (bin/fm_report.py). Every case runs over a synthetic home,
+# a synthetic deck session, a local bare "dotfiles" remote and stub deck, Jev,
+# backlog, handoff, report and gh commands; nothing reaches the network and no
+# model is called. The load-bearing guarantees: the digest carries captain
+# messages, tool errors, slow fm-* commands and failed no-mistakes runs and is
+# private; excluded homes never reach it; the skills step pushes only skills/
+# changes within the caps; triage drops duplicates of open work, keeps at most
+# three and files each with its owning mate; a dry run files nothing; and the
+# fleet report shows the last run.
+set -u
+
+# shellcheck source=tests/lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+command -v sqlite3 >/dev/null 2>&1 || { echo "skip: sqlite3 not found"; exit 0; }
+
+DREAM="$ROOT/bin/fm_dream.py"
+TMP_ROOT=$(fm_test_tmproot fm-dream)
+NOW=1792000000
+export FM_DREAM_NOW=$NOW FM_DREAM_SKIP_ZIGGY_WAIT=1 FM_DREAM_MIN_FREE_GB=0 FM_DREAM_RETRY_SECS=0
+
+iso() { python3 -c "import datetime,sys; print(datetime.datetime.fromtimestamp(int(sys.argv[1]), datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z'))" "$1"; }
+
+# new_case <name>: a home with a primary session, a private mate session, a
+# captain-direct line, a failed no-mistakes run, stub tools and a dotfiles remote.
+new_case() {
+  local d="$TMP_ROOT/$1" recent old
+  mkdir -p "$d/home/state/primary-chat" "$d/home/config" "$d/home/data" "$d/deck/sessions" "$d/bin" "$d/calls"
+  recent=$(iso $((NOW - 3600))); old=$(iso $((NOW - 3 * 86400)))
+  printf 'p-1\n' > "$d/home/state/primary-chat/session"
+  printf 's-private\n' > "$d/home/state/finn-finance.deck-session"
+  printf 'sup-1\n' > "$d/home/state/docana-delivery.supervisor-session"
+  mkdir -p "$d/home/state/procevent-inbox"
+  printf 'status: action-failed\nrestarted: cadia on workload (deck)\nunreached: finn-finance: SECRET RESTART DETAIL\n' \
+    > "$d/home/state/procevent-inbox/when-secondmate-restart-1.1.result"
+  python3 - "$d/deck/sessions" "$recent" "$old" <<'PY'
+import json, sys
+root, recent, old = sys.argv[1:4]
+call = lambda cid, cmd: {"type": "toolcall", "id": cid, "function": {"name": "run_command", "arguments": {"command": cmd}}}
+res = lambda cid, val: {"type": "toolresult", "call": cid, "name": "run_command", "content": [{"type": "json", "value": val}]}
+msgs = [
+  {"role": "user", "content": [{"type": "text", "text": "an old line from days ago"}], "at": old},
+  {"role": "user", "content": [{"type": "text", "text": "no, use fm-pr-merge.sh, not gh pr merge"}], "at": recent},
+  {"role": "assistant", "content": [call("c1", "bin/fm-wake-drain.sh"), call("c2", "bin/fm-spawn.sh x")], "at": recent},
+  {"role": "user", "content": [res("c1", {"exit_code": 0, "stdout": "ok"}), res("c2", {"exit_code": 1, "stderr": "spawn refused: hub unreachable"})],
+   "at": recent, "tools": [{"id": "c1", "duration_ms": 47000}, {"id": "c2", "duration_ms": 900}]},
+  {"role": "assistant", "content": [{"type": "text", "text": "Captain, done."}], "at": recent}]
+json.dump({"version": 1, "messages": msgs}, open(root + "/p-1.json", "w"))
+json.dump({"version": 1, "messages": [{"role": "user", "content": [{"type": "text", "text": "PRIVATE BANK LINE"}], "at": recent}]},
+          open(root + "/s-private.json", "w"))
+brief = lambda extra: {"role": "user", "content": [{"type": "text", "text": "FIRSTMATE_OP: v1 launch-brief\ntask: %s" % extra}], "at": recent}
+json.dump({"version": 1, "messages": [brief("ship-x"), {"role": "assistant", "content": [{"type": "text", "text": "WORKER DID THE THING"}], "at": recent}]},
+          open(root + "/w-1.json", "w"))
+json.dump({"version": 1, "messages": [brief("finn-finance-close"), {"role": "assistant", "content": [{"type": "text", "text": "PRIVATE WORKER LINE"}], "at": recent}]},
+          open(root + "/w-2.json", "w"))
+json.dump({"version": 1, "messages": [{"role": "user", "content": [{"type": "text", "text": "SPLIT SUPERVISOR LINE"}], "at": recent}]},
+          open(root + "/sup-1.json", "w"))
+json.dump({"version": 1, "messages": [{"role": "user", "content": [{"type": "text", "text": "UNRELATED DECK USE"}], "at": recent}]},
+          open(root + "/other.json", "w"))
+PY
+  printf '{"exclude_homes": ["finn-finance"], "owners": {"deck": "dave-tools"}, "model": "stub/model"}\n' > "$d/home/config/dream.json"
+  printf '%s\tcorr-1\tcaptain: please stop opening duplicate workers\n' $((NOW - 600)) > "$d/home/state/captain-direct.log"
+  sqlite3 "$d/nm.sqlite" "CREATE TABLE runs(id TEXT, status TEXT, branch TEXT, error TEXT, pr_url TEXT, created_at INTEGER);
+    INSERT INTO runs VALUES('r1','failed','fm/x','lint step timed out','',$((NOW - 7200)));
+    INSERT INTO runs VALUES('r0','failed','fm/old','ancient','',$((NOW - 9 * 86400)));"
+  # dotfiles: a bare origin with one skill, and a local clone
+  git init -q --bare "$d/origin.git"
+  git clone -q "$d/origin.git" "$d/dotfiles" 2>/dev/null
+  fm_git_identity "$d/dotfiles" 2>/dev/null || { git -C "$d/dotfiles" config user.email t@t; git -C "$d/dotfiles" config user.name t; }
+  mkdir -p "$d/dotfiles/skills/merge"
+  printf -- '---\nname: merge\ndescription: merging\n---\nUse gh.\n' > "$d/dotfiles/skills/merge/SKILL.md"
+  git -C "$d/dotfiles" add -A && git -C "$d/dotfiles" commit -qm init && git -C "$d/dotfiles" push -q origin HEAD:main 2>/dev/null
+  git -C "$d/dotfiles" branch -q -u origin/main 2>/dev/null || true
+  # stubs
+  cat > "$d/bin/deck" <<'SH'
+#!/usr/bin/env bash
+prompt=$(cat)
+if [ -n "${STUB_DECK_FAIL:-}" ]; then
+  printf '{"type":"run_failed","error":"model gateway request failed (HTTP 502)"}\n'; exit 1
+fi
+if [ -n "${STUB_DECK_FAIL_ONCE:-}" ] && [ ! -e "$STUB_CALLS/failed-once.$(printf '%s' "$prompt" | head -c 30 | cksum | cut -d' ' -f1)" ]; then
+  : > "$STUB_CALLS/failed-once.$(printf '%s' "$prompt" | head -c 30 | cksum | cut -d' ' -f1)"
+  printf '{"type":"run_failed","error":"model gateway request failed (HTTP 502)"}\n'; exit 1
+fi
+printf '%s\n' "$prompt" > "$STUB_CALLS/deck.$$"
+summary=$(printf '%s' "$prompt" | grep -o '/[^ ]*skills-[0-9-]*\.json' | head -1)
+triage=$(printf '%s' "$prompt" | grep -o '/[^ ]*triage-[0-9-]*\.json' | head -1)
+if [ -n "$summary" ]; then
+  case "${STUB_SKILLS:-edit}" in
+    edit) printf -- '---\nname: merge\ndescription: merging\n---\nUse bin/fm-pr-merge.sh, never gh pr merge.\n' > skills/merge/SKILL.md
+          printf '{"changes":[{"skill":"merge","what":"says to merge through fm-pr-merge.sh","why":"captain corrected it"}]}' > "$summary" ;;
+    outside) printf 'x\n' > README.md ;;
+    secret) printf 'token ghp_abcdefghijklmnopqrstuvwxyz0123\n' >> skills/merge/SKILL.md ;;
+    checkpoint) printf 'token ghp_abcdefghijklmnopqrstuvwxyz0123\n' > skills/merge/NOTES.md
+                git add -A && git -c user.email=a@b -c user.name=a commit -qm checkpoint
+                git rm -q skills/merge/NOTES.md 2>/dev/null; git -c user.email=a@b -c user.name=a commit -qm undo 2>/dev/null
+                printf 'token ghp_abcdefghijklmnopqrstuvwxyz0123\n' > skills/merge/NOTES.md
+                git add -A && git -c user.email=a@b -c user.name=a commit -qm again
+                printf 'clean edit\n' >> skills/merge/SKILL.md ;;
+    binary) printf 'GIF89a\0\0token ghp_abcdefghijklmnopqrstuvwxyz0123\0' > skills/merge/shot.gif ;;
+    message) printf 'clean edit\n' >> skills/merge/SKILL.md
+             printf '{"changes":[{"skill":"merge","what":"x","why":"it failed with ghp_abcdefghijklmnopqrstuvwxyz0123"}]}' > "$summary" ;;
+    none) ;;
+  esac
+fi
+if [ -n "$triage" ]; then
+  cat > "$triage" <<'JSON'
+{"items": [
+ {"repo": "firstmate", "title": "Cache the drain result in fm-wake-drain.sh", "kind": "slow", "evidence": ["slow command (47s): bin/fm-wake-drain.sh"], "why": "47 s per wake", "fix": "cache"},
+ {"repo": "deck", "title": "Retry spawn when the hub is briefly unreachable", "kind": "bug", "evidence": ["tool error: spawn refused"], "why": "lost spawn", "fix": "retry"},
+ {"repo": "firstmate", "title": "Stop duplicate worker spawns for one task", "kind": "guard", "evidence": ["captain: stop duplicates"], "why": "dupes", "fix": "lock"},
+ {"repo": "cli-proxy-native", "title": "Lower the default retry budget for upstream errors", "kind": "default", "evidence": ["x"], "why": "y", "fix": "z"},
+ {"repo": "firstmate", "title": "Make the idle sweep log its decisions", "kind": "guard", "evidence": ["x"], "why": "y", "fix": "z"},
+ {"repo": "nowhere", "title": "Not a harness repo", "kind": "bug", "evidence": ["x"], "why": "y", "fix": "z"},
+ {"repo": "firstmate", "title": "Cache the drain result in fm-wake-drain.sh", "kind": "slow", "evidence": ["again"], "why": "same", "fix": "same"}
+]}
+JSON
+fi
+SH
+  cat > "$d/bin/tasks" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  list) case "$*" in *--fields*) echo "unexpected --fields" >&2; exit 2 ;; esac
+        printf 'count: 2\ntasks[2]{id,state,kind,repo,title}:\n  fm-old,done,ship,firstmate,"Cache the drain result in fm-wake-drain.sh"\n  fm-dupes,queued,ship,"-","Prevent duplicate worker spawns, for a task"\n' ;;
+  add) n=$(find "$STUB_CALLS" -name 'add.*' | wc -l | tr -d ' '); printf '%s\n' "$*" > "$STUB_CALLS/add.$n"; printf '{\n  "ok": true,\n  "action": "add",\n  "task": {"id": "dream-k%s"}\n}\n' "$n" ;;
+esac
+SH
+  cat > "$d/bin/handoff" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$STUB_CALLS/handoff.$2"
+SH
+  cat > "$d/bin/jev" <<'SH'
+#!/usr/bin/env bash
+in=$(cat)
+case "$in" in *"idle sweep"*) printf 'usage\t1\t1\t0\t1\nanswers\t0.9\t0.2\t0.4\n' ;; *) printf 'usage\t1\t1\t0\t1\nanswers\t0.9\t0.9\t0.8\n' ;; esac
+SH
+  printf '#!/usr/bin/env bash\nprintf "{\\"summary\\": \\"fleet ok\\", \\"waiting\\": [], \\"gaps\\": [], \\"power\\": []}\\n"\n' > "$d/bin/report"
+  printf '#!/usr/bin/env bash\nprintf "[]\\n"\n' > "$d/bin/gh"
+  chmod +x "$d/bin/"*
+  printf '%s' "$d"
+}
+
+run_dream() {  # <case-dir> <args...>
+  local d=$1; shift
+  PATH="$d/bin:$PATH" DECK_STATE="$d/deck" FM_DREAM_DECK="$d/bin/deck" FM_DREAM_DOTFILES="$d/dotfiles" \
+    FM_DREAM_JEV="$d/bin/jev" FM_DREAM_TASKS="$d/bin/tasks" FM_DREAM_HANDOFF="$d/bin/handoff" \
+    FM_DREAM_REPORT="$d/bin/report" FM_DREAM_NO_MISTAKES_DB="$d/nm.sqlite" STUB_CALLS="$d/calls" \
+    python3 "$DREAM" run --home "$d/home" "$@"
+}
+
+test_collect_builds_a_private_digest_of_the_day() {
+  local d digest
+  d=$(new_case collect)
+  run_dream "$d" --only collect >/dev/null || fail "collect exited nonzero"
+  digest=$(ls "$d"/home/state/dream/digest-*.md) || fail "no digest written"
+  [ "$(stat -f %Lp "$digest" 2>/dev/null || stat -c %a "$digest")" = 600 ] || fail "digest is not 0600"
+  grep -q 'no, use fm-pr-merge.sh' "$digest" || fail "captain correction missing"
+  grep -q 'slow command (47s): bin/fm-wake-drain.sh' "$digest" || fail "slow fm-* command missing"
+  grep -q 'tool error (bin/fm-spawn.sh x): spawn refused' "$digest" || fail "tool error missing"
+  grep -q 'please stop opening duplicate workers' "$digest" || fail "captain-direct line missing"
+  grep -q 'lint step timed out' "$digest" || fail "failed no-mistakes run missing"
+  grep -q 'ancient\|an old line' "$digest" && fail "lines older than a day leaked in"
+  grep -q 'PRIVATE BANK LINE' "$digest" && fail "an excluded home reached the digest"
+  grep -q 'PRIVATE WORKER LINE' "$digest" && fail "an excluded home's worker reached the digest"
+  grep -q 'WORKER DID THE THING' "$digest" || fail "an unbound worker session was not found by its launch brief"
+  grep -q 'SPLIT SUPERVISOR LINE' "$digest" || fail "a split mate's supervisor session was missed"
+  grep -q 'UNRELATED DECK USE' "$digest" && fail "a session that is not fleet work reached the digest"
+  grep -q 'restarted: cadia on workload' "$digest" || fail "restart results missing"
+  grep -q 'SECRET RESTART DETAIL' "$digest" && fail "an excluded home's restart line reached the digest"
+  pass "collect builds a private digest of the day and leaves excluded homes out"
+}
+
+test_skills_pushes_a_guarded_change_to_main() {
+  local d
+  d=$(new_case skills)
+  run_dream "$d" --only collect skills >/dev/null || fail "run exited nonzero"
+  git -C "$d/origin.git" log -1 --format=%s main | grep -q 'fleet dreaming' || fail "no dreaming commit on main"
+  git -C "$d/origin.git" show main:skills/merge/SKILL.md | grep -q 'fm-pr-merge.sh' || fail "skill edit not pushed"
+  [ -z "$(git -C "$d/dotfiles" worktree list | sed -n 2p)" ] || fail "the dreaming worktree was left behind"
+  pass "the skills step commits and pushes a skills-only change to main"
+}
+
+test_skills_rejects_changes_outside_skills_and_secrets() {
+  local d mode before
+  for mode in outside secret checkpoint message binary; do
+    d=$(new_case "skills-$mode")
+    before=$(git -C "$d/origin.git" rev-parse main)
+    STUB_SKILLS=$mode run_dream "$d" --only collect skills > "$d/out.json" || fail "$mode: run exited nonzero"
+    grep -q '"rejected"' "$d/out.json" || fail "$mode: change not rejected"
+    [ "$(git -C "$d/origin.git" rev-parse main)" = "$before" ] || fail "$mode: main moved"
+  done
+  pass "the skills step rejects changes outside skills/, secret-like text, also in agent commits and summaries"
+}
+
+test_a_malformed_config_stops_the_run() {
+  local d
+  d=$(new_case badconfig)
+  printf '{"exclude_homes": ["finn-finance"],}\n' > "$d/home/config/dream.json"
+  if run_dream "$d" > "$d/out.json" 2> "$d/err"; then fail "a malformed dream.json did not stop the run"; fi
+  grep -q 'dream.json is unreadable' "$d/err" || fail "the refusal does not name the file: $(cat "$d/err")"
+  [ -z "$(find "$d/home/state" -name 'digest-*' 2>/dev/null)" ] || fail "a digest was written without the exclusions"
+  pass "a malformed dream.json stops the run before anything is collected"
+}
+
+test_the_jev_helper_refuses_without_a_key() {
+  local out rc
+  command -v node >/dev/null 2>&1 || { pass "the Jev helper key check (skipped: no node)"; return; }
+  out=$(printf '{"title": "x"}' | env -u FM_WAKE_GATE_KEY_VAR node "$ROOT/bin/wake-gate/jev-worth.mjs"); rc=$?
+  [ "$out" = "$(printf 'error\tno-key')" ] && [ "$rc" = 3 ] || fail "expected error/no-key and exit 3, got '$out' ($rc)"
+  out=$(printf 'not json' | node "$ROOT/bin/wake-gate/jev-worth.mjs"); rc=$?
+  [ "$out" = "$(printf 'error\tbad-input')" ] && [ "$rc" = 2 ] || fail "expected error/bad-input and exit 2, got '$out' ($rc)"
+  pass "the Jev helper refuses bad input and a missing key before any call"
+}
+
+test_a_failed_agent_is_reported_as_failed() {
+  local d
+  d=$(new_case agent-fail)
+  STUB_DECK_FAIL=1 run_dream "$d" > "$d/out.json" || fail "run exited nonzero"
+  jq -e '.steps.skills.status == "failed" and (.steps.skills.why | test("502"))' "$d/out.json" >/dev/null \
+    || fail "a failed skills agent was not reported as failed: $(cat "$d/out.json")"
+  jq -e '.steps.triage.status == "failed" and .steps.file.status == "nothing to file"' "$d/out.json" >/dev/null \
+    || fail "a failed triage agent was not reported as failed"
+  pass "an agent that fails (a gateway 502) is reported as failed, not as no changes"
+}
+
+test_a_gateway_blip_is_retried_once_and_succeeds() {
+  local d
+  d=$(new_case blip)
+  STUB_DECK_FAIL_ONCE=1 run_dream "$d" > "$d/out.json" || fail "run exited nonzero"
+  jq -e '.steps.skills.status == "merged" and .steps.triage.status == "done"' "$d/out.json" >/dev/null \
+    || fail "a retry that succeeded was not reported as success: $(cat "$d/out.json")"
+  pass "an agent that fails once and then succeeds is reported by its second attempt"
+}
+
+test_unreadable_open_work_files_nothing_blind() {
+  local d
+  d=$(new_case blind)
+  printf '#!/usr/bin/env bash\necho "gh: not logged in" >&2; exit 1\n' > "$d/bin/gh"
+  run_dream "$d" > "$d/out.json" || fail "run exited nonzero"
+  [ -z "$(find "$d/calls" -name 'add.*')" ] || fail "items were filed although open PRs could not be read"
+  jq -e '.steps.triage.why | test("unreadable")' "$d/out.json" >/dev/null || fail "the blind spot was not reported"
+  pass "a repository whose open PRs cannot be read gets nothing filed, and the report says so"
+}
+
+test_triage_dedupes_scores_caps_and_files_with_owners() {
+  local d n
+  d=$(new_case triage)
+  run_dream "$d" > "$d/out.json" || fail "run exited nonzero"
+  n=$(find "$d/calls" -name 'add.*' | wc -l | tr -d ' ')
+  [ "$n" = 3 ] || fail "expected 3 tasks filed, got $n"
+  grep -l 'duplicate worker' "$d"/calls/add.* >/dev/null 2>&1 && fail "a duplicate of an open task was filed"
+  grep -l 'idle sweep' "$d"/calls/add.* >/dev/null 2>&1 && fail "an item Jev scored low was filed"
+  grep -l 'Not a harness repo' "$d"/calls/add.* >/dev/null 2>&1 && fail "an unknown repo was filed"
+  grep -q 'dave-tools' "$d"/calls/handoff.* || fail "the deck item was not handed to its owner"
+  [ "$(wc -l < "$d/home/state/dream/raised.jsonl")" -eq 3 ] || fail "raised ledger not written"
+  jq -e '.raised | length == 3' "$d/home/state/dream/latest.json" >/dev/null || fail "latest.json lacks the raised items"
+  pass "triage drops duplicates and low Jev scores, keeps three and files them with their owners"
+}
+
+test_dry_run_files_nothing_and_pushes_nothing() {
+  local d before
+  d=$(new_case dry)
+  before=$(git -C "$d/origin.git" rev-parse main)
+  run_dream "$d" --dry-run >/dev/null || fail "dry run exited nonzero"
+  [ -n "$(find "$d/calls" -name 'add.*')" ] && fail "a dry run filed a task"
+  [ "$(git -C "$d/origin.git" rev-parse main)" = "$before" ] || fail "a dry run pushed"
+  [ -e "$d/home/state/dream/latest.json" ] && fail "a dry run replaced latest.json"
+  pass "a dry run files nothing, pushes nothing and leaves the last summary alone"
+}
+
+test_report_shows_the_last_run() {
+  local d out
+  d=$(new_case report)
+  run_dream "$d" >/dev/null || fail "run exited nonzero"
+  out=$(python3 -c "
+import sys, json, time; sys.path.insert(0, '$ROOT/bin'); import fm_report
+print(json.dumps(fm_report.read_dream('$d/home', time.time() - 86400)))")
+  printf '%s' "$out" | jq -e '.summary | test("Overnight")' >/dev/null || fail "report dream section missing: $out"
+  printf '%s' "$out" | jq -e '.skills[0].skill == "merge"' >/dev/null || fail "skills missing from the report"
+  pass "the fleet report carries the last dreaming run"
+}
+
+test_collect_builds_a_private_digest_of_the_day
+test_skills_pushes_a_guarded_change_to_main
+test_skills_rejects_changes_outside_skills_and_secrets
+test_triage_dedupes_scores_caps_and_files_with_owners
+test_a_failed_agent_is_reported_as_failed
+test_a_malformed_config_stops_the_run
+test_the_jev_helper_refuses_without_a_key
+test_a_gateway_blip_is_retried_once_and_succeeds
+test_unreadable_open_work_files_nothing_blind
+test_dry_run_files_nothing_and_pushes_nothing
+test_report_shows_the_last_run

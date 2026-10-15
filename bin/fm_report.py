@@ -49,6 +49,8 @@ JSON shape (schema fm-report.v1; new fields may be added, none removed):
    mates: [{id, name, domain, machine, freshness, shipped, crew, working, waiting, crew_seconds}]   (fleet)
    power: [{provider, pct_left, refills_at, tightest}], power_error           (fleet)
    domain, machine                                                       (non-fleet)
+   dream: {date, status, summary, skills, skills_commit, raised, slow_commands}  (fleet, primary;
+          the last fleet-dreaming run when it falls in the window, else null; bin/fm_dream.py owns it)
    gaps: [<what could not be read, in words>]}
 """
 import argparse
@@ -491,6 +493,8 @@ def build(home, scope_raw, days, now=None):
     else:
         rep['domain'] = parts[0]['domain']
         rep['machine'] = parts[0]['machine']
+    if scope in ('fleet', 'primary'):
+        rep['dream'] = read_dream(home, start)
     period = 'today' if days == 1 else 'the last %d days' % days
     rep['headline'] = '%s, %s: %d shipped, %d working now, %s crew time, %d waiting.' % (
         rep['scope_name'][0].upper() + rep['scope_name'][1:], period, len(rep['shipped']),
@@ -500,6 +504,26 @@ def build(home, scope_raw, days, now=None):
     rep['summary'] = rep['headline'] + (
         ' Tightest power: %s at %d%%.' % (low['provider'], low['pct_left']) if low else '')
     return rep
+
+
+def read_dream(home, start):
+    """The last fleet-dreaming run's summary (bin/fm_dream.py), when it finished
+    inside the window; None otherwise or when unreadable."""
+    try:
+        with open(Path(home) / 'state' / 'dream' / 'latest.json', encoding='utf-8') as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(doc, dict) or doc.get('schema') != 'fm-dream.v1':
+        return None
+    try:
+        finished = dt.datetime.fromisoformat(str(doc.get('finished')).replace('Z', '+00:00')).timestamp()
+    except ValueError:
+        return None
+    if finished < start - 6 * 3600:  # an overnight run belongs to the morning's "today"
+        return None
+    return {k: doc.get(k) for k in ('date', 'status', 'summary', 'skills', 'skills_commit', 'raised',
+                                    'slow_commands', 'finished')}
 
 
 def markdown(rep):
@@ -527,6 +551,14 @@ def markdown(rep):
         out += ['## Power'] + ['- %s: %d%% left%s (tightest: %s)' % (
             p['provider'], p['pct_left'], ', refills ' + p['refills_at'] if p['refills_at'] else '', p['tightest'])
             for p in rep.get('power') or []] + (['- unread: ' + rep['power_error']] if rep.get('power_error') else []) + ['']
+    if rep.get('dream'):
+        d = rep['dream']
+        out += ['## Overnight', '- ' + (d.get('summary') or 'fleet dreaming ran')]
+        out += ['- skill %s: %s' % (c.get('skill'), c.get('what')) for c in d.get('skills') or []]
+        out += ['- raised for %s: %s%s' % (r.get('mate'), r.get('title'), ' (%s)' % r['key'] if r.get('key') else '')
+                for r in d.get('raised') or []]
+        out += ['- slow: %s up to %ss (%d calls)' % (c['command'], c['seconds'], c['count'])
+                for c in (d.get('slow_commands') or [])[:3]] + ['']
     foot = 'Crew time comes from firstmate\'s own busy records%s.' % (
         ' since ' + rep['crew_time_since'] if rep.get('crew_time_since') else ' (none recorded yet)')
     out += ['_As of %s. %s%s_' % (rep['as_of'], foot, (' Unread: ' + '; '.join(rep['gaps'])) if rep['gaps'] else '')]
