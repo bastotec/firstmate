@@ -51,7 +51,8 @@
 #   parent_home=            absolute parent FM_HOME
 #   parent_status=          absolute path of parent state/<task_id>.status
 #   parent_status_scan_signature=
-#   request_summary=        short sanitized summary (no secrets by design)
+#   request_summary=        sanitized request excerpt, not secret-redacted;
+#                           fm_pending_reply_summarize below owns filtering and limits
 #   created_epoch=          when the expectation was created
 #   delivered_epoch=        when the marked request was confirmed delivered
 #                           (empty until delivery; the captain-direct exception
@@ -207,14 +208,25 @@ fm_pending_reply_text_has_corr() {  # <text> <corr_id>
   return 1
 }
 
-# Sanitize a short request summary: single line, bounded, no control chars.
+# Preserve Unicode letters, accents and punctuation in the request summary because
+# Fleet Town shows it as the captain's words. Perl removes control, format,
+# private-use and unassigned characters, other symbols (including emoji), and
+# non-ASCII modifier symbols; ASCII backticks and carets are preserved.
+# If Perl fails or is unavailable, fall back to the legacy printable-ASCII filter.
+# Regression: tests/fm-captain-direct-echo.test.sh.
 fm_pending_reply_summarize() {  # <text>
   local text=$1 cleaned
-  cleaned=$(printf '%s' "$text" | tr '\t\r\n' '   ' | tr -cd '\11\12\15\40-\176' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  cleaned=$(printf '%s' "$text" | perl -CSD -0777 -pe 's/[\t\r\n]/ /g; s/[\p{C}\p{So}]|(?![\x00-\x7f])\p{Sk}//g; s/\A\s+//; s/\s+\z//' 2>/dev/null) ||
+    cleaned=$(printf '%s' "$text" | tr '\t\r\n' '   ' | tr -cd '\11\12\15\40-\176' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
   # Drop an already-present marker/corr prefix so the durable summary stays short.
   cleaned=${cleaned#"$FM_FROMFIRST_MARK"}
   cleaned=$(printf '%s' "$cleaned" | sed -E "s/^corr=[A-Fa-f0-9]{16}[[:space:]]*//")
-  if [ "${#cleaned}" -gt 120 ]; then
+  # Perl caps at 120 characters without splitting a multibyte character;
+  # if it fails or is unavailable, retain the legacy shell substring cap.
+  local capped
+  if capped=$(printf '%s' "$cleaned" | perl -CSD -0777 -pe 's/\A(.{117}).{4,}\z/$1.../s' 2>/dev/null); then
+    cleaned=$capped
+  elif [ "${#cleaned}" -gt 120 ]; then
     cleaned="${cleaned:0:117}..."
   fi
   printf '%s' "$cleaned"
