@@ -327,6 +327,15 @@ normalize_payload() { # <source> <destination>
 # At most CONTINUITY_RECOVERY_LIMIT replays per hour per mate; the attempts are
 # recorded beside the cursor.
 CONTINUITY_RECOVERY_LIMIT=${FM_REMOTE_REPLY_RECOVERY_LIMIT:-3}
+# The capture sequence an escalated break stopped the source at, or -1. While a
+# stop is recorded nothing recovers or re-arms the source; only an operator's
+# arm (cmd_arm) lifts it.
+stopped_seq() { # <id>
+  local v
+  v=$(cat "$CURSOR_DIR/$1.stopped" 2>/dev/null || true)
+  case "$v" in ''|*[!0-9]*) printf '%s\n' -1 ;; *) printf '%s\n' "$v" ;; esac
+}
+
 # Each charge is keyed to the break's capture sequence, so retrying the same
 # break never charges the budget twice.
 continuity_recovery_allowed() { # <id> <seq>
@@ -405,7 +414,8 @@ cmd_ingest() {
     # bounded: a log that keeps breaking is escalated and left stopped.
     # Only a rewrite of a log this home had already read part of is replayed;
     # a break at the very start (an oversized line) would just recur.
-    if { [ "$reason" = truncated ] || [ "$reason" = prefix-changed ]; } \
+    if [ "$(stopped_seq "$id")" -lt 0 ] \
+      && { [ "$reason" = truncated ] || [ "$reason" = prefix-changed ]; } \
       && [ "$from" -gt 0 ] && continuity_recovery_allowed "$id" "$seq"; then
       # The receipt comes first and marks this break as recovered, so a
       # handle retried after any later failure finishes the reset and re-arm
@@ -424,7 +434,7 @@ cmd_ingest() {
     fi
     # Record which capture stopped the source, so a stale retry of an earlier
     # recovery cannot re-arm past this stop.
-    if [ -n "$seq" ]; then
+    if [ -n "$seq" ] && [ "$seq" -gt "$(stopped_seq "$id")" ]; then
       mkdir -p "$CURSOR_DIR" && printf '%s\n' "$seq" > "$CURSOR_DIR/$id.stopped"
     fi
     line="blocked [key=remote-reply-continuity-$id]: remote reply continuity broke for $id ($reason)"
@@ -511,7 +521,7 @@ cmd_ingest() {
 }
 
 cmd_handle_locked() {
-  local id=${1:-} seq=${2:-} result=${3:-} sid class rc=0 to from from_hash stopped
+  local id=${1:-} seq=${2:-} result=${3:-} sid class rc=0 to from from_hash
   validate_id "$id"
   case "$seq" in ''|*[!0-9]*) die "sequence must be a nonnegative integer" ;; esac
   sid=$(source_id "$id")
@@ -524,9 +534,7 @@ cmd_handle_locked() {
     # while the cursor is still where that break left it (its start, or the
     # reset itself); a cursor that has since moved on belongs to later
     # progress or a later break and is left alone.
-    stopped=$(cat "$CURSOR_DIR/$id.stopped" 2>/dev/null || true)
-    case "$stopped" in ''|*[!0-9]*) stopped=-1 ;; esac
-    if [ "$class" = continuity-broken ] && [ "$stopped" -lt "$seq" ]; then
+    if [ "$class" = continuity-broken ] && [ "$(stopped_seq "$id")" -lt 0 ]; then
       read_cursor "$id"
       from=$(result_field "$result" from_offset) || die "result start offset is ambiguous"
       from_hash=$(result_field "$result" from_prefix_sha256) || die "result start hash is ambiguous"
@@ -543,7 +551,8 @@ cmd_handle_locked() {
   if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ] && [ "$rc" -ne 4 ]; then
     return "$rc"
   fi
-  if [ "$class" = delta ] || [ "$rc" -eq 4 ]; then
+  # A recorded stop holds against every retry; only cmd_arm lifts it.
+  if { [ "$class" = delta ] || [ "$rc" -eq 4 ]; } && [ "$(stopped_seq "$id")" -lt 0 ]; then
     cmd_arm_locked "$id" || return 1
   fi
   [ "$rc" -ne 4 ] || rc=0
