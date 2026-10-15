@@ -103,6 +103,15 @@ fm_task_inbox_dir() {  # <state-dir> <task-id>
   printf '%s/%s.inbox' "$1" "$2"
 }
 
+# One stderr line naming the exact step that failed to deliver a steer record.
+# The send paths' caller errors promise "the leg's stderr above has the
+# reason": without this, a mkdir, lock-timeout, staging, or rename failure
+# returned a bare nonzero and the promise was false - the captain saw only the
+# generic summary (the Fleet Town cadia attachment send failure, 2026-10-14).
+fm_task_inbox_write_failure() {  # <step> <path>
+  printf 'fm-task-inbox: %s failed for %s\n' "$1" "$2" >&2
+}
+
 fm_task_inbox_handled_dir() {  # <state-dir> <task-id>
   printf '%s/%s.inbox/handled' "$1" "$2"
 }
@@ -151,7 +160,7 @@ _fm_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode]
   local dir=$1 text=$2 delivery_mode=${3:-} seq tmp rec status=0
   seq=$(fm_task_inbox_next_seq "$dir")
   rec="$dir/$seq.msg"
-  tmp=$(mktemp "$dir/.staging.XXXXXX") || return 1
+  tmp=$(mktemp "$dir/.staging.XXXXXX") || { fm_task_inbox_write_failure staging "$dir"; return 1; }
   {
     printf 'schema=%s\n' "$FM_TASK_INBOX_SCHEMA"
     printf 'at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -159,7 +168,7 @@ _fm_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode]
     printf -- '--\n'
     printf '%s' "$text"
   } > "$tmp" && mv "$tmp" "$rec" || status=1
-  [ "$status" -eq 0 ] || { rm -f "$tmp"; return 1; }
+  [ "$status" -eq 0 ] || { rm -f "$tmp"; fm_task_inbox_write_failure publish "$rec"; return 1; }
   printf '%s' "$rec"
 }
 
@@ -168,9 +177,9 @@ _fm_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode]
 fm_task_inbox_write() {  # <state-dir> <task-id> <text> [delivery-mode]
   local state=$1 task=$2 text=$3 delivery_mode=${4:-} dir lock rec status=0
   dir=$(fm_task_inbox_dir "$state" "$task")
-  mkdir -p "$dir/handled" || return 1
+  mkdir -p "$dir/handled" || { fm_task_inbox_write_failure mkdir "$dir"; return 1; }
   lock="$dir/.seq.lock"
-  fm_task_inbox_lock_acquire "$lock" || return 1
+  fm_task_inbox_lock_acquire "$lock" || { fm_task_inbox_write_failure "lock-acquire (${FM_TASK_INBOX_LOCK_WAIT_SECS:-$FM_TASK_INBOX_LOCK_WAIT_DEFAULT} seconds)" "$lock"; return 1; }
   rec=$(_fm_task_inbox_write_record_locked "$dir" "$text" "$delivery_mode") || status=1
   fm_lock_release "$lock"
   [ "$status" -eq 0 ] || return 1
@@ -185,9 +194,9 @@ fm_task_inbox_write() {  # <state-dir> <task-id> <text> [delivery-mode]
 fm_task_inbox_write_handled() {  # <state-dir> <task-id> <text>
   local state=$1 task=$2 text=$3 dir lock seq tmp rec status=0
   dir=$(fm_task_inbox_dir "$state" "$task")
-  mkdir -p "$dir/handled" || return 1
+  mkdir -p "$dir/handled" || { fm_task_inbox_write_failure mkdir "$dir"; return 1; }
   lock="$dir/.seq.lock"
-  fm_task_inbox_lock_acquire "$lock" || return 1
+  fm_task_inbox_lock_acquire "$lock" || { fm_task_inbox_write_failure "lock-acquire (${FM_TASK_INBOX_LOCK_WAIT_SECS:-$FM_TASK_INBOX_LOCK_WAIT_DEFAULT} seconds)" "$lock"; return 1; }
   seq=$(fm_task_inbox_next_seq "$dir")
   rec="$dir/handled/$seq.msg"
   if tmp=$(mktemp "$dir/handled/.staging.XXXXXX"); then
@@ -197,9 +206,13 @@ fm_task_inbox_write_handled() {  # <state-dir> <task-id> <text>
       printf -- '--\n'
       printf '%s' "$text"
     } > "$tmp" || status=1
-    [ "$status" -ne 0 ] || mv "$tmp" "$rec" || status=1
-    [ "$status" -eq 0 ] || rm -f "$tmp"
+    if [ "$status" -eq 0 ]; then
+      mv "$tmp" "$rec" || { status=1; fm_task_inbox_write_failure publish "$rec"; }
+    else
+      rm -f "$tmp"; fm_task_inbox_write_failure write "$tmp"
+    fi
   else
+    fm_task_inbox_write_failure staging "$dir/handled"
     status=1
   fi
   fm_lock_release "$lock"
@@ -221,9 +234,9 @@ fm_task_inbox_write_handled() {  # <state-dir> <task-id> <text>
 fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mode]
   local state=$1 task=$2 text=$3 delivery_mode=${4:-} dir lock want have f rec='' status=0
   dir=$(fm_task_inbox_dir "$state" "$task")
-  mkdir -p "$dir/handled" || return 1
+  mkdir -p "$dir/handled" || { fm_task_inbox_write_failure mkdir "$dir"; return 1; }
   lock="$dir/.seq.lock"
-  fm_task_inbox_lock_acquire "$lock" || return 1
+  fm_task_inbox_lock_acquire "$lock" || { fm_task_inbox_write_failure "lock-acquire (${FM_TASK_INBOX_LOCK_WAIT_SECS:-$FM_TASK_INBOX_LOCK_WAIT_DEFAULT} seconds)" "$lock"; return 1; }
   if want=$(mktemp "$dir/.dedup.XXXXXX") && have=$(mktemp "$dir/.dedup.XXXXXX"); then
     if printf '%s' "$text" > "$want"; then
       for f in "$dir"/*.msg "$dir/handled"/*.msg; do
@@ -256,11 +269,13 @@ fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mod
         break
       done
     else
+      fm_task_inbox_write_failure dedup-write "$dir"
       status=1
     fi
     rm -f "$want" "$have"
   else
     rm -f "${want:-}" 2>/dev/null || true
+    fm_task_inbox_write_failure dedup-staging "$dir"
     status=1
   fi
   if [ "$status" -eq 0 ] && [ -z "$rec" ]; then
