@@ -226,10 +226,43 @@ fm_task_inbox_write_handled() {  # <state-dir> <task-id> <text>
 # reading without the lock is safe. NOT authoritative alone: a concurrent
 # writer can publish a new record after the scan, which is why the caller
 # re-verifies under the lock.
+#
+# _fm_task_inbox_next_candidate resolves one glob candidate against the
+# acknowledgement race both scans must survive: a worker can move a root
+# record into handled/ while the scan is between its glob and its body read,
+# so a missing root candidate or a failed root body read is retried against
+# the same sequence's handled/ path before the candidate is given up on. This
+# is the original lock-held scan's candidate resolution, extracted unchanged
+# into one helper so the prescan and the locked re-verify cannot drift apart.
+_fm_task_inbox_next_candidate() {  # <inbox-dir> <candidate-path> [have-file]
+  local dir=$1 f=$2 have=${3:-} handled
+  if [ ! -e "$f" ]; then
+    case "$f" in
+      "$dir"/*.msg)
+        handled="$dir/handled/${f##*/}"
+        [ -e "$handled" ] || return 1
+        f=$handled
+        ;;
+      *) return 1 ;;
+    esac
+  fi
+  if [ -n "$have" ]; then
+    fm_task_inbox_body "$f" > "$have" 2>/dev/null &&
+      { printf '%s' "$f"; return 0; }
+    case "$f" in
+      "$dir"/*.msg)
+        handled="$dir/handled/${f##*/}"
+        fm_task_inbox_body "$handled" > "$have" 2>/dev/null &&
+          { printf '%s' "$handled"; return 0; }
+        ;;
+    esac
+    return 1
+  fi
+  printf '%s' "$f"
+}
 _fm_task_inbox_dedup_prescan() {  # <inbox-dir> <want-file> [delivery-mode]
   local dir=$1 want=$2 delivery_mode=${3:-} f n max=0 rec=''
   for f in "$dir"/*.msg "$dir/handled"/*.msg; do
-    [ -e "$f" ] || continue
     n=$(fm_task_inbox_seq_of "${f##*/}") || continue
     [ "$n" -le "$max" ] || max=$n
     if [ "$delivery_mode" = fire-and-forget ]; then
@@ -237,7 +270,7 @@ _fm_task_inbox_dedup_prescan() {  # <inbox-dir> <want-file> [delivery-mode]
     elif fm_task_inbox_is_fire_and_forget "$f"; then
       continue
     fi
-    fm_task_inbox_body "$f" > "$_FM_TASK_INBOX_DEDUP_HAVE" 2>/dev/null || continue
+    f=$(_fm_task_inbox_next_candidate "$dir" "$f" "$_FM_TASK_INBOX_DEDUP_HAVE") || continue
     cmp -s "$want" "$_FM_TASK_INBOX_DEDUP_HAVE" || continue
     [ ! -e "$dir/handled/${f##*/}" ] || f="$dir/handled/${f##*/}"
     rec=$f
@@ -309,7 +342,6 @@ fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mod
     fm_task_inbox_lock_acquire "$lock" || { fm_task_inbox_write_failure "lock-acquire (${FM_TASK_INBOX_LOCK_WAIT_SECS:-$FM_TASK_INBOX_LOCK_WAIT_DEFAULT} seconds)" "$lock"; rm -f "$want" "$have"; return 1; }
     # Bounded re-verify: only sequences the prescan could not have seen.
     for f in "$dir"/*.msg "$dir/handled"/*.msg; do
-      [ -e "$f" ] || continue
       n=$(fm_task_inbox_seq_of "${f##*/}") || continue
       [ "$n" -gt "$_FM_TASK_INBOX_PRESCAN_MAX" ] || continue
       if [ "$delivery_mode" = fire-and-forget ]; then
@@ -317,7 +349,7 @@ fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mod
       elif fm_task_inbox_is_fire_and_forget "$f"; then
         continue
       fi
-      fm_task_inbox_body "$f" > "$have" 2>/dev/null || continue
+      f=$(_fm_task_inbox_next_candidate "$dir" "$f" "$have") || continue
       cmp -s "$want" "$have" || continue
       [ ! -e "$dir/handled/${f##*/}" ] || f="$dir/handled/${f##*/}"
       rec=$f

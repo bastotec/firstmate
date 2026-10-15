@@ -392,7 +392,7 @@ test_idempotent_write_follows_concurrent_ack() {
 # prescan hit must not even wait on the lock: the safe-recovery resend lands
 # on its existing record while another writer holds the lock indefinitely.
 test_idempotent_prescan_does_not_hold_the_lock() {
-  local state rec2 count i text
+  local state rec2 count i text holder holder_fifo
   state="$TMP_ROOT/idem-prescan/state"; mkdir -p "$state"
   # A cadia-sized history: 300 acknowledged records for the prescan to walk.
   for i in $(seq 1 300); do
@@ -404,13 +404,21 @@ test_idempotent_prescan_does_not_hold_the_lock() {
   count=$(find "$state/t1.inbox" -name '*.msg' | wc -l | tr -d ' ')
   [ "$count" = 301 ] || fail "fixture should hold 301 records, found $count"
   # A held lock cannot delay the resend: the prescan finds the identical body
-  # and returns without acquiring .seq.lock at all.
+  # and returns without acquiring .seq.lock at all. (A live pid the test can
+  # signal, not pid 1: an unkillable probe reads as dead via EPERM and the
+  # stale-lock steal would reclaim it.)
+  holder_fifo="$TMP_ROOT/idem-prescan/holder.fifo"
+  mkfifo "$holder_fifo"
+  ( cd / && bash -c 'echo $$ >"$1"; exec sleep 30' _ "$holder_fifo" ) &
+  holder=$(cat "$holder_fifo")
+  rm -f "$holder_fifo"
   mkdir -p "$state/t1.inbox/.seq.lock"
-  echo 1 > "$state/t1.inbox/.seq.lock/pid"
+  echo "$holder" > "$state/t1.inbox/.seq.lock/pid"
   rec2=$(FM_TASK_INBOX_LOCK_WAIT_SECS=1 inbox_lib "$state" fm_task_inbox_write_idempotent "$state" t1 "$text") \
     || fail "an identical resend must succeed while another writer holds the lock"
   [ "$rec2" = "$state/t1.inbox/301.msg" ] || fail "resend should dedup onto 301.msg, got $rec2"
   rm -rf "$state/t1.inbox/.seq.lock"
+  [ -n "$holder" ] && kill "$holder" 2>/dev/null || true
   # A NEW body still serializes on the lock: the locked re-verify window plus
   # publish stay mutually exclusive with any other writer.
   rec2=$(FM_TASK_INBOX_LOCK_WAIT_SECS=5 inbox_lib "$state" fm_task_inbox_write_idempotent "$state" t1 "a genuinely new steer") \
