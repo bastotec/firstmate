@@ -297,36 +297,56 @@ fi
 # --relaunch, as a deploy's second-mate restart runs it) holds the task's
 # metadata lock for its whole restart, often longer than the inbox lock wait,
 # and then moves the task to a new endpoint, so a captain message sent in that
-# window fails although nothing is wrong. With --from-captain, an attempt that
-# fails only because the record stayed locked or changed endpoint before
-# anything was written exits 75 internally, and the send is retried from
-# scratch every second for up to FM_SEND_CAPTAIN_WAIT_SECS seconds (default 45,
-# a positive integer); only the last attempt's output is shown, and a send
-# still refused then exits 1 as before.
+# window fails although nothing is wrong. With --from-captain among the options
+# (the same grammar the parser below reads: [--decision-answer] <target>, then
+# options up to the message text), an attempt that fails only because the
+# record stayed locked or changed endpoint before anything was written exits 75
+# internally, and the send is retried from scratch every second until
+# FM_SEND_CAPTAIN_WAIT_SECS seconds (default 45, a positive integer) have
+# passed. Each attempt's lock wait is capped to the time left, so the whole
+# send ends within about a second of that bound; only the last attempt's
+# output is shown, and a send still refused then exits 1 as before.
+fm_send_captain_flagged() {
+  [ "${1:-}" != --decision-answer ] || shift
+  [ $# -gt 0 ] || return 1
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --from-captain) return 0 ;;
+      --resolve-key|--fire-and-forget|--from-mate) [ $# -ge 2 ] || return 1; shift 2 ;;
+      --resolve-key=*|--fire-and-forget=*|--correction) shift ;;
+      *) return 1 ;;
+    esac
+  done
+  return 1
+}
 FM_SEND_TEMPFAIL=1
 if [ "${FM_SEND_CAPTAIN_ATTEMPT:-0}" = 1 ]; then
   FM_SEND_TEMPFAIL=75
-else
-  for fm_send_arg in "$@"; do
-    [ "$fm_send_arg" != -- ] || break
-    [ "$fm_send_arg" = --from-captain ] || continue
-    fm_send_wait=${FM_SEND_CAPTAIN_WAIT_SECS:-45}
-    case "$fm_send_wait" in ''|*[!0-9]*|0) fm_send_wait=45 ;; esac
-    fm_send_deadline=$(( $(date +%s) + fm_send_wait ))
-    fm_send_out=$(mktemp "${TMPDIR:-/tmp}/fm-send-out.XXXXXX") || exit 1
-    fm_send_err=$(mktemp "${TMPDIR:-/tmp}/fm-send-err.XXXXXX") || { rm -f "$fm_send_out"; exit 1; }
-    while :; do
-      fm_send_rc=0
-      FM_SEND_CAPTAIN_ATTEMPT=1 bash "${BASH_SOURCE[0]}" "$@" >"$fm_send_out" 2>"$fm_send_err" || fm_send_rc=$?
-      [ "$fm_send_rc" = 75 ] && [ "$(date +%s)" -lt "$fm_send_deadline" ] || break
-      sleep 1
-    done
-    cat "$fm_send_out"
-    cat "$fm_send_err" >&2
-    rm -f "$fm_send_out" "$fm_send_err"
-    [ "$fm_send_rc" != 75 ] || fm_send_rc=1
-    exit "$fm_send_rc"
+elif fm_send_captain_flagged "$@"; then
+  fm_send_wait=${FM_SEND_CAPTAIN_WAIT_SECS:-45}
+  case "$fm_send_wait" in ''|*[!0-9]*|0) fm_send_wait=45 ;; esac
+  fm_send_lock_wait=${FM_TASK_INBOX_LOCK_WAIT_SECS:-5}
+  case "$fm_send_lock_wait" in ''|*[!0-9]*) fm_send_lock_wait=5 ;; esac
+  fm_send_deadline=$(( $(date +%s) + fm_send_wait ))
+  fm_send_out=$(mktemp "${TMPDIR:-/tmp}/fm-send-out.XXXXXX") || exit 1
+  fm_send_err=$(mktemp "${TMPDIR:-/tmp}/fm-send-err.XXXXXX") || { rm -f "$fm_send_out"; exit 1; }
+  while :; do
+    fm_send_left=$(( fm_send_deadline - $(date +%s) ))
+    [ "$fm_send_left" -ge 1 ] || fm_send_left=1
+    [ "$fm_send_lock_wait" -le "$fm_send_left" ] || fm_send_lock_wait=$fm_send_left
+    fm_send_rc=0
+    FM_TASK_INBOX_LOCK_WAIT_SECS=$fm_send_lock_wait FM_SEND_CAPTAIN_ATTEMPT=1 \
+      bash "${BASH_SOURCE[0]}" "$@" >"$fm_send_out" 2>"$fm_send_err" || fm_send_rc=$?
+    [ "$fm_send_rc" = 75 ] || break
+    [ $(( $(date +%s) + 1 )) -lt "$fm_send_deadline" ] || break
+    sleep 1
   done
+  cat "$fm_send_out"
+  cat "$fm_send_err" >&2
+  rm -f "$fm_send_out" "$fm_send_err"
+  [ "$fm_send_rc" != 75 ] || fm_send_rc=1
+  exit "$fm_send_rc"
 fi
 
 # shellcheck source=bin/fm-backend.sh

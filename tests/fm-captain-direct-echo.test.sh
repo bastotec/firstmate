@@ -386,16 +386,28 @@ test_ordinary_steer_keeps_the_short_lock_wait() {
   pass "captain-direct: an ordinary steer keeps the short lock wait"
 }
 
+test_captain_flag_in_message_text_is_an_ordinary_steer() {
+  local rc=0
+  setup flagtext
+  hold_meta 4
+  send_with_lock_waits 20 domain Explain --from-captain || rc=$?
+  wait "$HOLDER"
+  [ "$rc" = 1 ] || fail "a steer whose text names the flag must fail at the lock wait (rc=$rc)"
+  [ "$(inbox_count)" = 0 ] || fail "nothing must be enqueued"
+  pass "captain-direct: --from-captain inside the message text does not make a captain send"
+}
+
 test_captain_send_wait_is_bounded() {
   local rc=0 start elapsed
   setup bounded
   hold_meta 8
   start=$(date +%s)
-  send_with_lock_waits 2 domain --from-captain "$CAPTAIN_TEXT" || rc=$?
+  env FM_ROOT_OVERRIDE="$HOME_DIR" FM_HOME="$HOME_DIR" FM_SEND_LOG="$LOG" FM_SEND_SETTLE=0 \
+    FM_SEND_CAPTAIN_WAIT_SECS=2 "$SEND" domain --from-captain "$CAPTAIN_TEXT" > "$OUT" 2> "$OUT.err" || rc=$?
   elapsed=$(( $(date +%s) - start ))
   wait "$HOLDER"
   [ "$rc" = 1 ] || fail "a hold past the bound must fail with exit 1 (rc=$rc)"
-  [ "$elapsed" -lt 7 ] || fail "the wait must stop at its bound (${elapsed}s)"
+  [ "$elapsed" -le 4 ] || fail "the wait must stop at its bound, whatever the lock wait (${elapsed}s)"
   assert_contains "$(cat "$OUT.err")" "could not be locked for final delivery validation" "the last attempt's error must be shown"
   [ "$(inbox_count)" = 0 ] || fail "nothing must be enqueued"
   pass "captain-direct: the captain wait is bounded and fails as before"
@@ -413,4 +425,5 @@ test_ledger_retention
 test_unknown_delivery_never_escalates
 test_captain_send_waits_out_a_relaunch
 test_ordinary_steer_keeps_the_short_lock_wait
+test_captain_flag_in_message_text_is_an_ordinary_steer
 test_captain_send_wait_is_bounded
