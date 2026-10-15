@@ -342,7 +342,16 @@ hold_meta() {
     . "$ROOT/bin/fm-wake-lib.sh"
     fm_lock_try_acquire "$lock" || exit 1
     : > "$HOME_DIR/held"
-    [ -z "$relaunch" ] || fm_test_stream_secondmate_meta "$HOME_DIR/state/domain.meta" "$HOME_DIR" alpha echo "$LOG"
+    if [ -n "$relaunch" ]; then
+      # Let the send sample the old endpoint and queue on the lock, then move
+      # the task to a genuinely different endpoint, as a relaunch does.
+      sleep 2
+      mkdir -p "$HOME_DIR/relaunched"
+      identity=$(fm_test_stream_task "$HOME_DIR/relaunched" domain "$LOG") || exit 1
+      { printf '%s\n' "$identity"; grep -v -E '^(window|backend|stream_hub|stream_endpoint_id|endpoint_task_id)=' "$HOME_DIR/state/domain.meta"; } \
+        > "$HOME_DIR/state/domain.meta.new" && mv "$HOME_DIR/state/domain.meta.new" "$HOME_DIR/state/domain.meta"
+      : > "$HOME_DIR/relaunch-done"
+    fi
     sleep "$secs"
     fm_lock_release "$lock"
   ) &
@@ -352,23 +361,26 @@ hold_meta() {
   [ -e "$HOME_DIR/held" ] || fail "the holder never took the metadata lock"
 }
 
-send_with_lock_waits() {  # <captain-wait> <fm-send args...>
+send_with_lock_waits() {  # <captain-wait> <fm-send args...> (LOCK_WAIT, default 1)
   local wait=$1; shift
   env FM_ROOT_OVERRIDE="$HOME_DIR" FM_HOME="$HOME_DIR" FM_SEND_LOG="$LOG" FM_SEND_SETTLE=0 \
-    FM_TASK_INBOX_LOCK_WAIT_SECS=1 FM_SEND_CAPTAIN_WAIT_SECS="$wait" \
+    FM_TASK_INBOX_LOCK_WAIT_SECS="${LOCK_WAIT:-1}" FM_SEND_CAPTAIN_WAIT_SECS="$wait" \
     "$SEND" "$@" > "$OUT" 2> "$OUT.err"
 }
 
 test_captain_send_waits_out_a_relaunch() {
-  local start elapsed
+  local start elapsed old
   setup relaunch
-  hold_meta 4 relaunch
+  old=$(sed -n 's/^window=//p' "$HOME_DIR/state/domain.meta")
+  hold_meta 2 relaunch
   start=$(date +%s)
-  send_with_lock_waits 20 domain --from-captain "$CAPTAIN_TEXT" \
+  LOCK_WAIT=10 send_with_lock_waits 20 domain --from-captain "$CAPTAIN_TEXT" \
     || fail "a captain message must wait out a relaunch: $(cat "$OUT.err")"
   elapsed=$(( $(date +%s) - start ))
   wait "$HOLDER"
   [ "$elapsed" -ge 3 ] || fail "the send cannot have waited for the lock (${elapsed}s)"
+  [ -e "$HOME_DIR/relaunch-done" ] || fail "the relaunch never moved the endpoint"
+  [ "$(sed -n 's/^window=//p' "$HOME_DIR/state/domain.meta")" != "$old" ] || fail "the endpoint must really change"
   [ "$(inbox_count)" = 1 ] || fail "expected one inbox record, got $(inbox_count)"
   assert_contains "$(cat "$OUT")" "corr=" "a delivered captain message prints its corr"
   pass "captain-direct: a captain message waits out a relaunch and reaches the new endpoint"

@@ -303,7 +303,8 @@ fi
 # record stayed locked or changed endpoint before anything was written exits 75
 # internally, and the send is retried from scratch every second until
 # FM_SEND_CAPTAIN_WAIT_SECS seconds (default 45, a positive integer) have
-# passed. Each attempt's lock wait is capped to the time left and no attempt
+# passed. Each attempt's metadata-lock wait (FM_SEND_META_LOCK_WAIT_SECS, which
+# only these final-validation locks read) is capped to the time left and no attempt
 # starts past the bound, so waiting on a locked or moving record ends within
 # about a second of it; an attempt that gets past the lock delivers on its
 # usual timing (a remote mate's transport keeps its own FM_SEND_REMOTE_BUDGET,
@@ -339,7 +340,7 @@ elif fm_send_captain_flagged "$@"; then
     [ "$fm_send_left" -ge 1 ] || fm_send_left=1
     [ "$fm_send_lock_wait" -le "$fm_send_left" ] || fm_send_lock_wait=$fm_send_left
     fm_send_rc=0
-    FM_TASK_INBOX_LOCK_WAIT_SECS=$fm_send_lock_wait FM_SEND_CAPTAIN_ATTEMPT=1 \
+    FM_SEND_META_LOCK_WAIT_SECS=$fm_send_lock_wait FM_SEND_CAPTAIN_ATTEMPT=1 \
       bash "${BASH_SOURCE[0]}" "$@" >"$fm_send_out" 2>"$fm_send_err" || fm_send_rc=$?
     [ "$fm_send_rc" = 75 ] || break
     [ $(( $(date +%s) + 1 )) -lt "$fm_send_deadline" ] || break
@@ -1007,7 +1008,8 @@ else
     # open indefinitely; a bound hit exits through the same
     # unconfirmed-delivery contract.
     REMOTE_META_LOCK=$(fm_meta_lock_path "$TARGET_META") || exit 1
-    if [ "$DECISION_META_LOCK" != "$REMOTE_META_LOCK" ] && ! fm_task_inbox_lock_acquire "$REMOTE_META_LOCK"; then
+    if [ "$DECISION_META_LOCK" != "$REMOTE_META_LOCK" ] && ! FM_TASK_INBOX_LOCK_WAIT_SECS=${FM_SEND_META_LOCK_WAIT_SECS:-${FM_TASK_INBOX_LOCK_WAIT_SECS:-$FM_TASK_INBOX_LOCK_WAIT_DEFAULT}} \
+        fm_task_inbox_lock_acquire "$REMOTE_META_LOCK"; then
       if [ "$PENDING_REPLY_CREATED" = 1 ] && [ -n "$PENDING_REPLY_CORR" ]; then
         fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
       fi
@@ -1115,7 +1117,8 @@ else
   if [ "$INBOX_PLANE" = 1 ]; then
     INBOX_TASK_ID=$(fm_send_id_from_meta "$TARGET_META")
     INBOX_META_LOCK=$(fm_meta_lock_path "$TARGET_META") || exit 1
-    if [ "$DECISION_META_LOCK" != "$INBOX_META_LOCK" ] && ! fm_task_inbox_lock_acquire "$INBOX_META_LOCK"; then
+    if [ "$DECISION_META_LOCK" != "$INBOX_META_LOCK" ] && ! FM_TASK_INBOX_LOCK_WAIT_SECS=${FM_SEND_META_LOCK_WAIT_SECS:-${FM_TASK_INBOX_LOCK_WAIT_SECS:-$FM_TASK_INBOX_LOCK_WAIT_DEFAULT}} \
+        fm_task_inbox_lock_acquire "$INBOX_META_LOCK"; then
       if [ "$PENDING_REPLY_CREATED" = 1 ] && [ -n "$PENDING_REPLY_CORR" ]; then
         fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
       fi
