@@ -479,12 +479,16 @@ def idle_captain_sequence(state, task, floor):
 
 def conversation_busy(state, task):
     """True while a split agent's conversation lane has work it has not finished:
-    a conversation record still in the inbox whose turn is not journaled as
-    answered (or abandoned after a failed recovery). Supervision that watches
+    a turn running now (<task>.captain-lane.turn), or a conversation record
+    still in the inbox whose turn is not journaled as answered (or abandoned
+    after a failed recovery). Supervision that watches
     only the supervisor's endpoint for turn completion asks this too."""
     state = Path(state)
     if not captain_lane(state, task):
         return False
+    # A turn the lane is running right now, a recovery turn included.
+    if (state / (task + '.captain-lane.turn')).is_file():
+        return True
     last = {}
     try:
         for line in (state / (task + '.captain-lane.answered')).read_text().splitlines():

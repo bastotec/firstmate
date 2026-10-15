@@ -68,7 +68,7 @@ state/
   <id>.turn-ended         touched by bin/fm-deck-worker.sh at turn end
   <id>.deck-session       secondmate conversation binding; bin/fm-deck-worker.sh header owns format, resume eligibility, and retirement
   <id>.supervisor-session <id>.captain-lane  split secondmate supervisor binding and lane marker (bin/fm-deck-worker.sh "CAPTAIN LANE")
-  <id>.captain-lane.log <id>.captain-lane.answered  captain-lane log and turn journal (bin/fm-captain-lane.sh header)
+  <id>.captain-lane.log <id>.captain-lane.answered <id>.captain-lane.turn  captain-lane log, turn journal and running-turn marker (bin/fm-captain-lane.sh header)
   <id>.model <id>.deck-caps  in-place model choice and live driver capability (bin/fm-control.sh owns public behavior; bin/fm_model_switch.py owns capability checks)
   <id>.progress           in-turn native activity, read for the busy-age bound only (bin/fm-busy-event.sh)
   <id>.crew-state         local ship task's validation record for file watchers; bin/fm-task-state-lib.sh "PUBLISHED RECORD" owns fields, refreshes, and cleanup

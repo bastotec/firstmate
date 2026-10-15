@@ -1496,6 +1496,9 @@ test_split_home_captain_thread_and_supervisor() {
   FM_HOME="$home" FM_SEND_STREAM=monologue "$BIN/fm-send.sh" primary 'approved: run request r1 now' >/dev/null
   wait_for 10 "automatic input to the first mate reaches its monologue" turns_with "$LAB/sup.log" 'approved: run request r1 now'
   if turns_with "$LAB/cap.log" 'approved: run request r1 now' >/dev/null; then fail "automatic input must not reach the conversation"; fi
+  FM_HOME="$home" "$BIN/fm-send.sh" primary "$(printf '\342\201\243FIRSTMATE_OP: v1 operational probe')" >/dev/null
+  wait_for 10 "an operational input to the first mate reaches its monologue" turns_with "$LAB/sup.log" 'operational probe'
+  if turns_with "$LAB/cap.log" 'operational probe' >/dev/null; then fail "an operational input must not reach the conversation"; fi
   FM_HOME="$home" FM_CHAT_ROLE=supervisor "$BIN/fm-captain-note.sh" 'the PR merged' >/dev/null
   wait_for 10 "the note reaches the captain thread" turns_with "$LAB/cap.log" '[fm-supervisor-note] the PR merged'
   echo 'wake: split fixture' > "$home/wake.trigger"

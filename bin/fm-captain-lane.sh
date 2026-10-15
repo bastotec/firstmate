@@ -86,7 +86,7 @@ record_session() {
   [ -f "$DECK_SESSIONS/$started.json" ] || return 0
   printf '%s\n%s\n' "$started" "$FM_HOME" > "$RECORD.tmp.$$" && mv -f "$RECORD.tmp.$$" "$RECORD" && fresh=0
 }
-trap 'stop_deck; record_session; rm -rf -- "$WORK"' EXIT
+trap 'stop_deck; record_session; rm -f "$STATE/$ID.captain-lane.turn"; rm -rf -- "$WORK"' EXIT
 trap 'exit 143' TERM HUP
 export FM_CAPTAIN_LANE_STATE=$STATE FM_CAPTAIN_LANE_ID=$ID
 # Ctrl+C in the host's pane stops the supervisor's turn, never the captain's.
@@ -118,6 +118,8 @@ session_of() {
 # interrupted recovery is never run again. tests/fm-captain-lane.test.sh pins
 # these journal transitions and the acknowledgement retry behavior.
 ANSWERED="$STATE/$ID.captain-lane.answered"
+TURN_MARK="$STATE/$ID.captain-lane.turn"
+rm -f "$TURN_MARK"
 journal() {  # <state> <record-name>
   printf '%s %s\n' "$1" "$2" >> "$ANSWERED" 2>/dev/null
 }
@@ -255,6 +257,9 @@ $prompt"
   [ -z "$session" ] || args+=(--session "$session")
   : > "$WORK/events.ndjson"
   rc=0
+  # <state>/<id>.captain-lane.turn names the record whose turn is running, so
+  # supervision reads a running recovery as busy (fm_stream_deck.conversation_busy).
+  printf '%s\n' "$name" > "$TURN_MARK" 2>/dev/null || true
   FM_CONVERSATION_PARTY=$party "$DECK" "${args[@]}" </dev/null > "$WORK/events.ndjson" 2>"$WORK/deck.err" &
   DECK_PID=$!
   # A host that goes away mid-turn takes this turn with it, so its replacement
@@ -267,6 +272,7 @@ $prompt"
   done
   wait "$DECK_PID" || rc=$?
   DECK_PID=''
+  rm -f "$TURN_MARK"
   if [ -z "$session" ]; then
     observed=$(jq -r 'select(.type == "run_started") | .session' "$WORK/events.ndjson" 2>/dev/null | head -1)
     case "$observed" in ''|*[!A-Za-z0-9._-]*) observed='' ;; esac

@@ -647,6 +647,9 @@ assert conversation_busy(state, 'task'), 'unanswered conversation records keep t
 for done in (captain_words, peer):
     (state / 'task.inbox' / done.name).rename(state / 'task.inbox' / 'handled' / done.name)
 assert not conversation_busy(state, 'task'), 'a monologue record alone never makes the conversation busy'
+(state / 'task.captain-lane.turn').write_text('009.msg\n')
+assert conversation_busy(state, 'task'), 'a running turn, a recovery included, keeps the conversation busy'
+(state / 'task.captain-lane.turn').unlink()
 (state / 'task.captain-lane').unlink()
 assert not conversation_busy(state, 'task'), 'no lane, no conversation work'
 print('PASS a conversation lane keeps every party record from the supervisor, and the recorded stream decides')
