@@ -245,6 +245,8 @@ cmd_arm() {
   (
     fm_lock_acquire_wait "$lock" || die "cannot lock remote reply lifecycle for $id"
     trap 'fm_lock_release "$lock"' EXIT
+    # An operator's arm lifts a stop a continuity escalation recorded.
+    rm -f -- "$CURSOR_DIR/$id.stopped"
     cmd_arm_locked "$id"
   )
 }
@@ -401,7 +403,10 @@ cmd_ingest() {
     # line is appended at most once, so replaying the log from the start
     # delivers exactly the lines this home has not seen. That recovery is
     # bounded: a log that keeps breaking is escalated and left stopped.
-    if continuity_recovery_allowed "$id" "$seq"; then
+    # Only a rewrite of a log this home had already read part of is replayed;
+    # a break at the very start (an oversized line) would just recur.
+    if { [ "$reason" = truncated ] || [ "$reason" = prefix-changed ]; } \
+      && [ "$from" -gt 0 ] && continuity_recovery_allowed "$id" "$seq"; then
       # The receipt comes first and marks this break as recovered, so a
       # handle retried after any later failure finishes the reset and re-arm
       # (cmd_handle_locked) instead of refusing the moved cursor.
@@ -416,6 +421,11 @@ cmd_ingest() {
       rm -rf -- "$tmp"
       printf 'continuity-recovered: %s (%s); replaying from the start\n' "$id" "$reason"
       return 4
+    fi
+    # Record which capture stopped the source, so a stale retry of an earlier
+    # recovery cannot re-arm past this stop.
+    if [ -n "$seq" ]; then
+      mkdir -p "$CURSOR_DIR" && printf '%s\n' "$seq" > "$CURSOR_DIR/$id.stopped"
     fi
     line="blocked [key=remote-reply-continuity-$id]: remote reply continuity broke for $id ($reason)"
     append_rc=0
@@ -501,7 +511,7 @@ cmd_ingest() {
 }
 
 cmd_handle_locked() {
-  local id=${1:-} seq=${2:-} result=${3:-} sid class rc=0 to from from_hash
+  local id=${1:-} seq=${2:-} result=${3:-} sid class rc=0 to from from_hash stopped
   validate_id "$id"
   case "$seq" in ''|*[!0-9]*) die "sequence must be a nonnegative integer" ;; esac
   sid=$(source_id "$id")
@@ -514,7 +524,9 @@ cmd_handle_locked() {
     # while the cursor is still where that break left it (its start, or the
     # reset itself); a cursor that has since moved on belongs to later
     # progress or a later break and is left alone.
-    if [ "$class" = continuity-broken ]; then
+    stopped=$(cat "$CURSOR_DIR/$id.stopped" 2>/dev/null || true)
+    case "$stopped" in ''|*[!0-9]*) stopped=-1 ;; esac
+    if [ "$class" = continuity-broken ] && [ "$stopped" -lt "$seq" ]; then
       read_cursor "$id"
       from=$(result_field "$result" from_offset) || die "result start offset is ambiguous"
       from_hash=$(result_field "$result" from_prefix_sha256) || die "result start hash is ambiguous"
@@ -621,7 +633,7 @@ cmd_retire_finalize_locked() {
     fi
   fi
   rm -f -- "$(cursor_path "$id")"
-  rm -f -- "$CURSOR_DIR/$id".*.ingested
+  rm -f -- "$CURSOR_DIR/$id".*.ingested "$CURSOR_DIR/$id.stopped" "$CURSOR_DIR/$id.recoveries"
   rm -f -- "$(fm_pending_reply_remote_channel_watermark_path "$STATE" "$id")"
 }
 
