@@ -221,7 +221,8 @@ fm_pending_reply_summarize() {  # <text>
   # Drop an already-present marker/corr prefix so the durable summary stays short.
   cleaned=${cleaned#"$FM_FROMFIRST_MARK"}
   cleaned=$(printf '%s' "$cleaned" | sed -E "s/^corr=[A-Fa-f0-9]{16}[[:space:]]*//")
-  # 120 characters at most, counted as characters (never cutting one in half)
+  # Perl caps at 120 characters without splitting a multibyte character;
+  # if it fails or is unavailable, retain the legacy shell substring cap.
   local capped
   if capped=$(printf '%s' "$cleaned" | perl -CSD -0777 -pe 's/\A(.{117}).{4,}\z/$1.../s' 2>/dev/null); then
     cleaned=$capped
