@@ -113,7 +113,8 @@
 # Exit status is non-zero if any selected script exits non-zero, a configured
 # --fail-on-gate-skip token appears, the measured duration exceeds
 # --max-wall-ms, timing-artifact finalization fails, or a concurrent worker
-# violates its isolation check. Other gate skips (first meaningful line
+# violates its isolation check, or the service-unit guard detects a change.
+# Other gate skips (first meaningful line
 # matching ^skip:) remain successful and are counted as skipped_gate; each one
 # is logged with its reason and recorded in the timing artifact.
 #
@@ -125,6 +126,25 @@
 # Every selected script runs isolated from the host's global and system Git
 # configuration, including one that sources no test helper of its own;
 # tests/git-config-helpers.sh owns that contract and its limits.
+#
+# Service-unit isolation (every selected script, even without tests/lib.sh):
+#   FM_TEST_REAL_HOME records the runner's HOME; FM_TEST_SERVICE_SANDBOX names
+#   a per-script directory removed after execution. Remote-job LaunchAgent
+#   paths (including logs), machine tunnel units, and deck-chat agents redirect
+#   there only when their target account home equals FM_TEST_REAL_HOME, leaving
+#   a suite's fake HOME alone. An explicit FM_LAUNCH_AGENTS_DIR still takes
+#   precedence for deck-chat. Service labels stay unchanged.
+#   PATH shims reject the mutating verbs listed in service_shims below and
+#   delegate other calls to the original launchctl/systemctl, or exit 127 when
+#   absent. Tests exercising service actions must supply fixture commands.
+#   Before/after cksum fingerprints of *firstmate* entries directly under
+#   $HOME/Library/LaunchAgents and $HOME/.config/systemd/user make a persistent
+#   change fail the suite with exit 1, even if the script itself succeeded.
+#   This is a regression guard, not an OS sandbox: absolute tool paths, PATH
+#   replacement, other filenames, and writes undone before the final sample
+#   are outside its detection. It does not restore changed real units.
+#   tests/fm-test-run.test.sh:test_suites_cannot_touch_real_service_units covers
+#   the guard with a fake runner HOME, never the operator's service directories.
 #
 # Family labels, the changed-file map, and production portable-shard composition
 # live in this script only (one owner). The proven-isolated candidate set remains
@@ -2290,13 +2310,57 @@ record_script_result() {
   TOTAL=$((TOTAL + 1))
 }
 
+# The header's Service-unit isolation contract owns the guard and its limits.
+real_units_fingerprint() {
+  local d f
+  for d in "$HOME/Library/LaunchAgents" "$HOME/.config/systemd/user"; do
+    [ -d "$d" ] || continue
+    for f in "$d"/*firstmate*; do
+      [ -e "$f" ] || [ -L "$f" ] || continue
+      printf '%s\t%s\n' "$f" "$(cksum < "$f" 2>/dev/null || printf 'unreadable')"
+    done
+  done
+}
+
+SERVICE_SHIM_DIR=
+service_shims() {
+  local tool real
+  [ -z "$SERVICE_SHIM_DIR" ] || return 0
+  SERVICE_SHIM_DIR="$RUN_TMP/service-shims"
+  mkdir -p "$SERVICE_SHIM_DIR"
+  for tool in launchctl systemctl; do
+    real=$(command -v "$tool" 2>/dev/null || true)
+    printf '%s\n' "$real" > "$SERVICE_SHIM_DIR/$tool.real"
+    cat > "$SERVICE_SHIM_DIR/$tool" <<'SHIM'
+#!/usr/bin/env bash
+tool=${0##*/}
+for arg in "$@"; do
+  case "$arg" in
+    bootstrap|bootout|kickstart|load|unload|enable|disable|start|stop|restart|reload|daemon-reload|remove|submit|kill|link|mask|unmask|edit)
+      echo "$tool: refused under fm-test-run: a test must not change real services ($tool $*)" >&2
+      exit 1
+      ;;
+  esac
+done
+real=$(cat "$0.real" 2>/dev/null)
+[ -n "$real" ] || { echo "$tool: not installed" >&2; exit 127; }
+exec "$real" "$@"
+SHIM
+    chmod +x "$SERVICE_SHIM_DIR/$tool"
+  done
+}
+
 # Run <script>, capturing output to <out>. <stream> 1 also echoes it live.
 # <id> only has to be unique within this run. When PER_SCRIPT_TIMEOUT_SECS is
 # positive, a script that outruns it is terminated and reported as exit 124: a
 # hung script must become a bounded failure rather than an unbounded suite,
 # because an unbounded suite is what silently outruns its caller's budget.
 run_script_bounded() {  # <script> <out> <stream> <id>
-  local script=$1 out=$2 stream=$3 id=$4
+  local script=$1 out=$2 stream=$3 id=$4 units_before units_after sandbox
+  service_shims
+  sandbox="$RUN_TMP/service-units.$id"
+  mkdir -p "$sandbox"
+  units_before=$(real_units_fingerprint)
   # Declaring the variables local first keeps the helper's export scoped to this
   # call and its child script, so the runner's own environment is left as the
   # caller had it.
@@ -2305,6 +2369,10 @@ run_script_bounded() {  # <script> <out> <stream> <id>
   . "$ROOT/tests/git-config-helpers.sh" || return
   local rc
   : "$id"
+  # Keep the guard scoped to this suite; see Service-unit isolation above.
+  local PATH="$SERVICE_SHIM_DIR:$PATH"
+  local FM_TEST_SERVICE_SANDBOX="$sandbox" FM_TEST_REAL_HOME="$HOME"
+  export PATH FM_TEST_SERVICE_SANDBOX FM_TEST_REAL_HOME
   set +e
   if [ "$stream" -eq 1 ]; then
     if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ]; then
@@ -2329,6 +2397,14 @@ run_script_bounded() {  # <script> <out> <stream> <id>
       "$script" "$PER_SCRIPT_TIMEOUT_SECS" >>"$out"
     [ "$stream" -eq 1 ] && tail -1 "$out"
   fi
+  units_after=$(real_units_fingerprint)
+  if [ "$units_before" != "$units_after" ]; then
+    printf 'not ok - %s changed real service units under %s or %s; tests must use the sandbox unit directories\n' \
+      "$script" "$HOME/Library/LaunchAgents" "$HOME/.config/systemd/user" >>"$out"
+    [ "$stream" -eq 1 ] && tail -1 "$out"
+    rc=1
+  fi
+  rm -rf "$sandbox"
   return "$rc"
 }
 

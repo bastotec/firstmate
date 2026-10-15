@@ -295,10 +295,15 @@ cmd_install_tunnel() { # <label> <port> <user> <host> <ssh-port> <known-line> <c
   command -v curl >/dev/null 2>&1 || die "curl is missing"
   key="$HOME/.ssh/$TUNNEL_KEY_NAME"
   [ -f "$key" ] || die "no tunnel key at $key; run tunnel-key first"
+  # Test redirection and its limits are owned by bin/fm-test-run.sh's header.
+  local unit_home=$HOME
+  if [ -n "${FM_TEST_SERVICE_SANDBOX:-}" ] && [ "$HOME" = "${FM_TEST_REAL_HOME:-}" ]; then
+    unit_home=$FM_TEST_SERVICE_SANDBOX
+  fi
   case "$(uname -s)" in
-    Darwin) kind=launchd; dir="$HOME/Library/LaunchAgents"; unit="$dir/$label.plist" ;;
+    Darwin) kind=launchd; dir="$unit_home/Library/LaunchAgents"; unit="$dir/$label.plist" ;;
     Linux)
-      kind=systemd; dir="$HOME/.config/systemd/user"; unit="$dir/$label.service"
+      kind=systemd; dir="$unit_home/.config/systemd/user"; unit="$dir/$label.service"
       account=${USER:-$(id -un)}
       [ "$(loginctl show-user "$account" -p Linger < /dev/null 2>/dev/null)" = Linger=yes ] \
         || die "run sudo loginctl enable-linger $account on the machine, then rerun setup"
