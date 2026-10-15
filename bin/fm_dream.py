@@ -88,6 +88,8 @@ SESSION_CHARS = 14000
 SECRET = re.compile(r'(sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{12,}|'
                     r'BEGIN [A-Z ]*PRIVATE KEY|xox[abp]-[A-Za-z0-9-]{10,})')
 DEFAULT_MODEL = 'codex/gpt-6.1-sol'
+DEFAULT_REPOS = {'firstmate': 'bastotec/firstmate', 'deck': 'bastotec/deck', 'cli-proxy-native': 'bastotec/proxai',
+                 'firstmate-ui': 'bastotec/firstmate-ui', 'no-mistakes': 'bastotec/no-mistakes', 'phone-harness': None}
 
 
 def now():
@@ -144,6 +146,14 @@ def load_config(path):
         raise ConfigError('%s is unreadable (%s); fix it or remove it' % (path, e))
     if not isinstance(doc, dict):
         raise ConfigError('%s must hold a JSON object' % path)
+    names = doc.get('exclude_homes', [])
+    if not isinstance(names, list) or not all(isinstance(n, str) and n.strip() for n in names):
+        raise ConfigError('%s: exclude_homes must be a list of mate ids' % path)
+    for key in ('owners', 'repos'):
+        if not isinstance(doc.get(key, {}), dict):
+            raise ConfigError('%s: %s must be an object' % (path, key))
+    if not isinstance(doc.get('model', ''), str):
+        raise ConfigError('%s: model must be a string' % path)
     return doc
 
 
@@ -270,7 +280,7 @@ def text_of(content):
     return ' '.join(out)
 
 
-def session_lines(path, since, slow, label):
+def session_lines(path, since, slow, label, hide=lambda line: False):
     """Digest lines for one deck session file, newer than since; slow fm-* calls
     are appended to slow as (command, seconds)."""
     doc = read_json(path)
@@ -304,13 +314,14 @@ def session_lines(path, since, slow, label):
             for t in msg.get('tools') or []:
                 ms = t.get('duration_ms') or 0
                 cmd = calls.get(t.get('id')) or ''
-                if ms >= SLOW_MS and re.search(r'(^|[ /])(bin/)?fm[-_][A-Za-z0-9_.-]+', cmd):
+                if ms >= SLOW_MS and re.search(r'(^|[ /])(bin/)?fm[-_][A-Za-z0-9_.-]+', cmd) and not hide(cmd):
                     slow.append((cmd, ms / 1000.0))
                     lines.append('slow command (%ds): %s' % (ms // 1000, cmd[:200]))
         elif role == 'assistant':
             t = ' '.join(text_of(content).split())
             if t:
                 lines.append('agent: ' + t[:350])
+    lines = [l for l in lines if not hide(l)]
     if not lines:
         return []
     body = '\n'.join(lines)
@@ -397,9 +408,11 @@ def tail_since(path, since, limit=80):
     return keep[-limit:]
 
 
-def no_mistakes_runs(since, private_paths):
+def no_mistakes_runs(since, fleet_paths, harness):
     """Failed or cancelled no-mistakes runs that ended (last changed) in the window,
-    leaving out repositories and worktrees inside excluded homes."""
+    only for repositories that are the fleet's own: inside the main home or an
+    included local home, or a harness repository by name. Anything else (an
+    excluded mate's project among them) never reaches the digest."""
     db = Path(os.environ.get('FM_DREAM_NO_MISTAKES_DB') or os.path.expanduser('~/.no-mistakes/state.sqlite'))
     if not db.is_file():
         return [], None
@@ -422,8 +435,10 @@ def no_mistakes_runs(since, private_paths):
         r = dict(zip(pick + ['when', 'repo_path'], row))
         stamp = r['when'] / (1000 if r['when'] and r['when'] > 1e12 else 1) if isinstance(r['when'], (int, float)) \
             else parse_iso(r['when']) or 0
-        places = [str(r.get('repo_path') or ''), str(r.get('worktree_dir') or '')]
-        if stamp >= since and not any(p and place.startswith(p) for p in private_paths for place in places):
+        repo = str(r.get('repo_path') or '')
+        ours = any(repo == p or repo.startswith(p.rstrip('/') + '/') for p in fleet_paths) \
+            or os.path.basename(repo) in harness
+        if stamp >= since and ours and not any(n in json.dumps(r) for n in private_names()):
             out.append(r)
     return out, None
 
@@ -434,11 +449,19 @@ def tool(name, env_var):
 
 def fleet_report(ctx):
     try:
-        r = ctx.run([tool('fm-report.sh', 'FM_DREAM_REPORT'), 'fleet', '--json'], timeout=120,
+        # --days 2: a 04:15 run's last 24 hours start on the previous calendar day
+        r = ctx.run([tool('fm-report.sh', 'FM_DREAM_REPORT'), 'fleet', '--days', '2', '--json'], timeout=120,
                     env=dict(os.environ, FM_HOME=str(ctx.home)))
         return json.loads(r.stdout) if r.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return None
+
+
+PRIVATE_NAMES = []
+
+
+def private_names():
+    return PRIVATE_NAMES
 
 
 def mentions_excluded(ctx, line):
@@ -449,12 +472,15 @@ def step_collect(ctx):
     parts, slow = ['# Fleet day digest, %s (since %s)' % (ctx.day, iso(ctx.since)), ''], []
     sessions = local_sessions(ctx)
     for label, path in sessions:
-        parts += session_lines(path, ctx.since, slow, label)
+        parts += session_lines(path, ctx.since, slow, label, lambda line: mentions_excluded(ctx, line))
     captain = [l for l in tail_since(ctx.state / 'captain-direct.log', ctx.since) if not mentions_excluded(ctx, l)]
     if captain:
         parts += ['## Captain-direct messages', *captain, '']
-    private_paths = [h for mid, h, host in registry(ctx.home) if mid in ctx.excluded and h and not host]
-    nm, nm_err = no_mistakes_runs(ctx.since, private_paths)
+    fleet_paths = [str(ctx.home)] + [h for mid, h, host in registry(ctx.home)
+                                     if h and not host and mid not in ctx.excluded]
+    harness = set(ctx.config.get('repos') or DEFAULT_REPOS) | {'proxai'}
+    PRIVATE_NAMES[:] = sorted(ctx.excluded | {m.replace('-', ' ') for m in ctx.excluded})
+    nm, nm_err = no_mistakes_runs(ctx.since, fleet_paths, harness)
     if nm:
         parts += ['## Failed or cancelled no-mistakes runs (%d; newest 40)' % len(nm)] + [
             '- %s %s %s: %s' % (r.get('status'), r.get('branch') or '', r.get('pr_url') or '',
@@ -498,11 +524,10 @@ def step_collect(ctx):
     ctx.facts['counts'] = {'sessions': len(sessions), 'captain_messages': len(captain),
                            'no_mistakes_failed': len(nm), 'revives': len(revives), 'restarts': len(restarts),
                            'idle_sweep': len(sweep), 'digest_chars': len(text)}
-    result = {'status': 'done', **ctx.facts['counts']}
-    if nm_err:
-        result['why'] = nm_err
-    if rep is None:
-        result['why'] = (result.get('why', '') + '; fleet report unreadable').lstrip('; ')
+    gaps = ([nm_err] if nm_err else []) + (['fleet report unreadable'] if rep is None else [])
+    result = {'status': 'partial' if gaps else 'done', **ctx.facts['counts']}
+    if gaps:
+        result['why'] = '; '.join(gaps)
     return result
 
 
@@ -623,7 +648,10 @@ def step_skills(ctx):
         lines = sum(1 for l in diff.splitlines() if l[:1] in '+-' and l[:3] not in ('+++', '---'))
         if lines > MAX_DIFF_LINES:
             return {'status': 'rejected', 'why': '%d changed lines (cap %d)' % (lines, MAX_DIFF_LINES)}
-        changes = (read_json(summary, {}) or {}).get('changes') or []
+        doc = read_json(summary)
+        if not isinstance(doc, dict) or not isinstance(doc.get('changes'), list) or not doc['changes']:
+            return {'status': 'rejected', 'why': 'the skills agent changed skills but wrote no summary of them'}
+        changes = doc['changes']
         title = 'Updates skills from the fleet\'s %s sessions (fleet dreaming)' % ctx.day
         body = '\n'.join('- %s: %s (%s)' % (c.get('skill'), c.get('what'), c.get('why')) for c in changes)
         message = title + '\n\n' + body + '\n\nMerged automatically by the fleet\'s nightly reflection (bin/fm-dream.sh), skills only.'
@@ -712,7 +740,6 @@ def open_items(ctx, repos, owners):
     read, so nothing is filed for them blind."""
     tasks = tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS')
     reads = [('primary', [tasks, 'list', '--limit', '500'], ctx.home)]
-    wanted = set(owners.values())
     for mid, h, host in registry(ctx.home):
         if mid in ctx.excluded:
             continue
@@ -730,7 +757,7 @@ def open_items(ctx, repos, owners):
             r, ok = None, False
         if ok:
             titles += task_titles(r.stdout)
-        elif mid in wanted or mid == 'primary':
+        else:
             unchecked.add(mid)
     for repo, slug in sorted(repos.items()):
         if not slug:
@@ -743,20 +770,30 @@ def open_items(ctx, repos, owners):
                 unchecked.add(repo)
         except (OSError, subprocess.TimeoutExpired, ValueError, TypeError):
             unchecked.add(repo)
-    titles += raised_titles(ctx)
-    return titles, unchecked
+    raised = raised_titles(ctx)
+    if raised is None:
+        unchecked.add('the dreaming ledger (raised.jsonl)')
+    return titles + (raised or []), unchecked
 
 
 def raised_titles(ctx):
+    """Titles dreaming raised in the last RAISED_DAYS days; [] before the first
+    run, None when the ledger exists but cannot be read whole."""
     cutoff = ctx.now - RAISED_DAYS * 86400
     out = []
     try:
-        for line in (ctx.dir / 'raised.jsonl').read_text().splitlines():
+        text = (ctx.dir / 'raised.jsonl').read_text(encoding='utf-8')
+    except FileNotFoundError:
+        return []
+    except OSError:
+        return None
+    for line in text.splitlines():
+        try:
             row = json.loads(line)
-            if row.get('at', 0) >= cutoff:
-                out.append(row.get('title', ''))
-    except (OSError, ValueError):
-        pass
+        except ValueError:
+            return None
+        if isinstance(row, dict) and row.get('at', 0) >= cutoff:
+            out.append(row.get('title', ''))
     return out
 
 
@@ -797,14 +834,16 @@ def jev_scores(ctx, items):
 def step_triage(ctx):
     if quiet(ctx):
         return {'status': 'quiet day'}
-    repos = ctx.config.get('repos') or {'firstmate': 'bastotec/firstmate', 'deck': 'bastotec/deck',
-                                         'cli-proxy-native': 'bastotec/proxai', 'firstmate-ui': 'bastotec/firstmate-ui',
-                                         'no-mistakes': 'bastotec/no-mistakes', 'phone-harness': None}
+    repos = ctx.config.get('repos') or DEFAULT_REPOS
     owners = ctx.config.get('owners') or {}
     titles, unchecked = open_items(ctx, repos, owners)
     out = ctx.dir / ('triage-%s.json' % ctx.day)
     if ctx.dry_run:
         return {'status': 'dry-run', 'open_items': len(titles), 'unchecked': sorted(unchecked)}
+    if unchecked:
+        ctx.facts['triage'] = []
+        return {'status': 'partial', 'why': 'nothing proposed or filed, open work unreadable for %s'
+                % ', '.join(sorted(unchecked))}
     if out.exists():
         out.unlink()
     prompt = TRIAGE_PROMPT.format(digest=ctx.digest, repos=', '.join(repos), projects=ctx.home / 'projects',
@@ -813,7 +852,11 @@ def step_triage(ctx):
     if failed:
         ctx.facts['triage'] = []
         return {'status': 'failed', 'why': failed}
-    items = [it for it in (read_json(out, {}) or {}).get('items') or []
+    doc = read_json(out)
+    if not isinstance(doc, dict) or not isinstance(doc.get('items'), list):
+        ctx.facts['triage'] = []
+        return {'status': 'failed', 'why': 'the triage agent wrote no valid %s' % out.name}
+    items = [it for it in doc['items']
              if isinstance(it, dict) and it.get('repo') in repos and it.get('title') and it.get('evidence')]
     proposed = len(items)
     fresh = []
@@ -821,10 +864,7 @@ def step_triage(ctx):
         if not any(similar(it['title'], t) for t in titles + [f['title'] for f in fresh]):
             fresh.append(it)
     deduped = proposed - len(fresh)
-    # Without the whole snapshot of open work nothing is filed: a task can sit in
-    # any home's backlog (an earlier handoff may have half-happened).
-    blind = fresh if unchecked else []
-    items = [] if unchecked else fresh
+    items = fresh
     scores, why = jev_scores(ctx, items) if items else ({}, None)
     if scores is not None:
         for i, it in enumerate(items):
@@ -833,14 +873,8 @@ def step_triage(ctx):
     kept = items[:MAX_RAISED]
     ctx.facts['triage'] = kept
     result = {'status': 'done', 'proposed': proposed, 'duplicates': deduped, 'kept': len(kept)}
-    notes = []
     if why:
-        notes.append(why + '; kept the agent\'s own order')
-    if blind:
-        result['unchecked'] = len(blind)
-        notes.append('nothing filed, open work unreadable for %s' % ', '.join(sorted(unchecked)))
-    if notes:
-        result['why'] = '; '.join(notes)
+        result['why'] = why + '; kept the agent\'s own order'
     return result
 
 
@@ -852,6 +886,8 @@ def step_file(ctx):
         return {'status': 'nothing to file'}
     owners = ctx.config.get('owners') or {}
     already = raised_titles(ctx)
+    if already is None:
+        return {'status': 'partial', 'why': 'raised.jsonl is unreadable; nothing filed'}
     raised, errors = [], []
     ctx.facts['raised'] = raised  # filled as each item lands, so a later failure keeps them
     for it in items:
@@ -907,7 +943,7 @@ def step_file(ctx):
 
 # --- run --------------------------------------------------------------------
 
-CLEAN = ('done', 'merged', 'no changes', 'quiet day', 'nothing to file', 'dry-run')
+CLEAN = ('done', 'merged', 'no changes', 'quiet day', 'nothing to file', 'dry-run')  # anything else is not clean
 
 
 def summary_line(run):

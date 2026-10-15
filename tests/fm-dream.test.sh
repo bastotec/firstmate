@@ -43,9 +43,10 @@ res = lambda cid, val: {"type": "toolresult", "call": cid, "name": "run_command"
 msgs = [
   {"role": "user", "content": [{"type": "text", "text": "an old line from days ago"}], "at": old},
   {"role": "user", "content": [{"type": "text", "text": "no, use fm-pr-merge.sh, not gh pr merge"}], "at": recent},
-  {"role": "assistant", "content": [call("c1", "bin/fm-wake-drain.sh"), call("c2", "bin/fm-spawn.sh x")], "at": recent},
-  {"role": "user", "content": [res("c1", {"exit_code": 0, "stdout": "ok"}), res("c2", {"exit_code": 1, "stderr": "spawn refused: hub unreachable"})],
-   "at": recent, "tools": [{"id": "c1", "duration_ms": 47000}, {"id": "c2", "duration_ms": 900}]},
+  {"role": "assistant", "content": [call("c1", "bin/fm-wake-drain.sh"), call("c2", "bin/fm-spawn.sh x"), call("c3", "bin/fm-send.sh finn-finance 'PRIVATE SEND'")], "at": recent},
+  {"role": "user", "content": [res("c1", {"exit_code": 0, "stdout": "ok"}), res("c2", {"exit_code": 1, "stderr": "spawn refused: hub unreachable"}),
+                               res("c3", {"exit_code": 1, "stderr": "send failed"})],
+   "at": recent, "tools": [{"id": "c1", "duration_ms": 47000}, {"id": "c2", "duration_ms": 900}, {"id": "c3", "duration_ms": 30000}]},
   {"role": "assistant", "content": [{"type": "text", "text": "Captain, done."}], "at": recent}]
 json.dump({"version": 1, "messages": msgs}, open(root + "/p-1.json", "w"))
 json.dump({"version": 1, "messages": [{"role": "user", "content": [{"type": "text", "text": "PRIVATE BANK LINE"}], "at": recent}]},
@@ -62,9 +63,12 @@ json.dump({"version": 1, "messages": [{"role": "user", "content": [{"type": "tex
 PY
   printf '{"exclude_homes": ["finn-finance"], "owners": {"deck": "dave-tools"}, "model": "stub/model"}\n' > "$d/home/config/dream.json"
   printf '%s\tcorr-1\tcaptain: please stop opening duplicate workers\n' $((NOW - 600)) > "$d/home/state/captain-direct.log"
-  sqlite3 "$d/nm.sqlite" "CREATE TABLE runs(id TEXT, status TEXT, branch TEXT, error TEXT, pr_url TEXT, created_at INTEGER);
-    INSERT INTO runs VALUES('r1','failed','fm/x','lint step timed out','',$((NOW - 7200)));
-    INSERT INTO runs VALUES('r0','failed','fm/old','ancient','',$((NOW - 9 * 86400)));"
+  sqlite3 "$d/nm.sqlite" "CREATE TABLE repos(id TEXT, working_path TEXT);
+    INSERT INTO repos VALUES('fleet','$d/home'); INSERT INTO repos VALUES('elsewhere','/somewhere/private-project');
+    CREATE TABLE runs(id TEXT, repo_id TEXT, status TEXT, branch TEXT, error TEXT, pr_url TEXT, created_at INTEGER, updated_at INTEGER);
+    INSERT INTO runs VALUES('r1','fleet','failed','fm/x','lint step timed out','',$((NOW - 9 * 86400)),$((NOW - 7200)));
+    INSERT INTO runs VALUES('r0','fleet','failed','fm/old','ancient','',$((NOW - 9 * 86400)),$((NOW - 9 * 86400)));
+    INSERT INTO runs VALUES('r2','elsewhere','failed','fm/p','PRIVATE PROJECT FAILURE','',$((NOW - 3600)),$((NOW - 3600)));"
   # dotfiles: a bare origin with one skill, and a local clone
   git init -q --bare "$d/origin.git"
   git clone -q "$d/origin.git" "$d/dotfiles" 2>/dev/null
@@ -88,6 +92,7 @@ printf '%s\n' "$prompt" > "$STUB_CALLS/deck.$$"
 summary=$(printf '%s' "$prompt" | grep -o '/[^ ]*skills-[0-9-]*\.json' | head -1)
 triage=$(printf '%s' "$prompt" | grep -o '/[^ ]*triage-[0-9-]*\.json' | head -1)
 if [ -n "$summary" ]; then
+  [ "${STUB_SKILLS:-edit}" = nosummary ] || printf '{"changes":[{"skill":"merge","what":"edit","why":"why"}]}' > "$summary"
   case "${STUB_SKILLS:-edit}" in
     edit) printf -- '---\nname: merge\ndescription: merging\n---\nUse bin/fm-pr-merge.sh, never gh pr merge.\n' > skills/merge/SKILL.md
           printf '{"changes":[{"skill":"merge","what":"says to merge through fm-pr-merge.sh","why":"captain corrected it"}]}' > "$summary" ;;
@@ -100,12 +105,13 @@ if [ -n "$summary" ]; then
                 git add -A && git -c user.email=a@b -c user.name=a commit -qm again
                 printf 'clean edit\n' >> skills/merge/SKILL.md ;;
     binary) printf 'GIF89a\0\0token ghp_abcdefghijklmnopqrstuvwxyz0123\0' > skills/merge/shot.gif ;;
+    nosummary) printf 'clean edit\n' >> skills/merge/SKILL.md ;;
     message) printf 'clean edit\n' >> skills/merge/SKILL.md
              printf '{"changes":[{"skill":"merge","what":"x","why":"it failed with ghp_abcdefghijklmnopqrstuvwxyz0123"}]}' > "$summary" ;;
     none) ;;
   esac
 fi
-if [ -n "$triage" ]; then
+if [ -n "$triage" ] && [ -z "${STUB_NO_TRIAGE:-}" ]; then
   cat > "$triage" <<'JSON'
 {"items": [
  {"repo": "firstmate", "title": "Cache the drain result in fm-wake-drain.sh", "kind": "slow", "evidence": ["slow command (47s): bin/fm-wake-drain.sh"], "why": "47 s per wake", "fix": "cache"},
@@ -160,7 +166,8 @@ test_collect_builds_a_private_digest_of_the_day() {
   grep -q 'slow command (47s): bin/fm-wake-drain.sh' "$digest" || fail "slow fm-* command missing"
   grep -q 'tool error (bin/fm-spawn.sh x): spawn refused' "$digest" || fail "tool error missing"
   grep -q 'please stop opening duplicate workers' "$digest" || fail "captain-direct line missing"
-  grep -q 'lint step timed out' "$digest" || fail "failed no-mistakes run missing"
+  grep -q 'lint step timed out' "$digest" || fail "a run created long ago but failed today is missing"
+  grep -q 'PRIVATE PROJECT FAILURE' "$digest" && fail "a run outside the fleet's repositories reached the digest"
   grep -q 'ancient\|an old line' "$digest" && fail "lines older than a day leaked in"
   grep -q 'PRIVATE BANK LINE' "$digest" && fail "an excluded home reached the digest"
   grep -q 'PRIVATE WORKER LINE' "$digest" && fail "an excluded home's worker reached the digest"
@@ -169,6 +176,7 @@ test_collect_builds_a_private_digest_of_the_day() {
   grep -q 'UNRELATED DECK USE' "$digest" && fail "a session that is not fleet work reached the digest"
   grep -q 'restarted: cadia on workload' "$digest" || fail "restart results missing"
   grep -q 'SECRET RESTART DETAIL' "$digest" && fail "an excluded home's restart line reached the digest"
+  grep -q 'PRIVATE SEND' "$digest" && fail "a command addressed to an excluded home reached the digest"
   pass "collect builds a private digest of the day and leaves excluded homes out"
 }
 
@@ -184,11 +192,12 @@ test_skills_pushes_a_guarded_change_to_main() {
 
 test_skills_rejects_changes_outside_skills_and_secrets() {
   local d mode before
-  for mode in outside secret checkpoint message binary; do
+  for mode in outside secret checkpoint message binary nosummary; do
     d=$(new_case "skills-$mode")
     before=$(git -C "$d/origin.git" rev-parse main)
     STUB_SKILLS=$mode run_dream "$d" --only collect skills > "$d/out.json" || fail "$mode: run exited nonzero"
     grep -q '"rejected"' "$d/out.json" || fail "$mode: change not rejected"
+    case $mode in secret|checkpoint|binary|message) grep -q 'secret-like' "$d/out.json" || fail "$mode: rejected for the wrong reason: $(cat "$d/out.json")" ;; esac
     [ "$(git -C "$d/origin.git" rev-parse main)" = "$before" ] || fail "$mode: main moved"
   done
   pass "the skills step rejects changes outside skills/, secret-like text, also in agent commits and summaries"
@@ -200,8 +209,11 @@ test_a_malformed_config_stops_the_run() {
   printf '{"exclude_homes": ["finn-finance"],}\n' > "$d/home/config/dream.json"
   if run_dream "$d" > "$d/out.json" 2> "$d/err"; then fail "a malformed dream.json did not stop the run"; fi
   grep -q 'dream.json is unreadable' "$d/err" || fail "the refusal does not name the file: $(cat "$d/err")"
+  printf '{"exclude_homes": "finn-finance"}\n' > "$d/home/config/dream.json"
+  if run_dream "$d" > "$d/out.json" 2> "$d/err"; then fail "a string exclude_homes did not stop the run"; fi
+  grep -q 'exclude_homes must be a list' "$d/err" || fail "the refusal does not explain exclude_homes"
   [ -z "$(find "$d/home/state" -name 'digest-*' 2>/dev/null)" ] || fail "a digest was written without the exclusions"
-  pass "a malformed dream.json stops the run before anything is collected"
+  pass "a malformed or mistyped dream.json stops the run before anything is collected"
 }
 
 test_the_jev_helper_refuses_without_a_key() {
@@ -259,6 +271,21 @@ test_triage_dedupes_scores_caps_and_files_with_owners() {
   pass "triage drops duplicates and low Jev scores, keeps three and files them with their owners"
 }
 
+test_a_corrupt_ledger_or_missing_agent_output_files_nothing() {
+  local d
+  d=$(new_case ledger)
+  mkdir -p "$d/home/state/dream"; printf '{"title": "x", "at": 1}\n{broken\n' > "$d/home/state/dream/raised.jsonl"
+  run_dream "$d" > "$d/out.json" || fail "run exited nonzero"
+  [ -z "$(find "$d/calls" -name 'add.*')" ] || fail "items were filed with an unreadable ledger"
+  jq -e '.steps.triage.status == "partial" and (.steps.triage.why | test("raised.jsonl"))' "$d/out.json" >/dev/null \
+    || fail "the unreadable ledger was not reported: $(jq -c .steps.triage "$d/out.json")"
+  d=$(new_case notriage)
+  STUB_NO_TRIAGE=1 run_dream "$d" > "$d/out.json" || fail "run exited nonzero"
+  jq -e '.steps.triage.status == "failed"' "$d/out.json" >/dev/null || fail "missing triage output was not a failure"
+  jq -e '.summary | test("Did not run cleanly")' "$d/out.json" >/dev/null || fail "the summary hides the failed step"
+  pass "a corrupt ledger or a triage agent that writes nothing files nothing and is reported"
+}
+
 test_dry_run_files_nothing_and_pushes_nothing() {
   local d before
   d=$(new_case dry)
@@ -291,5 +318,6 @@ test_a_malformed_config_stops_the_run
 test_the_jev_helper_refuses_without_a_key
 test_a_gateway_blip_is_retried_once_and_succeeds
 test_unreadable_open_work_files_nothing_blind
+test_a_corrupt_ledger_or_missing_agent_output_files_nothing
 test_dry_run_files_nothing_and_pushes_nothing
 test_report_shows_the_last_run
