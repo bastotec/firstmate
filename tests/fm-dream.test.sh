@@ -183,7 +183,8 @@ test_collect_builds_a_private_digest_of_the_day() {
   d=$(new_case collect)
   run_dream "$d" --only collect > "$d/out.json" || fail "collect exited nonzero"
   digest=$(ls "$d"/home/state/dream/digest-*.md) || fail "no digest written"
-  [ "$(stat -f %Lp "$digest" 2>/dev/null || stat -c %a "$digest")" = 600 ] || fail "digest is not 0600"
+  python3 -c 'import os, stat, sys; sys.exit(stat.S_IMODE(os.stat(sys.argv[1]).st_mode) != 0o600)' "$digest" \
+    || fail "digest is not 0600"
   grep -q 'no, use fm-pr-merge.sh' "$digest" || fail "captain correction missing"
   grep -q 'slow command (47s): bin/fm-wake-drain.sh' "$digest" || fail "slow fm-* command missing"
   grep -q 'tool error (bin/fm-spawn.sh x): spawn refused' "$digest" || fail "tool error missing"

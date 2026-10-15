@@ -58,6 +58,7 @@ The embedded hints are the slowest completed `duration_ms` per script from the `
 The last of those is the first stream-only run.
 The new `tests/fm-mate-mail.test.sh` hint is its completed 26523 ms duration from green serial shard 3 of run [38445663105](https://github.com/bastotec/firstmate/actions/runs/38445663105) on 2026-10-13; all nine serial shards passed, although the run failed the unmeasured-share guard before this hint was added.
 The added `tests/fm-watch-parent-channel-echo.test.sh` hint is its completed 10154 ms measurement from green serial shard 8 of run [38444133335](https://github.com/bastotec/firstmate/actions/runs/38444133335) on 2026-10-13, with three family-phase workers.
+The added `tests/fm-approval.test.sh` hint is its completed 8213 ms measurement from green serial shard 4 of run [38683021067](https://github.com/bastotec/firstmate/actions/runs/38683021067) on 2026-10-15, with three family-phase workers; that run failed other checks.
 Taking the slowest of several CI runs rather than a single run keeps the balance honest on a slow runner.
 A script with no hint gets the conservative `PORTABLE_SERIAL_DEFAULT_WEIGHT_MS` default.
 Hints only affect balance: the coverage guard keeps the partition complete and disjoint whatever they say, so a stale hint costs a slower shard rather than lost coverage.
