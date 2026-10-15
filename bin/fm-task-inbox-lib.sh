@@ -103,6 +103,14 @@ fm_task_inbox_dir() {  # <state-dir> <task-id>
   printf '%s/%s.inbox' "$1" "$2"
 }
 
+# Send-path summaries rely on the enqueue primitive's stderr for the reason.
+# fm_task_inbox_write and fm_task_inbox_write_idempotent name the failed step
+# and path here; handled control reservations retain their separate contract.
+# Diagnostic regressions: tests/fm-task-inbox.test.sh.
+fm_task_inbox_write_failure() {  # <step> <path>
+  printf 'fm-task-inbox: %s failed for %s\n' "$1" "$2" >&2
+}
+
 fm_task_inbox_handled_dir() {  # <state-dir> <task-id>
   printf '%s/%s.inbox/handled' "$1" "$2"
 }
@@ -151,7 +159,7 @@ _fm_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode]
   local dir=$1 text=$2 delivery_mode=${3:-} seq tmp rec status=0
   seq=$(fm_task_inbox_next_seq "$dir")
   rec="$dir/$seq.msg"
-  tmp=$(mktemp "$dir/.staging.XXXXXX") || return 1
+  tmp=$(mktemp "$dir/.staging.XXXXXX") || { fm_task_inbox_write_failure staging "$dir"; return 1; }
   {
     printf 'schema=%s\n' "$FM_TASK_INBOX_SCHEMA"
     printf 'at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -159,7 +167,7 @@ _fm_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode]
     printf -- '--\n'
     printf '%s' "$text"
   } > "$tmp" && mv "$tmp" "$rec" || status=1
-  [ "$status" -eq 0 ] || { rm -f "$tmp"; return 1; }
+  [ "$status" -eq 0 ] || { rm -f "$tmp"; fm_task_inbox_write_failure publish "$rec"; return 1; }
   printf '%s' "$rec"
 }
 
@@ -168,9 +176,9 @@ _fm_task_inbox_write_record_locked() {  # <inbox-dir> <text> [delivery-mode]
 fm_task_inbox_write() {  # <state-dir> <task-id> <text> [delivery-mode]
   local state=$1 task=$2 text=$3 delivery_mode=${4:-} dir lock rec status=0
   dir=$(fm_task_inbox_dir "$state" "$task")
-  mkdir -p "$dir/handled" || return 1
+  mkdir -p "$dir/handled" || { fm_task_inbox_write_failure mkdir "$dir"; return 1; }
   lock="$dir/.seq.lock"
-  fm_task_inbox_lock_acquire "$lock" || return 1
+  fm_task_inbox_lock_acquire "$lock" || { fm_task_inbox_write_failure "lock-acquire (${FM_TASK_INBOX_LOCK_WAIT_SECS:-$FM_TASK_INBOX_LOCK_WAIT_DEFAULT} seconds)" "$lock"; return 1; }
   rec=$(_fm_task_inbox_write_record_locked "$dir" "$text" "$delivery_mode") || status=1
   fm_lock_release "$lock"
   [ "$status" -eq 0 ] || return 1
@@ -207,6 +215,53 @@ fm_task_inbox_write_handled() {  # <state-dir> <task-id> <text>
   printf '%s' "$rec"
 }
 
+# Both dedup passes share this acknowledgement-race handling: a worker can
+# move a root record into handled/ between glob expansion and the body read.
+# Retry a missing root candidate or failed root body read at the same
+# sequence's handled/ path before giving up on that candidate.
+_fm_task_inbox_next_candidate() {  # <inbox-dir> <candidate-path> <have-file>
+  local dir=$1 f=$2 have=$3 handled
+  if [ ! -e "$f" ]; then
+    case "$f" in
+      "$dir"/*.msg)
+        handled="$dir/handled/${f##*/}"
+        [ -e "$handled" ] || return 1
+        f=$handled
+        ;;
+      *) return 1 ;;
+    esac
+  fi
+  fm_task_inbox_body "$f" > "$have" 2>/dev/null &&
+    { printf '%s' "$f"; return 0; }
+  case "$f" in
+    "$dir"/*.msg)
+      handled="$dir/handled/${f##*/}"
+      fm_task_inbox_body "$handled" > "$have" 2>/dev/null &&
+        { printf '%s' "$handled"; return 0; }
+      ;;
+  esac
+  return 1
+}
+# Runs in the caller's shell to set _FM_TASK_INBOX_PRESCAN_REC (empty on miss),
+# using _FM_TASK_INBOX_DEDUP_HAVE as scratch space.
+# fm_task_inbox_write_idempotent below owns the prescan's locking invariant.
+_fm_task_inbox_dedup_prescan() {  # <inbox-dir> <want-file> [delivery-mode]
+  local dir=$1 want=$2 delivery_mode=${3:-} f rec=''
+  for f in "$dir"/*.msg "$dir/handled"/*.msg; do
+    if [ "$delivery_mode" = fire-and-forget ]; then
+      fm_task_inbox_is_fire_and_forget "$f" || continue
+    elif fm_task_inbox_is_fire_and_forget "$f"; then
+      continue
+    fi
+    f=$(_fm_task_inbox_next_candidate "$dir" "$f" "$_FM_TASK_INBOX_DEDUP_HAVE") || continue
+    cmp -s "$want" "$_FM_TASK_INBOX_DEDUP_HAVE" || continue
+    [ ! -e "$dir/handled/${f##*/}" ] || f="$dir/handled/${f##*/}"
+    rec=$f
+    break
+  done
+  _FM_TASK_INBOX_PRESCAN_REC=$rec
+}
+
 # Durably enqueue one steer at most once: when a record with the exact same
 # body already exists - unhandled or already acknowledged in handled/ - no new
 # record is written and the existing record's path is printed instead.
@@ -218,55 +273,67 @@ fm_task_inbox_write_handled() {  # <state-dir> <task-id> <text>
 # secondmate request embeds a per-request correlation token in its body. The
 # local plane keeps plain fm_task_inbox_write: its outcome is synchronous, so
 # a repeated identical local steer is a deliberate new instruction.
+#
+# Scan before taking .seq.lock so a matching resend does not wait for that
+# lock: published records are immutable and already durable, and the candidate
+# helper above follows acknowledgement moves. Other caller locks and endpoint
+# validation still apply; this is not a contention-free send guarantee.
+# A miss must repeat the COMPLETE scan under .seq.lock before publishing to
+# preserve at-most-once enqueue across concurrent writers. The prescan's two
+# globs are separate directory reads, not a consistent snapshot: a record moved
+# between those reads may be missed by both, so a cross-directory sequence
+# boundary cannot safely narrow the locked scan.
+# Regression: tests/fm-task-inbox.test.sh.
 fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mode]
-  local state=$1 task=$2 text=$3 delivery_mode=${4:-} dir lock want have f rec='' status=0
+  local state=$1 task=$2 text=$3 delivery_mode=${4:-} dir lock rec=''
+  local want have status=0 f
   dir=$(fm_task_inbox_dir "$state" "$task")
-  mkdir -p "$dir/handled" || return 1
-  lock="$dir/.seq.lock"
-  fm_task_inbox_lock_acquire "$lock" || return 1
-  if want=$(mktemp "$dir/.dedup.XXXXXX") && have=$(mktemp "$dir/.dedup.XXXXXX"); then
-    if printf '%s' "$text" > "$want"; then
-      for f in "$dir"/*.msg "$dir/handled"/*.msg; do
-        if [ ! -e "$f" ]; then
-          case "$f" in
-            "$dir"/*.msg)
-              f="$dir/handled/${f##*/}"
-              [ -e "$f" ] || continue
-              ;;
-            *) continue ;;
-          esac
-        fi
-        if [ "$delivery_mode" = fire-and-forget ]; then
-          fm_task_inbox_is_fire_and_forget "$f" || continue
-        elif fm_task_inbox_is_fire_and_forget "$f"; then
-          continue
-        fi
-        if ! fm_task_inbox_body "$f" > "$have" 2>/dev/null; then
-          case "$f" in
-            "$dir"/*.msg)
-              f="$dir/handled/${f##*/}"
-              fm_task_inbox_body "$f" > "$have" 2>/dev/null || continue
-              ;;
-            *) continue ;;
-          esac
-        fi
-        cmp -s "$want" "$have" || continue
-        [ ! -e "$dir/handled/${f##*/}" ] || f="$dir/handled/${f##*/}"
-        rec=$f
-        break
-      done
-    else
-      status=1
-    fi
-    rm -f "$want" "$have"
+  mkdir -p "$dir/handled" || { fm_task_inbox_write_failure mkdir "$dir"; return 1; }
+  if ! want=$(mktemp "$dir/.dedup.XXXXXX"); then
+    fm_task_inbox_write_failure dedup-staging "$dir"
+    return 1
+  fi
+  have=$(mktemp "$dir/.dedup.XXXXXX") || {
+    rm -f "$want"
+    fm_task_inbox_write_failure dedup-staging "$dir"
+    return 1
+  }
+  _FM_TASK_INBOX_DEDUP_HAVE=$have
+  _FM_TASK_INBOX_PRESCAN_REC=
+  if printf '%s' "$text" > "$want"; then
+    _fm_task_inbox_dedup_prescan "$dir" "$want" "$delivery_mode"
   else
-    rm -f "${want:-}" 2>/dev/null || true
+    fm_task_inbox_write_failure dedup-write "$dir"
     status=1
   fi
-  if [ "$status" -eq 0 ] && [ -z "$rec" ]; then
-    rec=$(_fm_task_inbox_write_record_locked "$dir" "$text" "$delivery_mode") || status=1
+  if [ "$status" -eq 0 ] && [ -n "$_FM_TASK_INBOX_PRESCAN_REC" ]; then
+    rec=$_FM_TASK_INBOX_PRESCAN_REC
+    rm -f "$want" "$have"
+    printf '%s' "$rec"
+    return 0
   fi
-  fm_lock_release "$lock"
+  if [ "$status" -eq 0 ]; then
+    lock="$dir/.seq.lock"
+    fm_task_inbox_lock_acquire "$lock" || { fm_task_inbox_write_failure "lock-acquire (${FM_TASK_INBOX_LOCK_WAIT_SECS:-$FM_TASK_INBOX_LOCK_WAIT_DEFAULT} seconds)" "$lock"; rm -f "$want" "$have"; return 1; }
+    # Full re-verification is required by the invariant in the function header.
+    for f in "$dir"/*.msg "$dir/handled"/*.msg; do
+      if [ "$delivery_mode" = fire-and-forget ]; then
+        fm_task_inbox_is_fire_and_forget "$f" || continue
+      elif fm_task_inbox_is_fire_and_forget "$f"; then
+        continue
+      fi
+      f=$(_fm_task_inbox_next_candidate "$dir" "$f" "$have") || continue
+      cmp -s "$want" "$have" || continue
+      [ ! -e "$dir/handled/${f##*/}" ] || f="$dir/handled/${f##*/}"
+      rec=$f
+      break
+    done
+    if [ -z "$rec" ]; then
+      rec=$(_fm_task_inbox_write_record_locked "$dir" "$text" "$delivery_mode") || status=1
+    fi
+    fm_lock_release "$lock"
+  fi
+  rm -f "$want" "$have"
   [ "$status" -eq 0 ] || return 1
   printf '%s' "$rec"
 }
