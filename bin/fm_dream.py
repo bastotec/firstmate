@@ -883,17 +883,24 @@ def toon_row(line):
 
 
 def task_titles(out):
-    """Titles of open rows in a `tasks-axi list` table, read by its own header;
-    None when a row cannot be decoded."""
-    titles, cols = [], None
-    for line in out.splitlines():
-        head = re.match(r'^tasks\[\d+\]\{([^}]*)\}:', line)
+    """Titles of open rows in a `tasks-axi list` table, read by its own header:
+    exactly the N rows `tasks[N]{...}:` announces (a `help[N]:` block follows
+    with lines indented the same way). None when the table is short or a row
+    cannot be decoded."""
+    lines = out.splitlines()
+    for i, line in enumerate(lines):
+        head = re.match(r'^tasks\[(\d+)\]\{([^}]*)\}:', line)
         if head:
-            cols = head.group(1).split(',')
-            continue
-        if not cols or not line.startswith('  '):
-            continue
-        fields = toon_row(line.strip())
+            break
+    else:
+        return None
+    count, cols = int(head.group(1)), head.group(2).split(',')
+    rows = lines[i + 1:i + 1 + count]
+    if len(rows) != count:
+        return None
+    titles = []
+    for line in rows:
+        fields = toon_row(line.strip()) if line.startswith('  ') else None
         if fields is None or len(fields) != len(cols):
             return None
         row = dict(zip(cols, fields))
