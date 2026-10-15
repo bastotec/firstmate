@@ -113,6 +113,7 @@ state/
   decision-bindings/ reconcile-requests/  captain-answer bindings and reconcile obligations; written only by bin/fm-captain-hold.sh
   ask-triage/             possible-ask state; written only by bin/fm-ask-triage.sh
   wake-gate/              wake-gate decisions; written only by bin/fm-wake-gate.sh
+  dream/                  private fleet-dreaming digest, run records and summary (bin/fm_dream.py header owns files)
   effort-policy/          turn-effort escalation and heartbeat fingerprint; written only by bin/fm-effort-policy.sh
   inbox/                  captain notes ("Inbox and voice records")
   x-watch.check.sh x-inbox/ x-context/ x-outbox/ x-poll.error x-poll.claim-error  generated Relay state (docs/relay.md)
