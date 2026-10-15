@@ -149,7 +149,7 @@ SH
 #!/usr/bin/env bash
 case "$1" in
   list) case "$*" in *--fields*) echo "unexpected --fields" >&2; exit 2 ;; esac
-        printf 'count: 3\ntasks[3]{id,state,kind,repo,title}:\n  fm-old,done,ship,firstmate,"Cache the drain result in fm-wake-drain.sh"\n  fm-dupes,queued,ship,"-","Prevent duplicate worker spawns, for a task"\n  fm-q,queued,ship,deck,"Handle \\"a,b\\" retry arguments in deck"\n' ;;
+        printf 'count: 3\ntasks[3]{id,state,kind,repo,title}:\n  fm-old,done,ship,firstmate,"Cache the drain result in fm-wake-drain.sh"\n  fm-dupes,queued,ship,"-","Prevent duplicate worker spawns, for a task"\n  fm-q,queued,ship,deck,"Handle \\"a,b\\" retry arguments in deck"\nhelp[2]:\n  - Run `tasks-axi show <id>` for full notes on a task\n  - Run `tasks-axi ready` to see unblocked queued work\n' ;;
   add) n=$(find "$STUB_CALLS" -name 'add.*' | wc -l | tr -d ' '); printf '%s\n' "$*" > "$STUB_CALLS/add.$n"; printf '{\n  "ok": true,\n  "action": "add",\n  "task": {"id": "dream-k%s"}\n}\n' "$n" ;;
 esac
 SH
