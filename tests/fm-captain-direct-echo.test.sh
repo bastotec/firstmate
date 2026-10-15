@@ -16,6 +16,10 @@
 #   5. --correction cannot accompany --from-captain.
 #   6. A captain-direct pending reply never sends the repost request and
 #      resolves on its own after grace.
+#   7. A captain message waits out a task record a relaunch holds locked and
+#      then moves to a new endpoint, within FM_SEND_CAPTAIN_WAIT_SECS; an
+#      ordinary steer still fails at the lock wait, and a hold past the bound
+#      fails with nothing enqueued.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -328,6 +332,104 @@ test_unknown_delivery_never_escalates() {
   pass "captain-direct: unknown delivery never escalates, resends safely, and resolves from correlated reports"
 }
 
+# hold_meta <seconds> [relaunch] : hold domain's metadata lock in the
+# background as bin/fm-spawn.sh --relaunch does, optionally moving the task to
+# a new endpoint before releasing it. Sets HOLDER; waits until the lock is held.
+hold_meta() {
+  local secs=$1 relaunch=${2:-} lock="$HOME_DIR/state/.meta-domain.lock"
+  (
+    # shellcheck source=/dev/null
+    . "$ROOT/bin/fm-wake-lib.sh"
+    fm_lock_try_acquire "$lock" || exit 1
+    : > "$HOME_DIR/held"
+    if [ -n "$relaunch" ]; then
+      # Once the send has resolved the old endpoint (its pending reply is
+      # created after target resolution and before the locked validation),
+      # move the task to a genuinely different endpoint, as a relaunch does.
+      i=0
+      until [ -n "$(find "$HOME_DIR/state/pending-replies" -maxdepth 1 -type f ! -name '.*' 2>/dev/null)" ]; do
+        [ "$i" -lt 400 ] || exit 1
+        sleep 0.05; i=$((i + 1))
+      done
+      mkdir -p "$HOME_DIR/relaunched"
+      identity=$(fm_test_stream_task "$HOME_DIR/relaunched" domain "$LOG") || exit 1
+      { printf '%s\n' "$identity"; grep -v -E '^(window|backend|stream_hub|stream_endpoint_id|endpoint_task_id)=' "$HOME_DIR/state/domain.meta"; } \
+        > "$HOME_DIR/state/domain.meta.new" && mv "$HOME_DIR/state/domain.meta.new" "$HOME_DIR/state/domain.meta"
+      : > "$HOME_DIR/relaunch-done"
+    fi
+    sleep "$secs"
+    fm_lock_release "$lock"
+  ) &
+  HOLDER=$!
+  local i=0
+  while [ ! -e "$HOME_DIR/held" ] && [ "$i" -lt 100 ]; do sleep 0.05; i=$((i + 1)); done
+  [ -e "$HOME_DIR/held" ] || fail "the holder never took the metadata lock"
+}
+
+send_with_lock_waits() {  # <captain-wait> <fm-send args...> (LOCK_WAIT, default 1)
+  local wait=$1; shift
+  env FM_ROOT_OVERRIDE="$HOME_DIR" FM_HOME="$HOME_DIR" FM_SEND_LOG="$LOG" FM_SEND_SETTLE=0 \
+    FM_TASK_INBOX_LOCK_WAIT_SECS="${LOCK_WAIT:-1}" FM_SEND_CAPTAIN_WAIT_SECS="$wait" \
+    "$SEND" "$@" > "$OUT" 2> "$OUT.err"
+}
+
+test_captain_send_waits_out_a_relaunch() {
+  local start elapsed old
+  setup relaunch
+  old=$(sed -n 's/^window=//p' "$HOME_DIR/state/domain.meta")
+  hold_meta 2 relaunch
+  start=$(date +%s)
+  LOCK_WAIT=10 send_with_lock_waits 20 domain --from-captain "$CAPTAIN_TEXT" \
+    || fail "a captain message must wait out a relaunch: $(cat "$OUT.err")"
+  elapsed=$(( $(date +%s) - start ))
+  wait "$HOLDER"
+  [ "$elapsed" -ge 3 ] || fail "the send cannot have waited for the lock (${elapsed}s)"
+  [ -e "$HOME_DIR/relaunch-done" ] || fail "the relaunch never moved the endpoint"
+  [ "$(sed -n 's/^window=//p' "$HOME_DIR/state/domain.meta")" != "$old" ] || fail "the endpoint must really change"
+  [ "$(inbox_count)" = 1 ] || fail "expected one inbox record, got $(inbox_count)"
+  assert_contains "$(cat "$OUT")" "corr=" "a delivered captain message prints its corr"
+  pass "captain-direct: a captain message waits out a relaunch and reaches the new endpoint"
+}
+
+test_ordinary_steer_keeps_the_short_lock_wait() {
+  local rc=0
+  setup ordinary
+  hold_meta 4
+  send_with_lock_waits 20 domain "routine steer" || rc=$?
+  wait "$HOLDER"
+  [ "$rc" = 1 ] || fail "an ordinary steer must fail at the lock wait as before (rc=$rc)"
+  assert_contains "$(cat "$OUT.err")" "could not be locked for final delivery validation" "the lock error must be shown"
+  [ "$(inbox_count)" = 0 ] || fail "nothing must be enqueued"
+  pass "captain-direct: an ordinary steer keeps the short lock wait"
+}
+
+test_captain_flag_in_message_text_is_an_ordinary_steer() {
+  local rc=0
+  setup flagtext
+  hold_meta 4
+  send_with_lock_waits 20 domain Explain --from-captain || rc=$?
+  wait "$HOLDER"
+  [ "$rc" = 1 ] || fail "a steer whose text names the flag must fail at the lock wait (rc=$rc)"
+  [ "$(inbox_count)" = 0 ] || fail "nothing must be enqueued"
+  pass "captain-direct: --from-captain inside the message text does not make a captain send"
+}
+
+test_captain_send_wait_is_bounded() {
+  local rc=0 start elapsed
+  setup bounded
+  hold_meta 8
+  start=$(date +%s)
+  env FM_ROOT_OVERRIDE="$HOME_DIR" FM_HOME="$HOME_DIR" FM_SEND_LOG="$LOG" FM_SEND_SETTLE=0 \
+    FM_SEND_CAPTAIN_WAIT_SECS=2 "$SEND" domain --from-captain "$CAPTAIN_TEXT" > "$OUT" 2> "$OUT.err" || rc=$?
+  elapsed=$(( $(date +%s) - start ))
+  wait "$HOLDER"
+  [ "$rc" = 1 ] || fail "a hold past the bound must fail with exit 1 (rc=$rc)"
+  [ "$elapsed" -le 4 ] || fail "the wait must stop at its bound, whatever the lock wait (${elapsed}s)"
+  assert_contains "$(cat "$OUT.err")" "could not be locked for final delivery validation" "the last attempt's error must be shown"
+  [ "$(inbox_count)" = 0 ] || fail "nothing must be enqueued"
+  pass "captain-direct: the captain wait is bounded and fails as before"
+}
+
 test_delivery_tells_first_mate_once
 test_echoes_are_suppressed
 test_corrections_and_unrelated_steers_are_sent
@@ -338,3 +440,7 @@ test_non_ascii_captain_message
 test_accented_captain_message_keeps_its_letters
 test_ledger_retention
 test_unknown_delivery_never_escalates
+test_captain_send_waits_out_a_relaunch
+test_ordinary_steer_keeps_the_short_lock_wait
+test_captain_flag_in_message_text_is_an_ordinary_steer
+test_captain_send_wait_is_bounded
