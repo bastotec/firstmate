@@ -174,6 +174,7 @@ class Ctx:
         self.digest = self.dir / ('digest-%s.md' % self.day)
         self.facts = {}
         self.excluded = set(self.config.get('exclude_homes') or [])
+        self.private_words = None
         self.deadline = None
 
     def left(self):
@@ -288,11 +289,15 @@ def text_of(content):
     return ' '.join(out)
 
 
+UNREADABLE = []  # session files collect could not parse, a partial collect
+
+
 def session_lines(path, since, slow, label, hide=lambda line: False):
     """Digest lines for one deck session file, newer than since; slow fm-* calls
     are appended to slow as (command, seconds)."""
     doc = read_json(path)
     if not isinstance(doc, dict):
+        UNREADABLE.append(os.path.basename(path))
         return []
     lines, calls = [], {}
     for msg in doc.get('messages') or []:
@@ -395,7 +400,8 @@ def local_sessions(ctx):
         brief = first_user_text(path)
         # A worker's brief names its inbox, <home>/state/<task>.inbox: only workers
         # of this home or an included local home count, never another FM_HOME's.
-        mine = any(h.rstrip('/') + '/state/' in brief for h in ours)
+        inbox = re.search(r'(/[^\s"\']+?)/state/[A-Za-z0-9._-]+\.inbox\b', brief)
+        mine = bool(inbox) and inbox.group(1).rstrip('/') in {h.rstrip('/') for h in ours}
         if WORKER_BRIEF in brief and mine and not any(word in brief for word in private):
             m = re.search(r'task(?: id)?[:=] *([A-Za-z0-9._-]+)', brief)
             add('worker %s' % (m.group(1) if m else path.stem), path)
@@ -483,11 +489,16 @@ def private_names():
 
 
 def mentions_excluded(ctx, line):
-    return any(name in line for name in ctx.excluded | {m.replace('-', ' ') for m in ctx.excluded})
+    """True when line names an excluded home by id, spelled id, or registered path."""
+    if ctx.private_words is None:
+        ctx.private_words = sorted(ctx.excluded | {m.replace('-', ' ') for m in ctx.excluded}
+                                   | {h for mid, h, host in registry(ctx.home) if mid in ctx.excluded and h})
+    return any(word in line for word in ctx.private_words)
 
 
 def step_collect(ctx):
     parts, slow = ['# Fleet day digest, %s (since %s)' % (ctx.day, iso(ctx.since)), ''], []
+    UNREADABLE.clear()
     sessions = local_sessions(ctx)
     for label, path in sessions:
         parts += session_lines(path, ctx.since, slow, label, lambda line: mentions_excluded(ctx, line))
@@ -549,9 +560,11 @@ def step_collect(ctx):
                            'no_mistakes_failed': len(nm), 'revives': len(revives), 'restarts': len(restarts),
                            'idle_sweep': len(sweep), 'digest_chars': len(text)}
     unread = ['%s: %s' % (m.get('id'), m.get('freshness')) for m in (rep or {}).get('mates', [])
-              if m.get('id') not in ctx.excluded and m.get('freshness') not in ('fresh', 'local', 'remote', 'cached', None)]
+              if m.get('id') not in ctx.excluded and m.get('freshness') not in ('fresh', 'local', 'remote', None)]
     if (rep or {}).get('power_error'):
         unread.append('power: %s' % rep['power_error'])
+    if UNREADABLE:
+        unread.append('%d session file(s) unreadable' % len(UNREADABLE))
     gaps = ([nm_err] if nm_err else []) + (['fleet report unreadable'] if rep is None else []) + unread[:3]
     result = {'status': 'partial' if gaps else 'done', **ctx.facts['counts']}
     if gaps:
@@ -618,9 +631,10 @@ def run_agent(ctx, prompt, cwd, log, output):
         with open(log, errors='replace') as fh:
             fh.seek(offset)
             failed = [json.loads(l).get('error') for l in fh if l.startswith('{') and '"run_failed"' in l]
-        if rc == 0 and not failed:
+        if rc == 0 and not failed and Path(output).is_file():
             return None
-        why = 'agent failed: %s' % ((failed[-1] if failed else None) or 'deck exited %d' % rc)
+        why = 'agent failed: %s' % ((failed[-1] if failed else None)
+                                    or ('deck exited %d' % rc if rc else 'it wrote no %s' % Path(output).name))
         if ctx.left() < 120:
             break
         time.sleep(RETRY_SECS)

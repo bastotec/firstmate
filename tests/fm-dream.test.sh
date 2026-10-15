@@ -32,6 +32,7 @@ new_case() {
   printf 'p-1\n' > "$d/home/state/primary-chat/session"
   printf 's-private\n' > "$d/home/state/finn-finance.deck-session"
   printf 'sup-1\n' > "$d/home/state/docana-delivery.supervisor-session"
+  printf 'broken\n' > "$d/home/state/broken-mate.deck-session"
   mkdir -p "$d/home/state/procevent-inbox"
   printf 'status: action-failed\nrestarted: cadia on workload (deck)\nunreached: finn-finance: SECRET RESTART DETAIL\n' \
     > "$d/home/state/procevent-inbox/when-secondmate-restart-1.1.result"
@@ -55,6 +56,11 @@ json.dump({"version": 1, "messages": [{"role": "user", "content": [{"type": "tex
 brief = lambda extra, h=home: {"role": "user", "content": [{"type": "text", "text": "FIRSTMATE_OP: v1 launch-brief\ntask: %s\ninbox: %s/state/%s.inbox" % (extra, h, extra)}], "at": recent}
 json.dump({"version": 1, "messages": [brief("other-ship", "/elsewhere/firstmate"), {"role": "assistant", "content": [{"type": "text", "text": "ANOTHER HOME WORKER"}], "at": recent}]},
           open(root + "/w-3.json", "w"))
+quoting = brief("quoting-ship", "/elsewhere/firstmate")
+quoting["content"][0]["text"] += "\nsee %s/state/idle-sweep.log" % home
+json.dump({"version": 1, "messages": [quoting, {"role": "assistant", "content": [{"type": "text", "text": "QUOTING WORKER"}], "at": recent}]},
+          open(root + "/w-4.json", "w"))
+open(root + "/broken.json", "w").write('{"version": 1, "messages": [')
 json.dump({"version": 1, "messages": [brief("ship-x"), {"role": "assistant", "content": [{"type": "text", "text": "WORKER DID THE THING"}], "at": recent}]},
           open(root + "/w-1.json", "w"))
 json.dump({"version": 1, "messages": [brief("finn-finance-close"), {"role": "assistant", "content": [{"type": "text", "text": "PRIVATE WORKER LINE"}], "at": recent}]},
@@ -167,7 +173,7 @@ run_dream() {  # <case-dir> <args...>
 test_collect_builds_a_private_digest_of_the_day() {
   local d digest
   d=$(new_case collect)
-  run_dream "$d" --only collect >/dev/null || fail "collect exited nonzero"
+  run_dream "$d" --only collect > "$d/out.json" || fail "collect exited nonzero"
   digest=$(ls "$d"/home/state/dream/digest-*.md) || fail "no digest written"
   [ "$(stat -f %Lp "$digest" 2>/dev/null || stat -c %a "$digest")" = 600 ] || fail "digest is not 0600"
   grep -q 'no, use fm-pr-merge.sh' "$digest" || fail "captain correction missing"
@@ -183,6 +189,9 @@ test_collect_builds_a_private_digest_of_the_day() {
   grep -q 'SPLIT SUPERVISOR LINE' "$digest" || fail "a split mate's supervisor session was missed"
   grep -q 'UNRELATED DECK USE' "$digest" && fail "a session that is not fleet work reached the digest"
   grep -q 'ANOTHER HOME WORKER' "$digest" && fail "a worker of another firstmate home reached the digest"
+  grep -q 'QUOTING WORKER' "$digest" && fail "a foreign worker quoting this home's paths reached the digest"
+  jq -e '.steps.collect.status == "partial" and (.steps.collect.why | test("unreadable"))' "$d/out.json" >/dev/null \
+    || fail "an unreadable session did not make collect partial"
   grep -q 'restarted: cadia on workload' "$digest" || fail "restart results missing"
   grep -q 'SECRET RESTART DETAIL' "$digest" && fail "an excluded home's restart line reached the digest"
   grep -q 'PRIVATE SEND' "$digest" && fail "a command addressed to an excluded home reached the digest"
