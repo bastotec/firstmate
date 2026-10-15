@@ -11,7 +11,8 @@ loop are small enough to keep a copy of here.
 Steps, in order; each has its own time budget, and one that fails or is skipped
 is recorded and never stops the next:
   collect  reads the day (local deck sessions of the first mate, the supervisor,
-           local mates and their workers; captain-direct; failed or cancelled
+           local mates and their workers; captain-direct deliveries from every
+           included local home's state, not only the main one; failed or cancelled
            no-mistakes runs; revive and restart results; the idle sweep; power)
            into a private digest under state/dream/ (0600, never committed),
            plus two calendar days of fleet reports for remote mates (remote deck
@@ -56,7 +57,9 @@ open work, but starts no agents, pushes nothing and files nothing.
 
 Files under <home>/state/dream/:
   runs/<date>.json   the run log (every step's status, seconds, details);
-                     dry runs use runs/<date>.dry-run.json
+                     dry runs use runs/<date>.dry-run.json. A run ended by
+                     SIGTERM/SIGHUP is finalized as partial, keeping completed
+                     steps, with the step in flight marked interrupted
   latest.json        published only by a full, non-dry run; --only and --dry-run
                      leave it alone. The summary bin/fm_report.py reads
                      (schema fm-dream.v1):
@@ -402,6 +405,13 @@ def first_user_text(doc, chars=None):
     return ''
 
 
+def local_homes(ctx):
+    """[('main', home), (mate id, home), ...]: the main home and every included
+    local mate's home, the one set every fleet-owned record is read from."""
+    return [('main', ctx.home)] + [(mid, Path(h)) for mid, h, host in registry(ctx.home)
+                                   if h and not host and mid not in ctx.excluded]
+
+
 def local_sessions(ctx):
     """[(label, session file)] touched in the window: the first mate's and the
     supervisor's, every local mate's (<home>/state/<id>.deck-session, or
@@ -432,8 +442,7 @@ def local_sessions(ctx):
             UNREADABLE.append(chat + '/session')
             continue
         add(label, sessions / (sid + '.json'), bound=True)
-    homes = [('main', ctx.home)] + [(mid, Path(h)) for mid, h, host in reg
-                                     if h and not host and mid not in ctx.excluded]
+    homes = local_homes(ctx)
     for mid, h in homes:
         for f in sorted(glob.glob(str(h / 'state' / '*.deck-session')) + glob.glob(str(h / 'state' / '*.supervisor-session'))):
             name, kind = Path(f).name.rsplit('.', 1)
@@ -569,19 +578,19 @@ def step_collect(ctx):
     for label, path in sessions:
         parts += session_lines(path, ctx.since, slow, label, lambda line: mentions_excluded(ctx, line))
     captain = []
-    for line in tail_since(ctx.state / 'captain-direct.log', ctx.since, hide=lambda l: mentions_excluded(ctx, l)):
-        corr = re.search(r'corr=([0-9a-f]+)', line)
-        try:
-            body = (ctx.state / 'captain-direct' / (corr.group(1) + '.text')).read_text(errors='replace') if corr else ''
-        except OSError:
-            body = ''
-        body = ' '.join(body.split())
-        if not mentions_excluded(ctx, body):
-            captain.append('%s: %s' % (line[:120], body[:500]) if body else line)
+    for _mid, h in local_homes(ctx):  # fm-send.sh records deliveries in the sending home's state
+        for line in tail_since(h / 'state' / 'captain-direct.log', ctx.since, hide=lambda l: mentions_excluded(ctx, l)):
+            corr = re.search(r'corr=([0-9a-f]+)', line)
+            try:
+                body = (h / 'state' / 'captain-direct' / (corr.group(1) + '.text')).read_text(errors='replace') if corr else ''
+            except OSError:
+                body = ''
+            body = ' '.join(body.split())
+            if not mentions_excluded(ctx, body):
+                captain.append('%s: %s' % (line[:120], body[:500]) if body else line)
     if captain:
         parts += ['## Captain-direct messages', *captain, '']
-    fleet_paths = [str(ctx.home)] + [h for mid, h, host in registry(ctx.home)
-                                     if h and not host and mid not in ctx.excluded]
+    fleet_paths = [str(h) for _mid, h in local_homes(ctx)]
     harness = {slug for slug in (ctx.config.get('repos') or DEFAULT_REPOS).values() if slug}
     PRIVATE_NAMES[:] = sorted(ctx.excluded | {m.replace('-', ' ') for m in ctx.excluded})
     private_paths = [h for mid, h, host in registry(ctx.home) if mid in ctx.excluded and h]
@@ -675,9 +684,9 @@ Finally write {summary} as JSON: {{"changes": [{{"skill": "name", "what": "one p
 "why": "what happened today that called for it"}}]}} - an empty list when you changed nothing."""
 
 
-def git(ctx, *args, cwd, check=True, timeout=None):
+def git(ctx, *args, cwd, check=True, timeout=None, text=True):
     """git inside the step's budget; output, or CalledProcessError when check."""
-    r = ctx.run(['git', *args], cwd=cwd, timeout=timeout)
+    r = ctx.run(['git', *args], cwd=cwd, timeout=timeout, text=text)
     if check and r.returncode:
         raise subprocess.CalledProcessError(r.returncode, ['git', *args], r.stdout, r.stderr)
     return r.stdout
@@ -760,8 +769,11 @@ def step_skills(ctx):
         # against the starting commit, so a checkpoint commit cannot slip past.
         git(ctx, 'add', '-A', cwd=tree)
         git(ctx, 'reset', '-q', '--soft', base, cwd=tree)
-        changed = git(ctx, 'diff', '--cached', '--name-only', '--no-renames', base, cwd=tree).split('\n')
-        changed = [p for p in changed if p]
+        # -z: under the default core.quotePath Git prints a non-ASCII path quoted
+        # and escaped, which a skills-only edit like skills/x/ação.md would then
+        # fail the skills/ check on: a false rejection.
+        raw = git(ctx, 'diff', '--cached', '--name-only', '-z', '--no-renames', base, cwd=tree, text=False)
+        changed = [p for p in raw.decode('utf-8', 'surrogateescape').split('\0') if p]
         doc = read_json(summary)
         if not isinstance(doc, dict) or not isinstance(doc.get('changes'), list):
             return {'status': 'failed', 'why': 'the skills agent wrote no valid %s' % summary.name}
@@ -1076,10 +1088,14 @@ def step_file(ctx):
         finally:
             bf.unlink()
         try:
-            doc = json.loads(r.stdout)
+            # strict=False: tasks-axi has been seen printing raw control
+            # characters inside string values, and a plain json.loads would
+            # reject a successful add.
+            doc = json.loads(r.stdout, strict=False)
             key = (doc.get('task') or {}).get('id') or doc.get('id')
         except (ValueError, AttributeError):
-            key = None
+            key = re.search(r'"id"\s*:\s*"([^"]+)"', r.stdout) or None
+            key = key.group(1) if key else None
         if r.returncode or not key:
             errors.append('%s: add failed (%s)' % (it['title'][:60], (r.stderr or r.stdout).strip()[:120]))
             continue
@@ -1144,9 +1160,34 @@ def cmd_run(args):
         return 1
     run = {'schema': 'fm-dream.v1', 'date': ctx.day, 'started': iso(ctx.now), 'dry_run': ctx.dry_run, 'steps': {}}
     log_path = ctx.dir / 'runs' / (ctx.day + ('.dry-run' if ctx.dry_run else '') + '.json')
+
+    def finalize(force_partial=False):
+        """The run record's final state, written the same way for a completed and
+        an interrupted run: latest.json included, so a terminated night still
+        leaves the report a summary instead of the previous night's."""
+        run['finished'] = iso(time.time())
+        run['skills'] = ctx.facts.get('skills', [])
+        run['skills_commit'] = ctx.facts.get('skills_commit')
+        run['raised'] = ctx.facts.get('raised', [])
+        run['slow_commands'] = ctx.facts.get('slow_commands', [])
+        run['counts'] = ctx.facts.get('counts', {})
+        run['status'] = ('done' if all(s.get('status') in CLEAN for s in run['steps'].values()) and not force_partial
+                         else 'partial')
+        run['summary'] = summary_line(run)
+        write_json(log_path, run)
+        if not ctx.dry_run and not args.only:
+            write_json(ctx.dir / 'latest.json', {k: v for k, v in run.items() if k != 'steps'} | {
+                'steps': {n: {k: v for k, v in s.items() if k in ('status', 'seconds', 'why')}
+                          for n, s in run['steps'].items()}})
+        print(json.dumps({'summary': run['summary'], 'steps': {n: {k: v for k, v in s.items() if k != 'items'}
+                                                               for n, s in run['steps'].items()}},
+                         indent=1, ensure_ascii=False))
+
+    interrupted = {'name': None, 'began': None}
     try:
         for name in args.only or STEPS:
             began = time.time()
+            interrupted.update(name=name, began=began)
             why = room_for(name)
             if why:
                 run['steps'][name] = {'status': 'skipped', 'why': why}
@@ -1163,23 +1204,20 @@ def cmd_run(args):
             if name == 'triage':
                 run['steps'][name]['items'] = ctx.facts.get('triage', [])
             write_json(log_path, run)
-        run['finished'] = iso(time.time())
-        run['skills'] = ctx.facts.get('skills', [])
-        run['skills_commit'] = ctx.facts.get('skills_commit')
-        run['raised'] = ctx.facts.get('raised', [])
-        run['slow_commands'] = ctx.facts.get('slow_commands', [])
-        run['counts'] = ctx.facts.get('counts', {})
-        run['status'] = 'done' if all(s.get('status') in CLEAN for s in run['steps'].values()) else 'partial'
-        run['summary'] = summary_line(run)
-        write_json(log_path, run)
-        if not ctx.dry_run and not args.only:
-            write_json(ctx.dir / 'latest.json', {k: v for k, v in run.items() if k != 'steps'} | {
-                'steps': {n: {k: v for k, v in s.items() if k in ('status', 'seconds', 'why')}
-                          for n, s in run['steps'].items()}})
-        print(json.dumps({'summary': run['summary'], 'steps': {n: {k: v for k, v in s.items() if k != 'items'}
-                                                               for n, s in run['steps'].items()}},
-                         indent=1, ensure_ascii=False))
+        finalize()
         return 0
+    except KeyboardInterrupt:
+        # SIGTERM or SIGHUP (or Ctrl+C): the subprocess group was ended and the
+        # lock released on the way out, but without this the run record would
+        # keep its last per-step snapshot only and latest.json would keep the
+        # previous night. The step in flight is interrupted; the ones that
+        # completed keep what they earned, and the run is partial.
+        if interrupted['name'] and interrupted['name'] not in run['steps']:
+            run['steps'][interrupted['name']] = {
+                'status': 'interrupted', 'seconds': round(time.time() - interrupted['began']),
+                'why': str(sys.exc_info()[1])[:120] or 'interrupted'}
+        finalize(force_partial=True)
+        return 1
     finally:
         os.close(lock_fd)
 

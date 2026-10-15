@@ -372,9 +372,106 @@ print(json.dumps(fm_report.read_dream('$d/home', time.time() - 86400)))")
   pass "the fleet report carries the last dreaming run"
 }
 
+test_collect_reads_captain_direct_from_every_included_local_home() {
+  local d digest
+  d=$(new_case captain-direct-mates)
+  # a local included mate home: registered, no host, not excluded
+  mkdir -p "$d/mate/state/captain-direct"
+  printf -- '- dave-tools - tools and harness (home: %s; scope: tools; projects: deck; added 2026-01-01)\n' "$d/mate" \
+    > "$d/home/data/secondmates.md"
+  printf '%s\tcorr-9\tmate: first line\n' $((NOW - 700)) > "$d/mate/state/captain-direct.log"
+  printf '%s delivered corr=def456 task=ship\n' "$(iso $((NOW - 400)))" >> "$d/mate/state/captain-direct.log"
+  printf 'run the deck tests before pushing\n' > "$d/mate/state/captain-direct/def456.text"
+  run_dream "$d" --only collect > "$d/out.json" || fail "collect exited nonzero"
+  digest=$(ls "$d"/home/state/dream/digest-*.md) || fail "no digest written"
+  grep -q 'run the deck tests before pushing' "$digest" || fail "a captain-direct delivery recorded in an included local mate's home is missing"
+  grep -q 'no, merge only on green' "$digest" || fail "the main home's captain-direct body was lost"
+  jq -e '.steps.collect.captain_messages == 4' "$d/out.json" >/dev/null \
+    || fail "captain message count does not cover both homes' logs: $(jq -c .steps.collect "$d/out.json")"
+  # an excluded home's records never reach the digest
+  mkdir -p "$d/excluded/state/captain-direct"
+  printf -- '- finn-finance - finance (home: %s; scope: finance; projects: books; added 2026-01-01)\n' "$d/excluded" \
+    >> "$d/home/data/secondmates.md"
+  printf '%s delivered corr=eee999 task=x\n' "$(iso $((NOW - 300)))" > "$d/excluded/state/captain-direct.log"
+  printf 'PRIVATE EXCLUDED CORRECTION\n' > "$d/excluded/state/captain-direct/eee999.text"
+  run_dream "$d" --only collect >/dev/null || fail "second collect exited nonzero"
+  digest=$(ls "$d"/home/state/dream/digest-*.md)
+  grep -q 'PRIVATE EXCLUDED CORRECTION' "$digest" && fail "an excluded home's captain-direct record reached the digest"
+  pass "collect reads captain-direct deliveries from every included local home, not only the main one"
+}
+
+test_skills_accepts_a_non_ascii_skill_path() {
+  local d
+  d=$(new_case skills-utf8)
+  cat > "$d/bin/deck" <<'SH'
+#!/usr/bin/env bash
+prompt=$(cat)
+if [ -n "${STUB_DECK_SLEEP:-}" ]; then sleep "$STUB_DECK_SLEEP"; fi
+summary=$(printf '%s' "$prompt" | grep -o '/[^ ]*skills-[0-9-]*\.json' | head -1)
+triage=$(printf '%s' "$prompt" | grep -o '/[^ ]*triage-[0-9-]*\.json' | head -1)
+if [ -n "$summary" ]; then
+  mkdir -p skills/x
+  printf 'uma skill sobre açaí\n' > 'skills/x/ação.md'
+  printf '{"changes":[{"skill":"x/ação","what":"add","why":"why"}]}' > "$summary"
+fi
+if [ -n "$triage" ] && [ -z "${STUB_NO_TRIAGE:-}" ]; then printf '{"items": []}\n' > "$triage"; fi
+SH
+  chmod +x "$d/bin/deck"
+  run_dream "$d" --only collect skills > "$d/out.json" || fail "run exited nonzero"
+  jq -e '.steps.skills.status == "merged"' "$d/out.json" >/dev/null \
+    || fail "a skills-only edit under a non-ASCII path was not merged: $(cat "$d/out.json")"
+  git -C "$d/origin.git" show main:'skills/x/ação.md' | grep -q 'açaí' \
+    || fail "the non-ASCII skill file did not land on main"
+  [ -z "$(git -C "$d/dotfiles" worktree list | sed -n 2p)" ] || fail "the dreaming worktree was left behind"
+  pass "a skills-only edit under a non-ASCII path is accepted, not falsely rejected"
+}
+
+test_a_terminated_run_is_finalized_as_partial() {
+  local d pid runs latest
+  d=$(new_case term-finalize)
+  STUB_DECK_SLEEP=31.4159 run_dream "$d" > "$d/out.json" 2>&1 &
+  pid=$!
+  for _ in $(seq 1 50); do pgrep -f 'sleep 31.4159' >/dev/null && break; sleep 0.2; done
+  pgrep -f 'sleep 31.4159' >/dev/null || fail "the stub agent never started"
+  kill -TERM "$(pgrep -f "fm_dream.py run --home $d/home")"; wait "$pid" 2>/dev/null
+  runs="$d/home/state/dream/runs"
+  latest="$d/home/state/dream/latest.json"
+  jq -e '.status == "partial" and .steps.skills.status == "interrupted" and (.steps | has("triage") | not)' \
+    "$runs"/*.json >/dev/null || fail "the interrupted run record is wrong: $(cat "$runs"/*.json)"
+  jq -e '.status == "partial" and .steps.skills.status == "interrupted" and (.summary | test("Did not run cleanly"))' \
+    "$latest" >/dev/null || fail "latest.json was not finalized for the interrupted run: $(cat "$latest" 2>/dev/null)"
+  # completed steps keep what they earned: the digest is still there
+  ls "$d"/home/state/dream/digest-*.md >/dev/null 2>&1 || fail "the interrupted run lost the digest"
+  pass "a terminated run finalizes as partial, keeping what its completed steps earned"
+}
+
+test_a_control_character_in_a_successful_add_is_still_parsed() {
+  local d
+  d=$(new_case add-control-chars)
+  cat > "$d/bin/tasks" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  list) printf 'count: 0\ntasks[0]{id,state,kind,repo,title}:\n' ;;
+  add) n=$(find "$STUB_CALLS" -name 'add.*' | wc -l | tr -d ' '); printf '%s\n' "$*" > "$STUB_CALLS/add.$n"
+       printf '{\n  "ok": true,\n  "action": "add",\n  "task": {"id": "dream-k%s", "title": "has a raw \ttab and\rcarriage return inside"}\n}\n' "$n" ;;
+esac
+SH
+  chmod +x "$d/bin/tasks"
+  run_dream "$d" > "$d/out.json" || fail "run exited nonzero"
+  jq -e '.steps.file.status == "done" and (.steps.file.raised | length == 3)' "$d/out.json" >/dev/null \
+    || fail "a successful add with raw control characters was rejected: $(jq -c .steps.file "$d/out.json")"
+  [ "$(wc -l < "$d/home/state/dream/raised.jsonl")" -eq 3 ] || fail "the ledger was not written"
+  grep -q 'unconfirmed' "$d/home/state/dream/raised.jsonl" && fail "handoffs read as unconfirmed"
+  pass "tasks-axi output with raw control characters is still parsed, so the handoff and ledger are written"
+}
+
 test_collect_builds_a_private_digest_of_the_day
 test_skills_pushes_a_guarded_change_to_main
 test_skills_rejects_changes_outside_skills_and_secrets
+test_collect_reads_captain_direct_from_every_included_local_home
+test_skills_accepts_a_non_ascii_skill_path
+test_a_terminated_run_is_finalized_as_partial
+test_a_control_character_in_a_successful_add_is_still_parsed
 test_triage_dedupes_scores_caps_and_files_with_owners
 test_a_failed_agent_is_reported_as_failed
 test_a_malformed_config_stops_the_run
