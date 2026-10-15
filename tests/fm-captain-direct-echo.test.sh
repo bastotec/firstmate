@@ -343,9 +343,14 @@ hold_meta() {
     fm_lock_try_acquire "$lock" || exit 1
     : > "$HOME_DIR/held"
     if [ -n "$relaunch" ]; then
-      # Let the send sample the old endpoint and queue on the lock, then move
-      # the task to a genuinely different endpoint, as a relaunch does.
-      sleep 2
+      # Once the send has resolved the old endpoint (its pending reply is
+      # created after target resolution and before the locked validation),
+      # move the task to a genuinely different endpoint, as a relaunch does.
+      i=0
+      until [ -n "$(find "$HOME_DIR/state/pending-replies" -maxdepth 1 -type f ! -name '.*' 2>/dev/null)" ]; do
+        [ "$i" -lt 400 ] || exit 1
+        sleep 0.05; i=$((i + 1))
+      done
       mkdir -p "$HOME_DIR/relaunched"
       identity=$(fm_test_stream_task "$HOME_DIR/relaunched" domain "$LOG") || exit 1
       { printf '%s\n' "$identity"; grep -v -E '^(window|backend|stream_hub|stream_endpoint_id|endpoint_task_id)=' "$HOME_DIR/state/domain.meta"; } \

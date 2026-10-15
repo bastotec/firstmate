@@ -303,9 +303,9 @@ fi
 # record stayed locked or changed endpoint before anything was written exits 75
 # internally, and the send is retried from scratch every second until
 # FM_SEND_CAPTAIN_WAIT_SECS seconds (default 45, a positive integer) have
-# passed. Each attempt's metadata-lock wait (FM_SEND_META_LOCK_WAIT_SECS, which
-# only these final-validation locks read) is capped to the time left and no attempt
-# starts past the bound, so waiting on a locked or moving record ends within
+# passed. The attempt carries that deadline (FM_SEND_CAPTAIN_DEADLINE), and its
+# final-validation metadata-lock wait is capped to the time left when it starts
+# waiting (fm_send_meta_lock_wait); no attempt starts past the bound, so waiting on a locked or moving record ends within
 # about a second of it; an attempt that gets past the lock delivers on its
 # usual timing (a remote mate's transport keeps its own FM_SEND_REMOTE_BUDGET,
 # because cutting it off would leave delivery unknown). Only the last attempt's
@@ -324,23 +324,27 @@ fm_send_captain_flagged() {
   done
   return 1
 }
+fm_send_meta_lock_wait() {  # prints this send's wait for a final-validation metadata lock
+  local wait=${FM_TASK_INBOX_LOCK_WAIT_SECS:-$FM_TASK_INBOX_LOCK_WAIT_DEFAULT} left
+  case "$wait" in ''|*[!0-9]*) wait=$FM_TASK_INBOX_LOCK_WAIT_DEFAULT ;; esac
+  case "${FM_SEND_CAPTAIN_DEADLINE:-}" in ''|*[!0-9]*) printf '%s' "$wait"; return 0 ;; esac
+  left=$(( FM_SEND_CAPTAIN_DEADLINE - $(date +%s) ))
+  [ "$left" -ge 0 ] || left=0
+  [ "$wait" -le "$left" ] || wait=$left
+  printf '%s' "$wait"
+}
 FM_SEND_TEMPFAIL=1
 if [ "${FM_SEND_CAPTAIN_ATTEMPT:-0}" = 1 ]; then
   FM_SEND_TEMPFAIL=75
 elif fm_send_captain_flagged "$@"; then
   fm_send_wait=${FM_SEND_CAPTAIN_WAIT_SECS:-45}
   case "$fm_send_wait" in ''|*[!0-9]*|0) fm_send_wait=45 ;; esac
-  fm_send_lock_wait=${FM_TASK_INBOX_LOCK_WAIT_SECS:-5}
-  case "$fm_send_lock_wait" in ''|*[!0-9]*) fm_send_lock_wait=5 ;; esac
   fm_send_deadline=$(( $(date +%s) + fm_send_wait ))
   fm_send_out=$(mktemp "${TMPDIR:-/tmp}/fm-send-out.XXXXXX") || exit 1
   fm_send_err=$(mktemp "${TMPDIR:-/tmp}/fm-send-err.XXXXXX") || { rm -f "$fm_send_out"; exit 1; }
   while :; do
-    fm_send_left=$(( fm_send_deadline - $(date +%s) ))
-    [ "$fm_send_left" -ge 1 ] || fm_send_left=1
-    [ "$fm_send_lock_wait" -le "$fm_send_left" ] || fm_send_lock_wait=$fm_send_left
     fm_send_rc=0
-    FM_SEND_META_LOCK_WAIT_SECS=$fm_send_lock_wait FM_SEND_CAPTAIN_ATTEMPT=1 \
+    FM_SEND_CAPTAIN_DEADLINE=$fm_send_deadline FM_SEND_CAPTAIN_ATTEMPT=1 \
       bash "${BASH_SOURCE[0]}" "$@" >"$fm_send_out" 2>"$fm_send_err" || fm_send_rc=$?
     [ "$fm_send_rc" = 75 ] || break
     [ $(( $(date +%s) + 1 )) -lt "$fm_send_deadline" ] || break
@@ -1008,7 +1012,7 @@ else
     # open indefinitely; a bound hit exits through the same
     # unconfirmed-delivery contract.
     REMOTE_META_LOCK=$(fm_meta_lock_path "$TARGET_META") || exit 1
-    if [ "$DECISION_META_LOCK" != "$REMOTE_META_LOCK" ] && ! FM_TASK_INBOX_LOCK_WAIT_SECS=${FM_SEND_META_LOCK_WAIT_SECS:-${FM_TASK_INBOX_LOCK_WAIT_SECS:-$FM_TASK_INBOX_LOCK_WAIT_DEFAULT}} \
+    if [ "$DECISION_META_LOCK" != "$REMOTE_META_LOCK" ] && ! FM_TASK_INBOX_LOCK_WAIT_SECS=$(fm_send_meta_lock_wait) \
         fm_task_inbox_lock_acquire "$REMOTE_META_LOCK"; then
       if [ "$PENDING_REPLY_CREATED" = 1 ] && [ -n "$PENDING_REPLY_CORR" ]; then
         fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
@@ -1117,7 +1121,7 @@ else
   if [ "$INBOX_PLANE" = 1 ]; then
     INBOX_TASK_ID=$(fm_send_id_from_meta "$TARGET_META")
     INBOX_META_LOCK=$(fm_meta_lock_path "$TARGET_META") || exit 1
-    if [ "$DECISION_META_LOCK" != "$INBOX_META_LOCK" ] && ! FM_TASK_INBOX_LOCK_WAIT_SECS=${FM_SEND_META_LOCK_WAIT_SECS:-${FM_TASK_INBOX_LOCK_WAIT_SECS:-$FM_TASK_INBOX_LOCK_WAIT_DEFAULT}} \
+    if [ "$DECISION_META_LOCK" != "$INBOX_META_LOCK" ] && ! FM_TASK_INBOX_LOCK_WAIT_SECS=$(fm_send_meta_lock_wait) \
         fm_task_inbox_lock_acquire "$INBOX_META_LOCK"; then
       if [ "$PENDING_REPLY_CREATED" = 1 ] && [ -n "$PENDING_REPLY_CORR" ]; then
         fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
