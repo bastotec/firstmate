@@ -18,6 +18,20 @@
 # workers. Every case lives in exactly one suite; this file holds only the
 # helpers they share.
 #
+# 2026-10-15 isolation audit (task fm-watch-triage-fixture-parent-leak): the
+# three scripts these suites drive - bin/fm-watch.sh (which runs
+# bin/fm-inactive-reconcile.sh scan every poll), bin/fm-wake-drain.sh, and
+# bin/fm-inactive-reconcile.sh itself - resolve FM_HOME from the environment
+# even when FM_STATE_OVERRIDE points at a fixture, so a suite launched from a
+# live home inherited the real home's parent-channel binding and leaked three
+# child-outcome fixture lines into the real parent channel. Every tests/*.test.sh
+# that invokes one of the three scripts now sources tests/lib.sh (directly or
+# through a behavior helper), which scrubs ambient FM_HOME/FM_ROOT_OVERRIDE at
+# source time; tests/fm-gotmp.test.sh, the one invoker that does not, pins
+# FM_HOME to its own synthetic root on every call. The regression that pins
+# this lives in tests/fm-inactive-reconcile.test.sh (a fixture scan under a
+# mimicked secondmate binding cannot write outside its fixture tree).
+#
 # Daemon-side classification/injection lives in fm-daemon.test.sh; watcher/lock
 # liveness in fm-watcher-lock.test.sh; the durable-queue safety matrix in
 # fm-wake-queue.test.sh.

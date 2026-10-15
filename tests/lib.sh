@@ -65,6 +65,18 @@ unset FM_ASK_TRIAGE_HELPER FM_ASK_TRIAGE_KEY_VAR
 # under the marker. A case that verifies the refusal sets FM_TASK_ID itself.
 unset FM_TASK_ID
 
+# Scrub ambient home/root identity before any fixture establishes its own.
+# A suite launched from inside a live home (a worker running the tests, as
+# happened on 2026-10-15: watcher-triage fixtures leaked three child-outcome
+# lines into the real parent channel) inherits that home's FM_HOME and
+# FM_ROOT_OVERRIDE, so bin/fm-watch.sh's per-poll
+# bin/fm-inactive-reconcile.sh scan resolves fm_parent_channel_destination
+# against the REAL home and appends fixture ledgers to the REAL parent
+# channel. FM_STATE_OVERRIDE alone does not scope that resolution, because
+# the parent-channel library reads the home, not the state dir. A case that
+# verifies real-home behavior sets FM_HOME itself after sourcing this helper.
+unset FM_HOME FM_ROOT_OVERRIDE
+
 # Clear the tasks-axi env overrides. An operator shell exports TASKS_AXI_FILE
 # (and may export TASKS_AXI_BACKEND) at its real home's backlog, and tasks-axi
 # resolves that env AHEAD of the .tasks.toml a fixture copies, so a suite that

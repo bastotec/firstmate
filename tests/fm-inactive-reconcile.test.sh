@@ -153,6 +153,18 @@ prime_seen() { # <state> <status>
   ' _ "$ROOT/bin/fm-wake-lib.sh" "$1" "$2"
 }
 
+# Prime a turn-ended marker's .seen-* suppressor to its current size:mtime
+# signature, so the watcher's no-verb signal scan does not surface the marker's
+# own first sighting and exit before the inactive-outcome scan runs.
+prime_turnend_seen() { # <state> <file>
+  FM_STATE_OVERRIDE="$1" bash -c '
+    . "$1"
+    sig=$(fm_wake_signal_sig "$2") || exit 1
+    sf=$(fm_wake_signal_seen_path "$3" "$2")
+    printf "%s" "$sig" > "$sf"
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$2" "$1"
+}
+
 reap() { kill "$1" 2>/dev/null || true; wait "$1" 2>/dev/null || true; }
 
 # The main retains a terminal presentation receipt until the corresponding wake
@@ -792,6 +804,107 @@ test_watcher_poll_delivers_child_ledger_line_to_parent() {
   pass "the real watcher poll delivers a child's terminal ledger line to the parent channel"
 }
 
+# 2026-10-15 fixture-leak regression: the watcher-triage suites drive the real
+# watcher with only FM_STATE_OVERRIDE pinned, so a suite launched from inside a
+# live home inherited that home's FM_HOME/FM_ROOT_OVERRIDE, fm-watch.sh resolved
+# the reconcile scan's parent-channel destination against the REAL home's
+# secondmate markers, and three fixture child-outcome lines (task ids done,
+# validating, busy-fresh) were appended to the real parent channel. tests/lib.sh
+# now scrubs the ambient identity at source time. This case pins that scrub by
+# launching the watcher in the suites' own invocation shape from a hostile
+# ambient - a foreign secondmate home whose parent channel holds a canary line -
+# and asserting the scan still records every fixture outcome inside the fixture
+# tree while the foreign channel stays byte-identical. Without the scrub the
+# hostile FM_HOME would append the child-outcome lines to that canary.
+test_watcher_fixture_scan_cannot_escape_the_fixture_tree() {
+  local foreign foreign_canary pid i receipt
+  make_world fixture-leak
+
+  # The foreign home mimics the live home a suite used to be launched from:
+  # secondmate markers and its own parent-channel destination, seeded with a
+  # canary line no fixture write may touch or append to.
+  foreign="$WORLD/foreign-home"
+  mkdir -p "$foreign/state" "$foreign/data" "$foreign/config"
+  printf 'foreign-mate\n' > "$foreign/.fm-secondmate-home"
+  cat > "$foreign/.fm-secondmate-parent" <<EOF
+schema=fm-secondmate-parent.v1
+route=local
+parent_home=$WORLD/foreign-parent
+EOF
+  mkdir -p "$WORLD/foreign-parent/state"
+  foreign_canary="$WORLD/foreign-parent/state/foreign-mate.status"
+  printf 'canary: no fixture write may append here\n' > "$foreign_canary"
+
+  # The three leaked child-outcome shapes: task ids done, validating, and
+  # busy-fresh, each ending in a terminal ledger line with the leaked PR.
+  # shellcheck disable=SC1010 # the literal task id spelled "done"
+  write_child "$MAIN" done 'done: PR https://example.test/pr/3 checks green'
+  write_child "$MAIN" validating 'done: PR https://example.test/pr/3 checks green'
+  write_child "$MAIN" busy-fresh 'done: PR https://example.test/pr/3 checks green'
+  prime_seen "$MAIN/state" "$MAIN/state/done.status"
+  prime_seen "$MAIN/state" "$MAIN/state/validating.status"
+  prime_seen "$MAIN/state" "$MAIN/state/busy-fresh.status"
+  prime_turnend_seen "$MAIN/state" "$MAIN/state/done.turn-ended"
+  prime_turnend_seen "$MAIN/state" "$MAIN/state/validating.turn-ended"
+  prime_turnend_seen "$MAIN/state" "$MAIN/state/busy-fresh.turn-ended"
+
+  # The suites' own invocation shape - FM_STATE_OVERRIDE only, no pinned home -
+  # launched from the hostile ambient a live home used to inject. Sourcing
+  # tests/lib.sh must scrub that inheritance before the watcher resolves its
+  # home; with the scrub the home falls back to a main home, so the fixture
+  # outcomes are presented inside the fixture instead of being delivered to the
+  # ambient home's parent channel.
+  # shellcheck disable=SC2016 # $1 must reach the child shell unexpanded
+  env FM_HOME="$foreign" FM_ROOT_OVERRIDE="$foreign" \
+    PATH="$WORLD/fakebin:$PATH" FM_STATE_OVERRIDE="$MAIN/state" \
+    FM_DATA_OVERRIDE="$MAIN/data" FM_CONFIG_OVERRIDE="$MAIN/config" \
+    FM_INACTIVE_RECONCILE_SECS=60 \
+    FM_INACTIVE_CREW_STATE_BIN="$WORLD/fakebin/fm-crew-state.sh" \
+    FM_FORGE_LOG="$WORLD/forge.log" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_FAKE_CREW_STATE='done' \
+    bash -c '
+      # shellcheck source=tests/lib.sh
+      . "$1/tests/lib.sh"
+      exec "$1/bin/fm-watch.sh"
+    ' _ "$ROOT" > "$WORLD/leak-watch.out" 2>&1 &
+  pid=$!
+  i=0
+  while [ "$i" -lt 150 ]; do
+    kill -0 "$pid" 2>/dev/null || break
+    [ "$(outcome_count "$MAIN" pending)" -ge 3 ] && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  reap "$pid"
+
+  # The scan ran and recorded all three shapes inside the fixture tree: one
+  # pending presentation receipt per leaked task id, and the watcher surfaced
+  # the inactive-outcome obligation rather than exiting quietly.
+  [ "$(outcome_count "$MAIN" pending)" -eq 3 ] \
+    || fail "fixture scan did not record all three child-outcome shapes inside the fixture: $(cat "$WORLD/leak-watch.out")"
+  for receipt in "$MAIN/state/terminal-outcomes"/*.pending; do
+    [ -f "$receipt" ] || continue
+    case "$(cat "$receipt")" in
+      *task_id=done*|*task_id=validating*|*task_id=busy-fresh*) ;;
+      *) fail "an unexpected outcome receipt appeared: $(cat "$receipt")" ;;
+    esac
+  done
+  # The fixture-side obligation is durable: the watcher surfaced the queued
+  # inactive-outcome wake for the fixture's own state (the suites' shape runs a
+  # main home, so the presentation is queued rather than parent-delivered).
+  [ "$(wake_count "$MAIN" 'inactive-outcome')" -ge 1 ] \
+    || fail "the fixture scan never queued its inactive-outcome obligation: $(cat "$WORLD/leak-watch.out")"
+
+  # And nothing escaped the fixture tree: the foreign canary is byte-identical
+  # and carries no child-outcome line, and the foreign home has no write at all.
+  [ "$(cat "$foreign_canary")" = 'canary: no fixture write may append here' ] \
+    || fail "a fixture scan rewrote the foreign parent channel: $(cat "$foreign_canary")"
+  if grep -rq 'child-outcome-' "$foreign"; then
+    fail "a fixture child-outcome line escaped into the foreign home: $(grep -rl 'child-outcome-' "$foreign")"
+  fi
+  pass "a fixture watcher scan under a hostile ambient home cannot write outside its fixture tree"
+}
+
 # A stalled authoritative state read consumes only the aggregate scan budget.
 # The durable scan position lets the next invocation reach the following child.
 test_stalled_state_read_is_bounded_and_scan_progresses() {
@@ -930,6 +1043,7 @@ test_scan_marker_replaces_symlink_safely
 test_nonterminal_and_captain_held_states_do_not_report
 test_watcher_hook_and_idle_secondmate_exemption
 test_watcher_poll_delivers_child_ledger_line_to_parent
+test_watcher_fixture_scan_cannot_escape_the_fixture_tree
 test_stalled_state_read_is_bounded_and_scan_progresses
 test_full_scan_budget_includes_wake_lock_wait
 test_notice_recovery_does_not_duplicate_wake
