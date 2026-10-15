@@ -746,6 +746,58 @@ test_watcher_dead_pane_ignores_stale_busy_state() {
   pass "watcher: dead-pane recovery overrides stale busy state"
 }
 
+# A write-step failure must name its step on stderr: the send paths' caller
+# errors promise "the leg's stderr above has the reason" (bin/fm-send.sh, the
+# remote steer leg), so a bare nonzero from any step - staging, publish,
+# lock-acquire - makes that promise false and the failure undiagnosable from
+# the UI alone. These cases pin the diagnostic contract with real failures.
+test_write_failure_names_its_step() {
+  local state fakebin err holder holder_fifo
+  state="$TMP_ROOT/write-diag/state"
+  fakebin="$TMP_ROOT/write-diag/fakebin"
+  mkdir -p "$state" "$fakebin"
+  cat > "$fakebin/mv" <<'SH'
+#!/usr/bin/env bash
+set -u
+exit 1
+SH
+  chmod +x "$fakebin/mv"
+
+  # A publish failure names the record it could not land.
+  err=$( { PATH="$fakebin:$PATH" inbox_lib "$state" fm_task_inbox_write "$state" t1 "steer"; } 2>&1 )
+  case "$err" in
+    "fm-task-inbox: publish failed for $state/t1.inbox/001.msg") ;;
+    *) fail "publish failure diagnostic missing or malformed: $err" ;;
+  esac
+  [ ! -e "$state/t1.inbox/001.msg" ] || fail "a failed publish left its record behind"
+
+  # A lock held by a live process names the lock and its wait. (A live pid the
+  # test can signal, not pid 1: an unkillable probe reads as dead via EPERM and
+  # the stale-lock steal would reclaim it.)
+  holder_fifo="$TMP_ROOT/write-diag/holder.fifo"
+  mkfifo "$holder_fifo"
+  ( cd / && bash -c 'echo $$ >"$1"; exec sleep 30' _ "$holder_fifo" ) &
+  holder=$(cat "$holder_fifo")
+  rm -f "$holder_fifo"
+  mkdir -p "$state/t1.inbox/.seq.lock"
+  echo "$holder" > "$state/t1.inbox/.seq.lock/pid"
+  err=$( { FM_TASK_INBOX_LOCK_WAIT_SECS=1 inbox_lib "$state" fm_task_inbox_write "$state" t1 "steer"; } 2>&1 )
+  case "$err" in
+    "fm-task-inbox: lock-acquire (1 seconds) failed for $state/t1.inbox/.seq.lock") ;;
+    *) fail "lock-acquire diagnostic missing or malformed: $err" ;;
+  esac
+  rm -rf "$state/t1.inbox/.seq.lock"
+  [ -n "$holder" ] && kill "$holder" 2>/dev/null || true
+
+  # The idempotent enqueue (the remote steer leg's primitive) reports the same way.
+  err=$( { PATH="$fakebin:$PATH" inbox_lib "$state" fm_task_inbox_write_idempotent "$state" t1 "steer"; } 2>&1 )
+  case "$err" in
+    "fm-task-inbox: publish failed for $state/t1.inbox/001.msg") ;;
+    *) fail "idempotent publish diagnostic missing or malformed: $err" ;;
+  esac
+  pass "inbox: every write-step failure names its step on stderr"
+}
+
 test_write_is_durable_and_exact
 test_doorbell_is_a_shell_noop
 test_doorbell_rejects_terminal_controls
@@ -756,6 +808,7 @@ test_idempotent_write_follows_concurrent_ack
 test_handled_mv_dedups_by_sequence
 test_concurrent_writers_never_clobber
 test_writer_retries_after_a_vanished_lock_collision
+test_write_failure_names_its_step
 test_ladder_writes_ignore_vanished_inbox
 test_fire_and_forget_records_never_enter_the_ladder
 test_ring_ladder_policy
