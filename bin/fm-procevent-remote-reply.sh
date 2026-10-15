@@ -325,18 +325,21 @@ normalize_payload() { # <source> <destination>
 # At most CONTINUITY_RECOVERY_LIMIT replays per hour per mate; the attempts are
 # recorded beside the cursor.
 CONTINUITY_RECOVERY_LIMIT=${FM_REMOTE_REPLY_RECOVERY_LIMIT:-3}
-continuity_recovery_allowed() { # <id>
-  local file now recent=0 t
+# Each charge is keyed to the break's capture sequence, so retrying the same
+# break never charges the budget twice.
+continuity_recovery_allowed() { # <id> <seq>
+  local file now recent=0 t s
   file="$CURSOR_DIR/$1.recoveries"
   now=$(date +%s)
   if [ -f "$file" ] && [ ! -L "$file" ]; then
-    while IFS= read -r t; do
+    while read -r t s; do
       case "$t" in ''|*[!0-9]*) continue ;; esac
+      [ -z "$2" ] || [ "$s" != "$2" ] || return 0
       [ $((now - t)) -ge 3600 ] || recent=$((recent + 1))
     done < "$file"
   fi
   [ "$recent" -lt "$CONTINUITY_RECOVERY_LIMIT" ] || return 1
-  mkdir -p "$CURSOR_DIR" && printf '%s\n' "$now" >> "$file"
+  mkdir -p "$CURSOR_DIR" && printf '%s %s\n' "$now" "$2" >> "$file"
 }
 
 append_status_once() { # <status-file> <line>
@@ -398,7 +401,7 @@ cmd_ingest() {
     # line is appended at most once, so replaying the log from the start
     # delivers exactly the lines this home has not seen. That recovery is
     # bounded: a log that keeps breaking is escalated and left stopped.
-    if continuity_recovery_allowed "$id"; then
+    if continuity_recovery_allowed "$id" "$seq"; then
       # The receipt comes first and marks this break as recovered, so a
       # handle retried after any later failure finishes the reset and re-arm
       # (cmd_handle_locked) instead of refusing the moved cursor.
@@ -409,6 +412,8 @@ cmd_ingest() {
       write_cursor "$id" 0 "$(empty_hash)" \
         || { fm_lock_release "$lock"; die "cannot reset remote reply cursor for $id"; }
       fm_lock_release "$lock"
+      trap - EXIT
+      rm -rf -- "$tmp"
       printf 'continuity-recovered: %s (%s); replaying from the start\n' "$id" "$reason"
       return 4
     fi
@@ -417,6 +422,8 @@ cmd_ingest() {
     append_status_once "$status_file" "$line" || append_rc=$?
     [ "$append_rc" -ne 2 ] || { fm_lock_release "$lock"; die "cannot append continuity escalation"; }
     fm_lock_release "$lock"
+    trap - EXIT
+    rm -rf -- "$tmp"
     printf 'continuity-broken: %s (%s)\n' "$id" "$reason"
     return 3
   fi
