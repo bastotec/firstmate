@@ -194,9 +194,9 @@ fm_task_inbox_write() {  # <state-dir> <task-id> <text> [delivery-mode]
 fm_task_inbox_write_handled() {  # <state-dir> <task-id> <text>
   local state=$1 task=$2 text=$3 dir lock seq tmp rec status=0
   dir=$(fm_task_inbox_dir "$state" "$task")
-  mkdir -p "$dir/handled" || { fm_task_inbox_write_failure mkdir "$dir"; return 1; }
+  mkdir -p "$dir/handled" || return 1
   lock="$dir/.seq.lock"
-  fm_task_inbox_lock_acquire "$lock" || { fm_task_inbox_write_failure "lock-acquire (${FM_TASK_INBOX_LOCK_WAIT_SECS:-$FM_TASK_INBOX_LOCK_WAIT_DEFAULT} seconds)" "$lock"; return 1; }
+  fm_task_inbox_lock_acquire "$lock" || return 1
   seq=$(fm_task_inbox_next_seq "$dir")
   rec="$dir/handled/$seq.msg"
   if tmp=$(mktemp "$dir/handled/.staging.XXXXXX"); then
@@ -206,18 +206,45 @@ fm_task_inbox_write_handled() {  # <state-dir> <task-id> <text>
       printf -- '--\n'
       printf '%s' "$text"
     } > "$tmp" || status=1
-    if [ "$status" -eq 0 ]; then
-      mv "$tmp" "$rec" || { status=1; fm_task_inbox_write_failure publish "$rec"; }
-    else
-      rm -f "$tmp"; fm_task_inbox_write_failure write "$tmp"
-    fi
+    [ "$status" -ne 0 ] || mv "$tmp" "$rec" || status=1
+    [ "$status" -eq 0 ] || rm -f "$tmp"
   else
-    fm_task_inbox_write_failure staging "$dir/handled"
     status=1
   fi
   fm_lock_release "$lock"
   [ "$status" -eq 0 ] || return 1
   printf '%s' "$rec"
+}
+
+# Lock-free dedup prescan over one inbox: sets _FM_TASK_INBOX_PRESCAN_MAX to
+# the highest sequence observed (0 for an empty inbox) and
+# _FM_TASK_INBOX_PRESCAN_REC to the existing record whose body is
+# byte-identical to <want-file> ('' when none). Runs in the caller's shell on
+# purpose: the max must survive into the locked re-verify pass. Records are
+# immutable once published and acknowledgement only moves a record root ->
+# handled/, a move this scan follows the same way the locked original did, so
+# reading without the lock is safe. NOT authoritative alone: a concurrent
+# writer can publish a new record after the scan, which is why the caller
+# re-verifies under the lock.
+_fm_task_inbox_dedup_prescan() {  # <inbox-dir> <want-file> [delivery-mode]
+  local dir=$1 want=$2 delivery_mode=${3:-} f n max=0 rec=''
+  for f in "$dir"/*.msg "$dir/handled"/*.msg; do
+    [ -e "$f" ] || continue
+    n=$(fm_task_inbox_seq_of "${f##*/}") || continue
+    [ "$n" -le "$max" ] || max=$n
+    if [ "$delivery_mode" = fire-and-forget ]; then
+      fm_task_inbox_is_fire_and_forget "$f" || continue
+    elif fm_task_inbox_is_fire_and_forget "$f"; then
+      continue
+    fi
+    fm_task_inbox_body "$f" > "$_FM_TASK_INBOX_DEDUP_HAVE" 2>/dev/null || continue
+    cmp -s "$want" "$_FM_TASK_INBOX_DEDUP_HAVE" || continue
+    [ ! -e "$dir/handled/${f##*/}" ] || f="$dir/handled/${f##*/}"
+    rec=$f
+    break
+  done
+  _FM_TASK_INBOX_PRESCAN_MAX=$max
+  _FM_TASK_INBOX_PRESCAN_REC=$rec
 }
 
 # Durably enqueue one steer at most once: when a record with the exact same
@@ -231,57 +258,77 @@ fm_task_inbox_write_handled() {  # <state-dir> <task-id> <text>
 # secondmate request embeds a per-request correlation token in its body. The
 # local plane keeps plain fm_task_inbox_write: its outcome is synchronous, so
 # a repeated identical local steer is a deliberate new instruction.
+#
+# The dedup scan runs WITHOUT the sequence lock first (a long-lived inbox
+# accumulates hundreds of handled records and fm_task_inbox_body forks awk and
+# cat per record, so the original scan held .seq.lock for seconds at a time -
+# the lock-contention amplifier behind the 2026-10-14 cadia send failure,
+# where an overlapping write timed out against an inbox that was perfectly
+# healthy). A prescan hit returns immediately without ever taking the lock, so
+# the safe-recovery resend never waits on contention. Only the at-most-once
+# decision for a NEW record needs serialization: the prescan narrows it, then
+# the lock-held pass re-verifies just the sequences newer than the prescan's
+# maximum, which is empty in the common case and exactly the window a
+# concurrent identical enqueue could slip into. At-most-once for identical
+# concurrent enqueues is preserved: both prescans miss, both re-verify the
+# same window under the lock, and the second writer's locked pass sees the
+# first's record and dedups onto it.
 fm_task_inbox_write_idempotent() {  # <state-dir> <task-id> <text> [delivery-mode]
-  local state=$1 task=$2 text=$3 delivery_mode=${4:-} dir lock want have f rec='' status=0
+  local state=$1 task=$2 text=$3 delivery_mode=${4:-} dir lock rec=''
+  local want have status=0 f n
   dir=$(fm_task_inbox_dir "$state" "$task")
   mkdir -p "$dir/handled" || { fm_task_inbox_write_failure mkdir "$dir"; return 1; }
-  lock="$dir/.seq.lock"
-  fm_task_inbox_lock_acquire "$lock" || { fm_task_inbox_write_failure "lock-acquire (${FM_TASK_INBOX_LOCK_WAIT_SECS:-$FM_TASK_INBOX_LOCK_WAIT_DEFAULT} seconds)" "$lock"; return 1; }
-  if want=$(mktemp "$dir/.dedup.XXXXXX") && have=$(mktemp "$dir/.dedup.XXXXXX"); then
-    if printf '%s' "$text" > "$want"; then
-      for f in "$dir"/*.msg "$dir/handled"/*.msg; do
-        if [ ! -e "$f" ]; then
-          case "$f" in
-            "$dir"/*.msg)
-              f="$dir/handled/${f##*/}"
-              [ -e "$f" ] || continue
-              ;;
-            *) continue ;;
-          esac
-        fi
-        if [ "$delivery_mode" = fire-and-forget ]; then
-          fm_task_inbox_is_fire_and_forget "$f" || continue
-        elif fm_task_inbox_is_fire_and_forget "$f"; then
-          continue
-        fi
-        if ! fm_task_inbox_body "$f" > "$have" 2>/dev/null; then
-          case "$f" in
-            "$dir"/*.msg)
-              f="$dir/handled/${f##*/}"
-              fm_task_inbox_body "$f" > "$have" 2>/dev/null || continue
-              ;;
-            *) continue ;;
-          esac
-        fi
-        cmp -s "$want" "$have" || continue
-        [ ! -e "$dir/handled/${f##*/}" ] || f="$dir/handled/${f##*/}"
-        rec=$f
-        break
-      done
-    else
-      fm_task_inbox_write_failure dedup-write "$dir"
-      status=1
-    fi
-    rm -f "$want" "$have"
-  else
-    rm -f "${want:-}" 2>/dev/null || true
+  if ! want=$(mktemp "$dir/.dedup.XXXXXX"); then
     fm_task_inbox_write_failure dedup-staging "$dir"
+    return 1
+  fi
+  have=$(mktemp "$dir/.dedup.XXXXXX") || {
+    rm -f "$want"
+    fm_task_inbox_write_failure dedup-staging "$dir"
+    return 1
+  }
+  _FM_TASK_INBOX_DEDUP_HAVE=$have
+  _FM_TASK_INBOX_PRESCAN_MAX=0
+  _FM_TASK_INBOX_PRESCAN_REC=
+  if printf '%s' "$text" > "$want"; then
+    _fm_task_inbox_dedup_prescan "$dir" "$want" "$delivery_mode"
+  else
+    fm_task_inbox_write_failure dedup-write "$dir"
     status=1
   fi
-  if [ "$status" -eq 0 ] && [ -z "$rec" ]; then
-    rec=$(_fm_task_inbox_write_record_locked "$dir" "$text" "$delivery_mode") || status=1
+  if [ "$status" -eq 0 ] && [ -n "$_FM_TASK_INBOX_PRESCAN_REC" ]; then
+    # An existing identical record is immutable and already durable: the dedup
+    # answer cannot change, so the resend returns without contending the lock.
+    rec=$_FM_TASK_INBOX_PRESCAN_REC
+    rm -f "$want" "$have"
+    printf '%s' "$rec"
+    return 0
   fi
-  fm_lock_release "$lock"
+  if [ "$status" -eq 0 ]; then
+    lock="$dir/.seq.lock"
+    fm_task_inbox_lock_acquire "$lock" || { fm_task_inbox_write_failure "lock-acquire (${FM_TASK_INBOX_LOCK_WAIT_SECS:-$FM_TASK_INBOX_LOCK_WAIT_DEFAULT} seconds)" "$lock"; rm -f "$want" "$have"; return 1; }
+    # Bounded re-verify: only sequences the prescan could not have seen.
+    for f in "$dir"/*.msg "$dir/handled"/*.msg; do
+      [ -e "$f" ] || continue
+      n=$(fm_task_inbox_seq_of "${f##*/}") || continue
+      [ "$n" -gt "$_FM_TASK_INBOX_PRESCAN_MAX" ] || continue
+      if [ "$delivery_mode" = fire-and-forget ]; then
+        fm_task_inbox_is_fire_and_forget "$f" || continue
+      elif fm_task_inbox_is_fire_and_forget "$f"; then
+        continue
+      fi
+      fm_task_inbox_body "$f" > "$have" 2>/dev/null || continue
+      cmp -s "$want" "$have" || continue
+      [ ! -e "$dir/handled/${f##*/}" ] || f="$dir/handled/${f##*/}"
+      rec=$f
+      break
+    done
+    if [ -z "$rec" ]; then
+      rec=$(_fm_task_inbox_write_record_locked "$dir" "$text" "$delivery_mode") || status=1
+    fi
+    fm_lock_release "$lock"
+  fi
+  rm -f "$want" "$have"
   [ "$status" -eq 0 ] || return 1
   printf '%s' "$rec"
 }
