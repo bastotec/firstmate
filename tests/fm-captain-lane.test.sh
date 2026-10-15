@@ -32,6 +32,10 @@ write_captain() {  # <text>
     "$DIR/state" $'[fm-captain-direct]⁣note\n\n'"$1"
 }
 
+record_body() {  # <record>
+  bash -c '. "$1"; fm_task_inbox_body "$2"' _ "$ROOT/bin/fm-task-inbox-lib.sh" "$1"
+}
+
 write_record() {  # <stream|-> <text>: one inbox record as a sender delivers it
   FM_TASK_INBOX_STREAM=${1#-} bash -c '. "$1"; fm_task_inbox_write "$2" mate "$3" >/dev/null' _ \
     "$ROOT/bin/fm-task-inbox-lib.sh" "$DIR/state" "$2"
@@ -208,7 +212,23 @@ test_supervisor_note_reaches_the_conversation() {
   pass "fm-captain-lane: a mate's supervisor posts to its conversation with fm-captain-note.sh"
 }
 
+test_handoff_names_its_sender() {
+  setup
+  handoff() { FM_CAPTAIN_LANE_STATE="$DIR/state" FM_CAPTAIN_LANE_ID=mate "$ROOT/bin/fm-captain-handoff.sh" "$@" >/dev/null; }
+  FM_CONVERSATION_PARTY=mate:dave handoff 'merge the PR' || fail "a peer hand-off was refused"
+  FM_CONVERSATION_PARTY=captain handoff --from mate:dave 'ship it' || fail "a captain hand-off was refused"
+  handoff --from firstmate 'audit the docs' || fail "an explicit hand-off was refused"
+  handoff 'no sender given' || fail "an unnamed hand-off was refused"
+  bodies=$(for f in "$DIR/state/mate.inbox"/*.msg; do record_body "$f"; echo; done)
+  assert_contains "$bodies" "From the mate dave: merge the PR" "a peer's order names the peer"
+  assert_contains "$bodies" "From the captain: ship it" "the conversation turn's sender wins over --from"
+  assert_contains "$bodies" "From the first mate: audit the docs" "--from names the sender"
+  assert_contains "$bodies" "From an unstated sender: no sender given" "an unnamed hand-off is never the captain's"
+  pass "fm-captain-handoff: every hand-off names who it came from"
+}
+
 test_unacknowledged_answer_is_never_repeated
+test_handoff_names_its_sender
 test_supervisor_note_reaches_the_conversation
 test_conversation_takes_every_party_and_leaves_the_monologue
 test_new_session_is_bound_while_its_turn_runs

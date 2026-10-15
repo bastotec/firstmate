@@ -255,7 +255,7 @@ $prompt"
   [ -z "$session" ] || args+=(--session "$session")
   : > "$WORK/events.ndjson"
   rc=0
-  "$DECK" "${args[@]}" </dev/null > "$WORK/events.ndjson" 2>"$WORK/deck.err" &
+  FM_CONVERSATION_PARTY=$party "$DECK" "${args[@]}" </dev/null > "$WORK/events.ndjson" 2>"$WORK/deck.err" &
   DECK_PID=$!
   # A host that goes away mid-turn takes this turn with it, so its replacement
   # never runs beside it. A new session is bound as soon as Deck saves it, so a

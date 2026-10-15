@@ -1126,7 +1126,7 @@ else
         resend_state=$(cd "$STATE" 2>/dev/null && pwd) || resend_state=$STATE
         printf 'FM_STATE_OVERRIDE=%q ' "$resend_state" >&2
       fi
-      printf 'FM_PENDING_REPLY_EXISTING_CORR=%q %q' "$PENDING_REPLY_CORR" "$SCRIPT_DIR/fm-send.sh" >&2
+      printf 'FM_SEND_STREAM=%q FM_PENDING_REPLY_EXISTING_CORR=%q %q' "$FM_TASK_INBOX_STREAM" "$PENDING_REPLY_CORR" "$SCRIPT_DIR/fm-send.sh" >&2
       for resend_arg in "${FM_SEND_ORIGINAL_ARGS[@]}"; do
         printf ' %q' "$resend_arg" >&2
       done

@@ -306,7 +306,7 @@ test_remote_rerun_is_idempotent() {
     || fail "the preserved expectation must record unknown delivery: $(cat "$pend")"
   corr=$(fm_pending_reply_get "$pend" corr_id)
   printf -v quoted '%q' "$home"
-  expected_cmd="FM_HOME=$quoted FM_PENDING_REPLY_EXISTING_CORR=$corr"
+  expected_cmd="FM_HOME=$quoted FM_SEND_STREAM=conversation FM_PENDING_REPLY_EXISTING_CORR=$corr"
   for arg in "$SEND" rsm "please rename the metric"; do
     printf -v quoted '%q' "$arg"
     expected_cmd="$expected_cmd $quoted"

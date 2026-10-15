@@ -642,9 +642,9 @@ if [ "$LOCK_BOUND" = 0 ]; then
   # not reach the captain thread: known operational input (watcher wakes, with
   # or without a deck-effort header, operational records, peer messages, model
   # controls) moves to split-archived/ beside the inbox, because the durable
-  # wake queue, not this preview, owns that work; a peer message or an
-  # unconsumed startup digest is handed to the supervisor first. Everything
-  # else is the captain's and stays where it is, in its order.
+  # wake queue, not this preview, owns that work; an unconsumed startup digest
+  # is handed to the supervisor first. Everything else, a peer message
+  # included, is the conversation's and stays where it is, in its order.
   ARCHIVED="$STEER_DIR/../split-archived"
   mkdir -p "$ARCHIVED" || die 'cannot prepare the inbox hand-over'
   for msg in $(cd "$STEER_DIR" && find . -maxdepth 1 -name '[1-9]*.msg' | sed 's|^\./||' | grep -E '^[1-9][0-9]*\.msg$' | sort -n); do
@@ -653,10 +653,10 @@ if [ "$LOCK_BOUND" = 0 ]; then
     case "$head" in
       'The home watcher has an actionable wake'*|"$OPERATIONAL_PREFIX"*|'deck-control:'*)
         mv -f "$STEER_DIR/$msg" "$ARCHIVED/$msg" || die "cannot archive pending input $msg" ;;
-      '[fm-from-mate:'*|'You are the primary firstmate, hosted by'*|'You are the supervisor of the primary firstmate'*)
-        # A peer message or a startup digest is not backed by the wake queue
-        # (a digest's one-shot presentations are already committed): it goes on
-        # to the supervisor's inbox, which its deck reads when it starts.
+      'You are the primary firstmate, hosted by'*|'You are the supervisor of the primary firstmate'*)
+        # A startup digest is not backed by the wake queue (its one-shot
+        # presentations are already committed): it goes on to the
+        # supervisor's inbox, which its deck reads when it starts.
         if ! FM_CHAT_ROLE=supervisor python3 "$PRIMARY_CHAT" handover --home "$FM_HOME" --file "$STEER_DIR/$msg" >/dev/null; then
           die "cannot hand pending input $msg to the supervisor"
         fi

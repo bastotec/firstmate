@@ -50,8 +50,11 @@ If the records do not answer it, ask the supervisor (below) and tell the captain
 Anything that changes the fleet goes to the supervisor, in the sender's own words:
 
 ```sh
-bin/fm-captain-handoff.sh '<their words, plus any context you have>'
+bin/fm-captain-handoff.sh --from <captain|firstmate|mate:<id>> '<their words, plus any context you have>'
 ```
+
+Name who actually wrote it: the supervisor takes only the captain's words as his approval.
+A second mate's conversation fills the sender in for you.
 
 That covers starting, steering, stopping or cleaning up work, merges, updates, restarts, card answers, and anything you are unsure about.
 Then tell whoever wrote, in one line, that the supervisor has it.
