@@ -813,7 +813,18 @@ fm_pending_reply_request_unread() {  # <state-dir> <task_id> <corr_id>
   token=$(fm_pending_reply_corr_token "$3")
   for f in "$dir"/*.msg; do
     [ -f "$f" ] || continue
-    grep -qF "$token" "$f" 2>/dev/null && return 0
+    grep -qF "$token" "$f" 2>/dev/null || continue
+    # A split mate's conversation lane may have finished with a record it left
+    # in the inbox: answered (its move to handled/ is still being retried) or
+    # abandoned after an interrupted recovery. Neither is unread unless its
+    # turn is running now (bin/fm-captain-lane.sh journal and turn marker).
+    if [ -f "$1/$2.captain-lane" ] \
+      && [ "$(cat "$1/$2.captain-lane.turn" 2>/dev/null)" != "${f##*/}" ]; then
+      case "$(awk -v n="${f##*/}" '$2 == n { s = $1 } END { print s }' "$1/$2.captain-lane.answered" 2>/dev/null)" in
+        answered|recovering) continue ;;
+      esac
+    fi
+    return 0
   done
   return 1
 }

@@ -658,11 +658,16 @@ fi
 # delivery (the stream= header, bin/fm-task-inbox-lib.sh). A party's words are
 # its conversation: the captain's (--from-captain), another mate's (--from-mate)
 # and a plain send from the first mate. Everything automatic is its inner
-# monologue: an operational input, and any send whose caller sets
+# monologue: an operational input, a keyed --decision-answer (the supervisor
+# that raised the decision resolves it), and any send whose caller sets
 # FM_SEND_STREAM=monologue (every scripted sender does; a party's words never
 # take it). FM_SEND_STREAM=conversation asks for the conversation explicitly.
 if [ "$FROM_CAPTAIN" = 1 ] || [ -n "$FROM_MATE" ]; then
   FM_TASK_INBOX_STREAM=conversation
+elif [ "$DECISION_ANSWER" = 1 ]; then
+  # A keyed decision answer is the input the supervisor that raised the
+  # decision is waiting on: its monologue resolves it.
+  FM_TASK_INBOX_STREAM=monologue
 else
   case "${FM_SEND_STREAM:-}" in
     monologue|conversation) FM_TASK_INBOX_STREAM=$FM_SEND_STREAM ;;

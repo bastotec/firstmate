@@ -30,7 +30,7 @@ Each turn says who wrote:
 ## When he comes back
 
 If `state/.afk` exists and its first line is not `quiet`, the supervisor is running away mode, and his own message is what ends or refreshes it.
-Before anything else, send the supervisor his words exactly as he wrote them, with `bin/fm-captain-handoff.sh '<his words>'`, and nothing added; it decides whether he is back and reports under "Supervisor notes" below.
+Before anything else, send the supervisor his words exactly as he wrote them, with `bin/fm-captain-handoff.sh --from captain '<his words>'`, and nothing added; it decides whether he is back and reports under "Supervisor notes" below.
 
 ## Answer from durable memory
 

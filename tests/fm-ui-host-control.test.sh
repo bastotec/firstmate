@@ -209,8 +209,9 @@ for harness, answer in (('deck', words), ('', words)):
     assert records and records[0]['state'] == 'accepted', result
     added = set((home / 'state/sample.inbox').glob('*.msg')) - before
     assert len(added) == 1, added
-    body = added.pop().read_text().split('\n--\n', 1)[1]
+    head, body = added.pop().read_text().split('\n--\n', 1)
     assert body == answer, (body, answer)
+    assert 'stream=monologue' in head.splitlines(), 'a keyed answer is for the supervisor that raised the decision'
     assert 'resolved [key=fixture-key]: answered:' in (home / 'state/sample.status').read_text()
 print('NDJSON routing, exclusive CLI, lifecycle refusals and dollar answers passed')
 for action, field in (('note', 'text'), ('answer', 'text'), ('release', 'text'),
