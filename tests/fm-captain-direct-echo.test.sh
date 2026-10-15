@@ -226,6 +226,10 @@ test_accented_captain_message_keeps_its_letters() {
   # shellcheck disable=SC2016 # Literal backticks are the input under test.
   [ "$(fm_pending_reply_summarize 'run `npm test` ^2')" = 'run `npm test` ^2' ] \
     || fail "ASCII backticks or carets were dropped"
+  # without perl the old ASCII filter and the plain cap still give a summary, never an empty one
+  # shellcheck disable=SC2329 # the stub shadows perl for the call inside the same substitution
+  [ "$(perl() { return 127; }; fm_pending_reply_summarize "from the captain: $(printf 'x%.0s' $(seq 1 200))")" = "from the captain: $(printf 'x%.0s' $(seq 1 99))..." ] \
+    || fail "the no-perl fallback lost the summary"
   pass "captain-direct: an accented message keeps its letters in the pending-reply summary"
 }
 

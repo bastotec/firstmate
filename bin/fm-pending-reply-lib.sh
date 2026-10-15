@@ -222,8 +222,12 @@ fm_pending_reply_summarize() {  # <text>
   cleaned=${cleaned#"$FM_FROMFIRST_MARK"}
   cleaned=$(printf '%s' "$cleaned" | sed -E "s/^corr=[A-Fa-f0-9]{16}[[:space:]]*//")
   # 120 characters at most, counted as characters (never cutting one in half)
-  cleaned=$(printf '%s' "$cleaned" | perl -CSD -0777 -pe 's/\A(.{117}).{4,}\z/$1.../s' 2>/dev/null) ||
-    { [ "${#cleaned}" -gt 120 ] && cleaned="${cleaned:0:117}..."; }
+  local capped
+  if capped=$(printf '%s' "$cleaned" | perl -CSD -0777 -pe 's/\A(.{117}).{4,}\z/$1.../s' 2>/dev/null); then
+    cleaned=$capped
+  elif [ "${#cleaned}" -gt 120 ]; then
+    cleaned="${cleaned:0:117}..."
+  fi
   printf '%s' "$cleaned"
 }
 
