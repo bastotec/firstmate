@@ -181,12 +181,8 @@ PROBE
   done
 }
 
-# A suite once wrote the captain's real ~/Library/LaunchAgents remote-job
-# agent with a temp-dir worker path. Every suite now runs with mutating
-# launchctl/systemctl refused, the shared installers redirected to a sandbox when
-# they target the real account, and a fingerprint of the real unit directories
-# taken around it: a suite that changes them fails. HOME is a fake here, so the
-# "real" directories under test are this case's own.
+# The runner header owns the service-unit isolation contract and its limits.
+# HOME is fake here, so the "real" directories under test are this case's own.
 test_suites_cannot_touch_real_service_units() {
   local tmp repo home out rc
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-units.XXXXXX")

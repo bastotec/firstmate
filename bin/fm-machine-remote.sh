@@ -295,8 +295,7 @@ cmd_install_tunnel() { # <label> <port> <user> <host> <ssh-port> <known-line> <c
   command -v curl >/dev/null 2>&1 || die "curl is missing"
   key="$HOME/.ssh/$TUNNEL_KEY_NAME"
   [ -f "$key" ] || die "no tunnel key at $key; run tunnel-key first"
-  # Under bin/fm-test-run.sh the real account's unit directories are replaced by
-  # the run's sandbox, so no test can install a real service.
+  # Test redirection and its limits are owned by bin/fm-test-run.sh's header.
   local unit_home=$HOME
   if [ -n "${FM_TEST_SERVICE_SANDBOX:-}" ] && [ "$HOME" = "${FM_TEST_REAL_HOME:-}" ]; then
     unit_home=$FM_TEST_SERVICE_SANDBOX
