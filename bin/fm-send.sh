@@ -303,8 +303,11 @@ fi
 # record stayed locked or changed endpoint before anything was written exits 75
 # internally, and the send is retried from scratch every second until
 # FM_SEND_CAPTAIN_WAIT_SECS seconds (default 45, a positive integer) have
-# passed. Each attempt's lock wait is capped to the time left, so the whole
-# send ends within about a second of that bound; only the last attempt's
+# passed. Each attempt's lock wait is capped to the time left and no attempt
+# starts past the bound, so waiting on a locked or moving record ends within
+# about a second of it; an attempt that gets past the lock delivers on its
+# usual timing (a remote mate's transport keeps its own FM_SEND_REMOTE_BUDGET,
+# because cutting it off would leave delivery unknown). Only the last attempt's
 # output is shown, and a send still refused then exits 1 as before.
 fm_send_captain_flagged() {
   [ "${1:-}" != --decision-answer ] || shift
