@@ -384,17 +384,12 @@ test_idempotent_write_follows_concurrent_ack() {
   pass "inbox: idempotent enqueue follows a record concurrently moved to handled"
 }
 
-# The dedup prescan must not hold the sequence lock: a long-lived inbox
-# accumulates hundreds of handled records and the body scan forks per record,
-# so scanning under .seq.lock serialized every overlapping write for seconds
-# (the contention shape behind the 2026-10-14 cadia send failure, where the
-# remote enqueue failed lock-acquire against a perfectly healthy inbox). A
-# prescan hit must not even wait on the lock: the safe-recovery resend lands
-# on its existing record while another writer holds the lock indefinitely.
+# Exercise the locking invariant owned by fm_task_inbox_write_idempotent in
+# bin/fm-task-inbox-lib.sh with a long history and a live competing lock holder.
 test_idempotent_prescan_does_not_hold_the_lock() {
   local state rec2 count i text holder holder_fifo
   state="$TMP_ROOT/idem-prescan/state"; mkdir -p "$state"
-  # A cadia-sized history: 300 acknowledged records for the prescan to walk.
+  # A long history: 300 acknowledged records for the prescan to walk.
   for i in $(seq 1 300); do
     inbox_lib "$state" fm_task_inbox_write "$state" t1 "history steer $i" >/dev/null
     mv "$state/t1.inbox/$(printf '%03d' "$i").msg" "$state/t1.inbox/handled/"
@@ -789,11 +784,7 @@ test_watcher_dead_pane_ignores_stale_busy_state() {
   pass "watcher: dead-pane recovery overrides stale busy state"
 }
 
-# A write-step failure must name its step on stderr: the send paths' caller
-# errors promise "the leg's stderr above has the reason" (bin/fm-send.sh, the
-# remote steer leg), so a bare nonzero from any step - staging, publish,
-# lock-acquire - makes that promise false and the failure undiagnosable from
-# the UI alone. These cases pin the diagnostic contract with real failures.
+# Exercise fm_task_inbox_write_failure's diagnostic contract with real failures.
 test_write_failure_names_its_step() {
   local state fakebin err holder holder_fifo
   state="$TMP_ROOT/write-diag/state"

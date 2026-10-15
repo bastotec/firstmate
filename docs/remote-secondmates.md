@@ -284,6 +284,7 @@ FM_HOME=<primary-home> bin/fm-send.sh fm-<id> '<request>'
 ```
 
 The [`fm-send.sh` header](../bin/fm-send.sh) owns the exact delivery-status contract.
+For an inbox-write failure, read the remote leg's step-and-path diagnostic above the final send-failure summary.
 A routed request is delivered as a durable record in the remote home's steering inbox plus a best-effort doorbell, never by typing the payload into the pane; exit 0 means the record durably exists.
 Every remote transport attempt is bounded by `FM_SEND_REMOTE_BUDGET`; that header owns the setting's default and validation contract.
 An unconfirmed SSH transport (exit 255) is retried identically once, while a budget expiry is not retried because completion is unknown; either outcome preserves this ordinary reply-bearing request's pending-reply expectation for the record that may have landed.
