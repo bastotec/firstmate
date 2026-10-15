@@ -407,7 +407,7 @@ def first_user_text(doc, chars=None):
 
 def local_homes(ctx):
     """[('main', home), (mate id, home), ...]: the main home and every included
-    local mate's home, the one set every fleet-owned record is read from."""
+    local mate's home, shared by session and captain-direct collection."""
     return [('main', ctx.home)] + [(mid, Path(h)) for mid, h, host in registry(ctx.home)
                                    if h and not host and mid not in ctx.excluded]
 

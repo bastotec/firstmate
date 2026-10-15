@@ -9,9 +9,6 @@
 #
 # bin/fm_dream.py owns the steps, their guards and budgets, the run log under
 # state/dream/, and the summary bin/fm_report.py shows; read its header first.
-# In short: read the day's sessions and logs into a private digest, improve the
-# skills in ~/dotfiles/skills (pushed to main, skills/ only), and raise at most
-# a few deduplicated, Jev-triaged harness fixes as tasks for the owning mates.
 # Dreaming never pushes to, or opens PRs on, harness repositories.
 #
 # The launchd agent runs `run` once a night on the main home's machine. It is
@@ -23,7 +20,8 @@
 #   FM_HOME                 the home (default: this checkout)
 #   FM_LAUNCHCTL, FM_LAUNCH_AGENTS_DIR   launchctl and LaunchAgents dir (tests)
 #
-# Exit codes: 0 done; 1 refused or failed; 2 usage.
+# Exit codes: 0 completed (steps may be partial); 1 refused, setup failure or
+# interrupted; 2 usage.
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_HOME=${FM_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}
