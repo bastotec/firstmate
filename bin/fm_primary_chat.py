@@ -361,29 +361,35 @@ def publish_body(steer, body):
     return seq
 
 
-def with_captain_memory(home, body, kind=''):
-    """Remember a standing instruction in the captain's own message, and give
-    every turn the captain's recorded preferences (bin/fm_captain_memory.py):
-    the block rides after the text, between markers Fleet Town strips, sized to
-    the room the turn leaves."""
-    memory = str(BIN / 'fm_captain_memory.py')
-    if '[fm-captain-memory]' in body:
-        return body
-    words = body
-    if kind == 'captain' and not words.startswith('[fm-supervisor-note]'):
+def captain_words(body):
+    words, marker, _ = body.rpartition('\n\n[fm-captain-memory]\n')
+    if marker and body.endswith('\n[/fm-captain-memory]'):
+        return words
+    return body
+
+
+def capture_captain_memory(home, body, source):
+    words = captain_words(body)
+    if not words.startswith('[fm-supervisor-note]'):
         try:
             # Detached: delivery never waits on the capture.
-            proc = subprocess.Popen([sys.executable, memory, 'capture', '--home', str(home),
-                                     '--source', 'a captain message to the first mate'],
+            proc = subprocess.Popen([sys.executable, str(BIN / 'fm_captain_memory.py'),
+                                     'capture', '--home', str(home), '--source', source],
                                     stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL, text=True, start_new_session=True)
             proc.stdin.write(words)
             proc.stdin.close()
         except (OSError, subprocess.SubprocessError):
             pass
-    room = MAX_BODY - len(body.encode('utf-8')) - 2
-    if room < 1000:
+
+
+def with_captain_memory(home, body):
+    """Give every turn the captain's recorded preferences, sized to its room."""
+    memory = str(BIN / 'fm_captain_memory.py')
+    words = captain_words(body)
+    if words != body:
         return body
+    room = MAX_BODY - len(body.encode('utf-8')) - 2
     try:
         block = subprocess.run([sys.executable, memory, 'recall', '--home', str(home), '--query', words[:2000],
                                 '--max-bytes', str(room)],
@@ -403,12 +409,17 @@ def steer_publish(args):
     if record is None:
         print('error: no live deck-chat primary is registered for this home', file=sys.stderr)
         return 3
+    words = body
     from fm_stream_deck import with_deck_images
     imaged = with_deck_images(body)
     if len(imaged.encode('utf-8')) <= MAX_BODY:
         body = imaged
-    body = with_captain_memory(args.home, body, getattr(args, 'kind', ''))
+    body = with_captain_memory(args.home, body)
     seq = publish_body(Path(record['steer_dir']), body)
+    if getattr(args, 'kind', '') == 'captain':
+        capture_captain_memory(args.home, words,
+                               'a captain message to the first mate (session=%s, seq=%d)'
+                               % (record['session'], seq))
     print('seq=%d' % seq)
     print('session=%s' % record['session'])
     return 0

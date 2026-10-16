@@ -74,7 +74,7 @@ REPEAT = re.compile(
     r"\b(i (?:told|said|asked) you|i already (?:said|told|asked)|as i said|how many times"
     r"|i keep (?:saying|telling))\b", re.I)
 CARD_PICK = re.compile(r'\A\s*(?:card \S+:\s*)?option \w+\s*\Z', re.I)
-RECORDED = re.compile(r'captain instruction \(recorded at delivery[^)]*\): "(.*)"\s*$', re.S)
+RECORDED = re.compile(r'captain instruction \(recorded at delivery[^\n]*\): "(.*)"\s*$', re.S)
 DATED = re.compile(r'^- (\d{4}-\d{2}-\d{2})\b')
 SHARED_HEADER = (
     '# Shared captain preferences\n\n<!-- memory tiers: see the stow skill -->\n\n'
@@ -112,30 +112,30 @@ def locked(path):
         yield
 
 
+def entry_blocks(text):
+    blocks = []
+    for line in text.splitlines(keepends=True):
+        if blocks and line.startswith('  '):
+            blocks[-1] += line
+        else:
+            blocks.append(line)
+    return blocks
+
+
 def entries(path):
     """The bullets and paragraphs of a preferences file, in file order."""
     try:
         text = path.read_text()
     except (FileNotFoundError, UnicodeDecodeError):
         return []
-    out, cur = [], []
-    for line in text.splitlines():
-        if cur and line.startswith('  '):
-            cur.append(line.strip())
+    out = []
+    for block in entry_blocks(text):
+        if block.startswith(('#', '<!--')) or not block.strip():
             continue
-        if line.startswith('#') or line.startswith('<!--') or not line.strip():
-            if cur:
-                out.append(' '.join(cur))
-                cur = []
-            continue
-        if line.startswith('- ') and cur:
-            out.append(' '.join(cur))
-            cur = []
-        cur.append(line.strip())
-    if cur:
-        out.append(' '.join(cur))
-    return [e for e in out if not e.startswith('This file is main-authoritative')
-            and not e.startswith('Route newly discovered')]
+        entry = block.strip()
+        if not entry.startswith(('This file is main-authoritative', 'Route newly discovered')):
+            out.append(entry)
+    return out
 
 
 def is_standing(text):
@@ -167,7 +167,8 @@ def count_repeat(home, mate, source, text):
     try:
         for line in log.read_text().splitlines():
             parts = line.split('\t')
-            if len(parts) >= 4 and parts[2] == source and parts[3] == words:
+            if (len(parts) >= 4 and parts[1] == (mate or 'firstmate')
+                    and parts[2] == source and parts[3] == words):
                 return
     except FileNotFoundError:
         pass
@@ -178,19 +179,20 @@ def count_repeat(home, mate, source, text):
 def schedule_push(home):
     if os.environ.get('FM_CAPTAIN_MEMORY_PUSH', '1') == '0':
         return
-    pending = home / 'state' / '.captain-memory-push-pending'
-    try:
-        if time.time() - pending.stat().st_mtime < PUSH_DELAY * 3:
-            return
-    except FileNotFoundError:
-        pass
-    pending.parent.mkdir(parents=True, exist_ok=True)
-    pending.write_text('%d\n' % time.time())
-    subprocess.Popen(
-        ['bash', '-c', 'sleep "$1"; rm -f "$2"; exec "$3"', 'fm-captain-memory-push',
-         str(PUSH_DELAY), str(pending), str(BIN / 'fm-config-push.sh')],
-        env=dict(os.environ, FM_HOME=str(home)), stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    with locked(shared(home)):
+        pending = home / 'state' / '.captain-memory-push-pending'
+        try:
+            if time.time() - pending.stat().st_mtime < PUSH_DELAY * 3:
+                return
+        except FileNotFoundError:
+            pass
+        pending.parent.mkdir(parents=True, exist_ok=True)
+        pending.write_text('%d\n' % time.time())
+        subprocess.Popen(
+            ['bash', '-c', 'sleep "$1"; rm -f "$2"; exec "$3"', 'fm-captain-memory-push',
+             str(PUSH_DELAY), str(pending), str(BIN / 'fm-config-push.sh')],
+            env=dict(os.environ, FM_HOME=str(home)), stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
 
 def capture(args):
@@ -199,14 +201,14 @@ def capture(args):
         print('captured=no')
         return 0
     home, path = primary_of(Path(args.home))
-    if REPEAT.search(text):
-        count_repeat(home, args.mate, args.source, text)
     lines = text.splitlines()
     today = datetime.date.today().isoformat()
     where = ', in %s\'s chat' % args.mate if args.mate else ''
     record = '- %s captain instruction (recorded at delivery from %s%s): "%s' % (today, args.source, where, lines[0])
     record += ''.join('\n  ' + line for line in lines[1:]) + '"\n'
     with locked(path):
+        if REPEAT.search(text):
+            count_repeat(home, args.mate, args.source, text)
         if any(key(e) == norm(text) for e in entries(path)):
             print('captured=duplicate')
             return 0
@@ -278,25 +280,24 @@ def upkeep(args):
     home = Path(args.home)
     path = shared(home)
     mates = local_mates(home)
-    with locked(path):
-        text = path.read_text() if path.exists() else ''
-        kept, seen, skipping = [], set(), False
-        for line in text.splitlines():
-            if line.startswith('- '):
-                k = key(line)
-                skipping = k in seen
-                seen.add(k)
-            elif not line.startswith('  '):
-                skipping = False
-            if not skipping:
-                kept.append(line)
-        new = '\n'.join(kept) + '\n' if kept else ''
-        if text and new != text:
-            path.write_text(new)
+    if not (home / '.fm-secondmate-parent').exists():
+        with locked(path):
+            text = path.read_bytes().decode('utf-8') if path.exists() else ''
+            kept, seen = [], set()
+            for block in entry_blocks(text):
+                if block.startswith('- '):
+                    k = key(block)
+                    if k in seen:
+                        continue
+                    seen.add(k)
+                kept.append(block)
+            new = ''.join(kept)
+            if new != text:
+                path.write_bytes(new.encode('utf-8'))
     known = {key(e) for e in entries(path)}
     cand_path = home / 'state' / 'captain-memory-candidates.md'
     known_cands = {key(e) for e in entries(cand_path)}
-    added = []
+    added, reviewed = [], []
     for h in [home] + mates:
         data = h / 'data'
         if not data.is_dir():
@@ -309,16 +310,25 @@ def upkeep(args):
                 k = key(e)
                 if k and k not in known and k not in known_cands:
                     known_cands.add(k)
-                    added.append('%s (from the local copy in %s, %s)' % (e if e.startswith('- ') else '- ' + e, h, q.name))
-            q.rename(q.with_name(q.name + '.reviewed'))
-        if not (data / 'captain.md').exists():
-            (data / 'captain.md').write_text(HOME_HEADER)
-    if added:
+                    added.append('<!-- from the local copy in %s, %s -->\n%s'
+                                 % (h, q.name, e if e.startswith('- ') else '- ' + e))
+            reviewed.append(q)
+        with locked(data / 'captain.md'):
+            try:
+                with open(data / 'captain.md', 'x') as f:
+                    f.write(HOME_HEADER)
+            except FileExistsError:
+                pass
+    if added or (reviewed and cand_path.exists()):
         cand_path.parent.mkdir(parents=True, exist_ok=True)
         with open(cand_path, 'a') as f:
             if not cand_path.stat().st_size:
                 f.write('# Captain memory candidates - mates\' local rules not in the shared file; promote or drop\n\n')
             f.write(''.join(a + '\n' for a in added))
+            f.flush()
+            os.fsync(f.fileno())
+    for q in reviewed:
+        q.rename(q.with_name(q.name + '.reviewed'))
     files = [path, home / 'data' / 'captain.md'] + [m / 'data' / 'captain.md' for m in mates]
     oversized = [str(f) for f in files if f.exists() and f.stat().st_size > OVERSIZED]
     repeats = 0

@@ -738,10 +738,10 @@ fm_send_captain_direct_delivered() {
   [ "$FROM_CAPTAIN" = 1 ] || return 0
   # Remember a standing instruction he gave any worker or mate
   # (bin/fm_captain_memory.py), detached so delivery never waits on it.
-  if [ -n "$PENDING_REPLY_CORR" ]; then
-    source="a captain message (corr=$PENDING_REPLY_CORR)"
+  if [ -n "${INBOX_RECORD:-}" ]; then
+    source="a captain message (record $INBOX_RECORD, target ${TARGET_TASK_ID:-${INBOX_TASK_ID:-}})"
   else
-    source="a captain message (record ${INBOX_RECORD##*/})"
+    source="a captain message (corr=$PENDING_REPLY_CORR)"
   fi
   printf '%s' "$RESOLVE_ANSWER_TEXT" | python3 "$SCRIPT_DIR/fm_captain_memory.py" capture \
     --home "$FM_HOME" --source "$source" --mate "${TARGET_TASK_ID:-${INBOX_TASK_ID:-}}" \

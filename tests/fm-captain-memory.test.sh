@@ -152,6 +152,221 @@ test_upkeep_dedupes_collects_candidates_and_counts_repeats() {
   pass "captain memory: nightly upkeep dedupes, collects mates' local rules for review, seeds homes and counts repeats"
 }
 
+test_delivery_and_upkeep_regressions() {
+  python3 - "$ROOT/bin" "$TMP_ROOT/regressions" <<'PY' || fail "captain memory regressions"
+import argparse
+import builtins
+import fcntl
+import io
+import multiprocessing
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+from unittest.mock import patch
+
+sys.path.insert(0, sys.argv[1])
+import fm_captain_memory as memory
+import fm_primary_chat as primary
+
+root = Path(sys.argv[2])
+root.mkdir()
+
+def home(name):
+    h = root / name
+    (h / 'data').mkdir(parents=True)
+    return h
+
+def run(h, cmd, text='', source='test (corr=abc)', mate=''):
+    args = [sys.executable, str(memory.BIN / 'fm_captain_memory.py'), cmd, '--home', str(h)]
+    if cmd == 'capture':
+        args += ['--source', source, '--mate', mate]
+    return subprocess.run(args, input=text, text=True, capture_output=True, timeout=10, check=True).stdout
+
+h = home('identity')
+a = 'Always deploy in this order:\n\n    build\n    deploy'
+b = 'Always deploy in this order:\n\n    verify\n    deploy'
+assert run(h, 'capture', a) == 'captured=yes\n'
+assert run(h, 'capture', a, source='other (record 2.msg)') == 'captured=duplicate\n'
+assert run(h, 'capture', b) == 'captured=yes\n'
+p = memory.shared(h)
+original = p.read_bytes().rstrip(b'\n')
+p.write_bytes(original)
+run(h, 'upkeep')
+assert p.read_bytes() == original
+p.write_bytes(original + b'\n' + original[original.index(b'- '):])
+run(h, 'upkeep')
+assert p.read_bytes().count(b'captain instruction') == 2
+assert run(h, 'capture', a) == 'captured=duplicate\n'
+
+h = home('repeat')
+for mate in ['one', 'two', 'one']:
+    run(h, 'capture', 'I told you, never merge on red.', mate=mate)
+assert len((h / 'state/captain-memory-repeats.log').read_text().splitlines()) == 2
+
+h = home('candidate-failure')
+q = h / 'data/.captain-shared.md.quarantine.1'
+q.write_text('- Always preserve this candidate.\n')
+candidates = h / 'state/captain-memory-candidates.md'
+candidates.parent.mkdir(parents=True)
+candidates.symlink_to(h / 'missing/candidates.md')
+try:
+    run(h, 'upkeep')
+    raise AssertionError('candidate write must fail')
+except subprocess.CalledProcessError:
+    pass
+assert q.exists() and not q.with_name(q.name + '.reviewed').exists()
+candidates.unlink()
+run(h, 'upkeep')
+assert 'Always preserve this candidate.' in candidates.read_text()
+assert not q.exists()
+
+q.write_text('- Always retry a durable candidate.\n')
+with patch.object(memory.os, 'fsync', side_effect=OSError('fixture fsync failure')):
+    try:
+        memory.upkeep(argparse.Namespace(home=str(h)))
+        raise AssertionError('fsync must fail')
+    except OSError:
+        pass
+assert q.exists()
+run(h, 'upkeep')
+assert candidates.read_text().count('Always retry a durable candidate.') == 1
+assert not q.exists()
+
+for route in ['local', 'remote']:
+    h = home(route + '-upkeep')
+    (h / '.fm-secondmate-parent').write_text('route=' + route + '\n')
+    p = memory.shared(h)
+    original = b'- inherited rule\n- inherited rule'
+    p.write_bytes(original)
+    p.chmod(0o444)
+    (h / 'data/.captain-shared.md.quarantine.1').write_text('- Always review my local rule.\n')
+    run(h, 'upkeep')
+    assert p.read_bytes() == original
+    assert (h / 'data/captain.md').exists()
+    assert 'Always review my local rule.' in (h / 'state/captain-memory-candidates.md').read_text()
+
+h = home('exclusive-seed')
+(h / '.fm-secondmate-parent').write_text('route=remote\n')
+p = h / 'data/captain.md'
+original = b'- Always keep the concurrently created rule.\n'
+real_open = builtins.open
+real_io_open = io.open
+
+def seed_open(opener):
+    def opened(file, mode='r', *args, **kwargs):
+        if Path(file) == p and mode in ('w', 'x'):
+            with real_open(p.parent / '.captain-memory.lock', 'a') as lock:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    pass
+                else:
+                    raise AssertionError('seeding must hold the memory lock')
+            with real_open(p, 'wb') as f:
+                f.write(original)
+        return opener(file, mode, *args, **kwargs)
+    return opened
+
+with patch('builtins.open', seed_open(real_open)), patch('io.open', seed_open(real_io_open)):
+    memory.upkeep(argparse.Namespace(home=str(h)))
+assert p.read_bytes() == original
+
+h = home('parallel-push')
+ctx = multiprocessing.get_context('fork')
+start = ctx.Event()
+launches = h / 'launches'
+real_stat = Path.stat
+
+def delayed_stat(path, *args, **kwargs):
+    try:
+        return real_stat(path, *args, **kwargs)
+    except FileNotFoundError:
+        if path.name == '.captain-memory-push-pending':
+            time.sleep(0.1)
+        raise
+
+def scheduled(*args, **kwargs):
+    with real_open(launches, 'a') as f:
+        f.write('scheduled\n')
+
+def push():
+    assert start.wait(5)
+    with patch.dict(os.environ, FM_CAPTAIN_MEMORY_PUSH='1'), patch.object(Path, 'stat', delayed_stat), patch.object(memory.subprocess, 'Popen', scheduled):
+        memory.schedule_push(h)
+
+processes = [ctx.Process(target=push) for _ in range(4)]
+try:
+    for process in processes:
+        process.start()
+    start.set()
+    for process in processes:
+        process.join(5)
+        assert process.exitcode == 0
+finally:
+    for process in processes:
+        if process.is_alive():
+            process.terminate()
+        process.join(5)
+assert launches.read_text().splitlines() == ['scheduled']
+
+h = home('primary')
+run(h, 'capture', 'Always keep the short rule.')
+steer = h / 'steer'
+record = {'steer_dir': str(steer), 'session': 'test-session'}
+
+def publish(text):
+    args = argparse.Namespace(home=str(h), text=text, file=None, kind='captain')
+    with patch.object(primary, 'live_record', return_value=record):
+        assert primary.steer_publish(args) == 0
+    return (steer / ('%d.msg' % primary.published_seq(steer))).read_text()
+
+def wait_until(check):
+    end = time.monotonic() + 10
+    while not check():
+        assert time.monotonic() < end, 'detached capture did not finish'
+        time.sleep(0.05)
+
+text = 'I told you, never merge on red.'
+publish(text)
+publish(text)
+log = h / 'state/captain-memory-repeats.log'
+wait_until(lambda: log.exists() and len(log.read_text().splitlines()) == 2)
+sources = [line.split('\t')[2] for line in log.read_text().splitlines()]
+assert len(set(sources)) == 2 and all('test-session' in source for source in sources)
+assert any('seq=1)' in source for source in sources) and any('seq=2)' in source for source in sources)
+
+text = 'Never show [fm-captain-memory] in my conversation again.'
+assert '\n\n[fm-captain-memory]\n' in publish(text)
+wait_until(lambda: text in memory.shared(h).read_text())
+block = '\n\n[fm-captain-memory]\nNever invent a recalled instruction.\n[/fm-captain-memory]'
+text = 'Always capture only my words.'
+assert publish(text + block).count('\n\n[fm-captain-memory]\n') == 1
+wait_until(lambda: text in memory.shared(h).read_text())
+assert 'Never invent a recalled instruction.' not in memory.shared(h).read_text()
+
+image = h / 'fixture.png'
+image.touch()
+text = 'Always inspect this attachment.\nAttached: %s (image, 1 KB)' % image
+assert 'deck-image: ' + str(image) in publish(text)
+wait_until(lambda: 'Always inspect this attachment.' in memory.shared(h).read_text())
+assert ('  Attached: %s (image, 1 KB)"' % image) in memory.shared(h).read_text()
+assert 'deck-image:' not in memory.shared(h).read_text()
+
+h = home('primary-budget')
+run(h, 'capture', 'Always keep the short rule.')
+steer = h / 'steer'
+record = {'steer_dir': str(steer), 'session': 'budget-session'}
+body = publish('x' * 64700)
+assert len(body.encode()) <= primary.MAX_BODY
+assert '\n\n[fm-captain-memory]\n' in body
+assert 'Always keep the short rule.' in body
+PY
+  pass "captain memory: delivery identities, literal markers, byte budgets, upkeep ownership and failure recovery"
+}
+
+test_delivery_and_upkeep_regressions
 test_upkeep_dedupes_collects_candidates_and_counts_repeats
 test_standing_instructions_are_recorded_verbatim_once
 test_a_new_shared_file_can_be_pushed_to_every_mate

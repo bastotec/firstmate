@@ -460,6 +460,32 @@ test_a_standing_rule_he_states_is_remembered() {
   pass "captain-direct: a standing rule he states in a mate's chat is recorded for every home"
 }
 
+test_worker_correction_deliveries_have_distinct_identities() {
+  local worker i count
+  setup remember-worker-corrections
+  for worker in w1 w2; do
+    fm_test_stream_task "$HOME_DIR/state" "$worker" > "$HOME_DIR/state/$worker.meta" || fail "setup: worker endpoint"
+    printf 'kind=ship\nharness=deck\n' >> "$HOME_DIR/state/$worker.meta"
+  done
+  for worker in w1 w1 w2; do
+    run_send "$FB" "$HOME_DIR" "$LOG" "$OUT" "$worker" --from-captain 'I told you, never merge on red.' \
+      || fail "worker correction delivery failed"
+  done
+  i=0
+  while :; do
+    count=$(wc -l < "$HOME_DIR/state/captain-memory-repeats.log" 2>/dev/null | tr -d ' ')
+    [ "$count" != 3 ] || break
+    [ "$i" -lt 100 ] || fail "each of three worker correction deliveries must count (got $count)"
+    sleep 0.1; i=$((i + 1))
+  done
+  assert_grep "$HOME_DIR/state/w1.inbox/" "$HOME_DIR/state/captain-memory-repeats.log" "a worker delivery names its full inbox path"
+  assert_grep "$HOME_DIR/state/w2.inbox/" "$HOME_DIR/state/captain-memory-repeats.log" "another worker names its own inbox path"
+  assert_grep 'target w2' "$HOME_DIR/state/captain-memory-repeats.log" "a delivery names its target"
+  [ "$(grep -c 'captain instruction' "$HOME_DIR/data/captain-shared.md")" = 1 ] || fail "worker delivery provenance must not defeat rule deduplication"
+  pass "captain-direct: worker correction deliveries count separately while their rule deduplicates"
+}
+
+test_worker_correction_deliveries_have_distinct_identities
 test_a_standing_rule_he_states_is_remembered
 test_a_standing_rule_he_gives_a_worker_is_remembered
 test_delivery_tells_first_mate_once
