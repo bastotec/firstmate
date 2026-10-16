@@ -137,6 +137,18 @@
 #                          FM_SECONDMATE_REVIVE_INTERVAL seconds (30) while the
 #                          home records a second mate; that script owns the
 #                          revival, its budget, and this one escalation
+#   check: second mate lane health: <id>...
+#                          surfaced once from a queue row keyed
+#                          lane-heal:<id>:<episode>, queued by the same scan's
+#                          lane-health step (bin/fm-secondmate-revive.sh "LANE
+#                          HEALTH"): a live mate's lane still failing after an
+#                          automatic relaunch, or recovered after that escalation
+#   check: worker run parked too long: <id>...
+#                          surfaced once from a queue row keyed
+#                          parked-run:<id>:<run or step>, queued by
+#                          bin/fm-parked-run-watch.sh, which this watcher runs
+#                          detached every FM_PARKED_RUN_INTERVAL seconds (600)
+#                          while the home records a worker
 #   check: idle workers need a decision / second mate not cleaning up idle workers: <id>...
 #                          surfaced once from durable queue rows keyed
 #                          idle-sweep:<epoch> and idle-sweep-audit:<mate>:<epoch>
@@ -290,6 +302,8 @@ case "$AUTOLAND_INTERVAL" in
   ''|*[!0-9]*|0) AUTOLAND_INTERVAL=90 ;;
 esac
 SECONDMATE_REVIVE_INTERVAL=${FM_SECONDMATE_REVIVE_INTERVAL:-30}
+PARKED_RUN_INTERVAL=${FM_PARKED_RUN_INTERVAL:-600}
+case "$PARKED_RUN_INTERVAL" in ''|*[!0-9]*|0) PARKED_RUN_INTERVAL=600 ;; esac
 IDLE_SWEEP_INTERVAL=${FM_IDLE_SWEEP_SECS:-1800}
 case "$IDLE_SWEEP_INTERVAL" in ''|*[!0-9]*|0) IDLE_SWEEP_INTERVAL=1800 ;; esac
 case "$SECONDMATE_REVIVE_INTERVAL" in ''|*[!0-9]*|0) SECONDMATE_REVIVE_INTERVAL=30 ;; esac
@@ -1723,7 +1737,7 @@ procevent_surface_after_output() {
 }
 
 procevent_surface_queued() {
-  local key reason captured="" stranded="" unstarted="" notes="" revive="" idle="" idle_audit="" idle_left="" mates=""
+  local key reason captured="" stranded="" unstarted="" notes="" revive="" idle="" idle_audit="" idle_left="" mates="" lanes="" parked=""
   PROCEVENT_SURFACED=
   [ -s "$FM_WAKE_QUEUE" ] || return 0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
@@ -1735,7 +1749,7 @@ procevent_surface_queued() {
         notes="$notes ${key#inbox:}"
         continue
         ;;
-      procevent:*|secondmate-revive:*|idle-sweep:*|idle-sweep-audit:*|idle-sweep-unhandled:*|mate-mail:*) ;;
+      procevent:*|secondmate-revive:*|lane-heal:*|parked-run:*|idle-sweep:*|idle-sweep-audit:*|idle-sweep-unhandled:*|mate-mail:*) ;;
       *) continue ;;
     esac
     [ -e "$(procevent_surfaced_marker "$key")" ] && continue
@@ -1748,6 +1762,14 @@ procevent_surface_queued() {
       secondmate-revive:*)
         key=${key#secondmate-revive:}
         revive="$revive ${key%%:*}"
+        ;;
+      lane-heal:*)
+        key=${key#lane-heal:}
+        lanes="$lanes ${key%%:*}"
+        ;;
+      parked-run:*)
+        key=${key#parked-run:}
+        parked="$parked ${key%%:*}"
         ;;
       idle-sweep:*) idle=1 ;;
       mate-mail:*) mates="$mates ${key#mate-mail:}" ;;
@@ -1770,6 +1792,14 @@ procevent_surface_queued() {
   if [ -n "$revive" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
     reason="$reason secondmate revival failed:$revive"
+  fi
+  if [ -n "$lanes" ]; then
+    [ "$reason" = "check:" ] || reason="$reason;"
+    reason="$reason second mate lane health:$lanes"
+  fi
+  if [ -n "$parked" ]; then
+    [ "$reason" = "check:" ] || reason="$reason;"
+    reason="$reason worker run parked too long:$parked"
   fi
   if [ -n "$idle" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
@@ -2214,6 +2244,18 @@ secondmate_revive_detached() {
     "$SCRIPT_DIR/fm-secondmate-revive.sh" scan </dev/null >/dev/null 2>&1 &
 }
 
+# A worker run parked at a review gate or the repair cap is nudged, then
+# escalated (bin/fm-parked-run-watch.sh owns what a scan does). It asks
+# no-mistakes for each worker's state, so it runs detached on its own cadence;
+# cheap when the home records no worker.
+parked_run_detached() {
+  [ "$(age_of "$STATE/.last-parked-run-watch")" -ge "$PARKED_RUN_INTERVAL" ] || return 0
+  grep -lqE '^kind=(ship|scout)$' "$STATE"/*.meta 2>/dev/null || return 0
+  touch "$STATE/.last-parked-run-watch"
+  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+    "$SCRIPT_DIR/fm-parked-run-watch.sh" scan </dev/null >/dev/null 2>&1 &
+}
+
 # bin/fm-idle-sweep.sh owns sweep eligibility, cadence, and locking.
 # Launch detached because a sweep can take minutes and must not delay the
 # watcher's cycle or liveness beacon.
@@ -2403,6 +2445,7 @@ while :; do
   # A dead second mate is revived here, between first-mate turns, rather than
   # waiting for the next session start (bin/fm-secondmate-revive.sh).
   secondmate_revive_detached
+  parked_run_detached
 
   # Finished workers are cleaned up and idle ones become decisions here, so a
   # home never keeps them waiting for a model turn (bin/fm-idle-sweep.sh).

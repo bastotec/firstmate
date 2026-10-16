@@ -1441,7 +1441,7 @@ if (home / 'fail-turn').exists():
         status = pathlib.Path(__file__).parent / 'parent/host.status'
         status.unlink(missing_ok=True)
         status.symlink_to(home / 'external-status')
-    print(json.dumps({'type': 'run_failed', 'error': 'injected'}), flush=True)
+    print(json.dumps({'type': 'run_failed', 'error': (home / 'fail-turn').read_text().strip() or 'injected'}), flush=True)
     sys.exit(9)
 captain_lane_turn = prompt.startswith('The captain wrote') or 'captain thread of this second mate' in prompt
 if prompt == 'slow-steer' or ((home / 'hold-turn').exists() and not captain_lane_turn):
@@ -2114,8 +2114,10 @@ def wait_for(check, label, bound=30):
         time.sleep(.05)
     raise AssertionError(label+': '+(root/'pane').read_text())
 with (root/'pane').open('w') as output:
+    # A bounded/background test runner may ignore SIGINT; the interactive host must not.
     p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
-                         env=env, text=True, start_new_session=True)
+                         env=env, text=True, start_new_session=True,
+                         preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
     try:
         wait_for(idle, 'startup')
         p.stdin.write('long-tool\n'); p.stdin.flush()
@@ -2585,6 +2587,191 @@ with (root/'pane').open('w') as output:
                 os.killpg(p.pid, signal.SIGKILL); p.wait()
 PYTHON
   pass "fm-deck-worker: a secondmate records a failed turn and waits at its prompt for the next wake"
+}
+
+test_secondmate_failing_supervisor_is_never_silent() {
+  local dir="$TMP_ROOT/host-failing-supervisor"
+  make_secondmate_host_fixture "$dir"
+  : > "$dir/home/config/primary-split"
+  python3 - "$dir" <<'PYTHON' || fail "a failing supervisor stayed silent"
+import json, os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+home = root / 'home'
+status = root / 'parent/host.status'
+health = root / 'parent/host.supervisor-failing'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='',
+           FM_DECK_FAIL_ESCALATE='2')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker', str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'), '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+def rows():
+    path = home/'turns'
+    return [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+def lines(prefix):
+    return [x for x in (status.read_text().splitlines() if status.exists() else []) if x.startswith(prefix)]
+def wait_for(check, label):
+    for _ in range(200):
+        if check(): return
+        if p.poll() is not None: raise AssertionError(label+' - host exited: '+(root/'pane').read_text())
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text())
+(home/'fail-turn').write_text('model gateway request failed (HTTP 400)')
+with (root/'pane').open('w') as output:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, env=env, text=True, start_new_session=True)
+    try:
+        wait_for(lambda: len(rows()) == 1, 'first failed turn')
+        wait_for(lambda: health.exists() and 'count=1' in health.read_text(), 'the first failure is counted')
+        since = dict(line.split('=', 1) for line in health.read_text().splitlines())['since']
+        assert not lines('blocked'), 'one failure is not yet a blocker'
+        p.stdin.write('again\n'); p.stdin.flush()
+        wait_for(lambda: len(lines('blocked [key=supervisor-failing-host]')) == 1, 'the second failure raises one blocker')
+        blocker = lines('blocked [key=supervisor-failing-host]')[0]
+        assert 'model gateway request failed (HTTP 400)' in blocker and 'since ' in blocker, blocker
+        p.stdin.write('still\n'); p.stdin.flush()
+        wait_for(lambda: 'count=3' in health.read_text(), 'the third failure is counted')
+        assert len(lines('blocked [key=supervisor-failing-host]')) == 1, 'the blocker is raised once per failing run'
+        (home/'fail-turn').unlink()
+        p.stdin.write('recovered\n'); p.stdin.flush()
+        wait_for(lambda: lines('resolved [key=supervisor-failing-host]'), 'a successful turn resolves the blocker')
+        wait_for(lambda: not health.exists(), 'the failing record is removed')
+        # The conversation hears both, as the mate's own words: one agent, in the
+        # first person, never naming a supervisor or a monologue.
+        def notes():
+            out = []
+            for d in (root/'parent/host.inbox', root/'parent/host.inbox/handled'):
+                for f in d.glob('*.msg'):
+                    body = f.read_text().split('\n--\n', 1)[1]
+                    if body.startswith('[fm-supervisor-note] '):
+                        out.append(body[len('[fm-supervisor-note] '):])
+            return out
+        wait_for(lambda: len(notes()) == 2, 'a failing note and a recovery note reach the conversation')
+        said = ' '.join(notes())
+        assert set(notes()) == {
+            f"I'm stuck: my background work has failed 2 times in a row since {since} (model gateway request failed (HTTP 400)). The first mate is being told.",
+            f"My background work is running again after failing since {since}."
+        }, said
+        assert 'supervisor' not in said.lower() and 'monologue' not in said.lower(), said
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        assert p.wait(timeout=20) == 0, 'the driver did not stop on /quit'
+    finally:
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGTERM)
+            try:
+                p.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                os.killpg(p.pid, signal.SIGKILL); p.wait()
+PYTHON
+  pass "fm-deck-worker: a supervisor failing turn after turn raises one blocker with its error and clears it on recovery"
+}
+
+test_secondmate_retries_undelivered_health_notes() {
+  local dir mode
+  for mode in failed-turn recovery; do
+    dir="$TMP_ROOT/host-pending-note-$mode"
+    make_secondmate_host_fixture "$dir"
+    : > "$dir/home/config/primary-split"
+    mv "$dir/bin/fm-captain-note.sh" "$dir/bin/fm-captain-note.real.sh"
+    cat > "$dir/bin/fm-captain-note.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> "$FM_HOME/note-attempts"
+[ ! -e "$FM_HOME/fail-note" ] || exit 3
+case "$1" in
+  'My background work is running again'*)
+    if [ -e "$FM_HOME/fail-recovery-note" ]; then
+      : > "$FM_HOME/recovery-note-refused"
+      exit 3
+    fi
+    ;;
+esac
+exec "$(dirname "$0")/fm-captain-note.real.sh" "$@"
+SH
+    chmod +x "$dir/bin/fm-captain-note.sh"
+    python3 - "$dir" "$mode" <<'PYTHON' || fail "undelivered health notes were lost ($mode)"
+import os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+mode = sys.argv[2]
+home = root/'home'
+health = root/'parent/host.supervisor-failing'
+status = root/'parent/host.status'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='',
+           FM_DECK_FAIL_ESCALATE='1')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker', str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'), '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+def state():
+    return dict(line.split('=', 1) for line in health.read_text().splitlines()) if health.exists() else {}
+def notes():
+    out = []
+    for d in (root/'parent/host.inbox', root/'parent/host.inbox/handled'):
+        for f in d.glob('*.msg'):
+            body = f.read_text().split('\n--\n', 1)[1]
+            if body.startswith('[fm-supervisor-note] '):
+                out.append(body[len('[fm-supervisor-note] '):])
+    return out
+def lines(prefix):
+    return [x for x in (status.read_text().splitlines() if status.exists() else []) if x.startswith(prefix)]
+def attempts():
+    path = home/'note-attempts'
+    return path.read_text().splitlines() if path.exists() else []
+def wait_for(check, label):
+    for _ in range(200):
+        if check(): return
+        if p.poll() is not None: raise AssertionError(label+' - host exited: '+(root/'pane').read_text())
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text())
+def turn(prompt):
+    p.stdin.write(prompt+'\n'); p.stdin.flush()
+(home/'fail-turn').write_text('HTTP 400')
+(home/'fail-note').touch()
+with (root/'pane').open('w') as output:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, env=env, text=True, start_new_session=True)
+    try:
+        wait_for(lambda: state().get('note_pending') == '1', 'failed failure-note publication stays pending')
+        since = state()['since']
+        turn('failed again')
+        wait_for(lambda: state().get('count') == '2', 'later failed turn retries its note')
+        assert len(attempts()) == 2 and not notes(), attempts()
+        assert state()['note_pending'] == '1', state()
+        assert len(lines('blocked [key=supervisor-failing-host]')) == 1
+        if mode == 'failed-turn':
+            (home/'fail-note').unlink()
+            turn('deliver on failed turn')
+            wait_for(lambda: state().get('count') == '3' and state().get('note_pending') == '0', 'failure-note retry delivered')
+            expected_count = 3
+        else:
+            (home/'fail-turn').unlink()
+            turn('successful but note still unavailable')
+            wait_for(lambda: len(attempts()) == 3, 'recovery retries the pending failure note')
+            assert health.exists() and state()['note_pending'] == '1' and not notes()
+            (home/'fail-note').unlink()
+            expected_count = 2
+        (home/'fail-turn').unlink(missing_ok=True)
+        (home/'fail-recovery-note').touch()
+        turn('recover but recovery note unavailable')
+        wait_for(lambda: state().get('note_recovery') == '1', 'failed recovery-note publication stays pending')
+        wait_for(lambda: (home/'recovery-note-refused').exists(), 'recovery-note publication failed')
+        assert state()['note_pending'] == '1', state()
+        failure_note = f"I'm stuck: my background work has failed {expected_count} times in a row since {since} (HTTP 400). The first mate is being told."
+        assert notes() == [failure_note], notes()
+        assert len(lines('blocked [key=supervisor-failing-host]')) == 1
+        assert len(lines('resolved [key=supervisor-failing-host]')) == 1
+        (home/'fail-recovery-note').unlink()
+        turn('retry recovery note')
+        wait_for(lambda: not health.exists(), 'record removed only after recovery-note delivery')
+        assert set(notes()) == {failure_note, f'My background work is running again after failing since {since}.'}, notes()
+        assert len(notes()) == 2, notes()
+        assert len(lines('resolved [key=supervisor-failing-host]')) == 1
+        assert len(lines('blocked [key=supervisor-failing-host]')) == 1
+        turn('/quit')
+        assert p.wait(timeout=20) == 0
+    finally:
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGTERM)
+            try:
+                p.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                os.killpg(p.pid, signal.SIGKILL); p.wait()
+PYTHON
+  done
+  pass "fm-deck-worker: failed health notes retry independently of parent reports through recovery"
 }
 
 test_secondmate_survives_a_refused_handling_confirmation() {
@@ -3346,6 +3533,8 @@ test_secondmate_turns_guard_the_reply_logs
 test_secondmate_mcp_config_on_startup_steer_and_wake
 test_secondmate_queued_exit_behind_composer_clears_beats_watcher_turn
 test_secondmate_survives_a_failed_turn
+test_secondmate_failing_supervisor_is_never_silent
+test_secondmate_retries_undelivered_health_notes
 test_secondmate_survives_a_refused_handling_confirmation
 test_secondmate_relaunch_publishes_a_fresh_recovery_generation
 test_concurrent_secondmate_duplicate_mints_once

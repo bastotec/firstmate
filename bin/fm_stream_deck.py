@@ -23,6 +23,7 @@ import json
 import os
 from pathlib import Path
 import re
+import time
 import subprocess
 import sys
 import tempfile
@@ -507,7 +508,34 @@ def conversation_busy(state, task):
     return False
 
 
+def stale_handoffs(state, task, age, now=None):
+    """Hand-offs ([fm-captain-thread] records) still unhandled in the inbox more
+    than `age` seconds after delivery, oldest first, that were not reported yet
+    (<task>.captain-lane.stale-noted lists the reported ones)."""
+    state = Path(state)
+    now = time.time() if now is None else now
+    try:
+        noted = set((state / (task + '.captain-lane.stale-noted')).read_text().split())
+    except FileNotFoundError:
+        noted = set()
+    found = []
+    for source in (state / (task + '.inbox')).glob('*.msg'):
+        if not source.stem.isdigit() or source.name in noted:
+            continue
+        try:
+            text = source.read_bytes().decode('utf-8')
+            if not HANDOFF.match(record_stream(text)[1]) or now - source.stat().st_mtime < age:
+                continue
+        except (OSError, UnicodeDecodeError):
+            continue
+        found.append((int(source.stem), source.name))
+    return [name for _, name in sorted(found)]
+
+
 def main():
+    if sys.argv[1:2] == ['stale-handoffs']:
+        print('\n'.join(stale_handoffs(sys.argv[2], sys.argv[3], float(sys.argv[4]))))
+        return
     if sys.argv[1:2] == ['conversation-busy']:
         sys.exit(0 if conversation_busy(sys.argv[2], sys.argv[3]) else 1)
     if sys.argv[1:2] == ['captain']:
