@@ -192,6 +192,101 @@ if found:
 PY
 }
 
+# OVERDUE HAND-OFFS: an order still unhandled after FM_HANDOFF_STALE_SECS
+# (default 600) gets one blocked [key=handoff-overdue-<id>] parent-channel line
+# via lane_report (which owns the status fallback), then one conversation note,
+# both with the supervisor's state. Checks run between conversation turns,
+# at most once every 30 s. <state>/<id>.captain-lane.stale-noted journals
+# "blocked <record>" after parent publication and "<record>" after note delivery.
+# When no overdue unacknowledged record remains, a matching resolved line
+# closes the blocker; only successful publication removes the journal.
+STALE_SECS=${FM_HANDOFF_STALE_SECS:-600}
+case "$STALE_SECS" in ''|*[!0-9]*|0) STALE_SECS=600 ;; esac
+STALE_NOTED="$STATE/$ID.captain-lane.stale-noted"
+stale_checked=0
+report_stale_handoffs() {
+  local now names name state health
+  now=$(date +%s)
+  [ $((now - stale_checked)) -ge 30 ] || return 0
+  stale_checked=$now
+  names=$(python3 "$SCRIPT_DIR/fm_stream_deck.py" stale-handoffs "$STATE" "$ID" "$STALE_SECS" 2>/dev/null) || return 0
+  if [ -z "$names" ]; then
+    if [ -s "$STALE_NOTED" ]; then
+      lane_report "resolved [key=handoff-overdue-$ID]: $ID has no overdue unacknowledged orders (records $(sed 's/^blocked //' "$STALE_NOTED" | sort -u | tr '\n' ' '))" \
+        && rm -f "$STALE_NOTED"
+    fi
+    return 0
+  fi
+  health="$STATE/$ID.supervisor-failing"
+  if [ -f "$health" ]; then
+    state="failing since $(sed -n 's/^since=//p' "$health"): $(sed -n 's/^error=//p' "$health")"
+  else
+    state=$(sed -n 's/.* state=\([a-z]*\).*/\1/p' "$STATE/$ID.busy-state" 2>/dev/null)
+  fi
+  for name in $names; do
+    grep -Fxq -- "$name" "$STALE_NOTED" 2>/dev/null && continue
+    if ! grep -Fxq -- "blocked $name" "$STALE_NOTED" 2>/dev/null; then
+      lane_report "blocked [key=handoff-overdue-$ID]: $ID has not picked up an order for $((STALE_SECS / 60)) minutes (record $name); its background work is ${state:-in an unknown state}" || continue
+      printf 'blocked %s\n' "$name" >> "$STALE_NOTED" || continue
+    fi
+    FM_SPLIT_MATE_STATE="$STATE" FM_SPLIT_MATE_ID="$ID" "$SCRIPT_DIR/fm-captain-note.sh" \
+      "Something I said I would do (record $name) is overdue: I have not finished or acknowledged it after $((STALE_SECS / 60)) minutes; my background work is ${state:-in an unknown state}." \
+      >/dev/null 2>&1 && printf '%s\n' "$name" >> "$STALE_NOTED"
+  done
+}
+
+# A run of failed conversation turns is reported to the first mate, the same
+# way the host reports a failing supervisor: at FM_DECK_FAIL_ESCALATE (default
+# 3) consecutive failures one keyed blocker
+# "blocked [key=conversation-failing-<id>]: ..." with the last error and since
+# when, closed by "resolved [key=...]" after the next answered turn. The run is
+# kept in <state>/<id>.conversation-failing (since=, count=, escalated=), so a
+# lane the first mate relaunched for it still resolves it once it answers. The
+# line goes to the home's own parent channel (bin/fm-parent-channel-lib.sh,
+# mirrored to the first mate for a remote mate), else, for a home with no
+# parent binding, to <state>/<id>.status through the host's status helper. The
+# first mate's revive scan acts on it (bin/fm-secondmate-revive.sh "LANE HEALTH").
+# shellcheck source=bin/fm-parent-channel-lib.sh
+. "$SCRIPT_DIR/fm-parent-channel-lib.sh"
+LANE_HEALTH="$STATE/$ID.conversation-failing"
+lane_report() {  # <line>
+  local rc=0
+  fm_parent_channel_report "$FM_HOME" "$FM_HOME/state" "$1" || rc=$?
+  if [ "$rc" -eq 1 ]; then
+    [ -n "${FM_DECK_STATUS_IO:-}" ] || return 1
+    printf '%s\n' "$1" | python3 "$FM_DECK_STATUS_IO" root-append "$STATE" "$ID.status"
+    return
+  fi
+  return "$rc"
+}
+lane_health_get() { sed -n "s/^$1=//p" "$LANE_HEALTH" 2>/dev/null | tail -1; }
+lane_health_put() {  # <since> <count> <escalated>
+  printf 'since=%s\ncount=%s\nescalated=%s\n' "$1" "$2" "$3" > "$LANE_HEALTH.tmp" \
+    && mv -f "$LANE_HEALTH.tmp" "$LANE_HEALTH"
+}
+lane_turn_failed() {  # <failure text>
+  local error limit=${FM_DECK_FAIL_ESCALATE:-3} since count escalated
+  case "$limit" in ''|*[!0-9]*|0) limit=3 ;; esac
+  error=$(printf '%s' "${1:-turn failed}" | tr '\n\t' '  ' | cut -c1-200)
+  since=$(lane_health_get since); count=$(lane_health_get count); escalated=$(lane_health_get escalated)
+  [ -n "$since" ] || since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  case "$count" in ''|*[!0-9]*) count=0 ;; esac
+  count=$((count + 1))
+  if [ "$count" -ge "$limit" ] && [ "${escalated:-0}" != 1 ]; then
+    lane_report "$(printf 'blocked [key=conversation-failing-%s]: %s conversation is failing every turn (%s consecutive): %s, since %s; messages to it are not being answered' \
+      "$ID" "$ID" "$count" "$error" "$since")" && escalated=1
+  fi
+  lane_health_put "$since" "$count" "${escalated:-0}"
+}
+lane_turn_ok() {
+  [ -f "$LANE_HEALTH" ] || return 0
+  if [ "$(lane_health_get escalated)" = 1 ]; then
+    lane_report "$(printf 'resolved [key=conversation-failing-%s]: %s conversation is answering again (failing since %s)' \
+      "$ID" "$ID" "$(lane_health_get since)")" || return 0
+  fi
+  rm -f "$LANE_HEALTH"
+}
+
 contract_sent=0
 retry_at=0 backoff=0 unrecorded='' observed=''
 while kill -0 "$HOST_PID" 2>/dev/null; do
@@ -206,6 +301,7 @@ while kill -0 "$HOST_PID" 2>/dev/null; do
     sleep 5
     continue
   fi
+  report_stale_handoffs
   next=$(next_record) || next=''
   if [ -z "$next" ] || [ "$(date +%s)" -lt "$retry_at" ]; then
     sleep "$POLL"
@@ -224,7 +320,7 @@ while kill -0 "$HOST_PID" 2>/dev/null; do
   case "$party" in
     captain) said="The captain wrote to this second mate directly" ;;
     mate:*) said="Another mate, ${party#mate:}, wrote to this second mate" ;;
-    monologue) said="This second mate's inner monologue (its supervisor) has something for the conversation; say it to the reader as an explicit message" ;;
+    monologue) said="Your own background work wrote this for the reader; say it as your own news, in the first person" ;;
     *) said="The first mate wrote to this second mate" ;;
   esac
   prompt="$said (record $rec):
@@ -284,6 +380,7 @@ $prompt"
       "$WORK/events.ndjson" >/dev/null 2>&1; then
     contract_sent=1
     backoff=0 retry_at=0
+    lane_turn_ok
     if journal answered "$name"; then
       acknowledge_answered || true
       [ ! -f "$rec" ] || log "answered $rec but could not move it to handled/ yet; retrying"
@@ -293,6 +390,7 @@ $prompt"
     fi
   else
     journal failed "$name" || true
+    lane_turn_failed "$(jq -rs '[.[] | select(.type == "run_failed") | .error // empty] | last // empty' "$WORK/events.ndjson" 2>/dev/null)"
     backoff=$(( backoff ? backoff * 2 : RETRY ))
     [ "$backoff" -le 300 ] || backoff=300
     retry_at=$(( $(date +%s) + backoff ))

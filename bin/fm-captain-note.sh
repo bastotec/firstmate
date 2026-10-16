@@ -10,7 +10,8 @@
 # inbox (bin/fm-primary-steer.sh, role captain); the conversation contract is
 # .agents/skills/captain-thread/SKILL.md. Write the note for its intended reader:
 # the outcome, its evidence and any decision they own, as you would say it
-# to them.
+# to them, in the first person as this agent ("I merged it"), never naming a
+# supervisor or a monologue: to its reader the agent is one agent.
 #
 # Outside split mode there is no separate conversation, so it refuses (exit 2):
 # say it in your own reply instead.

@@ -2,7 +2,7 @@
 
 Audience: maintainer verification.
 
-This record supports current busy-state, held-for-merge stale-suppression, turn-end, secondmate-revival, and wedge-alarm guarantees.
+This record supports current busy-state, held-for-merge stale-suppression, turn-end, secondmate-revival, lane-health, parked-run, and wedge-alarm guarantees.
 Operator behavior and active limits remain in the linked current guides.
 Task-specific chronology, temporary paths, run identifiers, and delivery transcripts remain in private reports or PR evidence.
 
@@ -46,9 +46,18 @@ The revival suite exercises confirmed local and remote down readings, local and 
 It also exercises deliberate-stop marker withdrawal under the lifecycle lock, recovery between probing and automatic admission without consuming a failure, and fresh confirmation of legacy unattempted remote-missing escalations while held and spent-budget episodes remain untouched.
 The liveness suite covers startup's held-stop and live-lock skips and the fresh liveness recheck after taking that lock.
 The control and remote stream suites cover secondmate exit protection, locked alive-admission refusal, and the primary stop marker after a lost remote exit response.
+The control suite also covers the lane-health live-replacement exception while preserving the deliberate-stop refusal.
+The revival suite covers per-lane recovery and escalation, a shared relaunch for two failing lanes, failed or deferred relaunches, and incremental status reads that preserve episode identity.
 The remote stream suite also covers refusal of explicit recovery-profile flags before contacting the host, restarts its real hub to make a remote mate's endpoint missing, proves recovery refuses while the forgotten agent still runs on the host, and proves the revive scan alone brings the mate back on a new endpoint once that agent is gone.
 The restart suite covers selection of the deciding failure instead of a preceding warning; [Deck portable regression](deck.md#portable-regression) owns queued-exit ordering coverage.
 These are regression entry points, not a new dated live-harness result.
+
+## Parked validation runs
+
+[`fm-parked-run-watch.sh`'s header](../../bin/fm-parked-run-watch.sh) owns the watchdog contract.
+The portable regression entry point is `bin/fm-test-run.sh tests/fm-parked-run-watch.test.sh`.
+It covers first-mate and second-mate delivery, observed re-parking and gate changes, unavailable queries and identity-free readings, serialized scan and close, and retryable close-publication failure.
+These are fixture assertions, not live no-mistakes timing evidence.
 
 ## Wedge-alarm channels
 

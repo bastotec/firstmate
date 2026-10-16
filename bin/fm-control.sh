@@ -5,7 +5,7 @@
 # Usage: fm-control.sh <task-id> interrupt
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
-#                                         [--effort <level>] [--unless-held-stopped]
+#                                         [--effort <level>] [--unless-held-stopped [--replace-live]]
 #                                         (--note <text> | --note-file <path>)
 #        fm-control.sh <task-id> reincarnate
 #                                         (--note <text> | --note-file <path>)
@@ -49,7 +49,11 @@
 #              Successful relaunch or recover-missing withdraws it.
 #              --unless-held-stopped on either recovery verb checks this marker
 #              and re-reads agent liveness under this home's per-task control
-#              lock, refusing an alive mate with 'is not down'. For a remote
+#              lock, refusing an alive mate with 'is not down' unless
+#              --replace-live is also given (the first mate's lane-health
+#              relaunch of a live mate whose lane keeps failing,
+#              bin/fm-secondmate-revive.sh), which keeps the deliberate-stop
+#              refusal and replaces the live agent. For a remote
 #              mate the fresh state comes from its configured host; the flag
 #              guards primary admission, not the host-local delegated call.
 #   relaunch   Transactionally replace the running agent with a new one, in the
@@ -348,6 +352,7 @@ EFFORT_SET=0
 NOTE=
 NOTE_SET=0
 UNLESS_HELD_STOPPED=0
+REPLACE_LIVE=0
 control_want_value=
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
@@ -379,6 +384,7 @@ for control_arg in "$@"; do
     --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
     --note-file) control_want_value=note_file ;;
     --unless-held-stopped) UNLESS_HELD_STOPPED=1 ;;
+    --replace-live) REPLACE_LIVE=1 ;;
     --note-file=*)
       [ -f "${control_arg#--note-file=}" ] || die "--note-file '${control_arg#--note-file=}' is not a readable file"
       NOTE=$(cat "${control_arg#--note-file=}")
@@ -510,7 +516,7 @@ model_switch() {
 if [ -n "$(fm_meta_get "$META" remote_host)" ]; then
   # shellcheck source=bin/fm-remote-control-lib.sh
   . "$SCRIPT_DIR/fm-remote-control-lib.sh"
-  if [ "$UNLESS_HELD_STOPPED" = 1 ]; then
+  if [ "$UNLESS_HELD_STOPPED" = 1 ] && [ "$REPLACE_LIVE" != 1 ]; then
     if remote_state=$("$SCRIPT_DIR/fm-on.sh" "$ID" fm-remote-secondmate-control.sh state "$ID" < /dev/null 2>/dev/null); then
       [ "$(printf '%s\n' "$remote_state" | tail -1)" != alive ] \
         || die "task $ID is not down; automatic revival refused"
@@ -555,7 +561,7 @@ agent_state() {
   fm_backend_agent_state "$BACKEND" "$T"
 }
 
-if [ "$UNLESS_HELD_STOPPED" = 1 ] && [ "$(agent_state)" = alive ]; then
+if [ "$UNLESS_HELD_STOPPED" = 1 ] && [ "$REPLACE_LIVE" != 1 ] && [ "$(agent_state)" = alive ]; then
   die "task $ID is not down; automatic revival refused"
 fi
 

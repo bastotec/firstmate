@@ -136,7 +136,11 @@
 #   set (its header owns the refusal). A secondmate runs in its own home and is
 #   not marked.
 #   Only after this isolation check, every fresh ship or scout requires a clean
-#   task worktree. When an origin configuration is detected, spawn fetches it,
+#   task worktree. If a pooled slot's only dirt is a wholly untracked .scratch/
+#   directory (not a symlink, with nothing tracked beneath it), spawn moves it
+#   intact to state/slot-quarantine/<slot>-<epoch>/.scratch and rechecks cleanliness.
+#   It never deletes that work; any other dirt refuses without moving it.
+#   When an origin configuration is detected, spawn fetches it,
 #   resolves the current remote default branch, and resets to its tip. When none
 #   is detected, spawn skips that remote freshness check and launches from the
 #   clean worktree's current HEAD. Relaunch reuses the recorded worktree without
@@ -1753,12 +1757,33 @@ spawn_worktree_has_origin_config() {  # <worktree>
   return 1
 }
 
+# The header owns scratch quarantine eligibility and preservation. Requiring
+# no tracked entries prevents moving clean tracked files alongside untracked dirt.
+quarantine_spawn_slot_scratch() {  # <worktree> <porcelain status>
+  local worktree=$1 status=$2 line dest tracked
+  [ -n "$status" ] || return 1
+  while IFS= read -r line; do
+    case "$line" in '?? .scratch/'|'?? .scratch/'*) ;; *) return 1 ;; esac
+  done <<EOF
+$status
+EOF
+  [ -d "$worktree/.scratch" ] && [ ! -L "$worktree/.scratch" ] || return 1
+  tracked=$(git -C "$worktree" ls-files -- .scratch) || return 1
+  [ -z "$tracked" ] || return 1
+  dest="$STATE/slot-quarantine/$(basename "$worktree")-$(date +%s)"
+  mkdir -p "$dest" && mv "$worktree/.scratch" "$dest/.scratch" || return 1
+  echo "notice: pooled worktree '$worktree' held only a previous worker's .scratch/; moved it to $dest/.scratch and continuing" >&2
+}
+
 freshen_spawn_worktree_base() {  # <worktree>
   local worktree=$1 default target expected actual status
   status=$(git -C "$worktree" -c core.quotePath=false status --porcelain) || {
     echo "error: could not inspect pooled worktree '$worktree' before refreshing its base" >&2
     return 1
   }
+  if [ -n "$status" ] && quarantine_spawn_slot_scratch "$worktree" "$status"; then
+    status=$(git -C "$worktree" -c core.quotePath=false status --porcelain) || return 1
+  fi
   if [ -n "$status" ]; then
     if describe_stale_submodule_pins "$worktree" "$status"; then
       echo "error: pooled worktree '$worktree' has a stale submodule checkout, not uncommitted work; refusing to launch and leaving it untouched" >&2

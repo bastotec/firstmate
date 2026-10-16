@@ -662,6 +662,24 @@ test_automatic_recovery_refuses_an_already_live_secondmate() {
   pass "fm-control: automatic admission refuses an already-live secondmate without touching it"
 }
 
+test_replace_live_admits_a_live_mate_but_never_a_stopped_one() {
+  local dir out rc
+  dir=$(new_case replace-live)
+  add_task "$dir" domain deck secondmate
+  alive_as "$dir" fm-deck-worker
+  out=$(run_control "$dir" domain relaunch --unless-held-stopped --replace-live --note 'lane kept failing'); rc=$?
+  assert_not_contains "$out" 'is not down' "--replace-live must admit a live mate"$'\n'"$out"
+  dir=$(new_case replace-live-held)
+  add_task "$dir" domain deck secondmate
+  alive_as "$dir" fm-deck-worker
+  printf 'stopped_at=1\n' > "$dir/home/state/domain.held-stopped"
+  out=$(run_control "$dir" domain relaunch --unless-held-stopped --replace-live --note 'lane kept failing'); rc=$?
+  expect_code 1 "$rc" "--replace-live must still refuse a mate stopped on purpose"$'\n'"$out"
+  assert_contains "$out" 'stopped on purpose' "the refusal names the deliberate stop"
+  [ "$(cat "$dir/fake/command")" = fm-deck-worker ] || fail "a stopped-on-purpose mate was touched"
+  pass "fm-control: --replace-live admits a live mate whose lane fails, never one stopped on purpose"
+}
+
 test_unless_held_stopped_refuses_before_touching_the_agent() {
   local dir out rc verb
   for verb in relaunch recover-missing; do
@@ -927,6 +945,7 @@ PY
 test_host_route_reaches_guarded_worker_owners
 test_secondmate_exit_records_a_deliberate_stop
 test_automatic_recovery_refuses_an_already_live_secondmate
+test_replace_live_admits_a_live_mate_but_never_a_stopped_one
 test_unless_held_stopped_refuses_before_touching_the_agent
 test_exit_types_each_harness_verified_command
 test_interrupt_sends_each_harness_verified_key
