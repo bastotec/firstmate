@@ -921,7 +921,7 @@ remote_secondmate_teardown() {
   handoff_wake_retire \
     || { echo "error: remote receiver wake cleanup failed; preserving the local route for retry" >&2; return 1; }
   rm -f -- "$STATE/$ID.deck-session" "$STATE/$ID.supervisor-session" "$STATE/$ID.captain-lane" \
-    "$STATE/$ID.captain-lane.log" "$STATE/$ID.captain-lane.answered" "$STATE/$ID.captain-lane.turn" "$STATE/$ID.captain-lane.stale-noted" "$STATE/$ID.supervisor-failing" "$STATE/$ID.conversation-failing" "$STATE/$ID.lane-heal-supervisor" "$STATE/$ID.lane-heal-conversation" || return 1
+    "$STATE/$ID.captain-lane.log" "$STATE/$ID.captain-lane.answered" "$STATE/$ID.captain-lane.turn" "$STATE/$ID.captain-lane.stale-noted" "$STATE/$ID.supervisor-failing" "$STATE/$ID.supervisor-notes" "$STATE/$ID.conversation-failing" "$STATE/$ID.lane-heal-supervisor" "$STATE/$ID.lane-heal-conversation" || return 1
   tmp="$SECONDMATE_REG.tmp.$$"
   grep -vE "^- $ID( |$)" "$SECONDMATE_REG" > "$tmp" || true
   mv -f -- "$tmp" "$SECONDMATE_REG"
@@ -3166,7 +3166,7 @@ cleanup_firstmate_home_children() {
     retire_wake_gate_task_state "$sub_state" "$child_id" || return 1
     fm_backlog_atomic_transition remove "$sub_state/$child_id.meta" "task record" "$sub_state" || return 1
     rm -f "$sub_state/$child_id.turn-ended" "$sub_state/$child_id.progress" "$sub_state/$child_id.deck-session" \
-      "$sub_state/$child_id.supervisor-session" "$sub_state/$child_id.captain-lane" "$sub_state/$child_id.captain-lane.log" "$sub_state/$child_id.captain-lane.answered" "$sub_state/$child_id.captain-lane.turn" "$sub_state/$child_id.captain-lane.stale-noted" "$sub_state/$child_id.supervisor-failing" "$sub_state/$child_id.conversation-failing" \
+      "$sub_state/$child_id.supervisor-session" "$sub_state/$child_id.captain-lane" "$sub_state/$child_id.captain-lane.log" "$sub_state/$child_id.captain-lane.answered" "$sub_state/$child_id.captain-lane.turn" "$sub_state/$child_id.captain-lane.stale-noted" "$sub_state/$child_id.supervisor-failing" "$sub_state/$child_id.supervisor-notes" "$sub_state/$child_id.conversation-failing" \
       "$sub_state/$child_id.reconcile-nudged" "$sub_state/$child_id.crew-state" "$sub_state/$child_id.gate" \
       "$sub_state/.$child_id.crew-state-follow.rearm"
     fm_lock_remove_path "$sub_state/.$child_id.crew-state-follow" || true
@@ -3548,7 +3548,7 @@ if [ "$KIND" = secondmate ]; then
   handoff_wake_retire_stage_commit \
     || { echo "error: receiver wake cleanup failed; preserving the secondmate route for retry" >&2; exit 1; }
   rm -f -- "$STATE/$ID.deck-session" "$STATE/$ID.supervisor-session" "$STATE/$ID.captain-lane" \
-    "$STATE/$ID.captain-lane.log" "$STATE/$ID.captain-lane.answered" "$STATE/$ID.captain-lane.turn" "$STATE/$ID.captain-lane.stale-noted" "$STATE/$ID.supervisor-failing" "$STATE/$ID.conversation-failing" "$STATE/$ID.lane-heal-supervisor" "$STATE/$ID.lane-heal-conversation"
+    "$STATE/$ID.captain-lane.log" "$STATE/$ID.captain-lane.answered" "$STATE/$ID.captain-lane.turn" "$STATE/$ID.captain-lane.stale-noted" "$STATE/$ID.supervisor-failing" "$STATE/$ID.supervisor-notes" "$STATE/$ID.conversation-failing" "$STATE/$ID.lane-heal-supervisor" "$STATE/$ID.lane-heal-conversation"
   remove_secondmate_registry_entry "$ID"
 fi
 # A worker leaving while its parked-run watch had escalated resolves that

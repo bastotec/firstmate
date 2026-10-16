@@ -2682,7 +2682,8 @@ case "$1" in
     fi
     ;;
 esac
-exec "$(dirname "$0")/fm-captain-note.real.sh" "$@"
+"$(dirname "$0")/fm-captain-note.real.sh" "$@" || exit $?
+printf '%s\n' "$1" >> "$FM_HOME/note-delivered"
 SH
     chmod +x "$dir/bin/fm-captain-note.sh"
     python3 - "$dir" "$mode" <<'PYTHON' || fail "undelivered health notes were lost ($mode)"
@@ -2717,56 +2718,75 @@ def wait_for(check, label):
         if p.poll() is not None: raise AssertionError(label+' - host exited: '+(root/'pane').read_text())
         time.sleep(.1)
     raise AssertionError(label+': '+(root/'pane').read_text())
+def pending():
+    path = root/'parent/host.supervisor-notes'
+    return path.read_text().splitlines() if path.exists() else []
+def delivered():
+    path = home/'note-delivered'
+    return path.read_text().splitlines() if path.exists() else []
 def turn(prompt):
+    before = (root/'pane').read_text().count('idle since')
     p.stdin.write(prompt+'\n'); p.stdin.flush()
+    if prompt != '/quit':
+        wait_for(lambda: (root/'pane').read_text().count('idle since') > before, 'turn completed: '+prompt)
 (home/'fail-turn').write_text('HTTP 400')
 (home/'fail-note').touch()
-with (root/'pane').open('w') as output:
+with (root/'pane').open('a') as output:
     p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, env=env, text=True, start_new_session=True)
     try:
-        wait_for(lambda: state().get('note_pending') == '1', 'failed failure-note publication stays pending')
+        wait_for(lambda: 'idle since' in (root/'pane').read_text(), 'first failed turn completed')
         since = state()['since']
+        failure_note = f"I'm stuck: my background work has failed 1 times in a row since {since} (HTTP 400). The first mate is being told."
+        recovery_note = f'My background work is running again after failing since {since}.'
+        assert pending() == [failure_note], pending()
+        assert set(state()) == {'since', 'count', 'error', 'escalated'}, state()
         turn('failed again')
-        wait_for(lambda: state().get('count') == '2', 'later failed turn retries its note')
-        assert len(attempts()) == 2 and not notes(), attempts()
-        assert state()['note_pending'] == '1', state()
+        assert state()['count'] == '2' and pending() == [failure_note], state()
+        assert attempts() == [failure_note, failure_note] and not notes(), attempts()
         assert len(lines('blocked [key=supervisor-failing-host]')) == 1
         if mode == 'failed-turn':
             (home/'fail-note').unlink()
             turn('deliver on failed turn')
-            wait_for(lambda: state().get('count') == '3' and state().get('note_pending') == '0', 'failure-note retry delivered')
-            expected_count = 3
-        else:
-            (home/'fail-turn').unlink()
-            turn('successful but note still unavailable')
-            wait_for(lambda: len(attempts()) == 3, 'recovery retries the pending failure note')
-            assert health.exists() and state()['note_pending'] == '1' and not notes()
-            assert state()['note_recovery'] == '1', state()
-            assert len(lines('resolved [key=supervisor-failing-host]')) == 1
-            turn('successful again but notes still unavailable')
-            wait_for(lambda: len(attempts()) == 4, 'later success retries only the owed notes')
-            assert state()['note_pending'] == '1' and state()['note_recovery'] == '1', state()
-            assert not notes() and all(note.startswith("I'm stuck:") for note in attempts()), attempts()
-            assert len(lines('resolved [key=supervisor-failing-host]')) == 1
-            (home/'fail-note').unlink()
-            expected_count = 2
-        (home/'fail-turn').unlink(missing_ok=True)
-        (home/'fail-recovery-note').touch()
-        turn('recover but recovery note unavailable')
-        wait_for(lambda: state().get('note_recovery') == '1', 'failed recovery-note publication stays pending')
-        wait_for(lambda: (home/'recovery-note-refused').exists(), 'recovery-note publication failed')
-        assert state()['note_pending'] == '0', state()
-        failure_note = f"I'm stuck: my background work has failed {expected_count} times in a row since {since} (HTTP 400). The first mate is being told."
-        assert notes() == [failure_note], notes()
-        assert len(lines('blocked [key=supervisor-failing-host]')) == 1
+            assert state()['count'] == '3' and not pending(), state()
+            assert delivered() == [failure_note], delivered()
+            (home/'fail-recovery-note').touch()
+        (home/'fail-turn').unlink()
+        turn('successful but notes still unavailable')
+        assert not health.exists(), state()
         assert len(lines('resolved [key=supervisor-failing-host]')) == 1
-        (home/'fail-recovery-note').unlink()
-        turn('retry recovery note')
-        wait_for(lambda: not health.exists(), 'record removed only after recovery-note delivery')
-        assert set(notes()) == {failure_note, f'My background work is running again after failing since {since}.'}, notes()
-        assert len(notes()) == 2, notes()
+        owed = [recovery_note] if mode == 'failed-turn' else [failure_note, recovery_note]
+        assert pending() == owed, pending()
+        before = len(attempts())
+        turn('successful again but notes still unavailable')
+        assert not health.exists() and pending() == owed, pending()
+        assert len(attempts()) == before + 1, attempts()
         assert len(lines('resolved [key=supervisor-failing-host]')) == 1
-        assert len(lines('blocked [key=supervisor-failing-host]')) == 1
+        turn('/quit')
+        assert p.wait(timeout=20) == 0
+        handoff = subprocess.check_output([str(root/'bin/fm-captain-handoff.sh'), 'check after recovery'],
+                    env=dict(env, FM_CAPTAIN_LANE_STATE=str(root/'parent'), FM_CAPTAIN_LANE_ID='host'), text=True)
+        assert 'supervisor=idle\n' in handoff and 'supervisor=failing' not in handoff, handoff
+        assert pending() == owed and not health.exists()
+        record = pathlib.Path(handoff.splitlines()[0].split('=', 1)[1])
+        record.rename(record.parent/'handled'/record.name)
+        (home/'fail-turn').write_text('HTTP 502')
+        before = (root/'pane').read_text().count('idle since')
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, env=env, text=True, start_new_session=True)
+        wait_for(lambda: (root/'pane').read_text().count('idle since') > before, 'new failure episode completed')
+        assert state()['count'] == '1' and state()['error'] == 'HTTP 502', state()
+        next_since = state()['since']
+        next_failure = f"I'm stuck: my background work has failed 1 times in a row since {next_since} (HTTP 502). The first mate is being told."
+        assert pending() == owed + [next_failure], pending()
+        assert len(lines('blocked [key=supervisor-failing-host]')) == 2
+        (home/'fail-note').unlink(missing_ok=True)
+        (home/'fail-recovery-note').unlink(missing_ok=True)
+        turn('deliver earlier notes during the new failure')
+        assert not (root/'parent/host.supervisor-notes').exists()
+        assert delivered() == [failure_note, recovery_note, next_failure], delivered()
+        assert set(notes()) == set(delivered()), notes()
+        assert state()['count'] == '2', state()
+        assert len(lines('resolved [key=supervisor-failing-host]')) == 1
+        assert len(lines('blocked [key=supervisor-failing-host]')) == 2
         turn('/quit')
         assert p.wait(timeout=20) == 0
     finally:

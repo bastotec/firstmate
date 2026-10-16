@@ -471,21 +471,10 @@ host_failure() {
 # SUPERVISOR HEALTH (second mates): a supervisor whose turns keep failing must
 # never be silent. <state>/<id>.supervisor-failing records the episode:
 # since=<utc>, count=<consecutive failed turns>, error=<last failure text>,
-# escalated=<0|1> (parent blocker published), note_pending=<0|1> (conversation
-# note owed), note_recovery=<0|1> (resolution published; recovery note owed
-# in split mode). At FM_DECK_FAIL_ESCALATE (default 3) consecutive failures
-# the host appends one "blocked [key=supervisor-failing-<id>]: ..." to the
-# parent channel and, in a split home, posts a first-person failure note with
-# bin/fm-captain-note.sh. A failed note delivery stays pending and is retried
-# on later failed turns and at recovery without republishing the blocker.
+# escalated=<0|1> (parent blocker published).
 # Only a verified turn-end proves recovery, never an interrupted turn.
-# Failed publication keeps the record for a
-# later successful turn to retry; removal requires the resolution and owed
-# notes to be delivered (or no escalation). A failure after note_recovery=1
-# starts a new episode. The notes report lane health, not task progress.
-# bin/fm-captain-handoff.sh and Fleet Town may read the same record; its
-# presence can mean delivery is still pending after a successful turn.
 SUPERVISOR_HEALTH="$STATE/$ID.supervisor-failing"
+SUPERVISOR_NOTES="$STATE/$ID.supervisor-notes"
 # One health line to the first mate: the home's own parent channel
 # (bin/fm-parent-channel-lib.sh: the parent home's state/<id>.status for a local
 # mate, state/parent-replies.status for a remote one, which the parent mirrors),
@@ -498,28 +487,41 @@ health_report() {  # <line>
 }
 supervisor_health_write() {
   local tmp="$SUPERVISOR_HEALTH.tmp.$$"
-  if printf 'since=%s\ncount=%s\nerror=%s\nescalated=%s\nnote_pending=%s\nnote_recovery=%s\n' \
-      "$1" "$2" "$3" "$4" "$5" "$6" > "$tmp" && mv -f "$tmp" "$SUPERVISOR_HEALTH"; then
+  if printf 'since=%s\ncount=%s\nerror=%s\nescalated=%s\n' \
+      "$1" "$2" "$3" "$4" > "$tmp" && mv -f "$tmp" "$SUPERVISOR_HEALTH"; then
     return 0
   fi
   rm -f "$tmp"
   return 1
 }
-supervisor_failure_note() {
+supervisor_note_deliver() {
   FM_SPLIT_MATE_STATE="$STATE" FM_SPLIT_MATE_ID="$ID" "$SCRIPT_DIR/fm-captain-note.sh" \
-    "I'm stuck: my background work has failed $2 times in a row since $1 ($3). The first mate is being told." \
-    >/dev/null 2>&1
+    "$1" >/dev/null 2>&1
+}
+supervisor_note() {
+  [ "$MATE_SPLIT" = 1 ] || return 0
+  if [ -s "$SUPERVISOR_NOTES" ] || ! supervisor_note_deliver "$1"; then
+    printf '%s\n' "$1" >> "$SUPERVISOR_NOTES"
+  fi
+}
+supervisor_notes_retry() {
+  local note tmp="$SUPERVISOR_NOTES.tmp.$$"
+  [ -f "$SUPERVISOR_NOTES" ] || return 0
+  while IFS= read -r note < "$SUPERVISOR_NOTES"; do
+    supervisor_note_deliver "$note" || return 0
+    tail -n +2 "$SUPERVISOR_NOTES" > "$tmp" && mv -f "$tmp" "$SUPERVISOR_NOTES" || {
+      rm -f "$tmp"
+      return 1
+    }
+  done
+  rm -f "$SUPERVISOR_NOTES"
 }
 supervisor_turn_failed() {  # <failure text>
-  local error=$1 since count escalated note_pending limit=${FM_DECK_FAIL_ESCALATE:-3}
+  local error=$1 since count escalated limit=${FM_DECK_FAIL_ESCALATE:-3}
   case "$limit" in ''|*[!0-9]*|0) limit=3 ;; esac
   since=$(sed -n 's/^since=//p' "$SUPERVISOR_HEALTH" 2>/dev/null)
   count=$(sed -n 's/^count=//p' "$SUPERVISOR_HEALTH" 2>/dev/null)
   escalated=$(sed -n 's/^escalated=//p' "$SUPERVISOR_HEALTH" 2>/dev/null)
-  note_pending=$(sed -n 's/^note_pending=//p' "$SUPERVISOR_HEALTH" 2>/dev/null)
-  if [ "$(sed -n 's/^note_recovery=//p' "$SUPERVISOR_HEALTH" 2>/dev/null)" = 1 ]; then
-    since='' count=0 escalated=0 note_pending=0
-  fi
   [ -n "$since" ] || since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   case "$count" in ''|*[!0-9]*) count=0 ;; esac
   count=$((count + 1))
@@ -529,39 +531,25 @@ supervisor_turn_failed() {  # <failure text>
     if health_report "$(printf 'blocked [key=supervisor-failing-%s]: %s supervisor is failing every turn (%s consecutive): %s, since %s; nothing handed to it is being acted on' \
         "$ID" "$ID" "$count" "$error" "$since")"; then
       escalated=1
-      [ "$MATE_SPLIT" != 1 ] || note_pending=1
+      supervisor_note "I'm stuck: my background work has failed $count times in a row since $since ($error). The first mate is being told."
     fi
   fi
-  if [ "${note_pending:-0}" = 1 ] && supervisor_failure_note "$since" "$count" "$error"; then
-    note_pending=0
-  fi
-  supervisor_health_write "$since" "$count" "$error" "${escalated:-0}" "${note_pending:-0}" 0
+  supervisor_health_write "$since" "$count" "$error" "${escalated:-0}"
 }
 supervisor_turn_ok() {
   [ -f "$SUPERVISOR_HEALTH" ] || return 0
-  local since count error escalated note_pending note_recovery
+  local since escalated
   since=$(sed -n 's/^since=//p' "$SUPERVISOR_HEALTH")
-  count=$(sed -n 's/^count=//p' "$SUPERVISOR_HEALTH")
-  error=$(sed -n 's/^error=//p' "$SUPERVISOR_HEALTH")
   escalated=$(sed -n 's/^escalated=//p' "$SUPERVISOR_HEALTH")
-  note_pending=$(sed -n 's/^note_pending=//p' "$SUPERVISOR_HEALTH")
-  note_recovery=$(sed -n 's/^note_recovery=//p' "$SUPERVISOR_HEALTH")
   if [ "$escalated" = 1 ]; then
-    if [ "${note_recovery:-0}" != 1 ]; then
-      health_report "$(printf 'resolved [key=supervisor-failing-%s]: %s supervisor is working again (failing since %s)' \
-        "$ID" "$ID" "$since")" || return 0
-      supervisor_health_write "$since" "$count" "$error" "$escalated" "${note_pending:-0}" 1 || return 0
-    fi
-    if [ "${note_pending:-0}" = 1 ]; then
-      supervisor_failure_note "$since" "$count" "$error" || return 0
-      supervisor_health_write "$since" "$count" "$error" "$escalated" 0 1 || return 0
-    fi
-    if [ "$MATE_SPLIT" = 1 ]; then
-      FM_SPLIT_MATE_STATE="$STATE" FM_SPLIT_MATE_ID="$ID" "$SCRIPT_DIR/fm-captain-note.sh" \
-        "My background work is running again after failing since $since." >/dev/null 2>&1 || return 0
-    fi
+    health_report "$(printf 'resolved [key=supervisor-failing-%s]: %s supervisor is working again (failing since %s)' \
+      "$ID" "$ID" "$since")" || return 0
   fi
-  rm -f "$SUPERVISOR_HEALTH"
+  rm -f "$SUPERVISOR_HEALTH" || return 1
+  supervisor_notes_retry || return 1
+  if [ "$escalated" = 1 ]; then
+    supervisor_note "My background work is running again after failing since $since."
+  fi
 }
 
 host_lock_owned() {
@@ -940,6 +928,7 @@ run_turn() {  # <prompt>
   local effort=$TURN_EFFORT
   TURN_EFFORT=''
   [ "$SECONDMATE" != 1 ] || host_lock_owned || return 1
+  [ "$SECONDMATE" != 1 ] || supervisor_notes_retry || return 1
   [ "$SECONDMATE" != 1 ] || watch_start || return 1
   [ "$SECONDMATE" != 1 ] || watch_confirm_handling_delivery || return 1
   [ -z "$effort" ] || prompt="deck-effort: $effort
