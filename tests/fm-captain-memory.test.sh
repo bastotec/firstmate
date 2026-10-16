@@ -80,19 +80,50 @@ test_a_restated_rule_counts_as_a_memory_failure() {
 
 test_recordings_share_one_fleet_push() {
   local dir="$TMP_ROOT/push" home="$TMP_ROOT/push/home"
+  local middle="$TMP_ROOT/push-middle" child="$TMP_ROOT/push-child" remote="$TMP_ROOT/push-remote" h i
   mkdir -p "$home/data" "$home/state"
   cp -R "$ROOT/bin" "$dir/bin"
+  mv "$dir/bin/fm-config-push.sh" "$dir/bin/fm-config-push-real.sh"
   cat > "$dir/bin/fm-config-push.sh" <<'SH'
 #!/usr/bin/env bash
 echo pushed >> "$FM_HOME/pushes"
+"$(dirname "$0")/fm-config-push-real.sh"
+rc=$?
+echo completed >> "$FM_HOME/push-completed"
+exit "$rc"
 SH
   chmod +x "$dir/bin/fm-config-push.sh"
-  for rule in 'Always one.' 'Always two.' 'Always three.'; do
-    printf '%s' "$rule" | FM_CAPTAIN_MEMORY_PUSH=1 python3 "$dir/bin/fm_captain_memory.py" capture --home "$home" --source t >/dev/null
+  for h in "$middle" "$child" "$remote"; do
+    mkdir -p "$h/data" "$h/state" "$h/config" "$h/bin"
+    touch "$h/AGENTS.md"
   done
-  sleep 23
-  [ "$(wc -l < "$home/pushes" 2>/dev/null | tr -d ' ')" = 1 ] || fail "three rules within the debounce window must share one push ($(cat "$home/pushes" 2>/dev/null | wc -l))"
-  pass "captain memory: rules recorded close together share one fleet push"
+  printf 'middle\n' > "$middle/.fm-secondmate-home"
+  printf 'child\n' > "$child/.fm-secondmate-home"
+  printf 'route=local\nparent_home=%s\n' "$home" > "$middle/.fm-secondmate-parent"
+  printf 'route=local\nparent_home=%s\n' "$middle" > "$child/.fm-secondmate-parent"
+  printf 'kind=secondmate\nhome=%s\n' "$middle" > "$home/state/middle.meta"
+  printf 'kind=secondmate\nhome=%s\n' "$child" > "$middle/state/child.meta"
+  printf -- '- middle - Middle (home: %s; scope: test; projects: none; added 2026-01-01)\n' "$middle" > "$home/data/secondmates.md"
+  printf -- '- remote - Remote (host: elsewhere; root: /remote; home: %s; scope: test; projects: none; added 2026-01-01)\n' "$remote" >> "$home/data/secondmates.md"
+  printf -- '- child - Child (home: %s; scope: test; projects: none; added 2026-01-01)\n' "$child" > "$middle/data/secondmates.md"
+  cp "$middle/data/secondmates.md" "$remote/data/secondmates.md"
+  for rule in 'Always one.' 'Always two.' 'Always three.'; do
+    printf '%s' "$rule" | FM_CAPTAIN_MEMORY_PUSH=1 python3 "$dir/bin/fm_captain_memory.py" capture --home "$child" --source t >/dev/null
+  done
+  for i in $(seq 1 400); do
+    [ -f "$middle/push-completed" ] && break
+    sleep 0.1
+  done
+  for h in "$home" "$middle"; do
+    [ "$(wc -l < "$h/pushes" 2>/dev/null | tr -d ' ')" = 1 ] || fail "three rules must share one push per parent home"
+  done
+  for h in "$middle" "$child"; do
+    cmp -s "$home/data/captain-shared.md" "$h/data/captain-shared.md" || fail "shared rules must reach nested homes"
+    assert_contains "$(python3 "$dir/bin/fm_captain_memory.py" recall --home "$h")" 'Always three.' "nested homes recall the new rule"
+  done
+  [ ! -e "$child/pushes" ] || fail "leaf homes need no push"
+  [ ! -e "$remote/pushes" ] || fail "remote registry rows are not walked locally"
+  pass "captain memory: debounced fleet push reaches nested local homes without walking remote homes"
 }
 
 test_mate_homes_route_to_the_right_file() {

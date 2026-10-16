@@ -192,10 +192,30 @@ def schedule_push(home):
         pending.parent.mkdir(parents=True, exist_ok=True)
         pending.write_text('%d\n' % time.time())
         subprocess.Popen(
-            ['bash', '-c', 'sleep "$1"; rm -f "$2"; exec "$3"', 'fm-captain-memory-push',
-             str(PUSH_DELAY), str(pending), str(BIN / 'fm-config-push.sh')],
-            env=dict(os.environ, FM_HOME=str(home)), stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            [sys.executable, str(BIN / 'fm_captain_memory.py'), 'push', '--home', str(home)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def push(args):
+    from fm_report import registry
+    home = Path(args.home).resolve()
+    time.sleep(PUSH_DELAY)
+    (home / 'state' / '.captain-memory-push-pending').unlink(missing_ok=True)
+    todo, seen = [home], set()
+    while todo:
+        current = todo.pop().resolve()
+        if current in seen:
+            continue
+        seen.add(current)
+        rows = list(registry(current).values())
+        if current == home or rows:
+            env = dict(os.environ, FM_HOME=str(current))
+            for name in ('FM_STATE_OVERRIDE', 'FM_DATA_OVERRIDE', 'FM_CONFIG_OVERRIDE'):
+                env.pop(name, None)
+            subprocess.run([str(BIN / 'fm-config-push.sh')], env=env)
+        todo.extend(Path(row['home']) for row in rows if row.get('home') and not row.get('host'))
+    return 0
 
 
 def capture(args):
@@ -379,8 +399,10 @@ def main():
     t.add_argument('--home', required=True)
     u = sub.add_parser('upkeep')
     u.add_argument('--home', required=True)
+    d = sub.add_parser('push')
+    d.add_argument('--home', required=True)
     args = p.parse_args()
-    return {'capture': capture, 'recall': recall, 'prompt': prompt, 'upkeep': upkeep}[args.cmd](args)
+    return {'capture': capture, 'recall': recall, 'prompt': prompt, 'upkeep': upkeep, 'push': push}[args.cmd](args)
 
 
 if __name__ == '__main__':

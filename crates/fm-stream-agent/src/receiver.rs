@@ -3,11 +3,12 @@
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 pub enum Decision {
     Legacy,
@@ -92,6 +93,94 @@ fn with_deck_images(text: &str) -> String {
         }
     }
     out.join("\n")
+}
+fn code_file(name: &str) -> Option<PathBuf> {
+    std::env::var_os("FM_STREAM_CODE_ROOT")
+        .map(|root| PathBuf::from(root).join("bin").join(name))
+        .filter(|path| path.is_file())
+        .or_else(|| {
+            std::env::current_exe()
+                .ok()?
+                .ancestors()
+                .map(|root| root.join("bin").join(name))
+                .find(|path| path.is_file())
+        })
+}
+fn memory_block(script: &Path, home: &Path, query: &str, room: usize) -> Option<String> {
+    let mut child = Command::new("python3")
+        .arg(script)
+        .arg("recall")
+        .arg("--home")
+        .arg(home)
+        .arg("--query")
+        .arg(query)
+        .arg("--max-bytes")
+        .arg(room.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let stdout = child.stdout.take()?;
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = send.send(stdout.take(8001).read_to_end(&mut bytes).map(|_| bytes));
+    });
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let success = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status.success(),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break false;
+            }
+        }
+    };
+    if !success {
+        return None;
+    }
+    let bytes = receive
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .ok()?
+        .ok()?;
+    if bytes.len() > room.min(8000) {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
+}
+fn with_memory(home: &Path, text: &str) -> String {
+    let mut body = String::new();
+    let mut rest = text;
+    while let Some((before, after)) = rest.split_once("[fm-captain-memory]") {
+        body.push_str(before);
+        rest = after
+            .split_once("[/fm-captain-memory]")
+            .map_or("", |(_, after)| after);
+    }
+    body.push_str(rest);
+    let room = 65536usize.saturating_sub(body.len() + 2);
+    if room > 0 {
+        if let Some(block) = code_file("fm_captain_memory.py").and_then(|script| {
+            memory_block(
+                &script,
+                home,
+                &body.chars().take(2000).collect::<String>(),
+                room,
+            )
+        }) {
+            let block = block.trim_end_matches('\n');
+            if !block.is_empty() {
+                body.push_str("\n\n");
+                body.push_str(block);
+            }
+        }
+    }
+    body
 }
 fn hash(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
@@ -241,21 +330,11 @@ impl Receiver {
     }
     fn enqueue(&self, binding: &Value, text: &str) -> io::Result<PathBuf> {
         // Keep allocation/format/idempotency under the existing inbox owner.
-        let library = std::env::var_os("FM_STREAM_CODE_ROOT")
-            .map(|root| PathBuf::from(root).join("bin/fm-task-inbox-lib.sh"))
-            .filter(|path| path.is_file())
-            .or_else(|| {
-                std::env::current_exe()
-                    .ok()?
-                    .ancestors()
-                    .map(|root| root.join("bin/fm-task-inbox-lib.sh"))
-                    .find(|path| path.is_file())
-            })
-            .ok_or_else(|| {
-                io::Error::other(
-                    "task inbox writer unavailable; set FM_STREAM_CODE_ROOT to the repository root",
-                )
-            })?;
+        let library = code_file("fm-task-inbox-lib.sh").ok_or_else(|| {
+            io::Error::other(
+                "task inbox writer unavailable; set FM_STREAM_CODE_ROOT to the repository root",
+            )
+        })?;
         let body = format!(
             "[stream-order {}]\nNative Deck delivery only: do not execute this source as ordinary steering. Retain it until native guidance instructs acknowledgement.\n{text}",
             serde_json::to_string(binding).map_err(io::Error::other)?
@@ -511,8 +590,9 @@ impl Receiver {
         let handled = projection.join("handled").join(&name);
         let rejected = projection.join("rejected").join(&name);
         if !message.exists() && !handled.exists() && !rejected.exists() {
-            if self
-                .active()?
+            let active = self.active()?;
+            if active
+                .as_ref()
                 .is_none_or(|a| a["active"] != true || a["turn"] != binding["turn"])
             {
                 return Ok(Decision::pending(
@@ -605,6 +685,13 @@ impl Receiver {
                 if text.trim().is_empty() || guidance.len() > 65536 {
                     break;
                 }
+                let home = active
+                    .as_ref()
+                    .and_then(|a| a["home"].as_str())
+                    .filter(|home| !home.is_empty())
+                    .map(Path::new)
+                    .unwrap_or_else(|| self.state.parent().unwrap());
+                let guidance = with_memory(home, &guidance);
                 atomic(&projection.join(name), guidance.as_bytes())?;
                 floor = number;
             }
@@ -764,15 +851,118 @@ mod tests {
             );
         }
     }
+    fn python_prompt(home: &Path, text: &str) -> String {
+        let mut child = Command::new("python3")
+            .arg(code_file("fm_captain_memory.py").unwrap())
+            .args(["prompt", "--home"])
+            .arg(home)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(text.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap()
+    }
+    #[test]
+    fn native_memory_matches_python_and_fails_open() {
+        let lab = Lab::new();
+        fs::create_dir_all(lab.0.join("data")).unwrap();
+        let preferences = lab.0.join("data/captain-shared.md");
+        fs::write(
+            &preferences,
+            "- 2026-01-01 Always quote the authentic olá rule.\n",
+        )
+        .unwrap();
+        for text in [
+            "Apply this correction.\n[fm-captain-memory]stale[/fm-captain-memory]\nKeep this.",
+            "Apply this correction.[fm-captain-memory]stale[/fm-captain-memory][fm-captain-memory]stale[/fm-captain-memory]",
+            "Apply this correction.[fm-captain-memory]unclosed",
+            &"é".repeat(32500),
+            &"x".repeat(65535),
+        ] {
+            let expected = python_prompt(&lab.0, text);
+            assert_eq!(with_memory(&lab.0, text), expected);
+            assert!(expected.len() <= 65536);
+            assert!(!expected.contains("stale"));
+        }
+        let receiver = Receiver::from_status(
+            lab.0.join("state/task.status").to_str().unwrap(),
+            &"e".repeat(32),
+        )
+        .unwrap();
+        fs::create_dir_all(&receiver.state).unwrap();
+        start(&receiver, "worker");
+        let text = "é".repeat(32000);
+        assert!(matches!(
+            receiver
+                .apply(
+                    "worker-order",
+                    &receiver.endpoint,
+                    &text,
+                    || true,
+                    false,
+                    &mut json!({}),
+                    "worker-command",
+                    false
+                )
+                .unwrap(),
+            Decision::Pending(_)
+        ));
+        let published = fs::read_to_string(receiver.root.join("worker/1.msg")).unwrap();
+        assert_eq!(
+            published,
+            python_prompt(
+                &lab.0,
+                &receiver.guidance(&receiver.inbox.join("001.msg"), &text)
+            )
+        );
+        assert!(published.contains("Always quote the authentic olá rule."));
+        assert!(published.len() <= 65536);
+        fs::write(&preferences, [0xff]).unwrap();
+        assert_eq!(
+            with_memory(&lab.0, "Keep this.[fm-captain-memory]stale"),
+            "Keep this."
+        );
+        let script = lab.0.join("recall.py");
+        for program in [
+            "raise SystemExit(1)",
+            "print('x' * 8001)",
+            "import sys; sys.stdout.buffer.write(b'\\xff')",
+        ] {
+            fs::write(&script, program).unwrap();
+            assert!(memory_block(&script, &lab.0, "test", 8000).is_none());
+        }
+        fs::write(&script, "import time; time.sleep(10)").unwrap();
+        let start = Instant::now();
+        assert!(memory_block(&script, &lab.0, "test", 8000).is_none());
+        assert!(start.elapsed() < Duration::from_secs(4));
+    }
     #[test]
     fn newer_bridge_order_flushes_earlier_captain_source() {
         let lab = Lab::new();
         let receiver = lab.receiver();
+        let home = lab.0.join("active-home");
+        fs::create_dir_all(home.join("data")).unwrap();
+        let preferences = home.join("data/captain-shared.md");
+        fs::write(&preferences, "- Always quote the active home's rule.\n").unwrap();
         start(&receiver, "original");
+        save(
+            &receiver.root.join("active.json"),
+            &json!({"turn":"original","active":true,"supported":true,"home":home}),
+        )
+        .unwrap();
         let body = "[fm-from-firstmate]\u{2063}corr=test [fm-captain-direct]\u{2063}note\n\nApply the earlier correction.\r\n";
+        let incoming = format!("{body}[fm-captain-memory]stale recall[/fm-captain-memory]");
         fs::write(
             receiver.inbox.join("001.msg"),
-            format!("schema=fm-task-inbox.v1\nat=x\n--\n{body}"),
+            format!("schema=fm-task-inbox.v1\nat=x\n--\n{incoming}"),
         )
         .unwrap();
         let mut reservation = json!({});
@@ -793,7 +983,44 @@ mod tests {
         ));
         let earlier = fs::read_to_string(receiver.root.join("original/1.msg")).unwrap();
         assert!(earlier.starts_with(body));
-        assert!(receiver.root.join("original/2.msg").is_file());
+        assert_eq!(
+            earlier,
+            python_prompt(
+                &home,
+                &receiver.guidance(&receiver.inbox.join("001.msg"), &incoming)
+            )
+        );
+        let later = fs::read_to_string(receiver.root.join("original/2.msg")).unwrap();
+        for message in [&earlier, &later] {
+            assert!(message.contains("Always quote the active home's rule."));
+            assert_eq!(message.matches("[fm-captain-memory]").count(), 1);
+            assert!(!message.contains("stale recall"));
+            assert!(message.len() <= 65536);
+        }
+        fs::write(&preferences, "- Never miss the latest recorded rule.\n").unwrap();
+        let mut reservation = json!({});
+        assert!(matches!(
+            receiver
+                .apply(
+                    "latest",
+                    &receiver.endpoint,
+                    "A fresh steer.",
+                    || true,
+                    false,
+                    &mut reservation,
+                    "latest-command",
+                    false
+                )
+                .unwrap(),
+            Decision::Pending(_)
+        ));
+        let latest = fs::read_to_string(receiver.root.join("original/3.msg")).unwrap();
+        assert!(latest.contains("Never miss the latest recorded rule."));
+        assert!(!latest.contains("Always quote the active home's rule."));
+        assert_eq!(
+            fs::read_to_string(receiver.root.join("original/1.msg")).unwrap(),
+            earlier
+        );
         assert!(
             receiver.inbox.join("001.msg").is_file(),
             "publication acknowledged the ordinary source"
