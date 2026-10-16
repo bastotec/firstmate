@@ -15,8 +15,8 @@
 # `parked` means a no-mistakes review gate or repair cap. state/<id>.parked-run records run=, step=,
 # since=<first observed parked epoch>, nudged=<wake epoch or 0>, escalated=<0|1>:
 #   - parked for FM_PARKED_RUN_SECS (3600): one `check:` wake to this home's own
-#     supervisor, which decides it now - one fix round through
-#     `no-mistakes axi respond`, or a fresh follow-up run
+#     supervisor, which decides it now and directs the worker to execute one
+#     fix round or a fresh follow-up run
 #     (.agents/skills/ask-user-authority/SKILL.md owns the decision);
 #   - still parked FM_PARKED_RUN_SECS after that nudge: one escalation. A second
 #     mate appends "blocked [key=parked-run-<mate>-<worker>]: ..." to its parent
