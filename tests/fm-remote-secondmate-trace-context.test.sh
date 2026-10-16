@@ -166,25 +166,18 @@ seed_stream_config() {  # <remote-home>
   printf 'manual\n' > "$1/config/backlog-backend"
 }
 
-# The hub as an operator on the parent sees it (through a tunnel in the fleet).
-hub_state() {  # <target>
+# Remove <id>'s endpoint with an agent-confirmed kill before reusing its label.
+# fm-control exit preserves the terminal: a `dead` agent classification can
+# describe its bare shell, not a closed endpoint, and cannot license a respawn.
+stop_remote_mate() {  # <id>
+  local endpoint_target
+  endpoint_target=$(sed -n 's/^remote_target=//p' "$PARENT/state/$1.meta" | tail -1)
   (
     export FM_STREAM_HUB="$HUB_URL" FM_STREAM_TOKEN="$HUB_TOKEN" FM_HOME="$PARENT" FM_ROOT="$ROOT"
     # shellcheck source=bin/fm-backend.sh
     . "$ROOT/bin/fm-backend.sh"
-    fm_backend_agent_state stream "$1"
-  )
-}
-
-# Stop <id>'s agent through the parent's control plane and wait until the hub
-# reports its endpoint dead: the previous endpoint is gone, so the next spawn is
-# an ordinary relaunch.
-stop_remote_mate() {  # <id>
-  local target waited=0
-  target=$(sed -n 's/^remote_target=//p' "$PARENT/state/$1.meta" | tail -1)
-  remote_env "$ROOT/bin/fm-control.sh" "$1" exit >/dev/null 2>&1 || fail "could not stop remote mate $1"
-  while [ "$(hub_state "$target")" != dead ] && [ "$waited" -lt 300 ]; do sleep 0.1; waited=$((waited + 1)); done
-  [ "$(hub_state "$target")" = dead ] || fail "remote mate $1's endpoint $target did not stop"
+    fm_backend_kill stream "$endpoint_target"
+  ) || fail "could not remove remote mate $1's endpoint $endpoint_target"
 }
 
 # turn_env <remote-home> <key>: what the newest Deck turn run from that home

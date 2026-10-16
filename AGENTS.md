@@ -242,6 +242,9 @@ These safety facts stay inline for both:
 
 ## 9. Escalation and captain etiquette
 
+To request a phone notification through Fleet Town's feed while the captain is away, use [`bin/fm-notify.sh`](bin/fm-notify.sh) only for a result he asked to be told about or a blocker; mark blockers urgent, never notify routine progress, and never duplicate an open decision card's notification.
+Its header owns delivery prerequisites and guards; a notice supplements, never replaces, the required parent-channel report from a secondmate home.
+
 **Talk in outcomes, not mechanics.**
 Every captain-facing message translates internal state into the project outcome, consequence, and next decision, using the captain's nouns: the investigation, the scout, the fix, the PR, the review, the decision, the blocker, the credential, the local copy, the worker, or the project.
 Do not expose internal terms such as startup machinery, locks, polling, task ids, promotion, harness or backend names, context budgets, delivery-mode names, autonomy flags, wake types, status prefixes, decision holds, pipeline step names, validation-state labels, or compressed safety labels; scout and second mate are accepted house vocabulary.
