@@ -24,15 +24,15 @@ for kind in ship scout; do
 done
 pass "ships and scouts must escalate through their mate"
 
-out=$(notify --title "Report ready" --link https://github.com/a/b/pull/7 "The VIP report is done.")
+out=$(notify --title "Report ready" "The VIP report is done.")
 [[ "$out" =~ ^notice=(nt-[0-9]{8}T[0-9]{6}-[0-9a-f]{6})\ push$ ]] || fail "unexpected: $out"
 id=${BASH_REMATCH[1]}
 rec="$H/state/notices/$id.json"
-assert_equals '{"version": 1, "title": "Report ready", "body": "The VIP report is done.", "urgent": false, "quiet": false, "link": "https://github.com/a/b/pull/7"}' \
+assert_equals '{"version": 1, "title": "Report ready", "body": "The VIP report is done.", "urgent": false, "quiet": false}' \
   "$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); [r.pop(k) for k in ("id","created")]; print(json.dumps(r))' "$rec")" "the record the feed and the app read"
 assert_equals '0o600' "$(python3 -c 'import os,stat,sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' "$rec")" \
   "captain-private notice contents stay owner-only under umask 022"
-pass "a notice is one private record with its title, body, urgency and link"
+pass "a notice is one private record with its title, body and urgency"
 
 out=$(AT=$((NOON + 60)) notify --title "report  ready" "The VIP report is done.")
 assert_equals "notice=duplicate: $id" "$out" "the same notice within 30 minutes"
@@ -51,13 +51,20 @@ echo off > "$H/config/notify-quiet"
 assert_contains "$(AT=$((NOON + 12 * 3600 + 9)) notify "quiet off")" " push" "quiet hours can be turned off"
 pass "quiet hours keep plain notices off the phone, not urgent ones"
 
-AT=$((NOON + 9 * 86400)) notify "a week later" >/dev/null
-[ ! -e "$rec" ] || fail "a week-old notice was kept"
-set +e; out=$(notify --link http://x "body"); rc=$?; set -e
-expect_code 2 "$rc" "a plain-http link"
+cp "$rec" "$T/original.json"
+out=$(AT=$((NOON + 9 * 86400)) notify --title "Report ready" "The VIP report is done.")
+assert_contains "$out" " push" "old notices do not suppress a new send"
+[ "$out" != "notice=$id push" ] || fail "a new send reused the old notice"
+cmp "$T/original.json" "$rec" || fail "a later send changed or removed an old notice"
+pass "old notices remain available to the feed without extending guard windows"
+
+set +e; out=$(notify --link https://example.com "body"); rc=$?; set -e
+expect_code 2 "$rc" "an unsupported destination option"
+set +e; out=$(notify - <<< "body from stdin"); rc=$?; set -e
+expect_code 2 "$rc" "an unsupported stdin body"
 set +e; out=$(notify ""); rc=$?; set -e
 expect_code 2 "$rc" "an empty body"
-pass "old notices go, and bad input is refused"
+pass "unsupported input modes and empty bodies are refused"
 
 python3 - "$N" "$T/concurrent" "$NOON" <<'PY'
 import concurrent.futures, json, os, pathlib, subprocess, sys, threading
