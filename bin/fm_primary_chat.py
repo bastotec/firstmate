@@ -385,7 +385,11 @@ def capture_captain_memory(home, body, source):
 
 def with_captain_memory(home, body):
     """Give every turn the captain's recorded preferences, sized to its room."""
-    body = re.sub(r'\[fm-captain-memory\].*?(?:\[/fm-captain-memory\]|\Z)', '', body, flags=re.S)
+    while True:
+        quoted = re.sub(r'(\[[^\]]*?)fm-captain-memory(?!-quoted)', r'\1fm-captain-memory-quoted', body, flags=re.I | re.A)
+        if quoted == body:
+            break
+        body = quoted
     try:
         from fm_captain_memory import with_memory
         return with_memory(home, body, max_bytes=MAX_BODY)

@@ -323,7 +323,11 @@ def recall_block(home, query='', max_bytes=None):
 
 
 def with_memory(home, body, max_bytes=65536):
-    body = re.sub(re.escape(OPEN) + r'.*?(?:' + re.escape(CLOSE) + r'|\Z)', '', body, flags=re.S)
+    while True:
+        quoted = re.sub(r'(\[[^\]]*?)fm-captain-memory(?!-quoted)', r'\1fm-captain-memory-quoted', body, flags=re.I | re.A)
+        if quoted == body:
+            break
+        body = quoted
     room = max_bytes - len(body.encode('utf-8')) - 2
     block = recall_block(home, body[:2000], room).rstrip('\n')
     return body + '\n\n' + block if block else body

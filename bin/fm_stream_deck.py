@@ -185,7 +185,11 @@ class Receiver:
                         continue
                 elif directory != self.inbox or not supervisor_direct(record, captain_lane(self.state, self.task)):
                     continue
-                body = re.sub(r'\[fm-captain-memory\].*?(?:\[/fm-captain-memory\]|\Z)', '', body, flags=re.S)
+                while True:
+                    quoted = re.sub(r'(\[[^\]]*?)fm-captain-memory(?!-quoted)', r'\1fm-captain-memory-quoted', body, flags=re.I | re.A)
+                    if quoted == body:
+                        break
+                    body = quoted
                 if not bridge:
                     body = with_deck_images(body)
                 ordinary = self.inbox / source.name

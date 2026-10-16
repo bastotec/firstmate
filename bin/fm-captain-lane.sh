@@ -340,7 +340,12 @@ $prompt"
   fi
   prompt=$(printf '%s' "$prompt" | python3 -c '
 import re, sys
-body = re.sub(r"\[fm-captain-memory\].*?(?:\[/fm-captain-memory\]|\Z)", "", sys.stdin.read(), flags=re.S)
+body = sys.stdin.read()
+while True:
+    quoted = re.sub(r"(\[[^\]]*?)fm-captain-memory(?!-quoted)", r"\1fm-captain-memory-quoted", body, flags=re.I | re.A)
+    if quoted == body:
+        break
+    body = quoted
 sys.path.insert(0, sys.argv[1])
 try:
     from fm_captain_memory import with_memory
