@@ -15,7 +15,11 @@ parked-run rules read the findings without asking no-mistakes again:
 
 parked_since is the Unix time in seconds when this run was first seen parked
 at this step; it is kept across rewrites and restarts when the run or step changes.
-finding_ids contains every finding's id in input order, including findings
+findings keeps at most 20 entries, retaining one repair-budget marker from
+beyond the limit in place of the last entry when needed.
+Descriptions are clipped to 2000 characters, other finding fields to 300,
+risk_rationale to 600, and risk to 20; clipped text ends in '...'.
+finding_ids contains every finding's full id in input order, including findings
 omitted from the bounded findings list.
 repair_budget_exhausted reports a repair-budget marker finding or help saying
 the repair budget or authority is exhausted; it is not permission to repair.
