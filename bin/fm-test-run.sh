@@ -653,6 +653,8 @@ portable_serial_weight_hints() {
 # 38444133335 (2026-10-13), with three family-phase workers.
 # fm-approval was measured in green serial shard 4 of run 38683021067
 # (2026-10-15), with three family-phase workers.
+# fm-machine was measured in green serial shard 3 of run 38836372241
+# (2026-10-16), with three family-phase workers.
 # The five tests/fm-watch-triage*.test.sh suites were one 694233 ms script
 # before run 37413095868; their hints start from each suite's share of that,
 # from the per-case output timestamps of run 37401433503's serial shard 1.
@@ -707,6 +709,7 @@ tests/fm-lint-workflows.test.sh 1203
 tests/fm-live-gate.test.sh 2469
 tests/fm-mail-check.test.sh 8405
 tests/fm-mail.test.sh 11718
+tests/fm-machine.test.sh 22210
 tests/fm-mate-mail.test.sh 26523
 tests/fm-model-chain.test.sh 30090
 tests/fm-nm-test-contract.test.sh 1135
