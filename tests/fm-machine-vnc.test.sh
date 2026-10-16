@@ -114,4 +114,12 @@ expect_code 1 "$rc" "unknown machine"
 assert_contains "$out" "refuse: not a known machine: ghost" "unknown machine refusal"
 pass "links, settings and machines are validated"
 
+stub xwininfo 'case "$*" in *-children*) printf "  2 children:\n     0x200003 \"PR #7 - Google Chrome\": (\"google-chrome\" \"Google-chrome\")  1599x999+0+0  +0+0\n     0x200009 \"tip\": (\"google-chrome\" \"Google-chrome\")  40x20+5+5  +5+5\n" ;; *) printf "  Width: 1600\n  Height: 1000\n" ;; esac'
+out=$(vnc windows local)
+assert_equals '{"display": {"w": 1600, "h": 1000}, "windows": [{"id": 2097155, "app": "Google-chrome", "title": "PR #7 - Google Chrome", "x": 0, "y": 0, "w": 1599, "h": 999}]}' "$out" "the display's windows, without tooltips"
+assert_equals "raised=nothing-to-do" "$(vnc raise local 2097155)" "Linux has only the one browser window"
+set +e; out=$(vnc raise local 12x); rc=$?; set -e
+expect_code 1 "$rc" "a window id that is not a number"
+pass "windows lists the display's windows for the viewer to crop to"
+
 echo "ALL TESTS PASSED"
