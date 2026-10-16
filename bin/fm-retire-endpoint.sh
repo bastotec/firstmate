@@ -63,7 +63,12 @@
 # Every OTHER refusal stands and stops the retirement, because each protects
 # something no retirement has a say over: an outcome that never reached the
 # parent channel and must stay retryable, a backlog transition that cannot be
-# replayed, a runtime refusal only --override-runtime-refusal proceeds past.
+# replayed, a runtime refusal only --override-runtime-refusal proceeds past,
+# and a missing worktree identity - unless the record carries a recorded slot
+# handover (worktree_reassigned_by) and passes cleanup's four-proof
+# record-only reassigned-slot gate, which bin/fm-teardown.sh owns.
+# --finished never reaches that gate: its ship preflight requires an owned
+# worktree.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

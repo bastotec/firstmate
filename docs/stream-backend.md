@@ -484,6 +484,8 @@ What operator mode touches, and what it does not:
 - When cleanup's unconfirmed-kill gate refuses, the records are retired anyway on your assertion alone, for an endpoint whose backend could not say whether it stopped.
   The backend answering positively that the endpoint is still present after its kill is the separate runtime refusal `--override-runtime-refusal` proceeds past; without that flag it stands and nothing is retired.
   Cleanup cannot tell which case you are in on the unconfirmed path, so a worker may still be running behind a record retired that way, and stopping it is yours to do.
+- Missing worktree identity is not an operator override: cleanup alone may accept a ship record through its [record-only reassigned-slot gate](../bin/fm-teardown.sh), which owns the complete proof and preservation contract.
+  An assertion of stopped status cannot replace that gate's evidence, and `--finished` does not accept this record shape.
 - Every other cleanup refusal stands and nothing is retired, such as an outcome that has not reached the parent channel or a backlog transition that cannot be replayed.
   A cleanup that fails only after it has already removed the durable task record reports that partial state instead of claiming nothing was retired.
 

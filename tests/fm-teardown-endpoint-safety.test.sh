@@ -7,6 +7,7 @@ set -u
 
 # shellcheck source=tests/fixtures.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
+fm_git_identity
 
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
 TMP_ROOT=$(fm_test_tmproot fm-teardown-endpoint-safety)
@@ -1059,6 +1060,8 @@ test_own_and_absent_slot_claims_still_tear_down() {
   run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr" \
     || fail "teardown of a task holding its own slot claim failed: $(cat "$dir/stderr")"
   assert_absent "$dir/home/state/$id.meta" "own-claim teardown left the task record"
+  assert_contains "$(cat "$dir/stdout")" ", worktree $dir/worktree)" \
+    "own-claim teardown should report normal worktree completion"
   assert_absent "$dir/pool/1/.fm-slot-owner" "own-claim teardown left its spent slot claim behind"
   grep -Fq "treehouse <return>" "$dir/runtime.log" \
     || fail "own-claim teardown did not return its own pool slot: $(cat "$dir/runtime.log")"
@@ -1072,6 +1075,8 @@ test_own_and_absent_slot_claims_still_tear_down() {
   run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr" \
     || fail "teardown of an unclaimed slot failed: $(cat "$dir/stderr")"
   assert_absent "$dir/home/state/$id.meta" "unclaimed-slot teardown left the task record"
+  assert_contains "$(cat "$dir/stdout")" ", worktree $dir/worktree)" \
+    "unclaimed-slot teardown should report normal worktree completion"
   grep -Fq "treehouse <return>" "$dir/runtime.log" \
     || fail "unclaimed-slot teardown did not return its pool slot: $(cat "$dir/runtime.log")"
 
@@ -1177,8 +1182,608 @@ SH
   pass "fm-retire-endpoint: after lock contention only unchanged records retire; replacements and vanished records leave the backlog untouched"
 }
 
+# --- Record-only retirement of a record whose pool slot was reassigned -------
+#
+# The four-proof gate: a record with no worktree= but a recorded
+# worktree_reassigned_by=<other-id> may retire record-only ONLY with positive
+# proof that its former slot was reassigned to a live matching owner, its work
+# landed per its own merged PR with final branch coverage, and its worker
+# stopped on recorded evidence. Anything less keeps today's identity refusal,
+# and the reassigned slot's current owner - its claim, its copy, its processes
+# - is never touched in either case.
+
+# A landed-evidence fixture: a project clone whose default branch carries the
+# task branch's content, a merged PR recorded on the dead record, and forge
+# stubs answering for that PR. <case> is prepared with make_case +
+# mark_case_as_treehouse_pool; the dead task's worktree is already gone (that
+# is the premise), so the branch lives only in the project's refs.
+seed_reassigned_landed_pr() {  # <case> [pr-state] [replay] [multi-commit]
+  local dir=$1 pr_state=${2:-MERGED} replay=${3:-0} multi_commit=${4:-0} default pr_head
+  default=$(git -C "$dir/project" symbolic-ref --quiet --short HEAD)
+  if [ "$replay" = retained ]; then
+    printf 'original work\n' > "$dir/project/landed.txt"
+    git -C "$dir/project" add landed.txt
+    git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+      commit -qm 'baseline before task work'
+  fi
+  git -C "$dir/project" checkout -q -B fm/dead-task
+  printf 'landed work\n' > "$dir/project/landed.txt"
+  git -C "$dir/project" add landed.txt
+  git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+    commit -qm 'dead task work'
+  if [ "$multi_commit" = 1 ]; then
+    printf 'second task patch\n' > "$dir/project/task.txt"
+    git -C "$dir/project" add task.txt
+    git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+      commit -qm 'second dead task commit'
+  fi
+  pr_head=$(git -C "$dir/project" rev-parse HEAD)
+  if [ "$replay" != 0 ]; then
+    git -C "$dir/project" checkout -q "$default"
+    printf 'new default work\n' > "$dir/project/default.txt"
+    git -C "$dir/project" add default.txt
+    git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+      commit -qm 'default advanced before pipeline replay'
+    if [ "$replay" = retained ]; then
+      git -C "$dir/project" checkout -q fm/dead-task
+      git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+        rebase -q "$default"
+    else
+      git -C "$dir/project" checkout -qb replayed-pr
+      git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+        cherry-pick "$pr_head" >/dev/null
+      pr_head=$(git -C "$dir/project" rev-parse HEAD)
+    fi
+  fi
+  printf '%s\n' "$pr_head" > "$dir/pr-head"
+  # Squash-land the branch's content on the default branch, then delete the
+  # branch: the common flow where the branch's own commits are reachable
+  # nowhere. A bare origin carries the landed default branch, because
+  # teardown's default-branch resolution reads origin/HEAD. The worktree
+  # checkout stays on the pool's detached fixture commit, so seeding never
+  # disturbs the claimant's copy.
+  git -C "$dir/project" checkout -q "$default"
+  if [ "$replay" = 1 ]; then
+    git -C "$dir/project" merge --squash -q replayed-pr >/dev/null
+    git -C "$dir/project" branch -q -D replayed-pr
+  elif [ "$replay" = retained ]; then
+    git -C "$dir/project" merge --squash -q "$pr_head" >/dev/null
+  else
+    git -C "$dir/project" merge --squash -q fm/dead-task >/dev/null
+    git -C "$dir/project" branch -q -D fm/dead-task
+  fi
+  git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+    commit -qm 'squash land dead task'
+  git init -q --bare "$dir/origin.git"
+  git -C "$dir/project" remote add origin "$dir/origin.git"
+  git -C "$dir/project" push -q origin "$default"
+  if [ "$replay" = retained ]; then
+    git -C "$dir/project" push -q origin fm/dead-task
+    git -C "$dir/project" push -q origin --delete fm/dead-task
+  fi
+  git -C "$dir/project" remote set-head origin "$default" 2>/dev/null || true
+  git -C "$dir/project" fetch -q origin 2>/dev/null || true
+  printf '%s\n' "$dir/origin.git" > "$dir/head-remote"
+  cat > "$dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+case "\${1:-} \${2:-}" in
+  "pr view")
+    case " \$* " in
+      *"state,headRefOid,headRefName,headRepository,url"*)
+        printf '%s\t%s\t%s\t%s\n' '$pr_state' '$pr_head' 'fm/dead-task' "\$(cat '$dir/head-remote')"
+        exit 0 ;;
+      *"--json state "*)
+        printf '%s\n' '$pr_state'
+        exit 0 ;;
+    esac
+    ;;
+esac
+echo "error: pull request not found" >&2
+exit 1
+SH
+  cat > "$dir/fakebin/gh-axi" <<SH
+#!/usr/bin/env bash
+case "\${1:-} \${2:-}" in
+  "pr view")
+    printf '%s\n' 'pull_request:' '  state: $pr_state'
+    exit 0 ;;
+esac
+exit 0
+SH
+  chmod +x "$dir/fakebin/gh" "$dir/fakebin/gh-axi"
+}
+
+# The dead record shape: endpoint identity intact, worktree= gone, the handover
+# recorded. The fake endpoint is closed by its agent, which is the recorded
+# stop evidence proof (d) reads.
+write_reassigned_meta() {  # <case> <id> <claimant> [extra-meta...]
+  local dir=$1 id=$2 claimant=$3
+  shift 3
+  fm_write_meta "$dir/home/state/$id.meta" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
+    "project=$dir/project" "kind=ship" "mode=no-mistakes" \
+    "spawn_gen=gen-$id" "worktree_reassigned_by=$claimant" "$@"
+}
+
+# The claimant's record: a live task holding the slot the pool handed it.
+write_claimant_meta() {  # <case> <claimant>
+  local dir=$1 claimant=$2
+  fm_write_meta "$dir/home/state/$claimant.meta" \
+    $(fm_test_stream_task "$dir/home/state" "$claimant") \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout" \
+    "spawn_gen=gen-$claimant"
+}
+
+assert_reassigned_slot_owner_untouched() {  # <case> <claimant>
+  local dir=$1 claimant=$2
+  assert_present "$dir/pool/1/.fm-slot-owner" \
+    "the reassigned slot's owner claim was removed"
+  assert_contains "$(cat "$dir/pool/1/.fm-slot-owner")" "task=$claimant" \
+    "the reassigned slot's owner claim was rewritten"
+  assert_present "$dir/pool/1/project/.git" \
+    "the reassigned slot's checkout was removed"
+  assert_present "$dir/home/state/$claimant.meta" \
+    "the reassigned slot's owner lost its own task record"
+  ! grep -Fq "treehouse <return>" "$dir/runtime.log" \
+    || fail "the reassigned slot was returned to the pool: $(cat "$dir/runtime.log")"
+}
+
+test_reassigned_slot_record_retires_only_on_all_four_proofs() {
+  local dir id=dead-task claimant=live-claimant target rc
+
+  # All four proofs hold: the record retires, record-only.
+  dir=$(make_case reassign-full)
+  mark_case_as_treehouse_pool "$dir"
+  seed_reassigned_landed_pr "$dir"
+  write_reassigned_meta "$dir" "$id" "$claimant" \
+    "pr=https://github.com/example/repo/pull/7"
+  write_claimant_meta "$dir" "$claimant"
+  claim_pool_slot "$dir" "$claimant" "$dir/home"
+  target=$(fm_test_stream_target_of "$dir/home/state" "$id")
+  fm_test_fake_stream_set "$target" '{"closed_by": "agent"}'
+
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  [ "$rc" -eq 0 ] || fail "a fully proved reassigned-slot record did not retire: $(cat "$dir/stderr")"
+  assert_absent "$dir/home/state/$id.meta" \
+    "a fully proved reassigned-slot record kept its task record"
+  assert_reassigned_slot_owner_untouched "$dir" "$claimant"
+  assert_contains "$(cat "$dir/stderr")" "$claimant" \
+    "the record-only retirement should name the slot's current owner"
+  assert_contains "$(cat "$dir/stdout")" "record-only" \
+    "the completion line should say the retirement was record-only"
+
+  # Proof (d) missing - the endpoint is not provably stopped - keeps the
+  # refusal and retires nothing.
+  dir=$(make_case reassign-live-endpoint)
+  mark_case_as_treehouse_pool "$dir"
+  seed_reassigned_landed_pr "$dir"
+  write_reassigned_meta "$dir" "$id" "$claimant" \
+    "pr=https://github.com/example/repo/pull/7"
+  write_claimant_meta "$dir" "$claimant"
+  claim_pool_slot "$dir" "$claimant" "$dir/home"
+  target=$(fm_test_stream_target_of "$dir/home/state" "$id")
+  fm_test_fake_stream_foreground "$target" deck
+
+  set +e
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a reassigned-slot record with a live endpoint retired anyway"
+  assert_present "$dir/home/state/$id.meta" \
+    "a reassigned-slot record with a live endpoint lost its task record"
+  assert_contains "$(cat "$dir/stderr")" "missing-worktree-identity refusal" \
+    "the missing-stop refusal should say the identity refusal stands"
+  assert_reassigned_slot_owner_untouched "$dir" "$claimant"
+
+  # Proof (c) missing - the PR is not merged - keeps the refusal.
+  dir=$(make_case reassign-open-pr)
+  mark_case_as_treehouse_pool "$dir"
+  seed_reassigned_landed_pr "$dir" OPEN
+  write_reassigned_meta "$dir" "$id" "$claimant" \
+    "pr=https://github.com/example/repo/pull/8"
+  write_claimant_meta "$dir" "$claimant"
+  claim_pool_slot "$dir" "$claimant" "$dir/home"
+  target=$(fm_test_stream_target_of "$dir/home/state" "$id")
+  fm_test_fake_stream_set "$target" '{"closed_by": "agent"}'
+
+  set +e
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a reassigned-slot record with an open PR retired anyway"
+  assert_present "$dir/home/state/$id.meta" \
+    "a reassigned-slot record with an open PR lost its task record"
+  assert_reassigned_slot_owner_untouched "$dir" "$claimant"
+
+  # Proof (c) again, its stricter half: a merged PR whose branch later gained
+  # an unlanded commit is NOT proof the branch's final tip landed. The branch
+  # is recreated from the same base with the landed content plus an extra
+  # unlanded commit, pushed to origin so the branch tip is discoverable; the
+  # forge still answers for the PR head, so only coverage can refuse.
+  dir=$(make_case reassign-later-branch-commit)
+  mark_case_as_treehouse_pool "$dir"
+  pr_tip=$(git -C "$dir/project" rev-parse HEAD)
+  seed_reassigned_landed_pr "$dir"
+  write_reassigned_meta "$dir" "$id" "$claimant" \
+    "pr=https://github.com/example/repo/pull/9"
+  write_claimant_meta "$dir" "$claimant"
+  claim_pool_slot "$dir" "$claimant" "$dir/home"
+  target=$(fm_test_stream_target_of "$dir/home/state" "$id")
+  fm_test_fake_stream_set "$target" '{"closed_by": "agent"}'
+  git -C "$dir/project" checkout -q -B fm/dead-task "$pr_tip"
+  printf 'unlanded later work\n' > "$dir/project/landed.txt"
+  git -C "$dir/project" add landed.txt
+  git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+    commit -qm 'later branch commit that never landed'
+  git -C "$dir/project" push -q origin fm/dead-task
+
+  set +e
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a merged PR with a later unlanded branch commit retired anyway"
+  assert_present "$dir/home/state/$id.meta" \
+    "a merged PR with a later unlanded branch commit lost its task record"
+  assert_contains "$(cat "$dir/stderr")" "final tip is not covered" \
+    "the refusal should name final branch coverage as the missing proof"
+  assert_reassigned_slot_owner_untouched "$dir" "$claimant"
+
+  # Proof (b) missing - the slot's live claim names a third task - keeps the
+  # refusal, and the recorded handover alone authorizes nothing.
+  dir=$(make_case reassign-claim-mismatch)
+  mark_case_as_treehouse_pool "$dir"
+  seed_reassigned_landed_pr "$dir"
+  write_reassigned_meta "$dir" "$id" "$claimant" \
+    "pr=https://github.com/example/repo/pull/7"
+  write_claimant_meta "$dir" "$claimant"
+  claim_pool_slot "$dir" "a-third-task" "$dir/home"
+  target=$(fm_test_stream_target_of "$dir/home/state" "$id")
+  fm_test_fake_stream_set "$target" '{"closed_by": "agent"}'
+
+  set +e
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a recorded handover with a mismatched live claim retired anyway"
+  assert_present "$dir/home/state/$id.meta" \
+    "a recorded handover with a mismatched live claim lost its task record"
+  assert_contains "$(cat "$dir/stderr")" "current owner does not match" \
+    "the refusal should name the live owner mismatch"
+  assert_contains "$(cat "$dir/pool/1/.fm-slot-owner")" "task=a-third-task" \
+    "the mismatched live claim was rewritten"
+  assert_present "$dir/home/state/$claimant.meta" \
+    "the recorded claimant lost its own task record on another's refusal"
+
+  # Proof (a) missing - a record with no worktree= and no recorded handover -
+  # keeps today's unconditional identity refusal.
+  dir=$(make_case reassign-no-handover)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$id.meta" \
+    $(fm_test_stream_task "$dir/home/state" "$id") \
+    "project=$dir/project" "kind=ship" "mode=no-mistakes" "spawn_gen=gen-$id"
+
+  set +e
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "a record with no worktree and no handover retired anyway"
+  assert_present "$dir/home/state/$id.meta" \
+    "a record with no worktree and no handover lost its task record"
+  assert_contains "$(cat "$dir/stderr")" "missing, empty, or ambiguous worktree identity" \
+    "a record with no handover should keep the plain identity refusal"
+
+  # --force lifts none of the four proofs.
+  dir=$(make_case reassign-force)
+  mark_case_as_treehouse_pool "$dir"
+  seed_reassigned_landed_pr "$dir" OPEN
+  write_reassigned_meta "$dir" "$id" "$claimant" \
+    "pr=https://github.com/example/repo/pull/7"
+  write_claimant_meta "$dir" "$claimant"
+  claim_pool_slot "$dir" "$claimant" "$dir/home"
+
+  set +e
+  FM_HOME="$dir/home" FM_ROOT_OVERRIDE="$ROOT" \
+  FM_RUNTIME_LOG="$dir/runtime.log" PATH="$dir/fakebin:$PATH" \
+    "$TEARDOWN" "$id" --force > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "--force retired a reassigned-slot record without its proofs"
+  assert_present "$dir/home/state/$id.meta" \
+    "--force lost a reassigned-slot record without its proofs"
+  assert_reassigned_slot_owner_untouched "$dir" "$claimant"
+
+  pass "fm-teardown: a reassigned-slot record retires record-only on all four proofs and refuses without any of them"
+}
+
+test_reassigned_record_coverage_and_preservation() {
+  local dir id=dead-task claimant=live-claimant target rc scenario pr_head default
+  local real_git local_tip unrelated_tip replay followup multi_commit
+  real_git=$(command -v git)
+  for scenario in local-only local-ahead remote-ahead fetch-failed remote-unreadable \
+      local-unreadable evolved-deleted evolved-retained evolved-remote preserved missing-worker \
+      replayed-local replayed-remote replayed-local-extra replayed-remote-extra \
+      retained-rebase retained-rebase-extra followup-retained-rebase \
+      fork-ahead fork-covered fork-fetch-failed fork-unreadable fork-fetch-raced \
+      fork-scp-covered fork-ssh-covered fork-alias-covered fork-ssh-ahead \
+      followup-local followup-remote followup-replayed-local followup-replayed-remote followup-unlanded \
+      followup-default-local followup-default-remote followup-default-unlanded; do
+    dir=$(make_case "reassign-$scenario")
+    mark_case_as_treehouse_pool "$dir"
+    replay=0
+    multi_commit=0
+    case "$scenario" in replayed-*|followup-replayed-*) replay=1 ;; esac
+    case "$scenario" in retained-rebase*|followup-retained-rebase) replay=retained ;; esac
+    case "$scenario" in followup-default-*) multi_commit=1 ;; esac
+    seed_reassigned_landed_pr "$dir" MERGED "$replay" "$multi_commit"
+    pr_head=$(cat "$dir/pr-head")
+    default=$(git -C "$dir/project" symbolic-ref --quiet --short HEAD)
+    write_reassigned_meta "$dir" "$id" "$claimant" \
+      "pr=https://github.com/example/repo/pull/7"
+    write_claimant_meta "$dir" "$claimant"
+    claim_pool_slot "$dir" "$claimant" "$dir/home"
+    target=$(fm_test_stream_target_of "$dir/home/state" "$id")
+    fm_test_fake_stream_set "$target" '{"closed_by": "agent"}'
+    local_tip=
+    unrelated_tip=
+    case "$scenario" in
+      local-only|local-ahead|remote-ahead|fetch-failed|evolved-retained|evolved-remote|preserved)
+        git -C "$dir/project" branch fm/dead-task "$pr_head"
+        local_tip=$pr_head
+        ;;
+    esac
+    case "$scenario" in
+      local-ahead|remote-ahead|fetch-failed|evolved-remote|preserved)
+        git -C "$dir/project" push -qu origin fm/dead-task
+        ;;
+    esac
+    case "$scenario" in
+      fork-*)
+        git init -q --bare "$dir/fork.git"
+        printf '%s\n' "$dir/fork.git" > "$dir/head-remote"
+        git -C "$dir/project" checkout -qb fm/dead-task "$pr_head"
+        if [ "$scenario" = fork-ahead ] || [ "$scenario" = fork-fetch-raced ] \
+            || [ "$scenario" = fork-ssh-ahead ]; then
+          printf 'unlanded fork work\n' > "$dir/project/fork.txt"
+          git -C "$dir/project" add fork.txt
+          git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+            commit -qm 'unlanded fork follow-up'
+        fi
+        git -C "$dir/project" push -q "$dir/fork.git" fm/dead-task
+        git -C "$dir/project" checkout -q "$default"
+        git -C "$dir/project" branch -f fm/dead-task "$pr_head"
+        local_tip=$pr_head
+        if [ "$scenario" = fork-unreadable ]; then
+          printf '%s\n' "$dir/unreadable-fork.git" > "$dir/head-remote"
+        fi
+        ;;
+      followup-*)
+        case "$scenario" in
+          followup-default-*)
+            git -C "$dir/project" branch fm/dead-task "$default"
+            ;;
+          *)
+            if [ "$replay" = 0 ]; then
+              git -C "$dir/project" branch fm/dead-task "$pr_head"
+            fi
+            ;;
+        esac
+        git -C "$dir/project" checkout -q fm/dead-task
+        printf 'follow-up work\n' > "$dir/project/followup.txt"
+        git -C "$dir/project" add followup.txt
+        git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+          commit -qm 'task follow-up'
+        followup=$(git -C "$dir/project" rev-parse HEAD)
+        local_tip=$followup
+        git -C "$dir/project" checkout -q "$default"
+        if [ "$scenario" != followup-unlanded ] && [ "$scenario" != followup-default-unlanded ]; then
+          git -C "$dir/project" merge --squash -q fm/dead-task >/dev/null
+          git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+            commit -qm 'squash land follow-up'
+        fi
+        case "$scenario" in
+          *-remote)
+            git -C "$dir/project" push -q origin fm/dead-task
+            git -C "$dir/project" branch -q -D fm/dead-task
+            local_tip=
+            ;;
+        esac
+        printf 'default evolved after squash landing\n' > "$dir/project/landed.txt"
+        git -C "$dir/project" add landed.txt
+        git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+          commit -qm 'subsequent default work'
+        git -C "$dir/project" push -q origin "$default"
+        ;;
+      local-only|local-ahead|remote-ahead|fetch-failed)
+        git -C "$dir/project" checkout -q fm/dead-task
+        printf 'unlanded later work\n' > "$dir/project/later.txt"
+        git -C "$dir/project" add later.txt
+        git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+          commit -qm 'later unlanded work'
+        local_tip=$(git -C "$dir/project" rev-parse HEAD)
+        git -C "$dir/project" checkout -q "$default"
+        case "$scenario" in
+          remote-ahead|fetch-failed)
+            git -C "$dir/project" push -q origin fm/dead-task
+            git -C "$dir/project" branch -f fm/dead-task "$pr_head"
+            local_tip=$pr_head
+            ;;
+        esac
+        ;;
+      replayed-*|retained-rebase*)
+        if [ "$scenario" = replayed-local-extra ] || [ "$scenario" = replayed-remote-extra ] \
+            || [ "$scenario" = retained-rebase-extra ]; then
+          git -C "$dir/project" checkout -q fm/dead-task
+          printf 'unlanded replay follow-up\n' > "$dir/project/later.txt"
+          git -C "$dir/project" add later.txt
+          git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+            commit -qm 'unlanded work after replay'
+          git -C "$dir/project" checkout -q "$default"
+        fi
+        local_tip=$(git -C "$dir/project" rev-parse refs/heads/fm/dead-task)
+        case "$scenario" in
+          replayed-remote*)
+            git -C "$dir/project" push -q origin fm/dead-task
+            git -C "$dir/project" branch -q -D fm/dead-task
+            local_tip=
+            ;;
+        esac
+        printf 'default evolved after squash landing\n' > "$dir/project/landed.txt"
+        git -C "$dir/project" add landed.txt
+        git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+          commit -qm 'subsequent default work'
+        git -C "$dir/project" push -q origin "$default"
+        ;;
+      local-unreadable)
+        mkdir -p "$dir/project/.git/refs/heads/fm"
+        printf '%040d\n' 1 > "$dir/project/.git/refs/heads/fm/dead-task"
+        ;;
+      evolved-*)
+        printf 'default evolved after squash landing\n' > "$dir/project/landed.txt"
+        git -C "$dir/project" add landed.txt
+        git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+          commit -qm 'subsequent default work'
+        git -C "$dir/project" push -q origin "$default"
+        ;;
+      preserved)
+        git -C "$dir/project" checkout -qb fm/unrelated
+        printf 'unrelated unlanded work\n' > "$dir/project/unrelated.txt"
+        git -C "$dir/project" add unrelated.txt
+        git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+          commit -qm 'unrelated work'
+        unrelated_tip=$(git -C "$dir/project" rev-parse HEAD)
+        git -C "$dir/project" push -qu origin fm/unrelated
+        git -C "$dir/project" checkout -q "$default"
+        git -C "$dir/project" push -q origin --delete fm/dead-task fm/unrelated
+        ;;
+      missing-worker)
+        fm_test_fake_stream_set "$target" '{"forget": true}'
+        ;;
+    esac
+    case "$scenario" in
+      fork-scp-covered|fork-ssh-covered|fork-alias-covered|fork-ssh-ahead)
+        case "$scenario" in
+          fork-scp-covered)
+            git -C "$dir/project" remote set-url origin git@forge-alias:example/repo.git
+            ;;
+          fork-alias-covered)
+            git -C "$dir/project" remote set-url origin forge-alias:example/repo.git
+            ;;
+          *)
+            git -C "$dir/project" remote set-url origin ssh://git@forge-alias:2222/example/repo.git
+            ;;
+        esac
+        printf '%s\n' https://github.com/contributor/repo.git > "$dir/head-remote"
+        cat > "$dir/fakebin/ssh" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> '$dir/ssh.log'
+case "\${!#}" in
+  "git-upload-pack 'example/repo.git'"|"git-upload-pack '/example/repo.git'") exec '$real_git' upload-pack '$dir/origin.git' ;;
+  "git-upload-pack 'contributor/repo.git'"|"git-upload-pack '/contributor/repo.git'") exec '$real_git' upload-pack '$dir/fork.git' ;;
+  *) exit 128 ;;
+esac
+SH
+        chmod +x "$dir/fakebin/ssh"
+        git -C "$dir/project" config core.sshCommand "$dir/fakebin/ssh"
+        git -C "$dir/project" config ssh.variant ssh
+        ;;
+    esac
+    if [ "$scenario" = fetch-failed ] || [ "$scenario" = remote-unreadable ] \
+        || [ "$scenario" = preserved ] || [ "$scenario" = fork-fetch-failed ] \
+        || [ "$scenario" = fork-fetch-raced ]; then
+      cat > "$dir/fakebin/git" <<SH
+#!/usr/bin/env bash
+case " \$* " in
+  *" --prune "*)
+    printf 'fleet-prune\n' >> '$dir/runtime.log'
+    ;;
+esac
+case '$scenario' in
+  fetch-failed|fork-fetch-failed)
+    case " \$* " in *" fetch "*" --no-tags "*) exit 128 ;; esac
+    ;;
+  fork-fetch-raced)
+    case " \$* " in
+      *" fetch "*"$dir/fork.git"*)
+        '$real_git' "\$@" || exit \$?
+        '$real_git' -C '$dir/project' fetch --quiet origin '$default' || exit \$?
+        printf 'fetch-head-replaced\n' >> '$dir/runtime.log'
+        exit 0
+        ;;
+    esac
+    ;;
+  remote-unreadable)
+    case " \$* " in *" ls-remote "*) exit 128 ;; esac
+    ;;
+esac
+exec '$real_git' "\$@"
+SH
+      chmod +x "$dir/fakebin/git"
+    fi
+    set +e
+    run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+    rc=$?
+    set -e
+    case "$scenario" in
+      evolved-*|preserved|replayed-local|replayed-remote|retained-rebase|fork-covered|\
+          fork-scp-covered|fork-ssh-covered|fork-alias-covered|\
+          followup-local|followup-remote|followup-replayed-local|followup-replayed-remote|\
+          followup-default-local|followup-default-remote|followup-retained-rebase)
+        [ "$rc" -eq 0 ] || fail "$scenario refused landed work: $(cat "$dir/stderr")"
+        assert_absent "$dir/home/state/$id.meta" "$scenario kept the old record"
+        ;;
+      *)
+        [ "$rc" -ne 0 ] || fail "$scenario retired without positive proof"
+        assert_present "$dir/home/state/$id.meta" "$scenario lost the old record"
+        case "$scenario" in
+          missing-worker)
+            assert_contains "$(cat "$dir/stderr")" "reads 'missing', not stopped" \
+              "$scenario did not require positive stop evidence"
+            ;;
+          *)
+            assert_contains "$(cat "$dir/stderr")" "final tip is not covered" \
+              "$scenario did not enforce final branch coverage"
+            ;;
+        esac
+        ;;
+    esac
+    if [ -n "$local_tip" ]; then
+      [ "$(git -C "$dir/project" rev-parse refs/heads/fm/dead-task)" = "$local_tip" ] \
+        || fail "$scenario changed or deleted the retained branch"
+    fi
+    if [ -n "$unrelated_tip" ]; then
+      [ "$(git -C "$dir/project" rev-parse refs/heads/fm/unrelated)" = "$unrelated_tip" ] \
+        || fail "$scenario changed or deleted unrelated work"
+      ! grep -q 'fleet-prune' "$dir/runtime.log" \
+        || fail "$scenario ran fleet synchronization and pruning"
+    fi
+    case "$scenario" in
+      fork-fetch-raced)
+        assert_contains "$(cat "$dir/runtime.log")" "fetch-head-replaced" \
+          "$scenario did not replace shared fetch evidence"
+        ;;
+      fork-scp-covered|fork-ssh-covered|fork-alias-covered|fork-ssh-ahead)
+        assert_contains "$(cat "$dir/ssh.log")" "forge-alias" \
+          "$scenario did not preserve the configured SSH host"
+        assert_contains "$(cat "$dir/ssh.log")" "contributor/repo.git" \
+          "$scenario did not read the PR's fork through SSH"
+        case "$scenario" in
+          fork-ssh-*)
+            assert_contains "$(cat "$dir/ssh.log")" "-p 2222" \
+              "$scenario did not preserve the configured SSH port"
+            ;;
+        esac
+        ;;
+    esac
+    assert_reassigned_slot_owner_untouched "$dir" "$claimant"
+  done
+  pass "reassigned retirement requires readable final tips and positive stop evidence while preserving branches"
+}
+
 test_record_only_retirement_revalidates_after_control_lock_wait
 test_invalid_endpoint_records_refuse_before_mutation
+test_reassigned_slot_record_retires_only_on_all_four_proofs
+test_reassigned_record_coverage_and_preservation
 test_control_lock_contention_refuses_before_mutation
 test_non_pool_teardown_ignores_task_set_lock
 test_metadata_lock_serializes_destructive_cleanup

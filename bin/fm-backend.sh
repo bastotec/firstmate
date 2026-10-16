@@ -145,13 +145,16 @@ fm_backend_target_of_meta() {  # <meta-file>
 # fm_backend_validate_task_endpoint: validate a task cleanup record entirely
 # from its durable metadata before any runtime command or cleanup mutation.
 # The validation binds the exact task id, selected backend, target, project,
-# and worktree. Stream records carry endpoint_task_id because their opaque
+# and worktree, except for the reassignment candidate admitted under teardown's
+# opt-in below. Stream records carry endpoint_task_id because their opaque
 # endpoint ids do not encode the task label. A record on a retired backend
 # validates its identity fields only (its endpoint can no longer be driven, so
 # there is nothing further to bind), which lets cleanup and
 # bin/fm-retire-endpoint.sh retire it.
-# On success, sets FM_BACKEND_VALIDATED_BACKEND and
-# FM_BACKEND_VALIDATED_TARGET. On failure, prints one refusal and returns 1.
+# On success, sets FM_BACKEND_VALIDATED_BACKEND,
+# FM_BACKEND_VALIDATED_TARGET, and - for the one reassigned-slot record shape,
+# under bin/fm-teardown.sh's opt-in - FM_BACKEND_VALIDATED_REASSIGNED_TO. On
+# failure, prints one refusal and returns 1.
 fm_backend_meta_exact_value() {  # <meta-file> <key>
   local meta=$1 key=$2 count value
   count=$(grep -c "^$key=" "$meta" 2>/dev/null || true)
@@ -167,11 +170,68 @@ fm_backend_endpoint_atom_valid() {  # <value>
   esac
 }
 
+# The reassigned-slot helpers report candidate identity and live-claim evidence
+# only; bin/fm-teardown.sh's record-only reassigned-slot block owns authorization.
+# A match never grants ownership of the current slot.
+#
+# fm_backend_reassignment_slot_candidate: does <meta> carry the recorded
+# handover shape at all (no worktree= of its own, exactly one non-empty
+# worktree_reassigned_by= naming another task)? Prints nothing; sets
+# FM_BACKEND_REASSIGNED_TO and returns 0 only for that exact shape, which
+# every caller then proves against the live slot claim.
+fm_backend_reassignment_slot_candidate() {  # <meta> <task-id>
+  local meta=$1 id=$2 count
+  FM_BACKEND_REASSIGNED_TO=
+  [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
+  count=$(grep -c '^worktree=' "$meta" 2>/dev/null || true)
+  [ "$count" -eq 0 ] || return 1
+  count=$(grep -c '^worktree_reassigned_by=' "$meta" 2>/dev/null || true)
+  [ "$count" -eq 1 ] || return 1
+  FM_BACKEND_REASSIGNED_TO=$(fm_backend_meta_exact_value "$meta" worktree_reassigned_by) || return 1
+  [ -n "$FM_BACKEND_REASSIGNED_TO" ] || return 1
+  [ "$FM_BACKEND_REASSIGNED_TO" != "$id" ] || return 1
+  return 0
+}
+
+# fm_backend_reassignment_slot_owner: prove the slot's live claim matches the
+# recorded claimant, reading against the old task's id (`other` is required).
+# fm_treehouse_slot_owner_state in bin/fm-wake-lib.sh owns the
+# FM_TREEHOUSE_SLOT_OWNER, FM_TREEHOUSE_SLOT_OWNER_ID, and
+# FM_TREEHOUSE_SLOT_OWNER_HOME output contract, including on refusal here.
+# Returns 0 only for the matching claimant; every other answer returns 1 with
+# the reason in FM_BACKEND_REASSIGNMENT_REFUSAL. The slot directory comes from
+# the caller, since only it knows which pool root it reads.
+# shellcheck disable=SC2034 # Output global, read by the sourcing caller.
+fm_backend_reassignment_slot_owner() {  # <slot-dir> <claimant-id> <task-id>
+  local slot=$1 claimant=$2 id=$3
+  fm_treehouse_slot_owner_state "$slot" "$id"
+  case "$FM_TREEHOUSE_SLOT_OWNER" in
+    other)
+      if [ "$FM_TREEHOUSE_SLOT_OWNER_ID" = "$claimant" ]; then
+        return 0
+      fi
+      FM_BACKEND_REASSIGNMENT_REFUSAL="the slot's current owner claim names task $FM_TREEHOUSE_SLOT_OWNER_ID, not the recorded claimant $claimant"
+      ;;
+    mine)
+      FM_BACKEND_REASSIGNMENT_REFUSAL="the slot's current owner claim still names task $id, so it was never reassigned"
+      ;;
+    absent)
+      FM_BACKEND_REASSIGNMENT_REFUSAL="the slot carries no owner claim, so no live evidence confirms the recorded reassignment to $claimant"
+      ;;
+    *)
+      FM_BACKEND_REASSIGNMENT_REFUSAL="the slot's owner claim cannot be read, so the recorded reassignment to $claimant is unconfirmed"
+      ;;
+  esac
+  return 1
+}
+
 fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
   local meta=$1 id=$2 backend_count backend window worktree project binding_count binding
   local hub_url endpoint_id hub_tag session pane recorded_session workspace tab
   FM_BACKEND_VALIDATED_BACKEND=
   FM_BACKEND_VALIDATED_TARGET=
+  # shellcheck disable=SC2034 # Set here, consumed by bin/fm-teardown.sh.
+  FM_BACKEND_VALIDATED_REASSIGNED_TO=
   [ -f "$meta" ] && [ ! -L "$meta" ] || {
     echo "REFUSED: task $id has no regular endpoint metadata at $meta; preserving task state." >&2
     return 1
@@ -185,8 +245,18 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
     return 1
   }
   worktree=$(fm_backend_meta_exact_value "$meta" worktree) || {
-    echo "REFUSED: task $id has a missing, empty, or ambiguous worktree identity; preserving task state." >&2
-    return 1
+    # This opt-in admits only a candidate, not cleanup authorization or current
+    # slot ownership. Metadata alone cannot prove the handover, landed work, or
+    # stopped worker; bin/fm-teardown.sh's record-only reassigned-slot gate owns
+    # those proofs and must pass before any destructive step.
+    if [ "${FM_BACKEND_VALIDATE_REASSIGNMENT_CANDIDATE:-0}" = 1 ] \
+       && fm_backend_reassignment_slot_candidate "$meta" "$id"; then
+      # shellcheck disable=SC2034 # Set here, consumed by bin/fm-teardown.sh.
+      FM_BACKEND_VALIDATED_REASSIGNED_TO=$FM_BACKEND_REASSIGNED_TO
+    else
+      echo "REFUSED: task $id has a missing, empty, or ambiguous worktree identity; preserving task state." >&2
+      return 1
+    fi
   }
   project=$(fm_backend_meta_exact_value "$meta" project) || {
     echo "REFUSED: task $id has a missing, empty, or ambiguous project identity; preserving task state." >&2
