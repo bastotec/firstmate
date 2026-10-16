@@ -126,9 +126,12 @@
 #     compatibility landed-work roll-up derived from secondmate_current. Readable
 #     structured homes are partial, not unreadable, when an unavailable child state
 #     or a backlog-vs-metadata inventory mismatch makes their summary incomplete;
-#     they retain independently trustworthy structured surfaces. An inventory
-#     mismatch also keeps the home's own current classification, which only an
-#     unavailable child state or an untrustworthy backlog collapses to unknown.
+#     they retain independently trustworthy structured surfaces.
+#     The home summary's unknown_children lists unknown non-secondmate task ids
+#     owned by structured In flight rows, independently of its first invalidity.
+#     An unowned leftover is instead an unowned_current inventory mismatch.
+#     An inventory mismatch keeps the home's own current classification unless
+#     unknown_children is nonempty or the backlog is untrustworthy.
 #     Which closed rows a home contributes is bin/fm-landed-lib.sh's rule, shared
 #     with the bearings projection so one Recently Landed section has one owner.
 #   secondmate_guidance: return-channel action note for renderers and bearings.
@@ -271,8 +274,8 @@ their own home's published summary, while remote endpoints stay unknown here.
 Worker metadata whose structured backlog item is Done is retained, not unowned
 or an unavailable child.
 Its invalidity object names the first normalized failure kind and affected ids.
-unknown_children lists every unread child id independently of that first
-invalidity; older producers may omit it.
+The script header owns unknown_children eligibility and home-state classification;
+older producers may omit unknown_children.
 Actionable tasks-axi captain holds appear as decisions_open and stay visible in
 queued with hold_reason, hold_kind, hold_until,
 hold_bucket, hold_age_days, and plural blocker fields for downstream
@@ -1087,8 +1090,10 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
     # A record kept after its item is Done (a captain-held preservation of a
     # finished worker) is retained: neither unowned live work nor a child whose
     # live state is needed.
+    # Only owned in-flight work needs a readable live state; a leftover record
+    # that no current item owns is reported as unowned instead.
     | ([ $tasks[] | select(.kind != "secondmate" and .current_state.state == "unknown")
-         | select(.id as $id | $done_ids | index($id) | not) ]) as $unknown_children
+         | select(.id as $id | [$owned_in_flight[].id] | index($id) != null) ]) as $unknown_children
     | ([ $owned_in_flight[]
          | select(.requires_child_metadata)
          | select(.id as $id | [$tasks[].id] | index($id) | not) ]) as $orphan_in_flight

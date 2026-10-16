@@ -2760,7 +2760,9 @@ EOF
     "$ROOT/bin/fm-fleet-snapshot.sh" --json)
   printf '%s' "$canonical" | jq -e '
     .secondmate_current.records[] | select(.id == "sshhip")
-    | .current.state == "unknown"
+    # A leftover the backlog does not own is unowned, not an unread child, so
+    # the home keeps its own state word.
+    | .current.state != "unknown"
       and (.current.reason | contains("live child state has no in-flight backlog item: unreadable-child=unknown"))
       and .provenance.selected == "structured-home"
       and .provenance.trust == "partial-structured"
