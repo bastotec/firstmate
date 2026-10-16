@@ -26,7 +26,9 @@
 #      to the routed status log; dead/missing report the remote verdict; an
 #      unreachable or unreadable remote reports unknown-remote, never a false
 #      gone/dead.
-#   2. Matching no-mistakes run for this crew's branch AND current code identity,
+#   2. Only ships whose delivery mode is neither local-only nor direct-PR query
+#      no-mistakes; scouts and secondmates also skip to the step 4 fallback.
+#      Matching no-mistakes run for this crew's branch AND current code identity,
 #      active or terminal (from `axi status`, or the coarse `no-mistakes runs`
 #      fallback)? Branch name alone is not enough: a historical run on a reused
 #      branch whose head was rewritten or diverged must not be attributed.
@@ -92,7 +94,7 @@
 #      worker cannot establish an unavailable validation outcome and can mask a
 #      dead run; unavailability is not proof the task stopped.
 #      A successful lookup with no attributable run (including an empty response),
-#      or a task that skips validation lookup (scout/secondmate): fall back to the
+#      or a task that skips validation lookup under step 2: fall back to the
 #      recorded backend's pane busy state, then the status log's last line only
 #      when its verb maps to a recognized run-state. Decision-only events such as
 #      `resolved` never become current state or detail.
@@ -914,8 +916,12 @@ HAVE_RUN=0
 RUN_SOURCE=full
 COARSE_STATUS=""
 # Scouts and secondmates never drive a no-mistakes validation of their own
-# worktree, so skip the lookup for them and read state from pane/log directly.
-if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/null 2>&1; then
+# worktree, and neither do ships delivered local-only or direct-PR, whose
+# repositories need not be initialized for it; skip the lookup for them and read
+# state from pane/log directly.
+DELIVERY_MODE=$(meta_value mode)
+if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/null 2>&1 \
+  && [ "$DELIVERY_MODE" != local-only ] && [ "$DELIVERY_MODE" != direct-PR ]; then
   if ! RUN_OUT=$(fm_nm_run_checked "$WT" "$NM_TIMEOUT" axi status); then
     emit unknown run-step "no-mistakes run unavailable or unreadable for branch $CREW_BRANCH"
   fi

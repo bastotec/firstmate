@@ -660,6 +660,19 @@ assert "1 working now" in d["headline"], d["headline"]
   expect_code 1 "$rc" "an unknown mate is refused"
   [ ! -e "$parent/homes/dave/state/dave-w1.inbox" ] && [ -z "$(ls "$parent/state/"*.inbox 2>/dev/null)" ] \
     || fail "reading a report must not message anyone"
+  python3 - "$parent/homes/dave/state/home-summary.json" <<'PY'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p))
+d.update(valid=False, reason="in-flight backlog item has no child metadata: x",
+         invalidity={"kind": "orphan_in_flight", "ids": ["x"]}, unknown_children=["dave-w9"])
+json.dump(d, open(p, "w"))
+PY
+  FM_HOME="$parent" "$ROOT/bin/fm-report.sh" dave --json | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert any("child current state unavailable: dave-w9" in g for g in d["gaps"]), d["gaps"]
+assert any("no child metadata" in x for x in d["inconsistencies"]), d["inconsistencies"]
+' || fail "an unreadable child hid behind a disagreement"
   pass "fm-report: a mate's report comes from records, read-only, from the main or a local mate home"
 }
 

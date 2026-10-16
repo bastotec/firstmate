@@ -125,6 +125,49 @@ EOF
     "mode=ship"
 }
 
+# The home summary reads its own records whole: a remote secondmate is described
+# by its own published summary, not as an unknown child; a worker record kept
+# after its item is Done is retained, not unowned; and a local-only ship never asks no-mistakes about a run its repository cannot have.
+test_home_summary_reads_remote_mates_retained_records_and_local_only_ships() {
+  local home fakebin out wt
+  home=$(make_home summary-whole-records)
+  wt="$home/projects/local-only"
+  git init -q "$wt" && git -C "$wt" commit -q --allow-empty -m init && git -C "$wt" checkout -q -b fm/local-ship
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [ ] local-ship - A local-only ship (repo: alpha) (kind: ship) (since 2026-10-15)
+  An ordinary indented note.
+
+## Queued
+
+## Done
+- [x] kept-ship - A finished worker kept by a captain hold (repo: alpha) (kind: ship) (done 2026-10-15)
+EOF
+  fm_write_meta "$home/state/far-mate.meta" \
+    $(snap_identity "$home" far-mate far-mate) \
+    "worktree=/remote/home" "project=/remote/home" "harness=deck" "kind=secondmate" "mode=secondmate" \
+    "home=/remote/home" "projects=" "remote_host=workload"
+  fm_write_meta "$home/state/kept-ship.meta" \
+    $(snap_identity "$home" kept-ship kept-ship) \
+    "worktree=$home/projects/gone" "project=alpha" "harness=deck" "kind=ship" "mode=no-mistakes"
+  record_deck_idle "$home/state" kept-ship
+  printf 'done: finished\n' > "$home/state/kept-ship.status"
+  fm_write_meta "$home/state/local-ship.meta" \
+    $(snap_identity "$home" local-ship local-ship) \
+    "worktree=$wt" "project=alpha" "harness=deck" "kind=ship" "mode=local-only"
+  record_deck_idle "$home/state" local-ship
+  printf 'working: assessing\n' > "$home/state/local-ship.status"
+  fakebin=$(make_fakebin "$home")
+  # A repository that was never initialized for no-mistakes answers like this.
+  printf '#!/usr/bin/env bash\necho "error: repo not initialized" >&2\nexit 1\n' > "$fakebin/no-mistakes"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '
+    .valid == true and .reason == null
+      and ([.endpoints[] | select(.id == "local-ship") | .state] != ["unknown"])
+  ' >/dev/null || fail "remote mate, retained record or local-only ship invalidated the summary: $out"
+  pass "home summary reads remote mates, retained records and local-only ships"
+}
+
 test_empty_fleet_json() {
   local home out view
   home=$(make_home empty)
@@ -1141,6 +1184,7 @@ test_empty_fleet_json
 test_reopened_task_keeps_its_current_pr_identity
 test_fixture_snapshot_json
 test_home_summary_excludes_secondmate_from_child_inventory
+test_home_summary_reads_remote_mates_retained_records_and_local_only_ships
 test_undated_captain_hold_phrasing_and_aging
 test_hold_buckets_are_total_and_text_blind
 test_main_inventory_orphan_and_unstructured_disclosure

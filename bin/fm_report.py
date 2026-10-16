@@ -52,12 +52,21 @@ JSON shape (schema fm-report.v1; new fields may be added, none removed):
    crew: [{agent, task, status, doing, mate}],
    time_worked: [{agent, task, mate, seconds}],
    crew_seconds, crew_time_since,
-   mates: [{id, name, domain, machine, freshness, shipped, crew, working, waiting, crew_seconds}]   (fleet)
+   mates: [{id, name, domain, machine, freshness, state, shipped, crew, working, waiting, crew_seconds}]   (fleet;
+          state is the home summary's own state word)
    power: [{provider, pct_left, refills_at, tightest}], power_error           (fleet)
    domain, machine                                                       (non-fleet)
    dream: {date, status, summary, skills, skills_commit, raised, slow_commands, finished}
           or null                                                        (fleet, primary)
-   gaps: [<what could not be read, in words>]}
+   gaps: [<what could not be read, in words>],
+   inconsistencies: [<records a home read but found disagreeing, in words>]}
+
+Record disagreements are listed under "Records that disagree" in markdown,
+separately from unread data in the footer. INCONSISTENT_KINDS owns the set of
+home-summary invalidities treated this way. unknown_children still names read
+gaps even when a disagreement is the first invalidity; for older summaries
+without that field, state unknown plus an unknown endpoint conservatively
+remains a read gap.
 """
 import argparse
 import datetime as dt
@@ -75,6 +84,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 CREW_LOG = 'crew-time.log'
 REGISTRY_ERRORS = []
 CREW_DAYS = 8  # what each home publishes as crew_time
+# Summary invalidities that mean records disagree rather than went unread.
+INCONSISTENT_KINDS = ('orphan_in_flight', 'unowned_current', 'terminal_in_flight', 'unstructured_current')
 STALE_AFTER = 900  # three home-summary refresh intervals
 FETCH_TIMEOUT = int(os.environ.get('FM_REPORT_FETCH_TIMEOUT', '20'))
 MAX_INTERVALS = 600  # keeps the published home summary well under its 256 KiB read bound
@@ -425,7 +436,7 @@ def build(home, scope_raw, days, now=None):
     scope = resolve_scope(scope_raw, mates)
     if scope is None:
         raise LookupError('no second mate named %r (second mates: %s; or fleet, primary)' % (scope_raw, ', '.join(mates)))
-    gaps, since = list(REGISTRY_ERRORS), []
+    gaps, since, inconsistencies = list(REGISTRY_ERRORS), [], []
     wanted = mates if scope == 'fleet' else ([scope] if scope != 'primary' else [])
     with ThreadPoolExecutor(max_workers=8) as pool:
         fetched = dict(zip(wanted, pool.map(lambda m: fetch_summary(home, m, reg[m]), wanted)))
@@ -440,7 +451,23 @@ def build(home, scope_raw, days, now=None):
             elif now - int(rec.get('generated_epoch') or now) > STALE_AFTER:
                 gaps.append('%s: summary is from %s' % (name, rec.get('generated')))
             if rec.get('valid') is False and rec.get('reason'):
-                gaps.append('%s: summary incomplete (%s)' % (name, rec['reason']))
+                # A summary that could not read part of its home is a gap; one that
+                # read everything and found records disagreeing is an inconsistency.
+                kind = (rec.get('invalidity') or {}).get('kind')
+                legacy_unknown = 'unknown_children' not in rec and rec.get('state') == 'unknown' \
+                    and any(e.get('state') == 'unknown' for e in rec.get('endpoints') or [])
+                if legacy_unknown:
+                    # An older producer does not say which children went unread.
+                    gaps.append('%s: summary incomplete (a child state may be unreadable: %s)' % (name, rec['reason']))
+                elif rec.get('unknown_children'):
+                    # Children whose state could not be read stay a read gap even when
+                    # a disagreement was reported first.
+                    gaps.append('%s: summary incomplete (child current state unavailable: %s)'
+                                % (name, ', '.join(rec['unknown_children'])))
+                if kind in INCONSISTENT_KINDS:
+                    inconsistencies.append('%s: %s' % (name, rec['reason']))
+                else:
+                    gaps.append('%s: summary incomplete (%s)' % (name, rec['reason']))
             ct = rec.get('crew_time') or {}
             if rec.get('crew_time') is None:
                 gaps.append('%s: crew time unavailable (its firstmate predates crew-time records)' % name)
@@ -459,7 +486,7 @@ def build(home, scope_raw, days, now=None):
         s, w, c, iv = home_rows(rec, mid, start_day, since, gaps)
         t = worked(iv, mid, start, now, {x['agent']: x['task'] for x in c})
         age = now - int(rec.get('generated_epoch') or now)
-        return {'id': mid, 'name': name, 'domain': domain, 'machine': machine,
+        return {'id': mid, 'name': name, 'domain': domain, 'machine': machine, 'state': rec.get('state'),
                 'freshness': source if rec else 'unreadable', 'summary_age_seconds': age if rec else None,
                 'shipped': s, 'waiting': w, 'crew': c, 'time_worked': t,
                 'crew_seconds': sum(x['seconds'] for x in t)}
@@ -488,10 +515,10 @@ def build(home, scope_raw, days, now=None):
         'time_worked': sorted(flat('time_worked'), key=lambda x: -x['seconds']),
         'crew_seconds': sum(p['crew_seconds'] for p in parts),
         'crew_time_since': iso(min(since)) if since else None,
-        'gaps': gaps,
+        'gaps': gaps, 'inconsistencies': inconsistencies,
     }
     if scope == 'fleet':
-        rep['mates'] = [{k: p[k] for k in ('id', 'name', 'domain', 'machine', 'freshness', 'crew_seconds')}
+        rep['mates'] = [{k: p[k] for k in ('id', 'name', 'domain', 'machine', 'freshness', 'state', 'crew_seconds')}
                         | {'shipped': len(p['shipped']), 'crew': len(p['crew']), 'waiting': len(p['waiting']),
                            'working': sum(1 for c in p['crew'] if c['status'] == 'working')}
                         for p in parts]
@@ -567,6 +594,8 @@ def markdown(rep):
                 for c in (d.get('slow_commands') or [])[:3]] + ['']
     foot = 'Crew time comes from firstmate\'s own busy records%s.' % (
         ' since ' + rep['crew_time_since'] if rep.get('crew_time_since') else ' (none recorded yet)')
+    if rep.get('inconsistencies'):
+        out += ['## Records that disagree'] + ['- ' + x for x in rep['inconsistencies']] + ['']
     out += ['_As of %s. %s%s_' % (rep['as_of'], foot, (' Unread: ' + '; '.join(rep['gaps'])) if rep['gaps'] else '')]
     return '\n'.join(out) + '\n'
 

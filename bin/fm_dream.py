@@ -18,9 +18,15 @@ is recorded and never stops the next:
            plus two calendar days of fleet reports for remote mates (remote deck
            transcripts are out of scope). Slow fm-* commands come from each
            run_command call joined to its result's duration_ms, at least SLOW_MS.
-           Unreadable sessions, no-mistakes state or fleet reports, non-live
-           included-home summaries, power errors and report gaps saying
-           incomplete/unavailable/unreadable make collect partial.
+           Each included mate's current home-summary state is listed. Unreadable
+           sessions, no-mistakes state or fleet reports, non-live included-home
+           summaries, missing mate states, power errors and report gaps naming
+           incomplete summaries or unavailable/unreadable data make collect partial.
+           Readable record disagreements go into the digest for triage instead;
+           bin/fm_report.py owns the gaps/inconsistencies distinction.
+           No-mistakes breakdowns read each included registered host once over
+           ssh only when its bridge allows reports; denied or unreadable hosts
+           are named in collect's why without the other reasons' three-item cap.
   skills   a deck agent in a fresh ~/dotfiles worktree improves skills/ from
            the digest. Same guards as Ziggy's reflection: only skills/, at most
            MAX_DIFF_LINES changed lines, secret scan of all changed staged bytes
@@ -67,16 +73,39 @@ Files under <home>/state/dream/:
                      {status, seconds, why?}}, skills: [{skill, what, why}],
                      skills_commit, raised: [{title, repo, mate, key, why}],
                      slow_commands: [{command, seconds, count}], counts: {...},
-                     summary}
+                     no_mistakes: {...} or null, summary}
   raised.jsonl       one line per raised item (dedupe across nights)
   digest-<date>.md   the private digest the agents read
+
+no_mistakes (null when collect did not produce a breakdown):
+  {date, failed, by_cause, by_step,
+   hosts: {host: {reviews, cap_hits, failed, by_cause}}, previous, change}.
+Counts cover the preceding 24 hours. Failures are failed/cancelled runs by
+updated_at; this Mac uses only the fleet runs kept by no_mistakes_runs, while
+remote hosts use their whole database. reviews counts all host review steps by
+start time (completion time if absent); cap_hits counts distinct runs with an
+exhausted repair-budget decision, dated by the parent step's completion time
+or start time, not the decision's time. An absent database yields zero counts;
+other read failures omit the host and name it as unread.
+Causes, first match wins: repair cap (an exhausted decision at any time),
+aborted (cancelled run), timeout, infra (lock/daemon/crash/gateway and similar
+errors), finding, other. by_step names the first failed step, else the first
+running/fixing/awaiting_approval/fix_review step, else none.
+previous is {date, failed, by_cause, hosts}; change is {failed, by_cause, hosts,
+coverage_changed}, with signed current-minus-previous counts only for hosts
+measured in both runs. Both are null without common hosts. The comparison
+source is latest.json at collection time, so a full same-day rerun compares
+against the last publication, not necessarily the previous night.
+The morning summary names the top three causes and available comparison;
+counts.no_mistakes_failed remains the local fleet-only count, not the host total.
 
 Configuration: docs/configuration.md "Fleet dreaming" owns config/dream.json.
 Environment: FM_DREAM_DECK (deck binary), FM_DREAM_DOTFILES (~/dotfiles),
 FM_DREAM_JEV (Jev helper command), FM_DREAM_MIN_FREE_GB, FM_DREAM_NO_MISTAKES_DB.
 Tests only: FM_DREAM_NOW (epoch), FM_DREAM_SKIP_ZIGGY_WAIT=1, and FM_DREAM_TASKS,
 FM_DREAM_HANDOFF, FM_DREAM_REPORT, FM_DREAM_ON replacing bin/fm-tasks-axi.sh,
-bin/fm-backlog-handoff.sh, bin/fm-report.sh and bin/fm-on.sh.
+bin/fm-backlog-handoff.sh, bin/fm-report.sh and bin/fm-on.sh; FM_DREAM_BRIDGE
+and FM_DREAM_SSH replace bin/fm-bridge.sh and ssh for breakdown reads.
 
     fm_dream.py run --home H [--only STEP ...] [--dry-run]
     fm_dream.py status --home H [--json]
@@ -542,6 +571,147 @@ def no_mistakes_runs(since, fleet_paths, harness, private_paths=()):
     return out, None
 
 
+# The no-mistakes cause breakdown, run against one host's state database (here
+# with python3 directly, on another host over ssh with this text on stdin):
+#   python3 - <db-path or ~/...> <since-epoch> [<run ids JSON>]
+# prints {reviews, cap_hits, failed, by_step, by_cause}; the module header owns
+# counting windows and cause precedence. A run-id list restricts failures only.
+NM_BREAKDOWN_PY = r"""
+import json, os, re, sqlite3, sys
+db, since = os.path.expanduser(sys.argv[1]), int(sys.argv[2])
+only = set(json.loads(sys.argv[3])) if len(sys.argv) > 3 else None
+CAUSES = (
+    ('timeout', r'timed? ?out|timeout|deadline exceeded|wait of .* elapsed'),
+    ('infra', r'database is locked|SQLITE_BUSY|\block\b|lock(ed)? |daemon|panic|crash|upstream_error|gateway|'
+              r'connection (refused|reset)|\bEOF\b|killed|signal|not initialized|no such file|unreachable|'
+              r'context canceled'),
+    ('finding', r'finding|non-compliant|refusing|risk|review|test(s)? failed|lint|check(s)? failed'),
+)
+def ms(v):
+    return (v / 1000 if v and v > 1e12 else v) if isinstance(v, (int, float)) else 0
+out = {'reviews': 0, 'cap_hits': 0, 'failed': 0, 'by_step': {}, 'by_cause': {}}
+if not os.path.isfile(db):
+    print(json.dumps(out)); sys.exit(0)
+con = sqlite3.connect('file:%s?mode=ro' % db, uri=True, timeout=5)
+tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+steps = {}
+step_rows = con.execute(
+    'SELECT run_id, step_name, step_order, status, started_at, completed_at, error, findings_json FROM step_results'
+) if 'step_results' in tables else []
+for run_id, name, order, status, started, completed, error, findings in step_rows:
+    if name == 'review' and ms(started or completed) >= since:
+        out['reviews'] += 1
+    steps.setdefault(run_id, []).append((order or 0, name, status, error or '', findings or ''))
+capped, capped_ever = set(), set()
+if {'repair_budget_decisions', 'step_results'} <= tables:
+    for run_id, when in con.execute(
+            "SELECT s.run_id, MAX(COALESCE(s.completed_at, s.started_at)) FROM repair_budget_decisions d "
+            "JOIN step_results s ON s.id = d.step_result_id WHERE d.source = 'exhausted' GROUP BY s.run_id"):
+        capped_ever.add(run_id)  # a run that hit the cap before the window still failed of it
+        if ms(when) >= since:
+            capped.add(run_id)
+out['cap_hits'] = len(capped)
+for run_id, status, error, updated in con.execute(
+        "SELECT id, status, error, updated_at FROM runs WHERE status IN ('failed', 'cancelled')"):
+    if ms(updated) < since or (only is not None and run_id not in only):
+        continue
+    rows = sorted(steps.get(run_id, []))
+    stopped = [r for r in rows if r[2] == 'failed'] or \
+        [r for r in rows if r[2] in ('running', 'fixing', 'awaiting_approval', 'fix_review')]
+    step = stopped[0][1] if stopped else 'none'
+    text = ' '.join([error or ''] + [r[3] for r in stopped])
+    if run_id in capped_ever:
+        cause = 'repair cap'
+    elif status == 'cancelled':
+        cause = 'aborted'
+    else:
+        cause = next((c for c, rx in CAUSES if re.search(rx, text, re.I)), None)
+        if cause is None:
+            cause = 'finding' if any(r[4] not in ('', '[]', 'null') for r in stopped) else 'other'
+    out['failed'] += 1
+    out['by_step'][step] = out['by_step'].get(step, 0) + 1
+    out['by_cause'][cause] = out['by_cause'].get(cause, 0) + 1
+con.close()
+print(json.dumps(out))
+"""
+
+
+def nm_breakdown(ctx, nm):
+    """Per-cause no-mistakes failures on every fleet machine, read-only. This
+    Mac's failures are exactly the runs collect already kept (the fleet's own);
+    another machine's database is read whole over ssh when its bridge allows the
+    reports flow. Unreachable hosts are named, never guessed."""
+    hosts, errors = {}, []
+    local_db = os.environ.get('FM_DREAM_NO_MISTAKES_DB') or '~/.no-mistakes/state.sqlite'
+    try:
+        r = ctx.run(['python3', '-', local_db, str(int(ctx.since)), json.dumps([x.get('id') for x in nm])],
+                    input=NM_BREAKDOWN_PY, timeout=60)
+        hosts['this Mac'] = json.loads(r.stdout) if r.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        hosts['this Mac'] = None
+    remote = sorted({h for mid, _home, h in registry(ctx.home) if h and mid not in ctx.excluded})
+    env = dict(os.environ, FM_HOME=str(ctx.home))
+    for host in remote:
+        try:
+            gate = ctx.run([tool('fm-bridge.sh', 'FM_DREAM_BRIDGE'), 'check', host, 'reports'], timeout=30, env=env)
+            if gate.returncode != 0:
+                errors.append('%s: bridge does not allow reports' % host)
+                continue
+            r = ctx.run([os.environ.get('FM_DREAM_SSH') or 'ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host,
+                         'python3 - ~/.no-mistakes/state.sqlite %d' % int(ctx.since)], input=NM_BREAKDOWN_PY, timeout=90)
+            hosts[host] = json.loads(r.stdout) if r.returncode == 0 else None
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            hosts[host] = None
+    for host, got in list(hosts.items()):
+        if got is None:
+            errors.append('%s: no-mistakes state unreadable' % host)
+            del hosts[host]
+    total = {'failed': 0, 'by_cause': {}, 'by_step': {}}
+    for got in hosts.values():
+        total['failed'] += got['failed']
+        for key in ('by_cause', 'by_step'):
+            for k, v in got[key].items():
+                total[key][k] = total[key].get(k, 0) + v
+    last_night = read_json(ctx.dir / 'latest.json') or {}
+    prev = last_night.get('no_mistakes') or {}
+    host_view = {h: {k: g[k] for k in ('reviews', 'cap_hits', 'failed', 'by_cause')} for h, g in hosts.items()}
+    out = {'failed': total['failed'], 'by_cause': total['by_cause'], 'by_step': total['by_step'],
+           'hosts': host_view, 'date': ctx.day, 'previous': None, 'change': None}
+    prev_hosts = prev.get('hosts') or {}
+    common = sorted(set(host_view) & set(prev_hosts))
+    if common:
+        # Compare only machines measured both nights, so a host that went
+        # unread is never mistaken for an improvement.
+        def sums(view):
+            causes = {}
+            for h in common:
+                for c, n in (view[h].get('by_cause') or {}).items():
+                    causes[c] = causes.get(c, 0) + n
+            return sum(view[h].get('failed', 0) for h in common), causes
+        now_failed, now_causes = sums(host_view)
+        then_failed, then_causes = sums(prev_hosts)
+        out['previous'] = {'date': last_night.get('date'), 'failed': then_failed, 'by_cause': then_causes,
+                           'hosts': common}
+        out['change'] = {'failed': now_failed - then_failed, 'hosts': common,
+                         'by_cause': {c: now_causes.get(c, 0) - then_causes.get(c, 0)
+                                      for c in sorted(set(now_causes) | set(then_causes))},
+                         'coverage_changed': sorted(set(host_view) ^ set(prev_hosts))}
+    return out, errors
+
+
+def nm_summary(nmb):
+    """'no-mistakes: 93 failed (-12 vs 2026-10-15); top: aborted 60, repair cap 20, infra 8'."""
+    if not nmb:
+        return ''
+    top = sorted(nmb['by_cause'].items(), key=lambda kv: -kv[1])[:3]
+    change = nmb.get('change') or {}
+    delta = '' if not change else ' (%+d vs %s%s)' % (
+        change['failed'], (nmb.get('previous') or {}).get('date'),
+        ', on ' + ', '.join(change['hosts']) + ' only' if change.get('coverage_changed') else '')
+    return 'no-mistakes: %d failed%s%s' % (nmb['failed'], delta,
+                                          '; top: ' + ', '.join('%s %d' % kv for kv in top) if top else '')
+
+
 def tool(name, env_var):
     return os.environ.get(env_var) or str(SCRIPT_DIR / name)
 
@@ -614,13 +784,27 @@ def step_collect(ctx):
     sweep = tail_since(ctx.state / 'idle-sweep.log', ctx.since, hide=lambda l: mentions_excluded(ctx, l))
     if sweep:
         parts += ['## Idle sweep', *sweep, '']
+    nmb, nmb_errors = nm_breakdown(ctx, nm)
+    ctx.facts['no_mistakes'] = nmb
+    if nmb['failed'] or nmb['hosts']:
+        parts += ['## No-mistakes failures by cause', nm_summary(nmb)]
+        parts += ['- %s: %d reviews, %d hit the repair cap, %d failed (%s)' % (
+            h, g['reviews'], g['cap_hits'], g['failed'], ', '.join('%s %d' % kv for kv in sorted(g['by_cause'].items())))
+            for h, g in nmb['hosts'].items()]
+        parts += ['- by step: ' + ', '.join('%s %d' % kv for kv in sorted(nmb['by_step'].items(), key=lambda kv: -kv[1]))]
+        parts += ['- unread: ' + e for e in nmb_errors] + ['']
     rep = fleet_report(ctx)
     if rep:
         parts += ['## Fleet report', rep.get('summary') or '']
         parts += ['- waiting: %s (on %s, %s)' % (w.get('what'), w.get('on'), w.get('mate'))
                   for w in rep.get('waiting', [])
                   if w.get('mate') not in ctx.excluded and not mentions_excluded(ctx, json.dumps(w, ensure_ascii=False))]
+        parts += ['- mate %s (%s): %s; %d working, %d waiting, %d shipped' % (
+            m.get('id'), m.get('machine'), m.get('state') or 'no current state', m.get('working', 0),
+            m.get('waiting', 0), m.get('shipped', 0))
+            for m in rep.get('mates', []) if m.get('id') not in ctx.excluded and not mentions_excluded(ctx, m.get('id') or '')]
         parts += ['- gap: ' + g for g in rep.get('gaps', []) if not mentions_excluded(ctx, g)]
+        parts += ['- records disagree: ' + g for g in rep.get('inconsistencies', []) if not mentions_excluded(ctx, g)]
         parts += ['- crew %s: %s on %s (%s)' % (c.get('status'), c.get('agent'), c.get('task'), c.get('mate'))
                   for c in rep.get('crew', []) if c.get('status') in ('failed', 'blocked', 'stopped', 'needs-decision')
                   and c.get('mate') not in ctx.excluded and not mentions_excluded(ctx, json.dumps(c, ensure_ascii=False))][:30]
@@ -645,13 +829,19 @@ def step_collect(ctx):
                            'idle_sweep': len(sweep), 'digest_chars': len(text)}
     unread = ['%s: %s' % (m.get('id'), m.get('freshness')) for m in (rep or {}).get('mates', [])
               if m.get('id') not in ctx.excluded and m.get('freshness') not in ('fresh', 'local', 'remote', None)]
+    # Partial means something could not be read; records that were read but
+    # disagree are digest findings for triage, not a partial collect.
     unread += [g for g in (rep or {}).get('gaps', [])
-               if re.search(r'incomplete|unavailable|unreadable', g) and not mentions_excluded(ctx, g)][:3]
+               if re.search(r'summary incomplete|unreadable|unavailable|could not be (read|checked)', g)
+               and not mentions_excluded(ctx, g)][:3]
+    unread += ['%s: no current state' % m.get('id') for m in (rep or {}).get('mates', [])
+               if m.get('id') not in ctx.excluded and not m.get('state')]
     if (rep or {}).get('power_error'):
         unread.append('power: %s' % rep['power_error'])
     if UNREADABLE:
         unread.append('%d session file(s) unreadable' % len(UNREADABLE))
-    gaps = ([nm_err] if nm_err else []) + (['fleet report unreadable'] if rep is None else []) + unread[:3]
+    # Unread machines are always named; other reasons are capped at three.
+    gaps = ([nm_err] if nm_err else []) + (['fleet report unreadable'] if rep is None else []) + unread[:3] + nmb_errors
     result = {'status': 'partial' if gaps else 'done', **ctx.facts['counts']}
     if gaps:
         result['why'] = '; '.join(gaps)
@@ -1138,6 +1328,9 @@ def summary_line(run):
     text = 'Overnight: %s, %s.' % (
         '%d skill%s updated' % (len(skills), '' if len(skills) == 1 else 's') if skills else 'no skill changes',
         '%d fix%s raised' % (len(raised), '' if len(raised) == 1 else 'es') if raised else 'nothing raised')
+    nm = nm_summary(run.get('no_mistakes'))
+    if nm:
+        text += ' ' + nm[0].upper() + nm[1:] + '.'
     if bad:
         text += ' Did not run cleanly: %s.' % ', '.join('%s (%s)' % (n, run['steps'][n]['status']) for n in bad)
     return text
@@ -1178,6 +1371,7 @@ def cmd_run(args):
         run['raised'] = ctx.facts.get('raised', [])
         run['slow_commands'] = ctx.facts.get('slow_commands', [])
         run['counts'] = ctx.facts.get('counts', {})
+        run['no_mistakes'] = ctx.facts.get('no_mistakes')
         run['status'] = ('done' if all(s.get('status') in CLEAN for s in run['steps'].values()) and not force_partial
                          else 'partial')
         run['summary'] = summary_line(run)

@@ -265,9 +265,14 @@ refreshes only its parent-side remote-summary cache as an observational side eff
 validated registered-home handoff. It is local-only, skips nested secondmate
 aggregation, includes generated_epoch for freshness arithmetic, and marks
 inventory contradictions or unavailable child state invalid.
-kind=secondmate meta records are not child inventory for unowned_current or
-terminal_in_flight; they never have backlog rows.
-Its invalidity object names the normalized failure kind and affected ids.
+kind=secondmate meta records are not child inventory for unowned_current,
+terminal_in_flight, or unavailable child state; their current state belongs to
+their own home's published summary, while remote endpoints stay unknown here.
+Worker metadata whose structured backlog item is Done is retained, not unowned
+or an unavailable child.
+Its invalidity object names the first normalized failure kind and affected ids.
+unknown_children lists every unread child id independently of that first
+invalidity; older producers may omit it.
 Actionable tasks-axi captain holds appear as decisions_open and stay visible in
 queued with hold_reason, hold_kind, hold_until,
 hold_bucket, hold_age_days, and plural blocker fields for downstream
@@ -1076,13 +1081,21 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
             report_path:((.report_path // null) | if . == null then null else trunc(500) end),
             local_note:((.local_note // null) | if . == null then null else trunc(120) end),outcome,completion} ]
        | sort_by([(.completion.date // ""), .id]) | reverse) as $landed_all
-    | ([ $tasks[] | select(.current_state.state == "unknown") ]) as $unknown_children
+    # The current state of a secondmate task is the summary its own home
+    # publishes, never an endpoint probe from here, so it is not an unknown child here.
+    | ([ $backlog.records[]? | select(.structured == true and .state == "done") | .id ]) as $done_ids
+    # A record kept after its item is Done (a captain-held preservation of a
+    # finished worker) is retained: neither unowned live work nor a child whose
+    # live state is needed.
+    | ([ $tasks[] | select(.kind != "secondmate" and .current_state.state == "unknown")
+         | select(.id as $id | $done_ids | index($id) | not) ]) as $unknown_children
     | ([ $owned_in_flight[]
          | select(.requires_child_metadata)
          | select(.id as $id | [$tasks[].id] | index($id) | not) ]) as $orphan_in_flight
     | ([ $tasks[]
          | select(.kind != "secondmate")
          | select(.id as $id | [$owned_in_flight[].id] | index($id) | not)
+         | select(.id as $id | $done_ids | index($id) | not)
          | {id,state:.current_state.state} ]) as $unowned_children
     | ([ $owned_in_flight[] as $work
          | $tasks[]
@@ -1189,6 +1202,7 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
           | .[:$queued_n]),
         landed:(if $landed_n == 0 then $landed_all else $landed_all[:$landed_n] end),
         crew_time:$crew_time,
+        unknown_children:($unknown_children | map(.id)),
         endpoints:([$tasks[] | {id,state:.current_state.state,source:.current_state.source,
           endpoint:(.endpoint + {target:((.endpoint.target // null) | if . == null then null else trunc(240) end)})}][:$child_n]),
         counts:{
