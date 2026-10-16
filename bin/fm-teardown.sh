@@ -1428,10 +1428,13 @@ work_is_landed() {
 #       repository, including a fork; origin supplies the freshly fetched default
 #       branch. Default-branch ancestry or merged-PR ancestry/equivalent patch ids
 #       prove coverage, including pipeline-replayed commits after later default
-#       evolution. Otherwise, a first-parent walk finds a prefix covered by either
-#       proof, so already-proved work is not rechecked. Only the remaining work
-#       is checked in a conflict-free 3-way merge using that prefix as the merge
-#       base; the result must equal the current default tree. Unreadable branch
+#       evolution. Patch evidence excludes commits already reachable from the
+#       default branch or PR head, combining those ancestry proofs with PR patch
+#       evidence for the remaining commits. Otherwise, a first-parent walk finds
+#       a prefix covered by either proof, so already-proved work is not rechecked.
+#       Only the remaining work is checked in a conflict-free 3-way merge using
+#       that prefix as the merge base; the result must equal the current default
+#       tree. Unreadable branch
 #       state or a failed fetch refuses; only confirmed remote branch absence
 #       permits omitting its tip;
 #   (d) the worker stopped on recorded evidence - the backend's recovery-grade

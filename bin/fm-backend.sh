@@ -145,7 +145,8 @@ fm_backend_target_of_meta() {  # <meta-file>
 # fm_backend_validate_task_endpoint: validate a task cleanup record entirely
 # from its durable metadata before any runtime command or cleanup mutation.
 # The validation binds the exact task id, selected backend, target, project,
-# and worktree. Stream records carry endpoint_task_id because their opaque
+# and worktree, except for the reassignment candidate admitted under teardown's
+# opt-in below. Stream records carry endpoint_task_id because their opaque
 # endpoint ids do not encode the task label. A record on a retired backend
 # validates its identity fields only (its endpoint can no longer be driven, so
 # there is nothing further to bind), which lets cleanup and
