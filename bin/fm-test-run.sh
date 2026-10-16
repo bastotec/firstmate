@@ -651,6 +651,8 @@ portable_serial_weight_hints() {
 # (2026-10-13); every serial shard passed in that run.
 # fm-watch-parent-channel-echo was measured in green serial shard 8 of run
 # 38444133335 (2026-10-13), with three family-phase workers.
+# fm-gate-record is a local measurement (10.5 s on macOS, 2026-10-16) until a
+# green CI run's timing artifact replaces it.
 # fm-approval was measured in green serial shard 4 of run 38683021067
 # (2026-10-15), with three family-phase workers.
 # fm-machine was measured in green serial shard 3 of run 38836372241
@@ -700,6 +702,7 @@ tests/fm-external-wait.test.sh 10095
 tests/fm-fleet-snapshot-view.test.sh 16642
 tests/fm-fleet-sync.test.sh 59502
 tests/fm-gate-refuse.test.sh 11178
+tests/fm-gate-record.test.sh 11000
 tests/fm-gitignore-config.test.sh 90
 tests/fm-gotmp.test.sh 3374
 tests/fm-guard-stale-banner.test.sh 40921

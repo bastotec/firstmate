@@ -130,6 +130,8 @@
 #     detail=<text>        this reader's one-line detail
 #     error=<text>         the run's recorded terminal error, when present
 #     updated_at=<UTC>     when any other line last changed
+#   The same full read also feeds state/<id>.gate; bin/fm_gate_record.py's
+#   header owns that JSON record's fields, preservation, and cleanup contract.
 #   Scouts, secondmates, remote mates, missing metadata and torn-down copies
 #   publish nothing; bin/fm-teardown.sh removes the record.
 #
@@ -265,9 +267,15 @@ crew_state_step() {
 crew_state_publish() {  # <state> <detail> [run-error]
   local record="$STATE/$ID.crew-state" tmp body step='' step_status='' run='' pr=''
   [ "$PUBLISH_READY" = 1 ] || return 0
+  local gate="$STATE/$ID.gate"
   if [ "$HAVE_RUN" != 1 ]; then
     rm -f -- "$record"
     return 0
+  fi
+  # Only full reads decide the gate's lifetime, independent of the verdict below;
+  # bin/fm_gate_record.py's header owns preservation and cleanup.
+  if [ "$RUN_SOURCE" = full ] && [ ! -L "$gate" ]; then
+    printf '%s' "$RUN_OUT" | python3 "$SCRIPT_DIR/fm_gate_record.py" "$gate" 2>/dev/null || true
   fi
   if [ "$RUN_SOURCE" = coarse ]; then
     step_status=$COARSE_STATUS

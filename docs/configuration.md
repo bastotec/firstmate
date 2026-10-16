@@ -75,6 +75,7 @@ state/
   <id>.model <id>.deck-caps  in-place model choice and live driver capability (bin/fm-control.sh owns public behavior; bin/fm_model_switch.py owns capability checks)
   <id>.progress           in-turn native activity, read for the busy-age bound only (bin/fm-busy-event.sh)
   <id>.crew-state         local ship task's validation record for file watchers; bin/fm-task-state-lib.sh "PUBLISHED RECORD" owns fields, refreshes, and cleanup
+  <id>.gate               validation gate JSON; bin/fm_gate_record.py's header owns fields, preservation, and cleanup
   cards/<task-id>.json    captain-facing decision card; bin/fm-card.sh owns schema and storage, bin/fm-captain-hold.sh owns hold and resolution hooks
   cards-cleared.log       stale-card clear and restore log; bin/fm-card.sh owns fields and undo guards
   orders/<id>.json        order proposal waiting for the captain's launch or cancel; bin/fm-order.sh owns schema and storage
