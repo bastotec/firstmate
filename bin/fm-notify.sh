@@ -6,6 +6,7 @@
 #   fm-notify.sh [--urgent] [--title <title>] [--link <https-url>] <body...>
 #   fm-notify.sh [--urgent] [--title <title>] [--link <https-url>] -      (body on stdin)
 #
+# Notice contents remain owner-only (mode 0600) from staging through publication.
 # Writes one notice to this home's state/notices/<id>.json (staged as .<id>.json.<hex> and
 # renamed into place), id nt-YYYYMMDDTHHMMSS-xxxxxx:
 #   {"version":1,"id","title","body","urgent":bool,"quiet":bool,"created":"<UTC>Z","link":<https|null>}
