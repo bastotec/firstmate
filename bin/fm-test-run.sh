@@ -714,6 +714,7 @@ tests/fm-mate-mail.test.sh 26523
 tests/fm-model-chain.test.sh 30090
 tests/fm-nm-test-contract.test.sh 1135
 tests/fm-no-mistakes-required.test.sh 5288
+tests/fm-notify.test.sh 1399
 tests/fm-on.test.sh 19570
 tests/fm-operational-input.test.sh 244
 tests/fm-peek-remote.test.sh 1331
