@@ -338,9 +338,17 @@ $(awk 'seen >= 2 { print } /^---$/ { seen++ }' "$CONTRACT")
 
 $prompt"
   fi
-  if recalled=$(printf '%s' "$prompt" | python3 "$SCRIPT_DIR/fm_captain_memory.py" prompt --home "$FM_HOME" 2>/dev/null); then
-    prompt=$recalled
-  fi
+  prompt=$(printf '%s' "$prompt" | python3 -c '
+import re, sys
+body = re.sub(r"\[fm-captain-memory\].*?(?:\[/fm-captain-memory\]|\Z)", "", sys.stdin.read(), flags=re.S)
+sys.path.insert(0, sys.argv[1])
+try:
+    from fm_captain_memory import with_memory
+    recalled = with_memory(sys.argv[2], body)
+except Exception:
+    recalled = body
+sys.stdout.write(recalled)
+' "$SCRIPT_DIR" "$FM_HOME" 2>/dev/null) || { log "cannot sanitize turn"; sleep "$POLL"; continue; }
   step=started
   [ "$mode" != recover ] || step=recovering
   journal "$step" "$name" || { log "cannot journal $name; not running its turn"; sleep 5; continue; }

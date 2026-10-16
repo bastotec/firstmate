@@ -941,10 +941,17 @@ run_turn() {  # <prompt>
   [ "$SECONDMATE" != 1 ] || watch_confirm_handling_delivery || return 1
   [ -z "$effort" ] || prompt="deck-effort: $effort
 $prompt"
-  local recalled
-  if recalled=$(printf '%s' "$prompt" | python3 "$SCRIPT_DIR/fm_captain_memory.py" prompt --home "${FM_HOME:-$(dirname "$STATE")}" 2>/dev/null); then
-    prompt=$recalled
-  fi
+  prompt=$(printf '%s' "$prompt" | python3 -c '
+import re, sys
+body = re.sub(r"\[fm-captain-memory\].*?(?:\[/fm-captain-memory\]|\Z)", "", sys.stdin.read(), flags=re.S)
+sys.path.insert(0, sys.argv[1])
+try:
+    from fm_captain_memory import with_memory
+    recalled = with_memory(sys.argv[2], body)
+except Exception:
+    recalled = body
+sys.stdout.write(recalled)
+' "$SCRIPT_DIR" "${FM_HOME:-$(dirname "$STATE")}" 2>/dev/null) || return 1
   # This turn's route: an in-place switch while the file is there, else the
   # launch --model (never a stale copy of an earlier switch).
   local switched model=$MODEL

@@ -385,11 +385,12 @@ def capture_captain_memory(home, body, source):
 
 def with_captain_memory(home, body):
     """Give every turn the captain's recorded preferences, sized to its room."""
+    body = re.sub(r'\[fm-captain-memory\].*?(?:\[/fm-captain-memory\]|\Z)', '', body, flags=re.S)
     try:
         from fm_captain_memory import with_memory
-    except ImportError:
+        return with_memory(home, body, max_bytes=MAX_BODY)
+    except Exception:
         return body
-    return with_memory(home, body, max_bytes=MAX_BODY)
 
 
 def steer_publish(args):

@@ -30,7 +30,7 @@ import tempfile
 
 try:
     from fm_captain_memory import with_memory
-except ImportError:
+except Exception:
     with_memory = None
 
 
@@ -185,6 +185,7 @@ class Receiver:
                         continue
                 elif directory != self.inbox or not supervisor_direct(record, captain_lane(self.state, self.task)):
                     continue
+                body = re.sub(r'\[fm-captain-memory\].*?(?:\[/fm-captain-memory\]|\Z)', '', body, flags=re.S)
                 if not bridge:
                     body = with_deck_images(body)
                 ordinary = self.inbox / source.name
@@ -192,7 +193,10 @@ class Receiver:
                 if not bridge and (not body.strip() or len(guidance.encode('utf-8')) > 65536):
                     continue
                 if with_memory is not None:
-                    guidance = with_memory(active.get('home') or self.state.parent, guidance)
+                    try:
+                        guidance = with_memory(active.get('home') or self.state.parent, guidance)
+                    except Exception:
+                        pass
                 candidates.append((int(source.stem), body, guidance))
         published = 0
         for number, body, guidance in sorted(candidates):

@@ -67,8 +67,10 @@ import datetime
 import fcntl
 import os
 import re
+import string
 import subprocess
 import sys
+import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -104,7 +106,7 @@ def shared(home):
 
 
 def norm(text):
-    return re.sub(r'\W+', ' ', text.lower()).strip()
+    return ' '.join(text.casefold().translate(str.maketrans('', '', string.punctuation)).split())
 
 
 def key(entry):
@@ -122,6 +124,18 @@ def locked(path):
     with open(path.parent / '.captain-memory.lock', 'a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         yield
+
+
+def atomic_write(path, text):
+    with tempfile.NamedTemporaryFile(dir=path.parent, prefix='.' + path.name + '.', delete=False) as f:
+        temp = Path(f.name)
+        try:
+            f.write(text.encode('utf-8'))
+            f.flush()
+            os.fsync(f.fileno())
+            os.replace(temp, path)
+        finally:
+            temp.unlink(missing_ok=True)
 
 
 def entry_blocks(text):
@@ -347,42 +361,40 @@ def upkeep(args):
                 kept.append(block)
             new = ''.join(kept)
             if new != text:
-                path.write_bytes(new.encode('utf-8'))
+                atomic_write(path, new)
     known = {key(e) for e in entries(path)}
     cand_path = home / 'state' / 'captain-memory-candidates.md'
-    known_cands = {key(e) for e in entries(cand_path)}
     added, reviewed = [], []
-    for h in [home] + mates:
-        data = h / 'data'
-        if not data.is_dir():
-            continue
-        quarantines = [q for q in sorted(data.glob('.captain-shared.md.quarantine.*'))
-                       + sorted(data.glob('captain-shared.md.remote-quarantine-*'))
-                       if not q.name.endswith('.reviewed')]
-        for q in quarantines:
-            for e in entries(q):
-                k = key(e)
-                if k and k not in known and k not in known_cands:
-                    known_cands.add(k)
-                    added.append('<!-- from the local copy in %s, %s -->\n%s'
-                                 % (h, q.name, e if e.startswith('- ') else '- ' + e))
-            reviewed.append(q)
-        with locked(data / 'captain.md'):
-            try:
-                with open(data / 'captain.md', 'x') as f:
-                    f.write(HOME_HEADER)
-            except FileExistsError:
-                pass
-    if added or (reviewed and cand_path.exists()):
-        cand_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(cand_path, 'a') as f:
-            if not cand_path.stat().st_size:
-                f.write('# Captain memory candidates - mates\' local rules not in the shared file; promote or drop\n\n')
-            f.write(''.join(a + '\n' for a in added))
-            f.flush()
-            os.fsync(f.fileno())
-    for q in reviewed:
-        q.rename(q.with_name(q.name + '.reviewed'))
+    with locked(cand_path):
+        known_cands = {key(e) for e in entries(cand_path)}
+        for h in [home] + mates:
+            data = h / 'data'
+            if not data.is_dir():
+                continue
+            quarantines = [q for q in sorted(data.glob('.captain-shared.md.quarantine.*'))
+                           + sorted(data.glob('captain-shared.md.remote-quarantine-*'))
+                           if not q.name.endswith('.reviewed')]
+            for q in quarantines:
+                for e in entries(q):
+                    k = key(e)
+                    if k and k not in known and k not in known_cands:
+                        known_cands.add(k)
+                        added.append('<!-- from the local copy in %s, %s -->\n%s'
+                                     % (h, q.name, e if e.startswith('- ') else '- ' + e))
+                reviewed.append(q)
+            with locked(data / 'captain.md'):
+                try:
+                    with open(data / 'captain.md', 'x') as f:
+                        f.write(HOME_HEADER)
+                except FileExistsError:
+                    pass
+        if added:
+            current = cand_path.read_text() if cand_path.exists() else ''
+            if not current:
+                current = '# Captain memory candidates - mates\' local rules not in the shared file; promote or drop\n\n'
+            atomic_write(cand_path, current + ''.join(a + '\n' for a in added))
+        for q in reviewed:
+            q.rename(q.with_name(q.name + '.reviewed'))
     files = [path, home / 'data' / 'captain.md'] + [m / 'data' / 'captain.md' for m in mates]
     oversized = [str(f) for f in files if f.exists() and f.stat().st_size > OVERSIZED]
     repeats = 0
