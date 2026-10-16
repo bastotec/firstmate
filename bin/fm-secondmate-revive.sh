@@ -283,7 +283,7 @@ lane_open_blocker() {  # <id>
 }
 
 lane_heal() {  # <id>
-  local id=$1 rec="$STATE/$1.lane-heal" open key line now first relaunched escalated out rc lane
+  local id=$1 rec="$STATE/$1.lane-heal" open key line now first relaunched escalated out rc lane episode
   open=$(lane_open_blocker "$id")
   now=$(date +%s)
   if [ -z "$open" ]; then
@@ -297,16 +297,19 @@ lane_heal() {  # <id>
     return 0
   fi
   key=${open%%$'\t'*} line=${open#*$'\t'}
+  # An episode is the exact blocked event (it carries its since), so a lane
+  # that recovered and failed again is a new episode, never the old one.
+  episode=$(printf '%s' "$line" | cksum | cut -d' ' -f1)
   case "$key" in supervisor-failing-*) lane="inner monologue (supervisor)" ;; *) lane="conversation lane" ;; esac
-  if [ "$(sed -n 's/^key=//p' "$rec" 2>/dev/null)" != "$key" ]; then
-    printf 'key=%s\nlane=%s\nfirst_seen=%s\nrelaunched=0\nescalated=0\n' "$key" "$lane" "$now" > "$rec.tmp" && mv -f "$rec.tmp" "$rec"
+  if [ "$(sed -n 's/^key=//p' "$rec" 2>/dev/null)" != "$key" ] || [ "$(sed -n 's/^episode=//p' "$rec" 2>/dev/null)" != "$episode" ]; then
+    printf 'key=%s\nepisode=%s\nlane=%s\nfirst_seen=%s\nrelaunched=0\nescalated=0\n' "$key" "$episode" "$lane" "$now" > "$rec.tmp" && mv -f "$rec.tmp" "$rec"
   fi
   first=$(sed -n 's/^first_seen=//p' "$rec"); relaunched=$(sed -n 's/^relaunched=//p' "$rec")
   escalated=$(sed -n 's/^escalated=//p' "$rec")
   [ "$escalated" != 1 ] || return 0
   if [ "$relaunched" = 0 ]; then
     rc=0
-    out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" relaunch --unless-held-stopped --note "$HEAL_NOTE" < /dev/null 2>&1) || rc=$?
+    out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" relaunch --unless-held-stopped --replace-live --note "$HEAL_NOTE" < /dev/null 2>&1) || rc=$?
     if [ "$rc" -eq 0 ]; then
       log "relaunched $id because its $lane kept failing"
       sed -i.bak "s/^relaunched=.*/relaunched=$now/" "$rec" && rm -f "$rec.bak"
@@ -323,10 +326,10 @@ lane_heal() {  # <id>
   elif [ $((now - relaunched)) -lt "$HEAL_GRACE" ]; then
     return 0
   fi
-  if fm_wake_append check "lane-heal:$id:$first" \
+  if fm_wake_append check "lane-heal:$id:$episode" \
       "check: second mate $id is stuck: its $lane keeps failing after an automatic relaunch; tell the captain. Its report: ${line#blocked }"; then
     log "escalated $id: its $lane is still failing"
-    printf 'key=%s\nlane=%s\nfirst_seen=%s\nrelaunched=%s\nescalated=1\n' "$key" "$lane" "$first" "$relaunched" > "$rec.tmp" \
+    printf 'key=%s\nepisode=%s\nlane=%s\nfirst_seen=%s\nrelaunched=%s\nescalated=1\n' "$key" "$episode" "$lane" "$first" "$relaunched" > "$rec.tmp" \
       && mv -f "$rec.tmp" "$rec"
   fi
 }

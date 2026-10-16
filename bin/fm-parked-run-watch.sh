@@ -2,6 +2,8 @@
 # fm-parked-run-watch.sh - never let a worker's validation run sit parked.
 #
 # Usage: fm-parked-run-watch.sh scan [--help]
+#        fm-parked-run-watch.sh close <worker-id>   (bin/fm-teardown.sh, as a
+#        worker leaves: resolve an escalated episode, then drop its record)
 #
 # The home's watcher (bin/fm-watch.sh) runs a scan every
 # FM_PARKED_RUN_INTERVAL seconds (600); this script owns what a scan does.
@@ -34,9 +36,9 @@ set -u
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 case "${1:-}" in
-  scan) ;;
-  -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
-  *) sed -n '2,32p' "$0" >&2; exit 2 ;;
+  scan|close) ;;
+  -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
+  *) sed -n '2,34p' "$0" >&2; exit 2 ;;
 esac
 [ -n "${FM_HOME:-}" ] || { echo "error: FM_HOME is required" >&2; exit 2; }
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
@@ -80,6 +82,18 @@ escalate() {  # <id> <blocked|resolved> <text>
 }
 
 minutes() { printf '%s' "$(( $1 / 60 ))"; }
+
+if [ "$1" = close ]; then
+  id=${2:-}
+  case "$id" in ''|*[!A-Za-z0-9._-]*) echo "error: close needs a worker id" >&2; exit 2 ;; esac
+  rec="$STATE/$id.parked-run"
+  [ -f "$rec" ] || exit 0
+  if [ "$(field "$rec" escalated)" = 1 ]; then
+    escalate "$id" resolved "worker $id's run $(field "$rec" run) left the fleet while parked at $(field "$rec" step) (parked since $(field "$rec" since))" || exit 1
+  fi
+  rm -f "$rec"
+  exit 0
+fi
 
 for meta in "$STATE"/*.meta; do
   [ -f "$meta" ] || continue

@@ -524,8 +524,10 @@ supervisor_turn_failed() {  # <failure text>
 supervisor_turn_ok() {
   [ -f "$SUPERVISOR_HEALTH" ] || return 0
   if [ "$(sed -n 's/^escalated=//p' "$SUPERVISOR_HEALTH")" = 1 ]; then
+    # Keep the record until the first mate has the resolution, so a channel
+    # that was briefly unwritable is retried on the next good turn.
     health_report "$(printf 'resolved [key=supervisor-failing-%s]: %s supervisor is working again (failing since %s)' \
-      "$ID" "$ID" "$(sed -n 's/^since=//p' "$SUPERVISOR_HEALTH")")" || true
+      "$ID" "$ID" "$(sed -n 's/^since=//p' "$SUPERVISOR_HEALTH")")" || return 0
     if [ "$MATE_SPLIT" = 1 ]; then
       FM_SPLIT_MATE_STATE="$STATE" FM_SPLIT_MATE_ID="$ID" "$SCRIPT_DIR/fm-captain-note.sh" \
         "I'm working again and picking up what was waiting." >/dev/null 2>&1 || true

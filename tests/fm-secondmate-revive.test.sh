@@ -172,6 +172,11 @@ test_a_live_mate_with_a_failing_lane_is_relaunched_then_escalated_once() {
   scan "$dir"
   assert_grep 'second mate pat recovered' "$dir/home/state/.wake-queue" "a recovery after an escalation clears the blocker"
   [ ! -e "$dir/home/state/pat.lane-heal" ] || fail "a recovered lane keeps no heal record"
+  # It fails again later: a new episode gets its own relaunch.
+  printf 'blocked [key=supervisor-failing-pat]: pat supervisor is failing every turn (3 consecutive): x, since 2026-10-16T09:00:00Z; nothing\n' >> "$st"
+  scan "$dir"
+  [ "$(calls "$dir" | grep -c '^pat relaunch ')" = 2 ] || fail "a new failing episode gets its own relaunch: $(calls "$dir")"
+  assert_grep '--replace-live' "$dir/home/control-calls" "the lane-health relaunch replaces the live mate"
   pass "a live mate whose lane keeps failing is relaunched once, then raised once, and cleared on recovery"
 }
 

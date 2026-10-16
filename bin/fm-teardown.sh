@@ -3551,6 +3551,10 @@ if [ "$KIND" = secondmate ]; then
     "$STATE/$ID.captain-lane.log" "$STATE/$ID.captain-lane.answered" "$STATE/$ID.captain-lane.turn" "$STATE/$ID.captain-lane.stale-noted" "$STATE/$ID.supervisor-failing" "$STATE/$ID.conversation-failing" "$STATE/$ID.lane-heal"
   remove_secondmate_registry_entry "$ID"
 fi
+# A worker leaving while its parked-run watch had escalated resolves that
+# blocker first (bin/fm-parked-run-watch.sh close), so it never stays open.
+FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-parked-run-watch.sh" close "$ID" >/dev/null 2>&1 \
+  || echo "warning: could not close task $ID's parked-run watch record" >&2
 # Remove the per-task temp root (/tmp/fm-<id>/, incl. its gotmp/) recorded by spawn.
 # Read before the state-file rm below; empty (pre-fix tasks without tasktmp=) is a no-op.
 [ -n "$TASK_TMP" ] && rm -rf "$TASK_TMP"

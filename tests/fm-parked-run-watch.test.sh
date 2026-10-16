@@ -119,7 +119,19 @@ test_a_run_that_parks_again_or_at_another_gate_starts_over() {
   pass "parked-run watch: a run parked again, or at another gate, gets its own nudge"
 }
 
+test_a_worker_leaving_closes_its_escalation() {
+  local dir
+  dir=$(new_home leaving)
+  parked "$dir" run-f
+  scan "$dir"; scan "$dir"; scan "$dir"
+  FM_HOME="$dir/home" "$dir/bin/fm-parked-run-watch.sh" close w1
+  [ "$(wakes "$dir" 'parked-run:w1:resolved')" = 1 ] || fail "a worker leaving must resolve its escalated parked run"
+  [ ! -e "$dir/home/state/w1.parked-run" ] || fail "a worker leaving keeps no parked record"
+  pass "parked-run watch: a worker cleaned up while escalated resolves its blocker"
+}
+
 test_first_mate_home_nudges_then_raises_once_and_clears
 test_second_mate_home_raises_to_its_parent_channel
+test_a_worker_leaving_closes_its_escalation
 test_an_unavailable_reading_never_resolves_a_parked_run
 test_a_run_that_parks_again_or_at_another_gate_starts_over
