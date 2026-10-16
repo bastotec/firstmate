@@ -556,7 +556,8 @@ only = set(json.loads(sys.argv[3])) if len(sys.argv) > 3 else None
 CAUSES = (
     ('timeout', r'timed? ?out|timeout|deadline exceeded|wait of .* elapsed'),
     ('infra', r'database is locked|SQLITE_BUSY|\block\b|lock(ed)? |daemon|panic|crash|upstream_error|gateway|'
-              r'connection (refused|reset)|\bEOF\b|killed|signal|not initialized|no such file|unreachable'),
+              r'connection (refused|reset)|\bEOF\b|killed|signal|not initialized|no such file|unreachable|'
+              r'context canceled'),
     ('finding', r'finding|non-compliant|refusing|risk|review|test(s)? failed|lint|check(s)? failed'),
 )
 def ms(v):
@@ -588,7 +589,8 @@ for run_id, status, error, updated in con.execute(
     if ms(updated) < since or (only is not None and run_id not in only):
         continue
     rows = sorted(steps.get(run_id, []))
-    stopped = [r for r in rows if r[2] == 'failed'] or [r for r in rows if r[2] in ('running', 'fixing', 'awaiting_approval')]
+    stopped = [r for r in rows if r[2] == 'failed'] or \
+        [r for r in rows if r[2] in ('running', 'fixing', 'awaiting_approval', 'fix_review')]
     step = stopped[0][1] if stopped else 'none'
     text = ' '.join([error or ''] + [r[3] for r in stopped])
     if run_id in capped_ever:
@@ -803,7 +805,7 @@ def step_collect(ctx):
     # Partial means something could not be read; records that were read but
     # disagree are digest findings for triage, not a partial collect.
     unread += [g for g in (rep or {}).get('gaps', [])
-               if re.search(r'summary incomplete|unreadable|could not be (read|checked)', g)
+               if re.search(r'summary incomplete|unreadable|unavailable|could not be (read|checked)', g)
                and not mentions_excluded(ctx, g)][:3]
     unread += ['%s: no current state' % m.get('id') for m in (rep or {}).get('mates', [])
                if m.get('id') not in ctx.excluded and not m.get('state')]

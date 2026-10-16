@@ -486,6 +486,10 @@ nm_case() {
     INSERT INTO step_results VALUES('s6','r1','lint',8,'failed',$((NOW - 7300)),$((NOW - 7200)),'timed out','[]');
     INSERT INTO runs VALUES('c3','fleet','cancelled','fm/c3','cancelled: aborted by user','',$((NOW - 3 * 86400)),$((NOW - 3000)));
     INSERT INTO step_results VALUES('s7','c3','review',3,'awaiting_approval',$((NOW - 3 * 86400)),NULL,'','[]');
+    INSERT INTO runs VALUES('d1','fleet','failed','fm/d1','step review failed: context canceled','',$((NOW - 3000)),$((NOW - 3000)));
+    INSERT INTO runs VALUES('c4','fleet','cancelled','fm/c4','cancelled: aborted by user','',$((NOW - 3000)),$((NOW - 3000)));
+    INSERT INTO step_results VALUES('s8','c4','review',3,'fix_review',$((NOW - 3500)),NULL,'','[]');
+    INSERT INTO step_results VALUES('s9','c4','test',4,'pending',NULL,NULL,'','[]');
     INSERT INTO repair_budget_decisions VALUES('x','s1',0,0,0,'exhausted','');
     INSERT INTO repair_budget_decisions VALUES('y','s7',0,0,0,'exhausted','');"
   printf '%s' "$d"
@@ -519,16 +523,17 @@ run = json.load(open(sys.argv[1]))
 nm = run["no_mistakes"]
 # r4 is the harness repository's failure from new_case, with no step results;
 # c3 hit the repair cap days ago and was cancelled today, so the cap is its cause.
-assert nm["hosts"]["this Mac"]["by_cause"] == {"repair cap": 2, "aborted": 1, "infra": 1, "finding": 1, "timeout": 1, "other": 1}, nm["hosts"]["this Mac"]
-assert nm["hosts"]["this Mac"]["reviews"] == 3 and nm["hosts"]["this Mac"]["cap_hits"] == 1, nm["hosts"]["this Mac"]
+# d1 failed on a daemon shutdown (infra); c4 was cancelled while its review sat in fix_review.
+assert nm["hosts"]["this Mac"]["by_cause"] == {"repair cap": 2, "aborted": 2, "infra": 2, "finding": 1, "timeout": 1, "other": 1}, nm["hosts"]["this Mac"]
+assert nm["hosts"]["this Mac"]["reviews"] == 4 and nm["hosts"]["this Mac"]["cap_hits"] == 1, nm["hosts"]["this Mac"]
 assert nm["hosts"]["workload"] == {"reviews": 7, "cap_hits": 3, "failed": 2, "by_cause": {"repair cap": 2}}, nm["hosts"]
-assert nm["by_step"] == {"review": 5, "ci": 1, "pr": 1, "lint": 1, "none": 1}, nm["by_step"]
-assert nm["failed"] == 9 and nm["by_cause"]["repair cap"] == 4, nm
+assert nm["by_step"] == {"review": 6, "ci": 1, "pr": 1, "lint": 1, "none": 2}, nm["by_step"]
+assert nm["failed"] == 11 and nm["by_cause"]["repair cap"] == 4, nm
 # Only the machine measured both nights is compared; workload is new coverage.
 ch = nm["change"]
-assert ch["hosts"] == ["this Mac"] and ch["failed"] == -2 and ch["coverage_changed"] == ["workload"], ch
-assert ch["by_cause"]["aborted"] == -5 and ch["by_cause"]["repair cap"] == 2, ch
-assert "No-mistakes: 9 failed (-2 vs 2026-10-11, on this Mac only); top: repair cap 4" in run["summary"], run["summary"]
+assert ch["hosts"] == ["this Mac"] and ch["failed"] == 0 and ch["coverage_changed"] == ["workload"], ch
+assert ch["by_cause"]["aborted"] == -4 and ch["by_cause"]["repair cap"] == 2, ch
+assert "No-mistakes: 11 failed (+0 vs 2026-10-11, on this Mac only); top: repair cap 4" in run["summary"], run["summary"]
 PY
   grep -q 'workload: 7 reviews, 3 hit the repair cap, 2 failed (repair cap 2)' "$d"/home/state/dream/digest-*.md \
     || fail "the digest lacks the per-host breakdown"

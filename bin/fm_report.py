@@ -447,7 +447,12 @@ def build(home, scope_raw, days, now=None):
                 # A summary that could not read part of its home is a gap; one that
                 # read everything and found records disagreeing is an inconsistency.
                 kind = (rec.get('invalidity') or {}).get('kind')
-                if rec.get('unknown_children'):
+                legacy_unknown = 'unknown_children' not in rec and rec.get('state') == 'unknown' \
+                    and any(e.get('state') == 'unknown' for e in rec.get('endpoints') or [])
+                if legacy_unknown:
+                    # An older producer does not say which children went unread.
+                    gaps.append('%s: summary incomplete (a child state may be unreadable: %s)' % (name, rec['reason']))
+                elif rec.get('unknown_children'):
                     # Children whose state could not be read stay a read gap even when
                     # a disagreement was reported first.
                     gaps.append('%s: summary incomplete (child current state unavailable: %s)'
