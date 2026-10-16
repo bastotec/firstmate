@@ -282,6 +282,38 @@ test_originless_dirty_pool_refuses_without_discarding_work() {
   pass "a dirty origin-less pooled worktree is refused without discarding its local work"
 }
 
+test_leftover_scratch_is_set_aside_not_discarded() {
+  local rec id out status kept
+  id='pool-scratch-r1'
+  rec=$(make_originless_case scratch-left "$id")
+  read_case_record "$rec"
+  mkdir -p "$POOL_DIR/.scratch/notes"
+  printf 'old worker scratch\n' > "$POOL_DIR/.scratch/notes/log.txt"
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "a slot holding only a leftover .scratch/ must not block the task"$'\n'"$out"
+  assert_contains "$out" "moved it to" "the move is reported"
+  kept=$(find "$HOME_DIR/state/slot-quarantine" -path '*/.scratch/notes/log.txt' | head -1)
+  [ -n "$kept" ] || fail "the leftover scratch was not kept in the quarantine"
+  assert_grep 'old worker scratch' "$kept" "the leftover scratch is kept intact"
+  pass "a slot holding only a previous worker's .scratch/ sets it aside and launches"
+}
+
+test_scratch_plus_other_dirt_still_refuses() {
+  local rec id out status
+  id='pool-scratch-dirty-r1'
+  rec=$(make_originless_case scratch-dirty "$id")
+  read_case_record "$rec"
+  mkdir -p "$POOL_DIR/.scratch"; printf 'x\n' > "$POOL_DIR/.scratch/a"
+  printf 'real work\n' > "$POOL_DIR/uncommitted.txt"
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a slot with real uncommitted work must still refuse"
+  assert_contains "$out" "is not clean" "the refusal is unchanged"
+  [ -f "$POOL_DIR/.scratch/a" ] || fail "nothing is moved when the slot also holds real work"
+  pass "a slot with real uncommitted work beside .scratch/ still refuses and is left untouched"
+}
+
 test_origin_config_without_url_refuses_pool() {
   local rec id out status before
   id='pool-origin-without-url-r1'
@@ -810,6 +842,8 @@ test_unresolved_remote_default_refuses_pool
 test_unreachable_origin_refuses_stale_pool_base
 test_originless_pool_launches_without_a_freshness_fetch
 test_originless_dirty_pool_refuses_without_discarding_work
+test_leftover_scratch_is_set_aside_not_discarded
+test_scratch_plus_other_dirt_still_refuses
 test_origin_config_without_url_refuses_pool
 test_empty_origin_config_section_refuses_pool
 test_empty_only_included_origin_config_section_launches_pool

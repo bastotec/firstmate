@@ -152,6 +152,43 @@ test_live_unknown_held_and_non_secondmate_records_are_left_alone() {
   pass "live, ambiguous, held, and non-secondmate records are left alone"
 }
 
+test_a_live_mate_with_a_failing_lane_is_relaunched_then_escalated_once() {
+  local dir st
+  dir=$(new_case failing-lane)
+  add_local_mate "$dir" pat fm-deck-worker >/dev/null
+  st="$dir/home/state/pat.status"
+  printf 'blocked [key=supervisor-failing-pat]: pat supervisor is failing every turn (3 consecutive): model gateway request failed (HTTP 400), since 2026-10-15T23:42:00Z; nothing handed to it is being acted on\n' > "$st"
+  scan "$dir"
+  [ "$(calls "$dir" | grep -c '^pat relaunch ')" = 1 ] || fail "a failing lane was not relaunched first: $(calls "$dir")"
+  [ "$(grep -c 'lane-heal:' "$dir/home/state/.wake-queue" 2>/dev/null || echo 0)" = 0 ] || fail "nobody is told before the relaunch had its chance"
+  scan "$dir"
+  [ "$(calls "$dir" | grep -c '^pat relaunch ')" = 1 ] || fail "the relaunch is tried once per episode"
+  FM_HOME="$dir/home" FM_SECONDMATE_REVIVE_CONFIRM_SECS=0 FM_LANE_HEAL_GRACE_SECS=0 "$dir/bin/fm-secondmate-revive.sh" scan
+  FM_HOME="$dir/home" FM_SECONDMATE_REVIVE_CONFIRM_SECS=0 FM_LANE_HEAL_GRACE_SECS=0 "$dir/bin/fm-secondmate-revive.sh" scan
+  [ "$(grep -c 'lane-heal:pat:' "$dir/home/state/.wake-queue")" = 1 ] || fail "a lane still failing after the relaunch must be raised exactly once"
+  assert_grep 'second mate pat is stuck: its inner monologue (supervisor) keeps failing after an automatic relaunch' "$dir/home/state/.wake-queue" "the escalation names the mate and the lane"
+  assert_grep 'model gateway request failed (HTTP 400), since 2026-10-15T23:42:00Z' "$dir/home/state/.wake-queue" "the escalation carries the error and since when"
+  printf 'resolved [key=supervisor-failing-pat]: pat supervisor is working again\n' >> "$st"
+  scan "$dir"
+  assert_grep 'second mate pat recovered' "$dir/home/state/.wake-queue" "a recovery after an escalation clears the blocker"
+  [ ! -e "$dir/home/state/pat.lane-heal" ] || fail "a recovered lane keeps no heal record"
+  pass "a live mate whose lane keeps failing is relaunched once, then raised once, and cleared on recovery"
+}
+
+test_a_lane_that_recovers_after_the_relaunch_is_never_raised() {
+  local dir st
+  dir=$(new_case healed-lane)
+  add_local_mate "$dir" pat fm-deck-worker >/dev/null
+  st="$dir/home/state/pat.status"
+  printf 'blocked [key=conversation-failing-pat]: pat conversation is failing every turn (3 consecutive): x, since y\n' > "$st"
+  scan "$dir"
+  printf 'resolved [key=conversation-failing-pat]: pat conversation is answering again\n' >> "$st"
+  FM_HOME="$dir/home" FM_SECONDMATE_REVIVE_CONFIRM_SECS=0 FM_LANE_HEAL_GRACE_SECS=0 "$dir/bin/fm-secondmate-revive.sh" scan
+  [ "$(grep -c 'lane-heal:' "$dir/home/state/.wake-queue" 2>/dev/null || echo 0)" = 0 ] || fail "a lane the relaunch fixed must never reach the captain"
+  [ ! -e "$dir/home/state/pat.lane-heal" ] || fail "a healed lane keeps no record"
+  pass "a lane that the automatic relaunch fixed never reaches the captain"
+}
+
 test_two_failed_revivals_escalate_once_and_stop() {
   local dir target
   dir=$(new_case failing)
@@ -486,6 +523,8 @@ SH
 test_dead_local_mate_is_relaunched_after_a_confirmed_reading
 test_missing_local_mate_is_recovered
 test_live_unknown_held_and_non_secondmate_records_are_left_alone
+test_a_live_mate_with_a_failing_lane_is_relaunched_then_escalated_once
+test_a_lane_that_recovers_after_the_relaunch_is_never_raised
 test_two_failed_revivals_escalate_once_and_stop
 test_a_mate_owned_by_another_lifecycle_action_is_not_a_failure
 test_remote_mate_is_probed_and_relaunched_on_its_host

@@ -28,7 +28,8 @@ It stops at the finding, routes the decision to firstmate, and applies only the 
 2. Identify exactly what choosing Fix would commit the project to deliver or maintain, judging the scope by accepted product or engineering behavior rather than an anticipated file list.
    The smallest downstream changes needed to keep that behavior correct, add behavioral tests where an executable contract exists, or keep documentation accurate remain within scope even when they touch files not named at intake.
    Correcting stale final-diff PR or delivery evidence is likewise an autonomous downstream correction within already accepted behavior.
-3. Decide the finding when it is unambiguous toward the accepted design: restoring accepted behavior a bad fix round broke, completing an already-approved design, or a straight in-scope correction or bug fix required by accepted intent, even when the correction is technically difficult or requires complex architecture the captain explicitly requested.
+3. A finding that contradicts the PR's own stated intent, or names a clear bug inside its scope, is always decided, never carded: tell the worker to fix it (`no-mistakes axi respond --action fix --finding <id>`), the same turn it arrives.
+   Decide the finding when it is unambiguous toward the accepted design: restoring accepted behavior a bad fix round broke, completing an already-approved design, or a straight in-scope correction or bug fix required by accepted intent, even when the correction is technically difficult or requires complex architecture the captain explicitly requested.
 4. Escalate only genuinely ambiguous findings:
    - a Fix that would materially expand the contract by adding a new guarantee, threat model, subsystem, abstraction, compatibility surface, state machine, continuous-monitoring requirement, generalized framework, or broader architecture not required by the accepted intent
    - a product or architecture call not settled by accepted intent
@@ -43,8 +44,14 @@ Send the same worker one exact decision naming the decision key, step, action, a
 Require the matching `resolved` event, forbid `--yes`, and require the worker to process every synchronous return until completion or a genuinely new escalation.
 Resume fleet supervision immediately after the decision lands.
 
+## A parked run is never left waiting
+
+A worker's run parked at a review gate or at the repair cap is unstuck by its own mate within the hour: decide its findings, grant one fix round through `no-mistakes axi respond`, or start a fresh follow-up run.
+`bin/fm-parked-run-watch.sh` nudges a mate whose worker stays parked an hour and, an hour later, raises one blocker beyond it, naming the run, its step and how long it has waited.
+
 ## Captain-facing escalation
 
+Only a genuine product, scope or accepted-risk trade-off reaches the captain, as a card (`bin/fm-captain-hold.sh`) with one plain question, the mate's recommendation, and the options as buttons.
 State all five of these elements in one concise, evidence-first escalation:
 
 1. The original requirement or accepted task criterion.

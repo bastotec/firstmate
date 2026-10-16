@@ -36,6 +36,24 @@ record_body() {  # <record>
   bash -c '. "$1"; fm_task_inbox_body "$2"' _ "$ROOT/bin/fm-task-inbox-lib.sh" "$1"
 }
 
+# The conversation speaks as one agent: what a lane turn tells the model to
+# say, and every note generated for the conversation, never names a supervisor
+# or a monologue (the [fm-supervisor-note] delivery tag aside).
+assert_one_agent_voice() {  # <turn log>
+  local said
+  said=$(printf '%s' "$1" | python3 -c '
+import json, re, sys
+for line in sys.stdin:
+    prompt = json.loads(line)["prompt"]
+    for m in re.finditer(r"^([^\n]*) \(record [^)\n]*\):\n\n([^\n]*)", prompt, re.M):
+        print(m.group(1))
+        print(m.group(2).replace("[fm-supervisor-note]", ""))
+')
+  case "$(printf '%s' "$said" | tr '[:upper:]' '[:lower:]')" in
+    *supervisor*|*monologue*|*"captain thread"*) fail "the conversation was told to name its supervisor or monologue: $said" ;;
+  esac
+}
+
 write_record() {  # <stream|-> <text>: one inbox record as a sender delivers it
   FM_TASK_INBOX_STREAM=${1#-} bash -c '. "$1"; fm_task_inbox_write "$2" mate "$3" >/dev/null' _ \
     "$ROOT/bin/fm-task-inbox-lib.sh" "$DIR/state" "$2"
@@ -194,7 +212,8 @@ test_conversation_takes_every_party_and_leaves_the_monologue() {
   turns=$(cat "$DIR/turns")
   assert_contains "$turns" "The first mate wrote to this second mate" "a first-mate record says who wrote"
   assert_contains "$turns" "Another mate, dave, wrote to this second mate" "a peer record names the mate"
-  assert_contains "$turns" "inner monologue (its supervisor) has something for the conversation" "a supervisor note is said as an explicit message"
+  assert_contains "$turns" "Your own background work wrote this for the reader; say it as your own news, in the first person" "a supervisor note is said as the mate's own news"
+  assert_one_agent_voice "$turns"
   [ "$(turns_with 'automatic wake text')" = 0 ] || fail "a monologue record reached the conversation"
   [ "$(turns_with 'legacy untagged steer')" = 0 ] || fail "an untagged legacy record reached the conversation"
   [ -f "$DIR/state/mate.inbox/001.msg" ] || fail "the monologue record must stay for the supervisor"
@@ -227,7 +246,104 @@ test_handoff_names_its_sender() {
   pass "fm-captain-handoff: every hand-off names who it came from"
 }
 
+test_handoff_reports_a_failing_supervisor() {
+  local out
+  setup
+  printf 'since=2026-10-15T23:42:00Z\ncount=4\nerror=model gateway request failed (HTTP 400)\nescalated=1\n' \
+    > "$DIR/state/mate.supervisor-failing"
+  out=$(FM_CAPTAIN_LANE_STATE="$DIR/state" FM_CAPTAIN_LANE_ID=mate "$ROOT/bin/fm-captain-handoff.sh" --from captain 'ship it')
+  assert_contains "$out" "supervisor=failing count=4 since=2026-10-15T23:42:00Z error=model gateway request failed (HTTP 400)" \
+    "a hand-off reports a failing supervisor instead of looking queued"
+  rm -f "$DIR/state/mate.supervisor-failing"
+  printf 'v1 gen=g1 seq=1 state=busy source=x event=turn-start ts=1\n' > "$DIR/state/mate.busy-state"
+  out=$(FM_CAPTAIN_LANE_STATE="$DIR/state" FM_CAPTAIN_LANE_ID=mate "$ROOT/bin/fm-captain-handoff.sh" --from captain 'ship it')
+  assert_contains "$out" "supervisor=busy" "a hand-off reports the supervisor's real state"
+  pass "fm-captain-handoff: every hand-off reports the supervisor's real state"
+}
+
+test_stale_handoff_is_reported_in_the_conversation() {
+  local rec
+  setup
+  printf 'since=2026-10-15T23:42:00Z\ncount=4\nerror=model gateway request failed (HTTP 400)\nescalated=1\n' \
+    > "$DIR/state/mate.supervisor-failing"
+  rec=$(FM_CAPTAIN_LANE_STATE="$DIR/state" FM_CAPTAIN_LANE_ID=mate "$ROOT/bin/fm-captain-handoff.sh" --from captain 'dispatch the order' \
+    | sed -n 's/^handed-over=//p')
+  touch -t 202601010000 "$rec"
+  FM_HANDOFF_STALE_SECS=60 start_lane
+  wait_until 150 answered_at_least "is overdue: I have not finished or acknowledged it" 1 || fail "a stale hand-off was never reported"
+  sleep 2
+  stop_lane
+  assert_contains "$(cat "$DIR/turns")" "my background work is failing since 2026-10-15T23:42:00Z: model gateway request failed (HTTP 400)" \
+    "the report says why it is stuck"
+  [ "$(turns_with "is overdue: I have not finished or acknowledged it")" = 1 ] || fail "a stale hand-off must be reported once"
+  assert_one_agent_voice "$(cat "$DIR/turns")"
+  pass "fm-captain-lane: an order the supervisor never picked up is reported once, with the supervisor's state"
+}
+
+test_failing_conversation_is_reported_and_cleared() {
+  setup
+  cp "$DIR/deck" "$DIR/deck-ok"
+  cat > "$DIR/deck" <<'PY'
+#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ['FAKE_TURNS'], 'a') as f:
+    f.write(json.dumps({'prompt': sys.argv[2]}) + '\n')
+print(json.dumps({'type': 'run_started', 'session': 'cap'}), flush=True)
+print(json.dumps({'type': 'run_failed', 'error': 'model gateway request failed (HTTP 400)'}), flush=True)
+sys.exit(9)
+PY
+  write_captain 'are you there'
+  FM_DECK_STATUS_IO="$ROOT/bin/fm-state-io.py" FM_DECK_FAIL_ESCALATE=1 start_lane
+  wait_until 100 grep -q 'blocked \[key=conversation-failing-mate\]' "$DIR/state/mate.status" \
+    || fail "a failing conversation was not reported to the first mate"
+  assert_contains "$(cat "$DIR/state/mate.status")" "model gateway request failed (HTTP 400), since " "the report carries the error and since when"
+  cp "$DIR/deck-ok" "$DIR/deck"
+  wait_until 450 grep -q 'resolved \[key=conversation-failing-mate\]' "$DIR/state/mate.status" \
+    || fail "an answering conversation did not clear its report"
+  stop_lane
+  pass "fm-captain-lane: a failing conversation is reported to the first mate with its error, and cleared once it answers"
+}
+
+test_relaunched_lane_resolves_the_open_blocker() {
+  setup
+  printf 'since=2026-10-16T10:00:00Z\ncount=3\nescalated=1\n' > "$DIR/state/mate.conversation-failing"
+  write_captain 'still there?'
+  FM_DECK_STATUS_IO="$ROOT/bin/fm-state-io.py" start_lane
+  wait_until 100 grep -q 'resolved \[key=conversation-failing-mate\]' "$DIR/state/mate.status" \
+    || fail "a relaunched lane did not resolve the blocker its predecessor raised"
+  stop_lane
+  assert_contains "$(cat "$DIR/state/mate.status")" "failing since 2026-10-16T10:00:00Z" "the resolution names its episode"
+  [ ! -e "$DIR/state/mate.conversation-failing" ] || fail "a recovered lane keeps no failing record"
+  pass "fm-captain-lane: a lane relaunched for failing resolves the blocker once it answers"
+}
+
+test_remote_lane_reports_through_its_parent_channel() {
+  setup
+  printf 'mate\n' > "$DIR/home/.fm-secondmate-home"
+  printf 'schema=fm-secondmate-parent.v1\nroute=remote\n' > "$DIR/home/.fm-secondmate-parent"
+  mkdir -p "$DIR/home/state"
+  cat > "$DIR/deck" <<'PY'
+#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ['FAKE_TURNS'], 'a') as f:
+    f.write(json.dumps({'prompt': sys.argv[2]}) + '\n')
+print(json.dumps({'type': 'run_failed', 'error': 'model gateway request failed (HTTP 400)'}), flush=True)
+sys.exit(9)
+PY
+  write_captain 'anyone?'
+  FM_DECK_FAIL_ESCALATE=1 start_lane
+  wait_until 100 grep -q 'blocked \[key=conversation-failing-mate\]' "$DIR/home/state/parent-replies.status" \
+    || fail "a remote mate's lane failure must go to the mirrored parent channel"
+  stop_lane
+  pass "fm-captain-lane: a remote mate reports a failing conversation through its mirrored parent channel"
+}
+
 test_unacknowledged_answer_is_never_repeated
+test_relaunched_lane_resolves_the_open_blocker
+test_remote_lane_reports_through_its_parent_channel
+test_failing_conversation_is_reported_and_cleared
+test_handoff_reports_a_failing_supervisor
+test_stale_handoff_is_reported_in_the_conversation
 test_handoff_names_its_sender
 test_supervisor_note_reaches_the_conversation
 test_conversation_takes_every_party_and_leaves_the_monologue

@@ -226,6 +226,8 @@ WATCH_HANDLING_GENERATION='' WATCH_HANDLING_WATCHER_PID=''
 . "$SCRIPT_DIR/fm-nm-run-lib.sh"
 # shellcheck source=bin/fm-task-inbox-lib.sh
 . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
+# shellcheck source=bin/fm-parent-channel-lib.sh
+. "$SCRIPT_DIR/fm-parent-channel-lib.sh"
 while [ $# -gt 0 ]; do
   case "$1" in
     --secondmate) SECONDMATE=1; shift ;;
@@ -466,6 +468,70 @@ host_failure() {
     return "$HOST_FAILURE_UNPUBLISHED"
   }
   return 1
+}
+
+# SUPERVISOR HEALTH (second mates): a supervisor whose turns keep failing must
+# never be silent. <state>/<id>.supervisor-failing records the run: since=<utc>,
+# count=<consecutive failed turns>, error=<the last turn's own failure text>,
+# escalated=<0|1>. At FM_DECK_FAIL_ESCALATE (default 3) consecutive failures
+# the host appends one keyed blocker to the parent channel
+# ("blocked [key=supervisor-failing-<id>]: ..."), so the first mate holds it
+# as a blocker, and, in a split home, posts a plain note into the mate's
+# conversation through bin/fm-captain-note.sh, so the captain hears it there
+# and bin/fm-captain-handoff.sh reports it instead of "queued". The first
+# successful turn removes the record, resolves the blocker and says so in the
+# conversation. Fleet Town may read the same record.
+SUPERVISOR_HEALTH="$STATE/$ID.supervisor-failing"
+# One health line to the first mate: the home's own parent channel
+# (bin/fm-parent-channel-lib.sh: the parent home's state/<id>.status for a local
+# mate, state/parent-replies.status for a remote one, which the parent mirrors),
+# else, for a home with no parent binding, this host's own status record.
+health_report() {  # <line>
+  local rc=0
+  fm_parent_channel_report "$FM_HOME" "$FM_HOME/state" "$1" || rc=$?
+  [ "$rc" -ne 1 ] || { printf '%s\n' "$1" | status_append; return; }
+  return "$rc"
+}
+supervisor_turn_failed() {  # <failure text>
+  local error=$1 since count escalated limit=${FM_DECK_FAIL_ESCALATE:-3} tmp
+  case "$limit" in ''|*[!0-9]*|0) limit=3 ;; esac
+  since=$(sed -n 's/^since=//p' "$SUPERVISOR_HEALTH" 2>/dev/null)
+  count=$(sed -n 's/^count=//p' "$SUPERVISOR_HEALTH" 2>/dev/null)
+  escalated=$(sed -n 's/^escalated=//p' "$SUPERVISOR_HEALTH" 2>/dev/null)
+  [ -n "$since" ] || since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  case "$count" in ''|*[!0-9]*) count=0 ;; esac
+  count=$((count + 1))
+  error=$(printf '%s' "$error" | tr '\n\t' '  ' | cut -c1-200)
+  [ -n "$error" ] || error="turn failed"
+  if [ "$count" -ge "$limit" ] && [ "${escalated:-0}" != 1 ]; then
+    if health_report "$(printf 'blocked [key=supervisor-failing-%s]: %s supervisor is failing every turn (%s consecutive): %s, since %s; nothing handed to it is being acted on' \
+        "$ID" "$ID" "$count" "$error" "$since")"; then
+      escalated=1
+      if [ "$MATE_SPLIT" = 1 ]; then
+        FM_SPLIT_MATE_STATE="$STATE" FM_SPLIT_MATE_ID="$ID" "$SCRIPT_DIR/fm-captain-note.sh" \
+          "I'm stuck: every attempt I make to act on orders fails with $error, since $since, so nothing I said I would do is happening until this clears. The first mate knows." \
+          >/dev/null 2>&1 || true
+      fi
+    fi
+  fi
+  tmp="$SUPERVISOR_HEALTH.tmp.$$"
+  if printf 'since=%s\ncount=%s\nerror=%s\nescalated=%s\n' "$since" "$count" "$error" "${escalated:-0}" > "$tmp"; then
+    mv -f "$tmp" "$SUPERVISOR_HEALTH" || rm -f "$tmp"
+  else
+    rm -f "$tmp"
+  fi
+}
+supervisor_turn_ok() {
+  [ -f "$SUPERVISOR_HEALTH" ] || return 0
+  if [ "$(sed -n 's/^escalated=//p' "$SUPERVISOR_HEALTH")" = 1 ]; then
+    health_report "$(printf 'resolved [key=supervisor-failing-%s]: %s supervisor is working again (failing since %s)' \
+      "$ID" "$ID" "$(sed -n 's/^since=//p' "$SUPERVISOR_HEALTH")")" || true
+    if [ "$MATE_SPLIT" = 1 ]; then
+      FM_SPLIT_MATE_STATE="$STATE" FM_SPLIT_MATE_ID="$ID" "$SCRIPT_DIR/fm-captain-note.sh" \
+        "I'm working again and picking up what was waiting." >/dev/null 2>&1 || true
+    fi
+  fi
+  rm -f "$SUPERVISOR_HEALTH"
 }
 
 host_lock_owned() {
@@ -766,7 +832,7 @@ if [ "$SECONDMATE" = 1 ]; then
     export FM_SPLIT_MATE_STATE="$STATE" FM_SPLIT_MATE_ID="$ID"
     PROMPT="$PROMPT
 
-This home runs split (config/primary-split): you are this mate's inner monologue, its supervisor, and a separate conversation answers the captain, the first mate and other mates. Inbox records whose header says stream=conversation (and, in older records without that header, ones tagged [fm-captain-direct], [fm-from-mate:...] or [fm-supervisor-note]) belong to the conversation: never read, answer or move them. Records tagged [fm-captain-thread] are orders and questions the conversation hands you, each starting with who it came from; only one from the captain carries his own approval (a merge, anything destructive), and one from the first mate is an ordinary parent instruction. Act on them, and report outcomes through your parent channel as usual. Nobody reads your own replies: when something you handle needs a party (a blocker, a decision, a finished result), post it to the conversation with bin/fm-captain-note.sh '<message>', written for the person who will read it, and end a turn with nothing to report without any reply text."
+This home runs split (config/primary-split): you are this mate's inner monologue, its supervisor, and a separate conversation answers the captain, the first mate and other mates. Inbox records whose header says stream=conversation (and, in older records without that header, ones tagged [fm-captain-direct], [fm-from-mate:...] or [fm-supervisor-note]) belong to the conversation: never read, answer or move them. Records tagged [fm-captain-thread] are orders and questions the conversation hands you, each starting with who it came from; only one from the captain carries his own approval (a merge, anything destructive), and one from the first mate is an ordinary parent instruction. Act on them, and report outcomes through your parent channel as usual. Nobody reads your own replies: when something you handle needs a party (a blocker, a decision, a finished result), post it to the conversation with bin/fm-captain-note.sh '<message>', written in the first person as this mate, for the person who will read it, never naming a supervisor or monologue, and end a turn with nothing to report without any reply text. Your parent-channel status lines are for the first mate only and never reach the conversation: whenever you append a blocked:, failed: or needs-decision: line about something the captain asked for, also post one plain fm-captain-note.sh line saying it the way you would to him (\"I'm blocked: I couldn't get a clean worktree, so nothing has started yet. I'll retry once it's free.\"), without corr tokens, keys or internal terms."
   else
     rm -f "$LANE_MARK"
   fi
@@ -983,6 +1049,7 @@ $prompt"
     if [ "$event" = interrupted ] && [ -n "$SESSION" ]; then
       host_failure 'turn interrupted; returning to supervised prompt' || true
     elif [ "$event" != turn-end ] || [ -z "$SESSION" ]; then
+      supervisor_turn_failed "$(jq -rs '[.[] | select(.type == "run_failed") | .error // empty] | last // empty' "$EVENTS" 2>/dev/null)"
       host_failure "turn failed ($event, exit $rc)" || published=$?
       record_busy_event idle turn-failed || return 1
       IDLE_SINCE=$(date -u +%Y-%m-%dT%H:%MZ)
@@ -993,6 +1060,9 @@ $prompt"
       [ "$published" != "$HOST_FAILURE_UNPUBLISHED" ] || return 1
       return "$TURN_RECOVERABLE"
     fi
+    # Only a verified, finished turn proves the supervisor recovered; an
+    # interrupted one keeps the failing record.
+    [ "$event" != turn-end ] || supervisor_turn_ok
     host_lock_owned || return 1
   elif ! status_has_worker_evidence "$status_before"; then
     if [ "$event" = turn-failed ]; then

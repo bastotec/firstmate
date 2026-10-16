@@ -1753,12 +1753,33 @@ spawn_worktree_has_origin_config() {  # <worktree>
   return 1
 }
 
+# A pooled slot whose only dirt is a previous worker's untracked .scratch/
+# folder is not uncommitted work: that folder is set aside, moved intact (never
+# deleted) into this home's state/slot-quarantine/<slot>-<epoch>/, so a
+# leftover scratch area never blocks a task. Any other dirt still refuses.
+quarantine_spawn_slot_scratch() {  # <worktree> <porcelain status>
+  local worktree=$1 status=$2 line dest
+  [ -n "$status" ] || return 1
+  while IFS= read -r line; do
+    case "$line" in '?? .scratch/'|'?? .scratch/'*) ;; *) return 1 ;; esac
+  done <<EOF
+$status
+EOF
+  [ -d "$worktree/.scratch" ] && [ ! -L "$worktree/.scratch" ] || return 1
+  dest="$STATE/slot-quarantine/$(basename "$worktree")-$(date +%s)"
+  mkdir -p "$dest" && mv "$worktree/.scratch" "$dest/.scratch" || return 1
+  echo "notice: pooled worktree '$worktree' held only a previous worker's .scratch/; moved it to $dest/.scratch and continuing" >&2
+}
+
 freshen_spawn_worktree_base() {  # <worktree>
   local worktree=$1 default target expected actual status
   status=$(git -C "$worktree" -c core.quotePath=false status --porcelain) || {
     echo "error: could not inspect pooled worktree '$worktree' before refreshing its base" >&2
     return 1
   }
+  if [ -n "$status" ] && quarantine_spawn_slot_scratch "$worktree" "$status"; then
+    status=$(git -C "$worktree" -c core.quotePath=false status --porcelain) || return 1
+  fi
   if [ -n "$status" ]; then
     if describe_stale_submodule_pins "$worktree" "$status"; then
       echo "error: pooled worktree '$worktree' has a stale submodule checkout, not uncommitted work; refusing to launch and leaving it untouched" >&2

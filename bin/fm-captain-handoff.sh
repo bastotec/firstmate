@@ -20,11 +20,15 @@
 # supervisor's running turn at its next safe point or wakes it when idle
 # (bin/fm_stream_deck.py).
 #
+# A second mate's hand-off then prints the supervisor's real state:
+# "supervisor=failing count=<n> since=<utc> error=<text>" while its turns keep
+# failing, else "supervisor=<busy|idle>".
+#
 # Exit: mate lane 0 recorded, 1 write failed, 2 no text; else fm-send's status.
 set -u
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 case "${1:-}" in
-  -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
   '') echo "error: fm-captain-handoff.sh needs the text to hand over" >&2; exit 2 ;;
 esac
 party=''
@@ -54,6 +58,15 @@ if [ -n "${FM_CAPTAIN_LANE_STATE:-}" ] && [ -n "${FM_CAPTAIN_LANE_ID:-}" ]; then
   # idle supervisor wakes on the record anyway (bin/fm_stream_deck.py).
   python3 "$SCRIPT_DIR/fm_stream_deck.py" captain "$FM_CAPTAIN_LANE_STATE" "$FM_CAPTAIN_LANE_ID" >/dev/null 2>&1 || true
   printf 'handed-over=%s\n' "$rec"
+  # The supervisor's real state, so the conversation never says "queued" when
+  # it is failing (bin/fm-deck-worker.sh "SUPERVISOR HEALTH").
+  health="$FM_CAPTAIN_LANE_STATE/$FM_CAPTAIN_LANE_ID.supervisor-failing"
+  if [ -f "$health" ]; then
+    printf 'supervisor=failing count=%s since=%s error=%s\n' "$(sed -n 's/^count=//p' "$health")" \
+      "$(sed -n 's/^since=//p' "$health")" "$(sed -n 's/^error=//p' "$health")"
+  else
+    printf 'supervisor=%s\n' "$(sed -n 's/.* state=\([a-z]*\).*/\1/p' "$FM_CAPTAIN_LANE_STATE/$FM_CAPTAIN_LANE_ID.busy-state" 2>/dev/null || true)"
+  fi
   exit 0
 fi
 FM_HOME=${FM_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}
