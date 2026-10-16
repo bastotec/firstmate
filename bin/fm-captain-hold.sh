@@ -53,10 +53,15 @@
 # Every hold carries a decision card (bin/fm-card.sh owns the file and schema).
 # With --card-file the card is validated before any backlog change and written
 # once the hold is durable; without it a draft card is written from the title,
-# repo and reason. Repeating an active hold without --card-file keeps an existing
-# card only while the reason is unchanged; a changed reason replaces it with a
-# draft from the new reason, so options written for the old reason never stay
-# in front of the captain. A new hold replaces any leftover card.
+# repo and reason. Hold reasons must be non-empty and one line; parentheses
+# are accepted and replaced with brackets only in the tasks-axi hold reason,
+# because tasks-axi reserves parentheses for its markdown hold tags. The draft
+# card and parent-channel hold report receive the original reason; --card-file
+# content is unchanged. Repeating an active hold without --card-file keeps an
+# existing card while the stored reason matches the normalized input; otherwise
+# it replaces the card with a draft from the new reason, so options written for
+# the old reason never stay in front of the captain. A new hold replaces any
+# leftover card.
 # `--expected-record` admits an idle-sweep hold only while the worker metadata
 # matches under its control lock, retained through the hold and card write.
 # For a linked idle-<origin> hold, --origin selects the worker and its lock is
@@ -92,15 +97,14 @@
 # closing the task or removing its card; --release does not close the task.
 # Matching retries of an already-closed answer remain offline finalization.
 #
-# `--defer <condition>` records a conditional answer with mode `deferred`,
-# parks the task in this home with the one-line condition as its hold reason
-# (parentheses normalized to brackets for storage only; the caller's words are
-# compared and reported verbatim), and removes its card and hold-set stamp. The
-# deferral is
-# settled when the newest resolution block has mode `deferred` and no
-# `Deferral reopened:` marker precedes it, even if parking is unfinished.
-# An exact retry matches the words and parked condition, or finishes an
-# interrupted deferral; other answers (including keyed answers), stale-clear,
+# `--defer <condition>` records the decision file's words with mode `deferred`,
+# parks the task in this home with the non-empty, one-line condition as its hold
+# reason using the normalization described above, and removes its card and
+# hold-set stamp. The condition is stored only as that normalized hold reason.
+# The deferral is settled when the newest resolution block has mode `deferred`
+# and no `Deferral reopened:` marker precedes it, even if parking is unfinished.
+# An exact retry matches the decision words and normalized parked condition,
+# or finishes an interrupted deferral; other answers (including keyed answers), stale-clear,
 # and reconcile close/note are refused. `open` excludes settled deferrals,
 # so card discovery skips them; stale reports any leftover card as an orphan.
 # `deferred` is read-only: 0 means a settled deferral or a reopening whose
@@ -352,11 +356,7 @@ validate_one_line() {  # <label> <value>
   esac
 }
 
-# tasks-axi reserves parentheses for its markdown hold tags, so the reason it
-# stores is normalized to brackets while the caller's own words stay verbatim
-# in every captain-facing surface: the parent-channel decision, the decision
-# card, and the deferral retry comparison, which normalizes both sides so an
-# exact `--defer` retry still matches its parked condition.
+# Storage normalization and retry semantics are owned by the header above.
 parentheses_free_reason() {  # <reason>
   printf '%s' "$1" | tr '()' '[]'
 }
