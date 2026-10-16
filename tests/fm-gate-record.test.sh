@@ -38,7 +38,7 @@ test_a_parked_gate_is_written_with_its_findings_as_written() {
   [ "$(field "$f" 'd["findings"][0]["description"]')" = '[CONFIRMED] The new path drops enforcement, so a reply "done" passes.' ] || fail "quoted cell: $(cat "$f")"
   [ "$(field "$f" 'd["findings"][1]["file"], d["findings"][1]["action"]')" = "('', 'auto-fix')" ] || fail "empty cell"
   [ "$(field "$f" 'd["repair_budget_exhausted"], d["recommendation"]')" = "(False, None)" ] || fail "defaults"
-  [ "$(stat -f %Lp "$f" 2>/dev/null || stat -c %a "$f")" = 600 ] || fail "owner-only mode"
+  [ "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$f")" = 0o600 ] || fail "owner-only mode"
   pass "a parked gate is written with its findings as written"
 }
 
@@ -74,10 +74,10 @@ test_an_exhausted_repair_budget_is_seen_from_the_marker_or_the_help() {
 test_no_gate_or_clear_removes_the_record_and_unchanged_leaves_it() {
   local f="$TMP_ROOT/e.gate" before
   status 01RF review "$R1" | python3 "$GATE" "$f"
-  before=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f")
+  before=$(python3 -c 'import os,sys; print(os.stat(sys.argv[1]).st_mtime_ns)' "$f")
   sleep 1
   status 01RF review "$R1" | python3 "$GATE" "$f"
-  [ "$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f")" = "$before" ] || fail "unchanged gate rewritten"
+  [ "$(python3 -c 'import os,sys; print(os.stat(sys.argv[1]).st_mtime_ns)' "$f")" = "$before" ] || fail "unchanged gate rewritten"
   printf 'run:\n  id: "01RF"\n  status: running\n' | python3 "$GATE" "$f"
   [ ! -e "$f" ] || fail "no gate in the read leaves the record"
   status 01RF review "$R1" | python3 "$GATE" "$f"
@@ -94,6 +94,9 @@ test_the_other_response_shapes_are_read_too() {
   # a scalar gate: its step's status from the run
   printf 'run:\n  id: "01RT"\n  status: awaiting_approval\n  findings[1]{id,severity,file,line,action,description}:\n    r2,error,b.go,,ask-user,changes product behavior\ngate: review\n' | python3 "$GATE" "$f"
   [ "$(field "$f" 'd["run"], d["step"], d["status"], d["findings"][0]["id"]')" = "('01RT', 'review', 'awaiting_approval', 'r2')" ] || fail "scalar gate: $(cat "$f")"
+  # a scalar gate whose steps table sits under run:
+  printf 'run:\n  id: "01RU"\n  status: running\n  steps[2]{step,status,findings,duration_ms}:\n    intent,completed,0,0\n    review,fix_review,1,0\ngate: review\n' | python3 "$GATE" "$f"
+  [ "$(field "$f" 'd["status"]')" = fix_review ] || fail "nested steps: $(cat "$f")"
   pass "a scalar gate and findings under run: are read too"
 }
 

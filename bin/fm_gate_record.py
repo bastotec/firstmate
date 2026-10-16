@@ -114,6 +114,11 @@ def parse(text):
         sub = re.match(r'^  (\w+)(\[\d+\]\{[^}]*\})?:\s*(.*)$', line)
         if sub and block in ('run', 'gate'):
             key, tab, rest = sub.groups()
+            if tab and key == 'steps':
+                # a steps table under run: (or gate:) reads like the top-level one
+                rows, i = table(lines, i, 4)
+                steps.update({r.get('step', ''): r.get('status', '') for r in rows})
+                continue
             if tab and key == 'findings':
                 rows, i = table(lines, i, 4)
                 findings = rows if block == 'gate' or not findings else findings
