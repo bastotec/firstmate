@@ -14,7 +14,7 @@ parked-run rules read the findings without asking no-mistakes again:
    "finding_ids": ["R1"]}
 
 parked_since is the Unix time in seconds when this run was first seen parked
-at this step; it is kept across rewrites and restarts when the run or step changes.
+at this step; it is kept across rewrites and resets when the run or step changes.
 findings keeps at most 20 entries, retaining one repair-budget marker from
 beyond the limit in place of the last entry when needed.
 Descriptions are clipped to 2000 characters, other finding fields to 300,
@@ -47,7 +47,11 @@ Usage: fm_gate_record.py <gate-file> [--clear]
   --clear, or input without a run id or gate, removes the file and its advice.
   --advise writes <gate-file>-advice for the gate record as it is now; it exits 1
   when there is no gate record to advise on.
-  Writes use an atomic temp+rename with mode 0600; unchanged records retain mtime.
+  Invalid advice arguments exit 2, including a bad choice, blank --why,
+  --why over 600 characters, --by over 100 characters, or any --findings id
+  absent from the gate's finding_ids; refusals write only a diagnostic to stderr.
+  Accepted advice preserves all supplied finding ids and why/by text without clipping.
+  Writes use an atomic temp+rename with mode 0600; unchanged gate records retain mtime.
   The publisher and writer leave symlinks alone, including on --clear.
   bin/fm-teardown.sh removes the path and its advice (symlink or not) with <id>.crew-state,
   including when retiring a secondmate home's children.
