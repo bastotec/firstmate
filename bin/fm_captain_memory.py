@@ -261,9 +261,10 @@ def capture(args):
 
 
 def recall_block(home, query='', max_bytes=None):
-    home = Path(home)
+    home = Path(home).resolve()
     cap = CAP if max_bytes is None else min(CAP, max_bytes)
-    items = entries(shared(home)) + entries(home / 'data' / 'captain.md')
+    paths = dict.fromkeys((shared(home), home / 'data' / 'captain.md', primary_of(home)[1]))
+    items = [entry for path in paths for entry in entries(path)]
     if not items or cap <= 0:
         return ''
 
@@ -274,13 +275,18 @@ def recall_block(home, query='', max_bytes=None):
             lines.append('- (%d more on record in data/captain-shared.md and data/captain.md)' % (len(items) - len(chosen)))
         return '\n'.join(lines + [CLOSE]) + '\n'
 
-    wrapper_size = len(render([]).encode('utf-8'))
-
     def dated(i):
         m = DATED.match(items[i])
         return (m.group(1) if m else '', i)
     order = sorted(range(len(items)), key=dated, reverse=True)
-    newest = [items[i] for i in order]
+    newest, seen = [], set()
+    for i in order:
+        identity = key(items[i])
+        if identity not in seen:
+            newest.append(items[i])
+            seen.add(identity)
+    items = newest
+    wrapper_size = len(render([]).encode('utf-8'))
     complete = render(newest)
     if len(complete.encode('utf-8')) <= cap:
         return complete

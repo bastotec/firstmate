@@ -528,7 +528,7 @@ cmd_choice_rows() {
       }
       next if $choice->{selection} eq "reconcile";
       if (length $choice->{captain_note}) {
-        my $note_json = encode_json($choice->{captain_note});
+        my $note_json = JSON::PP->new->ascii->allow_nonref->encode($choice->{captain_note});
         print "$choice->{key}\t$choice->{answer}\t$choice->{label}\t$choice->{mode}\t$note_json\n";
       } else {
         print length $choice->{mode}

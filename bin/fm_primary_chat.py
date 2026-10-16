@@ -385,7 +385,10 @@ def capture_captain_memory(home, body, source):
 
 def with_captain_memory(home, body):
     """Give every turn the captain's recorded preferences, sized to its room."""
-    from fm_captain_memory import with_memory
+    try:
+        from fm_captain_memory import with_memory
+    except ImportError:
+        return body
     return with_memory(home, body, max_bytes=MAX_BODY)
 
 

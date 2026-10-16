@@ -28,7 +28,10 @@ import subprocess
 import sys
 import tempfile
 
-from fm_captain_memory import with_memory
+try:
+    from fm_captain_memory import with_memory
+except ImportError:
+    with_memory = None
 
 
 ATTACHED_IMAGE = re.compile(r'^Attached: (/.+?) \(image, [^()\n]+\)\s*$')
@@ -188,7 +191,8 @@ class Receiver:
                 guidance = body + '\n\nAfter handling this native steer, acknowledge its ordinary task-inbox source by moving ' + str(ordinary) + ' to ' + str(self.inbox / 'handled' / source.name) + '. Do not apply the same source record twice.'
                 if not bridge and (not body.strip() or len(guidance.encode('utf-8')) > 65536):
                     continue
-                guidance = with_memory(active.get('home') or self.state.parent, guidance)
+                if with_memory is not None:
+                    guidance = with_memory(active.get('home') or self.state.parent, guidance)
                 candidates.append((int(source.stem), body, guidance))
         published = 0
         for number, body, guidance in sorted(candidates):

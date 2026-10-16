@@ -919,7 +919,7 @@ test_driver_stop_terminates_active_deck_and_resolves_spaced_paths() {
   cp "$WORKER" "$BUSY_EVENT" "$ROOT/bin/fm-busy-lib.sh" \
     "$ROOT/bin/fm-session-lock-lib.sh" "$ROOT/bin/fm-cursor-lib.sh" "$ROOT/bin/fm-nm-run-lib.sh" \
     "$ROOT/bin/fm-task-inbox-lib.sh" "$ROOT/bin/fm-wake-lib.sh" "$ROOT/bin/fm-backend.sh" \
-    "$ROOT/bin/fm_stream_deck.py" "$ROOT/bin/fm-state-io.py" "$ROOT/bin/fm-deck-stop.py" "$install/"
+    "$ROOT/bin/fm_stream_deck.py" "$ROOT/bin/fm_captain_memory.py" "$ROOT/bin/fm-state-io.py" "$ROOT/bin/fm-deck-stop.py" "$install/"
   ln -s "$physical" "$alias"
   cat > "$deck" <<'PY'
 #!/usr/bin/env python3

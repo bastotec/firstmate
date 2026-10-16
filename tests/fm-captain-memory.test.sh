@@ -498,10 +498,57 @@ for mate, parent in [(child, middle), (middle, owner)]:
 run(child, 'capture', 'Always find the root owner.')
 assert 'Always find the root owner.' in memory.shared(owner).read_text()
 assert memory.shared(middle).read_text() == '- inherited rule\n'
+with memory.shared(owner).open('a') as f:
+    f.write('- inherited rule\n')
+recalled = run(child, 'recall')
+assert recalled.count('Always find the root owner.') == 1
+assert recalled.count('inherited rule') == 1
+assert run(owner, 'recall').count('Always find the root owner.') == 1
 (owner / '.fm-secondmate-parent').write_text('route=remote\nparent_home=/not-on-this-machine\n')
 run(child, 'capture', 'Never write past a remote boundary.')
 assert 'Never write past a remote boundary.' in (owner / 'data/captain.md').read_text()
 assert 'Never write past a remote boundary.' not in memory.shared(owner).read_text()
+recalled = run(child, 'recall')
+assert 'Never write past a remote boundary.' in recalled
+assert recalled.count('inherited rule') == 1
+assert run(owner, 'recall').count('Never write past a remote boundary.') == 1
+
+partial = root / 'partial-install'
+partial.mkdir()
+for script in ['fm_primary_chat.py', 'fm_model_switch.py', 'fm_stream_deck.py']:
+    shutil.copy(memory.BIN / script, partial / script)
+subprocess.run([sys.executable, '-I', '-c', """
+import argparse
+import json
+from pathlib import Path
+import sys
+from unittest.mock import patch
+sys.path.insert(0, sys.argv[1])
+import fm_primary_chat as primary
+from fm_stream_deck import Receiver
+home = Path(sys.argv[1]) / 'home'
+home.mkdir()
+startup = home / 'startup.txt'
+startup.write_text('Carry the handover forward.')
+assert primary.handover(argparse.Namespace(home=str(home), file=str(startup))) == 0
+steer = next((home / 'state/primary-chat').glob('*/steer'))
+assert (steer / '1.msg').read_text() == startup.read_text()
+record = {'steer_dir': str(steer), 'session': steer.parent.name}
+with patch.object(primary, 'live_record', return_value=record):
+    assert primary.steer_publish(argparse.Namespace(home=str(home), text='Deliver this peer message.', file=None, kind='other')) == 0
+assert (steer / '2.msg').read_text() == 'Deliver this peer message.'
+receiver = Receiver(home / 'state', 'worker', 'e' * 32)
+projection = Path(receiver.start('turn', True))
+binding = {'execution': receiver.endpoint, 'turn': 'turn', 'order_id': 'one'}
+(receiver.inbox / '1.msg').write_text('schema=fm-task-inbox.v1\\nat=x\\n--\\n[stream-order ' + json.dumps(binding) + ']\\nNative delivery\\nHandle this native steer.')
+with receiver.locked():
+    assert receiver.publish(receiver.active()) == 1
+body = (projection / '1.msg').read_text()
+assert body.startswith('Handle this native steer.')
+assert 'acknowledge its ordinary task-inbox source' in body
+assert '[fm-captain-memory]' not in body
+receiver.end()
+""", str(partial)], check=True, capture_output=True, text=True, timeout=10)
 
 h = home('native-worker')
 run(h, 'capture', 'Always quote the worker rule.')
@@ -622,9 +669,26 @@ if shutil.which('tasks-axi') and shutil.which('jq'):
     card('hold', 'repeat', '--reason', 'Needed now', '--reopen-deferred')
     card('answer', 'repeat', '--decision-file', str(decision), '--release')
     wait_until(lambda: len(log.read_text().splitlines()) == 2)
-    assert {row.split('\t')[2] for row in log.read_text().splitlines()} == {'his answer to card repeat (occurrence 1)', 'his answer to card repeat (occurrence 2)'}
+    assert {row.split('\t')[2] for row in log.read_text().splitlines()} == {f'his answer to card repeat in {h} (occurrence 1)', f'his answer to card repeat in {h} (occurrence 2)'}
     card('answer', 'repeat', '--decision-file', str(decision), '--release')
     assert len(log.read_text().splitlines()) == 2
+
+    parent_env = env
+    mate_homes = [home('card-mate-one'), home('card-mate-two')]
+    for mate_home in mate_homes:
+        for directory in ['state', 'config', 'projects']:
+            (mate_home / directory).mkdir()
+        shutil.copy(memory.BIN.parent / '.tasks.toml', mate_home / '.tasks.toml')
+        (mate_home / 'data/backlog.md').write_text('## In flight\n\n## Queued\n\n## Done\n')
+        (mate_home / '.fm-secondmate-parent').write_text(f'route=local\nparent_home={h}\n')
+        env = dict(parent_env, FM_HOME=str(mate_home), FM_STATE_OVERRIDE=str(mate_home / 'state'), FM_DATA_OVERRIDE=str(mate_home / 'data'), FM_CONFIG_OVERRIDE=str(mate_home / 'config'))
+        card('hold', 'release', '--title', 'Release', '--reason', 'Choose')
+        card('answer', 'release', '--decision-file', str(decision), '--defer', 'When needed')
+        card('answer', 'release', '--decision-file', str(decision), '--defer', 'When needed')
+    env = parent_env
+    wait_until(lambda: len(log.read_text().splitlines()) == 4)
+    sources = {row.split('\t')[2] for row in log.read_text().splitlines()}
+    assert all(f'his answer to card release in {mate_home} (occurrence 1)' in sources for mate_home in mate_homes)
 
     def board_answer(task, selection, note):
         card('hold', task, '--title', 'Always generated label', '--reason', 'Choose')
@@ -633,11 +697,16 @@ if shutil.which('tasks-axi') and shutil.which('jq'):
         captured.write_text('prompts[1]{id,prompt,type,tag,text}:\n  "1",' + json.dumps('Context data:\n' + json.dumps(context)) + ',"form",choice,"Always generated label"\n')
         rows = subprocess.check_output([str(memory.BIN / 'fm-procevent-lavish.sh'), 'answers', str(captured)], text=True, env=env)
         assert rows.split('\t')[1] == (selection or note)
+        if note:
+            assert json.loads(rows.split('\t')[4]) == note
         return card('answers', '--source', 'test-board', text=rows)
     board_answer('always-on-vpn', '1', '')
     board_answer('noted', '1', 'Always keep only my note.\n\n    Use my exact layout.')
     board_answer('free-text', '', 'Never ignore free-text notes.')
-    wait_until(lambda: 'Never ignore free-text notes.' in memory.shared(h).read_text() and 'Always keep only my note.' in memory.shared(h).read_text())
+    board_answer('portuguese', '', 'Sempre use o status ✅ ação')
+    unicode_rule = 'Always follow this: Sempre use o status ✅ ação'
+    board_answer('unicode-rule', '', unicode_rule)
+    wait_until(lambda: 'Never ignore free-text notes.' in memory.shared(h).read_text() and 'Always keep only my note.' in memory.shared(h).read_text() and unicode_rule in memory.shared(h).read_text())
     recorded = memory.shared(h).read_text()
     assert 'Always keep only my note.\n  \n      Use my exact layout.' in recorded
     assert 'always-on-vpn' not in recorded and 'Always generated label' not in recorded

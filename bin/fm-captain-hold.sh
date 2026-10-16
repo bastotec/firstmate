@@ -1220,7 +1220,7 @@ close_deferred() {  # <task-id> <original-condition> <storage-condition>
 capture_card_answer() {
   [ -n "$3" ] || return 0
   printf '%s' "$3" | python3 "$SCRIPT_DIR/fm_captain_memory.py" capture \
-    --home "$FM_HOME" --source "his answer to card $1 (occurrence $2)" >/dev/null 2>&1 &
+    --home "$FM_HOME" --source "his answer to card $1 in $FM_HOME (occurrence $2)" >/dev/null 2>&1 &
 }
 
 command_answer() {
