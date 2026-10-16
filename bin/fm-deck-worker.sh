@@ -472,7 +472,15 @@ host_failure() {
 # never be silent. <state>/<id>.supervisor-failing records the episode:
 # since=<utc>, count=<consecutive failed turns>, error=<last failure text>,
 # escalated=<0|1> (parent blocker published).
-# Only a verified turn-end proves recovery, never an interrupted turn.
+# FM_DECK_FAIL_ESCALATE (default 3; invalid or zero values use the default)
+# consecutive failures publish one blocked [key=supervisor-failing-<id>] line
+# with the last run_failed error and episode start, plus a first-person note
+# in split mode. Only a verified turn-end proves recovery, never an interrupted
+# turn. Recovery closes an escalated blocker with a matching resolved line
+# before removing the health record; failed publication keeps the record.
+# Recovery of an escalated episode also sends a first-person note in split mode.
+# Note delivery is independent of health: docs/configuration.md owns the queue.
+# tests/fm-deck-harness.test.sh covers recovery and owed-note retries.
 SUPERVISOR_HEALTH="$STATE/$ID.supervisor-failing"
 SUPERVISOR_NOTES="$STATE/$ID.supervisor-notes"
 # One health line to the first mate: the home's own parent channel

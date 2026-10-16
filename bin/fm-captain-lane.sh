@@ -192,10 +192,14 @@ if found:
 PY
 }
 
-# An order handed to the supervisor that is still unhandled after
-# FM_HANDOFF_STALE_SECS (default 600) is reported once in the conversation,
-# with the supervisor's state, so a stuck supervisor is never mistaken for a
-# busy one. Checked every 30 s.
+# OVERDUE HAND-OFFS: an order still unhandled after FM_HANDOFF_STALE_SECS
+# (default 600) gets one blocked [key=handoff-overdue-<id>] parent-channel line
+# via lane_report (which owns the status fallback), then one conversation note,
+# both with the supervisor's state. Checks run between conversation turns,
+# at most once every 30 s. <state>/<id>.captain-lane.stale-noted journals
+# "blocked <record>" after parent publication and "<record>" after note delivery.
+# When no overdue unacknowledged record remains, a matching resolved line
+# closes the blocker; only successful publication removes the journal.
 STALE_SECS=${FM_HANDOFF_STALE_SECS:-600}
 case "$STALE_SECS" in ''|*[!0-9]*|0) STALE_SECS=600 ;; esac
 STALE_NOTED="$STATE/$ID.captain-lane.stale-noted"

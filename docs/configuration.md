@@ -71,8 +71,9 @@ state/
   <id>.turn-ended         touched by bin/fm-deck-worker.sh at turn end
   <id>.deck-session       secondmate conversation binding; bin/fm-deck-worker.sh header owns format, resume eligibility, and retirement
   <id>.supervisor-session <id>.captain-lane  split secondmate supervisor binding and lane marker (bin/fm-deck-worker.sh "CAPTAIN LANE")
-  <id>.captain-lane.log <id>.captain-lane.answered <id>.captain-lane.turn <id>.captain-lane.stale-noted  captain-lane log, turn journal, running-turn marker and stale hand-off delivery journal (blocked <record> for parent publication, <record> for conversation delivery); the keyed handoff-overdue blocker resolves and this journal is removed once no overdue unacknowledged order remains (bin/fm-captain-lane.sh header)
-  <id>.supervisor-failing <id>.conversation-failing  secondmate lane-health episodes, removed after recovery is published (bin/fm-deck-worker.sh "SUPERVISOR HEALTH", bin/fm-captain-lane.sh lane-health comment)
+  <id>.captain-lane.log <id>.captain-lane.answered <id>.captain-lane.turn  captain-lane log, turn journal and running-turn marker (bin/fm-captain-lane.sh header)
+  <id>.captain-lane.stale-noted  overdue hand-off delivery journal (bin/fm-captain-lane.sh "OVERDUE HAND-OFFS" owns format, reporting and resolution)
+  <id>.supervisor-failing <id>.conversation-failing  secondmate lane-health episodes (bin/fm-deck-worker.sh "SUPERVISOR HEALTH", bin/fm-captain-lane.sh lane-health comment own escalation and recovery)
   <id>.supervisor-notes   owed supervisor conversation notes, one note text per line, oldest first; failed delivery is queued independently of health episodes and retried in order at every turn start and recovery; teardown removes it
   <id>.lane-heal-<lane>  the first mate's automatic relaunch and escalation of a second mate whose lane keeps failing, one record per lane (bin/fm-secondmate-revive.sh "LANE HEALTH")
   <id>.parked-run  a worker's parked validation run being nudged and escalated (bin/fm-parked-run-watch.sh header)

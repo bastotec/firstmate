@@ -139,13 +139,13 @@
 #                          revival, its budget, and this one escalation
 #   check: second mate lane health: <id>...
 #                          surfaced once from a queue row keyed
-#                          lane-heal:<id>:<episode>, queued by the same scan's
+#                          lane-heal:<id>:..., queued by the same scan's
 #                          lane-health step (bin/fm-secondmate-revive.sh "LANE
 #                          HEALTH"): a live mate's lane still failing after an
 #                          automatic relaunch, or recovered after that escalation
 #   check: worker run parked too long: <id>...
 #                          surfaced once from a queue row keyed
-#                          parked-run:<id>:<run or step>, queued by
+#                          parked-run:<id>:..., queued by
 #                          bin/fm-parked-run-watch.sh, which this watcher runs
 #                          detached every FM_PARKED_RUN_INTERVAL seconds (600)
 #                          while the home records a worker

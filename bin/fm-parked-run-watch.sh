@@ -11,7 +11,7 @@
 # in its state), so every mate, the first mate included, watches its own.
 #
 # For each worker, `bin/fm-crew-state.sh --publish <id>` refreshes state/<id>.crew-state.
-# Failed queries and unknown/missing readings keep the parked record unchanged, ignoring stale projections.
+# Failed queries, unknown/missing readings, and empty run= keep the parked record unchanged, ignoring stale projections.
 # `parked` means a no-mistakes review gate or repair cap. state/<id>.parked-run records run=, step=,
 # since=<first observed parked epoch>, nudged=<wake epoch or 0>, escalated=<0|1>:
 #   - parked for FM_PARKED_RUN_SECS (3600): one `check:` wake to this home's own
@@ -23,7 +23,7 @@
 #     channel (bin/fm-parent-channel-lib.sh), so the first mate raises it; the
 #     first mate queues one `check:` wake to raise it with the captain. Either
 #     names the worker, the run, its step and how long it has been parked;
-#   - an affirmative working/done/blocked/failed reading closes the record;
+#   - a working/done/blocked/failed reading with non-empty run= closes the record;
 #     a new run or step resolves the old episode and starts a fresh clock.
 #     Resolution uses "resolved [key=...]", or a wake in the first mate's home.
 # A scan and a close of one worker serialize on state/.<id>.parked-run.lock, and
