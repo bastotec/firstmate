@@ -185,6 +185,7 @@ test_a_left_worker_is_never_raised_and_its_record_is_dropped() {
   scan "$dir"; scan "$dir"
   [ "$(wakes "$dir" 'parked-run:w1:run-h')" = 1 ] || fail "setup: the nudge is missing"
   # While a close holds the worker, a scan leaves it alone.
+  # shellcheck source=/dev/null
   ( . "$dir/bin/fm-wake-lib.sh"
     fm_lock_try_acquire "$dir/home/state/.w1.parked-run.lock" && : > "$dir/held"
     sleep 30 ) &

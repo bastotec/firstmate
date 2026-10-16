@@ -2114,8 +2114,10 @@ def wait_for(check, label, bound=30):
         time.sleep(.05)
     raise AssertionError(label+': '+(root/'pane').read_text())
 with (root/'pane').open('w') as output:
+    # A bounded/background test runner may ignore SIGINT; the interactive host must not.
     p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
-                         env=env, text=True, start_new_session=True)
+                         env=env, text=True, start_new_session=True,
+                         preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
     try:
         wait_for(idle, 'startup')
         p.stdin.write('long-tool\n'); p.stdin.flush()

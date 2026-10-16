@@ -657,6 +657,8 @@ portable_serial_weight_hints() {
 # (2026-10-16), with three family-phase workers.
 # fm-backend-identity was measured in green serial shard 4 of run 38922921673
 # (2026-10-16).
+# fm-parked-run-watch was measured in green serial shard 7 of run 38932286914
+# (2026-10-16), with three family-phase workers.
 # The five tests/fm-watch-triage*.test.sh suites were one 694233 ms script
 # before run 37413095868; their hints start from each suite's share of that,
 # from the per-case output timestamps of run 37401433503's serial shard 1.
@@ -721,6 +723,7 @@ tests/fm-notify.test.sh 1399
 tests/fm-on.test.sh 19570
 tests/fm-operational-input.test.sh 244
 tests/fm-peek-remote.test.sh 1331
+tests/fm-parked-run-watch.test.sh 6057
 tests/fm-pending-reply.test.sh 95487
 tests/fm-pr-check-security.test.sh 213897
 tests/fm-procevent-quota.test.sh 3314

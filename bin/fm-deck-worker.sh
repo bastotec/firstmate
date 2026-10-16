@@ -404,12 +404,10 @@ trap cleanup EXIT
 trap 'exit 1' HUP TERM
 # Ctrl+C reaches the whole foreground group: Deck and the renderer stop, this
 # driver survives, records the cancelled turn, and returns to the prompt.
+# Defer cancellation to the turn loop: running command substitutions from an
+# INT trap can corrupt Bash's parser if it interrupted another substitution.
 INTERRUPTED=0
-interrupt_turn() {
-  INTERRUPTED=1
-  request_turn_stop
-}
-trap interrupt_turn INT
+trap 'INTERRUPTED=1' INT
 
 busy_event() {  # <busy|idle> <event>
   "$BUSY_EVENT" apply "$STATE" "$ID" "$1" --gen "$GEN" --source deck-wrapper --event "$2" >/dev/null
@@ -1017,6 +1015,9 @@ $prompt"
     STOP_REQUESTED_AT=''
     while kill -0 "$TURN_PID" 2>/dev/null; do
       session_observe
+      if [ "$INTERRUPTED" = 1 ] && [ -z "$STOP_REQUESTED_AT" ]; then
+        request_turn_stop
+      fi
       escalate_turn_stop
       # /quit typed while the turn runs is an exit request, not a later turn:
       # stop the turn now, and the prompt loop reads the queued /quit next.
