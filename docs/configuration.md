@@ -106,6 +106,7 @@ state/
   model-chain/            per-lane model cooldowns ("Model fallback chains")
   pending-replies/        parent-owned secondmate pending replies (bin/fm-pending-reply-lib.sh)
   captain-direct/ captain-direct.log  parent-side captain-direct delivery ledger and echo-guard log (bin/fm-captain-direct-lib.sh)
+  captain-memory-* .captain-memory-*  captain-memory records and bookkeeping (bin/fm_captain_memory.py header owns files and mutation contracts)
   mate-mail/             primary-home peer-message spool and routing bookkeeping (bin/fm-mate-mail-lib.sh owns layout)
   mate-messages.log      primary-home peer-message oversight log (bin/fm-mate-mail-lib.sh owns fields)
   crew-time.log           per-home busy-state history for crew time; append-only; bin/fm-busy-event.sh appends, bin/fm_report.py reads

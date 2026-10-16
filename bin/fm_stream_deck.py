@@ -8,9 +8,11 @@ only its required plain-text/canonical-sequence projection.
 An endpoint-scoped lifecycle lock serializes publication with driver start/end.
 No projection is ever carried into the next turn. Only Deck's handled file
 confirms application; inbox publication, run liveness and PTY writes do not.
-Driver CLI: fm_stream_deck.py start|end STATE ID ENDPOINT [TURN SUPPORTED [SET_MODEL]].
+Driver CLI: fm_stream_deck.py start|end STATE ID ENDPOINT [TURN SUPPORTED [SET_MODEL [HOME]]].
 SET_MODEL 1 records that this turn's Deck takes `deck-control: set_model`
 (bin/fm_model_switch.py publishes it only into such a turn).
+HOME selects captain recall's operational home; absent, it defaults to STATE's
+parent. bin/fm_captain_memory.py owns the recall contract.
 start prints the turn projection path; end retires the active descriptor.
 fm_stream_deck.py captain STATE ID flushes eligible direct sources and bound
 Bridge orders; project_captain owns eligibility and acknowledgement rules.

@@ -18,12 +18,13 @@ a standing instruction - "always", "never", "from now on", "going forward",
 "stop doing", "don't ... again", "every time", "whenever", or a correction such
 as "I told you" or "I already said" - is recorded verbatim (its own line breaks
 kept, indented under the bullet), with its date and source, unless the same
-instruction is already recorded. Identity is the normalized instruction text,
-compared for equality, so a shorter or longer rule is its own rule. A card
-answer that only picks an option, or a one-off order without those cues, is not
-a standing rule. Capture follows local parent bindings to the upstream primary's
-captain-shared.md; at a remote binding it records in that home's data/captain.md,
-since the parent is on another machine.
+instruction is already recorded. Identity compares whole instructions after
+casefolding, collapsing whitespace and dropping ASCII punctuation; accented
+letters, emoji and other symbols stay significant. A shorter or longer rule
+is its own rule. A card answer that only picks an option, or a one-off order
+without those cues, is not a standing rule. Capture follows local parent
+bindings to the upstream primary's captain-shared.md; at a remote binding it
+records in that home's data/captain.md, since the parent is on another machine.
 Recording and upkeep serialize on data/.captain-memory.lock.
 
 Every correction delivery is counted in state/captain-memory-repeats.log as a
@@ -40,27 +41,38 @@ tests.
 
 recall prints the block every turn of every lane carries, between the markers
 "[fm-captain-memory]" and "[/fm-captain-memory]" (Fleet Town strips it from what
-it shows): the home's captain-shared.md and captain.md entries merged by date,
-newest first, up to 8000 UTF-8 bytes (about 2k tokens for ASCII), or --max-bytes
-when the turn has less room. Past the cap it keeps the newest half and fills
-the rest with the entries sharing the most words with --query (the turn's own
-text). With no entries or too little room for the wrapper, it prints nothing.
+it shows). It reads the home's captain-shared.md and captain.md plus the file
+capture routes to through local parent bindings, deduplicating paths and
+instructions. Entries are merged by date, newest first, up to 8000 UTF-8 bytes
+(about 2k tokens for ASCII), or --max-bytes when the turn has less room. Past
+the cap it keeps the newest half and fills the rest with the entries sharing
+the most words with --query (the turn's own text). With no entries or too
+little room for the wrapper, it prints nothing.
 
-prompt strips every incoming memory span, including an unclosed trailing one,
-then appends fresh recall from the home's own files within the turn's 65536-byte
-limit. Delivered text is not a trusted source of recorded captain memory.
-Both native Deck publishers apply the same enrichment; the Rust receiver gives
-the Python recall helper two seconds and publishes without recall if it fails.
+prompt neutralizes incoming memory markers without deleting their contents:
+it rewrites the case-insensitive token fm-captain-memory within square-bracket
+markers to fm-captain-memory-quoted, unless already quoted, repeating until
+unchanged. This covers opening, closing, nested and unclosed markers
+without joining fragments into a trusted marker. It then appends fresh recall
+within the turn's 65536-byte limit. Delivered text is not a trusted source of
+recorded captain memory; only the freshly computed block has real markers.
+Both native Deck publishers and the shell lanes apply the same neutralization
+even if recall is unavailable or fails, delivering the quoted body without a
+fresh block. The Rust receiver gives the Python recall helper two seconds.
 
-upkeep (nightly, from dreaming) dedupes captain-shared.md; collects entries
-missing from it that a mate wrote into its read-only copy (quarantined by a push
-as data/.captain-shared.md.quarantine.* or captain-shared.md.remote-quarantine-*,
-in this home or a local mate's) into state/captain-memory-candidates.md for
-dreaming to promote or drop - a quarantine can also hold a rule the primary
-retired, so nothing is imported unreviewed - and marks each read quarantine
-.reviewed; seeds a missing data/captain.md here and in each local mate home; and
-prints one summary line: entries, new candidates, oversized files (over 32 KB),
-repeats since the last upkeep.
+upkeep (nightly, from dreaming) dedupes captain-shared.md only in a home
+without a parent binding, leaving inherited copies untouched. It collects
+entries missing from it that a mate wrote into its read-only copy (quarantined
+by a push as data/.captain-shared.md.quarantine.* or
+captain-shared.md.remote-quarantine-*, in this home or a direct local mate's)
+into state/captain-memory-candidates.md for dreaming to promote or drop - a
+quarantine can also hold a rule the primary retired, so nothing is imported
+unreviewed - and marks each read quarantine .reviewed. It seeds a missing
+data/captain.md here and in each direct local mate home, then prints one
+summary line: entries, new candidates, oversized files (over 32 KB), repeats
+since the last upkeep (tracked by state/.captain-memory-upkeep).
+Shared-file rewrites and candidate writes use atomic replacement under their
+respective locks so unlocked recall and push readers see complete snapshots.
 """
 import argparse
 import datetime

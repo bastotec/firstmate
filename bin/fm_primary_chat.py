@@ -54,8 +54,9 @@ Two hosts serve one home:
     and chosen model, the primary busy id, stream label primary-chat and keeper
     dev.firstmate.primary.<hash>. It takes no home session lock, runs no session
     start or watcher, and uses --no-project-context. Its positional first prompt
-    on every start is .agents/skills/captain-thread/SKILL.md, the sole captain
-    contract, queued ahead of pending steering; the host never moves pending
+    on every start carries .agents/skills/captain-thread/SKILL.md, the sole
+    captain contract, plus recall under bin/fm_captain_memory.py's contract,
+    queued ahead of pending steering; the host never moves pending
     conversation input, including peer messages. Known operational input is
     archived in split-archived/; unconsumed startup digests are handed to the
     supervisor's persisted inbox before archiving, even without a live host.
