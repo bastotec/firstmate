@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Tell the captain something on his phone: a notice record his Fleet app shows and the
-# Mac's Fleet feed pushes through firstmate's ntfy server.
+# Write a captain notice for the external Fleet Town app and phone-push feed.
+# This command publishes a local record, not a delivery receipt.
 #
 # Usage:
 #   fm-notify.sh [--urgent] [--title <title>] [--link <https-url>] <body...>
@@ -9,24 +9,27 @@
 # Writes one notice to this home's state/notices/<id>.json (staged as .<id>.json.<hex> and
 # renamed into place), id nt-YYYYMMDDTHHMMSS-xxxxxx:
 #   {"version":1,"id","title","body","urgent":bool,"quiet":bool,"created":"<UTC>Z","link":<https|null>}
-# The Fleet feed reads every home's notices, remote ones included, attributes each to its
-# mate, and pushes it to his phone once (title = the mate's name, the link opens that
-# mate's chat); the ntfy token never leaves the Mac. Decision cards reach him that way
-# already, so never send a notice for an open decision.
+# Fleet Town's separate feed integration must read each home's notices (including remote
+# homes), attribute them to the mate, and push once with the mate's name as title and its
+# chat as the destination; urgent notices request high priority even in quiet hours.
+# This script never contacts ntfy or reads its token, which stays on the primary Mac.
+# `push` below means eligible for that feed, not confirmed delivery.
+# The primary home's ntfy configuration is catalogued in docs/configuration.md.
+# AGENTS.md section 9 owns when to notify and the parent-channel reporting requirement.
 #
-# Use it only for what he would want to hear about now: a long task he asked to be told
-# about finished, a result is ready, or a blocker. --urgent is for blockers and things that
-# cannot wait: it rings at high priority even in quiet hours. Never for routine progress.
-#
-# Guards, per home:
-#   - duplicate: the same title and body within 30 minutes is not sent again
-#     (`notice=duplicate: <id>`, exit 0);
-#   - rate limit: at most 6 notices an hour, 12 counting urgent ones
-#     (`notice=limited: ...`, exit 3, nothing written);
+# Guards, per home (scan, cleanup and publication serialized by notices/.lock):
+#   - workers: fm-worker-guard-lib.sh refuses a marked worker of this home before any
+#     notification state is created (exit 3); escalate through the supervising mate;
+#   - duplicate: title and body, after whitespace folding and lowercasing, match a notice
+#     within 30 minutes (`notice=duplicate: <id>`, exit 0), regardless of urgency or link;
+#   - rate limit: at most 6 non-urgent notices and 12 total notices in a rolling hour
+#     (`notice=limited: ...`, exit 3, no new notice published);
 #   - quiet hours: config/notify-quiet holds `HH:MM-HH:MM` in this machine's local time
 #     (default 22:00-08:00; `off` disables). A non-urgent notice sent then is kept with
-#     quiet: true, shown in the app but not pushed.
-# Notices older than seven days are removed. Prints `notice=<id> push|quiet`.
+#     quiet: true for app display without a phone push. Urgent notices bypass quiet hours.
+# Valid input is sanitized and truncated to 120 title and 1000 body characters; --link
+# must be HTTPS. Notices older than seven days are removed during a valid send attempt.
+# Prints `notice=<id> push|quiet` when a new record is published.
 # FM_NOTIFY_NOW (epoch seconds) fixes the clock for tests. Usage errors exit 2.
 set -eu
 

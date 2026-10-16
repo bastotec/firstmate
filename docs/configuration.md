@@ -44,7 +44,7 @@ config/
   shared-skills           optional skills repo shipped to connected machines; primary home only (bin/fm-machine.sh header)
   vnc/<machine>.password  mode-600 VNC password per machine; primary home only (bin/fm-machine-vnc.sh header)
   ntfy/url ntfy/topic ntfy/token  firstmate's ntfy server for phone pushes (mode 600 token); primary home only, read by Fleet Town's feed
-  notify-quiet            optional HH:MM-HH:MM quiet hours for notices, default 22:00-08:00, or off (bin/fm-notify.sh header)
+  notify-quiet            optional home-local notice quiet hours (bin/fm-notify.sh header owns syntax and defaults)
   machine-tunnels         optional gateway host whose model gateway and stream hub machine setup forwards (bin/fm-machine.sh header)
   bridges.json            home-local cross-machine permissions ("Bridge gates"; bin/fm-bridge.py owns schema)
   inbox-* voice-read-*    inbox model and voice-read settings ("Inbox and voice records")

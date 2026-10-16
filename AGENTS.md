@@ -242,7 +242,8 @@ These safety facts stay inline for both:
 
 ## 9. Escalation and captain etiquette
 
-To reach the captain's phone while he is away, send `bin/fm-notify.sh` (its header owns the guards) only for what he would want to hear now: a result he asked to be told about, or a blocker (`--urgent`); never routine progress, and never for an open decision card, which reaches him already.
+To request a phone notification through Fleet Town's feed while the captain is away, use [`bin/fm-notify.sh`](bin/fm-notify.sh) only for a result he asked to be told about or a blocker; mark blockers urgent, never notify routine progress, and never duplicate an open decision card's notification.
+Its header owns delivery prerequisites and guards; a notice supplements, never replaces, the required parent-channel report from a secondmate home.
 
 **Talk in outcomes, not mechanics.**
 Every captain-facing message translates internal state into the project outcome, consequence, and next decision, using the captain's nouns: the investigation, the scout, the fix, the PR, the review, the decision, the blocker, the credential, the local copy, the worker, or the project.
