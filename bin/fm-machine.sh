@@ -69,7 +69,8 @@
 # described below, then the doctor's --fix through the same scratch route,
 # then the approval gate hook (installed with no
 # gates enabled; the machine's own policy file turns gates on), then the
-# shared-skills and inventory steps described below.
+# shared-skills and inventory steps described below, followed by the machine
+# instructions offer and the optional VNC step described below.
 # It then prints a `human` line for each remaining human item and the verdict.
 # A doctor that did not run, a transport failure, or a fixable gap left after
 # --fix fails the doctor step; human gaps alone do not. Rerunning skips
@@ -175,8 +176,10 @@
 # registration prerequisite.
 #
 # VNC: setup then runs bin/fm-machine-vnc.sh install on a registered machine
-# and prints `step vnc=done|skipped`; it never installs a package (that script
-# reports the exact command, and --install-deps needs the captain's yes).
+# and prints `step vnc=done|skipped`; installation failures and unregistered
+# machines are skipped without failing setup or adding readiness requirements.
+# Setup never installs VNC packages; bin/fm-machine-vnc.sh owns prerequisites
+# and package-install consent.
 #
 # register <alias> <remote-root> records the machine in this home's
 # data/machines.md as `- <alias> (root: <remote-root>; added YYYY-MM-DD)`. It is

@@ -46,14 +46,15 @@
 # status prints checklist lines (bin/fm-machine.sh's protocol):
 #   item vnc-server=present|human: ...
 #   item vnc-service=present|human: ...
-#   item vnc-loopback=present|human: ...
+#   item vnc-loopback=present|human|unknown: ...
 #   item tcc-accessibility=present|human|unknown: ...      (macOS)
 #   item tcc-screen-recording=present|human|unknown: ...   (macOS)
 #   item vnc-browser=present|human: ...                    (Linux)
 # macOS reports the privacy settings from the server's own log: it exits
 # naming the missing permission, so `unknown` until a viewer has connected
 # once. open-setting opens that pane of System Settings on the machine.
-# start, restart and install clear the log first.
+# On macOS, restart and install clear the log; start clears it only when the
+# service is not already running, preserving existing viewers otherwise.
 #
 # open-url opens the link in the machine's browser: the default browser of
 # the logged-in user on macOS, the display :17 Chrome on Linux.

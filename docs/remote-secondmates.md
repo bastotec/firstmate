@@ -68,11 +68,10 @@ The origin URL named for each project must be reachable from the remote account 
 
 ### Remote desktop (VNC)
 
-Every machine can run Firstmate's own VNC server so the captain can see and use it from Fleet Town: macVNC on macOS, TigerVNC's Xvnc with a Chrome on its own display on Linux.
-It listens on `127.0.0.1:5917` only, takes a per-machine password Firstmate generates and keeps in `config/vnc/<machine>.password`, and is reached through an ssh forward.
-`setup` installs it on a registered machine whose packages are already there; otherwise it prints the exact package command, which needs the captain's yes before anyone runs it with `--install-deps`.
-On macOS, Screen Recording and Accessibility have to be granted to macVNC once, by hand at that Mac; `status` reports both from the server's own log and `open-setting` opens the right pane.
-[`bin/fm-machine-vnc.sh`](../bin/fm-machine-vnc.sh) owns install, status, the service, links opened in the machine's browser, and the viewer's `connect` answer.
+Firstmate's VNC backend shares the logged-in Mac's screen; on Linux it provides a separate browser display rather than the console desktop.
+On macOS, grant Screen Recording and Accessibility to macVNC by hand at that Mac, and grant them again after a rebuild.
+The [`fm-machine.sh` header](../bin/fm-machine.sh) owns setup's optional VNC step; VNC gaps do not block machine readiness.
+The [`fm-machine-vnc.sh` header](../bin/fm-machine-vnc.sh) owns installation prerequisites, package-install consent, loopback-only access through SSH, password handling, status, service controls, privacy settings, browser links, and the connection details for Fleet Town's viewer.
 
 ## Non-interactive tool contract
 
