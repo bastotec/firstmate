@@ -914,8 +914,12 @@ HAVE_RUN=0
 RUN_SOURCE=full
 COARSE_STATUS=""
 # Scouts and secondmates never drive a no-mistakes validation of their own
-# worktree, so skip the lookup for them and read state from pane/log directly.
-if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/null 2>&1; then
+# worktree, and neither do ships delivered local-only or direct-PR, whose
+# repositories need not be initialized for it; skip the lookup for them and read
+# state from pane/log directly.
+DELIVERY_MODE=$(meta_value mode)
+if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/null 2>&1 \
+  && [ "$DELIVERY_MODE" != local-only ] && [ "$DELIVERY_MODE" != direct-PR ]; then
   if ! RUN_OUT=$(fm_nm_run_checked "$WT" "$NM_TIMEOUT" axi status); then
     emit unknown run-step "no-mistakes run unavailable or unreadable for branch $CREW_BRANCH"
   fi

@@ -1076,13 +1076,21 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
             report_path:((.report_path // null) | if . == null then null else trunc(500) end),
             local_note:((.local_note // null) | if . == null then null else trunc(120) end),outcome,completion} ]
        | sort_by([(.completion.date // ""), .id]) | reverse) as $landed_all
-    | ([ $tasks[] | select(.current_state.state == "unknown") ]) as $unknown_children
+    # The current state of a secondmate task is the summary its own home
+    # publishes, never an endpoint probe from here, so it is not an unknown child here.
+    | ([ $backlog.records[]? | select(.structured == true and .state == "done") | .id ]) as $done_ids
+    # A record kept after its item is Done (a captain-held preservation of a
+    # finished worker) is retained: neither unowned live work nor a child whose
+    # live state is needed.
+    | ([ $tasks[] | select(.kind != "secondmate" and .current_state.state == "unknown")
+         | select(.id as $id | $done_ids | index($id) | not) ]) as $unknown_children
     | ([ $owned_in_flight[]
          | select(.requires_child_metadata)
          | select(.id as $id | [$tasks[].id] | index($id) | not) ]) as $orphan_in_flight
     | ([ $tasks[]
          | select(.kind != "secondmate")
          | select(.id as $id | [$owned_in_flight[].id] | index($id) | not)
+         | select(.id as $id | $done_ids | index($id) | not)
          | {id,state:.current_state.state} ]) as $unowned_children
     | ([ $owned_in_flight[] as $work
          | $tasks[]

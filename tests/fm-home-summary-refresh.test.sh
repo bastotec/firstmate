@@ -720,15 +720,14 @@ elapsed=$(( $(date +%s) - started ))
   || fail "the producer waited $elapsed seconds despite skipping remote endpoint state"
 [ ! -e "$TMP_ROOT/stalled-ssh.called" ] \
   || fail "the producer issued a remote per-task state probe"
+# A remote secondmate's state is its own home's published summary: its
+# endpoint here stays unknown, without invalidating this home's summary.
 jq -e '
   .schema == "fm-secondmate-home-summary.v1"
-  and .valid == false
-  and .state == "unknown"
-  and .invalidity.kind == "child_current_unavailable"
-  and (.invalidity.ids == ["rsm"])
+  and (.invalidity.kind != "child_current_unavailable")
   and any(.endpoints[]; .id == "rsm" and .state == "unknown")
 ' "$TMP_ROOT/stalled-summary.json" >/dev/null \
-  || fail "an unreachable remote task was not reported as unknown"
+  || fail "an unreachable remote secondmate was not listed as unknown, or invalidated the summary"
 pass "producer skips remote per-task state probes"
 
 # The watcher's beacon is what the rest of supervision reads as proof it is

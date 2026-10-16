@@ -465,7 +465,117 @@ SH
   pass "tasks-axi output with raw control characters is still parsed, so the handoff and ledger are written"
 }
 
+# nm_case <name>: a case whose no-mistakes database has step results and repair
+# budget decisions, so failures can be told apart by step and cause.
+nm_case() {
+  local d
+  d=$(new_case "$1")
+  sqlite3 "$d/nm.sqlite" "CREATE TABLE step_results(id TEXT, run_id TEXT, step_name TEXT, step_order INTEGER, status TEXT,
+      started_at INTEGER, completed_at INTEGER, error TEXT, findings_json TEXT);
+    CREATE TABLE repair_budget_decisions(round_id TEXT, step_result_id TEXT, consumed INTEGER, repair_limit INTEGER,
+      authority_limit INTEGER, source TEXT, dispatch_state TEXT);
+    INSERT INTO runs VALUES('c1','fleet','cancelled','fm/c1','cancelled: aborted by user','',$((NOW - 3000)),$((NOW - 3000)));
+    INSERT INTO runs VALUES('c2','fleet','cancelled','fm/c2','cancelled: aborted by user','',$((NOW - 3000)),$((NOW - 3000)));
+    INSERT INTO runs VALUES('k1','fleet','failed','fm/k1','step ci failed: update run PR state: database is locked (5) (SQLITE_BUSY)','',$((NOW - 3000)),$((NOW - 3000)));
+    INSERT INTO runs VALUES('f1','fleet','failed','fm/f1','step pr failed: refusing non-compliant PR publication','',$((NOW - 3000)),$((NOW - 3000)));
+    INSERT INTO step_results VALUES('s1','c1','review',3,'awaiting_approval',$((NOW - 3500)),NULL,'','[{\"id\":\"R1\"}]');
+    INSERT INTO step_results VALUES('s2','c2','review',3,'awaiting_approval',$((NOW - 3500)),NULL,'','[]');
+    INSERT INTO step_results VALUES('s3','k1','review',3,'completed',$((NOW - 3500)),$((NOW - 3400)),'','[]');
+    INSERT INTO step_results VALUES('s4','k1','ci',10,'failed',$((NOW - 3300)),$((NOW - 3000)),'database is locked','[]');
+    INSERT INTO step_results VALUES('s5','f1','pr',9,'failed',$((NOW - 3300)),$((NOW - 3000)),'non-compliant','[]');
+    INSERT INTO step_results VALUES('s6','r1','lint',8,'failed',$((NOW - 7300)),$((NOW - 7200)),'timed out','[]');
+    INSERT INTO repair_budget_decisions VALUES('x','s1',0,0,0,'exhausted','');"
+  printf '%s' "$d"
+}
+
+test_no_mistakes_failures_are_broken_down_by_step_cause_and_host() {
+  local d log
+  d=$(nm_case nm-causes)
+  printf -- '- dave-tools - tools (host: workload; root: /r; home: /h/dave; scope: tools; projects: ; added 2026-10-01)\n' \
+    > "$d/home/data/secondmates.md"
+  cat > "$d/bin/bridge" <<'SH'
+#!/usr/bin/env bash
+[ "$1 $3" = "check reports" ] && exit 0; exit 1
+SH
+  cat > "$d/bin/ssh" <<'SH'
+#!/usr/bin/env bash
+cat > /dev/null
+printf '%s\n' "$*" > "$STUB_CALLS/ssh"
+printf '{"reviews": 7, "cap_hits": 3, "failed": 2, "by_step": {"review": 2}, "by_cause": {"repair cap": 2}, "runs": []}\n'
+SH
+  chmod +x "$d/bin/bridge" "$d/bin/ssh"
+  mkdir -p "$d/home/state/dream"
+  printf '{"schema": "fm-dream.v1", "date": "2026-10-11", "no_mistakes": {"failed": 9, "by_cause": {"aborted": 6, "infra": 3}}}\n' \
+    > "$d/home/state/dream/latest.json"
+  FM_DREAM_BRIDGE="$d/bin/bridge" FM_DREAM_SSH="$d/bin/ssh" run_dream "$d" --only collect > "$d/out.json" \
+    || fail "collect exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" <<'PY' || fail "no-mistakes breakdown wrong: $(jq -c .no_mistakes "$log")"
+import json, sys
+run = json.load(open(sys.argv[1]))
+nm = run["no_mistakes"]
+# r4 is the harness repository's failure from new_case, with no step results.
+assert nm["hosts"]["this Mac"]["by_cause"] == {"repair cap": 1, "aborted": 1, "infra": 1, "finding": 1, "timeout": 1, "other": 1}, nm["hosts"]["this Mac"]
+assert nm["hosts"]["this Mac"]["reviews"] == 3 and nm["hosts"]["this Mac"]["cap_hits"] == 1, nm["hosts"]["this Mac"]
+assert nm["hosts"]["workload"] == {"reviews": 7, "cap_hits": 3, "failed": 2, "by_cause": {"repair cap": 2}}, nm["hosts"]
+assert nm["by_step"] == {"review": 4, "ci": 1, "pr": 1, "lint": 1, "none": 1}, nm["by_step"]
+assert nm["failed"] == 8 and nm["by_cause"]["repair cap"] == 3, nm
+assert nm["previous"]["date"] == "2026-10-11" and nm["change"]["aborted"] == -5 and nm["change"]["repair cap"] == 3, nm
+assert "No-mistakes: 8 failed (-1 vs 2026-10-11); top: repair cap 3" in run["summary"], run["summary"]
+PY
+  grep -q 'workload: 7 reviews, 3 hit the repair cap, 2 failed (repair cap 2)' "$d"/home/state/dream/digest-*.md \
+    || fail "the digest lacks the per-host breakdown"
+  grep -q 'workload python3 - ~/.no-mistakes/state.sqlite' "$d/calls/ssh" || fail "the remote database was not read over ssh"
+  pass "no-mistakes failures are counted by step, cause and host, with the change since the previous night"
+}
+
+test_a_bridge_without_reports_skips_the_host_and_says_so() {
+  local d
+  d=$(nm_case nm-bridge)
+  printf -- '- dave-tools - tools (host: workload; root: /r; home: /h/dave; scope: tools; projects: ; added 2026-10-01)\n' \
+    > "$d/home/data/secondmates.md"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$d/bin/bridge"
+  # shellcheck disable=SC2016 # the stub expands its own variables
+  printf '#!/usr/bin/env bash\ntouch "$STUB_CALLS/ssh-called"\n' > "$d/bin/ssh"
+  chmod +x "$d/bin/bridge" "$d/bin/ssh"
+  FM_DREAM_BRIDGE="$d/bin/bridge" FM_DREAM_SSH="$d/bin/ssh" run_dream "$d" --only collect > "$d/out.json" \
+    || fail "collect exited nonzero"
+  [ ! -e "$d/calls/ssh-called" ] || fail "a host whose bridge denies reports was read anyway"
+  jq -e '.steps.collect.why | test("workload: bridge does not allow reports")' "$d/out.json" >/dev/null \
+    || fail "the skipped host is not named: $(cat "$d/out.json")"
+  pass "a machine whose bridge denies reports is skipped and named, never read"
+}
+
+test_readable_disagreements_do_not_make_collect_partial() {
+  local d
+  d=$(nm_case clean-collect)
+  # Only what makes collect partial in this case: no unreadable sessions.
+  rm -f "$d/deck/sessions/broken.json" "$d/home/state/broken-mate.deck-session"
+  cat > "$d/bin/report" <<'SH'
+#!/usr/bin/env bash
+printf '{"summary": "fleet ok", "waiting": [], "power": [], "shipped": [], "crew": [],
+ "gaps": ["firstmate runtime: 31 more queued not listed"],
+ "inconsistencies": ["bob helper: live child state has no in-flight backlog item: w1=paused"],
+ "mates": [{"id": "bob-helper", "machine": "workload", "state": "externally_held", "working": 0, "waiting": 2, "shipped": 1, "freshness": "remote"}]}\n'
+SH
+  run_dream "$d" --only collect > "$d/out.json" || fail "collect exited nonzero"
+  jq -e '.steps.collect.status == "done"' "$d/out.json" >/dev/null \
+    || fail "readable data made collect partial: $(jq -c .steps.collect "$d/out.json")"
+  grep -q 'mate bob-helper (workload): externally_held; 0 working, 2 waiting, 1 shipped' "$d"/home/state/dream/digest-*.md \
+    || fail "the digest lacks the mate's current state"
+  grep -q 'records disagree: bob helper: live child state' "$d"/home/state/dream/digest-*.md \
+    || fail "the disagreement is not in the digest for triage"
+  sed -i.bak 's/"state": "externally_held", //' "$d/bin/report"
+  run_dream "$d" --only collect > "$d/out.json" || fail "collect exited nonzero"
+  jq -e '.steps.collect.status == "partial" and (.steps.collect.why | test("bob-helper: no current state"))' "$d/out.json" >/dev/null \
+    || fail "a mate without a current state did not make collect partial"
+  pass "collect is done when every mate was read, and readable disagreements go to the digest"
+}
+
 test_collect_builds_a_private_digest_of_the_day
+test_no_mistakes_failures_are_broken_down_by_step_cause_and_host
+test_a_bridge_without_reports_skips_the_host_and_says_so
+test_readable_disagreements_do_not_make_collect_partial
 test_skills_pushes_a_guarded_change_to_main
 test_skills_rejects_changes_outside_skills_and_secrets
 test_collect_reads_captain_direct_from_every_included_local_home

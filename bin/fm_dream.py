@@ -542,6 +542,132 @@ def no_mistakes_runs(since, fleet_paths, harness, private_paths=()):
     return out, None
 
 
+# The no-mistakes cause breakdown, run against one host's state database (here
+# with python3 directly, on another host over ssh with this text on stdin):
+#   python3 - <db-path or ~/...> <since-epoch> [<run ids JSON>]
+# prints {reviews, cap_hits, failed, by_step, by_cause, runs: [{id, step, cause}]}.
+# reviews and cap_hits count the host's review steps and runs whose review hit
+# the repair cap in the window; failed rows are the failed or cancelled runs in
+# the window, restricted to the given run ids when a list is passed.
+NM_BREAKDOWN_PY = r"""
+import json, os, re, sqlite3, sys
+db, since = os.path.expanduser(sys.argv[1]), int(sys.argv[2])
+only = set(json.loads(sys.argv[3])) if len(sys.argv) > 3 else None
+CAUSES = (
+    ('timeout', r'timed? ?out|timeout|deadline exceeded|wait of .* elapsed'),
+    ('infra', r'database is locked|SQLITE_BUSY|\block\b|lock(ed)? |daemon|panic|crash|upstream_error|gateway|'
+              r'connection (refused|reset)|\bEOF\b|killed|signal|not initialized|no such file|unreachable'),
+    ('finding', r'finding|non-compliant|refusing|risk|review|test(s)? failed|lint|check(s)? failed'),
+)
+def ms(v):
+    return (v / 1000 if v and v > 1e12 else v) if isinstance(v, (int, float)) else 0
+out = {'reviews': 0, 'cap_hits': 0, 'failed': 0, 'by_step': {}, 'by_cause': {}, 'runs': []}
+if not os.path.isfile(db):
+    print(json.dumps(out)); sys.exit(0)
+con = sqlite3.connect('file:%s?mode=ro' % db, uri=True, timeout=5)
+tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+steps = {}
+step_rows = con.execute(
+    'SELECT run_id, step_name, step_order, status, started_at, completed_at, error, findings_json FROM step_results'
+) if 'step_results' in tables else []
+for run_id, name, order, status, started, completed, error, findings in step_rows:
+    if name == 'review' and ms(started or completed) >= since:
+        out['reviews'] += 1
+    steps.setdefault(run_id, []).append((order or 0, name, status, error or '', findings or ''))
+capped = set()
+if {'repair_budget_decisions', 'step_results'} <= tables:
+    for run_id, when in con.execute(
+            "SELECT s.run_id, MAX(COALESCE(s.completed_at, s.started_at)) FROM repair_budget_decisions d "
+            "JOIN step_results s ON s.id = d.step_result_id WHERE d.source = 'exhausted' GROUP BY s.run_id"):
+        if ms(when) >= since:
+            capped.add(run_id)
+out['cap_hits'] = len(capped)
+for run_id, status, error, updated in con.execute(
+        "SELECT id, status, error, updated_at FROM runs WHERE status IN ('failed', 'cancelled')"):
+    if ms(updated) < since or (only is not None and run_id not in only):
+        continue
+    rows = sorted(steps.get(run_id, []))
+    stopped = [r for r in rows if r[2] == 'failed'] or [r for r in rows if r[2] in ('running', 'fixing', 'awaiting_approval')]
+    step = stopped[0][1] if stopped else 'none'
+    text = ' '.join([error or ''] + [r[3] for r in stopped])
+    if run_id in capped:
+        cause = 'repair cap'
+    elif status == 'cancelled':
+        cause = 'aborted'
+    else:
+        cause = next((c for c, rx in CAUSES if re.search(rx, text, re.I)), None)
+        if cause is None:
+            cause = 'finding' if any(r[4] not in ('', '[]', 'null') for r in stopped) else 'other'
+    out['failed'] += 1
+    out['by_step'][step] = out['by_step'].get(step, 0) + 1
+    out['by_cause'][cause] = out['by_cause'].get(cause, 0) + 1
+    out['runs'].append({'id': run_id, 'step': step, 'cause': cause})
+con.close()
+print(json.dumps(out))
+"""
+
+
+def nm_breakdown(ctx, nm):
+    """Per-cause no-mistakes failures on every fleet machine, read-only. This
+    Mac's failures are exactly the runs collect already kept (the fleet's own);
+    another machine's database is read whole over ssh when its bridge allows the
+    reports flow. Unreachable hosts are named, never guessed."""
+    hosts, errors = {}, []
+    local_db = os.environ.get('FM_DREAM_NO_MISTAKES_DB') or '~/.no-mistakes/state.sqlite'
+    try:
+        r = ctx.run(['python3', '-', local_db, str(int(ctx.since)), json.dumps([x.get('id') for x in nm])],
+                    input=NM_BREAKDOWN_PY, timeout=60)
+        hosts['this Mac'] = json.loads(r.stdout) if r.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        hosts['this Mac'] = None
+    remote = sorted({h for mid, _home, h in registry(ctx.home) if h and mid not in ctx.excluded})
+    env = dict(os.environ, FM_HOME=str(ctx.home))
+    for host in remote:
+        try:
+            gate = ctx.run([tool('fm-bridge.sh', 'FM_DREAM_BRIDGE'), 'check', host, 'reports'], timeout=30, env=env)
+            if gate.returncode != 0:
+                errors.append('%s: bridge does not allow reports' % host)
+                continue
+            r = ctx.run([os.environ.get('FM_DREAM_SSH') or 'ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host,
+                         'python3 - ~/.no-mistakes/state.sqlite %d' % int(ctx.since)], input=NM_BREAKDOWN_PY, timeout=90)
+            hosts[host] = json.loads(r.stdout) if r.returncode == 0 else None
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            hosts[host] = None
+    for host, got in list(hosts.items()):
+        if got is None:
+            errors.append('%s: no-mistakes state unreadable' % host)
+            del hosts[host]
+    total = {'failed': 0, 'by_cause': {}, 'by_step': {}}
+    for got in hosts.values():
+        total['failed'] += got['failed']
+        for key in ('by_cause', 'by_step'):
+            for k, v in got[key].items():
+                total[key][k] = total[key].get(k, 0) + v
+    last_night = read_json(ctx.dir / 'latest.json') or {}
+    previous = dict(last_night.get('no_mistakes') or {}, date=last_night.get('date')) \
+        if last_night.get('no_mistakes') else {}
+    prev_causes = previous.get('by_cause') or {}
+    out = {'failed': total['failed'], 'by_cause': total['by_cause'], 'by_step': total['by_step'],
+           'hosts': {h: {k: g[k] for k in ('reviews', 'cap_hits', 'failed', 'by_cause')} for h, g in hosts.items()},
+           'previous': {'date': previous.get('date'), 'failed': previous.get('failed'), 'by_cause': prev_causes}
+           if previous else None,
+           'change': {c: total['by_cause'].get(c, 0) - prev_causes.get(c, 0)
+                      for c in sorted(set(total['by_cause']) | set(prev_causes))} if previous else None,
+           'date': ctx.day}
+    return out, errors
+
+
+def nm_summary(nmb):
+    """'no-mistakes: 93 failed (-12 vs 2026-10-15); top: aborted 60, repair cap 20, infra 8'."""
+    if not nmb:
+        return ''
+    top = sorted(nmb['by_cause'].items(), key=lambda kv: -kv[1])[:3]
+    prev = nmb.get('previous') or {}
+    delta = '' if prev.get('failed') is None else ' (%+d vs %s)' % (nmb['failed'] - prev['failed'], prev.get('date'))
+    return 'no-mistakes: %d failed%s%s' % (nmb['failed'], delta,
+                                          '; top: ' + ', '.join('%s %d' % kv for kv in top) if top else '')
+
+
 def tool(name, env_var):
     return os.environ.get(env_var) or str(SCRIPT_DIR / name)
 
@@ -614,13 +740,27 @@ def step_collect(ctx):
     sweep = tail_since(ctx.state / 'idle-sweep.log', ctx.since, hide=lambda l: mentions_excluded(ctx, l))
     if sweep:
         parts += ['## Idle sweep', *sweep, '']
+    nmb, nmb_errors = nm_breakdown(ctx, nm)
+    ctx.facts['no_mistakes'] = nmb
+    if nmb['failed'] or nmb['hosts']:
+        parts += ['## No-mistakes failures by cause', nm_summary(nmb)]
+        parts += ['- %s: %d reviews, %d hit the repair cap, %d failed (%s)' % (
+            h, g['reviews'], g['cap_hits'], g['failed'], ', '.join('%s %d' % kv for kv in sorted(g['by_cause'].items())))
+            for h, g in nmb['hosts'].items()]
+        parts += ['- by step: ' + ', '.join('%s %d' % kv for kv in sorted(nmb['by_step'].items(), key=lambda kv: -kv[1]))]
+        parts += ['- unread: ' + e for e in nmb_errors] + ['']
     rep = fleet_report(ctx)
     if rep:
         parts += ['## Fleet report', rep.get('summary') or '']
         parts += ['- waiting: %s (on %s, %s)' % (w.get('what'), w.get('on'), w.get('mate'))
                   for w in rep.get('waiting', [])
                   if w.get('mate') not in ctx.excluded and not mentions_excluded(ctx, json.dumps(w, ensure_ascii=False))]
+        parts += ['- mate %s (%s): %s; %d working, %d waiting, %d shipped' % (
+            m.get('id'), m.get('machine'), m.get('state') or 'no current state', m.get('working', 0),
+            m.get('waiting', 0), m.get('shipped', 0))
+            for m in rep.get('mates', []) if m.get('id') not in ctx.excluded and not mentions_excluded(ctx, m.get('id') or '')]
         parts += ['- gap: ' + g for g in rep.get('gaps', []) if not mentions_excluded(ctx, g)]
+        parts += ['- records disagree: ' + g for g in rep.get('inconsistencies', []) if not mentions_excluded(ctx, g)]
         parts += ['- crew %s: %s on %s (%s)' % (c.get('status'), c.get('agent'), c.get('task'), c.get('mate'))
                   for c in rep.get('crew', []) if c.get('status') in ('failed', 'blocked', 'stopped', 'needs-decision')
                   and c.get('mate') not in ctx.excluded and not mentions_excluded(ctx, json.dumps(c, ensure_ascii=False))][:30]
@@ -645,8 +785,14 @@ def step_collect(ctx):
                            'idle_sweep': len(sweep), 'digest_chars': len(text)}
     unread = ['%s: %s' % (m.get('id'), m.get('freshness')) for m in (rep or {}).get('mates', [])
               if m.get('id') not in ctx.excluded and m.get('freshness') not in ('fresh', 'local', 'remote', None)]
+    # Partial means something could not be read; records that were read but
+    # disagree are digest findings for triage, not a partial collect.
     unread += [g for g in (rep or {}).get('gaps', [])
-               if re.search(r'incomplete|unavailable|unreadable', g) and not mentions_excluded(ctx, g)][:3]
+               if re.search(r'summary incomplete|unreadable|could not be (read|checked)', g)
+               and not mentions_excluded(ctx, g)][:3]
+    unread += ['%s: no current state' % m.get('id') for m in (rep or {}).get('mates', [])
+               if m.get('id') not in ctx.excluded and not m.get('state')]
+    unread += nmb_errors
     if (rep or {}).get('power_error'):
         unread.append('power: %s' % rep['power_error'])
     if UNREADABLE:
@@ -1138,6 +1284,9 @@ def summary_line(run):
     text = 'Overnight: %s, %s.' % (
         '%d skill%s updated' % (len(skills), '' if len(skills) == 1 else 's') if skills else 'no skill changes',
         '%d fix%s raised' % (len(raised), '' if len(raised) == 1 else 'es') if raised else 'nothing raised')
+    nm = nm_summary(run.get('no_mistakes'))
+    if nm:
+        text += ' ' + nm[0].upper() + nm[1:] + '.'
     if bad:
         text += ' Did not run cleanly: %s.' % ', '.join('%s (%s)' % (n, run['steps'][n]['status']) for n in bad)
     return text
@@ -1178,6 +1327,7 @@ def cmd_run(args):
         run['raised'] = ctx.facts.get('raised', [])
         run['slow_commands'] = ctx.facts.get('slow_commands', [])
         run['counts'] = ctx.facts.get('counts', {})
+        run['no_mistakes'] = ctx.facts.get('no_mistakes')
         run['status'] = ('done' if all(s.get('status') in CLEAN for s in run['steps'].values()) and not force_partial
                          else 'partial')
         run['summary'] = summary_line(run)
