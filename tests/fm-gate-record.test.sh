@@ -21,6 +21,7 @@ status() {  # <run> <step> <findings rows...> -> one axi status on stdout
   printf 'gate:\n  step: %s\n  status: awaiting_approval\n  risk: high\n  findings[%d]{id,severity,file,action,description}:\n' "$step" "$#"
   local r
   for r in "$@"; do printf '    %s\n' "$r"; done
+  # shellcheck disable=SC2016
   printf 'help[1]: Run `no-mistakes axi respond --action approve` to accept\n'
 }
 
