@@ -42,6 +42,7 @@ config/
   model-policy.json       home-local route policy for in-place switches (bin/fm_model_switch.py owns validation and policy semantics)
   power-host              optional ssh alias for fleet quota reads (bin/fm_report.py owns default and bridge flow)
   shared-skills           optional skills repo shipped to connected machines; primary home only (bin/fm-machine.sh header)
+  vnc/<machine>.password  mode-600 VNC password per machine; primary home only (bin/fm-machine-vnc.sh header)
   machine-tunnels         optional gateway host whose model gateway and stream hub machine setup forwards (bin/fm-machine.sh header)
   bridges.json            home-local cross-machine permissions ("Bridge gates"; bin/fm-bridge.py owns schema)
   inbox-* voice-read-*    inbox model and voice-read settings ("Inbox and voice records")

@@ -66,6 +66,14 @@ A worker stops itself once its configured code root stops being a Firstmate chec
 The remote account must provide the required toolchain listed under [Readiness, repair, and the human steps](#readiness-repair-and-the-human-steps), the stream prerequisites, and credentials that work on that host.
 The origin URL named for each project must be reachable from the remote account because projects are cloned on that host rather than copied from the primary.
 
+### Remote desktop (VNC)
+
+Every machine can run Firstmate's own VNC server so the captain can see and use it from Fleet Town: macVNC on macOS, TigerVNC's Xvnc with a Chrome on its own display on Linux.
+It listens on `127.0.0.1:5917` only, takes a per-machine password Firstmate generates and keeps in `config/vnc/<machine>.password`, and is reached through an ssh forward.
+`setup` installs it on a registered machine whose packages are already there; otherwise it prints the exact package command, which needs the captain's yes before anyone runs it with `--install-deps`.
+On macOS, Screen Recording and Accessibility have to be granted to macVNC once, by hand at that Mac; `status` reports both from the server's own log and `open-setting` opens the right pane.
+[`bin/fm-machine-vnc.sh`](../bin/fm-machine-vnc.sh) owns install, status, the service, links opened in the machine's browser, and the viewer's `connect` answer.
+
 ## Non-interactive tool contract
 
 Remote job execution never runs a login or interactive shell, so `~/.profile`, `~/.bashrc`, and `~/.zshrc` never contribute to the job worker's runtime `PATH`.
@@ -377,6 +385,7 @@ bin/fm-test-run.sh tests/fm-machine-blocker.test.sh
 bin/fm-test-run.sh tests/fm-machine-skills.test.sh
 bin/fm-test-run.sh tests/fm-machine-instructions.test.sh
 bin/fm-test-run.sh tests/fm-machine-rules.test.sh
+bin/fm-test-run.sh tests/fm-machine-vnc.test.sh
 bin/fm-test-run.sh tests/fm-on.test.sh
 bin/fm-test-run.sh tests/fm-send-remote-delivery.test.sh
 bin/fm-test-run.sh tests/fm-secondmate-reconcile.test.sh

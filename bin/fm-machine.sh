@@ -174,6 +174,10 @@
 # bin/fm-machine-instructions.sh owns the separate read/save interface and its
 # registration prerequisite.
 #
+# VNC: setup then runs bin/fm-machine-vnc.sh install on a registered machine
+# and prints `step vnc=done|skipped`; it never installs a package (that script
+# reports the exact command, and --install-deps needs the captain's yes).
+#
 # register <alias> <remote-root> records the machine in this home's
 # data/machines.md as `- <alias> (root: <remote-root>; added YYYY-MM-DD)`. It is
 # idempotent for the same root and refuses a different root for a recorded
@@ -217,7 +221,7 @@
 #                                                probe, tool-<tool>, deck, gateway-key-mode, tunnels,
 #                                                tunnel-key, tunnel-authorize, tunnel-gateway, tunnel-hub,
 #                                                doctor, approval-gate, shared-skills, skill-inventory,
-#                                                machine-instructions)
+#                                                machine-instructions, vnc)
 #   human <item-name>: <exact step for a person> (setup, after the steps)
 #   setup=complete|incomplete: <n> human steps|failed   (setup; exit 0, 3, 1)
 #   added=<ssh-config-path>                      (add)
@@ -984,6 +988,23 @@ skills_url_without_userinfo() { # <url>
   esac
 }
 
+# Firstmate's VNC server (bin/fm-machine-vnc.sh) on a registered machine.
+# Never fails setup: a missing package or an unregistered machine is reported
+# as skipped with the exact next step, since packages need the captain's yes.
+vnc_step() { # <alias>
+  local out line
+  if ! "$SCRIPT_DIR/fm-machine-skills.sh" roots 2>/dev/null | cut -f1 | grep -qxF -- "$1"; then
+    printf 'step vnc=skipped: register the machine, then bin/fm-machine-vnc.sh install %s\n' "$1"
+    return 0
+  fi
+  if out=$("$SCRIPT_DIR/fm-machine-vnc.sh" install "$1" < /dev/null 2>&1); then
+    printf 'step vnc=done: 127.0.0.1:5917 on %s; bin/fm-machine-vnc.sh status %s lists what is left\n' "$1" "$1"
+  else
+    line=$(printf '%s\n' "$out" | awk '/^refuse: / { sub(/^refuse: /, ""); print; exit }')
+    printf 'step vnc=skipped: %s\n' "${line:-bin/fm-machine-vnc.sh install $1 failed}"
+  fi
+}
+
 # The machine's binding instructions (~/.agents/AGENTS.md), offered at connect:
 # never written here, only reported, with the command that writes them.
 # Sets INSTR_TEXT.
@@ -1381,6 +1402,7 @@ cmd_setup() { # <alias> <remote-root>
   skills_steps "$alias" "$root" || setup_finish "$alias" "$root" "$class" "$known" 1
   instructions_offer "$alias"
   printf 'step machine-instructions=skipped: %s\n' "$INSTR_TEXT"
+  vnc_step "$alias"
   probe_machine "$alias" "$root"
   if [ "$PROBE_RC" -ne 0 ]; then
     printf 'step probe=failed: the probe over ssh failed (exit %s)\n' "$PROBE_RC"
