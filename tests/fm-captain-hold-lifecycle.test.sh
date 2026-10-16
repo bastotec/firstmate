@@ -960,6 +960,111 @@ EOF
   pass "release frees held work with the captain's words recorded and the body preserved"
 }
 
+# tasks-axi reserves parentheses for its markdown hold tags, so hold reasons
+# and deferred conditions are normalized to brackets for storage while the
+# captain keeps his own wording in every surface he reads: the parent-channel
+# decision, the decision card, and the task body. The originating task is not
+# completed by a hold; only its recorded answer closes it.
+test_parenthetical_reasons_round_trip_verbatim() {
+  local home id show card rc=0
+  home=$(make_home paren-reason)
+  id=sample-paren-origin
+  mkdir -p "$home/data/$id"
+  tasks_in "$home" add "$id" "Investigate the paren route" --kind scout --repo sample --start >/dev/null \
+    || fail "could not create the paren origin"
+  write_origin_meta "$home" "$id"
+  printf 'done: report complete\n' > "$home/state/$id.status"
+  printf '# Paren route\n\nOne choice remains.\n' > "$home/data/$id/report.md"
+
+  # A parenthetical hold reason lands, keeps the captain's wording in the
+  # card and the parent channel, and never closes the originating task.
+  FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold sample-paren-call \
+    --title "Choose the paren route" \
+    --reason "approve the report policy (partial results allowed, see report)" \
+    --repo sample >/dev/null \
+    || fail "hold refused a one-line reason containing parentheses"
+  show=$(tasks_in "$home" show sample-paren-call --full)
+  assert_contains "$show" "held: yes" "the parenthetical hold did not land"
+  assert_contains "$show" "hold_kind: captain" "the parenthetical hold lost its captain kind"
+  assert_contains "$show" "state: queued" "the held call was completed by holding it"
+  assert_contains "$show" 'hold_reason: "approve the report policy [partial results allowed, see report]"' \
+    "the stored reason was not normalized to the parentheses-free storage form"
+  card=$(jq -r .situation "$home/state/cards/sample-paren-call.json") \
+    || fail "the parenthetical hold wrote no decision card"
+  assert_contains "$card" "approve the report policy (partial results allowed, see report)" \
+    "the card did not preserve the captain's original wording"
+  show=$(tasks_in "$home" show "$id" --full)
+  assert_contains "$show" "state: in_flight" "the parenthetical hold closed or requeued the originating task"
+
+  # The completion gate attests the held inventory, and the captain's answer
+  # closes the call while the original parenthetical wording survives in the
+  # decision evidence.
+  run_captain "$home" complete "$id" sample-paren-call >/dev/null \
+    || fail "completion failed for the parenthetically held call"
+  printf 'Ship it with the partial-result policy.\n' > "$home/paren-decision.txt"
+  run_captain "$home" answer sample-paren-call --decision-file "$home/paren-decision.txt" >/dev/null \
+    || fail "answer could not close the parenthetically held call"
+  show=$(tasks_in "$home" show sample-paren-call --full)
+  assert_contains "$show" "state: done" "the answered parenthetical call did not close"
+  assert_contains "$show" "Resolution mode: answered" "the answered call lost its close path"
+  assert_contains "$show" "Ship it with the partial-result policy." \
+    "the answered call lost the captain's decision text"
+
+  # A parenthetical defer condition parks the call verbatim for the captain
+  # while tasks-axi stores the bracket form, and an exact retry still matches.
+  tasks_in "$home" add sample-paren-defer "Decide the conditional route" --kind ship --repo sample >/dev/null \
+    || fail "could not create the conditional call"
+  FM_CAPTAIN_HOLD_NOW=2026-07-14T12:00:00Z run_captain "$home" hold sample-paren-defer \
+    --reason "choose when to fire (after the pilot or before it)" --repo sample >/dev/null \
+    || fail "could not hold the conditional call"
+  printf 'Wait until the pilot lands (or I say otherwise).\n' > "$home/defer-decision.txt"
+  run_captain "$home" answer sample-paren-defer --decision-file "$home/defer-decision.txt" \
+    --defer "fire after the pilot lands (not before)" >/dev/null \
+    || fail "answer --defer refused a one-line condition containing parentheses"
+  show=$(tasks_in "$home" show sample-paren-defer --full)
+  assert_contains "$show" "hold_kind: parked" "the deferral did not park the call"
+  assert_contains "$show" "state: queued" "the deferred call was completed by parking"
+  assert_contains "$show" 'hold_reason: "fire after the pilot lands [not before]"' \
+    "the parked condition was not stored in the parentheses-free form"
+  assert_contains "$show" "Wait until the pilot lands (or I say otherwise)." \
+    "the deferral lost the captain's own parenthetical words"
+  assert_absent "$home/state/cards/sample-paren-defer.json" "the deferral kept its card"
+  run_captain "$home" answer sample-paren-defer --decision-file "$home/defer-decision.txt" \
+    --defer "fire after the pilot lands (not before)" >/dev/null \
+    || fail "an exact parenthetical deferral retry did not match its parked condition"
+  run_captain "$home" hold sample-paren-defer --reopen-deferred \
+    --reason "condition fired (pilot landed)" >/dev/null \
+    || fail "could not reopen the parenthetical deferral"
+  show=$(tasks_in "$home" show sample-paren-defer --full)
+  assert_contains "$show" "hold_kind: captain" "reopening did not restore the captain hold"
+
+  # One line is still the whole contract: multi-line and empty refusals keep
+  # refusing, and a refused reason holds nothing.
+  if run_captain "$home" hold sample-paren-bad --title "Bad reason" \
+    --reason "$(printf 'first line\nsecond line')" --repo sample \
+    > "$home/multiline.out" 2> "$home/multiline.err"; then
+    fail "hold accepted a multi-line reason"
+  fi
+  assert_grep "reason must be one line" "$home/multiline.err" \
+    "the multi-line refusal lost its message"
+  if run_captain "$home" hold sample-paren-bad --title "Bad reason" \
+    --reason "" --repo sample > "$home/empty.out" 2> "$home/empty.err"; then
+    fail "hold accepted an empty reason"
+  fi
+  assert_grep "reason must not be empty" "$home/empty.err" \
+    "the empty refusal lost its message"
+  if run_captain "$home" answer sample-paren-defer --decision-file "$home/defer-decision.txt" \
+    --defer "$(printf 'cond one\ncond two')" > "$home/cond.out" 2> "$home/cond.err"; then
+    fail "answer --defer accepted a multi-line condition"
+  fi
+  assert_grep "condition must be one line" "$home/cond.err" \
+    "the multi-line condition refusal lost its message"
+  rc=0
+  tasks_in "$home" show sample-paren-bad >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 0 ] || fail "a refused reason still created its task"
+  pass "parenthetical hold reasons and defer conditions round-trip with the captain's wording verbatim"
+}
+
 # The hold-set stamp must be durable before the captain hold becomes visible.
 # A wrapper observes the real tasks-axi hold boundary, and a forced stamp-write
 # failure proves the command never publishes the hold without its timestamp.
@@ -4245,6 +4350,7 @@ test_hold_decodes_a_bare_scalar_body_without_the_nonref_default
 test_retained_body_keeps_its_utf8_bytes
 test_completion_gate_attests_and_transfers
 test_answer_records_and_closes
+test_parenthetical_reasons_round_trip_verbatim
 test_release_frees_held_work
 test_hold_stamp_precedes_hold_visibility
 test_interrupted_answer_preserves_hold_age
