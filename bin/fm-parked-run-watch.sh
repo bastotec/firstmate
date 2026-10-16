@@ -125,6 +125,7 @@ scan_one() {  # <id>
   esac
   verdict=$(field "$STATE/$id.crew-state" verdict)
   run=$(field "$STATE/$id.crew-state" run)
+  [ -n "$run" ] || return 0
   step=$(field "$STATE/$id.crew-state" step)
   # Only an affirmative reading moves the clock: an unavailable query (no
   # record, or unknown) keeps the parked record as it is.

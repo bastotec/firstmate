@@ -106,6 +106,28 @@ test_an_unavailable_reading_never_resolves_a_parked_run() {
   pass "parked-run watch: an unknown or missing reading keeps a parked run's record and blocker"
 }
 
+test_a_reading_without_run_identity_keeps_the_parked_episode() {
+  local dir verdict record queue
+  dir=$(new_home coarse)
+  parked "$dir" run-coarse
+  scan "$dir"; scan "$dir"; scan "$dir"
+  [ "$(wakes "$dir" 'parked-run:w1:escalate')" = 1 ] || fail "setup: the run was not escalated"
+  record=$(cat "$dir/home/state/w1.parked-run")
+  queue=$(cat "$dir/home/state/.wake-queue")
+  for verdict in working done blocked failed parked; do
+    printf 'verdict=%s\nstep=\nrun=\n' "$verdict" > "$dir/home/fake-w1.crew-state"
+    scan "$dir"
+    [ -f "$dir/home/state/w1.parked-run" ] || fail "$verdict without a run identity removed the parked record"
+    [ "$(cat "$dir/home/state/w1.parked-run")" = "$record" ] || fail "$verdict without a run identity changed the parked episode"
+    [ "$(cat "$dir/home/state/.wake-queue")" = "$queue" ] || fail "$verdict without a run identity emitted a wake"
+  done
+  printf 'verdict=working\nstep=test\nrun=run-coarse\n' > "$dir/home/fake-w1.crew-state"
+  scan "$dir"
+  [ "$(wakes "$dir" 'parked-run:w1:resolved')" = 1 ] || fail "an attributed moving reading must resolve the blocker"
+  [ ! -e "$dir/home/state/w1.parked-run" ] || fail "an attributed moving reading must clear the parked record"
+  pass "parked-run watch: identity-free readings preserve the episode until an attributed reading moves it"
+}
+
 test_an_unavailable_query_never_uses_a_stale_projection() {
   local dir mode stage record queue
   for mode in unknown failed; do
@@ -208,5 +230,6 @@ test_a_left_worker_is_never_raised_and_its_record_is_dropped
 test_second_mate_home_raises_to_its_parent_channel
 test_a_worker_leaving_closes_its_escalation
 test_an_unavailable_reading_never_resolves_a_parked_run
+test_a_reading_without_run_identity_keeps_the_parked_episode
 test_an_unavailable_query_never_uses_a_stale_projection
 test_a_run_that_parks_again_or_at_another_gate_starts_over
