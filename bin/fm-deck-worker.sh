@@ -478,9 +478,8 @@ host_failure() {
 # parent channel and, in a split home, posts a first-person failure note with
 # bin/fm-captain-note.sh. A failed note delivery stays pending and is retried
 # on later failed turns and at recovery without republishing the blocker.
-# Only a verified turn-end proves recovery, never an interrupted turn. It
-# delivers any pending failure note, publishes the episode's resolved line,
-# then delivers the recovery note. Failed publication keeps the record for a
+# Only a verified turn-end proves recovery, never an interrupted turn.
+# Failed publication keeps the record for a
 # later successful turn to retry; removal requires the resolution and owed
 # notes to be delivered (or no escalation). A failure after note_recovery=1
 # starts a new episode. The notes report lane health, not task progress.
@@ -549,13 +548,13 @@ supervisor_turn_ok() {
   note_recovery=$(sed -n 's/^note_recovery=//p' "$SUPERVISOR_HEALTH")
   if [ "$escalated" = 1 ]; then
     if [ "${note_recovery:-0}" != 1 ]; then
-      if [ "${note_pending:-0}" = 1 ]; then
-        supervisor_failure_note "$since" "$count" "$error" || return 0
-        supervisor_health_write "$since" "$count" "$error" "$escalated" 0 0 || return 0
-      fi
       health_report "$(printf 'resolved [key=supervisor-failing-%s]: %s supervisor is working again (failing since %s)' \
         "$ID" "$ID" "$since")" || return 0
-      supervisor_health_write "$since" "$count" "$error" "$escalated" "$MATE_SPLIT" 1 || return 0
+      supervisor_health_write "$since" "$count" "$error" "$escalated" "${note_pending:-0}" 1 || return 0
+    fi
+    if [ "${note_pending:-0}" = 1 ]; then
+      supervisor_failure_note "$since" "$count" "$error" || return 0
+      supervisor_health_write "$since" "$count" "$error" "$escalated" 0 1 || return 0
     fi
     if [ "$MATE_SPLIT" = 1 ]; then
       FM_SPLIT_MATE_STATE="$STATE" FM_SPLIT_MATE_ID="$ID" "$SCRIPT_DIR/fm-captain-note.sh" \

@@ -2741,6 +2741,13 @@ with (root/'pane').open('w') as output:
             turn('successful but note still unavailable')
             wait_for(lambda: len(attempts()) == 3, 'recovery retries the pending failure note')
             assert health.exists() and state()['note_pending'] == '1' and not notes()
+            assert state()['note_recovery'] == '1', state()
+            assert len(lines('resolved [key=supervisor-failing-host]')) == 1
+            turn('successful again but notes still unavailable')
+            wait_for(lambda: len(attempts()) == 4, 'later success retries only the owed notes')
+            assert state()['note_pending'] == '1' and state()['note_recovery'] == '1', state()
+            assert not notes() and all(note.startswith("I'm stuck:") for note in attempts()), attempts()
+            assert len(lines('resolved [key=supervisor-failing-host]')) == 1
             (home/'fail-note').unlink()
             expected_count = 2
         (home/'fail-turn').unlink(missing_ok=True)
@@ -2748,7 +2755,7 @@ with (root/'pane').open('w') as output:
         turn('recover but recovery note unavailable')
         wait_for(lambda: state().get('note_recovery') == '1', 'failed recovery-note publication stays pending')
         wait_for(lambda: (home/'recovery-note-refused').exists(), 'recovery-note publication failed')
-        assert state()['note_pending'] == '1', state()
+        assert state()['note_pending'] == '0', state()
         failure_note = f"I'm stuck: my background work has failed {expected_count} times in a row since {since} (HTTP 400). The first mate is being told."
         assert notes() == [failure_note], notes()
         assert len(lines('blocked [key=supervisor-failing-host]')) == 1
