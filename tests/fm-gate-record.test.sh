@@ -141,7 +141,7 @@ test_advice_refuses_unknown_findings_and_overlong_text_without_writing() {
   local f="$TMP_ROOT/invalid/record.gate"
   mkdir "$TMP_ROOT/invalid"
   status 01RV review "$R1" | python3 "$GATE" "$f" || fail "gate setup"
-  python3 - "$GATE" "$f" <<'PY'
+  python3 - "$GATE" "$f" <<'PY' || fail "advice validation or no-write contract"
 import json
 from pathlib import Path
 import subprocess
@@ -174,7 +174,6 @@ for existing in (False, True):
                  for p in gate.parent.iterdir()}
         assert after == before, (args, 'refused advice changed files')
 PY
-  [ $? = 0 ] || fail "advice validation or no-write contract"
   pass "unknown findings and overlong why/by exit 2 without creating or rewriting records"
 }
 
