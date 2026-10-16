@@ -94,7 +94,9 @@
 #
 # `--defer <condition>` records a conditional answer with mode `deferred`,
 # parks the task in this home with the one-line condition as its hold reason
-# (no parentheses), and removes its card and hold-set stamp. The deferral is
+# (parentheses normalized to brackets for storage only; the caller's words are
+# compared and reported verbatim), and removes its card and hold-set stamp. The
+# deferral is
 # settled when the newest resolution block has mode `deferred` and no
 # `Deferral reopened:` marker precedes it, even if parking is unfinished.
 # An exact retry matches the words and parked condition, or finishes an
@@ -348,6 +350,15 @@ validate_one_line() {  # <label> <value>
   case "$value" in
     *$'\n'*|*$'\r'*) fail "$label must be one line" ;;
   esac
+}
+
+# tasks-axi reserves parentheses for its markdown hold tags, so the reason it
+# stores is normalized to brackets while the caller's own words stay verbatim
+# in every captain-facing surface: the parent-channel decision, the decision
+# card, and the deferral retry comparison, which normalizes both sides so an
+# exact `--defer` retry still matches its parked condition.
+parentheses_free_reason() {  # <reason>
+  printf '%s' "$1" | tr '()' '[]'
 }
 
 acquire_task_control_lock() {  # <task-id>
@@ -918,7 +929,7 @@ verify_entry_durable() {  # <origin-or-empty> <entry>; prints "<id> <how>"
 }
 
 command_hold() {
-  local id=${1:-} title='' reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence
+  local id=${1:-} title='' reason='' storage_reason='' repo='' origin='' until='' show state existing_title body='' hold_kind hold_set occurrence
   local existing_hold_kind='' existing_held='' preserve_hold_set=0 card_file=''
   local reopen_deferred=0 existing_reason='' tmp deferral_state=''
   local expected_record='' expected_record_set=0 worker_id current_record
@@ -940,7 +951,7 @@ command_hold() {
   done
   validate_slug task-id "$id"
   validate_one_line reason "$reason"
-  case "$reason" in *'('*|*')'*) fail "reason must not contain parentheses (tasks-axi hold contract)" ;; esac
+  storage_reason=$(parentheses_free_reason "$reason")
   if [ -n "$origin" ]; then
     validate_slug origin-id "$origin"
   fi
@@ -1043,10 +1054,10 @@ command_hold() {
     rm -f -- "$tmp"
   fi
   if [ -n "$until" ]; then
-    tasks_axi hold "$id" --reason "$reason" --kind captain --until "$until" >/dev/null \
+    tasks_axi hold "$id" --reason "$storage_reason" --kind captain --until "$until" >/dev/null \
       || fail "could not hold task $id for the captain"
   else
-    tasks_axi hold "$id" --reason "$reason" --kind captain >/dev/null \
+    tasks_axi hold "$id" --reason "$storage_reason" --kind captain >/dev/null \
       || fail "could not hold task $id for the captain"
   fi
   task_show "$id" || fail "task $id disappeared while holding it"
@@ -1064,7 +1075,7 @@ command_hold() {
     "$CARD_TOOL" write "$id" --file "$card_file" >/dev/null \
       || printf 'actionable: task %s is held but its decision card could not be written\n' "$id" >&2
   elif [ "$preserve_hold_set" = 0 ] || [ ! -f "$STATE/cards/$id.json" ] \
-    || [ "$existing_reason" != "$reason" ]; then
+    || [ "$existing_reason" != "$storage_reason" ]; then
     "$CARD_TOOL" remove "$id" 2>/dev/null || true
     "$CARD_TOOL" draft "$id" --title "$(show_field_value "$show" title)" \
       --project "$(show_field_value "$show" repo)" --situation "$reason" >/dev/null \
@@ -1185,7 +1196,7 @@ close_deferred() {  # <task-id> <condition>
 
 command_answer() {
   local id=${1:-} decision_file='' release=0 show state hold_kind body outcome recorded_mode occurrence
-  local defer=0 condition='' deferral_state
+  local defer=0 condition='' storage_condition='' deferral_state
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
@@ -1201,7 +1212,7 @@ command_answer() {
   if [ "$defer" = 1 ]; then
     [ "$release" = 0 ] || fail "--defer and --release are exclusive"
     validate_one_line condition "$condition"
-    case "$condition" in *'('*|*')'*) fail "condition must not contain parentheses (tasks-axi hold contract)" ;; esac
+    storage_condition=$(parentheses_free_reason "$condition")
   fi
   load_decision "$decision_file"
   acquire_task_control_lock "$id"
@@ -1261,11 +1272,11 @@ command_answer() {
     [ "$defer" = 1 ] && [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
       || fail "task $id already records the captain's deferred answer; re-ask with hold --reopen-deferred only once its condition fires"
     if [ "$hold_kind" = parked ]; then
-      [ "$(show_field_value "$show" hold_reason)" = "$condition" ] \
+      [ "$(show_field_value "$show" hold_reason)" = "$storage_condition" ] \
         || fail "task $id records a different deferral condition; retry with its parked hold reason"
       remove_decision_card "$id"
     else
-      close_deferred "$id" "$condition" || fail "could not park deferred captain call $id"
+      close_deferred "$id" "$storage_condition" || fail "could not park deferred captain call $id"
     fi
     remove_interrupted_answer_stamp "$id"
     publish_parent_resolution_then_retire "$id" $((occurrence - 1)) deferred
@@ -1298,7 +1309,7 @@ command_answer() {
     fi
     write_resolution_record "$id" "$outcome" "$body"
     if [ "$defer" = 1 ]; then
-      close_deferred "$id" "$condition" || fail "could not park deferred captain call $id"
+      close_deferred "$id" "$storage_condition" || fail "could not park deferred captain call $id"
     elif ! close_answered "$id" "$release"; then
       fail "could not close answered captain-held task $id"
     fi
