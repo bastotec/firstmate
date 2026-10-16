@@ -74,7 +74,7 @@ REPEAT = re.compile(
     r"\b(i (?:told|said|asked) you|i already (?:said|told|asked)|as i said|how many times"
     r"|i keep (?:saying|telling))\b", re.I)
 CARD_PICK = re.compile(r'\A\s*(?:card \S+:\s*)?option \w+\s*\Z', re.I)
-RECORDED = re.compile(r'captain instruction \(recorded at delivery[^\n]*\): "(.*)"\s*$', re.S)
+RECORDED = re.compile(r'captain instruction \(recorded at delivery from [^"\n]*?\): "(.*)"\s*$', re.S)
 DATED = re.compile(r'^- (\d{4}-\d{2}-\d{2})\b')
 SHARED_HEADER = (
     '# Shared captain preferences\n\n<!-- memory tiers: see the stow skill -->\n\n'
@@ -271,6 +271,7 @@ def recall_block(home, query='', max_bytes=None):
 
 
 def with_memory(home, body, max_bytes=65536):
+    body = re.sub(re.escape(OPEN) + r'.*?(?:' + re.escape(CLOSE) + r'|\Z)', '', body, flags=re.S)
     room = max_bytes - len(body.encode('utf-8')) - 2
     block = recall_block(home, body[:2000], room).rstrip('\n')
     return body + '\n\n' + block if block else body

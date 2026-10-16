@@ -385,20 +385,8 @@ def capture_captain_memory(home, body, source):
 
 def with_captain_memory(home, body):
     """Give every turn the captain's recorded preferences, sized to its room."""
-    memory = str(BIN / 'fm_captain_memory.py')
-    words = captain_words(body)
-    if words != body:
-        return body
-    room = MAX_BODY - len(body.encode('utf-8')) - 2
-    try:
-        block = subprocess.run([sys.executable, memory, 'recall', '--home', str(home), '--query', words[:2000],
-                                '--max-bytes', str(room)],
-                               capture_output=True, text=True, timeout=10).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        block = ''
-    if block and len((body + '\n\n' + block).encode('utf-8')) <= MAX_BODY:
-        return body + '\n\n' + block
-    return body
+    from fm_captain_memory import with_memory
+    return with_memory(home, body, max_bytes=MAX_BODY)
 
 
 def steer_publish(args):
