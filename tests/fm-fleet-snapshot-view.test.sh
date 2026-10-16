@@ -165,6 +165,15 @@ EOF
     .valid == true and .reason == null
       and ([.endpoints[] | select(.id == "local-ship") | .state] != ["unknown"])
   ' >/dev/null || fail "remote mate, retained record or local-only ship invalidated the summary: $out"
+  # A leftover record no current item owns, whose worktree is gone, is unowned,
+  # not an unread child.
+  fm_write_meta "$home/state/leftover.meta" \
+    $(snap_identity "$home" leftover leftover) \
+    "worktree=" "project=alpha" "harness=deck" "kind=ship" "mode=no-mistakes"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '
+    .invalidity.kind == "unowned_current" and .unknown_children == []
+  ' >/dev/null || fail "a leftover record was reported as an unread child: $out"
   pass "home summary reads remote mates, retained records and local-only ships"
 }
 

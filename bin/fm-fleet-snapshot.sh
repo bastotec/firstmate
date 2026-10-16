@@ -1087,8 +1087,10 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
     # A record kept after its item is Done (a captain-held preservation of a
     # finished worker) is retained: neither unowned live work nor a child whose
     # live state is needed.
+    # Only owned in-flight work needs a readable live state; a leftover record
+    # that no current item owns is reported as unowned instead.
     | ([ $tasks[] | select(.kind != "secondmate" and .current_state.state == "unknown")
-         | select(.id as $id | $done_ids | index($id) | not) ]) as $unknown_children
+         | select(.id as $id | [$owned_in_flight[].id] | index($id) != null) ]) as $unknown_children
     | ([ $owned_in_flight[]
          | select(.requires_child_metadata)
          | select(.id as $id | [$tasks[].id] | index($id) | not) ]) as $orphan_in_flight
