@@ -270,15 +270,21 @@ crew_state_step() {
 crew_state_publish() {  # <state> <detail> [run-error]
   local record="$STATE/$ID.crew-state" tmp body step='' step_status='' run='' pr=''
   [ "$PUBLISH_READY" = 1 ] || return 0
+  local gate="$STATE/$ID.gate"
   if [ "$HAVE_RUN" != 1 ]; then
-    rm -f -- "$record" "$STATE/$ID.gate"
+    rm -f -- "$record"
+    [ -L "$gate" ] || rm -f -- "$gate"
     return 0
   fi
-  # the gate a parked run waits at, with its findings, from this same read (bin/fm_gate_record.py)
-  if [ "$RUN_SOURCE" = full ] && [ "$1" = parked ] && [ ! -L "$STATE/$ID.gate" ]; then
-    printf '%s' "$RUN_OUT" | python3 "$SCRIPT_DIR/fm_gate_record.py" "$STATE/$ID.gate" 2>/dev/null || true
-  else
-    rm -f -- "$STATE/$ID.gate"
+  # the gate a parked run waits at, with its findings, from this same read (bin/fm_gate_record.py);
+  # only a full read says anything about it: the coarse ledger leaves it as it is, and a symlink
+  # in its place is never touched
+  if [ "$RUN_SOURCE" = full ] && [ ! -L "$gate" ]; then
+    if [ "$1" = parked ]; then
+      printf '%s' "$RUN_OUT" | python3 "$SCRIPT_DIR/fm_gate_record.py" "$gate" 2>/dev/null || true
+    else
+      rm -f -- "$gate"
+    fi
   fi
   if [ "$RUN_SOURCE" = coarse ]; then
     step_status=$COARSE_STATUS

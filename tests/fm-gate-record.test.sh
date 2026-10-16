@@ -86,7 +86,45 @@ test_no_gate_or_clear_removes_the_record_and_unchanged_leaves_it() {
   pass "no gate (or --clear) removes the record; an unchanged one is left alone"
 }
 
+test_the_other_response_shapes_are_read_too() {
+  local f="$TMP_ROOT/s.gate"
+  # findings under run:, a gate block with its status, and the steps table at the top level
+  printf 'run:\n  id: "01RS"\n  status: running\n  findings[1]{id,severity,file,line,action,description}:\n    r1,error,b.go,,ask-user,changes product behavior\ngate:\n  step: review\n  status: fix_review\nsteps[2]{step,status,findings,duration_ms}:\n  intent,completed,0,0\n  review,fix_review,1,0\n' | python3 "$GATE" "$f"
+  [ "$(field "$f" 'd["status"], d["findings"][0]["id"], d["findings"][0]["description"]')" = "('fix_review', 'r1', 'changes product behavior')" ] || fail "findings under run: $(cat "$f")"
+  # a scalar gate: its step's status from the run
+  printf 'run:\n  id: "01RT"\n  status: awaiting_approval\n  findings[1]{id,severity,file,line,action,description}:\n    r2,error,b.go,,ask-user,changes product behavior\ngate: review\n' | python3 "$GATE" "$f"
+  [ "$(field "$f" 'd["run"], d["step"], d["status"], d["findings"][0]["id"]')" = "('01RT', 'review', 'awaiting_approval', 'r2')" ] || fail "scalar gate: $(cat "$f")"
+  pass "a scalar gate and findings under run: are read too"
+}
+
+test_a_symlink_in_its_place_is_left_alone() {
+  local f="$TMP_ROOT/l.gate"
+  printf 'keep\n' > "$TMP_ROOT/target"
+  ln -s "$TMP_ROOT/target" "$f"
+  status 01RL review "$R1" | python3 "$GATE" "$f"
+  python3 "$GATE" "$f" --clear </dev/null
+  [ -L "$f" ] && [ "$(cat "$TMP_ROOT/target")" = keep ] || fail "symlink touched"
+  pass "a symlink in its place is left alone"
+}
+
+test_a_recommendation_holds_only_for_every_finding_unchanged() {
+  local f="$TMP_ROOT/r.gate" rows=() n
+  for n in $(seq 1 21); do rows+=("R$n,warning,a.ts,ask-user,\"finding $n\""); done
+  status 01RR review "${rows[@]}" | python3 "$GATE" "$f"
+  python3 - "$f" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d['recommendation'] = {'choice': 'accept'}; json.dump(d, open(sys.argv[1], 'w'))
+PY
+  rows[20]='R99,warning,a.ts,ask-user,"another"'
+  status 01RR review "${rows[@]}" | python3 "$GATE" "$f"
+  [ "$(field "$f" 'len(d["findings"]), d["recommendation"]')" = "(20, None)" ] || fail "a change past the clip keeps the recommendation"
+  pass "a recommendation holds only while every finding, clipped or not, is unchanged"
+}
+
 test_a_parked_gate_is_written_with_its_findings_as_written
 test_parked_since_holds_and_restarts_for_a_new_run_or_step
 test_an_exhausted_repair_budget_is_seen_from_the_marker_or_the_help
 test_no_gate_or_clear_removes_the_record_and_unchanged_leaves_it
+test_the_other_response_shapes_are_read_too
+test_a_symlink_in_its_place_is_left_alone
+test_a_recommendation_holds_only_for_every_finding_unchanged

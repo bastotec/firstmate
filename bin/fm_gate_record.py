@@ -70,47 +70,70 @@ def row(line):
     return cells
 
 
+def table(lines, i, indent):
+    """A tabular block whose header is lines[i]: its rows as dicts, and the index after it."""
+    m = re.match(r'^\s*\w+\[\d+\]\{([^}]*)\}:\s*$', lines[i])
+    names, out = m.group(1).split(','), []
+    i += 1
+    while i < len(lines) and lines[i].startswith(' ' * indent) and lines[i].strip():
+        cells = row(lines[i].strip())
+        out.append({k: (cells[n] if n < len(cells) else '') for n, k in enumerate(names)})
+        i += 1
+    return out, i
+
+
 def parse(text):
-    """The run id and the gate block of one `axi status`, or (run, None)."""
+    """The run id and the gate a parked run waits at, or (run, None). Both response shapes are
+    read: a `gate:` block (step, status, risk, ...) or a scalar `gate: <step>`, with the findings
+    table under `gate:` or under `run:`, and the step status from the gate or the steps table."""
     lines = text.splitlines()
-    run = ''
-    gate = None
-    budget = False
-    i = 0
+    run, gate, scalar, findings, steps, run_status, budget = '', None, '', [], {}, '', False
+    i, block = 0, ''
     while i < len(lines):
         line = lines[i]
-        if line == 'run:':
+        top = re.match(r'^([a-z_]+)(\[\d+\]\{[^}]*\})?:\s*(.*)$', line)
+        if top:
+            name, tab, rest = top.groups()
+            if tab and name == 'steps':
+                rows, i = table(lines, i, 2)
+                steps = {r.get('step', ''): r.get('status', '') for r in rows}
+                continue
+            if name == 'gate':
+                if rest.strip():
+                    scalar = str(value(rest))
+                else:
+                    gate = gate or {}
+            if name == 'help' or line.startswith('help['):
+                if re.search(r'repair (budget|authority)[^.]*exhausted', line, re.I):
+                    budget = True
+            block = name
             i += 1
-            while i < len(lines) and lines[i].startswith('  '):
-                m = re.match(r'^  id:\s*(.*)$', lines[i])
-                if m:
-                    run = value(m.group(1))
-                i += 1
-            continue
-        if line == 'gate:':
-            gate = {'findings': []}
-            i += 1
-            while i < len(lines) and lines[i].startswith('  '):
-                m = re.match(r'^  findings\[\d+\]\{([^}]*)\}:\s*$', lines[i])
-                if m:
-                    names = m.group(1).split(',')
-                    i += 1
-                    while i < len(lines) and lines[i].startswith('    '):
-                        cells = row(lines[i].strip())
-                        gate['findings'].append({k: (cells[n] if n < len(cells) else '') for n, k in enumerate(names)})
-                        i += 1
-                    continue
-                m = re.match(r'^  ([a-z_]+):\s*(.*)$', lines[i])
-                if m:
-                    gate[m.group(1)] = value(m.group(2))
-                i += 1
             continue
         if line.startswith('help[') and re.search(r'repair (budget|authority)[^.]*exhausted', line, re.I):
             budget = True
+        sub = re.match(r'^  (\w+)(\[\d+\]\{[^}]*\})?:\s*(.*)$', line)
+        if sub and block in ('run', 'gate'):
+            key, tab, rest = sub.groups()
+            if tab and key == 'findings':
+                rows, i = table(lines, i, 4)
+                findings = rows if block == 'gate' or not findings else findings
+                continue
+            if block == 'run' and key == 'id':
+                run = str(value(rest))
+            elif block == 'run' and key == 'status':
+                run_status = str(value(rest))
+            elif block == 'gate' and gate is not None:
+                gate[key] = value(rest)
         i += 1
-    if gate is not None:
-        budget = budget or any(str(f.get('id', '')).startswith('repair-budget') for f in gate['findings'])
-        gate['_budget'] = budget
+    if gate is None and scalar:
+        gate = {'step': scalar}
+    if gate is None:
+        return run, None
+    step = str(gate.get('step', ''))
+    if not gate.get('status'):
+        gate['status'] = steps.get(step) or run_status
+    gate['findings'] = findings
+    gate['_budget'] = budget or any(str(f.get('id', '')).startswith('repair-budget') for f in findings)
     return run, gate
 
 
@@ -127,14 +150,15 @@ def record(run, gate, previous, now):
         findings = findings[:MAX_FINDINGS - len(marker[:1])] + marker[:1]
     step = str(gate.get('step', ''))
     same = isinstance(previous, dict) and previous.get('run') == run and previous.get('step') == step
-    ids = [f['id'] for f in findings]
-    rec = previous.get('recommendation') if same and [f.get('id') for f in previous.get('findings', [])] == ids else None
+    # every finding's id, the ones clipped away included: a recommendation holds only for these
+    ids = [str(f.get('id', '')) for f in gate['findings']]
+    rec = previous.get('recommendation') if same and previous.get('finding_ids') == ids else None
     return {
         'version': 1, 'run': run, 'step': step, 'status': str(gate.get('status', '')),
         'risk': clip(gate.get('risk', ''), 20), 'risk_rationale': clip(gate.get('risk_rationale', ''), 600),
         'parked_since': previous.get('parked_since') if same and previous.get('parked_since') else now,
         'repair_budget_exhausted': bool(gate.get('_budget')),
-        'findings': findings, 'recommendation': rec,
+        'findings': findings, 'finding_ids': ids, 'recommendation': rec,
     }
 
 
@@ -159,6 +183,9 @@ def main(argv):
         sys.stderr.write(__doc__)
         return 2
     path = argv[0]
+    # a symlink in its place is not this record: left alone
+    if os.path.islink(path):
+        return 0
     if '--clear' in argv[1:]:
         run, gate = '', None
     else:
