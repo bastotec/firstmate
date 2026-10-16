@@ -71,7 +71,7 @@ The origin URL named for each project must be reachable from the remote account 
 Firstmate's VNC backend shares the logged-in Mac's screen; on Linux it provides a separate browser display rather than the console desktop.
 On macOS, grant Screen Recording and Accessibility to macVNC by hand at that Mac, and grant them again after a rebuild.
 The [`fm-machine.sh` header](../bin/fm-machine.sh) owns setup's optional VNC step; VNC gaps do not block machine readiness.
-The [`fm-machine-vnc.sh` header](../bin/fm-machine-vnc.sh) owns installation prerequisites, package-install consent, loopback-only access through SSH, password handling, status, service controls, privacy settings, browser links, and the connection details for Fleet Town's viewer.
+The [`fm-machine-vnc.sh` header](../bin/fm-machine-vnc.sh) owns installation prerequisites, package-install consent, loopback-only access through SSH, password handling, status, service controls, privacy settings, browser links, window listing and activation, and the connection details for Fleet Town's viewer.
 
 ## Non-interactive tool contract
 
