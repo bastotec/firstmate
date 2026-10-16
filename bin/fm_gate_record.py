@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""fm_gate_record.py - keep state/<id>.gate: the gate a parked validation run waits at.
+
+Reads one `no-mistakes axi status` (TOON) on stdin, the same read that
+bin/fm-task-state-lib.sh's crew_state_publish turns into state/<id>.crew-state,
+and keeps the gate it shows as JSON next to it, so Fleet Town and the
+parked-run rules read the findings without asking no-mistakes again:
+
+  {"version": 1, "run": "01M...", "step": "review", "status": "awaiting_approval",
+   "risk": "high", "risk_rationale": "...", "parked_since": 1792161477,
+   "repair_budget_exhausted": false,
+   "findings": [{"id", "severity", "file", "action", "description"}],
+   "recommendation": null}
+
+parked_since is when this run was first seen parked at this step; it is kept
+across rewrites and starts again when the run or the step changes.
+repair_budget_exhausted is true when the review can fix nothing more (a
+repair-budget-* finding, or the gate's help saying the budget is exhausted).
+recommendation is never written here: a mate's triage may fill it in, and it is
+kept while the run, step and finding ids are unchanged.
+
+Usage: fm_gate_record.py <gate-file> [--clear]
+  --clear (or no gate in the input) removes the file. Writes are atomic.
+"""
+import json
+import os
+import re
+import sys
+import tempfile
+import time
+
+MAX_FINDINGS = 20
+MAX_TEXT = 2000
+
+
+def value(raw):
+    """A TOON scalar: a JSON string when quoted, else the bare word."""
+    raw = raw.strip()
+    if raw.startswith('"'):
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return raw.strip('"')
+    return raw
+
+
+def row(line):
+    """One tabular TOON row: comma-separated cells, quoted cells JSON-escaped."""
+    cells, i, n = [], 0, len(line)
+    dec = json.JSONDecoder()
+    while i <= n:
+        if i < n and line[i] == '"':
+            try:
+                s, end = dec.raw_decode(line, i)
+            except ValueError:
+                s, end = line[i + 1:], n
+            cells.append(s)
+            i = end
+            if i < n and line[i] == ',':
+                i += 1
+            elif i >= n:
+                break
+            continue
+        j = line.find(',', i)
+        if j < 0:
+            cells.append(line[i:])
+            break
+        cells.append(line[i:j])
+        i = j + 1
+    return cells
+
+
+def parse(text):
+    """The run id and the gate block of one `axi status`, or (run, None)."""
+    lines = text.splitlines()
+    run = ''
+    gate = None
+    budget = False
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line == 'run:':
+            i += 1
+            while i < len(lines) and lines[i].startswith('  '):
+                m = re.match(r'^  id:\s*(.*)$', lines[i])
+                if m:
+                    run = value(m.group(1))
+                i += 1
+            continue
+        if line == 'gate:':
+            gate = {'findings': []}
+            i += 1
+            while i < len(lines) and lines[i].startswith('  '):
+                m = re.match(r'^  findings\[\d+\]\{([^}]*)\}:\s*$', lines[i])
+                if m:
+                    names = m.group(1).split(',')
+                    i += 1
+                    while i < len(lines) and lines[i].startswith('    '):
+                        cells = row(lines[i].strip())
+                        gate['findings'].append({k: (cells[n] if n < len(cells) else '') for n, k in enumerate(names)})
+                        i += 1
+                    continue
+                m = re.match(r'^  ([a-z_]+):\s*(.*)$', lines[i])
+                if m:
+                    gate[m.group(1)] = value(m.group(2))
+                i += 1
+            continue
+        if line.startswith('help[') and re.search(r'repair (budget|authority)[^.]*exhausted', line, re.I):
+            budget = True
+        i += 1
+    if gate is not None:
+        budget = budget or any(str(f.get('id', '')).startswith('repair-budget') for f in gate['findings'])
+        gate['_budget'] = budget
+    return run, gate
+
+
+def clip(s, n):
+    s = str(s or '')
+    return s if len(s) <= n else s[:n - 3] + '...'
+
+
+def record(run, gate, previous, now):
+    findings = [{k: clip(f.get(k, ''), MAX_TEXT if k == 'description' else 300) for k in ('id', 'severity', 'file', 'action', 'description')} for f in gate['findings']]
+    if len(findings) > MAX_FINDINGS:
+        # the repair-budget marker says the review cannot fix more: kept whatever is cut
+        marker = [f for f in findings[MAX_FINDINGS:] if f['id'].startswith('repair-budget')]
+        findings = findings[:MAX_FINDINGS - len(marker[:1])] + marker[:1]
+    step = str(gate.get('step', ''))
+    same = isinstance(previous, dict) and previous.get('run') == run and previous.get('step') == step
+    ids = [f['id'] for f in findings]
+    rec = previous.get('recommendation') if same and [f.get('id') for f in previous.get('findings', [])] == ids else None
+    return {
+        'version': 1, 'run': run, 'step': step, 'status': str(gate.get('status', '')),
+        'risk': clip(gate.get('risk', ''), 20), 'risk_rationale': clip(gate.get('risk_rationale', ''), 600),
+        'parked_since': previous.get('parked_since') if same and previous.get('parked_since') else now,
+        'repair_budget_exhausted': bool(gate.get('_budget')),
+        'findings': findings, 'recommendation': rec,
+    }
+
+
+def write(path, data):
+    d = os.path.dirname(path) or '.'
+    fd, tmp = tempfile.mkstemp(prefix='.' + os.path.basename(path) + '.', dir=d)
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(data, f, sort_keys=True)
+            f.write('\n')
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def main(argv):
+    if not argv or argv[0].startswith('-'):
+        sys.stderr.write(__doc__)
+        return 2
+    path = argv[0]
+    if '--clear' in argv[1:]:
+        run, gate = '', None
+    else:
+        run, gate = parse(sys.stdin.read())
+    if gate is None or not run:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        return 0
+    try:
+        with open(path) as f:
+            previous = json.load(f)
+    except (OSError, ValueError):
+        previous = {}
+    data = record(run, gate, previous, int(time.time()))
+    # unchanged but for nothing: leave the file (and its mtime) alone
+    if data == previous:
+        return 0
+    write(path, data)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

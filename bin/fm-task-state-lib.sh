@@ -130,6 +130,11 @@
 #     detail=<text>        this reader's one-line detail
 #     error=<text>         the run's recorded terminal error, when present
 #     updated_at=<UTC>     when any other line last changed
+#   While the run is parked, state/<id>.gate (also 0600, also atomic) carries the
+#   gate it waits at from the same read - step, status, risk, parked_since,
+#   repair_budget_exhausted and its findings - as JSON for the town and the
+#   parked-run rules; bin/fm_gate_record.py owns that record. It is removed with
+#   the crew-state record, or once the run is no longer parked.
 #   Scouts, secondmates, remote mates, missing metadata and torn-down copies
 #   publish nothing; bin/fm-teardown.sh removes the record.
 #
@@ -266,8 +271,14 @@ crew_state_publish() {  # <state> <detail> [run-error]
   local record="$STATE/$ID.crew-state" tmp body step='' step_status='' run='' pr=''
   [ "$PUBLISH_READY" = 1 ] || return 0
   if [ "$HAVE_RUN" != 1 ]; then
-    rm -f -- "$record"
+    rm -f -- "$record" "$STATE/$ID.gate"
     return 0
+  fi
+  # the gate a parked run waits at, with its findings, from this same read (bin/fm_gate_record.py)
+  if [ "$RUN_SOURCE" = full ] && [ "$1" = parked ] && [ ! -L "$STATE/$ID.gate" ]; then
+    printf '%s' "$RUN_OUT" | python3 "$SCRIPT_DIR/fm_gate_record.py" "$STATE/$ID.gate" 2>/dev/null || true
+  else
+    rm -f -- "$STATE/$ID.gate"
   fi
   if [ "$RUN_SOURCE" = coarse ]; then
     step_status=$COARSE_STATUS
