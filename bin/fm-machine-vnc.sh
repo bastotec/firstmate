@@ -244,7 +244,15 @@ mac_service() { # start|stop|restart
   dom="gui/$(id -u)"
   case "$1" in
     stop) launchctl bootout "$dom/$LABEL" >/dev/null 2>&1 || true ;;
-    start|restart)
+    start)
+      # a running server keeps its viewers; only a stopped one is started
+      launchctl print "$dom/$LABEL" 2>/dev/null | grep -q 'state = running' && return 0
+      : > "$(mac_log)"
+      launchctl bootstrap "$dom" "$(mac_plist)" >/dev/null 2>&1 \
+        || launchctl kickstart "$dom/$LABEL" >/dev/null 2>&1 \
+        || refuse "could not start $LABEL in $dom (is someone logged in at the screen?)"
+      ;;
+    restart)
       : > "$(mac_log)"
       launchctl bootout "$dom/$LABEL" >/dev/null 2>&1 || true
       launchctl bootstrap "$dom" "$(mac_plist)" >/dev/null 2>&1 \
@@ -335,6 +343,8 @@ linux_service() { # start|stop|restart
   user_bus
   case "$1" in
     stop) systemctl --user stop "$LABEL-browser.service" "$LABEL.service" >/dev/null 2>&1 || true ;;
+    # start leaves a running server (and its viewers) alone
+    start) systemctl --user start "$LABEL.service" "$LABEL-browser.service" >/dev/null 2>&1 || refuse "could not start $LABEL" ;;
     *) systemctl --user restart "$LABEL.service" "$LABEL-browser.service" >/dev/null 2>&1 || refuse "could not start $LABEL" ;;
   esac
 }
@@ -438,12 +448,12 @@ cmd_open_url_local() { # <url>
   else
     user_bus
     systemctl --user is-active --quiet "$LABEL-browser.service" || linux_service start
-    # With the display's Chrome running this hands the link over and exits; if it
-    # becomes the browser itself it keeps running, which still opened the link.
+    # The display's Chrome is running, so this hands the link over and exits 0;
+    # anything else (a stalled handoff included) is reported, not assumed opened.
     local rc=0
     DISPLAY=":$DISPLAY_NUM" XAUTHORITY="$(xauth_file)" timeout 15 "$(linux_browser)" \
       --user-data-dir="$HOME/.config/firstmate/vnc-browser" "$1" < /dev/null >/dev/null 2>&1 || rc=$?
-    case "$rc" in 0|124) ;; *) refuse "Chrome on display :$DISPLAY_NUM did not take the link (exit $rc)" ;; esac
+    [ "$rc" -eq 0 ] || refuse "Chrome on display :$DISPLAY_NUM did not take the link (exit $rc)"
   fi
   printf 'opened=url\n'
 }
