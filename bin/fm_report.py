@@ -104,7 +104,7 @@ def read_crew_log(state_dir):
     return rows, None
 
 
-def crew_intervals(rows, start, now, limit=MAX_INTERVALS):
+def crew_intervals(rows, start, now):
     """Busy intervals per task, clipped to [start, now]; overlapping or touching ones merge."""
     rows = sorted(rows, key=lambda r: r[0])  # stable: same-second events keep writer order
     open_since = {}
@@ -129,15 +129,15 @@ def crew_intervals(rows, start, now, limit=MAX_INTERVALS):
         else:
             merged.append(row)
     merged.sort(key=lambda r: r[2])
-    return merged[-limit:] if limit else merged
+    return merged[-MAX_INTERVALS:]
 
 
-def crew_time(state_dir, days=8, now=None, limit=MAX_INTERVALS):
+def crew_time(state_dir, days=8, now=None):
     now = int(now or time.time())
     start = now - days * 86400
     rows, error = read_crew_log(state_dir)
     since = min((r[0] for r in rows), default=None)
-    out = {'since': since, 'intervals': crew_intervals(rows, start, now, limit)}
+    out = {'since': since, 'intervals': crew_intervals(rows, start, now)}
     if error:
         out['error'] = error
     return out
@@ -447,6 +447,11 @@ def build(home, scope_raw, days, now=None):
                 # A summary that could not read part of its home is a gap; one that
                 # read everything and found records disagreeing is an inconsistency.
                 kind = (rec.get('invalidity') or {}).get('kind')
+                if rec.get('unknown_children'):
+                    # Children whose state could not be read stay a read gap even when
+                    # a disagreement was reported first.
+                    gaps.append('%s: summary incomplete (child current state unavailable: %s)'
+                                % (name, ', '.join(rec['unknown_children'])))
                 if kind in INCONSISTENT_KINDS:
                     inconsistencies.append('%s: %s' % (name, rec['reason']))
                 else:
@@ -456,7 +461,7 @@ def build(home, scope_raw, days, now=None):
                 gaps.append('%s: crew time unavailable (its firstmate predates crew-time records)' % name)
             elif ct.get('error'):
                 gaps.append('%s: crew time unreadable (%s)' % (name, ct['error']))
-            elif mid != 'primary' and len(ct.get('intervals') or []) >= MAX_INTERVALS:
+            elif len(ct.get('intervals') or []) >= MAX_INTERVALS:
                 gaps.append('%s: crew time is partial (only its latest %d busy spells are published)' % (name, MAX_INTERVALS))
             elif start < int(rec.get('generated_epoch') or now) - CREW_DAYS * 86400:
                 gaps.append('%s: crew time covers only the last %d days' % (name, CREW_DAYS))
@@ -469,8 +474,6 @@ def build(home, scope_raw, days, now=None):
         s, w, c, iv = home_rows(rec, mid, start_day, since, gaps)
         t = worked(iv, mid, start, now, {x['agent']: x['task'] for x in c})
         age = now - int(rec.get('generated_epoch') or now)
-        if mid == 'primary':  # second mates are reported as mates, not as the first mate's crew
-            c = [x for x in c if x['agent'] not in reg]
         return {'id': mid, 'name': name, 'domain': domain, 'machine': machine, 'state': rec.get('state'),
                 'freshness': source if rec else 'unreadable', 'summary_age_seconds': age if rec else None,
                 'shipped': s, 'waiting': w, 'crew': c, 'time_worked': t,
@@ -485,8 +488,7 @@ def build(home, scope_raw, days, now=None):
         if not summary_valid(doc, None):
             doc = None
         else:
-            # Read in place, so no publication cap applies to the main home's own history.
-            doc = dict(doc, crew_time=crew_time(Path(home) / 'state', days=CREW_DAYS, now=now, limit=None))
+            doc = dict(doc, crew_time=crew_time(Path(home) / 'state', days=CREW_DAYS, now=now))
         return part('primary', doc, 'first mate', 'the whole fleet', 'this Mac',
                     'local' if doc else 'no readable home summary')
 

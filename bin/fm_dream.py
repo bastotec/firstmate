@@ -545,7 +545,7 @@ def no_mistakes_runs(since, fleet_paths, harness, private_paths=()):
 # The no-mistakes cause breakdown, run against one host's state database (here
 # with python3 directly, on another host over ssh with this text on stdin):
 #   python3 - <db-path or ~/...> <since-epoch> [<run ids JSON>]
-# prints {reviews, cap_hits, failed, by_step, by_cause, runs: [{id, step, cause}]}.
+# prints {reviews, cap_hits, failed, by_step, by_cause}.
 # reviews and cap_hits count the host's review steps and runs whose review hit
 # the repair cap in the window; failed rows are the failed or cancelled runs in
 # the window, restricted to the given run ids when a list is passed.
@@ -561,7 +561,7 @@ CAUSES = (
 )
 def ms(v):
     return (v / 1000 if v and v > 1e12 else v) if isinstance(v, (int, float)) else 0
-out = {'reviews': 0, 'cap_hits': 0, 'failed': 0, 'by_step': {}, 'by_cause': {}, 'runs': []}
+out = {'reviews': 0, 'cap_hits': 0, 'failed': 0, 'by_step': {}, 'by_cause': {}}
 if not os.path.isfile(db):
     print(json.dumps(out)); sys.exit(0)
 con = sqlite3.connect('file:%s?mode=ro' % db, uri=True, timeout=5)
@@ -574,11 +574,12 @@ for run_id, name, order, status, started, completed, error, findings in step_row
     if name == 'review' and ms(started or completed) >= since:
         out['reviews'] += 1
     steps.setdefault(run_id, []).append((order or 0, name, status, error or '', findings or ''))
-capped = set()
+capped, capped_ever = set(), set()
 if {'repair_budget_decisions', 'step_results'} <= tables:
     for run_id, when in con.execute(
             "SELECT s.run_id, MAX(COALESCE(s.completed_at, s.started_at)) FROM repair_budget_decisions d "
             "JOIN step_results s ON s.id = d.step_result_id WHERE d.source = 'exhausted' GROUP BY s.run_id"):
+        capped_ever.add(run_id)  # a run that hit the cap before the window still failed of it
         if ms(when) >= since:
             capped.add(run_id)
 out['cap_hits'] = len(capped)
@@ -590,7 +591,7 @@ for run_id, status, error, updated in con.execute(
     stopped = [r for r in rows if r[2] == 'failed'] or [r for r in rows if r[2] in ('running', 'fixing', 'awaiting_approval')]
     step = stopped[0][1] if stopped else 'none'
     text = ' '.join([error or ''] + [r[3] for r in stopped])
-    if run_id in capped:
+    if run_id in capped_ever:
         cause = 'repair cap'
     elif status == 'cancelled':
         cause = 'aborted'
@@ -601,7 +602,6 @@ for run_id, status, error, updated in con.execute(
     out['failed'] += 1
     out['by_step'][step] = out['by_step'].get(step, 0) + 1
     out['by_cause'][cause] = out['by_cause'].get(cause, 0) + 1
-    out['runs'].append({'id': run_id, 'step': step, 'cause': cause})
 con.close()
 print(json.dumps(out))
 """
@@ -644,16 +644,29 @@ def nm_breakdown(ctx, nm):
             for k, v in got[key].items():
                 total[key][k] = total[key].get(k, 0) + v
     last_night = read_json(ctx.dir / 'latest.json') or {}
-    previous = dict(last_night.get('no_mistakes') or {}, date=last_night.get('date')) \
-        if last_night.get('no_mistakes') else {}
-    prev_causes = previous.get('by_cause') or {}
+    prev = last_night.get('no_mistakes') or {}
+    host_view = {h: {k: g[k] for k in ('reviews', 'cap_hits', 'failed', 'by_cause')} for h, g in hosts.items()}
     out = {'failed': total['failed'], 'by_cause': total['by_cause'], 'by_step': total['by_step'],
-           'hosts': {h: {k: g[k] for k in ('reviews', 'cap_hits', 'failed', 'by_cause')} for h, g in hosts.items()},
-           'previous': {'date': previous.get('date'), 'failed': previous.get('failed'), 'by_cause': prev_causes}
-           if previous else None,
-           'change': {c: total['by_cause'].get(c, 0) - prev_causes.get(c, 0)
-                      for c in sorted(set(total['by_cause']) | set(prev_causes))} if previous else None,
-           'date': ctx.day}
+           'hosts': host_view, 'date': ctx.day, 'previous': None, 'change': None}
+    prev_hosts = prev.get('hosts') or {}
+    common = sorted(set(host_view) & set(prev_hosts))
+    if common:
+        # Compare only machines measured both nights, so a host that went
+        # unread is never mistaken for an improvement.
+        def sums(view):
+            causes = {}
+            for h in common:
+                for c, n in (view[h].get('by_cause') or {}).items():
+                    causes[c] = causes.get(c, 0) + n
+            return sum(view[h].get('failed', 0) for h in common), causes
+        now_failed, now_causes = sums(host_view)
+        then_failed, then_causes = sums(prev_hosts)
+        out['previous'] = {'date': last_night.get('date'), 'failed': then_failed, 'by_cause': then_causes,
+                           'hosts': common}
+        out['change'] = {'failed': now_failed - then_failed, 'hosts': common,
+                         'by_cause': {c: now_causes.get(c, 0) - then_causes.get(c, 0)
+                                      for c in sorted(set(now_causes) | set(then_causes))},
+                         'coverage_changed': sorted(set(host_view) ^ set(prev_hosts))}
     return out, errors
 
 
@@ -662,8 +675,10 @@ def nm_summary(nmb):
     if not nmb:
         return ''
     top = sorted(nmb['by_cause'].items(), key=lambda kv: -kv[1])[:3]
-    prev = nmb.get('previous') or {}
-    delta = '' if prev.get('failed') is None else ' (%+d vs %s)' % (nmb['failed'] - prev['failed'], prev.get('date'))
+    change = nmb.get('change') or {}
+    delta = '' if not change else ' (%+d vs %s%s)' % (
+        change['failed'], (nmb.get('previous') or {}).get('date'),
+        ', on ' + ', '.join(change['hosts']) + ' only' if change.get('coverage_changed') else '')
     return 'no-mistakes: %d failed%s%s' % (nmb['failed'], delta,
                                           '; top: ' + ', '.join('%s %d' % kv for kv in top) if top else '')
 
@@ -792,12 +807,12 @@ def step_collect(ctx):
                and not mentions_excluded(ctx, g)][:3]
     unread += ['%s: no current state' % m.get('id') for m in (rep or {}).get('mates', [])
                if m.get('id') not in ctx.excluded and not m.get('state')]
-    unread += nmb_errors
     if (rep or {}).get('power_error'):
         unread.append('power: %s' % rep['power_error'])
     if UNREADABLE:
         unread.append('%d session file(s) unreadable' % len(UNREADABLE))
-    gaps = ([nm_err] if nm_err else []) + (['fleet report unreadable'] if rep is None else []) + unread[:3]
+    # Unread machines are always named; other reasons are capped at three.
+    gaps = ([nm_err] if nm_err else []) + (['fleet report unreadable'] if rep is None else []) + unread[:3] + nmb_errors
     result = {'status': 'partial' if gaps else 'done', **ctx.facts['counts']}
     if gaps:
         result['why'] = '; '.join(gaps)
