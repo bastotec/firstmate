@@ -130,7 +130,52 @@ test_a_worker_leaving_closes_its_escalation() {
   pass "parked-run watch: a worker cleaned up while escalated resolves its blocker"
 }
 
+test_a_close_that_cannot_resolve_keeps_the_record_and_fails() {
+  local dir parent rc=0
+  dir=$(new_home closefail)
+  parent="$TMP_ROOT/closefail-parent"
+  mkdir -p "$parent/state"
+  printf 'docana\n' > "$dir/home/.fm-secondmate-home"
+  printf 'schema=fm-secondmate-parent.v1\nroute=local\nparent_home=%s\n' "$parent" > "$dir/home/.fm-secondmate-parent"
+  parked "$dir" run-g
+  scan "$dir"; scan "$dir"; scan "$dir"
+  assert_grep 'blocked [key=parked-run-docana-w1]' "$parent/state/docana.status" "setup: the run was escalated"
+  chmod a-w "$parent/state" "$parent/state/docana.status"
+  FM_HOME="$dir/home" "$dir/bin/fm-parked-run-watch.sh" close w1 2>/dev/null || rc=$?
+  chmod u+w "$parent/state" "$parent/state/docana.status"
+  [ "$rc" = 1 ] || fail "a close that could not resolve its blocker must fail (rc=$rc)"
+  [ -f "$dir/home/state/w1.parked-run" ] || fail "a failed close must keep the record so a retry resolves it"
+  FM_HOME="$dir/home" "$dir/bin/fm-parked-run-watch.sh" close w1 || fail "the retried close must succeed"
+  assert_grep 'resolved [key=parked-run-docana-w1]' "$parent/state/docana.status" "the retry resolves the blocker"
+  pass "parked-run watch: a close that cannot resolve keeps its record and fails, and a retry resolves it"
+}
+
+test_a_left_worker_is_never_raised_and_its_record_is_dropped() {
+  local dir holder
+  dir=$(new_home left)
+  parked "$dir" run-h
+  scan "$dir"; scan "$dir"
+  [ "$(wakes "$dir" 'parked-run:w1:run-h')" = 1 ] || fail "setup: the nudge is missing"
+  # While a close holds the worker, a scan leaves it alone.
+  ( . "$dir/bin/fm-wake-lib.sh"
+    fm_lock_try_acquire "$dir/home/state/.w1.parked-run.lock" && : > "$dir/held"
+    sleep 30 ) &
+  holder=$!
+  for _ in $(seq 1 50); do [ -e "$dir/held" ] && break; sleep 0.1; done
+  [ -e "$dir/held" ] || fail "setup: the close's lock was not taken"
+  scan "$dir"
+  kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+  [ "$(wakes "$dir" 'parked-run:w1:escalate')" = 0 ] || fail "a worker held by a close must not be raised by a scan"
+  rm -f "$dir/home/state/w1.meta"
+  scan "$dir"
+  [ "$(wakes "$dir" 'parked-run:w1:escalate')" = 0 ] || fail "a worker that left must never be raised"
+  [ ! -e "$dir/home/state/w1.parked-run" ] || fail "a left worker's record is dropped"
+  pass "parked-run watch: a worker being closed or gone is never raised, and its record is dropped"
+}
+
 test_first_mate_home_nudges_then_raises_once_and_clears
+test_a_close_that_cannot_resolve_keeps_the_record_and_fails
+test_a_left_worker_is_never_raised_and_its_record_is_dropped
 test_second_mate_home_raises_to_its_parent_channel
 test_a_worker_leaving_closes_its_escalation
 test_an_unavailable_reading_never_resolves_a_parked_run

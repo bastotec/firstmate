@@ -73,7 +73,7 @@ state/
   <id>.supervisor-session <id>.captain-lane  split secondmate supervisor binding and lane marker (bin/fm-deck-worker.sh "CAPTAIN LANE")
   <id>.captain-lane.log <id>.captain-lane.answered <id>.captain-lane.turn <id>.captain-lane.stale-noted  captain-lane log, turn journal, running-turn marker and reported stale hand-offs (bin/fm-captain-lane.sh header)
   <id>.supervisor-failing <id>.conversation-failing  a second mate's run of consecutive failed supervisor or conversation turns (bin/fm-deck-worker.sh "SUPERVISOR HEALTH", bin/fm-captain-lane.sh header)
-  <id>.lane-heal  the first mate's automatic relaunch and escalation of a second mate whose lane keeps failing (bin/fm-secondmate-revive.sh "LANE HEALTH")
+  <id>.lane-heal-<lane>  the first mate's automatic relaunch and escalation of a second mate whose lane keeps failing, one record per lane (bin/fm-secondmate-revive.sh "LANE HEALTH")
   <id>.parked-run  a worker's parked validation run being nudged and escalated (bin/fm-parked-run-watch.sh header)
   <id>.model <id>.deck-caps  in-place model choice and live driver capability (bin/fm-control.sh owns public behavior; bin/fm_model_switch.py owns capability checks)
   <id>.progress           in-turn native activity, read for the busy-age bound only (bin/fm-busy-event.sh)

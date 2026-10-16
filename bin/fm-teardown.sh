@@ -921,7 +921,7 @@ remote_secondmate_teardown() {
   handoff_wake_retire \
     || { echo "error: remote receiver wake cleanup failed; preserving the local route for retry" >&2; return 1; }
   rm -f -- "$STATE/$ID.deck-session" "$STATE/$ID.supervisor-session" "$STATE/$ID.captain-lane" \
-    "$STATE/$ID.captain-lane.log" "$STATE/$ID.captain-lane.answered" "$STATE/$ID.captain-lane.turn" "$STATE/$ID.captain-lane.stale-noted" "$STATE/$ID.supervisor-failing" "$STATE/$ID.conversation-failing" "$STATE/$ID.lane-heal" || return 1
+    "$STATE/$ID.captain-lane.log" "$STATE/$ID.captain-lane.answered" "$STATE/$ID.captain-lane.turn" "$STATE/$ID.captain-lane.stale-noted" "$STATE/$ID.supervisor-failing" "$STATE/$ID.conversation-failing" "$STATE/$ID.lane-heal-supervisor" "$STATE/$ID.lane-heal-conversation" || return 1
   tmp="$SECONDMATE_REG.tmp.$$"
   grep -vE "^- $ID( |$)" "$SECONDMATE_REG" > "$tmp" || true
   mv -f -- "$tmp" "$SECONDMATE_REG"
@@ -3548,13 +3548,17 @@ if [ "$KIND" = secondmate ]; then
   handoff_wake_retire_stage_commit \
     || { echo "error: receiver wake cleanup failed; preserving the secondmate route for retry" >&2; exit 1; }
   rm -f -- "$STATE/$ID.deck-session" "$STATE/$ID.supervisor-session" "$STATE/$ID.captain-lane" \
-    "$STATE/$ID.captain-lane.log" "$STATE/$ID.captain-lane.answered" "$STATE/$ID.captain-lane.turn" "$STATE/$ID.captain-lane.stale-noted" "$STATE/$ID.supervisor-failing" "$STATE/$ID.conversation-failing" "$STATE/$ID.lane-heal"
+    "$STATE/$ID.captain-lane.log" "$STATE/$ID.captain-lane.answered" "$STATE/$ID.captain-lane.turn" "$STATE/$ID.captain-lane.stale-noted" "$STATE/$ID.supervisor-failing" "$STATE/$ID.conversation-failing" "$STATE/$ID.lane-heal-supervisor" "$STATE/$ID.lane-heal-conversation"
   remove_secondmate_registry_entry "$ID"
 fi
 # A worker leaving while its parked-run watch had escalated resolves that
-# blocker first (bin/fm-parked-run-watch.sh close), so it never stays open.
-FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-parked-run-watch.sh" close "$ID" >/dev/null 2>&1 \
-  || echo "warning: could not close task $ID's parked-run watch record" >&2
+# blocker first (bin/fm-parked-run-watch.sh close), so it never stays open; if
+# it cannot, every durable record stays so a rerun retries the resolution.
+if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-parked-run-watch.sh" close "$ID" >/dev/null; then
+  echo "error: $ID's parked-run blocker could not be resolved; retaining every durable task record so a rerun can retry it" >&2
+  exit 1
+fi
+fm_lock_remove_path "$STATE/.$ID.parked-run.lock" || true
 # Remove the per-task temp root (/tmp/fm-<id>/, incl. its gotmp/) recorded by spawn.
 # Read before the state-file rm below; empty (pre-fix tasks without tasktmp=) is a no-op.
 [ -n "$TASK_TMP" ] && rm -rf "$TASK_TMP"

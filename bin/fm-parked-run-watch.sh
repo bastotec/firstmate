@@ -26,19 +26,24 @@
 #   - a run that moves on, or a new run, closes the record, and an escalated
 #     one is resolved ("resolved [key=...]" on the parent channel, or one more
 #     wake in the first mate's home).
+# A scan and a close of one worker serialize on state/.<id>.parked-run.lock, and
+# a scan escalates only while the worker's state/<id>.meta still exists, so a
+# worker leaving never has a blocker raised after its close resolved it. A scan
+# drops a record whose worker has left.
 #
 # Environment knobs:
 #   FM_HOME              required
 #   FM_PARKED_RUN_SECS   seconds parked before each step (3600)
 #
-# Exit: 0 after a scan; 2 on invalid use.
+# Exit: 0 after a scan or close; 1 when close could not resolve an escalated
+# blocker (the record is kept, so a retry resolves it); 2 on invalid use.
 set -u
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 case "${1:-}" in
   scan|close) ;;
-  -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
-  *) sed -n '2,34p' "$0" >&2; exit 2 ;;
+  -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+  *) sed -n '2,40p' "$0" >&2; exit 2 ;;
 esac
 [ -n "${FM_HOME:-}" ] || { echo "error: FM_HOME is required" >&2; exit 2; }
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
@@ -83,23 +88,36 @@ escalate() {  # <id> <blocked|resolved> <text>
 
 minutes() { printf '%s' "$(( $1 / 60 ))"; }
 
+lock_of() { printf '%s/.%s.parked-run.lock' "$STATE" "$1"; }
+
 if [ "$1" = close ]; then
   id=${2:-}
   case "$id" in ''|*[!A-Za-z0-9._-]*) echo "error: close needs a worker id" >&2; exit 2 ;; esac
   rec="$STATE/$id.parked-run"
   [ -f "$rec" ] || exit 0
-  if [ "$(field "$rec" escalated)" = 1 ]; then
-    escalate "$id" resolved "worker $id's run $(field "$rec" run) left the fleet while parked at $(field "$rec" step) (parked since $(field "$rec" since))" || exit 1
+  fm_lock_acquire_wait "$(lock_of "$id")" || { echo "error: cannot lock $id's parked-run record" >&2; exit 1; }
+  rc=0
+  if [ -f "$rec" ] && [ "$(field "$rec" escalated)" = 1 ]; then
+    escalate "$id" resolved "worker $id's run $(field "$rec" run) left the fleet while parked at $(field "$rec" step) (parked since $(field "$rec" since))" || rc=1
   fi
-  rm -f "$rec"
-  exit 0
+  [ "$rc" != 0 ] || rm -f "$rec"
+  fm_lock_release "$(lock_of "$id")" >/dev/null 2>&1 || true
+  exit "$rc"
 fi
 
-for meta in "$STATE"/*.meta; do
-  [ -f "$meta" ] || continue
-  grep -qE '^kind=(ship|scout)$' "$meta" 2>/dev/null || continue
-  id=$(basename "$meta" .meta)
-  rec="$STATE/$id.parked-run"
+# A record whose worker has left (its meta is gone) is dropped.
+for rec in "$STATE"/*.parked-run; do
+  [ -f "$rec" ] || continue
+  id=$(basename "$rec" .parked-run)
+  [ ! -f "$STATE/$id.meta" ] || continue
+  fm_lock_try_acquire "$(lock_of "$id")" || continue
+  [ -f "$STATE/$id.meta" ] || rm -f "$rec"
+  fm_lock_release "$(lock_of "$id")" >/dev/null 2>&1 || true
+  fm_lock_remove_path "$(lock_of "$id")" >/dev/null 2>&1 || true
+done
+
+scan_one() {  # <id>
+  local id=$1 rec="$STATE/$1.parked-run" verdict run step since nudged escalated
   FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-crew-state.sh" --publish "$id" </dev/null >/dev/null 2>&1 || true
   verdict=$(field "$STATE/$id.crew-state" verdict)
   run=$(field "$STATE/$id.crew-state" run)
@@ -109,40 +127,52 @@ for meta in "$STATE"/*.meta; do
   case "$verdict" in
     parked) ;;
     working|done|blocked|failed) ;;
-    *) continue ;;
+    *) return 0 ;;
   esac
   if [ "$verdict" != parked ]; then
-    [ -f "$rec" ] || continue
+    [ -f "$rec" ] || return 0
     if [ "$(field "$rec" escalated)" = 1 ]; then
-      escalate "$id" resolved "worker $id's run $(field "$rec" run) is no longer parked at $(field "$rec" step) (parked since $(field "$rec" since))" || continue
+      escalate "$id" resolved "worker $id's run $(field "$rec" run) is no longer parked at $(field "$rec" step) (parked since $(field "$rec" since))" || return 0
     fi
     rm -f "$rec"
-    continue
+    return 0
   fi
   if [ ! -f "$rec" ] || [ "$(field "$rec" run)" != "$run" ] || [ "$(field "$rec" step)" != "$step" ]; then
     # A new run, or the same run parked at another gate, starts its own clock;
     # an escalated old episode is resolved first.
     if [ -f "$rec" ] && [ "$(field "$rec" escalated)" = 1 ]; then
-      escalate "$id" resolved "worker $id's run $(field "$rec" run) is no longer parked at $(field "$rec" step) (parked since $(field "$rec" since))" || continue
+      escalate "$id" resolved "worker $id's run $(field "$rec" run) is no longer parked at $(field "$rec" step) (parked since $(field "$rec" since))" || return 0
     fi
     record_write "$id" "$run" "$step" "$NOW" 0 0
-    continue
+    return 0
   fi
   since=$(field "$rec" since) nudged=$(field "$rec" nudged) escalated=$(field "$rec" escalated)
   case "$since" in ''|*[!0-9]*) since=$NOW ;; esac
   case "$nudged" in ''|*[!0-9]*) nudged=0 ;; esac
-  [ "$escalated" != 1 ] || continue
+  [ "$escalated" != 1 ] || return 0
   if [ "$nudged" = 0 ]; then
-    [ $((NOW - since)) -ge "$LIMIT" ] || continue
+    [ $((NOW - since)) -ge "$LIMIT" ] || return 0
     if fm_wake_append check "parked-run:$id:$run:$since" \
         "check: worker $id's validation run $run has been parked at ${step:-its gate} for $(minutes $((NOW - since))) minutes: decide it now - one fix round with no-mistakes axi respond, or a fresh follow-up run"; then
       record_write "$id" "$run" "$step" "$since" "$NOW" 0
     fi
-    continue
+    return 0
   fi
-  [ $((NOW - nudged)) -ge "$LIMIT" ] || continue
+  [ $((NOW - nudged)) -ge "$LIMIT" ] || return 0
+  # A worker that left meanwhile is never raised after its close.
+  [ -f "$STATE/$id.meta" ] || return 0
   if escalate "$id" blocked "worker $id's validation run $run has been parked at ${step:-its gate} since $(date -u -r "$since" +%Y-%m-%dT%H:%MZ 2>/dev/null || date -u -d "@$since" +%Y-%m-%dT%H:%MZ) and its mate did not unstick it"; then
     record_write "$id" "$run" "$step" "$since" "$nudged" 1
   fi
+}
+
+for meta in "$STATE"/*.meta; do
+  [ -f "$meta" ] || continue
+  grep -qE '^kind=(ship|scout)$' "$meta" 2>/dev/null || continue
+  id=$(basename "$meta" .meta)
+  # A close of this worker is running: leave it to the close.
+  fm_lock_try_acquire "$(lock_of "$id")" || continue
+  scan_one "$id"
+  fm_lock_release "$(lock_of "$id")" >/dev/null 2>&1 || true
 done
 exit 0
