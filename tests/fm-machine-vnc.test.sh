@@ -32,15 +32,16 @@ stub systemctl 'printf "systemctl %s\n" "$*" >> "$FAKE_LOG"; case "$*" in *MainP
 stub ss 'printf "LISTEN 0 5 %s 0.0.0.0:* users:((\"Xvnc\",pid=%s,fd=5))\n" $FAKE_LISTEN ${FAKE_PID:-4242}'
 expect_code() { [ "$1" = "$2" ] || fail "$3: expected exit $1, got $2"; }
 vnc() { PATH="$FAKEBIN:$PATH" HOME="$ACCT" FM_HOME="$H" FM_CONFIG_OVERRIDE="$H/config" "$V" "$@" 2>&1; }
+file_mode() { python3 -c 'import os, stat, sys; print(format(stat.S_IMODE(os.stat(sys.argv[1]).st_mode), "o"))' "$1"; }
 
 out=$(vnc install local)
 PW=$(cat "$H/config/vnc/local.password")
 [[ "$PW" =~ ^[A-Za-z0-9]{8}$ ]] || fail "the password is not 8 letters and digits"
-assert_equals 600 "$(stat -f %Lp "$H/config/vnc/local.password" 2>/dev/null || stat -c %a "$H/config/vnc/local.password")" "the kept password is private"
+assert_equals 600 "$(file_mode "$H/config/vnc/local.password")" "the kept password is private"
 assert_not_contains "$out" "$PW" "install printed the password"
 assert_contains "$out" "step vnc-service=done: dev.firstmate.vnc on 127.0.0.1:5917" "service step"
 assert_equals "OBF:8" "$(cat "$ACCT/.config/firstmate/vnc/passwd")" "the machine keeps only the obfuscated form"
-assert_equals 600 "$(stat -f %Lp "$ACCT/.config/firstmate/vnc/passwd" 2>/dev/null || stat -c %a "$ACCT/.config/firstmate/vnc/passwd")" "the machine's password file is private"
+assert_equals 600 "$(file_mode "$ACCT/.config/firstmate/vnc/passwd")" "the machine's password file is private"
 # The units as systemd reads them: the one uncommented ExecStart and its arguments.
 unit_exec() { awk '/^[[:space:]]*#/ { next } /^ExecStart=/ { n++; sub(/^ExecStart=/, ""); line = $0 } END { if (n != 1) exit 1; print line }' "$1"; }
 unit_env() { awk -v k="$2" '/^[[:space:]]*#/ { next } /^Environment=/ { sub(/^Environment=/, ""); if (index($0, k "=") == 1) v = substr($0, length(k) + 2) } END { print v }' "$1"; }
@@ -56,7 +57,7 @@ assert_equals tcp "$(arg_after "$exec_line" -nolisten)" "no X11 over TCP"
 assert_equals ":17" "$(unit_env "$units/dev.firstmate.vnc-browser.service" DISPLAY)" "the browser runs on the VNC display"
 assert_equals "%h/.config/firstmate/vnc/xauthority" "$(unit_env "$units/dev.firstmate.vnc-browser.service" XAUTHORITY)" "the browser holds the X11 cookie"
 assert_grep "MIT-MAGIC-COOKIE-1" "$ACCT/.config/firstmate/vnc/xauthority" "the X11 cookie was written"
-assert_equals 600 "$(stat -f %Lp "$ACCT/.config/firstmate/vnc/xauthority" 2>/dev/null || stat -c %a "$ACCT/.config/firstmate/vnc/xauthority")" "the X11 cookie is private"
+assert_equals 600 "$(file_mode "$ACCT/.config/firstmate/vnc/xauthority")" "the X11 cookie is private"
 assert_no_grep "$PW" "$LOG" "a stub saw the password on argv"
 vnc install local > /dev/null
 assert_equals "$PW" "$(cat "$H/config/vnc/local.password")" "a reinstall keeps the same password"
