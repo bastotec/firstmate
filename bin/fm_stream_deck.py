@@ -28,6 +28,8 @@ import subprocess
 import sys
 import tempfile
 
+from fm_captain_memory import with_memory
+
 
 ATTACHED_IMAGE = re.compile(r'^Attached: (/.+?) \(image, [^()\n]+\)\s*$')
 IMAGE_SUFFIXES = {'.png', '.jpg', '.jpeg', '.webp', '.gif'}
@@ -104,12 +106,13 @@ class Receiver:
         except FileNotFoundError:
             return None
 
-    def start(self, turn, supported, set_model=False):
+    def start(self, turn, supported, set_model=False, home=None):
         with self.locked():
             projection = self.root / turn
             projection.mkdir(mode=0o700)
             atomic_write(self.root / 'active.json', json.dumps({
-                'turn': turn, 'supported': supported, 'set_model': set_model, 'active': True}))
+                'turn': turn, 'supported': supported, 'set_model': set_model, 'active': True,
+                'home': str(home or self.state.parent)}))
             return str(projection)
 
     def end(self):
@@ -185,6 +188,7 @@ class Receiver:
                 guidance = body + '\n\nAfter handling this native steer, acknowledge its ordinary task-inbox source by moving ' + str(ordinary) + ' to ' + str(self.inbox / 'handled' / source.name) + '. Do not apply the same source record twice.'
                 if not bridge and (not body.strip() or len(guidance.encode('utf-8')) > 65536):
                     continue
+                guidance = with_memory(active.get('home') or self.state.parent, guidance)
                 candidates.append((int(source.stem), body, guidance))
         published = 0
         for number, body, guidance in sorted(candidates):
@@ -540,7 +544,7 @@ def main():
     action, state, task, endpoint, *args = sys.argv[1:]
     receiver = Receiver(state, task, endpoint)
     if action == 'start':
-        print(receiver.start(args[0], args[1] == '1', args[2:3] == ['1']))
+        print(receiver.start(args[0], args[1] == '1', args[2:3] == ['1'], args[3] if len(args) > 3 else None))
     elif action == 'end':
         receiver.end()
     else:

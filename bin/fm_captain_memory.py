@@ -84,7 +84,7 @@ HOME_HEADER = '# Captain preferences - this home\n\n'
 
 
 def now_utc():
-    return datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='microseconds').replace('+00:00', 'Z')
 
 
 def shared(home):
@@ -148,15 +148,18 @@ def primary_of(home):
     """(home to record in, file) for a capture made in `home`: the primary's
     captain-shared.md, reached through a local mate's parent binding; a remote
     mate's own data/captain.md, since its parent is on another machine."""
-    binding = home / '.fm-secondmate-parent'
-    try:
-        fields = dict(line.split('=', 1) for line in binding.read_text().splitlines() if '=' in line)
-    except FileNotFoundError:
-        return home, shared(home)
-    if fields.get('route') == 'local' and fields.get('parent_home', '').startswith('/'):
-        parent = Path(fields['parent_home'])
-        return parent, shared(parent)
-    return home, home / 'data' / 'captain.md'
+    seen = set()
+    while home not in seen:
+        seen.add(home)
+        binding = home / '.fm-secondmate-parent'
+        try:
+            fields = dict(line.split('=', 1) for line in binding.read_text().splitlines() if '=' in line)
+        except FileNotFoundError:
+            return home, shared(home)
+        if fields.get('route') != 'local' or not fields.get('parent_home', '').startswith('/'):
+            return home, home / 'data' / 'captain.md'
+        home = Path(fields['parent_home']).resolve()
+    raise ValueError('cyclic secondmate parent bindings')
 
 
 def count_repeat(home, mate, source, text):
@@ -225,55 +228,67 @@ def capture(args):
     return 0
 
 
-def recall(args):
-    home = Path(args.home)
-    cap = CAP
-    if args.max_bytes is not None:
-        cap = min(cap, args.max_bytes - 400)
+def recall_block(home, query='', max_bytes=None):
+    home = Path(home)
+    cap = CAP if max_bytes is None else min(CAP, max_bytes)
     items = entries(shared(home)) + entries(home / 'data' / 'captain.md')
     if not items or cap <= 0:
-        return 0
-    # Newest first by recorded date; undated entries, and ties, by file order.
+        return ''
+
+    def render(chosen):
+        lines = [OPEN, "The captain's standing instructions on record (follow them; newest and most relevant first):"]
+        lines.extend(e if e.startswith('- ') else '- ' + e for e in chosen)
+        if len(chosen) < len(items):
+            lines.append('- (%d more on record in data/captain-shared.md and data/captain.md)' % (len(items) - len(chosen)))
+        return '\n'.join(lines + [CLOSE]) + '\n'
+
+    wrapper_size = len(render([]).encode('utf-8'))
+
     def dated(i):
         m = DATED.match(items[i])
         return (m.group(1) if m else '', i)
     order = sorted(range(len(items)), key=dated, reverse=True)
     newest = [items[i] for i in order]
+    complete = render(newest)
+    if len(complete.encode('utf-8')) <= cap:
+        return complete
     chosen, size = [], 0
     for e in newest:
-        if size + len(e.encode('utf-8')) + 3 > cap // 2:
+        cost = len((e if e.startswith('- ') else '- ' + e).encode('utf-8')) + 1
+        if size + cost > (cap - wrapper_size) // 2:
             break
         chosen.append(e)
-        size += len(e.encode('utf-8')) + 3
+        size += cost
     rest = newest[len(chosen):]
     if rest:
-        query = set(norm(args.query or '').split()) - {'the', 'a', 'to', 'and', 'of', 'is', 'it', 'i', 'you', 'in'}
-        ranked = sorted(rest, key=lambda e: -len(query & set(norm(e).split())))
+        words = set(norm(query).split()) - {'the', 'a', 'to', 'and', 'of', 'is', 'it', 'i', 'you', 'in'}
+        ranked = sorted(rest, key=lambda e: -len(words & set(norm(e).split())))
         for e in ranked:
-            if size + len(e.encode('utf-8')) + 3 > cap:
-                continue
-            chosen.append(e)
-            size += len(e.encode('utf-8')) + 3
-    print(OPEN)
-    print("The captain's standing instructions on record (follow them; newest and most relevant first):")
-    for e in chosen:
-        print(e if e.startswith('- ') else '- ' + e)
-    if len(chosen) < len(items):
-        print('- (%d more on record in data/captain-shared.md and data/captain.md)' % (len(items) - len(chosen)))
-    print(CLOSE)
+            if len(render(chosen + [e]).encode('utf-8')) <= cap:
+                chosen.append(e)
+    block = render(chosen)
+    return block if len(block.encode('utf-8')) <= cap else ''
+
+
+def with_memory(home, body, max_bytes=65536):
+    room = max_bytes - len(body.encode('utf-8')) - 2
+    block = recall_block(home, body[:2000], room).rstrip('\n')
+    return body + '\n\n' + block if block else body
+
+
+def recall(args):
+    print(recall_block(args.home, args.query or '', args.max_bytes), end='')
+    return 0
+
+
+def prompt(args):
+    print(with_memory(args.home, sys.stdin.read()), end='')
     return 0
 
 
 def local_mates(home):
-    homes = []
-    try:
-        for line in (home / 'data' / 'secondmates.md').read_text().splitlines():
-            m = re.search(r'\(home: (/[^;)]+)', line)
-            if m and not re.search(r'\((?:host|root): ', line):
-                homes.append(Path(m.group(1).strip()))
-    except FileNotFoundError:
-        pass
-    return homes
+    from fm_report import registry
+    return [Path(row['home']) for row in registry(home).values() if row.get('home') and not row.get('host')]
 
 
 def upkeep(args):
@@ -333,11 +348,16 @@ def upkeep(args):
     oversized = [str(f) for f in files if f.exists() and f.stat().st_size > OVERSIZED]
     repeats = 0
     log, mark = home / 'state' / 'captain-memory-repeats.log', home / 'state' / '.captain-memory-upkeep'
-    since = mark.read_text().strip() if mark.exists() else ''
-    if log.exists():
-        repeats = sum(1 for line in log.read_text().splitlines() if line.split('\t', 1)[0] > since)
-    (home / 'state').mkdir(parents=True, exist_ok=True)
-    mark.write_text(now_utc() + '\n')
+    with locked(path):
+        checkpoint = now_utc()
+        since = mark.read_text().strip() if mark.exists() else ''
+        since_time = datetime.datetime.fromisoformat(since.replace('Z', '+00:00')) if since else None
+        if log.exists():
+            repeats = sum(1 for line in log.read_text().splitlines()
+                          if since_time is None or datetime.datetime.fromisoformat(
+                              line.split('\t', 1)[0].replace('Z', '+00:00')) > since_time)
+        (home / 'state').mkdir(parents=True, exist_ok=True)
+        mark.write_text(checkpoint + '\n')
     print('captain-memory: %d entries, %d new candidates in %s, oversized: %s, repeats since last upkeep: %d'
           % (len(entries(path)), len(added), cand_path, ', '.join(oversized) or 'none', repeats))
     return 0
@@ -354,10 +374,12 @@ def main():
     r.add_argument('--home', required=True)
     r.add_argument('--query', default='')
     r.add_argument('--max-bytes', type=int, default=None)
+    t = sub.add_parser('prompt')
+    t.add_argument('--home', required=True)
     u = sub.add_parser('upkeep')
     u.add_argument('--home', required=True)
     args = p.parse_args()
-    return {'capture': capture, 'recall': recall, 'upkeep': upkeep}[args.cmd](args)
+    return {'capture': capture, 'recall': recall, 'prompt': prompt, 'upkeep': upkeep}[args.cmd](args)
 
 
 if __name__ == '__main__':

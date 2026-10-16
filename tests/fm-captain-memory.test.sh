@@ -134,7 +134,7 @@ test_upkeep_dedupes_collects_candidates_and_counts_repeats() {
   local home="$TMP_ROOT/upkeep" mate="$TMP_ROOT/upkeep-mate/firstmate" out
   mkdir -p "$home/data" "$home/state" "$mate/data"
   printf '# Shared captain preferences\n\n- rule one\n- rule one\n' > "$home/data/captain-shared.md"
-  printf -- '- mate (home: %s; scope: x)\n' "$mate" > "$home/data/secondmates.md"
+  printf -- '- mate - builds (host: ci) (home: %s; scope: x; projects: alpha; added 2026-08-02)\n' "$mate" > "$home/data/secondmates.md"
   printf '# Shared captain preferences\n\n- rule one\n- a rule the mate wrote locally\n' > "$mate/data/.captain-shared.md.quarantine.1"
   printf '2026-10-16T10:00:00Z\tmate\tsrc\tI told you\n' > "$home/state/captain-memory-repeats.log"
   out=$(python3 "$MEM" upkeep --home "$home")
@@ -156,10 +156,14 @@ test_delivery_and_upkeep_regressions() {
   python3 - "$ROOT/bin" "$TMP_ROOT/regressions" <<'PY' || fail "captain memory regressions"
 import argparse
 import builtins
+import contextlib
+import datetime
 import fcntl
 import io
 import multiprocessing
 import os
+import json
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -358,10 +362,170 @@ h = home('primary-budget')
 run(h, 'capture', 'Always keep the short rule.')
 steer = h / 'steer'
 record = {'steer_dir': str(steer), 'session': 'budget-session'}
-body = publish('x' * 64700)
+body = publish('x' * 65184)
 assert len(body.encode()) <= primary.MAX_BODY
 assert '\n\n[fm-captain-memory]\n' in body
 assert 'Always keep the short rule.' in body
+
+for budget in [0, 150, 350, 8000]:
+    block = memory.recall_block(h, max_bytes=budget)
+    assert len(block.encode()) <= budget
+assert 'Always keep the short rule.' in memory.recall_block(h, max_bytes=350)
+(h / 'data/captain.md').write_text('- Always say olá.\n')
+block = memory.recall_block(h)
+assert memory.recall_block(h, max_bytes=len(block.encode())) == block
+
+h = home('repeat-checkpoint')
+clock = datetime.datetime
+base = clock.now(datetime.timezone.utc).replace(microsecond=0) - datetime.timedelta(seconds=1)
+ticks = iter(range(1, 20))
+class Clock(clock):
+    @classmethod
+    def now(cls, tz=None):
+        return base + datetime.timedelta(microseconds=next(ticks))
+
+args = argparse.Namespace(home=str(h), source='one', mate='')
+log = h / 'state/captain-memory-repeats.log'
+mark = h / 'state/.captain-memory-upkeep'
+real_read, real_write = Path.read_text, Path.write_text
+
+def assert_memory_locked():
+    with open(h / 'data/.captain-memory.lock', 'a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return
+        raise AssertionError('repeat snapshot and checkpoint must hold the capture lock')
+
+def read_checkpoint(path, *args, **kwargs):
+    if path in (log, mark):
+        assert_memory_locked()
+    return real_read(path, *args, **kwargs)
+
+def write_checkpoint(path, *args, **kwargs):
+    if path == mark:
+        assert_memory_locked()
+    return real_write(path, *args, **kwargs)
+
+with patch.object(memory.datetime, 'datetime', Clock), patch.object(Path, 'read_text', read_checkpoint), patch.object(Path, 'write_text', write_checkpoint):
+    for source in ['one', 'two']:
+        args.source = source
+        with patch('sys.stdin', io.StringIO('I told you, never lose corrections.')):
+            memory.capture(args)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            memory.upkeep(args)
+        assert 'repeats since last upkeep: 1' in out.getvalue()
+assert '.000003Z' in log.read_text()
+mark.write_text(base.strftime('%Y-%m-%dT%H:%M:%SZ') + '\n')
+assert 'repeats since last upkeep: 2' in run(h, 'upkeep')
+assert 'repeats since last upkeep: 0' in run(h, 'upkeep')
+
+owner, middle, child = [home(n) for n in ['root-owner', 'middle', 'nested-child']]
+for mate, parent in [(child, middle), (middle, owner)]:
+    (mate / '.fm-secondmate-parent').write_text('route=local\nparent_home=%s\n' % parent)
+    memory.shared(mate).write_text('- inherited rule\n')
+    memory.shared(mate).chmod(0o444)
+run(child, 'capture', 'Always find the root owner.')
+assert 'Always find the root owner.' in memory.shared(owner).read_text()
+assert memory.shared(middle).read_text() == '- inherited rule\n'
+(owner / '.fm-secondmate-parent').write_text('route=remote\nparent_home=/not-on-this-machine\n')
+run(child, 'capture', 'Never write past a remote boundary.')
+assert 'Never write past a remote boundary.' in (owner / 'data/captain.md').read_text()
+assert 'Never write past a remote boundary.' not in memory.shared(owner).read_text()
+
+h = home('native-worker')
+run(h, 'capture', 'Always quote the worker rule.')
+from fm_stream_deck import Receiver
+state = h / 'state'
+receiver = Receiver(state, 'ship', 'e' * 32)
+projection = Path(receiver.start('first', True))
+receiver.enqueue({'execution': receiver.endpoint, 'turn': 'first', 'order_id': 'one'}, 'Please review this PR.')
+with receiver.locked():
+    assert receiver.publish(receiver.active()) == 1
+body = next(projection.glob('*.msg')).read_text()
+assert '[fm-captain-memory]' in body and 'Always quote the worker rule.' in body
+assert len(body.encode()) <= 65536
+receiver.end()
+mate = home('native-mate')
+run(mate, 'capture', 'Always recall from the active home.')
+projection = Path(receiver.start('second', True, home=mate))
+(receiver.inbox / '002.msg').write_text('schema=fm-task-inbox.v1\nat=x\n--\n[fm-captain-direct]⁣note\n\n' + 'x' * 64500)
+with receiver.locked():
+    assert receiver.publish(receiver.active()) == 1
+body = next(projection.glob('*.msg')).read_text()
+assert '[fm-captain-memory]' in body and len(body.encode()) <= 65536
+assert 'Always recall from the active home.' in body
+assert 'Always quote the worker rule.' not in body
+
+if shutil.which('jq'):
+    h = home('deck-worker')
+    run(h, 'capture', 'Always carry memory into worker turns.')
+    state = h / 'state'
+    state.mkdir()
+    fake = h / 'deck'
+    fake.write_text("""#!/usr/bin/env python3
+import json, os, subprocess, sys
+from pathlib import Path
+with open(Path(os.environ['FM_HOME']) / 'prompts.jsonl', 'a') as f:
+    f.write(json.dumps(sys.argv[2]) + '\\n')
+subprocess.run([sys.executable, os.environ['FM_DECK_STATUS_IO'], 'root-append', os.environ['FM_DECK_STATUS_STATE'], os.environ['FM_DECK_STATUS_NAME']], input='done: test evidence\\n', text=True, check=True, stdout=subprocess.DEVNULL)
+print(json.dumps({'type': 'run_started', 'session': 'test-worker'}))
+print(json.dumps({'type': 'run_completed', 'session': 'test-worker'}))
+""")
+    fake.chmod(0o700)
+    gen = subprocess.check_output([str(memory.BIN / 'fm-busy-event.sh'), 'arm', str(state), 't1'], text=True).strip()
+    result = subprocess.run([str(memory.BIN / 'fm-deck-worker.sh'), '--id', 't1', '--state', str(state), '--gen', gen, '--deck', str(fake), '--', 'Please review this PR.'], input='Next worker turn.\n/quit\n', text=True, capture_output=True, timeout=30, env=dict(os.environ, FM_HOME=str(h), FM_DECK_PIPELINE_WAIT_SECS='0'))
+    assert result.returncode == 0, result.stdout + result.stderr
+    prompts = [json.loads(line) for line in (h / 'prompts.jsonl').read_text().splitlines()]
+    assert len(prompts) == 2, prompts
+    assert all('[fm-captain-memory]' in prompt and 'Always carry memory into worker turns.' in prompt for prompt in prompts)
+
+if shutil.which('tasks-axi') and shutil.which('jq'):
+    h = home('card-memory')
+    for directory in ['state', 'config', 'projects', 'fakebin']:
+        (h / directory).mkdir()
+    shutil.copy(memory.BIN.parent / '.tasks.toml', h / '.tasks.toml')
+    (h / 'data/backlog.md').write_text('## In flight\n\n## Queued\n\n## Done\n')
+    for tool in ['tmux', 'treehouse', 'no-mistakes', 'gh', 'gh-axi']:
+        fake = h / 'fakebin' / tool
+        fake.write_text('#!/bin/sh\nexit 0\n')
+        fake.chmod(0o700)
+    env = dict(os.environ, PATH=str(h / 'fakebin') + os.pathsep + os.environ['PATH'], FM_ROOT_OVERRIDE=str(memory.BIN.parent), FM_HOME=str(h), FM_STATE_OVERRIDE=str(h / 'state'), FM_DATA_OVERRIDE=str(h / 'data'), FM_CONFIG_OVERRIDE=str(h / 'config'))
+    def card(*args, text=''):
+        return subprocess.run([str(memory.BIN / 'fm-captain-hold.sh'), *args], input=text, text=True, capture_output=True, timeout=20, env=env, check=True).stdout
+    decision = h / 'decision.txt'
+    decision.write_text('I told you, never page me from a worker.\n')
+    card('hold', 'repeat', '--title', 'Repeat', '--reason', 'Choose')
+    card('answer', 'repeat', '--decision-file', str(decision), '--defer', 'When needed')
+    log = h / 'state/captain-memory-repeats.log'
+    wait_until(lambda: log.exists())
+    card('answer', 'repeat', '--decision-file', str(decision), '--defer', 'When needed')
+    card('hold', 'repeat', '--reason', 'Needed now', '--reopen-deferred')
+    card('answer', 'repeat', '--decision-file', str(decision), '--release')
+    wait_until(lambda: len(log.read_text().splitlines()) == 2)
+    assert {row.split('\t')[2] for row in log.read_text().splitlines()} == {'his answer to card repeat (occurrence 1)', 'his answer to card repeat (occurrence 2)'}
+    card('answer', 'repeat', '--decision-file', str(decision), '--release')
+    assert len(log.read_text().splitlines()) == 2
+
+    def board_answer(task, selection, note):
+        card('hold', task, '--title', 'Always generated label', '--reason', 'Choose')
+        context = {'schema': 'fm-bearings-answer.v1', 'question': task, 'selection': selection, 'note': note}
+        captured = h / 'captured.toon'
+        captured.write_text('prompts[1]{id,prompt,type,tag,text}:\n  "1",' + json.dumps('Context data:\n' + json.dumps(context)) + ',"form",choice,"Always generated label"\n')
+        rows = subprocess.check_output([str(memory.BIN / 'fm-procevent-lavish.sh'), 'answers', str(captured)], text=True, env=env)
+        assert rows.split('\t')[1] == (selection or note)
+        return card('answers', '--source', 'test-board', text=rows)
+    board_answer('always-on-vpn', '1', '')
+    board_answer('noted', '1', 'Always keep only my note.\n\n    Use my exact layout.')
+    board_answer('free-text', '', 'Never ignore free-text notes.')
+    wait_until(lambda: 'Never ignore free-text notes.' in memory.shared(h).read_text() and 'Always keep only my note.' in memory.shared(h).read_text())
+    recorded = memory.shared(h).read_text()
+    assert 'Always keep only my note.\n  \n      Use my exact layout.' in recorded
+    assert 'always-on-vpn' not in recorded and 'Always generated label' not in recorded
+    assert 'Captain answered this call' not in recorded and 'Task: noted' not in recorded
+else:
+    print('skip: card memory regressions require tasks-axi and jq')
 PY
   pass "captain memory: delivery identities, literal markers, byte budgets, upkeep ownership and failure recovery"
 }

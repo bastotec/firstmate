@@ -939,17 +939,12 @@ run_turn() {  # <prompt>
   [ "$SECONDMATE" != 1 ] || supervisor_notes_retry || return 1
   [ "$SECONDMATE" != 1 ] || watch_start || return 1
   [ "$SECONDMATE" != 1 ] || watch_confirm_handling_delivery || return 1
-  # A second mate's every turn carries the captain's recorded preferences
-  # (bin/fm_captain_memory.py; Fleet Town strips the marked block).
-  if [ "$SECONDMATE" = 1 ]; then
-    local memory
-    memory=$(python3 "$SCRIPT_DIR/fm_captain_memory.py" recall --home "$FM_HOME" --query "$prompt" 2>/dev/null) || memory=''
-    [ -z "$memory" ] || prompt="$prompt
-
-$memory"
-  fi
   [ -z "$effort" ] || prompt="deck-effort: $effort
 $prompt"
+  local recalled
+  if recalled=$(printf '%s' "$prompt" | python3 "$SCRIPT_DIR/fm_captain_memory.py" prompt --home "${FM_HOME:-$(dirname "$STATE")}" 2>/dev/null); then
+    prompt=$recalled
+  fi
   # This turn's route: an in-place switch while the file is there, else the
   # launch --model (never a stale copy of an earlier switch).
   local switched model=$MODEL
@@ -971,7 +966,7 @@ $prompt"
     case "$deck_help" in *set_model*) set_model=1 ;; esac
     steer_turn=$(python3 -c 'import uuid; print(uuid.uuid4().hex)')
     if steer_dir=$(python3 "$SCRIPT_DIR/fm_stream_deck.py" start "$STATE" "$ID" \
-        "$FM_STREAM_ENDPOINT_ID" "$steer_turn" "$steer_supported" "$set_model"); then
+        "$FM_STREAM_ENDPOINT_ID" "$steer_turn" "$steer_supported" "$set_model" "${FM_HOME:-$(dirname "$STATE")}"); then
       [ "$steer_supported" = 0 ] || args+=(--steer-dir "$steer_dir")
       # Attempt native publication before Deck's first safe point.
       [ "$steer_supported" = 0 ] || python3 "$SCRIPT_DIR/fm_stream_deck.py" captain "$STATE" "$ID" >/dev/null 2>&1 || true

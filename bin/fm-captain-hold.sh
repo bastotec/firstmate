@@ -1208,14 +1208,21 @@ close_deferred() {  # <task-id> <original-condition> <storage-condition>
   remove_decision_card "$1"
 }
 
+capture_card_answer() {
+  [ -n "$3" ] || return 0
+  printf '%s' "$3" | python3 "$SCRIPT_DIR/fm_captain_memory.py" capture \
+    --home "$FM_HOME" --source "his answer to card $1 (occurrence $2)" >/dev/null 2>&1 &
+}
+
 command_answer() {
   local id=${1:-} decision_file='' release=0 show state hold_kind body outcome recorded_mode occurrence
-  local defer=0 condition='' storage_condition='' deferral_state
+  local defer=0 condition='' storage_condition='' deferral_state captain_note='' captain_note_set=0 memory_text
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --decision-file) shift; decision_file=${1:-} ;;
+      --captain-note) shift; captain_note=${1-}; captain_note_set=1 ;;
       --release) release=1 ;;
       --defer) shift; defer=1; condition=${1:-} ;;
       *) usage >&2; exit 2 ;;
@@ -1229,10 +1236,8 @@ command_answer() {
     storage_condition=$(parentheses_free_reason "$condition")
   fi
   load_decision "$decision_file"
-  # A free-text card answer can state a standing instruction too
-  # (bin/fm_captain_memory.py ignores a plain option pick).
-  printf '%s' "$DECISION_TEXT" | python3 "$SCRIPT_DIR/fm_captain_memory.py" capture \
-    --home "$FM_HOME" --source "his answer to card $id" >/dev/null 2>&1 &
+  memory_text=$DECISION_TEXT
+  [ "$captain_note_set" = 0 ] || memory_text=$captain_note
   acquire_task_control_lock "$id"
   require_tasks_axi
   task_show "$id" || fail "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
@@ -1274,6 +1279,7 @@ command_answer() {
     [ "$hold_kind" = captain ] \
       || fail "task $id was never held for the captain; nothing to record an answer on"
     write_resolution_record "$id" repaired "$body"
+    capture_card_answer "$id" "$occurrence" "$memory_text"
     remove_interrupted_answer_stamp "$id"
     task_show "$id" || fail "task $id disappeared while recording the answer"
     show=$TASK_SHOW_OUTPUT
@@ -1327,9 +1333,11 @@ command_answer() {
     fi
     if [ "$defer" = 1 ]; then
       write_resolution_record "$id" "$outcome" "$body" "$condition"
+      capture_card_answer "$id" "$occurrence" "$memory_text"
       close_deferred "$id" "$condition" "$storage_condition" || fail "could not park deferred captain call $id"
     else
       write_resolution_record "$id" "$outcome" "$body"
+      capture_card_answer "$id" "$occurrence" "$memory_text"
     fi
     if [ "$defer" = 0 ] && ! close_answered "$id" "$release"; then
       fail "could not close answered captain-held task $id"
@@ -1456,7 +1464,7 @@ sanitize_reconcile_provenance() {
 command_answers() {
   local origin='' source='' row rest key answer label mode id show state hold_kind body digest legacy_digest legacy_key
   local recorded_digest recorded_mode occurrence tmp err closed=0 skipped=0 reason release_flag tab=$'\t'
-  local resolve_rc
+  local resolve_rc note
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --source) shift; source=${1:-} ;;
@@ -1485,13 +1493,19 @@ command_answers() {
     answer=${rest%%"$tab"*}
     case "$rest" in *"$tab"*) rest=${rest#*"$tab"} ;; *) rest='' ;; esac
     label=${rest%%"$tab"*}
-    case "$rest" in *"$tab"*) mode=${rest#*"$tab"} ;; *) mode='' ;; esac
+    case "$rest" in *"$tab"*) rest=${rest#*"$tab"} ;; *) rest='' ;; esac
+    mode=${rest%%"$tab"*}
+    case "$rest" in *"$tab"*) note=${rest#*"$tab"} ;; *) note='' ;; esac
     [ -n "${key:-}" ] || continue
     case "$key" in *[!A-Za-z0-9._-]*) continue ;; esac
     [ "${#key}" -le 128 ] || continue
     answer=$(sanitize_field "${answer:-}")
     [ -n "$answer" ] || continue
     label=$(sanitize_field "${label:-}")
+    if [ -n "$note" ]; then
+      note=$(printf '%s' "$note" | python3 -c 'import json, sys; note = json.load(sys.stdin); assert isinstance(note, str); sys.stdout.write(note)') \
+        || fail "invalid captain note for $key"
+    fi
     if [ "$answer" = "$RECONCILE_VALUE" ]; then
       printf 'refused: %s (reconcile requests require a bound captured source)\n' "$key"
       skipped=$((skipped + 1))
@@ -1579,7 +1593,7 @@ command_answers() {
       continue
     fi
     # shellcheck disable=SC2086  # release_flag is empty or a single literal flag.
-    if "$0" answer "$id" --decision-file "$tmp" $release_flag </dev/null >/dev/null 2>"$err"; then
+    if "$0" answer "$id" --decision-file "$tmp" --captain-note "$note" $release_flag </dev/null >/dev/null 2>"$err"; then
       # A parent-channel delivery problem is reported on stderr by the answer
       # path even when the close succeeded; keep it visible.
       [ ! -s "$err" ] || cat "$err" >&2

@@ -506,13 +506,14 @@ cmd_choice_rows() {
         $mode = $data->{close};
       }
       my $label = defined $f{text} ? $f{text} : "";
+      my $captain_note = $note;
       s/[\x00-\x1f\x7f]/ /g for ($answer, $note, $label);
       $label = substr($label, 0, 512);
       if (defined $seen{$key}) { $choices[$seen{$key}] = undef }
       $seen{$key} = scalar @choices;
       push @choices, {
         key => $key, selection => $selected, note => $note, legacy => $legacy,
-        answer => $answer, label => $label, mode => $mode
+        answer => $answer, label => $label, mode => $mode, captain_note => $captain_note
       };
     }
     for my $choice (grep { defined } @choices) {
@@ -526,9 +527,14 @@ cmd_choice_rows() {
         next;
       }
       next if $choice->{selection} eq "reconcile";
-      print length $choice->{mode}
-        ? "$choice->{key}\t$choice->{answer}\t$choice->{label}\t$choice->{mode}\n"
-        : "$choice->{key}\t$choice->{answer}\t$choice->{label}\n";
+      if (length $choice->{captain_note}) {
+        my $note_json = encode_json($choice->{captain_note});
+        print "$choice->{key}\t$choice->{answer}\t$choice->{label}\t$choice->{mode}\t$note_json\n";
+      } else {
+        print length $choice->{mode}
+          ? "$choice->{key}\t$choice->{answer}\t$choice->{label}\t$choice->{mode}\n"
+          : "$choice->{key}\t$choice->{answer}\t$choice->{label}\n";
+      }
     }
   ' "$selection" "$file"
 }
