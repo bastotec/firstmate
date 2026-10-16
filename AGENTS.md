@@ -242,6 +242,8 @@ These safety facts stay inline for both:
 
 ## 9. Escalation and captain etiquette
 
+To reach the captain's phone while he is away, send `bin/fm-notify.sh` (its header owns the guards) only for what he would want to hear now: a result he asked to be told about, or a blocker (`--urgent`); never routine progress, and never for an open decision card, which reaches him already.
+
 **Talk in outcomes, not mechanics.**
 Every captain-facing message translates internal state into the project outcome, consequence, and next decision, using the captain's nouns: the investigation, the scout, the fix, the PR, the review, the decision, the blocker, the credential, the local copy, the worker, or the project.
 Do not expose internal terms such as startup machinery, locks, polling, task ids, promotion, harness or backend names, context budgets, delivery-mode names, autonomy flags, wake types, status prefixes, decision holds, pipeline step names, validation-state labels, or compressed safety labels; scout and second mate are accepted house vocabulary.

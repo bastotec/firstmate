@@ -43,6 +43,8 @@ config/
   power-host              optional ssh alias for fleet quota reads (bin/fm_report.py owns default and bridge flow)
   shared-skills           optional skills repo shipped to connected machines; primary home only (bin/fm-machine.sh header)
   vnc/<machine>.password  mode-600 VNC password per machine; primary home only (bin/fm-machine-vnc.sh header)
+  ntfy/url ntfy/topic ntfy/token  firstmate's ntfy server for phone pushes (mode 600 token); primary home only, read by Fleet Town's feed
+  notify-quiet            optional HH:MM-HH:MM quiet hours for notices, default 22:00-08:00, or off (bin/fm-notify.sh header)
   machine-tunnels         optional gateway host whose model gateway and stream hub machine setup forwards (bin/fm-machine.sh header)
   bridges.json            home-local cross-machine permissions ("Bridge gates"; bin/fm-bridge.py owns schema)
   inbox-* voice-read-*    inbox model and voice-read settings ("Inbox and voice records")
@@ -102,6 +104,7 @@ state/
   home-summary.json       this home's ledger (bin/fm-home-summary-refresh.sh)
   machine-pending/<m>.json  a machine being connected: its checklist and planned second mates; bin/fm-machine-blocker.sh owns format and lifecycle
   machine-skills/<m>.tsv  each machine's `deck skills` inventory; bin/fm-machine-skills.sh owns format and refresh
+  notices/<id>.json       notices for the captain's phone and Fleet app; bin/fm-notify.sh owns the record and its guards
   secondmate-summary-cache/  parent-side copies of remote ledgers (bin/fm-fleet-snapshot.sh)
   reconcile-notify/       one-shot Bearings reconcile requests (bin/fm-secondmate-reconcile.sh)
   primary-chat.json       live deck-chat primary record (bin/fm_primary_chat.py owns fields)
