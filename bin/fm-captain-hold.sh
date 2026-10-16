@@ -100,7 +100,10 @@
 # `--defer <condition>` records the decision file's words with mode `deferred`,
 # parks the task in this home with the non-empty, one-line condition as its hold
 # reason using the normalization described above, and removes its card and
-# hold-set stamp. The condition is stored only as that normalized hold reason.
+# hold-set stamp. The parked reason is the bracket form only because tasks-axi
+# reserves parentheses for hold tags; the caller's own condition words are
+# recorded verbatim in the deferred resolution block (`Deferral condition:`),
+# so captain-facing readers see the condition exactly as it was said.
 # The deferral is settled when the newest resolution block has mode `deferred`
 # and no `Deferral reopened:` marker precedes it, even if parking is unfinished.
 # An exact retry matches the decision words and normalized parked condition,
@@ -617,12 +620,19 @@ closed_answer_replay_mode_compatible() {  # <mode> <task-body>
 # reading as the captain's own words. `reconciled` closes a call that went moot
 # and carries verified evidence, `stale-cleared` closes a stale call on the
 # first mate's evidence under the captain's standing ruling, and every other
-# mode carries what the captain said.
-resolution_block() {  # <mode>
+# mode carries what the captain said. A deferred answer also carries the
+# caller's own one-line condition verbatim below the mode, because the parked
+# hold reason is the parentheses-free storage form tasks-axi requires, while
+# the words themselves are what captain-facing readers need to see again.
+resolution_block() {  # <mode> [verbatim-deferral-condition]
   local label='Captain decision:'
   case "$1" in
     reconciled) label='Reconciliation evidence:' ;;
     stale-cleared) label='Stale-clear evidence:' ;;
+    deferred)
+      [ "$#" -ge 2 ] && [ -n "${2:-}" ] \
+        && label=$(printf 'Deferral condition: %s\n\n%s' "$2" "$label")
+      ;;
   esac
   printf 'Resolution recorded by fm-captain-hold.\nDecision digest: %s\nResolution mode: %s\n\n%s\n%s\n' \
     "$DECISION_DIGEST" "$1" "$label" "$DECISION_TEXT"
@@ -1087,9 +1097,9 @@ command_hold() {
 # Record a resolution block beneath any leading active hold-set stamp,
 # preserving the previous body below it and archiving the pristine original.
 # Successful closure removes the stamp to restore resolution-first ordering.
-write_resolution_record() {  # <task-id> <mode> <shown-body>
-  local id=$1 mode=$2 body=$3 new_body tmp hold_set
-  new_body=$(resolution_block "$mode")
+write_resolution_record() {  # <task-id> <mode> <shown-body> [verbatim-deferral-condition]
+  local id=$1 mode=$2 body=$3 new_body tmp hold_set condition=${4:-}
+  new_body=$(resolution_block "$mode" "$condition")
   body=$(decode_shown_value "$body") \
     || fail "could not decode the existing body for $id"
   hold_set=$(body_hold_set_timestamp "$body")
@@ -1189,8 +1199,12 @@ remove_interrupted_answer_stamp() {  # <task-id>
 
 # Settle a call whose answer waits on a condition: the captain no longer owes
 # anything, so the captain hold becomes this home's parked wait and the card goes.
-close_deferred() {  # <task-id> <condition>
-  tasks_axi hold "$1" --reason "$2" --kind parked >/dev/null || return 1
+# tasks-axi reserves parentheses for hold tags, so the parked reason is the
+# bracket form while the caller's own words were already recorded verbatim in
+# the deferred resolution block the same call wrote, so captain-facing readers
+# can always read the condition as it was said.
+close_deferred() {  # <task-id> <original-condition> <storage-condition>
+  tasks_axi hold "$1" --reason "$3" --kind parked >/dev/null || return 1
   remove_decision_card "$1"
 }
 
@@ -1276,7 +1290,7 @@ command_answer() {
         || fail "task $id records a different deferral condition; retry with its parked hold reason"
       remove_decision_card "$id"
     else
-      close_deferred "$id" "$storage_condition" || fail "could not park deferred captain call $id"
+      close_deferred "$id" "$condition" "$storage_condition" || fail "could not park deferred captain call $id"
     fi
     remove_interrupted_answer_stamp "$id"
     publish_parent_resolution_then_retire "$id" $((occurrence - 1)) deferred
@@ -1307,10 +1321,13 @@ command_answer() {
       printf '%s: %s\n' "$outcome" "$id"
       return 0
     fi
-    write_resolution_record "$id" "$outcome" "$body"
     if [ "$defer" = 1 ]; then
-      close_deferred "$id" "$storage_condition" || fail "could not park deferred captain call $id"
-    elif ! close_answered "$id" "$release"; then
+      write_resolution_record "$id" "$outcome" "$body" "$condition"
+      close_deferred "$id" "$condition" "$storage_condition" || fail "could not park deferred captain call $id"
+    else
+      write_resolution_record "$id" "$outcome" "$body"
+    fi
+    if [ "$defer" = 0 ] && ! close_answered "$id" "$release"; then
       fail "could not close answered captain-held task $id"
     fi
     remove_interrupted_answer_stamp "$id"
