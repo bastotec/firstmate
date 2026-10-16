@@ -30,7 +30,9 @@ id=${BASH_REMATCH[1]}
 rec="$H/state/notices/$id.json"
 assert_equals '{"version": 1, "title": "Report ready", "body": "The VIP report is done.", "urgent": false, "quiet": false, "link": "https://github.com/a/b/pull/7"}' \
   "$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); [r.pop(k) for k in ("id","created")]; print(json.dumps(r))' "$rec")" "the record the feed and the app read"
-pass "a notice is one record with its title, body, urgency and link"
+assert_equals '0o600' "$(python3 -c 'import os,stat,sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' "$rec")" \
+  "captain-private notice contents stay owner-only under umask 022"
+pass "a notice is one private record with its title, body, urgency and link"
 
 out=$(AT=$((NOON + 60)) notify --title "report  ready" "The VIP report is done.")
 assert_equals "notice=duplicate: $id" "$out" "the same notice within 30 minutes"

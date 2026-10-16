@@ -118,9 +118,8 @@ nid = "nt-" + time.strftime("%Y%m%dT%H%M%S", time.gmtime(now)) + "-" + secrets.t
 rec = {"version": 1, "id": nid, "title": title, "body": body, "urgent": urgent, "quiet": quiet,
        "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)), "link": link or None}
 tmp = os.path.join(d, ".%s.json.%s" % (nid, secrets.token_hex(4)))
-with open(tmp, "w") as f:
+with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
     json.dump(rec, f)
-os.chmod(tmp, 0o644)
 os.rename(tmp, os.path.join(d, nid + ".json"))
 print("notice=%s %s" % (nid, "quiet" if quiet else "push"))
 '
