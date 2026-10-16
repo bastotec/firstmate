@@ -18,9 +18,15 @@ is recorded and never stops the next:
            plus two calendar days of fleet reports for remote mates (remote deck
            transcripts are out of scope). Slow fm-* commands come from each
            run_command call joined to its result's duration_ms, at least SLOW_MS.
-           Unreadable sessions, no-mistakes state or fleet reports, non-live
-           included-home summaries, power errors and report gaps saying
-           incomplete/unavailable/unreadable make collect partial.
+           Each included mate's current home-summary state is listed. Unreadable
+           sessions, no-mistakes state or fleet reports, non-live included-home
+           summaries, missing mate states, power errors and report gaps naming
+           incomplete summaries or unavailable/unreadable data make collect partial.
+           Readable record disagreements go into the digest for triage instead;
+           bin/fm_report.py owns the gaps/inconsistencies distinction.
+           No-mistakes breakdowns read each included registered host once over
+           ssh only when its bridge allows reports; denied or unreadable hosts
+           are named in collect's why without the other reasons' three-item cap.
   skills   a deck agent in a fresh ~/dotfiles worktree improves skills/ from
            the digest. Same guards as Ziggy's reflection: only skills/, at most
            MAX_DIFF_LINES changed lines, secret scan of all changed staged bytes
@@ -67,16 +73,39 @@ Files under <home>/state/dream/:
                      {status, seconds, why?}}, skills: [{skill, what, why}],
                      skills_commit, raised: [{title, repo, mate, key, why}],
                      slow_commands: [{command, seconds, count}], counts: {...},
-                     summary}
+                     no_mistakes: {...} or null, summary}
   raised.jsonl       one line per raised item (dedupe across nights)
   digest-<date>.md   the private digest the agents read
+
+no_mistakes (null when collect did not produce a breakdown):
+  {date, failed, by_cause, by_step,
+   hosts: {host: {reviews, cap_hits, failed, by_cause}}, previous, change}.
+Counts cover the preceding 24 hours. Failures are failed/cancelled runs by
+updated_at; this Mac uses only the fleet runs kept by no_mistakes_runs, while
+remote hosts use their whole database. reviews counts all host review steps by
+start time (completion time if absent); cap_hits counts distinct runs with an
+exhausted repair-budget decision, dated by the parent step's completion time
+or start time, not the decision's time. An absent database yields zero counts;
+other read failures omit the host and name it as unread.
+Causes, first match wins: repair cap (an exhausted decision at any time),
+aborted (cancelled run), timeout, infra (lock/daemon/crash/gateway and similar
+errors), finding, other. by_step names the first failed step, else the first
+running/fixing/awaiting_approval/fix_review step, else none.
+previous is {date, failed, by_cause, hosts}; change is {failed, by_cause, hosts,
+coverage_changed}, with signed current-minus-previous counts only for hosts
+measured in both runs. Both are null without common hosts. The comparison
+source is latest.json at collection time, so a full same-day rerun compares
+against the last publication, not necessarily the previous night.
+The morning summary names the top three causes and available comparison;
+counts.no_mistakes_failed remains the local fleet-only count, not the host total.
 
 Configuration: docs/configuration.md "Fleet dreaming" owns config/dream.json.
 Environment: FM_DREAM_DECK (deck binary), FM_DREAM_DOTFILES (~/dotfiles),
 FM_DREAM_JEV (Jev helper command), FM_DREAM_MIN_FREE_GB, FM_DREAM_NO_MISTAKES_DB.
 Tests only: FM_DREAM_NOW (epoch), FM_DREAM_SKIP_ZIGGY_WAIT=1, and FM_DREAM_TASKS,
 FM_DREAM_HANDOFF, FM_DREAM_REPORT, FM_DREAM_ON replacing bin/fm-tasks-axi.sh,
-bin/fm-backlog-handoff.sh, bin/fm-report.sh and bin/fm-on.sh.
+bin/fm-backlog-handoff.sh, bin/fm-report.sh and bin/fm-on.sh; FM_DREAM_BRIDGE
+and FM_DREAM_SSH replace bin/fm-bridge.sh and ssh for breakdown reads.
 
     fm_dream.py run --home H [--only STEP ...] [--dry-run]
     fm_dream.py status --home H [--json]
@@ -545,10 +574,8 @@ def no_mistakes_runs(since, fleet_paths, harness, private_paths=()):
 # The no-mistakes cause breakdown, run against one host's state database (here
 # with python3 directly, on another host over ssh with this text on stdin):
 #   python3 - <db-path or ~/...> <since-epoch> [<run ids JSON>]
-# prints {reviews, cap_hits, failed, by_step, by_cause}.
-# reviews and cap_hits count the host's review steps and runs whose review hit
-# the repair cap in the window; failed rows are the failed or cancelled runs in
-# the window, restricted to the given run ids when a list is passed.
+# prints {reviews, cap_hits, failed, by_step, by_cause}; the module header owns
+# counting windows and cause precedence. A run-id list restricts failures only.
 NM_BREAKDOWN_PY = r"""
 import json, os, re, sqlite3, sys
 db, since = os.path.expanduser(sys.argv[1]), int(sys.argv[2])

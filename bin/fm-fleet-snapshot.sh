@@ -265,9 +265,14 @@ refreshes only its parent-side remote-summary cache as an observational side eff
 validated registered-home handoff. It is local-only, skips nested secondmate
 aggregation, includes generated_epoch for freshness arithmetic, and marks
 inventory contradictions or unavailable child state invalid.
-kind=secondmate meta records are not child inventory for unowned_current or
-terminal_in_flight; they never have backlog rows.
-Its invalidity object names the normalized failure kind and affected ids.
+kind=secondmate meta records are not child inventory for unowned_current,
+terminal_in_flight, or unavailable child state; their current state belongs to
+their own home's published summary, while remote endpoints stay unknown here.
+Worker metadata whose structured backlog item is Done is retained, not unowned
+or an unavailable child.
+Its invalidity object names the first normalized failure kind and affected ids.
+unknown_children lists every unread child id independently of that first
+invalidity; older producers may omit it.
 Actionable tasks-axi captain holds appear as decisions_open and stay visible in
 queued with hold_reason, hold_kind, hold_until,
 hold_bucket, hold_age_days, and plural blocker fields for downstream

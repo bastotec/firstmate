@@ -60,6 +60,13 @@ JSON shape (schema fm-report.v1; new fields may be added, none removed):
           or null                                                        (fleet, primary)
    gaps: [<what could not be read, in words>],
    inconsistencies: [<records a home read but found disagreeing, in words>]}
+
+Record disagreements are listed under "Records that disagree" in markdown,
+separately from unread data in the footer. INCONSISTENT_KINDS owns the set of
+home-summary invalidities treated this way. unknown_children still names read
+gaps even when a disagreement is the first invalidity; for older summaries
+without that field, state unknown plus an unknown endpoint conservatively
+remains a read gap.
 """
 import argparse
 import datetime as dt
