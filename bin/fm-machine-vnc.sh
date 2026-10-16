@@ -27,9 +27,11 @@
 #     tigervnc-standalone-server; Xvnc needs the system xkbcomp, so it is not
 #     installed per user), plus Chrome on that display with its own profile at
 #     ~/.config/firstmate/vnc-browser. systemd user units dev.firstmate.vnc and
-#     dev.firstmate.vnc-browser (linger must be on).
+#     dev.firstmate.vnc-browser (linger must be on). Xvnc is an X server too, so
+#     display :17 takes only clients holding the X11 cookie in
+#     ~/.config/firstmate/vnc/xauthority (mode 600), not any local account.
 # Packages are installed only with --install-deps (`brew install
-# libvncserver`, or `sudo -n apt-get install -y tigervnc-standalone-server`
+# libvncserver`, or `sudo -n apt-get install -y tigervnc-standalone-server tigervnc-tools xauth`
 # when sudo needs no password); otherwise install refuses with the exact
 # command for a person to run. Never run --install-deps on a machine whose
 # captain has not approved the package.
@@ -56,16 +58,15 @@
 # open-url opens the link in the machine's browser: the default browser of
 # the logged-in user on macOS, the display :17 Chrome on Linux.
 #
-# FM_MACHINE_VNC_PORT and FM_MACHINE_VNC_DISPLAY override the port and
-# display (tests). Refusals print `refuse: <reason>` and exit 1; usage errors 2.
+# Refusals print `refuse: <reason>` and exit 1; usage errors 2.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
-PORT=${FM_MACHINE_VNC_PORT:-5917}
-DISPLAY_NUM=${FM_MACHINE_VNC_DISPLAY:-17}
+PORT=5917
+DISPLAY_NUM=17
 MACVNC_REPO=https://github.com/LibVNC/macVNC.git
 MACVNC_COMMIT=6c45640168dd170120d96661b3b711d283257166
 LABEL=dev.firstmate.vnc
@@ -253,14 +254,36 @@ mac_service() { # start|stop|restart
   esac
 }
 
+# The remote job worker runs commands with a bare environment; systemctl --user
+# needs the account's runtime dir and session bus.
+user_bus() {
+  [ -n "${XDG_RUNTIME_DIR:-}" ] || XDG_RUNTIME_DIR="/run/user/$(id -u)"
+  [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] || DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+  export XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS
+}
+
+# The display's X11 cookie: Xvnc is also an X server, so only clients holding it
+# (the browser, open-url) may use :17, not any local account.
+xauth_file() { printf '%s/xauthority\n' "$(vnc_dir)"; }
+ensure_xauth() {
+  local f cookie
+  f=$(xauth_file)
+  (umask 077; mkdir -p "$(vnc_dir)")
+  if ! xauth -f "$f" list ":$DISPLAY_NUM" 2>/dev/null | grep -q MIT-MAGIC-COOKIE-1; then
+    cookie=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+    (umask 077; xauth -q -f "$f" add ":$DISPLAY_NUM" MIT-MAGIC-COOKIE-1 "$cookie" 2>/dev/null) || refuse "could not write the display's X11 cookie"
+  fi
+  chmod 600 "$f"
+}
+
 linux_install() { # [--install-deps]
   local units browser
-  if ! command -v Xvnc >/dev/null 2>&1 || ! command -v vncpasswd >/dev/null 2>&1; then
+  if ! command -v Xvnc >/dev/null 2>&1 || ! command -v vncpasswd >/dev/null 2>&1 || ! command -v xauth >/dev/null 2>&1; then
     if [ "${1:-}" != --install-deps ] || ! sudo -n true 2>/dev/null; then
-      refuse "TigerVNC is missing; a person runs: sudo apt-get install -y tigervnc-standalone-server"
+      refuse "TigerVNC is missing; a person runs: sudo apt-get install -y tigervnc-standalone-server tigervnc-tools xauth"
     fi
-    sudo -n apt-get install -y tigervnc-standalone-server < /dev/null >&2 || refuse "apt-get install tigervnc-standalone-server failed"
-    printf 'step vnc-server=done: installed tigervnc-standalone-server\n'
+    sudo -n apt-get install -y tigervnc-standalone-server tigervnc-tools xauth < /dev/null >&2 || refuse "apt-get install of TigerVNC failed"
+    printf 'step vnc-server=done: installed tigervnc-standalone-server, tigervnc-tools and xauth\n'
   else
     printf 'step vnc-server=skipped: Xvnc at %s\n' "$(command -v Xvnc)"
   fi
@@ -268,7 +291,8 @@ linux_install() { # [--install-deps]
   [ -n "$browser" ] || refuse "no Chrome or Chromium on this machine for the remote browser; a person installs google-chrome"
   # shellcheck disable=SC2016 # $1 is the inner shell's argument.
   store_password sh -c 'vncpasswd -f > "$1"' sh
-  printf 'step vnc-password=done: stored at %s/passwd\n' "$(vnc_dir)"
+  ensure_xauth
+  printf 'step vnc-password=done: stored at %s/passwd, with an X11 cookie for display :%s\n' "$(vnc_dir)" "$DISPLAY_NUM"
   units="$HOME/.config/systemd/user"
   mkdir -p "$units"
   cat > "$units/$LABEL.service" <<UNIT
@@ -276,7 +300,7 @@ linux_install() { # [--install-deps]
 Description=Firstmate VNC desktop (Xvnc :$DISPLAY_NUM on 127.0.0.1:$PORT)
 
 [Service]
-ExecStart=$(command -v Xvnc) :$DISPLAY_NUM -localhost -rfbport $PORT -SecurityTypes VncAuth -rfbauth %h/.config/firstmate/vnc/passwd -geometry 1600x1000 -depth 24 -AlwaysShared
+ExecStart=$(command -v Xvnc) :$DISPLAY_NUM -auth %h/.config/firstmate/vnc/xauthority -nolisten tcp -localhost -rfbport $PORT -SecurityTypes VncAuth -rfbauth %h/.config/firstmate/vnc/passwd -geometry 1600x1000 -depth 24 -AlwaysShared
 Restart=always
 RestartSec=5
 
@@ -291,6 +315,7 @@ After=$LABEL.service
 
 [Service]
 Environment=DISPLAY=:$DISPLAY_NUM
+Environment=XAUTHORITY=%h/.config/firstmate/vnc/xauthority
 ExecStartPre=/bin/sleep 2
 ExecStart=$browser --user-data-dir=%h/.config/firstmate/vnc-browser --no-first-run --no-default-browser-check --start-maximized --window-position=0,0 --window-size=1600,1000
 Restart=always
@@ -299,6 +324,7 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 UNIT
+  user_bus
   systemctl --user daemon-reload
   systemctl --user enable "$LABEL.service" "$LABEL-browser.service" >/dev/null 2>&1 || true
   linux_service restart
@@ -306,6 +332,7 @@ UNIT
 }
 
 linux_service() { # start|stop|restart
+  user_bus
   case "$1" in
     stop) systemctl --user stop "$LABEL-browser.service" "$LABEL.service" >/dev/null 2>&1 || true ;;
     *) systemctl --user restart "$LABEL.service" "$LABEL-browser.service" >/dev/null 2>&1 || refuse "could not start $LABEL" ;;
@@ -340,8 +367,9 @@ cmd_status_local() {
       if command -v Xvnc >/dev/null 2>&1; then
         printf 'item vnc-server=present: TigerVNC Xvnc at %s\n' "$(command -v Xvnc)"
       else
-        printf 'item vnc-server=human: sudo apt-get install -y tigervnc-standalone-server\n'
+        printf 'item vnc-server=human: sudo apt-get install -y tigervnc-standalone-server tigervnc-tools xauth\n'
       fi
+      user_bus
       systemctl --user is-active --quiet "$LABEL.service" 2>/dev/null && running=yes
       ;;
   esac
@@ -395,8 +423,9 @@ cmd_open_url_local() { # <url>
   if [ "$(os)" = Darwin ]; then
     open "$1" || refuse "the browser did not open the link"
   else
+    user_bus
     systemctl --user is-active --quiet "$LABEL-browser.service" || linux_service start
-    DISPLAY=":$DISPLAY_NUM" "$(linux_browser)" --user-data-dir="$HOME/.config/firstmate/vnc-browser" "$1" >/dev/null 2>&1 &
+    DISPLAY=":$DISPLAY_NUM" XAUTHORITY="$(xauth_file)" "$(linux_browser)" --user-data-dir="$HOME/.config/firstmate/vnc-browser" "$1" >/dev/null 2>&1 &
   fi
   printf 'opened=url\n'
 }

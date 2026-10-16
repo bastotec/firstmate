@@ -24,6 +24,7 @@ export FAKE_LOG="$LOG" FAKE_LISTEN="127.0.0.1:5917"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$FAKEBIN/$1"; chmod +x "$FAKEBIN/$1"; }
 stub uname 'echo Linux'
 stub Xvnc 'exit 0'
+stub xauth 'f=; while [ $# -gt 0 ]; do case $1 in -f) f=$2; shift 2;; -q) shift;; list) [ -s "$f" ] && cat "$f"; exit 0;; add) printf "%s MIT-MAGIC-COOKIE-1 %s\n" "$2" "$4" >> "$f"; exit 0;; *) shift;; esac; done'
 stub vncpasswd '[ "$1" = -f ] || exit 2; read -r p; printf "OBF:%s" "${#p}"'
 stub google-chrome 'printf "chrome %s\n" "$*" >> "$FAKE_LOG"'
 stub systemctl 'printf "systemctl %s\n" "$*" >> "$FAKE_LOG"; exit 0'
@@ -39,9 +40,22 @@ assert_not_contains "$out" "$PW" "install printed the password"
 assert_contains "$out" "step vnc-service=done: dev.firstmate.vnc on 127.0.0.1:5917" "service step"
 assert_equals "OBF:8" "$(cat "$ACCT/.config/firstmate/vnc/passwd")" "the machine keeps only the obfuscated form"
 assert_equals 600 "$(stat -f %Lp "$ACCT/.config/firstmate/vnc/passwd" 2>/dev/null || stat -c %a "$ACCT/.config/firstmate/vnc/passwd")" "the machine's password file is private"
-unit="$ACCT/.config/systemd/user/dev.firstmate.vnc.service"
-assert_grep '-localhost -rfbport 5917 -SecurityTypes VncAuth -rfbauth %h/.config/firstmate/vnc/passwd' "$unit" "Xvnc must be loopback and password only"
-assert_grep 'Environment=DISPLAY=:17' "$ACCT/.config/systemd/user/dev.firstmate.vnc-browser.service" "the browser runs on the VNC display"
+# The units as systemd reads them: the one uncommented ExecStart and its arguments.
+unit_exec() { awk '/^[[:space:]]*#/ { next } /^ExecStart=/ { n++; sub(/^ExecStart=/, ""); line = $0 } END { if (n != 1) exit 1; print line }' "$1"; }
+unit_env() { awk -v k="$2" '/^[[:space:]]*#/ { next } /^Environment=/ { sub(/^Environment=/, ""); if (index($0, k "=") == 1) v = substr($0, length(k) + 2) } END { print v }' "$1"; }
+arg_after() { awk -v want="$2" '{ for (i = 1; i < NF; i++) if ($i == want) { print $(i + 1); exit } }' <<< "$1"; }
+units="$ACCT/.config/systemd/user"
+exec_line=$(unit_exec "$units/dev.firstmate.vnc.service") || fail "the VNC unit must have exactly one ExecStart"
+[[ " $exec_line " == *" -localhost "* ]] || fail "Xvnc runs without -localhost"
+assert_equals 5917 "$(arg_after "$exec_line" -rfbport)" "Xvnc's port"
+assert_equals VncAuth "$(arg_after "$exec_line" -SecurityTypes)" "Xvnc takes only the VNC password"
+assert_equals "%h/.config/firstmate/vnc/passwd" "$(arg_after "$exec_line" -rfbauth)" "Xvnc's password file"
+assert_equals "%h/.config/firstmate/vnc/xauthority" "$(arg_after "$exec_line" -auth)" "Xvnc's X11 cookie"
+assert_equals tcp "$(arg_after "$exec_line" -nolisten)" "no X11 over TCP"
+assert_equals ":17" "$(unit_env "$units/dev.firstmate.vnc-browser.service" DISPLAY)" "the browser runs on the VNC display"
+assert_equals "%h/.config/firstmate/vnc/xauthority" "$(unit_env "$units/dev.firstmate.vnc-browser.service" XAUTHORITY)" "the browser holds the X11 cookie"
+assert_grep "MIT-MAGIC-COOKIE-1" "$ACCT/.config/firstmate/vnc/xauthority" "the X11 cookie was written"
+assert_equals 600 "$(stat -f %Lp "$ACCT/.config/firstmate/vnc/xauthority" 2>/dev/null || stat -c %a "$ACCT/.config/firstmate/vnc/xauthority")" "the X11 cookie is private"
 assert_no_grep "$PW" "$LOG" "a stub saw the password on argv"
 vnc install local > /dev/null
 assert_equals "$PW" "$(cat "$H/config/vnc/local.password")" "a reinstall keeps the same password"
@@ -68,7 +82,7 @@ out=$(vnc install local)
 rc=$?
 set -e
 expect_code 1 "$rc" "install without the package"
-assert_contains "$out" "refuse: TigerVNC is missing; a person runs: sudo apt-get install -y tigervnc-standalone-server" "exact command for a person"
+assert_contains "$out" "refuse: TigerVNC is missing; a person runs: sudo apt-get install -y tigervnc-standalone-server tigervnc-tools xauth" "exact command for a person"
 stub Xvnc 'exit 0'
 pass "a missing package is never installed without --install-deps"
 
