@@ -403,11 +403,12 @@ matches = [turn['text'] for turn in turns if marker in turn['text']]
 assert len(matches) == 1, matches
 body = matches[0]
 output = pathlib.Path(sys.argv[2]).read_bytes()
-budget = 65536 - len(preamble.encode('utf-8'))
+# A wake leaves 9000 bytes for the captain's recorded preferences each turn carries.
+budget = 65536 - len(preamble.encode('utf-8')) - 9000
 assert body.startswith(preamble), 'wake handling instructions were truncated'
 assert body.endswith(marker + '\n'), 'wake reason was truncated'
 assert body == preamble + output[-budget:].decode('utf-8', 'ignore'), 'unexpected bounded watcher output'
-assert 65533 <= len(body.encode('utf-8')) <= 65536, 'incorrect UTF-8 byte budget'
+assert 65533 - 9000 <= len(body.encode('utf-8')) <= 65536 - 9000, 'incorrect UTF-8 byte budget'
 PY
     count=$((count + 1))
   done

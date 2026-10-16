@@ -46,6 +46,9 @@ is recorded and never stops the next:
            previous run's proposals. An unreadable raised.jsonl prevents filing,
            and an item already in its dedupe window is not filed twice.
            Dreaming never pushes to or opens PRs on harness repositories.
+  memory   runs the captain memory's upkeep (bin/fm_captain_memory.py) and adds
+           its one line to the summary; skipped on a dry run. Its findings are
+           not failures: only an upkeep that cannot run is not clean.
 
 Runs are serialized by a kernel flock held for the whole run.
 Before each step (dry runs included): skipped when the Mac has less than
@@ -103,8 +106,9 @@ Configuration: docs/configuration.md "Fleet dreaming" owns config/dream.json.
 Environment: FM_DREAM_DECK (deck binary), FM_DREAM_DOTFILES (~/dotfiles),
 FM_DREAM_JEV (Jev helper command), FM_DREAM_MIN_FREE_GB, FM_DREAM_NO_MISTAKES_DB.
 Tests only: FM_DREAM_NOW (epoch), FM_DREAM_SKIP_ZIGGY_WAIT=1, and FM_DREAM_TASKS,
-FM_DREAM_HANDOFF, FM_DREAM_REPORT, FM_DREAM_ON replacing bin/fm-tasks-axi.sh,
-bin/fm-backlog-handoff.sh, bin/fm-report.sh and bin/fm-on.sh; FM_DREAM_BRIDGE
+FM_DREAM_HANDOFF, FM_DREAM_REPORT, FM_DREAM_ON, FM_DREAM_CAPTAIN_MEMORY replacing
+bin/fm-tasks-axi.sh, bin/fm-backlog-handoff.sh, bin/fm-report.sh, bin/fm-on.sh and
+`bin/fm_captain_memory.py upkeep`; FM_DREAM_BRIDGE
 and FM_DREAM_SSH replace bin/fm-bridge.sh and ssh for breakdown reads.
 
     fm_dream.py run --home H [--only STEP ...] [--dry-run]
@@ -126,8 +130,8 @@ import time
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-STEPS = ['collect', 'skills', 'triage', 'file']
-BUDGET = {'collect': 300, 'skills': 2700, 'triage': 1200, 'file': 300}
+STEPS = ['collect', 'skills', 'triage', 'file', 'memory']
+BUDGET = {'collect': 300, 'skills': 2700, 'triage': 1200, 'file': 300, 'memory': 120}
 MIN_FREE_GB = float(os.environ.get('FM_DREAM_MIN_FREE_GB', '3'))
 WAIT_ZIGGY = 3600
 MAX_DIFF_LINES = 600
@@ -1317,6 +1321,22 @@ def step_file(ctx):
     return result
 
 
+def step_memory(ctx):
+    """The captain memory's nightly upkeep (bin/fm_captain_memory.py owns what it
+    does). Its findings - new candidates, oversized files, repeats - go in the
+    summary line; only a failure to run is not clean."""
+    if ctx.dry_run:
+        return {'status': 'dry-run'}
+    stub = os.environ.get('FM_DREAM_CAPTAIN_MEMORY')
+    argv = [stub] if stub else [sys.executable, str(SCRIPT_DIR / 'fm_captain_memory.py')]
+    r = ctx.run(argv + ['upkeep', '--home', str(ctx.home)], timeout=120, env=dict(os.environ, FM_HOME=str(ctx.home)))
+    line = next((ln for ln in reversed((r.stdout or '').splitlines()) if ln.startswith('captain-memory:')), '')
+    if r.returncode or not line:
+        return {'status': 'failed', 'why': ((r.stderr or r.stdout or '').strip() or 'no summary line')[:300]}
+    ctx.facts['captain_memory'] = line
+    return {'status': 'done', 'summary': line}
+
+
 # --- run --------------------------------------------------------------------
 
 CLEAN = ('done', 'merged', 'no changes', 'quiet day', 'nothing to file', 'dry-run')  # anything else is not clean
@@ -1331,6 +1351,8 @@ def summary_line(run):
     nm = nm_summary(run.get('no_mistakes'))
     if nm:
         text += ' ' + nm[0].upper() + nm[1:] + '.'
+    if run.get('captain_memory'):
+        text += ' ' + run['captain_memory'][0].upper() + run['captain_memory'][1:] + '.'
     if bad:
         text += ' Did not run cleanly: %s.' % ', '.join('%s (%s)' % (n, run['steps'][n]['status']) for n in bad)
     return text
@@ -1372,6 +1394,7 @@ def cmd_run(args):
         run['slow_commands'] = ctx.facts.get('slow_commands', [])
         run['counts'] = ctx.facts.get('counts', {})
         run['no_mistakes'] = ctx.facts.get('no_mistakes')
+        run['captain_memory'] = ctx.facts.get('captain_memory')
         run['status'] = ('done' if all(s.get('status') in CLEAN for s in run['steps'].values()) and not force_partial
                          else 'partial')
         run['summary'] = summary_line(run)

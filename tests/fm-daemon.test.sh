@@ -3125,7 +3125,7 @@ test_inject_msg_stream_with_real_steer_client() {
   state="$dir/state"; steer="$dir/chat/steer"; events="$dir/chat/events.ndjson"
   client="$dir/client-bin"
   mkdir -p "$steer" "$client"
-  cp "$ROOT/bin/fm-primary-steer.sh" "$ROOT/bin/fm_primary_chat.py" "$ROOT/bin/fm_model_switch.py" "$ROOT/bin/fm_stream_deck.py" "$ROOT/bin/fm-gate-refuse-lib.sh" "$client/"
+  cp "$ROOT/bin/fm-primary-steer.sh" "$ROOT/bin/fm_primary_chat.py" "$ROOT/bin/fm_model_switch.py" "$ROOT/bin/fm_stream_deck.py" "$ROOT/bin/fm_captain_memory.py" "$ROOT/bin/fm-gate-refuse-lib.sh" "$client/"
   # Keep the real client beside a stand-in host script so its process identity
   # includes the exact script path and --home suffix, as the real host does.
   cat > "$client/fm-deck-chat.sh" <<'SH'

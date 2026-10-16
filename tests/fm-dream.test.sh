@@ -169,6 +169,12 @@ printf '{"summary": "fleet ok", "waiting": [], "gaps": [], "power": [], "shipped
           {"agent": "w-8", "task": "finn-finance-crew", "status": "failed", "mate": "finn-finance"}]}\n'
 SH
   printf '#!/usr/bin/env bash\nprintf "[]\\n"\n' > "$d/bin/gh"
+  cat > "$d/bin/memory" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$STUB_CALLS/memory"
+[ ! -e "$STUB_CALLS/memory-fails" ] || { echo "cannot read the shared file" >&2; exit 1; }
+echo "captain-memory: 12 entries, 2 new candidates in x, oversized: none, repeats since last upkeep: 1"
+SH
   chmod +x "$d/bin/"*
   printf '%s' "$d"
 }
@@ -177,7 +183,7 @@ run_dream() {  # <case-dir> <args...>
   local d=$1; shift
   PATH="$d/bin:$PATH" DECK_STATE="$d/deck" FM_DREAM_DECK="$d/bin/deck" FM_DREAM_DOTFILES="$d/dotfiles" \
     FM_DREAM_JEV="$d/bin/jev" FM_DREAM_TASKS="$d/bin/tasks" FM_DREAM_HANDOFF="$d/bin/handoff" \
-    FM_DREAM_REPORT="$d/bin/report" FM_DREAM_NO_MISTAKES_DB="$d/nm.sqlite" STUB_CALLS="$d/calls" \
+    FM_DREAM_REPORT="$d/bin/report" FM_DREAM_CAPTAIN_MEMORY="$d/bin/memory" FM_DREAM_NO_MISTAKES_DB="$d/nm.sqlite" STUB_CALLS="$d/calls" \
     python3 "$DREAM" run --home "$d/home" "$@"
 }
 
@@ -349,6 +355,19 @@ test_a_terminated_run_leaves_no_agent_behind() {
   pass "a terminated run ends its agent and removes its worktree"
 }
 
+test_the_captain_memory_upkeep_runs_nightly_and_reports_its_findings() {
+  local d out
+  d=$(new_case memory)
+  out=$(run_dream "$d" --only memory) || fail "the memory step exited nonzero"
+  assert_contains "$(cat "$d/calls/memory")" "upkeep --home $d/home" "the upkeep runs for this home"
+  assert_contains "$out" 'Captain-memory: 12 entries, 2 new candidates' "its findings reach the summary line"
+  assert_contains "$out" '"status": "done"' "findings are not a failure"
+  : > "$d/calls/memory-fails"
+  out=$(run_dream "$d" --only memory) || true
+  assert_contains "$out" 'Did not run cleanly: memory (failed)' "an upkeep that cannot run is reported"
+  pass "the captain memory's nightly upkeep runs in dreaming, and only a failure to run is not clean"
+}
+
 test_dry_run_files_nothing_and_pushes_nothing() {
   local d before
   d=$(new_case dry)
@@ -357,6 +376,7 @@ test_dry_run_files_nothing_and_pushes_nothing() {
   [ -n "$(find "$d/calls" -name 'add.*')" ] && fail "a dry run filed a task"
   [ "$(git -C "$d/origin.git" rev-parse main)" = "$before" ] || fail "a dry run pushed"
   [ -e "$d/home/state/dream/latest.json" ] && fail "a dry run replaced latest.json"
+  [ -e "$d/calls/memory" ] && fail "a dry run ran the captain memory upkeep"
   pass "a dry run files nothing, pushes nothing and leaves the last summary alone"
 }
 
@@ -603,4 +623,5 @@ test_unreadable_open_work_files_nothing_blind
 test_a_corrupt_ledger_or_missing_agent_output_files_nothing
 test_a_terminated_run_leaves_no_agent_behind
 test_dry_run_files_nothing_and_pushes_nothing
+test_the_captain_memory_upkeep_runs_nightly_and_reports_its_findings
 test_report_shows_the_last_run

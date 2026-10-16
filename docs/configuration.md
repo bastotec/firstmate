@@ -106,6 +106,7 @@ state/
   model-chain/            per-lane model cooldowns ("Model fallback chains")
   pending-replies/        parent-owned secondmate pending replies (bin/fm-pending-reply-lib.sh)
   captain-direct/ captain-direct.log  parent-side captain-direct delivery ledger and echo-guard log (bin/fm-captain-direct-lib.sh)
+  captain-memory-* .captain-memory-*  captain-memory records and bookkeeping (bin/fm_captain_memory.py header owns files and mutation contracts)
   mate-mail/             primary-home peer-message spool and routing bookkeeping (bin/fm-mate-mail-lib.sh owns layout)
   mate-messages.log      primary-home peer-message oversight log (bin/fm-mate-mail-lib.sh owns fields)
   crew-time.log           per-home busy-state history for crew time; append-only; bin/fm-busy-event.sh appends, bin/fm_report.py reads
@@ -341,8 +342,10 @@ The [`firstmate-coding-guidelines` skill](../.agents/skills/firstmate-coding-gui
 
 Domain-local preferences for one captain's fleet live in each home's `data/captain.md`, printed in the session-start digest after `data/projects.md` and optional `data/secondmates.md`.
 Before changing it, inspect the file and curate the matching bullet in place under the [`stow` skill's](../.agents/skills/stow/SKILL.md) tiering and archive contract; add a bullet only for a genuinely new durable preference.
-Shared preferences across secondmate domains live only in the primary home's optional `data/captain-shared.md`.
-`secondmate-provisioning` owns its propagation contract, including the required header, read-only copies, quarantine diagnostics, and the rule that existing homes trim `data/captain.md` by hand after first propagation.
+Shared preferences across secondmate domains are authoritative in the primary home's optional `data/captain-shared.md`.
+[`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) owns its propagation contract, including the required header, read-only copies, quarantine diagnostics, and the rule that existing homes trim `data/captain.md` by hand after first propagation.
+Captain memory automatically records standing instructions at delivery and recalls recorded preferences on turns.
+[`bin/fm_captain_memory.py`](../bin/fm_captain_memory.py)'s header owns capture routing and cues, recall limits, repeat accounting, and nightly upkeep; [`tests/fm-captain-memory.test.sh`](../tests/fm-captain-memory.test.sh) covers that contract.
 
 ## Operational learnings (data/learnings.md)
 

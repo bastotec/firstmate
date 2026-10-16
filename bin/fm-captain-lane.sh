@@ -338,6 +338,22 @@ $(awk 'seen >= 2 { print } /^---$/ { seen++ }' "$CONTRACT")
 
 $prompt"
   fi
+  prompt=$(printf '%s' "$prompt" | python3 -c '
+import re, sys
+body = sys.stdin.read()
+while True:
+    quoted = re.sub(r"(\[[^\]]*?)fm-captain-memory(?!-quoted)", r"\1fm-captain-memory-quoted", body, flags=re.I | re.A)
+    if quoted == body:
+        break
+    body = quoted
+sys.path.insert(0, sys.argv[1])
+try:
+    from fm_captain_memory import with_memory
+    recalled = with_memory(sys.argv[2], body)
+except Exception:
+    recalled = body
+sys.stdout.write(recalled)
+' "$SCRIPT_DIR" "$FM_HOME" 2>/dev/null) || { log "cannot sanitize turn"; sleep "$POLL"; continue; }
   step=started
   [ "$mode" != recover ] || step=recovering
   journal "$step" "$name" || { log "cannot journal $name; not running its turn"; sleep 5; continue; }

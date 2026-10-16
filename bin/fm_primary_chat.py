@@ -54,8 +54,9 @@ Two hosts serve one home:
     and chosen model, the primary busy id, stream label primary-chat and keeper
     dev.firstmate.primary.<hash>. It takes no home session lock, runs no session
     start or watcher, and uses --no-project-context. Its positional first prompt
-    on every start is .agents/skills/captain-thread/SKILL.md, the sole captain
-    contract, queued ahead of pending steering; the host never moves pending
+    on every start carries .agents/skills/captain-thread/SKILL.md, the sole
+    captain contract, plus recall under bin/fm_captain_memory.py's contract,
+    queued ahead of pending steering; the host never moves pending
     conversation input, including peer messages. Known operational input is
     archived in split-archived/; unconsumed startup digests are handed to the
     supervisor's persisted inbox before archiving, even without a live host.
@@ -149,6 +150,7 @@ from fm_model_switch import policy_permits
 
 BIN = Path(__file__).resolve().parent
 MAX_BODY = 65536
+MEMORY_ROOM = 9000
 KINDS = ('wake', 'away', 'captain', 'other')
 SEQ_NAME = re.compile(r'^([1-9][0-9]*)\.msg$')
 SESSION_RE = re.compile(r'^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$')
@@ -360,6 +362,42 @@ def publish_body(steer, body):
     return seq
 
 
+def captain_words(body):
+    words, marker, _ = body.rpartition('\n\n[fm-captain-memory]\n')
+    if marker and body.endswith('\n[/fm-captain-memory]'):
+        return words
+    return body
+
+
+def capture_captain_memory(home, body, source):
+    words = captain_words(body)
+    if not words.startswith('[fm-supervisor-note]'):
+        try:
+            # Detached: delivery never waits on the capture.
+            proc = subprocess.Popen([sys.executable, str(BIN / 'fm_captain_memory.py'),
+                                     'capture', '--home', str(home), '--source', source],
+                                    stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL, text=True, start_new_session=True)
+            proc.stdin.write(words)
+            proc.stdin.close()
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+
+def with_captain_memory(home, body):
+    """Give every turn the captain's recorded preferences, sized to its room."""
+    while True:
+        quoted = re.sub(r'(\[[^\]]*?)fm-captain-memory(?!-quoted)', r'\1fm-captain-memory-quoted', body, flags=re.I | re.A)
+        if quoted == body:
+            break
+        body = quoted
+    try:
+        from fm_captain_memory import with_memory
+        return with_memory(home, body, max_bytes=MAX_BODY)
+    except Exception:
+        return body
+
+
 def steer_publish(args):
     body = read_body(args)
     if body is None:
@@ -368,11 +406,17 @@ def steer_publish(args):
     if record is None:
         print('error: no live deck-chat primary is registered for this home', file=sys.stderr)
         return 3
+    words = body
     from fm_stream_deck import with_deck_images
     imaged = with_deck_images(body)
     if len(imaged.encode('utf-8')) <= MAX_BODY:
         body = imaged
+    body = with_captain_memory(args.home, body)
     seq = publish_body(Path(record['steer_dir']), body)
+    if getattr(args, 'kind', '') == 'captain':
+        capture_captain_memory(args.home, words,
+                               'a captain message to the first mate (session=%s, seq=%d)'
+                               % (record['session'], seq))
     print('seq=%d' % seq)
     print('session=%s' % record['session'])
     return 0
@@ -468,7 +512,7 @@ def record_write(args):
         body = read_body(argparse.Namespace(text=None, file=args.startup_file))
         if body is None:
             return 2
-        publish_body(base / 'steer', body)
+        publish_body(base / 'steer', with_captain_memory(home, body))
     atomic_write(record, json.dumps({
         'version': 1, 'home': str(home), 'session': args.session,
         'steer_dir': str(base / 'steer'), 'events_file': str(base / 'events.ndjson'),
@@ -494,7 +538,7 @@ def handover(args):
     body = read_body(argparse.Namespace(text=None, file=args.file))
     if body is None:
         return 2
-    print('seq=%d' % publish_body(root / session / 'steer', body))
+    print('seq=%d' % publish_body(root / session / 'steer', with_captain_memory(args.home, body)))
     return 0
 
 
@@ -653,7 +697,8 @@ class Supervisor:
             preamble = ('deck-effort: %s\n' % level).encode('utf-8') + preamble
             self.log('wake classified routine; effort %s' % level)
         data = output.encode('utf-8')
-        budget = MAX_BODY - len(preamble)
+        # Leave room for the captain's recorded preferences every turn carries.
+        budget = MAX_BODY - len(preamble) - MEMORY_ROOM
         if len(data) > budget:
             data = data[-budget:].decode('utf-8', 'ignore').encode('utf-8')
         data = preamble + data

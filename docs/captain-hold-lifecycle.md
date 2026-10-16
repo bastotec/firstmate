@@ -51,8 +51,8 @@ Resolution follows the [captain-hold lifecycle policy](../.agents/skills/captain
 ## Answer-time resolution
 
 "A keyed answer resolves its matching captain-held task" is one capability with one owner.
-`answers` is its channel-agnostic entry point: it reads `<task-id>\t<answer>\t<label>[\t<mode>]` lines and resolves each named task through the same `answer` path, so every guard applies identically no matter which channel the answer arrived on.
-The optional mode column carries a card-declared close: `done` (default) completes the task and `release` lifts the hold so held work resumes; any other value is skipped.
+`answers` is its channel-agnostic entry point: it resolves each named task through the same `answer` path, so every guard applies identically no matter which channel the answer arrived on.
+The [`fm-captain-hold.sh` header](../bin/fm-captain-hold.sh) owns the keyed-line format, including close modes and the separate free-text note used for captain memory.
 A key that names no task, names a task that is not captain-held, or names a task already closed is reported as `skipped:` and feeds nothing; a replay whose answer and requested close mode match the newest record is an idempotent `closed:`, while a mode mismatch is skipped; and the command exits nonzero when any key was skipped.
 `--source` is provenance text recorded in the durable decision, never a behavior switch, and the command carries no per-channel branch.
 

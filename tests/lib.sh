@@ -54,6 +54,9 @@ export FM_GATE_REFUSE_BYPASS=1
 # ~/.secrets would otherwise let any watcher test spend a real model call.
 # tests/fm-ask-triage.test.sh points each case at its own synthetic secrets file.
 export FM_ASK_TRIAGE_SECRETS=/nonexistent/fm-test-no-secrets
+# A captured captain rule never pushes to real homes from a test
+# (bin/fm_captain_memory.py).
+export FM_CAPTAIN_MEMORY_PUSH=0
 unset FM_ASK_TRIAGE_HELPER FM_ASK_TRIAGE_KEY_VAR
 
 # Clear the task-worker marker bin/fm-spawn.sh exports into ship and scout

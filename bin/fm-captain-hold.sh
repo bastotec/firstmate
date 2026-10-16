@@ -23,7 +23,7 @@
 #   fm-captain-hold.sh hold <task-id> --reason <reason> \
 #     [--title <title>] [--repo <repo>] [--origin <origin-id>] [--until YYYY-MM-DD] \
 #     [--card-file <path>] [--reopen-deferred] [--expected-record <metadata>]
-#   fm-captain-hold.sh answer <task-id> --decision-file <path> [--release | --defer <condition>]
+#   fm-captain-hold.sh answer <task-id> --decision-file <path> [--captain-note <text>] [--release | --defer <condition>]
 #   fm-captain-hold.sh answers [<legacy-origin> | --any-origin] --source <provenance>   (keyed answers on stdin)
 #   fm-captain-hold.sh reconcile-requests --source-id <source-id> --source <provenance>   (task ids on stdin)
 #   fm-captain-hold.sh bind <source-id> [<legacy-origin> | --any-origin]
@@ -96,6 +96,10 @@
 # A refusal preserves the recorded answer for retry without
 # closing the task or removing its card; --release does not close the task.
 # Matching retries of an already-closed answer remain offline finalization.
+# After recording a new resolution, `answer` submits its decision words to
+# bin/fm_captain_memory.py capture. `--captain-note` supplies the captain's
+# free text separately from a channel-generated decision; an explicitly empty
+# note suppresses capture of option labels and generated provenance.
 #
 # `--defer <condition>` records the decision file's words with mode `deferred`,
 # parks the task in this home with the non-empty, one-line condition as its hold
@@ -123,12 +127,17 @@
 # ONE KEYED-ANSWER INTAKE, FED BY EVERY CHANNEL.
 # "A keyed answer resolves its matching captain-held task" is a single
 # capability, owned here and nowhere else. `answers` reads
-# `<task-id>\t<answer>\t<label>[\t<mode>]` lines on stdin and resolves each named
-# task through the very same `answer` path above, so every guard applies
-# identically no matter which channel the answer arrived on. The key IS the
-# task id - no identity arithmetic. The optional fourth field selects the close:
-# empty or `done` completes the task, `release` lifts the hold so held work
-# resumes; anything else is skipped. A key that names no task, a task that is
+# `<task-id>\t<answer>\t<label>[\t<mode>[\t<captain-note-json>]]` lines on stdin
+# and resolves each named task through the very same `answer` path above, so
+# every guard applies identically no matter which channel the answer arrived
+# on. The key IS the task id - no identity arithmetic. The optional fourth
+# field selects the close: empty or `done` completes the task, `release` lifts
+# the hold so held work resumes; anything else is skipped. The optional fifth
+# field is a JSON string containing the captain's original free-text note,
+# preserving its line breaks independently of the single-line answer field.
+# It is decoded and passed as `--captain-note`; absent or empty means no note
+# and never captures the generated keyed decision as a standing instruction.
+# A key that names no task, a task that is
 # not held for the captain, or a task already closed is reported as `skipped:`
 # and feeds nothing. A replayed delivery whose answer digest and requested
 # close mode both match the newest record is reported `closed:` and is a no-op;
@@ -1208,14 +1217,21 @@ close_deferred() {  # <task-id> <original-condition> <storage-condition>
   remove_decision_card "$1"
 }
 
+capture_card_answer() {
+  [ -n "$3" ] || return 0
+  printf '%s' "$3" | python3 "$SCRIPT_DIR/fm_captain_memory.py" capture \
+    --home "$FM_HOME" --source "his answer to card $1 in $FM_HOME (occurrence $2)" >/dev/null 2>&1 &
+}
+
 command_answer() {
   local id=${1:-} decision_file='' release=0 show state hold_kind body outcome recorded_mode occurrence
-  local defer=0 condition='' storage_condition='' deferral_state
+  local defer=0 condition='' storage_condition='' deferral_state captain_note='' captain_note_set=0 memory_text
   [ "$#" -ge 1 ] || { usage >&2; exit 2; }
   shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --decision-file) shift; decision_file=${1:-} ;;
+      --captain-note) shift; captain_note=${1-}; captain_note_set=1 ;;
       --release) release=1 ;;
       --defer) shift; defer=1; condition=${1:-} ;;
       *) usage >&2; exit 2 ;;
@@ -1229,6 +1245,8 @@ command_answer() {
     storage_condition=$(parentheses_free_reason "$condition")
   fi
   load_decision "$decision_file"
+  memory_text=$DECISION_TEXT
+  [ "$captain_note_set" = 0 ] || memory_text=$captain_note
   acquire_task_control_lock "$id"
   require_tasks_axi
   task_show "$id" || fail "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
@@ -1270,6 +1288,7 @@ command_answer() {
     [ "$hold_kind" = captain ] \
       || fail "task $id was never held for the captain; nothing to record an answer on"
     write_resolution_record "$id" repaired "$body"
+    capture_card_answer "$id" "$occurrence" "$memory_text"
     remove_interrupted_answer_stamp "$id"
     task_show "$id" || fail "task $id disappeared while recording the answer"
     show=$TASK_SHOW_OUTPUT
@@ -1323,9 +1342,11 @@ command_answer() {
     fi
     if [ "$defer" = 1 ]; then
       write_resolution_record "$id" "$outcome" "$body" "$condition"
+      capture_card_answer "$id" "$occurrence" "$memory_text"
       close_deferred "$id" "$condition" "$storage_condition" || fail "could not park deferred captain call $id"
     else
       write_resolution_record "$id" "$outcome" "$body"
+      capture_card_answer "$id" "$occurrence" "$memory_text"
     fi
     if [ "$defer" = 0 ] && ! close_answered "$id" "$release"; then
       fail "could not close answered captain-held task $id"
@@ -1452,7 +1473,7 @@ sanitize_reconcile_provenance() {
 command_answers() {
   local origin='' source='' row rest key answer label mode id show state hold_kind body digest legacy_digest legacy_key
   local recorded_digest recorded_mode occurrence tmp err closed=0 skipped=0 reason release_flag tab=$'\t'
-  local resolve_rc
+  local resolve_rc note
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --source) shift; source=${1:-} ;;
@@ -1481,13 +1502,19 @@ command_answers() {
     answer=${rest%%"$tab"*}
     case "$rest" in *"$tab"*) rest=${rest#*"$tab"} ;; *) rest='' ;; esac
     label=${rest%%"$tab"*}
-    case "$rest" in *"$tab"*) mode=${rest#*"$tab"} ;; *) mode='' ;; esac
+    case "$rest" in *"$tab"*) rest=${rest#*"$tab"} ;; *) rest='' ;; esac
+    mode=${rest%%"$tab"*}
+    case "$rest" in *"$tab"*) note=${rest#*"$tab"} ;; *) note='' ;; esac
     [ -n "${key:-}" ] || continue
     case "$key" in *[!A-Za-z0-9._-]*) continue ;; esac
     [ "${#key}" -le 128 ] || continue
     answer=$(sanitize_field "${answer:-}")
     [ -n "$answer" ] || continue
     label=$(sanitize_field "${label:-}")
+    if [ -n "$note" ]; then
+      note=$(printf '%s' "$note" | python3 -c 'import json, sys; note = json.load(sys.stdin); assert isinstance(note, str); sys.stdout.write(note)') \
+        || fail "invalid captain note for $key"
+    fi
     if [ "$answer" = "$RECONCILE_VALUE" ]; then
       printf 'refused: %s (reconcile requests require a bound captured source)\n' "$key"
       skipped=$((skipped + 1))
@@ -1575,7 +1602,7 @@ command_answers() {
       continue
     fi
     # shellcheck disable=SC2086  # release_flag is empty or a single literal flag.
-    if "$0" answer "$id" --decision-file "$tmp" $release_flag </dev/null >/dev/null 2>"$err"; then
+    if "$0" answer "$id" --decision-file "$tmp" --captain-note "$note" $release_flag </dev/null >/dev/null 2>"$err"; then
       # A parent-channel delivery problem is reported on stderr by the answer
       # path even when the close succeeded; keep it visible.
       [ ! -s "$err" ] || cat "$err" >&2

@@ -8,9 +8,11 @@ only its required plain-text/canonical-sequence projection.
 An endpoint-scoped lifecycle lock serializes publication with driver start/end.
 No projection is ever carried into the next turn. Only Deck's handled file
 confirms application; inbox publication, run liveness and PTY writes do not.
-Driver CLI: fm_stream_deck.py start|end STATE ID ENDPOINT [TURN SUPPORTED [SET_MODEL]].
+Driver CLI: fm_stream_deck.py start|end STATE ID ENDPOINT [TURN SUPPORTED [SET_MODEL [HOME]]].
 SET_MODEL 1 records that this turn's Deck takes `deck-control: set_model`
 (bin/fm_model_switch.py publishes it only into such a turn).
+HOME selects captain recall's operational home; absent, it defaults to STATE's
+parent. bin/fm_captain_memory.py owns the recall contract.
 start prints the turn projection path; end retires the active descriptor.
 fm_stream_deck.py captain STATE ID flushes eligible direct sources and bound
 Bridge orders; project_captain owns eligibility and acknowledgement rules.
@@ -27,6 +29,11 @@ import time
 import subprocess
 import sys
 import tempfile
+
+try:
+    from fm_captain_memory import with_memory
+except Exception:
+    with_memory = None
 
 
 ATTACHED_IMAGE = re.compile(r'^Attached: (/.+?) \(image, [^()\n]+\)\s*$')
@@ -104,12 +111,13 @@ class Receiver:
         except FileNotFoundError:
             return None
 
-    def start(self, turn, supported, set_model=False):
+    def start(self, turn, supported, set_model=False, home=None):
         with self.locked():
             projection = self.root / turn
             projection.mkdir(mode=0o700)
             atomic_write(self.root / 'active.json', json.dumps({
-                'turn': turn, 'supported': supported, 'set_model': set_model, 'active': True}))
+                'turn': turn, 'supported': supported, 'set_model': set_model, 'active': True,
+                'home': str(home or self.state.parent)}))
             return str(projection)
 
     def end(self):
@@ -179,12 +187,22 @@ class Receiver:
                         continue
                 elif directory != self.inbox or not supervisor_direct(record, captain_lane(self.state, self.task)):
                     continue
+                while True:
+                    quoted = re.sub(r'(\[[^\]]*?)fm-captain-memory(?!-quoted)', r'\1fm-captain-memory-quoted', body, flags=re.I | re.A)
+                    if quoted == body:
+                        break
+                    body = quoted
                 if not bridge:
                     body = with_deck_images(body)
                 ordinary = self.inbox / source.name
                 guidance = body + '\n\nAfter handling this native steer, acknowledge its ordinary task-inbox source by moving ' + str(ordinary) + ' to ' + str(self.inbox / 'handled' / source.name) + '. Do not apply the same source record twice.'
                 if not bridge and (not body.strip() or len(guidance.encode('utf-8')) > 65536):
                     continue
+                if with_memory is not None:
+                    try:
+                        guidance = with_memory(active.get('home') or self.state.parent, guidance)
+                    except Exception:
+                        pass
                 candidates.append((int(source.stem), body, guidance))
         published = 0
         for number, body, guidance in sorted(candidates):
@@ -540,7 +558,7 @@ def main():
     action, state, task, endpoint, *args = sys.argv[1:]
     receiver = Receiver(state, task, endpoint)
     if action == 'start':
-        print(receiver.start(args[0], args[1] == '1', args[2:3] == ['1']))
+        print(receiver.start(args[0], args[1] == '1', args[2:3] == ['1'], args[3] if len(args) > 3 else None))
     elif action == 'end':
         receiver.end()
     else:

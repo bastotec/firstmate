@@ -67,8 +67,8 @@
 # and restart recovery all belong to bin/fm-procevent.sh.
 #
 # `answers` is this adapter's half of the generic keyed-answer contract in
-# bin/fm-procevent.sh. It reports what the captain actually chose, as
-# `<task-id>\t<answer>\t<label>` lines, and stops there. It maps nothing to a
+# bin/fm-procevent.sh. It reports what the captain actually chose using the
+# keyed-line format owned by bin/fm-captain-hold.sh's header. It maps nothing to a
 # task, records no decision, and closes nothing: a captain answer is not special
 # to Lavish, so every rule about what a keyed answer DOES belongs to the one
 # intake in bin/fm-captain-hold.sh, which the runner feeds. A Lavish review is
@@ -410,9 +410,9 @@ cmd_silent() {
   [ "$content_rc" -eq 1 ]
 }
 
-# Print `key<TAB>answer<TAB>label[<TAB>mode]` for each non-reconcile structured choice the
-# captain submitted in a captured result; the optional mode column relays the
-# card's declared close mode (`done` or `release`) to the keyed-answer intake. The published response frames queued feedback as
+# Print keyed lines for each non-reconcile structured choice; bin/fm-captain-hold.sh's
+# header owns the format. Relay the card's declared close mode and JSON-encode
+# any original free-text note separately for captain memory. The published response frames queued feedback as
 # a `prompts[N]{field,...}:` header followed by exactly N indented CSV rows whose
 # quoted fields carry JSON-style escapes, so this reads the declared field ORDER
 # rather than assuming a fixed column, and takes only rows whose `tag` field is
@@ -506,13 +506,14 @@ cmd_choice_rows() {
         $mode = $data->{close};
       }
       my $label = defined $f{text} ? $f{text} : "";
+      my $captain_note = $note;
       s/[\x00-\x1f\x7f]/ /g for ($answer, $note, $label);
       $label = substr($label, 0, 512);
       if (defined $seen{$key}) { $choices[$seen{$key}] = undef }
       $seen{$key} = scalar @choices;
       push @choices, {
         key => $key, selection => $selected, note => $note, legacy => $legacy,
-        answer => $answer, label => $label, mode => $mode
+        answer => $answer, label => $label, mode => $mode, captain_note => $captain_note
       };
     }
     for my $choice (grep { defined } @choices) {
@@ -526,9 +527,14 @@ cmd_choice_rows() {
         next;
       }
       next if $choice->{selection} eq "reconcile";
-      print length $choice->{mode}
-        ? "$choice->{key}\t$choice->{answer}\t$choice->{label}\t$choice->{mode}\n"
-        : "$choice->{key}\t$choice->{answer}\t$choice->{label}\n";
+      if (length $choice->{captain_note}) {
+        my $note_json = JSON::PP->new->ascii->allow_nonref->encode($choice->{captain_note});
+        print "$choice->{key}\t$choice->{answer}\t$choice->{label}\t$choice->{mode}\t$note_json\n";
+      } else {
+        print length $choice->{mode}
+          ? "$choice->{key}\t$choice->{answer}\t$choice->{label}\t$choice->{mode}\n"
+          : "$choice->{key}\t$choice->{answer}\t$choice->{label}\n";
+      }
     }
   ' "$selection" "$file"
 }

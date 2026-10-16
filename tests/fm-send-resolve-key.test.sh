@@ -647,16 +647,28 @@ test_failed_close_recovery_command_is_shell_safe() {
   fb=$(make_stubs "$dir"); log="$dir/send.log"; err="$dir/send.err"
   home=$(setup_home "manual close")
   marker="$dir/injected"
-  answer="ok'; touch $marker; echo '"
+  answer="Always choose safely'; touch $marker; echo '"
   { fm_test_stream_task "$home/state" t1 "$log"; printf 'kind=ship\n'; } > "$home/state/t1.meta"
   printf 'needs-decision [key=quote-safety]: choose safely\n' > "$home/state/t1.status"
   chmod 0400 "$home/state/t1.status"
 
   env PATH="$fb:$PATH" \
     FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_LOG="$log" FM_SEND_SETTLE=0 \
-    "$SEND" t1 --resolve-key quote-safety "$answer" >/dev/null 2>"$err"; rc=$?
+    "$SEND" t1 --from-captain --resolve-key quote-safety "$answer" >/dev/null 2>"$err"; rc=$?
   chmod 0600 "$home/state/t1.status"
   [ "$rc" -ne 0 ] || fail "a delivered answer with a failed close append should fail loudly"
+  python3 - "$home" "$answer" <<'PY' || fail "a durably delivered captain rule must be captured even when closing fails"
+from pathlib import Path
+import sys
+import time
+home, answer = Path(sys.argv[1]), sys.argv[2]
+assert list((home / 'state/t1.inbox').glob('*.msg')), 'answer was not delivered'
+memory = home / 'data/captain-shared.md'
+deadline = time.monotonic() + 10
+while not memory.exists() or answer not in memory.read_text():
+    assert time.monotonic() < deadline, 'delivered rule was never captured'
+    time.sleep(0.05)
+PY
   diagnostic=$(cat "$err")
   assert_contains "$diagnostic" "Close it manually with:" "the close failure should provide recovery guidance"
   manual=${diagnostic#*Close it manually with: }

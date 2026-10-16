@@ -78,6 +78,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm_stream_deck.py`      | Apply stream hub orders to a Deck worker's durable task inbox |
 | `fm_model_switch.py`     | Checks and live publication for `fm-control.sh <task> model`, the in-place Deck model switch |
 | [`fm-primary-steer.sh`](../bin/fm-primary-steer.sh) | Publish to and read the steering inbox of a `deck chat` primary (`fm_primary_chat.py` owns the layout) |
+| [`fm_captain_memory.py`](../bin/fm_captain_memory.py) | Record the captain's standing instructions at delivery, recall them on every turn, and keep them tidy nightly |
 | [`fm-captain-note.sh`](../bin/fm-captain-note.sh) | A split agent's supervisor (its inner monologue) posts to its conversation, first mate and second mates alike |
 | [`fm-captain-handoff.sh`](../bin/fm-captain-handoff.sh) | A conversation hands an order or question to its own supervisor, naming the sender |
 | [`fm-captain-lane.sh`](../bin/fm-captain-lane.sh) | A split second mate's conversation (the captain's, the first mate's and other mates' words), run beside its supervisor by the home host |
