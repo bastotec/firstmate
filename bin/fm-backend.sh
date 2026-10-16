@@ -202,7 +202,6 @@ fm_backend_reassignment_slot_candidate() {  # <meta> <task-id>
 # the reason in FM_BACKEND_REASSIGNMENT_REFUSAL. The slot directory comes from
 # the caller, since only it knows which pool root it reads.
 # shellcheck disable=SC2034 # Output global, read by the sourcing caller.
-FM_BACKEND_REASSIGNMENT_REFUSAL=
 fm_backend_reassignment_slot_owner() {  # <slot-dir> <claimant-id> <task-id>
   local slot=$1 claimant=$2 id=$3
   fm_treehouse_slot_owner_state "$slot" "$id"
@@ -252,9 +251,9 @@ fm_backend_validate_task_endpoint() {  # <meta-file> <task-id>
     # those proofs and must pass before any destructive step.
     if [ "${FM_BACKEND_VALIDATE_REASSIGNMENT_CANDIDATE:-0}" = 1 ] \
        && fm_backend_reassignment_slot_candidate "$meta" "$id"; then
+      # shellcheck disable=SC2034 # Set here, consumed by bin/fm-teardown.sh.
       FM_BACKEND_VALIDATED_REASSIGNED_TO=$FM_BACKEND_REASSIGNED_TO
     else
-      FM_BACKEND_VALIDATED_REASSIGNED_TO=
       echo "REFUSED: task $id has a missing, empty, or ambiguous worktree identity; preserving task state." >&2
       return 1
     fi

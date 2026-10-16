@@ -7,6 +7,7 @@ set -u
 
 # shellcheck source=tests/fixtures.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
+fm_git_identity
 
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
 TMP_ROOT=$(fm_test_tmproot fm-teardown-endpoint-safety)
@@ -1196,8 +1197,8 @@ SH
 # stubs answering for that PR. <case> is prepared with make_case +
 # mark_case_as_treehouse_pool; the dead task's worktree is already gone (that
 # is the premise), so the branch lives only in the project's refs.
-seed_reassigned_landed_pr() {  # <case> <pr-url> [pr-state]
-  local dir=$1 pr_url=$2 pr_state=${3:-MERGED} replay=${4:-0} multi_commit=${5:-0} default pr_head
+seed_reassigned_landed_pr() {  # <case> [pr-state] [replay] [multi-commit]
+  local dir=$1 pr_state=${2:-MERGED} replay=${3:-0} multi_commit=${4:-0} default pr_head
   default=$(git -C "$dir/project" symbolic-ref --quiet --short HEAD)
   if [ "$replay" = retained ]; then
     printf 'original work\n' > "$dir/project/landed.txt"
@@ -1333,7 +1334,7 @@ test_reassigned_slot_record_retires_only_on_all_four_proofs() {
   # All four proofs hold: the record retires, record-only.
   dir=$(make_case reassign-full)
   mark_case_as_treehouse_pool "$dir"
-  seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/7"
+  seed_reassigned_landed_pr "$dir"
   write_reassigned_meta "$dir" "$id" "$claimant" \
     "pr=https://github.com/example/repo/pull/7"
   write_claimant_meta "$dir" "$claimant"
@@ -1356,7 +1357,7 @@ test_reassigned_slot_record_retires_only_on_all_four_proofs() {
   # refusal and retires nothing.
   dir=$(make_case reassign-live-endpoint)
   mark_case_as_treehouse_pool "$dir"
-  seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/7"
+  seed_reassigned_landed_pr "$dir"
   write_reassigned_meta "$dir" "$id" "$claimant" \
     "pr=https://github.com/example/repo/pull/7"
   write_claimant_meta "$dir" "$claimant"
@@ -1378,7 +1379,7 @@ test_reassigned_slot_record_retires_only_on_all_four_proofs() {
   # Proof (c) missing - the PR is not merged - keeps the refusal.
   dir=$(make_case reassign-open-pr)
   mark_case_as_treehouse_pool "$dir"
-  seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/8" OPEN
+  seed_reassigned_landed_pr "$dir" OPEN
   write_reassigned_meta "$dir" "$id" "$claimant" \
     "pr=https://github.com/example/repo/pull/8"
   write_claimant_meta "$dir" "$claimant"
@@ -1403,7 +1404,7 @@ test_reassigned_slot_record_retires_only_on_all_four_proofs() {
   dir=$(make_case reassign-later-branch-commit)
   mark_case_as_treehouse_pool "$dir"
   pr_tip=$(git -C "$dir/project" rev-parse HEAD)
-  seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/9"
+  seed_reassigned_landed_pr "$dir"
   write_reassigned_meta "$dir" "$id" "$claimant" \
     "pr=https://github.com/example/repo/pull/9"
   write_claimant_meta "$dir" "$claimant"
@@ -1432,7 +1433,7 @@ test_reassigned_slot_record_retires_only_on_all_four_proofs() {
   # refusal, and the recorded handover alone authorizes nothing.
   dir=$(make_case reassign-claim-mismatch)
   mark_case_as_treehouse_pool "$dir"
-  seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/7"
+  seed_reassigned_landed_pr "$dir"
   write_reassigned_meta "$dir" "$id" "$claimant" \
     "pr=https://github.com/example/repo/pull/7"
   write_claimant_meta "$dir" "$claimant"
@@ -1475,7 +1476,7 @@ test_reassigned_slot_record_retires_only_on_all_four_proofs() {
   # --force lifts none of the four proofs.
   dir=$(make_case reassign-force)
   mark_case_as_treehouse_pool "$dir"
-  seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/7" OPEN
+  seed_reassigned_landed_pr "$dir" OPEN
   write_reassigned_meta "$dir" "$id" "$claimant" \
     "pr=https://github.com/example/repo/pull/7"
   write_claimant_meta "$dir" "$claimant"
@@ -1514,7 +1515,7 @@ test_reassigned_record_coverage_and_preservation() {
     case "$scenario" in replayed-*|followup-replayed-*) replay=1 ;; esac
     case "$scenario" in retained-rebase*|followup-retained-rebase) replay=retained ;; esac
     case "$scenario" in followup-default-*) multi_commit=1 ;; esac
-    seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/7" MERGED "$replay" "$multi_commit"
+    seed_reassigned_landed_pr "$dir" MERGED "$replay" "$multi_commit"
     pr_head=$(cat "$dir/pr-head")
     default=$(git -C "$dir/project" symbolic-ref --quiet --short HEAD)
     write_reassigned_meta "$dir" "$id" "$claimant" \
