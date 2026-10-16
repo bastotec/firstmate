@@ -2,7 +2,7 @@
 # fm-dream.sh - the fleet's nightly pass over its own day ("dreaming").
 #
 # Usage:
-#   fm-dream.sh run [--only collect|skills|triage|file ...] [--dry-run]
+#   fm-dream.sh run [--only collect|skills|triage|file|memory ...] [--dry-run]
 #   fm-dream.sh status [--json]
 #   fm-dream.sh install-service     macOS launchd agent, nightly at 04:15
 #   fm-dream.sh uninstall-service

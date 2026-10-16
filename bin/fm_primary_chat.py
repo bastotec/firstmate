@@ -149,6 +149,7 @@ from fm_model_switch import policy_permits
 
 BIN = Path(__file__).resolve().parent
 MAX_BODY = 65536
+MEMORY_ROOM = 9000
 KINDS = ('wake', 'away', 'captain', 'other')
 SEQ_NAME = re.compile(r'^([1-9][0-9]*)\.msg$')
 SESSION_RE = re.compile(r'^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$')
@@ -360,6 +361,40 @@ def publish_body(steer, body):
     return seq
 
 
+def with_captain_memory(home, body, kind=''):
+    """Remember a standing instruction in the captain's own message, and give
+    every turn the captain's recorded preferences (bin/fm_captain_memory.py):
+    the block rides after the text, between markers Fleet Town strips, sized to
+    the room the turn leaves."""
+    memory = str(BIN / 'fm_captain_memory.py')
+    if '[fm-captain-memory]' in body:
+        return body
+    words = body
+    if kind == 'captain' and not words.startswith('[fm-supervisor-note]'):
+        try:
+            # Detached: delivery never waits on the capture.
+            proc = subprocess.Popen([sys.executable, memory, 'capture', '--home', str(home),
+                                     '--source', 'a captain message to the first mate'],
+                                    stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL, text=True, start_new_session=True)
+            proc.stdin.write(words)
+            proc.stdin.close()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    room = MAX_BODY - len(body.encode('utf-8')) - 2
+    if room < 1000:
+        return body
+    try:
+        block = subprocess.run([sys.executable, memory, 'recall', '--home', str(home), '--query', words[:2000],
+                                '--max-bytes', str(room)],
+                               capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        block = ''
+    if block and len((body + '\n\n' + block).encode('utf-8')) <= MAX_BODY:
+        return body + '\n\n' + block
+    return body
+
+
 def steer_publish(args):
     body = read_body(args)
     if body is None:
@@ -372,6 +407,7 @@ def steer_publish(args):
     imaged = with_deck_images(body)
     if len(imaged.encode('utf-8')) <= MAX_BODY:
         body = imaged
+    body = with_captain_memory(args.home, body, getattr(args, 'kind', ''))
     seq = publish_body(Path(record['steer_dir']), body)
     print('seq=%d' % seq)
     print('session=%s' % record['session'])
@@ -468,7 +504,7 @@ def record_write(args):
         body = read_body(argparse.Namespace(text=None, file=args.startup_file))
         if body is None:
             return 2
-        publish_body(base / 'steer', body)
+        publish_body(base / 'steer', with_captain_memory(home, body))
     atomic_write(record, json.dumps({
         'version': 1, 'home': str(home), 'session': args.session,
         'steer_dir': str(base / 'steer'), 'events_file': str(base / 'events.ndjson'),
@@ -494,7 +530,7 @@ def handover(args):
     body = read_body(argparse.Namespace(text=None, file=args.file))
     if body is None:
         return 2
-    print('seq=%d' % publish_body(root / session / 'steer', body))
+    print('seq=%d' % publish_body(root / session / 'steer', with_captain_memory(args.home, body)))
     return 0
 
 
@@ -653,7 +689,8 @@ class Supervisor:
             preamble = ('deck-effort: %s\n' % level).encode('utf-8') + preamble
             self.log('wake classified routine; effort %s' % level)
         data = output.encode('utf-8')
-        budget = MAX_BODY - len(preamble)
+        # Leave room for the captain's recorded preferences every turn carries.
+        budget = MAX_BODY - len(preamble) - MEMORY_ROOM
         if len(data) > budget:
             data = data[-budget:].decode('utf-8', 'ignore').encode('utf-8')
         data = preamble + data

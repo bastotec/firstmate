@@ -1229,6 +1229,10 @@ command_answer() {
     storage_condition=$(parentheses_free_reason "$condition")
   fi
   load_decision "$decision_file"
+  # A free-text card answer can state a standing instruction too
+  # (bin/fm_captain_memory.py ignores a plain option pick).
+  printf '%s' "$DECISION_TEXT" | python3 "$SCRIPT_DIR/fm_captain_memory.py" capture \
+    --home "$FM_HOME" --source "his answer to card $id" >/dev/null 2>&1 &
   acquire_task_control_lock "$id"
   require_tasks_axi
   task_show "$id" || fail "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"

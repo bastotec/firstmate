@@ -734,8 +734,19 @@ fi
 # After a captain message reaches a secondmate: record it for the echo guard and
 # tell this home's first mate once, FYI only (see the header).
 fm_send_captain_direct_delivered() {
-  local mate note f told=told
-  [ "$FROM_CAPTAIN" = 1 ] && [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ -n "$PENDING_REPLY_CORR" ] || return 0
+  local mate note f told=told source
+  [ "$FROM_CAPTAIN" = 1 ] || return 0
+  # Remember a standing instruction he gave any worker or mate
+  # (bin/fm_captain_memory.py), detached so delivery never waits on it.
+  if [ -n "$PENDING_REPLY_CORR" ]; then
+    source="a captain message (corr=$PENDING_REPLY_CORR)"
+  else
+    source="a captain message (record ${INBOX_RECORD##*/})"
+  fi
+  printf '%s' "$RESOLVE_ANSWER_TEXT" | python3 "$SCRIPT_DIR/fm_captain_memory.py" capture \
+    --home "$FM_HOME" --source "$source" --mate "${TARGET_TASK_ID:-${INBOX_TASK_ID:-}}" \
+    >/dev/null 2>&1 &
+  [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ -n "$PENDING_REPLY_CORR" ] || return 0
   if [ ! -f "$(fm_captain_direct_dir "$STATE")/$PENDING_REPLY_CORR" ]; then
     fm_captain_direct_record "$STATE" "$TARGET_TASK_ID" "$PENDING_REPLY_CORR" "$RESOLVE_ANSWER_TEXT" \
       || echo "warning: the captain's message was delivered, but its echo-guard record could not be written under $STATE/captain-direct" >&2

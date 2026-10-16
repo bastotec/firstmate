@@ -430,6 +430,38 @@ test_captain_send_wait_is_bounded() {
   pass "captain-direct: the captain wait is bounded and fails as before"
 }
 
+test_a_standing_rule_he_gives_a_worker_is_remembered() {
+  local i
+  setup remember-worker
+  fm_test_stream_task "$HOME_DIR/state" w1 > "$HOME_DIR/state/w1.meta" || fail "setup: worker endpoint"
+  printf 'kind=ship\nharness=deck\n' >> "$HOME_DIR/state/w1.meta"
+  run_send "$FB" "$HOME_DIR" "$LOG" "$OUT" w1 --from-captain "Going forward, keep every PR under 300 lines." \
+    || fail "the captain's message to a worker should be delivered: $(cat "$OUT")"
+  i=0
+  until grep -qF 'keep every PR under 300 lines' "$HOME_DIR/data/captain-shared.md" 2>/dev/null; do
+    [ "$i" -lt 100 ] || fail "a standing rule he gave a worker was not recorded"
+    sleep 0.1; i=$((i + 1))
+  done
+  assert_grep "in w1's chat" "$HOME_DIR/data/captain-shared.md" "the record names the worker"
+  pass "captain-direct: a standing rule he states in a worker's chat is recorded too"
+}
+
+test_a_standing_rule_he_states_is_remembered() {
+  local i
+  setup remember
+  run_send "$FB" "$HOME_DIR" "$LOG" "$OUT" domain --from-captain "From now on, never merge on a red check." \
+    || fail "the captain's message should be delivered"
+  i=0
+  until grep -qF 'never merge on a red check' "$HOME_DIR/data/captain-shared.md" 2>/dev/null; do
+    [ "$i" -lt 100 ] || fail "a standing rule he gave a mate was not recorded"
+    sleep 0.1; i=$((i + 1))
+  done
+  assert_grep "in domain's chat" "$HOME_DIR/data/captain-shared.md" "the record names the mate"
+  pass "captain-direct: a standing rule he states in a mate's chat is recorded for every home"
+}
+
+test_a_standing_rule_he_states_is_remembered
+test_a_standing_rule_he_gives_a_worker_is_remembered
 test_delivery_tells_first_mate_once
 test_echoes_are_suppressed
 test_corrections_and_unrelated_steers_are_sent

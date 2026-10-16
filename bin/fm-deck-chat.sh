@@ -671,6 +671,10 @@ if [ "$LOCK_BOUND" = 0 ]; then
     printf 'You are the captain thread of the primary firstmate, hosted by bin/fm-deck-chat.sh.\n'
     printf 'This home runs split: a separate supervisor session does all supervision. Your contract follows; it replaces any earlier role in this conversation.\n\n'
     awk 'seen >= 2 { print } /^---$/ { seen++ }' "$CONTRACT"
+    # The captain's recorded preferences ride on this first turn too
+    # (bin/fm_captain_memory.py); every later turn gets them as it is published.
+    printf '\n'
+    python3 "$SCRIPT_DIR/fm_captain_memory.py" recall --home "$FM_HOME" 2>/dev/null || true
   } > "$WORK/first"
 else
 # The digest is the first new steer; older pending input is retained for the

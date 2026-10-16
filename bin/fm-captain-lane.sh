@@ -326,6 +326,12 @@ while kill -0 "$HOST_PID" 2>/dev/null; do
   prompt="$said (record $rec):
 
 $body"
+  # The captain's recorded preferences ride after his words on every turn
+  # (bin/fm_captain_memory.py; Fleet Town strips the marked block).
+  memory=$(python3 "$SCRIPT_DIR/fm_captain_memory.py" recall --home "$FM_HOME" --query "$body" 2>/dev/null) || memory=''
+  [ -z "$memory" ] || prompt="$prompt
+
+$memory"
   if [ "$mode" != new ]; then
     prompt="An earlier turn on this message was interrupted or failed before its end was recorded. Read your last messages in this conversation first: if you already answered it, reply with nothing new and stop.
 

@@ -939,6 +939,15 @@ run_turn() {  # <prompt>
   [ "$SECONDMATE" != 1 ] || supervisor_notes_retry || return 1
   [ "$SECONDMATE" != 1 ] || watch_start || return 1
   [ "$SECONDMATE" != 1 ] || watch_confirm_handling_delivery || return 1
+  # A second mate's every turn carries the captain's recorded preferences
+  # (bin/fm_captain_memory.py; Fleet Town strips the marked block).
+  if [ "$SECONDMATE" = 1 ]; then
+    local memory
+    memory=$(python3 "$SCRIPT_DIR/fm_captain_memory.py" recall --home "$FM_HOME" --query "$prompt" 2>/dev/null) || memory=''
+    [ -z "$memory" ] || prompt="$prompt
+
+$memory"
+  fi
   [ -z "$effort" ] || prompt="deck-effort: $effort
 $prompt"
   # This turn's route: an in-place switch while the file is there, else the

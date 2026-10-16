@@ -377,6 +377,20 @@ PY
   pass "fm-captain-lane: a remote mate reports a failing conversation through its mirrored parent channel"
 }
 
+test_every_turn_carries_the_captains_recorded_rules() {
+  setup
+  mkdir -p "$DIR/home/data"
+  printf '# Shared captain preferences\n\n- 2026-10-16 captain instruction: always open PRs ready for review.\n' > "$DIR/home/data/captain-shared.md"
+  write_captain 'what do you do with a new PR?'
+  start_lane
+  wait_until 100 answered_at_least 'what do you do with a new PR?' 1 || fail "the lane never answered"
+  stop_lane
+  assert_contains "$(cat "$DIR/turns")" '[fm-captain-memory]' "the turn carries the marked memory block"
+  assert_contains "$(cat "$DIR/turns")" 'always open PRs ready for review' "the turn carries his recorded rule"
+  pass "fm-captain-lane: every conversation turn carries the captain's recorded rules"
+}
+
+test_every_turn_carries_the_captains_recorded_rules
 test_unacknowledged_answer_is_never_repeated
 test_relaunched_lane_resolves_the_open_blocker
 test_remote_lane_reports_through_its_parent_channel
