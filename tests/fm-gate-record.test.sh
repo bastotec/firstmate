@@ -4,8 +4,9 @@
 # its findings parsed as written (quoted cells, commas and escapes inside them),
 # parked_since kept across rewrites and restarted for a new run or step, the
 # repair-budget exhaustion seen from a marker finding or the help line, a mate's
-# recommendation kept only while the findings are the same, the record removed
-# when no gate shows, and nothing rewritten when nothing changed.
+# advice in its own <id>.gate-advice carrying what it was given for, the record
+# and its advice removed when no gate shows, and nothing rewritten when nothing
+# changed.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -38,7 +39,7 @@ test_a_parked_gate_is_written_with_its_findings_as_written() {
   [ "$(field "$f" 'd["run"], d["step"], d["risk"], len(d["findings"])')" = "('01RA', 'review', 'high', 2)" ] || fail "gate fields: $(cat "$f")"
   [ "$(field "$f" 'd["findings"][0]["description"]')" = '[CONFIRMED] The new path drops enforcement, so a reply "done" passes.' ] || fail "quoted cell: $(cat "$f")"
   [ "$(field "$f" 'd["findings"][1]["file"], d["findings"][1]["action"]')" = "('', 'auto-fix')" ] || fail "empty cell"
-  [ "$(field "$f" 'd["repair_budget_exhausted"], d["recommendation"]')" = "(False, None)" ] || fail "defaults"
+  [ "$(field "$f" 'd["repair_budget_exhausted"], "recommendation" in d')" = "(False, False)" ] || fail "defaults"
   [ "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$f")" = 0o600 ] || fail "owner-only mode"
   pass "a parked gate is written with its findings as written"
 }
@@ -48,13 +49,13 @@ test_parked_since_holds_and_restarts_for_a_new_run_or_step() {
   status 01RB review "$R1" | python3 "$GATE" "$f"
   python3 - "$f" <<'PY'
 import json, sys
-d = json.load(open(sys.argv[1])); d['parked_since'] = 1000; d['recommendation'] = {'choice': 'fix', 'findings': ['R1'], 'why': 'small', 'by': 'm', 'at': 1}
+d = json.load(open(sys.argv[1])); d['parked_since'] = 1000
 json.dump(d, open(sys.argv[1], 'w'))
 PY
   status 01RB review "$R1" | python3 "$GATE" "$f"
-  [ "$(field "$f" 'd["parked_since"], d["recommendation"]["choice"]')" = "(1000, 'fix')" ] || fail "kept across rewrites: $(cat "$f")"
+  [ "$(field "$f" 'd["parked_since"]')" = 1000 ] || fail "kept across rewrites: $(cat "$f")"
   status 01RB review "$R1" "$R2" | python3 "$GATE" "$f"
-  [ "$(field "$f" 'd["parked_since"], d["recommendation"]')" = "(1000, None)" ] || fail "new findings drop the recommendation only"
+  [ "$(field "$f" 'd["parked_since"]')" = 1000 ] || fail "new findings keep the wait"
   status 01RB test "$R1" | python3 "$GATE" "$f"
   first=$(field "$f" 'd["parked_since"]')
   [ "$first" != 1000 ] || fail "a new step starts the wait again"
@@ -82,9 +83,14 @@ test_no_gate_or_clear_removes_the_record_and_unchanged_leaves_it() {
   printf 'run:\n  id: "01RF"\n  status: running\n' | python3 "$GATE" "$f"
   [ ! -e "$f" ] || fail "no gate in the read leaves the record"
   status 01RF review "$R1" | python3 "$GATE" "$f"
+  python3 "$GATE" "$f" --advise accept --why ok
   python3 "$GATE" "$f" --clear </dev/null
-  [ ! -e "$f" ] || fail "--clear leaves the record"
-  pass "no gate (or --clear) removes the record; an unchanged one is left alone"
+  [ ! -e "$f" ] && [ ! -e "$f-advice" ] || fail "--clear leaves the record or its advice"
+  status 01RF review "$R1" | python3 "$GATE" "$f"
+  python3 "$GATE" "$f" --advise accept --why ok
+  printf 'run:\n  id: "01RF"\n  status: running\n' | python3 "$GATE" "$f"
+  [ ! -e "$f-advice" ] || fail "a gate that went away leaves its advice"
+  pass "no gate (or --clear) removes the record and its advice; an unchanged one is left alone"
 }
 
 test_the_other_response_shapes_are_read_too() {
@@ -111,18 +117,64 @@ test_a_symlink_in_its_place_is_left_alone() {
   pass "a symlink in its place is left alone"
 }
 
-test_a_recommendation_holds_only_for_every_finding_unchanged() {
-  local f="$TMP_ROOT/r.gate" rows=() n
+test_advice_names_what_it_was_given_for_and_never_races_the_publisher() {
+  local f="$TMP_ROOT/r.gate" rows=() n before
   for n in $(seq 1 21); do rows+=("R$n,warning,a.ts,ask-user,\"finding $n\""); done
   status 01RR review "${rows[@]}" | python3 "$GATE" "$f"
-  python3 - "$f" <<'PY'
-import json, sys
-d = json.load(open(sys.argv[1])); d['recommendation'] = {'choice': 'accept'}; json.dump(d, open(sys.argv[1], 'w'))
-PY
+  python3 "$GATE" "$f" --advise fix --why "two small fixes" --findings R1,R2 --by docana || fail "advise exited non-zero"
+  [ "$(field "$f-advice" 'd["run"], d["step"], len(d["finding_ids"]), d["choice"], d["findings"], d["why"], d["by"]')" = "('01RR', 'review', 21, 'fix', ['R1', 'R2'], 'two small fixes', 'docana')" ] || fail "advice fields: $(cat "$f-advice")"
+  [ "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$f-advice")" = 0o600 ] || fail "owner-only advice"
+  python3 "$GATE" "$f" --advise fix --why "fix every finding" --findings "$(field "$f" '",".join(d["finding_ids"])')" || fail "21-finding advice refused"
+  [ "$(field "$f-advice" 'd["findings"] == ["R" + str(n) for n in range(1, 22)]')" = True ] || fail "advice findings truncated: $(cat "$f-advice")"
+  before=$(cat "$f-advice")
+  # the publisher rewrites the gate (a finding past the clip changed) and never touches the advice
   rows[20]='R99,warning,a.ts,ask-user,"another"'
   status 01RR review "${rows[@]}" | python3 "$GATE" "$f"
-  [ "$(field "$f" 'len(d["findings"]), d["recommendation"]')" = "(20, None)" ] || fail "a change past the clip keeps the recommendation"
-  pass "a recommendation holds only while every finding, clipped or not, is unchanged"
+  [ "$(cat "$f-advice")" = "$before" ] || fail "the publisher rewrote the advice"
+  [ "$(python3 -c 'import json,sys; g=json.load(open(sys.argv[1])); a=json.load(open(sys.argv[2])); print(g["finding_ids"] == a["finding_ids"])' "$f" "$f-advice")" = False ] || fail "a reader cannot tell the advice is stale"
+  python3 "$GATE" "$f" --advise maybe --why x 2>/dev/null; [ $? = 2 ] || fail "an unknown choice is refused"
+  python3 "$GATE" "$TMP_ROOT/none.gate" --advise accept --why x 2>/dev/null; [ $? = 1 ] && [ ! -e "$TMP_ROOT/none.gate-advice" ] || fail "advice without a gate"
+  pass "advice names the run, step and findings it was given for, and the publisher never rewrites it"
+}
+
+test_advice_refuses_unknown_findings_and_overlong_text_without_writing() {
+  local f="$TMP_ROOT/invalid/record.gate"
+  mkdir "$TMP_ROOT/invalid"
+  status 01RV review "$R1" | python3 "$GATE" "$f" || fail "gate setup"
+  python3 - "$GATE" "$f" <<'PY' || fail "advice validation or no-write contract"
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+writer, gate_file = sys.argv[1:]
+gate = Path(gate_file)
+advice = Path(gate_file + '-advice')
+command = [sys.executable, writer, gate_file, '--advise', 'fix']
+invalid = [
+    ['--why', 'ok', '--findings', 'R1,R99'],
+    ['--why', 'w' * 601],
+    ['--why', 'ok', '--by', 'b' * 101],
+]
+for existing in (False, True):
+    if existing:
+        result = subprocess.run(command + ['--why', 'é' * 600, '--by', '名' * 100],
+                                capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        data = json.loads(advice.read_text())
+        assert data['why'] == 'é' * 600 and data['by'] == '名' * 100, data
+    for args in invalid:
+        before = {p.name: (p.read_bytes(), p.stat().st_mtime_ns)
+                  for p in gate.parent.iterdir()}
+        result = subprocess.run(command + args, capture_output=True, text=True)
+        assert result.returncode == 2, (args, result)
+        assert result.stderr.strip(), (args, result)
+        assert not result.stdout, (args, result)
+        after = {p.name: (p.read_bytes(), p.stat().st_mtime_ns)
+                 for p in gate.parent.iterdir()}
+        assert after == before, (args, 'refused advice changed files')
+PY
+  pass "unknown findings and overlong why/by exit 2 without creating or rewriting records"
 }
 
 test_a_parked_gate_is_written_with_its_findings_as_written
@@ -131,4 +183,5 @@ test_an_exhausted_repair_budget_is_seen_from_the_marker_or_the_help
 test_no_gate_or_clear_removes_the_record_and_unchanged_leaves_it
 test_the_other_response_shapes_are_read_too
 test_a_symlink_in_its_place_is_left_alone
-test_a_recommendation_holds_only_for_every_finding_unchanged
+test_advice_names_what_it_was_given_for_and_never_races_the_publisher
+test_advice_refuses_unknown_findings_and_overlong_text_without_writing
