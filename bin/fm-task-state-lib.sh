@@ -130,11 +130,8 @@
 #     detail=<text>        this reader's one-line detail
 #     error=<text>         the run's recorded terminal error, when present
 #     updated_at=<UTC>     when any other line last changed
-#   While the run is parked, state/<id>.gate (also 0600, also atomic) carries the
-#   gate it waits at from the same read - step, status, risk, parked_since,
-#   repair_budget_exhausted and its findings - as JSON for the town and the
-#   parked-run rules; bin/fm_gate_record.py owns that record. It is removed with
-#   the crew-state record, or once the run is no longer parked.
+#   The same full read also feeds state/<id>.gate; bin/fm_gate_record.py's
+#   header owns that JSON record's fields, preservation, and cleanup contract.
 #   Scouts, secondmates, remote mates, missing metadata and torn-down copies
 #   publish nothing; bin/fm-teardown.sh removes the record.
 #
@@ -275,10 +272,8 @@ crew_state_publish() {  # <state> <detail> [run-error]
     rm -f -- "$record"
     return 0
   fi
-  # the gate a parked run waits at, with its findings, decided by this same read alone
-  # (bin/fm_gate_record.py keeps it while the read shows a gate, removes it when the read shows
-  # the run without one): a failed or coarse read, or a verdict another rule overrode, says
-  # nothing about it, and a symlink in its place is never touched
+  # Only full reads decide the gate's lifetime, independent of the verdict below;
+  # bin/fm_gate_record.py's header owns preservation and cleanup.
   if [ "$RUN_SOURCE" = full ] && [ ! -L "$gate" ]; then
     printf '%s' "$RUN_OUT" | python3 "$SCRIPT_DIR/fm_gate_record.py" "$gate" 2>/dev/null || true
   fi

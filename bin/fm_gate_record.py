@@ -9,18 +9,35 @@ parked-run rules read the findings without asking no-mistakes again:
   {"version": 1, "run": "01M...", "step": "review", "status": "awaiting_approval",
    "risk": "high", "risk_rationale": "...", "parked_since": 1792161477,
    "repair_budget_exhausted": false,
-   "findings": [{"id", "severity", "file", "action", "description"}],
-   "recommendation": null}
+   "findings": [{"id": "R1", "severity": "warning", "file": "a.py",
+                 "action": "ask-user", "description": "..."}],
+   "finding_ids": ["R1"], "recommendation": null}
 
-parked_since is when this run was first seen parked at this step; it is kept
-across rewrites and starts again when the run or the step changes.
-repair_budget_exhausted is true when the review can fix nothing more (a
-repair-budget-* finding, or the gate's help saying the budget is exhausted).
-recommendation is never written here: a mate's triage may fill it in, and it is
-kept while the run, step and finding ids are unchanged.
+parked_since is the Unix time in seconds when this run was first seen parked
+at this step; it is kept across rewrites and restarts when the run or step changes.
+finding_ids contains every finding's id in input order, including findings
+omitted from the bounded findings list.
+repair_budget_exhausted reports a repair-budget marker finding or help saying
+the repair budget or authority is exhausted; it is not permission to repair.
+recommendation starts null: a mate's triage may fill it in, and the publisher
+keeps it only while the run, step and complete finding_ids list are unchanged.
+
+Publication feeds this writer only a successful full attributed status read.
+A gate in that read keeps the record; a run without a gate removes it.
+Failed or timed-out queries, no attributed run, and coarse ledger fallbacks
+leave an existing gate record alone, unlike the crew-state record.
+Current-state verdict overrides do not decide its lifetime.
+Readers must match it to a parked crew-state for the same run and step.
+The publisher ignores writer failures, so they never fail crew-state publication.
 
 Usage: fm_gate_record.py <gate-file> [--clear]
-  --clear (or no gate in the input) removes the file. Writes are atomic.
+  --clear, or input without a run id or gate, removes the file.
+  Writes use an atomic temp+rename with mode 0600; unchanged records retain mtime.
+  The publisher and writer leave symlinks alone, including on --clear.
+  bin/fm-teardown.sh removes the path (symlink or not) with <id>.crew-state,
+  including when retiring a secondmate home's children.
+
+Regression coverage: tests/fm-gate-record.test.sh and tests/fm-crew-state.test.sh.
 """
 import json
 import os
