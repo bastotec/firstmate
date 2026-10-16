@@ -122,6 +122,17 @@ mac_plist() { printf '%s/Library/LaunchAgents/%s.plist\n' "$HOME" "$LABEL"; }
 storepasswd() { printf '%s/.local/libexec/firstmate/fm-vnc-storepasswd\n' "$HOME"; }
 brew_bin() { command -v brew 2>/dev/null || { [ -x /opt/homebrew/bin/brew ] && echo /opt/homebrew/bin/brew; } || { [ -x /usr/local/bin/brew ] && echo /usr/local/bin/brew; } || true; }
 
+# TigerVNC's own X server: Debian names it Xtigervnc, and Xvnc may be another
+# VNC server picked through update-alternatives.
+tiger_xvnc() {
+  local x
+  x=$(command -v Xtigervnc 2>/dev/null || true)
+  [ -n "$x" ] && { printf '%s\n' "$x"; return 0; }
+  x=$(command -v Xvnc 2>/dev/null || true)
+  [ -n "$x" ] && "$x" -version 2>&1 | grep -q TigerVNC && printf '%s\n' "$x"
+  return 0
+}
+
 linux_browser() { command -v google-chrome 2>/dev/null || command -v chromium 2>/dev/null || command -v chromium-browser 2>/dev/null || true; }
 
 # The password install-local received on stdin, read before anything else
@@ -286,15 +297,18 @@ ensure_xauth() {
 
 linux_install() { # [--install-deps]
   local units browser
-  if ! command -v Xvnc >/dev/null 2>&1 || ! command -v vncpasswd >/dev/null 2>&1 || ! command -v xauth >/dev/null 2>&1; then
+  if [ -z "$(tiger_xvnc)" ] || ! command -v vncpasswd >/dev/null 2>&1 || ! command -v xauth >/dev/null 2>&1; then
     if [ "${1:-}" != --install-deps ] || ! sudo -n true 2>/dev/null; then
       refuse "TigerVNC is missing; a person runs: sudo apt-get install -y tigervnc-standalone-server tigervnc-tools xauth"
     fi
     sudo -n apt-get install -y tigervnc-standalone-server tigervnc-tools xauth < /dev/null >&2 || refuse "apt-get install of TigerVNC failed"
     printf 'step vnc-server=done: installed tigervnc-standalone-server, tigervnc-tools and xauth\n'
   else
-    printf 'step vnc-server=skipped: Xvnc at %s\n' "$(command -v Xvnc)"
+    printf 'step vnc-server=skipped: TigerVNC at %s\n' "$(tiger_xvnc)"
   fi
+  # without lingering, logind stops the user's services when the last login ends
+  [ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" = yes ] \
+    || refuse "this account's services stop at logout; a person runs: sudo loginctl enable-linger $(id -un)"
   browser=$(linux_browser)
   [ -n "$browser" ] || refuse "no Chrome or Chromium on this machine for the remote browser; a person installs google-chrome"
   # shellcheck disable=SC2016 # $1 is the inner shell's argument.
@@ -308,7 +322,7 @@ linux_install() { # [--install-deps]
 Description=Firstmate VNC desktop (Xvnc :$DISPLAY_NUM on 127.0.0.1:$PORT)
 
 [Service]
-ExecStart=$(command -v Xvnc) :$DISPLAY_NUM -auth %h/.config/firstmate/vnc/xauthority -nolisten tcp -localhost -rfbport $PORT -SecurityTypes VncAuth -rfbauth %h/.config/firstmate/vnc/passwd -geometry 1600x1000 -depth 24 -AlwaysShared
+ExecStart=$(tiger_xvnc) :$DISPLAY_NUM -auth %h/.config/firstmate/vnc/xauthority -nolisten tcp -localhost -rfbport $PORT -SecurityTypes VncAuth -rfbauth %h/.config/firstmate/vnc/passwd -geometry 1600x1000 -depth 24 -AlwaysShared
 Restart=always
 RestartSec=5
 
@@ -387,8 +401,8 @@ cmd_status_local() {
       log=$(tail -n 60 "$(mac_log)" 2>/dev/null || true)
       ;;
     *)
-      if command -v Xvnc >/dev/null 2>&1; then
-        printf 'item vnc-server=present: TigerVNC Xvnc at %s\n' "$(command -v Xvnc)"
+      if [ -n "$(tiger_xvnc)" ]; then
+        printf 'item vnc-server=present: TigerVNC at %s\n' "$(tiger_xvnc)"
       else
         printf 'item vnc-server=human: sudo apt-get install -y tigervnc-standalone-server tigervnc-tools xauth\n'
       fi

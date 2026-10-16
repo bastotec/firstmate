@@ -23,7 +23,8 @@ export FAKE_LOG="$LOG" FAKE_LISTEN="127.0.0.1:5917"
 
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$FAKEBIN/$1"; chmod +x "$FAKEBIN/$1"; }
 stub uname 'echo Linux'
-stub Xvnc 'exit 0'
+stub Xvnc 'echo "Xvnc TigerVNC 1.15"'
+stub loginctl 'echo ${FAKE_LINGER:-yes}'
 stub xauth 'f=; while [ $# -gt 0 ]; do case $1 in -f) f=$2; shift 2;; -q) shift;; list) [ -s "$f" ] && cat "$f"; exit 0;; add) printf "%s MIT-MAGIC-COOKIE-1 %s\n" "$2" "$4" >> "$f"; exit 0;; *) shift;; esac; done'
 stub vncpasswd '[ "$1" = -f ] || exit 2; read -r p; printf "OBF:%s" "${#p}"'
 stub google-chrome 'printf "chrome %s\n" "$*" >> "$FAKE_LOG"; exit ${FAKE_CHROME_RC:-0}'
@@ -67,7 +68,7 @@ password=$PW" "$out" "connect gives the viewer what it needs"
 pass "connect is the one place the password is printed"
 
 out=$(vnc status local)
-assert_contains "$out" "item vnc-server=present: TigerVNC Xvnc" "server present"
+assert_contains "$out" "item vnc-server=present: TigerVNC at" "server present"
 assert_contains "$out" "item vnc-service=present: dev.firstmate.vnc is running on 127.0.0.1:5917" "service running"
 assert_contains "$out" "item vnc-loopback=present: only 127.0.0.1 listens on port 5917" "loopback only"
 assert_contains "$out" "item vnc-browser=present: Chrome is running on display :17" "browser running"
@@ -86,7 +87,10 @@ rc=$?
 set -e
 expect_code 1 "$rc" "install without the package"
 assert_contains "$out" "refuse: TigerVNC is missing; a person runs: sudo apt-get install -y tigervnc-standalone-server tigervnc-tools xauth" "exact command for a person"
-stub Xvnc 'exit 0'
+stub Xvnc 'echo "Xvnc TigerVNC 1.15"'
+set +e; out=$(FAKE_LINGER=no vnc install local); rc=$?; set -e
+expect_code 1 "$rc" "install without lingering"
+assert_contains "$out" "a person runs: sudo loginctl enable-linger" "the linger step is a person's"
 pass "a missing package is never installed without --install-deps"
 
 : > "$LOG"
