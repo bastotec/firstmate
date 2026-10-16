@@ -268,22 +268,55 @@ EOF
 }
 
 test_stale_handoff_is_reported_in_the_conversation() {
-  local rec
-  setup
-  printf 'since=2026-10-15T23:42:00Z\ncount=4\nerror=model gateway request failed (HTTP 400)\nescalated=1\n' \
-    > "$DIR/state/mate.supervisor-failing"
-  rec=$(FM_CAPTAIN_LANE_STATE="$DIR/state" FM_CAPTAIN_LANE_ID=mate "$ROOT/bin/fm-captain-handoff.sh" --from captain 'dispatch the order' \
-    | sed -n 's/^handed-over=//p')
-  touch -t 202601010000 "$rec"
-  FM_HANDOFF_STALE_SECS=60 start_lane
-  wait_until 150 answered_at_least "is overdue: I have not finished or acknowledged it" 1 || fail "a stale hand-off was never reported"
-  sleep 2
-  stop_lane
-  assert_contains "$(cat "$DIR/turns")" "my background work is failing since 2026-10-15T23:42:00Z: model gateway request failed (HTTP 400)" \
-    "the report says why it is stuck"
-  [ "$(turns_with "is overdue: I have not finished or acknowledged it")" = 1 ] || fail "a stale hand-off must be reported once"
-  assert_one_agent_voice "$(cat "$DIR/turns")"
-  pass "fm-captain-lane: an order the supervisor never picked up is reported once, with the supervisor's state"
+  local rec rec2 route status background
+  for route in fallback remote; do
+    setup
+    status="$DIR/state/mate.status"
+    if [ "$route" = remote ]; then
+      printf 'mate\n' > "$DIR/home/.fm-secondmate-home"
+      printf 'schema=fm-secondmate-parent.v1\nroute=remote\n' > "$DIR/home/.fm-secondmate-parent"
+      status="$DIR/home/state/parent-replies.status"
+    fi
+    background='failing since 2026-10-15T23:42:00Z: model gateway request failed (HTTP 400)'
+    if [ "$route" = remote ]; then
+      background=busy
+      printf 'v1 gen=g1 seq=1 state=busy source=x event=turn-start ts=1\n' > "$DIR/state/mate.busy-state"
+    else
+      printf 'since=2026-10-15T23:42:00Z\ncount=4\nerror=model gateway request failed (HTTP 400)\nescalated=1\n' \
+        > "$DIR/state/mate.supervisor-failing"
+    fi
+    rec=$(FM_CAPTAIN_LANE_STATE="$DIR/state" FM_CAPTAIN_LANE_ID=mate "$ROOT/bin/fm-captain-handoff.sh" --from captain 'dispatch the order' \
+      | sed -n 's/^handed-over=//p')
+    rec2=$(FM_CAPTAIN_LANE_STATE="$DIR/state" FM_CAPTAIN_LANE_ID=mate "$ROOT/bin/fm-captain-handoff.sh" --from captain 'dispatch another order' \
+      | sed -n 's/^handed-over=//p')
+    touch -t 202601010000 "$rec" "$rec2"
+    FM_DECK_STATUS_IO="$ROOT/bin/fm-state-io.py" FM_HANDOFF_STALE_SECS=60 start_lane
+    wait_until 150 answered_at_least "is overdue: I have not finished or acknowledged it" 2 || fail "a stale hand-off was never reported"
+    wait_until 100 test -f "$DIR/state/mate.inbox/handled/004.msg" || fail "the overdue notes were not acknowledged"
+    stop_lane
+    assert_contains "$(cat "$DIR/turns")" "my background work is $background" \
+      "the report says why it is stuck"
+    assert_contains "$(cat "$status")" "blocked [key=handoff-overdue-mate]: mate has not picked up an order for 1 minutes (record $(basename "$rec")); its background work is $background" \
+      "the overdue order reaches the first mate through $route"
+    [ "$(grep -c 'blocked \[key=handoff-overdue-mate\]' "$status")" = 2 ] || fail "each overdue record needs one blocker"
+    assert_one_agent_voice "$(cat "$DIR/turns")"
+
+    mv "$rec" "$DIR/state/mate.inbox/handled/"
+    write_captain 'check with one overdue order remaining'
+    FM_DECK_STATUS_IO="$ROOT/bin/fm-state-io.py" FM_HANDOFF_STALE_SECS=60 start_lane
+    wait_until 100 answered_at_least 'check with one overdue order remaining' 1 || fail "the restarted lane never checked the remaining hand-off"
+    stop_lane
+    [ "$(turns_with "is overdue: I have not finished or acknowledged it")" = 2 ] || fail "a stale hand-off must be reported once across restarts"
+    [ "$(grep -c 'blocked \[key=handoff-overdue-mate\]' "$status")" = 2 ] || fail "a reported hand-off must not publish another blocker"
+    assert_not_contains "$(cat "$status")" 'resolved [key=handoff-overdue-mate]' "one unacknowledged order keeps the blocker open"
+
+    mv "$rec2" "$DIR/state/mate.inbox/handled/"
+    FM_DECK_STATUS_IO="$ROOT/bin/fm-state-io.py" FM_HANDOFF_STALE_SECS=60 start_lane
+    wait_until 100 grep -q 'resolved \[key=handoff-overdue-mate\]' "$status" || fail "acknowledging every overdue order did not resolve its blocker through $route"
+    stop_lane
+    [ ! -e "$DIR/state/mate.captain-lane.stale-noted" ] || fail "a resolved hand-off episode kept its reporting record"
+    pass "fm-captain-lane: overdue hand-offs notify the conversation and first mate once, and resolve through $route"
+  done
 }
 
 test_failing_conversation_is_reported_and_cleared() {

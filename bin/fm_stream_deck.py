@@ -510,17 +510,12 @@ def conversation_busy(state, task):
 
 def stale_handoffs(state, task, age, now=None):
     """Hand-offs ([fm-captain-thread] records) still unhandled in the inbox more
-    than `age` seconds after delivery, oldest first, that were not reported yet
-    (<task>.captain-lane.stale-noted lists the reported ones)."""
+    than `age` seconds after delivery, oldest first."""
     state = Path(state)
     now = time.time() if now is None else now
-    try:
-        noted = set((state / (task + '.captain-lane.stale-noted')).read_text().split())
-    except FileNotFoundError:
-        noted = set()
     found = []
     for source in (state / (task + '.inbox')).glob('*.msg'):
-        if not source.stem.isdigit() or source.name in noted:
+        if not source.stem.isdigit():
             continue
         try:
             text = source.read_bytes().decode('utf-8')
