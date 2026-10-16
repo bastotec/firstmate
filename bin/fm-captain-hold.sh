@@ -23,7 +23,7 @@
 #   fm-captain-hold.sh hold <task-id> --reason <reason> \
 #     [--title <title>] [--repo <repo>] [--origin <origin-id>] [--until YYYY-MM-DD] \
 #     [--card-file <path>] [--reopen-deferred] [--expected-record <metadata>]
-#   fm-captain-hold.sh answer <task-id> --decision-file <path> [--release | --defer <condition>]
+#   fm-captain-hold.sh answer <task-id> --decision-file <path> [--captain-note <text>] [--release | --defer <condition>]
 #   fm-captain-hold.sh answers [<legacy-origin> | --any-origin] --source <provenance>   (keyed answers on stdin)
 #   fm-captain-hold.sh reconcile-requests --source-id <source-id> --source <provenance>   (task ids on stdin)
 #   fm-captain-hold.sh bind <source-id> [<legacy-origin> | --any-origin]
@@ -96,6 +96,10 @@
 # A refusal preserves the recorded answer for retry without
 # closing the task or removing its card; --release does not close the task.
 # Matching retries of an already-closed answer remain offline finalization.
+# After recording a new resolution, `answer` submits its decision words to
+# bin/fm_captain_memory.py capture. `--captain-note` supplies the captain's
+# free text separately from a channel-generated decision; an explicitly empty
+# note suppresses capture of option labels and generated provenance.
 #
 # `--defer <condition>` records the decision file's words with mode `deferred`,
 # parks the task in this home with the non-empty, one-line condition as its hold
@@ -123,12 +127,17 @@
 # ONE KEYED-ANSWER INTAKE, FED BY EVERY CHANNEL.
 # "A keyed answer resolves its matching captain-held task" is a single
 # capability, owned here and nowhere else. `answers` reads
-# `<task-id>\t<answer>\t<label>[\t<mode>]` lines on stdin and resolves each named
-# task through the very same `answer` path above, so every guard applies
-# identically no matter which channel the answer arrived on. The key IS the
-# task id - no identity arithmetic. The optional fourth field selects the close:
-# empty or `done` completes the task, `release` lifts the hold so held work
-# resumes; anything else is skipped. A key that names no task, a task that is
+# `<task-id>\t<answer>\t<label>[\t<mode>[\t<captain-note-json>]]` lines on stdin
+# and resolves each named task through the very same `answer` path above, so
+# every guard applies identically no matter which channel the answer arrived
+# on. The key IS the task id - no identity arithmetic. The optional fourth
+# field selects the close: empty or `done` completes the task, `release` lifts
+# the hold so held work resumes; anything else is skipped. The optional fifth
+# field is a JSON string containing the captain's original free-text note,
+# preserving its line breaks independently of the single-line answer field.
+# It is decoded and passed as `--captain-note`; absent or empty means no note
+# and never captures the generated keyed decision as a standing instruction.
+# A key that names no task, a task that is
 # not held for the captain, or a task already closed is reported as `skipped:`
 # and feeds nothing. A replayed delivery whose answer digest and requested
 # close mode both match the newest record is reported `closed:` and is a no-op;

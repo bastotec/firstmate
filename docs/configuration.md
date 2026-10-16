@@ -341,10 +341,10 @@ The [`firstmate-coding-guidelines` skill](../.agents/skills/firstmate-coding-gui
 
 Domain-local preferences for one captain's fleet live in each home's `data/captain.md`, printed in the session-start digest after `data/projects.md` and optional `data/secondmates.md`.
 Before changing it, inspect the file and curate the matching bullet in place under the [`stow` skill's](../.agents/skills/stow/SKILL.md) tiering and archive contract; add a bullet only for a genuinely new durable preference.
-Shared preferences across secondmate domains live only in the primary home's optional `data/captain-shared.md`.
-`secondmate-provisioning` owns its propagation contract, including the required header, read-only copies, quarantine diagnostics, and the rule that existing homes trim `data/captain.md` by hand after first propagation.
-A standing instruction the captain states in any chat or free-text card answer is recorded there verbatim at delivery, deduplicated and pushed to every home, and both files ride on every turn of every lane as a capped, relevance-filled block; a rule he had to restate is counted in `state/captain-memory-repeats.log`.
-[`bin/fm_captain_memory.py`](../bin/fm_captain_memory.py)'s header owns capture, recall, and the nightly upkeep.
+Shared preferences across secondmate domains are authoritative in the primary home's optional `data/captain-shared.md`.
+[`secondmate-provisioning`](../.agents/skills/secondmate-provisioning/SKILL.md) owns its propagation contract, including the required header, read-only copies, quarantine diagnostics, and the rule that existing homes trim `data/captain.md` by hand after first propagation.
+Captain memory automatically records standing instructions at delivery and recalls recorded preferences on turns.
+[`bin/fm_captain_memory.py`](../bin/fm_captain_memory.py)'s header owns capture routing and cues, recall limits, repeat accounting, and nightly upkeep; [`tests/fm-captain-memory.test.sh`](../tests/fm-captain-memory.test.sh) covers that contract.
 
 ## Operational learnings (data/learnings.md)
 

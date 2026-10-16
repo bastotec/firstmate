@@ -4,6 +4,7 @@
 Usage:
   fm_captain_memory.py capture --home H --source S [--mate M]   (text on stdin)
   fm_captain_memory.py recall --home H [--query Q] [--max-bytes N]
+  fm_captain_memory.py prompt --home H   (turn text on stdin)
   fm_captain_memory.py upkeep --home H
 
 The captain's standing preferences live in the primary home's
@@ -20,25 +21,36 @@ kept, indented under the bullet), with its date and source, unless the same
 instruction is already recorded. Identity is the normalized instruction text,
 compared for equality, so a shorter or longer rule is its own rule. A card
 answer that only picks an option, or a one-off order without those cues, is not
-a standing rule. A local mate records in its parent's captain-shared.md; a remote
-mate in its own data/captain.md, since its parent is on another machine.
+a standing rule. Capture follows local parent bindings to the upstream primary's
+captain-shared.md; at a remote binding it records in that home's data/captain.md,
+since the parent is on another machine.
 Recording and upkeep serialize on data/.captain-memory.lock.
 
 Every correction delivery is counted in state/captain-memory-repeats.log as a
 memory failure (the captain had to say it again), once per source, whether or
 not its words were already recorded.
 
-After a recording in captain-shared.md, bin/fm-config-push.sh pushes the file
-to every home 20 seconds later; recordings inside that window share one push
-(state/.captain-memory-push-pending), so another mate quotes the rule within
-about a minute.
+After a recording in captain-shared.md, a detached job waits 20 seconds, then
+runs bin/fm-config-push.sh in the recording home and recursively in local
+registered homes that themselves register secondmates, so nested homes receive
+the update too. Remote registry rows are not walked locally; the existing push
+owns remote transfer. Recordings inside that window share one job
+(state/.captain-memory-push-pending). FM_CAPTAIN_MEMORY_PUSH=0 disables it for
+tests.
 
 recall prints the block every turn of every lane carries, between the markers
 "[fm-captain-memory]" and "[/fm-captain-memory]" (Fleet Town strips it from what
 it shows): the home's captain-shared.md and captain.md entries merged by date,
-newest first, up to 8000 characters (about 2k tokens), or --max-bytes when the
-turn has less room. Past the cap it keeps the newest half and fills the rest
-with the entries sharing the most words with --query (the turn's own text).
+newest first, up to 8000 UTF-8 bytes (about 2k tokens for ASCII), or --max-bytes
+when the turn has less room. Past the cap it keeps the newest half and fills
+the rest with the entries sharing the most words with --query (the turn's own
+text). With no entries or too little room for the wrapper, it prints nothing.
+
+prompt strips every incoming memory span, including an unclosed trailing one,
+then appends fresh recall from the home's own files within the turn's 65536-byte
+limit. Delivered text is not a trusted source of recorded captain memory.
+Both native Deck publishers apply the same enrichment; the Rust receiver gives
+the Python recall helper two seconds and publishes without recall if it fails.
 
 upkeep (nightly, from dreaming) dedupes captain-shared.md; collects entries
 missing from it that a mate wrote into its read-only copy (quarantined by a push

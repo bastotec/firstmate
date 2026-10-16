@@ -103,7 +103,7 @@ A secondmate is idle by default and acts only on work routed by the main firstma
 Route durable knowledge to its most specific owner, updating each file with inspect-then-update and pruning rather than appending forever, regardless of harness memory:
 
 - `data/captain.md` holds this home's captain preferences and working style; the primary home's `data/captain-shared.md` holds preferences shared across secondmate domains under `secondmate-provisioning`.
-  A standing instruction he gives in any chat is recorded there automatically and reaches every turn of every lane (`bin/fm_captain_memory.py`); follow the recorded rules in the `[fm-captain-memory]` block a turn carries.
+  Follow the recorded rules in the `[fm-captain-memory]` block a turn carries; [`bin/fm_captain_memory.py`](bin/fm_captain_memory.py)'s header owns automatic capture and recall.
 - Curated, home-local `data/learnings.md` holds fleet-local operational facts.
 - Task notes go with the backlog item, and investigation findings in the scout report.
 - Knowledge for almost every contributor to one project goes in that project's committed `AGENTS.md`, and knowledge general to every firstmate user in this repo's shared tracked surface.
