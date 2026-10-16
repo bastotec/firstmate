@@ -237,6 +237,10 @@ def advise(path, args):
     if opts.get('--advise') not in ('fix', 'accept', 'abort') or not opts.get('--why', '').strip():
         sys.stderr.write(__doc__)
         return 2
+    for option, limit in (('--why', 600), ('--by', 100)):
+        if len(opts.get(option, '')) > limit:
+            sys.stderr.write(f'fm_gate_record: {option} must not exceed {limit} characters\n')
+            return 2
     advice = path + '-advice'
     if os.path.islink(path) or os.path.islink(advice):
         return 0
@@ -249,11 +253,15 @@ def advise(path, args):
         sys.stderr.write('fm_gate_record: no gate record to advise on\n')
         return 1
     findings = [x for x in (opts.get('--findings') or '').split(',') if x]
+    for finding in findings:
+        if finding not in gate.get('finding_ids', []):
+            sys.stderr.write(f'fm_gate_record: --findings id {finding!r} is not in the gate finding_ids\n')
+            return 2
     write(advice, {
         'version': 1, 'run': gate['run'], 'step': gate.get('step', ''),
         'finding_ids': gate.get('finding_ids', []), 'choice': opts['--advise'],
-        'findings': findings[:MAX_FINDINGS], 'why': clip(opts['--why'], 600),
-        'by': clip(opts.get('--by', ''), 100), 'at': int(time.time()),
+        'findings': findings, 'why': opts['--why'],
+        'by': opts.get('--by', ''), 'at': int(time.time()),
     })
     return 0
 

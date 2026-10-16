@@ -124,6 +124,8 @@ test_advice_names_what_it_was_given_for_and_never_races_the_publisher() {
   python3 "$GATE" "$f" --advise fix --why "two small fixes" --findings R1,R2 --by docana || fail "advise exited non-zero"
   [ "$(field "$f-advice" 'd["run"], d["step"], len(d["finding_ids"]), d["choice"], d["findings"], d["why"], d["by"]')" = "('01RR', 'review', 21, 'fix', ['R1', 'R2'], 'two small fixes', 'docana')" ] || fail "advice fields: $(cat "$f-advice")"
   [ "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "$f-advice")" = 0o600 ] || fail "owner-only advice"
+  python3 "$GATE" "$f" --advise fix --why "fix every finding" --findings "$(field "$f" '",".join(d["finding_ids"])')" || fail "21-finding advice refused"
+  [ "$(field "$f-advice" 'd["findings"] == ["R" + str(n) for n in range(1, 22)]')" = True ] || fail "advice findings truncated: $(cat "$f-advice")"
   before=$(cat "$f-advice")
   # the publisher rewrites the gate (a finding past the clip changed) and never touches the advice
   rows[20]='R99,warning,a.ts,ask-user,"another"'
@@ -135,6 +137,47 @@ test_advice_names_what_it_was_given_for_and_never_races_the_publisher() {
   pass "advice names the run, step and findings it was given for, and the publisher never rewrites it"
 }
 
+test_advice_refuses_unknown_findings_and_overlong_text_without_writing() {
+  local f="$TMP_ROOT/invalid/record.gate"
+  mkdir "$TMP_ROOT/invalid"
+  status 01RV review "$R1" | python3 "$GATE" "$f" || fail "gate setup"
+  python3 - "$GATE" "$f" <<'PY'
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+writer, gate_file = sys.argv[1:]
+gate = Path(gate_file)
+advice = Path(gate_file + '-advice')
+command = [sys.executable, writer, gate_file, '--advise', 'fix']
+invalid = [
+    ['--why', 'ok', '--findings', 'R1,R99'],
+    ['--why', 'w' * 601],
+    ['--why', 'ok', '--by', 'b' * 101],
+]
+for existing in (False, True):
+    if existing:
+        result = subprocess.run(command + ['--why', 'é' * 600, '--by', '名' * 100],
+                                capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        data = json.loads(advice.read_text())
+        assert data['why'] == 'é' * 600 and data['by'] == '名' * 100, data
+    for args in invalid:
+        before = {p.name: (p.read_bytes(), p.stat().st_mtime_ns)
+                  for p in gate.parent.iterdir()}
+        result = subprocess.run(command + args, capture_output=True, text=True)
+        assert result.returncode == 2, (args, result)
+        assert result.stderr.strip(), (args, result)
+        assert not result.stdout, (args, result)
+        after = {p.name: (p.read_bytes(), p.stat().st_mtime_ns)
+                 for p in gate.parent.iterdir()}
+        assert after == before, (args, 'refused advice changed files')
+PY
+  [ $? = 0 ] || fail "advice validation or no-write contract"
+  pass "unknown findings and overlong why/by exit 2 without creating or rewriting records"
+}
+
 test_a_parked_gate_is_written_with_its_findings_as_written
 test_parked_since_holds_and_restarts_for_a_new_run_or_step
 test_an_exhausted_repair_budget_is_seen_from_the_marker_or_the_help
@@ -142,3 +185,4 @@ test_no_gate_or_clear_removes_the_record_and_unchanged_leaves_it
 test_the_other_response_shapes_are_read_too
 test_a_symlink_in_its_place_is_left_alone
 test_advice_names_what_it_was_given_for_and_never_races_the_publisher
+test_advice_refuses_unknown_findings_and_overlong_text_without_writing
