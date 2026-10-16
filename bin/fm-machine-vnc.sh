@@ -339,13 +339,26 @@ linux_service() { # start|stop|restart
   esac
 }
 
-# 0 when every listener on the port is a loopback address.
-loopback_only() {
-  local addrs
-  if command -v ss >/dev/null 2>&1; then
-    addrs=$(ss -ltnH "sport = :$PORT" 2>/dev/null | awk '{ print $4 }')
+# The managed server's process id, or nothing.
+service_pid() {
+  if [ "$(os)" = Darwin ]; then
+    launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null | awk '$1 == "pid" && $2 == "=" { print $3; exit }'
   else
-    addrs=$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 { print $9 }')
+    user_bus
+    systemctl --user show -p MainPID --value "$LABEL.service" 2>/dev/null | awk '$1 > 0 { print $1 }'
+  fi
+}
+
+# 0 when the managed server itself listens on the port and only on loopback;
+# 2 when it does not listen there (an unrelated listener does not count);
+# 1 when it listens beyond loopback.
+loopback_only() {
+  local pid=$1 addrs
+  [ -n "$pid" ] || return 2
+  if command -v ss >/dev/null 2>&1; then
+    addrs=$(ss -ltnpH "sport = :$PORT" 2>/dev/null | awk -v p="pid=$pid," 'index($0, p) { print $4 }')
+  else
+    addrs=$(lsof -nP -a -p "$pid" -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 { print $9 }')
   fi
   [ -n "$addrs" ] || return 2
   ! printf '%s\n' "$addrs" | grep -vqE '^(127\.0\.0\.1|\[::1\]|::1):'
@@ -373,7 +386,7 @@ cmd_status_local() {
       systemctl --user is-active --quiet "$LABEL.service" 2>/dev/null && running=yes
       ;;
   esac
-  set +e; loopback_only; rc=$?; set -e
+  set +e; loopback_only "$(service_pid)"; rc=$?; set -e
   if [ "$running" = yes ] && [ "$rc" -eq 0 ]; then
     printf 'item vnc-service=present: %s is running on 127.0.0.1:%s\n' "$LABEL" "$PORT"
   else
@@ -381,7 +394,7 @@ cmd_status_local() {
   fi
   case "$rc" in
     0) printf 'item vnc-loopback=present: only 127.0.0.1 listens on port %s\n' "$PORT" ;;
-    2) printf 'item vnc-loopback=unknown: nothing listens on port %s yet\n' "$PORT" ;;
+    2) printf 'item vnc-loopback=unknown: the server does not listen on port %s yet\n' "$PORT" ;;
     *) printf 'item vnc-loopback=human: port %s listens beyond loopback; stop it and check the service\n' "$PORT" ;;
   esac
   if [ "$(os)" = Darwin ]; then
@@ -425,7 +438,12 @@ cmd_open_url_local() { # <url>
   else
     user_bus
     systemctl --user is-active --quiet "$LABEL-browser.service" || linux_service start
-    DISPLAY=":$DISPLAY_NUM" XAUTHORITY="$(xauth_file)" "$(linux_browser)" --user-data-dir="$HOME/.config/firstmate/vnc-browser" "$1" >/dev/null 2>&1 &
+    # With the display's Chrome running this hands the link over and exits; if it
+    # becomes the browser itself it keeps running, which still opened the link.
+    local rc=0
+    DISPLAY=":$DISPLAY_NUM" XAUTHORITY="$(xauth_file)" timeout 15 "$(linux_browser)" \
+      --user-data-dir="$HOME/.config/firstmate/vnc-browser" "$1" < /dev/null >/dev/null 2>&1 || rc=$?
+    case "$rc" in 0|124) ;; *) refuse "Chrome on display :$DISPLAY_NUM did not take the link (exit $rc)" ;; esac
   fi
   printf 'opened=url\n'
 }

@@ -26,9 +26,9 @@ stub uname 'echo Linux'
 stub Xvnc 'exit 0'
 stub xauth 'f=; while [ $# -gt 0 ]; do case $1 in -f) f=$2; shift 2;; -q) shift;; list) [ -s "$f" ] && cat "$f"; exit 0;; add) printf "%s MIT-MAGIC-COOKIE-1 %s\n" "$2" "$4" >> "$f"; exit 0;; *) shift;; esac; done'
 stub vncpasswd '[ "$1" = -f ] || exit 2; read -r p; printf "OBF:%s" "${#p}"'
-stub google-chrome 'printf "chrome %s\n" "$*" >> "$FAKE_LOG"'
-stub systemctl 'printf "systemctl %s\n" "$*" >> "$FAKE_LOG"; exit 0'
-stub ss 'printf "LISTEN 0 5 %s 0.0.0.0:*\n" $FAKE_LISTEN'
+stub google-chrome 'printf "chrome %s\n" "$*" >> "$FAKE_LOG"; exit ${FAKE_CHROME_RC:-0}'
+stub systemctl 'printf "systemctl %s\n" "$*" >> "$FAKE_LOG"; case "$*" in *MainPID*) echo 4242 ;; esac; exit 0'
+stub ss 'printf "LISTEN 0 5 %s 0.0.0.0:* users:((\"Xvnc\",pid=%s,fd=5))\n" $FAKE_LISTEN ${FAKE_PID:-4242}'
 expect_code() { [ "$1" = "$2" ] || fail "$3: expected exit $1, got $2"; }
 vnc() { PATH="$FAKEBIN:$PATH" HOME="$ACCT" FM_HOME="$H" FM_CONFIG_OVERRIDE="$H/config" "$V" "$@" 2>&1; }
 
@@ -74,6 +74,9 @@ assert_contains "$out" "item vnc-browser=present: Chrome is running on display :
 out=$(FAKE_LISTEN="0.0.0.0:5917" vnc status local)
 assert_contains "$out" "item vnc-loopback=human: port 5917 listens beyond loopback" "a public listener is flagged"
 assert_contains "$out" "item vnc-service=human:" "a public listener is not a healthy service"
+out=$(FAKE_PID=99 vnc status local)
+assert_contains "$out" "item vnc-loopback=unknown: the server does not listen on port 5917 yet" "another process's listener does not count"
+assert_contains "$out" "item vnc-service=human:" "an unrelated listener is not a healthy service"
 pass "status reads the server, the service, loopback and the browser"
 
 rm "$FAKEBIN/Xvnc"
@@ -91,6 +94,9 @@ out=$(vnc open-url local 'https://github.com/a/vip-dashboard/pull/7')
 assert_contains "$out" "opened=url" "open-url result"
 for _ in $(seq 1 50); do grep -q vip-dashboard "$LOG" && break; sleep 0.1; done
 assert_grep 'chrome --user-data-dir='"$ACCT"'/.config/firstmate/vnc-browser https://github.com/a/vip-dashboard/pull/7' "$LOG" "the link opens in the VNC display's Chrome"
+set +e; out=$(FAKE_CHROME_RC=1 vnc open-url local 'https://github.com/a/b'); rc=$?; set -e
+expect_code 1 "$rc" "a link Chrome did not take"
+assert_contains "$out" "did not take the link" "the failure reaches the caller"
 for bad in 'file:///etc/passwd' 'javascript:alert(1)' "https://x/\$(id)'" 'https://x/ a'; do
   set +e; out=$(vnc open-url local "$bad"); rc=$?; set -e
   expect_code 1 "$rc" "open-url $bad"
