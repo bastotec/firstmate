@@ -9,6 +9,8 @@
 #   fm-machine-vnc.sh open-setting <machine> screen|accessibility
 #   fm-machine-vnc.sh open-url <machine> <http(s)-url>
 #   fm-machine-vnc.sh connect <machine>
+#   fm-machine-vnc.sh windows <machine>
+#   fm-machine-vnc.sh raise <machine> <window-id>
 #
 # <machine> is `local` or an ssh alias bin/fm-machine-skills.sh knows (roots);
 # a remote machine runs this same script's `*-local` half through fm-on.sh,
@@ -59,6 +61,16 @@
 # open-url opens the link in the machine's browser: the default browser of
 # the logged-in user on macOS, the display :17 Chrome on Linux.
 #
+# windows prints one JSON line {"display":{"w","h"},"windows":[{"id","app",
+# "title","x","y","w","h"}]}: the shared screen's size and its ordinary
+# windows front to back, in the same coordinates (macOS points of the main
+# display, which macVNC shares; X pixels of display :17 on Linux). Fleet Town
+# shows one window by cropping the desktop to those bounds. macOS withholds
+# other apps' window titles from anything without Screen Recording, so titles
+# are empty there and the app name stands in. raise brings that window's app to
+# the front on macOS (open -a, no extra permission); on Linux the display's
+# Chrome is the only window and raise reports `raised=nothing-to-do`.
+#
 # Refusals print `refuse: <reason>` and exit 1; usage errors 2.
 set -eu
 
@@ -72,7 +84,7 @@ MACVNC_REPO=https://github.com/LibVNC/macVNC.git
 MACVNC_COMMIT=6c45640168dd170120d96661b3b711d283257166
 LABEL=dev.firstmate.vnc
 
-usage() { sed -n '5,11p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '5,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 refuse() { printf 'refuse: %s\n' "$1"; exit 1; }
 
 valid_machine() {
@@ -456,6 +468,61 @@ cmd_open_setting_local() { # screen|accessibility
   printf 'opened=%s\n' "$1"
 }
 
+cmd_windows_local() {
+  if [ "$(os)" = Darwin ]; then
+    osascript -l JavaScript - <<'JXA' || refuse "could not list this Mac's windows"
+ObjC.import('CoreGraphics');
+const opts = $.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements;
+const list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(opts, $.kCGNullWindowID))) || [];
+const d = $.CGDisplayBounds($.CGMainDisplayID());
+const ws = list.filter(w => w.kCGWindowLayer === 0 && w.kCGWindowBounds && w.kCGWindowBounds.Width >= 120 && w.kCGWindowBounds.Height >= 80
+    && w.kCGWindowBounds.X < d.size.width && w.kCGWindowBounds.Y < d.size.height
+    && w.kCGWindowBounds.X + w.kCGWindowBounds.Width > 0 && w.kCGWindowBounds.Y + w.kCGWindowBounds.Height > 0)
+  .map(w => ({ id: w.kCGWindowNumber, app: String(w.kCGWindowOwnerName || ''), title: String(w.kCGWindowName || ''),
+    x: w.kCGWindowBounds.X, y: w.kCGWindowBounds.Y, w: w.kCGWindowBounds.Width, h: w.kCGWindowBounds.Height }));
+JSON.stringify({ display: { w: d.size.width, h: d.size.height }, windows: ws });
+JXA
+  else
+    { DISPLAY=":$DISPLAY_NUM" XAUTHORITY="$(xauth_file)" LC_ALL=C.UTF-8 xwininfo -root 2>/dev/null
+      DISPLAY=":$DISPLAY_NUM" XAUTHORITY="$(xauth_file)" LC_ALL=C.UTF-8 xwininfo -root -children 2>/dev/null; } | python3 -c '
+import json, re, sys
+text = sys.stdin.read()
+size = re.search(r"Width: (\d+)\s+Height: (\d+)", text)
+wins = []
+for line in text.splitlines():
+    m = re.match(r"\s+0x([0-9a-f]+) \"(.*)\": \(\"([^\"]*)\" \"([^\"]*)\"\)\s+(\d+)x(\d+)\+(-?\d+)\+(-?\d+)", line)
+    if not m: continue
+    w, h = int(m.group(5)), int(m.group(6))
+    if w < 120 or h < 80: continue
+    wins.append({"id": int(m.group(1), 16), "app": m.group(4) or m.group(3), "title": m.group(2), "x": int(m.group(7)), "y": int(m.group(8)), "w": w, "h": h})
+wins.reverse()  # xwininfo lists bottom to top
+if not size: sys.exit(1)
+print(json.dumps({"display": {"w": int(size.group(1)), "h": int(size.group(2))}, "windows": wins}))
+' || refuse "could not list display :$DISPLAY_NUM's windows"
+  fi
+}
+
+cmd_raise_local() { # <window-id>
+  local pid exe app
+  case "$1" in ''|*[!0-9]*) refuse "not a window id: $1" ;; esac
+  if [ "$(os)" != Darwin ]; then printf 'raised=nothing-to-do\n'; return 0; fi
+  pid=$(osascript -l JavaScript - "$1" <<'JXA' 2>/dev/null
+ObjC.import('CoreGraphics');
+function run(argv) {
+  const list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID))) || [];
+  const w = list.find(x => x.kCGWindowNumber === Number(argv[0]));
+  return w ? String(w.kCGWindowOwnerPID) : '';
+}
+JXA
+)
+  [ -n "$pid" ] || refuse "no window $1 on this Mac"
+  exe=$(ps -o comm= -p "$pid" 2>/dev/null) || refuse "that window's app is gone"
+  app=${exe%%.app/*}.app
+  [ -d "$app" ] || refuse "could not find that window's app"
+  open -a "$app" || refuse "could not bring $app to the front"
+  printf 'raised=%s\n' "$(basename "$app" .app)"
+}
+
 cmd_open_url_local() { # <url>
   valid_url "$1" || refuse "only plain http(s) links open on a machine"
   if [ "$(os)" = Darwin ]; then
@@ -510,6 +577,8 @@ case "$sub" in
   start-local|stop-local|restart-local) [ "$#" -eq 0 ] || usage; service_local "${sub%-local}" ;;
   open-setting-local) [ "$#" -eq 1 ] || usage; cmd_open_setting_local "$1" ;;
   open-url-local) [ "$#" -eq 1 ] || usage; cmd_open_url_local "$1" ;;
+  windows-local) [ "$#" -eq 0 ] || usage; cmd_windows_local ;;
+  raise-local) [ "$#" -eq 1 ] || usage; cmd_raise_local "$1" ;;
   install) [ "$#" -ge 1 ] || usage; cmd_install "$@" ;;
   status|start|stop|restart)
     [ "$#" -eq 1 ] || usage
@@ -526,5 +595,14 @@ case "$sub" in
     valid_url "$2" || refuse "only plain http(s) links open on a machine"
     on_machine "$1" open-url "$2" ;;
   connect) [ "$#" -eq 1 ] || usage; cmd_connect "$1" ;;
+  windows)
+    [ "$#" -eq 1 ] || usage
+    valid_machine "$1" || refuse "not a known machine: $1"
+    on_machine "$1" windows ;;
+  raise)
+    [ "$#" -eq 2 ] || usage
+    valid_machine "$1" || refuse "not a known machine: $1"
+    case "$2" in ''|*[!0-9]*) refuse "not a window id: $2" ;; esac
+    on_machine "$1" raise "$2" ;;
   *) usage ;;
 esac
