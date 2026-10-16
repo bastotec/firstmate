@@ -1758,7 +1758,7 @@ spawn_worktree_has_origin_config() {  # <worktree>
 # deleted) into this home's state/slot-quarantine/<slot>-<epoch>/, so a
 # leftover scratch area never blocks a task. Any other dirt still refuses.
 quarantine_spawn_slot_scratch() {  # <worktree> <porcelain status>
-  local worktree=$1 status=$2 line dest
+  local worktree=$1 status=$2 line dest tracked
   [ -n "$status" ] || return 1
   while IFS= read -r line; do
     case "$line" in '?? .scratch/'|'?? .scratch/'*) ;; *) return 1 ;; esac
@@ -1766,6 +1766,8 @@ quarantine_spawn_slot_scratch() {  # <worktree> <porcelain status>
 $status
 EOF
   [ -d "$worktree/.scratch" ] && [ ! -L "$worktree/.scratch" ] || return 1
+  tracked=$(git -C "$worktree" ls-files -- .scratch) || return 1
+  [ -z "$tracked" ] || return 1
   dest="$STATE/slot-quarantine/$(basename "$worktree")-$(date +%s)"
   mkdir -p "$dest" && mv "$worktree/.scratch" "$dest/.scratch" || return 1
   echo "notice: pooled worktree '$worktree' held only a previous worker's .scratch/; moved it to $dest/.scratch and continuing" >&2

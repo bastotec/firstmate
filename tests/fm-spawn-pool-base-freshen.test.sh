@@ -299,6 +299,28 @@ test_leftover_scratch_is_set_aside_not_discarded() {
   pass "a slot holding only a previous worker's .scratch/ sets it aside and launches"
 }
 
+test_partially_tracked_scratch_is_left_untouched() {
+  local rec id out status before
+  id='pool-scratch-tracked-r1'
+  rec=$(make_originless_case scratch-tracked "$id")
+  read_case_record "$rec"
+  mkdir -p "$POOL_DIR/.scratch"
+  printf 'tracked scratch instructions\n' > "$POOL_DIR/.scratch/README.md"
+  git -C "$POOL_DIR" add .scratch/README.md
+  git -C "$POOL_DIR" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm scratch-instructions
+  printf 'untracked scratch work\n' > "$POOL_DIR/.scratch/tmp.txt"
+  before=$(git -C "$POOL_DIR" status --porcelain)
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a partially tracked scratch directory must refuse"
+  assert_contains "$out" "is not clean" "the refusal is unchanged"
+  [ "$(git -C "$POOL_DIR" status --porcelain)" = "$before" ] || fail "refusing the slot changed its dirt"
+  assert_grep 'tracked scratch instructions' "$POOL_DIR/.scratch/README.md" "tracked scratch is never moved"
+  assert_grep 'untracked scratch work' "$POOL_DIR/.scratch/tmp.txt" "untracked scratch is never moved beside tracked files"
+  [ ! -e "$HOME_DIR/state/slot-quarantine" ] || fail "refusing tracked scratch created a quarantine"
+  pass "a partially tracked scratch directory is refused without moving any files"
+}
+
 test_scratch_plus_other_dirt_still_refuses() {
   local rec id out status
   id='pool-scratch-dirty-r1'
@@ -843,6 +865,7 @@ test_unreachable_origin_refuses_stale_pool_base
 test_originless_pool_launches_without_a_freshness_fetch
 test_originless_dirty_pool_refuses_without_discarding_work
 test_leftover_scratch_is_set_aside_not_discarded
+test_partially_tracked_scratch_is_left_untouched
 test_scratch_plus_other_dirt_still_refuses
 test_origin_config_without_url_refuses_pool
 test_empty_origin_config_section_refuses_pool

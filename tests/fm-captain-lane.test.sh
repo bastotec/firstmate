@@ -247,13 +247,19 @@ test_handoff_names_its_sender() {
 }
 
 test_handoff_reports_a_failing_supervisor() {
-  local out
+  local out count escalated told health_case
   setup
-  printf 'since=2026-10-15T23:42:00Z\ncount=4\nerror=model gateway request failed (HTTP 400)\nescalated=1\n' \
-    > "$DIR/state/mate.supervisor-failing"
-  out=$(FM_CAPTAIN_LANE_STATE="$DIR/state" FM_CAPTAIN_LANE_ID=mate "$ROOT/bin/fm-captain-handoff.sh" --from captain 'ship it')
-  assert_contains "$out" "supervisor=failing count=4 since=2026-10-15T23:42:00Z error=model gateway request failed (HTTP 400)" \
-    "a hand-off reports a failing supervisor instead of looking queued"
+  for health_case in '1 0 no' '4 0 no' '4 1 yes' '1 missing no'; do
+    read -r count escalated told <<EOF
+$health_case
+EOF
+    printf 'since=2026-10-15T23:42:00Z\ncount=%s\nerror=model gateway request failed (HTTP 400)\n' "$count" \
+      > "$DIR/state/mate.supervisor-failing"
+    [ "$escalated" = missing ] || printf 'escalated=%s\n' "$escalated" >> "$DIR/state/mate.supervisor-failing"
+    out=$(FM_CAPTAIN_LANE_STATE="$DIR/state" FM_CAPTAIN_LANE_ID=mate "$ROOT/bin/fm-captain-handoff.sh" --from captain 'ship it')
+    assert_contains "$out" "supervisor=failing count=$count since=2026-10-15T23:42:00Z told=$told error=model gateway request failed (HTTP 400)" \
+      "a hand-off distinguishes failed turns from a published notification"
+  done
   rm -f "$DIR/state/mate.supervisor-failing"
   printf 'v1 gen=g1 seq=1 state=busy source=x event=turn-start ts=1\n' > "$DIR/state/mate.busy-state"
   out=$(FM_CAPTAIN_LANE_STATE="$DIR/state" FM_CAPTAIN_LANE_ID=mate "$ROOT/bin/fm-captain-handoff.sh" --from captain 'ship it')

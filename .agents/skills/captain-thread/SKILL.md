@@ -62,7 +62,7 @@ A second mate's conversation fills the sender in for you.
 
 That covers starting, steering, stopping or cleaning up work, merges, updates, restarts, card answers delivered here, and anything you are unsure about.
 Then say in one line, in the first person, what you will do ("I'll verify the landing and clean up").
-When the hand-off printed `supervisor=failing`, never say it is in hand: say plainly that you are stuck, what fails and since when, and that the first mate knows.
+When the hand-off printed `supervisor=failing`, never say it is in hand: say plainly that your background work is failing, what fails and since when. Say "the first mate knows" only when it also printed `told=yes`; otherwise say "my background work is failing and I am raising it".
 Say only what you will do, never that it has started, been passed along, or is in progress: you have no proof of that yet, and your next news about it comes as a note when it happens or fails.
 Never run supervision yourself: no wake drains, watcher, `fm-spawn`, steering workers or second mates (a reply to a mate's own message is fine), merges, `fm-captain-hold`, teardown, restarts or updates.
 For a quick question, send `question: <it>` the same way.

@@ -217,6 +217,76 @@ test_each_failing_lane_is_raised_and_cleared_on_its_own() {
   pass "each failing lane of a mate is raised and cleared on its own"
 }
 
+test_both_lanes_share_a_failed_or_deferred_relaunch() {
+  local dir mode tag rec
+  for mode in fails busy; do
+    dir=$(new_case "both-lanes-$mode")
+    add_remote_mate "$dir" pat
+    printf 'alive\n' > "$dir/home/remote-state"
+    printf 'blocked [key=supervisor-failing-pat]: s-err, since a\nblocked [key=conversation-failing-pat]: c-err, since b\n' \
+      > "$dir/home/state/pat.status"
+    : > "$dir/home/control-$mode"
+    scan "$dir"
+    [ "$(calls "$dir" | wc -l | tr -d ' ')" = 1 ] || fail "two failing lanes duplicated the $mode relaunch: $(calls "$dir")"
+    for tag in supervisor conversation; do
+      rec="$dir/home/state/pat.lane-heal-$tag"
+      if [ "$mode" = fails ]; then
+        [ "$(sed -n 's/^relaunched=//p' "$rec")" -gt 0 ] || fail "$tag did not record its failed relaunch"
+        assert_grep 'escalated=1' "$rec" "$tag escalates after a failed relaunch"
+        grep 'lane-heal:pat:' "$dir/home/state/.wake-queue" | grep "${tag}-failing-pat" | grep -q 'did not come up within 90s' \
+          || fail "$tag escalation lost the shared failure output"
+      else
+        assert_grep 'relaunched=0' "$rec" "a busy lifecycle action defers $tag without spending its attempt"
+      fi
+    done
+    if [ "$mode" = fails ]; then
+      scan "$dir"
+      [ "$(calls "$dir" | wc -l | tr -d ' ')" = 1 ] || fail "a failed shared relaunch retried"
+      [ "$(grep -c 'lane-heal:pat:' "$dir/home/state/.wake-queue")" = 2 ] || fail "each failed lane must escalate exactly once"
+    else
+      [ ! -e "$dir/home/state/.wake-queue" ] || fail "a busy lifecycle action escalated"
+      rm -f "$dir/home/control-busy"
+      scan "$dir"
+      [ "$(calls "$dir" | wc -l | tr -d ' ')" = 2 ] || fail "deferred lanes did not share the next attempt"
+    fi
+  done
+  pass "both lanes share one failed or deferred relaunch and retain separate outcomes"
+}
+
+test_lane_health_reads_only_status_appends_once_per_scan() {
+  local dir st probe line expected before after delta i
+  dir=$(new_case incremental-lanes)
+  add_local_mate "$dir" pat fm-deck-worker >/dev/null
+  st="$dir/home/state/pat.status"
+  probe="$dir/status-reads"
+  i=0
+  while [ "$i" -lt 200 ]; do
+    printf 'working: unrelated history %s\n' "$i"
+    i=$((i + 1))
+  done > "$st"
+  line='blocked [key=supervisor-failing-pat]: HTTP 400, since 2026-10-15T23:42:00Z'
+  printf '%s\n' "$line" >> "$st"
+  printf 'blocked [key=conversation-failing-pat]: c-err, since b\n' >> "$st"
+  before=$(wc -c < "$st" | tr -d ' ')
+  FM_OPEN_DECISIONS_READ_PROBE="$probe" scan "$dir"
+  [ "$(wc -l < "$probe" | tr -d ' ')" = 1 ] || fail "a scan must fold both lane keys together"
+  [ "$(cut -f2 "$probe")" = "$before" ] || fail "the initial scan did not fold the status history"
+  expected=$(printf '%s' "$line" | cksum | cut -d' ' -f1)
+  assert_grep "episode=$expected" "$dir/home/state/pat.lane-heal-supervisor" "the exact blocked report identifies the episode"
+  FM_OPEN_DECISIONS_READ_PROBE="$probe" scan "$dir"
+  [ "$(wc -l < "$probe" | tr -d ' ')" = 1 ] || fail "an unchanged status log was reread"
+  printf 'resolved [key=supervisor-failing-pat]: recovered\n' >> "$st"
+  after=$(wc -c < "$st" | tr -d ' ')
+  delta=$((after - before))
+  FM_OPEN_DECISIONS_READ_PROBE="$probe" scan "$dir"
+  [ "$(wc -l < "$probe" | tr -d ' ')" = 2 ] || fail "the appended resolution was not folded exactly once"
+  [ "$(tail -1 "$probe" | cut -f2)" = "$delta" ] || fail "a scan reread history instead of only new appends"
+  [ ! -e "$dir/home/state/pat.lane-heal-supervisor" ] || fail "the resolved lane kept its record"
+  [ -e "$dir/home/state/pat.lane-heal-conversation" ] || fail "the still-open lane was cleared"
+  [ "$(calls "$dir" | wc -l | tr -d ' ')" = 1 ] || fail "unchanged open episodes relaunched again"
+  pass "lane health shares the incremental status fold without losing episode identity"
+}
+
 test_two_failed_revivals_escalate_once_and_stop() {
   local dir target
   dir=$(new_case failing)
@@ -554,6 +624,8 @@ test_live_unknown_held_and_non_secondmate_records_are_left_alone
 test_a_live_mate_with_a_failing_lane_is_relaunched_then_escalated_once
 test_a_lane_that_recovers_after_the_relaunch_is_never_raised
 test_each_failing_lane_is_raised_and_cleared_on_its_own
+test_both_lanes_share_a_failed_or_deferred_relaunch
+test_lane_health_reads_only_status_appends_once_per_scan
 test_two_failed_revivals_escalate_once_and_stop
 test_a_mate_owned_by_another_lifecycle_action_is_not_a_failure
 test_remote_mate_is_probed_and_relaunched_on_its_host

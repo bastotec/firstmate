@@ -62,8 +62,10 @@ if [ -n "${FM_CAPTAIN_LANE_STATE:-}" ] && [ -n "${FM_CAPTAIN_LANE_ID:-}" ]; then
   # it is failing (bin/fm-deck-worker.sh "SUPERVISOR HEALTH").
   health="$FM_CAPTAIN_LANE_STATE/$FM_CAPTAIN_LANE_ID.supervisor-failing"
   if [ -f "$health" ]; then
-    printf 'supervisor=failing count=%s since=%s error=%s\n' "$(sed -n 's/^count=//p' "$health")" \
-      "$(sed -n 's/^since=//p' "$health")" "$(sed -n 's/^error=//p' "$health")"
+    told=no
+    [ "$(sed -n 's/^escalated=//p' "$health")" != 1 ] || told=yes
+    printf 'supervisor=failing count=%s since=%s told=%s error=%s\n' "$(sed -n 's/^count=//p' "$health")" \
+      "$(sed -n 's/^since=//p' "$health")" "$told" "$(sed -n 's/^error=//p' "$health")"
   else
     printf 'supervisor=%s\n' "$(sed -n 's/.* state=\([a-z]*\).*/\1/p' "$FM_CAPTAIN_LANE_STATE/$FM_CAPTAIN_LANE_ID.busy-state" 2>/dev/null || true)"
   fi

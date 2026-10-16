@@ -84,6 +84,7 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+. "$SCRIPT_DIR/fm-classify-lib.sh"
 
 CONFIRM_SECS=${FM_SECONDMATE_REVIVE_CONFIRM_SECS:-45}
 case "$CONFIRM_SECS" in ''|*[!0-9]*) CONFIRM_SECS=45 ;; esac
@@ -271,29 +272,34 @@ HEAL_GRACE=${FM_LANE_HEAL_GRACE_SECS:-900}
 case "$HEAL_GRACE" in ''|*[!0-9]*) HEAL_GRACE=900 ;; esac
 HEAL_NOTE="Restarted automatically because one of your lanes kept failing. Read your inbox in order and pick up what was waiting."
 
-# The open lane-failure blocker of <id> for one key, as its blocked line, or nothing.
-lane_open_blocker() {  # <id> <key>
-  awk -v k="[key=$2]" '
-    index($0, k) { if ($0 ~ /^blocked /) open = $0; else if ($0 ~ /^resolved /) open = "" }
-    END { if (open != "") print open }' "$STATE/$1.status" 2>/dev/null
-}
-
 # Each lane is healed on its own (state/<id>.lane-heal-<lane>), so a mate with
 # both lanes failing has each raised, and one recovering never clears the
 # other. Both lanes share one relaunch per scan.
 lane_heal() {  # <id>
-  local id=$1 lane_tag
-  LANE_RELAUNCHED_AT=
+  local id=$1 lane_tag open key verb note supervisor_line='' conversation_line=''
+  local LANE_RELAUNCHED_AT='' LANE_RELAUNCH_RC=0 LANE_RELAUNCH_OUT=''
+  open=$(status_open_decisions_incremental "$STATE/$id.status")
+  while IFS=$'\t' read -r key verb note; do
+    [ "$verb" = blocked ] || continue
+    case "$key" in
+      "supervisor-failing-$id") supervisor_line="blocked [key=$key]: $note" ;;
+      "conversation-failing-$id") conversation_line="blocked [key=$key]: $note" ;;
+    esac
+  done <<EOF
+$open
+EOF
   for lane_tag in supervisor conversation; do
-    lane_heal_one "$id" "$lane_tag" || return 0
+    case "$lane_tag" in
+      supervisor) lane_heal_one "$id" "$lane_tag" "$supervisor_line" || return 0 ;;
+      conversation) lane_heal_one "$id" "$lane_tag" "$conversation_line" || return 0 ;;
+    esac
   done
 }
 
 # Returns 1 only when the mate was stopped on purpose meanwhile, so the caller
 # leaves its other lane alone too.
 lane_heal_one() {  # <id> <supervisor|conversation>
-  local id=$1 tag=$2 rec="$STATE/$1.lane-heal-$2" key="$2-failing-$1" line now first relaunched escalated out rc lane episode
-  line=$(lane_open_blocker "$id" "$key")
+  local id=$1 tag=$2 rec="$STATE/$1.lane-heal-$2" key="$2-failing-$1" line=$3 now first relaunched escalated out rc lane episode relaunch_error
   now=$(date +%s)
   case "$tag" in supervisor) lane="inner monologue (supervisor)" ;; *) lane="conversation lane" ;; esac
   if [ -z "$line" ]; then
@@ -315,31 +321,33 @@ lane_heal_one() {  # <id> <supervisor|conversation>
   first=$(sed -n 's/^first_seen=//p' "$rec"); relaunched=$(sed -n 's/^relaunched=//p' "$rec")
   escalated=$(sed -n 's/^escalated=//p' "$rec")
   [ "$escalated" != 1 ] || return 0
+  relaunch_error=$(sed -n 's/^relaunch_error=//p' "$rec")
   if [ "$relaunched" = 0 ]; then
-    if [ -n "$LANE_RELAUNCHED_AT" ]; then
-      # The other lane's relaunch this scan restarted this one too.
-      sed -i.bak "s/^relaunched=.*/relaunched=$LANE_RELAUNCHED_AT/" "$rec" && rm -f "$rec.bak"
-      return 0
-    fi
-    rc=0
-    out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" relaunch --unless-held-stopped --replace-live --note "$HEAL_NOTE" < /dev/null 2>&1) || rc=$?
-    if [ "$rc" -eq 0 ]; then
-      log "relaunched $id because its $lane kept failing"
+    if [ -z "$LANE_RELAUNCHED_AT" ]; then
       LANE_RELAUNCHED_AT=$now
-      sed -i.bak "s/^relaunched=.*/relaunched=$now/" "$rec" && rm -f "$rec.bak"
-      return 0
+      LANE_RELAUNCH_OUT=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" relaunch --unless-held-stopped --replace-live --note "$HEAL_NOTE" < /dev/null 2>&1) || LANE_RELAUNCH_RC=$?
     fi
-    case "$out" in
-      *"another lifecycle action is already running"*) return 0 ;;
-      # Stopped on purpose meanwhile: leave it down and its lanes alone.
-      *"was stopped on purpose"*) rm -f "$STATE/$id.lane-heal-supervisor" "$STATE/$id.lane-heal-conversation"; return 1 ;;
-    esac
-    log "relaunch of $id for its failing $lane failed: $(one_line "$out")"
-    relaunched=$now
-    line="$line (an automatic relaunch failed: $(one_line "$out"))"
-  elif [ $((now - relaunched)) -lt "$HEAL_GRACE" ]; then
+    rc=$LANE_RELAUNCH_RC
+    out=$LANE_RELAUNCH_OUT
+    if [ "$rc" -ne 0 ]; then
+      case "$out" in
+        *"another lifecycle action is already running"*) return 0 ;;
+        *"was stopped on purpose"*) rm -f "$STATE/$id.lane-heal-supervisor" "$STATE/$id.lane-heal-conversation"; return 1 ;;
+      esac
+      relaunch_error=$(one_line "$out")
+      [ -n "$relaunch_error" ] || relaunch_error="exit $rc"
+      log "relaunch of $id for its failing $lane failed: $relaunch_error"
+    else
+      log "relaunched $id because its $lane kept failing"
+    fi
+    relaunched=$LANE_RELAUNCHED_AT
+    printf 'key=%s\nepisode=%s\nlane=%s\nfirst_seen=%s\nrelaunched=%s\nescalated=0\nrelaunch_error=%s\n' \
+      "$key" "$episode" "$lane" "$first" "$relaunched" "$relaunch_error" > "$rec.tmp" && mv -f "$rec.tmp" "$rec"
+    [ "$rc" -ne 0 ] || return 0
+  elif [ -z "$relaunch_error" ] && [ $((now - relaunched)) -lt "$HEAL_GRACE" ]; then
     return 0
   fi
+  [ -z "$relaunch_error" ] || line="$line (an automatic relaunch failed: $relaunch_error)"
   if fm_wake_append check "lane-heal:$id:$episode" \
       "check: second mate $id is stuck: its $lane keeps failing after an automatic relaunch; tell the captain. Its report: ${line#blocked }"; then
     log "escalated $id: its $lane is still failing"
