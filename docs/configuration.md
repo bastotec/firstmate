@@ -72,7 +72,7 @@ state/
   <id>.deck-session       secondmate conversation binding; bin/fm-deck-worker.sh header owns format, resume eligibility, and retirement
   <id>.supervisor-session <id>.captain-lane  split secondmate supervisor binding and lane marker (bin/fm-deck-worker.sh "CAPTAIN LANE")
   <id>.captain-lane.log <id>.captain-lane.answered <id>.captain-lane.turn <id>.captain-lane.stale-noted  captain-lane log, turn journal, running-turn marker and reported stale hand-offs (bin/fm-captain-lane.sh header)
-  <id>.supervisor-failing <id>.conversation-failing  a second mate's run of consecutive failed supervisor or conversation turns (bin/fm-deck-worker.sh "SUPERVISOR HEALTH", bin/fm-captain-lane.sh header)
+  <id>.supervisor-failing <id>.conversation-failing  secondmate lane-health episodes, including pending supervisor notifications after recovery (bin/fm-deck-worker.sh "SUPERVISOR HEALTH", bin/fm-captain-lane.sh lane-health comment)
   <id>.lane-heal-<lane>  the first mate's automatic relaunch and escalation of a second mate whose lane keeps failing, one record per lane (bin/fm-secondmate-revive.sh "LANE HEALTH")
   <id>.parked-run  a worker's parked validation run being nudged and escalated (bin/fm-parked-run-watch.sh header)
   <id>.model <id>.deck-caps  in-place model choice and live driver capability (bin/fm-control.sh owns public behavior; bin/fm_model_switch.py owns capability checks)
@@ -98,6 +98,7 @@ state/
   endpoint-retirements.log  endpoint retirement and leftover-close assertions (operator or owning mate); written only by bin/fm-retire-endpoint.sh
   pr-unbinds.log          wrong-PR metadata clear assertions; written only by bin/fm-pr-unbind.sh
   terminal-outcomes/      inactive terminal-outcome receipts (bin/fm-inactive-reconcile.sh)
+  slot-quarantine/       preserved scratch from pooled worktree slots (bin/fm-spawn.sh header owns eligibility and destination layout)
   model-chain/            per-lane model cooldowns ("Model fallback chains")
   pending-replies/        parent-owned secondmate pending replies (bin/fm-pending-reply-lib.sh)
   captain-direct/ captain-direct.log  parent-side captain-direct delivery ledger and echo-guard log (bin/fm-captain-direct-lib.sh)
@@ -736,6 +737,8 @@ Runtime tuning via environment variables (defaults shown).
 Variables documented in a section above are not repeated: mail plane, auto-land hooks, watched tools, inbox, wake gate, possible-ask, turn-end churn, and the away-mode target; Relay variables are in [`relay.md`](relay.md) and process-event variables in [`process-event-sources.md`](process-event-sources.md).
 Script headers own the exact parsing and fallback of each value.
 [`bin/fm-idle-sweep.sh`](../bin/fm-idle-sweep.sh) owns `FM_IDLE_SWEEP_SECS` and the watcher-run cleanup, decision, and second-mate audit contract.
+For lane-failure thresholds, overdue hand-offs, and recovery tuning, see the health comments in [`fm-deck-worker.sh`](../bin/fm-deck-worker.sh), [`fm-captain-lane.sh`](../bin/fm-captain-lane.sh), and [`fm-secondmate-revive.sh`](../bin/fm-secondmate-revive.sh).
+[`fm-parked-run-watch.sh`'s header](../bin/fm-parked-run-watch.sh) owns parked-run timing; [`fm-watch.sh`](../bin/fm-watch.sh) owns detached scan cadences.
 
 ```sh
 # homes and paths ("FM_HOME")

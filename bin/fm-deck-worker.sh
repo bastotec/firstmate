@@ -471,16 +471,23 @@ host_failure() {
 }
 
 # SUPERVISOR HEALTH (second mates): a supervisor whose turns keep failing must
-# never be silent. <state>/<id>.supervisor-failing records the run: since=<utc>,
-# count=<consecutive failed turns>, error=<the last turn's own failure text>,
-# escalated=<0|1>. At FM_DECK_FAIL_ESCALATE (default 3) consecutive failures
-# the host appends one keyed blocker to the parent channel
-# ("blocked [key=supervisor-failing-<id>]: ..."), so the first mate holds it
-# as a blocker, and, in a split home, posts a plain note into the mate's
-# conversation through bin/fm-captain-note.sh, so the captain hears it there
-# and bin/fm-captain-handoff.sh reports it instead of "queued". The first
-# successful turn removes the record, resolves the blocker and says so in the
-# conversation. Fleet Town may read the same record.
+# never be silent. <state>/<id>.supervisor-failing records the episode:
+# since=<utc>, count=<consecutive failed turns>, error=<last failure text>,
+# escalated=<0|1> (parent blocker published), note_pending=<0|1> (conversation
+# note owed), note_recovery=<0|1> (resolution published; recovery note owed
+# in split mode). At FM_DECK_FAIL_ESCALATE (default 3) consecutive failures
+# the host appends one "blocked [key=supervisor-failing-<id>]: ..." to the
+# parent channel and, in a split home, posts a first-person failure note with
+# bin/fm-captain-note.sh. A failed note delivery stays pending and is retried
+# on later failed turns and at recovery without republishing the blocker.
+# Only a verified turn-end proves recovery, never an interrupted turn. It
+# delivers any pending failure note, publishes the episode's resolved line,
+# then delivers the recovery note. Failed publication keeps the record for a
+# later successful turn to retry; removal requires the resolution and owed
+# notes to be delivered (or no escalation). A failure after note_recovery=1
+# starts a new episode. The notes report lane health, not task progress.
+# bin/fm-captain-handoff.sh and Fleet Town may read the same record; its
+# presence can mean delivery is still pending after a successful turn.
 SUPERVISOR_HEALTH="$STATE/$ID.supervisor-failing"
 # One health line to the first mate: the home's own parent channel
 # (bin/fm-parent-channel-lib.sh: the parent home's state/<id>.status for a local

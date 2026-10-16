@@ -20,9 +20,9 @@
 # supervisor's running turn at its next safe point or wakes it when idle
 # (bin/fm_stream_deck.py).
 #
-# A second mate's hand-off then prints the supervisor's real state:
-# "supervisor=failing count=<n> since=<utc> error=<text>" while its turns keep
-# failing, else "supervisor=<busy|idle>".
+# A second mate's hand-off prints supervisor=failing count=<n> since=<utc> told=<yes|no> error=<text>
+# while its health record exists; told=yes means the keyed parent blocker was published, not order pickup.
+# Otherwise it prints supervisor=<busy|idle> (empty if no busy record exists).
 #
 # Exit: mate lane 0 recorded, 1 write failed, 2 no text; else fm-send's status.
 set -u

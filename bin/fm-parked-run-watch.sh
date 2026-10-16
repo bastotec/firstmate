@@ -10,10 +10,10 @@
 # A home only watches its own direct workers (kind=ship or kind=scout records
 # in its state), so every mate, the first mate included, watches its own.
 #
-# For each worker, `bin/fm-crew-state.sh --publish <id>` refreshes
-# state/<id>.crew-state; a verdict of `parked` means its no-mistakes run waits
-# at a review gate or at the repair cap. state/<id>.parked-run records the
-# parked run (run=, step=, since=, nudged=, escalated=):
+# For each worker, `bin/fm-crew-state.sh --publish <id>` refreshes state/<id>.crew-state.
+# Failed queries and unknown/missing readings keep the parked record unchanged, ignoring stale projections.
+# `parked` means a no-mistakes review gate or repair cap. state/<id>.parked-run records run=, step=,
+# since=<first observed parked epoch>, nudged=<wake epoch or 0>, escalated=<0|1>:
 #   - parked for FM_PARKED_RUN_SECS (3600): one `check:` wake to this home's own
 #     supervisor, which decides it now - one fix round through
 #     `no-mistakes axi respond`, or a fresh follow-up run
@@ -23,9 +23,9 @@
 #     channel (bin/fm-parent-channel-lib.sh), so the first mate raises it; the
 #     first mate queues one `check:` wake to raise it with the captain. Either
 #     names the worker, the run, its step and how long it has been parked;
-#   - a run that moves on, or a new run, closes the record, and an escalated
-#     one is resolved ("resolved [key=...]" on the parent channel, or one more
-#     wake in the first mate's home).
+#   - an affirmative working/done/blocked/failed reading closes the record;
+#     a new run or step resolves the old episode and starts a fresh clock.
+#     Resolution uses "resolved [key=...]", or a wake in the first mate's home.
 # A scan and a close of one worker serialize on state/.<id>.parked-run.lock, and
 # a scan escalates only while the worker's state/<id>.meta still exists, so a
 # worker leaving never has a blocker raised after its close resolved it. A scan

@@ -136,7 +136,11 @@
 #   set (its header owns the refusal). A secondmate runs in its own home and is
 #   not marked.
 #   Only after this isolation check, every fresh ship or scout requires a clean
-#   task worktree. When an origin configuration is detected, spawn fetches it,
+#   task worktree. If a pooled slot's only dirt is a wholly untracked .scratch/
+#   directory (not a symlink, with nothing tracked beneath it), spawn moves it
+#   intact to state/slot-quarantine/<slot>-<epoch>/.scratch and rechecks cleanliness.
+#   It never deletes that work; any other dirt refuses without moving it.
+#   When an origin configuration is detected, spawn fetches it,
 #   resolves the current remote default branch, and resets to its tip. When none
 #   is detected, spawn skips that remote freshness check and launches from the
 #   clean worktree's current HEAD. Relaunch reuses the recorded worktree without
@@ -1753,10 +1757,8 @@ spawn_worktree_has_origin_config() {  # <worktree>
   return 1
 }
 
-# A pooled slot whose only dirt is a previous worker's untracked .scratch/
-# folder is not uncommitted work: that folder is set aside, moved intact (never
-# deleted) into this home's state/slot-quarantine/<slot>-<epoch>/, so a
-# leftover scratch area never blocks a task. Any other dirt still refuses.
+# The header owns scratch quarantine eligibility and preservation. Requiring
+# no tracked entries prevents moving clean tracked files alongside untracked dirt.
 quarantine_spawn_slot_scratch() {  # <worktree> <porcelain status>
   local worktree=$1 status=$2 line dest tracked
   [ -n "$status" ] || return 1

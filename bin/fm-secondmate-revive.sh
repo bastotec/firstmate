@@ -15,7 +15,8 @@
 #   - read the endpoint the same way the control plane does: the local backend's
 #     agent-state classifier, or the configured host's `state` verb for a remote
 #     route (an unreachable host or unreadable answer is unknown, never dead);
-#   - `alive` clears the mate's revive record and any deliberate-stop marker;
+#   - `alive` clears the mate's revive record and any deliberate-stop marker,
+#     then checks its lane-failure keys (the LANE HEALTH block below owns it);
 #   - `dead` (endpoint present, no agent) is revived with
 #     `bin/fm-control.sh <id> relaunch`, local or remote;
 #   - `missing` (endpoint gone), local or remote, is revived with

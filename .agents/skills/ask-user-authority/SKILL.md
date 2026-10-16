@@ -47,7 +47,7 @@ Resume fleet supervision immediately after the decision lands.
 ## A parked run is never left waiting
 
 A worker's run parked at a review gate or at the repair cap is unstuck by its own mate within the hour: decide its findings, grant one fix round through `no-mistakes axi respond`, or start a fresh follow-up run.
-`bin/fm-parked-run-watch.sh` nudges a mate whose worker stays parked an hour and, an hour later, raises one blocker beyond it, naming the run, its step and how long it has waited.
+[`bin/fm-parked-run-watch.sh`'s header](../../../bin/fm-parked-run-watch.sh) owns watchdog timing, nudges, and escalation beyond this home.
 
 ## Captain-facing escalation
 

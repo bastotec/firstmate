@@ -29,6 +29,8 @@ Every captain-facing outcome that leaves durable evidence in the mate home is pu
 | PR merged | the merge poll or the mate's own merge | `bin/fm-merge-outcome-lib.sh` |
 | Child leaving the home | its final ledger line | `bin/fm-teardown.sh`, which refuses to remove the child while that line is undelivered |
 | Child ended silently | terminal current state with a silent ledger | the existing inactive-outcome scan in `bin/fm-inactive-reconcile.sh`, which carries the reader's generic state detail as `detail=` and its separately recorded run cause as `error=` |
+| Mate lane failing or recovered | the mate's lane-health episode | [`fm-deck-worker.sh`'s SUPERVISOR HEALTH block](../bin/fm-deck-worker.sh) and [`fm-captain-lane.sh`'s lane-health comment](../bin/fm-captain-lane.sh) |
+| Child validation parked too long or moving again | the child's parked-run episode | [`fm-parked-run-watch.sh`](../bin/fm-parked-run-watch.sh); its header owns timing and resolution, including teardown's close |
 | Answer to an ordinary marked request | a correlated line guarded by the pending-reply record | `bin/fm-secondmate-report.sh`, which resolves the parent channel from the mate home; the pending-reply guard repairs a line stranded in the local mate's same-basename status file before recovery or escalation; [captain-direct messages](#captain-direct-messages) follow their own rule |
 | An outcome that exists only in the mate's reasoning | none | the charter and the `AGENTS.md` carve-outs only |
 
@@ -51,8 +53,8 @@ The [`mate-messaging` skill](../.agents/skills/mate-messaging/SKILL.md) owns whe
 ## What is deliberately not built
 
 - No mirror of the mate's chat: chat can mix outcomes with other conversation, so choosing which sentence is an outcome would itself be model behavior.
-- No threshold escalation of a child's open decision or blocker: a decision the mate escalates is a captain hold, which is published; a decision the mate neither answers nor escalates is a supervision-quality question, separable from channel delivery.
-- No second watcher or standalone scanner: a lightweight ledger pass runs inside the existing inactive-outcome command on every watcher poll and reuses its receipts and upstream append.
+- No generic timeout on every child's open decision or blocker: [parked validation runs](../bin/fm-parked-run-watch.sh) have a watchdog, while other unanswered decisions remain a supervision-quality question, separable from channel delivery.
+- No separate ledger watcher: the lightweight ledger pass stays inside the existing inactive-outcome command on every watcher poll and reuses its receipts and upstream append.
 - No orphan lifecycle: teardown refuses instead of removing an undelivered outcome, the same way it refuses on other unlanded conditions.
 
 ## Regression coverage
