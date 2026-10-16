@@ -517,10 +517,10 @@ supervisor_notes_retry() {
   [ -f "$SUPERVISOR_NOTES" ] || return 0
   while IFS= read -r note < "$SUPERVISOR_NOTES"; do
     supervisor_note_deliver "$note" || return 0
-    tail -n +2 "$SUPERVISOR_NOTES" > "$tmp" && mv -f "$tmp" "$SUPERVISOR_NOTES" || {
+    if ! tail -n +2 "$SUPERVISOR_NOTES" > "$tmp" || ! mv -f "$tmp" "$SUPERVISOR_NOTES"; then
       rm -f "$tmp"
       return 1
-    }
+    fi
   done
   rm -f "$SUPERVISOR_NOTES"
 }

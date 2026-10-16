@@ -226,8 +226,8 @@ report_stale_handoffs() {
   for name in $names; do
     grep -Fxq -- "$name" "$STALE_NOTED" 2>/dev/null && continue
     if ! grep -Fxq -- "blocked $name" "$STALE_NOTED" 2>/dev/null; then
-      lane_report "blocked [key=handoff-overdue-$ID]: $ID has not picked up an order for $((STALE_SECS / 60)) minutes (record $name); its background work is ${state:-in an unknown state}" \
-        && printf 'blocked %s\n' "$name" >> "$STALE_NOTED" || continue
+      lane_report "blocked [key=handoff-overdue-$ID]: $ID has not picked up an order for $((STALE_SECS / 60)) minutes (record $name); its background work is ${state:-in an unknown state}" || continue
+      printf 'blocked %s\n' "$name" >> "$STALE_NOTED" || continue
     fi
     FM_SPLIT_MATE_STATE="$STATE" FM_SPLIT_MATE_ID="$ID" "$SCRIPT_DIR/fm-captain-note.sh" \
       "Something I said I would do (record $name) is overdue: I have not finished or acknowledged it after $((STALE_SECS / 60)) minutes; my background work is ${state:-in an unknown state}." \

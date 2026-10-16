@@ -114,7 +114,7 @@ test_a_reading_without_run_identity_keeps_the_parked_episode() {
   [ "$(wakes "$dir" 'parked-run:w1:escalate')" = 1 ] || fail "setup: the run was not escalated"
   record=$(cat "$dir/home/state/w1.parked-run")
   queue=$(cat "$dir/home/state/.wake-queue")
-  for verdict in working done blocked failed parked; do
+  for verdict in working 'done' blocked failed parked; do
     printf 'verdict=%s\nstep=\nrun=\n' "$verdict" > "$dir/home/fake-w1.crew-state"
     scan "$dir"
     [ -f "$dir/home/state/w1.parked-run" ] || fail "$verdict without a run identity removed the parked record"
