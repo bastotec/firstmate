@@ -36,6 +36,10 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 
+# shellcheck source=bin/fm-worker-guard-lib.sh
+. "$SCRIPT_DIR/fm-worker-guard-lib.sh"
+fm_worker_guard_refuse "$STATE" "send a captain notification"
+
 usage() { sed -n '5,7p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 urgent=0 title='' link=''
@@ -58,9 +62,8 @@ quiet_spec=22:00-08:00
 
 FM_NOTIFY_URGENT=$urgent FM_NOTIFY_TITLE=$title FM_NOTIFY_LINK=$link FM_NOTIFY_BODY=$body \
 FM_NOTIFY_QUIET=$quiet_spec FM_NOTIFY_DIR="$STATE/notices" exec python3 -c '
-import calendar, json, os, re, secrets, sys, time
+import calendar, fcntl, json, os, re, secrets, sys, time
 E = os.environ
-now = float(E.get("FM_NOTIFY_NOW") or time.time())
 d = E["FM_NOTIFY_DIR"]
 urgent = E["FM_NOTIFY_URGENT"] == "1"
 ctl = re.compile(r"[\x00-\x09\x0b-\x1f\x7f]")
@@ -72,6 +75,9 @@ if not body:
 if link and not re.fullmatch(r"https://[^\s\x00-\x1f\x7f]{1,292}", link):
     print("notice=refused: --link must be a plain https link"); sys.exit(2)
 os.makedirs(d, mode=0o755, exist_ok=True)
+lock = open(os.path.join(d, ".lock"), "a")
+fcntl.flock(lock, fcntl.LOCK_EX)
+now = float(E.get("FM_NOTIFY_NOW") or time.time())
 mine = []
 for n in os.listdir(d):
     if not re.fullmatch(r"nt-\d{8}T\d{6}-[0-9a-f]{6}\.json", n):

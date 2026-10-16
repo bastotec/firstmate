@@ -14,6 +14,16 @@ NOON=$(python3 -c 'import time; t=time.localtime(); print(int(time.mktime((t.tm_
 notify() { FM_HOME="$H" FM_NOTIFY_NOW="${AT:-$NOON}" "$N" "$@" 2>&1; }
 expect_code() { [ "$1" = "$2" ] || fail "$3: expected exit $1, got $2"; }
 
+for kind in ship scout; do
+  fm_write_meta "$H/state/w-1.meta" "kind=$kind"
+  rc=0
+  out=$(FM_TASK_ID=w-1 notify --urgent "Blocked on a key") || rc=$?
+  expect_code 3 "$rc" "a $kind cannot notify its mate's captain"
+  assert_contains "$out" "needs-decision" "the worker is directed to its mate"
+  assert_absent "$H/state/notices" "a refused worker creates no notification state"
+done
+pass "ships and scouts must escalate through their mate"
+
 out=$(notify --title "Report ready" --link https://github.com/a/b/pull/7 "The VIP report is done.")
 [[ "$out" =~ ^notice=(nt-[0-9]{8}T[0-9]{6}-[0-9a-f]{6})\ push$ ]] || fail "unexpected: $out"
 id=${BASH_REMATCH[1]}
@@ -46,5 +56,40 @@ expect_code 2 "$rc" "a plain-http link"
 set +e; out=$(notify ""); rc=$?; set -e
 expect_code 2 "$rc" "an empty body"
 pass "old notices go, and bad input is refused"
+
+python3 - "$N" "$T/concurrent" "$NOON" <<'PY'
+import concurrent.futures, json, os, pathlib, subprocess, sys, threading
+
+script, home, now = sys.argv[1:]
+env = dict(os.environ, FM_HOME=home, FM_NOTIFY_NOW=now)
+notices = pathlib.Path(home) / "state" / "notices"
+
+def burst(bodies, urgent=False):
+    barrier = threading.Barrier(len(bodies), timeout=10)
+    def send(body):
+        barrier.wait()
+        return subprocess.run([script] + (["--urgent"] if urgent else []) + [body],
+                              env=env, capture_output=True, text=True, timeout=15)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(bodies)) as pool:
+        return list(pool.map(send, bodies))
+
+def records():
+    return [json.loads(p.read_text()) for p in notices.glob("nt-*.json")]
+
+results = burst(["The report is ready"] * 16)
+assert all(r.returncode == 0 for r in results), results
+assert sum("notice=duplicate:" in r.stdout for r in results) == 15, results
+assert len(records()) == 1, records()
+
+results = burst([f"Result {i}" for i in range(16)])
+assert sorted(r.returncode for r in results) == [0] * 5 + [3] * 11, results
+assert len(records()) == 6, records()
+
+results = burst([f"Blocker {i}" for i in range(16)], urgent=True)
+assert sorted(r.returncode for r in results) == [0] * 6 + [3] * 10, results
+assert len(records()) == 12, records()
+assert sum(r["urgent"] for r in records()) == 6, records()
+PY
+pass "overlapping sends preserve duplicate, plain and urgent limits"
 
 echo "ALL TESTS PASSED"
