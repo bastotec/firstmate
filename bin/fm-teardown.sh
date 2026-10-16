@@ -3167,7 +3167,7 @@ cleanup_firstmate_home_children() {
     fm_backlog_atomic_transition remove "$sub_state/$child_id.meta" "task record" "$sub_state" || return 1
     rm -f "$sub_state/$child_id.turn-ended" "$sub_state/$child_id.progress" "$sub_state/$child_id.deck-session" \
       "$sub_state/$child_id.supervisor-session" "$sub_state/$child_id.captain-lane" "$sub_state/$child_id.captain-lane.log" "$sub_state/$child_id.captain-lane.answered" "$sub_state/$child_id.captain-lane.turn" "$sub_state/$child_id.captain-lane.stale-noted" "$sub_state/$child_id.supervisor-failing" "$sub_state/$child_id.supervisor-notes" "$sub_state/$child_id.conversation-failing" \
-      "$sub_state/$child_id.reconcile-nudged" "$sub_state/$child_id.crew-state" "$sub_state/$child_id.gate" \
+      "$sub_state/$child_id.reconcile-nudged" "$sub_state/$child_id.crew-state" "$sub_state/$child_id.gate" "$sub_state/$child_id.gate-advice" \
       "$sub_state/.$child_id.crew-state-follow.rearm"
     fm_lock_remove_path "$sub_state/.$child_id.crew-state-follow" || true
     fm_lock_remove_path "$sub_state/.$child_id.crew-state.lock" || true
@@ -3569,7 +3569,7 @@ retire_wake_gate_task_state "$STATE" "$ID" || exit 1
 rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.progress" \
   "$STATE/$ID.control-relaunch" "$STATE/$ID.control-relaunch.meta-prior" \
   "$STATE/$ID.control-relaunch.brief-prior" "$STATE/$ID.control-relaunch.note" \
-  "$STATE/$ID.reconcile-nudged" "$STATE/$ID.crew-state" "$STATE/$ID.gate" \
+  "$STATE/$ID.reconcile-nudged" "$STATE/$ID.crew-state" "$STATE/$ID.gate" "$STATE/$ID.gate-advice" \
   "$STATE/$ID.revive" "$STATE/$ID.held-stopped" \
   "$STATE/$ID.agent-diagnostics" "$STATE/$ID.agent-diagnostics".[1-9] \
   "$STATE/.$ID.crew-state-follow.rearm"

@@ -11,7 +11,7 @@ parked-run rules read the findings without asking no-mistakes again:
    "repair_budget_exhausted": false,
    "findings": [{"id": "R1", "severity": "warning", "file": "a.py",
                  "action": "ask-user", "description": "..."}],
-   "finding_ids": ["R1"], "recommendation": null}
+   "finding_ids": ["R1"]}
 
 parked_since is the Unix time in seconds when this run was first seen parked
 at this step; it is kept across rewrites and restarts when the run or step changes.
@@ -23,8 +23,16 @@ finding_ids contains every finding's full id in input order, including findings
 omitted from the bounded findings list.
 repair_budget_exhausted reports a repair-budget marker finding or help saying
 the repair budget or authority is exhausted; it is not permission to repair.
-recommendation starts null: a mate's triage may fill it in, and the publisher
-keeps it only while the run, step and complete finding_ids list are unchanged.
+
+A mate's triage recommendation lives in its own file, state/<id>.gate-advice, so
+the publisher and the triage never write the same file:
+
+  {"version": 1, "run": "01M...", "step": "review", "finding_ids": ["R1"],
+   "choice": "fix", "findings": ["R1"], "why": "...", "by": "<mate>", "at": 1792161600}
+
+Only `--advise` writes it, copying run, step and finding_ids from the gate record
+it advises on. Readers ignore it unless those three match state/<id>.gate. The
+publisher never writes it; it removes it whenever it removes the gate record.
 
 Publication feeds this writer only a successful full attributed status read.
 A gate in that read keeps the record; a run without a gate removes it.
@@ -35,10 +43,13 @@ Readers must match it to a parked crew-state for the same run and step.
 The publisher ignores writer failures, so they never fail crew-state publication.
 
 Usage: fm_gate_record.py <gate-file> [--clear]
-  --clear, or input without a run id or gate, removes the file.
+       fm_gate_record.py <gate-file> --advise fix|accept|abort --why TEXT [--findings R1,R2] [--by NAME]
+  --clear, or input without a run id or gate, removes the file and its advice.
+  --advise writes <gate-file>-advice for the gate record as it is now; it exits 1
+  when there is no gate record to advise on.
   Writes use an atomic temp+rename with mode 0600; unchanged records retain mtime.
   The publisher and writer leave symlinks alone, including on --clear.
-  bin/fm-teardown.sh removes the path (symlink or not) with <id>.crew-state,
+  bin/fm-teardown.sh removes the path and its advice (symlink or not) with <id>.crew-state,
   including when retiring a secondmate home's children.
 
 Regression coverage: tests/fm-gate-record.test.sh and tests/fm-crew-state.test.sh.
@@ -176,15 +187,14 @@ def record(run, gate, previous, now):
         findings = findings[:MAX_FINDINGS - len(marker[:1])] + marker[:1]
     step = str(gate.get('step', ''))
     same = isinstance(previous, dict) and previous.get('run') == run and previous.get('step') == step
-    # every finding's id, the ones clipped away included: a recommendation holds only for these
+    # every finding's id, the ones clipped away included: advice holds only for these
     ids = [str(f.get('id', '')) for f in gate['findings']]
-    rec = previous.get('recommendation') if same and previous.get('finding_ids') == ids else None
     return {
         'version': 1, 'run': run, 'step': step, 'status': str(gate.get('status', '')),
         'risk': clip(gate.get('risk', ''), 20), 'risk_rationale': clip(gate.get('risk_rationale', ''), 600),
         'parked_since': previous.get('parked_since') if same and previous.get('parked_since') else now,
         'repair_budget_exhausted': bool(gate.get('_budget')),
-        'findings': findings, 'finding_ids': ids, 'recommendation': rec,
+        'findings': findings, 'finding_ids': ids,
     }
 
 
@@ -204,11 +214,57 @@ def write(path, data):
         raise
 
 
+def remove(path):
+    """Removes a record unless a symlink stands in its place."""
+    if os.path.islink(path):
+        return
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+
+
+def advise(path, args):
+    """Writes <gate-file>-advice for the gate record as it is now."""
+    opts, i = {}, 0
+    while i < len(args):
+        if args[i] in ('--advise', '--why', '--findings', '--by') and i + 1 < len(args):
+            opts[args[i]] = args[i + 1]
+            i += 2
+        else:
+            sys.stderr.write(__doc__)
+            return 2
+    if opts.get('--advise') not in ('fix', 'accept', 'abort') or not opts.get('--why', '').strip():
+        sys.stderr.write(__doc__)
+        return 2
+    advice = path + '-advice'
+    if os.path.islink(path) or os.path.islink(advice):
+        return 0
+    try:
+        with open(path) as f:
+            gate = json.load(f)
+    except (OSError, ValueError):
+        gate = None
+    if not isinstance(gate, dict) or not gate.get('run'):
+        sys.stderr.write('fm_gate_record: no gate record to advise on\n')
+        return 1
+    findings = [x for x in (opts.get('--findings') or '').split(',') if x]
+    write(advice, {
+        'version': 1, 'run': gate['run'], 'step': gate.get('step', ''),
+        'finding_ids': gate.get('finding_ids', []), 'choice': opts['--advise'],
+        'findings': findings[:MAX_FINDINGS], 'why': clip(opts['--why'], 600),
+        'by': clip(opts.get('--by', ''), 100), 'at': int(time.time()),
+    })
+    return 0
+
+
 def main(argv):
     if not argv or argv[0].startswith('-'):
         sys.stderr.write(__doc__)
         return 2
     path = argv[0]
+    if '--advise' in argv[1:]:
+        return advise(path, argv[1:])
     # a symlink in its place is not this record: left alone
     if os.path.islink(path):
         return 0
@@ -217,10 +273,8 @@ def main(argv):
     else:
         run, gate = parse(sys.stdin.read())
     if gate is None or not run:
-        try:
-            os.unlink(path)
-        except FileNotFoundError:
-            pass
+        remove(path)
+        remove(path + '-advice')
         return 0
     try:
         with open(path) as f:
