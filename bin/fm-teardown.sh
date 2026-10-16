@@ -1297,7 +1297,8 @@ patch_id_for_commit() {
 }
 
 patches_are_in_pr_head() {
-  local repo=$1 current=$2 pr_head=$3 excluded=$4
+  local repo=$1 current=$2 pr_head=$3
+  shift 3
   local base pr_patch_ids commit patch_id commits
   base=$(git -C "$repo" merge-base "$current" "$pr_head" 2>/dev/null) || return 1
   pr_patch_ids=$(
@@ -1309,7 +1310,7 @@ patches_are_in_pr_head() {
       | sort -u
   ) || return 1
   [ -n "$pr_patch_ids" ] || return 1
-  commits=$(git -C "$repo" log --format=%H "$current" --not "$excluded" -- 2>/dev/null) || return 1
+  commits=$(git -C "$repo" log --format=%H "$current" --not "$@" -- 2>/dev/null) || return 1
   [ -n "$commits" ] || return 1
   while IFS= read -r commit; do
     [ -n "$commit" ] || continue
@@ -1477,7 +1478,7 @@ teardown_reassigned_content_in_default() {
   local commit=$1 ref=$2 pr_head=$3 covered=$1 default_tree merged_tree
   while ! git -C "$PROJ" merge-base --is-ancestor "$covered" "$ref" 2>/dev/null \
       && ! git -C "$PROJ" merge-base --is-ancestor "$covered" "$pr_head" 2>/dev/null \
-      && ! patches_are_in_pr_head "$PROJ" "$covered" "$pr_head" "$pr_head"; do
+      && ! patches_are_in_pr_head "$PROJ" "$covered" "$pr_head" "$pr_head" "$ref"; do
     covered=$(git -C "$PROJ" rev-parse --quiet --verify "$covered^1" 2>/dev/null) || return 1
   done
   default_tree=$(git -C "$PROJ" rev-parse --quiet --verify "$ref^{tree}" 2>/dev/null) || return 1
@@ -1524,7 +1525,7 @@ teardown_reassigned_branch_covered() {
   esac
   for tip in "${tips[@]}"; do
     git -C "$PROJ" merge-base --is-ancestor "$tip" "$pr_head" 2>/dev/null && continue
-    patches_are_in_pr_head "$PROJ" "$tip" "$pr_head" "$pr_head" && continue
+    patches_are_in_pr_head "$PROJ" "$tip" "$pr_head" "$pr_head" "$ref" && continue
     git -C "$PROJ" merge-base --is-ancestor "$tip" "$ref" 2>/dev/null && continue
     teardown_reassigned_content_in_default "$tip" "$ref" "$pr_head" || return 1
   done

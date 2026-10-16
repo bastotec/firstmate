@@ -1199,6 +1199,12 @@ SH
 seed_reassigned_landed_pr() {  # <case> <pr-url> [pr-state]
   local dir=$1 pr_url=$2 pr_state=${3:-MERGED} replay=${4:-0} multi_commit=${5:-0} default pr_head
   default=$(git -C "$dir/project" symbolic-ref --quiet --short HEAD)
+  if [ "$replay" = retained ]; then
+    printf 'original work\n' > "$dir/project/landed.txt"
+    git -C "$dir/project" add landed.txt
+    git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+      commit -qm 'baseline before task work'
+  fi
   git -C "$dir/project" checkout -q -B fm/dead-task
   printf 'landed work\n' > "$dir/project/landed.txt"
   git -C "$dir/project" add landed.txt
@@ -1211,16 +1217,22 @@ seed_reassigned_landed_pr() {  # <case> <pr-url> [pr-state]
       commit -qm 'second dead task commit'
   fi
   pr_head=$(git -C "$dir/project" rev-parse HEAD)
-  if [ "$replay" = 1 ]; then
+  if [ "$replay" != 0 ]; then
     git -C "$dir/project" checkout -q "$default"
     printf 'new default work\n' > "$dir/project/default.txt"
     git -C "$dir/project" add default.txt
     git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
       commit -qm 'default advanced before pipeline replay'
-    git -C "$dir/project" checkout -qb replayed-pr
-    git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
-      cherry-pick "$pr_head" >/dev/null
-    pr_head=$(git -C "$dir/project" rev-parse HEAD)
+    if [ "$replay" = retained ]; then
+      git -C "$dir/project" checkout -q fm/dead-task
+      git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+        rebase -q "$default"
+    else
+      git -C "$dir/project" checkout -qb replayed-pr
+      git -C "$dir/project" -c user.name=test -c user.email=test@example.invalid \
+        cherry-pick "$pr_head" >/dev/null
+      pr_head=$(git -C "$dir/project" rev-parse HEAD)
+    fi
   fi
   printf '%s\n' "$pr_head" > "$dir/pr-head"
   # Squash-land the branch's content on the default branch, then delete the
@@ -1233,6 +1245,8 @@ seed_reassigned_landed_pr() {  # <case> <pr-url> [pr-state]
   if [ "$replay" = 1 ]; then
     git -C "$dir/project" merge --squash -q replayed-pr >/dev/null
     git -C "$dir/project" branch -q -D replayed-pr
+  elif [ "$replay" = retained ]; then
+    git -C "$dir/project" merge --squash -q "$pr_head" >/dev/null
   else
     git -C "$dir/project" merge --squash -q fm/dead-task >/dev/null
     git -C "$dir/project" branch -q -D fm/dead-task
@@ -1242,6 +1256,10 @@ seed_reassigned_landed_pr() {  # <case> <pr-url> [pr-state]
   git init -q --bare "$dir/origin.git"
   git -C "$dir/project" remote add origin "$dir/origin.git"
   git -C "$dir/project" push -q origin "$default"
+  if [ "$replay" = retained ]; then
+    git -C "$dir/project" push -q origin fm/dead-task
+    git -C "$dir/project" push -q origin --delete fm/dead-task
+  fi
   git -C "$dir/project" remote set-head origin "$default" 2>/dev/null || true
   git -C "$dir/project" fetch -q origin 2>/dev/null || true
   printf '%s\n' "$dir/origin.git" > "$dir/head-remote"
@@ -1484,6 +1502,7 @@ test_reassigned_record_coverage_and_preservation() {
   for scenario in local-only local-ahead remote-ahead fetch-failed remote-unreadable \
       local-unreadable evolved-deleted evolved-retained evolved-remote preserved missing-worker \
       replayed-local replayed-remote replayed-local-extra replayed-remote-extra \
+      retained-rebase retained-rebase-extra followup-retained-rebase \
       fork-ahead fork-covered fork-fetch-failed fork-unreadable fork-fetch-raced \
       fork-scp-covered fork-ssh-covered fork-alias-covered fork-ssh-ahead \
       followup-local followup-remote followup-replayed-local followup-replayed-remote followup-unlanded \
@@ -1493,6 +1512,7 @@ test_reassigned_record_coverage_and_preservation() {
     replay=0
     multi_commit=0
     case "$scenario" in replayed-*|followup-replayed-*) replay=1 ;; esac
+    case "$scenario" in retained-rebase*|followup-retained-rebase) replay=retained ;; esac
     case "$scenario" in followup-default-*) multi_commit=1 ;; esac
     seed_reassigned_landed_pr "$dir" "https://github.com/example/repo/pull/7" MERGED "$replay" "$multi_commit"
     pr_head=$(cat "$dir/pr-head")
@@ -1589,8 +1609,9 @@ test_reassigned_record_coverage_and_preservation() {
             ;;
         esac
         ;;
-      replayed-*)
-        if [ "$scenario" = replayed-local-extra ] || [ "$scenario" = replayed-remote-extra ]; then
+      replayed-*|retained-rebase*)
+        if [ "$scenario" = replayed-local-extra ] || [ "$scenario" = replayed-remote-extra ] \
+            || [ "$scenario" = retained-rebase-extra ]; then
           git -C "$dir/project" checkout -q fm/dead-task
           printf 'unlanded replay follow-up\n' > "$dir/project/later.txt"
           git -C "$dir/project" add later.txt
@@ -1703,10 +1724,10 @@ SH
     rc=$?
     set -e
     case "$scenario" in
-      evolved-*|preserved|replayed-local|replayed-remote|fork-covered|\
+      evolved-*|preserved|replayed-local|replayed-remote|retained-rebase|fork-covered|\
           fork-scp-covered|fork-ssh-covered|fork-alias-covered|\
           followup-local|followup-remote|followup-replayed-local|followup-replayed-remote|\
-          followup-default-local|followup-default-remote)
+          followup-default-local|followup-default-remote|followup-retained-rebase)
         [ "$rc" -eq 0 ] || fail "$scenario refused landed work: $(cat "$dir/stderr")"
         assert_absent "$dir/home/state/$id.meta" "$scenario kept the old record"
         ;;
