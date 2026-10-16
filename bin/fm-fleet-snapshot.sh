@@ -126,9 +126,12 @@
 #     compatibility landed-work roll-up derived from secondmate_current. Readable
 #     structured homes are partial, not unreadable, when an unavailable child state
 #     or a backlog-vs-metadata inventory mismatch makes their summary incomplete;
-#     they retain independently trustworthy structured surfaces. An inventory
-#     mismatch also keeps the home's own current classification, which only an
-#     unavailable child state or an untrustworthy backlog collapses to unknown.
+#     they retain independently trustworthy structured surfaces.
+#     The home summary's unknown_children lists unknown non-secondmate task ids
+#     owned by structured In flight rows, independently of its first invalidity.
+#     An unowned leftover is instead an unowned_current inventory mismatch.
+#     An inventory mismatch keeps the home's own current classification unless
+#     unknown_children is nonempty or the backlog is untrustworthy.
 #     Which closed rows a home contributes is bin/fm-landed-lib.sh's rule, shared
 #     with the bearings projection so one Recently Landed section has one owner.
 #   secondmate_guidance: return-channel action note for renderers and bearings.
@@ -271,8 +274,8 @@ their own home's published summary, while remote endpoints stay unknown here.
 Worker metadata whose structured backlog item is Done is retained, not unowned
 or an unavailable child.
 Its invalidity object names the first normalized failure kind and affected ids.
-unknown_children lists every unread child id independently of that first
-invalidity; older producers may omit it.
+The script header owns unknown_children eligibility and home-state classification;
+older producers may omit unknown_children.
 Actionable tasks-axi captain holds appear as decisions_open and stay visible in
 queued with hold_reason, hold_kind, hold_until,
 hold_bucket, hold_age_days, and plural blocker fields for downstream

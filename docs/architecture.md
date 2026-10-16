@@ -110,7 +110,7 @@ This interface derives observations from existing record owners rather than intr
 A registered secondmate's validated home is the authority for its current state, because it owns the child inventory, child states, endpoint observations, holds, keyed decisions, and recent Done baseline.
 Treating the mate as an ordinary parent task would let an idle mate's latest append-only parent event read as current work after its home had moved that work to Done.
 Generated charters therefore key only supervisor-actionable phase reports and close them with a same-key later state or `resolved`, while the structured home stays authoritative when that closure is missing.
-Cross-home reads validate identity and directory boundaries and classify unavailable or inconsistent structured state as unknown rather than reviving a parent event.
+Cross-home reads validate identity and directory boundaries and use the classifications owned by [`bin/fm-fleet-snapshot.sh`](../bin/fm-fleet-snapshot.sh)'s header rather than parent events.
 A bounded terminal tail may be shown for diagnosis, but scrollback and agent prose are not durable state, so it is stripped of control sequences and never overrides a valid structured classification.
 Live GitHub enrichment exists only behind the bearings `--include-prs` opt-in.
 Optional Relay integrates with the watcher only after explicit opt-in; [`relay.md`](relay.md) owns its mechanics.
