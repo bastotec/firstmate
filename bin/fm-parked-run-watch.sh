@@ -117,8 +117,12 @@ for rec in "$STATE"/*.parked-run; do
 done
 
 scan_one() {  # <id>
-  local id=$1 rec="$STATE/$1.parked-run" verdict run step since nudged escalated
-  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-crew-state.sh" --publish "$id" </dev/null >/dev/null 2>&1 || true
+  local id=$1 rec="$STATE/$1.parked-run" verdict run step since nudged escalated reading
+  reading=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-crew-state.sh" --publish "$id" </dev/null 2>/dev/null) || return 0
+  case "$reading" in
+    'state: parked · '*|'state: working · '*|'state: done · '*|'state: blocked · '*|'state: failed · '*) ;;
+    *) return 0 ;;
+  esac
   verdict=$(field "$STATE/$id.crew-state" verdict)
   run=$(field "$STATE/$id.crew-state" run)
   step=$(field "$STATE/$id.crew-state" step)

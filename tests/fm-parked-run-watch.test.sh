@@ -18,10 +18,16 @@ new_home() {  # <name> -> echoes a home with a code copy beside it
 #!/usr/bin/env bash
 id=$2
 state=${FM_STATE_OVERRIDE:-$FM_HOME/state}
+case "$(cat "$FM_HOME/query-mode" 2>/dev/null)" in
+  unknown) printf 'state: unknown · source: none\n'; exit 0 ;;
+  failed) printf 'state: parked · source: run-step\n'; exit 1 ;;
+esac
 if [ -f "$FM_HOME/fake-$id.crew-state" ]; then
   cp "$FM_HOME/fake-$id.crew-state" "$state/$id.crew-state"
+  printf 'state: %s · source: run-step\n' "$(sed -n 's/^verdict=//p' "$state/$id.crew-state")"
 else
   rm -f "$state/$id.crew-state"
+  printf 'state: unknown · source: none\n'
 fi
 SH
   chmod +x "$dir/bin/fm-crew-state.sh"
@@ -98,6 +104,28 @@ test_an_unavailable_reading_never_resolves_a_parked_run() {
   [ "$(wakes "$dir" 'parked-run:w1:resolved')" = 0 ] || fail "an unavailable reading must not clear a parked run"
   [ -f "$dir/home/state/w1.parked-run" ] || fail "an unavailable reading must keep the parked record"
   pass "parked-run watch: an unknown or missing reading keeps a parked run's record and blocker"
+}
+
+test_an_unavailable_query_never_uses_a_stale_projection() {
+  local dir mode stage record queue
+  for mode in unknown failed; do
+    dir=$(new_home "stale-$mode")
+    parked "$dir" run-stale
+    scan "$dir"
+    for stage in nudge escalate; do
+      record=$(cat "$dir/home/state/w1.parked-run")
+      queue=$(cat "$dir/home/state/.wake-queue" 2>/dev/null)
+      printf '%s\n' "$mode" > "$dir/home/query-mode"
+      scan "$dir"
+      [ "$(cat "$dir/home/state/w1.parked-run")" = "$record" ] || fail "$mode query advanced the $stage clock using a stale projection"
+      [ "$(cat "$dir/home/state/.wake-queue" 2>/dev/null)" = "$queue" ] || fail "$mode query emitted a $stage wake using a stale projection"
+      assert_grep 'verdict=parked' "$dir/home/state/w1.crew-state" "setup: the unavailable query must leave the stale projection intact"
+      rm "$dir/home/query-mode"
+      scan "$dir"
+    done
+    [ "$(wakes "$dir" 'parked-run:w1:escalate')" = 1 ] || fail "fresh readings must resume escalation"
+  done
+  pass "parked-run watch: unknown and failed queries cannot advance a stale parked projection"
 }
 
 test_a_run_that_parks_again_or_at_another_gate_starts_over() {
@@ -179,4 +207,5 @@ test_a_left_worker_is_never_raised_and_its_record_is_dropped
 test_second_mate_home_raises_to_its_parent_channel
 test_a_worker_leaving_closes_its_escalation
 test_an_unavailable_reading_never_resolves_a_parked_run
+test_an_unavailable_query_never_uses_a_stale_projection
 test_a_run_that_parks_again_or_at_another_gate_starts_over

@@ -492,12 +492,30 @@ health_report() {  # <line>
   [ "$rc" -ne 1 ] || { printf '%s\n' "$1" | status_append; return; }
   return "$rc"
 }
+supervisor_health_write() {
+  local tmp="$SUPERVISOR_HEALTH.tmp.$$"
+  if printf 'since=%s\ncount=%s\nerror=%s\nescalated=%s\nnote_pending=%s\nnote_recovery=%s\n' \
+      "$1" "$2" "$3" "$4" "$5" "$6" > "$tmp" && mv -f "$tmp" "$SUPERVISOR_HEALTH"; then
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+supervisor_failure_note() {
+  FM_SPLIT_MATE_STATE="$STATE" FM_SPLIT_MATE_ID="$ID" "$SCRIPT_DIR/fm-captain-note.sh" \
+    "I'm stuck: my background work has failed $2 times in a row since $1 ($3). The first mate is being told." \
+    >/dev/null 2>&1
+}
 supervisor_turn_failed() {  # <failure text>
-  local error=$1 since count escalated limit=${FM_DECK_FAIL_ESCALATE:-3} tmp
+  local error=$1 since count escalated note_pending limit=${FM_DECK_FAIL_ESCALATE:-3}
   case "$limit" in ''|*[!0-9]*|0) limit=3 ;; esac
   since=$(sed -n 's/^since=//p' "$SUPERVISOR_HEALTH" 2>/dev/null)
   count=$(sed -n 's/^count=//p' "$SUPERVISOR_HEALTH" 2>/dev/null)
   escalated=$(sed -n 's/^escalated=//p' "$SUPERVISOR_HEALTH" 2>/dev/null)
+  note_pending=$(sed -n 's/^note_pending=//p' "$SUPERVISOR_HEALTH" 2>/dev/null)
+  if [ "$(sed -n 's/^note_recovery=//p' "$SUPERVISOR_HEALTH" 2>/dev/null)" = 1 ]; then
+    since='' count=0 escalated=0 note_pending=0
+  fi
   [ -n "$since" ] || since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   case "$count" in ''|*[!0-9]*) count=0 ;; esac
   count=$((count + 1))
@@ -507,30 +525,36 @@ supervisor_turn_failed() {  # <failure text>
     if health_report "$(printf 'blocked [key=supervisor-failing-%s]: %s supervisor is failing every turn (%s consecutive): %s, since %s; nothing handed to it is being acted on' \
         "$ID" "$ID" "$count" "$error" "$since")"; then
       escalated=1
-      if [ "$MATE_SPLIT" = 1 ]; then
-        FM_SPLIT_MATE_STATE="$STATE" FM_SPLIT_MATE_ID="$ID" "$SCRIPT_DIR/fm-captain-note.sh" \
-          "I'm stuck: every attempt I make to act on orders fails with $error, since $since, so nothing I said I would do is happening until this clears. The first mate knows." \
-          >/dev/null 2>&1 || true
-      fi
+      [ "$MATE_SPLIT" != 1 ] || note_pending=1
     fi
   fi
-  tmp="$SUPERVISOR_HEALTH.tmp.$$"
-  if printf 'since=%s\ncount=%s\nerror=%s\nescalated=%s\n' "$since" "$count" "$error" "${escalated:-0}" > "$tmp"; then
-    mv -f "$tmp" "$SUPERVISOR_HEALTH" || rm -f "$tmp"
-  else
-    rm -f "$tmp"
+  if [ "${note_pending:-0}" = 1 ] && supervisor_failure_note "$since" "$count" "$error"; then
+    note_pending=0
   fi
+  supervisor_health_write "$since" "$count" "$error" "${escalated:-0}" "${note_pending:-0}" 0
 }
 supervisor_turn_ok() {
   [ -f "$SUPERVISOR_HEALTH" ] || return 0
-  if [ "$(sed -n 's/^escalated=//p' "$SUPERVISOR_HEALTH")" = 1 ]; then
-    # Keep the record until the first mate has the resolution, so a channel
-    # that was briefly unwritable is retried on the next good turn.
-    health_report "$(printf 'resolved [key=supervisor-failing-%s]: %s supervisor is working again (failing since %s)' \
-      "$ID" "$ID" "$(sed -n 's/^since=//p' "$SUPERVISOR_HEALTH")")" || return 0
+  local since count error escalated note_pending note_recovery
+  since=$(sed -n 's/^since=//p' "$SUPERVISOR_HEALTH")
+  count=$(sed -n 's/^count=//p' "$SUPERVISOR_HEALTH")
+  error=$(sed -n 's/^error=//p' "$SUPERVISOR_HEALTH")
+  escalated=$(sed -n 's/^escalated=//p' "$SUPERVISOR_HEALTH")
+  note_pending=$(sed -n 's/^note_pending=//p' "$SUPERVISOR_HEALTH")
+  note_recovery=$(sed -n 's/^note_recovery=//p' "$SUPERVISOR_HEALTH")
+  if [ "$escalated" = 1 ]; then
+    if [ "${note_recovery:-0}" != 1 ]; then
+      if [ "${note_pending:-0}" = 1 ]; then
+        supervisor_failure_note "$since" "$count" "$error" || return 0
+        supervisor_health_write "$since" "$count" "$error" "$escalated" 0 0 || return 0
+      fi
+      health_report "$(printf 'resolved [key=supervisor-failing-%s]: %s supervisor is working again (failing since %s)' \
+        "$ID" "$ID" "$since")" || return 0
+      supervisor_health_write "$since" "$count" "$error" "$escalated" "$MATE_SPLIT" 1 || return 0
+    fi
     if [ "$MATE_SPLIT" = 1 ]; then
       FM_SPLIT_MATE_STATE="$STATE" FM_SPLIT_MATE_ID="$ID" "$SCRIPT_DIR/fm-captain-note.sh" \
-        "I'm working again and picking up what was waiting." >/dev/null 2>&1 || true
+        "My background work is running again after failing since $since." >/dev/null 2>&1 || return 0
     fi
   fi
   rm -f "$SUPERVISOR_HEALTH"
