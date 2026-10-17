@@ -139,8 +139,9 @@
 #   task worktree. If a pooled slot's only dirt is untracked leftovers of a
 #   previous worker - a wholly untracked .scratch/ directory at any age, or any
 #   other untracked path whose own and descendants' modification times are at
-#   least a day old (1440 minutes) - and none of those paths is a symlink or
-#   holds anything tracked, spawn moves them intact to
+#   least a day old (1440 minutes) - and all candidates and descendants are
+#   readable, with searchable directories, no symlinks, and nothing tracked,
+#   spawn moves them intact to
 #   state/slot-quarantine/<slot>-<epoch>/ (same relative paths) and rechecks
 #   cleanliness. The age threshold is fixed; a regular file named .scratch
 #   has no age exemption. All candidates are inspected before any move; any
