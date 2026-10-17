@@ -1558,6 +1558,57 @@ SH
   pass "--keep-commits discovers merged PR identity independently of content and refuses unproved merges"
 }
 
+test_keep_commits_verifies_the_callers_pr_through_its_forge() {
+  local case_dir provider state url later kept rc
+  for provider in github gitlab; do
+    for state in merged open closed offline; do
+      case_dir=$(make_case "keep-caller-$provider-$state")
+      add_logging_treehouse "$case_dir"
+      write_meta "$case_dir" no-mistakes ship
+      wt_commit_file "$case_dir" feature.txt 'landed feature'
+      land_on_origin_main "$case_dir" feature.txt 'landed feature'
+      wt_commit_file "$case_dir" later.txt 'unlanded follow-up'
+      later=$(git -C "$case_dir/wt" rev-parse HEAD)
+      if [ "$provider" = github ]; then
+        url=https://github.com/example/repo/pull/7
+      else
+        url=https://gitlab.example/group/repo/-/merge_requests/7
+      fi
+      cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >> '$case_dir/github-calls'
+[ '$provider' = github ] && [ '$state' != offline ] || exit 1
+[ "\${1:-} \${2:-}" = 'pr view' ] && [ "\${4:-} \${5:-}" = '--json state' ] || exit 1
+printf '%s\\n' '$state'
+SH
+      cat > "$case_dir/fakebin/glab" <<SH
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >> '$case_dir/gitlab-calls'
+[ '$provider' = gitlab ] && [ '$state' != offline ] || exit 1
+[ "\$*" = 'mr view 7 -R https://gitlab.example/group/repo' ] || exit 1
+printf 'state: %s\\n' '$state'
+SH
+      chmod +x "$case_dir/fakebin/glab"
+      rc=0
+      run_teardown "$case_dir" --keep-commits --merged-pr "$url" \
+        > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+      kept=$(git -C "$case_dir/project" for-each-ref --format='%(objectname)' 'refs/heads/kept/task-x1-*')
+      if [ "$state" = merged ]; then
+        expect_code 0 "$rc" "caller $provider merge could not preserve work: $(cat "$case_dir/stderr")"
+        assert_equals "$later" "$kept" "the caller's PR leaves its extra commit preserved"
+        assert_absent "$case_dir/state/task-x1.meta" "the worker record was cleaned up"
+        assert_contains "$(cat "$case_dir/stdout")" 'kept:' "the kept branch is reported"
+        assert_present "$case_dir/$provider-calls" "the correct forge verified the caller's URL"
+      else
+        assert_not_equals 0 "$rc" "a caller's $state PR must not authorize cleanup"
+        assert_equals '' "$kept" "an unproved merge creates no kept branch"
+        assert_refusal_retained_task_state "$case_dir" "$provider-$state" "$later"
+      fi
+    done
+  done
+  pass "--merged-pr verifies GitHub and GitLab merges before preserving caller-identified work"
+}
+
 test_finished_retirement_reuses_preserved_commits() {
   local backend case_dir pr_head later rc saved baseline
   for backend in tmux herdr; do
@@ -3938,6 +3989,7 @@ test_squash_merged_pr_allows_replayed_unpushed_patch no
 test_merged_pr_with_later_local_commit_refuses
 test_keep_commits_saves_leftover_commits_then_cleans_up
 test_keep_commits_discovers_merged_pr_before_checking_content
+test_keep_commits_verifies_the_callers_pr_through_its_forge
 test_finished_retirement_reuses_preserved_commits
 test_keep_commits_still_refuses_uncommitted_or_unmerged_work
 test_squash_merged_rebased_branch_allows

@@ -216,6 +216,7 @@ already_raised() {  # <id>
 classify() {
   local id=$1 line verb worktree row pr pr_state hold_rc=0
   UNPROVEN=0
+  MERGED_PR_URL=
   AGE=$(record_age "$id")
   DETAIL=
   hold_settled "$id" "idle-$id" || hold_rc=$?
@@ -249,7 +250,7 @@ classify() {
         pr_state=$(fm_run_timed 60 bash -c '. "$1/fm-pr-lib.sh"; fm_pr_live_state "$2"' \
           _ "$SCRIPT_DIR" "$pr" 2>/dev/null) || pr_state=
         case "$pr_state" in
-          merged) ;;
+          merged) MERGED_PR_URL=$pr ;;
           open) CLASS=awaiting-merge; return ;;
           closed) UNPROVEN=1 ;;
           *) CLASS=settling; DETAIL="cannot read whether $pr merged"; return ;;
@@ -373,11 +374,13 @@ raise() {
 # cleanup <id>: guarded teardown of a finished worker. 0 = cleaned; else
 # CLEANUP_WHY holds the refusal.
 cleanup() {
-  local id=$1 out rc=0
+  local id=$1 out rc=0 args
+  args=("$id" --keep-commits)
+  [ -z "$MERGED_PR_URL" ] || args+=(--merged-pr "$MERGED_PR_URL")
   CLEANUP_WHY=
   # --keep-commits: leftover local commits after a merged PR are saved on a
   # kept/ branch rather than raised (housekeeping is never a captain call).
-  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-teardown.sh" "$id" --keep-commits </dev/null 2>&1) || rc=$?
+  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-teardown.sh" "${args[@]}" </dev/null 2>&1) || rc=$?
   [ "$rc" -eq 0 ] && return 0
   if printf '%s' "$out" | grep -q "on the retired '"; then
     rc=0

@@ -161,7 +161,7 @@
 # leased home and state in place instead of hiding a still-held lease.
 # bin/fm-deck-worker.sh's SECOND MATE SESSION CONTINUITY header owns the
 # conversation binding retired with a secondmate and its forced descendants.
-# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--keep-commits]
+# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--keep-commits] [--merged-pr <url>]
 #   --keep-commits handles the leftover local commits a squash merge leaves
 #   behind: when a ship task's PR is merged, its worktree has no uncommitted
 #   changes, and its committed work still is not proved landed, teardown first
@@ -170,7 +170,8 @@
 #   "kept: <n> local commit(s) on branch <name>", and then cleans up. Nothing
 #   is discarded, so this is housekeeping, not a captain decision. Without a
 #   merged PR, with uncommitted changes, or for local-only work it refuses as
-#   before.
+#   before. --merged-pr supplies a PR/MR URL when none is recorded; its live
+#   merge state is verified through the forge before commits can be kept.
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
 #   when the captain has explicitly said to discard the work.
@@ -324,12 +325,21 @@ ID=$1
 FORCE=
 LEGACY_RECORD_GIVEN=0
 KEEP_COMMITS=0
+MERGED_PR_URL=
 shift
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --force) FORCE=--force ;;
     --legacy-record) LEGACY_RECORD_GIVEN=1 ;;
     --keep-commits) KEEP_COMMITS=1 ;;
+    --merged-pr)
+      shift
+      [ "$#" -gt 0 ] && fm_pr_url_parse "$1" || {
+        echo "error: --merged-pr requires a supported PR/MR URL" >&2
+        exit 2
+      }
+      MERGED_PR_URL=$1
+      ;;
     *)
       echo "error: invalid teardown request" >&2
       exit 2
@@ -3342,6 +3352,7 @@ if [ "$KIND" != secondmate ]; then
     pr_task_row=
   fi
   [ -n "$PR_URL" ] || PR_URL=$(fm_pr_task_url "$pr_task_row" "$META")
+  [ -n "$PR_URL" ] || PR_URL=$MERGED_PR_URL
 fi
 if [ "$KEEP_COMMITS" = 1 ] && [ "$KIND" = ship ] && [ "$MODE" != local-only ] \
     && [ -z "$PR_URL" ] && teardown_owns_worktree && [ -d "$WT" ]; then

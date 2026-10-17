@@ -572,6 +572,49 @@ test_clear_then_restore_round_trips() {
   pass "fm-card: clear then restore brings back the hold, reason and card"
 }
 
+test_restore_rewrites_legacy_jargon_as_a_plain_draft() {
+  local home card restored
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home restore-legacy)
+  hold_it "$home" old-one "Original call" 'Review the old repair'
+  card="$home/state/cards/old-one.json"
+  good_card "$home/input.json"
+  run_card "$home" write old-one --file "$home/input.json" >/dev/null || fail "card write failed"
+  jq '.title="Repair pr-1806-orphan-choice-fix" |
+      .situation="Review Direction7 in pr-1806-orphan-choice-fix." |
+      .options[0].label="Keep pr-1806-orphan-choice-fix"' "$card" > "$card.tmp" && mv "$card.tmp" "$card"
+  run_card "$home" show old-one >/dev/null || fail "legacy card should still show"
+  run_card "$home" clear old-one --why idle >/dev/null || fail "legacy clear failed"
+  run_card "$home" restore old-one >/dev/null || fail "legacy restore failed"
+  run_captain "$home" open old-one || fail "the restored legacy call must stay held"
+  restored=$(run_card "$home" show old-one) || fail "the restored legacy call has no card"
+  assert_equals true "$(printf '%s' "$restored" | jq -r .draft)" "legacy wording becomes a draft"
+  assert_equals 'Repair this task' "$(printf '%s' "$restored" | jq -r .title)" "saved title is rewritten in plain words"
+  assert_equals 'Review this task in this task.' "$(printf '%s' "$restored" | jq -r .situation)" "saved situation is rewritten in plain words"
+  assert_equals 0 "$(printf '%s' "$restored" | jq '.options|length')" "the legacy options are not offered again"
+  assert_equals restored "$(tail -n 1 "$home/state/cards-cleared.log" | jq -r .event)" "the successful restore is logged"
+  pass "fm-card: restore keeps legacy calls held with plain drafts rewritten from their saved cards"
+}
+
+test_restore_preflights_saved_card_before_reopening() {
+  local home card before rc=0
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home restore-invalid)
+  hold_it "$home" old-one "Original call" 'Review the old repair'
+  card="$home/state/cards/old-one.json"
+  good_card "$home/input.json"
+  run_card "$home" write old-one --file "$home/input.json" >/dev/null || fail "card write failed"
+  run_card "$home" clear old-one --why idle >/dev/null || fail "clear failed"
+  jq -c '.card.options=[]' "$home/state/cards-cleared.log" > "$home/log.tmp" && mv "$home/log.tmp" "$home/state/cards-cleared.log"
+  before=$(tasks_in "$home" show old-one --full)
+  run_card "$home" restore old-one >/dev/null 2>&1 || rc=$?
+  assert_not_equals 0 "$rc" "a structurally invalid saved card cannot be restored"
+  assert_equals "$before" "$(tasks_in "$home" show old-one --full)" "preflight refusal leaves the task unchanged"
+  assert_absent "$card" "preflight refusal creates no card"
+  assert_equals cleared "$(tail -n 1 "$home/state/cards-cleared.log" | jq -r .event)" "the clear remains recoverable"
+  pass "fm-card: restore validates saved cards before reopening a task"
+}
+
 test_clear_removes_an_orphan_card_without_touching_the_backlog() {
   local home
   command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
@@ -1041,6 +1084,8 @@ test_stale_finds_orphans_merged_and_idle_holds
 test_stale_matches_the_current_pr_identity
 test_stale_uses_the_fixed_three_day_cutoff
 test_clear_then_restore_round_trips
+test_restore_rewrites_legacy_jargon_as_a_plain_draft
+test_restore_preflights_saved_card_before_reopening
 test_clear_removes_an_orphan_card_without_touching_the_backlog
 test_clear_refuses_a_task_that_is_not_a_captain_call
 test_restore_refuses_when_held_again

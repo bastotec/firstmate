@@ -430,7 +430,7 @@ cmd_clear() {
 }
 
 cmd_restore() {
-  local id=${1:-} line reason card input show mode
+  local id=${1:-} line reason card input='' show mode err
   require_slug "$id"
   [ -f "$CLEAR_LOG" ] || die "nothing was cleared"
   line=$(jq -c --arg id "$id" 'select(.task == $id)' "$CLEAR_LOG" | tail -n 1)
@@ -446,10 +446,25 @@ cmd_restore() {
   mode=$(shown_value "$show" body | sed -n 's/^Resolution mode: //p' | head -1)
   [ "$mode" = stale-cleared ] || die "$id was resolved again after the clear; refusing to undo that"
   card=$(printf '%s' "$line" | jq -c .card)
-  tasks reopen "$id" >/dev/null || die "could not reopen $id"
   if [ "$card" != null ] && [ "$(printf '%s' "$card" | jq -r .draft)" = false ]; then
     input=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-card-restore.XXXXXX") || die "cannot stage the card"
     printf '%s' "$card" | jq '{project, title, situation, options, recommended}' > "$input"
+    err=$(card_error "$input" "$id")
+    if [ -n "$err" ]; then
+      rm -f -- "$input"
+      die "invalid saved card: $err"
+    fi
+    err=$(card_error "$input" "$id" plain)
+    if [ -n "$err" ]; then
+      rm -f -- "$input"
+      input=''
+    fi
+  fi
+  if ! tasks reopen "$id" >/dev/null; then
+    [ -z "$input" ] || rm -f -- "$input"
+    die "could not reopen $id"
+  fi
+  if [ -n "$input" ]; then
     if ! hold_tool hold "$id" --reason "$reason" --card-file "$input" >/dev/null; then
       rm -f -- "$input"
       die "could not re-hold $id"
@@ -457,6 +472,11 @@ cmd_restore() {
     rm -f -- "$input"
   else
     hold_tool hold "$id" --reason "$reason" >/dev/null || die "could not re-hold $id"
+    if [ "$card" != null ]; then
+      cmd_draft "$id" --project "$(printf '%s' "$card" | jq -r .project)" \
+        --title "$(printf '%s' "$card" | jq -r .title)" \
+        --situation "$(printf '%s' "$card" | jq -r .situation)" >/dev/null
+    fi
   fi
   log_line restored "$id" "$(printf '%s' "$line" | jq -r .kind)" "restored on request" "$reason" "$card"
   printf 'restored: %s\n' "$id"

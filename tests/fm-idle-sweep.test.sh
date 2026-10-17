@@ -436,6 +436,32 @@ test_open_pr_workers_wait_for_merge_without_a_cleanup_decision() {
   pass "fm-idle-sweep: open PR workers wait for merge; merged workers retain guarded cleanup"
 }
 
+test_merged_mr_in_ledger_is_passed_to_teardown() {
+  local dir id
+  dir=$(new_case merged-mr-ledger)
+  for id in ledger-mr next-worker; do
+    add_worker "$dir" "$id" 'state: done · source: status-log · PR ready' 7200
+  done
+  printf 'done: MR https://gitlab.example/group/repo/-/merge_requests/57\n' >> "$dir/home/state/ledger-mr.status"
+  age_file "$dir/home/state/ledger-mr.status" 7200
+  printf 'merged\n' > "$dir/home/pr-states/57"
+  printf 'pr=https://github.com/owner/repo/pull/58\n' >> "$dir/home/state/next-worker.meta"
+  printf 'MERGED\n' > "$dir/home/pr-states/58"
+
+  sweep "$dir" scan --now || fail "scan failed"
+
+  assert_grep 'ledger-mr --keep-commits --merged-pr https://gitlab.example/group/repo/-/merge_requests/57' \
+    "$dir/home/teardown-args" "the ledger MR URL must reach teardown"
+  assert_grep 'next-worker --keep-commits --merged-pr https://github.com/owner/repo/pull/58' \
+    "$dir/home/teardown-args" "each worker must pass its own verified URL"
+  assert_absent "$dir/home/state/ledger-mr.meta" "the ledger-only merged worker is cleaned up"
+  assert_absent "$dir/home/state/next-worker.meta" "the next merged worker is cleaned up"
+  [ ! -s "$dir/home/hold-attempts" ] || fail "merged workers became captain cards"
+  [ "$(jq '[.workers[] | select(.action=="cleaned")] | length' "$dir/home/state/idle-sweep.json")" = 2 ] \
+    || fail "merged ledger cleanup was not reported"
+  pass "fm-idle-sweep: verified ledger-only MR URLs reach teardown without becoming cards"
+}
+
 test_closed_unmerged_prs_require_a_cleanup_decision() {
   local dir id
   dir=$(new_case closed-unmerged)
@@ -458,7 +484,7 @@ test_closed_unmerged_prs_require_a_cleanup_decision() {
   sweep "$dir" scan --now || fail "scan failed"
 
   [ "$(calls "$dir" teardown-calls)" = merged-ledger ] || fail "cleanup admitted an unmerged or unreadable PR"
-  [ "$(calls "$dir" teardown-args)" = "merged-ledger --keep-commits" ] \
+  [ "$(calls "$dir" teardown-args)" = "merged-ledger --keep-commits --merged-pr https://github.com/owner/repo/pull/55" ] \
     || fail "a merged worker's cleanup must keep leftover local commits on a branch instead of raising them: $(calls "$dir" teardown-args)"
   [ "$(sort "$dir/home/hold-calls" | tr '\n' ' ')" = 'closed-ledger closed-mr closed-recorded ' ] \
     || fail "closed-unmerged PRs did not become exactly one decision each"
@@ -906,6 +932,7 @@ test_watcher_runs_the_sweep_and_surfaces_its_decision() {
 test_real_holds_check_worker_records_inside_the_lifecycle_lock
 test_done_workers_are_cleaned_up_without_force
 test_closed_unmerged_prs_require_a_cleanup_decision
+test_merged_mr_in_ledger_is_passed_to_teardown
 test_only_lifecycle_contention_defers_cleanup_refusals
 test_pending_backlog_closes_remain_visible_until_cleared
 test_open_pr_workers_wait_for_merge_without_a_cleanup_decision
