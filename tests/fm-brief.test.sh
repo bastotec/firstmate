@@ -859,6 +859,9 @@ test_every_agent_is_told_to_act_within_scope() {
   assert_contains "$role" '"merge when green" includes rebasing, fixing CI, rerunning checks and fixing review findings' "granted authority covers its routine steps"
   assert_contains "$role" 'deploying or promoting to production' "the hard stops stay explicit"
   assert_contains "$role" 'A blocker is real only after you tried the obvious fix' "blockers must be real"
+  assert_contains "$role" "read the project's own guidance" "a credential or access blocker is checked against the project's own guidance first"
+  assert_contains "$role" 'INTERNAL.md' "the project's internal docs are named as a place to look"
+  assert_contains "$role" 'say what you checked and tried' "a blocker names what was checked"
   FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise assigned work.' \
     "$ROOT/bin/fm-brief.sh" mate --secondmate --no-projects >/dev/null || fail "secondmate scaffold failed"
   assert_grep '# Act within your scope' "$home/data/mate/brief.md" "a new second mate's charter carries the act-within-scope contract"
