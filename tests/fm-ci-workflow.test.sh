@@ -132,6 +132,9 @@ CAPS
 
 # Cancellation makes an undersized cap costlier: a falsely tripped job now also
 # discards a run nobody replaced. These bounds were measured, not guessed.
+# Serial 7's 20m15s timeout (run 39005793725, attempt 2) is a censored lower
+# bound, not a completion; 30m adds 9m45s (48%) headroom under load. Recent
+# successful jobs took 8m12s-10m08s. Keep the other caps and runner budget fixed.
 test_measured_lanes_keep_their_authorized_bounds() {
   local job expected actual
   while read -r job expected; do
@@ -141,7 +144,7 @@ test_measured_lanes_keep_their_authorized_bounds() {
       || fail "$job timeout must stay $expected minutes, got $actual"
   done <<'CAPS'
 tests-portable-parallel 15
-tests-portable-serial 20
+tests-portable-serial 30
 macos-stock-bash 15
 CAPS
   pass "the measured lane bounds match their authorized caps"
