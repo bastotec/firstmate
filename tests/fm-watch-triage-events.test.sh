@@ -147,6 +147,61 @@ test_procevent_captured_result_surfaces_proactively() {
   pass "a captured process-event result wakes a healthy watcher proactively, with no manual drain"
 }
 
+test_specialist_completion_row_wakes_the_watcher() {
+  local dir state out drain_out key outcome pid began took i
+  for key in specialist:fixture:done-job specialist:fixture:failed-job group:fixture-group group-cleanup:fixture-group; do
+    dir=$(make_case "crew-completion-${key//:/-}"); state="$dir/state"
+    out="$dir/watch.out"; drain_out="$dir/drain.out"
+    touch "$state/.last-check" "$state/.last-heartbeat" "$state/.last-idle-sweep"
+    # Observe the real poll sleep rather than guessing how long startup takes.
+    cat > "$dir/fakebin/sleep" <<'SH'
+#!/usr/bin/env bash
+[ "$1" != 1 ] || : > "$FM_TEST_POLL_READY"
+exec /bin/sleep "$@"
+SH
+    chmod +x "$dir/fakebin/sleep"
+    PATH="$dir/fakebin:$PATH" FM_TEST_POLL_READY="$dir/poll.ready" FM_HOME="$dir" \
+      FM_CREW_STATE_BIN="$dir/fakebin/fm-crew-state.sh" FM_POLL=30 FM_SIGNAL_GRACE=1 \
+      FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+    pid=$!
+    for i in $(seq 1 100); do
+      [ -e "$dir/poll.ready" ] && break
+      is_live_non_zombie "$pid" || break
+      sleep 0.1
+    done
+    if [ ! -e "$dir/poll.ready" ] || ! is_live_non_zombie "$pid"; then
+      reap "$pid"
+      fail "the idle watcher did not reach poll sleep: $(cat "$out")"
+    fi
+    outcome=DONE
+    case "$key" in *failed-job) outcome=FAILED ;; esac
+    began=$(date +%s)
+    append_wake "$state" check "$key" "check: $key $outcome" \
+      || { reap "$pid"; fail "could not append the completion row for $key"; }
+    wait_for_exit "$pid" 50 \
+      || { reap "$pid"; fail "completion $key did not wake the sleeping watcher: $(cat "$out")"; }
+    took=$(( $(date +%s) - began ))
+    [ "$took" -le 5 ] || fail "completion $key took ${took}s to wake a watcher sleeping 30 s"
+    grep -F "check: specialist/group job finished: $key" "$out" >/dev/null \
+      || fail "the completion wake did not name $key: $(cat "$out")"
+    FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null \
+      || fail "drain after completion $key failed"
+    grep "$(printf '\tcheck\t')" "$drain_out" | grep -F "check: $key $outcome" >/dev/null \
+      || fail "the following drain did not present completion $key ($outcome)"
+    # Draining without acknowledging keeps the row queued. A full successor
+    # cycle must ignore that same row because it was already surfaced.
+    grep -F "$key" "$state/.wake-queue" >/dev/null \
+      || fail "the completion row vanished before the dedup assertion"
+    watch_bg "$state" "$dir/fakebin" "$out" env FM_TEST_POLL_READY="$dir/poll.ready"
+    pid=$!
+    wait_poll_cycle "$state" "$pid" \
+      || { reap "$pid"; fail "the surfaced row $key woke a successor again: $(cat "$out")"; }
+    [ ! -s "$out" ] || { reap "$pid"; fail "the successor emitted another wake: $(cat "$out")"; }
+    reap "$pid"
+  done
+  pass "specialist success/failure and group completions promptly wake a sleeping watcher exactly once"
+}
+
 # A captain inbox note (bin/fm-inbox.sh note) wakes a healthy watcher mid-sleep,
 # within a few seconds, and only once. Before this, nothing in the watcher read
 # an inbox row: it sat on the queue until an unrelated event closed a cycle,
@@ -1182,6 +1237,7 @@ test_afk_one_shot_never_hands_off_captain_held_under_away_record() {
 
 test_triage_log_size_cap_accepts_spaced_wc_counts
 test_procevent_captured_result_surfaces_proactively
+test_specialist_completion_row_wakes_the_watcher
 test_inbox_note_wakes_the_watcher_promptly
 test_unread_inbox_note_survives_acknowledgement
 test_unread_inbox_note_resurfaces_a_bounded_number_of_times
