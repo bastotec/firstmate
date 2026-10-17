@@ -780,15 +780,31 @@ test_live_deck_relaunch_uses_control_protocol_before_residual_stop() {
   local dir out rc gen pid
   dir=$(new_case live-deck-stop rl-deck-live)
   add_ship_task "$dir" rl-deck-live deck
-  cat > "$dir/fakebin/deck" <<'SH'
-#!/usr/bin/env bash
-printf '{"type":"run_started","session":"live-session"}\n'
-touch "$FM_DECK_TEST_READY"
-/bin/sleep 60
-SH
+  cat > "$dir/fakebin/deck" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+
+def stop(*_):
+    if not os.path.exists(os.environ["FM_DECK_PROTOCOL_FIRST"]):
+        open(os.environ["FM_DECK_STOPPED_BEFORE_PROTOCOL"], "w").close()
+    subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1)"])
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, stop)
+print(json.dumps({"type": "run_started", "session": "live-session"}), flush=True)
+open(os.environ["FM_DECK_TEST_READY"], "w").close()
+# Outlive the confirmation window even when the machine is heavily loaded.
+time.sleep(600)
+PY
   chmod +x "$dir/fakebin/deck"
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl-deck-live)
-  FM_DECK_TEST_READY="$dir/ready" \
+  FM_DECK_TEST_READY="$dir/ready" FM_DECK_PROTOCOL_FIRST="$dir/protocol-first" \
+    FM_DECK_STOPPED_BEFORE_PROTOCOL="$dir/stopped-before-protocol" \
     python3 -c 'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
     "$ROOT/bin/fm-deck-worker.sh" --id rl-deck-live --state "$dir/home/state" \
     --gen "$gen" --deck "$dir/fakebin/deck" -- old-brief </dev/null > "$dir/driver.out" 2>&1 &
@@ -797,7 +813,26 @@ SH
   [ -e "$dir/ready" ] || fail "live Deck driver never started"
   printf deck > "$dir/fake/command"
   printf deck > "$dir/fake/becomes"
+  # Reproduce a driver that cannot consume the delivered /quit: the endpoint
+  # stays alive until the exact old driver has really stopped. The hook models
+  # the stream agent's own process observation, not composer text.
+  fake_push "$dir"
+  cat > "$dir/observe-stop" <<SH
+#!/usr/bin/env bash
+[ "\$2" = processes ] || exit 0
+if ps -ax -o pgid=,stat= | awk '\$1 == $pid && \$2 !~ /^Z/ { live=1 } END { exit !live }'; then
+  exit 0
+fi
+: > '$dir/group-stopped'
+curl -fsS -m 5 -H 'Authorization: Bearer $FM_STREAM_TOKEN' \
+  -H 'Content-Type: application/json' -X POST \
+  --data-binary '{"foreground":[{"pid":"","name":"bash","argv0":"bash","args":"bash"}]}' \
+  '$FM_TEST_STREAM_URL/v1/test/endpoints/$(cat "$dir/fake/target" | sed 's/.*://')' >/dev/null
+SH
+  chmod +x "$dir/observe-stop"
   out=$(FM_TEST_EXIT_WAIT=5 FM_FAKE_PROTOCOL_FIRST="$dir/protocol-first" \
+    FM_FAKE_PRIOR_PID="$pid" FM_FAKE_PRIOR_LIVE_MARKER="$dir/prior-live-at-launch" \
+    FM_FAKE_NEVER_DIES=1 FM_FAKE_ON_REQUEST="$dir/observe-stop" \
     run_control "$dir" rl-deck-live relaunch --note 'replace live driver'); rc=$?
   if kill -0 "$pid" 2>/dev/null; then
     kill -KILL -- -"$pid" 2>/dev/null || true
@@ -809,6 +844,10 @@ SH
   assert_grep 'C-c' "$dir/fake/keys" "live Deck relaunch did not interrupt through control"
   assert_grep '/quit' "$dir/fake/literal" "live Deck relaunch did not submit /quit"
   [ -e "$dir/protocol-first" ] || fail "residual stop ran before the normal Deck control protocol"
+  [ ! -e "$dir/stopped-before-protocol" ] || fail "TERM preceded protocol delivery"
+  [ -e "$dir/group-stopped" ] || fail "the recorded endpoint never observed the exact driver group stopped"
+  [ ! -e "$dir/prior-live-at-launch" ] || fail "replacement launched before the prior driver stopped"
+  assert_grep 'encode launch-brief' "$dir/fake/literal" "replacement did not launch after both stop proofs"
   pass "fm-control relaunch: Deck control protocol precedes residual process cleanup"
 }
 
@@ -1926,9 +1965,36 @@ test_relaunch_refuses_a_held_in_flight_item_before_stopping() {
 
 
 
+test_relaunch_requires_the_recorded_endpoint_to_stop() {
+  local dir other out rc=0
+  dir=$(new_case unconfirmed-stop rl-stop-proof)
+  add_ship_task "$dir" rl-stop-proof deck
+  other=$(new_case other-endpoint rl-other-proof)
+  add_ship_task "$other" rl-other-proof deck
+  fake_push "$other"
+  fm_test_close_task_endpoint "$other/home/state/rl-other-proof.meta"
+  cp "$dir/home/data/rl-stop-proof/brief.md" "$dir/brief.prior"
+  cp "$dir/home/state/rl-stop-proof.meta" "$dir/meta.prior"
+  printf 'uncommitted work\n' > "$dir/wt/preserved"
+  git -C "$dir/wt" add preserved
+  git -C "$dir/wt" diff --cached > "$dir/staged.prior"
+  # Another task's agent-reported endpoint close is not proof for this task.
+  out=$(FM_FAKE_NEVER_DIES=1 run_control "$dir" rl-stop-proof relaunch --note 'must not launch') || rc=$?
+  expect_code 1 "$rc" "a still-live endpoint must refuse replacement: $out"
+  assert_contains "$out" 'exit=unconfirmed' "missing bounded-stop diagnostic"
+  assert_contains "$out" 'original instructions were restored' "missing preservation diagnostic"
+  cmp -s "$dir/brief.prior" "$dir/home/data/rl-stop-proof/brief.md" || fail "instructions changed on stop refusal"
+  cmp -s "$dir/meta.prior" "$dir/home/state/rl-stop-proof.meta" || fail "metadata changed on stop refusal"
+  git -C "$dir/wt" diff --cached > "$dir/staged.after"
+  cmp -s "$dir/staged.prior" "$dir/staged.after" || fail "staged work changed"
+  assert_not_contains "$(cat "$dir/fake/literal")" 'encode launch-brief' "replacement launched without stop proof"
+  pass "relaunch refuses a live recorded endpoint even after another process exits, preserving staged work"
+}
+
 # fm-model-chain sources these fixture helpers without running this suite.
 [ "${FM_MODEL_CHAIN_TEST_SKIP_RUN:-0}" != 1 ] || return 0
 
+test_relaunch_requires_the_recorded_endpoint_to_stop
 test_secondmate_relaunch_preserves_an_in_place_model_choice
 test_relaunch_model_choice_follows_launch_resolution
 test_remote_relaunch_publishes_the_model_choice_with_the_route
