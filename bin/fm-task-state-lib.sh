@@ -438,6 +438,9 @@ map_log_state() {  # <line>
   case "$(status_line_verb "$1")" in
     working)        echo working ;;
     needs-decision) echo parked ;;
+    # The worker's open decision moved to a durable captain hold
+    # (bin/fm-captain-hold.sh), so it waits exactly as a parked worker does.
+    captain-held)   echo parked ;;
     blocked)        echo blocked ;;
     done)           echo "done" ;;
     failed)         echo failed ;;

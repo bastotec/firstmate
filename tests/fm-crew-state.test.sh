@@ -2022,6 +2022,24 @@ test_no_run_idle_secondmate_resolved_event_not_state() {
   pass "a trailing resolved: event does not corrupt state render (idle stays idle)"
 }
 
+# A trailing captain-held line means the worker's open decision moved to a
+# durable captain hold: the worker waits on the captain exactly as a parked one.
+test_no_run_idle_captain_held_reads_as_parked() {
+  reset_fakes
+  local d; d=$(new_case captain-held-idle)
+  mkdir -p "$d/wt"
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/scout.meta" $(fm_test_stream_task "$d/state" "scout") "worktree=$d/wt" "kind=scout" "harness=deck"
+  printf 'blocked: runtime prerequisite missing\ncaptain-held [key=default]: tracked by scout\n' > "$d/state/scout.status"
+  arm_idle_record "$d/state" scout
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_BUSY=0
+  local out; out=$(run_crew_state "$d" scout)
+  assert_contains "$out" "state: parked" "a captain-held worker reads as parked, not unknown"
+  assert_contains "$out" "source: status-log" "the captain-held line is the state source"
+  pass "a trailing captain-held line reads as parked"
+}
+
 test_dead_window_ignores_stale_status_log() {
   reset_fakes
   local d; d=$(new_case dead-window)
@@ -2786,6 +2804,7 @@ test_no_run_idle_pane_uses_keyed_log
 test_no_run_idle_pane_paused
 test_no_run_idle_pane_custom_paused_verb
 test_no_run_idle_secondmate_resolved_event_not_state
+test_no_run_idle_captain_held_reads_as_parked
 test_dead_window_ignores_stale_status_log
 test_dead_window_still_reports_terminal_run_step
 test_dead_window_still_reports_active_run_step
