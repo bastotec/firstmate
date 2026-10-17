@@ -95,6 +95,12 @@
 #                          and has not been surfaced yet; reported once per
 #                          captured generation, never again while that record
 #                          stays queued and never once it is acknowledged
+#   check: specialist/group job finished: <keys>
+#                          queued specialist:<name>:<job>, group:<gid>, and
+#                          group-cleanup:<gid> checks surface once per key while
+#                          queued, including failed outcomes and cleanup results;
+#                          no status line or turn-end touch is required, and the
+#                          original rows remain for the ordinary drain and ack
 #   check: process-event source stranded: <keys>
 #                          a registered process-to-event source has a claim
 #                          reconcile will not displace and nothing collecting
@@ -1737,7 +1743,7 @@ procevent_surface_after_output() {
 }
 
 procevent_surface_queued() {
-  local key reason captured="" stranded="" unstarted="" notes="" revive="" idle="" idle_audit="" idle_left="" mates="" lanes="" parked=""
+  local key reason captured="" stranded="" unstarted="" notes="" revive="" idle="" idle_audit="" idle_left="" mates="" lanes="" parked="" crew_done=""
   PROCEVENT_SURFACED=
   [ -s "$FM_WAKE_QUEUE" ] || return 0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
@@ -1749,7 +1755,7 @@ procevent_surface_queued() {
         notes="$notes ${key#inbox:}"
         continue
         ;;
-      procevent:*|secondmate-revive:*|lane-heal:*|parked-run:*|idle-sweep:*|idle-sweep-audit:*|idle-sweep-unhandled:*|mate-mail:*) ;;
+      procevent:*|secondmate-revive:*|lane-heal:*|parked-run:*|idle-sweep:*|idle-sweep-audit:*|idle-sweep-unhandled:*|mate-mail:*|specialist:*|group:*|group-cleanup:*) ;;
       *) continue ;;
     esac
     [ -e "$(procevent_surfaced_marker "$key")" ] && continue
@@ -1778,6 +1784,7 @@ procevent_surface_queued() {
         key=${key#idle-sweep-audit:}
         idle_audit="$idle_audit ${key%%:*}"
         ;;
+      specialist:*|group:*|group-cleanup:*) crew_done="$crew_done $key" ;;
       procevent:*:stranded:*) stranded="$stranded $key" ;;
       procevent:*:launch-failed:*) unstarted="$unstarted $key" ;;
       *) captured="$captured $key" ;;
@@ -1816,6 +1823,10 @@ procevent_surface_queued() {
   if [ -n "$idle_audit" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
     reason="$reason second mate not cleaning up idle workers:$idle_audit"
+  fi
+  if [ -n "$crew_done" ]; then
+    [ "$reason" = "check:" ] || reason="$reason;"
+    reason="$reason specialist/group job finished:$crew_done"
   fi
   if [ -n "$captured" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
