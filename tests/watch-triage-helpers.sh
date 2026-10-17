@@ -18,6 +18,9 @@
 # workers. Every case lives in exactly one suite; this file holds only the
 # helpers they share.
 #
+# tests/lib.sh owns the fixture home-identity isolation rule and regression
+# pointers; source-time scrubbing alone is not a launch-boundary pin.
+#
 # Daemon-side classification/injection lives in fm-daemon.test.sh; watcher/lock
 # liveness in fm-watcher-lock.test.sh; the durable-queue safety matrix in
 # fm-wake-queue.test.sh.
