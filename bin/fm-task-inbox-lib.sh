@@ -258,18 +258,18 @@ _fm_task_inbox_next_candidate() {  # <inbox-dir> <candidate-path> <have-file>
 # line keeps every record; neither shortcut can drop a real match.
 _fm_task_inbox_dedup_candidates() {  # <inbox-dir> <want-file>
   local dir=$1 want=$2 first matches f
-  local -a files=()
+  local -a inbox_records=()
   for f in "$dir"/*.msg "$dir/handled"/*.msg; do
-    files+=("$f")
+    inbox_records+=("$f")
   done
-  [ "${#files[@]}" -gt 0 ] || return 0
+  [ "${#inbox_records[@]}" -gt 0 ] || return 0
   IFS= read -r first < "$want" || true
   if [ -z "$first" ]; then
-    printf '%s\0' "${files[@]}"
+    printf '%s\0' "${inbox_records[@]}"
     return 0
   fi
-  matches=$(printf '%s\0' "${files[@]}" | xargs -0 grep -lFx -e "$first" -- 2>/dev/null || true)
-  for f in "${files[@]}"; do
+  matches=$(printf '%s\0' "${inbox_records[@]}" | xargs -0 grep -lFx -e "$first" -- 2>/dev/null || true)
+  for f in "${inbox_records[@]}"; do
     case $'\n'"$matches"$'\n' in
       *$'\n'"$f"$'\n'*) printf '%s\0' "$f" ;;
       *) [ -e "$f" ] || printf '%s\0' "$f" ;;
