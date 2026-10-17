@@ -292,11 +292,50 @@ test_leftover_scratch_is_set_aside_not_discarded() {
   out=$(run_spawn "$id" --mode no-mistakes --yolo off)
   status=$?
   expect_code 0 "$status" "a slot holding only a leftover .scratch/ must not block the task"$'\n'"$out"
-  assert_contains "$out" "moved it to" "the move is reported"
+  assert_contains "$out" "moved them to" "the move is reported"
   kept=$(find "$HOME_DIR/state/slot-quarantine" -path '*/.scratch/notes/log.txt' | head -1)
   [ -n "$kept" ] || fail "the leftover scratch was not kept in the quarantine"
   assert_grep 'old worker scratch' "$kept" "the leftover scratch is kept intact"
   pass "a slot holding only a previous worker's .scratch/ sets it aside and launches"
+}
+
+test_day_old_untracked_leftovers_are_set_aside() {
+  local rec id out status kept
+  id='pool-stale-left-r1'
+  rec=$(make_originless_case stale-left "$id")
+  read_case_record "$rec"
+  mkdir -p "$POOL_DIR/.readiness-pass"
+  printf 'old ci copy\n' > "$POOL_DIR/.readiness-pass/ci-exact.yml"
+  printf 'old note\n' > "$POOL_DIR/notes.txt"
+  touch -t 202601010000 "$POOL_DIR/.readiness-pass/ci-exact.yml" "$POOL_DIR/.readiness-pass" "$POOL_DIR/notes.txt"
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "day-old untracked leftovers must not block the task"$'\n'"$out"
+  assert_contains "$out" "moved them to" "the move is reported"
+  kept=$(find "$HOME_DIR/state/slot-quarantine" -path '*/.readiness-pass/ci-exact.yml' | head -1)
+  [ -n "$kept" ] || fail "the stale leftover directory was not kept in the quarantine"
+  assert_grep 'old ci copy' "$kept" "the stale leftover is kept intact"
+  [ -n "$(find "$HOME_DIR/state/slot-quarantine" -name notes.txt | head -1)" ] || fail "the stale leftover file was not kept"
+  pass "untracked leftovers nothing touched for a day are set aside and the task launches"
+}
+
+test_a_fresh_untracked_file_keeps_stale_leftovers_in_place() {
+  local rec id out status before
+  id='pool-stale-fresh-r1'
+  rec=$(make_originless_case stale-fresh "$id")
+  read_case_record "$rec"
+  mkdir -p "$POOL_DIR/.readiness-pass"
+  printf 'old\n' > "$POOL_DIR/.readiness-pass/a.txt"
+  touch -t 202601010000 "$POOL_DIR/.readiness-pass/a.txt" "$POOL_DIR/.readiness-pass"
+  printf 'work from today\n' > "$POOL_DIR/today.txt"
+  before=$(git -C "$POOL_DIR" status --porcelain)
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a fresh untracked file must refuse the slot"
+  assert_contains "$out" "is not clean" "the refusal is unchanged"
+  [ "$(git -C "$POOL_DIR" status --porcelain)" = "$before" ] || fail "refusing the slot moved some of its leftovers"
+  [ ! -e "$HOME_DIR/state/slot-quarantine" ] || fail "refusing the slot created a quarantine"
+  pass "a fresh untracked file refuses the slot without moving its stale leftovers"
 }
 
 test_partially_tracked_scratch_is_left_untouched() {
@@ -865,6 +904,8 @@ test_unreachable_origin_refuses_stale_pool_base
 test_originless_pool_launches_without_a_freshness_fetch
 test_originless_dirty_pool_refuses_without_discarding_work
 test_leftover_scratch_is_set_aside_not_discarded
+test_day_old_untracked_leftovers_are_set_aside
+test_a_fresh_untracked_file_keeps_stale_leftovers_in_place
 test_partially_tracked_scratch_is_left_untouched
 test_scratch_plus_other_dirt_still_refuses
 test_origin_config_without_url_refuses_pool
