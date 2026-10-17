@@ -555,6 +555,7 @@ test_unreachable_host_is_reported_unknown() {
   assert_not_contains "$out" "restarted: sm3" "an unreachable host must not be claimed as restarted"
   assert_contains "$out" "sm3:" "the unreachable mate must still be named"
   assert_contains "$out" "could not be delivered" "an unreachable host must be reported as undelivered, not as reloaded"
+  assert_not_contains "$out" "delivered: WARNING" "the reason must be the send's own error, never a warning banner"
   pass "T7 an unreachable host is reported honestly instead of claimed as reloaded"
 }
 

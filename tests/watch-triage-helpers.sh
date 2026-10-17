@@ -152,7 +152,18 @@ record_pi_busy() {  # <state-dir> <id>
     --source deck-wrapper --event agent-start
 }
 
-reap() { kill "$1" 2>/dev/null || true; wait "$1" 2>/dev/null || true; }
+# Bash can lose a TERM while parsing a command substitution. Retry the stop
+# rather than waiting for the watcher to reach a real pause/wedge deadline.
+reap() {
+  local pid=$1 i=0
+  while is_live_non_zombie "$pid" && [ "$i" -lt 5 ]; do
+    kill "$pid" 2>/dev/null || true
+    sleep 1
+    i=$((i + 1))
+  done
+  fm_test_kill_tree "$pid"
+  wait "$pid" 2>/dev/null || true
+}
 
 size_of() { LC_ALL=C wc -c < "$1" | tr -d '[:space:]'; }
 
