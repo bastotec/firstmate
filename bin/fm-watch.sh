@@ -95,6 +95,12 @@
 #                          and has not been surfaced yet; reported once per
 #                          captured generation, never again while that record
 #                          stays queued and never once it is acknowledged
+#   check: specialist/group job finished: <keys>
+#                          queued specialist:<name>:<job>, group:<gid>, and
+#                          group-cleanup:<gid> checks surface once per key while
+#                          queued, including failed outcomes and cleanup results;
+#                          no status line or turn-end touch is required, and the
+#                          original rows remain for the ordinary drain and ack
 #   check: process-event source stranded: <keys>
 #                          a registered process-to-event source has a claim
 #                          reconcile will not displace and nothing collecting
