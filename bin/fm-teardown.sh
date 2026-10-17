@@ -3329,6 +3329,7 @@ if [ "$KIND" = ship ] && [ "$MODE" != local-only ] \
   if [ -z "$branch" ] || ! work_is_landed "$branch"; then
     echo "REFUSED: task $ID is not finished: no PR is recorded and its work is not proven landed." >&2
     echo "Nothing was changed. Land the work before retrying teardown." >&2
+    [ -z "$branch" ] || work_gate_refusal_exit
     exit 1
   fi
 fi

@@ -1230,6 +1230,56 @@ test_no_pr_done_pushed_unmerged_refuses() {
   pass 'done-row failed ship with no PR refuses even when all commits are pushed, preserving all artifacts'
 }
 
+test_no_pr_unlanded_retirement_preserves_work() {
+  local scenario case_dir rc head
+  for scenario in operator finished missing unreadable; do
+    case_dir=$(make_case "no-pr-retirement-$scenario")
+    fm_write_meta "$case_dir/state/task-x1.meta" \
+      "backend=tmux" "window=fm:fm-task-x1" \
+      "worktree=$case_dir/wt" "project=$case_dir/project" \
+      "kind=ship" "mode=no-mistakes" "spawn_gen=teardown-test-task-x1"
+    fm_fake_exit0 "$case_dir/fakebin" tmux
+    wt_commit_file "$case_dir" feature.txt 'preserve unlanded work'
+    git -C "$case_dir/wt" push -q origin HEAD:refs/heads/frozen-task
+    head=$(git -C "$case_dir/wt" rev-parse HEAD)
+    seed_backlog_in_flight "$case_dir"
+    printf 'failed: validation stopped\n' > "$case_dir/state/task-x1.status"
+    add_logging_treehouse "$case_dir"
+    case "$scenario" in
+      missing) git -C "$case_dir/project" worktree remove --force "$case_dir/wt" ;;
+      unreadable) printf 'invalid git identity\n' > "$case_dir/wt/.git" ;;
+    esac
+    cp "$case_dir/state/task-x1.meta" "$case_dir/meta.before"
+    cp "$case_dir/data/backlog.md" "$case_dir/backlog.before"
+    rc=0
+    if [ "$scenario" = finished ]; then
+      FM_HOME="$case_dir" FM_ROOT_OVERRIDE="$ROOT" PATH="$case_dir/fakebin:$PATH" \
+        "$ROOT/bin/fm-retire-endpoint.sh" --finished task-x1 </dev/null \
+        > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    else
+      printf 'task-x1\n' | FM_HOME="$case_dir" FM_ROOT_OVERRIDE="$ROOT" PATH="$case_dir/fakebin:$PATH" \
+        "$ROOT/bin/fm-retire-endpoint.sh" task-x1 \
+        > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    fi
+    if [ "$scenario" = operator ]; then
+      expect_code 0 "$rc" "operator retirement failed: $(cat "$case_dir/stderr")"
+      assert_absent "$case_dir/state/task-x1.meta" 'operator retirement retained metadata'
+      [ "$(backlog_row_state "$case_dir")" = done ] || fail 'operator retirement left the row open'
+    else
+      expect_code 1 "$rc" "$scenario retirement must refuse"
+      cmp -s "$case_dir/meta.before" "$case_dir/state/task-x1.meta" || fail "$scenario changed metadata"
+      cmp -s "$case_dir/backlog.before" "$case_dir/data/backlog.md" || fail "$scenario changed backlog"
+    fi
+    if [ "$scenario" != missing ]; then
+      [ "$(cat "$case_dir/wt/feature.txt")" = 'preserve unlanded work' ] || fail "$scenario changed work"
+    fi
+    [ "$(git -C "$case_dir/project" rev-parse fm/task-x1)" = "$head" ] || fail "$scenario moved the branch"
+    assert_absent "$case_dir/treehouse.log" "$scenario returned the pooled copy"
+    assert_absent "$case_dir/state/task-x1.endpoint-retired" "$scenario left retirement authorization"
+  done
+  pass 'only explicit operator retirement bypasses known unlanded work, preserving the copy'
+}
+
 # With FM_HOME unset, a code root that happens to be a secondmate home must
 # not become the fixture's reporting identity. The canary parent is a sibling
 # sandbox, never the machine's real parent channel.
@@ -3699,6 +3749,7 @@ EOF
 }
 
 test_no_pr_done_pushed_unmerged_refuses
+test_no_pr_unlanded_retirement_preserves_work
 test_unset_home_keeps_fixture_outcomes_in_sandbox
 test_local_only_fork_remote_allows
 test_wake_gate_retirement_refuses_a_symlinked_parent
