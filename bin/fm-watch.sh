@@ -2289,6 +2289,8 @@ pr_poll_control_release() {
 }
 
 watcher_cleanup() {
+  # A repeated stop must not interrupt recovery publication or lock release.
+  trap '' HUP INT TERM
   local cleanup_status=0 owns_lock=0 transition=release-lock
   pr_poll_control_release || cleanup_status=1
   if [ "$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)" = "${WATCHER_PID:-}" ]; then

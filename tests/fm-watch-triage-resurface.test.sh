@@ -8,6 +8,48 @@ set -u
 # shellcheck source=tests/watch-triage-helpers.sh
 . "$(dirname "${BASH_SOURCE[0]}")/watch-triage-helpers.sh"
 
+# A loaded runner can leave the watcher in its EXIT cleanup when reap retries
+# TERM. Hold recovery publication at a barrier to exercise that exact boundary.
+test_repeated_stop_preserves_recovery() {
+  local dir state fakebin out pid real_mktemp rc
+  dir=$(make_case repeated-stop-recovery); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  real_mktemp=$(command -v mktemp)
+  cat > "$fakebin/mktemp" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  */.watcher-down.tmp.*)
+    printf '1\n' > "$FM_TEST_CLEANUP_BARRIER/cleanup-entered"
+    ticks=0
+    while [ -d "$FM_TEST_CLEANUP_BARRIER" ] && [ "$ticks" -lt 600 ]; do
+      [ ! -e "$FM_TEST_CLEANUP_BARRIER/cleanup-release" ] || break
+      sleep 0.05
+      ticks=$((ticks + 1))
+    done
+    [ -e "$FM_TEST_CLEANUP_BARRIER/cleanup-release" ] || exit 1
+    ;;
+esac
+exec "$FM_TEST_REAL_MKTEMP" "$@"
+SH
+  chmod +x "$fakebin/mktemp"
+  watch_bg "$state" "$fakebin" "$out" env \
+    FM_TEST_REAL_MKTEMP="$real_mktemp" FM_TEST_CLEANUP_BARRIER="$dir"
+  pid=$!
+  wait_poll_cycle "$state" "$pid" \
+    || { reap "$pid"; fail "the repeated-stop watcher did not complete a poll"; }
+  kill -TERM "$pid"
+  wait_numeric_file "$dir/cleanup-entered" 100 \
+    || { reap "$pid"; fail "the watcher did not enter recovery publication"; }
+  kill -TERM "$pid"
+  touch "$dir/cleanup-release"
+  wait_for_exit "$pid" 100
+  rc=$?
+  [ "$rc" -eq 1 ] || { reap "$pid"; fail "the stopped watcher returned $rc instead of 1"; }
+  [ ! -d "$state/.watch.lock" ] || fail "repeated stop interrupted the watcher's lock release"
+  ack_stopped_cycle "$state" || fail "repeated stop left no acknowledgeable recovery episode"
+  pass "repeated stop lets watcher cleanup publish recovery and release its lock"
+}
+
 # One sighting that must surface and exit the cycle.
 hold_watch_surface() {  # <dir> <out> <capture> <pane-text>
   local dir=$1 out=$2 capture=$3 text=$4
@@ -777,6 +819,7 @@ test_terminal_first_sight_drops_a_finished_write_deferral_chain() {
   pass "both first-sight paths through a captain-relevant status drop a finished write-deferral chain with the idle window"
 }
 
+test_repeated_stop_preserves_recovery
 test_open_captain_call_bounds_stale_churn
 test_stale_churn_without_a_captain_call_still_alarms
 test_failed_wake_append_does_not_arm_the_captain_hold_throttle
