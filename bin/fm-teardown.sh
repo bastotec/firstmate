@@ -62,7 +62,10 @@
 # fetching its head via refs/pull/<n>/head when the branch itself was deleted.
 # Missing recorded PR evidence alone never causes a false refusal of landed work.
 # A gh lookup error during this merged-head discovery falls back to the
-# content-in-default check; if that is also inconclusive, teardown refuses.
+# content-in-default check; if that is also inconclusive, teardown refuses
+# before endpoint, worktree, metadata, or backlog cleanup, even for a terminal
+# failed ship with a Done backlog row. Regression coverage:
+# tests/fm-teardown.test.sh's test_no_pr_done_pushed_unmerged_refuses.
 # This fallback never substitutes for the recorded-PR completion-claim gate.
 # Uncommitted changes are never landed.
 # A recorded PR on any non-secondmate task also requires the completion-claim
@@ -72,9 +75,10 @@
 # (merged, superseded, or closed-unmerged for a forced PR confirmed open or
 # closed; an unreadable forge state records none), and a failure to record it
 # refuses cleanup.
-# local-only projects additionally accept work merged into the local default
-# branch (firstmate performs that merge after configured approval) as a fallback
-# for the common case where there is no remote at all.
+# local-only projects retain a separate preservation gate: clean work reachable
+# from any remote-tracking branch is accepted, or work merged into the local
+# default branch (firstmate performs that merge after configured approval) when
+# there is no remote copy. A recorded PR still requires its completion-claim gate.
 # Scout tasks (kind=scout in meta) carve out of the committed-content check:
 # their worktree is scratch and the report at data/<task-id>/report.md is the work
 # product. Teardown proceeds only once the report exists and the shared

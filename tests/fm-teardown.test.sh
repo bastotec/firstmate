@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
 # Tests for bin/fm-teardown.sh's landed-work safety and stale-lock recovery.
 #
-# The check refuses to tear down a worktree whose work has not LANDED, because
-# treehouse return hard-resets the worktree. For an ordinary ship, "landed" means
-# a merged PR head contains the current local work, or the content is already in
-# the up-to-date default branch. Remote reachability alone is not landing proof.
-# Local-only tasks retain their remote-preservation and local-main gates.
+# bin/fm-teardown.sh's header owns the landed-work and local-only preservation
+# contracts; these tests exercise them through the public teardown interface.
 #
-# Covers three fixes:
+# Coverage includes:
 #   - local-only fork-remote: a fork IS a remote, so fork-pushed upstream-
 #     contribution PRs are teardown-eligible (the pre-fix code false-refused them).
 #   - squash-merge-then-delete-branch: the branch's own commits live nowhere on a

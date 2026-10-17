@@ -245,9 +245,9 @@ test_send_refuses_and_admits() {
 
 # --- fm-teardown ------------------------------------------------------------
 
-# make_teardown_case <name> -> echoes a case dir holding a LANDED no-mistakes ship
-# task (HEAD reachable from origin), so a normal teardown genuinely succeeds and a
-# refused one leaves the task untouched (mirrors tests/fm-teardown make_case).
+# make_teardown_case <name> -> echoes a case dir holding a no-mistakes ship
+# whose empty commit leaves its content already in origin/main, so a normal
+# teardown succeeds and a refused one leaves the task untouched.
 make_teardown_case() {
   local name=$1 case_dir fakebin
   case_dir="$TMP/$name"; fakebin="$case_dir/fakebin"
