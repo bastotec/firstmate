@@ -163,10 +163,12 @@ jobs:
     # Nine shards pack to about 9-10 minutes each of slowest-run hints
     # (bin/fm-test-run.sh --check-coverage reports serial_max_ms).
     # This cap is a hang tripwire with runner-speed and setup margin, not the
-    # expected healthy end of the lane. 15 minutes stopped being enough on
-    # 2026-10-13: shard 2 reached it while starting its last script on main
-    # (run 38361446061) and on PR #168 twice, with every finished script green.
-    timeout-minutes: 20
+    # expected healthy end of the lane. Serial 7 completed in 8m12s-10m08s
+    # across eleven recent successful jobs, but run 39005793725 attempt 2
+    # stopped at 20m15s under load on 2026-10-17. That timeout is a censored
+    # lower bound, not a completed duration. Allow 30 minutes: 9m45s (48%)
+    # above that observation, without adding runners or changing coverage.
+    timeout-minutes: 30
     strategy:
       # Every shard reports so one failure never hides another shard's result.
       fail-fast: false
