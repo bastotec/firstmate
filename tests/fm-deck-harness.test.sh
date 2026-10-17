@@ -994,7 +994,8 @@ SH
 }
 
 test_driver_stop_is_scoped_and_escalates_after_timeout() {
-  local dir="$TMP_ROOT/stop-escalation" pid gen
+  local mode=${1:-legacy}
+  local dir="$TMP_ROOT/stop-escalation-$mode" pid gen
   mkdir -p "$dir/state"
   cat > "$dir/deck" <<'PY'
 #!/usr/bin/env python3
@@ -1041,11 +1042,36 @@ PY
   [ ! -e "$dir/signalled" ] || fail "a non-finite timeout signalled the Deck process before refusal"
   python3 "$ROOT/bin/fm-deck-stop.py" "$dir/state" other 1 || fail "unrelated task stop refused"
   kill -0 "$pid" 2>/dev/null || fail "stopping another task killed this driver"
-  python3 "$ROOT/bin/fm-deck-stop.py" "$dir/state" owned 0.3 \
-    || fail "the timed-out driver group was not escalated"
+  if [ "$mode" = legacy ]; then
+    python3 "$ROOT/bin/fm-deck-stop.py" "$dir/state" owned 0.3 \
+      || fail "the timed-out driver group was not escalated"
+    wait "$pid" 2>/dev/null || true
+    kill -0 "$pid" 2>/dev/null && fail "the timed-out driver survived escalation"
+    pass "Deck stop: exact task scope and bounded escalation remove survivors"
+    return 0
+  fi
+  python3 - "$ROOT/bin/fm-deck-stop.py" "$dir/state" owned <<'PY' \
+    || fail "cooperative stop forced a survivor or accepted unproven stop"
+import subprocess
+import sys
+helper, state, task = sys.argv[1:]
+result = subprocess.run(
+    [sys.executable, helper, state, task, "0.3", "--cooperative"],
+    capture_output=True, text=True, timeout=10,
+)
+assert result.returncode == 1, result
+assert "refusing replacement without forcing it" in result.stderr, result.stderr
+PY
+  [ -e "$dir/signalled" ] || fail "cooperative stop never requested TERM"
+  # No forced cleanup is performed by the helper in cooperative mode.
+  kill -0 -- -"$pid" 2>/dev/null || fail "cooperative stop killed the owned group"
+  kill -KILL -- -"$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  kill -0 "$pid" 2>/dev/null && fail "the timed-out driver survived escalation"
-  pass "Deck stop: exact task scope and bounded escalation remove survivors"
+  pass "Deck stop: exact task scope and cooperative timeout preserve survivors"
+}
+
+test_driver_cooperative_stop_preserves_survivors() {
+  test_driver_stop_is_scoped_and_escalates_after_timeout cooperative
 }
 
 test_liveness_reads_the_driver_as_an_agent() {
@@ -3677,6 +3703,7 @@ test_completed_turn_removes_busy_ack_before_the_next_steer
 test_driver_stop_terminates_active_deck_and_resolves_spaced_paths
 test_stale_secondmate_driver_is_stopped_at_relaunch_boundary
 test_driver_stop_is_scoped_and_escalates_after_timeout
+test_driver_cooperative_stop_preserves_survivors
 test_liveness_reads_the_driver_as_an_agent
 test_stream_liveness_uses_the_deck_driver_argv0
 test_control_busy_and_delivery_tables_name_deck

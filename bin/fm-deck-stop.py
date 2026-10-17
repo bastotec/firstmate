@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Stop local Deck drivers for one exact task at a lifecycle boundary.
 
-Usage: fm-deck-stop.py STATE TASK TIMEOUT
+Usage: fm-deck-stop.py STATE TASK TIMEOUT [--cooperative]
+The --cooperative relaunch mode sends only TERM and refuses at TIMEOUT if any
+owned process remains; it never escalates to KILL.
        fm-deck-stop.py STATE TASK --prove-stopped [BACKEND TARGET WORKSPACE]
 The read-only --prove-stopped mode refuses any anchored non-zombie driver,
 including non-process-group leaders, without sending a signal. When supplied,
@@ -188,7 +190,7 @@ def deck_processes(rows, driver, group, executable):
     return matches
 
 
-def stop(state, task, timeout):
+def stop(state, task, timeout, cooperative=False):
     if not math.isfinite(timeout):
         raise ValueError("timeout must be finite")
     state = os.path.realpath(state)
@@ -197,7 +199,18 @@ def stop(state, task, timeout):
     )
     if not os.path.isdir(state):
         raise RuntimeError(f"state directory is unavailable: {state}")
-    drivers = find_drivers(processes(), worker, state, task)
+    rows = processes()
+    if cooperative:
+        for pid, _, group, stat in rows:
+            if (
+                pid != group and not stat.startswith("Z")
+                and driver_deck(process_arguments(pid), worker, state, task)
+            ):
+                raise RuntimeError(
+                    f"task-bound Deck driver {pid} has no isolated group; "
+                    "refusing replacement"
+                )
+    drivers = find_drivers(rows, worker, state, task)
     for pid, group, _ in drivers:
         if group == os.getpgrp():
             raise RuntimeError(
@@ -240,6 +253,11 @@ def stop(state, task, timeout):
         if time.monotonic() >= deadline:
             break
         time.sleep(0.1)
+    if cooperative:
+        raise RuntimeError(
+            f"task-bound Deck driver has not stopped within {timeout}s; "
+            "refusing replacement without forcing it"
+        )
     for group in groups:
         try:
             os.killpg(group, signal.SIGKILL)
@@ -330,7 +348,12 @@ if __name__ == "__main__":
             if len(sys.argv) > 4:
                 prove_endpoint_absent(sys.argv[4], sys.argv[5], sys.argv[6])
         else:
-            stop(sys.argv[1], sys.argv[2], float(sys.argv[3]))
+            if sys.argv[4:] not in ([], ["--cooperative"]):
+                raise ValueError("expected TIMEOUT [--cooperative]")
+            stop(
+                sys.argv[1], sys.argv[2], float(sys.argv[3]),
+                cooperative=sys.argv[4:] == ["--cooperative"],
+            )
     except (
         IndexError,
         ValueError,

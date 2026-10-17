@@ -78,7 +78,10 @@
 #              secondmate reconciles its own home's records at startup, so its
 #              standing charter is never rewritten.
 #              Records a durable checkpoint and that note, exits the old agent,
-#              then delegates the launch to its single owner,
+#              requests cooperative TERM from only its task-bound Deck driver,
+#              and proves both that driver group gone and the endpoint stopped
+#              within bounded waits, refusing without forced termination.
+#              Then delegates the launch to its single owner,
 #              bin/fm-spawn.sh --relaunch. Backlog eligibility is proved before
 #              exit: an unheld In-flight dependency blocker is valid recovery,
 #              while blocked Queued work and every hold still refuse with the
@@ -721,7 +724,10 @@ retire_busy_incarnation() {
 }
 
 stop_deck_residual_drivers() {
-  [ "$HARNESS" != deck ] || python3 "$SCRIPT_DIR/fm-deck-stop.py" "$STATE" "$ID" "$EXIT_WAIT" \
+  local args=("$STATE" "$ID" "$EXIT_WAIT")
+  # Relaunch must never turn a bounded stop refusal into a forced kill.
+  [ "$VERB" != relaunch ] || args+=(--cooperative)
+  [ "$HARNESS" != deck ] || python3 "$SCRIPT_DIR/fm-deck-stop.py" "${args[@]}" \
     || die "the prior Deck driver has not been proved stopped; refusing replacement"
 }
 
@@ -865,6 +871,11 @@ do_exit() {
     || die "the exit command could not be sent to task $ID on $BACKEND"
   [ "$verdict" != send-failed ] \
     || die "the exit command could not be sent to task $ID on $BACKEND"
+  # A driver can be parked in a synchronous probe and not consume /quit.
+  # After protocol delivery, ask only this task's argv-bound driver to stop
+  # cooperatively, proving its group gone before accepting endpoint liveness.
+  # The endpoint's own fresh/dead or agent-closed proof remains mandatory.
+  [ "$VERB" != relaunch ] || stop_deck_residual_drivers
   state=$(wait_agent_state "$EXIT_WAIT" dead) || {
     die "exit-delivered $ID interrupt=$interrupt_result exit-command=delivered agent-state=$state exit=unconfirmed; the agent did not stop within ${EXIT_WAIT}s"
   }
