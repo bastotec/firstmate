@@ -39,6 +39,32 @@ good_card() {  # <path>
 EOF
 }
 
+test_cards_use_plain_words() {
+  local home in err
+  home=$(make_home plain)
+  in="$home/in.json"
+  good_card "$in"
+  jq '.situation="Direction1750 cleanup refuses three local commits."' "$in" > "$in.tmp" && mv "$in.tmp" "$in"
+  err=$(run_card "$home" validate --file "$in" 2>&1) && fail "validate accepted letters run together with digits"
+  assert_contains "$err" 'Direction1750' "the error names the jargon token"
+  good_card "$in"
+  jq '.options[0].label="Keep pr-1806-orphan-choice-fix"' "$in" > "$in.tmp" && mv "$in.tmp" "$in"
+  err=$(run_card "$home" validate --file "$in" 2>&1) && fail "validate accepted a task-slug label"
+  assert_contains "$err" 'options' "the error names the option labels"
+  good_card "$in"
+  jq '.title="Fix, then merge or stop?"' "$in" > "$in.tmp" && mv "$in.tmp" "$in"
+  err=$(run_card "$home" write sweep-task-one --file "$in" 2>&1) || fail "a plain card was refused: $err"
+  jq '.title="sweep-task-one is ready"' "$in" > "$in.tmp" && mv "$in.tmp" "$in"
+  err=$(run_card "$home" write sweep-task-one --file "$in" 2>&1) && fail "write accepted the card's own task id in the title"
+  good_card "$in"
+  jq '.title="PR 1806 is merged. 3 local commits look unmerged, probably because of the squash. Keep them or delete them?" | .situation="Checked end-to-end." | .options[0].instruction="keep pr-1806-orphan-choice-fix on a kept branch"' "$in" > "$in.tmp" && mv "$in.tmp" "$in"
+  run_card "$home" validate --file "$in" || fail "the plain example card was refused; instructions to the first mate are exempt"
+  printf '%s\n' '{"version":1,"task":"legacy-one","project":"cadia","title":"legacy-task-card-title","situation":"old","options":[{"key":"1","label":"Ok","instruction":"x"}],"recommended":"1","draft":false,"created":"2026-10-01T00:00:00Z","updated":"2026-10-01T00:00:00Z"}' > "$home/state/cards/legacy-one.json" 2>/dev/null \
+    || { mkdir -p "$home/state/cards" && printf '%s\n' '{"version":1,"task":"legacy-one","project":"cadia","title":"legacy-task-card-title","situation":"old","options":[{"key":"1","label":"Ok","instruction":"x"}],"recommended":"1","draft":false,"created":"2026-10-01T00:00:00Z","updated":"2026-10-01T00:00:00Z"}' > "$home/state/cards/legacy-one.json"; }
+  run_card "$home" show legacy-one >/dev/null || fail "a card stored before the plain-words check must still show"
+  pass "fm-card: new cards use plain words; first-mate instructions and older stored cards are unaffected"
+}
+
 test_write_and_show_round_trip() {
   local home in out mode
   home=$(make_home roundtrip)
@@ -910,6 +936,7 @@ test_interrupted_reopening_can_be_retried() {
 }
 
 test_write_and_show_round_trip
+test_cards_use_plain_words
 test_validate_names_the_broken_field
 test_card_requires_exactly_one_json_object
 test_show_reports_a_corrupt_card_as_invalid

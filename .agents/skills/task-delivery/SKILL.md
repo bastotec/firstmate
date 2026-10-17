@@ -81,11 +81,12 @@ For each finished worker:
 
 1. Run `bin/fm-teardown.sh <id>`, never with `--force`.
 2. If cleanup refuses only because the endpoint is on a retired backend and could never be confirmed gone, retire the record with `FM_HOME=<this home> bin/fm-retire-endpoint.sh --finished <id>`; its help owns what it accepts, and it never proceeds past unlanded work.
-3. Treat any other refusal - unlanded or uncommitted work, a missing report, an open captain decision, a stream endpoint that would not confirm its stop, a window still listed - as not provably finished: stop, never retry around it, and hold one plain decision for the captain through `bin/fm-captain-hold.sh` naming the worker, the evidence, and the choice between cleaning it up and keeping it.
+3. If cleanup refuses only because committed local work is not proved landed after its PR merged (the usual squash-merge leftover), resolve it yourself: rerun `bin/fm-teardown.sh <id> --keep-commits`, which saves those commits on a `kept/` branch and then cleans up, and mention the kept branch as an FYI at most.
+4. Treat any other refusal - uncommitted work, unlanded work without a merged PR, a missing report, an open captain decision, a stream endpoint that would not confirm its stop, a window still listed - as not provably finished: stop, never retry around it, and hold one plain decision for the captain through `bin/fm-captain-hold.sh` naming the worker, the evidence, and the choice between cleaning it up and keeping it.
 
 Then close this home's record-less leftovers: endpoints the hub still lists live for a task whose record here is already gone.
 Use `fm-retire-endpoint.sh`'s read-only orphan listing, then close each listed task/endpoint pair with its orphan mode and endpoint pin; its help owns invocation mechanics and listing limits, and [`fm-retire-orphan-lib.sh`'s header](../../../bin/fm-retire-orphan-lib.sh) owns eligibility and timing limits.
-Treat its refusal like step 3: never retry around it, and hold one plain decision for the captain naming the endpoint and the reason.
+Treat its refusal like step 4: never retry around it, and hold one plain decision for the captain naming the endpoint and the reason.
 
 Once a worker's decision is held, later sweeps leave it to that decision rather than raising it again.
 In a secondmate home that decision reaches the captain through the parent channel, as every escalation there does.

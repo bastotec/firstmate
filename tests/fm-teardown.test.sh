@@ -1495,6 +1495,45 @@ test_merged_pr_with_later_local_commit_refuses() {
   pass "merged PR does not allow teardown after a later local commit"
 }
 
+test_keep_commits_saves_leftover_commits_then_cleans_up() {
+  local case_dir rc pr_head later repo kept
+  case_dir=$(make_case keep-commits)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  append_pr_meta_for_current_head "$case_dir"
+  pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  wt_commit_file "$case_dir" later.txt local-only "local follow-up"
+  later=$(git -C "$case_dir/wt" rev-parse HEAD)
+  repo=$(git -C "$case_dir/wt" rev-parse --git-common-dir)
+  case "$repo" in /*) ;; *) repo="$case_dir/wt/$repo" ;; esac
+  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+
+  set +e
+  run_teardown "$case_dir" --keep-commits > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "keep-commits: teardown should save the leftover commits and clean up"$'\n'"$(cat "$case_dir/stderr")"
+  grep -q '^kept: .* on branch kept/task-x1-' "$case_dir/stdout" || fail "keep-commits: no kept line: $(cat "$case_dir/stdout")"
+  kept=$(git --git-dir="$repo" for-each-ref --format='%(objectname)' 'refs/heads/kept/task-x1-*')
+  [ "$kept" = "$later" ] || fail "keep-commits: the kept branch must point at the leftover commits (got '$kept', want '$later')"
+  pass "--keep-commits saves a merged task's leftover local commits on a branch, then cleans up"
+}
+
+test_keep_commits_still_refuses_uncommitted_or_unmerged_work() {
+  local case_dir rc
+  case_dir=$(make_case keep-commits-unmerged)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  set +e
+  run_teardown "$case_dir" --keep-commits > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "keep-commits-unmerged: without a merged PR teardown must still refuse"
+  grep -q REFUSED "$case_dir/stderr" || fail "keep-commits-unmerged: no REFUSED line"
+  pass "--keep-commits never applies without a merged PR"
+}
+
 test_squash_merged_rebased_branch_allows() {
   local case_dir rc pr_head
   case_dir=$(make_case squash-rebased)
@@ -3805,6 +3844,8 @@ test_no_pr_recorded_discovers_merged_pr_by_branch_allows
 test_squash_merged_pr_allows_replayed_unpushed_patch
 test_squash_merged_pr_allows_replayed_unpushed_patch no
 test_merged_pr_with_later_local_commit_refuses
+test_keep_commits_saves_leftover_commits_then_cleans_up
+test_keep_commits_still_refuses_uncommitted_or_unmerged_work
 test_squash_merged_rebased_branch_allows
 test_squash_merged_same_file_different_content_refuses
 test_squash_merged_rebased_local_with_unlanded_commit_refuses

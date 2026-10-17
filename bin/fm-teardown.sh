@@ -161,7 +161,16 @@
 # leased home and state in place instead of hiding a still-held lease.
 # bin/fm-deck-worker.sh's SECOND MATE SESSION CONTINUITY header owns the
 # conversation binding retired with a secondmate and its forced descendants.
-# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record]
+# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--keep-commits]
+#   --keep-commits handles the leftover local commits a squash merge leaves
+#   behind: when a ship task's PR is merged, its worktree has no uncommitted
+#   changes, and its committed work still is not proved landed, teardown first
+#   saves those commits on a new local branch kept/<id>-<UTC stamp> in the
+#   same repository, verifies the branch points at them, prints
+#   "kept: <n> local commit(s) on branch <name>", and then cleans up. Nothing
+#   is discarded, so this is housekeeping, not a captain decision. Without a
+#   merged PR, with uncommitted changes, or for local-only work it refuses as
+#   before.
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
 #   when the captain has explicitly said to discard the work.
@@ -314,11 +323,13 @@ fi
 ID=$1
 FORCE=
 LEGACY_RECORD_GIVEN=0
+KEEP_COMMITS=0
 shift
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --force) FORCE=--force ;;
     --legacy-record) LEGACY_RECORD_GIVEN=1 ;;
+    --keep-commits) KEEP_COMMITS=1 ;;
     *)
       echo "error: invalid teardown request" >&2
       exit 2
@@ -1858,6 +1869,20 @@ teardown_treehouse_return() {
   return 1
 }
 
+# --keep-commits (see the header): save HEAD on a new kept/ branch and prove it.
+keep_unlanded_commits() {
+  local head name count
+  head=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
+  # The safety check runs again after the lock; the same head is kept once.
+  [ "${KEPT_HEAD:-}" != "$head" ] || return 0
+  name="kept/$ID-$(date -u +%Y%m%dT%H%M%SZ)"
+  git -C "$WT" branch --no-track "$name" "$head" >/dev/null 2>&1 || return 1
+  [ "$(git -C "$WT" rev-parse --verify "refs/heads/$name" 2>/dev/null)" = "$head" ] || return 1
+  count=$(git -C "$WT" rev-list --count HEAD --not --remotes 2>/dev/null || echo "?")
+  KEPT_HEAD=$head
+  echo "kept: $count local commit(s) on branch $name"
+}
+
 validate_worktree_teardown_safety() {
   local dirty_raw dirty unpushed_raw unpushed DEFAULT unmerged_raw unmerged branch
   [ -d "$WT" ] || return 0
@@ -1916,6 +1941,9 @@ validate_worktree_teardown_safety() {
       TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY=$branch
     fi
     if ! work_is_landed "$branch"; then
+      if [ "$KEEP_COMMITS" = 1 ] && [ "${PR_CLOSE_VERDICT:-}" = merged ] && keep_unlanded_commits; then
+        return 0
+      fi
       echo "REFUSED: worktree $WT has work not landed in the default branch or a merged PR head." >&2
       [ -z "$unpushed" ] || printf 'unpushed commits:\n%s\n' "$unpushed" >&2
       echo "Land the work, or get the captain's explicit OK to discard, then --force." >&2

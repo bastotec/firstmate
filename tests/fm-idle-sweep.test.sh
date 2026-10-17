@@ -28,7 +28,8 @@ cat "$FM_HOME/crew/$1" 2>/dev/null || echo 'state: unknown · source: none · no
 SH
   cat > "$dir/bin/fm-teardown.sh" <<'SH'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$FM_HOME/teardown-calls"
+printf '%s\n' "$1" >> "$FM_HOME/teardown-calls"
+printf '%s\n' "$*" >> "$FM_HOME/teardown-args"
 if [ -f "$FM_HOME/pending-close/$1" ]; then
   printf 'id=%s\ndata=%s/data\nspawn_gen=fixture\ncleanup_incomplete=0\n' "$1" "$FM_HOME" > "$FM_HOME/state/$1.backlog-close"
   rm -f "$FM_HOME/state/$1.meta"
@@ -457,6 +458,8 @@ test_closed_unmerged_prs_require_a_cleanup_decision() {
   sweep "$dir" scan --now || fail "scan failed"
 
   [ "$(calls "$dir" teardown-calls)" = merged-ledger ] || fail "cleanup admitted an unmerged or unreadable PR"
+  [ "$(calls "$dir" teardown-args)" = "merged-ledger --keep-commits" ] \
+    || fail "a merged worker's cleanup must keep leftover local commits on a branch instead of raising them: $(calls "$dir" teardown-args)"
   [ "$(sort "$dir/home/hold-calls" | tr '\n' ' ')" = 'closed-ledger closed-mr closed-recorded ' ] \
     || fail "closed-unmerged PRs did not become exactly one decision each"
   for id in closed-recorded closed-ledger closed-mr; do

@@ -81,6 +81,9 @@ When you hold, author a full card with your judgment using the schema in `bin/fm
 Pass it as `bin/fm-captain-hold.sh hold <id> --reason "<reason>" --card-file <path>`; re-holding an active call this way replaces its card and keeps its timestamp.
 A script that holds on its own leaves a draft card, which is not a judgment.
 The mate whose home holds the call owns its card, a second mate included, and writes its situation and options for the captain in plain words.
+Write it so a person can act on it without context: the title says what happened and asks the question, the situation adds only what the choice needs, and each option says what it does, with no task names, run ids, hashes or other internal jargon (`bin/fm-card.sh` refuses those).
+For example: "PR 1806 is merged. 3 local commits look unmerged, probably because of the squash. Keep them or delete them?"
+Housekeeping is never a captain call: leftover branches or local commits after a merge, worktree or slot cleanup, and stale scratch are yours to resolve (see `task-delivery`'s finished-work sweep), at most mentioned as an FYI.
 To replace a draft without touching the hold, run `bin/fm-card.sh write <id> --file <path>`.
 When the session-start digest's `DECISION CARDS` subsection lists calls without a full card, write one for each before going idle, once this session has verified lock ownership.
 It also lists every open captain call: before going idle, check each one's hold reason, body, and the captain's recorded preferences, and record any answer he already gave instead of leaving it in front of him, with `--defer` when that answer waits on a condition.

@@ -25,6 +25,13 @@
 # Input JSON for write is exactly one object carrying project, title,
 # situation, options and recommended; the script adds version, task, draft,
 # created and updated.
+# Plain words: the title, situation and option labels are for a person acting
+# without context, so they refuse internal jargon: a token shaped like a task
+# slug (three or more lowercase hyphen-joined parts, such as
+# "pr-1806-orphan-choice-fix", besides common phrases like "end-to-end"), the
+# card's own task id when it is not a plain word, a snake_case name, a commit hash, or letters run together
+# with digits ("Direction1750", "exact49f14d"). Option instructions are for the
+# first mate and are exempt.
 # Limits: title <= 120 chars; situation <= 280 chars and <= 2 lines; 1-9
 # options keyed "1".."9" in order; label <= 40 chars; instruction <= 1000
 # chars; recommended names one option; no control characters except newlines
@@ -102,10 +109,20 @@ card_path() { printf '%s/%s.json\n' "$CARDS" "$1"; }
 
 # Prints the first validation error as "<field>: <why>", or nothing when valid.
 # Works on the input shape and on stored full cards alike.
-card_error() {  # <path>
-  jq -rs '
+# The plain-words check applies to new cards only (pass "plain" as the third
+# argument), so a card stored before it existed still shows.
+card_error() {  # <path> [task-id] [plain]
+  jq -rs --arg task "${2:-}" --arg plain "${3:-}" '
     def ctl: test("[\u0000-\u0009\u000b-\u001f\u007f]");
     def oneline: test("[\u0000-\u001f\u007f]");
+    def plainok: ["end-to-end","up-to-date","out-of-date","day-to-day","step-by-step","face-to-face","one-on-one","state-of-the-art","word-for-word","back-to-back"];
+    def jargontoken: . as $t
+      | ($task != "" and ($task|test("[-_0-9]")) and ($t|ascii_downcase) == ($task|ascii_downcase))
+        or (($t|test("^[a-z0-9]+(-[a-z0-9]+){2,}$")) and ((plainok|index($t)) == null))
+        or ($t|test("^[a-z]+(_[a-z0-9]+)+$"))
+        or (($t|test("^[0-9a-f]{7,}$")) and ($t|test("[a-f]")) and ($t|test("[0-9]")))
+        or ($t|test("[A-Za-z]{3,}[0-9]{2,}|[0-9]{2,}[A-Za-z]{3,}"));
+    def jargon: [scan("[A-Za-z0-9_-]+") | select(jargontoken)] | first;
     if length != 1 then "card: exactly one JSON object required"
     else .[0] |
     if type != "object" then "card: not a JSON object"
@@ -117,18 +134,21 @@ card_error() {  # <path>
     elif ([.options[]|select((.label|type) != "string" or (.label|length) == 0 or (.label|length) > 40 or (.label|oneline))]|length) > 0 then "options: each label is one line of at most 40 characters"
     elif ([.options[]|select((.instruction|type) != "string" or (.instruction|length) == 0 or (.instruction|length) > 1000 or (.instruction|ctl))]|length) > 0 then "options: each instruction is at most 1000 characters"
     elif (.recommended|type) != "string" or (.recommended as $r | [.options[].key] | index($r)) == null then "recommended: must name one option key"
+    elif $plain == "plain" and (.title|jargon) != null then "title: use plain words a person can act on, not \"\(.title|jargon)\""
+    elif $plain == "plain" and (.situation|jargon) != null then "situation: use plain words a person can act on, not \"\(.situation|jargon)\""
+    elif $plain == "plain" and ([.options[].label|jargon|select(. != null)]|first) != null then "options: use plain words in each label, not \"\([.options[].label|jargon|select(. != null)]|first)\""
     else empty end end
   ' "$1" 2>/dev/null || printf 'card: not valid JSON\n'
 }
 
 cmd_validate() {
-  local file='' err
+  local file='' err task=''
   while [ "$#" -gt 0 ]; do
-    case "$1" in --file) shift; file=${1:-} ;; *) usage >&2; exit 2 ;; esac
+    case "$1" in --file) shift; file=${1:-} ;; --task) shift; task=${1:-} ;; *) usage >&2; exit 2 ;; esac
     shift
   done
   [ -f "$file" ] || die "--file must name a readable card file"
-  err=$(card_error "$file")
+  err=$(card_error "$file" "$task" plain)
   [ -z "$err" ] || die "invalid card: $err"
 }
 
@@ -159,7 +179,7 @@ cmd_write() {
     case "$1" in --file) shift; file=${1:-} ;; *) usage >&2; exit 2 ;; esac
     shift
   done
-  cmd_validate --file "$file"
+  cmd_validate --file "$file" --task "$id"
   ts=$(now)
   created=$(existing_created "$id")
   [ -n "$created" ] || created=$ts
