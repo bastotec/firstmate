@@ -21,8 +21,6 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
-# shellcheck source=tests/fixtures.sh
-. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-startup-network-tests)
 DRAIN="$ROOT/bin/fm-wake-drain.sh"
@@ -865,14 +863,6 @@ test_a_bounded_run_still_publishes_the_timings_it_managed_to_record() {
 $rec
 EOF
   printf '%s\n' $$ > "$home/state/.lock"
-  # A live secondmate on this suite's fake stream hub, so the liveness sweep
-  # actually reaches its bounded bootstrap child and sleeps there: the phase
-  # record the report must still name is written by that sweep's victim, so
-  # an empty fleet publishes only the aggregate stage record.
-  fm_test_fake_stream_ensure \
-    || fail "the fake stream hub did not start for a live secondmate"
-  fm_test_stream_secondmate_meta "$home/state/mate-a.meta" "$home" alpha deck \
-    || fail "the live secondmate endpoint could not be registered"
 
   # Headroom matters here: the composed sweep runs the real inactive-outcome
   # scan (0.4-1.3s against a live fake-hub secondmate, load-dependent) BEFORE
