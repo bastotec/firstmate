@@ -130,8 +130,13 @@
 #     The home summary's unknown_children lists unknown non-secondmate task ids
 #     owned by structured In flight rows, independently of its first invalidity.
 #     An unowned leftover is instead an unowned_current inventory mismatch.
-#     An inventory mismatch keeps the home's own current classification unless
-#     unknown_children is nonempty or the backlog is untrustworthy.
+#     The producer keeps its computed state for inventory disagreements, including
+#     unstructured_current, while retaining valid=false, reason, and invalidity.
+#     Nonempty unknown_children or other invalidity kinds still force unknown.
+#     This does not widen parent projection trust: secondmate_current rejects
+#     unstructured_current with unknown state and historical parent-event fallback.
+#     bin/fm_report.py reads the published state directly; its header owns how
+#     reports distinguish record disagreements from unread data.
 #     Which closed rows a home contributes is bin/fm-landed-lib.sh's rule, shared
 #     with the bearings projection so one Recently Landed section has one owner.
 #   secondmate_guidance: return-channel action note for renderers and bearings.
@@ -1168,7 +1173,7 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
        else {kind:null,ids:[]} end) as $invalidity
     | (if ($valid | not)
           and (($unknown_children | length) > 0
-               or (["orphan_in_flight","unowned_current","terminal_in_flight"]
+               or (["orphan_in_flight","unowned_current","terminal_in_flight","unstructured_current"]
                    | index($invalidity.kind) | not))
        then "unknown"
        elif any($decisions_all[]; .verb == "needs-decision" or .verb == "captain-hold") then "captain_decision"

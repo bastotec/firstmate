@@ -174,6 +174,15 @@ EOF
   printf '%s' "$out" | jq -e '
     .invalidity.kind == "unowned_current" and .unknown_children == []
   ' >/dev/null || fail "a leftover record was reported as an unread child: $out"
+  # A stray non-canonical line is a disagreement the summary still reports, but
+  # the home keeps the state it computed from everything it read.
+  awk '/^## Queued/{print; print "stray line written by hand"; next} {print}' "$home/data/backlog.md" > "$home/data/backlog.md.tmp" \
+    && mv "$home/data/backlog.md.tmp" "$home/data/backlog.md"
+  rm -f "$home/state/leftover.meta"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '
+    .invalidity.kind == "unstructured_current" and .state != "unknown"
+  ' >/dev/null || fail "a stray backlog line blanked the home state: $out"
   pass "home summary reads remote mates, retained records and local-only ships"
 }
 
