@@ -69,6 +69,10 @@
 # Watcher results pass through the durable execution steering inbox and its ordinary
 # doorbell, retained until acknowledged after a serialized next turn;
 # the durable wake queue is acknowledged only by the model after handling.
+# A successful arm result is retained even before startup confirmation or when
+# it races a timeout or refused-handoff replacement, before capture reuse.
+# Watcher launches clear inherited handoff claims; only this driver's tracked
+# predecessor arm can supply a new claim.
 # Exactly one supervisor Deck turn runs at a time, including stdin and watcher
 # turns. A split home (config/primary-split) also runs its captain lane beside
 # them: the CAPTAIN LANE block below owns it, and bin/fm-captain-lane.sh's header
@@ -84,14 +88,13 @@
 # - A watcher cycle that fails or ends without a result logs a stderr warning,
 #   clears handoff claims, and schedules a fresh watcher with no predecessor
 #   claim after as many seconds as consecutive failed cycles, without publishing
-#   failure status. A successor that completes successfully before startup
-#   confirmation retains its result for the next serialized turn, just like a
-#   confirmed watcher. A successful result resets the count; reaching
+#   failure status. A successful result resets the count; reaching
 #   FM_DECK_WATCH_FAILURE_LIMIT stops the host
 #   with failure status. The retry deadline never blocks input or turn-stop
 #   handling, and no watcher starts while turn cancellation is pending.
-# - A successor watcher that does not confirm startup in time or dies first,
-#   or a refused handling-delivery confirmation, logs the condition to stderr,
+# - A successor watcher that does not confirm startup in time or exits without
+#   a successful result first, or a refused handling-delivery confirmation,
+#   logs the condition to stderr,
 #   stops the remaining arm child, clears handoff claims, and starts a fresh
 #   watcher with no predecessor claim. If that start fails, the driver stops;
 #   otherwise it continues the turn without publishing failed status.
