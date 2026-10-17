@@ -80,7 +80,7 @@ make_case() {
   local name=$1 case_dir fakebin
   case_dir="$TMP_ROOT/$name"
   fakebin="$case_dir/fakebin"
-  mkdir -p "$case_dir/state" "$case_dir/config" "$case_dir/data" "$fakebin"
+  mkdir -p "$case_dir/home" "$case_dir/state" "$case_dir/config" "$case_dir/data" "$fakebin"
 
   # Mocks for the post-check teardown steps. Refuse logic exits before these
   # run; the ALLOW cases need them so the script can complete cleanly.
@@ -630,7 +630,8 @@ run_teardown() {
   # repo's own home and a test could mutate live records.
   # Pin the operational home as well as its directories: final-outcome delivery
   # must never resolve a real parent channel from the code root or caller home.
-  FM_HOME="${FM_TEARDOWN_TEST_HOME:-$case_dir}" \
+  # Keep that home disjoint from the worktrees and removable secondmate homes.
+  FM_HOME="${FM_TEARDOWN_TEST_HOME:-$case_dir/home}" \
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
   FM_DATA_OVERRIDE="$case_dir/data" \
@@ -2099,8 +2100,7 @@ test_stale_index_lock_cleanup_rechecks_dirty_worktree() {
   case_dir=$(make_case stale-lock-dirty-recheck)
   write_meta "$case_dir" no-mistakes ship
   wt_commit_file "$case_dir" feature.txt landed "landed work"
-  git -C "$case_dir/wt" push -q origin fm/task-x1
-  git -C "$case_dir/project" fetch -q origin
+  land_on_origin_main "$case_dir" feature.txt landed
   printf '%s\n' dirty > "$case_dir/wt/feature.txt"
 
   add_lock_aware_treehouse "$case_dir"
