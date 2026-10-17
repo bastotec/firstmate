@@ -424,6 +424,124 @@ test_day_old_untracked_leftovers_are_set_aside() {
   pass "untracked leftovers nothing touched for a day are set aside and the task launches"
 }
 
+test_unreadable_leftovers_are_left_untouched() {
+  local rec id out status before kind blocked path
+  for kind in file old scratch unsearchable; do
+    id="pool-unreadable-$kind-r2"
+    rec=$(make_originless_case "unreadable-$kind" "$id")
+    read_case_record "$rec"
+    path=notes.txt
+    case "$kind" in
+      old|unsearchable) path=old/nested/notes.txt ;;
+      scratch) path=.scratch/nested/notes.txt ;;
+    esac
+    mkdir -p "$POOL_DIR/$(dirname "$path")"
+    printf 'unreadable work\n' > "$POOL_DIR/$path"
+    printf 'eligible old work\n' > "$POOL_DIR/a.txt"
+    find "$POOL_DIR" -not -path '*/.git' -not -path '*/README.md' -exec touch -t 202601010000 {} +
+    before=$(git -C "$POOL_DIR" status --porcelain)
+    blocked="$POOL_DIR/$path"
+    if [ "$kind" = unsearchable ]; then
+      blocked="$POOL_DIR/old/nested"
+      chmod 600 "$blocked"
+      [ ! -x "$blocked" ] || fail "fixture directory remains searchable"
+    else
+      chmod 000 "$blocked"
+      [ ! -r "$blocked" ] || fail "fixture file remains readable"
+    fi
+    out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+    status=$?
+    chmod u+rwx "$blocked"
+    [ "$status" -ne 0 ] || fail "unreadable $kind dirt must refuse the slot"
+    assert_contains "$out" "is not clean" "unreadable dirt refusal"
+    assert_equals "$before" "$(git -C "$POOL_DIR" status --porcelain)" "refusal preserves unreadable dirt"
+    assert_grep 'unreadable work' "$POOL_DIR/$path" "unreadable contents are preserved"
+    assert_grep 'eligible old work' "$POOL_DIR/a.txt" "eligible sibling is untouched"
+    assert_absent "$HOME_DIR/state/slot-quarantine" "unreadable dirt must not be quarantined"
+    assert_absent "$HOME_DIR/state/$id.meta" "unreadable dirt must not launch a worker"
+  done
+  pass "unreadable files and unsearchable descendants refuse even inside scratch"
+}
+
+test_symlinked_leftovers_are_left_untouched() {
+  local rec id out status before kind path
+  for kind in file old scratch; do
+    id="pool-symlink-$kind-r2"
+    rec=$(make_originless_case "symlink-$kind" "$id")
+    read_case_record "$rec"
+    path=link
+    case "$kind" in
+      old) path=old/nested/link ;;
+      scratch) path=.scratch/nested/link ;;
+    esac
+    mkdir -p "$POOL_DIR/$(dirname "$path")"
+    printf 'eligible old work\n' > "$POOL_DIR/a.txt"
+    ln -s README.md "$POOL_DIR/$path"
+    find "$POOL_DIR" -not -path '*/.git' -not -path '*/README.md' -exec touch -h -t 202601010000 {} +
+    before=$(git -C "$POOL_DIR" status --porcelain)
+    out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+    status=$?
+    [ "$status" -ne 0 ] || fail "symlinked $kind dirt must refuse the slot"
+    assert_contains "$out" "is not clean" "symlinked dirt refusal"
+    assert_equals "$before" "$(git -C "$POOL_DIR" status --porcelain)" "refusal preserves symlinked dirt"
+    [ -L "$POOL_DIR/$path" ] || fail "refusal moved the symlink"
+    assert_equals README.md "$(readlink "$POOL_DIR/$path")" "symlink target is unchanged"
+    assert_grep 'eligible old work' "$POOL_DIR/a.txt" "eligible sibling is untouched"
+    assert_absent "$HOME_DIR/state/slot-quarantine" "symlinked dirt must not be quarantined"
+    assert_absent "$HOME_DIR/state/$id.meta" "symlinked dirt must not launch a worker"
+  done
+  pass "symlinks at any depth refuse even inside scratch"
+}
+
+test_expanded_status_does_not_hide_a_fresh_directory() {
+  local rec id out status before
+  id='pool-fresh-dir-r2'
+  rec=$(make_originless_case fresh-dir "$id")
+  read_case_record "$rec"
+  git -C "$POOL_DIR" config status.showUntrackedFiles all
+  mkdir -p "$POOL_DIR/old"
+  printf 'old child\n' > "$POOL_DIR/old/a.txt"
+  printf 'eligible old work\n' > "$POOL_DIR/a.txt"
+  touch -t 202601010000 "$POOL_DIR/old/a.txt" "$POOL_DIR/a.txt"
+  before=$(git -C "$POOL_DIR" status --porcelain)
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "expanded status must not hide a fresh directory"
+  assert_contains "$out" "is not clean" "fresh directory refusal"
+  assert_equals "$before" "$(git -C "$POOL_DIR" status --porcelain)" "refusal preserves all leftovers"
+  assert_grep 'old child' "$POOL_DIR/old/a.txt" "fresh directory contents are untouched"
+  assert_grep 'eligible old work' "$POOL_DIR/a.txt" "eligible sibling is untouched"
+  assert_absent "$HOME_DIR/state/slot-quarantine" "fresh directory must not be quarantined"
+  pass "fresh directory age is checked regardless of untracked status configuration"
+}
+
+test_quoted_leftover_names_are_preserved_losslessly() {
+  local rec id out status kept path
+  local -a names=('notes "old".txt' 'back\slash.txt' $'line\nbreak.txt' $'tab\tfile.txt' 'café.txt' $'parent\n/notes "old".txt')
+  id='pool-quoted-r2'
+  rec=$(make_originless_case quoted "$id")
+  read_case_record "$rec"
+  mkdir -p "$POOL_DIR/"$'parent\n'
+  printf 'tracked parent\n' > "$POOL_DIR/"$'parent\n/README.md'
+  git -C "$POOL_DIR" add .
+  git -C "$POOL_DIR" -c user.name=t -c user.email=t@t commit -qm parent
+  for path in "${names[@]}"; do
+    printf 'preserved contents: %s\n' "$path" > "$POOL_DIR/$path"
+    touch -t 202601010000 "$POOL_DIR/$path"
+  done
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "quoted stale names must not block spawning"$'\n'"$out"
+  kept=$(find "$HOME_DIR/state/slot-quarantine" -mindepth 1 -maxdepth 1 -type d | head -1)
+  [ -n "$kept" ] || fail "quoted leftovers were not quarantined"
+  for path in "${names[@]}"; do
+    assert_absent "$POOL_DIR/$path" "quoted leftover must leave the slot"
+    assert_equals "preserved contents: $path" "$(cat "$kept/$path")" "filename and contents survive quarantine"
+  done
+  assert_present "$POOL_DIR/"$'parent\n/README.md' "tracked parent contents remain in place"
+  pass "quoted names including tabs, newlines and backslashes are quarantined intact"
+}
+
 test_a_fresh_untracked_file_keeps_stale_leftovers_in_place() {
   local rec id out status before
   id='pool-stale-fresh-r1'
@@ -1016,6 +1134,10 @@ test_fresh_scratch_file_is_not_exempt_from_age_check
 test_failed_freshness_scan_preserves_all_leftovers
 test_failed_move_restores_previous_leftovers
 test_day_old_untracked_leftovers_are_set_aside
+test_unreadable_leftovers_are_left_untouched
+test_symlinked_leftovers_are_left_untouched
+test_expanded_status_does_not_hide_a_fresh_directory
+test_quoted_leftover_names_are_preserved_losslessly
 test_a_fresh_untracked_file_keeps_stale_leftovers_in_place
 test_partially_tracked_scratch_is_left_untouched
 test_scratch_plus_other_dirt_still_refuses
