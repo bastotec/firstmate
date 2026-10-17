@@ -91,7 +91,9 @@ The steps below describe `relaunch`; [missing-terminal recovery](#recovering-a-m
 4. **Record the note.**
    A ship or scout relaunch requires `--note`, because the replacement inherits the local copy but none of the conversation; the note is appended to the instructions it reads.
    A secondmate relaunch does not require one and never rewrites its standing charter.
-5. **Stop the old agent** through the `exit` verb, with its postcondition.
+5. **Stop the old agent** through the `exit` path, with its postcondition.
+   After lifecycle input is delivered, relaunch requests cooperative stop through the [`fm-deck-stop.py` boundary](../bin/fm-deck-stop.py) before waiting for the recorded endpoint to report the agent gone.
+   Delivery alone is not stop proof: both proofs must pass within their bounded waits or replacement is refused without forced termination.
 6. **Launch the replacement** through its single owner, `bin/fm-spawn.sh --relaunch`, which reuses the recorded worktree and adopts the recorded endpoint, clears the previous harness's per-task wiring, arms a fresh busy generation, rechecks the same backlog recovery eligibility before publication and at the launch commit, and leaves an eligible In-flight row untouched.
 
 Switching harness is therefore one ordinary relaunch rather than a separate mechanism.

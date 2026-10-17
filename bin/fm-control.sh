@@ -220,9 +220,9 @@
 #
 # Environment knobs (all bounded waits, seconds):
 #   FM_CONTROL_POLL              poll interval for postcondition waits (0.5)
-#   FM_CONTROL_EXIT_WAIT         wait for an endpoint to read agent-free: after
-#                                the exit command, and for a recreated
-#                                terminal's shell to finish starting (30)
+#   FM_CONTROL_EXIT_WAIT         per-wait bound for task-bound Deck driver stop
+#                                and endpoint agent-free proof; also used for
+#                                a recreated shell to finish starting (30)
 #   FM_CONTROL_LAUNCH_WAIT       dead->alive wait after a relaunch (90)
 #   FM_CONTROL_EXIT_RETRIES      Enter retries for the exit command (3)
 #   FM_CONTROL_CLEAR_RETRIES     composer clear/re-read attempts in the exit

@@ -10,11 +10,14 @@ including non-process-group leaders, without sending a signal. When supplied,
 a retired BACKEND requires independent endpoint absence from its inventory;
 missing tools, unreadable inventory, and present endpoints all refuse.
 Matches the driver's launch arguments, never brief text, generation, or pane
-output. Only a driver leading its own process group may be stopped. TERM is
-sent to the driver and its active Deck child; fm-deck-worker.sh's header owns
-the secondmate driver's bounded cooperative-stop handling. A surviving group
-is killed after TIMEOUT, and the boundary is refused until every member has
-exited; zombies cannot write.
+output. Only a driver leading its own process group may be stopped.
+Cooperative mode includes inherited-argv descendants in that identified group
+in its stop proof, but refuses task-bound drivers outside an identified group
+before signalling anything. TERM is sent to the driver and its active Deck
+child; fm-deck-worker.sh's header owns the secondmate driver's stop handling.
+Without --cooperative, a surviving group is killed after TIMEOUT.
+In either mode, success requires every non-zombie group member to have exited;
+zombies cannot write.
 Legacy drivers need no PID registration. Callers still require their independent
 backend endpoint proof.
 """
