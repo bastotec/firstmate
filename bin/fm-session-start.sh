@@ -17,7 +17,7 @@
 # sequencing/formatting logic added here stays local to this file. Those four
 # scripts remain fully working
 # standalone with unchanged default behavior - other flows (fm-bootstrap.sh
-# install <tools> after consent, /updatefirstmate, the afk daemon, existing
+# install <tools> under bootstrap-diagnostics, /updatefirstmate, the afk daemon, existing
 # tests) still call them directly. The one seam this script needed -
 # bootstrap running its detect-only diagnostics without its six mutating
 # sweeps - is an opt-in FM_BOOTSTRAP_DETECT_ONLY=1 flag on fm-bootstrap.sh

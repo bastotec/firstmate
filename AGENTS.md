@@ -163,10 +163,8 @@ Never use `fm-send` for interrupt, exit, or other lifecycle control, because tha
 
 ### Acting within scope
 
-Within its role, and always under section 1's hard rules, every mate and worker acts by default inside its scope and fixes what is in its way: it starts or installs a missing tool or daemon, resolves its own branch's conflicts and rebases, fixes in-scope review findings and failing tests, retries flaky infrastructure, and cleans or replaces a stale worktree.
-Only a short list of hard stops needs an explicit current instruction: moving money, entering credentials or secrets, production deploys or promotions, deleting others' data, outward messages to people, force-pushing a shared branch, merges beyond standing authority, and a machine's own sandbox rules; `fm_act_within_scope_section` in `bin/fm-dod-lib.sh` owns the full contract.
-A blocker is reported only after the obvious fix was tried, naming what was tried; one that is not the captain's call is the mate's to solve, never the captain's to hear about.
-Status lines and escalations are plain sentences.
+Within its role, and always under section 1's hard rules, every mate and worker acts by default inside its scope.
+Follow `fm_act_within_scope_section` in `bin/fm-dod-lib.sh` for the authoritative repair, implied-authority, hard-stop, blocker, and status-language contract.
 
 ### Selected delivery path and merge authority
 
@@ -310,7 +308,7 @@ Fill `## Captain's intent` (`{TASK}`) with the captain's own ask and stated boun
 Fill `## Firstmate spec` (`{FIRSTMATE_SPEC}`) with only the build instructions that ask requires, naming what stays out of scope; unrequested generalization or hardening is follow-up work to note, not scope.
 `bin/fm-dod-lib.sh` owns intent authoring and what a worker may pass as `--intent`.
 Keep additions task-specific, and alter generated sections only when the task genuinely differs from the standard shape.
-A brief grants the authority the captain already gave, in positive terms and with the routine steps it implies ("merge when green" covers rebasing, fixing CI, rerunning, and fixing review findings); it never enumerates forbidden actions, because section 7's hard stops are the whole list.
+A brief grants the authority the captain already gave in positive terms; follow section 7's "Acting within scope" contract rather than adding forbidden-action lists.
 Every ship brief keeps the worktree-isolation assertion, and a ship task touching firstmate's shared tracked material explicitly requires `firstmate-coding-guidelines`.
 A charter brief follows `secondmate-provisioning`, preserving its idle-by-default and marked-return-channel contracts.
 Status appends are sparse supervisor-actionable events, not progress; `bin/fm-classify-lib.sh` owns their keyed semantics.

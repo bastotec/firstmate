@@ -38,13 +38,10 @@
 # conflicting role is superseded rather than duplicated.
 # fm_ship_rule_one owns the mode-specific first ship safety rule shared by an
 # ordinary ship brief and the durable contract written during scout promotion.
-# fm_act_within_scope_section owns the act-within-scope contract: the default
-# is to fix what is in the way inside the task's scope, a short list of hard
-# stops needs an explicit current instruction, granted authority covers the
-# routine steps it implies, a blocker is real only after the obvious fix was
-# tried, and status lines are plain sentences. fm_brief_worker_role carries it
-# into every ship/scout launch and bin/fm-brief.sh into every secondmate
-# charter; AGENTS.md section 7 points here rather than restating it.
+# fm_act_within_scope_section owns the act-within-scope contract.
+# fm_brief_worker_role carries it into every ship/scout launch before stored
+# brief text, and bin/fm-brief.sh into every new secondmate charter; AGENTS.md
+# section 7 points here rather than restating it.
 # fm_concurrent_work_section owns the worker's half of the parallel-work contract
 # (AGENTS.md section 7): firstmate names concurrent work touching this task's
 # area, and this section is what tells the worker that the notice is awareness

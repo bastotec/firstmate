@@ -26,7 +26,7 @@ A semantic conflict a worker reports is yours to decide or escalate, never to ha
 
 ## When a worker reports blocked
 
-`AGENTS.md` section 7's "Acting within scope" is the bar: a blocker is real only after the obvious fix was tried.
+Follow `fm_act_within_scope_section` in `bin/fm-dod-lib.sh`, referenced by `AGENTS.md` section 7's "Acting within scope", when judging a reported blocker.
 When a worker's `blocked:` names nothing it tried, steer it to try the obvious fix within its scope before you treat the blocker as real.
 When it did try, solve what is in its way yourself - start or install the tool, free or replace the slot, grant the authority the captain already gave - and steer it to continue.
 Raise the blocker with the captain only when it is his call: a hard stop, a product decision, or a credential only he can supply.

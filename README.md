@@ -66,7 +66,7 @@ Full detail on every feature lives in [docs/architecture.md](docs/architecture.m
 - Git and the GitHub CLI, authenticated through `gh auth login`.
 - The stream backend's dependencies (python3, curl, jq, treehouse) and a reachable hub ([docs/stream-backend.md](docs/stream-backend.md)).
 
-The first mate detects and offers to install supported missing tools after you approve.
+The first mate checks for missing tools and follows the [toolchain repair policy](docs/configuration.md#toolchain).
 Backend-specific setup is linked in [Documentation](#documentation).
 
 ### Install and launch
@@ -97,7 +97,7 @@ The plain launch above keeps the primary in its own terminal, so bare `deck chat
 ```sh
 > ahoy! look at my github project xyz, then fix the flaky login test and add dark mode
 
-# firstmate checks its toolchain (asking your consent before installing anything),
+# firstmate checks its toolchain (see Toolchain in docs/configuration.md),
 # clones the project under projects/ and spawns two isolated workers on the stream hub.
 # Minutes later:
 
