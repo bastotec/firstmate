@@ -1074,6 +1074,89 @@ test_driver_cooperative_stop_preserves_survivors() {
   test_driver_stop_is_scoped_and_escalates_after_timeout cooperative
 }
 
+test_cooperative_stop_accounts_for_inherited_driver_argv() {
+  local dir="$TMP_ROOT/stop-inherited-argv"
+  mkdir -p "$dir/bin" "$dir/state"
+  cp "$ROOT/bin/fm-deck-stop.py" "$dir/bin/"
+  cat > "$dir/bin/fm-deck-worker.sh" <<'SH'
+#!/usr/bin/env bash
+trap ': > "$FM_STOP_ROOT/signalled"; exit 0' TERM
+line=$(
+  python3 -c 'import os; print(os.getppid())' > "$FM_STOP_ROOT/child-pid"
+  deadline=$((SECONDS + 20))
+  while [ -d "$FM_STOP_ROOT" ] && [ ! -e "$FM_STOP_ROOT/release" ] && [ "$SECONDS" -lt "$deadline" ]; do
+    /bin/sleep 0.05
+  done
+  printf 'probe finished'
+)
+SH
+  python3 - "$dir" <<'PY' || fail "cooperative stop misclassified an inherited-argv descendant"
+import os, pathlib, runpy, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+helper = root / 'bin/fm-deck-stop.py'
+arguments = runpy.run_path(str(helper))['process_arguments']
+for case in ('owned', 'survivor', 'unisolated'):
+    directory = root / case
+    directory.mkdir()
+    isolated = case != 'unisolated'
+    cmd = ['/bin/bash', str(root/'bin/fm-deck-worker.sh'), '--id', 'owned',
+           '--state', str(root/'state'), '--gen', 'old', '--deck', str(root/'deck'), '--', 'brief']
+    p = subprocess.Popen(cmd, env=dict(os.environ, FM_STOP_ROOT=str(directory)),
+                         start_new_session=isolated)
+    stopping = None
+    child = None
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            path = directory/'child-pid'
+            if path.exists() and path.read_text().strip():
+                child = int(path.read_text())
+                break
+            assert p.poll() is None, case
+            time.sleep(.02)
+        assert child is not None, case
+        assert child != p.pid and os.getpgid(child) == os.getpgid(p.pid), case
+        assert arguments(child) == arguments(p.pid), 'fixture did not inherit launch argv'
+        stopping = subprocess.Popen([sys.executable, str(helper), str(root/'state'),
+                                     'owned', '3' if case == 'owned' else '0.3', '--cooperative'],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if case == 'owned':
+            time.sleep(.5)
+            assert stopping.poll() is None, 'stop refused or accepted a live owned descendant'
+            (directory/'release').touch()
+            _, error = stopping.communicate(timeout=8)
+            assert stopping.returncode == 0, error
+            assert p.wait(timeout=3) == 0
+            assert (directory/'signalled').exists(), 'owned driver never received TERM'
+        else:
+            _, error = stopping.communicate(timeout=8)
+            assert stopping.returncode == 1, error
+            expected = 'without forcing it' if isolated else 'has no isolated group'
+            assert expected in error, error
+            assert p.poll() is None, 'refusal killed the driver'
+            os.kill(child, 0)
+            assert not (directory/'signalled').exists(), 'refusal forced the driver past its probe'
+        print(f'{case}: inherited argv classified; stop proof preserved')
+    finally:
+        (directory/'release').touch()
+        if stopping is not None and stopping.poll() is None:
+            stopping.kill()
+            stopping.communicate(timeout=3)
+        try:
+            p.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            if isolated:
+                os.killpg(p.pid, signal.SIGKILL)
+            else:
+                p.kill()
+                if child is not None:
+                    try: os.kill(child, signal.SIGKILL)
+                    except ProcessLookupError: pass
+            p.wait(timeout=3)
+PY
+  pass "Deck cooperative stop owns inherited-argv subshells, waits for survivors, and refuses unisolated drivers"
+}
+
 test_liveness_reads_the_driver_as_an_agent() {
   [ "$(fm_agent_process_classify bash fm-deck-worker '')" = agent ] || fail "the driver's argv[0] must read as an agent"
   [ "$(fm_agent_process_classify fm-deck-worker fm-deck-worker '')" = agent ] || fail "the driver's macOS process name must read as an agent"
@@ -3704,6 +3787,7 @@ test_driver_stop_terminates_active_deck_and_resolves_spaced_paths
 test_stale_secondmate_driver_is_stopped_at_relaunch_boundary
 test_driver_stop_is_scoped_and_escalates_after_timeout
 test_driver_cooperative_stop_preserves_survivors
+test_cooperative_stop_accounts_for_inherited_driver_argv
 test_liveness_reads_the_driver_as_an_agent
 test_stream_liveness_uses_the_deck_driver_argv0
 test_control_busy_and_delivery_tables_name_deck

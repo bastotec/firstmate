@@ -200,23 +200,23 @@ def stop(state, task, timeout, cooperative=False):
     if not os.path.isdir(state):
         raise RuntimeError(f"state directory is unavailable: {state}")
     rows = processes()
+    drivers = find_drivers(rows, worker, state, task)
+    groups = {group for _, group, _ in drivers}
     if cooperative:
         for pid, _, group, stat in rows:
             if (
-                pid != group and not stat.startswith("Z")
+                pid != group and group not in groups and not stat.startswith("Z")
                 and driver_deck(process_arguments(pid), worker, state, task)
             ):
                 raise RuntimeError(
                     f"task-bound Deck driver {pid} has no isolated group; "
                     "refusing replacement"
                 )
-    drivers = find_drivers(rows, worker, state, task)
     for pid, group, _ in drivers:
         if group == os.getpgrp():
             raise RuntimeError(
                 f"Deck driver {pid} does not lead an isolated process group"
             )
-    groups = {group for _, group, _ in drivers}
     deck_pids = set()
     for pid, group, executable in drivers:
         rows = processes()

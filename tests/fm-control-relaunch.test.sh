@@ -784,7 +784,18 @@ test_live_deck_relaunch_uses_control_protocol_before_residual_stop() {
 #!/usr/bin/env python3
 import json
 import os
+import signal
+import subprocess
+import sys
 import time
+
+def stop(*_):
+    if not os.path.exists(os.environ["FM_DECK_PROTOCOL_FIRST"]):
+        open(os.environ["FM_DECK_STOPPED_BEFORE_PROTOCOL"], "w").close()
+    subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1)"])
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, stop)
 print(json.dumps({"type": "run_started", "session": "live-session"}), flush=True)
 open(os.environ["FM_DECK_TEST_READY"], "w").close()
 # Outlive the confirmation window even when the machine is heavily loaded.
@@ -792,7 +803,8 @@ time.sleep(600)
 PY
   chmod +x "$dir/fakebin/deck"
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl-deck-live)
-  FM_DECK_TEST_READY="$dir/ready" \
+  FM_DECK_TEST_READY="$dir/ready" FM_DECK_PROTOCOL_FIRST="$dir/protocol-first" \
+    FM_DECK_STOPPED_BEFORE_PROTOCOL="$dir/stopped-before-protocol" \
     python3 -c 'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
     "$ROOT/bin/fm-deck-worker.sh" --id rl-deck-live --state "$dir/home/state" \
     --gen "$gen" --deck "$dir/fakebin/deck" -- old-brief </dev/null > "$dir/driver.out" 2>&1 &
@@ -808,8 +820,10 @@ PY
   cat > "$dir/observe-stop" <<SH
 #!/usr/bin/env bash
 [ "\$2" = processes ] || exit 0
-stat=\$(ps -o stat= -p '$pid' 2>/dev/null | tr -d '[:space:]')
-case "\$stat" in ''|Z*) ;; *) exit 0 ;; esac
+if ps -ax -o pgid=,stat= | awk '\$1 == $pid && \$2 !~ /^Z/ { live=1 } END { exit !live }'; then
+  exit 0
+fi
+: > '$dir/group-stopped'
 curl -fsS -m 5 -H 'Authorization: Bearer $FM_STREAM_TOKEN' \
   -H 'Content-Type: application/json' -X POST \
   --data-binary '{"foreground":[{"pid":"","name":"bash","argv0":"bash","args":"bash"}]}' \
@@ -817,6 +831,7 @@ curl -fsS -m 5 -H 'Authorization: Bearer $FM_STREAM_TOKEN' \
 SH
   chmod +x "$dir/observe-stop"
   out=$(FM_TEST_EXIT_WAIT=5 FM_FAKE_PROTOCOL_FIRST="$dir/protocol-first" \
+    FM_FAKE_PRIOR_PID="$pid" FM_FAKE_PRIOR_LIVE_MARKER="$dir/prior-live-at-launch" \
     FM_FAKE_NEVER_DIES=1 FM_FAKE_ON_REQUEST="$dir/observe-stop" \
     run_control "$dir" rl-deck-live relaunch --note 'replace live driver'); rc=$?
   if kill -0 "$pid" 2>/dev/null; then
@@ -829,6 +844,10 @@ SH
   assert_grep 'C-c' "$dir/fake/keys" "live Deck relaunch did not interrupt through control"
   assert_grep '/quit' "$dir/fake/literal" "live Deck relaunch did not submit /quit"
   [ -e "$dir/protocol-first" ] || fail "residual stop ran before the normal Deck control protocol"
+  [ ! -e "$dir/stopped-before-protocol" ] || fail "TERM preceded protocol delivery"
+  [ -e "$dir/group-stopped" ] || fail "the recorded endpoint never observed the exact driver group stopped"
+  [ ! -e "$dir/prior-live-at-launch" ] || fail "replacement launched before the prior driver stopped"
+  assert_grep 'encode launch-brief' "$dir/fake/literal" "replacement did not launch after both stop proofs"
   pass "fm-control relaunch: Deck control protocol precedes residual process cleanup"
 }
 
@@ -1974,6 +1993,15 @@ test_relaunch_requires_the_recorded_endpoint_to_stop() {
 
 # fm-model-chain sources these fixture helpers without running this suite.
 [ "${FM_MODEL_CHAIN_TEST_SKIP_RUN:-0}" != 1 ] || return 0
+
+if [ -n "${FM_TEST_CONTROL_RELAUNCH_CASES:-}" ]; then
+  for test_case in $FM_TEST_CONTROL_RELAUNCH_CASES; do
+    case "$test_case" in test_*) ;; *) fail "invalid test case: $test_case" ;; esac
+    declare -F "$test_case" >/dev/null || fail "unknown test case: $test_case"
+    "$test_case"
+  done
+  exit 0
+fi
 
 test_relaunch_requires_the_recorded_endpoint_to_stop
 test_secondmate_relaunch_preserves_an_in_place_model_choice
