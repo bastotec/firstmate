@@ -381,7 +381,7 @@ EOF
   old_rule_line=$(grep -n '^7\. Never stop, restart, or update the shared' "$prompt" | cut -d: -f1)
   [ -n "$precedence_line" ] && [ -n "$old_rule_line" ] && [ "$precedence_line" -lt "$old_rule_line" ] \
     || fail "relaunch must deliver the superseding repair contract before the obsolete daemon rule"
-  assert_grep 'the hard stops below, the rule against stopping, restarting or updating a running shared daemon, and the no-mistakes ask-user escalation and `--yes` / `-y` ban are unchanged' "$prompt" \
+  assert_grep "the hard stops below, the rule against stopping, restarting or updating a running shared daemon, and the no-mistakes ask-user escalation and \`--yes\` / \`-y\` ban are unchanged" "$prompt" \
     "repair precedence must preserve safety and ask-user boundaries"
   assert_grep 'install it for your user or start it, retry, and report only if that fails' "$prompt" \
     "relaunch must deliver the repair default"
