@@ -100,9 +100,23 @@ test_release_retry() {
   refuses "$home" 'withdrawal retry mismatch' withdraw work --evidence-file "$home/different" --release
   FM_CAPTAIN_HOLD_NOW=2030-01-01T00:00:00Z run_captain "$home" hold work --reason 'A new independent question' >/dev/null
   cp "$home/state/cards/work.json" "$home/new-card.before"
+  before=$(tasks_in "$home" show work --full)
   refuses "$home" 'withdrawal ownership mismatch' withdraw work --evidence-file "$home/evidence" --release
+  [ "$before" = "$(tasks_in "$home" show work --full)" ] || fail 'old retry changed a new call'
   cmp "$home/new-card.before" "$home/state/cards/work.json" || fail 'old retry removed a new call'
-  pass 'evidence-only release preserves unfinished work and retries interrupted release exactly'
+  : > "$home/interrupt"
+  refuses "$home" 'could not release' withdraw work --evidence-file "$home/different" --release
+  run_captain "$home" withdraw work --evidence-file "$home/different" --release >/dev/null
+  assert_preserved "$home"
+  show=$(tasks_in "$home" show work --full)
+  assert_contains "$show" 'held: no' 'fresh withdrawal did not release the new call'
+  assert_contains "$show" 'Different evidence' 'fresh withdrawal lost its new evidence'
+  [ "$(printf '%s\n' "$show" | grep -o 'Withdrawal evidence:' | wc -l | tr -d ' ')" = 2 ] \
+    || fail 'fresh withdrawal did not record exactly one new occurrence'
+  assert_absent "$home/state/cards/work.json" 'fresh withdrawal left the new card'
+  run_captain "$home" withdraw work --evidence-file "$home/different" --release >/dev/null
+  [ "$show" = "$(tasks_in "$home" show work --full)" ] || fail 'fresh withdrawal retry duplicated evidence'
+  pass 'evidence-only release preserves unfinished work across fresh calls and exact retries'
 }
 
 test_park_and_refusals() {
@@ -119,9 +133,6 @@ test_park_and_refusals() {
   refuses "$home" 'withdrawal retry mismatch' withdraw work --evidence-file "$home/evidence" --park 'Different wait'
   tasks_in "$home" add unheld 'Not held' --repo sample >/dev/null
   refuses "$home" 'not held for the captain' withdraw unheld --evidence-file "$home/evidence" --release
-  rm "$home/state/cards/other.json"
-  refuses "$home" 'no decision card' withdraw other --evidence-file "$home/evidence" --release
-  run_captain "$home" hold other --reason 'Independent question' >/dev/null
   run_captain "$home" stale-clear other --evidence-file "$home/evidence" >/dev/null
   refuses "$home" 'already closed' withdraw other --evidence-file "$home/evidence" --release
   show=$(tasks_in "$home" show other --full)
@@ -162,6 +173,31 @@ test_parent_finalization_retry() {
   pass 'withdrawal retries parent/key/request finalization after the card is already removed'
 }
 
+test_cardless_withdrawal() {
+  local home show mode
+  for mode in release park; do
+    home=$(make_home "cardless-$mode")
+    prepare "$home"
+    rm "$home/state/cards/work.json"
+    if [ "$mode" = release ]; then
+      run_captain "$home" withdraw work --evidence-file "$home/evidence" --release >/dev/null
+    else
+      run_captain "$home" withdraw work --evidence-file "$home/evidence" --park 'Wait for tooling' >/dev/null
+    fi
+    assert_preserved "$home"
+    show=$(tasks_in "$home" show work --full)
+    if [ "$mode" = release ]; then
+      assert_contains "$show" 'held: no' 'cardless withdrawal did not release the call'
+    else
+      assert_contains "$show" 'hold_kind: parked' 'cardless withdrawal did not park the call'
+      assert_contains "$show" 'hold_reason: Wait for tooling' 'cardless withdrawal changed the wait'
+    fi
+    assert_absent "$home/state/cards/work.json" 'cardless withdrawal created a card'
+  done
+  pass 'cardless captain-held work withdraws on authoritative backlog state'
+}
+
 test_release_retry
 test_park_and_refusals
 test_parent_finalization_retry
+test_cardless_withdrawal

@@ -180,7 +180,7 @@
 # for the captain, is refused.
 #
 # `withdraw` settles only the erroneous call, never the underlying task.
-# It requires an open captain-held task with a card and the same evidence-file
+# It requires an open captain-held task and the same evidence-file
 # limit as stale-clear. It records `withdrawn-released` or `withdrawn-parked`
 # under `Withdrawal evidence:`, without captain words or memory capture.
 # --release removes the hold; --park replaces it with a parked hold carrying
@@ -1939,20 +1939,26 @@ command_withdraw() {
   recorded_mode=$(recorded_resolution_mode "$body" || true)
   case "$recorded_mode" in
     withdrawn-released|withdrawn-parked)
-      recorded_reason=''
-      if [ "$recorded_mode" = withdrawn-parked ]; then
-        recorded_reason=$(printf '%s\n' "$(show_field_value "$show" body)" | sed -n 's/^Withdrawal hold reason: //p' | head -1)
+      hold_set=$(body_hold_set_timestamp "$(show_field_value "$show" body)")
+      recorded_hold_set=$(printf '%s\n' "$(show_field_value "$show" body)" | sed -n 's/^Withdrawal hold set: //p' | head -1)
+      if [ "$hold_kind" = captain ] && [ -n "$hold_set" ] && [ "$hold_set" != "$recorded_hold_set" ]; then
+        [ "$(recorded_decision_digest "$body" || true)" != "$DECISION_DIGEST" ] \
+          || fail "task $id withdrawal ownership mismatch: a new captain hold replaced the withdrawn call"
+      else
+        recorded_reason=''
+        if [ "$recorded_mode" = withdrawn-parked ]; then
+          recorded_reason=$(printf '%s\n' "$(show_field_value "$show" body)" | sed -n 's/^Withdrawal hold reason: //p' | head -1)
+        fi
+        [ "$recorded_mode" = "$mode" ] \
+          && [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
+          && [ "$recorded_reason" = "$storage_reason" ] \
+          || fail "task $id withdrawal retry mismatch: evidence, mode, or hold reason changed"
+        replay=1
       fi
-      [ "$recorded_mode" = "$mode" ] \
-        && [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
-        && [ "$recorded_reason" = "$storage_reason" ] \
-        || fail "task $id withdrawal retry mismatch: evidence, mode, or hold reason changed"
-      replay=1
       ;;
   esac
   if [ "$replay" = 0 ]; then
     [ "$hold_kind" = captain ] || fail "task $id is not held for the captain; there is no call to withdraw"
-    [ -f "$STATE/cards/$id.json" ] || fail "task $id has no decision card; refusing withdrawal"
     if [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ]; then
       fail "task $id records this evidence under another resolution mode: ${recorded_mode:-unknown}"
     fi
@@ -1960,8 +1966,6 @@ command_withdraw() {
     write_resolution_record "$id" "$mode" "$body" "$storage_reason"
   else
     occurrence=$(resolution_record_count "$body")
-    hold_set=$(body_hold_set_timestamp "$(show_field_value "$show" body)")
-    recorded_hold_set=$(printf '%s\n' "$(show_field_value "$show" body)" | sed -n 's/^Withdrawal hold set: //p' | head -1)
     [ -z "$hold_set" ] || [ "$hold_set" = "$recorded_hold_set" ] \
       || fail "task $id withdrawal ownership mismatch: a new captain hold replaced the withdrawn call"
     case "$mode:$hold_kind" in
