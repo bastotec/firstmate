@@ -981,7 +981,7 @@ command_hold() {
     esac
   fi
   if [ -n "$card_file" ]; then
-    "$CARD_TOOL" validate --file "$card_file" \
+    "$CARD_TOOL" validate --file "$card_file" --task "$id" \
       || fail "the decision card for $id is invalid; nothing was held"
   fi
   hold_set=${FM_CAPTAIN_HOLD_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}

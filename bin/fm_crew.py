@@ -1099,7 +1099,7 @@ def cleanup_group(g: Group, reason: str) -> bool:
     if survivors:
         card = {
             "project": "firstmate",
-            "title": f"Task group {g.gid} left processes behind",
+            "title": "A task group left processes running after cleanup. Stop them or keep them?",
             "situation": first_lines(f"Cleanup could not stop member processes {survivors}. They may still be using the model."),
             "options": [
                 {"key": "1", "label": "Retry cleanup", "instruction": f"Run FM_HOME={shlex.quote(str(g.h))} bin/fm-group.sh cleanup {g.gid}."},

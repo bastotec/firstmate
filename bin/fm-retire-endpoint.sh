@@ -17,13 +17,18 @@
 # ship only while its worktree is still this task's own, so cleanup's
 # landed-work gate actually runs; when tmux is installed, its inventory must
 # be readable and omit the window, or definitively report no server; and it
-# never proceeds past cleanup's work-protection gate, so unlanded or
-# uncommitted work, a scout without its report, or an
+# never proceeds past cleanup's work-protection gate. It invokes teardown with
+# --keep-commits; bin/fm-teardown.sh's header owns that preservation contract.
+# Work that still fails that gate, a scout without its report, or an
 # unresolved captain decision retires nothing. Its basis is that cleanup, once
 # those gates pass, has already stopped every process under the worktree before
 # it reaches the endpoint. It skips the type-back prompt because an agent runs
 # it, and records basis=finished-work in the assertion log instead. Anything it
 # refuses goes to the captain as a decision.
+# --merged-pr <url> is accepted only with --finished and exactly one task id;
+# it forwards a supported PR/MR URL to teardown for live forge verification
+# when metadata and backlog do not record it. This also carries a ledger-only
+# URL across the idle sweep's retirement fallback.
 #
 # Absence from the hub is never proof that a worker stopped: a same-protocol
 # restart clears the registry while live agents rejoin on their own schedule,
@@ -97,6 +102,7 @@ usage() {
   cat <<'EOF'
 usage: fm-retire-endpoint.sh [--override-runtime-refusal] <task-id> [<task-id>...]
        FM_HOME=<owning-home> fm-retire-endpoint.sh --finished <task-id> [<task-id>...]
+       FM_HOME=<owning-home> fm-retire-endpoint.sh --finished <task-id> --merged-pr <url>
        FM_HOME=<owning-home> fm-retire-endpoint.sh --orphan <task-id> [--endpoint <endpoint-id>]
        FM_HOME=<owning-home> fm-retire-endpoint.sh --list-orphans
 
@@ -177,12 +183,19 @@ that owns the records, asks for no typed confirmation, and takes only:
     can be read and does not list its window, or tmux definitively reports
     that no server is running.
 
-Cleanup's work-protection refusal is NOT proceeded past: unlanded or
-uncommitted work, a scout whose report is missing, or a captain decision the
-report still leaves open retires nothing. Cleanup stops every process under
-the worktree before it reaches the endpoint, which is what stands behind the
-stop this asserts. The log line carries basis=finished-work. Anything refused
-here is the captain's decision.
+--finished invokes cleanup with --keep-commits: unlanded work is never
+discarded; a merged task's clean leftover commits are saved on a kept/ branch
+under bin/fm-teardown.sh's header contract. Every other refusal stands.
+Cleanup's work-protection refusal is NOT proceeded past: work still failing
+that gate, a scout whose report is missing, or a captain decision the report
+still leaves open retires nothing. Cleanup stops every process under the
+worktree before it reaches the endpoint, which is what stands behind the stop
+this asserts. The log line carries basis=finished-work. Anything refused here
+is the captain's decision.
+
+--merged-pr <url> supplies the PR/MR URL for one --finished task when it is
+not recorded in its metadata or backlog. Cleanup rechecks its live forge state
+before preserving any committed work on a kept/ branch.
 
 --orphan: close one live stream endpoint whose task record in this home is
 already gone. It needs an explicit FM_HOME and asks for no typed confirmation.
@@ -212,6 +225,7 @@ refuse() {
 
 IDS=()
 FINISHED=0
+MERGED_PR_URL=
 OVERRIDE_RUNTIME_REFUSAL=0
 ORPHAN=0
 LIST_ORPHANS=0
@@ -226,6 +240,13 @@ while [ "$#" -gt 0 ]; do
       ;;
     --finished)
       FINISHED=1
+      ;;
+    --merged-pr)
+      if [ "$#" -eq 0 ] || ! fm_pr_url_parse "$1"; then
+        refuse "--merged-pr requires a supported PR/MR URL"
+      fi
+      MERGED_PR_URL=$1
+      shift
       ;;
     --override-runtime-refusal)
       OVERRIDE_RUNTIME_REFUSAL=1
@@ -256,6 +277,11 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ -n "$MERGED_PR_URL" ]; then
+  [ "$FINISHED" = 1 ] && [ "${#IDS[@]}" -eq 1 ] \
+    || refuse "--merged-pr requires --finished with exactly one task id"
+fi
 
 if [ "$ORPHAN" = 1 ] || [ "$LIST_ORPHANS" = 1 ]; then
   [ "$FINISHED" = 0 ] || refuse "--finished retires task records; --orphan and --list-orphans close endpoints that have none - use one mode"
@@ -609,7 +635,10 @@ for id in "${IDS[@]}"; do
     echo "note: $id is being retired with a runtime refusal overridden by $retired_by at $retired_at" >&2
   fi
   teardown_rc=0
-  "$SCRIPT_DIR/fm-teardown.sh" "$id" || teardown_rc=$?
+  teardown_args=("$id")
+  [ "$FINISHED" = 0 ] || teardown_args+=(--keep-commits)
+  [ -z "$MERGED_PR_URL" ] || teardown_args+=(--merged-pr "$MERGED_PR_URL")
+  "$SCRIPT_DIR/fm-teardown.sh" "${teardown_args[@]}" || teardown_rc=$?
   if [ "$teardown_rc" = 0 ]; then
     echo "note: $id retired; cleanup completed under the retirement recorded for $retired_by at $retired_at" >&2
   elif [ "$teardown_rc" = "$RUNTIME_REFUSAL_EXIT" ]; then

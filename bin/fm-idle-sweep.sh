@@ -30,9 +30,11 @@
 #     automatically, since a pushed but unmerged branch passes cleanup's checks;
 #     it becomes the clean-it-up-or-keep-it decision below;
 #   - otherwise done, quiet for 15 minutes (a ship's PR must be merged):
-#     cleaned up with bin/fm-teardown.sh, never --force; a refusal only because
-#     the endpoint is on a retired backend goes to
-#     bin/fm-retire-endpoint.sh --finished;
+#     cleaned up with bin/fm-teardown.sh --keep-commits, never --force;
+#     teardown's header owns committed-work preservation and its limits.
+#     The sweep passes the PR/MR URL it verified to teardown and to the
+#     bin/fm-retire-endpoint.sh --finished fallback when the only refusal
+#     is an endpoint on a retired backend;
 #     a refusal because another cleanup or lifecycle action holds the task
 #     waits for the next scan; after a refusal, a now-absent worker record is
 #     reported as cleaned unless its backlog close is still pending (then
@@ -215,6 +217,7 @@ already_raised() {  # <id>
 classify() {
   local id=$1 line verb worktree row pr pr_state hold_rc=0
   UNPROVEN=0
+  MERGED_PR_URL=
   AGE=$(record_age "$id")
   DETAIL=
   hold_settled "$id" "idle-$id" || hold_rc=$?
@@ -248,7 +251,7 @@ classify() {
         pr_state=$(fm_run_timed 60 bash -c '. "$1/fm-pr-lib.sh"; fm_pr_live_state "$2"' \
           _ "$SCRIPT_DIR" "$pr" 2>/dev/null) || pr_state=
         case "$pr_state" in
-          merged) ;;
+          merged) MERGED_PR_URL=$pr ;;
           open) CLASS=awaiting-merge; return ;;
           closed) UNPROVEN=1 ;;
           *) CLASS=settling; DETAIL="cannot read whether $pr merged"; return ;;
@@ -287,7 +290,7 @@ project_of() {  # <meta>
 }
 
 hours() {  # <secs>
-  printf '%sh' $(($1 / 3600))
+  printf '%s hours' $(($1 / 3600))
 }
 
 # raise <id> <class> <why> <project>: hold the worker for the captain with a
@@ -299,25 +302,36 @@ raise() {
   RAISE_SKIPPED=0
   local where="this home"
   [ "$FM_HOME" = "${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}" ] || where="home $FM_HOME"
+  # The card is for a person acting without context (bin/fm-card.sh refuses
+  # internal jargon): name the PR, never the task id, and say the refusal in
+  # plain words; the exact refusal stays in the instruction and the reason.
+  local about="A worker" pr
+  pr=
+  [ "${6:-}" = orphan ] || pr=$(fm_meta_get "$STATE/$ledger_id.meta" pr 2>/dev/null || true)
+  case "$pr" in */pull/[0-9]*) about="The worker on PR ${pr##*/pull/}" ;; esac
   case "$class" in
     finished)
-      title="Clean up finished worker $id?"
-      situation="Its work is done, but cleanup refused: $why"
+      title="A finished worker's cleanup was refused. Clean it up or keep it?"
+      case "$why" in
+        *uncommitted*) situation="$about is done, but its local copy has uncommitted changes." ;;
+        *"not landed"*|*unlanded*) situation="$about is done, but its local copy has commits that are not in main." ;;
+        *) situation="$about is done, but cleaning up its local copy was refused." ;;
+      esac
       l1="Clean it up"; o1="Worker $id in $where is done but its cleanup refused: $why. Resolve that refusal and clean it up through the guarded cleanup; never discard unlanded work without my explicit word."
       l2="Keep it"; o2="Keep worker $id in $where as it is for now."
       rec=1 ;;
     *)
       case "$class" in
-        failed) situation="It failed and nothing retried it: $why" ;;
-        stalled) situation="It has been waiting with nobody acting on it: $why" ;;
-        *) situation="Its worker is gone, but its record was left: $why" ;;
+        failed) situation="$about failed and nothing retried it." ;;
+        stalled) situation="$about has been waiting with nobody acting on it." ;;
+        *) situation="$about is gone, but its record was left behind." ;;
       esac
-      title="Retire or retry worker $id?"
+      title="Retire or retry a worker that stopped?"
       l1="Retire it"; o1="Retire worker $id in $where: push any unlanded work to a branch, then clean it up through the guarded cleanup path."
       l2="Retry it"; o2="Relaunch worker $id in $where on its existing instructions and local copy, and have it finish its task."
       rec=1; [ "$class" = stalled ] && rec=2 ;;
   esac
-  reason="$(printf '%s' "$situation" | tr -d '()' | cut -c1-200); quiet $(hours "$AGE"); $l1 or $l2"
+  reason="$(printf '%s: %s' "$id" "$why" | tr -d '()' | cut -c1-200); quiet $(hours "$AGE"); $l1 or $l2"
   situation="$(printf '%s' "$situation" | cut -c1-240) ($(hours "$AGE") quiet)"
   card=$(mktemp "$STATE/.idle-sweep-card.XXXXXX") || return 0
   jq -n --arg project "$project" --arg title "${title:0:120}" --arg situation "$situation" \
@@ -361,13 +375,19 @@ raise() {
 # cleanup <id>: guarded teardown of a finished worker. 0 = cleaned; else
 # CLEANUP_WHY holds the refusal.
 cleanup() {
-  local id=$1 out rc=0
+  local id=$1 out rc=0 args
+  args=("$id" --keep-commits)
+  [ -z "$MERGED_PR_URL" ] || args+=(--merged-pr "$MERGED_PR_URL")
   CLEANUP_WHY=
-  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-teardown.sh" "$id" </dev/null 2>&1) || rc=$?
+  # --keep-commits: leftover local commits after a merged PR are saved on a
+  # kept/ branch rather than raised (housekeeping is never a captain call).
+  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-teardown.sh" "${args[@]}" </dev/null 2>&1) || rc=$?
   [ "$rc" -eq 0 ] && return 0
   if printf '%s' "$out" | grep -q "on the retired '"; then
     rc=0
-    out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-retire-endpoint.sh" --finished "$id" </dev/null 2>&1) || rc=$?
+    args=(--finished "$id")
+    [ -z "$MERGED_PR_URL" ] || args+=(--merged-pr "$MERGED_PR_URL")
+    out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-retire-endpoint.sh" "${args[@]}" </dev/null 2>&1) || rc=$?
     [ "$rc" -eq 0 ] && return 0
   fi
   CLEANUP_WHY=$(printf '%s\n' "$out" | grep -m1 -E '^(REFUSED|error|refus)' || true)

@@ -35,7 +35,8 @@
 # lift the deferral (it authorizes discarding unlanded WORK, never the
 # captain's question), and bin/fm-captain-hold.sh answer stays the only act
 # that closes the call.
-# REFUSES if the worktree holds work that has not LANDED, because cleanup
+# REFUSES if the worktree holds work that has not LANDED, unless committed
+# work is preserved through --keep-commits below, because cleanup
 # hard-resets/removes the worktree and kills its processes. For a normal ship,
 # remote reachability alone is not landing evidence: both completion and committed
 # content require a merged PR whose head contains the current local work, or content
@@ -48,9 +49,11 @@
 # cherry, and merge-tree containment each fail to prove content landed without also
 # accepting unlanded edits to the same paths. Teardown still accepts a merged PR
 # whose head contains the current local work (ancestor or equivalent patch ids),
-# or a clean content-in-default tree match. Anything else refuses.
+# or a clean content-in-default tree match. Anything else needs preservation
+# through --keep-commits below or refuses.
 # The PR itself is resolved from the task's recorded pr= when present, else by
-# bin/fm-pr-lib.sh's fm_pr_task_url resolver for the backlog row. For every
+# bin/fm-pr-lib.sh's fm_pr_task_url resolver for the backlog row, then from
+# --merged-pr when supplied. For every
 # non-secondmate task, a row read that errors or times out refuses non-forced
 # cleanup, including on manual-backend homes and when metadata already names
 # a PR. A confirmed NOT_FOUND or an absent configured markdown backlog permits
@@ -161,7 +164,23 @@
 # leased home and state in place instead of hiding a still-held lease.
 # bin/fm-deck-worker.sh's SECOND MATE SESSION CONTINUITY header owns the
 # conversation binding retired with a secondmate and its forced descendants.
-# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record]
+# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--keep-commits] [--merged-pr <url>]
+#   --keep-commits handles the leftover local commits a squash merge leaves
+#   behind: when a ship task's PR is merged, its worktree has no uncommitted
+#   changes, and its committed work still is not proved landed, teardown first
+#   saves HEAD on a local branch kept/<id>-<UTC stamp> in the same repository,
+#   reusing an existing kept/<id>-* branch when it already points at HEAD,
+#   verifies that branch, prints "kept: <n> local commit(s) on branch <name>",
+#   and then cleans up. Nothing is discarded, so this is housekeeping, not a
+#   captain decision. Without a
+#   merged PR, with uncommitted changes, or for local-only work it refuses as
+#   before. --merged-pr supplies a PR/MR URL when none is recorded; its live
+#   merge state is verified through the forge before commits can be kept.
+#   With --keep-commits and no resolved URL, teardown tries GitHub discovery
+#   by branch before the completion gate; a caller that already knows the
+#   merged GitHub PR or GitLab MR URL should supply it with --merged-pr.
+#   Regression coverage: tests/fm-teardown.test.sh's keep-commits and
+#   finished-retirement cases; tests/fm-idle-sweep.test.sh's ledger-only MR cases.
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
 #   when the captain has explicitly said to discard the work.
@@ -170,8 +189,8 @@
 #   agent-less (bin/fm-backend.sh's recovery-grade classifier), and without
 #   --force the worktree still passes the ordinary landed-work checks. The
 #   accepted legacy incarnation is stamped into the record before its close is
-#   recorded and named in the teardown line; the flag never relaxes the
-#   unlanded-work refusal, which --force alone can authorize. A legacy- stamp
+#   recorded and named in the teardown line; the flag never relaxes any
+#   work-protection gate. A legacy- stamp
 #   an abandoned attempt left behind never counts as a published incarnation:
 #   the record still reads as a legacy record, so the endpoint gate runs again
 #   and the retry still needs --legacy-record.
@@ -314,11 +333,22 @@ fi
 ID=$1
 FORCE=
 LEGACY_RECORD_GIVEN=0
+KEEP_COMMITS=0
+MERGED_PR_URL=
 shift
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --force) FORCE=--force ;;
     --legacy-record) LEGACY_RECORD_GIVEN=1 ;;
+    --keep-commits) KEEP_COMMITS=1 ;;
+    --merged-pr)
+      shift
+      if [ "$#" -eq 0 ] || ! fm_pr_url_parse "$1"; then
+        echo "error: --merged-pr requires a supported PR/MR URL" >&2
+        exit 2
+      fi
+      MERGED_PR_URL=$1
+      ;;
     *)
       echo "error: invalid teardown request" >&2
       exit 2
@@ -1323,14 +1353,8 @@ $commits
 EOF
 }
 
-# Is the worktree's PR merged for local work contained in that PR? Uses PR_URL
-# resolved from metadata or the backlog row, else discovers the PR by branch
-# name, and asks GitHub for both state and head. Returns non-zero when the PR
-# is not merged, the current work is not contained in the PR head, no PR is
-# found, or any gh error occurs. The caller's content-check fallback proves
-# only content safety; it never replaces the completion-claim gate above.
-pr_is_merged() {
-  local branch=$1 target view state remainder head resolved_url current landed=0
+resolve_merged_pr() {
+  local branch=$1 target view state remainder head resolved_url
   if [ -n "$PR_URL" ]; then
     target=$PR_URL
   else
@@ -1349,20 +1373,28 @@ pr_is_merged() {
     *) return 1 ;;
   esac
   [ -n "$head" ] || return 1
-  ensure_commit_object "$target" "$head" || return 1
-  current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
-  if git -C "$WT" merge-base --is-ancestor "$current" "$head" 2>/dev/null; then
-    landed=1
-  elif patches_are_in_pr_head "$WT" "$current" "$head" "$head"; then
-    landed=1
-  fi
-  [ "$landed" = 1 ] || return 1
   if [ -z "$PR_URL" ]; then
-    [ -n "$resolved_url" ] || return 1
+    fm_pr_url_parse "$resolved_url" || return 1
     PR_URL=$resolved_url
   fi
+  MERGED_PR_HEAD=$head
   PR_CLOSE_VERDICT=merged
   return 0
+}
+
+# Is the worktree's PR merged for local work contained in that PR? Uses PR_URL
+# resolved from metadata or the backlog row, else discovers the PR by branch
+# name, and asks GitHub for both state and head. Returns non-zero when the PR
+# is not merged, the current work is not contained in the PR head, no PR is
+# found, or any gh error occurs. The caller's content-check fallback proves
+# only content safety; it never replaces the completion-claim gate above.
+pr_is_merged() {
+  local current
+  resolve_merged_pr "$1" || return 1
+  ensure_commit_object "$PR_URL" "$MERGED_PR_HEAD" || return 1
+  current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
+  git -C "$WT" merge-base --is-ancestor "$current" "$MERGED_PR_HEAD" 2>/dev/null \
+    || patches_are_in_pr_head "$WT" "$current" "$MERGED_PR_HEAD" "$MERGED_PR_HEAD"
 }
 
 # Is the branch's content already present in the up-to-date default branch? Fetches
@@ -1858,6 +1890,24 @@ teardown_treehouse_return() {
   return 1
 }
 
+# --keep-commits preservation is owned by the header above.
+keep_unlanded_commits() {
+  local head name count
+  head=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
+  # The safety check runs again after the lock; the same head is kept once.
+  [ "${KEPT_HEAD:-}" != "$head" ] || return 0
+  name=$(git -C "$WT" for-each-ref --points-at="$head" --format='%(refname:short)' \
+    "refs/heads/kept/$ID-*" | head -1) || return 1
+  if [ -z "$name" ]; then
+    name="kept/$ID-$(date -u +%Y%m%dT%H%M%SZ)"
+    git -C "$WT" branch --no-track "$name" "$head" >/dev/null 2>&1 || return 1
+  fi
+  [ "$(git -C "$WT" rev-parse --verify "refs/heads/$name" 2>/dev/null)" = "$head" ] || return 1
+  count=$(git -C "$WT" rev-list --count HEAD --not --remotes 2>/dev/null || echo "?")
+  KEPT_HEAD=$head
+  echo "kept: $count local commit(s) on branch $name"
+}
+
 validate_worktree_teardown_safety() {
   local dirty_raw dirty unpushed_raw unpushed DEFAULT unmerged_raw unmerged branch
   [ -d "$WT" ] || return 0
@@ -1916,6 +1966,9 @@ validate_worktree_teardown_safety() {
       TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY=$branch
     fi
     if ! work_is_landed "$branch"; then
+      if [ "$KEEP_COMMITS" = 1 ] && [ "${PR_CLOSE_VERDICT:-}" = merged ] && keep_unlanded_commits; then
+        return 0
+      fi
       echo "REFUSED: worktree $WT has work not landed in the default branch or a merged PR head." >&2
       [ -z "$unpushed" ] || printf 'unpushed commits:\n%s\n' "$unpushed" >&2
       echo "Land the work, or get the captain's explicit OK to discard, then --force." >&2
@@ -3308,6 +3361,12 @@ if [ "$KIND" != secondmate ]; then
     pr_task_row=
   fi
   [ -n "$PR_URL" ] || PR_URL=$(fm_pr_task_url "$pr_task_row" "$META")
+  [ -n "$PR_URL" ] || PR_URL=$MERGED_PR_URL
+fi
+if [ "$KEEP_COMMITS" = 1 ] && [ "$KIND" = ship ] && [ "$MODE" != local-only ] \
+    && [ -z "$PR_URL" ] && teardown_owns_worktree && [ -d "$WT" ]; then
+  branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=
+  resolve_merged_pr "$branch" || true
 fi
 if [ "$KIND" != secondmate ] && [ -n "$PR_URL" ]; then
   pr_task_body=$(fm_pr_task_body "$pr_task_row" 2>/dev/null) || pr_task_body=

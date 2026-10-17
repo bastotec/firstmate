@@ -1495,6 +1495,188 @@ test_merged_pr_with_later_local_commit_refuses() {
   pass "merged PR does not allow teardown after a later local commit"
 }
 
+test_keep_commits_saves_leftover_commits_then_cleans_up() {
+  local case_dir rc pr_head later repo kept
+  case_dir=$(make_case keep-commits)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  append_pr_meta_for_current_head "$case_dir"
+  pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  wt_commit_file "$case_dir" later.txt local-only "local follow-up"
+  later=$(git -C "$case_dir/wt" rev-parse HEAD)
+  repo=$(git -C "$case_dir/wt" rev-parse --git-common-dir)
+  case "$repo" in /*) ;; *) repo="$case_dir/wt/$repo" ;; esac
+  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+
+  set +e
+  run_teardown "$case_dir" --keep-commits > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "keep-commits: teardown should save the leftover commits and clean up"$'\n'"$(cat "$case_dir/stderr")"
+  grep -q '^kept: .* on branch kept/task-x1-' "$case_dir/stdout" || fail "keep-commits: no kept line: $(cat "$case_dir/stdout")"
+  kept=$(git --git-dir="$repo" for-each-ref --format='%(objectname)' 'refs/heads/kept/task-x1-*')
+  [ "$kept" = "$later" ] || fail "keep-commits: the kept branch must point at the leftover commits (got '$kept', want '$later')"
+  pass "--keep-commits saves a merged task's leftover local commits on a branch, then cleans up"
+}
+
+test_keep_commits_discovers_merged_pr_before_checking_content() {
+  local case_dir pr_head later rc state kept
+  for state in MERGED OPEN CLOSED offline; do
+    case_dir=$(make_case "keep-discovered-$state")
+    add_logging_treehouse "$case_dir"
+    write_meta "$case_dir" no-mistakes ship
+    wt_commit_file "$case_dir" feature.txt hello
+    pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+    wt_commit_file "$case_dir" later.txt 'unlanded follow-up'
+    later=$(git -C "$case_dir/wt" rev-parse HEAD)
+    add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+    cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+[ '$state' != offline ] || exit 1
+case " \$* " in
+  *"state,headRefOid,url"*) printf '%s\\t%s\\t%s\\n' '$state' '$pr_head' 'https://github.com/example/repo/pull/7' ;;
+  *"--json state "*) printf '%s\\n' '$state' ;;
+  *) exit 1 ;;
+esac
+SH
+    rc=0
+    run_teardown "$case_dir" --keep-commits > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    kept=$(git -C "$case_dir/project" for-each-ref --format='%(objectname)' 'refs/heads/kept/task-x1-*')
+    if [ "$state" = MERGED ]; then
+      expect_code 0 "$rc" "discovered merged PR could not preserve work: $(cat "$case_dir/stderr")"
+      assert_equals "$later" "$kept" "the discovered PR's extra commit is preserved"
+      assert_absent "$case_dir/state/task-x1.meta" "cleanup removed the worker record"
+      assert_contains "$(cat "$case_dir/treehouse.log")" "return --force $case_dir/wt" "cleanup returned the worktree"
+      assert_contains "$(cat "$case_dir/stdout")" 'kept:' "preservation is reported"
+    else
+      assert_not_equals 0 "$rc" "a $state PR cannot authorize preservation cleanup"
+      assert_equals '' "$kept" "an unproved merge creates no kept branch"
+      assert_refusal_retained_task_state "$case_dir" "$state" "$later"
+    fi
+  done
+  pass "--keep-commits discovers merged PR identity independently of content and refuses unproved merges"
+}
+
+test_keep_commits_verifies_the_callers_pr_through_its_forge() {
+  local case_dir provider state url later kept rc
+  for provider in github gitlab; do
+    for state in merged open closed offline; do
+      case_dir=$(make_case "keep-caller-$provider-$state")
+      add_logging_treehouse "$case_dir"
+      write_meta "$case_dir" no-mistakes ship
+      wt_commit_file "$case_dir" feature.txt 'landed feature'
+      land_on_origin_main "$case_dir" feature.txt 'landed feature'
+      wt_commit_file "$case_dir" later.txt 'unlanded follow-up'
+      later=$(git -C "$case_dir/wt" rev-parse HEAD)
+      if [ "$provider" = github ]; then
+        url=https://github.com/example/repo/pull/7
+      else
+        url=https://gitlab.example/group/repo/-/merge_requests/7
+      fi
+      cat > "$case_dir/fakebin/gh" <<SH
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >> '$case_dir/github-calls'
+[ '$provider' = github ] && [ '$state' != offline ] || exit 1
+[ "\${1:-} \${2:-}" = 'pr view' ] && [ "\${4:-} \${5:-}" = '--json state' ] || exit 1
+printf '%s\\n' '$state'
+SH
+      cat > "$case_dir/fakebin/glab" <<SH
+#!/usr/bin/env bash
+printf '%s\\n' "\$*" >> '$case_dir/gitlab-calls'
+[ '$provider' = gitlab ] && [ '$state' != offline ] || exit 1
+[ "\$*" = 'mr view 7 -R https://gitlab.example/group/repo' ] || exit 1
+printf 'state: %s\\n' '$state'
+SH
+      chmod +x "$case_dir/fakebin/glab"
+      rc=0
+      run_teardown "$case_dir" --keep-commits --merged-pr "$url" \
+        > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+      kept=$(git -C "$case_dir/project" for-each-ref --format='%(objectname)' 'refs/heads/kept/task-x1-*')
+      if [ "$state" = merged ]; then
+        expect_code 0 "$rc" "caller $provider merge could not preserve work: $(cat "$case_dir/stderr")"
+        assert_equals "$later" "$kept" "the caller's PR leaves its extra commit preserved"
+        assert_absent "$case_dir/state/task-x1.meta" "the worker record was cleaned up"
+        assert_contains "$(cat "$case_dir/stdout")" 'kept:' "the kept branch is reported"
+        assert_present "$case_dir/$provider-calls" "the correct forge verified the caller's URL"
+      else
+        assert_not_equals 0 "$rc" "a caller's $state PR must not authorize cleanup"
+        assert_equals '' "$kept" "an unproved merge creates no kept branch"
+        assert_refusal_retained_task_state "$case_dir" "$provider-$state" "$later"
+      fi
+    done
+  done
+  pass "--merged-pr verifies GitHub and GitLab merges before preserving caller-identified work"
+}
+
+test_finished_retirement_reuses_preserved_commits() {
+  local backend case_dir pr_head later rc saved baseline
+  for backend in tmux herdr; do
+    case_dir=$(make_case "keep-retired-$backend")
+    add_logging_treehouse "$case_dir"
+    fm_write_meta "$case_dir/state/task-x1.meta" \
+      "backend=$backend" "window=fm:fm-task-x1" "endpoint_task_id=task-x1" \
+      "worktree=$case_dir/wt" "project=$case_dir/project" \
+      "kind=ship" "mode=no-mistakes" "spawn_gen=teardown-test-task-x1"
+    if [ "$backend" = herdr ]; then
+      printf '%s\n' 'herdr_session=fm' 'herdr_workspace_id=w1' 'herdr_tab_id=t1' \
+        'herdr_pane_id=fm-task-x1' >> "$case_dir/state/task-x1.meta"
+    fi
+    fm_fake_exit0 "$case_dir/fakebin" tmux
+    wt_commit_file "$case_dir" feature.txt hello
+    append_pr_meta_for_current_head "$case_dir"
+    pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+    wt_commit_file "$case_dir" later.txt 'unlanded follow-up'
+    later=$(git -C "$case_dir/wt" rev-parse HEAD)
+    add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+    rc=0
+    FM_TEARDOWN_TEST_HOME="$case_dir" run_teardown "$case_dir" --keep-commits \
+      > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    assert_not_equals 0 "$rc" "a retired endpoint needs its retirement owner"
+    assert_contains "$(cat "$case_dir/stderr")" "on the retired '$backend'" "cleanup refused at the endpoint boundary"
+    saved=$(git -C "$case_dir/project" for-each-ref --format='%(refname:short)' 'refs/heads/kept/task-x1-*')
+    assert_equals "$later" "$(git -C "$case_dir/project" rev-parse "$saved")" "first cleanup preserved the commits"
+    git -C "$case_dir/project" branch -m "$saved" kept/task-x1-20000101T000000Z
+    git -C "$case_dir/project" branch kept/task-x1-19990101T000000Z "$pr_head"
+    baseline=$(git -C "$case_dir/project" for-each-ref --format='%(refname) %(objectname)' 'refs/heads/kept/task-x1-*')
+    rc=0
+    FM_HOME="$case_dir" FM_ROOT_OVERRIDE="$ROOT" PATH="$case_dir/fakebin:$PATH" \
+      "$ROOT/bin/fm-retire-endpoint.sh" --finished task-x1 </dev/null \
+      > "$case_dir/retire.stdout" 2> "$case_dir/retire.stderr" || rc=$?
+    expect_code 0 "$rc" "finished retirement did not preserve work: $(cat "$case_dir/retire.stderr")"
+    assert_absent "$case_dir/state/task-x1.meta" "finished retirement removed the record"
+    assert_contains "$(cat "$case_dir/treehouse.log")" "return --force $case_dir/wt" "finished retirement returned the worktree"
+    assert_equals "$baseline" "$(git -C "$case_dir/project" for-each-ref --format='%(refname) %(objectname)' 'refs/heads/kept/task-x1-*')" \
+      "retirement reused the same-head branch without changing the other saved branch"
+    assert_contains "$(cat "$case_dir/retire.stdout")" 'on branch kept/task-x1-20000101T000000Z' "reuse is reported"
+  done
+  pass "finished retirement carries preservation through cleanup and reuses the same saved HEAD"
+}
+
+test_keep_commits_still_refuses_uncommitted_or_unmerged_work() {
+  local case_dir rc scenario head mode
+  for scenario in missing-pr dirty local-only; do
+    case_dir=$(make_case "keep-commits-$scenario")
+    mode=no-mistakes
+    [ "$scenario" != local-only ] || mode=local-only
+    write_meta "$case_dir" "$mode" ship
+    wt_commit_file "$case_dir" feature.txt hello "add feature"
+    head=$(git -C "$case_dir/wt" rev-parse HEAD)
+    if [ "$scenario" != missing-pr ]; then
+      append_pr_meta_for_current_head "$case_dir"
+      add_gh_pr_merged_for_head "$case_dir" "$head"
+    fi
+    [ "$scenario" != dirty ] || printf 'not committed\n' >> "$case_dir/wt/feature.txt"
+    rc=0
+    run_teardown "$case_dir" --keep-commits > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    expect_code 1 "$rc" "keep-commits-$scenario: teardown must still refuse"
+    assert_refusal_retained_task_state "$case_dir" "$scenario" "$head"
+    assert_equals '' "$(git -C "$case_dir/project" for-each-ref --format='%(refname)' 'refs/heads/kept/task-x1-*')" \
+      "keep-commits-$scenario: no preservation branch was created"
+  done
+  pass "--keep-commits refuses absent merge evidence, uncommitted changes and local-only work"
+}
+
 test_squash_merged_rebased_branch_allows() {
   local case_dir rc pr_head
   case_dir=$(make_case squash-rebased)
@@ -3805,6 +3987,11 @@ test_no_pr_recorded_discovers_merged_pr_by_branch_allows
 test_squash_merged_pr_allows_replayed_unpushed_patch
 test_squash_merged_pr_allows_replayed_unpushed_patch no
 test_merged_pr_with_later_local_commit_refuses
+test_keep_commits_saves_leftover_commits_then_cleans_up
+test_keep_commits_discovers_merged_pr_before_checking_content
+test_keep_commits_verifies_the_callers_pr_through_its_forge
+test_finished_retirement_reuses_preserved_commits
+test_keep_commits_still_refuses_uncommitted_or_unmerged_work
 test_squash_merged_rebased_branch_allows
 test_squash_merged_same_file_different_content_refuses
 test_squash_merged_rebased_local_with_unlanded_commit_refuses

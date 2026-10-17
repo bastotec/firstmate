@@ -162,10 +162,10 @@ card_json() {  # <record-json-file>
     | {
         project: "firstmate",
         title: ("\(.alias) needs you before I can \(.for)" | .[0:120]),
-        situation: (("Blocked on you: \($n) step\(if $n == 1 then "" else "s" end) on \(.alias) - \([$you[].name] | join(", ")).\n" + .then) | .[0:280]),
+        situation: (("Blocked on you: \($n) step\(if $n == 1 then "" else "s" end) on \(.alias); the re-check lists them.\n" + .then) | .[0:280]),
         options: [
           {key: "1", label: "Done - re-check now",
-           instruction: ("Do NOT record this option through answer. Run bin/fm-machine-blocker.sh ready \(.alias); if it passes, run bin/fm-machine-blocker.sh resolve \(.alias) to stale-clear with evidence, then carry on with: \(.for). Otherwise reply with the remaining Blocked on you steps using bin/fm-machine-blocker.sh show \(.alias), and leave the card open." | .[0:1000])}
+           instruction: ("Steps waiting on the captain: \([$you[].name] | join(", ")). Do NOT record this option through answer. Run bin/fm-machine-blocker.sh ready \(.alias); if it passes, run bin/fm-machine-blocker.sh resolve \(.alias) to stale-clear with evidence, then carry on with: \(.for). Otherwise reply with the remaining Blocked on you steps using bin/fm-machine-blocker.sh show \(.alias), and leave the card open." | .[0:1000])}
         ],
         recommended: "1"
       }

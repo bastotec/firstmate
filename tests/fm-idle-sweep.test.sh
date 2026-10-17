@@ -28,7 +28,8 @@ cat "$FM_HOME/crew/$1" 2>/dev/null || echo 'state: unknown · source: none · no
 SH
   cat > "$dir/bin/fm-teardown.sh" <<'SH'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$FM_HOME/teardown-calls"
+printf '%s\n' "$1" >> "$FM_HOME/teardown-calls"
+printf '%s\n' "$*" >> "$FM_HOME/teardown-args"
 if [ -f "$FM_HOME/pending-close/$1" ]; then
   printf 'id=%s\ndata=%s/data\nspawn_gen=fixture\ncleanup_incomplete=0\n' "$1" "$FM_HOME" > "$FM_HOME/state/$1.backlog-close"
   rm -f "$FM_HOME/state/$1.meta"
@@ -435,6 +436,96 @@ test_open_pr_workers_wait_for_merge_without_a_cleanup_decision() {
   pass "fm-idle-sweep: open PR workers wait for merge; merged workers retain guarded cleanup"
 }
 
+test_merged_mr_in_ledger_is_passed_to_teardown() {
+  local dir id
+  dir=$(new_case merged-mr-ledger)
+  for id in ledger-mr next-worker; do
+    add_worker "$dir" "$id" 'state: done · source: status-log · PR ready' 7200
+  done
+  printf 'done: MR https://gitlab.example/group/repo/-/merge_requests/57\n' >> "$dir/home/state/ledger-mr.status"
+  age_file "$dir/home/state/ledger-mr.status" 7200
+  printf 'merged\n' > "$dir/home/pr-states/57"
+  printf 'pr=https://github.com/owner/repo/pull/58\n' >> "$dir/home/state/next-worker.meta"
+  printf 'MERGED\n' > "$dir/home/pr-states/58"
+
+  sweep "$dir" scan --now || fail "scan failed"
+
+  assert_grep 'ledger-mr --keep-commits --merged-pr https://gitlab.example/group/repo/-/merge_requests/57' \
+    "$dir/home/teardown-args" "the ledger MR URL must reach teardown"
+  assert_grep 'next-worker --keep-commits --merged-pr https://github.com/owner/repo/pull/58' \
+    "$dir/home/teardown-args" "each worker must pass its own verified URL"
+  assert_absent "$dir/home/state/ledger-mr.meta" "the ledger-only merged worker is cleaned up"
+  assert_absent "$dir/home/state/next-worker.meta" "the next merged worker is cleaned up"
+  [ ! -s "$dir/home/hold-attempts" ] || fail "merged workers became captain cards"
+  [ "$(jq '[.workers[] | select(.action=="cleaned")] | length' "$dir/home/state/idle-sweep.json")" = 2 ] \
+    || fail "merged ledger cleanup was not reported"
+  pass "fm-idle-sweep: verified ledger-only MR URLs reach teardown without becoming cards"
+}
+
+test_retired_worker_keeps_ledger_only_merged_mr_without_a_card() {
+  local dir later kept
+  dir=$(new_case retired-ledger-mr)
+  cp "$ROOT/bin/fm-teardown.sh" "$ROOT/bin/fm-retire-endpoint.sh" "$dir/bin/"
+  fm_git_identity fmtest fmtest@example.invalid
+  printf 'manual\n' > "$dir/home/config/backlog-backend"
+  touch "$dir/home/state/.last-watcher-beat"
+  git init -q --bare "$dir/origin.git"
+  git -C "$dir/origin.git" symbolic-ref HEAD refs/heads/main
+  git clone -q "$dir/origin.git" "$dir/home/project" 2>/dev/null
+  printf 'landed feature\n' > "$dir/home/project/feature.txt"
+  git -C "$dir/home/project" add feature.txt
+  git -C "$dir/home/project" commit -qm 'landed feature'
+  git -C "$dir/home/project" push -q origin main
+  git -C "$dir/home/project" remote set-head origin main
+  git -C "$dir/home/project" worktree add -qb fm/ledger-mr "$dir/wt" main
+  printf 'unlanded follow-up\n' > "$dir/wt/later.txt"
+  git -C "$dir/wt" add later.txt
+  git -C "$dir/wt" commit -qm 'local follow-up'
+  later=$(git -C "$dir/wt" rev-parse HEAD)
+  add_worker "$dir" ledger-mr 'state: done · source: status-log · MR ready' 7200
+  fm_write_meta "$dir/home/state/ledger-mr.meta" \
+    'backend=tmux' 'window=fm:fm-ledger-mr' 'endpoint_task_id=ledger-mr' \
+    "worktree=$dir/wt" "project=$dir/home/project" 'kind=ship' \
+    'mode=no-mistakes' 'spawn_gen=ledger-mr-test'
+  printf 'done: MR https://gitlab.example/group/repo/-/merge_requests/57\n' >> "$dir/home/state/ledger-mr.status"
+  age_file "$dir/home/state/ledger-mr.status" 7200
+  printf 'merged\n' > "$dir/home/pr-states/57"
+  cat > "$dir/bin/treehouse" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_HOME/treehouse-calls"
+[ "$1" = return ] && [ "$2" = --force ] || exit 1
+git -C "$FM_HOME/project" worktree remove --force "$3"
+SH
+  cat > "$dir/bin/gh-axi" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+  cat > "$dir/bin/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  cp "$dir/bin/no-mistakes" "$dir/bin/lsof"
+  cp "$dir/bin/no-mistakes" "$dir/bin/tmux"
+  cp "$dir/bin/no-mistakes" "$dir/bin/fm-remote-job-reap-orphans.sh"
+  chmod +x "$dir/bin/treehouse" "$dir/bin/gh-axi" "$dir/bin/lsof" \
+    "$dir/bin/no-mistakes" "$dir/bin/tmux" "$dir/bin/fm-remote-job-reap-orphans.sh"
+
+  sweep "$dir" scan --now || fail 'retired ledger-only MR scan failed'
+
+  assert_absent "$dir/home/state/ledger-mr.meta" "the retired worker record remains: $(cat "$dir/home/state/idle-sweep.json")"
+  assert_absent "$dir/wt" 'the retired worktree was not returned'
+  assert_absent "$dir/home/state/ledger-mr.endpoint-retired" 'retirement authorization remains'
+  kept=$(git -C "$dir/home/project" for-each-ref --format='%(objectname)' 'refs/heads/kept/ledger-mr-*')
+  assert_equals "$later" "$kept" 'exactly one kept branch must preserve the extra local commit'
+  assert_grep 'basis=finished-work' "$dir/home/state/endpoint-retirements.log" 'finished retirement was not used'
+  [ "$(grep -c '^mr view 57 -R https://gitlab.example/group/repo$' "$dir/home/forge-calls")" -ge 3 ] \
+    || fail 'the sweep and both teardown attempts did not verify the merged MR'
+  [ ! -s "$dir/home/hold-attempts" ] || fail 'ledger-only merged MR housekeeping became a card'
+  [ "$(jq -r '.workers[] | select(.id=="ledger-mr") | .action' "$dir/home/state/idle-sweep.json")" = cleaned ] \
+    || fail "retired MR cleanup was not reported: $(cat "$dir/home/state/idle-sweep.json")"
+  pass 'fm-idle-sweep: retirement preserves ledger-only merged MR commits without a card in manual mode'
+}
+
 test_closed_unmerged_prs_require_a_cleanup_decision() {
   local dir id
   dir=$(new_case closed-unmerged)
@@ -457,6 +548,8 @@ test_closed_unmerged_prs_require_a_cleanup_decision() {
   sweep "$dir" scan --now || fail "scan failed"
 
   [ "$(calls "$dir" teardown-calls)" = merged-ledger ] || fail "cleanup admitted an unmerged or unreadable PR"
+  [ "$(calls "$dir" teardown-args)" = "merged-ledger --keep-commits --merged-pr https://github.com/owner/repo/pull/55" ] \
+    || fail "a merged worker's cleanup must keep leftover local commits on a branch instead of raising them: $(calls "$dir" teardown-args)"
   [ "$(sort "$dir/home/hold-calls" | tr '\n' ' ')" = 'closed-ledger closed-mr closed-recorded ' ] \
     || fail "closed-unmerged PRs did not become exactly one decision each"
   for id in closed-recorded closed-ledger closed-mr; do
@@ -561,7 +654,9 @@ test_refusals_and_idle_workers_become_one_decision_each() {
   printf 'pr=https://github.com/owner/repo/pull/41\n' >> "$dir/home/state/unlanded.meta"
   printf 'MERGED\n' > "$dir/home/pr-states/41"
   add_worker "$dir" broke 'state: failed · source: run-step · run failed (test step)' 90000
+  printf 'pr=https://github.com/owner/repo/pull/1806\n' >> "$dir/home/state/broke.meta"
   add_worker "$dir" waiting 'state: blocked · source: status-log · needs a token' 90000
+  printf 'pr=https://github.com/owner/repo/pull/1807\n' >> "$dir/home/state/waiting.meta"
   add_worker "$dir" vanished 'state: unknown · source: none · backend target gone: hub:abc' 90000
   add_worker "$dir" just-blocked 'state: blocked · source: status-log · needs a token' 600
   add_worker "$dir" busy 'state: working · source: pane · harness busy' 90000
@@ -585,7 +680,11 @@ test_refusals_and_idle_workers_become_one_decision_each() {
       "$id should offer retire or retry"
   done
   [ "$(jq -r '.recommended' "$dir/home/cards/waiting.json")" = 2 ] || fail "a stalled worker should recommend retrying"
-  assert_contains "$(cat "$dir/home/cards/broke.reason")" 'quiet 25h' "the hold reason should include quiet time"
+  assert_equals 'The worker on PR 1806 failed and nothing retried it. (25 hours quiet)' \
+    "$(jq -r .situation "$dir/home/cards/broke.json")" "the failed card names its recorded PR"
+  assert_equals 'The worker on PR 1807 has been waiting with nobody acting on it. (25 hours quiet)' \
+    "$(jq -r .situation "$dir/home/cards/waiting.json")" "the stalled card names its own PR"
+  assert_contains "$(cat "$dir/home/cards/broke.reason")" 'quiet 25 hours' "the hold reason should include quiet time"
   assert_contains "$(cat "$dir/home/cards/broke.reason")" 'run failed test step' "the hold reason should preserve detail without parentheses"
   [ "$(jq -r '.workers[] | select(.id=="unreachable") | .class' "$dir/home/state/idle-sweep.json")" = settling ] \
     || fail "an unavailable backend was classified as a dead worker"
@@ -897,6 +996,8 @@ test_watcher_runs_the_sweep_and_surfaces_its_decision() {
 test_real_holds_check_worker_records_inside_the_lifecycle_lock
 test_done_workers_are_cleaned_up_without_force
 test_closed_unmerged_prs_require_a_cleanup_decision
+test_merged_mr_in_ledger_is_passed_to_teardown
+test_retired_worker_keeps_ledger_only_merged_mr_without_a_card
 test_only_lifecycle_contention_defers_cleanup_refusals
 test_pending_backlog_closes_remain_visible_until_cleared
 test_open_pr_workers_wait_for_merge_without_a_cleanup_decision
