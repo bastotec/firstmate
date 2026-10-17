@@ -242,8 +242,9 @@ while [ "$#" -gt 0 ]; do
       FINISHED=1
       ;;
     --merged-pr)
-      [ "$#" -gt 0 ] && fm_pr_url_parse "$1" \
-        || refuse "--merged-pr requires a supported PR/MR URL"
+      if [ "$#" -eq 0 ] || ! fm_pr_url_parse "$1"; then
+        refuse "--merged-pr requires a supported PR/MR URL"
+      fi
       MERGED_PR_URL=$1
       shift
       ;;

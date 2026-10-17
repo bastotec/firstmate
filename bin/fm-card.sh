@@ -114,6 +114,7 @@ require_slug() {  # <task-id>
 
 card_path() { printf '%s/%s.json\n' "$CARDS" "$1"; }
 
+# shellcheck disable=SC2016 # jq, not the shell, expands these variables.
 PLAIN_WORDS_JQ='
   def plainok: ["end-to-end","up-to-date","out-of-date","day-to-day","step-by-step","face-to-face","one-on-one","state-of-the-art","word-for-word","back-to-back"];
   def products: ["IPv4","IPv6","OAuth2","H264","MP3","MP4","S3","EC2","UTF8","x86","x64","2FA","4K"];

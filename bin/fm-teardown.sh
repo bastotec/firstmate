@@ -343,10 +343,10 @@ while [ "$#" -gt 0 ]; do
     --keep-commits) KEEP_COMMITS=1 ;;
     --merged-pr)
       shift
-      [ "$#" -gt 0 ] && fm_pr_url_parse "$1" || {
+      if [ "$#" -eq 0 ] || ! fm_pr_url_parse "$1"; then
         echo "error: --merged-pr requires a supported PR/MR URL" >&2
         exit 2
-      }
+      fi
       MERGED_PR_URL=$1
       ;;
     *)
