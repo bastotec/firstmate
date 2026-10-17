@@ -73,8 +73,19 @@ unset FM_TASK_ID
 # bin/fm-inactive-reconcile.sh scan resolves fm_parent_channel_destination
 # against the REAL home and appends fixture ledgers to the REAL parent
 # channel. FM_STATE_OVERRIDE alone does not scope that resolution, because
-# the parent-channel library reads the home, not the state dir. A case that
-# verifies real-home behavior sets FM_HOME itself after sourcing this helper.
+# the parent-channel library reads the home, not the state dir.
+#
+# The scrub is only the first layer of the isolation guarantee, not the whole
+# of it: with both overrides empty the driven scripts (bin/fm-watch.sh and
+# bin/fm-inactive-reconcile.sh) fall back to the code root that contains the
+# invoked script, and a secondmate checkout seeds the parent-channel markers at
+# exactly that root, so a nested invocation that relies on the empty fallback
+# could still resolve a REAL seeded home. Every suite therefore also pins
+# FM_HOME (and FM_ROOT_OVERRIDE) to its fixture home at the launch boundary
+# after sourcing this helper; tests/watch-triage-helpers.sh owns that audit
+# across the suites that drive the watcher, the wake drain, and the reconcile
+# scan. A case that verifies real-home behavior sets FM_HOME itself after
+# sourcing this helper.
 unset FM_HOME FM_ROOT_OVERRIDE
 
 # Clear the tasks-axi env overrides. An operator shell exports TASKS_AXI_FILE

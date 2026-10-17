@@ -21,6 +21,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-startup-network-tests)
 DRAIN="$ROOT/bin/fm-wake-drain.sh"
@@ -514,13 +516,19 @@ killed_runner_case() {  # <signal> <stage-bound> <seconds-to-settle>
 $rec
 EOF
   # shellcheck disable=SC2016  # Expanded by the child runner.
+  # The fixture home and code root ride as positional arguments, not the
+  # ambient environment: tests/lib.sh scrubs any inherited FM_HOME and
+  # FM_ROOT_OVERRIDE at source time, so this child establishes its fixture
+  # identity only after sourcing the helper, the same shape the watcher
+  # suites pin at launch.
   FM_FAKE_BOOTSTRAP_LOG="$log" FM_FAKE_BOOTSTRAP_SLEEP=60 FM_STARTUP_NETWORK_TIMEOUT="$bound" \
-    PATH="$root/bin:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \
+    PATH="$root/bin:$PATH" \
     bash -c '
       . "$1/tests/lib.sh"
       FM_TEST_CLEANUP_DIRS+=("$2")
+      FM_HOME="$4" FM_ROOT_OVERRIDE="$3" export FM_HOME FM_ROOT_OVERRIDE
       printf "%s\n" $$ > "$FM_HOME/state/.lock"
-      if [ "$3" = 2 ]; then
+      if [ "$5" = 2 ]; then
         FM_FAKE_HARNESS_PID=$$ "$FM_ROOT_OVERRIDE/bin/fm-startup-network.sh" start --locked 0 --harvest-pid $$
         sed -n "s/^pid=//p" "$FM_HOME/state/.startup-network.status" > "$2/first-pid"
         waited=0
@@ -533,7 +541,7 @@ EOF
       FM_FAKE_HARNESS_PID=$$ "$FM_ROOT_OVERRIDE/bin/fm-startup-network.sh" start --locked 1 --harvest-pid $$
       touch "$2/runner-ready"
       while :; do sleep 0.2; done
-    ' _ "$ROOT" "${home%/home}" "$generations" >/dev/null 2>&1 &
+    ' _ "$ROOT" "${home%/home}" "$root" "$home" "$generations" >/dev/null 2>&1 &
   runner=$!
   waited=0
   while [ ! -f "${home%/home}/runner-ready" ] && [ "$waited" -lt 100 ]; do
@@ -857,8 +865,22 @@ test_a_bounded_run_still_publishes_the_timings_it_managed_to_record() {
 $rec
 EOF
   printf '%s\n' $$ > "$home/state/.lock"
+  # A live secondmate on this suite's fake stream hub, so the liveness sweep
+  # actually reaches its bounded bootstrap child and sleeps there: the phase
+  # record the report must still name is written by that sweep's victim, so
+  # an empty fleet publishes only the aggregate stage record.
+  fm_test_fake_stream_ensure \
+    || fail "the fake stream hub did not start for a live secondmate"
+  fm_test_stream_secondmate_meta "$home/state/mate-a.meta" "$home" alpha deck \
+    || fail "the live secondmate endpoint could not be registered"
 
-  FM_STARTUP_NETWORK_TIMEOUT=1 FM_SESSION_START_TIMEOUT=2 \
+  # Headroom matters here: the composed sweep runs the real inactive-outcome
+  # scan (0.4-1.3s against a live fake-hub secondmate, load-dependent) BEFORE
+  # the seeded fake bootstrap starts and writes its phase record. A 1s bound
+  # races that scan, so the "partial recorded before the bound" premise only
+  # sometimes engages. Five seconds lets the scan finish and the bootstrap
+  # record its phase first, while sleep 20 still guarantees a mid-sweep kill.
+  FM_STARTUP_NETWORK_TIMEOUT=5 FM_SESSION_START_TIMEOUT=10 \
     FM_FAKE_BOOTSTRAP_LOG="$log" FM_FAKE_BOOTSTRAP_SLEEP=20 \
     FM_FAKE_TIMING_PHASE=secondmate-liveness FM_FAKE_TIMING_DETAIL='mate-a@host-one' \
     run_stage "$home" "$root" run --locked 1
@@ -866,7 +888,7 @@ EOF
   [ "$(sed -n 's/^state=//p' "$home/state/.startup-network.status")" = timeout ] \
     || fail "the bounded run did not record itself as timed out"
   report_out=$(run_stage "$home" "$root" report)
-  assert_contains "$report_out" "hit the 1s bound" "the bound stopped being reported"
+  assert_contains "$report_out" "hit the 5s bound" "the bound stopped being reported"
   assert_contains "$report_out" "secondmate-liveness mate-a@host-one" \
     "a timed-out run discarded the partial timings its sweeps had already recorded"
   pass "fm-startup-network: a timed-out run still publishes the partial timings it recorded"

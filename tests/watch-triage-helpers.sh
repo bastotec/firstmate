@@ -28,9 +28,16 @@
 # that invokes one of the three scripts now sources tests/lib.sh (directly or
 # through a behavior helper), which scrubs ambient FM_HOME/FM_ROOT_OVERRIDE at
 # source time; tests/fm-gotmp.test.sh, the one invoker that does not, pins
-# FM_HOME to its own synthetic root on every call. The regression that pins
-# this lives in tests/fm-inactive-reconcile.test.sh (a fixture scan under a
-# mimicked secondmate binding cannot write outside its fixture tree).
+# FM_HOME to its own synthetic root on every call. The scrub alone is not the
+# isolation guarantee: with both overrides empty the driven scripts fall back
+# to the code root that contains them, and a secondmate checkout seeds the
+# parent-channel markers at exactly that root, so the launch boundary must also
+# pin FM_HOME (and FM_ROOT_OVERRIDE) to the fixture home after sourcing the
+# helper - the pin every watcher-suite invocation now carries. The regressions
+# that pin both layers live in tests/fm-inactive-reconcile.test.sh: a watcher
+# scan under a hostile ambient secondmate home, and a reconcile scan invoked
+# from a synthetic marked code root, each asserting every write stays inside
+# the fixture tree.
 #
 # Daemon-side classification/injection lives in fm-daemon.test.sh; watcher/lock
 # liveness in fm-watcher-lock.test.sh; the durable-queue safety matrix in

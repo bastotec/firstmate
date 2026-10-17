@@ -865,11 +865,12 @@ EOF
     bash -c '
       # shellcheck source=tests/lib.sh
       . "$1/tests/lib.sh"
+      FM_HOME="$2" FM_ROOT_OVERRIDE="$3" export FM_HOME FM_ROOT_OVERRIDE
       exec "$1/bin/fm-watch.sh"
-    ' _ "$ROOT" > "$WORLD/leak-watch.out" 2>&1 &
+    ' _ "$ROOT" "$MAIN" "$WORLD/root" > "$WORLD/leak-watch.out" 2>&1 &
   pid=$!
   i=0
-  while [ "$i" -lt 150 ]; do
+  while [ "$i" -lt 300 ]; do
     kill -0 "$pid" 2>/dev/null || break
     [ "$(outcome_count "$MAIN" pending)" -ge 3 ] && break
     sleep 0.1
@@ -895,7 +896,7 @@ EOF
   [ "$(wake_count "$MAIN" 'inactive-outcome')" -ge 1 ] \
     || fail "the fixture scan never queued its inactive-outcome obligation: $(cat "$WORLD/leak-watch.out")"
 
-  # And nothing escaped the fixture tree: the foreign canary is byte-identical
+  # ...and nothing escaped the fixture tree: the foreign canary is byte-identical
   # and carries no child-outcome line, and the foreign home has no write at all.
   [ "$(cat "$foreign_canary")" = 'canary: no fixture write may append here' ] \
     || fail "a fixture scan rewrote the foreign parent channel: $(cat "$foreign_canary")"
@@ -903,6 +904,104 @@ EOF
     fail "a fixture child-outcome line escaped into the foreign home: $(grep -rl 'child-outcome-' "$foreign")"
   fi
   pass "a fixture watcher scan under a hostile ambient home cannot write outside its fixture tree"
+}
+
+# 2026-10-15 fallback-layer regression: tests/lib.sh's scrub leaves both
+# overrides empty, and the driven scripts then resolve their home from the code
+# root that contains them, so a secondmate checkout seeds the secondmate markers
+# at exactly that root and the fallback can still select a REAL seeded home.
+# Every launch boundary therefore pins FM_HOME after sourcing the helper. This
+# case pins the fallback layer itself: the reconcile scan is invoked from a
+# synthetic marked code root whose real-parent canary sits exactly where the
+# fallback would deliver, with only FM_STATE_OVERRIDE pointing at the fixture
+# - the suites' pre-scrub invocation shape - and the hostile ambient of the
+# sibling case above. The scan must record the fixture outcome inside the
+# fixture tree and leave the fallback real parent channel byte-identical.
+test_reconcile_from_a_marked_code_root_stays_inside_the_fixture() {
+  local foreign foreign_canary root main_root
+  make_world marked-root
+  main_root="$WORLD/root"
+  MAIN="$WORLD/rootmain"
+  mkdir -p "$MAIN/state" "$MAIN/data" "$MAIN/config" "$MAIN/projects"
+
+  # The synthetic marked code root: a secondmate checkout's code root carries
+  # the seeded markers, and their real parent channel lives one hop away. The
+  # canary line proves the scan never delivered there.
+  foreign="$WORLD/foreign-home"
+  mkdir -p "$foreign/state" "$foreign/data" "$foreign/config"
+  printf 'foreign-mate\n' > "$foreign/.fm-secondmate-home"
+  root="$WORLD/marked-code-root"
+  mkdir -p "$root/bin"
+  # A real secondmate checkout carries the whole script set, reconcile script
+  # included, so copy it all from the repo root. The escape audits below grep
+  # for the fixture child's own receipt-key prefix - an id that never appears
+  # in shipped source - rather than the bare child-outcome- literal, which
+  # would self-match the copied reconcile script's own outcome-key strings.
+  (cd "$ROOT" && cp bin/*.sh "$root/bin/")
+  # Negative control: the fixture child's key prefix must be absent from the
+  # copied code root before the scan runs, so any later match is a real write
+  # rather than a pre-existing fixture artifact.
+  if grep -rq 'child-outcome-done-' "$root"; then
+    fail "the escape audit canary prefix already exists in the copied code root: $(grep -rl 'child-outcome-done-' "$root")"
+  fi
+  printf 'foreign-mate\n' > "$root/.fm-secondmate-home"
+  cat > "$root/.fm-secondmate-parent" <<EOF
+schema=fm-secondmate-parent.v1
+route=local
+parent_home=$foreign
+EOF
+  foreign_canary="$foreign/state/foreign-mate.status"
+  printf 'canary: no fixture write may append here\n' > "$foreign_canary"
+
+  # One fixture child outcome to reconcile, aged past the inactive threshold,
+  # inside the fixture home the scan must be scoped to.
+  # shellcheck disable=SC1010 # the literal task id spelled "done"
+  write_child "$MAIN" done 'done: PR https://example.test/pr/3 checks green'
+  prime_seen "$MAIN/state" "$MAIN/state/done.status"
+  prime_turnend_seen "$MAIN/state" "$MAIN/state/done.turn-ended"
+
+  # The pre-scrub invocation shape: a live home's ambient identity in the
+  # environment, only FM_STATE_OVERRIDE naming the fixture, and the script
+  # resolved from the marked synthetic code root, so the empty-override
+  # fallback has every opportunity to select the marked root's real home.
+  # shellcheck disable=SC2016 # $1 must reach the child shell unexpanded
+  env FM_HOME="$foreign" FM_ROOT_OVERRIDE="$foreign" \
+    PATH="$WORLD/fakebin:$PATH" FM_STATE_OVERRIDE="$MAIN/state" \
+    FM_DATA_OVERRIDE="$MAIN/data" FM_CONFIG_OVERRIDE="$MAIN/config" \
+    FM_INACTIVE_RECONCILE_SECS=60 \
+    FM_INACTIVE_CREW_STATE_BIN="$WORLD/fakebin/fm-crew-state.sh" \
+    FM_FORGE_LOG="$WORLD/forge.log" FM_FAKE_CREW_STATE='done' \
+    bash -c '
+      # shellcheck source=tests/lib.sh
+      . "$1/tests/lib.sh"
+      FM_HOME="$4" FM_ROOT_OVERRIDE="$3" export FM_HOME FM_ROOT_OVERRIDE
+      FM_STATE_OVERRIDE="$5/state" FM_DATA_OVERRIDE="$5/data" \
+        FM_CONFIG_OVERRIDE="$5/config" \
+        FM_INACTIVE_CREW_STATE_BIN="$6/fm-crew-state.sh" FM_FORGE_LOG="$7" \
+        export FM_STATE_OVERRIDE FM_DATA_OVERRIDE FM_CONFIG_OVERRIDE \
+        FM_INACTIVE_CREW_STATE_BIN FM_FORGE_LOG
+      exec "$2/bin/fm-inactive-reconcile.sh" scan
+    ' _ "$ROOT" "$root" "$main_root" "$MAIN" "$MAIN" "$WORLD/fakebin" \
+    > "$WORLD/marked-root-reconcile.out" 2>&1
+
+
+  # The scan ran and recorded the fixture outcome inside the fixture tree, as
+  # a pending presentation receipt for the leaked task id.
+  [ "$(outcome_count "$MAIN" pending)" -ge 1 ] \
+    || fail "a scan from a marked code root did not record the fixture outcome inside the fixture: $(cat "$WORLD/marked-root-reconcile.out")"
+  # And nothing escaped the fixture tree: the fallback real parent's canary is
+  # byte-identical and carries no child-outcome line, and neither the foreign
+  # home nor the marked code root saw any write. The grep names the fixture
+  # child's own receipt-key prefix - child-outcome-done- - which a real leak
+  # always writes (the reconcile path builds its outcome key from the child
+  # id and state) but which never occurs in shipped source, unlike the bare
+  # child-outcome- literal the copied code root legitimately carries.
+  [ "$(cat "$foreign_canary")" = 'canary: no fixture write may append here' ] \
+    || fail "a scan from a marked code root rewrote the real parent channel: $(cat "$foreign_canary")"
+  if grep -rq 'child-outcome-done-' "$foreign" "$root" "$main_root"; then
+    fail "a fixture child-outcome line escaped into the fallback home: $(grep -rl 'child-outcome-done-' "$foreign" "$root" "$main_root")"
+  fi
+  pass "a reconcile scan invoked from a marked code root stays inside its fixture tree"
 }
 
 # A stalled authoritative state read consumes only the aggregate scan budget.
@@ -1044,6 +1143,7 @@ test_nonterminal_and_captain_held_states_do_not_report
 test_watcher_hook_and_idle_secondmate_exemption
 test_watcher_poll_delivers_child_ledger_line_to_parent
 test_watcher_fixture_scan_cannot_escape_the_fixture_tree
+test_reconcile_from_a_marked_code_root_stays_inside_the_fixture
 test_stalled_state_read_is_bounded_and_scan_progresses
 test_full_scan_budget_includes_wake_lock_wait
 test_notice_recovery_does_not_duplicate_wake
