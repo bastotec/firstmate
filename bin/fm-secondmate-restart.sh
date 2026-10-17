@@ -4,6 +4,13 @@
 #
 # Usage: fm-secondmate-restart.sh [--background] [--persist-wait seconds] [--persist-poll seconds] <secondmate-id>... [--help]
 #
+# A remote mate's sends get FM_SEND_REMOTE_BUDGET seconds per transport
+# attempt, 120 unless set (bin/fm-send.sh's own default is 30), because a busy
+# remote home can take longer than that to record a message; an unconfirmed
+# request is then resent once with its same correlation, which lands on the
+# same remote record rather than a duplicate. A failed send is reported by its
+# own error line, never by a warning banner printed before it.
+#
 # --background arms this same pass as a one-shot process-event job
 # (bin/fm-procevent-when.sh, condition /usr/bin/true) and returns at once; its
 # per-mate lines and summary arrive later as that job's notification. Exit 0
@@ -76,6 +83,8 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FM_SEND_REMOTE_BUDGET=${FM_SEND_REMOTE_BUDGET:-120}
+export FM_SEND_REMOTE_BUDGET
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
 usage() {
@@ -174,9 +183,13 @@ unreached_count=0
 # Report the first nonblank, non-warning line, flattened with "error: " dropped,
 # so a preceding composer warning cannot hide the deciding failure. Fall back
 # to a warning only when no other output carries the outcome.
+# The real failure: an "error:" line first, then any line that is not a
+# warning banner (fm-guard.sh prints "WARNING: ..." banners that say nothing
+# about this send), then whatever there is.
 first_reported_line() {  # <text>
   local line
-  line=$(printf '%s\n' "$1" | sed -n '/^warning: /d;/./{s/^error: //;s/[[:space:]]\{1,\}/ /g;p;q;}')
+  line=$(printf '%s\n' "$1" | sed -n '/^[Ee]rror: /{s/^[Ee]rror: //;s/[[:space:]]\{1,\}/ /g;p;q;}')
+  [ -n "$line" ] || line=$(printf '%s\n' "$1" | sed -n '/^[Ww][Aa][Rr][Nn][Ii][Nn][Gg]: /d;/./{s/[[:space:]]\{1,\}/ /g;p;q;}')
   [ -n "$line" ] || line=$(printf '%s\n' "$1" | sed -n '/./{s/[[:space:]]\{1,\}/ /g;p;q;}')
   printf '%s\n' "$line"
 }
@@ -329,9 +342,18 @@ while [ "$i" -lt "${#IDS[@]}" ]; do
     i=$((i + 1))
     continue
   fi
-  if ! send_out=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+  send_rc=0
+  send_out=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
     FM_PENDING_REPLY_EXISTING_CORR="$corr" \
-    FM_SEND_STREAM=monologue "$SCRIPT_DIR/fm-send.sh" "$id" "$FM_SECONDMATE_PERSIST_REQUEST" 2>&1); then
+    FM_SEND_STREAM=monologue "$SCRIPT_DIR/fm-send.sh" "$id" "$FM_SECONDMATE_PERSIST_REQUEST" 2>&1) || send_rc=$?
+  if [ "$send_rc" -ne 0 ] && printf '%s' "$send_out" | grep -q 'is unconfirmed'; then
+    # Same correlation: an idempotent resend that lands on the same record.
+    send_rc=0
+    send_out=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+      FM_PENDING_REPLY_EXISTING_CORR="$corr" \
+      FM_SEND_STREAM=monologue "$SCRIPT_DIR/fm-send.sh" "$id" "$FM_SECONDMATE_PERSIST_REQUEST" 2>&1) || send_rc=$?
+  fi
+  if [ "$send_rc" -ne 0 ]; then
     fm_pending_reply_discard_undelivered "$STATE" "$corr" >/dev/null 2>&1 || true
     REASON[i]="the request to write down its open work could not be delivered: $(first_reported_line "$send_out")"
     i=$((i + 1))
