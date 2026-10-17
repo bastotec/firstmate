@@ -36,12 +36,9 @@
 # captain's question), and bin/fm-captain-hold.sh answer stays the only act
 # that closes the call.
 # REFUSES if the worktree holds work that has not LANDED, because cleanup
-# hard-resets/removes the worktree and kills its processes. The committed-content
-# safety check accepts work reachable from any remote-tracking branch (including
-# a fork or gate remote), but that alone does not prove a recorded PR merged:
-# the separate completion-claim gate below must also pass. For a normal ship task
-# whose commits are not so reachable, the content check instead accepts a merged
-# PR whose GitHub-reported head contains the current local work, or content
+# hard-resets/removes the worktree and kills its processes. For a normal ship,
+# remote reachability alone is not landing evidence: both completion and committed
+# content require a merged PR whose head contains the current local work, or content
 # already present in the up-to-date default branch. This recognizes the common
 # squash-merge-then-delete-branch flow, where the branch's own commits live nowhere
 # on a remote yet the change is fully in main.
@@ -1352,7 +1349,7 @@ pr_is_merged() {
   current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
   if git -C "$WT" merge-base --is-ancestor "$current" "$head" 2>/dev/null; then
     landed=1
-  elif patches_are_in_pr_head "$WT" "$current" "$head" --remotes; then
+  elif patches_are_in_pr_head "$WT" "$current" "$head" "$head"; then
     landed=1
   fi
   [ "$landed" = 1 ] || return 1
@@ -1389,11 +1386,10 @@ content_in_default() {
   [ "$merged_tree" = "$default_tree" ]
 }
 
-# Has the worktree's committed work actually LANDED, though its commits are not
-# reachable from any remote-tracking branch? True when a merged PR proves the
-# current local work is contained in the PR head, OR the content is already in the
-# default branch (fallback, which also covers the no-PR and gh-error paths). False
-# only for genuinely unlanded work.
+# Has the worktree's committed work actually LANDED? True when a merged PR proves
+# the current local work is contained in the PR head, OR the content is already in
+# the default branch (fallback, which also covers the no-PR and gh-error paths).
+# Remote branch preservation is not proof of landing.
 work_is_landed() {
   local branch=$1
   pr_is_merged "$branch" && return 0
@@ -1909,16 +1905,16 @@ validate_worktree_teardown_safety() {
     echo "uncommitted changes present" >&2
     echo "Commit them (or get the captain's explicit OK to discard, then --force)." >&2
     return 1
-  elif [ -n "$unpushed" ]; then
+  elif [ "$MODE" != local-only ]; then
     branch=${TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY:-}
     if [ -z "$branch" ]; then
       branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
       TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY=$branch
     fi
     if ! work_is_landed "$branch"; then
-      echo "REFUSED: worktree $WT has work not on any remote and not landed." >&2
-      printf 'unpushed commits:\n%s\n' "$unpushed" >&2
-      echo "Push the branch, land its PR, or get the captain's explicit OK to discard, then --force." >&2
+      echo "REFUSED: worktree $WT has work not landed in the default branch or a merged PR head." >&2
+      [ -z "$unpushed" ] || printf 'unpushed commits:\n%s\n' "$unpushed" >&2
+      echo "Land the work, or get the captain's explicit OK to discard, then --force." >&2
       return 1
     fi
   fi
@@ -3319,6 +3315,20 @@ if [ "$KIND" != secondmate ] && [ -n "$PR_URL" ]; then
   else
     echo "REFUSED: task $ID is not finished: $FM_PR_CLOSE_REFUSAL." >&2
     echo "Nothing was changed. Land the PR, or record why it was superseded once it is closed, then retry." >&2
+    exit 1
+  fi
+fi
+
+# An ordinary ship with no recorded PR still needs positive landing evidence.
+# Keep record-only reassignment, local-only, scout, and force paths on their own
+# gates; a missing owned copy cannot prove an ordinary no-PR ship finished.
+if [ "$KIND" = ship ] && [ "$MODE" != local-only ] \
+    && [ "$FORCE" != "--force" ] && [ -z "$PR_URL" ] \
+    && [ -z "$FM_BACKEND_VALIDATED_REASSIGNED_TO" ] && teardown_owns_worktree; then
+  branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=
+  if [ -z "$branch" ] || ! work_is_landed "$branch"; then
+    echo "REFUSED: task $ID is not finished: no PR is recorded and its work is not proven landed." >&2
+    echo "Nothing was changed. Land the work before retrying teardown." >&2
     exit 1
   fi
 fi
