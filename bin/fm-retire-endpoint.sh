@@ -609,7 +609,9 @@ for id in "${IDS[@]}"; do
     echo "note: $id is being retired with a runtime refusal overridden by $retired_by at $retired_at" >&2
   fi
   teardown_rc=0
-  "$SCRIPT_DIR/fm-teardown.sh" "$id" || teardown_rc=$?
+  teardown_args=("$id")
+  [ "$FINISHED" = 0 ] || teardown_args+=(--keep-commits)
+  "$SCRIPT_DIR/fm-teardown.sh" "${teardown_args[@]}" || teardown_rc=$?
   if [ "$teardown_rc" = 0 ]; then
     echo "note: $id retired; cleanup completed under the retirement recorded for $retired_by at $retired_at" >&2
   elif [ "$teardown_rc" = "$RUNTIME_REFUSAL_EXIT" ]; then

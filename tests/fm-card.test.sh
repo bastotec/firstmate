@@ -65,6 +65,44 @@ test_cards_use_plain_words() {
   pass "fm-card: new cards use plain words; first-mate instructions and older stored cards are unaffected"
 }
 
+test_run_together_identifiers_and_product_names() {
+  local home in field token err
+  home=$(make_home mixed-tokens)
+  in="$home/in.json"
+  for field in title situation label; do
+    for token in PR1806 Direction7 A1 1A 2FA4K IPv7 OAuth3; do
+      good_card "$in"
+      jq --arg field "$field" --arg token "$token" '
+        if $field == "label" then .options[0].label=$token else .[$field]=$token end
+      ' "$in" > "$in.tmp" && mv "$in.tmp" "$in"
+      err=$(run_card "$home" validate --file "$in" 2>&1) && fail "$field accepted $token"
+      assert_contains "$err" "$token" "the invalid token is identified"
+    done
+    for token in IPv4 IPv6 OAuth2 H264 MP3 MP4 S3 EC2 UTF8 x86 x64 2FA 4K; do
+      good_card "$in"
+      jq --arg field "$field" --arg token "$token" '
+        if $field == "label" then .options[0].label=$token else .[$field]=$token end
+      ' "$in" > "$in.tmp" && mv "$in.tmp" "$in"
+      run_card "$home" write product-call --file "$in" >/dev/null || fail "$field refused product $token"
+    done
+  done
+  pass "fm-card: every visible field rejects adjacent letters and digits except ordinary product names"
+}
+
+test_drafts_replace_jargon_with_plain_words() {
+  local home card
+  home=$(make_home draft-words)
+  run_card "$home" draft docana-delivery --project cadia \
+    --title 'Repair pr-1806-orphan-choice-fix' \
+    --situation 'docana-delivery PR1806 Direction7 snake_case 49f14da need IPv4 and OAuth2.' >/dev/null \
+    || fail "draft failed"
+  card=$(run_card "$home" show docana-delivery) || fail "draft did not show"
+  assert_equals 'Repair this task' "$(printf '%s' "$card" | jq -r .title)" "the title is plain"
+  assert_equals 'this task this task this task this task this task need IPv4 and OAuth2.' \
+    "$(printf '%s' "$card" | jq -r .situation)" "only jargon is replaced in the situation"
+  pass "fm-card: new drafts replace jargon tokens and preserve ordinary product names"
+}
+
 test_write_and_show_round_trip() {
   local home in out mode
   home=$(make_home roundtrip)
@@ -262,6 +300,48 @@ test_hold_without_card_writes_a_draft() {
   assert_equals "Pick a language rule" "$(jq -r .situation "$home/state/cards/card-a.json")" "reason is the draft situation"
   assert_equals cadia "$(jq -r .project "$home/state/cards/card-a.json")" "repo is the draft project"
   pass "fm-captain-hold: a hold without a card gets a draft card"
+}
+
+test_hold_preflight_uses_the_task_identity() {
+  local home state before card_before rc
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  for state in new existing; do
+    home=$(make_home "hold-task-preflight-$state")
+    good_card "$home/card.json"
+    if [ "$state" = existing ]; then
+      run_captain "$home" hold docana-delivery --title Repair --repo cadia --reason 'old question' \
+        --card-file "$home/card.json" >/dev/null || fail "initial hold failed"
+      card_before=$(run_card "$home" show docana-delivery)
+    fi
+    before=$(cat "$home/data/backlog.md")
+    jq '.title="Approve docana-delivery?"' "$home/card.json" > "$home/bad.json"
+    rc=0
+    run_captain "$home" hold docana-delivery --title Repair --repo cadia --reason 'new question' \
+      --card-file "$home/bad.json" >/dev/null 2>&1 || rc=$?
+    assert_not_equals 0 "$rc" "the task-aware preflight refuses $state holds"
+    assert_equals "$before" "$(cat "$home/data/backlog.md")" "preflight leaves the backlog unchanged"
+    if [ "$state" = existing ]; then
+      assert_equals "$card_before" "$(run_card "$home" show docana-delivery)" "the old card is unchanged"
+    else
+      assert_absent "$home/state/cards/docana-delivery.json" "a refused new hold writes no card"
+    fi
+  done
+  pass "fm-captain-hold: task-aware validation precedes new holds and re-holds"
+}
+
+test_hold_with_jargon_still_writes_a_plain_draft() {
+  local home card
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home hold-jargon)
+  run_captain "$home" hold docana-delivery --title 'Repair pr-1806-orphan-choice-fix' --repo cadia \
+    --reason 'Review docana-delivery and PR1806' >/dev/null || fail "jargon must not block a draft hold"
+  run_captain "$home" open docana-delivery || fail "the hold is not open"
+  card=$(run_card "$home" show docana-delivery) || fail "hold has no draft card"
+  assert_equals true "$(printf '%s' "$card" | jq -r .draft)" "the hold has a draft"
+  assert_equals 'Repair this task' "$(printf '%s' "$card" | jq -r .title)" "the hold title is sanitized"
+  assert_equals 'Review this task and this task' "$(printf '%s' "$card" | jq -r .situation)" "the hold reason is sanitized"
+  assert_contains "$(tasks_in "$home" show docana-delivery --full)" 'Review docana-delivery and PR1806' "the durable reason retains exact identifiers"
+  pass "fm-captain-hold: jargon in a hold produces a plain draft without blocking the hold"
 }
 
 test_hold_with_card_file_writes_the_full_card() {
@@ -937,6 +1017,10 @@ test_interrupted_reopening_can_be_retried() {
 
 test_write_and_show_round_trip
 test_cards_use_plain_words
+test_run_together_identifiers_and_product_names
+test_drafts_replace_jargon_with_plain_words
+test_hold_preflight_uses_the_task_identity
+test_hold_with_jargon_still_writes_a_plain_draft
 test_validate_names_the_broken_field
 test_card_requires_exactly_one_json_object
 test_show_reports_a_corrupt_card_as_invalid

@@ -1334,14 +1334,8 @@ $commits
 EOF
 }
 
-# Is the worktree's PR merged for local work contained in that PR? Uses PR_URL
-# resolved from metadata or the backlog row, else discovers the PR by branch
-# name, and asks GitHub for both state and head. Returns non-zero when the PR
-# is not merged, the current work is not contained in the PR head, no PR is
-# found, or any gh error occurs. The caller's content-check fallback proves
-# only content safety; it never replaces the completion-claim gate above.
-pr_is_merged() {
-  local branch=$1 target view state remainder head resolved_url current landed=0
+resolve_merged_pr() {
+  local branch=$1 target view state remainder head resolved_url
   if [ -n "$PR_URL" ]; then
     target=$PR_URL
   else
@@ -1360,20 +1354,28 @@ pr_is_merged() {
     *) return 1 ;;
   esac
   [ -n "$head" ] || return 1
-  ensure_commit_object "$target" "$head" || return 1
-  current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
-  if git -C "$WT" merge-base --is-ancestor "$current" "$head" 2>/dev/null; then
-    landed=1
-  elif patches_are_in_pr_head "$WT" "$current" "$head" "$head"; then
-    landed=1
-  fi
-  [ "$landed" = 1 ] || return 1
   if [ -z "$PR_URL" ]; then
-    [ -n "$resolved_url" ] || return 1
+    fm_pr_url_parse "$resolved_url" || return 1
     PR_URL=$resolved_url
   fi
+  MERGED_PR_HEAD=$head
   PR_CLOSE_VERDICT=merged
   return 0
+}
+
+# Is the worktree's PR merged for local work contained in that PR? Uses PR_URL
+# resolved from metadata or the backlog row, else discovers the PR by branch
+# name, and asks GitHub for both state and head. Returns non-zero when the PR
+# is not merged, the current work is not contained in the PR head, no PR is
+# found, or any gh error occurs. The caller's content-check fallback proves
+# only content safety; it never replaces the completion-claim gate above.
+pr_is_merged() {
+  local current
+  resolve_merged_pr "$1" || return 1
+  ensure_commit_object "$PR_URL" "$MERGED_PR_HEAD" || return 1
+  current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
+  git -C "$WT" merge-base --is-ancestor "$current" "$MERGED_PR_HEAD" 2>/dev/null \
+    || patches_are_in_pr_head "$WT" "$current" "$MERGED_PR_HEAD" "$MERGED_PR_HEAD"
 }
 
 # Is the branch's content already present in the up-to-date default branch? Fetches
@@ -1875,8 +1877,12 @@ keep_unlanded_commits() {
   head=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
   # The safety check runs again after the lock; the same head is kept once.
   [ "${KEPT_HEAD:-}" != "$head" ] || return 0
-  name="kept/$ID-$(date -u +%Y%m%dT%H%M%SZ)"
-  git -C "$WT" branch --no-track "$name" "$head" >/dev/null 2>&1 || return 1
+  name=$(git -C "$WT" for-each-ref --points-at="$head" --format='%(refname:short)' \
+    "refs/heads/kept/$ID-*" | head -1) || return 1
+  if [ -z "$name" ]; then
+    name="kept/$ID-$(date -u +%Y%m%dT%H%M%SZ)"
+    git -C "$WT" branch --no-track "$name" "$head" >/dev/null 2>&1 || return 1
+  fi
   [ "$(git -C "$WT" rev-parse --verify "refs/heads/$name" 2>/dev/null)" = "$head" ] || return 1
   count=$(git -C "$WT" rev-list --count HEAD --not --remotes 2>/dev/null || echo "?")
   KEPT_HEAD=$head
@@ -3336,6 +3342,11 @@ if [ "$KIND" != secondmate ]; then
     pr_task_row=
   fi
   [ -n "$PR_URL" ] || PR_URL=$(fm_pr_task_url "$pr_task_row" "$META")
+fi
+if [ "$KEEP_COMMITS" = 1 ] && [ "$KIND" = ship ] && [ "$MODE" != local-only ] \
+    && [ -z "$PR_URL" ] && teardown_owns_worktree && [ -d "$WT" ]; then
+  branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=
+  resolve_merged_pr "$branch" || true
 fi
 if [ "$KIND" != secondmate ] && [ -n "$PR_URL" ]; then
   pr_task_body=$(fm_pr_task_body "$pr_task_row" 2>/dev/null) || pr_task_body=

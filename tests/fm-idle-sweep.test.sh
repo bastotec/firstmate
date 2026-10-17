@@ -564,7 +564,9 @@ test_refusals_and_idle_workers_become_one_decision_each() {
   printf 'pr=https://github.com/owner/repo/pull/41\n' >> "$dir/home/state/unlanded.meta"
   printf 'MERGED\n' > "$dir/home/pr-states/41"
   add_worker "$dir" broke 'state: failed · source: run-step · run failed (test step)' 90000
+  printf 'pr=https://github.com/owner/repo/pull/1806\n' >> "$dir/home/state/broke.meta"
   add_worker "$dir" waiting 'state: blocked · source: status-log · needs a token' 90000
+  printf 'pr=https://github.com/owner/repo/pull/1807\n' >> "$dir/home/state/waiting.meta"
   add_worker "$dir" vanished 'state: unknown · source: none · backend target gone: hub:abc' 90000
   add_worker "$dir" just-blocked 'state: blocked · source: status-log · needs a token' 600
   add_worker "$dir" busy 'state: working · source: pane · harness busy' 90000
@@ -588,7 +590,11 @@ test_refusals_and_idle_workers_become_one_decision_each() {
       "$id should offer retire or retry"
   done
   [ "$(jq -r '.recommended' "$dir/home/cards/waiting.json")" = 2 ] || fail "a stalled worker should recommend retrying"
-  assert_contains "$(cat "$dir/home/cards/broke.reason")" 'quiet 25h' "the hold reason should include quiet time"
+  assert_equals 'The worker on PR 1806 failed and nothing retried it. (25 hours quiet)' \
+    "$(jq -r .situation "$dir/home/cards/broke.json")" "the failed card names its recorded PR"
+  assert_equals 'The worker on PR 1807 has been waiting with nobody acting on it. (25 hours quiet)' \
+    "$(jq -r .situation "$dir/home/cards/waiting.json")" "the stalled card names its own PR"
+  assert_contains "$(cat "$dir/home/cards/broke.reason")" 'quiet 25 hours' "the hold reason should include quiet time"
   assert_contains "$(cat "$dir/home/cards/broke.reason")" 'run failed test step' "the hold reason should preserve detail without parentheses"
   [ "$(jq -r '.workers[] | select(.id=="unreachable") | .class' "$dir/home/state/idle-sweep.json")" = settling ] \
     || fail "an unavailable backend was classified as a dead worker"

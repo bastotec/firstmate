@@ -288,7 +288,7 @@ project_of() {  # <meta>
 }
 
 hours() {  # <secs>
-  printf '%sh' $(($1 / 3600))
+  printf '%s hours' $(($1 / 3600))
 }
 
 # raise <id> <class> <why> <project>: hold the worker for the captain with a
@@ -305,7 +305,7 @@ raise() {
   # plain words; the exact refusal stays in the instruction and the reason.
   local about="A worker" pr
   pr=
-  [ "${6:-}" = orphan ] || pr=$(fm_meta_get "$RECORD" pr 2>/dev/null || true)
+  [ "${6:-}" = orphan ] || pr=$(fm_meta_get "$STATE/$ledger_id.meta" pr 2>/dev/null || true)
   case "$pr" in */pull/[0-9]*) about="The worker on PR ${pr##*/pull/}" ;; esac
   case "$class" in
     finished)

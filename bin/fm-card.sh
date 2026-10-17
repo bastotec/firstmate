@@ -10,7 +10,7 @@
 # opens or closes one, and bin/fm-captain-hold.sh owns every hold and close.
 #
 # Usage:
-#   fm-card.sh validate --file <card.json>
+#   fm-card.sh validate --file <card.json> [--task <task-id>]
 #   fm-card.sh write <task-id> --file <card.json>
 #   fm-card.sh show <task-id>
 #   fm-card.sh remove <task-id>
@@ -30,8 +30,10 @@
 # slug (three or more lowercase hyphen-joined parts, such as
 # "pr-1806-orphan-choice-fix", besides common phrases like "end-to-end"), the
 # card's own task id when it is not a plain word, a snake_case name, a commit hash, or letters run together
-# with digits ("Direction1750", "exact49f14d"). Option instructions are for the
-# first mate and are exempt.
+# with digits ("PR1806", "Direction7"). Ordinary product names IPv4, IPv6,
+# OAuth2, H264, MP3, MP4, S3, EC2, UTF8, x86, x64, 2FA and 4K are allowed.
+# Option instructions are for the first mate and are exempt. Drafts replace
+# jargon tokens in titles and situations with "this task".
 # Limits: title <= 120 chars; situation <= 280 chars and <= 2 lines; 1-9
 # options keyed "1".."9" in order; label <= 40 chars; instruction <= 1000
 # chars; recommended names one option; no control characters except newlines
@@ -107,22 +109,27 @@ require_slug() {  # <task-id>
 
 card_path() { printf '%s/%s.json\n' "$CARDS" "$1"; }
 
+PLAIN_WORDS_JQ='
+  def plainok: ["end-to-end","up-to-date","out-of-date","day-to-day","step-by-step","face-to-face","one-on-one","state-of-the-art","word-for-word","back-to-back"];
+  def products: ["IPv4","IPv6","OAuth2","H264","MP3","MP4","S3","EC2","UTF8","x86","x64","2FA","4K"];
+  def jargontoken: . as $t
+    | ($task != "" and ($task|test("[-_0-9]")) and ($t|ascii_downcase) == ($task|ascii_downcase))
+      or (($t|test("^[a-z0-9]+(-[a-z0-9]+){2,}$")) and ((plainok|index($t)) == null))
+      or ($t|test("^[a-z]+(_[a-z0-9]+)+$"))
+      or (($t|test("^[0-9a-f]{7,}$")) and ($t|test("[a-f]")) and ($t|test("[0-9]")))
+      or (($t|test("[A-Za-z][0-9]|[0-9][A-Za-z]")) and ((products|index($t)) == null));
+  def jargon: [scan("[A-Za-z0-9_-]+") | select(jargontoken)] | first;
+  def plainwords: gsub("(?<token>[A-Za-z0-9_-]+)"; .token | if jargontoken then "this task" else . end);
+'
+
 # Prints the first validation error as "<field>: <why>", or nothing when valid.
 # Works on the input shape and on stored full cards alike.
 # The plain-words check applies to new cards only (pass "plain" as the third
 # argument), so a card stored before it existed still shows.
 card_error() {  # <path> [task-id] [plain]
-  jq -rs --arg task "${2:-}" --arg plain "${3:-}" '
+  jq -rs --arg task "${2:-}" --arg plain "${3:-}" "$PLAIN_WORDS_JQ"'
     def ctl: test("[\u0000-\u0009\u000b-\u001f\u007f]");
     def oneline: test("[\u0000-\u001f\u007f]");
-    def plainok: ["end-to-end","up-to-date","out-of-date","day-to-day","step-by-step","face-to-face","one-on-one","state-of-the-art","word-for-word","back-to-back"];
-    def jargontoken: . as $t
-      | ($task != "" and ($task|test("[-_0-9]")) and ($t|ascii_downcase) == ($task|ascii_downcase))
-        or (($t|test("^[a-z0-9]+(-[a-z0-9]+){2,}$")) and ((plainok|index($t)) == null))
-        or ($t|test("^[a-z]+(_[a-z0-9]+)+$"))
-        or (($t|test("^[0-9a-f]{7,}$")) and ($t|test("[a-f]")) and ($t|test("[0-9]")))
-        or ($t|test("[A-Za-z]{3,}[0-9]{2,}|[0-9]{2,}[A-Za-z]{3,}"));
-    def jargon: [scan("[A-Za-z0-9_-]+") | select(jargontoken)] | first;
     if length != 1 then "card: exactly one JSON object required"
     else .[0] |
     if type != "object" then "card: not a JSON object"
@@ -248,9 +255,9 @@ cmd_draft() {
   fi
   ts=$(now)
   jq -cn --arg task "$id" --arg project "$project" --arg title "$title" \
-    --argjson situation "$(clip_situation "$situation")" --arg ts "$ts" '
-    {version: 1, task: $task, project: $project, title: ($title | .[0:120]),
-     situation: $situation, options: [], recommended: null, draft: true,
+    --argjson situation "$(clip_situation "$situation")" --arg ts "$ts" "$PLAIN_WORDS_JQ"'
+    {version: 1, task: $task, project: $project, title: ($title | plainwords | .[0:120] | plainwords | .[0:120]),
+     situation: ($situation | plainwords | .[0:280] | plainwords | .[0:280]), options: [], recommended: null, draft: true,
      created: $ts, updated: $ts}' | store_card "$id"
 }
 
