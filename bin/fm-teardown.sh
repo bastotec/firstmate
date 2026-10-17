@@ -3319,21 +3319,6 @@ if [ "$KIND" != secondmate ] && [ -n "$PR_URL" ]; then
   fi
 fi
 
-# An ordinary ship with no recorded PR still needs positive landing evidence.
-# Keep record-only reassignment, local-only, scout, and force paths on their own
-# gates; a missing owned copy cannot prove an ordinary no-PR ship finished.
-if [ "$KIND" = ship ] && [ "$MODE" != local-only ] \
-    && [ "$FORCE" != "--force" ] && [ -z "$PR_URL" ] \
-    && [ -z "$FM_BACKEND_VALIDATED_REASSIGNED_TO" ] && teardown_owns_worktree; then
-  branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=
-  if [ -z "$branch" ] || ! work_is_landed "$branch"; then
-    echo "REFUSED: task $ID is not finished: no PR is recorded and its work is not proven landed." >&2
-    echo "Nothing was changed. Land the work before retrying teardown." >&2
-    [ -z "$branch" ] || work_gate_refusal_exit
-    exit 1
-  fi
-fi
-
 # A record accepted as a reassignment candidate at the endpoint gate above runs
 # its four-proof gate here, after the completion-claim gate resolved PR_URL and
 # before any destructive step. The proof block above owns its evidence reads
@@ -3360,6 +3345,21 @@ if [ "$FORCE" != "--force" ] \
     echo "REFUSED: task $ID still owes a public reply through the myfirstmate relay." >&2
     printf '%s\n' "$PUBLIC_FOLLOWUP_BLOCKING" >&2
     echo "Deliver it with bin/fm-public-followup.sh deliver <obligation-id>, waive it with bin/fm-tasks-axi.sh public-followup waive, or use --force after explicit discard approval." >&2
+    exit 1
+  fi
+fi
+
+# An ordinary ship with no recorded PR still needs positive landing evidence.
+# Keep record-only reassignment, local-only, scout, and force paths on their own
+# gates; a missing owned copy cannot prove an ordinary no-PR ship finished.
+if [ "$KIND" = ship ] && [ "$MODE" != local-only ] \
+    && [ "$FORCE" != "--force" ] && [ -z "$PR_URL" ] \
+    && [ -z "$FM_BACKEND_VALIDATED_REASSIGNED_TO" ] && teardown_owns_worktree; then
+  branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=
+  if [ -z "$branch" ] || ! work_is_landed "$branch"; then
+    echo "REFUSED: task $ID is not finished: no PR is recorded and its work is not proven landed." >&2
+    echo "Nothing was changed. Land the work before retrying teardown." >&2
+    [ -z "$branch" ] || work_gate_refusal_exit
     exit 1
   fi
 fi

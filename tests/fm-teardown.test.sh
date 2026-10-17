@@ -1231,8 +1231,9 @@ test_no_pr_done_pushed_unmerged_refuses() {
 }
 
 test_no_pr_unlanded_retirement_preserves_work() {
-  local scenario case_dir rc head
-  for scenario in operator finished missing unreadable; do
+  local scenario case_dir rc head relay_token
+  for scenario in operator finished missing unreadable public-followup unresolved-parent; do
+    relay_token=
     case_dir=$(make_case "no-pr-retirement-$scenario")
     fm_write_meta "$case_dir/state/task-x1.meta" \
       "backend=tmux" "window=fm:fm-task-x1" \
@@ -1248,6 +1249,27 @@ test_no_pr_unlanded_retirement_preserves_work() {
     case "$scenario" in
       missing) git -C "$case_dir/project" worktree remove --force "$case_dir/wt" ;;
       unreadable) printf 'invalid git identity\n' > "$case_dir/wt/.git" ;;
+      public-followup)
+        relay_token=test-token
+        cp "$ROOT/.tasks.toml" "$case_dir/.tasks.toml"
+        printf '%s\n' '{"request_id":"req-retire","platform":"x","context_binding":{"version":"ctx1","value":"ctx1_retire"},"public_safe_summary":"finish the work","received_at":"2026-07-30T10:00:00Z","followup_expires_at":"2099-10-01T00:00:00Z","reservation_expires_at":"2099-10-01T00:00:00Z"}' > "$case_dir/request.json"
+        printf '%s\n' '{"type":"pr-merged","project":"firstmate","required_deliverables":["pr_url"],"completion_policy":"all-required"}' > "$case_dir/expected.json"
+        printf '%s\n' '{"relation_id":"rel-code","work_ref":{"home_id":"main","task_id":"task-x1"},"role":"fulfills","required":true,"generation":1}' > "$case_dir/relation.json"
+        (
+          cd "$case_dir" || exit 1
+          tasks-axi public-followup add pf-retire --request-context-file request.json \
+            --purpose promised-final --expected-final-file expected.json --expires-at 2099-10-01T00:00:00Z >/dev/null \
+            && tasks-axi public-followup bind-work pf-retire --relation-file relation.json >/dev/null
+        ) || fail 'could not bind the retirement public commitment'
+        FMX_PAIRING_TOKEN=test-token FM_HOME="$case_dir" FM_ROOT_OVERRIDE="$ROOT" \
+          "$ROOT/bin/fm-public-followup.sh" register pf-retire --relation rel-code \
+            --work-home main --work-id task-x1 --generation 1 >/dev/null \
+          || fail 'could not register the retirement public commitment'
+        ;;
+      unresolved-parent)
+        printf 'mate\n' > "$case_dir/.fm-secondmate-home"
+        printf 'invalid parent record\n' > "$case_dir/.fm-secondmate-parent"
+        ;;
     esac
     cp "$case_dir/state/task-x1.meta" "$case_dir/meta.before"
     cp "$case_dir/data/backlog.md" "$case_dir/backlog.before"
@@ -1257,7 +1279,8 @@ test_no_pr_unlanded_retirement_preserves_work() {
         "$ROOT/bin/fm-retire-endpoint.sh" --finished task-x1 </dev/null \
         > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
     else
-      printf 'task-x1\n' | FM_HOME="$case_dir" FM_ROOT_OVERRIDE="$ROOT" PATH="$case_dir/fakebin:$PATH" \
+      printf 'task-x1\n' | FMX_PAIRING_TOKEN="$relay_token" FM_HOME="$case_dir" \
+        FM_ROOT_OVERRIDE="$ROOT" PATH="$case_dir/fakebin:$PATH" \
         "$ROOT/bin/fm-retire-endpoint.sh" task-x1 \
         > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
     fi
@@ -1269,6 +1292,10 @@ test_no_pr_unlanded_retirement_preserves_work() {
       expect_code 1 "$rc" "$scenario retirement must refuse"
       cmp -s "$case_dir/meta.before" "$case_dir/state/task-x1.meta" || fail "$scenario changed metadata"
       cmp -s "$case_dir/backlog.before" "$case_dir/data/backlog.md" || fail "$scenario changed backlog"
+      case "$scenario" in
+        public-followup) assert_grep 'still owes a public reply' "$case_dir/stderr" 'retirement bypassed the public commitment guard' ;;
+        unresolved-parent) assert_grep 'cannot resolve the primary home' "$case_dir/stderr" 'retirement bypassed the parent binding guard' ;;
+      esac
     fi
     if [ "$scenario" != missing ]; then
       [ "$(cat "$case_dir/wt/feature.txt")" = 'preserve unlanded work' ] || fail "$scenario changed work"
