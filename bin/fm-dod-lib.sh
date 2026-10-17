@@ -94,7 +94,7 @@ These need an explicit, current instruction that names the action, and nothing e
 - anything a machine's own `~/.agents/AGENTS.md` forbids, such as the Automattic sandbox rules.
 Before you call anything a credential, access or tooling blocker, read the project's own guidance - its `.agents/skills/`, `AGENTS.md` and `INTERNAL.md` - and try the path it documents; a documented helper that uses access already on this machine is the normal route, not entering a secret.
 A blocker is real only after you tried the obvious fix and any documented path: say what you checked and tried and what failed.
-A blocker that is not the captain's call goes to your mate, who solves it.
+A blocker that is not the captain's call goes to your mate, who solves it; a credential, access or tooling blocker becomes the captain's only when no documented path exists.
 Write status lines as plain sentences a person understands at a glance.
 EOF
 }

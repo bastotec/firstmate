@@ -862,6 +862,7 @@ test_every_agent_is_told_to_act_within_scope() {
   assert_contains "$role" "read the project's own guidance" "a credential or access blocker is checked against the project's own guidance first"
   assert_contains "$role" 'INTERNAL.md' "the project's internal docs are named as a place to look"
   assert_contains "$role" 'say what you checked and tried' "a blocker names what was checked"
+  assert_contains "$role" "becomes the captain's only when no documented path exists" "an access blocker reaches the captain only without a documented path"
   FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise assigned work.' \
     "$ROOT/bin/fm-brief.sh" mate --secondmate --no-projects >/dev/null || fail "secondmate scaffold failed"
   assert_grep '# Act within your scope' "$home/data/mate/brief.md" "a new second mate's charter carries the act-within-scope contract"
