@@ -85,7 +85,7 @@ The record exists so the obligation to re-check cannot be lost between the wake 
 It is idempotent per task: repeating a reconcile keeps one request and its original timestamp.
 The supported creator is the runner carrying the captain's board selection; the binding-checked `reconcile-requests` command is that internal intake rather than an operator reconciliation outcome.
 
-Verification retires a request through one of two outcomes, and each one requires both the pending board-created request and the operator input that supports its claim:
+The request-specific verification commands offer two outcomes, and each one requires both the pending board-created request and the operator input that supports its claim:
 
 - `reconcile close <task-id> --evidence-file <path>` is the moot outcome.
   It writes a resolution record whose mode is `reconciled` and whose body is the supplied EVIDENCE under a `Reconciliation evidence:` label, then closes the task.
@@ -124,7 +124,7 @@ For a main-home call, the reconcile option is the recovery path for whatever sti
 ## Stale clear: the first mate's evidence, never the captain's words
 
 The [captain-hold lifecycle skill](../.agents/skills/captain-hold-lifecycle/SKILL.md#decision-cards) owns stale-clear authority, evidence review, reporting, and undo handling.
-The [`fm-captain-hold.sh` header](../bin/fm-captain-hold.sh) owns resolution labels, modes, retry finalization, and reconcile-request retirement; the [`fm-card.sh` header and help](../bin/fm-card.sh) own card schema, stale classification, clear-log fields, and restore guards.
+The [`fm-captain-hold.sh` header](../bin/fm-captain-hold.sh) owns resolution labels, modes, retry finalization, reconcile-request retirement, and the standalone evidence-only `withdraw` path; the [`fm-card.sh` header and help](../bin/fm-card.sh) own card schema, stale classification, clear-log fields, and restore guards.
 These card files are separate from the Bearings board's rendered cards described above; the backlog remains the authority on whether a call is open.
 
 ## Answered conditional deferrals leave the captain's queue
@@ -202,6 +202,8 @@ The shim recognizes an exact replay of a pre-collapse routed resolution by its h
 `bin/fm-decision-hold.sh` itself remains for one release as a thin command-mapping shim over `bin/fm-captain-hold.sh`, so in-flight work briefed before the collapse keeps working; its header owns the exact mapping.
 
 ## Verification record
+
+[`tests/fm-evidence-only-withdrawal.test.sh`](../tests/fm-evidence-only-withdrawal.test.sh) is the focused regression entry point for call-only withdrawal, including cardless holds, caller-directed release and parking, preserved unfinished work and custody, fresh calls with distinct hold stamps, interrupted finalization, exact retries, and unchanged question-only stale-clear behavior.
 
 Card-specific regressions and hold hooks live in `tests/fm-card.test.sh`, covering full-card validation, owner-only storage, drafts, idempotent backfill and the read-only draft listing (including expired deferrals and excluding Done calls), cleanup replay and repair, stale-clear retry and completion verification, fixed three-day classification with deferral and worker exclusions, PR-identity matching, unreadable-backlog refusal, clear/restore guards, deferred answers that park the call with no card and survive backfill, listings, and the stale sweep, replayed answers and re-holds that never reopen a deferral, `--reopen-deferred` starting a fresh call even when the answer repeats the previous words, interrupted deferrals excluded from open-call discovery and protected from evidence closures until exact finalization, and a changed-reason re-hold refreshing its card.
 The session-start half is pinned in `tests/fm-session-start.test.sh`: a locked start drafts a card for every uncarded captain hold in a second-mate-shaped scratch home, lists the remaining drafts, stays idempotent across restarts, lists every open call for answers already on file, drops a call once it is deferred without re-carding it on restart, and a read-only start lists drafts without writing any.

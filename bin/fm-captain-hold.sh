@@ -112,8 +112,8 @@
 # The deferral is settled when the newest resolution block has mode `deferred`
 # and no `Deferral reopened:` marker precedes it, even if parking is unfinished.
 # An exact retry matches the decision words and normalized parked condition,
-# or finishes an interrupted deferral; other answers (including keyed answers), stale-clear,
-# and reconcile close/note are refused. `open` excludes settled deferrals,
+# or finishes an interrupted deferral; other answers (including keyed answers),
+# stale-clear, withdraw, and reconcile close/note are refused. `open` excludes settled deferrals,
 # so card discovery skips them; stale reports any leftover card as an orphan.
 # `deferred` is read-only: 0 means a settled deferral or a reopening whose
 # captain hold has not landed, 1 means neither, and 2 means unreadable;
@@ -180,8 +180,8 @@
 # for the captain, is refused.
 #
 # `withdraw` settles only the erroneous call, never the underlying task.
-# It requires an open captain-held task and the same evidence-file
-# limit as stale-clear. It records `withdrawn-released` or `withdrawn-parked`
+# It requires an open captain-held task, not a card file, and the same
+# evidence-file limit as stale-clear. It records `withdrawn-released` or `withdrawn-parked`
 # under `Withdrawal evidence:`, without captain words or memory capture.
 # --release removes the hold; --park replaces it with a parked hold carrying
 # the caller's reason (parentheses normalized as above). Neither starts work,
