@@ -5,11 +5,12 @@
 # Usage: fm-secondmate-restart.sh [--background] [--persist-wait seconds] [--persist-poll seconds] <secondmate-id>... [--help]
 #
 # A remote mate's sends get FM_SEND_REMOTE_BUDGET seconds per transport
-# attempt, 120 unless set (bin/fm-send.sh's own default is 30), because a busy
-# remote home can take longer than that to record a message; an unconfirmed
-# request is then resent once with its same correlation, which lands on the
-# same remote record rather than a duplicate. A failed send is reported by its
-# own error line, never by a warning banner printed before it.
+# attempt, defaulting to 120 when unset or empty, because a busy remote home
+# can take longer to record a message. bin/fm-send.sh owns validation and its
+# standalone default.
+# An unconfirmed persist request is resent once with its same correlation,
+# which lands on the same remote record rather than a duplicate.
+# A failed send's error line takes precedence over any earlier warning banner.
 #
 # --background arms this same pass as a one-shot process-event job
 # (bin/fm-procevent-when.sh, condition /usr/bin/true) and returns at once; its
@@ -180,12 +181,9 @@ restarted_count=0
 nudged_count=0
 unreached_count=0
 
-# Report the first nonblank, non-warning line, flattened with "error: " dropped,
-# so a preceding composer warning cannot hide the deciding failure. Fall back
-# to a warning only when no other output carries the outcome.
-# The real failure: an "error:" line first, then any line that is not a
-# warning banner (fm-guard.sh prints "WARNING: ..." banners that say nothing
-# about this send), then whatever there is.
+# Prefer the send's own error over advisory guard/composer output, which does
+# not establish delivery. Fall back to a non-warning line, then any output
+# only when neither carries a reason.
 first_reported_line() {  # <text>
   local line
   line=$(printf '%s\n' "$1" | sed -n '/^[Ee]rror: /{s/^[Ee]rror: //;s/[[:space:]]\{1,\}/ /g;p;q;}')
