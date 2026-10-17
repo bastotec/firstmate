@@ -165,7 +165,8 @@
 #          told to leave that work to the lock holder. Unset/0 (the default)
 #          keeps detect-only meaning unlocked, exactly as before.
 #        fm-bootstrap.sh install <tool>...
-#          Install the named tools (only ones the captain approved).
+#          Install the named tools; bootstrap-diagnostics owns the caller's
+#          user-level repair procedure and required-consent checks.
 #        fm-bootstrap.sh lavish-compatible
 #          Exit 0 when lavish-axi meets LAVISH_AXI_MIN, 1 otherwise, printing
 #          nothing; bin/fm-brief.sh uses it to gate scout Lavish hosting.

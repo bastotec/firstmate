@@ -213,6 +213,7 @@ INBOX_SECTION=${INBOX_SECTION%$'\n'}
 # single owner in bin/fm-dod-lib.sh, so the promoted-scout path renders the same
 # text rather than a second copy of it.
 CONCURRENT_SECTION=$(fm_concurrent_work_section)
+ACT_SECTION=$(fm_act_within_scope_section)
 
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
@@ -255,6 +256,8 @@ Do not invent a second delegation system.
 You do not generate your own work.
 Act only on tasks the main firstmate routes to you.
 Never start a survey, audit, or "find improvements" sweep on your own initiative; that is not your job and it is unwanted.
+
+$ACT_SECTION
 
 # The captain and the parent channel
 The main firstmate never reads this chat, and the captain reads it only when he messages you himself: otherwise both see only what is appended to $STATUS_FILE, and a captain-facing sentence that is not appended there has not been sent.
@@ -365,21 +368,20 @@ The report is the only thing that survives, so anything worth keeping must be in
    treating it as a possible wedge. When you know when the wait clears, say so in the line with
    \`until <YYYY-MM-DDTHH:MMZ>\` (UTC) and firstmate rechecks at that time instead.
    Use \`blocked:\` when you are stuck and need help.
-5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
+5. Before reporting \`blocked:\`, try the obvious fix (see "Act within your scope" above); report it only if that failed, naming what you tried: \`blocked: {what is in the way}; tried {what}\`.
 6. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
    That decision goes to your parent mate (the first mate or second mate that launched you), never to the captain:
    the mate decides within its authority or asks the captain itself, so never hold a task for the captain or write a decision card yourself.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
-7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
-   every lane/home, so restarting it kills other lanes' in-flight pipeline runs; only firstmate
-   manages the daemon.
+7. Never stop, restart, or update a running \`no-mistakes\` daemon - it is one instance serving
+   every lane/home, so restarting it kills other lanes' in-flight pipeline runs.
    Before you append \`blocked:\` about the pipeline, run \`no-mistakes daemon status\` and
-   \`no-mistakes axi status\`. If the daemon socket refuses connections or is missing, append
-   \`blocked: {the daemon error}\` and stop even when the local run record still says running or
-   fixing, because that record can be stale after the daemon exits. A run record failed with a
-   daemon error is also a real block.
+   \`no-mistakes axi status\`. If the daemon is not running, start it (\`no-mistakes daemon start\`)
+   and retry. Only if it still refuses connections or will not start, append
+   \`blocked: {the daemon error}; tried starting it\` and stop, even when the local run record still
+   says running or fixing, because that record can be stale after the daemon exits.
    Only after ruling out socket refusal, if the run is still running or fixing, reattach and keep
    going. A drive-call error, timeout, slow read, or generic unreachability is NOT a daemon error:
    the daemon accepts \`respond\` immediately and runs the round in the background, so a killed or
@@ -455,20 +457,19 @@ $RULE1
    known external wait you expect to clear on its own (an upstream release, a rate-limit reset,
    a scheduled window): firstmate then leaves your idle pane alone and rechecks it on a long
    cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
-5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
+5. Before reporting \`blocked:\`, try the obvious fix (see "Act within your scope" above); report it only if that failed, naming what you tried: \`blocked: {what is in the way}; tried {what}\`.
 6. If a decision belongs above the implementation worker (product choices, destructive actions),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
 $ASK_USER_BLOCK
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
-7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
-   every lane/home, so restarting it kills other lanes' in-flight pipeline runs; only firstmate
-   manages the daemon.
+7. Never stop, restart, or update a running \`no-mistakes\` daemon - it is one instance serving
+   every lane/home, so restarting it kills other lanes' in-flight pipeline runs.
    Before you append \`blocked:\` about the pipeline, run \`no-mistakes daemon status\` and
-   \`no-mistakes axi status\`. If the daemon socket refuses connections or is missing, append
-   \`blocked: {the daemon error}\` and stop even when the local run record still says running or
-   fixing, because that record can be stale after the daemon exits. A run record failed with a
-   daemon error is also a real block.
+   \`no-mistakes axi status\`. If the daemon is not running, start it (\`no-mistakes daemon start\`)
+   and retry. Only if it still refuses connections or will not start, append
+   \`blocked: {the daemon error}; tried starting it\` and stop, even when the local run record still
+   says running or fixing, because that record can be stale after the daemon exits.
    Only after ruling out socket refusal, if the run is still running or fixing, reattach and keep
    going. A drive-call error, timeout, slow read, or generic unreachability is NOT a daemon error:
    the daemon accepts \`respond\` immediately and runs the round in the background, so a killed or

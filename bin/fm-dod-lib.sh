@@ -38,6 +38,10 @@
 # conflicting role is superseded rather than duplicated.
 # fm_ship_rule_one owns the mode-specific first ship safety rule shared by an
 # ordinary ship brief and the durable contract written during scout promotion.
+# fm_act_within_scope_section owns the act-within-scope contract.
+# fm_brief_worker_role carries it into every ship/scout launch before stored
+# brief text, and bin/fm-brief.sh into every new secondmate charter; AGENTS.md
+# section 7 points here rather than restating it.
 # fm_concurrent_work_section owns the worker's half of the parallel-work contract
 # (AGENTS.md section 7): firstmate names concurrent work touching this task's
 # area, and this section is what tells the worker that the notice is awareness
@@ -61,10 +65,36 @@ Never run `fm-captain-hold.sh hold/answer/answers/stale-clear` or write a decisi
 A scout whose report leaves nothing for the captain may run `fm-captain-hold.sh complete <your-id> --none`.
 EOF
   printf "Your steering inbox is \`%s/%s.inbox\`; this exact path belongs to your current task even when it is outside the worktree or under the supervising firstmate home, so read and acknowledge its messages and do not reject it as another home's state.\n" "$state" "$task_id"
+  fm_act_within_scope_section
   cat <<'EOF'
 Never inspect or change any other home's endpoint namespace; this authorization is limited to the exact task paths named by this brief.
 When this task works on Firstmate itself, the repository root `AGENTS.md` (also imported by `CLAUDE.md`) is project content and the supervisor contract for the firstmate managing you: follow this brief instead of that supervisor contract.
 Project instructions still govern the work wherever they do not conflict with this worker identity, including `CONTRIBUTING.md` and `firstmate-coding-guidelines` for Firstmate changes.
+EOF
+}
+
+fm_act_within_scope_section() {
+  cat <<'EOF'
+# Act within your scope
+This section supersedes any older brief instruction that tells you to stop, report blocked, or leave a daemon or tool alone instead of trying the obvious fix; the hard stops below, the rule against stopping, restarting or updating a running shared daemon, and the no-mistakes ask-user escalation and `--yes` / `-y` ban are unchanged.
+Your default is to act: inside this task's scope, fix what is in your way yourself and keep going.
+- A tool, daemon or service you need is missing or stopped: install it for your user or start it, retry, and report only if that fails. A no-mistakes daemon that is already running serves other work too, so never stop, restart or update it.
+- A merge conflict or a needed rebase on your own branch: resolve it.
+- A review finding inside your task's scope, or a failing test: investigate and fix it. While a no-mistakes run owns the branch, fix through its gate.
+- Flaky infrastructure (network, rate limits, slow CI): retry with backoff.
+- A stale or dirty worktree or slot: clean it or take another.
+Authority you were given covers the routine steps it implies: "merge when green" includes rebasing, fixing CI, rerunning checks and fixing review findings.
+These need an explicit, current instruction that names the action, and nothing else does:
+- moving money, or entering credentials or secrets;
+- deploying or promoting to production;
+- deleting data that is not yours;
+- messages to people outside the fleet (PR comments to teammates, Slack, WhatsApp, email);
+- force-pushing a shared branch;
+- merging beyond the merge authority you were given;
+- anything a machine's own `~/.agents/AGENTS.md` forbids, such as the Automattic sandbox rules.
+A blocker is real only after you tried the obvious fix: say what you tried and what failed.
+A blocker that is not the captain's call goes to your mate, who solves it.
+Write status lines as plain sentences a person understands at a glance.
 EOF
 }
 

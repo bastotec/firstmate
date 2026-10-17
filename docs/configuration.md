@@ -204,7 +204,7 @@ A task record on the retired `tmux` or `herdr` backend, including a record with 
 [Endpoint retirement](stream-backend.md#retiring-an-endpoint-record-without-a-confirmed-stop) owns the operator assertion required to retire such a record with [`bin/fm-retire-endpoint.sh`](../bin/fm-retire-endpoint.sh), and the owning mate's `--finished` path for its own finished work.
 A stream endpoint the hub still lists live after its task record is gone is closed only by `bin/fm-retire-endpoint.sh --orphan`, which [the same section](stream-backend.md#retiring-an-endpoint-record-without-a-confirmed-stop) points to.
 `fm-spawn.sh` spawns local ship, scout, and `--secondmate` tasks on stream, and [remote placement](remote-secondmates.md#normal-operation) owns remote secondmates.
-A spawn refusal from a missing dependency, version gate, or unreachable hub is terminal, and firstmate surfaces it as a blocker.
+A spawn refusal from a missing dependency, version gate, or unreachable hub ends that invocation; [AGENTS.md section 4](../AGENTS.md#4-harness-and-runtime-dispatch) owns the repair and retry policy before escalation.
 Every spawn records `backend=stream`, `endpoint_task_id=` (the cleanup binding between the metadata filename and the opaque endpoint), `stream_hub=`, and `stream_endpoint_id=` in task meta.
 The [`fm-remote-control-lib.sh` header](../bin/fm-remote-control-lib.sh) owns a remote secondmate's parent-record endpoint binding.
 The session-start and watcher-run secondmate recovery paths use `fm_backend_agent_state`, whose comment in `bin/fm-backend.sh` owns its state contract; [Secondmate lifecycle](stream-backend.md#secondmate-lifecycle) owns automatic recovery behavior and limits.
@@ -495,7 +495,7 @@ Bootstrap validates the file with `jq`: valid files stay silent unless `FM_BOOTS
 
 ## Toolchain
 
-On session start firstmate lists each missing or too-old required tool with an exact install command or manual instructions, and installs supported tools only after you say go.
+On session start firstmate lists each missing or too-old required tool with an exact install command or manual instructions; [AGENTS.md section 3](../AGENTS.md#3-session-start-run-once-at-every-session-start) owns installation authority and [`bootstrap-diagnostics`](../.agents/skills/bootstrap-diagnostics/SKILL.md) owns repair and retry.
 [`bin/fm-home-tools-lib.sh`](../bin/fm-home-tools-lib.sh) owns the universal toolchain and install commands shared by bootstrap and remote machine setup; [`bin/fm-bootstrap.sh`](../bin/fm-bootstrap.sh) owns compatibility detection, including the no-mistakes version floor.
 no-mistakes runs the validation pipeline, gh-axi and chrome-devtools-axi cover GitHub and browser work, and tasks-axi and quota-axi back backlog mutations and quota-aware dispatch.
 [`bin/fm-bootstrap.sh`](../bin/fm-bootstrap.sh) owns the axi floor policy and the gh-axi and lavish-axi floors, while [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh) and [`bin/fm-quota-axi-lib.sh`](../bin/fm-quota-axi-lib.sh) hold their own floors.

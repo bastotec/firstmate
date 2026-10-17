@@ -66,7 +66,8 @@ When locked, the digest presents the wake queue as this turn's first work queue,
 Its per-task liveness line is a presence check only; read actual current state with `bin/fm-crew-state.sh <id>`.
 Network checks (GitHub auth, secondmate relaunch and convergence, handoff delivery, clone refresh) run off the digest's path in `bin/fm-startup-network.sh`; treat a check its `NETWORK CHECKS` section reports in progress as unconfirmed until `bin/fm-startup-network.sh report` finishes, and an actionable result also arrives as a `check: startup-network` wake.
 
-Bootstrap detects first, asks for consent, and installs only after the captain approves in the current session.
+Bootstrap detects first, installs missing user-installable tools at user level without asking, then retries; `bin/fm-home-tools-lib.sh` owns that classification and `bootstrap-diagnostics` owns the repair procedure.
+Ask for current-session consent for system-level installs, anything needing sudo, or tools not classified as user-installable; credential and machine-policy boundaries still bind.
 Do not dispatch until the essential launch tools are present and GitHub authentication is good; presentation availability does not block nonvisual work.
 Use `gh-axi` for GitHub, `chrome-devtools-axi` for browser work, and compatible `lavish-axi` for visual decisions or reports; consult current help rather than memorizing flags.
 
@@ -82,7 +83,7 @@ Firstmate alone resolves a matched profile array, keeps malformed profile config
 
 Absent `config/backend` means stream, and a leftover `tmux` or `herdr` value is refused.
 Pass a per-spawn `--backend` only under that task's own authority, never as precedent ([`docs/configuration.md`](docs/configuration.md) "Runtime backend").
-A missing dependency, authentication failure, unsupported backend, or version refusal is a blocker; never silently retry around it.
+Try the authorized missing-dependency repair before reporting a blocker; never bypass an authentication failure, unsupported backend, or version refusal by silently choosing another route.
 Consult [`docs/configuration.md`](docs/configuration.md#runtime-backend-configbackend--fm_backend) for retired-record classification, supported continuation, and the retirement owner; a live endpoint whose record is gone is a leftover, and `task-delivery` owns this home's finished-work sweep (section 7), which cleans up both.
 
 ## 5. Recovery
@@ -159,6 +160,11 @@ After an unconfirmed remote secondmate delivery, only the exact `FM_PENDING_REPL
 When a steer answers an open keyed decision or blocker, pass `--resolve-key` so the answer closes that record.
 Never use `fm-send` for interrupt, exit, or other lifecycle control, because that text becomes chat; use `bin/fm-control.sh`'s allowlisted task verbs, which never tear down or discard anything ([`docs/agent-control.md`](docs/agent-control.md)).
 `bin/fm-pending-reply-lib.sh` owns correlation, recovery, and escalation for marked secondmate requests.
+
+### Acting within scope
+
+Within its role, and always under section 1's hard rules, every mate and worker acts by default inside its scope.
+Follow `fm_act_within_scope_section` in `bin/fm-dod-lib.sh` for the authoritative repair, implied-authority, hard-stop, blocker, and status-language contract.
 
 ### Selected delivery path and merge authority
 
@@ -302,6 +308,7 @@ Fill `## Captain's intent` (`{TASK}`) with the captain's own ask and stated boun
 Fill `## Firstmate spec` (`{FIRSTMATE_SPEC}`) with only the build instructions that ask requires, naming what stays out of scope; unrequested generalization or hardening is follow-up work to note, not scope.
 `bin/fm-dod-lib.sh` owns intent authoring and what a worker may pass as `--intent`.
 Keep additions task-specific, and alter generated sections only when the task genuinely differs from the standard shape.
+A brief grants the authority the captain already gave in positive terms; follow section 7's "Acting within scope" contract rather than adding forbidden-action lists.
 Every ship brief keeps the worktree-isolation assertion, and a ship task touching firstmate's shared tracked material explicitly requires `firstmate-coding-guidelines`.
 A charter brief follows `secondmate-provisioning`, preserving its idle-by-default and marked-return-channel contracts.
 Status appends are sparse supervisor-actionable events, not progress; `bin/fm-classify-lib.sh` owns their keyed semantics.
@@ -318,7 +325,7 @@ These skills are not captain-invocable; load them only at their triggers.
 - `bootstrap-diagnostics` - load when the digest's bootstrap or network-checks section prints any diagnostic line other than `BOOTSTRAP_INFO:`, or a `BOOTSTRAP_INFO:` line saying an interrupted backlog cleanup may have left an endpoint or local copy.
 - `diagnostic-reasoning` - load before scoping a reported bug and before acting on a diagnostic report.
 - `ask-user-authority` - load before deciding any ask-user finding, and on a `check: worker run parked too long` wake.
-- `task-delivery` - load before every spawn; when judging an active validation run, when the captain changes the ask of a task under validation, or when its worker hand-edits, commits, aborts, or restarts during the run; when a worker reports a PR or ready branch; before writing a custom check; after a teardown; when a scout completes; and on every heartbeat for the finished-work sweep.
+- `task-delivery` - load before every spawn; when a worker reports blocked; when judging an active validation run, when the captain changes the ask of a task under validation, or when its worker hand-edits, commits, aborts, or restarts during the run; when a worker reports a PR or ready branch; before writing a custom check; after a teardown; when a scout completes; and on every heartbeat for the finished-work sweep.
 - `harness-adapters` - load before spawning or recovering a crewmate or secondmate, choosing among a matched dispatch profile array, handling a trust dialog, sending a harness-specific skill invocation, interrupting, exiting, or resuming an agent, or verifying an adapter.
 - `project-management` - load before adding (including cloning or registering), creating, removing, or initializing a project.
 - `stuck-crewmate-recovery` - load when the digest reports a direct report's endpoint dead or its metadata without a window, after a stale wake, looping, repeated confusion, an answered-by-brief question, an unresponsive crewmate, or a failed steer, and when a live worker reports its no-mistakes pipeline dead, unreachable, or timed out.

@@ -2,7 +2,7 @@
 name: task-delivery
 description: >-
   Agent-only procedures for the dispatch, validation, ready, landing, and scout-outcome steps of a task's delivery.
-  Use before every spawn, when judging an active no-mistakes validation run's state, when the captain adds or changes the ask of a task under validation, when a worker hand-edits, commits, aborts, or restarts during its run, when a worker reports a PR or a ready local-only branch, before writing a custom watcher check, after a teardown, when a scout completes, and on every heartbeat for the finished-work sweep.
+  Use before every spawn, when judging an active no-mistakes validation run's state, when the captain adds or changes the ask of a task under validation, when a worker hand-edits, commits, aborts, or restarts during its run, when a worker reports a PR or a ready local-only branch, before writing a custom watcher check, after a teardown, when a worker reports blocked, when a scout completes, and on every heartbeat for the finished-work sweep.
 user-invocable: false
 metadata:
   internal: true
@@ -23,6 +23,13 @@ That notice is awareness rather than a hold, because the ship brief carries the 
 A worker rebases only while its branch is still its own to rewrite, and the branch-custody rules in the supersession and run-state sections below decide when that is, so a change that lands while the pipeline still owns the branch is never a steer into it.
 Once custody is settled, getting the branch current is yours to own by steering or relaunching the worker.
 A semantic conflict a worker reports is yours to decide or escalate, never to hand back.
+
+## When a worker reports blocked
+
+Follow `fm_act_within_scope_section` in `bin/fm-dod-lib.sh`, referenced by `AGENTS.md` section 7's "Acting within scope", when judging a reported blocker.
+When a worker's `blocked:` names nothing it tried, steer it to try the obvious fix within its scope before you treat the blocker as real.
+When it did try, solve what is in its way yourself - start or install the tool, free or replace the slot, grant the authority the captain already gave - and steer it to continue.
+Raise the blocker with the captain only when it is his call: a hard stop, a product decision, or a credential only he can supply.
 
 ## Scope once validation starts
 
