@@ -73,16 +73,25 @@ Files under <home>/state/dream/:
                      interrupted. The summary bin/fm_report.py reads
                      (schema fm-dream.v1):
                      {schema, date, started, finished, dry_run, status, steps: {name:
-                     {status, seconds, why?, waited_for_ziggy?, timings?}}, where
-                     seconds is the step's own time, waited_for_ziggy the
-                     seconds it first waited for Ziggy's dream, and collect's
-                     timings its phases in seconds; skills: [{skill, what, why}],
-                     skills_commit, raised: [{title, repo, mate, key, why}],
+                     {status, seconds, why?, waited_for_ziggy?, timings?}},
+                     skills: [{skill, what, why}], skills_commit,
+                     raised: [{title, repo, mate, key, why}],
                      slow_commands: [{command, seconds, count}], counts: {...},
                      disagreements: [<home records read but disagreeing>],
                      no_mistakes: {...} or null, summary}
   raised.jsonl       one line per raised item (dedupe across nights)
   digest-<date>.md   the private digest the agents read
+
+Step timing starts after the pre-step checks; waited_for_ziggy, when nonzero,
+is the seconds spent polling for Ziggy's dream before that step.
+Collect's timings records elapsed seconds to one decimal place for its phases:
+"sessions and local logs" (including the local failed-run read), "no-mistakes"
+(the host breakdown), "fleet report", and "digest".
+Both timing fields survive publication to latest.json.
+The summary names the total recorded wait when it reaches five minutes.
+Disagreements carries the fleet report's inconsistencies after excluding lines
+naming excluded homes; the summary names their count and the first one's first
+120 characters, with an indication when more remain.
 
 no_mistakes (null when collect did not produce a breakdown):
   {date, failed, by_cause, by_step,
