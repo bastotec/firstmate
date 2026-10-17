@@ -30,10 +30,11 @@
 #     automatically, since a pushed but unmerged branch passes cleanup's checks;
 #     it becomes the clean-it-up-or-keep-it decision below;
 #   - otherwise done, quiet for 15 minutes (a ship's PR must be merged):
-#     cleaned up with bin/fm-teardown.sh --keep-commits (leftover local commits
-#     of a merged PR are saved on a kept/ branch), never --force; a refusal only because
-#     the endpoint is on a retired backend goes to
-#     bin/fm-retire-endpoint.sh --finished;
+#     cleaned up with bin/fm-teardown.sh --keep-commits, never --force;
+#     teardown's header owns committed-work preservation and its limits.
+#     The sweep passes the PR/MR URL it verified to teardown and to the
+#     bin/fm-retire-endpoint.sh --finished fallback when the only refusal
+#     is an endpoint on a retired backend;
 #     a refusal because another cleanup or lifecycle action holds the task
 #     waits for the next scan; after a refusal, a now-absent worker record is
 #     reported as cleaned unless its backlog close is still pending (then

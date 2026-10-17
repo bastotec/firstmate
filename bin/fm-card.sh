@@ -33,7 +33,8 @@
 # with digits ("PR1806", "Direction7"). Ordinary product names IPv4, IPv6,
 # OAuth2, H264, MP3, MP4, S3, EC2, UTF8, x86, x64, 2FA and 4K are allowed.
 # Option instructions are for the first mate and are exempt. Drafts replace
-# jargon tokens in titles and situations with "this task".
+# jargon tokens in titles and situations with "this task". `show` still accepts
+# cards stored before the wording check; it does not apply that check on reads.
 # Limits: title <= 120 chars; situation <= 280 chars and <= 2 lines; 1-9
 # options keyed "1".."9" in order; label <= 40 chars; instruction <= 1000
 # chars; recommended names one option; no control characters except newlines
@@ -71,8 +72,12 @@
 # restored), task, kind (orphan or stale), why (evidence or restore note),
 # reason (prior hold reason), and card (prior card object or null).
 # `restore` undoes the newest clear of a task only while it is still Done with
-# newest resolution mode stale-cleared: it reopens and re-holds with the prior
-# reason and full card, or a draft when no full card was saved.
+# newest resolution mode stale-cleared. Before reopening, it validates a saved
+# full card's structure; invalid structure refuses without changing the task.
+# It reopens and re-holds with the prior reason and full card when its wording
+# passes the current check. Older wording becomes a plain draft from the saved
+# title and situation, without the old options; no saved full card also yields
+# a draft.
 # It refuses after a newer captain answer, after other work has reopened the
 # task, when already held again, after a restore, or for an orphan card.
 # Restore starts a new hold lifecycle and does not restore a deferral date.

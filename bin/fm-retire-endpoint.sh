@@ -17,13 +17,18 @@
 # ship only while its worktree is still this task's own, so cleanup's
 # landed-work gate actually runs; when tmux is installed, its inventory must
 # be readable and omit the window, or definitively report no server; and it
-# never proceeds past cleanup's work-protection gate, so unlanded or
-# uncommitted work, a scout without its report, or an
+# never proceeds past cleanup's work-protection gate. It invokes teardown with
+# --keep-commits; bin/fm-teardown.sh's header owns that preservation contract.
+# Work that still fails that gate, a scout without its report, or an
 # unresolved captain decision retires nothing. Its basis is that cleanup, once
 # those gates pass, has already stopped every process under the worktree before
 # it reaches the endpoint. It skips the type-back prompt because an agent runs
 # it, and records basis=finished-work in the assertion log instead. Anything it
 # refuses goes to the captain as a decision.
+# --merged-pr <url> is accepted only with --finished and exactly one task id;
+# it forwards a supported PR/MR URL to teardown for live forge verification
+# when metadata and backlog do not record it. This also carries a ledger-only
+# URL across the idle sweep's retirement fallback.
 #
 # Absence from the hub is never proof that a worker stopped: a same-protocol
 # restart clears the registry while live agents rejoin on their own schedule,

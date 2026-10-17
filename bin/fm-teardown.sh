@@ -35,7 +35,8 @@
 # lift the deferral (it authorizes discarding unlanded WORK, never the
 # captain's question), and bin/fm-captain-hold.sh answer stays the only act
 # that closes the call.
-# REFUSES if the worktree holds work that has not LANDED, because cleanup
+# REFUSES if the worktree holds work that has not LANDED, unless committed
+# work is preserved through --keep-commits below, because cleanup
 # hard-resets/removes the worktree and kills its processes. For a normal ship,
 # remote reachability alone is not landing evidence: both completion and committed
 # content require a merged PR whose head contains the current local work, or content
@@ -48,9 +49,11 @@
 # cherry, and merge-tree containment each fail to prove content landed without also
 # accepting unlanded edits to the same paths. Teardown still accepts a merged PR
 # whose head contains the current local work (ancestor or equivalent patch ids),
-# or a clean content-in-default tree match. Anything else refuses.
+# or a clean content-in-default tree match. Anything else needs preservation
+# through --keep-commits below or refuses.
 # The PR itself is resolved from the task's recorded pr= when present, else by
-# bin/fm-pr-lib.sh's fm_pr_task_url resolver for the backlog row. For every
+# bin/fm-pr-lib.sh's fm_pr_task_url resolver for the backlog row, then from
+# --merged-pr when supplied. For every
 # non-secondmate task, a row read that errors or times out refuses non-forced
 # cleanup, including on manual-backend homes and when metadata already names
 # a PR. A confirmed NOT_FOUND or an absent configured markdown backlog permits
@@ -165,13 +168,19 @@
 #   --keep-commits handles the leftover local commits a squash merge leaves
 #   behind: when a ship task's PR is merged, its worktree has no uncommitted
 #   changes, and its committed work still is not proved landed, teardown first
-#   saves those commits on a new local branch kept/<id>-<UTC stamp> in the
-#   same repository, verifies the branch points at them, prints
-#   "kept: <n> local commit(s) on branch <name>", and then cleans up. Nothing
-#   is discarded, so this is housekeeping, not a captain decision. Without a
+#   saves HEAD on a local branch kept/<id>-<UTC stamp> in the same repository,
+#   reusing an existing kept/<id>-* branch when it already points at HEAD,
+#   verifies that branch, prints "kept: <n> local commit(s) on branch <name>",
+#   and then cleans up. Nothing is discarded, so this is housekeeping, not a
+#   captain decision. Without a
 #   merged PR, with uncommitted changes, or for local-only work it refuses as
 #   before. --merged-pr supplies a PR/MR URL when none is recorded; its live
 #   merge state is verified through the forge before commits can be kept.
+#   With --keep-commits and no resolved URL, teardown tries GitHub discovery
+#   by branch before the completion gate; a caller that already knows the
+#   merged GitHub PR or GitLab MR URL should supply it with --merged-pr.
+#   Regression coverage: tests/fm-teardown.test.sh's keep-commits and
+#   finished-retirement cases; tests/fm-idle-sweep.test.sh's ledger-only MR cases.
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
 #   when the captain has explicitly said to discard the work.
@@ -180,8 +189,8 @@
 #   agent-less (bin/fm-backend.sh's recovery-grade classifier), and without
 #   --force the worktree still passes the ordinary landed-work checks. The
 #   accepted legacy incarnation is stamped into the record before its close is
-#   recorded and named in the teardown line; the flag never relaxes the
-#   unlanded-work refusal, which --force alone can authorize. A legacy- stamp
+#   recorded and named in the teardown line; the flag never relaxes any
+#   work-protection gate. A legacy- stamp
 #   an abandoned attempt left behind never counts as a published incarnation:
 #   the record still reads as a legacy record, so the endpoint gate runs again
 #   and the retry still needs --legacy-record.
@@ -1881,7 +1890,7 @@ teardown_treehouse_return() {
   return 1
 }
 
-# --keep-commits (see the header): save HEAD on a new kept/ branch and prove it.
+# --keep-commits preservation is owned by the header above.
 keep_unlanded_commits() {
   local head name count
   head=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
