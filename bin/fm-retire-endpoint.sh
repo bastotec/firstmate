@@ -183,12 +183,15 @@ that owns the records, asks for no typed confirmation, and takes only:
     can be read and does not list its window, or tmux definitively reports
     that no server is running.
 
-Cleanup's work-protection refusal is NOT proceeded past: unlanded or
-uncommitted work, a scout whose report is missing, or a captain decision the
-report still leaves open retires nothing. Cleanup stops every process under
-the worktree before it reaches the endpoint, which is what stands behind the
-stop this asserts. The log line carries basis=finished-work. Anything refused
-here is the captain's decision.
+--finished invokes cleanup with --keep-commits: unlanded work is never
+discarded; a merged task's clean leftover commits are saved on a kept/ branch
+under bin/fm-teardown.sh's header contract. Every other refusal stands.
+Cleanup's work-protection refusal is NOT proceeded past: work still failing
+that gate, a scout whose report is missing, or a captain decision the report
+still leaves open retires nothing. Cleanup stops every process under the
+worktree before it reaches the endpoint, which is what stands behind the stop
+this asserts. The log line carries basis=finished-work. Anything refused here
+is the captain's decision.
 
 --merged-pr <url> supplies the PR/MR URL for one --finished task when it is
 not recorded in its metadata or backlog. Cleanup rechecks its live forge state
