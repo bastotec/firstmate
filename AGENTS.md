@@ -160,6 +160,13 @@ When a steer answers an open keyed decision or blocker, pass `--resolve-key` so 
 Never use `fm-send` for interrupt, exit, or other lifecycle control, because that text becomes chat; use `bin/fm-control.sh`'s allowlisted task verbs, which never tear down or discard anything ([`docs/agent-control.md`](docs/agent-control.md)).
 `bin/fm-pending-reply-lib.sh` owns correlation, recovery, and escalation for marked secondmate requests.
 
+### Acting within scope
+
+Within its role, and always under section 1's hard rules, every mate and worker acts by default inside its scope and fixes what is in its way: it starts or installs a missing tool or daemon, resolves its own branch's conflicts and rebases, fixes in-scope review findings and failing tests, retries flaky infrastructure, and cleans or replaces a stale worktree.
+Only a short list of hard stops needs an explicit current instruction: moving money, entering credentials or secrets, production deploys or promotions, deleting others' data, outward messages to people, force-pushing a shared branch, merges beyond standing authority, and a machine's own sandbox rules; `fm_act_within_scope_section` in `bin/fm-dod-lib.sh` owns the full contract.
+A blocker is reported only after the obvious fix was tried, naming what was tried; one that is not the captain's call is the mate's to solve, never the captain's to hear about.
+Status lines and escalations are plain sentences.
+
 ### Selected delivery path and merge authority
 
 The selected delivery path owns its own rigor: with no-mistakes, it alone owns review, fixes, tests, documentation, push, PR, and CI; otherwise follow the faster path without an added reviewer.
@@ -302,6 +309,7 @@ Fill `## Captain's intent` (`{TASK}`) with the captain's own ask and stated boun
 Fill `## Firstmate spec` (`{FIRSTMATE_SPEC}`) with only the build instructions that ask requires, naming what stays out of scope; unrequested generalization or hardening is follow-up work to note, not scope.
 `bin/fm-dod-lib.sh` owns intent authoring and what a worker may pass as `--intent`.
 Keep additions task-specific, and alter generated sections only when the task genuinely differs from the standard shape.
+A brief grants the authority the captain already gave, in positive terms and with the routine steps it implies ("merge when green" covers rebasing, fixing CI, rerunning, and fixing review findings); it never enumerates forbidden actions, because section 7's hard stops are the whole list.
 Every ship brief keeps the worktree-isolation assertion, and a ship task touching firstmate's shared tracked material explicitly requires `firstmate-coding-guidelines`.
 A charter brief follows `secondmate-provisioning`, preserving its idle-by-default and marked-return-channel contracts.
 Status appends are sparse supervisor-actionable events, not progress; `bin/fm-classify-lib.sh` owns their keyed semantics.
@@ -318,7 +326,7 @@ These skills are not captain-invocable; load them only at their triggers.
 - `bootstrap-diagnostics` - load when the digest's bootstrap or network-checks section prints any diagnostic line other than `BOOTSTRAP_INFO:`, or a `BOOTSTRAP_INFO:` line saying an interrupted backlog cleanup may have left an endpoint or local copy.
 - `diagnostic-reasoning` - load before scoping a reported bug and before acting on a diagnostic report.
 - `ask-user-authority` - load before deciding any ask-user finding, and on a `check: worker run parked too long` wake.
-- `task-delivery` - load before every spawn; when judging an active validation run, when the captain changes the ask of a task under validation, or when its worker hand-edits, commits, aborts, or restarts during the run; when a worker reports a PR or ready branch; before writing a custom check; after a teardown; when a scout completes; and on every heartbeat for the finished-work sweep.
+- `task-delivery` - load before every spawn; when a worker reports blocked; when judging an active validation run, when the captain changes the ask of a task under validation, or when its worker hand-edits, commits, aborts, or restarts during the run; when a worker reports a PR or ready branch; before writing a custom check; after a teardown; when a scout completes; and on every heartbeat for the finished-work sweep.
 - `harness-adapters` - load before spawning or recovering a crewmate or secondmate, choosing among a matched dispatch profile array, handling a trust dialog, sending a harness-specific skill invocation, interrupting, exiting, or resuming an agent, or verifying an adapter.
 - `project-management` - load before adding (including cloning or registering), creating, removing, or initializing a project.
 - `stuck-crewmate-recovery` - load when the digest reports a direct report's endpoint dead or its metadata without a window, after a stale wake, looping, repeated confusion, an answered-by-brief question, an unresponsive crewmate, or a failed steer, and when a live worker reports its no-mistakes pipeline dead, unreachable, or timed out.

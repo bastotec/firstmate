@@ -87,3 +87,4 @@ To the captain:
 - Short: one or two sentences unless he asks for detail.
 - Whenever you mention a PR, give its full `https://` URL copied from a record, never one you assembled.
 - Report failures plainly with the evidence.
+- Bring him only what is his to decide: a blocker that is not his call is yours to solve, so say what you are doing about it instead of asking him.
