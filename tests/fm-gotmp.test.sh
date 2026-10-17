@@ -42,8 +42,9 @@ TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/fm-gotmp-tests.XXXXXX")
 
 # Build a fake FM_HOME/FM_ROOT so the real fm-teardown.sh (symlinked in) resolves
 # state and helper scripts inside it. Stub the helper scripts fm-teardown calls so no
-# live session host, treehouse or fleet state is touched. A nonexistent worktree path makes both
-# `if [ -d "$WT" ]` guards skip, so teardown runs straight to the cleanup + state rm.
+# live session host, treehouse or fleet state is touched. These local-only cleanup
+# fixtures have no copy to inspect; ordinary no-PR ships require landing evidence.
+# A nonexistent worktree path makes the dirty/treehouse blocks skip.
 make_fake_root() {
   local id=$1 tasktmp=$2
   local fake="$TMP_ROOT/$id"
@@ -130,7 +131,7 @@ worktree=$TMP_ROOT/nonexistent-worktree-$id
 project=$TMP_ROOT/nonexistent-project-$id
 harness=deck
 kind=ship
-mode=no-mistakes
+mode=local-only
 yolo=off
 tasktmp=$tasktmp
 META
@@ -230,7 +231,7 @@ worktree=$TMP_ROOT/nonexistent-wt-$id
 project=$TMP_ROOT/nonexistent-proj-$id
 harness=deck
 kind=ship
-mode=no-mistakes
+mode=local-only
 yolo=off
 META
   FM_HOME="$fake" bash "$fake/bin/fm-teardown.sh" "$id" >/dev/null 2>&1 \

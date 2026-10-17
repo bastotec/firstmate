@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
 # Tests for bin/fm-teardown.sh's landed-work safety and stale-lock recovery.
 #
-# The check refuses to tear down a worktree whose work has not LANDED, because
-# treehouse return hard-resets the worktree. "Landed" means reachable from a remote
-# OR - for a normal ship task whose commits are not so reachable - its PR is merged
-# and GitHub reports a PR head that contains the current local work, or its content
-# is already in the up-to-date default branch.
+# bin/fm-teardown.sh's header owns the landed-work and local-only preservation
+# contracts; these tests exercise them through the public teardown interface.
 #
-# Covers three fixes:
+# Coverage includes:
 #   - local-only fork-remote: a fork IS a remote, so fork-pushed upstream-
 #     contribution PRs are teardown-eligible (the pre-fix code false-refused them).
 #   - squash-merge-then-delete-branch: the branch's own commits live nowhere on a
@@ -24,7 +21,7 @@
 #   (a) local-only + HEAD on a fork remote-tracking branch     -> ALLOW  (fork fix)
 #   (b) local-only + truly unpushed work (no remote, not main) -> REFUSE (safety)
 #   (c) local-only + merged into local main, no remote         -> ALLOW  (no regression)
-#   (d) no-mistakes + HEAD on origin remote-tracking branch    -> ALLOW  (no regression)
+#   (d) no-mistakes + pushed empty commit, content in default -> ALLOW  (content proof)
 #   (e) no-mistakes + unpushed, no PR, content not in default  -> REFUSE (safety)
 #   (f) local-only + truly unpushed + --force                  -> ALLOW  (escape hatch)
 #   (g) no-mistakes + squash-merged PR, exact PR head          -> ALLOW  (squash fix)
@@ -83,7 +80,7 @@ make_case() {
   local name=$1 case_dir fakebin
   case_dir="$TMP_ROOT/$name"
   fakebin="$case_dir/fakebin"
-  mkdir -p "$case_dir/state" "$case_dir/config" "$case_dir/data" "$fakebin"
+  mkdir -p "$case_dir/home" "$case_dir/state" "$case_dir/config" "$case_dir/data" "$fakebin"
 
   # Mocks for the post-check teardown steps. Refuse logic exits before these
   # run; the ALLOW cases need them so the script can complete cleanly.
@@ -631,6 +628,10 @@ run_teardown() {
   # FM_DATA_OVERRIDE is pinned to the case dir because teardown closes this
   # home's backlog item itself; without it $DATA would resolve to the real
   # repo's own home and a test could mutate live records.
+  # Pin the operational home as well as its directories: final-outcome delivery
+  # must never resolve a real parent channel from the code root or caller home.
+  # Keep that home disjoint from the worktrees and removable secondmate homes.
+  FM_HOME="${FM_TEARDOWN_TEST_HOME:-$case_dir/home}" \
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
   FM_DATA_OVERRIDE="$case_dir/data" \
@@ -797,6 +798,8 @@ test_teardown_refuses_unmerged_recorded_pr() {
   for state in OPEN CLOSED ''; do
     case_dir=$(make_case "pr-gate-${state:-offline}")
     write_meta "$case_dir" no-mistakes ship
+    wt_commit_file "$case_dir" feature.txt 'pushed but unmerged'
+    git -C "$case_dir/wt" push -q origin HEAD:refs/heads/frozen-task
     printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
     seed_backlog_in_flight "$case_dir"
     add_logging_treehouse "$case_dir"
@@ -815,7 +818,7 @@ test_teardown_refuses_unmerged_recorded_pr() {
   assert_grep 'is still open' "$(dirname "$case_dir")/pr-gate-OPEN/stderr" \
     "pr-gate-OPEN: the refusal did not say the PR is open"
   assert_grep 'Superseded: <reason>' "$(dirname "$case_dir")/pr-gate-CLOSED/stderr" \
-    "pr-gate-CLOSED: the refusal did not name the supersession line"
+    "pr-gate-CLOSED: the refusal did not name the supersession line: $(cat "$(dirname "$case_dir")/pr-gate-CLOSED/stderr")"
   assert_grep 'cannot read the live state' "$(dirname "$case_dir")/pr-gate-offline/stderr" \
     "pr-gate-offline: the refusal did not say the state was unreadable"
   pass "teardown refuses a recorded PR that is open, closed without a reason, or unreadable"
@@ -834,6 +837,9 @@ test_teardown_backlog_only_pr_gate() {
       || fail 'could not record the backlog-only PR'
     assert_no_grep '^pr=' "$case_dir/state/task-x1.meta" 'row-only fixture recorded a metadata PR'
     add_logging_treehouse "$case_dir"
+    if [ "$state" = MERGED ]; then
+      add_gh_pr_merged_for_head "$case_dir" "$(git -C "$case_dir/wt" rev-parse HEAD)"
+    fi
     before=$(cksum "$case_dir/state/task-x1.meta" "$case_dir/data/backlog.md" "$case_dir/wt/feature.txt")
     rc=0
     FM_FAKE_GH_PR_STATE=$state run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
@@ -868,6 +874,8 @@ test_teardown_manual_backlog_read_gate() {
     write_meta "$case_dir" no-mistakes ship
     wt_commit_file "$case_dir" feature.txt 'pushed work'
     add_fork_with_pushed_branch "$case_dir"
+    # These cases isolate row-read policy; their content has actually landed.
+    land_on_origin_main "$case_dir" feature.txt 'pushed work'
     printf '%s\n' manual > "$case_dir/config/backlog-backend"
     case "$scenario" in
       no-backlog*) ;;
@@ -1183,7 +1191,150 @@ test_no_mistakes_origin_remote_allows() {
   ! grep -q REFUSED "$case_dir/stderr" || fail "nm-origin: teardown printed a REFUSED line"
   grep -F 'blockers are gone and date is due' "$case_dir/stdout" >/dev/null \
     || fail "nm-origin: teardown manual prompt did not preserve date-gate check"
-  pass "no-mistakes worktree with HEAD on origin is torn down (no regression)"
+  pass "pushed empty commit tears down because its content is already in default"
+}
+
+# Exercise the complete public teardown path with the misleading completion
+# signals that used to bypass both landed-work gates.
+test_no_pr_done_pushed_unmerged_refuses() {
+  local case_dir rc head
+  case_dir=$(make_case no-pr-done-pushed-unmerged)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt 'only on a frozen remote branch'
+  git -C "$case_dir/wt" push -q origin HEAD:refs/heads/frozen-task
+  seed_backlog_in_flight "$case_dir"
+  tasks-axi 'done' task-x1 --file "$case_dir/data/backlog.md" >/dev/null
+  printf 'failed: validation stopped\n' > "$case_dir/state/task-x1.status"
+  add_logging_treehouse "$case_dir"
+  cp "$case_dir/state/task-x1.meta" "$case_dir/meta.before"
+  cp "$case_dir/data/backlog.md" "$case_dir/backlog.before"
+  cp "$case_dir/state/task-x1.status" "$case_dir/status.before"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  fm_test_fake_stream_endpoints > "$case_dir/endpoint.before" || fail 'cannot snapshot endpoint'
+
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" "no-pr-done-pushed-unmerged: teardown must refuse"
+  assert_grep REFUSED "$case_dir/stderr" 'missing unlanded-work refusal'
+  assert_refusal_retained_task_state "$case_dir" no-pr-done-pushed-unmerged "$head"
+  cmp -s "$case_dir/meta.before" "$case_dir/state/task-x1.meta" || fail 'refusal changed metadata'
+  cmp -s "$case_dir/backlog.before" "$case_dir/data/backlog.md" || fail 'refusal changed done backlog row'
+  cmp -s "$case_dir/status.before" "$case_dir/state/task-x1.status" || fail 'refusal changed terminal status'
+  fm_test_fake_stream_endpoints > "$case_dir/endpoint.after" || fail 'cannot inspect preserved endpoint'
+  cmp -s "$case_dir/endpoint.before" "$case_dir/endpoint.after" || fail 'refusal changed endpoint record'
+  [ "$(cat "$case_dir/wt/feature.txt")" = 'only on a frozen remote branch' ] || fail 'refusal changed work content'
+  assert_absent "$case_dir/treehouse.log" 'refusal returned the pooled copy'
+  assert_absent "$case_dir/state/task-x1.backlog-close" 'refusal staged a backlog mutation'
+  pass 'done-row failed ship with no PR refuses even when all commits are pushed, preserving all artifacts'
+}
+
+test_no_pr_unlanded_retirement_preserves_work() {
+  local scenario case_dir rc head relay_token
+  for scenario in operator finished missing unreadable public-followup unresolved-parent; do
+    relay_token=
+    case_dir=$(make_case "no-pr-retirement-$scenario")
+    fm_write_meta "$case_dir/state/task-x1.meta" \
+      "backend=tmux" "window=fm:fm-task-x1" \
+      "worktree=$case_dir/wt" "project=$case_dir/project" \
+      "kind=ship" "mode=no-mistakes" "spawn_gen=teardown-test-task-x1"
+    fm_fake_exit0 "$case_dir/fakebin" tmux
+    wt_commit_file "$case_dir" feature.txt 'preserve unlanded work'
+    git -C "$case_dir/wt" push -q origin HEAD:refs/heads/frozen-task
+    head=$(git -C "$case_dir/wt" rev-parse HEAD)
+    seed_backlog_in_flight "$case_dir"
+    printf 'failed: validation stopped\n' > "$case_dir/state/task-x1.status"
+    add_logging_treehouse "$case_dir"
+    case "$scenario" in
+      missing) git -C "$case_dir/project" worktree remove --force "$case_dir/wt" ;;
+      unreadable) printf 'invalid git identity\n' > "$case_dir/wt/.git" ;;
+      public-followup)
+        relay_token=test-token
+        cp "$ROOT/.tasks.toml" "$case_dir/.tasks.toml"
+        printf '%s\n' '{"request_id":"req-retire","platform":"x","context_binding":{"version":"ctx1","value":"ctx1_retire"},"public_safe_summary":"finish the work","received_at":"2026-07-30T10:00:00Z","followup_expires_at":"2099-10-01T00:00:00Z","reservation_expires_at":"2099-10-01T00:00:00Z"}' > "$case_dir/request.json"
+        printf '%s\n' '{"type":"pr-merged","project":"firstmate","required_deliverables":["pr_url"],"completion_policy":"all-required"}' > "$case_dir/expected.json"
+        printf '%s\n' '{"relation_id":"rel-code","work_ref":{"home_id":"main","task_id":"task-x1"},"role":"fulfills","required":true,"generation":1}' > "$case_dir/relation.json"
+        (
+          cd "$case_dir" || exit 1
+          tasks-axi public-followup add pf-retire --request-context-file request.json \
+            --purpose promised-final --expected-final-file expected.json --expires-at 2099-10-01T00:00:00Z >/dev/null \
+            && tasks-axi public-followup bind-work pf-retire --relation-file relation.json >/dev/null
+        ) || fail 'could not bind the retirement public commitment'
+        FMX_PAIRING_TOKEN=test-token FM_HOME="$case_dir" FM_ROOT_OVERRIDE="$ROOT" \
+          "$ROOT/bin/fm-public-followup.sh" register pf-retire --relation rel-code \
+            --work-home main --work-id task-x1 --generation 1 >/dev/null \
+          || fail 'could not register the retirement public commitment'
+        ;;
+      unresolved-parent)
+        printf 'mate\n' > "$case_dir/.fm-secondmate-home"
+        printf 'invalid parent record\n' > "$case_dir/.fm-secondmate-parent"
+        ;;
+    esac
+    cp "$case_dir/state/task-x1.meta" "$case_dir/meta.before"
+    cp "$case_dir/data/backlog.md" "$case_dir/backlog.before"
+    rc=0
+    if [ "$scenario" = finished ]; then
+      FM_HOME="$case_dir" FM_ROOT_OVERRIDE="$ROOT" PATH="$case_dir/fakebin:$PATH" \
+        "$ROOT/bin/fm-retire-endpoint.sh" --finished task-x1 </dev/null \
+        > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    else
+      printf 'task-x1\n' | FMX_PAIRING_TOKEN="$relay_token" FM_HOME="$case_dir" \
+        FM_ROOT_OVERRIDE="$ROOT" PATH="$case_dir/fakebin:$PATH" \
+        "$ROOT/bin/fm-retire-endpoint.sh" task-x1 \
+        > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    fi
+    if [ "$scenario" = operator ]; then
+      expect_code 0 "$rc" "operator retirement failed: $(cat "$case_dir/stderr")"
+      assert_absent "$case_dir/state/task-x1.meta" 'operator retirement retained metadata'
+      [ "$(backlog_row_state "$case_dir")" = 'done' ] || fail 'operator retirement left the row open'
+    else
+      expect_code 1 "$rc" "$scenario retirement must refuse"
+      cmp -s "$case_dir/meta.before" "$case_dir/state/task-x1.meta" || fail "$scenario changed metadata"
+      cmp -s "$case_dir/backlog.before" "$case_dir/data/backlog.md" || fail "$scenario changed backlog"
+      case "$scenario" in
+        public-followup) assert_grep 'still owes a public reply' "$case_dir/stderr" 'retirement bypassed the public commitment guard' ;;
+        unresolved-parent) assert_grep 'cannot resolve the primary home' "$case_dir/stderr" 'retirement bypassed the parent binding guard' ;;
+      esac
+    fi
+    if [ "$scenario" != missing ]; then
+      [ "$(cat "$case_dir/wt/feature.txt")" = 'preserve unlanded work' ] || fail "$scenario changed work"
+    fi
+    [ "$(git -C "$case_dir/project" rev-parse fm/task-x1)" = "$head" ] || fail "$scenario moved the branch"
+    assert_absent "$case_dir/treehouse.log" "$scenario returned the pooled copy"
+    assert_absent "$case_dir/state/task-x1.endpoint-retired" "$scenario left retirement authorization"
+  done
+  pass 'only explicit operator retirement bypasses known unlanded work, preserving the copy'
+}
+
+# With FM_HOME unset, a code root that happens to be a secondmate home must
+# not become the fixture's reporting identity. The canary parent is a sibling
+# sandbox, never the machine's real parent channel.
+test_unset_home_keeps_fixture_outcomes_in_sandbox() {
+  local case_dir caller parent rc
+  case_dir=$(make_case unset-home-isolation)
+  caller="$TMP_ROOT/unset-home-code"
+  parent="$TMP_ROOT/unset-home-parent"
+  configure_secondmate_home "$caller" local "$parent"
+  ln -s "$ROOT/bin" "$caller/home/bin"
+  printf 'parent sentinel\n' > "$parent/state/mate-x.status"
+  cp "$parent/state/mate-x.status" "$case_dir/parent.before"
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt landed
+  land_on_origin_main "$case_dir" feature.txt landed
+  seed_backlog_in_flight "$case_dir"
+  tasks-axi 'done' task-x1 --file "$case_dir/data/backlog.md" >/dev/null
+  printf 'failed: synthetic validation stopped\n' > "$case_dir/state/task-x1.status"
+  add_logging_treehouse "$case_dir"
+  rc=0
+  (
+    unset FM_HOME FM_TEARDOWN_TEST_HOME
+    ROOT="$caller/home" run_teardown "$case_dir"
+  ) > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "unset-home: landed fixture should complete: $(cat "$case_dir/stderr")"
+  assert_present "$case_dir/treehouse.log" 'unset-home: fixture never reached cleanup'
+  assert_absent "$case_dir/state/task-x1.meta" 'unset-home: fixture cleanup was incomplete'
+  cmp -s "$case_dir/parent.before" "$parent/state/mate-x.status" \
+    || fail 'unset-home: synthetic outcome escaped to the caller code root parent'
+  pass 'unset FM_HOME cannot route a fixture outcome outside its operational sandbox'
 }
 
 test_no_mistakes_truly_unpushed_refuses() {
@@ -1290,13 +1441,18 @@ test_no_pr_recorded_discovers_merged_pr_by_branch_allows() {
 }
 
 test_squash_merged_pr_allows_replayed_unpushed_patch() {
-  local case_dir rc parent_head pr_head
-  case_dir=$(make_case squash-replayed-patch)
+  local case_dir rc parent_head pr_head parent_landed=${1:-yes} expected=0
+  case_dir=$(make_case "squash-replayed-patch-$parent_landed")
   write_meta "$case_dir" no-mistakes ship
   wt_commit_file "$case_dir" local-parent.txt parent "local parent"
   parent_head=$(git -C "$case_dir/wt" rev-parse HEAD)
   git -C "$case_dir/wt" push -q origin "$parent_head:refs/heads/fm/task-x1"
-  git -C "$case_dir/project" fetch -q origin fm/task-x1
+  if [ "$parent_landed" = yes ]; then
+    git -C "$case_dir/wt" push -q origin "$parent_head:refs/heads/main"
+  else
+    expected=1
+  fi
+  git -C "$case_dir/project" fetch -q origin
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   append_pr_meta_url "$case_dir"
   pr_head=$(land_equivalent_patch_on_origin_branch "$case_dir" pr-head feature.txt hello "add feature")
@@ -1307,9 +1463,15 @@ test_squash_merged_pr_allows_replayed_unpushed_patch() {
   rc=$?
   set -e
 
-  expect_code 0 "$rc" "squash-replayed-patch: teardown should succeed when unpushed local patch is in the merged PR head"
-  ! grep -q REFUSED "$case_dir/stderr" || fail "squash-replayed-patch: teardown printed a REFUSED line"
-  pass "squash-merged PR accepts replayed unpushed local patches contained in the PR head"
+  expect_code "$expected" "$rc" "squash-replayed-patch: parent landed=$parent_landed"
+  if [ "$expected" = 0 ]; then
+    ! grep -q REFUSED "$case_dir/stderr" || fail "squash-replayed-patch: teardown printed a REFUSED line"
+    pass "squash-merged PR accepts replayed patches with an already-landed parent"
+  else
+    assert_grep REFUSED "$case_dir/stderr" 'remote-only parent was accepted as landed'
+    assert_refusal_retained_task_state "$case_dir" remote-only-parent "$(git -C "$case_dir/wt" rev-parse HEAD)"
+    pass 'replayed merged patch cannot hide an unlanded parent preserved only on a remote'
+  fi
 }
 
 test_merged_pr_with_later_local_commit_refuses() {
@@ -1320,6 +1482,7 @@ test_merged_pr_with_later_local_commit_refuses() {
   append_pr_meta_for_current_head "$case_dir"
   pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
   wt_commit_file "$case_dir" later.txt local-only "local follow-up"
+  git -C "$case_dir/wt" push -q origin HEAD:refs/heads/frozen-task
   add_gh_pr_merged_for_head "$case_dir" "$pr_head"
 
   set +e
@@ -1432,7 +1595,7 @@ test_pr_check_does_not_refresh_stale_pr_head() {
   pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
   add_gh_pr_merged_for_head "$case_dir" "$pr_head"
 
-  FM_ROOT_OVERRIDE="$ROOT" \
+  FM_HOME="$case_dir" FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
   PATH="$case_dir/fakebin:$PATH" \
     "$PR_CHECK" task-x1 https://github.com/example/repo/pull/7 >/dev/null
@@ -1440,7 +1603,7 @@ test_pr_check_does_not_refresh_stale_pr_head() {
   wt_commit_file "$case_dir" later.txt local-only "local follow-up"
   new_head=$(git -C "$case_dir/wt" rev-parse HEAD)
 
-  FM_ROOT_OVERRIDE="$ROOT" \
+  FM_HOME="$case_dir" FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
   PATH="$case_dir/fakebin:$PATH" \
     "$PR_CHECK" task-x1 https://github.com/example/repo/pull/7 >/dev/null
@@ -1469,7 +1632,7 @@ test_pr_check_records_remote_head_when_local_lags() {
   pr_head=$(commit_tree_from_wt_head "$case_dir" "$local_head" "no-mistakes follow-up")
   add_gh_pr_merged_for_head "$case_dir" "$pr_head"
 
-  FM_ROOT_OVERRIDE="$ROOT" \
+  FM_HOME="$case_dir" FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
   PATH="$case_dir/fakebin:$PATH" \
     "$PR_CHECK" task-x1 https://github.com/example/repo/pull/7 >/dev/null
@@ -1937,8 +2100,7 @@ test_stale_index_lock_cleanup_rechecks_dirty_worktree() {
   case_dir=$(make_case stale-lock-dirty-recheck)
   write_meta "$case_dir" no-mistakes ship
   wt_commit_file "$case_dir" feature.txt landed "landed work"
-  git -C "$case_dir/wt" push -q origin fm/task-x1
-  git -C "$case_dir/project" fetch -q origin
+  land_on_origin_main "$case_dir" feature.txt landed
   printf '%s\n' dirty > "$case_dir/wt/feature.txt"
 
   add_lock_aware_treehouse "$case_dir"
@@ -2254,7 +2416,7 @@ test_secondmate_pr_registration_publishes_ready_line() {
   write_meta "$case_dir" no-mistakes ship
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   add_gh_pr_merged_for_head "$case_dir" "$(git -C "$case_dir/wt" rev-parse HEAD)"
-  FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$case_dir/state" \
+  FM_HOME="$case_dir" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$case_dir/state" \
     PATH="$case_dir/fakebin:$PATH" "$PR_CHECK" task-x1 "$url" >/dev/null 2> "$case_dir/pr-check.err" \
     || fail "main-pr-ready: fm-pr-check failed"
   ! grep -q '^actionable:' "$case_dir/pr-check.err" \
@@ -2281,7 +2443,7 @@ test_secondmate_home_teardown_delivers_final_line_or_refuses() {
   printf 'working: shipping\ndone: PR https://github.com/example/repo/pull/9 checks green\n' \
     > "$case_dir/state/task-x1.status"
   set +e
-  FM_HOME="$case_dir/home" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  FM_TEARDOWN_TEST_HOME="$case_dir/home" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
   expect_code 0 "$rc" "mate-teardown-delivers: teardown should succeed: $(cat "$case_dir/stderr")"
@@ -2312,7 +2474,7 @@ test_secondmate_home_teardown_delivers_final_line_or_refuses() {
   git -C "$case_dir/project" update-ref refs/heads/main "$wt_head"
   printf 'done: PR https://github.com/example/repo/pull/9 checks green\n' > "$case_dir/state/task-x1.status"
   set +e
-  FM_HOME="$case_dir/home" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  FM_TEARDOWN_TEST_HOME="$case_dir/home" run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
   set -e
   [ "$rc" -ne 0 ] || fail "mate-teardown-refuses: teardown proceeded with an undelivered final line"
@@ -2331,7 +2493,7 @@ test_secondmate_home_teardown_delivers_final_line_or_refuses() {
   [ -z "$seq" ] || FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" \
     "$ROOT/bin/fm-wake-drain.sh" --ack-through "$seq" --recovery-generation "$generation" >/dev/null
   set +e
-  FM_HOME="$case_dir/home" run_teardown "$case_dir" > "$case_dir/stdout2" 2> "$case_dir/stderr2"
+  FM_TEARDOWN_TEST_HOME="$case_dir/home" run_teardown "$case_dir" > "$case_dir/stdout2" 2> "$case_dir/stderr2"
   rc=$?
   set -e
   expect_code 0 "$rc" "mate-teardown-refuses: rerun after repair should succeed: $(cat "$case_dir/stderr2")"
@@ -2623,10 +2785,9 @@ assert_head_absent_from_worktree() {  # <worktree> <short-sha> <label>
     || fail "$3: fixture broke - the pipeline head resolved in the task copy"
 }
 
-# Land a shippable commit on the task branch and push it to origin, the same
-# "definitely landed, teardown must ALLOW" shape test_no_mistakes_origin_remote_allows
-# uses, so these new cases exercise the abort/reap steps on a real successful
-# teardown rather than a refusal path.
+# Push an empty commit: its content is already in default, so teardown must
+# ALLOW by content proof, not because origin preserves the task branch. These
+# cases exercise the abort/reap steps on a real successful teardown.
 land_shippable_commit() {
   local case_dir=$1
   wt_commit "$case_dir" "shippable work"
@@ -3611,6 +3772,9 @@ EOF
   pass "the run abort and the leaked-process reap both complete before the destructive worktree return"
 }
 
+test_no_pr_done_pushed_unmerged_refuses
+test_no_pr_unlanded_retirement_preserves_work
+test_unset_home_keeps_fixture_outcomes_in_sandbox
 test_local_only_fork_remote_allows
 test_wake_gate_retirement_refuses_a_symlinked_parent
 test_wake_gate_retirement_requires_python_only_for_existing_state
@@ -3639,6 +3803,7 @@ test_squash_merged_branch_deleted_allows
 test_squash_merged_pr_allows_when_head_ancestor_of_pr_head
 test_no_pr_recorded_discovers_merged_pr_by_branch_allows
 test_squash_merged_pr_allows_replayed_unpushed_patch
+test_squash_merged_pr_allows_replayed_unpushed_patch no
 test_merged_pr_with_later_local_commit_refuses
 test_squash_merged_rebased_branch_allows
 test_squash_merged_same_file_different_content_refuses

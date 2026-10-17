@@ -1255,9 +1255,12 @@ test_cleanup_refuses_while_a_public_reply_is_owed() {
     || fail "could not add the guarded ship to its home's backlog"
   tasks_in "$home" start ship-task >/dev/null \
     || fail "could not mark the guarded ship In flight"
+  # Public delivery does not prove code landed. Give this ship a clean copy
+  # whose content is already in the default branch, so only the reply is owed.
+  fm_git_worktree "$home/projects/sample" "$home/projects/ship-task" fm/ship-task
   fm_write_meta "$home/state/ship-task.meta" \
     $(fm_test_stream_task "$home/state" "ship-task") \
-    "worktree=$home/projects/gone" \
+    "worktree=$home/projects/ship-task" \
     "project=$home/projects/sample" \
     "harness=codex" \
     "kind=ship" \
@@ -2127,9 +2130,10 @@ test_retention_creates_no_false_teardown_refusal() {
     || fail "could not add the retained-registration ship to its home's backlog"
   tasks_in "$home" start ship-retain >/dev/null \
     || fail "could not mark the retained-registration ship In flight"
+  fm_git_worktree "$home/projects/sample" "$home/projects/ship-retain" fm/ship-retain
   fm_write_meta "$home/state/ship-retain.meta" \
     $(fm_test_stream_task "$home/state" "ship-retain") \
-    "worktree=$home/projects/gone" \
+    "worktree=$home/projects/ship-retain" \
     "project=$home/projects/sample" \
     "harness=codex" \
     "kind=ship" \
