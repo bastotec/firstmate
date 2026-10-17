@@ -69,6 +69,10 @@
 # Watcher results pass through the durable execution steering inbox and its ordinary
 # doorbell, retained until acknowledged after a serialized next turn;
 # the durable wake queue is acknowledged only by the model after handling.
+# A successful arm result is retained even before startup confirmation or when
+# it races a timeout or refused-handoff replacement, before capture reuse.
+# Watcher launches clear inherited handoff claims; only this driver's tracked
+# predecessor arm can supply a new claim.
 # Exactly one supervisor Deck turn runs at a time, including stdin and watcher
 # turns. A split home (config/primary-split) also runs its captain lane beside
 # them: the CAPTAIN LANE block below owns it, and bin/fm-captain-lane.sh's header
@@ -88,8 +92,9 @@
 #   FM_DECK_WATCH_FAILURE_LIMIT stops the host
 #   with failure status. The retry deadline never blocks input or turn-stop
 #   handling, and no watcher starts while turn cancellation is pending.
-# - A successor watcher that does not confirm startup in time or dies first,
-#   or a refused handling-delivery confirmation, logs the condition to stderr,
+# - A successor watcher that does not confirm startup in time or exits without
+#   a successful result first, or a refused handling-delivery confirmation,
+#   logs the condition to stderr,
 #   stops the remaining arm child, clears handoff claims, and starts a fresh
 #   watcher with no predecessor claim. If that start fails, the driver stops;
 #   otherwise it continues the turn without publishing failed status.
@@ -568,7 +573,7 @@ host_lock_owned() {
 # tool call. Its output stays in WORK while a turn runs; its actionable reason
 # is merely a doorbell for the durable home queue, never an acknowledgement.
 watch_wait_handling_successor() {
-  local deadline line
+  local deadline line rc
   deadline=$(( $(date +%s) + WATCH_CONFIRM_SECS ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
     line=$(sed -n 's/^watcher: started pid=\([0-9][0-9]*\).* recovery-generation=\([A-Za-z0-9._-][A-Za-z0-9._-]*\)$/\1 \2/p' "$WORK/watch.out" 2>/dev/null | tail -1)
@@ -586,7 +591,15 @@ watch_wait_handling_successor() {
       return 0
     fi
     if ! kill -0 "$WATCH_PID" 2>/dev/null; then
-      wait "$WATCH_PID" 2>/dev/null || true
+      rc=0
+      wait "$WATCH_PID" 2>/dev/null || rc=$?
+      # A queued wake can finish the arm before it publishes a startup line.
+      # Its successful result still owes a turn; restarting alone loses it
+      # because the producer has already marked that durable row as surfaced.
+      if [ "$rc" -eq 0 ] && [ -s "$WORK/watch.out" ]; then
+        watch_result
+        return $?
+      fi
       WATCH_PID=''
       watch_restart_unclaimed 'successor watcher exited before confirming startup'
       return
@@ -596,6 +609,25 @@ watch_wait_handling_successor() {
   watch_restart_unclaimed "successor watcher did not confirm startup within ${WATCH_CONFIRM_SECS}s"
 }
 
+# Stop before reusing the capture, retaining a result that won the race with
+# replacement. A startup line is not a result; only a successful arm owes work.
+watch_stop_for_replacement() {
+  local rc=0
+  if [ -n "$WATCH_PID" ]; then
+    kill -TERM "$WATCH_PID" 2>/dev/null || true
+    wait "$WATCH_PID" 2>/dev/null || rc=$?
+    if [ "$rc" -eq 0 ] && [ -s "$WORK/watch.out" ]; then
+      watch_result || return 1
+    else
+      WATCH_PID=''
+      cat "$WORK/watch.out"
+    fi
+  else
+    cat "$WORK/watch.out"
+  fi
+  WATCH_PREDECESSOR_ARM_PID=''
+}
+
 # The header owns the nonfatal replacement contract shared with refused
 # handling-delivery confirmation below.
 watch_restart_unclaimed() {  # <reason>
@@ -603,12 +635,7 @@ watch_restart_unclaimed() {  # <reason>
   WATCH_HANDLING_GENERATION=''
   WATCH_HANDLING_WATCHER_PID=''
   WATCH_PREDECESSOR_ARM_PID=''
-  if [ -n "$WATCH_PID" ]; then
-    kill -TERM "$WATCH_PID" 2>/dev/null || true
-    wait "$WATCH_PID" 2>/dev/null || true
-    WATCH_PID=''
-  fi
-  cat "$WORK/watch.out"
+  watch_stop_for_replacement || return 1
   watch_start
 }
 
@@ -626,11 +653,7 @@ watch_confirm_handling_delivery() {
   WATCH_HANDLING_GENERATION=''
   WATCH_HANDLING_WATCHER_PID=''
   WATCH_PREDECESSOR_ARM_PID=''
-  if [ -n "$WATCH_PID" ]; then
-    kill -TERM "$WATCH_PID" 2>/dev/null || true
-    wait "$WATCH_PID" 2>/dev/null || true
-    WATCH_PID=''
-  fi
+  watch_stop_for_replacement || return 1
   watch_start
 }
 
@@ -650,6 +673,9 @@ watch_start() {
   fi
   (
     trap '' INT
+    # A host can itself have been launched by a watcher turn. Handoff claims
+    # belong only to this driver's tracked arm, never to its inherited parent.
+    unset FM_WATCH_PREDECESSOR_ARM_PID FM_WATCH_HANDLING_SUCCESSOR
     if [ -f "$FM_HOME/config/x-mode.env" ]; then
       # shellcheck source=/dev/null
       . "$FM_HOME/config/x-mode.env" || exit 1
