@@ -138,11 +138,15 @@
 #   Only after this isolation check, every fresh ship or scout requires a clean
 #   task worktree. If a pooled slot's only dirt is untracked leftovers of a
 #   previous worker - a wholly untracked .scratch/ directory at any age, or any
-#   other untracked path nothing in which changed for a day (1440 minutes) -
-#   and none of them is a symlink or holds anything tracked, spawn moves them intact to
+#   other untracked path whose own and descendants' modification times are at
+#   least a day old (1440 minutes) - and none of those paths is a symlink or
+#   holds anything tracked, spawn moves them intact to
 #   state/slot-quarantine/<slot>-<epoch>/ (same relative paths) and rechecks
-#   cleanliness. It never deletes that work; any other dirt, including a fresh
-#   untracked file, refuses without moving anything.
+#   cleanliness. The age threshold is fixed; a regular file named .scratch
+#   has no age exemption. All candidates are inspected before any move; any
+#   ineligible dirt or failed inspection refuses without moving anything.
+#   A move failure refuses and attempts to restore already-moved paths; a failed
+#   restore reports the path preserved in quarantine. No leftover is deleted.
 #   When an origin configuration is detected, spawn fetches it,
 #   resolves the current remote default branch, and resets to its tip. When none
 #   is detected, spawn skips that remote freshness check and launches from the
@@ -1760,9 +1764,8 @@ spawn_worktree_has_origin_config() {  # <worktree>
   return 1
 }
 
-# The header owns leftover quarantine eligibility and preservation. Every path is
-# checked before any moves, so a slot is either wholly set aside or left as it was;
-# requiring no tracked entries prevents moving clean tracked files alongside untracked dirt.
+# The header owns leftover quarantine eligibility and preservation.
+# Requiring no tracked entries prevents moving clean tracked files alongside untracked dirt.
 quarantine_spawn_slot_scratch() {  # <worktree> <porcelain status>
   local worktree=$1 status=$2 line path dest tracked recent scratch_seen=0 moved=0 i
   local -a paths=()

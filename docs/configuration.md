@@ -102,7 +102,7 @@ state/
   endpoint-retirements.log  endpoint retirement and leftover-close assertions (operator or owning mate); written only by bin/fm-retire-endpoint.sh
   pr-unbinds.log          wrong-PR metadata clear assertions; written only by bin/fm-pr-unbind.sh
   terminal-outcomes/      inactive terminal-outcome receipts (bin/fm-inactive-reconcile.sh)
-  slot-quarantine/       preserved scratch from pooled worktree slots (bin/fm-spawn.sh header owns eligibility and destination layout)
+  slot-quarantine/       preserved untracked leftovers from pooled worktree slots (bin/fm-spawn.sh header owns eligibility and destination layout)
   model-chain/            per-lane model cooldowns ("Model fallback chains")
   pending-replies/        parent-owned secondmate pending replies (bin/fm-pending-reply-lib.sh)
   captain-direct/ captain-direct.log  parent-side captain-direct delivery ledger and echo-guard log (bin/fm-captain-direct-lib.sh)
