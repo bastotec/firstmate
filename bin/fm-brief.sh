@@ -368,7 +368,7 @@ The report is the only thing that survives, so anything worth keeping must be in
    treating it as a possible wedge. When you know when the wait clears, say so in the line with
    \`until <YYYY-MM-DDTHH:MMZ>\` (UTC) and firstmate rechecks at that time instead.
    Use \`blocked:\` when you are stuck and need help.
-5. Before reporting \`blocked:\`, try the obvious fix (see "Act within your scope" above); report it only if that failed, naming what you tried: \`blocked: {what is in the way}; tried {what}\`.
+5. Before reporting \`blocked:\`, follow "Act within your scope" above (try the obvious fix, then the project's documented path); report it only if both failed, naming what you checked and tried.
 6. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
    That decision goes to your parent mate (the first mate or second mate that launched you), never to the captain:
@@ -457,7 +457,7 @@ $RULE1
    known external wait you expect to clear on its own (an upstream release, a rate-limit reset,
    a scheduled window): firstmate then leaves your idle pane alone and rechecks it on a long
    cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
-5. Before reporting \`blocked:\`, try the obvious fix (see "Act within your scope" above); report it only if that failed, naming what you tried: \`blocked: {what is in the way}; tried {what}\`.
+5. Before reporting \`blocked:\`, follow "Act within your scope" above (try the obvious fix, then the project's documented path); report it only if both failed, naming what you checked and tried.
 6. If a decision belongs above the implementation worker (product choices, destructive actions),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
 $ASK_USER_BLOCK
