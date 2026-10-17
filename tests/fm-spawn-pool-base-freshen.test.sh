@@ -469,7 +469,7 @@ test_symlinked_leftovers_are_left_untouched() {
     id="pool-symlink-$kind-r2"
     rec=$(make_originless_case "symlink-$kind" "$id")
     read_case_record "$rec"
-    path=link
+    path='link'
     case "$kind" in
       old) path=old/nested/link ;;
       scratch) path=.scratch/nested/link ;;
