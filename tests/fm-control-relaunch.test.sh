@@ -1994,15 +1994,6 @@ test_relaunch_requires_the_recorded_endpoint_to_stop() {
 # fm-model-chain sources these fixture helpers without running this suite.
 [ "${FM_MODEL_CHAIN_TEST_SKIP_RUN:-0}" != 1 ] || return 0
 
-if [ -n "${FM_TEST_CONTROL_RELAUNCH_CASES:-}" ]; then
-  for test_case in $FM_TEST_CONTROL_RELAUNCH_CASES; do
-    case "$test_case" in test_*) ;; *) fail "invalid test case: $test_case" ;; esac
-    declare -F "$test_case" >/dev/null || fail "unknown test case: $test_case"
-    "$test_case"
-  done
-  exit 0
-fi
-
 test_relaunch_requires_the_recorded_endpoint_to_stop
 test_secondmate_relaunch_preserves_an_in_place_model_choice
 test_relaunch_model_choice_follows_launch_resolution
