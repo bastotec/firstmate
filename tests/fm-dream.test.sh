@@ -597,6 +597,9 @@ SH
     || fail "the digest lacks the mate's current state"
   grep -q 'records disagree: bob helper: live child state' "$d"/home/state/dream/digest-*.md \
     || fail "the disagreement is not in the digest for triage"
+  jq -e '.disagreements == ["bob helper: live child state has no in-flight backlog item: w1=paused"]
+    and (.summary | test("1 home record disagrees \\(bob helper: live child state"))' "$(ls "$d"/home/state/dream/runs/*.json)" >/dev/null \
+    || fail "the disagreement is not in the run summary: $(jq -c '{summary, disagreements}' "$(ls "$d"/home/state/dream/runs/*.json)")"
   sed -i.bak 's/"state": "externally_held", //' "$d/bin/report"
   run_dream "$d" --only collect > "$d/out.json" || fail "collect exited nonzero"
   jq -e '.steps.collect.status == "partial" and (.steps.collect.why | test("bob-helper: no current state"))' "$d/out.json" >/dev/null \
@@ -604,7 +607,31 @@ SH
   pass "collect is done when every mate was read, and readable disagreements go to the digest"
 }
 
+test_waiting_for_ziggy_is_not_the_step_s_own_time() {
+  local d
+  d=$(new_case ziggy-wait)
+  # Ziggy's dream is "running" for the first five checks, then done.
+  cat > "$d/bin/pgrep" <<'SH'
+#!/usr/bin/env bash
+n=$(cat "$STUB_CALLS/pgrep" 2>/dev/null || echo 0); echo $((n + 1)) > "$STUB_CALLS/pgrep"
+[ "$n" -lt 5 ]
+SH
+  chmod +x "$d/bin/pgrep"
+  FM_DREAM_SKIP_ZIGGY_WAIT=0 FM_DREAM_ZIGGY_POLL=1 run_dream "$d" --only collect > "$d/out.json" \
+    || fail "collect exited nonzero"
+  python3 - "$(ls "$d"/home/state/dream/runs/*.json)" <<'PY' || fail "the wait was booked as collect time: $(cat "$d/out.json")"
+import json, sys
+c = json.load(open(sys.argv[1]))["steps"]["collect"]
+assert c["waited_for_ziggy"] == 5, c
+# Collect itself takes about a second here; the wait is not part of it.
+assert c["seconds"] < 5, c
+assert set(c["timings"]) == {"sessions and local logs", "no-mistakes", "fleet report", "digest"}, c["timings"]
+PY
+  pass "time spent waiting for Ziggy's dream is recorded apart from the step's own time, with collect's phases"
+}
+
 test_collect_builds_a_private_digest_of_the_day
+test_waiting_for_ziggy_is_not_the_step_s_own_time
 test_no_mistakes_failures_are_broken_down_by_step_cause_and_host
 test_a_bridge_without_reports_skips_the_host_and_says_so
 test_readable_disagreements_do_not_make_collect_partial

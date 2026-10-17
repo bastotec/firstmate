@@ -73,12 +73,25 @@ Files under <home>/state/dream/:
                      interrupted. The summary bin/fm_report.py reads
                      (schema fm-dream.v1):
                      {schema, date, started, finished, dry_run, status, steps: {name:
-                     {status, seconds, why?}}, skills: [{skill, what, why}],
-                     skills_commit, raised: [{title, repo, mate, key, why}],
+                     {status, seconds, why?, waited_for_ziggy?, timings?}},
+                     skills: [{skill, what, why}], skills_commit,
+                     raised: [{title, repo, mate, key, why}],
                      slow_commands: [{command, seconds, count}], counts: {...},
+                     disagreements: [<home records read but disagreeing>],
                      no_mistakes: {...} or null, summary}
   raised.jsonl       one line per raised item (dedupe across nights)
   digest-<date>.md   the private digest the agents read
+
+Step timing starts after the pre-step checks; waited_for_ziggy, when nonzero,
+is the seconds spent polling for Ziggy's dream before that step.
+Collect's timings records elapsed seconds to one decimal place for its phases:
+"sessions and local logs" (including the local failed-run read), "no-mistakes"
+(the host breakdown), "fleet report", and "digest".
+Both timing fields survive publication to latest.json.
+The summary names the total recorded wait when it reaches five minutes.
+Disagreements carries the fleet report's inconsistencies after excluding lines
+naming excluded homes; the summary names their count and the first one's first
+120 characters, with an indication when more remain.
 
 no_mistakes (null when collect did not produce a breakdown):
   {date, failed, by_cause, by_step,
@@ -105,7 +118,7 @@ counts.no_mistakes_failed remains the local fleet-only count, not the host total
 Configuration: docs/configuration.md "Fleet dreaming" owns config/dream.json.
 Environment: FM_DREAM_DECK (deck binary), FM_DREAM_DOTFILES (~/dotfiles),
 FM_DREAM_JEV (Jev helper command), FM_DREAM_MIN_FREE_GB, FM_DREAM_NO_MISTAKES_DB.
-Tests only: FM_DREAM_NOW (epoch), FM_DREAM_SKIP_ZIGGY_WAIT=1, and FM_DREAM_TASKS,
+Tests only: FM_DREAM_NOW (epoch), FM_DREAM_SKIP_ZIGGY_WAIT=1, FM_DREAM_ZIGGY_POLL (seconds), and FM_DREAM_TASKS,
 FM_DREAM_HANDOFF, FM_DREAM_REPORT, FM_DREAM_ON, FM_DREAM_CAPTAIN_MEMORY replacing
 bin/fm-tasks-axi.sh, bin/fm-backlog-handoff.sh, bin/fm-report.sh, bin/fm-on.sh and
 `bin/fm_captain_memory.py upkeep`; FM_DREAM_BRIDGE
@@ -134,6 +147,7 @@ STEPS = ['collect', 'skills', 'triage', 'file', 'memory']
 BUDGET = {'collect': 300, 'skills': 2700, 'triage': 1200, 'file': 300, 'memory': 120}
 MIN_FREE_GB = float(os.environ.get('FM_DREAM_MIN_FREE_GB', '3'))
 WAIT_ZIGGY = 3600
+ZIGGY_POLL = float(os.environ.get('FM_DREAM_ZIGGY_POLL', '30'))  # tests shorten the poll
 MAX_DIFF_LINES = 600
 MAX_SKILLS = 5  # asked of the agent; the changed-line cap is the enforced bound
 MAX_RAISED = 3
@@ -303,14 +317,20 @@ def ziggy_dreaming():
     return r.returncode == 0
 
 
+WAITED = {}  # step -> seconds it waited for Ziggy's dream before starting
+
+
 def room_for(step):
-    """None when the step may start, else why not."""
+    """None when the step may start, else why not. Time spent waiting for
+    Ziggy's dream is recorded in WAITED, never in the step's own seconds."""
     waited = 0
     while ziggy_dreaming():
         if waited >= WAIT_ZIGGY:
+            WAITED[step] = round(waited)
             return "Ziggy's dream still running after %d min" % (WAIT_ZIGGY // 60)
-        time.sleep(30)
-        waited += 30
+        time.sleep(ZIGGY_POLL)
+        waited += ZIGGY_POLL
+    WAITED[step] = round(waited)
     free = available_gb()
     if free is not None and free < MIN_FREE_GB:
         return 'only %.1f GB free on the Mac' % free
@@ -748,6 +768,13 @@ def mentions_excluded(ctx, line):
 def step_collect(ctx):
     parts, slow = ['# Fleet day digest, %s (since %s)' % (ctx.day, iso(ctx.since)), ''], []
     UNREADABLE.clear()
+    timings, mark = {}, [time.time()]
+
+    def lap(phase):  # seconds since the previous phase, so a slow night shows where it went
+        now = time.time()
+        timings[phase] = round(now - mark[0], 1)
+        mark[0] = now
+
     sessions = local_sessions(ctx)
     for label, path in sessions:
         parts += session_lines(path, ctx.since, slow, label, lambda line: mentions_excluded(ctx, line))
@@ -788,7 +815,9 @@ def step_collect(ctx):
     sweep = tail_since(ctx.state / 'idle-sweep.log', ctx.since, hide=lambda l: mentions_excluded(ctx, l))
     if sweep:
         parts += ['## Idle sweep', *sweep, '']
+    lap('sessions and local logs')
     nmb, nmb_errors = nm_breakdown(ctx, nm)
+    lap('no-mistakes')
     ctx.facts['no_mistakes'] = nmb
     if nmb['failed'] or nmb['hosts']:
         parts += ['## No-mistakes failures by cause', nm_summary(nmb)]
@@ -798,6 +827,7 @@ def step_collect(ctx):
         parts += ['- by step: ' + ', '.join('%s %d' % kv for kv in sorted(nmb['by_step'].items(), key=lambda kv: -kv[1]))]
         parts += ['- unread: ' + e for e in nmb_errors] + ['']
     rep = fleet_report(ctx)
+    lap('fleet report')
     if rep:
         parts += ['## Fleet report', rep.get('summary') or '']
         parts += ['- waiting: %s (on %s, %s)' % (w.get('what'), w.get('on'), w.get('mate'))
@@ -808,7 +838,8 @@ def step_collect(ctx):
             m.get('waiting', 0), m.get('shipped', 0))
             for m in rep.get('mates', []) if m.get('id') not in ctx.excluded and not mentions_excluded(ctx, m.get('id') or '')]
         parts += ['- gap: ' + g for g in rep.get('gaps', []) if not mentions_excluded(ctx, g)]
-        parts += ['- records disagree: ' + g for g in rep.get('inconsistencies', []) if not mentions_excluded(ctx, g)]
+        ctx.facts['disagreements'] = [g for g in rep.get('inconsistencies', []) if not mentions_excluded(ctx, g)]
+        parts += ['- records disagree: ' + g for g in ctx.facts['disagreements']]
         parts += ['- crew %s: %s on %s (%s)' % (c.get('status'), c.get('agent'), c.get('task'), c.get('mate'))
                   for c in rep.get('crew', []) if c.get('status') in ('failed', 'blocked', 'stopped', 'needs-decision')
                   and c.get('mate') not in ctx.excluded and not mentions_excluded(ctx, json.dumps(c, ensure_ascii=False))][:30]
@@ -846,7 +877,8 @@ def step_collect(ctx):
         unread.append('%d session file(s) unreadable' % len(UNREADABLE))
     # Unread machines are always named; other reasons are capped at three.
     gaps = ([nm_err] if nm_err else []) + (['fleet report unreadable'] if rep is None else []) + unread[:3] + nmb_errors
-    result = {'status': 'partial' if gaps else 'done', **ctx.facts['counts']}
+    lap('digest')
+    result = {'status': 'partial' if gaps else 'done', **ctx.facts['counts'], 'timings': timings}
     if gaps:
         result['why'] = '; '.join(gaps)
     return result
@@ -1348,6 +1380,13 @@ def summary_line(run):
     text = 'Overnight: %s, %s.' % (
         '%d skill%s updated' % (len(skills), '' if len(skills) == 1 else 's') if skills else 'no skill changes',
         '%d fix%s raised' % (len(raised), '' if len(raised) == 1 else 'es') if raised else 'nothing raised')
+    waited = sum(s.get('waited_for_ziggy', 0) for s in run['steps'].values())
+    if waited >= 300:
+        text += " Waited %d min for Ziggy's dream to finish." % round(waited / 60)
+    odd = run.get('disagreements') or []
+    if odd:
+        text += ' %d home record%s (%s%s).' % (
+            len(odd), ' disagrees' if len(odd) == 1 else 's disagree', odd[0][:120], '; and more' if len(odd) > 1 else '')
     nm = nm_summary(run.get('no_mistakes'))
     if nm:
         text += ' ' + nm[0].upper() + nm[1:] + '.'
@@ -1394,6 +1433,7 @@ def cmd_run(args):
         run['slow_commands'] = ctx.facts.get('slow_commands', [])
         run['counts'] = ctx.facts.get('counts', {})
         run['no_mistakes'] = ctx.facts.get('no_mistakes')
+        run['disagreements'] = ctx.facts.get('disagreements', [])
         run['captain_memory'] = ctx.facts.get('captain_memory')
         run['status'] = ('done' if all(s.get('status') in CLEAN for s in run['steps'].values()) and not force_partial
                          else 'partial')
@@ -1401,7 +1441,7 @@ def cmd_run(args):
         write_json(log_path, run)
         if not ctx.dry_run and not args.only:
             write_json(ctx.dir / 'latest.json', {k: v for k, v in run.items() if k != 'steps'} | {
-                'steps': {n: {k: v for k, v in s.items() if k in ('status', 'seconds', 'why')}
+                'steps': {n: {k: v for k, v in s.items() if k in ('status', 'seconds', 'why', 'waited_for_ziggy', 'timings')}
                           for n, s in run['steps'].items()}})
         print(json.dumps({'summary': run['summary'], 'steps': {n: {k: v for k, v in s.items() if k != 'items'}
                                                                for n, s in run['steps'].items()}},
@@ -1413,6 +1453,8 @@ def cmd_run(args):
             began = time.time()
             interrupted.update(name=name, began=began)
             why = room_for(name)
+            began = time.time()  # the step's own time starts after any wait for Ziggy
+            interrupted.update(began=began)
             if why:
                 run['steps'][name] = {'status': 'skipped', 'why': why}
             else:
@@ -1425,6 +1467,8 @@ def cmd_run(args):
                     run['steps'][name] = {'status': 'failed', 'why': '%s: %s' % (type(exc).__name__, str(exc)[:300])}
             ctx.deadline = None
             run['steps'][name]['seconds'] = round(time.time() - began)
+            if WAITED.get(name):
+                run['steps'][name]['waited_for_ziggy'] = WAITED[name]
             if name == 'triage':
                 run['steps'][name]['items'] = ctx.facts.get('triage', [])
             write_json(log_path, run)
