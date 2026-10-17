@@ -97,6 +97,7 @@ usage() {
   cat <<'EOF'
 usage: fm-retire-endpoint.sh [--override-runtime-refusal] <task-id> [<task-id>...]
        FM_HOME=<owning-home> fm-retire-endpoint.sh --finished <task-id> [<task-id>...]
+       FM_HOME=<owning-home> fm-retire-endpoint.sh --finished <task-id> --merged-pr <url>
        FM_HOME=<owning-home> fm-retire-endpoint.sh --orphan <task-id> [--endpoint <endpoint-id>]
        FM_HOME=<owning-home> fm-retire-endpoint.sh --list-orphans
 
@@ -184,6 +185,10 @@ the worktree before it reaches the endpoint, which is what stands behind the
 stop this asserts. The log line carries basis=finished-work. Anything refused
 here is the captain's decision.
 
+--merged-pr <url> supplies the PR/MR URL for one --finished task when it is
+not recorded in its metadata or backlog. Cleanup rechecks its live forge state
+before preserving any committed work on a kept/ branch.
+
 --orphan: close one live stream endpoint whose task record in this home is
 already gone. It needs an explicit FM_HOME and asks for no typed confirmation.
 Ownership needs this home's state/<id>.inbox/deck-<endpoint-id>/ record plus
@@ -212,6 +217,7 @@ refuse() {
 
 IDS=()
 FINISHED=0
+MERGED_PR_URL=
 OVERRIDE_RUNTIME_REFUSAL=0
 ORPHAN=0
 LIST_ORPHANS=0
@@ -226,6 +232,12 @@ while [ "$#" -gt 0 ]; do
       ;;
     --finished)
       FINISHED=1
+      ;;
+    --merged-pr)
+      [ "$#" -gt 0 ] && fm_pr_url_parse "$1" \
+        || refuse "--merged-pr requires a supported PR/MR URL"
+      MERGED_PR_URL=$1
+      shift
       ;;
     --override-runtime-refusal)
       OVERRIDE_RUNTIME_REFUSAL=1
@@ -256,6 +268,11 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ -n "$MERGED_PR_URL" ]; then
+  [ "$FINISHED" = 1 ] && [ "${#IDS[@]}" -eq 1 ] \
+    || refuse "--merged-pr requires --finished with exactly one task id"
+fi
 
 if [ "$ORPHAN" = 1 ] || [ "$LIST_ORPHANS" = 1 ]; then
   [ "$FINISHED" = 0 ] || refuse "--finished retires task records; --orphan and --list-orphans close endpoints that have none - use one mode"
@@ -611,6 +628,7 @@ for id in "${IDS[@]}"; do
   teardown_rc=0
   teardown_args=("$id")
   [ "$FINISHED" = 0 ] || teardown_args+=(--keep-commits)
+  [ -z "$MERGED_PR_URL" ] || teardown_args+=(--merged-pr "$MERGED_PR_URL")
   "$SCRIPT_DIR/fm-teardown.sh" "${teardown_args[@]}" || teardown_rc=$?
   if [ "$teardown_rc" = 0 ]; then
     echo "note: $id retired; cleanup completed under the retirement recorded for $retired_by at $retired_at" >&2

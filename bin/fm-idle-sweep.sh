@@ -384,7 +384,9 @@ cleanup() {
   [ "$rc" -eq 0 ] && return 0
   if printf '%s' "$out" | grep -q "on the retired '"; then
     rc=0
-    out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-retire-endpoint.sh" --finished "$id" </dev/null 2>&1) || rc=$?
+    args=(--finished "$id")
+    [ -z "$MERGED_PR_URL" ] || args+=(--merged-pr "$MERGED_PR_URL")
+    out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-retire-endpoint.sh" "${args[@]}" </dev/null 2>&1) || rc=$?
     [ "$rc" -eq 0 ] && return 0
   fi
   CLEANUP_WHY=$(printf '%s\n' "$out" | grep -m1 -E '^(REFUSED|error|refus)' || true)
