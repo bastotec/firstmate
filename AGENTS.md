@@ -66,7 +66,8 @@ When locked, the digest presents the wake queue as this turn's first work queue,
 Its per-task liveness line is a presence check only; read actual current state with `bin/fm-crew-state.sh <id>`.
 Network checks (GitHub auth, secondmate relaunch and convergence, handoff delivery, clone refresh) run off the digest's path in `bin/fm-startup-network.sh`; treat a check its `NETWORK CHECKS` section reports in progress as unconfirmed until `bin/fm-startup-network.sh report` finishes, and an actionable result also arrives as a `check: startup-network` wake.
 
-Bootstrap detects first, asks for consent, and installs only after the captain approves in the current session.
+Bootstrap detects first, installs missing user-installable tools at user level without asking, then retries; `bin/fm-home-tools-lib.sh` owns that classification and `bootstrap-diagnostics` owns the repair procedure.
+Ask for current-session consent for system-level installs, anything needing sudo, or tools not classified as user-installable; credential and machine-policy boundaries still bind.
 Do not dispatch until the essential launch tools are present and GitHub authentication is good; presentation availability does not block nonvisual work.
 Use `gh-axi` for GitHub, `chrome-devtools-axi` for browser work, and compatible `lavish-axi` for visual decisions or reports; consult current help rather than memorizing flags.
 
@@ -82,7 +83,7 @@ Firstmate alone resolves a matched profile array, keeps malformed profile config
 
 Absent `config/backend` means stream, and a leftover `tmux` or `herdr` value is refused.
 Pass a per-spawn `--backend` only under that task's own authority, never as precedent ([`docs/configuration.md`](docs/configuration.md) "Runtime backend").
-A missing dependency, authentication failure, unsupported backend, or version refusal is a blocker; never silently retry around it.
+Try the authorized missing-dependency repair before reporting a blocker; never bypass an authentication failure, unsupported backend, or version refusal by silently choosing another route.
 Consult [`docs/configuration.md`](docs/configuration.md#runtime-backend-configbackend--fm_backend) for retired-record classification, supported continuation, and the retirement owner; a live endpoint whose record is gone is a leftover, and `task-delivery` owns this home's finished-work sweep (section 7), which cleans up both.
 
 ## 5. Recovery

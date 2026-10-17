@@ -342,9 +342,21 @@ SH
 # --- 1. same-harness relaunch -----------------------------------------------
 
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint() {
-  local dir out rc gen_before gen_after
+  local dir out rc gen_before gen_after prompt precedence_line old_rule_line
   dir=$(new_case same rl1)
   add_ship_task "$dir" rl1 deck
+  cat >> "$dir/home/data/rl1/brief.md" <<'EOF'
+
+# Rules
+7. Never stop, restart, or update the shared `no-mistakes` daemon - it is one instance serving
+   every lane/home, so restarting it kills other lanes' in-flight pipeline runs; only firstmate
+   manages the daemon.
+   Before you append `blocked:` about the pipeline, run `no-mistakes daemon status` and
+   `no-mistakes axi status`. If the daemon socket refuses connections or is missing, append
+   `blocked: {the daemon error}` and stop even when the local run record still says running or
+   fixing, because that record can be stale after the daemon exits. A run record failed with a
+   daemon error is also a real block.
+EOF
   gen_before=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl1)
   printf 'busy_gen=%s\n' "$gen_before" >> "$dir/home/state/rl1.meta"
   out=$(run_control "$dir" rl1 relaunch --note "stopped mid-refactor"); rc=$?
@@ -363,7 +375,18 @@ test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint() {
     || fail "the transaction journal should end complete"
   assert_grep "/quit" "$dir/fake/literal" "the previous agent should have been exited"
   assert_grep "encode launch-brief" "$dir/fake/literal" "the replacement should have been launched"
-  pass "fm-control relaunch: a same-harness relaunch replaces the agent in the same endpoint and worktree"
+  prompt="$dir/home/data/rl1/launch-brief.md"
+  assert_grep "$prompt" "$dir/fake/literal" "the replacement must receive the current emitted prompt"
+  precedence_line=$(grep -n '^This section supersedes any older brief instruction that tells you to stop, report blocked, or leave a daemon or tool alone instead of trying the obvious fix;' "$prompt" | cut -d: -f1)
+  old_rule_line=$(grep -n '^7\. Never stop, restart, or update the shared' "$prompt" | cut -d: -f1)
+  [ -n "$precedence_line" ] && [ -n "$old_rule_line" ] && [ "$precedence_line" -lt "$old_rule_line" ] \
+    || fail "relaunch must deliver the superseding repair contract before the obsolete daemon rule"
+  assert_grep 'the hard stops below, the rule against stopping, restarting or updating a running shared daemon, and the no-mistakes ask-user escalation and `--yes` / `-y` ban are unchanged' "$prompt" \
+    "repair precedence must preserve safety and ask-user boundaries"
+  assert_grep 'install it for your user or start it, retry, and report only if that fails' "$prompt" \
+    "relaunch must deliver the repair default"
+  assert_grep 'deploying or promoting to production' "$prompt" "relaunch must retain the hard stops"
+  pass "fm-control relaunch: a same-harness relaunch preserves identity and supersedes obsolete stopping rules"
 }
 
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text() {

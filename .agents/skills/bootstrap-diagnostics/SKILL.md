@@ -13,19 +13,22 @@ metadata:
 
 Handle each printed line as below, before dispatching work that depends on it.
 The line formats themselves are owned by `bin/fm-bootstrap.sh`'s header; this playbook owns the response to actionable lines.
-The inline rules in `AGENTS.md` section 3 still bind: detect, then consent, then install - never install anything the captain has not approved in this session - and no work is dispatched until the tools it needs are present and GitHub auth is good.
+The inline rules in `AGENTS.md` section 3 still bind: repair missing user-installable tools before reporting a blocker, and dispatch no work until the tools it needs are present and GitHub auth is good.
+For an install or upgrade below, source `bin/fm-home-tools-lib.sh` and check `fm_home_tool_user_installable <tool>`: if it succeeds, run `bin/fm-bootstrap.sh install <tool>` at user level without asking, then rerun bootstrap and retry the operation that needed it.
+Use a user-owned installation destination; ask for current-session consent instead if the tool is not user-installable, the install would be system-level, or it needs sudo.
+Credential entry and the machine's own policy remain hard stops; if an authorized repair fails, report what was tried and the remaining failure.
 When any diagnostic needs captain attention, report the plain consequence and requested action using `AGENTS.md` section 9's captain-facing translation contract; do not name the diagnostic label unless the captain needs to paste it into a command or issue.
 
-- `MISSING: <tool> (install: <command>)` - list the missing tools to the captain with a one-line purpose each plus the printed install commands, wait for consent (one approval may cover the list), then run `bin/fm-bootstrap.sh install <approved tools...>`.
+- `MISSING: <tool> (install: <command>)` - apply the install procedure above, then confirm the tool is usable before dispatching dependent work.
   For `treehouse`, this also covers an installed version whose `treehouse get` lacks `--lease`; treat it as an upgrade request.
   For `no-mistakes`, this also covers an installed version older than 1.46.0, because this repo's PR gate requires structured pipeline attestation that older builds do not write.
   For essential axi-family tools - `gh-axi`, `tasks-axi`, `quota-axi` - an installed version below its floor is a plain upgrade request; [`bin/fm-bootstrap.sh`](../../../bin/fm-bootstrap.sh) owns the floor policy, and never argue the floor down to whatever the home happens to have installed.
   For `tasks-axi`, this additionally covers an installed build that fails the separate feature probe (`bin/fm-tasks-axi-lib.sh` owns the definition); `config/backlog-backend=manual` only suppresses the verbose `BOOTSTRAP_INFO: tasks-axi available` fact, not this missing-tool report.
   For `quota-axi`, bootstrap requires it because firstmate reads its current output directly before resolving every crew-dispatch profile array; without it, report the missing requirement and do not choose around an unexamined candidate.
 - `VERSION_UNREADABLE: <tool> (installed build; requires semantic version >=<floor>; upgrade: <command>)` - the essential tool exists, but its version output cannot prove that it satisfies the floor, so do not dispatch work that depends on it and do not describe it as absent.
-  Tell the captain that the installed build's compatibility is unknown, request consent for the printed upgrade command, then run `bin/fm-bootstrap.sh install <approved tool>` and rerun session start to confirm a semantic version at or above the floor.
-- `PRESENTATION_UNAVAILABLE: lavish-axi ...` - explain that visual presentation is unavailable and continue nonvisual work with plain-text decisions and reports; do not hold unrelated dispatch for installation consent.
-  Do not use Lavish until it satisfies the floor owned by `bin/fm-bootstrap.sh`; when visual work needs it, request consent for the printed install or upgrade command, then rerun bootstrap to confirm compatibility before using it.
+  Apply the install procedure above for the printed upgrade, then rerun bootstrap to confirm a semantic version at or above the floor.
+- `PRESENTATION_UNAVAILABLE: lavish-axi ...` - continue nonvisual work with plain-text decisions and reports; do not hold unrelated dispatch for installation.
+  Do not use Lavish until it satisfies the floor owned by `bin/fm-bootstrap.sh`; when visual work needs it, apply the install procedure above, then rerun bootstrap to confirm compatibility before using it.
   Scout briefs check the same floor when scaffolded and ask for a text report instead of a Lavish loop, so scaffold a visual scout only after that rerun confirms compatibility.
 - `BACKEND_INVALID: <name> (known: <names>)` - the resolved runtime backend has no verified dependency or lifecycle contract, so do not dispatch work until the invalid `FM_BACKEND` or `config/backend` value is corrected to one of the listed backends.
 - `NEEDS_GH_AUTH` - ask the captain to run `! gh auth login` (interactive; you cannot run it for them).

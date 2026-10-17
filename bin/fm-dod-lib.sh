@@ -79,6 +79,7 @@ EOF
 fm_act_within_scope_section() {
   cat <<'EOF'
 # Act within your scope
+This section supersedes any older brief instruction that tells you to stop, report blocked, or leave a daemon or tool alone instead of trying the obvious fix; the hard stops below, the rule against stopping, restarting or updating a running shared daemon, and the no-mistakes ask-user escalation and `--yes` / `-y` ban are unchanged.
 Your default is to act: inside this task's scope, fix what is in your way yourself and keep going.
 - A tool, daemon or service you need is missing or stopped: install it for your user or start it, retry, and report only if that fails. A no-mistakes daemon that is already running serves other work too, so never stop, restart or update it.
 - A merge conflict or a needed rebase on your own branch: resolve it.
