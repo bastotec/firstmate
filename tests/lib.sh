@@ -65,27 +65,16 @@ unset FM_ASK_TRIAGE_HELPER FM_ASK_TRIAGE_KEY_VAR
 # under the marker. A case that verifies the refusal sets FM_TASK_ID itself.
 unset FM_TASK_ID
 
-# Scrub ambient home/root identity before any fixture establishes its own.
-# A suite launched from inside a live home (a worker running the tests, as
-# happened on 2026-10-15: watcher-triage fixtures leaked three child-outcome
-# lines into the real parent channel) inherits that home's FM_HOME and
-# FM_ROOT_OVERRIDE, so bin/fm-watch.sh's per-poll
-# bin/fm-inactive-reconcile.sh scan resolves fm_parent_channel_destination
-# against the REAL home and appends fixture ledgers to the REAL parent
-# channel. FM_STATE_OVERRIDE alone does not scope that resolution, because
-# the parent-channel library reads the home, not the state dir.
-#
-# The scrub is only the first layer of the isolation guarantee, not the whole
-# of it: with both overrides empty the driven scripts (bin/fm-watch.sh and
-# bin/fm-inactive-reconcile.sh) fall back to the code root that contains the
-# invoked script, and a secondmate checkout seeds the parent-channel markers at
-# exactly that root, so a nested invocation that relies on the empty fallback
-# could still resolve a REAL seeded home. Every suite therefore also pins
-# FM_HOME (and FM_ROOT_OVERRIDE) to its fixture home at the launch boundary
-# after sourcing this helper; tests/watch-triage-helpers.sh owns that audit
-# across the suites that drive the watcher, the wake drain, and the reconcile
-# scan. A case that verifies real-home behavior sets FM_HOME itself after
-# sourcing this helper.
+# Fixture home identity must not come from the invoking worker's environment.
+# FM_STATE_OVERRIDE alone cannot isolate parent-channel writes: the channel
+# resolver reads the home's secondmate markers, not the overridden state dir.
+# Clearing these values is only the first layer: an unset home can still fall
+# back to a code root carrying live secondmate markers. After sourcing this
+# helper, launch fixtures with FM_HOME pinned to their synthetic home and any
+# FM_ROOT_OVERRIDE pinned to their synthetic code root; do not rely on an empty
+# fallback. Nested shells must establish that identity after sourcing too.
+# tests/fm-inactive-reconcile.test.sh covers explicitly pinned launches under a
+# hostile ambient home and from a synthetic marked code root.
 unset FM_HOME FM_ROOT_OVERRIDE
 
 # Clear the tasks-axi env overrides. An operator shell exports TASKS_AXI_FILE

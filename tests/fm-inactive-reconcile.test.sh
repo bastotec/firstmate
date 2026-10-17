@@ -804,18 +804,10 @@ test_watcher_poll_delivers_child_ledger_line_to_parent() {
   pass "the real watcher poll delivers a child's terminal ledger line to the parent channel"
 }
 
-# 2026-10-15 fixture-leak regression: the watcher-triage suites drive the real
-# watcher with only FM_STATE_OVERRIDE pinned, so a suite launched from inside a
-# live home inherited that home's FM_HOME/FM_ROOT_OVERRIDE, fm-watch.sh resolved
-# the reconcile scan's parent-channel destination against the REAL home's
-# secondmate markers, and three fixture child-outcome lines (task ids done,
-# validating, busy-fresh) were appended to the real parent channel. tests/lib.sh
-# now scrubs the ambient identity at source time. This case pins that scrub by
-# launching the watcher in the suites' own invocation shape from a hostile
-# ambient - a foreign secondmate home whose parent channel holds a canary line -
-# and asserting the scan still records every fixture outcome inside the fixture
-# tree while the foreign channel stays byte-identical. Without the scrub the
-# hostile FM_HOME would append the child-outcome lines to that canary.
+# Exercise the launch-boundary isolation rule in tests/lib.sh under a hostile
+# ambient secondmate identity. The child sources the helper, then explicitly
+# pins its fixture home and code root. All three fixture outcomes must become
+# local pending receipts while the foreign parent-channel canary stays intact.
 test_watcher_fixture_scan_cannot_escape_the_fixture_tree() {
   local foreign foreign_canary pid i receipt
   make_world fixture-leak
@@ -848,12 +840,8 @@ EOF
   prime_turnend_seen "$MAIN/state" "$MAIN/state/validating.turn-ended"
   prime_turnend_seen "$MAIN/state" "$MAIN/state/busy-fresh.turn-ended"
 
-  # The suites' own invocation shape - FM_STATE_OVERRIDE only, no pinned home -
-  # launched from the hostile ambient a live home used to inject. Sourcing
-  # tests/lib.sh must scrub that inheritance before the watcher resolves its
-  # home; with the scrub the home falls back to a main home, so the fixture
-  # outcomes are presented inside the fixture instead of being delivered to the
-  # ambient home's parent channel.
+  # Re-establish fixture identity after sourcing the helper in the child, so
+  # neither the hostile ambient home nor the executing checkout is selected.
   # shellcheck disable=SC2016 # $1 must reach the child shell unexpanded
   env FM_HOME="$foreign" FM_ROOT_OVERRIDE="$foreign" \
     PATH="$WORLD/fakebin:$PATH" FM_STATE_OVERRIDE="$MAIN/state" \
@@ -890,14 +878,13 @@ EOF
       *) fail "an unexpected outcome receipt appeared: $(cat "$receipt")" ;;
     esac
   done
-  # The fixture-side obligation is durable: the watcher surfaced the queued
-  # inactive-outcome wake for the fixture's own state (the suites' shape runs a
-  # main home, so the presentation is queued rather than parent-delivered).
+  # The explicit fixture home has no secondmate marker, so its presentation
+  # obligation must be queued locally rather than parent-delivered.
   [ "$(wake_count "$MAIN" 'inactive-outcome')" -ge 1 ] \
     || fail "the fixture scan never queued its inactive-outcome obligation: $(cat "$WORLD/leak-watch.out")"
 
-  # ...and nothing escaped the fixture tree: the foreign canary is byte-identical
-  # and carries no child-outcome line, and the foreign home has no write at all.
+  # The foreign channel retains its canary content, and the foreign home must
+  # contain no child-outcome receipt key.
   [ "$(cat "$foreign_canary")" = 'canary: no fixture write may append here' ] \
     || fail "a fixture scan rewrote the foreign parent channel: $(cat "$foreign_canary")"
   if grep -rq 'child-outcome-' "$foreign"; then
@@ -906,17 +893,9 @@ EOF
   pass "a fixture watcher scan under a hostile ambient home cannot write outside its fixture tree"
 }
 
-# 2026-10-15 fallback-layer regression: tests/lib.sh's scrub leaves both
-# overrides empty, and the driven scripts then resolve their home from the code
-# root that contains them, so a secondmate checkout seeds the secondmate markers
-# at exactly that root and the fallback can still select a REAL seeded home.
-# Every launch boundary therefore pins FM_HOME after sourcing the helper. This
-# case pins the fallback layer itself: the reconcile scan is invoked from a
-# synthetic marked code root whose real-parent canary sits exactly where the
-# fallback would deliver, with only FM_STATE_OVERRIDE pointing at the fixture
-# - the suites' pre-scrub invocation shape - and the hostile ambient of the
-# sibling case above. The scan must record the fixture outcome inside the
-# fixture tree and leave the fallback real parent channel byte-identical.
+# Exercise the same isolation rule when the invoked script's code root carries
+# synthetic secondmate markers. The explicit fixture identity must prevent
+# fallback delivery to the marked root's parent-channel canary.
 test_reconcile_from_a_marked_code_root_stays_inside_the_fixture() {
   local foreign foreign_canary root main_root
   make_world marked-root
@@ -960,10 +939,8 @@ EOF
   prime_seen "$MAIN/state" "$MAIN/state/done.status"
   prime_turnend_seen "$MAIN/state" "$MAIN/state/done.turn-ended"
 
-  # The pre-scrub invocation shape: a live home's ambient identity in the
-  # environment, only FM_STATE_OVERRIDE naming the fixture, and the script
-  # resolved from the marked synthetic code root, so the empty-override
-  # fallback has every opportunity to select the marked root's real home.
+  # Launch from the marked synthetic code root, but explicitly select the
+  # unmarked fixture home and root after sourcing the helper in the child.
   # shellcheck disable=SC2016 # $1 must reach the child shell unexpanded
   env FM_HOME="$foreign" FM_ROOT_OVERRIDE="$foreign" \
     PATH="$WORLD/fakebin:$PATH" FM_STATE_OVERRIDE="$MAIN/state" \
@@ -989,10 +966,10 @@ EOF
   # a pending presentation receipt for the leaked task id.
   [ "$(outcome_count "$MAIN" pending)" -ge 1 ] \
     || fail "a scan from a marked code root did not record the fixture outcome inside the fixture: $(cat "$WORLD/marked-root-reconcile.out")"
-  # And nothing escaped the fixture tree: the fallback real parent's canary is
-  # byte-identical and carries no child-outcome line, and neither the foreign
-  # home nor the marked code root saw any write. The grep names the fixture
-  # child's own receipt-key prefix - child-outcome-done- - which a real leak
+  # The marked root's parent channel retains its canary content, and no fixture
+  # receipt key may appear in the foreign home or either synthetic code root.
+  # The grep names the fixture child's own receipt-key prefix -
+  # child-outcome-done- - which a real leak
   # always writes (the reconcile path builds its outcome key from the child
   # id and state) but which never occurs in shipped source, unlike the bare
   # child-outcome- literal the copied code root legitimately carries.

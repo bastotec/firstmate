@@ -18,26 +18,8 @@
 # workers. Every case lives in exactly one suite; this file holds only the
 # helpers they share.
 #
-# 2026-10-15 isolation audit (task fm-watch-triage-fixture-parent-leak): the
-# three scripts these suites drive - bin/fm-watch.sh (which runs
-# bin/fm-inactive-reconcile.sh scan every poll), bin/fm-wake-drain.sh, and
-# bin/fm-inactive-reconcile.sh itself - resolve FM_HOME from the environment
-# even when FM_STATE_OVERRIDE points at a fixture, so a suite launched from a
-# live home inherited the real home's parent-channel binding and leaked three
-# child-outcome fixture lines into the real parent channel. Every tests/*.test.sh
-# that invokes one of the three scripts now sources tests/lib.sh (directly or
-# through a behavior helper), which scrubs ambient FM_HOME/FM_ROOT_OVERRIDE at
-# source time; tests/fm-gotmp.test.sh, the one invoker that does not, pins
-# FM_HOME to its own synthetic root on every call. The scrub alone is not the
-# isolation guarantee: with both overrides empty the driven scripts fall back
-# to the code root that contains them, and a secondmate checkout seeds the
-# parent-channel markers at exactly that root, so the launch boundary must also
-# pin FM_HOME (and FM_ROOT_OVERRIDE) to the fixture home after sourcing the
-# helper - the pin every watcher-suite invocation now carries. The regressions
-# that pin both layers live in tests/fm-inactive-reconcile.test.sh: a watcher
-# scan under a hostile ambient secondmate home, and a reconcile scan invoked
-# from a synthetic marked code root, each asserting every write stays inside
-# the fixture tree.
+# tests/lib.sh owns the fixture home-identity isolation rule and regression
+# pointers; source-time scrubbing alone is not a launch-boundary pin.
 #
 # Daemon-side classification/injection lives in fm-daemon.test.sh; watcher/lock
 # liveness in fm-watcher-lock.test.sh; the durable-queue safety matrix in

@@ -514,11 +514,8 @@ killed_runner_case() {  # <signal> <stage-bound> <seconds-to-settle>
 $rec
 EOF
   # shellcheck disable=SC2016  # Expanded by the child runner.
-  # The fixture home and code root ride as positional arguments, not the
-  # ambient environment: tests/lib.sh scrubs any inherited FM_HOME and
-  # FM_ROOT_OVERRIDE at source time, so this child establishes its fixture
-  # identity only after sourcing the helper, the same shape the watcher
-  # suites pin at launch.
+  # Carry fixture paths through positional arguments so the child can restore
+  # them after sourcing tests/lib.sh; that helper owns the isolation rule.
   FM_FAKE_BOOTSTRAP_LOG="$log" FM_FAKE_BOOTSTRAP_SLEEP=60 FM_STARTUP_NETWORK_TIMEOUT="$bound" \
     PATH="$root/bin:$PATH" \
     bash -c '
@@ -865,11 +862,9 @@ EOF
   printf '%s\n' $$ > "$home/state/.lock"
 
   # Headroom matters here: the composed sweep runs the real inactive-outcome
-  # scan (0.4-1.3s against a live fake-hub secondmate, load-dependent) BEFORE
-  # the seeded fake bootstrap starts and writes its phase record. A 1s bound
-  # races that scan, so the "partial recorded before the bound" premise only
-  # sometimes engages. Five seconds lets the scan finish and the bootstrap
-  # record its phase first, while sleep 20 still guarantees a mid-sweep kill.
+  # scan before the fake bootstrap records its phase. Five seconds gives that
+  # startup work room to finish before the bound; the bootstrap records even
+  # with no secondmates, then sleeps 20s so the bound interrupts it mid-sweep.
   FM_STARTUP_NETWORK_TIMEOUT=5 FM_SESSION_START_TIMEOUT=10 \
     FM_FAKE_BOOTSTRAP_LOG="$log" FM_FAKE_BOOTSTRAP_SLEEP=20 \
     FM_FAKE_TIMING_PHASE=secondmate-liveness FM_FAKE_TIMING_DETAIL='mate-a@host-one' \
