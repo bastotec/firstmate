@@ -138,9 +138,8 @@
 #   Only after this isolation check, every fresh ship or scout requires a clean
 #   task worktree. If a pooled slot's only dirt is untracked leftovers of a
 #   previous worker - a wholly untracked .scratch/ directory at any age, or any
-#   other untracked path nothing in which changed for a day
-#   (FM_SPAWN_LEFTOVER_STALE_MIN minutes, default 1440) - and none of them is a
-#   symlink or holds anything tracked, spawn moves them intact to
+#   other untracked path nothing in which changed for a day (1440 minutes) -
+#   and none of them is a symlink or holds anything tracked, spawn moves them intact to
 #   state/slot-quarantine/<slot>-<epoch>/ (same relative paths) and rechecks
 #   cleanliness. It never deletes that work; any other dirt, including a fresh
 #   untracked file, refuses without moving anything.
@@ -1765,20 +1764,27 @@ spawn_worktree_has_origin_config() {  # <worktree>
 # checked before any moves, so a slot is either wholly set aside or left as it was;
 # requiring no tracked entries prevents moving clean tracked files alongside untracked dirt.
 quarantine_spawn_slot_scratch() {  # <worktree> <porcelain status>
-  local worktree=$1 status=$2 line path dest tracked stale_min=${FM_SPAWN_LEFTOVER_STALE_MIN:-1440}
+  local worktree=$1 status=$2 line path dest tracked recent scratch_seen=0 moved=0 i
   local -a paths=()
   [ -n "$status" ] || return 1
-  case "$stale_min" in ''|*[!0-9]*) stale_min=1440 ;; esac
   while IFS= read -r line; do
     case "$line" in '?? "'*|'?? ') return 1 ;; '?? '*) ;; *) return 1 ;; esac
     path=${line#?? }
     path=${path%/}
+    case "$path" in
+      .scratch|.scratch/*)
+        path=.scratch
+        [ "$scratch_seen" -eq 0 ] || continue
+        scratch_seen=1
+        ;;
+    esac
     case "$path" in ''|.|..|/*|../*|*/../*|.git|.git/*) return 1 ;; esac
     [ -e "$worktree/$path" ] && [ ! -L "$worktree/$path" ] || return 1
     tracked=$(git -C "$worktree" ls-files -- "$path") || return 1
     [ -z "$tracked" ] || return 1
-    if [ "$path" != .scratch ] && [ -n "$(find "$worktree/$path" -mmin "-$stale_min" -print -quit 2>/dev/null)" ]; then
-      return 1
+    if [ "$path" != .scratch ] || [ ! -d "$worktree/$path" ]; then
+      recent=$(find "$worktree/$path" -mmin -1440 -print -quit 2>/dev/null) || return 1
+      [ -z "$recent" ] || return 1
     fi
     paths+=("$path")
   done <<EOF
@@ -1786,7 +1792,14 @@ $status
 EOF
   dest="$STATE/slot-quarantine/$(basename "$worktree")-$(date +%s)"
   for path in "${paths[@]}"; do
-    mkdir -p "$dest/$(dirname "$path")" && mv "$worktree/$path" "$dest/$path" || return 1
+    if ! { mkdir -p "$dest/$(dirname "$path")" && mv "$worktree/$path" "$dest/$path"; }; then
+      for ((i=moved-1; i>=0; i--)); do
+        path=${paths[i]}
+        mv "$dest/$path" "$worktree/$path" || echo "error: could not restore '$worktree/$path'; preserved at '$dest/$path'" >&2
+      done
+      return 1
+    fi
+    moved=$((moved+1))
   done
   echo "notice: pooled worktree '$worktree' held only a previous worker's untracked leftovers (${paths[*]}); moved them to $dest and continuing" >&2
 }

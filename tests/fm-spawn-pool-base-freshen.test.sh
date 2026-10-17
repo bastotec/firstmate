@@ -299,6 +299,111 @@ test_leftover_scratch_is_set_aside_not_discarded() {
   pass "a slot holding only a previous worker's .scratch/ sets it aside and launches"
 }
 
+test_scratch_descendants_are_quarantined_together() {
+  local rec id out status kept
+  id='pool-scratch-all-r1'
+  rec=$(make_originless_case scratch-all "$id")
+  read_case_record "$rec"
+  git -C "$POOL_DIR" config status.showUntrackedFiles all
+  mkdir -p "$POOL_DIR/.scratch/notes"
+  printf 'first note\n' > "$POOL_DIR/.scratch/notes/a.txt"
+  printf 'second note\n' > "$POOL_DIR/.scratch/notes/b.txt"
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "fresh scratch descendants must be moved as one directory"$'\n'"$out"
+  kept=$(find "$HOME_DIR/state/slot-quarantine" -type d -name .scratch | head -1)
+  [ -n "$kept" ] || fail "scratch root was not quarantined"
+  assert_grep 'first note' "$kept/notes/a.txt" "first scratch descendant is preserved"
+  assert_grep 'second note' "$kept/notes/b.txt" "second scratch descendant is preserved"
+  [ ! -e "$POOL_DIR/.scratch" ] || fail "scratch was not moved intact"
+  pass "expanded untracked status quarantines fresh scratch once, intact"
+}
+
+test_fresh_scratch_file_is_not_exempt_from_age_check() {
+  local rec id out status before
+  id='pool-scratch-file-r1'
+  rec=$(make_originless_case scratch-file "$id")
+  read_case_record "$rec"
+  printf 'fresh work\n' > "$POOL_DIR/.scratch"
+  printf 'old note\n' > "$POOL_DIR/notes.txt"
+  touch -t 202601010000 "$POOL_DIR/notes.txt"
+  before=$(git -C "$POOL_DIR" status --porcelain)
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a fresh regular .scratch file must refuse the slot"
+  assert_contains "$out" "is not clean" "regular scratch file refusal"
+  assert_equals "$before" "$(git -C "$POOL_DIR" status --porcelain)" "refusal preserves all leftovers"
+  assert_grep 'fresh work' "$POOL_DIR/.scratch" "fresh scratch file is untouched"
+  [ ! -e "$HOME_DIR/state/slot-quarantine" ] || fail "refusing fresh scratch created a quarantine"
+  pass "only a scratch directory is exempt from the age check"
+}
+
+test_failed_freshness_scan_preserves_all_leftovers() {
+  local rec id out status before
+  id='pool-scan-error-r1'
+  rec=$(make_originless_case scan-error "$id")
+  read_case_record "$rec"
+  mkdir -p "$POOL_DIR/old"
+  printf 'old note\n' > "$POOL_DIR/a.txt"
+  printf 'recent hidden work\n' > "$POOL_DIR/old/hidden.txt"
+  touch -t 202601010000 "$POOL_DIR/a.txt" "$POOL_DIR/old"
+  cat > "$FAKEBIN_DIR/find" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = "$FAKE_SCAN_ROOT/old" ]; then
+  touch "$FAKE_SCAN_ROOT/../scan-failed"
+  exit 1
+fi
+exec "$REAL_FIND" "$@"
+SH
+  chmod +x "$FAKEBIN_DIR/find"
+  before=$(git -C "$POOL_DIR" status --porcelain)
+  out=$(FAKE_SCAN_ROOT="$POOL_DIR" REAL_FIND="$(command -v find)" run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "an unsuccessful freshness scan must refuse the slot"
+  assert_present "$CASE_DIR/scan-failed" "the freshness scan failed without output"
+  assert_contains "$out" "is not clean" "failed scan refusal"
+  assert_equals "$before" "$(git -C "$POOL_DIR" status --porcelain)" "inspection failure preserves every candidate"
+  assert_grep 'old note' "$POOL_DIR/a.txt" "previously inspected candidate is untouched"
+  assert_grep 'recent hidden work' "$POOL_DIR/old/hidden.txt" "uninspected work is untouched"
+  [ ! -e "$HOME_DIR/state/slot-quarantine" ] || fail "a failed scan created a quarantine"
+  pass "failed freshness inspection refuses before moving any leftovers"
+}
+
+test_failed_move_restores_previous_leftovers() {
+  local rec id out status before
+  id='pool-move-error-r1'
+  rec=$(make_originless_case move-error "$id")
+  read_case_record "$rec"
+  mkdir -p "$POOL_DIR/docs"
+  printf 'tracked instructions\n' > "$POOL_DIR/docs/README.md"
+  git -C "$POOL_DIR" add docs/README.md
+  git -C "$POOL_DIR" -c user.name=t -c user.email=t@t commit -qm docs
+  printf 'first old note\n' > "$POOL_DIR/a.txt"
+  printf 'second old note\n' > "$POOL_DIR/docs/notes.txt"
+  touch -t 202601010000 "$POOL_DIR/a.txt" "$POOL_DIR/docs/notes.txt"
+  cat > "$FAKEBIN_DIR/mv" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = "$FAKE_MOVE_ROOT/docs/notes.txt" ]; then
+  [ ! -e "$FAKE_MOVE_ROOT/a.txt" ] || exit 2
+  touch "$FAKE_MOVE_ROOT/../move-failed"
+  exit 1
+fi
+exec "$REAL_MV" "$@"
+SH
+  chmod +x "$FAKEBIN_DIR/mv"
+  before=$(git -C "$POOL_DIR" status --porcelain)
+  out=$(FAKE_MOVE_ROOT="$POOL_DIR" REAL_MV="$(command -v mv)" run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a failed quarantine move must refuse the slot"
+  assert_present "$CASE_DIR/move-failed" "the second move failed after the first succeeded"
+  assert_contains "$out" "is not clean" "failed move refusal"
+  assert_equals "$before" "$(git -C "$POOL_DIR" status --porcelain)" "move failure restores all candidates"
+  assert_grep 'first old note' "$POOL_DIR/a.txt" "first candidate was restored intact"
+  assert_grep 'second old note' "$POOL_DIR/docs/notes.txt" "failed candidate is untouched"
+  assert_absent "$HOME_DIR/state/$id.meta" "a failed move must not publish a worker"
+  pass "a later quarantine move failure restores already moved leftovers"
+}
+
 test_day_old_untracked_leftovers_are_set_aside() {
   local rec id out status kept
   id='pool-stale-left-r1'
@@ -329,9 +434,9 @@ test_a_fresh_untracked_file_keeps_stale_leftovers_in_place() {
   touch -t 202601010000 "$POOL_DIR/.readiness-pass/a.txt" "$POOL_DIR/.readiness-pass"
   printf 'work from today\n' > "$POOL_DIR/today.txt"
   before=$(git -C "$POOL_DIR" status --porcelain)
-  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  out=$(FM_SPAWN_LEFTOVER_STALE_MIN=0 run_spawn "$id" --mode no-mistakes --yolo off)
   status=$?
-  [ "$status" -ne 0 ] || fail "a fresh untracked file must refuse the slot"
+  [ "$status" -ne 0 ] || fail "a fresh untracked file must refuse the slot even with a stale-age override"
   assert_contains "$out" "is not clean" "the refusal is unchanged"
   [ "$(git -C "$POOL_DIR" status --porcelain)" = "$before" ] || fail "refusing the slot moved some of its leftovers"
   [ ! -e "$HOME_DIR/state/slot-quarantine" ] || fail "refusing the slot created a quarantine"
@@ -348,6 +453,8 @@ test_partially_tracked_scratch_is_left_untouched() {
   git -C "$POOL_DIR" add .scratch/README.md
   git -C "$POOL_DIR" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm scratch-instructions
   printf 'untracked scratch work\n' > "$POOL_DIR/.scratch/tmp.txt"
+  touch -t 202601010000 "$POOL_DIR/.scratch/tmp.txt" "$POOL_DIR/.scratch"
+  git -C "$POOL_DIR" config status.showUntrackedFiles all
   before=$(git -C "$POOL_DIR" status --porcelain)
   out=$(run_spawn "$id" --mode no-mistakes --yolo off)
   status=$?
@@ -904,6 +1011,10 @@ test_unreachable_origin_refuses_stale_pool_base
 test_originless_pool_launches_without_a_freshness_fetch
 test_originless_dirty_pool_refuses_without_discarding_work
 test_leftover_scratch_is_set_aside_not_discarded
+test_scratch_descendants_are_quarantined_together
+test_fresh_scratch_file_is_not_exempt_from_age_check
+test_failed_freshness_scan_preserves_all_leftovers
+test_failed_move_restores_previous_leftovers
 test_day_old_untracked_leftovers_are_set_aside
 test_a_fresh_untracked_file_keeps_stale_leftovers_in_place
 test_partially_tracked_scratch_is_left_untouched
