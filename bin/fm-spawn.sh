@@ -136,10 +136,18 @@
 #   set (its header owns the refusal). A secondmate runs in its own home and is
 #   not marked.
 #   Only after this isolation check, every fresh ship or scout requires a clean
-#   task worktree. If a pooled slot's only dirt is a wholly untracked .scratch/
-#   directory (not a symlink, with nothing tracked beneath it), spawn moves it
-#   intact to state/slot-quarantine/<slot>-<epoch>/.scratch and rechecks cleanliness.
-#   It never deletes that work; any other dirt refuses without moving it.
+#   task worktree. If a pooled slot's only dirt is untracked leftovers of a
+#   previous worker - a wholly untracked .scratch/ directory at any age, or any
+#   other untracked path whose own and descendants' modification times are at
+#   least a day old (1440 minutes) - and all candidates and descendants are
+#   readable, with searchable directories, no symlinks, and nothing tracked,
+#   spawn moves them intact to
+#   state/slot-quarantine/<slot>-<epoch>/ (same relative paths) and rechecks
+#   cleanliness. The age threshold is fixed; a regular file named .scratch
+#   has no age exemption. All candidates are inspected before any move; any
+#   ineligible dirt or failed inspection refuses without moving anything.
+#   A move failure refuses and attempts to restore already-moved paths; a failed
+#   restore reports the path preserved in quarantine. No leftover is deleted.
 #   When an origin configuration is detected, spawn fetches it,
 #   resolves the current remote default branch, and resets to its tip. When none
 #   is detected, spawn skips that remote freshness check and launches from the
@@ -1757,32 +1765,59 @@ spawn_worktree_has_origin_config() {  # <worktree>
   return 1
 }
 
-# The header owns scratch quarantine eligibility and preservation. Requiring
-# no tracked entries prevents moving clean tracked files alongside untracked dirt.
-quarantine_spawn_slot_scratch() {  # <worktree> <porcelain status>
-  local worktree=$1 status=$2 line dest tracked
-  [ -n "$status" ] || return 1
-  while IFS= read -r line; do
-    case "$line" in '?? .scratch/'|'?? .scratch/'*) ;; *) return 1 ;; esac
-  done <<EOF
-$status
-EOF
-  [ -d "$worktree/.scratch" ] && [ ! -L "$worktree/.scratch" ] || return 1
-  tracked=$(git -C "$worktree" ls-files -- .scratch) || return 1
-  [ -z "$tracked" ] || return 1
+# The header owns leftover quarantine eligibility and preservation.
+# Requiring no tracked entries prevents moving clean tracked files alongside untracked dirt.
+quarantine_spawn_slot_scratch() {  # <worktree>
+  local worktree=$1 line path dest parent tracked recent unsafe inspected=0 scratch_seen=0 moved=0 i
+  local -a paths=()
+  while IFS= read -r -d '' line; do
+    case "$line" in '') inspected=1; break ;; '?? '*) ;; *) return 1 ;; esac
+    path=${line#?? }
+    path=${path%/}
+    case "$path" in
+      .scratch|.scratch/*)
+        path=.scratch
+        [ "$scratch_seen" -eq 0 ] || continue
+        scratch_seen=1
+        ;;
+    esac
+    case "$path" in ''|.|..|/*|../*|*/../*|.git|.git/*) return 1 ;; esac
+    [ -e "$worktree/$path" ] && [ ! -L "$worktree/$path" ] || return 1
+    tracked=$(git --literal-pathspecs -C "$worktree" ls-files -- "$path") || return 1
+    [ -z "$tracked" ] || return 1
+    unsafe=$(find "$worktree/$path" \( -type l -o ! -exec test -r {} \; -o \( -type d ! -exec test -x {} \; \) \) -print -quit 2>/dev/null) || return 1
+    [ -z "$unsafe" ] || return 1
+    if [ "$path" != .scratch ] || [ ! -d "$worktree/$path" ]; then
+      recent=$(find "$worktree/$path" -mmin -1440 -print -quit 2>/dev/null) || return 1
+      [ -z "$recent" ] || return 1
+    fi
+    paths+=("$path")
+  done < <(git -C "$worktree" status --porcelain=v1 --untracked-files=normal -z && printf '\0')
+  [ "$inspected" -eq 1 ] && [ "${#paths[@]}" -gt 0 ] || return 1
   dest="$STATE/slot-quarantine/$(basename "$worktree")-$(date +%s)"
-  mkdir -p "$dest" && mv "$worktree/.scratch" "$dest/.scratch" || return 1
-  echo "notice: pooled worktree '$worktree' held only a previous worker's .scratch/; moved it to $dest/.scratch and continuing" >&2
+  for path in "${paths[@]}"; do
+    parent=.
+    case "$path" in */*) parent=${path%/*} ;; esac
+    if ! { mkdir -p "$dest/$parent" && mv "$worktree/$path" "$dest/$path"; }; then
+      for ((i=moved-1; i>=0; i--)); do
+        path=${paths[i]}
+        mv "$dest/$path" "$worktree/$path" || echo "error: could not restore '$worktree/$path'; preserved at '$dest/$path'" >&2
+      done
+      return 1
+    fi
+    moved=$((moved+1))
+  done
+  echo "notice: pooled worktree '$worktree' held only a previous worker's untracked leftovers (${paths[*]}); moved them to $dest and continuing" >&2
 }
 
 freshen_spawn_worktree_base() {  # <worktree>
   local worktree=$1 default target expected actual status
-  status=$(git -C "$worktree" -c core.quotePath=false status --porcelain) || {
+  status=$(git -C "$worktree" -c core.quotePath=false status --porcelain --untracked-files=normal) || {
     echo "error: could not inspect pooled worktree '$worktree' before refreshing its base" >&2
     return 1
   }
-  if [ -n "$status" ] && quarantine_spawn_slot_scratch "$worktree" "$status"; then
-    status=$(git -C "$worktree" -c core.quotePath=false status --porcelain) || return 1
+  if [ -n "$status" ] && quarantine_spawn_slot_scratch "$worktree"; then
+    status=$(git -C "$worktree" -c core.quotePath=false status --porcelain --untracked-files=normal) || return 1
   fi
   if [ -n "$status" ]; then
     if describe_stale_submodule_pins "$worktree" "$status"; then
