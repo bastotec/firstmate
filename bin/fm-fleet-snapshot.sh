@@ -1168,7 +1168,7 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
        else {kind:null,ids:[]} end) as $invalidity
     | (if ($valid | not)
           and (($unknown_children | length) > 0
-               or (["orphan_in_flight","unowned_current","terminal_in_flight"]
+               or (["orphan_in_flight","unowned_current","terminal_in_flight","unstructured_current"]
                    | index($invalidity.kind) | not))
        then "unknown"
        elif any($decisions_all[]; .verb == "needs-decision" or .verb == "captain-hold") then "captain_decision"
