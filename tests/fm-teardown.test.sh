@@ -1284,7 +1284,7 @@ test_no_pr_unlanded_retirement_preserves_work() {
     if [ "$scenario" = operator ]; then
       expect_code 0 "$rc" "operator retirement failed: $(cat "$case_dir/stderr")"
       assert_absent "$case_dir/state/task-x1.meta" 'operator retirement retained metadata'
-      [ "$(backlog_row_state "$case_dir")" = done ] || fail 'operator retirement left the row open'
+      [ "$(backlog_row_state "$case_dir")" = 'done' ] || fail 'operator retirement left the row open'
     else
       expect_code 1 "$rc" "$scenario retirement must refuse"
       cmp -s "$case_dir/meta.before" "$case_dir/state/task-x1.meta" || fail "$scenario changed metadata"
