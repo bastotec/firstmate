@@ -1318,6 +1318,7 @@ make_secondmate_host_fixture() {  # <dir>
   local dir=$1
   mkdir -p "$dir/home/state" "$dir/home/config" "$dir/parent" "$dir/bin" "$dir/.agents/skills"
   cp -R "$ROOT/bin/." "$dir/bin/"
+  cp "$WORKER" "$dir/bin/fm-deck-worker.sh"
   cp -R "$ROOT/.agents/skills/captain-thread" "$dir/.agents/skills/"
   cat > "$dir/bin/fm-session-start.sh" <<'SH'
 #!/usr/bin/env bash
@@ -1796,6 +1797,83 @@ with (root/'pane').open('w') as output:
             os.killpg(p.pid, 9); p.wait()
 PYTHON
   pass "Deck secondmate turns follow state/<id>.model, and the launch model without it"
+}
+
+# A real arm can finish successfully before it ever confirms startup: its
+# watcher already has a durable result. That result still owes the next turn.
+test_secondmate_fast_successor_keeps_its_notification() {
+  local dir="$TMP_ROOT/host-fast-successor"
+  make_secondmate_host_fixture "$dir"
+  cp "$ROOT/bin/fm-watch-arm.sh" "$dir/bin/fm-watch-arm.sh"
+  cat > "$dir/bin/fm-watch.sh" <<'SH'
+#!/usr/bin/env bash
+. "$(dirname "$0")/fm-watch-wake-lib.sh"
+if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" = 1 ] && [ -f "$FM_HOME/fast-next" ]; then
+  rm "$FM_HOME/fast-next"
+  fm_wake_append check fast-result 'check: fast result'
+  : > "$FM_HOME/fast-published"
+  wake 'check: fast result'
+fi
+mkdir -p "$STATE/.watch.lock"
+printf '%s\n' "$$" > "$STATE/.watch.lock/pid"
+fm_pid_identity "$$" > "$STATE/.watch.lock/pid-identity"
+printf '%s\n' "$FM_HOME" > "$STATE/.watch.lock/fm-home"
+printf '%s\n' "$0" > "$STATE/.watch.lock/watcher-path"
+touch "$STATE/.last-watcher-beat"
+printf '%s\n' "$$" >> "$FM_HOME/watch-starts"
+trap 'rm -rf "$STATE/.watch.lock"' EXIT
+trap 'exit 143' TERM INT
+while [ ! -f "$FM_HOME/trigger" ]; do sleep 0.1; done
+rm "$FM_HOME/trigger"
+wake 'check: first result'
+SH
+  chmod +x "$dir/bin/fm-watch.sh"
+  # The fake model's separate handoff assertions are covered by other cases.
+  touch "$dir/home/captain-wakes"
+  python3 - "$dir" <<'PYTHON' || fail "a fast successor lost a durable notification after a healthy turn"
+import json, os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1]); home = root/'home'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+       str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'),
+       '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+def rows():
+    path = home/'turns'
+    return [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+def idle():
+    path = root/'parent/host.busy-state'
+    return path.exists() and 'state=idle' in path.read_text()
+def wait_for(check, label):
+    for _ in range(200):
+        if check(): return
+        assert p.poll() is None, label+': host exited: '+(root/'pane').read_text()
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text())
+with (root/'pane').open('w') as output:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+                         env=env, text=True, start_new_session=True)
+    try:
+        wait_for(lambda: len(rows()) == 1 and idle() and (home/'watch-starts').exists(), 'healthy startup')
+        (home/'fast-next').touch()
+        (home/'trigger').touch()
+        wait_for(lambda: (home/'fast-published').exists(), 'durable fast notification')
+        wait_for(lambda: idle() and any('check: fast result' in r['inbox'] for r in rows()[1:]),
+                 'next turn for the fast notification')
+        assert 'check: first result' in rows()[1]['inbox'], rows()
+        assert all(r['resumed'] for r in rows()[1:]), rows()
+        # Driver delivery must not acknowledge the model's durable queue.
+        assert 'fast-result' in (home/'state/.wake-queue').read_text()
+        turns = len(rows())
+        time.sleep(.5)
+        assert len(rows()) == turns, 'completed result caused duplicate turns'
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        assert p.wait(timeout=20) == 0
+    finally:
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGKILL); p.wait()
+PYTHON
+  pass "Deck host retains a fast successor's durable notification for the next serialized turn"
 }
 
 # A successor watcher that is slow to confirm or dies before confirming used to
@@ -2808,7 +2886,10 @@ test_secondmate_survives_a_refused_handling_confirmation() {
 import json, os, pathlib, signal, subprocess, sys, time
 root = pathlib.Path(sys.argv[1])
 home = root / 'home'
-env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+# A refused handoff must rearm unclaimed, even when a host launched from a
+# watcher turn inherits unrelated claims.
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='',
+           FM_WATCH_PREDECESSOR_ARM_PID='12345', FM_WATCH_HANDLING_SUCCESSOR='1')
 gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
 cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker', str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'), '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
 def rows():
@@ -3553,6 +3634,7 @@ test_secondmate_retries_a_captain_wake_whose_turn_failed
 test_split_secondmate_answers_the_captain_beside_a_busy_supervisor
 test_secondmate_turn_model_follows_the_switch_file
 test_secondmate_host_survives_an_unconfirmed_successor_watcher
+test_secondmate_fast_successor_keeps_its_notification
 test_secondmate_host_retains_failed_successor_start_evidence
 test_secondmate_host_survives_a_failed_watcher_and_resumes_its_session
 test_secondmate_watcher_backoff_keeps_turn_stop_responsive
