@@ -45,8 +45,8 @@
 #     reported as cleaned unless its backlog close is still pending (then
 #     unhandled),
 #     while a changed record is left untouched with class unknown/action none
-#     for a fresh scan; a remaining refusal on the unchanged record becomes
-#     a decision to clean it up or keep it;
+#     for a fresh scan; a remaining refusal on the unchanged record is referred
+#     to the owning mate for investigation, once per evidence change;
 #   - failed, blocked, paused, or unknown with its endpoint or copy gone,
 #     quiet for 6 hours: refer to the owning mate to decide retry or guarded
 #     retirement, once per evidence change, without a captain card; an
@@ -494,9 +494,12 @@ while IFS= read -r meta; do
         CLASS=settling
         DETAIL="another cleanup or lifecycle action holds it: $CLEANUP_WHY"
       else
-        RAISED=0
-        raise "$id" finished "$CLEANUP_WHY" "$project"
-        if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; elif [ "${RAISE_SKIPPED:-0}" = 1 ]; then CLASS=unknown; DETAIL="worker record changed during scan"; else action=unhandled; fi
+        worktree=$(fm_meta_get "$meta" worktree)
+        if notify_mate "$id" "$(mate_evidence "$id" "$worktree" "$CLEANUP_WHY")" mate-review; then
+          action=referred
+        else
+          action=unhandled
+        fi
         DETAIL=$CLEANUP_WHY
       fi
       ;;

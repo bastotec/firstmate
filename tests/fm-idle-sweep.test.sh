@@ -484,9 +484,9 @@ test_open_pr_workers_wait_for_merge_without_a_cleanup_decision() {
 
   assert_absent "$dir/home/state/monitoring.meta" "a merged PR worker was not cleaned up"
   assert_absent "$dir/home/state/ended-monitor.meta" "a merged MR worker was not cleaned up"
-  [ "$(calls "$dir" hold-calls)" = ready ] || fail "a finished worker's cleanup refusal did not get one decision"
-  [ "$(jq -r '.options[0].label' "$dir/home/cards/ready.json")" = 'Clean it up' ] \
-    || fail "a finished worker lost its cleanup options"
+  [ ! -s "$dir/home/hold-attempts" ] || fail "a finished worker's cleanup refusal reached the captain"
+  assert_contains "$(cat "$dir/home/state/.wake-queue")" 'idle-sweep-mate:ready:' 'cleanup refusal did not reach its mate'
+  assert_equals referred "$(jq -r '.workers[] | select(.id=="ready") | .action' "$dir/home/state/idle-sweep.json")" 'cleanup refusal was not referred'
   pass "fm-idle-sweep: open PR workers wait for merge; merged workers retain guarded cleanup"
 }
 
@@ -632,14 +632,17 @@ test_only_lifecycle_contention_defers_cleanup_refusals() {
 
   sweep "$dir" scan --now || fail "scan failed"
 
-  [ "$(sort "$dir/home/hold-calls" | tr '\n' ' ')" = 'clock unrelated-progress unresolved-lock ' ] \
-    || fail "contention matching suppressed an unrelated refusal or raised a busy task"
+  [ ! -s "$dir/home/hold-attempts" ] || fail 'a cleanup refusal raised a captain card'
+  for id in clock unresolved-lock unrelated-progress; do
+    assert_equals referred "$(jq -r --arg id "$id" '.workers[] | select(.id==$id) | .action' "$dir/home/state/idle-sweep.json")" 'a non-contention refusal was not referred'
+    assert_contains "$(cat "$dir/home/state/.wake-queue")" "idle-sweep-mate:$id:" 'a non-contention refusal did not reach its mate'
+  done
   for id in lifecycle treehouse; do
     [ "$(jq -r --arg id "$id" '.workers[] | select(.id==$id) | [.class,.action] | join(" ")' "$dir/home/state/idle-sweep.json")" = 'settling none' ] \
       || fail "a supported contention refusal did not wait for the next scan"
   done
   [ "$(wc -l < "$dir/home/teardown-calls" | tr -d ' ')" = 5 ] || fail "not all refusal paths were exercised"
-  pass "fm-idle-sweep: only supported lifecycle contention defers a cleanup decision"
+  pass "fm-idle-sweep: lifecycle contention waits; other cleanup refusals reach the mate"
 }
 
 test_pending_backlog_closes_remain_visible_until_cleared() {
@@ -700,8 +703,8 @@ test_concurrent_cleanup_does_not_raise_stale_decisions() {
   pass "fm-idle-sweep: concurrent removal or replacement cannot create stale cleanup decisions"
 }
 
-test_refusals_and_idle_workers_become_one_decision_each() {
-  local dir card
+test_refusals_and_idle_workers_are_referred_to_the_mate() {
+  local dir id
   dir=$(new_case decisions)
   add_worker "$dir" unlanded 'state: done · source: run-step · run passed: PR merged/closed' 7200
   printf 'REFUSED: task unlanded has uncommitted changes (dirty copy)\n' > "$dir/home/refuse/unlanded"
@@ -722,25 +725,22 @@ test_refusals_and_idle_workers_become_one_decision_each() {
 
   sweep "$dir" scan --now || fail "scan failed"
 
-  [ "$(calls "$dir" hold-calls)" = unlanded ] \
+  [ ! -s "$dir/home/hold-attempts" ] \
     || fail "routine worker decisions reached the captain: $(calls "$dir" hold-calls)"
-  for id in broke waiting vanished; do
+  for id in unlanded broke waiting vanished; do
     assert_contains "$(cat "$dir/home/state/.wake-queue")" "idle-sweep-mate:$id:" 'routine case did not reach owning mate'
     assert_equals referred "$(jq -r --arg id "$id" '.workers[] | select(.id==$id) | .action' "$dir/home/state/idle-sweep.json")" 'routine decision was not referred'
     assert_present "$dir/home/state/$id.meta" 'referral removed unfinished work'
   done
   assert_present "$dir/home/state/unlanded.meta" "a refused cleanup removed the record"
-  card="$dir/home/cards/unlanded.json"
-  assert_contains "$(jq -r '.options[0].label' "$card")" "Clean it up" "a refused cleanup should offer cleaning it up"
-  assert_contains "$(jq -r '.situation' "$card")" "uncommitted changes" "the card should carry the refusal"
+  assert_contains "$(jq -r '.workers[] | select(.id=="unlanded") | .detail' "$dir/home/state/idle-sweep.json")" 'uncommitted changes' 'the referral lost the cleanup refusal'
   [ "$(jq -r '.workers[] | select(.id=="unreachable") | .class' "$dir/home/state/idle-sweep.json")" = settling ] \
     || fail "an unavailable backend was classified as a dead worker"
   if grep -qx asked "$dir/home/crew-state-calls"; then
     fail "a worker already held for the captain was re-read"
   fi
-  assert_contains "$(cat "$dir/home/state/.wake-queue")" "idle-sweep:" "a main home should queue one decision wake"
-  [ "$(grep -c 'idle-sweep:' "$dir/home/state/.wake-queue")" = 1 ] || fail "more than one decision wake was queued"
-  pass "fm-idle-sweep: routine retry or retirement goes to the mate; unresolved cleanup choices stay held"
+  if grep -q 'idle-sweep:' "$dir/home/state/.wake-queue"; then fail 'routine referrals queued a captain-decision wake'; fi
+  pass "fm-idle-sweep: routine retry or retirement goes to the mate; existing choices stay held"
 }
 
 test_a_raised_worker_is_raised_again_only_after_its_ledger_changes() {
@@ -1213,6 +1213,81 @@ test_orphan_mate_waits_cover_original_and_linked_calls() {
   pass 'fm-idle-sweep: orphan and linked waits prevent closure and repeated captain cards'
 }
 
+test_finished_cleanup_refusals_are_assessed_by_the_mate() {
+  local dir expected why
+  for why in 'cannot inspect worktree users: lsof failed' 'stream endpoint did not confirm its stop'; do
+    for expected in referred unhandled; do
+      dir=$(new_case "finished-$expected-${why%% *}")
+      add_worker "$dir" shipped 'state: done · source: run-step · run passed: PR merged/closed' 7200
+      printf 'REFUSED: %s\n' "$why" > "$dir/home/refuse/shipped"
+      if [ "$expected" = unhandled ]; then mkdir "$dir/home/state/.wake-queue"; fi
+
+      sweep "$dir" scan --now 2> "$dir/sweep.err" || fail 'refused cleanup scan failed'
+      assert_equals "$expected" "$(jq -r '.workers[0].action' "$dir/home/state/idle-sweep.json")" 'cleanup referral outcome was not published'
+      assert_contains "$(jq -r '.workers[0].detail' "$dir/home/state/idle-sweep.json")" "$why" 'cleanup referral lost refusal evidence'
+      assert_present "$dir/home/state/shipped.meta" 'a cleanup refusal removed the worker'
+      [ "$(calls "$dir" teardown-calls)" = shipped ] || fail 'the guarded cleanup was not attempted'
+      [ ! -s "$dir/home/hold-attempts" ] || fail 'a routine cleanup refusal reached the captain'
+      if [ "$expected" = unhandled ]; then
+        assert_absent "$dir/home/state/idle-sweep/shipped.mate-review" 'failed referral was marked handled'
+        rmdir "$dir/home/state/.wake-queue"
+      fi
+      sweep "$dir" scan --now || fail 'repeated cleanup refusal scan failed'
+      sweep "$dir" scan --now || fail 'unchanged cleanup refusal scan failed'
+      assert_equals 1 "$(grep -c 'idle-sweep-mate:shipped:' "$dir/home/state/.wake-queue")" 'unchanged cleanup evidence did not refer exactly once'
+      printf 'REFUSED: %s; capability changed\n' "$why" > "$dir/home/refuse/shipped"
+      sweep "$dir" scan --now || fail 'changed cleanup refusal scan failed'
+      assert_equals 2 "$(grep -c 'idle-sweep-mate:shipped:' "$dir/home/state/.wake-queue")" 'changed cleanup refusal did not reach the mate'
+      : > "$dir/home/held/shipped"
+      rm "$dir/home/teardown-calls"
+      sweep "$dir" scan --now || fail 'held cleanup scan failed'
+      assert_equals held "$(jq -r '.workers[0].class' "$dir/home/state/idle-sweep.json")" 'a genuine unresolved choice was not honored'
+      [ ! -s "$dir/home/teardown-calls" ] || fail 'held cleanup was retried'
+      [ ! -s "$dir/home/hold-attempts" ] || fail 'cleanup reassessment raised a captain card'
+      if grep -q -- --force "$dir/home/teardown-args"; then fail 'cleanup guards were bypassed'; fi
+    done
+  done
+  pass 'fm-idle-sweep: finished cleanup refusals reach the mate once per change; failed referrals retry and real choices remain held'
+}
+
+surface_mate_queue() {
+  local dir=$1
+  PATH="$dir/bin:$PATH" TASKS_AXI_BACKEND=markdown FM_HOME="$dir/home" \
+    bash -c '. "$1/fm-watch.sh"; procevent_surface_queued; printf "no new notifications\n"' _ "$dir/bin"
+}
+
+test_long_mate_wake_keys_are_marked_once_per_evidence_change() {
+  local dir short_id long_id id expected_markers round
+  dir=$(new_case long-mate-wake)
+  short_id=$(printf 'worker-%021d' 1)
+  long_id=$(printf 'worker-%057d' 1)
+  for id in "$short_id" "$long_id"; do
+    add_worker "$dir" "$id" 'state: failed · source: run-step · failed check' 90000
+  done
+  for round in 1 2; do
+    sweep "$dir" scan --now || fail 'long-id referral scan failed'
+    surface_mate_queue "$dir" > "$dir/watch.out" 2> "$dir/watch.err" || fail 'long-id queue consumer failed'
+    for id in "$short_id" "$long_id"; do
+      assert_contains "$(cat "$dir/watch.out")" "$id" 'a long-id referral was not surfaced'
+    done
+    assert_contains "$(cat "$dir/watch.out")" 'mate reassessment of retry or guarded retirement:' 'long-id referral lost its meaning'
+    [ ! -s "$dir/watch.err" ] || fail "long-id surfacing failed: $(cat "$dir/watch.err")"
+    expected_markers=$((round * 2))
+    assert_equals "$expected_markers" "$(find "$dir/home/state" -name '.seen-procevent-*' -type f | wc -l | tr -d ' ')" 'distinct long-id wakes were not durably marked'
+    surface_mate_queue "$dir" > "$dir/replay.out" 2> "$dir/replay.err" || fail 'long-id successor consumer failed'
+    assert_equals 'no new notifications' "$(cat "$dir/replay.out")" 'an unacknowledged long-id wake surfaced again during handling'
+    [ ! -s "$dir/replay.err" ] || fail 'the successor could not read long-id markers'
+    for id in "$short_id" "$long_id"; do
+      printf 'failed: new check result\n' >> "$dir/home/state/$id.status"
+      age_file "$dir/home/state/$id.status" 90000
+    done
+  done
+  [ ! -s "$dir/home/hold-attempts" ] || fail 'long-id referrals reached the captain'
+  pass 'fm-idle-sweep: long mate wake keys surface once per evidence change, not once per successor'
+}
+
+test_finished_cleanup_refusals_are_assessed_by_the_mate
+test_long_mate_wake_keys_are_marked_once_per_evidence_change
 test_local_only_completion_is_assessed_by_the_mate
 test_orphan_mate_waits_cover_original_and_linked_calls
 test_parked_evidence_ignores_observation_time_but_tracks_git_changes
@@ -1226,7 +1301,7 @@ test_only_lifecycle_contention_defers_cleanup_refusals
 test_pending_backlog_closes_remain_visible_until_cleared
 test_open_pr_workers_wait_for_merge_without_a_cleanup_decision
 test_concurrent_cleanup_does_not_raise_stale_decisions
-test_refusals_and_idle_workers_become_one_decision_each
+test_refusals_and_idle_workers_are_referred_to_the_mate
 test_a_raised_worker_is_raised_again_only_after_its_ledger_changes
 test_reassigned_slots_cannot_supply_completion
 test_closed_worker_gets_a_linked_followup_hold

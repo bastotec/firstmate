@@ -1685,6 +1685,7 @@ procevent_surfaced_marker() {  # <queue-key>
   # for it, so it sat on the queue until an unrelated event closed a cycle.
   case "$1" in
     inbox:*) fm_inbox_surfaced_marker "$STATE" "$1" ;;
+    idle-sweep-mate:*) printf '%s/.seen-procevent-%s' "$STATE" "$(printf '%s' "$1" | shasum -a 256 | cut -d' ' -f1)" ;;
     *) printf '%s/.seen-procevent-%s' "$STATE" "$(printf '%s' "$1" | LC_ALL=C od -An -tx1 | tr -d ' \n')" ;;
   esac
 }
