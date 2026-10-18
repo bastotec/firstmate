@@ -2,7 +2,7 @@
 # tests/fm-idle-sweep.test.sh - the watcher-run idle-worker sweep owned by
 # bin/fm-idle-sweep.sh.
 #
-# bin/fm-idle-sweep.sh's header owns the cleanup, decision-card, admission,
+# bin/fm-idle-sweep.sh's header owns the cleanup, mate-referral, admission,
 # repeat-suppression, and second-mate audit guarantees exercised here.
 #
 # bin/ is copied into each case with the crew-state, teardown, retirement,
@@ -178,30 +178,9 @@ calls() {  # <dir> <file>
   cat "$dir/home/$2" 2>/dev/null || true
 }
 
-test_a_cleanup_finishing_during_the_hold_mints_no_followup_call() {
-  local dir
-  dir=$(new_case cleaned-during-hold)
-  add_worker "$dir" racy 'state: done · source: status-log · landing evidence unresolved' 90000
-  printf 'pr=https://github.com/owner/repo/pull/29\n' >> "$dir/home/state/racy.meta"
-  printf 'CLOSED\n' > "$dir/home/pr-states/29"
-  : > "$dir/home/cleaned-during-hold/racy"
-
-  sweep "$dir" scan --now || fail "scan failed"
-
-  if grep -qx idle-racy "$dir/home/hold-attempts"; then
-    fail "a follow-up call was minted for a worker another cleanup had just removed"
-  fi
-  [ ! -s "$dir/home/hold-calls" ] || fail "a decision was held for a cleaned-up worker: $(calls "$dir" hold-calls)"
-  [ "$(jq -r '.workers[] | select(.id=="racy") | [.class,.action] | join(" ")' "$dir/home/state/idle-sweep.json")" = 'unknown none' ] \
-    || fail "the raced worker was not left for a fresh scan: $(cat "$dir/home/state/idle-sweep.json")"
-  if grep -q 'idle-sweep-unhandled:' "$dir/home/state/.wake-queue" 2>/dev/null; then
-    fail "a raced cleanup was reported as a failure"
-  fi
-  pass "fm-idle-sweep: a cleanup that finishes while the decision is held mints no follow-up call"
-}
-
 test_real_holds_check_worker_records_inside_the_lifecycle_lock() {
-  local real_tasks dir path mode target expected worker_record
+  local real_tasks dir path mode target rc worker_record
+  local hold_args=()
   real_tasks=$(command -v tasks-axi || true)
   [ -n "$real_tasks" ] || { echo 'skip: tasks-axi not found for real hold races'; return; }
   for path in direct linked; do
@@ -266,21 +245,29 @@ exec "$(cat "$FM_HOME/real-tasks")" "$@"
 SH
       chmod +x "$dir/bin/fm-captain-hold.sh" "$dir/bin/tasks-axi"
 
-      sweep "$dir" scan --now || fail "real hold scan failed: $path/$mode"
+      cat > "$dir/card.json" <<'JSON'
+{"project":"firstmate","title":"Choose the replacement behavior","situation":"Two replacement behaviors remain possible.","options":[{"key":"1","label":"Keep current","instruction":"Keep the current behavior."},{"key":"2","label":"Use replacement","instruction":"Use the replacement behavior."}],"recommended":"1"}
+JSON
+      rc=0
+      hold_args=(--repo firstmate)
+      [ "$path" = direct ] || hold_args+=(--origin worker --title 'Choose the replacement behavior')
+      PATH="$dir/bin:$PATH" TASKS_AXI_BACKEND=markdown FM_HOME="$dir/home" \
+        "$dir/bin/fm-captain-hold.sh" hold "$target" \
+        "${hold_args[@]}" --reason 'replacement behavior needs a decision' \
+        --card-file "$dir/card.json" --expected-record "$worker_record" > "$dir/hold.out" 2>&1 || rc=$?
 
       [ ! -s "$dir/home/unprotected-mutations" ] || fail 'a backlog mutation ran without the original or target lock'
       if [ "$mode" = unchanged ]; then
-        expected='finished carded'
+        assert_equals 0 "$rc" "unchanged worker hold failed: $(cat "$dir/hold.out")"
         [ -s "$dir/home/protected-mutations" ] || fail 'unchanged worker did not exercise hold mutations'
         assert_present "$dir/home/state/cards/$target.json" 'unchanged worker lost its decision card'
-        cmp -s "$dir/home/race-target" <(jq -r '.workers[0].hold_id' "$dir/home/state/idle-sweep.json") || fail 'wrong task held'
         [ "$(cat "$dir/home/state/worker.meta")" = "$worker_record" ] || fail 'holding changed the worker record'
         if [ "$path" = linked ]; then
           (cd "$dir/home" && "$real_tasks" show idle-worker --full) > "$dir/followup-row"
           assert_contains "$(cat "$dir/followup-row")" 'Origin: worker' 'follow-up lost its origin'
         fi
       else
-        expected='unknown none'
+        assert_equals 3 "$rc" 'stale worker hold was not rejected'
         [ ! -s "$dir/home/protected-mutations" ] || fail 'stale decision mutated the backlog'
         assert_absent "$dir/home/state/cards/$target.json" 'stale worker received a card'
         assert_absent "$dir/home/state/idle-sweep/worker.raised" 'stale worker was marked raised'
@@ -293,14 +280,12 @@ SH
         if [ "$path" = direct ]; then
           [ "$(calls "$dir" hold-attempts)" = worker ] || fail 'stale direct hold attempted a follow-up'
         else
-          [ "$(calls "$dir" hold-attempts)" = $'worker\nidle-worker' ] || fail 'linked race was not exercised'
+          [ "$(calls "$dir" hold-attempts)" = idle-worker ] || fail 'linked race was not exercised'
         fi
         if (cd "$dir/home" && "$real_tasks" show idle-worker >/dev/null 2>&1); then
           fail 'a stale linked task was created'
         fi
       fi
-      [ "$(jq -r '.workers[0] | [.class,.action] | join(" ")' "$dir/home/state/idle-sweep.json")" = "$expected" ] \
-        || fail "wrong hold outcome for $path/$mode: $(cat "$dir/home/state/idle-sweep.json")"
       [ ! -e "$dir/home/state/.control-worker.lock" ] && [ ! -L "$dir/home/state/.control-worker.lock" ] || fail 'worker lock leaked'
       [ ! -e "$dir/home/state/.control-idle-worker.lock" ] && [ ! -L "$dir/home/state/.control-idle-worker.lock" ] || fail 'follow-up lock leaked'
     done
@@ -314,10 +299,10 @@ test_a_main_home_is_woken_once_for_what_the_sweep_could_not_handle() {
   add_worker "$dir" stuck 'state: done · source: status-log · landing evidence unresolved' 90000
   printf 'pr=https://github.com/owner/repo/pull/29\n' >> "$dir/home/state/stuck.meta"
   printf 'CLOSED\n' > "$dir/home/pr-states/29"
-  : > "$dir/home/hold-unavailable"
+  mkdir -p "$dir/home/state/idle-sweep/stuck.mate-review"
 
-  sweep "$dir" scan --now || fail "scan failed"
-  sweep "$dir" scan --now || fail "second scan failed"
+  sweep "$dir" scan --now 2> "$dir/scan.err" || fail "scan failed"
+  sweep "$dir" scan --now 2>> "$dir/scan.err" || fail "second scan failed"
 
   [ "$(jq -r '.workers[] | select(.id=="stuck") | .action' "$dir/home/state/idle-sweep.json")" = unhandled ] \
     || fail "a worker the sweep could not raise was not published as unhandled"
@@ -326,27 +311,11 @@ test_a_main_home_is_woken_once_for_what_the_sweep_could_not_handle() {
   assert_contains "$(cat "$dir/home/state/.wake-queue")" "could neither clean up nor raise: stuck" \
     "the wake should name what was left"
 
-  rm -f "$dir/home/hold-unavailable"
+  rmdir "$dir/home/state/idle-sweep/stuck.mate-review"
   sweep "$dir" scan --now || fail "third scan failed"
   [ "$(grep -c 'idle-sweep-unhandled:' "$dir/home/state/.wake-queue")" = 1 ] \
     || fail "a handled worker woke the main home again"
   pass "fm-idle-sweep: a main home is woken once for what the sweep could neither clean up nor raise"
-}
-
-test_a_worker_named_like_an_orphan_call_still_gets_the_record_check() {
-  local dir
-  dir=$(new_case orphan-named-worker)
-  add_worker "$dir" idle-orphan-race 'state: done · source: status-log · landing evidence unresolved' 90000
-  printf 'pr=https://github.com/owner/repo/pull/29\n' >> "$dir/home/state/idle-orphan-race.meta"
-  printf 'CLOSED\n' > "$dir/home/pr-states/29"
-  : > "$dir/home/cleaned-during-hold/idle-orphan-race"
-
-  sweep "$dir" scan --now || fail "scan failed"
-
-  [ ! -s "$dir/home/hold-calls" ] || fail "a removed worker named like an orphan call got a decision: $(calls "$dir" hold-calls)"
-  [ "$(jq -r '.workers[] | select(.id=="idle-orphan-race") | [.class,.action] | join(" ")' "$dir/home/state/idle-sweep.json")" = 'unknown none' ] \
-    || fail "a worker named like an orphan call skipped the record check: $(cat "$dir/home/state/idle-sweep.json")"
-  pass "fm-idle-sweep: a real worker whose id starts with idle-orphan- still gets the locked record check"
 }
 
 test_done_workers_are_cleaned_up_without_force() {
@@ -580,10 +549,10 @@ SH
   pass 'fm-idle-sweep: retirement preserves ledger-only merged MR commits without a card in manual mode'
 }
 
-test_closed_unmerged_prs_require_a_cleanup_decision() {
-  local dir id
+test_closed_unmerged_prs_are_assessed_by_the_mate() {
+  local dir id wt head verdict
   dir=$(new_case closed-unmerged)
-  for id in closed-recorded closed-ledger closed-mr unreadable merged-ledger; do
+  for id in closed-recorded closed-ledger closed-mr superseded unreadable merged-ledger; do
     add_worker "$dir" "$id" 'state: done · source: status-log · PR ready' 7200
   done
   printf 'pr=https://github.com/owner/repo/pull/51\n' >> "$dir/home/state/closed-recorded.meta"
@@ -591,31 +560,59 @@ test_closed_unmerged_prs_require_a_cleanup_decision() {
   printf 'done: PR https://gitlab.example/group/repo/-/merge_requests/53\n' >> "$dir/home/state/closed-mr.status"
   printf 'pr=https://github.com/owner/repo/pull/54\n' >> "$dir/home/state/unreadable.meta"
   printf 'done: PR https://github.com/owner/repo/pull/55\n' >> "$dir/home/state/merged-ledger.status"
+  wt="$dir/superseded-copy"
+  mkdir -p "$wt"
+  git -C "$wt" init -q
+  printf 'committed work\n' > "$wt/work"
+  git -C "$wt" add work
+  git -C "$wt" commit -qm 'Work preserved for mate assessment'
+  head=$(git -C "$wt" rev-parse HEAD)
+  printf 'uncommitted leftovers\n' >> "$wt/work"
+  fm_write_meta "$dir/home/state/superseded.meta" "kind=ship" "worktree=$wt" 'pr=https://github.com/owner/repo/pull/56'
+  printf '  body: "Superseded: replaced by another change"\n' > "$dir/home/rows/superseded"
   printf 'CLOSED\n' > "$dir/home/pr-states/51"
   printf 'CLOSED\n' > "$dir/home/pr-states/52"
   printf 'closed\n' > "$dir/home/pr-states/53"
   printf 'MERGED\n' > "$dir/home/pr-states/55"
+  printf 'CLOSED\n' > "$dir/home/pr-states/56"
   for id in closed-ledger closed-mr merged-ledger; do
     age_file "$dir/home/state/$id.status" 7200
   done
 
   sweep "$dir" scan --now || fail "scan failed"
+  sweep "$dir" scan --now || fail "unchanged scan failed"
 
   [ "$(calls "$dir" teardown-calls)" = merged-ledger ] || fail "cleanup admitted an unmerged or unreadable PR"
   [ "$(calls "$dir" teardown-args)" = "merged-ledger --keep-commits --merged-pr https://github.com/owner/repo/pull/55" ] \
-    || fail "a merged worker's cleanup must keep leftover local commits on a branch instead of raising them: $(calls "$dir" teardown-args)"
-  [ "$(sort "$dir/home/hold-calls" | tr '\n' ' ')" = 'closed-ledger closed-mr closed-recorded ' ] \
-    || fail "closed-unmerged PRs did not become exactly one decision each"
-  for id in closed-recorded closed-ledger closed-mr; do
-    assert_present "$dir/home/state/$id.meta" "a closed-unmerged PR worker was removed"
-    [ "$(jq -r '.options | map(.label) | join(",")' "$dir/home/cards/$id.json")" = 'Clean it up,Keep it' ] \
-      || fail "a closed-unmerged PR did not get cleanup options"
-    [ "$(jq -r --arg id "$id" '.workers[] | select(.id==$id) | .action' "$dir/home/state/idle-sweep.json")" = carded ] \
-      || fail "a closed-unmerged PR decision was not published"
+    || fail "a merged worker's cleanup must keep leftover local commits on a branch: $(calls "$dir" teardown-args)"
+  [ ! -s "$dir/home/hold-attempts" ] || fail 'closed-unmerged PRs reached the captain before mate assessment'
+  for id in closed-recorded closed-ledger closed-mr superseded; do
+    assert_present "$dir/home/state/$id.meta" 'a closed-unmerged PR worker was removed'
+    assert_equals 'mate-review referred' "$(jq -r --arg id "$id" '.workers[] | select(.id==$id) | [.class,.action] | join(" ")' "$dir/home/state/idle-sweep.json")" 'closed-unmerged PR was not referred'
+    assert_equals 1 "$(grep -c "idle-sweep-mate:$id:" "$dir/home/state/.wake-queue")" 'unchanged closed PR evidence did not notify exactly once'
   done
-  assert_present "$dir/home/state/unreadable.meta" "an unreadable PR worker was removed"
-  assert_absent "$dir/home/state/merged-ledger.meta" "a merged PR reported in the ledger was not cleaned up"
-  pass "fm-idle-sweep: only merged PRs admit cleanup; closed-unmerged PRs become decisions"
+  assert_equals "$head" "$(git -C "$wt" rev-parse HEAD)" 'referral changed unlanded commits'
+  assert_contains "$(cat "$wt/work")" 'uncommitted leftovers' 'referral discarded leftovers'
+  assert_present "$dir/home/state/unreadable.meta" 'an unreadable PR worker was removed'
+  assert_equals settling "$(jq -r '.workers[] | select(.id=="unreadable") | .class' "$dir/home/state/idle-sweep.json")" 'unreadable PR state did not stop safely'
+  assert_absent "$dir/home/state/merged-ledger.meta" 'a merged PR reported in the ledger was not cleaned up'
+
+  verdict=$(PATH="$dir/bin:$PATH" FM_HOME="$dir/home" bash -c '
+    . "$1/fm-pr-lib.sh"
+    body=$(fm_pr_task_body "$(cat "$2")")
+    fm_pr_close_verdict https://github.com/owner/repo/pull/56 "$body" || exit 1
+    printf "%s\n" "$FM_PR_CLOSE_VERDICT"
+    if fm_pr_close_verdict https://github.com/owner/repo/pull/51; then exit 1; fi
+  ' _ "$dir/bin" "$dir/home/rows/superseded") || fail 'completion-claim gate did not distinguish documented supersession from unlanded work'
+  assert_equals superseded "$verdict" 'mate assessment lost the existing supersession verdict'
+
+  printf '  body: "Superseded: replacement evidence updated"\n' > "$dir/home/rows/superseded"
+  sweep "$dir" scan --now || fail 'changed supersession scan failed'
+  sweep "$dir" scan --now || fail 'unchanged supersession scan failed'
+  assert_equals 2 "$(grep -c 'idle-sweep-mate:superseded:' "$dir/home/state/.wake-queue")" 'changed backlog evidence did not notify the mate exactly once'
+  [ ! -s "$dir/home/hold-attempts" ] || fail 'changed supersession evidence raised a captain call'
+  [ "$(calls "$dir" teardown-calls)" = merged-ledger ] || fail 'supersession reassessment bypassed guarded retirement'
+  pass 'fm-idle-sweep: closed PRs reach their mate once per change; supersession and leftover guards remain intact'
 }
 
 test_only_lifecycle_contention_defers_cleanup_refusals() {
@@ -789,30 +786,25 @@ test_reassigned_slots_cannot_supply_completion() {
   pass "fm-idle-sweep: a reassigned slot cannot close an unfinished task"
 }
 
-test_closed_worker_gets_a_linked_followup_hold() {
+test_closed_worker_honors_an_existing_linked_followup_hold() {
   local dir
   dir=$(new_case closed-worker)
   add_worker "$dir" closed-worker 'state: done · source: status-log · landing evidence unresolved' 90000
   printf 'pr=https://github.com/owner/repo/pull/29\n' >> "$dir/home/state/closed-worker.meta"
   printf 'CLOSED\n' > "$dir/home/pr-states/29"
-  : > "$dir/home/closed/closed-worker"
+  : > "$dir/home/held/idle-closed-worker"
 
   sweep "$dir" scan --now || fail "scan failed"
-
-  [ "$(calls "$dir" hold-calls)" = idle-closed-worker ] || fail "a closed task did not get one followup call"
-  [ "$(cat "$dir/home/cards/idle-closed-worker.origin")" = closed-worker ] || fail "the followup was not linked to its worker"
-  [ "$(jq -r '.workers[0].hold_id' "$dir/home/state/idle-sweep.json")" = idle-closed-worker ] \
-    || fail "the summary did not identify the followup hold"
-  assert_contains "$(cat "$dir/home/state/.wake-queue")" idle-closed-worker "the wake did not name the followup call"
-  assert_present "$dir/home/state/closed-worker.meta" "creating a call closed the worker"
-
-  : > "$dir/home/held/idle-closed-worker"
   printf 'failed: another event\n' >> "$dir/home/state/closed-worker.status"
   age_file "$dir/home/state/closed-worker.status" 90000
   sweep "$dir" scan --now || fail "second scan failed"
-  [ "$(grep -c . "$dir/home/hold-calls")" = 1 ] || fail "a held followup call was raised again"
-  [ "$(jq -r '.workers[0].class' "$dir/home/state/idle-sweep.json")" = held ] || fail "the held followup was ignored"
-  pass "fm-idle-sweep: closed tasks receive one linked followup call"
+
+  [ ! -s "$dir/home/hold-attempts" ] || fail 'an existing linked choice was raised again'
+  [ ! -s "$dir/home/teardown-calls" ] || fail 'a linked choice did not prevent cleanup'
+  [ ! -s "$dir/home/state/.wake-queue" ] || fail 'a linked choice did not prevent reassessment'
+  assert_present "$dir/home/state/closed-worker.meta" 'a linked choice lost its worker'
+  assert_equals held "$(jq -r '.workers[0].class' "$dir/home/state/idle-sweep.json")" 'the held followup was ignored'
+  pass 'fm-idle-sweep: existing linked choices remain with the captain'
 }
 
 test_record_less_endpoints_are_closed_as_orphans() {
@@ -1294,7 +1286,7 @@ test_parked_evidence_ignores_observation_time_but_tracks_git_changes
 test_real_parked_withdrawals_survive_later_sweeps
 test_real_holds_check_worker_records_inside_the_lifecycle_lock
 test_done_workers_are_cleaned_up_without_force
-test_closed_unmerged_prs_require_a_cleanup_decision
+test_closed_unmerged_prs_are_assessed_by_the_mate
 test_merged_mr_in_ledger_is_passed_to_teardown
 test_retired_worker_keeps_ledger_only_merged_mr_without_a_card
 test_only_lifecycle_contention_defers_cleanup_refusals
@@ -1304,7 +1296,7 @@ test_concurrent_cleanup_does_not_raise_stale_decisions
 test_refusals_and_idle_workers_are_referred_to_the_mate
 test_a_raised_worker_is_raised_again_only_after_its_ledger_changes
 test_reassigned_slots_cannot_supply_completion
-test_closed_worker_gets_a_linked_followup_hold
+test_closed_worker_honors_an_existing_linked_followup_hold
 test_record_less_endpoints_are_closed_as_orphans
 test_refused_orphans_are_referred_without_captain_calls
 test_orphan_decisions_gate_closure_and_repeated_escalation
@@ -1313,7 +1305,4 @@ test_second_mates_that_do_not_sweep_are_escalated_once
 test_local_mates_with_missing_homes_are_escalated
 test_scan_uses_fixed_quiet_and_audit_bounds
 test_watcher_runs_the_sweep_and_surfaces_its_decision
-test_done_ships_without_merge_evidence_are_never_cleaned_automatically
-test_a_cleanup_finishing_during_the_hold_mints_no_followup_call
-test_a_main_home_is_woken_once_for_what_the_sweep_could_not_handle
-test_a_worker_named_like_an_orphan_call_still_gets_the_record_check
+test_done_ships_without_merge_evidence_are_never_cleaned_automaticallytest_a_main_home_is_woken_once_for_what_the_sweep_could_not_handle
