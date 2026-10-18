@@ -1737,7 +1737,7 @@ procevent_surface_after_output() {
 }
 
 procevent_surface_queued() {
-  local key reason captured="" stranded="" unstarted="" notes="" revive="" idle="" idle_audit="" idle_left="" mates="" lanes="" parked=""
+  local key reason captured="" stranded="" unstarted="" notes="" revive="" idle="" idle_audit="" idle_left="" idle_mate="" mates="" lanes="" parked=""
   PROCEVENT_SURFACED=
   [ -s "$FM_WAKE_QUEUE" ] || return 0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
@@ -1749,7 +1749,7 @@ procevent_surface_queued() {
         notes="$notes ${key#inbox:}"
         continue
         ;;
-      procevent:*|secondmate-revive:*|lane-heal:*|parked-run:*|idle-sweep:*|idle-sweep-audit:*|idle-sweep-unhandled:*|mate-mail:*) ;;
+      procevent:*|secondmate-revive:*|lane-heal:*|parked-run:*|idle-sweep:*|idle-sweep-mate:*|idle-sweep-audit:*|idle-sweep-unhandled:*|mate-mail:*) ;;
       *) continue ;;
     esac
     [ -e "$(procevent_surfaced_marker "$key")" ] && continue
@@ -1772,6 +1772,10 @@ procevent_surface_queued() {
         parked="$parked ${key%%:*}"
         ;;
       idle-sweep:*) idle=1 ;;
+      idle-sweep-mate:*)
+        key=${key#idle-sweep-mate:}
+        idle_mate="$idle_mate ${key%%:*}"
+        ;;
       mate-mail:*) mates="$mates ${key#mate-mail:}" ;;
       idle-sweep-unhandled:*) idle_left=1 ;;
       idle-sweep-audit:*)
@@ -1808,6 +1812,10 @@ procevent_surface_queued() {
   if [ -n "$mates" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
     reason="$reason second mate message needs a look (state/mate-messages.log):$mates"
+  fi
+  if [ -n "$idle_mate" ]; then
+    [ "$reason" = "check:" ] || reason="$reason;"
+    reason="$reason mate reassessment of retry or guarded retirement:$idle_mate"
   fi
   if [ -n "$idle_left" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"

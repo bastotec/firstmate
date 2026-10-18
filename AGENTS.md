@@ -195,7 +195,9 @@ When a worker reports a PR or a ready local-only branch, load `task-delivery`.
 For PR-based tasks, record the PR with `bin/fm-pr-check.sh` and give the captain its full URL.
 Bind any custom `state/<id>.check.sh` you write with `bin/fm-check-register.sh` before the watcher runs it, and retire it only through `bin/fm-check-unregister.sh` or teardown, never a hand-composed `rm`.
 Tear down a ship task only after landing is confirmed; a refusal for uncommitted or unlanded work means stop and investigate.
-It is the captain's standing instruction that the mate who created a worker cleans it up once its work is done, so he never has to remember to: at completion and at every heartbeat, each home cleans up only its own finished endpoint-backed direct reports through `task-delivery`'s finished-work sweep, never forces, and sends anything not provably finished to the captain as a one-line decision.
+It is the captain's standing instruction that the mate who created a worker cleans it up once its work is done, so he never has to remember to: at completion and at every heartbeat, each home cleans up only its own finished endpoint-backed direct reports through `task-delivery`'s finished-work sweep, never forces, and owns routine retry or retirement decisions itself.
+Retry still-wanted unfinished work; retire done, merged, superseded or abandoned work through the guarded owners, preserving leftovers.
+Escalate uncertainty to the parent mate in a secondmate home, not another retire-or-retry question to the captain; the primary raises only a genuinely unresolved choice or authority boundary.
 Retire a secondmate only on an explicit captain or main-firstmate decision, with no work under way in its home; its empty queue is healthy.
 
 ### Scout outcome and promotion

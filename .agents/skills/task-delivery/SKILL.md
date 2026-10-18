@@ -71,7 +71,12 @@ Retire a custom check only through `bin/fm-check-unregister.sh <id>` (or `bin/fm
 `AGENTS.md` section 7 records the captain's standing instruction that the mate who created a worker cleans it up once its work is done.
 Run this sweep when a ship lands, when a scout completes, and on every heartbeat, over this home's own endpoint-backed direct reports and endpoint-bound leftover records only, never another home's, and never a secondmate, which retires only on an explicit decision.
 The watcher independently runs [`bin/fm-idle-sweep.sh`](../../../bin/fm-idle-sweep.sh), whose header owns automated cleanup eligibility, decision cards, repeat suppression, cadence, and second-mate audit.
-Handle its decision wakes through `captain-hold-lifecycle` rather than creating a duplicate call.
+Handle its captain-held decision wakes through `captain-hold-lifecycle` rather than creating a duplicate call.
+An `idle-sweep-mate` wake belongs to this home's owning mate: inspect the current task, brief, backlog, validation and landing evidence before choosing retry for still-wanted unfinished work or guarded retirement for done, merged, superseded or abandoned work.
+Use `stuck-crewmate-recovery` for retry; preserve the existing local copy and leftovers, and never bypass cleanup or unlanded-work guards.
+Uncertainty in a secondmate home goes to its parent channel, not directly to the captain; the primary raises only a real unresolved choice or authority boundary, never a routine retire-or-retry poll.
+For an existing erroneous captain call gating unfinished work, record the mate's retry or external-capability wait with `fm-captain-hold.sh withdraw --evidence-file ... --park ...` under its header's contract, without completing the task or claiming captain approval.
+A later changed-evidence wake is reassessment input, not permission to clear the wait or reactivate the worker automatically.
 
 Use [`bin/fm-pr-lib.sh`'s completion-claim gate](../../../bin/fm-pr-lib.sh) to judge a worker with a recorded PR, regardless of delivery mode.
 Without a recorded PR, a worker is finished when its branch landed, or when it is a scout whose report exists and whose `captain-hold-lifecycle` completion gate passes.
@@ -83,11 +88,13 @@ For each finished worker:
    If the verified PR/MR URL is known only from the status ledger, supply it through the header's merged-PR input rather than relying on GitHub branch discovery.
    Handle preserved work yourself under [the housekeeping policy](../captain-hold-lifecycle/SKILL.md#decision-cards), mentioning it as an FYI at most.
 2. If cleanup refuses only because the endpoint is on a retired backend and could never be confirmed gone, retire the record with `FM_HOME=<this home> bin/fm-retire-endpoint.sh --finished <id>`, carrying the same verified PR/MR URL when supplied to teardown; its [header](../../../bin/fm-retire-endpoint.sh) owns eligibility and forwarding to guarded cleanup.
-3. Treat any other refusal - uncommitted work, unlanded work without a merged PR, a missing report, an open captain decision, a stream endpoint that would not confirm its stop, a window still listed - as not provably finished: stop, never retry around it, and hold one plain decision for the captain through `bin/fm-captain-hold.sh` naming the worker, the evidence, and the choice between cleaning it up and keeping it.
+3. Treat any other refusal - uncommitted work, unlanded work without a merged PR, a missing report, an open captain decision, a stream endpoint that would not confirm its stop, a window still listed - as not provably finished: stop and investigate, never retry around it or force cleanup.
+   Resolve routine preservation and retry or retirement within the mate's authority; leave real unresolved captain choices held, and take uncertainty to the parent mate before raising any new captain call.
+   A primary mate raises only the concrete choice or authority boundary that remains unresolved, naming the evidence rather than polling whether to retire or retry.
 
 Then close this home's record-less leftovers: endpoints the hub still lists live for a task whose record here is already gone.
 Use `fm-retire-endpoint.sh`'s read-only orphan listing, then close each listed task/endpoint pair with its orphan mode and endpoint pin; its help owns invocation mechanics and listing limits, and [`fm-retire-orphan-lib.sh`'s header](../../../bin/fm-retire-orphan-lib.sh) owns eligibility and timing limits.
-Treat its refusal like step 3: never retry around it, and hold one plain decision for the captain naming the endpoint and the reason.
+Treat its refusal like step 3: never retry around it; the owning mate reconciles the evidence and takes unresolved uncertainty to its parent, preserving real captain-held choices.
 
 Once a worker's decision is held, later sweeps leave it to that decision rather than raising it again.
 In a secondmate home that decision reaches the captain through the parent channel, as every escalation there does.

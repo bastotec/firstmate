@@ -177,7 +177,7 @@ calls() {  # <dir> <file>
 test_a_cleanup_finishing_during_the_hold_mints_no_followup_call() {
   local dir
   dir=$(new_case cleaned-during-hold)
-  add_worker "$dir" racy 'state: failed · source: run-step · run failed' 90000
+  add_worker "$dir" racy 'state: done · source: status-log · landing evidence unresolved' 90000
   : > "$dir/home/cleaned-during-hold/racy"
 
   sweep "$dir" scan --now || fail "scan failed"
@@ -204,7 +204,7 @@ test_real_holds_check_worker_records_inside_the_lifecycle_lock() {
       cp "$ROOT/bin/fm-captain-hold.sh" "$dir/bin/fm-captain-hold-real.sh"
       cp "$ROOT/.tasks.toml" "$dir/home/.tasks.toml"
       printf '## In flight\n\n## Queued\n\n## Done\n' > "$dir/home/data/backlog.md"
-      add_worker "$dir" worker 'state: failed · source: run-step · run failed' 90000
+      add_worker "$dir" worker 'state: done · source: status-log · landing evidence unresolved' 90000
       worker_record=$(cat "$dir/home/state/worker.meta")
       (cd "$dir/home" && "$real_tasks" add worker 'Worker task' --repo firstmate >/dev/null) || fail 'could not seed backlog'
       target=worker
@@ -262,7 +262,7 @@ SH
 
       [ ! -s "$dir/home/unprotected-mutations" ] || fail 'a backlog mutation ran without the original or target lock'
       if [ "$mode" = unchanged ]; then
-        expected='failed carded'
+        expected='finished carded'
         [ -s "$dir/home/protected-mutations" ] || fail 'unchanged worker did not exercise hold mutations'
         assert_present "$dir/home/state/cards/$target.json" 'unchanged worker lost its decision card'
         cmp -s "$dir/home/race-target" <(jq -r '.workers[0].hold_id' "$dir/home/state/idle-sweep.json") || fail 'wrong task held'
@@ -303,7 +303,7 @@ SH
 test_a_main_home_is_woken_once_for_what_the_sweep_could_not_handle() {
   local dir
   dir=$(new_case unhandled-wake)
-  add_worker "$dir" stuck 'state: failed · source: run-step · run failed' 90000
+  add_worker "$dir" stuck 'state: done · source: status-log · landing evidence unresolved' 90000
   : > "$dir/home/hold-unavailable"
 
   sweep "$dir" scan --now || fail "scan failed"
@@ -326,7 +326,7 @@ test_a_main_home_is_woken_once_for_what_the_sweep_could_not_handle() {
 test_a_worker_named_like_an_orphan_call_still_gets_the_record_check() {
   local dir
   dir=$(new_case orphan-named-worker)
-  add_worker "$dir" idle-orphan-race 'state: failed · source: run-step · run failed' 90000
+  add_worker "$dir" idle-orphan-race 'state: done · source: status-log · landing evidence unresolved' 90000
   : > "$dir/home/cleaned-during-hold/idle-orphan-race"
 
   sweep "$dir" scan --now || fail "scan failed"
@@ -669,24 +669,17 @@ test_refusals_and_idle_workers_become_one_decision_each() {
 
   sweep "$dir" scan --now || fail "scan failed"
 
-  [ "$(sort "$dir/home/hold-calls" | tr '\n' ' ')" = "broke unlanded vanished waiting " ] \
-    || fail "wrong set of workers raised: $(calls "$dir" hold-calls)"
+  [ "$(calls "$dir" hold-calls)" = unlanded ] \
+    || fail "routine worker decisions reached the captain: $(calls "$dir" hold-calls)"
+  for id in broke waiting vanished; do
+    assert_contains "$(cat "$dir/home/state/.wake-queue")" "idle-sweep-mate:$id:" 'routine case did not reach owning mate'
+    assert_equals referred "$(jq -r --arg id "$id" '.workers[] | select(.id==$id) | .action' "$dir/home/state/idle-sweep.json")" 'routine decision was not referred'
+    assert_present "$dir/home/state/$id.meta" 'referral removed unfinished work'
+  done
   assert_present "$dir/home/state/unlanded.meta" "a refused cleanup removed the record"
   card="$dir/home/cards/unlanded.json"
   assert_contains "$(jq -r '.options[0].label' "$card")" "Clean it up" "a refused cleanup should offer cleaning it up"
   assert_contains "$(jq -r '.situation' "$card")" "uncommitted changes" "the card should carry the refusal"
-  for id in broke vanished; do
-    [ "$(jq -r '.recommended' "$dir/home/cards/$id.json")" = 1 ] || fail "$id should recommend retiring"
-    assert_contains "$(jq -r '[.options[].label]|join(",")' "$dir/home/cards/$id.json")" "Retire it,Retry it" \
-      "$id should offer retire or retry"
-  done
-  [ "$(jq -r '.recommended' "$dir/home/cards/waiting.json")" = 2 ] || fail "a stalled worker should recommend retrying"
-  assert_equals 'The worker on PR 1806 failed and nothing retried it. (25 hours quiet)' \
-    "$(jq -r .situation "$dir/home/cards/broke.json")" "the failed card names its recorded PR"
-  assert_equals 'The worker on PR 1807 has been waiting with nobody acting on it. (25 hours quiet)' \
-    "$(jq -r .situation "$dir/home/cards/waiting.json")" "the stalled card names its own PR"
-  assert_contains "$(cat "$dir/home/cards/broke.reason")" 'quiet 25 hours' "the hold reason should include quiet time"
-  assert_contains "$(cat "$dir/home/cards/broke.reason")" 'run failed test step' "the hold reason should preserve detail without parentheses"
   [ "$(jq -r '.workers[] | select(.id=="unreachable") | .class' "$dir/home/state/idle-sweep.json")" = settling ] \
     || fail "an unavailable backend was classified as a dead worker"
   if grep -qx asked "$dir/home/crew-state-calls"; then
@@ -694,7 +687,7 @@ test_refusals_and_idle_workers_become_one_decision_each() {
   fi
   assert_contains "$(cat "$dir/home/state/.wake-queue")" "idle-sweep:" "a main home should queue one decision wake"
   [ "$(grep -c 'idle-sweep:' "$dir/home/state/.wake-queue")" = 1 ] || fail "more than one decision wake was queued"
-  pass "fm-idle-sweep: refusals and idle workers become one retire-or-retry decision each; active, recent and held ones are left"
+  pass "fm-idle-sweep: routine retry or retirement goes to the mate; unresolved cleanup choices stay held"
 }
 
 test_a_raised_worker_is_raised_again_only_after_its_ledger_changes() {
@@ -705,20 +698,20 @@ test_a_raised_worker_is_raised_again_only_after_its_ledger_changes() {
   sweep "$dir" scan --now || fail "first scan failed"
   printf 'state: unknown · source: none · backend target gone\n' > "$dir/home/crew/broke"
   sweep "$dir" scan --now || fail "second scan failed"
-  [ "$(grep -c . "$dir/home/hold-calls")" = 1 ] || fail "an unchanged worker was raised twice: $(calls "$dir" hold-calls)"
-  [ "$(jq -r '.workers[0].class' "$dir/home/state/idle-sweep.json")" = raised ] \
-    || fail "an unchanged raised worker should list as raised"
+  sweep "$dir" scan --now || fail "unchanged scan failed"
+  assert_equals 2 "$(grep -c 'idle-sweep-mate:' "$dir/home/state/.wake-queue")" 'a changed crew result must notify once'
+  [ ! -s "$dir/home/hold-calls" ] || fail 'routine reassessment raised a captain card'
 
   printf 'failed: second attempt failed\n' >> "$dir/home/state/broke.status"
   age_file "$dir/home/state/broke.status" 90000
   sweep "$dir" scan --now || fail "third scan failed"
-  [ "$(grep -c . "$dir/home/hold-calls")" = 2 ] || fail "a worker whose ledger changed was not raised again"
+  assert_equals 3 "$(grep -c 'idle-sweep-mate:' "$dir/home/state/.wake-queue")" 'changed ledger did not reach mate'
 
   touch "$dir/home/state/.last-idle-sweep"
   printf 'failed: third\n' >> "$dir/home/state/broke.status"
   age_file "$dir/home/state/broke.status" 90000
   sweep "$dir" scan || fail "cadence-gated scan failed"
-  [ "$(grep -c . "$dir/home/hold-calls")" = 2 ] || fail "a scan inside its cadence still ran"
+  assert_equals 3 "$(grep -c 'idle-sweep-mate:' "$dir/home/state/.wake-queue")" 'a scan inside its cadence still ran'
   pass "fm-idle-sweep: a raised worker waits for its ledger to change, and scans keep their cadence"
 }
 
@@ -735,7 +728,8 @@ test_reassigned_slots_cannot_supply_completion() {
   assert_present "$dir/home/state/stale.meta" "a reassigned task was closed using the claimant's completion"
   assert_absent "$dir/home/state/claimant.meta" "the actual claimant was not cleaned up"
   [ "$(calls "$dir" teardown-calls)" = claimant ] || fail "cleanup touched the stale task"
-  [ "$(calls "$dir" hold-calls)" = stale ] || fail "the stale task did not get a decision"
+  [ ! -s "$dir/home/hold-calls" ] || fail 'reassigned worker raised a captain card'
+  assert_contains "$(cat "$dir/home/state/.wake-queue")" 'idle-sweep-mate:stale:' 'stale task did not reach mate'
   [ "$(jq -r '.workers[] | select(.id=="stale") | .class' "$dir/home/state/idle-sweep.json")" = dead ] \
     || fail "the stale task was not classified as dead"
   if grep -qx stale "$dir/home/crew-state-calls"; then fail "the stale task read the claimant's run"; fi
@@ -745,7 +739,7 @@ test_reassigned_slots_cannot_supply_completion() {
 test_closed_worker_gets_a_linked_followup_hold() {
   local dir
   dir=$(new_case closed-worker)
-  add_worker "$dir" closed-worker 'state: failed · source: run-step · run failed' 90000
+  add_worker "$dir" closed-worker 'state: done · source: status-log · landing evidence unresolved' 90000
   : > "$dir/home/closed/closed-worker"
 
   sweep "$dir" scan --now || fail "scan failed"
@@ -965,9 +959,11 @@ test_scan_uses_fixed_quiet_and_audit_bounds() {
 
 run_watcher_until() {  # <dir> <file> <pattern>
   local dir=$1 file=$2 pattern=$3 watcher i=0
-  FM_HOME="$dir/home" FM_POLL=1 FM_HOME_SUMMARY_INTERVAL=999999 FM_SECONDMATE_REVIVE_INTERVAL=999999 \
+  PATH="$dir/bin:$PATH" TASKS_AXI_BACKEND=markdown \
+    FM_WATCH_HANDLING_SUCCESSOR=1 FM_HOME="$dir/home" FM_POLL=1 FM_HOME_SUMMARY_INTERVAL=999999 FM_SECONDMATE_REVIVE_INTERVAL=999999 \
     "$dir/bin/fm-watch.sh" > "$dir/watch.out" 2> "$dir/watch.err" &
   watcher=$!
+  fm_test_track_helper_pid "$watcher"
   while ! grep -q "$pattern" "$file" 2>/dev/null && [ "$i" -lt 400 ]; do
     sleep 0.05; i=$((i + 1))
   done
@@ -979,8 +975,12 @@ test_watcher_runs_the_sweep_and_surfaces_its_decision() {
   local dir
   dir=$(new_case watcher)
   add_worker "$dir" broke 'state: failed · source: run-step · run failed' 90000
-  run_watcher_until "$dir" "$dir/home/hold-calls" broke
-  assert_contains "$(calls "$dir" hold-calls)" broke "the watcher did not run the sweep on its own"
+  run_watcher_until "$dir" "$dir/home/state/.wake-queue" 'idle-sweep-mate:broke:'
+  assert_contains "$(cat "$dir/home/state/.wake-queue")" 'idle-sweep-mate:broke:' 'watcher did not run the sweep on its own'
+  run_watcher_until "$dir" "$dir/watch.out" 'mate reassessment'
+  assert_contains "$(cat "$dir/watch.out")" 'mate reassessment of retry or guarded retirement: broke' \
+    "watcher did not run and surface the mate referral: $(cat "$dir/watch.err"); summary=$(cat "$dir/home/state/idle-sweep.json" 2>/dev/null); queue=$(cat "$dir/home/state/.wake-queue" 2>/dev/null)"
+  [ ! -s "$dir/home/hold-calls" ] || fail 'watcher raised a routine captain card'
 
   dir=$(new_case watcher-wake)
   mkdir -p "$dir/mate/state"
@@ -995,12 +995,12 @@ test_watcher_runs_the_sweep_and_surfaces_its_decision() {
 }
 
 test_real_parked_withdrawals_survive_later_sweeps() {
-  local dir real_tasks path target kind round evidence
+  local dir real_tasks path target kind round evidence summary_id
   real_tasks=$(command -v tasks-axi || true)
   [ -n "$real_tasks" ] || { echo 'skip: tasks-axi not found for real parked withdrawals'; return; }
-  for path in direct linked; do
+  for path in direct linked orphan orphan-linked; do
     for kind in retry capability-wait; do
-      case "$path:$kind" in direct:capability-wait|linked:retry) continue ;; esac
+      case "$path:$kind" in direct:capability-wait|linked:retry|orphan:retry|orphan-linked:retry) continue ;; esac
       dir=$(new_case "park-$path-$kind")
       cp "$ROOT/bin/fm-captain-hold.sh" "$dir/bin/fm-captain-hold.sh"
       cp "$ROOT/.tasks.toml" "$dir/home/.tasks.toml"
@@ -1008,13 +1008,35 @@ test_real_parked_withdrawals_survive_later_sweeps() {
       printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$real_tasks" > "$dir/bin/tasks-axi"
       add_worker "$dir" worker 'state: blocked · source: status-log · awaiting preview capability' 90000
       (cd "$dir/home" && "$real_tasks" add worker 'Synthetic unfinished work' --repo firstmate >/dev/null) || fail 'seed failed'
+      summary_id=worker
       target=worker
       if [ "$path" = linked ]; then
         (cd "$dir/home" && "$real_tasks" 'done' worker >/dev/null) || fail 'close failed'
         target=idle-worker
       fi
-      sweep "$dir" scan --now || fail 'initial retry scan failed'
-      assert_present "$dir/home/state/cards/$target.json" 'initial retry question missing'
+      case "$path" in
+        orphan|orphan-linked)
+          rm "$dir/home/state/worker.meta"
+          summary_id=idle-orphan-worker
+          target=$summary_id
+          printf 'worker\teid123\n' > "$dir/home/orphans"
+          : > "$dir/home/orphan-refused"
+          if [ "$path" = orphan-linked ]; then
+            (cd "$dir/home" && "$real_tasks" add "$target" 'Legacy orphan question' --repo firstmate >/dev/null \
+              && "$real_tasks" 'done' "$target" >/dev/null) || fail 'orphan linked setup failed'
+            target=idle-$target
+          fi
+          sweep "$dir" scan --now || fail 'refused orphan setup failed'
+          assert_present "$dir/home/state/cards/$target.json" 'refused orphan call missing'
+          ;;
+      esac
+      printf '{"project":"firstmate","title":"Resume unfinished work?","situation":"Work is unfinished.","options":[{"key":"1","label":"Retry","instruction":"Retry the work."},{"key":"2","label":"Wait","instruction":"Wait for capability."}],"recommended":"1"}\n' > "$dir/card.json"
+      if [ "$summary_id" = worker ]; then
+        PATH="$dir/bin:$PATH" TASKS_AXI_BACKEND=markdown FM_HOME="$dir/home" \
+          "$dir/bin/fm-captain-hold.sh" hold "$target" --reason 'Legacy retry question' \
+          --title 'Synthetic unfinished work' --origin worker --repo firstmate --card-file "$dir/card.json" \
+          > "$dir/hold.out" || fail 'legacy call setup failed'
+      fi
       printf 'The mate owns %s for this unfinished task; preserve its local work.\n' "$kind" > "$dir/evidence"
       PATH="$dir/bin:$PATH" TASKS_AXI_BACKEND=markdown FM_HOME="$dir/home" \
         "$dir/bin/fm-captain-hold.sh" withdraw "$target" --evidence-file "$dir/evidence" \
@@ -1031,16 +1053,20 @@ test_real_parked_withdrawals_survive_later_sweeps() {
       done
       [ ! -s "$dir/home/teardown-calls" ] || fail 'parked work was cleaned up'
       if grep -q 'idle-sweep-mate:' "$dir/home/state/.wake-queue"; then fail 'unchanged evidence woke mate'; fi
-      evidence=$(cat "$dir/home/state/idle-sweep/worker.mate-wait")
+      evidence=$(cat "$dir/home/state/idle-sweep/$summary_id.mate-wait")
       printf 'blocked: capability is available; retry now\n' > "$dir/home/state/worker.status"
       age_file "$dir/home/state/worker.status" 90000
       sweep "$dir" scan --now || fail 'changed evidence scan failed'
-      [ "$evidence" != "$(cat "$dir/home/state/idle-sweep/worker.mate-wait")" ] || fail 'evidence fingerprint unchanged'
-      assert_contains "$(cat "$dir/home/state/.wake-queue")" 'idle-sweep-mate:worker:' 'material change did not reach mate'
+      [ "$evidence" != "$(cat "$dir/home/state/idle-sweep/$summary_id.mate-wait")" ] || fail 'evidence fingerprint unchanged'
+      assert_contains "$(cat "$dir/home/state/.wake-queue")" "idle-sweep-mate:$summary_id:" 'material change did not reach mate'
       assert_absent "$dir/home/state/cards/$target.json" 'changed evidence went to captain instead of mate'
       sweep "$dir" scan --now || fail 'repeat changed scan failed'
       assert_equals 1 "$(grep -c 'idle-sweep-mate:' "$dir/home/state/.wake-queue")" 'unchanged new evidence notified twice'
-      assert_present "$dir/home/state/worker.meta" 'unfinished work was removed'
+      if [ "$summary_id" = worker ]; then
+        assert_present "$dir/home/state/worker.meta" 'unfinished work was removed'
+      else
+        assert_equals 1 "$(grep -c '^--orphan ' "$dir/home/retire-calls")" 'parked orphan closure was retried'
+      fi
     done
   done
   pass 'fm-idle-sweep: real withdraw --park preserves retry and capability waits; changed evidence goes to mate'
@@ -1070,12 +1096,54 @@ test_parked_evidence_ignores_observation_time_but_tracks_git_changes() {
   [ ! -s "$dir/home/hold-attempts" ] || fail 'changed parked evidence raised a captain card'
   [ ! -s "$dir/home/teardown-calls" ] || fail 'changed parked evidence triggered cleanup'
   assert_present "$dir/pool/1/firstmate/leftover" 'local work was removed'
+  run_watcher_until "$dir" "$dir/watch.out" 'mate reassessment'
+  assert_contains "$(cat "$dir/watch.out")" 'mate reassessment of retry or guarded retirement: waiting' 'handling successor ignored changed Git evidence'
+  if grep -q 'process-event result captured\|idle workers need a decision\|rearm-resurface' "$dir/watch.out"; then
+    fail 'mate reassessment was misclassified or depended on generic recovery'
+  fi
   : > "$dir/home/held/$id"
   sweep "$dir" scan --now || fail 'fresh unresolved choice scan failed'
   assert_equals held "$(jq -r '.workers[0].class' "$dir/home/state/idle-sweep.json")" 'new unresolved captain choice was suppressed'
   pass 'fm-idle-sweep: parked evidence ignores read timestamps, reports Git changes to mate and preserves unresolved choices and local work'
 }
 
+test_orphan_mate_waits_cover_original_and_linked_calls() {
+  local dir target mode round
+  for target in gone-task idle-gone-task idle-orphan-gone-task idle-idle-orphan-gone-task; do
+    for mode in parked unreadable; do
+      dir=$(new_case "orphan-wait-$target-$mode")
+      mkdir -p "$dir/home/parked"
+      printf 'gone-task\teid123\n' > "$dir/home/orphans"
+      printf 'blocked: legacy endpoint wait\n' > "$dir/home/state/gone-task.status"
+      : > "$dir/home/orphan-refused"
+      if [ "$mode" = parked ]; then
+        printf 'mate capability wait\n' > "$dir/home/parked/$target"
+      else
+        : > "$dir/home/unreadable/withdrawn-parked-$target"
+      fi
+      for round in 1 2; do
+        sweep "$dir" scan --now || fail 'orphan wait scan failed'
+        [ ! -s "$dir/home/hold-attempts" ] || fail 'parked orphan was raised'
+        if grep -q '^--orphan ' "$dir/home/retire-calls"; then fail 'parked orphan closure was retried'; fi
+      done
+      [ ! -s "$dir/home/state/.wake-queue" ] || fail 'unchanged orphan wait woke mate'
+      printf 'blocked: capability changed\n' >> "$dir/home/state/gone-task.status"
+      sweep "$dir" scan --now || fail 'changed orphan scan failed'
+      sweep "$dir" scan --now || fail 'unchanged new orphan scan failed'
+      [ ! -s "$dir/home/hold-attempts" ] || fail 'changed orphan wait raised a card'
+      if grep -q '^--orphan ' "$dir/home/retire-calls"; then fail 'changed parked orphan was closed'; fi
+      if [ "$mode" = parked ]; then
+        assert_equals mate-wait "$(jq -r '.workers[0].class' "$dir/home/state/idle-sweep.json")" 'orphan lost mate wait'
+        assert_equals 1 "$(grep -c 'idle-sweep-mate:idle-orphan-gone-task:' "$dir/home/state/.wake-queue")" 'changed orphan evidence did not notify exactly once'
+      else
+        assert_equals unknown "$(jq -r '.workers[0].class' "$dir/home/state/idle-sweep.json")" 'unreadable mate wait did not stop safely'
+      fi
+    done
+  done
+  pass 'fm-idle-sweep: orphan and linked waits prevent closure and repeated captain cards'
+}
+
+test_orphan_mate_waits_cover_original_and_linked_calls
 test_parked_evidence_ignores_observation_time_but_tracks_git_changes
 test_real_parked_withdrawals_survive_later_sweeps
 test_real_holds_check_worker_records_inside_the_lifecycle_lock

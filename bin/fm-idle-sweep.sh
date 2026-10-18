@@ -48,15 +48,16 @@
 #     for a fresh scan; a remaining refusal on the unchanged record becomes
 #     a decision to clean it up or keep it;
 #   - failed, blocked, paused, or unknown with its endpoint or copy gone,
-#     quiet for 6 hours: one decision to retire or retry it, recommending
-#     retire for failed/dead and retry for blocked/paused; an unavailable
-#     backend without evidence that the endpoint or copy is gone is left alone.
+#     quiet for 6 hours: refer to the owning mate to decide retry or guarded
+#     retirement, once per evidence change, without a captain card; an
+#     unavailable backend without evidence that the endpoint or copy is gone
+#     is left alone.
 #   Then this home's record-less live endpoints are listed through
 #   bin/fm-retire-endpoint.sh --list-orphans. Before --orphan closure, holds
-#   and settled deferrals on idle-orphan-<task> (or its follow-up), and an
-#   unchanged raised fingerprint of the actual task's ledger, leave the
-#   endpoint alone; otherwise a refused close becomes a decision under
-#   idle-orphan-<task>.
+#   and settled deferrals on idle-orphan-<task> (or its follow-up), durable
+#   mate waits on those or the original task, and an unchanged raised
+#   fingerprint of the actual task's ledger, leave the endpoint alone;
+#   otherwise a refused close becomes a decision under idle-orphan-<task>.
 # Metadata-less pending backlog closes also appear as unhandled on every scan
 # until the lifecycle owner clears them; the sweep reports but never retries
 # or changes those recovery records.
@@ -100,8 +101,9 @@
 # (schema fm-idle-sweep.v1: generated, generated_epoch, home, workers[] of
 # {id, class, age_seconds, detail, action, hold_id}); hold_id names the raised
 # captain call, or is null; action is one of none, cleaned,
-# carded, or unhandled. Refused orphan closes are included even when their
-# hold fails; held or unchanged raised orphans appear with action none.
+# carded, referred (to the owning mate), or unhandled. Refused orphan closes
+# are included even when their hold fails; held or unchanged raised orphans
+# appear with action none.
 # Exit 1 when no scan has published a summary yet.
 #
 # Environment knobs:
@@ -218,9 +220,54 @@ already_raised() {  # <id>
   [ -f "$RAISED_DIR/$1.raised" ] && [ "$(cat "$RAISED_DIR/$1.raised" 2>/dev/null)" = "$(fingerprint "$1" "${2:-$1}")" ]
 }
 
+mate_evidence() {
+  local id=$1 worktree=$2 line=$3
+  {
+    cat "$STATE/$id.meta" "$STATE/$id.status" 2>/dev/null
+    printf '%s\n' "${line%; observed=*}" "${4:-}"
+    if [ -n "$worktree" ] && [ -d "$worktree" ]; then
+      git -C "$worktree" rev-parse HEAD 2>/dev/null
+      GIT_OPTIONAL_LOCKS=0 git -C "$worktree" status --porcelain 2>/dev/null
+    fi
+  } | shasum -a 256
+}
+
+notify_mate() {
+  local id=$1 evidence=$2 mode=$3 previous marker
+  marker="$RAISED_DIR/$id.$mode"
+  mkdir -p "$RAISED_DIR" || return 1
+  previous=$(cat "$marker" 2>/dev/null) || previous=
+  if [ "$previous" != "$evidence" ] && { [ "$mode" = mate-review ] || [ -n "$previous" ]; }; then
+    fm_wake_append check "idle-sweep-mate:$id:$NOW:${evidence%% *}" \
+      "check: mate must reassess worker $id; decide retry for still-wanted unfinished work or guarded retirement for completed, merged, superseded or abandoned work; preserve leftovers and escalate uncertainty to the parent mate" || return 1
+  fi
+  printf '%s\n' "$evidence" > "$marker"
+}
+
+mate_disposition() {
+  local id=$1 ledger_id=$2 worktree=$3 line=$4 call_id disposition rc
+  shift 4
+  for call_id in "$@"; do
+    rc=0
+    disposition=$("$SCRIPT_DIR/fm-captain-hold.sh" withdrawn-parked "$call_id" 2>/dev/null) || rc=$?
+    case "$rc" in
+      0)
+        if notify_mate "$id" "$(mate_evidence "$ledger_id" "$worktree" "$line" "$call_id:$disposition")" mate-wait; then
+          CLASS=mate-wait
+        else
+          CLASS=unknown; DETAIL="could not notify mate of changed evidence"
+        fi
+        return 0 ;;
+      1) ;;
+      *) CLASS=unknown; DETAIL="mate disposition could not be read"; return 0 ;;
+    esac
+  done
+  return 1
+}
+
 # classify <id>: sets CLASS, DETAIL, AGE
 classify() {
-  local id=$1 line verb worktree row pr pr_state hold_rc=0 disposition call_id evidence previous
+  local id=$1 line verb worktree row pr pr_state hold_rc=0
   UNPROVEN=0
   MERGED_PR_URL=
   AGE=$(record_age "$id")
@@ -241,33 +288,7 @@ classify() {
   fi
   verb=$(printf '%s' "$line" | sed -n 's/^state: \([a-z]*\).*/\1/p')
   DETAIL=$(printf '%s' "$line" | sed 's/^state: [a-z]* · source: [a-z-]* · //' | cut -c1-200)
-  for call_id in "$id" "idle-$id"; do
-    hold_rc=0
-    disposition=$("$SCRIPT_DIR/fm-captain-hold.sh" withdrawn-parked "$call_id" 2>/dev/null) || hold_rc=$?
-    case "$hold_rc" in
-      0)
-        evidence=$({
-          cat "$STATE/$id.meta" "$STATE/$id.status" 2>/dev/null
-          printf '%s\n' "${line%; observed=*}" "$call_id" "$disposition"
-          if [ -d "$worktree" ]; then
-            git -C "$worktree" rev-parse HEAD 2>/dev/null
-            GIT_OPTIONAL_LOCKS=0 git -C "$worktree" status --porcelain 2>/dev/null
-          fi
-        } | shasum -a 256)
-        mkdir -p "$RAISED_DIR"
-        previous=$(cat "$RAISED_DIR/$id.mate-wait" 2>/dev/null) || previous=
-        if [ -n "$previous" ] && [ "$previous" != "$evidence" ]; then
-          fm_wake_append check "idle-sweep-mate:$id:$NOW" \
-            "check: parked worker $id has changed evidence; its mate must reassess the retry or wait" \
-            || { CLASS=unknown; DETAIL="could not notify mate of changed evidence"; return; }
-        fi
-        printf '%s\n' "$evidence" > "$RAISED_DIR/$id.mate-wait"
-        CLASS='mate-wait'
-        return ;;
-      1) ;;
-      *) CLASS=unknown; DETAIL="mate disposition could not be read"; return ;;
-    esac
-  done
+  mate_disposition "$id" "$id" "$worktree" "$line" "$id" "idle-$id" && return
   case "$verb" in
     working|parked) CLASS=active; return ;;
     done)
@@ -307,9 +328,12 @@ classify() {
   if [ "$CLASS" != finished ] && [ "$CLASS" != settling ] && [ "$AGE" -lt 21600 ]; then
     CLASS=settling
   fi
-  if [ "$CLASS" != settling ] && already_raised "$id"; then
+  if [ "$CLASS" = finished ] && already_raised "$id"; then
     CLASS=raised
   fi
+  case "$CLASS" in
+    failed|stalled|dead) MATE_EVIDENCE=$(mate_evidence "$id" "$worktree" "$line") ;;
+  esac
 }
 
 project_of() {  # <meta>
@@ -497,9 +521,12 @@ while IFS= read -r meta; do
       fi
       ;;
     failed|stalled|dead)
-      RAISED=0
-      raise "$id" "$CLASS" "$DETAIL" "$project"
-      if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; elif [ "${RAISE_SKIPPED:-0}" = 1 ]; then CLASS=unknown; DETAIL="worker record changed during scan"; else action=unhandled; fi
+      if notify_mate "$id" "$MATE_EVIDENCE" mate-review; then
+        action=referred
+      else
+        action=unhandled
+        DETAIL="could not notify owning mate: $DETAIL"
+      fi
       ;;
   esac
   add_row "$id" "$CLASS" "$DETAIL" "$action"
@@ -524,12 +551,18 @@ while IFS=$'\t' read -r otask oeid; do
   HOLD_ID=
   detail="endpoint $oeid for $otask has no record"
   hold_rc=0
-  hold_settled "idle-orphan-$otask" "idle-idle-orphan-$otask" || hold_rc=$?
+  hold_settled "$otask" "idle-$otask" "idle-orphan-$otask" "idle-idle-orphan-$otask" || hold_rc=$?
   case "$hold_rc" in
     0) add_row "idle-orphan-$otask" held "$detail" none; continue ;;
     1) ;;
     *) add_row "idle-orphan-$otask" unknown "$detail; captain hold could not be read" none; continue ;;
   esac
+  DETAIL=$detail
+  if mate_disposition "idle-orphan-$otask" "$otask" "" "$oeid" \
+    "$otask" "idle-$otask" "idle-orphan-$otask" "idle-idle-orphan-$otask"; then
+    add_row "idle-orphan-$otask" "$CLASS" "$DETAIL" none
+    continue
+  fi
   if already_raised "idle-orphan-$otask" "$otask"; then
     add_row "idle-orphan-$otask" raised "$detail" none
     continue
