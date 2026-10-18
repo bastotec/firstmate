@@ -38,17 +38,31 @@ is recorded and never stops the next:
            a deck agent in a fresh worktree of firstmate's origin/main improves
            the instructions every agent reads - AGENTS.md, .agents/skills/ and
            the brief and charter templates in bin/fm-brief.sh - from the day's
-           evidence, at most MAX_INSTRUCTION_LINES changed lines, secret-scanned,
-           and never removing or rewording a line that carries a hard stop
-           (HARD_STOPS: money, credentials, production, outward messages,
+           evidence, within a 90-minute budget and at most MAX_INSTRUCTION_LINES
+           changed lines (additions plus deletions, with renames counted as both).
+           Every change record must name a changed file, what, why and nonempty
+           digest evidence, and every changed file must be listed. The patch is
+           secret-scanned, never removing or rewording a line that carries a hard
+           stop (HARD_STOPS: money, credentials, production, outward messages,
            destructive or irreversible actions, captain approval). The change
            ships as one PR through the no-mistakes gate (`no-mistakes axi run
            --yes`); auto-land (bin/fm-autoland.sh) merges it under its own
            authority, attestation and risk cap and rolls it out with the firstmate
            deploy hook. A PR above that cap, or a gate --yes cannot pass, is
-           reported for the captain, never merged here. A mate's own charter lives
-           in its private home data, so edits to it are proposals in the report
-           (charters-<date>.md), not applied.
+           reported for the captain, never merged here. A parked gate is reported
+           as 'needs a decision'; a spent budget as 'timed out'; other nonzero
+           gate replies fail unless they report a bounded wait ending. These
+           outcomes and an interrupted gate trigger a separately bounded abort;
+           an unconfirmed stop is named in the step reason. The committed branch
+           and worktree stay for the gate's CI monitor or human follow-up.
+           Later nights prune earlier worktrees once the branch is an ancestor
+           of origin/main, its PR is merged (including squash merges), or the
+           worktree is a week old. A mate's own charter lives in its private home
+           data, so edits to it are proposals in charters-<date>.md, not applied;
+           excluded homes' proposals are dropped. 'pr opened' is a clean outcome.
+           The morning summary separates the final PR diff's lines and files
+           (or its unavailability) from proposed descriptions, and names the PR
+           and its risk rating when available.
   triage   a deck agent proposes concrete harness fixes from the digest; each
            is deduplicated against open tasks in the main home and every included
            mate's backlog, open PRs, what dreaming raised in the last RAISED_DAYS
@@ -75,7 +89,7 @@ subprocesses have their own process groups, and worktree cleanup has a separate
 short bound. Each agent step uses deck run --ephemeral and retries one failed
 attempt while budget remains; a nonzero exit, run_failed event or missing output
 fails an attempt, and expected output is cleared before each attempt.
-A digest with no sections skips both agent steps.
+A digest with no sections skips all agent steps.
 Only clean step outcomes (CLEAN) yield a done run; other outcomes make it partial.
 --only selects steps in the supplied order; --dry-run still collects and reads
 open work, but starts no agents, pushes nothing and files nothing.
@@ -94,12 +108,16 @@ Files under <home>/state/dream/:
                      raised: [{title, repo, mate, key, why}],
                      slow_commands: [{command, seconds, count}], counts: {...},
                      disagreements: [<home records read but disagreeing>],
-                     instructions: {changes (as proposed), proposed_lines, lines
-                     and files (the PR's final diff; null when unread), pr, risk} | null,
+                     instructions: {changes: [{path, what, why, evidence}],
+                     proposed_lines (pre-gate additions + deletions),
+                     lines, files (final PR diff when a PR exists; null if unread;
+                     without a PR, lines is the proposal count and files is null),
+                     pr, risk (null if unread)} | null,
                      charter_proposals: [{mate, what}],
                      no_mistakes: {...} or null, summary}
   raised.jsonl       one line per raised item (dedupe across nights)
   digest-<date>.md   the private digest the agents read
+  charters-<date>.md private charter-edit proposals, when any are kept
 
 Step timing starts after the pre-step checks; waited_for_ziggy, when nonzero,
 is the seconds spent polling for Ziggy's dream before that step.
@@ -136,7 +154,9 @@ counts.no_mistakes_failed remains the local fleet-only count, not the host total
 
 Configuration: docs/configuration.md "Fleet dreaming" owns config/dream.json.
 Environment: FM_DREAM_DECK (deck binary), FM_DREAM_DOTFILES (~/dotfiles),
-FM_DREAM_JEV (Jev helper command), FM_DREAM_MIN_FREE_GB, FM_DREAM_NO_MISTAKES_DB.
+FM_DREAM_JEV (Jev helper command), FM_DREAM_MIN_FREE_GB, FM_DREAM_NO_MISTAKES_DB,
+FM_DREAM_FIRSTMATE (firstmate checkout, default: this code root),
+FM_DREAM_NO_MISTAKES (gate binary, default: no-mistakes), FM_DREAM_GH (gh binary).
 Tests only: FM_DREAM_NOW (epoch), FM_DREAM_SKIP_ZIGGY_WAIT=1, FM_DREAM_ZIGGY_POLL (seconds), and FM_DREAM_TASKS,
 FM_DREAM_HANDOFF, FM_DREAM_REPORT, FM_DREAM_ON, FM_DREAM_CAPTAIN_MEMORY replacing
 bin/fm-tasks-axi.sh, bin/fm-backlog-handoff.sh, bin/fm-report.sh, bin/fm-on.sh and
@@ -1304,8 +1324,8 @@ def step_instructions(ctx):
 
 
 def prune_instruction_trees(ctx, repo):
-    """Remove earlier nights' instruction worktrees whose branch landed on
-    origin/main or that are a week old; their gate runs are long finished."""
+    """Remove earlier nights' instruction worktrees once their branch is an
+    ancestor of origin/main, their PR is merged, or they are a week old."""
     merged = set(git(ctx, 'branch', '--merged', 'origin/main', '--format=%(refname:short)', cwd=repo, check=False).split())
     for path in sorted(ctx.dir.glob('firstmate-fm-dream-instructions-*')):
         day = path.name.rsplit('-instructions-', 1)[-1]
