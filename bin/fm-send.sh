@@ -207,9 +207,16 @@
 # inspect (it can no longer reconcile or escalate on its own). Only a
 # failed enqueue discards the expectation. On the typed plane an unconfirmed submit (exit 3) keeps
 # it armed rather than dropping it, and only a proven send failure discards it.
-# Set FM_PENDING_REPLY_EXISTING_CORR=<id> when re-sending a recovery request
-# for an already-open expectation so a second record is not created. Direct
-# unmarked captain input never creates one. A marked secondmate instruction
+# Set FM_PENDING_REPLY_EXISTING_CORR=<id> to reuse an already-open expectation
+# for a resend or its recovery request instead of creating another expectation.
+# A local inbox resend deduplicates the same correlated request onto its
+# existing root or handled record, even after recovery begins. Only the exact
+# text from fm_pending_reply_recovery_message bypasses that deduplication so
+# recovery can enqueue its own message; a new request without a reused
+# correlation still gets a separate record. Before refusing an unresolved
+# delivery attempt, fm-send reconciles it under the stale-local-inbox rule
+# owned by bin/fm-pending-reply-lib.sh's header. Direct
+# unmarked captain input never creates an expectation. A marked secondmate instruction
 # sent with --fire-and-forget <16-hex-delivery-id> uses the same inbox transport
 # without creating a reply expectation; its delivery id makes uncertain retries
 # idempotent while allowing a later identical instruction to be distinct.
@@ -1024,6 +1031,10 @@ else
     if [ -n "$existing_corr" ] \
       && fm_pending_reply_corr_reusable "$STATE" "$existing_corr" "$TARGET_TASK_ID"; then
       PENDING_REPLY_CORR=$existing_corr
+      if [ "$INBOX_PLANE" = 1 ] && [ "$TARGET_BACKEND" != remote ] \
+        && [ "$MESSAGE" != "$(fm_pending_reply_recovery_message "$(fm_pending_reply_path "$STATE" "$PENDING_REPLY_CORR")")" ]; then
+        FM_SEND_IDEMPOTENT=1
+      fi
     else
       if [ "$existing_corr_explicit" = 1 ]; then
         echo "error: explicitly requested pending-reply correlation '${existing_corr:-empty}' is not reusable for $TARGET_TASK_ID; refusing to mint a replacement correlation" >&2
@@ -1038,6 +1049,10 @@ else
       PENDING_REPLY_CREATED=1
     fi
     fm_pending_reply_embed_corr "$MESSAGE" "$PENDING_REPLY_CORR" MESSAGE
+    # Settle a stale unconfirmed attempt first (bin/fm-pending-reply-lib.sh
+    # owns the rule), so one interrupted send cannot block every resend.
+    [ "$PENDING_REPLY_CREATED" = 1 ] \
+      || fm_pending_reply_reconcile_delivery "$STATE" "$PENDING_REPLY_CORR" >/dev/null 2>&1 || true
     if [ "$PENDING_REPLY_CREATED" != 1 ] \
       && fm_pending_reply_delivery_attempt_unresolved "$STATE" "$PENDING_REPLY_CORR"; then
       if [ "$TARGET_BACKEND" = remote ]; then
@@ -1050,7 +1065,9 @@ else
         exit 1
       fi
     fi
-    if ! fm_pending_reply_prepare_delivery "$STATE" "$PENDING_REPLY_CORR"; then
+    delivery_plane=typed
+    [ "$INBOX_PLANE" != 1 ] || delivery_plane=inbox
+    if ! fm_pending_reply_prepare_delivery "$STATE" "$PENDING_REPLY_CORR" "$delivery_plane"; then
       [ "$PENDING_REPLY_CREATED" != 1 ] \
         || fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
       echo "error: failed to durably prepare pending-reply delivery for $TARGET_TASK_ID" >&2
