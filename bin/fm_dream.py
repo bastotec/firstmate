@@ -1100,10 +1100,13 @@ def improve_changes(ctx, raw, repos):
         kind = c.get('kind')
         if kind not in ('instructions', 'code', 'captain'):
             continue
-        # a repository named by its GitHub slug is the same repository
-        c['repo'] = next((k for k, slug in repos.items() if c.get('repo') in (k, slug)), c.get('repo'))
-        if kind == 'code' and not (c.get('repo') in repos and c.get('title')):
-            continue
+        if kind == 'code':
+            repo = c.get('repo')
+            if not isinstance(repo, str) or not repo:
+                continue
+            c['repo'] = next((k for k, slug in repos.items() if repo == k or (slug and repo == slug)), repo)
+            if not (c['repo'] in repos and c.get('title')):
+                continue
         if c.get('target') not in TARGETS:
             continue
         row = {k: str(c.get(k) or '')[:400] for k in ('kind', 'change', 'repo', 'title', 'fix', 'evidence', 'target')}
@@ -1142,7 +1145,8 @@ def pr_state(ctx, pr, dep):
         return 'state unread'
     if facts.get('merged'):
         merged[pr] = facts
-        return 'merged and deployed' if fl.deployed_at(pr, facts, dep, gh, run) else 'merged, deploy pending'
+        return 'merged and deployed' if fl.deployed_at(
+            pr, facts, dep, gh, run, ctx.facts.setdefault('deployment_comparisons', {})) else 'merged, deploy pending'
     return 'closed' if str(facts.get('state')).upper() == 'CLOSED' else 'open'
 
 
@@ -1196,7 +1200,10 @@ def last_night(ctx, point):
         elif r.get('kind') == 'captain' and r.get('key'):
             waiting = any(x.get('task') == r.get('key') and x.get('mate') == (r.get('mate') or 'primary')
                           for x in rep.get('waiting') or [])
-            state = 'waiting on the captain' if waiting else 'answered or closed'
+            resolved = any(x.get('task') == r['key'] and x.get('mate') == (r.get('mate') or 'primary')
+                           for x in rep.get('shipped') or [])
+            state = ('waiting on the captain' if waiting else 'answered or closed'
+                     if r.get('state') == 'card raised' or resolved else r.get('state') or 'card raise unconfirmed')
         else:
             state = r.get('state') or 'not acted on'
         out.append(dict(r, now_state=state, now_value=metric_of(point, r.get('target'))))
@@ -1229,7 +1236,8 @@ def step_improve(ctx):
                 break
             prs_left -= 1
             prs[url] = fl.pr_facts(url, gh, run=run)
-        items += fl.timelines(host, data, ctx.now, prs, dep, ctx.since, gh, run)
+        items += fl.timelines(host, data, ctx.now, prs, dep, ctx.since, gh, run,
+                              ctx.facts.setdefault('deployment_comparisons', {}))
     unread_prs = [t['pr'] for t in items if t.get('pr_unread')]
     if unread_prs:
         # never counted as open or merged: the split is incomplete, and says so
@@ -1304,8 +1312,6 @@ def step_track(ctx):
     life = ctx.facts.get('improve')
     if not life:
         return {'status': 'quiet day'}
-    if life.get('measurement_error'):
-        return {'status': 'partial', 'why': life['measurement_error']}
     tonight = life['tonight']
     ins = ctx.facts.get('instructions') or {}
     pr = ins.get('pr')
@@ -1344,6 +1350,8 @@ def step_track(ctx):
     taken = lambda a: (a.get('state') in ('open', 'merged and deployed', 'merged, deploy pending') and a.get('pr')
                        or str(a.get('state')).startswith('dispatch ordered') or a.get('state') == 'card raised')
     acted = [a for a in tonight if taken(a)]
+    if life.get('measurement_error'):
+        return {'status': 'partial', 'why': life['measurement_error'], 'acted': len(acted)}
     if life['changes'] and not acted:
         return {'status': 'nothing changed', 'why': ('no change was shipped, dispatched or carded tonight: %s'
                                                      % '; '.join(str(a.get('state')) for a in tonight))[:300]}
@@ -1355,16 +1363,17 @@ def improve_summary(life):
     if not life:
         return ''
     if life.get('measurement_error'):
-        return 'Improve: measurement incomplete: ' + life['measurement_error']
-    m = life['metrics']
-    change = life.get('change') or {}
-    text = 'Improve: %d mate task%s (%d merged, %d open), start to merge median %s (p90 %s)%s vs %s for %d session branch%s' % (
-        m['tasks'], '' if m['tasks'] == 1 else 's', m['mate']['merged'], m['mate']['open'], fl.human(m['mate']['median']),
-        fl.human(m['mate']['p90']), ' (%s%s vs %s)' % ('+' if change['mate_median'] >= 0 else '-', fl.human(abs(change['mate_median'])),
-                                                    life['previous']['date']) if change.get('mate_median') is not None else '',
-        fl.human(m['session']['median']), m['sessions'], '' if m['sessions'] == 1 else 'es')
-    if m['sinks']:
-        text += '; slowed by ' + ', '.join('%s %s' % (k, fl.human(v)) for k, v in m['sinks'][:3])
+        text = 'Improve: measurement incomplete: ' + life['measurement_error']
+    else:
+        m = life['metrics']
+        change = life.get('change') or {}
+        text = 'Improve: %d mate task%s (%d merged, %d open), start to merge median %s (p90 %s)%s vs %s for %d session branch%s' % (
+            m['tasks'], '' if m['tasks'] == 1 else 's', m['mate']['merged'], m['mate']['open'], fl.human(m['mate']['median']),
+            fl.human(m['mate']['p90']), ' (%s%s vs %s)' % ('+' if change['mate_median'] >= 0 else '-', fl.human(abs(change['mate_median'])),
+                                                        life['previous']['date']) if change.get('mate_median') is not None else '',
+            fl.human(m['session']['median']), m['sessions'], '' if m['sessions'] == 1 else 'es')
+        if m['sinks']:
+            text += '; slowed by ' + ', '.join('%s %s' % (k, fl.human(v)) for k, v in m['sinks'][:3])
     done, prs = [], set()
     for a in life.get('tonight') or []:
         state = a.get('state') or 'state unknown'

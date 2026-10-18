@@ -213,6 +213,67 @@ PY
   pass "lifecycle: repeated task ids retain each home's spawn, waits, relaunches and unstarted work"
 }
 
+test_retry_names_resolve_within_the_owning_repository() {
+  local d t0=$((NOW - 20000))
+  d=$(new_case retry-home)
+  mkdir -p "$d/other/data" "$d/other/state"
+  printf 'project=/fleet/firstmate\n' >> "$d/home/state/ship-a.meta"
+  printf -- '- [ ] ship-a-2 - Independent task (repo: other) (kind: ship)\n' > "$d/other/data/backlog.md"
+  printf 'kind=ship\nproject=/fleet/other\nspawn_gen=s%s.1.2\n' $((t0 + 1800)) > "$d/other/state/ship-a-2.meta"
+  printf 'paused: awaiting service\n' > "$d/other/state/ship-a-2.status"
+  sqlite3 "$d/nm.sqlite" "UPDATE runs SET branch='fm/ship-a-2' WHERE id='a2';
+    INSERT INTO repos VALUES('other','/fleet/other');
+    INSERT INTO runs VALUES('other-a','other','fm/ship-a-2','running',$((t0 + 2000)),$((t0 + 2200)),0,NULL,NULL,NULL);"
+  python3 "$LIFE" timeline --db "$d/nm.sqlite" --home "$d/home" --home "$d/other" \
+    --since $((NOW - 86400)) --now "$NOW" --gh "$d/bin/gh" > "$d/out.json" || fail "the timeline did not build"
+  python3 - "$d/out.json" "$d" "$t0" <<'PY' || fail "a retry borrowed another home's exact task id: $(cat "$d/out.json")"
+import json, sys
+rows = [t for t in json.load(open(sys.argv[1]))['timelines'] if t['kind'] == 'mate']
+root, t0 = sys.argv[2], int(sys.argv[3])
+assert len(rows) == 2, rows
+by_home = {t['home']: t for t in rows}
+a, b = (by_home[root + '/' + h] for h in ('home', 'other'))
+assert a['task'] == 'ship-a' and a['start'] == t0 and a['runs'] == 2, a
+assert a['branches'] == ['fm/ship-a', 'fm/ship-a-2'] and a['sinks']['implementation'] == 600, a
+assert a['waits'] == ['blocked'] and a['relaunches'] == 1, a
+assert b['task'] == 'ship-a-2' and b['start'] == t0 + 1800 and b['runs'] == 1, b
+assert b['waits'] == ['paused'] and b['sinks']['implementation'] == 200 and b['relaunches'] == 0, b
+PY
+  pass "lifecycle: retry names use their owning repository's task before another home's exact id"
+}
+
+test_closed_unmerged_prs_stop_at_closure() {
+  local d t0=$((NOW - 20000))
+  d=$(new_case closed-pr)
+  cat > "$d/bin/gh" <<SH
+#!/usr/bin/env bash
+printf '%s\\n' '{"createdAt":"$(iso $((t0 + 4000)))","mergedAt":null,"closedAt":"$(iso $((t0 + 5500)))","state":"CLOSED","commits":[]}'
+SH
+  timeline "$d" > "$d/out.json" || fail "the timeline did not build"
+  python3 "$LIFE" timeline --db "$d/nm.sqlite" --home "$d/home" --since $((NOW - 86400)) --now $((NOW + 3600)) \
+    --gh "$d/bin/gh" > "$d/later.json" || fail "the later timeline did not build"
+  python3 - "$d/out.json" "$d/later.json" <<'PY' || fail "closed PR kept accumulating time: $(cat "$d/out.json")"
+import json, sys
+for path in sys.argv[1:]:
+    doc = json.load(open(path))
+    a = next(t for t in doc['timelines'] if t['task'] == 'ship-a')
+    assert a['open'] is False and a['merged'] is None and a['seconds'] == 5500, a
+    assert a['sinks']['waiting to merge'] == 700, a
+    assert doc['metrics']['mate']['open'] == 0 and doc['metrics']['mate']['merged'] == 0, doc['metrics']
+    assert doc['metrics']['sinks_all']['waiting to merge'] == 700, doc['metrics']
+PY
+  cat > "$d/bin/gh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' '{"state":"CLOSED","mergedAt":null,"commits":[]}'
+SH
+  timeline "$d" > "$d/no-closure-time.json" || fail "the timeline did not build without a closure time"
+  jq -e '.timelines[] | select(.task == "ship-a") | .open == false and .seconds == 5000 and .sinks["waiting to merge"] == 200' \
+    "$d/no-closure-time.json" >/dev/null || fail "a closed PR without a timestamp kept growing"
+  pass "lifecycle: closed unmerged PRs are not open and their elapsed time and merge wait stop growing"
+}
+
+test_retry_names_resolve_within_the_owning_repository
+test_closed_unmerged_prs_stop_at_closure
 test_deployments_must_contain_the_pr_merge
 test_task_metadata_stays_with_its_home_and_repository
 test_a_mate_task_s_time_is_split_by_stage

@@ -270,6 +270,14 @@ import json
 changes = [{"kind": "instructions", "change": change, "target": "review", "evidence": "ship-x waited in review"}
            for change in ("Name the required check commands", "Explain how to reproduce a review failure")]
 print(json.dumps({"choices": [{"message": {"content": json.dumps({"changes": changes})}}]}))' ;;
+  bad-repos) python3 -c '
+import json
+base = {"kind": "code", "title": "Reject a projectless fix", "change": "Retry a read", "fix": "retry",
+        "target": "failed_runs", "evidence": "one failed read"}
+changes = [base, dict(base, repo=None), dict(base, repo=""),
+           dict(base, repo="phone-harness", title="Retry the phone connection"),
+           dict(base, repo="bastotec/deck", title="Retry a disconnected tool session")]
+print(json.dumps({"choices": [{"message": {"content": json.dumps({"changes": changes})}}]}))' ;;
   down) printf '%s\n' '{"error": {"code": "upstream_error", "message": "selected account has no project-owned enrollment"}}' ;;
 esac
 SH
@@ -785,7 +793,7 @@ test_last_night_keeps_unread_homes_unresolved() {
   local d log mode
   d=$(new_case improve-home-gaps)
   seed_improve "$d"
-  printf '%s\n' '{"date":"2026-10-01","kind":"captain","what":"a call","key":"cap-1"}' \
+  printf '%s\n' '{"date":"2026-10-01","kind":"captain","what":"a call","key":"cap-1","state":"card raised"}' \
     '{"date":"2026-10-01","kind":"code","what":"retry the hub","key":"w-9","mate":"dave-tools"}' \
     > "$d/home/state/dream/improve-actions.jsonl"
   for mode in unread cached incomplete; do
@@ -1006,7 +1014,7 @@ test_improve_reports_last_night_s_changes_and_their_targets() {
   seed_improve "$d"
   printf '%s\n' '{"date": "2026-10-01", "kind": "instructions", "what": "brief names the checks", "pr": "https://github.com/bastotec/firstmate/pull/990", "target": "parked at a gate", "before": 7200}' \
     '{"date": "2026-10-01", "kind": "code", "what": "retry the hub", "key": "w-9", "mate": "dave-tools", "target": "fix_rounds", "before": 9}' \
-    '{"date": "2026-10-01", "kind": "captain", "what": "a call", "key": "cap-1"}' \
+    '{"date": "2026-10-01", "kind": "captain", "what": "a call", "key": "cap-1", "state": "card raised"}' \
     '{"date": "2026-10-01", "kind": "code", "what": "PRIVATE ACTION", "key": "p-1", "mate": "finn-finance"}' \
     '{"date": "2026-09-30", "kind": "code", "what": "OLDER NIGHT", "key": "x"}' > "$d/home/state/dream/improve-actions.jsonl"
   STUB_REFLECT=down run_dream "$d" --only collect improve > "$d/out.json" || fail "run exited nonzero"
@@ -1258,6 +1266,133 @@ PY
   pass "instructions: an interrupted night stops the gate run and still reports the PR"
 }
 
+test_improve_rejects_missing_repositories_before_filing() {
+  local d log
+  d=$(new_case improve-missing-repos)
+  seed_improve "$d"
+  STUB_REFLECT=bad-repos run_dream "$d" --only collect improve file track > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" "$d/calls" <<'PY' || fail "a projectless change was dispatched"
+import glob, json, sys
+run = json.load(open(sys.argv[1]))
+assert run['steps']['improve']['changes'] == 2 and run['steps']['improve']['dropped'] == 3, run['steps']
+assert [c['repo'] for c in run['improve']['changes']] == ['phone-harness', 'deck'], run['improve']
+adds = [open(p).read() for p in glob.glob(sys.argv[2] + '/add.*')]
+assert len(adds) == 2 and not any('Reject a projectless fix' in a for a in adds), adds
+assert any('--repo phone-harness' in a for a in adds) and any('--repo deck' in a for a in adds), adds
+assert all(a['state'].startswith('dispatch ordered') for a in run['improve']['tonight']), run['improve']
+PY
+  pass "improve: missing, null and empty repositories are dropped while explicit keys and slugs still dispatch"
+}
+
+test_measurement_failure_preserves_independent_actions() {
+  local d log
+  d=$(new_case improve-unread-actions)
+  printf 'not a sqlite database\n' > "$d/nm.sqlite"
+  mkdir -p "$d/home/state/autoland"
+  printf '%s autoland: merged https://github.com/bastotec/firstmate/pull/990 (deploy follows)\n%s autoland: deployed firstmate abcdef0: homes at abcdef0\n' \
+    "$(iso $((NOW - 100)))" "$(iso $((NOW - 50)))" > "$d/home/state/autoland/report.log"
+  STUB_INSTR=edit STUB_NO_TRIAGE=1 STUB_SKILLS=none run_dream "$d" > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" "$d/home/state/dream" <<'PY' || fail "measurement failure lost successful actions: $(cat "$log")"
+import json, pathlib, sys
+run = json.load(open(sys.argv[1]))
+root = pathlib.Path(sys.argv[2])
+assert run['status'] == 'partial' and run['steps']['improve']['status'] == 'partial', run['steps']
+assert run['steps']['track']['status'] == 'partial' and run['steps']['track']['acted'] == 2, run['steps']
+assert 'no-mistakes state' in run['steps']['track']['why'], run['steps']['track']
+life = run['improve']
+assert life['changes'] == [] and life['measurement_error'], life
+instructions, card = life['tonight']
+assert instructions['kind'] == 'instructions' and instructions['state'] == 'merged and deployed', instructions
+assert instructions['pr'].endswith('/pull/990'), instructions
+assert card['kind'] == 'captain' and card['state'] == 'card raised' and card['key'], card
+rows = [json.loads(l) for l in (root / 'improve-actions.jsonl').read_text().splitlines()]
+assert rows == [dict(a, date=run['date']) for a in life['tonight']], rows
+assert not (root / 'improve.jsonl').exists(), 'failed measurements were persisted as metrics'
+summary = run['summary']
+assert 'Improve: measurement incomplete:' in summary and '. Tonight: AGENTS.md:' in summary, summary
+assert instructions['pr'] + ', merged and deployed' in summary and 'captain card ' + card['key'] in summary, summary
+PY
+  [ ! -e "$d/calls/reflect.0" ] || fail "failed measurements called the reflection model"
+  pass "improve: failed measurements stay partial but independent PRs and cards are tracked, recorded and summarized"
+}
+
+test_last_night_requires_evidence_before_resolving_failed_cards() {
+  local d log
+  d=$(new_case improve-failed-cards)
+  seed_improve "$d"
+  printf '%s\n' \
+    '{"date":"2026-10-01","kind":"captain","what":"queued after failure","key":"cap-queued","state":"card not raised: TimeoutExpired"}' \
+    '{"date":"2026-10-01","kind":"captain","what":"held later","key":"cap-held","state":"card not raised"}' \
+    '{"date":"2026-10-01","kind":"captain","what":"completed later","key":"cap-done","state":"card not raised"}' \
+    '{"date":"2026-10-01","kind":"captain","what":"confirmed card","key":"cap-confirmed","state":"card raised"}' \
+    > "$d/home/state/dream/improve-actions.jsonl"
+  cat > "$d/bin/report" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' '{"summary":"fleet ok","gaps":[],"crew":[],"power":[],
+ "mates":[{"id":"primary","name":"first mate","freshness":"local","state":"idle"}],
+ "waiting":[{"task":"cap-held","mate":"primary"}],"shipped":[{"task":"cap-done","mate":"primary"}]}'
+SH
+  STUB_REFLECT=none run_dream "$d" --only collect improve > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  jq -e '[.improve.last_night[].now_state] == ["card not raised: TimeoutExpired", "waiting on the captain", "answered or closed", "answered or closed"]
+    and (.summary | contains("queued after failure (card not raised: TimeoutExpired)"))' "$log" >/dev/null \
+    || fail "a failed card was assumed answered: $(cat "$log")"
+  pass "improve: failed cards stay unresolved until a hold or completion is observed"
+}
+
+test_deployment_polls_cache_confirmed_comparisons_only() {
+  local d
+  d=$(new_case improve-compare-cache)
+  python3 - "$d/home" "$ROOT/bin" <<'PY' || fail "deployment comparisons were repeated or unread results were cached"
+import collections, json, subprocess, sys
+sys.path.insert(0, sys.argv[2])
+import fm_dream as dream
+
+class Context(dream.Ctx):
+    def run(self, argv, **kw):
+        self.calls[tuple(argv)] += 1
+        if argv[1:3] == ['pr', 'view']:
+            body = {'state': 'MERGED', 'mergedAt': '2026-10-14T17:30:00Z', 'mergeCommit': {'oid': self.merge}}
+        else:
+            count = self.calls[tuple(argv)]
+            sha = argv[-1].split('...')[-1]
+            if sha == '4444444' and count == 1:
+                return subprocess.CompletedProcess(argv, 1, '', 'unread')
+            if sha == '4444444' and count == 2:
+                return subprocess.CompletedProcess(argv, 0, '{', '')
+            body = {'status': {'1111111': 'behind', '3333333': 'diverged', '4444444': 'behind', '2222222': 'ahead'}[sha]}
+        return subprocess.CompletedProcess(argv, 0, json.dumps(body), '')
+
+ctx = Context(sys.argv[1], False)
+ctx.calls = collections.Counter()
+ctx.merge = 'abcdef0000000000000000000000000000000000'
+pr = 'https://github.com/o/firstmate/pull/1'
+deps = {pr: [{'at': 1792000000, 'sha': sha} for sha in ('1111111', '3333333', '4444444')]}
+for _ in range(4):
+    assert dream.pr_state(ctx, pr, deps) == 'merged, deploy pending'
+api = lambda: {argv[-1]: count for argv, count in ctx.calls.items() if argv[1] == 'api'}
+assert sorted(api().values()) == [1, 1, 3], api()
+assert sum(count for argv, count in ctx.calls.items() if argv[1] == 'pr') == 1, ctx.calls
+deps[pr].append({'at': 1792000010, 'sha': '2222222'})
+assert dream.pr_state(ctx, pr, deps) == 'merged and deployed'
+assert dream.pr_state(ctx, pr, deps) == 'merged and deployed'
+assert sorted(api().values()) == [1, 1, 1, 3], api()
+other = 'https://github.com/o/other/pull/1'
+assert dream.pr_state(ctx, other, {other: deps[pr][:1]}) == 'merged, deploy pending'
+ctx.merge = 'fedcba0000000000000000000000000000000000'
+next_pr = 'https://github.com/o/firstmate/pull/2'
+assert dream.pr_state(ctx, next_pr, {next_pr: deps[pr][:1]}) == 'merged, deploy pending'
+assert len(api()) == 6 and sorted(api().values()) == [1, 1, 1, 1, 1, 3], api()
+PY
+  pass "improve: polling caches confirmed commit comparisons per repository and pair, retries unread results and checks new deployments"
+}
+
+test_improve_rejects_missing_repositories_before_filing
+test_measurement_failure_preserves_independent_actions
+test_last_night_requires_evidence_before_resolving_failed_cards
+test_deployment_polls_cache_confirmed_comparisons_only
 test_last_night_keeps_unread_homes_unresolved
 test_every_unshipped_instruction_reaches_the_summary
 test_failed_empty_measurements_are_not_quiet_days

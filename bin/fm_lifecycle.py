@@ -176,9 +176,9 @@ def task_key(branch, tasks):
 
 
 def pr_facts(url, gh='gh', run=None):
-    """{opened, merged, first_commit, state} for one PR url, or None."""
+    """{opened, merged, closed, first_commit, state} for one PR url, or None."""
     try:
-        r = (run or _run)([gh, 'pr', 'view', url, '--json', 'createdAt,mergedAt,state,commits,mergeCommit'], timeout=30)
+        r = (run or _run)([gh, 'pr', 'view', url, '--json', 'createdAt,mergedAt,closedAt,state,commits,mergeCommit'], timeout=30)
         doc = json.loads(r.stdout) if r.returncode == 0 else None
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return None
@@ -187,6 +187,7 @@ def pr_facts(url, gh='gh', run=None):
     commits = [c.get('authoredDate') or c.get('committedDate') for c in doc.get('commits') or [] if isinstance(c, dict)]
     stamps = [t for t in (parse_iso(c) for c in commits) if t]
     return {'opened': parse_iso(doc.get('createdAt')), 'merged': parse_iso(doc.get('mergedAt')),
+            'closed': parse_iso(doc.get('closedAt')),
             'first_commit': min(stamps) if stamps else None, 'state': doc.get('state'),
             'merge_commit': (doc.get('mergeCommit') or {}).get('oid')}
 
@@ -220,8 +221,9 @@ def deploys(log_text):
     return out
 
 
-def deployed_at(url, facts, deployments, gh='gh', run=None):
+def deployed_at(url, facts, deployments, gh='gh', run=None, comparisons=None):
     """First successful deployment whose commit contains this PR's merge."""
+    comparisons = {} if comparisons is None else comparisons
     merge = facts.get('merge_commit')
     repo = re.fullmatch(r'https://github.com/([^/]+/[^/]+)/pull/\d+', url)
     if not merge or not facts.get('merged') or not repo:
@@ -231,31 +233,37 @@ def deployed_at(url, facts, deployments, gh='gh', run=None):
             continue
         if merge.startswith(dep['sha']):
             return dep['at']
-        try:
-            r = (run or _run)([gh, 'api', 'repos/%s/compare/%s...%s' % (repo.group(1), merge, dep['sha'])], timeout=30)
-            doc = json.loads(r.stdout) if r.returncode == 0 else {}
-            if doc.get('status') in ('ahead', 'identical'):
-                return dep['at']
-        except (OSError, ValueError, subprocess.TimeoutExpired):
-            pass
+        key = (repo.group(1), merge, dep['sha'])
+        status = comparisons.get(key)
+        if status is None:
+            try:
+                r = (run or _run)([gh, 'api', 'repos/%s/compare/%s...%s' % key], timeout=30)
+                doc = json.loads(r.stdout) if r.returncode == 0 else {}
+                status = doc.get('status')
+                if status in ('ahead', 'identical', 'behind', 'diverged'):
+                    comparisons[key] = status
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                continue
+        if status in ('ahead', 'identical'):
+            return dep['at']
     return None
 
 
-def timelines(host, data, now, prs=None, deployed=None, since=None, gh='gh', run=None):
+def timelines(host, data, now, prs=None, deployed=None, since=None, gh='gh', run=None, comparisons=None):
     """One record per task on one host, from HOST_PY output and PR facts. A PR
     whose facts could not be read leaves its task's merge unknown (open None),
     never assumed open. A worker task spawned in the window with no run yet is
     a timeline of implementation only."""
     tasks, groups, metadata = data.get('tasks') or [], {}, {}
-    names = {t['id'] for t in tasks}
+    comparisons = {} if comparisons is None else comparisons
     for r in data.get('runs') or []:
-        key, kind = task_key(r['branch'], names)
-        candidates = [t for t in tasks if t['id'] == key] if kind == 'mate' else []
-        exact = [t for t in candidates if (t.get('repo') and t['repo'] == r.get('repo')) or
+        exact = [t for t in tasks if (t.get('repo') and t['repo'] == r.get('repo')) or
                  (t.get('worktree') and t['worktree'] == r.get('worktree'))]
-        owned = exact or [t for t in candidates if any(p == t['home'] or p.startswith(t['home'] + '/')
-                                                      for p in (r.get('repo') or '', r.get('worktree') or ''))]
-        matches = owned or candidates
+        owned = exact or [t for t in tasks if any(p == t['home'] or p.startswith(t['home'] + '/')
+                                                for p in (r.get('repo') or '', r.get('worktree') or ''))]
+        scope = owned or tasks
+        key, kind = task_key(r['branch'], {t['id'] for t in scope})
+        matches = [t for t in scope if t['id'] == key] if kind == 'mate' else []
         info = matches[0] if len(matches) == 1 else {}
         if not info:
             kind = 'session'
@@ -273,7 +281,10 @@ def timelines(host, data, now, prs=None, deployed=None, since=None, gh='gh', run
         starts = [t for t in (info.get('spawn'), facts.get('first_commit'), runs[0]['created']) if t]
         start = min(starts)
         merged = facts.get('merged')
+        closed = not merged and str(facts.get('state')).upper() == 'CLOSED'
         end = merged or now
+        if closed:
+            end = facts.get('closed') or runs[-1]['updated'] or start
         steps = {}
         for r in runs:
             for name, s in r['steps'].items():
@@ -286,7 +297,7 @@ def timelines(host, data, now, prs=None, deployed=None, since=None, gh='gh', run
         ready = max(recorded or [runs[-1]['updated'] or start])
         if merged or (recorded and not unread):
             sinks['waiting to merge'] = max(0, end - ready)  # an open PR is still waiting
-        dep = deployed_at(pr, facts, deployed or {}, gh, run) if pr else None
+        dep = deployed_at(pr, facts, deployed or {}, gh, run, comparisons) if pr else None
         if dep and merged:
             sinks['deploy'] = max(0, dep - merged)
         out.append({
@@ -295,7 +306,7 @@ def timelines(host, data, now, prs=None, deployed=None, since=None, gh='gh', run
             ('first commit' if facts.get('first_commit') == start else 'first run'),
             'first_run': runs[0]['created'], 'pr': pr, 'pr_opened': facts.get('opened'), 'pr_unread': unread,
             'ci_ready': ready if recorded else None, 'merged': merged,
-            'deployed': dep, 'open': None if unread else not merged, 'seconds': round(end - start),
+            'deployed': dep, 'open': None if unread else not (merged or closed), 'seconds': round(end - start),
             'runs': len(runs), 'failed_runs': sum(1 for r in runs if r['status'] in ('failed', 'cancelled')),
             'fix_rounds': sum(r['fix_rounds'] for r in runs),
             'gateway_errors': sum(r['gateway_errors'] for r in runs),
