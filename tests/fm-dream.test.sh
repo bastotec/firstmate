@@ -238,11 +238,29 @@ SH
   cat > "$d/bin/reflect" <<'SH'
 #!/usr/bin/env bash
 cat > "$STUB_CALLS/reflect.$(find "$STUB_CALLS" -name 'reflect.*' | wc -l | tr -d ' ')"
-case "${STUB_REFLECT:-ok}" in
-  ok) printf '%s\n' '{"choices": [{"message": {"content": "Here:\n{\"changes\": [{\"change\": \"Give workers the reviewer rubric in their brief\", \"area\": \"briefs\", \"owner\": \"instructions\", \"evidence\": \"ship-x parked 2h at review\"}, {\"change\": \"no evidence\"}]}"}}]}' ;;
+case "${STUB_REFLECT:-none}" in
+  none) printf '%s\n' '{"choices": [{"message": {"content": "{\"changes\": []}"}}]}' ;;
+  ok) python3 -c '
+import json
+changes = [
+ {"kind": "instructions", "change": "Tell workers to run the repo checks before the first run", "target": "fix_rounds",
+  "evidence": "ship-x needed 4 fix rounds"},
+ {"kind": "code", "repo": "bastotec/deck", "title": "Merge green mate PRs without waiting for a person", "fix": "in the PR step",
+  "change": "Merge green mate PRs at once", "target": "waiting to merge", "evidence": "ship-x waited 1h to merge"},
+ {"kind": "captain", "change": "Decide whether mates may merge medium-risk PRs", "target": "nonsense",
+  "evidence": "3 PRs waited for a merge"},
+ {"kind": "code", "repo": "nowhere", "title": "Not a fleet repo", "change": "x", "evidence": "y"},
+ {"kind": "instructions", "change": "no evidence"}]
+print(json.dumps({"choices": [{"message": {"content": "Plan:\n" + json.dumps({"changes": changes})}}]}))' ;;
   down) printf '%s\n' '{"error": {"code": "upstream_error", "message": "selected account has no project-owned enrollment"}}' ;;
 esac
 SH
+  # send, inbox and hold record their arguments under their own name
+  cat > "$d/bin/send" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$STUB_CALLS/$(basename "$0")"
+SH
+  cp "$d/bin/send" "$d/bin/inbox"; cp "$d/bin/send" "$d/bin/hold"
   chmod +x "$d/bin/"*
   printf '%s' "$d"
 }
@@ -253,7 +271,8 @@ run_dream() {  # <case-dir> <args...>
     FM_DREAM_JEV="$d/bin/jev" FM_DREAM_TASKS="$d/bin/tasks" FM_DREAM_HANDOFF="$d/bin/handoff" \
     FM_DREAM_REPORT="$d/bin/report" FM_DREAM_CAPTAIN_MEMORY="$d/bin/memory" FM_DREAM_NO_MISTAKES_DB="$d/nm.sqlite" STUB_CALLS="$d/calls" \
     FM_DREAM_FIRSTMATE="$d/firstmate" FM_DREAM_NO_MISTAKES="$d/bin/no-mistakes" FM_DREAM_GH="$d/bin/gh-pr" \
-    FM_DREAM_REFLECT="$d/bin/reflect" python3 "$DREAM" run --home "$d/home" "$@"
+    FM_DREAM_REFLECT="$d/bin/reflect" FM_DREAM_SEND="$d/bin/send" FM_DREAM_INBOX="$d/bin/inbox" FM_DREAM_HOLD="$d/bin/hold" \
+    FM_DREAM_TRACK_WAIT=0 python3 "$DREAM" run --home "$d/home" "$@"
 }
 
 test_each_relaunch_is_counted_once() {
@@ -716,82 +735,130 @@ PY
   pass "time spent waiting for Ziggy's dream is recorded apart from the step's own time, with collect's phases"
 }
 
-# seed_lifecycle <case-dir>: ship-x is a task of the home, with one run spawned
+# seed_improve <case-dir>: ship-x is a task of the home, with one run spawned
 # 2 h before NOW whose PR the gh stub reports merged at NOW - 1000.
-seed_lifecycle() {
+seed_improve() {
   local d=$1
   printf '# Backlog\n\n## In flight\n- [ ] ship-x - Do the thing (repo: firstmate) (kind: ship)\n' > "$d/home/data/backlog.md"
   printf 'spawn_gen=s%s.1.2\n' $((NOW - 7200)) > "$d/home/state/ship-x.meta"
   sqlite3 "$d/nm.sqlite" "INSERT INTO runs VALUES('rx','fleet','completed','fm/ship-x','','https://github.com/x/fm/pull/5',$((NOW - 6000)),$((NOW - 5000)));"
+  mkdir -p "$d/home/state/autoland" "$d/home/state/dream"
+  printf '%s autoland: merged https://github.com/bastotec/firstmate/pull/990 (deploy follows)\n%s autoland: deployed firstmate abc: homes at abc\n' \
+    "$(iso $((NOW - 100)))" "$(iso $((NOW - 50)))" > "$d/home/state/autoland/report.log"
 }
 
-test_lifecycle_measures_the_day_and_feeds_the_night_s_changes() {
+test_improve_acts_on_every_kind_of_change() {
   local d log
-  d=$(new_case life)
-  seed_lifecycle "$d"
-  mkdir -p "$d/home/state/dream"
+  d=$(new_case improve)
+  seed_improve "$d"
   printf '{"date": "2026-10-01", "mate_median": 7000, "mate_p90": 9000, "session_median": 600, "merged": 0, "open": 2}\n' \
-    > "$d/home/state/dream/lifecycle.jsonl"
-  run_dream "$d" --only collect lifecycle > "$d/out.json" || fail "run exited nonzero"
+    > "$d/home/state/dream/improve.jsonl"
+  STUB_REFLECT=ok STUB_INSTR=edit run_dream "$d" --only collect improve instructions file track > "$d/out.json" || fail "run exited nonzero"
   log=$(ls "$d"/home/state/dream/runs/*.json)
-  python3 - "$log" "$d/calls" <<'PY' || fail "lifecycle step wrong: $(jq -c '.steps.lifecycle, .summary' "$log")"
+  python3 - "$log" "$d/calls" <<'PY' || fail "improve wrong: $(jq -c '.steps, .summary' "$log")"
 import glob, json, sys
 run = json.load(open(sys.argv[1]))
-st, life = run["steps"]["lifecycle"], run["lifecycle"]
-assert st["status"] == "done" and st["tasks"] == 1 and st["recommendations"] == 1, st
+calls = sys.argv[2]
+st, life = run["steps"]["improve"], run["improve"]
+assert st["status"] == "done" and st["tasks"] == 1 and st["changes"] == 3 and st["dropped"] == 2, st
 assert life["model"] == "claude/opus-5-5" and life["metrics"]["mate"]["median"] == 6200, life
-assert life["recommendations"] == [{"change": "Give workers the reviewer rubric in their brief", "area": "briefs",
-                                    "owner": "instructions", "evidence": "ship-x parked 2h at review"}], life
+kinds = [c["kind"] for c in life["changes"]]
+assert kinds == ["instructions", "code", "captain"], kinds
+assert life["changes"][2]["target"] == "mate median" and life["changes"][0]["before"] == 0, life["changes"]
 assert life["previous"]["date"] == "2026-10-01" and life["change"]["mate_median"] == -800, life
-calls = glob.glob(sys.argv[2] + "/reflect.*")
-assert len(calls) == 1, calls
-req = json.load(open(calls[0]))
+reqs = glob.glob(calls + "/reflect.*")
+assert len(reqs) == 1, reqs
+req = json.load(open(reqs[0]))
 assert req["model"] == "claude/opus-5-5" and "tools" not in req and len(req["messages"]) == 1, req
 assert "ship-x" in req["messages"][0]["content"], req
+# instructions: the agent was told to make the change, and its PR is followed to deploy
+prompts = [open(f).read() for f in glob.glob(calls + "/deck.*")]
+assert any("must make them" in p and "Tell workers to run the repo checks" in p for p in prompts), "required change not in the prompt"
+tonight = {a["kind"]: a for a in life["tonight"]}
+assert tonight["instructions"]["pr"].endswith("/pull/990") and tonight["instructions"]["state"] == "merged and deployed", tonight
+assert run["steps"]["track"]["status"] == "done" and run["steps"]["track"]["acted"] == 3, run["steps"]["track"]
+# code: a priority task, handed to the owning mate, with a dispatch order
+adds = [open(f).read() for f in sorted(glob.glob(calls + "/add.*"))]
+code_add = [a for a in adds if "Merge green mate PRs" in a]
+assert code_add and "--priority 0" in code_add[0] and "--repo deck" in code_add[0], adds
+key = tonight["code"]["key"]
+assert tonight["code"]["state"] == "dispatch ordered to dave-tools as %s" % key, tonight["code"]
+assert open(calls + "/handoff." + key).read().strip() == "dave-tools " + key
+send = open(calls + "/send").read()
+assert send.startswith("dave-tools Priority from fleet dreaming: %s" % key) and "Dispatch a worker on it now" in send, send
+# captain: one plain card, with the charter proposal on it
+card = tonight["captain"]
+assert card["state"] == "card raised" and card["key"], card
+hold = open(calls + "/hold").read()
+assert hold.startswith("hold %s --reason Decide whether mates may merge medium-risk PRs" % card["key"]), hold
+assert "charter edit for cadia: name the kernel repo" in card["what"], card
 s = run["summary"]
-assert "Lifecycle: 1 mate task (1 merged, 0 open), start to merge median 1.7h (p90 1.7h) (-13m vs 2026-10-01)" in s, s
-assert "Changing: Give workers the reviewer rubric in their brief." in s, s
+assert "Improve: 1 mate task (1 merged, 0 open), start to merge median 1.7h (p90 1.7h) (-13m vs 2026-10-01)" in s, s
+assert "Tonight: AGENTS.md: says how to answer a peer (https://github.com/bastotec/firstmate/pull/990, merged and deployed)" in s, s
+assert "Merge green mate PRs without waiting for a person (dispatch ordered to dave-tools as %s)" % key in s, s
+assert "captain card %s" % card["key"] in s, s
 PY
-  grep -q '^## Lifecycle' "$d"/home/state/dream/digest-*.md || fail "the digest has no lifecycle section"
-  grep -q 'Give workers the reviewer rubric in their brief \[briefs, owner: instructions\]' "$d"/home/state/dream/digest-*.md \
-    || fail "the night's changes did not reach the digest the instructions and triage agents read"
+  grep -q '^## Improve' "$d"/home/state/dream/digest-*.md || fail "the digest has no improve section"
   [ "$(stat -f %Lp "$d"/home/state/dream/digest-*.md 2>/dev/null || stat -c %a "$d"/home/state/dream/digest-*.md)" = 600 ] \
     || fail "the digest is no longer private"
-  [ "$(wc -l < "$d/home/state/dream/lifecycle.jsonl" | tr -d ' ')" = 1 ] || fail "an --only run wrote the night-over-night history"
-  pass "lifecycle: the day is measured, Opus is asked once with no tools, and its changes reach the digest and the summary"
+  [ ! -e "$d/home/state/dream/improve-actions.jsonl" ] || fail "an --only run recorded the night's actions"
+  [ "$(wc -l < "$d/home/state/dream/improve.jsonl" | tr -d ' ')" = 1 ] || fail "an --only run wrote the night-over-night history"
+  pass "improve: Opus is asked once, and its instructions, code and captain changes are shipped, dispatched and carded"
 }
 
-test_an_unavailable_reflection_model_is_named_and_never_replaced() {
+test_improve_reports_last_night_s_changes_and_their_targets() {
   local d log
-  d=$(new_case life-down)
-  seed_lifecycle "$d"
-  STUB_REFLECT=down run_dream "$d" --only collect lifecycle > "$d/out.json" || fail "run exited nonzero"
+  d=$(new_case improve-last)
+  seed_improve "$d"
+  printf '%s\n' '{"date": "2026-10-01", "kind": "instructions", "what": "brief names the checks", "pr": "https://github.com/bastotec/firstmate/pull/990", "target": "parked at a gate", "before": 7200}' \
+    '{"date": "2026-10-01", "kind": "code", "what": "retry the hub", "key": "deploy", "target": "fix_rounds", "before": 9}' \
+    '{"date": "2026-09-30", "kind": "code", "what": "OLDER NIGHT", "key": "x"}' > "$d/home/state/dream/improve-actions.jsonl"
+  STUB_REFLECT=down run_dream "$d" --only collect improve > "$d/out.json" || fail "run exited nonzero"
   log=$(ls "$d"/home/state/dream/runs/*.json)
-  python3 - "$log" "$d/calls" <<'PY' || fail "unavailable model handled wrong: $(jq -c '.steps.lifecycle, .summary' "$log")"
+  python3 - "$log" <<'PY' || fail "last night wrong: $(jq -c '.improve.last_night, .summary' "$log")"
+import json, sys
+run = json.load(open(sys.argv[1]))
+last = run["improve"]["last_night"]
+assert [a["now_state"] for a in last] == ["merged and deployed", "worker failed"], last
+assert last[0]["now_value"] == 0 and last[1]["now_value"] == 0, last
+s = run["summary"]
+assert "Last night: brief names the checks (merged and deployed, parked at a gate 2.0h -> 0m); retry the hub (worker failed, fix_rounds 9 -> 0)" in s, s
+assert "OLDER NIGHT" not in s, s
+PY
+  pass "improve: last night's changes are reported with their state now and the measurement they targeted, then and now"
+}
+
+test_an_unavailable_improve_model_is_named_and_never_replaced() {
+  local d log
+  d=$(new_case improve-down)
+  seed_improve "$d"
+  STUB_REFLECT=down run_dream "$d" --only collect improve track > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" "$d/calls" <<'PY' || fail "unavailable model handled wrong: $(jq -c '.steps, .summary' "$log")"
 import glob, json, sys
 run = json.load(open(sys.argv[1]))
-st = run["steps"]["lifecycle"]
+st = run["steps"]["improve"]
 assert st["status"] == "partial", st
 note = "claude/opus-5-5 unavailable: selected account has no project-owned enrollment; no other model was tried"
-assert note in st["why"] and note in run["summary"], (st, run["summary"])
-assert run["lifecycle"]["metrics"]["tasks"] == 1 and run["lifecycle"]["recommendations"] == [], run["lifecycle"]
-calls = glob.glob(sys.argv[2] + "/reflect.*")
-assert [json.load(open(c))["model"] for c in calls] == ["claude/opus-5-5"], calls
+assert note in st["why"] and "Nothing changed tonight: " + note in run["summary"], (st, run["summary"])
+assert run["improve"]["metrics"]["tasks"] == 1 and run["improve"]["changes"] == [], run["improve"]
+assert [json.load(open(c))["model"] for c in glob.glob(sys.argv[2] + "/reflect.*")] == ["claude/opus-5-5"]
+assert run["steps"]["track"]["status"] == "done", run["steps"]["track"]
 PY
-  pass "lifecycle: an unavailable Opus is named in the report, the measurements still land, and no other model is tried"
+  pass "improve: an unavailable Opus is named in the report, the measurements still land, and no other model is tried"
 }
 
-test_the_lifecycle_model_comes_from_config_and_a_bad_one_stops_the_run() {
+test_the_improve_model_comes_from_config_and_a_bad_one_stops_the_run() {
   local d
-  d=$(new_case life-config)
-  seed_lifecycle "$d"
-  printf '{"exclude_homes": ["finn-finance"], "model": "stub/model", "lifecycle": {"model": "claude/opus-9"}}\n' > "$d/home/config/dream.json"
-  run_dream "$d" --only collect lifecycle > "$d/out.json" || fail "run exited nonzero"
-  [ "$(jq -r .model "$d"/calls/reflect.0)" = claude/opus-9 ] || fail "the configured lifecycle model was not used"
-  printf '{"lifecycle": {"model": 5}}\n' > "$d/home/config/dream.json"
-  if run_dream "$d" --only lifecycle > "$d/out2.json" 2> "$d/err"; then fail "a malformed lifecycle model did not stop the run"; fi
-  grep -q 'lifecycle must be an object whose model is a string' "$d/err" || fail "the refusal is unclear: $(cat "$d/err")"
-  pass "lifecycle: config/dream.json pins the reflection model, and a malformed one stops the run"
+  d=$(new_case improve-config)
+  seed_improve "$d"
+  printf '{"exclude_homes": ["finn-finance"], "model": "stub/model", "improve": {"model": "claude/opus-9"}}\n' > "$d/home/config/dream.json"
+  STUB_REFLECT=ok run_dream "$d" --only collect improve > "$d/out.json" || fail "run exited nonzero"
+  [ "$(jq -r .model "$d"/calls/reflect.0)" = claude/opus-9 ] || fail "the configured improve model was not used"
+  printf '{"improve": {"model": 5}}\n' > "$d/home/config/dream.json"
+  if run_dream "$d" --only improve > "$d/out2.json" 2> "$d/err"; then fail "a malformed improve model did not stop the run"; fi
+  grep -q 'improve must be an object whose model is a string' "$d/err" || fail "the refusal is unclear: $(cat "$d/err")"
+  pass "improve: config/dream.json pins the model, and a malformed one stops the run"
 }
 
 test_instructions_open_one_gated_pr_and_propose_charter_edits() {
@@ -965,9 +1032,10 @@ PY
 test_collect_builds_a_private_digest_of_the_day
 test_each_relaunch_is_counted_once
 test_an_interrupted_night_stops_the_gate_and_keeps_the_pr
-test_lifecycle_measures_the_day_and_feeds_the_night_s_changes
-test_an_unavailable_reflection_model_is_named_and_never_replaced
-test_the_lifecycle_model_comes_from_config_and_a_bad_one_stops_the_run
+test_improve_acts_on_every_kind_of_change
+test_improve_reports_last_night_s_changes_and_their_targets
+test_an_unavailable_improve_model_is_named_and_never_replaced
+test_the_improve_model_comes_from_config_and_a_bad_one_stops_the_run
 test_instructions_open_one_gated_pr_and_propose_charter_edits
 test_instructions_prune_landed_or_old_worktrees
 test_instructions_guards_reject_out_of_scope_hard_stop_and_big_changes

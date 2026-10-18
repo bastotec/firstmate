@@ -27,19 +27,31 @@ is recorded and never stops the next:
            No-mistakes breakdowns read each included registered host once over
            ssh only when its bridge allows reports; denied or unreadable hosts
            are named in collect's why without the other reasons' three-item cap.
-  lifecycle
-           measures each task's day on every included machine (bin/fm_lifecycle.py
-           owns the timeline: sources, task kinds and where time went), writes the
-           timelines to lifecycle-<date>.json and one metrics line per night to
-           lifecycle.jsonl, then asks one model (config lifecycle.model, default
-           LIFECYCLE_MODEL, through the proxai gateway; one call, no tools, a
-           bounded digest) for the three highest-leverage changes, each tied to
-           evidence. An unavailable model is named in the step reason and never
-           replaced by another. The measurements and the changes are appended to
-           the digest as its "Lifecycle" section, so the instructions step carries
-           out the charter, brief and instruction changes and triage files the tool
-           and code ones with their owning mates. A machine whose records cannot be
-           read is named, and makes the step partial.
+  improve  acts on the day, every night. It measures each task's day on every
+           included machine (bin/fm_lifecycle.py owns the timeline: sources, task
+           kinds and where time went), writes the timelines to improve-<date>.json
+           and one metrics line per published night to improve.jsonl, and asks one
+           model (config improve.model, default IMPROVE_MODEL, through the proxai
+           gateway; one call, no tools, a bounded digest) for the three changes the
+           fleet makes tonight, each tied to evidence and to the one measurement it
+           should move (TARGETS). An unavailable model is named in the step reason
+           and never replaced by another; the measurement and every step that needs
+           no model still run. The changes are acted on, not reported:
+             instructions  the instructions step must make them (AGENTS.md, the
+                           shared skills, the brief and charter templates) and
+                           ship them as its one gated PR, which auto-land merges
+                           on green and deploys to every home;
+             code          the file step files each as a priority task for the
+                           repository's owning mate and tells that mate to
+                           dispatch a worker now (the main home through its inbox);
+             captain       the file step raises one plain decision card for all of
+                           them, with the night's private charter proposals.
+           The changes and the measurements are also the digest's "Improve"
+           section, which the instructions and triage agents read.
+           It also reads last night's actions (improve-actions.jsonl) with their
+           state now: a PR merged and deployed or not, a task's worker or merge
+           from the fleet report, a card still waiting, and the measurement each
+           targeted then and now.
   skills   a deck agent in a fresh ~/dotfiles worktree improves skills/ from
            the digest. Same guards as Ziggy's reflection: only skills/, at most
            MAX_DIFF_LINES changed lines, secret scan of all changed staged bytes
@@ -87,8 +99,16 @@ is recorded and never stops the next:
            tasks and hands each to its configured owning mate; it never replays a
            previous run's proposals. An unreadable raised.jsonl prevents filing,
            and an item already in its dedupe window is not filed twice.
-           Dreaming never pushes to or opens PRs on harness repositories,
-           except the instructions step's one PR on firstmate, through the gate.
+           Code changes from the improve step are filed first, as priority-0
+           tasks, and their owning mate is told to dispatch a worker now (fm-send.sh,
+           or the main home's inbox); captain changes and charter proposals become
+           one decision card (fm-captain-hold.sh). Dreaming never pushes to or opens
+           PRs on harness repositories, except the instructions step's one PR on
+           firstmate, through the gate.
+  track    follows tonight's instructions PR until auto-land merged and deployed it
+           (at most TRACK_WAIT seconds), then records every action of the night for
+           tomorrow's report. Changes proposed but none shipped or dispatched is
+           'nothing changed', which is not clean.
   memory   runs the captain memory's upkeep (bin/fm_captain_memory.py) and adds
            its one line to the summary; skipped on a dry run. Its findings are
            not failures: only an upkeep that cannot run is not clean.
@@ -127,17 +147,20 @@ Files under <home>/state/dream/:
                      without a PR, lines is the proposal count and files is null),
                      pr, risk (null if unread)} | null,
                      charter_proposals: [{mate, what}],
-                     lifecycle: {metrics (bin/fm_lifecycle.py metrics), model,
-                     recommendations: [{change, area, owner, evidence}],
-                     reflection_error, previous: {date, mate_median, mate_p90,
-                     session_median, merged, open} | null, change: {mate_median,
-                     mate_p90, merged} | null} | null,
+                     improve: {metrics (bin/fm_lifecycle.py metrics), model,
+                     changes: [{kind, change, repo, title, fix, target, evidence,
+                     before}], reflection_error, point (tonight's improve.jsonl
+                     line), previous (the last earlier one) | null, change:
+                     {mate_median, mate_p90, merged} | null, tonight: [{kind, what,
+                     pr?, key?, mate?, state, target, before}], last_night: [{...,
+                     date, now_state, now_value}]} | null,
                      no_mistakes: {...} or null, summary}
   raised.jsonl       one line per raised item (dedupe across nights)
   digest-<date>.md   the private digest the agents read
   charters-<date>.md private charter-edit proposals, when any are kept
-  lifecycle-<date>.json  the night's task timelines (private)
-  lifecycle.jsonl    one metrics line per published night, for night-over-night change
+  improve-<date>.json  the night's task timelines (private)
+  improve.jsonl      one metrics line per published night, for night-over-night change
+  improve-actions.jsonl  one line per action a published night took, for the next report
 
 Step timing starts after the pre-step checks; waited_for_ziggy, when nonzero,
 is the seconds spent polling for Ziggy's dream before that step.
@@ -177,12 +200,14 @@ Environment: FM_DREAM_DECK (deck binary), FM_DREAM_DOTFILES (~/dotfiles),
 FM_DREAM_JEV (Jev helper command), FM_DREAM_MIN_FREE_GB, FM_DREAM_NO_MISTAKES_DB,
 FM_DREAM_FIRSTMATE (firstmate checkout, default: this code root),
 FM_DREAM_NO_MISTAKES (gate binary, default: no-mistakes), FM_DREAM_GH (gh binary),
-PROXAI_BASE_URL and PROXAI_API_KEY_FILE (the lifecycle reflection's gateway).
+PROXAI_BASE_URL and PROXAI_API_KEY_FILE (the improve step's gateway).
 Tests only: FM_DREAM_NOW (epoch), FM_DREAM_SKIP_ZIGGY_WAIT=1, FM_DREAM_ZIGGY_POLL (seconds), and FM_DREAM_TASKS,
 FM_DREAM_HANDOFF, FM_DREAM_REPORT, FM_DREAM_ON, FM_DREAM_CAPTAIN_MEMORY replacing
 bin/fm-tasks-axi.sh, bin/fm-backlog-handoff.sh, bin/fm-report.sh, bin/fm-on.sh and
 `bin/fm_captain_memory.py upkeep`; FM_DREAM_REFLECT replaces the gateway call (it
-reads the request JSON on stdin and prints the gateway's reply); FM_DREAM_BRIDGE
+reads the request JSON on stdin and prints the gateway's reply); FM_DREAM_SEND,
+FM_DREAM_INBOX and FM_DREAM_HOLD replace bin/fm-send.sh, bin/fm-inbox.sh and
+bin/fm-captain-hold.sh; FM_DREAM_TRACK_WAIT and FM_DREAM_TRACK_POLL; FM_DREAM_BRIDGE
 and FM_DREAM_SSH replace bin/fm-bridge.sh and ssh for breakdown reads.
 
     fm_dream.py run --home H [--only STEP ...] [--dry-run]
@@ -205,12 +230,14 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
-import fm_lifecycle as fl  # noqa: E402 - the lifecycle step's timeline builder, next to this file
-STEPS = ['collect', 'lifecycle', 'skills', 'instructions', 'triage', 'file', 'memory']
-BUDGET = {'collect': 300, 'lifecycle': 900, 'skills': 2700, 'instructions': 5400, 'triage': 1200, 'file': 300,
-          'memory': 120}
-LIFECYCLE_MODEL = 'claude/opus-5-5'
-MAX_LIFECYCLE_PRS = 80
+import fm_lifecycle as fl  # noqa: E402 - the improve step's timeline builder, next to this file
+STEPS = ['collect', 'improve', 'skills', 'instructions', 'triage', 'file', 'memory', 'track']
+BUDGET = {'collect': 300, 'improve': 900, 'skills': 2700, 'instructions': 5400, 'triage': 1200, 'file': 600,
+          'memory': 120, 'track': 1500}
+IMPROVE_MODEL = 'claude/opus-5-5'
+MAX_IMPROVE_PRS = 80
+TRACK_WAIT = int(os.environ.get('FM_DREAM_TRACK_WAIT', '1200'))  # tests shorten the wait for auto-land
+TRACK_POLL = int(os.environ.get('FM_DREAM_TRACK_POLL', '60'))
 INSTRUCTION_PATHS = ('AGENTS.md', '.agents/skills/', 'bin/fm-brief.sh')
 MAX_INSTRUCTION_LINES = 80
 # A changed instruction line matching this is a hard stop: it may be added to, never removed or reworded.
@@ -300,9 +327,9 @@ def load_config(path):
         raise ConfigError('%s: repos must map repositories to owner/name or null' % path)
     if not isinstance(doc.get('model', ''), str):
         raise ConfigError('%s: model must be a string' % path)
-    life = doc.get('lifecycle', {})
-    if not isinstance(life, dict) or not isinstance(life.get('model', ''), str):
-        raise ConfigError('%s: lifecycle must be an object whose model is a string' % path)
+    improve = doc.get('improve', {})
+    if not isinstance(improve, dict) or not isinstance(improve.get('model', ''), str):
+        raise ConfigError('%s: improve must be an object whose model is a string' % path)
     return doc
 
 
@@ -903,6 +930,7 @@ def step_collect(ctx):
         parts += ['- by step: ' + ', '.join('%s %d' % kv for kv in sorted(nmb['by_step'].items(), key=lambda kv: -kv[1]))]
         parts += ['- unread: ' + e for e in nmb_errors] + ['']
     rep = fleet_report(ctx)
+    ctx.facts['fleet_report'] = rep
     lap('fleet report')
     if rep:
         parts += ['## Fleet report', rep.get('summary') or '']
@@ -965,24 +993,36 @@ def step_collect(ctx):
     return result
 
 
-# --- lifecycle --------------------------------------------------------------
+# --- improve ----------------------------------------------------------------
 
-LIFECYCLE_PROMPT = """You review a software fleet's day: a first mate supervising second mates and \
-their short-lived workers, which ship changes through a validation pipeline (no-mistakes: review, \
-test, fix rounds, PR, CI) to merge and deploy. Claude Code sessions ship the same kind of change \
-without the mates, and are the benchmark. These are today's measurements:
+# What a change may aim to move, read from one night's metrics point.
+TARGETS = ('mate median', 'mate p90', 'implementation', 'review', 'test', 'ci', 'parked at a gate', 'rework',
+           'waiting to merge', 'deploy', 'fix_rounds', 'failed_runs', 'gateway_errors', 'relaunches', 'held_or_blocked')
+
+IMPROVE_PROMPT = """You improve a software fleet's way of working, every night. The fleet is a first \
+mate supervising second mates and their short-lived workers, which ship changes through a validation \
+pipeline (no-mistakes: review, test, fix rounds, PR, CI) to merge and deploy. Claude Code sessions ship \
+the same kind of change without the mates, and are the benchmark. These are today's measurements:
 
 {digest}
 
-Name the three changes that would most cut the mates' time from start to merge: to their tools, \
-their charters, their worker briefs, the models they use, or the flow itself. Tie each to the \
-evidence above (a task, a number). Prefer small changes that remove a whole wait. Answer with JSON \
-only: {{"changes": [{{"change": "one or two sentences", "area": "tools|charters|briefs|models|flow", \
-"owner": "instructions (AGENTS.md, skills, briefs, charters) or the repository to change", \
+Choose the three changes the fleet makes tonight that would most cut the mates' time from start to \
+merge. Each is one of:
+- "instructions": an edit tonight to the instructions every agent reads (AGENTS.md, the shared skills, \
+or the worker brief and second-mate charter templates). A nightly agent makes it and ships it as a PR.
+- "code": a fix in one of these repositories that a worker ships: {repos}.
+- "captain": only when it needs the captain's own decision (merge authority, money, credentials, \
+production, what the fleet promises users); it becomes one question for him.
+Never weaken a safety rule or an approval only the captain can give: a change that would is a "captain" \
+item. Tie each change to the evidence above (a task, a number), and name the one measurement it should \
+move, from: {targets}.
+Answer with JSON only: {{"changes": [{{"kind": "instructions|code|captain", "change": "one or two \
+sentences: exactly what changes", "repo": "for code: one of the repositories", "title": "for code: \
+imperative, under 90 characters", "fix": "for code: where and how", "target": "one measurement", \
 "evidence": "the measurement it rests on"}}]}}"""
 
 
-def lifecycle_hosts(ctx):
+def improve_hosts(ctx):
     """[(host, db, homes, ssh argv or None)]: this Mac with the main and every
     included local home, then each included remote host whose bridge allows
     reports with its registered homes; refused hosts are returned as errors."""
@@ -1006,11 +1046,10 @@ def lifecycle_hosts(ctx):
     return out, errors
 
 
-def reflect(ctx, model, text):
-    """(changes, None) from one gateway call, or (None, why). No tools, no retry
-    on another model: an unavailable model is the answer."""
-    request = {'model': model, 'max_tokens': 2000,
-               'messages': [{'role': 'user', 'content': LIFECYCLE_PROMPT.format(digest=text)}]}
+def reflect(ctx, model, prompt):
+    """(the reply's change records, None) from one gateway call, or (None, why).
+    No tools, no retry on another model: an unavailable model is the answer."""
+    request = {'model': model, 'max_tokens': 2500, 'messages': [{'role': 'user', 'content': prompt}]}
     stub = os.environ.get('FM_DREAM_REFLECT')
     try:
         if stub:
@@ -1047,24 +1086,107 @@ def reflect(ctx, model, text):
         doc = json.loads(body.group(0)) if body else None
     except (KeyError, IndexError, TypeError, ValueError):
         doc = None
-    changes = [c for c in (doc or {}).get('changes') or []
-               if isinstance(c, dict) and c.get('change') and c.get('evidence')] if isinstance(doc, dict) else []
-    if not changes:
-        return None, 'the reply held no evidence-linked changes'
-    return [{k: str(c.get(k, ''))[:400] for k in ('change', 'area', 'owner', 'evidence')} for c in changes[:3]], None
+    changes = (doc or {}).get('changes') if isinstance(doc, dict) else None
+    return (changes, None) if isinstance(changes, list) else (None, 'the reply held no changes list')
 
 
-def step_lifecycle(ctx):
-    hosts, errors = lifecycle_hosts(ctx)
+def improve_changes(ctx, raw, repos):
+    """The reply's changes the fleet can act on: an evidence-linked change of a
+    known kind, code naming a known repository and a title; at most three."""
+    out = []
+    for c in raw or []:
+        if not (isinstance(c, dict) and c.get('change') and c.get('evidence')):
+            continue
+        kind = c.get('kind')
+        if kind not in ('instructions', 'code', 'captain'):
+            continue
+        # a repository named by its GitHub slug is the same repository
+        c['repo'] = next((k for k, slug in repos.items() if c.get('repo') in (k, slug)), c.get('repo'))
+        if kind == 'code' and not (c.get('repo') in repos and c.get('title')):
+            continue
+        row = {k: str(c.get(k) or '')[:400] for k in ('kind', 'change', 'repo', 'title', 'fix', 'evidence')}
+        row['target'] = c.get('target') if c.get('target') in TARGETS else 'mate median'
+        if not mentions_excluded(ctx, json.dumps(row, ensure_ascii=False)):
+            out.append(row)
+    return out[:3]
+
+
+def metric_of(point, target):
+    """One measurement from a night's metrics point, or None."""
+    if not point:
+        return None
+    if target in ('mate median', 'mate p90'):
+        return point.get('mate_median' if target == 'mate median' else 'mate_p90')
+    if target in (point.get('counted') or {}):
+        return point['counted'][target]
+    return (point.get('sinks') or {}).get(target, 0 if point.get('sinks') is not None else None)
+
+
+COUNTS = ('fix_rounds', 'failed_runs', 'gateway_errors', 'relaunches', 'held_or_blocked')
+
+
+def shown(target, value):
+    if value is None:
+        return 'n/a'
+    return str(value) if target in COUNTS else fl.human(value)
+
+
+def pr_state(ctx, pr, dep):
+    """'merged and deployed', 'merged, deploy pending', 'open', 'closed' or 'state unread'."""
+    facts = fl.pr_facts(pr, os.environ.get('FM_DREAM_GH') or 'gh',
+                        run=lambda argv, input=None, timeout=None: ctx.run(argv, input=input, timeout=timeout))
+    if not facts:
+        return 'state unread'
+    if facts.get('merged'):
+        return 'merged and deployed' if pr in dep else 'merged, deploy pending'
+    return 'closed' if str(facts.get('state')).upper() == 'CLOSED' else 'open'
+
+
+def autoland_deploys(ctx):
+    try:
+        return fl.deploys((ctx.state / 'autoland' / 'report.log').read_text(encoding='utf-8', errors='replace'))
+    except OSError:
+        return {}
+
+
+def last_night(ctx, point):
+    """Last night's actions, each with its state now and its target then and now."""
+    rows = []
+    try:
+        rows = [json.loads(l) for l in (ctx.dir / 'improve-actions.jsonl').read_text(encoding='utf-8').splitlines() if l.strip()]
+    except (OSError, ValueError):
+        return []
+    dates = sorted({r.get('date') for r in rows if r.get('date') and r['date'] < ctx.day})
+    if not dates:
+        return []
+    rep = ctx.facts.get('fleet_report') or {}
+    dep = autoland_deploys(ctx)
+    out = []
+    for r in (r for r in rows if r.get('date') == dates[-1]):
+        if r.get('pr'):
+            state = pr_state(ctx, r['pr'], dep)
+        elif r.get('kind') == 'code' and r.get('key'):
+            shipped = [x for x in rep.get('shipped') or [] if x.get('task') == r['key']]
+            crew = [x for x in rep.get('crew') or [] if x.get('task') == r['key']]
+            state = ('merged (%s)' % shipped[0].get('pr') if shipped else
+                     'worker %s' % crew[0].get('status') if crew else 'no worker on it yet')
+        elif r.get('kind') == 'captain':
+            waiting = any(x.get('task') == r.get('key') for x in rep.get('waiting') or [])
+            state = 'waiting on the captain' if waiting else 'answered or closed'
+        else:
+            state = r.get('state') or 'not acted on'
+        out.append(dict(r, now_state=state, now_value=metric_of(point, r.get('target'))))
+    return out
+
+
+def step_improve(ctx):
+    hosts, errors = improve_hosts(ctx)
     private = [h for mid, h, host in registry(ctx.home) if mid in ctx.excluded and h]
     items, unread = [], list(errors)
     gh = os.environ.get('FM_DREAM_GH') or 'gh'
     run = lambda argv, input=None, timeout=None: ctx.run(argv, input=input, timeout=timeout)
-    try:
-        dep = fl.deploys((ctx.state / 'autoland' / 'report.log').read_text(encoding='utf-8', errors='replace'))
-    except OSError:
-        dep = {}
-    prs_left = MAX_LIFECYCLE_PRS
+    dep = autoland_deploys(ctx)
+    prs_left = MAX_IMPROVE_PRS
     for host, db, homes, ssh in hosts:
         data = fl.host_data(db, ctx.since, homes, run=run, ssh=ssh)
         if data is None:
@@ -1083,67 +1205,141 @@ def step_lifecycle(ctx):
             prs[url] = fl.pr_facts(url, gh, run=run)
         items += fl.timelines(host, data, ctx.now, prs, dep)
     if not items:
-        ctx.facts['lifecycle'] = None
+        ctx.facts['improve'] = None
         return {'status': 'quiet day', **({'why': '; '.join(unread)} if unread else {})}
     m = fl.metrics(items)
     text = fl.digest(m, items, unread)
-    write_private(ctx.dir / ('lifecycle-%s.json' % ctx.day), json.dumps({'timelines': items, 'metrics': m}, indent=1))
-    history = ctx.dir / 'lifecycle.jsonl'
+    write_private(ctx.dir / ('improve-%s.json' % ctx.day), json.dumps({'timelines': items, 'metrics': m}, indent=1))
     prev = None
     try:
-        for line in history.read_text(encoding='utf-8').splitlines():
+        for line in (ctx.dir / 'improve.jsonl').read_text(encoding='utf-8').splitlines():
             row = json.loads(line)
             if row.get('date') != ctx.day:
                 prev = row
     except (OSError, ValueError):
         pass
     point = {'date': ctx.day, 'mate_median': m['mate']['median'], 'mate_p90': m['mate']['p90'],
-             'session_median': m['session']['median'], 'merged': m['mate']['merged'], 'open': m['mate']['open']}
+             'session_median': m['session']['median'], 'merged': m['mate']['merged'], 'open': m['mate']['open'],
+             'sinks': dict(m['sinks']), 'counted': m['counted']}
     change = None
     if prev:
         change = {k: (point[k] - prev[k]) if point.get(k) is not None and prev.get(k) is not None else None
                   for k in ('mate_median', 'mate_p90', 'merged')}
-    model = (ctx.config.get('lifecycle') or {}).get('model') or LIFECYCLE_MODEL
-    changes, why = (None, 'dry run: no model called') if ctx.dry_run else reflect(ctx, model, text)
-    facts = {'metrics': m, 'model': model, 'recommendations': changes or [], 'previous': prev, 'change': change,
-             'reflection_error': None if changes else '%s unavailable: %s; no other model was tried' % (model, why)}
-    ctx.facts['lifecycle'] = facts
-    section = ['', '## Lifecycle (where today\'s tasks spent their time)', text, '']
+    model = (ctx.config.get('improve') or {}).get('model') or IMPROVE_MODEL
+    repos = ctx.config.get('repos') or DEFAULT_REPOS
+    if ctx.dry_run:
+        raw, why = None, 'dry run: no model called'
+    else:
+        raw, why = reflect(ctx, model, IMPROVE_PROMPT.format(digest=text, repos=', '.join(repos), targets=', '.join(TARGETS)))
+    changes = improve_changes(ctx, raw, repos) if raw is not None else []
+    nothing = raw == []  # an honest answer: the model found nothing worth changing tonight
+    if raw and not changes:
+        why = 'the reply held no change the fleet can act on'
+    for c in changes:
+        c['before'] = metric_of(point, c['target'])
+    facts = {'metrics': m, 'model': model, 'changes': changes, 'previous': prev, 'change': change, 'point': point,
+             'last_night': last_night(ctx, point), 'tonight': [],
+             'nothing_to_change': nothing,
+             'reflection_error': None if changes or nothing else (
+                 '%s unavailable: %s; no other model was tried' % (model, why) if raw is None else why)}
+    ctx.facts['improve'] = facts
+    section = ['', '## Improve (where today\'s tasks spent their time)', text, '']
     if changes:
-        section += ['### Highest-leverage changes (%s)' % model] + [
-            '- %s [%s, owner: %s] Evidence: %s' % (c['change'], c['area'], c['owner'], c['evidence']) for c in changes] + ['']
+        section += ['### Changes the fleet makes tonight (%s)' % model] + [
+            '- [%s] %s Target: %s. Evidence: %s' % (c['kind'], c['change'], c['target'], c['evidence']) for c in changes] + ['']
     try:
         write_private(ctx.digest, ctx.digest.read_text(encoding='utf-8') + '\n'.join(section))
     except OSError:
-        unread.append('the digest could not take the lifecycle section')
+        unread.append('the digest could not take the improve section')
     if not ctx.dry_run and not getattr(ctx, 'only', None):
-        with open(history, 'a', encoding='utf-8') as fh:
+        with open(ctx.dir / 'improve.jsonl', 'a', encoding='utf-8') as fh:
             fh.write(json.dumps(point) + '\n')
     gaps = unread + ([facts['reflection_error']] if facts['reflection_error'] and not ctx.dry_run else [])
     result = {'status': 'dry-run' if ctx.dry_run else ('partial' if gaps else 'done'), 'tasks': m['tasks'],
-              'sessions': m['sessions'], 'recommendations': len(changes or [])}
+              'sessions': m['sessions'], 'changes': len(changes)}
+    if raw and len(raw) > len(changes):
+        result['dropped'] = len(raw) - len(changes)  # not acted on: unknown kind or repository, or no evidence
     if gaps:
         result['why'] = '; '.join(gaps)[:500]
     return result
 
 
-def lifecycle_summary(life):
-    """'Lifecycle: 7 mate tasks (2 merged, 5 open), start to merge median 31m ...'."""
+def step_track(ctx):
+    """Follows tonight's changes to where they landed: the instructions PR to its
+    merge and deploy (auto-land owns both; this waits up to TRACK_WAIT), and
+    records every action for tomorrow's report."""
+    life = ctx.facts.get('improve')
+    if not life:
+        return {'status': 'nothing to track'}
+    tonight = life['tonight']
+    ins = ctx.facts.get('instructions') or {}
+    pr = ins.get('pr')
+    planned = [c for c in life['changes'] if c['kind'] == 'instructions']
+    if pr and not ctx.dry_run:
+        state, waited = 'open', 0
+        while True:
+            state = pr_state(ctx, pr, autoland_deploys(ctx))
+            if state in ('merged and deployed', 'closed') or waited >= TRACK_WAIT or ctx.left() < TRACK_POLL + 30:
+                break
+            time.sleep(TRACK_POLL)
+            waited += TRACK_POLL
+        made = {c.get('path') for c in ins.get('changes') or []}
+        tonight.insert(0, {'kind': 'instructions', 'what': '; '.join('%s: %s' % (c.get('path'), c.get('what'))
+                                                                     for c in ins.get('changes') or [])[:400],
+                           'pr': pr, 'state': state, 'files': sorted(made),
+                           'target': planned[0]['target'] if planned else None,
+                           'before': planned[0]['before'] if planned else None})
+    elif planned:
+        step = ctx.facts.get('instructions_status') or {}
+        tonight.insert(0, {'kind': 'instructions', 'what': planned[0]['change'][:200], 'pr': None,
+                           'state': 'not shipped: %s' % (step.get('why') or step.get('status') or 'the step did not run'),
+                           'target': planned[0]['target'], 'before': planned[0]['before']})
+    if not ctx.dry_run and not getattr(ctx, 'only', None):
+        with open(ctx.dir / 'improve-actions.jsonl', 'a', encoding='utf-8') as fh:
+            for a in tonight:
+                fh.write(json.dumps(dict(a, date=ctx.day)) + '\n')
+    acted = [a for a in tonight if a.get('pr') or a.get('key')]
+    if life['changes'] and not acted:
+        return {'status': 'nothing changed', 'why': 'no change was shipped or dispatched tonight: %s'
+                % '; '.join(a.get('state', '') for a in tonight)[:300] or 'none was acted on'}
+    return {'status': 'done', 'acted': len(acted)}
+
+
+def improve_summary(life):
+    """'Improve: 7 mate tasks (2 merged, 5 open), start to merge median 31m ...; Tonight: ...; Last night: ...'."""
     if not life:
         return ''
     m = life['metrics']
     change = life.get('change') or {}
-    text = 'Lifecycle: %d mate task%s (%d merged, %d open), start to merge median %s (p90 %s)%s vs %s for %d session branch%s' % (
+    text = 'Improve: %d mate task%s (%d merged, %d open), start to merge median %s (p90 %s)%s vs %s for %d session branch%s' % (
         m['tasks'], '' if m['tasks'] == 1 else 's', m['mate']['merged'], m['mate']['open'], fl.human(m['mate']['median']),
         fl.human(m['mate']['p90']), ' (%s%s vs %s)' % ('+' if change['mate_median'] >= 0 else '-', fl.human(abs(change['mate_median'])),
                                                     life['previous']['date']) if change.get('mate_median') is not None else '',
         fl.human(m['session']['median']), m['sessions'], '' if m['sessions'] == 1 else 'es')
     if m['sinks']:
         text += '; slowed by ' + ', '.join('%s %s' % (k, fl.human(v)) for k, v in m['sinks'][:3])
-    if life.get('recommendations'):
-        text += '. Changing: ' + '; '.join(c['change'][:140] for c in life['recommendations'])
+    done = []
+    for a in life.get('tonight') or []:
+        if a['kind'] == 'instructions':
+            done.append('%s (%s%s)' % (a['what'][:160], a['pr'] + ', ' if a.get('pr') else '', a['state']))
+        elif a['kind'] == 'code':
+            done.append('%s (%s)' % (a['what'][:120], a['state']))
+        else:
+            done.append('captain card %s: %s' % (a.get('key'), a['what'][:120]))
+    if done:
+        text += '. Tonight: ' + '; '.join(done)
     elif life.get('reflection_error'):
-        text += '. No changes proposed: ' + life['reflection_error']
+        text += '. Nothing changed tonight: ' + life['reflection_error']
+    elif life.get('nothing_to_change'):
+        text += '. Nothing changed tonight: %s found nothing worth changing' % life['model']
+    before = []
+    for a in life.get('last_night') or []:
+        moved = ''
+        if a.get('target') and (a.get('before') is not None or a.get('now_value') is not None):
+            moved = ', %s %s -> %s' % (a['target'], shown(a['target'], a.get('before')), shown(a['target'], a.get('now_value')))
+        before.append('%s (%s%s)' % ((a.get('what') or '')[:100], a.get('now_state'), moved))
+    if before:
+        text += '. Last night: ' + '; '.join(before)
     return text
 
 
@@ -1339,14 +1535,15 @@ Hard rules for this change:
 A mate's own charter (its data/charter.md and data/secondmates.md entry) is private and not in this
 checkout: propose edits to it instead of making them.
 
-The digest's "Lifecycle" section measures where today's tasks spent their time and names the
-night's highest-leverage changes. Carry out first the ones about instructions, briefs or charters
-that fit the rules above, citing the lifecycle evidence.
+The digest's "Improve" section measures where today's tasks spent their time. These changes were
+chosen for tonight and you must make them, within the hard rules above, citing their evidence;
+skip one only if it would break a hard rule or needs a mate's private charter, and say why:
+{required}
 
 Finally write {out} as JSON: {{"changes": [{{"path": "file", "what": "one plain sentence", "why": "what
 happened today", "evidence": ["exact digest lines, at most 3"]}}], "charters": [{{"mate": "<mate id>",
 "what": "the edit, in one or two sentences", "why": "...", "evidence": ["..."]}}]}} - empty lists when
-there is nothing."""
+there is nothing. Add "skipped": [{{"change": "...", "why": "..."}}] for any required change you did not make."""
 
 
 def firstmate_repo(ctx):
@@ -1439,7 +1636,10 @@ def step_instructions(ctx):
     try:
         base = git(ctx, 'rev-parse', 'HEAD', cwd=tree).strip()
         out = ctx.dir / ('instructions-%s.json' % ctx.day)
-        prompt = INSTRUCTIONS_PROMPT.format(digest=ctx.digest, tree=tree, max_lines=MAX_INSTRUCTION_LINES, out=out)
+        required = [c for c in (ctx.facts.get('improve') or {}).get('changes') or [] if c['kind'] == 'instructions']
+        prompt = INSTRUCTIONS_PROMPT.format(digest=ctx.digest, tree=tree, max_lines=MAX_INSTRUCTION_LINES, out=out,
+                                            required='\n'.join('- %s (target: %s; evidence: %s)' % (
+                                                c['change'], c['target'], c['evidence']) for c in required) or '- none')
         failed = run_agent(ctx, prompt, tree, ctx.dir / ('instructions-%s.log' % ctx.day), out)
         if failed:
             return {'status': 'failed', 'why': failed}
@@ -1585,8 +1785,8 @@ fleet's last 24 hours: {digest}
 Propose concrete improvements to the harness repositories, only where the digest shows evidence: a
 bug seen in the logs, a missing guard, a slow path (the slow fm-* commands), a bad default, a
 recurring failure. Repositories: {repos}. You may read code under {projects} to make an item precise,
-but change nothing anywhere. The digest's "Lifecycle" section names the night's highest-leverage
-changes: propose first the ones that are tool or code changes in these repositories.
+but change nothing anywhere. The code changes in the digest's "Improve" section are filed already;
+do not propose them again.
 
 Already open or recently raised (do not propose these again):
 {open_items}
@@ -1817,9 +2017,107 @@ def step_triage(ctx):
 
 # --- file -------------------------------------------------------------------
 
+def file_improvements(ctx, already):
+    """Tonight's code changes as priority tasks with a dispatch order to their
+    owning mate, then one decision card for the captain changes and the night's
+    private charter proposals. (rows, errors)."""
+    life = ctx.facts.get('improve')
+    if not life:
+        return [], []
+    owners = ctx.config.get('owners') or {}
+    env = dict(os.environ, FM_HOME=str(ctx.home))
+    rows, errors = [], []
+    for c in [c for c in life['changes'] if c['kind'] == 'code']:
+        mate = owners.get(c['repo'], 'primary')
+        entry = {'kind': 'code', 'what': c['title'], 'mate': mate, 'key': None, 'target': c['target'],
+                 'before': c['before']}
+        life['tonight'].append(entry)
+        if any(similar(c['title'], t) for t in already):
+            entry['state'] = 'already open, not filed again'
+            continue
+        if ctx.dry_run:
+            entry['state'] = 'dry run: not filed'
+            continue
+        body = '\n'.join(['Priority change from fleet dreaming (bin/fm-dream.sh) on %s: dispatch a worker now.' % ctx.day,
+                          '', 'Change: ' + c['change'], '', 'Fix: ' + c['fix'], '', 'Evidence: ' + c['evidence'],
+                          '', 'It should move: %s (now %s).' % (c['target'], shown(c['target'], c['before']))])
+        bf = ctx.dir / '.body.md'
+        write_private(bf, body)
+        try:
+            r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'add', '--mint', '--prefix', 'dream', c['title'],
+                         '--kind', 'ship', '--repo', c['repo'], '--priority', '0', '--body-file', str(bf), '--json'],
+                        env=env, timeout=60)
+        finally:
+            bf.unlink()
+        key = task_key_of(r)
+        if r.returncode or not key:
+            entry['state'] = 'not filed'
+            errors.append('%s: add failed (%s)' % (c['title'][:60], (r.stderr or r.stdout).strip()[:120]))
+            continue
+        entry['key'] = key
+        order = ('Priority from fleet dreaming: %s "%s" is in your backlog. Dispatch a worker on it now and see it '
+                 'to merged; tomorrow\'s report follows it.' % (key, c['title']))
+        if mate != 'primary':
+            h = ctx.run([tool('fm-backlog-handoff.sh', 'FM_DREAM_HANDOFF'), mate, key], env=env, timeout=120)
+            s = ctx.run([tool('fm-send.sh', 'FM_DREAM_SEND'), mate, order], env=env, timeout=60) if h.returncode == 0 else h
+        else:
+            s = ctx.run([tool('fm-inbox.sh', 'FM_DREAM_INBOX'), 'note', order], env=env, timeout=60)
+        entry['state'] = 'dispatch ordered to %s as %s' % (mate, key) if s.returncode == 0 else \
+            'filed as %s; dispatch order to %s unconfirmed' % (key, mate)
+        if s.returncode:
+            errors.append('%s: dispatch order to %s unconfirmed (%s)' % (key, mate, (s.stderr or s.stdout).strip()[:120]))
+        already.append(c['title'])
+        with open(ctx.dir / 'raised.jsonl', 'a', encoding='utf-8') as fh:
+            fh.write(json.dumps({'title': c['title'], 'repo': c['repo'], 'mate': mate, 'key': key, 'at': ctx.now}) + '\n')
+    calls = [c for c in life['changes'] if c['kind'] == 'captain']
+    charters = ctx.facts.get('charter_proposals') or []
+    if calls or charters:
+        what = '; '.join([c['change'][:200] for c in calls] + ['charter edit for %s: %s' % (c['mate'], c['what'])
+                                                                for c in charters])[:400]
+        entry = {'kind': 'captain', 'what': what, 'key': None, 'target': calls[0]['target'] if calls else None,
+                 'before': calls[0]['before'] if calls else None}
+        life['tonight'].append(entry)
+        if ctx.dry_run:
+            entry['state'] = 'dry run: no card'
+            return rows, errors
+        title = 'Fleet dreaming needs your call (%s)' % ctx.day
+        card = '\n'.join(['# %s' % title, ''] + ['- %s Evidence: %s' % (c['change'], c['evidence']) for c in calls]
+                         + ['- Apply this charter edit for %s? %s' % (c['mate'], c['what']) for c in charters])
+        bf = ctx.dir / '.card.md'
+        write_private(bf, card)
+        try:
+            r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'add', '--mint', '--prefix', 'dream-call', title,
+                         '--kind', 'docs', '--body-file', str(bf), '--json'], env=env, timeout=60)
+            key = task_key_of(r)
+            h = ctx.run([tool('fm-captain-hold.sh', 'FM_DREAM_HOLD'), 'hold', key, '--reason', what[:200],
+                         '--card-file', str(bf)], env=env, timeout=60) if key and not r.returncode else r
+        finally:
+            bf.unlink()
+        entry['key'] = key
+        entry['state'] = 'card raised' if key and h.returncode == 0 else 'card not raised'
+        if entry['state'] != 'card raised':
+            errors.append('captain card not raised (%s)' % (h.stderr or h.stdout or '').strip()[:120])
+    return rows, errors
+
+
+def task_key_of(r):
+    """The new task's id from a tasks-axi add, or None."""
+    try:
+        # strict=False: tasks-axi has been seen printing raw control
+        # characters inside string values, and a plain json.loads would
+        # reject a successful add.
+        doc = json.loads(r.stdout, strict=False)
+        return (doc.get('task') or {}).get('id') or doc.get('id')
+    except (ValueError, AttributeError):
+        key = re.search(r'"id"\s*:\s*"([^"]+)"', r.stdout or '')
+        return key.group(1) if key else None
+
+
 def step_file(ctx):
-    items = ctx.facts.get('triage')
-    if not items:
+    items = ctx.facts.get('triage') or []
+    life = ctx.facts.get('improve')
+    acting = life and any(c['kind'] != 'instructions' for c in life['changes']) or ctx.facts.get('charter_proposals')
+    if not items and not acting:
         return {'status': 'nothing to file'}
     owners = ctx.config.get('owners') or {}
     already = raised_titles(ctx)
@@ -1827,6 +2125,12 @@ def step_file(ctx):
         return {'status': 'partial', 'why': 'raised.jsonl is unreadable; nothing filed'}
     raised, errors = [], []
     ctx.facts['raised'] = raised  # filled as each item lands, so a later failure keeps them
+    try:
+        _rows, errors = file_improvements(ctx, already)
+    except subprocess.TimeoutExpired:
+        raise
+    except Exception as exc:  # noqa: BLE001 - the triage items still get filed
+        errors.append('improve actions failed: %s: %s' % (type(exc).__name__, str(exc)[:200]))
     for it in items:
         if any(similar(it['title'], t) for t in already):
             continue
@@ -1849,15 +2153,7 @@ def step_file(ctx):
                         env=env, timeout=60)
         finally:
             bf.unlink()
-        try:
-            # strict=False: tasks-axi has been seen printing raw control
-            # characters inside string values, and a plain json.loads would
-            # reject a successful add.
-            doc = json.loads(r.stdout, strict=False)
-            key = (doc.get('task') or {}).get('id') or doc.get('id')
-        except (ValueError, AttributeError):
-            key = re.search(r'"id"\s*:\s*"([^"]+)"', r.stdout) or None
-            key = key.group(1) if key else None
+        key = task_key_of(r)
         if r.returncode or not key:
             errors.append('%s: add failed (%s)' % (it['title'][:60], (r.stderr or r.stdout).strip()[:120]))
             continue
@@ -1930,7 +2226,7 @@ def summary_line(run):
     if odd:
         text += ' %d home record%s (%s%s).' % (
             len(odd), ' disagrees' if len(odd) == 1 else 's disagree', odd[0][:120], '; and more' if len(odd) > 1 else '')
-    life = lifecycle_summary(run.get('lifecycle'))
+    life = improve_summary(run.get('improve'))
     if life:
         text += ' ' + life.rstrip('.') + '.'
     nm = nm_summary(run.get('no_mistakes'))
@@ -1983,7 +2279,7 @@ def cmd_run(args):
         run['disagreements'] = ctx.facts.get('disagreements', [])
         run['instructions'] = ctx.facts.get('instructions')
         run['charter_proposals'] = ctx.facts.get('charter_proposals', [])
-        run['lifecycle'] = ctx.facts.get('lifecycle')
+        run['improve'] = ctx.facts.get('improve')
         run['captain_memory'] = ctx.facts.get('captain_memory')
         run['status'] = ('done' if all(s.get('status') in CLEAN for s in run['steps'].values()) and not force_partial
                          else 'partial')
@@ -2021,6 +2317,8 @@ def cmd_run(args):
                 run['steps'][name]['waited_for_ziggy'] = WAITED[name]
             if name == 'triage':
                 run['steps'][name]['items'] = ctx.facts.get('triage', [])
+            if name == 'instructions':
+                ctx.facts['instructions_status'] = run['steps'][name]
             write_json(log_path, run)
         finalize()
         return 0

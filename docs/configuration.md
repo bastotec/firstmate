@@ -295,7 +295,7 @@ Running hosts pick up a change to the code only after a restart, and a change to
 ## Fleet dreaming (config/dream.json)
 
 `bin/fm-dream.sh` is the fleet's optional nightly pass over its own day; its [header](../bin/fm-dream.sh) owns running, inspecting, scheduling and uninstalling the service.
-It collects a private digest, measures where each task's time went from start to deploy against Claude-session branches as the benchmark ([`bin/fm_lifecycle.py`](../bin/fm_lifecycle.py)'s header owns the timeline), asks one pinned model for the night's three highest-leverage changes, improves shared skills, opens gated firstmate PRs for evidence-linked instruction improvements, proposes private charter edits, and files other harness fixes as tasks for the owning mates.
+It collects a private digest and then acts on it every night: it measures where each task's time went from start to deploy against Claude-session branches as the benchmark ([`bin/fm_lifecycle.py`](../bin/fm_lifecycle.py)'s header owns the timeline), asks one pinned model for the three changes the fleet makes that night, and makes them - instruction, skill and brief or charter-template edits ship as one gated firstmate PR that auto-land merges on green and deploys to every home, code fixes go to the owning mate as priority tasks with an order to dispatch a worker now, and anything only the captain can decide becomes one decision card. It also improves shared skills, files other harness fixes as tasks for the owning mates, and reports each change with its PR, deploy or worker state, plus last night's changes and whether the measurement they targeted moved.
 [`bin/fm_dream.py`](../bin/fm_dream.py)'s header owns the sources, steps, budgets, guards and private files; [`tests/fm-dream.test.sh`](../tests/fm-dream.test.sh) exercises them offline.
 
 This section owns `config/dream.json`, a gitignored, per-home JSON object whose fields are all optional.
@@ -312,8 +312,8 @@ An absent file means `{}`; an unreadable, malformed or mistyped configuration st
   Their backlogs are omitted from triage's open-work reads.
   An unparsable registry entry stops a run with exclusions because the private homes cannot be reliably identified.
 - `model`: a string selecting the deck model; absent or empty uses the primary chat's recorded model, then the runner's `DEFAULT_MODEL`.
-- `lifecycle`: an object whose optional `model` string pins the lifecycle reflection's gateway model; absent or empty uses `LIFECYCLE_MODEL` in [`bin/fm_dream.py`](../bin/fm_dream.py) (`claude/opus-5-5`).
-  An unavailable model is named in the morning summary and never replaced by another.
+- `improve`: an object whose optional `model` string pins the improve step's gateway model; absent or empty uses `IMPROVE_MODEL` in [`bin/fm_dream.py`](../bin/fm_dream.py) (`claude/opus-5-5`).
+  An unavailable model is named in the morning summary and never replaced by another; the measurement and the steps that need no model still run.
 
 The fleet and primary reports expose the last published run through `dream` and the markdown "Overnight" section; [`bin/fm_report.py`](../bin/fm_report.py)'s header owns that projection and its time window.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """fm_lifecycle.py - each task's day, from start to deploy, for fleet dreaming.
 
-bin/fm_dream.py's lifecycle step uses this module; it can also be run alone
+bin/fm_dream.py's improve step uses this module; it can also be run alone
 (`fm_lifecycle.py timeline ...`, below) to print one host's timelines.
 
 A task is one branch of work, measured from the records that carry timestamps:
