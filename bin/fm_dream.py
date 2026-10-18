@@ -34,6 +34,35 @@ is recorded and never stops the next:
            message; committed and pushed to main (rebased and retried if main
            moved). The agent must write a changes list, empty for no change;
            MAX_SKILLS is prompt guidance, not an enforced cap.
+  instructions
+           a deck agent in a fresh worktree of firstmate's origin/main improves
+           the instructions every agent reads - AGENTS.md, .agents/skills/ and
+           the brief and charter templates in bin/fm-brief.sh - from the day's
+           evidence, within a 90-minute budget and at most MAX_INSTRUCTION_LINES
+           changed lines (additions plus deletions, with renames counted as both).
+           Every change record must name a changed file, what, why and nonempty
+           digest evidence, and every changed file must be listed. The patch is
+           secret-scanned, never removing or rewording a line that carries a hard
+           stop (HARD_STOPS: money, credentials, production, outward messages,
+           destructive or irreversible actions, captain approval). The change
+           ships as one PR through the no-mistakes gate (`no-mistakes axi run
+           --yes`); auto-land (bin/fm-autoland.sh) merges it under its own
+           authority, attestation and risk cap and rolls it out with the firstmate
+           deploy hook. A PR above that cap, or a gate --yes cannot pass, is
+           reported for the captain, never merged here. A parked gate is reported
+           as 'needs a decision'; a spent budget as 'timed out'; other nonzero
+           gate replies fail unless they report a bounded wait ending. These
+           outcomes and an interrupted gate trigger a separately bounded abort;
+           an unconfirmed stop is named in the step reason. The committed branch
+           and worktree stay for the gate's CI monitor or human follow-up.
+           Later nights prune earlier worktrees once the branch is an ancestor
+           of origin/main, its PR is merged (including squash merges), or the
+           worktree is a week old. A mate's own charter lives in its private home
+           data, so edits to it are proposals in charters-<date>.md, not applied;
+           excluded homes' proposals are dropped. 'pr opened' is a clean outcome.
+           The morning summary separates the final PR diff's lines and files
+           (or its unavailability) from proposed descriptions, and names the PR
+           and its risk rating when available.
   triage   a deck agent proposes concrete harness fixes from the digest; each
            is deduplicated against open tasks in the main home and every included
            mate's backlog, open PRs, what dreaming raised in the last RAISED_DAYS
@@ -45,7 +74,8 @@ is recorded and never stops the next:
            tasks and hands each to its configured owning mate; it never replays a
            previous run's proposals. An unreadable raised.jsonl prevents filing,
            and an item already in its dedupe window is not filed twice.
-           Dreaming never pushes to or opens PRs on harness repositories.
+           Dreaming never pushes to or opens PRs on harness repositories,
+           except the instructions step's one PR on firstmate, through the gate.
   memory   runs the captain memory's upkeep (bin/fm_captain_memory.py) and adds
            its one line to the summary; skipped on a dry run. Its findings are
            not failures: only an upkeep that cannot run is not clean.
@@ -59,7 +89,7 @@ subprocesses have their own process groups, and worktree cleanup has a separate
 short bound. Each agent step uses deck run --ephemeral and retries one failed
 attempt while budget remains; a nonzero exit, run_failed event or missing output
 fails an attempt, and expected output is cleared before each attempt.
-A digest with no sections skips both agent steps.
+A digest with no sections skips all agent steps.
 Only clean step outcomes (CLEAN) yield a done run; other outcomes make it partial.
 --only selects steps in the supplied order; --dry-run still collects and reads
 open work, but starts no agents, pushes nothing and files nothing.
@@ -78,9 +108,16 @@ Files under <home>/state/dream/:
                      raised: [{title, repo, mate, key, why}],
                      slow_commands: [{command, seconds, count}], counts: {...},
                      disagreements: [<home records read but disagreeing>],
+                     instructions: {changes: [{path, what, why, evidence}],
+                     proposed_lines (pre-gate additions + deletions),
+                     lines, files (final PR diff when a PR exists; null if unread;
+                     without a PR, lines is the proposal count and files is null),
+                     pr, risk (null if unread)} | null,
+                     charter_proposals: [{mate, what}],
                      no_mistakes: {...} or null, summary}
   raised.jsonl       one line per raised item (dedupe across nights)
   digest-<date>.md   the private digest the agents read
+  charters-<date>.md private charter-edit proposals, when any are kept
 
 Step timing starts after the pre-step checks; waited_for_ziggy, when nonzero,
 is the seconds spent polling for Ziggy's dream before that step.
@@ -117,7 +154,9 @@ counts.no_mistakes_failed remains the local fleet-only count, not the host total
 
 Configuration: docs/configuration.md "Fleet dreaming" owns config/dream.json.
 Environment: FM_DREAM_DECK (deck binary), FM_DREAM_DOTFILES (~/dotfiles),
-FM_DREAM_JEV (Jev helper command), FM_DREAM_MIN_FREE_GB, FM_DREAM_NO_MISTAKES_DB.
+FM_DREAM_JEV (Jev helper command), FM_DREAM_MIN_FREE_GB, FM_DREAM_NO_MISTAKES_DB,
+FM_DREAM_FIRSTMATE (firstmate checkout, default: this code root),
+FM_DREAM_NO_MISTAKES (gate binary, default: no-mistakes), FM_DREAM_GH (gh binary).
 Tests only: FM_DREAM_NOW (epoch), FM_DREAM_SKIP_ZIGGY_WAIT=1, FM_DREAM_ZIGGY_POLL (seconds), and FM_DREAM_TASKS,
 FM_DREAM_HANDOFF, FM_DREAM_REPORT, FM_DREAM_ON, FM_DREAM_CAPTAIN_MEMORY replacing
 bin/fm-tasks-axi.sh, bin/fm-backlog-handoff.sh, bin/fm-report.sh, bin/fm-on.sh and
@@ -143,8 +182,15 @@ import time
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-STEPS = ['collect', 'skills', 'triage', 'file', 'memory']
-BUDGET = {'collect': 300, 'skills': 2700, 'triage': 1200, 'file': 300, 'memory': 120}
+STEPS = ['collect', 'skills', 'instructions', 'triage', 'file', 'memory']
+BUDGET = {'collect': 300, 'skills': 2700, 'instructions': 5400, 'triage': 1200, 'file': 300, 'memory': 120}
+INSTRUCTION_PATHS = ('AGENTS.md', '.agents/skills/', 'bin/fm-brief.sh')
+MAX_INSTRUCTION_LINES = 80
+# A changed instruction line matching this is a hard stop: it may be added to, never removed or reworded.
+HARD_STOPS = re.compile(r'money|payment|purchase|trade|transfer|bank|credential|password|token|secret|api key|'
+                        r'production|\bprod\b|deploy|outward|publish|post(ed|ing)?\b|send(ing)? (a )?message|email|'
+                        r'destructive|irreversible|security-sensitive|force|discard|captain.{0,40}(approv|explicit|word)|'
+                        r'never merge|hard rule', re.I)
 MIN_FREE_GB = float(os.environ.get('FM_DREAM_MIN_FREE_GB', '3'))
 WAIT_ZIGGY = 3600
 ZIGGY_POLL = float(os.environ.get('FM_DREAM_ZIGGY_POLL', '30'))  # tests shorten the poll
@@ -1054,6 +1100,267 @@ def step_skills(ctx):
                 pass
 
 
+# --- instructions -----------------------------------------------------------
+
+INSTRUCTIONS_PROMPT = """You are the firstmate fleet's nightly instructions review. Read the digest of \
+the fleet's last 24 hours: {digest}
+
+Every agent in the fleet reads these instructions, all in this checkout ({tree}): AGENTS.md (the
+first and second mates' contract), .agents/skills/ (the shared agent-only skills) and bin/fm-brief.sh
+(the crewmate brief and second-mate charter templates). Improve them only where the digest shows
+evidence that they misled an agent today: a correction the captain had to repeat, a wrong or
+misdirected blocker, a confusing decision card, a recurring failure cause that a clearer instruction
+would have avoided. Read .agents/skills/firstmate-coding-guidelines/SKILL.md first and follow it
+(one owner per rule, prefer rewording over appending, one sentence per line, plain dash).
+
+Hard rules for this change:
+- Edit only AGENTS.md, files under .agents/skills/, and the template text in bin/fm-brief.sh. No code.
+- At most {max_lines} changed lines in total. Small and evidence-linked beats broad.
+- Never remove, reword or weaken a line about money, payments, credentials, production, deploys,
+  outward messages (posting, sending, publishing), destructive or irreversible actions, security, or
+  what needs the captain's explicit approval. You may only add to those.
+- No secrets, keys, account numbers or private personal details; no captain or mate names that are
+  not already in these files.
+- Do not commit; leave the edits in the working tree.
+- If nothing warrants a change, change nothing.
+
+A mate's own charter (its data/charter.md and data/secondmates.md entry) is private and not in this
+checkout: propose edits to it instead of making them.
+
+Finally write {out} as JSON: {{"changes": [{{"path": "file", "what": "one plain sentence", "why": "what
+happened today", "evidence": ["exact digest lines, at most 3"]}}], "charters": [{{"mate": "<mate id>",
+"what": "the edit, in one or two sentences", "why": "...", "evidence": ["..."]}}]}} - empty lists when
+there is nothing."""
+
+
+def firstmate_repo(ctx):
+    return Path(os.environ.get('FM_DREAM_FIRSTMATE') or SCRIPT_DIR.parent)
+
+
+def nm_bin():
+    return os.environ.get('FM_DREAM_NO_MISTAKES') or 'no-mistakes'
+
+
+def stop_run(tree):
+    """Stop the owned no-mistakes run in tree with its own short bound, so a
+    spent step budget never leaves the daemon publishing on its own. True only
+    when the abort says the run is cancelled."""
+    try:
+        r = subprocess.run([nm_bin(), 'axi', 'abort'], cwd=tree, capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return r.returncode == 0 and 'cancelled' in (r.stdout or '')
+
+
+def drive_gate(ctx, tree, intent):
+    """Drive one no-mistakes run in tree to its outcome with --yes, within the
+    step budget. Returns (outcome, pr_url, detail); outcome is the pipeline's
+    word, 'gate' when a gate --yes cannot pass, or 'timed out'. Gates are read
+    by bin/fm_gate_record.py's parser, which knows both AXI response shapes."""
+    from fm_gate_record import parse as parse_gate
+    args = [nm_bin(), 'axi', 'run', '--yes', '--intent', intent]
+    pr = None
+    while ctx.left() > 180:
+        try:
+            r = ctx.run(args, cwd=tree, timeout=min(600, ctx.left() - 150))
+        except subprocess.TimeoutExpired:
+            break
+        out = (r.stdout or '') + (r.stderr or '')
+        m = re.search(r'https://github\.com/[^\s"\']+/pull/\d+', out)
+        pr = m.group(0) if m else pr
+        if pr and isinstance(ctx.facts.get('instructions'), dict):
+            ctx.facts['instructions']['pr'] = pr  # known even if the night is interrupted next
+        outcome = re.search(r'^outcome: (\S+)', out, re.M)
+        if outcome:
+            return outcome.group(1), pr, ''
+        _run, gate = parse_gate(out)
+        if gate:
+            findings = ', '.join('%s %s' % (f.get('id'), f.get('severity')) for f in gate['findings'][:4])
+            return 'gate', pr, '%s gate%s' % (gate.get('step') or 'a', ': ' + findings if findings else '')
+        if r.returncode and not re.search(r'wait of \S+ elapsed', out):
+            # Anything but the bounded hold ending is an error to report, not to retry.
+            last = [l for l in out.splitlines() if l.strip()][-1:] or ['no-mistakes exited %d' % r.returncode]
+            return 'failed', pr, last[0][:300]
+        args = [nm_bin(), 'axi', 'run', '--yes', '--intent', 'x']  # reattach: the run keeps its intent
+    return 'timed out', pr, 'no outcome within the step budget'
+
+
+def pr_diff(ctx, pr):
+    """(changed lines, files) of the PR as finally reviewed, or (None, None)."""
+    try:
+        r = ctx.run([os.environ.get('FM_DREAM_GH') or 'gh', 'pr', 'view', pr, '--json', 'additions,deletions,files'],
+                    timeout=60)
+        doc = json.loads(r.stdout)
+        return doc['additions'] + doc['deletions'], [f['path'] for f in doc.get('files') or []]
+    except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
+        return None, None
+
+
+def pr_risk(ctx, pr):
+    """The PR's risk word (Low, Medium, High) from its body, or None."""
+    try:
+        r = ctx.run([os.environ.get('FM_DREAM_GH') or 'gh', 'pr', 'view', pr, '--json', 'body', '-q', '.body'], timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    m = re.search(r'## Risk Assessment\s+\S*\s*(Low|Medium|High)\b', r.stdout or '')
+    return m.group(1) if m else None
+
+
+def step_instructions(ctx):
+    if quiet(ctx):
+        return {'status': 'quiet day'}
+    if ctx.dry_run:
+        return {'status': 'dry-run', 'would': 'run the instructions agent and open one gated firstmate PR'}
+    repo = firstmate_repo(ctx)
+    git(ctx, 'fetch', '-q', 'origin', cwd=repo, timeout=120)
+    prune_instruction_trees(ctx, repo)
+    branch = 'fm/dream-instructions-%s' % ctx.day
+    tree = ctx.dir / ('firstmate-' + branch.replace('/', '-'))
+    if ctx.run(['git', 'rev-parse', '--verify', '-q', branch], cwd=repo).returncode == 0:
+        return {'status': 'rejected', 'why': 'branch %s already exists; tonight already opened one' % branch}
+    git(ctx, 'worktree', 'add', '-q', '-b', branch, str(tree), 'origin/main', cwd=repo)
+    keep_branch = False
+    try:
+        base = git(ctx, 'rev-parse', 'HEAD', cwd=tree).strip()
+        out = ctx.dir / ('instructions-%s.json' % ctx.day)
+        prompt = INSTRUCTIONS_PROMPT.format(digest=ctx.digest, tree=tree, max_lines=MAX_INSTRUCTION_LINES, out=out)
+        failed = run_agent(ctx, prompt, tree, ctx.dir / ('instructions-%s.log' % ctx.day), out)
+        if failed:
+            return {'status': 'failed', 'why': failed}
+        doc = read_json(out)
+        if not isinstance(doc, dict) or not isinstance(doc.get('changes'), list):
+            return {'status': 'failed', 'why': 'the instructions agent wrote no valid %s' % out.name}
+        charters = [c for c in doc.get('charters') or [] if isinstance(c, dict) and c.get('mate')
+                    and c.get('mate') not in ctx.excluded]
+        if charters:
+            write_private(ctx.dir / ('charters-%s.md' % ctx.day), '\n'.join(
+                ['# Proposed charter edits, %s' % ctx.day, ''] +
+                ['- %s: %s (why: %s; evidence: %s)' % (c['mate'], c.get('what'), c.get('why'),
+                                                       '; '.join(c.get('evidence') or [])) for c in charters]) + '\n')
+            ctx.facts['charter_proposals'] = [{'mate': c['mate'], 'what': c.get('what')} for c in charters]
+        git(ctx, 'add', '-A', cwd=tree)
+        git(ctx, 'reset', '-q', '--soft', base, cwd=tree)
+        raw = git(ctx, 'diff', '--cached', '--name-only', '-z', '--no-renames', base, cwd=tree, text=False)
+        changed = [p for p in raw.decode('utf-8', 'surrogateescape').split('\0') if p]
+        if not changed:
+            return {'status': 'no changes', 'charter_proposals': len(charters)}
+        outside = [p for p in changed if not (p in INSTRUCTION_PATHS or p.startswith('.agents/skills/'))]
+        if outside:
+            return {'status': 'rejected', 'why': 'touched %s' % outside[:3]}
+        diff = git(ctx, 'diff', '--cached', '-U0', '--no-renames', base, cwd=tree)  # a move is a removal and an addition
+        removed, added = [], []
+        in_hunk = False
+        for line in diff.splitlines():
+            if line.startswith('diff --git '):
+                in_hunk = False
+            elif line.startswith('@@ '):
+                in_hunk = True
+            elif in_hunk:
+                if line.startswith('-'):
+                    removed.append(line[1:])
+                elif line.startswith('+'):
+                    added.append(line[1:])
+        if len(removed) + len(added) > MAX_INSTRUCTION_LINES:
+            return {'status': 'rejected', 'why': '%d changed lines (cap %d)' % (len(removed) + len(added), MAX_INSTRUCTION_LINES)}
+        stops = [l.strip()[:80] for l in removed if HARD_STOPS.search(l)]
+        if stops:
+            return {'status': 'rejected', 'why': 'would remove or reword a hard-stop line: %s' % stops[0]}
+        changes = doc['changes']
+        complete = lambda c: (isinstance(c, dict) and c.get('path') in changed and c.get('what') and c.get('why')
+                              and isinstance(c.get('evidence'), list) and any(c['evidence']))
+        if not changes or not all(complete(c) for c in changes):
+            return {'status': 'rejected', 'why': 'every change must name a changed file, what, why and its digest evidence'}
+        unlisted = sorted(set(changed) - {c['path'] for c in changes})
+        if unlisted:
+            return {'status': 'rejected', 'why': 'changed files the agent did not list: %s' % unlisted[:3]}
+        title = 'Improves fleet instructions from the %s sessions (fleet dreaming)' % ctx.day
+        body = '\n'.join('- %s: %s (%s)' % (c.get('path'), c.get('what'), c.get('why')) for c in changes)
+        message = title + '\n\n' + body + '\n\nProposed by the fleet\'s nightly reflection (bin/fm-dream.sh); shipped through the no-mistakes gate.'
+        if SECRET.search(message) or staged_secret(ctx, tree, changed):
+            return {'status': 'rejected', 'why': 'secret-like text in a changed file or its summary'}
+        git(ctx, 'commit', '-q', '-m', message, cwd=tree)
+        keep_branch = True  # from here the gate owns the branch
+        intent = ('Nightly fleet dreaming instructions change for %s, proposed from the day\'s digest by '
+                  'bin/fm-dream.sh under the captain\'s direction that dreaming improve the instructions all '
+                  'agents and charters read. Scope: only AGENTS.md, .agents/skills/ and the brief and charter '
+                  'templates in bin/fm-brief.sh; at most %d changed lines; no hard-stop line (money, credentials, '
+                  'production, outward messages, destructive or irreversible actions, captain approval) removed '
+                  'or reworded. Each change and its evidence:\n%s\nRisk policy: auto-land at its cap; anything '
+                  'above it waits for the captain.' % (ctx.day, MAX_INSTRUCTION_LINES, body))
+        proposed = len(removed) + len(added)
+        # Recorded before the gate runs, so an interrupted night still reports the proposal and its PR.
+        summary = {'changes': changes, 'proposed_lines': proposed, 'lines': proposed, 'pr': None,
+                   'files': None, 'risk': None}
+        ctx.facts['instructions'] = summary
+
+        def read_pr_back():
+            pr_now = summary['pr']
+            if pr_now:
+                # Whatever the outcome, the gate may have repaired the patch: report what the PR holds.
+                final_lines, files = pr_diff(ctx, pr_now)
+                summary.update(risk=pr_risk(ctx, pr_now), lines=final_lines, files=files)
+
+        try:
+            outcome, pr, detail = drive_gate(ctx, tree, intent)
+        except KeyboardInterrupt as exc:
+            # An interrupted night (SIGTERM, SIGHUP) must not leave the gate publishing alone.
+            stopped = stop_run(tree)
+            try:
+                read_pr_back()
+            except Exception:  # noqa: BLE001 - the stop, not the metadata, is what matters here
+                pass
+            raise KeyboardInterrupt('%s; stopping the gate run was %s' % (exc, 'confirmed' if stopped else 'not confirmed'))
+        except BaseException:
+            stop_run(tree)
+            raise
+        if outcome in ('gate', 'timed out', 'failed'):
+            # Nothing waits on a parked run overnight: stop it, keep the branch for a person.
+            if not stop_run(tree):
+                detail = (detail or outcome) + '; stopping the run was not confirmed'
+        summary['pr'] = pr
+        read_pr_back()
+        lines, risk = summary['lines'], summary['risk']
+        if outcome in ('checks-passed', 'passed') and pr:
+            return {'status': 'pr opened', 'pr': pr, 'risk': risk, 'lines': lines, 'changes': changes}
+        return {'status': 'needs a decision' if outcome == 'gate' else outcome, 'why': detail or outcome,
+                'pr': pr, 'lines': lines, 'changes': changes}
+    finally:
+        # Once the gate owns the branch its run keeps using this worktree (its CI
+        # monitor watches the PR), so it stays until a later night prunes it.
+        if not keep_branch:
+            for argv in (['git', 'worktree', 'remove', '--force', str(tree)], ['git', 'branch', '-D', branch]):
+                try:
+                    subprocess.run(argv, cwd=repo, capture_output=True, timeout=60)
+                except subprocess.TimeoutExpired:
+                    pass
+
+
+def prune_instruction_trees(ctx, repo):
+    """Remove earlier nights' instruction worktrees once their branch is an
+    ancestor of origin/main, their PR is merged, or they are a week old."""
+    merged = set(git(ctx, 'branch', '--merged', 'origin/main', '--format=%(refname:short)', cwd=repo, check=False).split())
+    for path in sorted(ctx.dir.glob('firstmate-fm-dream-instructions-*')):
+        day = path.name.rsplit('-instructions-', 1)[-1]
+        branch = 'fm/dream-instructions-' + day
+        try:
+            old = (ctx.now - path.stat().st_mtime) > 7 * 86400
+        except OSError:
+            continue
+        if day == ctx.day:
+            continue
+        landed = branch in merged
+        if not landed and not old:
+            try:
+                r = ctx.run([os.environ.get('FM_DREAM_GH') or 'gh', 'pr', 'list', '--head', branch,
+                             '--state', 'merged', '--json', 'number'], cwd=repo, timeout=60)
+                prs = json.loads(r.stdout)
+                landed = r.returncode == 0 and isinstance(prs, list) and bool(prs)
+            except (OSError, subprocess.TimeoutExpired, ValueError):
+                pass
+        if landed or old:
+            ctx.run(['git', 'worktree', 'remove', '--force', str(path)], cwd=repo, timeout=60)
+
+
 # --- triage -----------------------------------------------------------------
 
 TRIAGE_PROMPT = """You are the firstmate fleet's nightly harness review. Read the digest of the \
@@ -1376,7 +1683,7 @@ def step_memory(ctx):
 
 # --- run --------------------------------------------------------------------
 
-CLEAN = ('done', 'merged', 'no changes', 'quiet day', 'nothing to file', 'dry-run')  # anything else is not clean
+CLEAN = ('done', 'merged', 'no changes', 'quiet day', 'nothing to file', 'dry-run', 'pr opened')  # anything else is not clean
 
 
 def summary_line(run):
@@ -1388,6 +1695,20 @@ def summary_line(run):
     waited = sum(s.get('waited_for_ziggy', 0) for s in run['steps'].values())
     if waited >= 300:
         text += " Waited %d min for Ziggy's dream to finish." % round(waited / 60)
+    ins = run.get('instructions')
+    if ins:
+        if ins.get('files') is not None:
+            final = 'PR holds %s lines in %s' % (ins['lines'], ', '.join(ins['files'][:4]) or 'no files')
+        elif ins.get('pr'):
+            final = 'final PR diff unavailable'
+        else:
+            final = '%d lines' % ins['lines']
+        text += ' Instructions: %s; proposed %s%s.' % (
+            final, '; '.join('%s: %s' % (c.get('path'), c.get('what')) for c in ins['changes'][:3]),
+            ' (PR %s%s)' % (ins['pr'], ', rated %s' % ins['risk'] if ins.get('risk') else '') if ins.get('pr') else '')
+    if run.get('charter_proposals'):
+        text += ' %d charter edit%s proposed (charters-%s.md).' % (
+            len(run['charter_proposals']), '' if len(run['charter_proposals']) == 1 else 's', run['date'])
     odd = run.get('disagreements') or []
     if odd:
         text += ' %d home record%s (%s%s).' % (
@@ -1439,6 +1760,8 @@ def cmd_run(args):
         run['counts'] = ctx.facts.get('counts', {})
         run['no_mistakes'] = ctx.facts.get('no_mistakes')
         run['disagreements'] = ctx.facts.get('disagreements', [])
+        run['instructions'] = ctx.facts.get('instructions')
+        run['charter_proposals'] = ctx.facts.get('charter_proposals', [])
         run['captain_memory'] = ctx.facts.get('captain_memory')
         run['status'] = ('done' if all(s.get('status') in CLEAN for s in run['steps'].values()) and not force_partial
                          else 'partial')
