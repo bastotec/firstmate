@@ -295,7 +295,7 @@ Running hosts pick up a change to the code only after a restart, and a change to
 ## Fleet dreaming (config/dream.json)
 
 `bin/fm-dream.sh` is the fleet's optional nightly pass over its own day; its [header](../bin/fm-dream.sh) owns running, inspecting, scheduling and uninstalling the service.
-It collects a private digest, improves shared skills, proposes evidence-linked instruction improvements and private charter edits, and files other harness fixes as tasks for the owning mates.
+It collects a private digest, improves shared skills, opens gated firstmate PRs for evidence-linked instruction improvements, proposes private charter edits, and files other harness fixes as tasks for the owning mates.
 [`bin/fm_dream.py`](../bin/fm_dream.py)'s header owns the sources, steps, budgets, guards and private files; [`tests/fm-dream.test.sh`](../tests/fm-dream.test.sh) exercises them offline.
 
 This section owns `config/dream.json`, a gitignored, per-home JSON object whose fields are all optional.
