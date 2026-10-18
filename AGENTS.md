@@ -196,8 +196,6 @@ For PR-based tasks, record the PR with `bin/fm-pr-check.sh` and give the captain
 Bind any custom `state/<id>.check.sh` you write with `bin/fm-check-register.sh` before the watcher runs it, and retire it only through `bin/fm-check-unregister.sh` or teardown, never a hand-composed `rm`.
 Tear down a ship task only after landing is confirmed; a refusal for uncommitted or unlanded work means stop and investigate.
 It is the captain's standing instruction that the mate who created a worker cleans it up once its work is done, so he never has to remember to: at completion and at every heartbeat, each home cleans up only its own finished endpoint-backed direct reports through `task-delivery`'s finished-work sweep, never forces, and owns routine retry or retirement decisions itself.
-Retry still-wanted unfinished work; retire done, merged, superseded or abandoned work through the guarded owners, preserving leftovers.
-Escalate uncertainty to the parent mate in a secondmate home, not another retire-or-retry question to the captain; the primary raises only a genuinely unresolved choice or authority boundary.
 Retire a secondmate only on an explicit captain or main-firstmate decision, with no work under way in its home; its empty queue is healthy.
 
 ### Scout outcome and promotion
@@ -327,7 +325,7 @@ These skills are not captain-invocable; load them only at their triggers.
 - `bootstrap-diagnostics` - load when the digest's bootstrap or network-checks section prints any diagnostic line other than `BOOTSTRAP_INFO:`, or a `BOOTSTRAP_INFO:` line saying an interrupted backlog cleanup may have left an endpoint or local copy.
 - `diagnostic-reasoning` - load before scoping a reported bug and before acting on a diagnostic report.
 - `ask-user-authority` - load before deciding any ask-user finding, and on a `check: worker run parked too long` wake.
-- `task-delivery` - load before every spawn; when a worker reports blocked; when judging an active validation run, when the captain changes the ask of a task under validation, or when its worker hand-edits, commits, aborts, or restarts during the run; when a worker reports a PR or ready branch; before writing a custom check; after a teardown; when a scout completes; and on every heartbeat for the finished-work sweep.
+- `task-delivery` - load before every spawn; when a worker reports blocked; when judging an active validation run, when the captain changes the ask of a task under validation, or when its worker hand-edits, commits, aborts, or restarts during the run; when a worker reports a PR or ready branch; before writing a custom check; after a teardown; when a scout completes; on an `idle-sweep-mate` check wake; and on every heartbeat for the finished-work sweep.
 - `harness-adapters` - load before spawning or recovering a crewmate or secondmate, choosing among a matched dispatch profile array, handling a trust dialog, sending a harness-specific skill invocation, interrupting, exiting, or resuming an agent, or verifying an adapter.
 - `project-management` - load before adding (including cloning or registering), creating, removing, or initializing a project.
 - `stuck-crewmate-recovery` - load when the digest reports a direct report's endpoint dead or its metadata without a window, after a stale wake, looping, repeated confusion, an answered-by-brief question, an unresponsive crewmate, or a failed steer, and when a live worker reports its no-mistakes pipeline dead, unreachable, or timed out.

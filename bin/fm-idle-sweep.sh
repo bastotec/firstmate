@@ -7,8 +7,9 @@
 #   fm-idle-sweep.sh summary
 #
 # The home's watcher (bin/fm-watch.sh) runs `scan` detached on its own cadence,
-# so finished-worker cleanup and idle-worker decisions do not depend on a
-# model turn reaching .agents/skills/task-delivery's finished-work sweep.
+# so finished-worker cleanup and referrals do not wait for a model turn reaching
+# .agents/skills/task-delivery's finished-work sweep; the mate still owns the
+# retry or retirement assessment.
 # `scan --now` bypasses the cadence for an operator-triggered sweep, but not
 # the home-scoped scan lock or any eligibility or cleanup guard.
 #
@@ -66,6 +67,15 @@
 # or changes those recovery records.
 # Existing captain holds, settled deferrals, and legacy raised fingerprints
 # remain admission guards; this sweep never creates a captain call.
+# Mate referrals queue `check:` rows keyed idle-sweep-mate:<id>:<epoch>:<digest>.
+# state/idle-sweep/<id>.mate-review stores the last successfully queued referral
+# evidence; <id>.mate-wait stores the last observed durable-wait evidence.
+# The evidence digest includes metadata, ledger, crew-state (excluding its
+# observed timestamp), local Git head/status when available, and any probed
+# withdrawal identity; closed-unmerged PR referrals also include the backlog row.
+# Legacy <id>.raised markers contain the ledger byte count and are read only.
+# tests/fm-idle-sweep.test.sh covers referrals, parked waits, cleanup guards,
+# and watcher delivery.
 # A main home has no parent audit, so a scan that leaves workers unhandled
 # queues ONE `check:` wake keyed idle-sweep-unhandled:<epoch>, naming those ids.
 # state/idle-sweep/.unhandled stores the sorted id set after a successful queue

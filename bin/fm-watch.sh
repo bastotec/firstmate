@@ -149,14 +149,18 @@
 #                          bin/fm-parked-run-watch.sh, which this watcher runs
 #                          detached every FM_PARKED_RUN_INTERVAL seconds (600)
 #                          while the home records a worker
+#   check: mate reassessment of retry or guarded retirement: <id>...
+#                          surfaced from idle-sweep-mate:<id>:<epoch>:<digest>
+#                          queue rows; bin/fm-idle-sweep.sh owns referral and
+#                          changed-evidence admission, and task-delivery owns
+#                          the mate's assessment procedure
 #   check: idle workers need a decision / second mate not cleaning up idle workers: <id>...
-#                          surfaced once from durable queue rows keyed
-#                          idle-sweep:<epoch> and idle-sweep-audit:<mate>:<epoch>
-#                          (and idle-sweep-unhandled:<epoch> for "idle sweep
-#                          could neither clean up nor raise some workers"),
-#                          queued by bin/fm-idle-sweep.sh, which this watcher
-#                          runs detached; that script's header owns cadence,
-#                          cleanup eligibility, decisions, and the audit
+#                          legacy idle-sweep:<epoch> rows and current
+#                          idle-sweep-audit:<mate>:<epoch> rows are surfaced once
+#                          (also idle-sweep-unhandled:<epoch> for "idle sweep
+#                          could neither clean up nor raise some workers");
+#                          bin/fm-idle-sweep.sh owns cleanup eligibility,
+#                          referral cadence, and the audit
 # For normal supervision, resume the session-start primary-harness protocol
 # after each printed reason. Direct duplicate invocations of this script still
 # no-op through the watcher singleton lock.

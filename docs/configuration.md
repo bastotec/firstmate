@@ -94,7 +94,7 @@ state/
   <id>.reconcile-nudged   last inventory-reconcile nudge time (bin/fm-secondmate-reconcile.sh)
   <id>.revive secondmate-revive.log  mid-session second-mate revival record and log (bin/fm-secondmate-revive.sh)
   <id>.held-stopped       deliberate secondmate stop marker (bin/fm-control.sh)
-  idle-sweep.json idle-sweep.log idle-sweep/<id>.raised <mate>.idle-audit <mate>.idle-audit-missing  idle-worker sweep summary, log, raised-decision fingerprints, second-mate audit episodes and missing-summary grace marks (bin/fm-idle-sweep.sh)
+  idle-sweep.json idle-sweep.log idle-sweep/ <mate>.idle-audit <mate>.idle-audit-missing  idle-worker sweep summary, log, evidence markers and second-mate audit records; bin/fm-idle-sweep.sh owns their formats and suppression contracts
   idle-sweep/.unhandled   main-home unhandled-set wake suppression marker; bin/fm-idle-sweep.sh owns its contents and reset contract
   <id>.check.sh <id>.check-trust  authenticated slow poll and custom-check binding (bin/fm-check-register.sh)
   <id>.pr-poll <id>.pr-poll-registration <id>.pr-poll-retirement <id>.pr-poll-merge-notified  PR merge poll records (bin/fm-pr-lib.sh)
@@ -742,7 +742,7 @@ The bridge editing panel and connect-form permission checkboxes belong to a sepa
 Runtime tuning via environment variables (defaults shown).
 Variables documented in a section above are not repeated: mail plane, auto-land hooks, watched tools, inbox, wake gate, possible-ask, turn-end churn, and the away-mode target; Relay variables are in [`relay.md`](relay.md) and process-event variables in [`process-event-sources.md`](process-event-sources.md).
 Script headers own the exact parsing and fallback of each value.
-[`bin/fm-idle-sweep.sh`](../bin/fm-idle-sweep.sh) owns `FM_IDLE_SWEEP_SECS` and the watcher-run cleanup, decision, and second-mate audit contract.
+[`bin/fm-idle-sweep.sh`](../bin/fm-idle-sweep.sh) owns `FM_IDLE_SWEEP_SECS` and the watcher-run cleanup, mate-referral, and second-mate audit contract.
 For lane-failure thresholds, overdue hand-offs, and recovery tuning, see the health comments in [`fm-deck-worker.sh`](../bin/fm-deck-worker.sh), [`fm-captain-lane.sh`](../bin/fm-captain-lane.sh), and [`fm-secondmate-revive.sh`](../bin/fm-secondmate-revive.sh).
 [`fm-parked-run-watch.sh`'s header](../bin/fm-parked-run-watch.sh) owns parked-run timing; [`fm-watch.sh`](../bin/fm-watch.sh) owns detached scan cadences.
 
