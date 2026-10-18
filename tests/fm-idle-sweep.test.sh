@@ -399,7 +399,7 @@ SH
 
 test_resumed_workers_are_not_retired_after_a_merged_pr_read() {
   local dir recovery before target
-  for recovery in working parked done unknown busy newer-status during-refresh teardown-busy teardown-newer-status; do
+  for recovery in working parked 'done' unknown busy newer-status during-refresh teardown-busy teardown-newer-status; do
     dir=$(new_case "retirement-recovery-$recovery")
     add_worker "$dir" stopped 'state: paused · source: status-log · waiting' 90000
     fm_git_init_commit "$dir/pool/1/firstmate"
