@@ -2,7 +2,7 @@
 name: task-delivery
 description: >-
   Agent-only procedures for the dispatch, validation, ready, landing, and scout-outcome steps of a task's delivery.
-  Use before every spawn, when judging an active no-mistakes validation run's state, when the captain adds or changes the ask of a task under validation, when a worker hand-edits, commits, aborts, or restarts during its run, when a worker reports a PR or a ready local-only branch, before writing a custom watcher check, after a teardown, when a worker reports blocked, when a scout completes, on an idle-sweep-mate check wake, and on every heartbeat for the finished-work sweep.
+  Use before every spawn, when judging an active no-mistakes validation run's state, when the captain adds or changes the ask of a task under validation, when a worker hand-edits, commits, aborts, or restarts during its run, when a worker reports a PR or a ready local-only branch, before writing a custom watcher check, after a teardown, when a worker reports blocked, when a scout completes, on a "check: mate reassessment of retry or guarded retirement" wake, and on every heartbeat for the finished-work sweep.
 user-invocable: false
 metadata:
   internal: true
@@ -72,7 +72,7 @@ Retire a custom check only through `bin/fm-check-unregister.sh <id>` (or `bin/fm
 Run this sweep when a ship lands, when a scout completes, and on every heartbeat, over this home's own endpoint-backed direct reports and endpoint-bound leftover records only, never another home's, and never a secondmate, which retires only on an explicit decision.
 The watcher independently runs [`bin/fm-idle-sweep.sh`](../../../bin/fm-idle-sweep.sh), whose header owns automated cleanup eligibility, mate referrals, repeat suppression, cadence, and second-mate audit.
 Handle existing captain-held choices through `captain-hold-lifecycle` rather than creating a duplicate call.
-An `idle-sweep-mate` wake belongs to this home's owning mate: inspect the current task, brief, backlog, validation and landing evidence before choosing retry for still-wanted unfinished work or guarded retirement for done, merged, superseded or abandoned work.
+On a `check: mate reassessment of retry or guarded retirement` wake, or its queued `idle-sweep-mate` referral, this home's owning mate inspects the current task, brief, backlog, validation and landing evidence before choosing retry for still-wanted unfinished work or guarded retirement for done, merged, superseded or abandoned work.
 Use `stuck-crewmate-recovery` for retry; preserve the existing local copy and leftovers, and never bypass cleanup or unlanded-work guards.
 Uncertainty in a secondmate home goes to its parent channel, not directly to the captain; the primary raises only a real unresolved choice or authority boundary, never a routine retire-or-retry poll.
 For an existing erroneous captain call gating unfinished work, record the mate's retry or external-capability wait through the [lifecycle owner's evidence-only withdrawal and parking contract](../../../bin/fm-captain-hold.sh), without completing the task or claiming captain approval.

@@ -55,26 +55,30 @@
 #     unavailable backend without evidence that the endpoint or copy is gone
 #     is left alone.
 #   Then this home's record-less live endpoints are listed through
-#   bin/fm-retire-endpoint.sh --list-orphans. Before --orphan closure, holds
-#   and settled deferrals on idle-orphan-<task> (or its follow-up), durable
-#   mate waits on those or the original task, and an unchanged raised
-#   fingerprint of the actual task's ledger, leave the endpoint alone;
+#   bin/fm-retire-endpoint.sh --list-orphans. Before --orphan closure, holds,
+#   settled deferrals, and durable mate waits on the original task,
+#   idle-orphan-<task>, or either one's idle-<id> follow-up leave the endpoint
+#   alone, as does an unchanged raised fingerprint of the actual task's ledger;
 #   otherwise a refused close is referred to the owning mate under
 #   idle-orphan-<task>, without a captain card or another close attempt until
 #   the task ledger or endpoint identity changes.
 # Metadata-less pending backlog closes also appear as unhandled on every scan
 # until the lifecycle owner clears them; the sweep reports but never retries
 # or changes those recovery records.
-# Existing captain holds, settled deferrals, and legacy raised fingerprints
-# remain admission guards; this sweep never creates a captain call.
+# Existing captain holds and settled deferrals remain admission guards;
+# legacy raised fingerprints also suppress finished-worker cleanup and orphan
+# closure, but not mate referrals for failed, stalled, or dead workers.
+# This sweep never creates a captain call.
 # Mate referrals queue `check:` rows keyed idle-sweep-mate:<id>:<epoch>:<digest>.
 # state/idle-sweep/<marker>.mate-review stores the last successfully queued
 # referral evidence; <marker>.mate-wait stores the last observed durable wait.
 # A worker's marker is its task ID; orphan markers add a SHA-256 endpoint suffix
 # so endpoints belonging to the same task never overwrite each other's evidence.
-# The evidence digest includes metadata, ledger, crew-state (excluding its
-# observed timestamp), local Git head/status when available, and any probed
-# withdrawal identity; closed-unmerged PR referrals also include the backlog row.
+# Evidence includes metadata and ledger bytes, plus the crew-state result
+# (excluding its observed timestamp), cleanup refusal, or orphan endpoint ID
+# for the path being assessed, and local Git head/status when available.
+# Durable waits also include the probed withdrawal identity;
+# closed-unmerged PR referrals also include the backlog row.
 # Legacy <id>.raised markers contain the ledger byte count and are read only.
 # tests/fm-idle-sweep.test.sh covers referrals, parked waits, cleanup guards,
 # and watcher delivery.
