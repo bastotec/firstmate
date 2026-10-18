@@ -951,9 +951,15 @@ test_retired_worker_keeps_ledger_only_merged_mr_without_a_card() {
     'mode=no-mistakes' 'spawn_gen=ledger-mr-test'
   printf 'done: MR https://gitlab.example/group/repo/-/merge_requests/57\n' >> "$dir/home/state/ledger-mr.status"
   age_file "$dir/home/state/ledger-mr.status" 7200
-  if [ "$phase" = stopped ]; then
+  if [ "$phase" = stopped ] || [ "$phase" = kindless-done ]; then
     printf 'state: paused · source: status-log · waiting\n' > "$dir/home/crew/ledger-mr"
     age_file "$dir/home/state/ledger-mr.status" 90000
+  fi
+  if [ "$phase" = kindless-done ]; then
+    sed '/^kind=/d' "$dir/home/state/ledger-mr.meta" > "$dir/kindless.meta"
+    mv "$dir/kindless.meta" "$dir/home/state/ledger-mr.meta"
+    printf 'state: failed · source: status-log · stopped\n' > "$dir/home/crew/ledger-mr"
+    printf -- '- ledger-mr: Finished work\n  state: done\n' > "$dir/home/rows/ledger-mr"
   fi
   printf 'merged\n' > "$dir/home/pr-states/57"
   cat > "$dir/bin/treehouse" <<'SH'
@@ -987,9 +993,15 @@ SH
   [ "$(grep -c '^mr view 57 -R https://gitlab.example/group/repo$' "$dir/home/forge-calls")" -ge 3 ] \
     || fail 'the sweep and both teardown attempts did not verify the merged MR'
   assert_no_captain_call "$dir" 'ledger-only merged MR housekeeping'
-  if [ "$phase" = stopped ]; then
-    assert_equals 'stalled retired' "$(summary_of "$dir" ledger-mr)" "the stopped retired-backend worker must pass guarded retirement"
-    assert_equals 4 "$(wc -l < "$dir/home/crew-state-calls" | tr -d ' ')" "both teardown attempts and the fallback must refresh stopped activity"
+  if [ "$phase" = stopped ] || [ "$phase" = kindless-done ]; then
+    if [ "$phase" = kindless-done ]; then
+      assert_equals 'failed retired' "$(summary_of "$dir" ledger-mr)" 'a kindless failed worker with a done backlog item must be retired'
+      assert_absent "$dir/home/state/idle-sweep/ledger-mr.raised" 'a retired kindless worker must not be handed off'
+      assert_absent "$dir/home/state/idle-sweep/ledger-mr.retried" 'a done kindless worker must not be retried'
+    else
+      assert_equals 'stalled retired' "$(summary_of "$dir" ledger-mr)" "the stopped retired-backend worker must pass guarded retirement"
+      assert_equals 4 "$(wc -l < "$dir/home/crew-state-calls" | tr -d ' ')" "both teardown attempts and the fallback must refresh stopped activity"
+    fi
   else
     assert_equals 'finished cleaned' "$(summary_of "$dir" ledger-mr)" "retired MR cleanup was not reported"
   fi

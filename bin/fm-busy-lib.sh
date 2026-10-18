@@ -244,7 +244,7 @@ fm_busy_admit_stopped() {
   local meta=$1 id=$2 state=$3 expected_record=$4 expected_size=$5 script_dir=$6
   local line verb busy backend target harness changed=0 size=0
   case "$(fm_meta_get "$meta" kind)" in
-    ship|scout) ;;
+    ''|ship|scout) ;;
     *) changed=1 ;;
   esac
   [ -z "$(fm_meta_get "$meta" remote_host)" ] || changed=1

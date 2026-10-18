@@ -417,12 +417,12 @@ decide_stopped() {
     STOPPED_ACTION=asked
     return 0
   fi
-  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" relaunch --expected-record "$record" \
+  retry_tx="idle-sweep.${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
+  out=$(FM_HOME="$FM_HOME" FM_CONTROL_RELAUNCH_TX="$retry_tx" "$SCRIPT_DIR/fm-control.sh" "$id" relaunch --expected-record "$record" \
     --if-still-stopped "$stopped_status_size" \
     --note 'Restarted by the idle sweep: your task is still open and unfinished. Read your inbox in order and continue it.' </dev/null 2>&1) || rc=$?
   if [ "$rc" -ne 0 ]; then
-    retry_tx=$(fm_meta_get "$STATE/$id.meta" control_relaunch_tx)
-    if [ -n "$retry_tx" ] \
+    if [ "$(fm_meta_get "$STATE/$id.meta" control_relaunch_tx)" = "$retry_tx" ] \
       && [ "$(cat "$STATE/$id.meta" 2>/dev/null)" != "$record" ] \
       && [ "$(fm_meta_get "$STATE/$id.control-relaunch" relaunch_tx)" = "$retry_tx" ] \
       && [ "$(cat "$STATE/$id.control-relaunch.meta-prior" 2>/dev/null)" = "$record" ]; then

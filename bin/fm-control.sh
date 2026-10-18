@@ -455,6 +455,9 @@ if [ -n "$STOPPED_STATUS_SIZE" ]; then
   [ "$VERB" = relaunch ] && [ "$EXPECTED_RECORD_SET" = 1 ] \
     || die "--if-still-stopped requires relaunch with --expected-record"
 fi
+case "${FM_CONTROL_RELAUNCH_TX:-}" in
+  *[!a-zA-Z0-9._-]*) die "FM_CONTROL_RELAUNCH_TX must contain only letters, digits, dots, underscores, or hyphens" ;;
+esac
 
 # --- exact task-id resolution ----------------------------------------------
 
@@ -478,7 +481,7 @@ if [ "$EXPECTED_RECORD_SET" = 1 ] && { [ ! -f "$META" ] \
 fi
 if [ -n "$STOPPED_STATUS_SIZE" ]; then
   case "$(fm_meta_get "$META" kind)" in
-    ship|scout) ;;
+    ''|ship|scout) ;;
     *) die "--if-still-stopped applies to local ship or scout workers only" ;;
   esac
   [ -z "$(fm_meta_get "$META" remote_host)" ] \
@@ -1394,7 +1397,7 @@ do_relaunch() {
 
   # The launch owner (fm-spawn --relaunch) clears the previous incarnation's
   # per-task harness wiring before arming the new one, so nothing to do here.
-  RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
+  RELAUNCH_TX="${FM_CONTROL_RELAUNCH_TX:-${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM}"
   journal_write launching "${CHECKPOINT_LINES[@]}"
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   # A chained surface was only pre-flighted above: the ORIGINAL chain is what
