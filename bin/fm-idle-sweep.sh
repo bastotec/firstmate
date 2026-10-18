@@ -454,7 +454,7 @@ cleanup() {
   local id=$1 out rc=0 args
   args=("$id" --keep-commits --expected-record "$record")
   [ -z "${2:-}" ] || args+=(--if-still-stopped "$2")
-  [ "$CLASS" != finished ] || args+=(--expected-state done)
+  [ "$CLASS" != finished ] || args+=(--expected-state 'done')
   [ -z "$MERGED_PR_URL" ] || args+=(--merged-pr "$MERGED_PR_URL")
   CLEANUP_WHY=
   CLEANUP_STALE=0
@@ -471,7 +471,7 @@ cleanup() {
     rc=0
     args=(--finished "$id" --expected-record "$record")
     [ -z "${2:-}" ] || args+=(--if-still-stopped "$2")
-    [ "$CLASS" != finished ] || args+=(--expected-state done)
+    [ "$CLASS" != finished ] || args+=(--expected-state 'done')
     [ -z "$MERGED_PR_URL" ] || args+=(--merged-pr "$MERGED_PR_URL")
     out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-retire-endpoint.sh" "${args[@]}" </dev/null 2>&1) || rc=$?
     [ "$rc" -eq 0 ] && return 0

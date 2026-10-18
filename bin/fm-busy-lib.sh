@@ -250,8 +250,8 @@ fm_busy_admit_stopped() {
   [ -z "$(fm_meta_get "$meta" remote_host)" ] || changed=1
   line=$(fm_run_timed 60 "$script_dir/fm-crew-state.sh" "$id" 2>/dev/null) || line=
   verb=$(printf '%s\n' "$line" | sed -n '1s/^state: \([a-z]*\).*/\1/p')
-  if [ "$expected_state" = done ]; then
-    [ "$verb" = done ] || changed=1
+  if [ "$expected_state" = 'done' ]; then
+    [ "$verb" = 'done' ] || changed=1
   else
     case "$verb" in
       failed|blocked|paused) ;;

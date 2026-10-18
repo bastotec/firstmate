@@ -366,7 +366,7 @@ while [ "$#" -gt 0 ]; do
       ;;
     --expected-state)
       shift
-      [ "$#" -gt 0 ] && [ "$1" = done ] || exit 2
+      [ "$#" -gt 0 ] && [ "$1" = 'done' ] || exit 2
       EXPECTED_STATE=$1
       ;;
     --if-still-stopped)
@@ -390,7 +390,7 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
-if [ "$EXPECTED_STATE" = done ]; then
+if [ "$EXPECTED_STATE" = 'done' ]; then
   [ -n "$STOPPED_STATUS_SIZE" ] || exit 2
 fi
 if [ -n "$STOPPED_STATUS_SIZE" ]; then

@@ -270,7 +270,7 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --expected-state)
-      [ "$#" -gt 0 ] && [ "$1" = done ] || refuse "--expected-state requires done"
+      [ "$#" -gt 0 ] && [ "$1" = 'done' ] || refuse "--expected-state requires done"
       EXPECTED_STATE=$1
       shift
       ;;
@@ -315,7 +315,7 @@ if [ "$EXPECTED_RECORD_SET" = 1 ]; then
     || refuse "--expected-record requires --finished with exactly one task id"
 fi
 
-if [ "$EXPECTED_STATE" = done ]; then
+if [ "$EXPECTED_STATE" = 'done' ]; then
   [ -n "$STOPPED_STATUS_SIZE" ] || refuse "--expected-state requires --if-still-stopped"
 fi
 if [ -n "$STOPPED_STATUS_SIZE" ]; then
@@ -704,7 +704,7 @@ for id in "${IDS[@]}"; do
     EXPECTED_LOCK_HELD=0
   fi
   [ -z "$STOPPED_STATUS_SIZE" ] || teardown_args+=(--if-still-stopped "$STOPPED_STATUS_SIZE")
-  [ "$EXPECTED_STATE" != done ] || teardown_args+=(--expected-state done)
+  [ "$EXPECTED_STATE" != 'done' ] || teardown_args+=(--expected-state 'done')
   [ "$FINISHED" = 0 ] || teardown_args+=(--keep-commits)
   [ -z "$MERGED_PR_URL" ] || teardown_args+=(--merged-pr "$MERGED_PR_URL")
   "$SCRIPT_DIR/fm-teardown.sh" "${teardown_args[@]}" || teardown_rc=$?
