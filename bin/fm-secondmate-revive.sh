@@ -282,7 +282,7 @@ HEAL_NOTE="Restarted automatically because one of your lanes kept failing. Read 
 # other. Both lanes share one relaunch per scan.
 lane_heal() {  # <id>
   local id=$1 lane_tag open key verb note supervisor_line='' conversation_line=''
-  local LANE_RELAUNCHED_AT='' LANE_RELAUNCH_RC=0 LANE_RELAUNCH_OUT=''
+  local LANE_RELAUNCHED_AT='' LANE_RELAUNCH_RC=0 LANE_RELAUNCH_OUT='' LANE_FAILING_LANES=''
   local LANE_SWITCH_MODEL='' LANE_SWITCH_AT='' LANE_SWITCH_RC=0 LANE_SWITCH_OUT=''
   open=$(status_open_decisions_incremental "$STATE/$id.status")
   while IFS=$'\t' read -r key verb note; do
@@ -294,6 +294,10 @@ lane_heal() {  # <id>
   done <<EOF
 $open
 EOF
+  [ -z "$supervisor_line" ] || LANE_FAILING_LANES="inner monologue (supervisor)"
+  if [ -n "$conversation_line" ]; then
+    LANE_FAILING_LANES="${LANE_FAILING_LANES:+$LANE_FAILING_LANES and }conversation lane"
+  fi
   for lane_tag in supervisor conversation; do
     case "$lane_tag" in
       supervisor) lane_heal_one "$id" "$lane_tag" "$supervisor_line" || return 0 ;;
@@ -366,6 +370,9 @@ lane_heal_one() {  # <id> <supervisor|conversation>
     if [ -z "$LANE_RELAUNCHED_AT" ]; then
       LANE_RELAUNCHED_AT=$now
       LANE_RELAUNCH_OUT=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" relaunch --unless-held-stopped --replace-live --note "$HEAL_NOTE" < /dev/null 2>&1) || LANE_RELAUNCH_RC=$?
+      if [ "$LANE_RELAUNCH_RC" -eq 0 ]; then
+        log "relaunched $id because its $LANE_FAILING_LANES kept failing"
+      fi
     fi
     rc=$LANE_RELAUNCH_RC
     out=$LANE_RELAUNCH_OUT
@@ -377,8 +384,6 @@ lane_heal_one() {  # <id> <supervisor|conversation>
       relaunch_error=$(one_line "$out")
       [ -n "$relaunch_error" ] || relaunch_error="exit $rc"
       log "relaunch of $id for its failing $lane failed: $relaunch_error"
-    else
-      log "relaunched $id because its $lane kept failing"
     fi
     relaunched=$LANE_RELAUNCHED_AT
     printf 'key=%s\nepisode=%s\nlane=%s\nfirst_seen=%s\nrelaunched=%s\nescalated=0\nrelaunch_error=%s\n' \
@@ -394,7 +399,7 @@ lane_heal_one() {  # <id> <supervisor|conversation>
   switched=$(sed -n 's/^model_switched=//p' "$rec")
   if [ -z "$relaunch_error" ] && [ -z "$switched" ]; then
     case "$line" in
-      *"model gateway request failed (HTTP 5"*|*"HTTP 502"*|*"HTTP 503"*|*"HTTP 504"*)
+      *"HTTP 5"[0-9][0-9]*)
         alt=$LANE_SWITCH_MODEL
         [ -n "$alt" ] || alt=$(lane_heal_alternate_model "$id")
         if [ -n "$alt" ]; then
@@ -407,7 +412,7 @@ lane_heal_one() {  # <id> <supervisor|conversation>
           rc=$LANE_SWITCH_RC
           out=$LANE_SWITCH_OUT
           if [ "$rc" -eq 0 ]; then
-            log "relaunched $id on $alt because its $lane kept failing on its model"
+            log "relaunched $id on $alt because its $LANE_FAILING_LANES kept failing on its model"
             for sibling_rec in "$STATE/$id.lane-heal-supervisor" "$STATE/$id.lane-heal-conversation"; do
               [ ! -f "$sibling_rec" ] || lane_heal_record_switch "$sibling_rec" "$LANE_SWITCH_AT" "$alt"
             done

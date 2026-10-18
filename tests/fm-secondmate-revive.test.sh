@@ -106,6 +106,28 @@ calls() {  # <case-dir>
   cat "$1/home/control-calls" 2>/dev/null || true
 }
 
+assert_shared_relaunch_count() {  # <case-dir> <count>
+  local dir=$1 expected=$2
+  printf '#!/usr/bin/env bash\nprintf "{}\\n"\n' > "$dir/report"
+  chmod +x "$dir/report"
+  DECK_STATE="$dir/deck" FM_DREAM_REPORT="$dir/report" FM_DREAM_NO_MISTAKES_DB="$dir/absent.sqlite" \
+    FM_DREAM_NOW="$(date +%s)" FM_DREAM_SKIP_ZIGGY_WAIT=1 FM_DREAM_MIN_FREE_GB=0 \
+    python3 "$ROOT/bin/fm_dream.py" run --home "$dir/home" --only collect > "$dir/collect.json" \
+    || fail "collecting the two-lane heal log failed"
+  python3 - "$dir" "$expected" <<'PY' || fail "shared relaunch logs or nightly count differ from completed actions"
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+expected = int(sys.argv[2])
+completed = [line for line in (root / 'home/state/secondmate-revive.log').read_text().splitlines()
+             if ' relaunched ' in line]
+assert len(completed) == expected, completed
+assert all('inner monologue (supervisor) and conversation lane' in line for line in completed), completed
+assert len((root / 'home/control-calls').read_text().splitlines()) == expected
+result = json.loads((root / 'collect.json').read_text())
+assert result['steps']['collect']['revives'] == expected, result
+PY
+}
+
 queued_revive_wakes() {  # <case-dir>
   if [ -f "$1/home/state/.wake-queue" ]; then
     grep -c 'secondmate-revive:' "$1/home/state/.wake-queue" || true
@@ -190,6 +212,36 @@ test_a_lane_failing_on_its_model_is_moved_to_a_healthy_mates_model() {
   pass "a lane failing on its model is moved once to a healthy mate's model before it is raised"
 }
 
+test_all_http_5xx_model_failures_try_the_alternate() {
+  local dir code form error expected
+  for form in raw gateway; do
+    for code in 400 499 500 501 505 599 600; do
+      dir=$(new_case "http-$form-$code")
+      add_remote_mate "$dir" pat
+      add_remote_mate "$dir" sib
+      printf 'alive\n' > "$dir/home/remote-state"
+      printf 'model=codex/flaky-model\n' >> "$dir/home/state/pat.meta"
+      printf 'model=codex/steady-model\n' >> "$dir/home/state/sib.meta"
+      error="HTTP $code"
+      [ "$form" != gateway ] || error="model gateway request failed ($error)"
+      printf 'blocked [key=supervisor-failing-pat]: %s, since a\n' "$error" > "$dir/home/state/pat.status"
+      scan "$dir"
+      FM_LANE_HEAL_GRACE_SECS=0 scan "$dir"
+      expected=1
+      if [ "$code" -ge 500 ] && [ "$code" -le 599 ]; then
+        expected=2
+        calls "$dir" | grep -q -- '--model codex/steady-model --note ' || fail "$error did not try the alternate model"
+        assert_grep 'switched_to=codex/steady-model' "$dir/home/state/pat.lane-heal-supervisor" "$error records the switch"
+        [ ! -e "$dir/home/state/.wake-queue" ] || fail "$error escalated before the switch grace"
+      else
+        assert_grep 'second mate pat is stuck' "$dir/home/state/.wake-queue" "$error keeps the previous escalation"
+      fi
+      [ "$(calls "$dir" | wc -l | tr -d ' ')" = "$expected" ] || fail "$error took the wrong recovery path: $(calls "$dir")"
+    done
+  done
+  pass "raw and gateway HTTP 5xx failures try an alternate while other statuses escalate"
+}
+
 test_default_and_unset_sibling_models_do_not_replace_a_concrete_choice() {
   local dir id
   dir=$(new_case no-concrete-alternate)
@@ -260,8 +312,10 @@ test_both_lanes_share_the_model_switch_and_its_grace() {
   printf 'model=codex/steady-model\n' >> "$dir/home/state/sib.meta"
   printf 'blocked [key=supervisor-failing-pat]: HTTP 502, since a\nblocked [key=conversation-failing-pat]: HTTP 502, since b\n' > "$dir/home/state/pat.status"
   scan "$dir"
+  assert_shared_relaunch_count "$dir" 1
   FM_LANE_HEAL_GRACE_SECS=0 scan "$dir"
   [ "$(calls "$dir" | grep -c '^pat relaunch ')" = 2 ] || fail "both lanes must share the model switch: $(calls "$dir")"
+  assert_shared_relaunch_count "$dir" 2
   [ ! -e "$dir/home/state/.wake-queue" ] || fail "a lane escalated during the model switch"
   switched_at=$(sed -n 's/^model_switched=//p' "$dir/home/state/pat.lane-heal-supervisor")
   [ -n "$switched_at" ] || fail "the model switch was not recorded"
@@ -380,6 +434,7 @@ test_each_failing_lane_is_raised_and_cleared_on_its_own() {
   } > "$st"
   scan "$dir"
   [ "$(calls "$dir" | grep -c '^pat relaunch ')" = 1 ] || fail "two failing lanes share one relaunch: $(calls "$dir")"
+  assert_shared_relaunch_count "$dir" 1
   FM_HOME="$dir/home" FM_SECONDMATE_REVIVE_CONFIRM_SECS=0 FM_LANE_HEAL_GRACE_SECS=0 "$dir/bin/fm-secondmate-revive.sh" scan
   assert_grep 'its inner monologue (supervisor) keeps failing' "$dir/home/state/.wake-queue" "the failing supervisor is raised"
   assert_grep 'its conversation lane keeps failing' "$dir/home/state/.wake-queue" "the failing conversation is raised too"
@@ -799,6 +854,7 @@ test_missing_local_mate_is_recovered
 test_live_unknown_held_and_non_secondmate_records_are_left_alone
 test_a_live_mate_with_a_failing_lane_is_relaunched_then_escalated_once
 test_a_lane_failing_on_its_model_is_moved_to_a_healthy_mates_model
+test_all_http_5xx_model_failures_try_the_alternate
 test_default_and_unset_sibling_models_do_not_replace_a_concrete_choice
 test_only_live_siblings_without_parent_channel_lane_failures_supply_models
 test_both_lanes_share_the_model_switch_and_its_grace
