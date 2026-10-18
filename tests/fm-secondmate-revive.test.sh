@@ -152,6 +152,27 @@ test_live_unknown_held_and_non_secondmate_records_are_left_alone() {
   pass "live, ambiguous, held, and non-secondmate records are left alone"
 }
 
+test_a_lane_failing_on_its_model_is_moved_to_a_healthy_mates_model() {
+  local dir st
+  dir=$(new_case model-switch)
+  add_local_mate "$dir" pat fm-deck-worker >/dev/null
+  add_local_mate "$dir" sib fm-deck-worker >/dev/null
+  printf 'model=codex/flaky-model\n' >> "$dir/home/state/pat.meta"
+  printf 'model=codex/steady-model\n' >> "$dir/home/state/sib.meta"
+  st="$dir/home/state/pat.status"
+  printf 'blocked [key=supervisor-failing-pat]: pat supervisor is failing every turn (3 consecutive): model gateway request failed (HTTP 502), since 2026-10-18T02:28:25Z; nothing handed to it is being acted on\n' > "$st"
+  scan "$dir"
+  [ "$(calls "$dir" | grep -c '^pat relaunch ')" = 1 ] || fail "the failing lane is relaunched first: $(calls "$dir")"
+  FM_HOME="$dir/home" FM_SECONDMATE_REVIVE_CONFIRM_SECS=0 FM_LANE_HEAL_GRACE_SECS=0 "$dir/bin/fm-secondmate-revive.sh" scan
+  calls "$dir" | grep '^pat relaunch ' | tail -1 | grep -q -- '--model codex/steady-model' \
+    || fail "a lane still failing on a model-service error is moved to the model a healthy mate runs: $(calls "$dir")"
+  [ "$(grep -c 'lane-heal:pat:' "$dir/home/state/.wake-queue" 2>/dev/null || echo 0)" = 0 ] || fail "the model switch is tried before anyone is told"
+  FM_HOME="$dir/home" FM_SECONDMATE_REVIVE_CONFIRM_SECS=0 FM_LANE_HEAL_GRACE_SECS=0 "$dir/bin/fm-secondmate-revive.sh" scan
+  [ "$(calls "$dir" | grep -c '^pat relaunch ')" = 2 ] || fail "the model is switched only once: $(calls "$dir")"
+  assert_grep 'also after switching it to codex/steady-model' "$dir/home/state/.wake-queue" "the escalation says the switch was tried"
+  pass "a lane failing on its model is moved once to a healthy mate's model before it is raised"
+}
+
 test_a_live_mate_with_a_failing_lane_is_relaunched_then_escalated_once() {
   local dir st
   dir=$(new_case failing-lane)
@@ -622,6 +643,7 @@ test_dead_local_mate_is_relaunched_after_a_confirmed_reading
 test_missing_local_mate_is_recovered
 test_live_unknown_held_and_non_secondmate_records_are_left_alone
 test_a_live_mate_with_a_failing_lane_is_relaunched_then_escalated_once
+test_a_lane_failing_on_its_model_is_moved_to_a_healthy_mates_model
 test_a_lane_that_recovers_after_the_relaunch_is_never_raised
 test_each_failing_lane_is_raised_and_cleared_on_its_own
 test_both_lanes_share_a_failed_or_deferred_relaunch

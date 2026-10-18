@@ -266,7 +266,10 @@ revive_one() {  # <meta> <id>
 # first tries the safe fix once per episode, a `bin/fm-control.sh <id> relaunch`
 # that resumes the mate's recorded sessions, and records it in
 # state/<id>.lane-heal-<supervisor|conversation>, one record per lane. If the
-# key is still open FM_LANE_HEAL_GRACE_SECS (900) after that relaunch, or the relaunch fails, it queues one `check:` wake for
+# key is still open FM_LANE_HEAL_GRACE_SECS (900) after that relaunch and its
+# error is a model-service failure (HTTP 5xx), it relaunches the mate once more
+# on the model most healthy second mates of this home run, when one differs;
+# if it is still open a grace later, or the relaunch fails, it queues one `check:` wake for
 # the first mate to raise with the captain, naming the mate, the lane, its error
 # and since when. A resolved key removes the record, and a recovery after an
 # escalation queues one "recovered" wake, so the blocker clears.
@@ -300,8 +303,22 @@ EOF
 
 # Returns 1 only when the mate was stopped on purpose meanwhile, so the caller
 # leaves its other lane alone too.
+# The model most healthy second mates of this home run, other than <id>'s
+# own: healthy means a live record with no failing lane. Empty when none.
+lane_heal_alternate_model() {  # <id>
+  local id=$1 current m other
+  current=$(fm_meta_get "$STATE/$id.meta" model)
+  for m in "$STATE"/*.meta; do
+    other=$(basename "$m" .meta)
+    [ "$other" != "$id" ] || continue
+    grep -q '^kind=secondmate$' "$m" 2>/dev/null || continue
+    [ ! -e "$STATE/$other.supervisor-failing" ] && [ ! -e "$STATE/$other.conversation-failing" ] || continue
+    fm_meta_get "$m" model
+  done | grep -v -x -F -- "${current:-.}" | grep . | sort | uniq -c | sort -rn | awk 'NR==1 {print $2}'
+}
+
 lane_heal_one() {  # <id> <supervisor|conversation>
-  local id=$1 tag=$2 rec="$STATE/$1.lane-heal-$2" key="$2-failing-$1" line=$3 now first relaunched escalated out rc lane episode relaunch_error
+  local id=$1 tag=$2 rec="$STATE/$1.lane-heal-$2" key="$2-failing-$1" line=$3 now first relaunched escalated out rc lane episode relaunch_error switched alt
   now=$(date +%s)
   case "$tag" in supervisor) lane="inner monologue (supervisor)" ;; *) lane="conversation lane" ;; esac
   if [ -z "$line" ]; then
@@ -349,7 +366,32 @@ lane_heal_one() {  # <id> <supervisor|conversation>
   elif [ -z "$relaunch_error" ] && [ $((now - relaunched)) -lt "$HEAL_GRACE" ]; then
     return 0
   fi
+  # Still failing after the relaunch, on a model-service error: the model the
+  # mate runs on is the likely cause, so try once more on a model a healthy
+  # mate of this home already runs before raising it (never a model nobody
+  # chose, so the mate is never silently moved to a weaker class).
+  switched=$(sed -n 's/^model_switched=//p' "$rec")
+  if [ -z "$relaunch_error" ] && [ -z "$switched" ]; then
+    case "$line" in
+      *"model gateway request failed (HTTP 5"*|*"HTTP 502"*|*"HTTP 503"*|*"HTTP 504"*)
+        alt=$(lane_heal_alternate_model "$id")
+        if [ -n "$alt" ]; then
+          rc=0
+          out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" relaunch --unless-held-stopped --replace-live \
+            --model "$alt" --note "$HEAL_NOTE Restarted on $alt because the previous model kept failing." < /dev/null 2>&1) || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            log "relaunched $id on $alt because its $lane kept failing on its model"
+            printf 'key=%s\nepisode=%s\nlane=%s\nfirst_seen=%s\nrelaunched=%s\nescalated=0\nmodel_switched=%s\nswitched_to=%s\n' \
+              "$key" "$episode" "$lane" "$first" "$now" "$now" "$alt" > "$rec.tmp" && mv -f "$rec.tmp" "$rec"
+            return 0
+          fi
+          relaunch_error="switching it to $alt failed: $(one_line "$out")"
+        fi
+        ;;
+    esac
+  fi
   [ -z "$relaunch_error" ] || line="$line (an automatic relaunch failed: $relaunch_error)"
+  [ -z "$switched" ] || line="$line (also after switching it to $(sed -n 's/^switched_to=//p' "$rec"))"
   if fm_wake_append check "lane-heal:$id:$episode" \
       "check: second mate $id is stuck: its $lane keeps failing after an automatic relaunch; tell the captain. Its report: ${line#blocked }"; then
     log "escalated $id: its $lane is still failing"
