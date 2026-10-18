@@ -164,7 +164,10 @@
 # leased home and state in place instead of hiding a still-held lease.
 # bin/fm-deck-worker.sh's SECOND MATE SESSION CONTINUITY header owns the
 # conversation binding retired with a secondmate and its forced descendants.
-# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--keep-commits] [--merged-pr <url>]
+# For caller admission, --expected-record <metadata> requires the exact
+# metadata snapshot under the task's control lock before any cleanup; exit 3
+# leaves a changed or vanished record for a fresh scan.
+# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--keep-commits] [--merged-pr <url>] [--expected-record <metadata>]
 #   --keep-commits handles the leftover local commits a squash merge leaves
 #   behind: when a ship task's PR is merged, its worktree has no uncommitted
 #   changes, and its committed work still is not proved landed, teardown first

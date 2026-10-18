@@ -3,11 +3,11 @@
 # stop, on an operator's explicit say-so or, with --finished, on the owning
 # mate's proof that the work is finished.
 #
-# No daemon runs this script or produces what it writes. Cleanup on its own
-# never retires such a record - bin/fm-teardown.sh's endpoint gates refuse on a
-# stop nothing proved, and --force does not lift them - so these records would
-# otherwise stay forever. This is the one way they are ever retired, and it
-# runs only when someone names them.
+# Retirement requires a named record and an explicit basis, never just a
+# missing endpoint. Cleanup on its own never retires such a record -
+# bin/fm-teardown.sh's endpoint gates refuse on a stop nothing proved, and
+# --force does not lift them. The idle sweep can invoke --finished under the
+# narrower proof below; operator retirement requires inspecting the machine.
 #
 # --finished is the owning mate's path, under the captain's standing
 # instruction that whoever created a worker cleans it up once its work is done.
@@ -23,12 +23,16 @@
 # unresolved captain decision retires nothing. Its basis is that cleanup, once
 # those gates pass, has already stopped every process under the worktree before
 # it reaches the endpoint. It skips the type-back prompt because an agent runs
-# it, and records basis=finished-work in the assertion log instead. Anything it
-# refuses goes to the captain as a decision.
+# it, and records basis=finished-work in the assertion log instead. Refusals
+# follow .agents/skills/task-delivery/SKILL.md's finished-work sweep policy.
 # --merged-pr <url> is accepted only with --finished and exactly one task id;
 # it forwards a supported PR/MR URL to teardown for live forge verification
 # when metadata and backlog do not record it. This also carries a ledger-only
 # URL across the idle sweep's retirement fallback.
+# --expected-record <metadata> is also restricted to --finished with one task
+# id. It checks the caller's snapshot under the control lock before recording
+# an assertion (exit 3 on mismatch), then forwards the same snapshot to
+# teardown's independently locked admission guard; see its header.
 #
 # Absence from the hub is never proof that a worker stopped: a same-protocol
 # restart clears the registry while live agents rejoin on their own schedule,
@@ -489,8 +493,8 @@ retirement_done_args() {  # <id> <pr> <verdict>
 # with its deliverable, exactly as cleanup and the session-start replay do, so
 # a retirement never quietly answers the captain's own question.
 # The record-only mutation runs under the task's control lock, the same lock
-# cleanup, relaunch and an idle-sweep hold (bin/fm-captain-hold.sh
-# --expected-record) take, so none of them acts on a record mid-retirement.
+# cleanup, relaunch and snapshot-guarded holds take, so none of them acts on a
+# record mid-retirement.
 # Revalidate the pre-cleanup snapshot under that lock: an assertion for the
 # old incarnation must not retire a replacement published while we waited.
 # Regression coverage: tests/fm-teardown-endpoint-safety.test.sh.

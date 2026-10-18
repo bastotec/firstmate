@@ -23,8 +23,8 @@
 #   fm-card.sh restore <task-id>
 #
 # Input JSON for write is exactly one object carrying project, title,
-# situation, options and recommended; the script adds version, task, draft,
-# created and updated.
+# situation, options and recommended, plus optional urgent (below); the script
+# adds version, task, draft, created and updated.
 # Plain words: the title, situation and option labels are for a person acting
 # without context, so they refuse internal jargon: a token shaped like a task
 # slug (three or more lowercase hyphen-joined parts, such as
@@ -41,8 +41,8 @@
 # and hyphenated tokens with an all-caps part ("POST-to-observation") are
 # jargon too. A card is normal priority unless it carries
 # "urgent": {"because": <reason>}, and the only reasons are production-down,
-# customer-breakage, money and secret-exposure (a secret that left the
-# machine); Fleet Town shows "Urgent - needs you now" only for those.
+# customer-breakage, money and secret-exposure; the holding mate's urgency
+# policy lives in .agents/skills/captain-hold-lifecycle/SKILL.md.
 # Limits: title <= 120 chars; situation <= 280 chars and <= 2 lines; 1-9
 # options keyed "1".."9" in order; label <= 40 chars; instruction <= 1000
 # chars; recommended names one option; no control characters except newlines
@@ -81,8 +81,9 @@
 # reason (prior hold reason), and card (prior card object or null).
 # `restore` undoes the newest clear of a task only while it is still Done with
 # newest resolution mode stale-cleared. Before reopening, it validates a saved
-# full card's structure; invalid structure refuses without changing the task.
-# It reopens and re-holds with the prior reason and full card when its wording
+# full card's structure, including optional urgency; invalid structure refuses
+# without changing the task. It reopens and re-holds with the prior reason
+# and full card, preserving urgency, when its wording
 # passes the current check. Older wording becomes a plain draft from the saved
 # title and situation, without the old options; no saved full card also yields
 # a draft.

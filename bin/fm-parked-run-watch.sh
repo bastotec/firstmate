@@ -31,6 +31,16 @@
 # worker leaving never has a blocker raised after its close resolved it. A scan
 # drops a record whose worker has left.
 #
+# Separately, a live worker classified busy by bin/fm-busy-lib.sh gets one
+# check-in wake after FM_WORKER_QUIET_SECS without a status change, whether or
+# not it has a validation run. The quiet stretch is keyed by status-file mtime,
+# or by the busy-state timestamp when no status file exists. A successful
+# append of worker-quiet:<id>:<timestamp> records state/<id>.quiet-noted;
+# failed appends remain eligible. bin/fm-watch.sh surfaces it as a worker
+# check-in, not a parked-run alarm. The mate checks what the worker is doing
+# under fm_act_within_scope_section in bin/fm-dod-lib.sh, which owns the
+# side-investigation time-box. `close` also removes the quiet marker.
+#
 # Environment knobs:
 #   FM_HOME              required
 #   FM_PARKED_RUN_SECS   seconds parked before each step (3600)
@@ -178,10 +188,6 @@ scan_one() {  # <id>
   fi
 }
 
-# A busy worker that has reported nothing for QUIET seconds may be deep in a
-# side investigation its task never asked for: its mate gets one check-in
-# wake per quiet stretch (keyed by the status file's last change, recorded in
-# state/<id>.quiet-noted), so it asks the worker what it is on.
 quiet_one() {  # <id>
   local id=$1 meta="$STATE/$1.meta" status changed noted classification
   status="$STATE/$id.status"

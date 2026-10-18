@@ -70,8 +70,8 @@ Retire a custom check only through `bin/fm-check-unregister.sh <id>` (or `bin/fm
 
 `AGENTS.md` section 7 records the captain's standing instruction that the mate who created a worker cleans it up once its work is done.
 Run this sweep when a ship lands, when a scout completes, and on every heartbeat, over this home's own endpoint-backed direct reports and endpoint-bound leftover records only, never another home's, and never a secondmate, which retires only on an explicit decision.
-The watcher independently runs [`bin/fm-idle-sweep.sh`](../../../bin/fm-idle-sweep.sh), whose header owns automated cleanup eligibility, decision cards, repeat suppression, cadence, and second-mate audit.
-Handle its decision wakes through `captain-hold-lifecycle` rather than creating a duplicate call.
+The watcher independently runs [`bin/fm-idle-sweep.sh`](../../../bin/fm-idle-sweep.sh), whose header owns automated cleanup and retry eligibility, first-mate handoffs, repeat suppression, cadence, and second-mate audit.
+Handle its handoffs under the stopped-worker rule below, never through a captain hold.
 
 Use [`bin/fm-pr-lib.sh`'s completion-claim gate](../../../bin/fm-pr-lib.sh) to judge a worker with a recorded PR, regardless of delivery mode.
 Without a recorded PR, a worker is finished when its branch landed, or when it is a scout whose report exists and whose `captain-hold-lifecycle` completion gate passes.
@@ -86,8 +86,8 @@ For each finished worker:
 3. Treat any other refusal - uncommitted work, unlanded work without a merged PR, a missing report, an open captain decision, a stream endpoint that would not confirm its stop, a window still listed - as not provably finished: never force or retry around it, and decide it yourself under the rule below.
 
 Deciding a stopped or unproven worker is yours, never the captain's (his rule of 2026-10-18: "i dont want to make those decisions"):
-- Retire it when its work is done, merged, superseded or abandoned: run the cleanup in step 1, which saves leftover commits on a `kept/` branch first.
-- Retry it when the work is still wanted and unfinished - its task is open, no PR of it landed, and nothing superseded it: relaunch it with `bin/fm-control.sh <id> relaunch --note 'Restarted by the idle sweep: your task is still open and unfinished. Read your inbox in order and continue it.'`, once per stopped stretch.
+- Retire it when its work is done, merged, superseded or abandoned: use step 1's guarded cleanup and preservation path, respecting its documented limits.
+- Retry it when the work is still wanted and unfinished - its task is open, no PR of it landed, and nothing superseded it: use [`fm-control.sh`'s relaunch path](../../../bin/fm-control.sh) with a note that tells the worker why it is restarting and what to continue.
 - If you really cannot tell, ask your own first mate (in a second mate home, one `needs-decision` line on the parent channel); the captain sees at most a one-line FYI in your chat or notes, never a card.
 [`bin/fm-idle-sweep.sh`'s header](../../../bin/fm-idle-sweep.sh) owns the automatic version of this rule.
 
@@ -95,7 +95,7 @@ Then close this home's record-less leftovers: endpoints the hub still lists live
 Use `fm-retire-endpoint.sh`'s read-only orphan listing, then close each listed task/endpoint pair with its orphan mode and endpoint pin; its help owns invocation mechanics and listing limits, and [`fm-retire-orphan-lib.sh`'s header](../../../bin/fm-retire-orphan-lib.sh) owns eligibility and timing limits.
 Treat its refusal the same way: never retry around it, and settle it yourself or ask your first mate, never the captain.
 
-Once a worker was handed to the first mate, later sweeps leave it to that decision rather than raising it again.
+See the sweep header for how long handoff suppression lasts and when changed evidence becomes eligible again.
 
 On every heartbeat sweep, also run `bin/fm-pr-record-audit.sh` for this home, plus `FM_HOME=<home> bin/fm-pr-record-audit.sh` for each local secondmate home in the main home.
 Its [header](../../../bin/fm-pr-record-audit.sh) owns mismatch selection, diagnostics, and exit status.

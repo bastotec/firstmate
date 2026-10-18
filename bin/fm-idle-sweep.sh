@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fm-idle-sweep.sh - guarded cleanup and decision cards for this home's
+# fm-idle-sweep.sh - guarded cleanup, retries and first-mate handoffs for this home's
 # eligible idle workers, without waiting for a model turn.
 #
 # Usage:
@@ -60,14 +60,22 @@
 # until the lifecycle owner clears them; the sweep reports but never retries
 # or changes those recovery records.
 # Anything the sweep cannot settle itself (a refused cleanup or retirement, a
-# failed retry, a worker that stopped again after its retry) goes to the home's
-# own first mate, never to the captain as a card: a second mate appends one
+# failed retry, a worker that stopped again after its retry, or an unreadable
+# full backlog item or PR state) goes to the home's own first mate, never to
+# the captain as a card: a second mate appends one
 # "needs-decision [key=idle-<id>]" line to its parent channel, and the first
 # mate's own home lists it in the end-of-scan wake below. Each hand-off records
-# the worker's ledger byte count under state/idle-sweep/<id>.raised, and each
-# retry under state/idle-sweep/<id>.retried (ledger size and retry count; at
-# most two retries per worker); an unchanged size suppresses a repeat. An existing captain hold or settled deferral on the worker or on
-# idle-<id> still takes precedence.
+# the worker's ledger byte count under state/idle-sweep/<id>.raised only after
+# parent-channel delivery or the main-home wake append succeeds. Each retry is
+# recorded under state/idle-sweep/<id>.retried (ledger size and retry count; at
+# most two retries per worker); an unchanged size suppresses a repeat. An
+# existing captain hold or settled deferral on the worker or on idle-<id>
+# still takes precedence.
+# Cleanup and retry pass the classified metadata snapshot to their lifecycle
+# owners for a locked check; a changed record is left for a fresh scan with
+# class unknown/action none. Retry also passes the classified status byte
+# count to bin/fm-control.sh's --if-still-stopped admission guard, whose header
+# owns the fresh current-state and live busy checks.
 # A main home has no parent audit, so a scan that leaves workers unhandled
 # queues ONE `check:` wake keyed idle-sweep-unhandled:<epoch>, naming those ids.
 # state/idle-sweep/.unhandled stores the sorted id set after a successful queue
@@ -93,10 +101,11 @@
 #
 # `summary` prints the last scan's state/idle-sweep.json
 # (schema fm-idle-sweep.v1: generated, generated_epoch, home, workers[] of
-# {id, class, age_seconds, detail, action, hold_id}); hold_id names the raised
-# captain call, or is null; action is one of none, cleaned, retired,
-# retried, asked (handed to the first mate), or unhandled. Refused orphan closes are included even when their
-# hold fails; held or unchanged raised orphans appear with action none.
+# {id, class, age_seconds, detail, action, hold_id}); hold_id is retained for
+# compatibility and is always null in new scans; no captain call is created.
+# Action is one of none, cleaned, retired, retried, asked (handed to the first
+# mate), or unhandled. Refused orphan closes are included even when their
+# handoff fails; held or unchanged raised orphans appear with action none.
 # Exit 1 when no scan has published a summary yet.
 #
 # Environment knobs:
