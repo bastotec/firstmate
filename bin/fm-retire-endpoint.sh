@@ -198,8 +198,8 @@ Cleanup's work-protection refusal is NOT proceeded past: work still failing
 that gate, a scout whose report is missing, or a captain decision the report
 still leaves open retires nothing. Cleanup stops every process under the
 worktree before it reaches the endpoint, which is what stands behind the stop
-this asserts. The log line carries basis=finished-work. Anything refused here
-is the captain's decision.
+this asserts. The log line carries basis=finished-work. Refusals belong to the
+owning mate under .agents/skills/task-delivery/SKILL.md's finished-work sweep.
 
 --merged-pr <url> supplies the PR/MR URL for one --finished task when it is
 not recorded in its metadata or backlog. Cleanup rechecks its live forge state
@@ -210,7 +210,8 @@ already gone. It needs an explicit FM_HOME and asks for no typed confirmation.
 Ownership needs this home's state/<id>.inbox/deck-<endpoint-id>/ record plus
 label fm-<id>; a label or local process match alone is never enough.
 bin/fm-retire-orphan-lib.sh's header owns the full eligibility checks and the
-remaining check-to-kill race. Refusals are the captain's decision.
+remaining check-to-kill race. Refusals belong to the owning mate under
+.agents/skills/task-delivery/SKILL.md's finished-work sweep.
 Task files, worktrees, branches and backlog rows remain untouched; the command
 writes its assertion log and locking records.
 
@@ -704,7 +705,7 @@ for id in "${IDS[@]}"; do
     echo "error: $id's runtime reported the endpoint still present and this retirement did not override that; nothing was retired - rerun with --override-runtime-refusal if you have verified no worker is still running behind it" >&2
   elif [ "$teardown_rc" = "$WORK_GATE_EXIT" ] && [ "$FINISHED" = 1 ]; then
     status=1
-    echo "error: cleanup for $id refused over unlanded or uncommitted work in its worktree, so it is not finished; nothing was retired, and this is the captain's decision" >&2
+    echo "error: cleanup for $id refused over unlanded or uncommitted work in its worktree, so it is not finished; nothing was retired - the owning mate decides under .agents/skills/task-delivery/SKILL.md's finished-work sweep" >&2
   elif [ "$teardown_rc" != "$WORK_GATE_EXIT" ]; then
     status=1
     if [ -e "$STATE/$id.meta" ] || [ -L "$STATE/$id.meta" ]; then
