@@ -171,11 +171,12 @@
 #
 # HOST SHUTDOWN (cleanup on /quit, end of input, TERM, or HUP)
 # The host first sends TERM to its watcher arm and its captain lane, so they
-# stop while it stops its own Deck turn with the bounded stop above. It then
-# gives each of them at most FM_DECK_CHILD_STOP_SECS more to exit and, past
-# that, kills that child's whole process subtree, so a watcher check or a lane
-# turn can never hold the host up. The total stays well under the time
-# bin/fm-control.sh waits for a relaunched driver to stop.
+# stop while it stops its own Deck turn with the bounded stop above. Each
+# child's FM_DECK_CHILD_STOP_SECS grace starts at that TERM, not at the later
+# wait: after stopping its turn, the host waits only the remaining grace before
+# killing that child's whole process subtree. A watcher check or lane turn
+# cannot hold shutdown up indefinitely. With default bounds, cleanup stays
+# below the time bin/fm-control.sh waits for a relaunched driver to stop.
 #
 # ENVIRONMENT
 #   FM_DECK_MAX_TURNS       model calls per turn (default 200; Deck's own 24 is

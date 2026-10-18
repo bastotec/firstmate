@@ -77,7 +77,7 @@ The TERM-resistant fixture exercises both helper modes: the default mode escalat
 Its separate live-endpoint refusal case closes another task's endpoint and checks that replacement still refuses while preserving the instructions, metadata, and staged work.
 Physical-state-alias and stale-generation relaunch regressions, including the valueless `--secondmate` driver flag, are in `tests/fm-deck-harness.test.sh` and `tests/fm-control-relaunch.test.sh`.
 This driver-only path does not alter backend transport or endpoint classifiers.
-`tests/fm-deck-harness.test.sh` covers bounded watcher-tree shutdown after TERM, an arm exiting before its descendants, and cooperative TERM arriving during `/quit` cleanup with both watcher and captain lane running.
+`tests/fm-deck-harness.test.sh` covers bounded watcher-tree shutdown after TERM, grace consumed by a slow step between TERM and the wait, an arm exiting before its descendants, and cooperative TERM arriving during `/quit` cleanup with both watcher and captain lane running.
 `tests/fm-watch-arm.test.sh` and `tests/fm-captain-lane.test.sh` cover a slow watcher's bounded stop and prompt TERM handling during lane waits; `tests/fm-control-relaunch.test.sh` covers replacement after a driver shutdown longer than the plain-exit bound.
 
 The separate `test_secondmate_stops_a_turn_inside_a_long_tool` fixture models Deck's cooperative SIGTERM while running real child processes under the secondmate driver.

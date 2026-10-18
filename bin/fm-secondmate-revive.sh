@@ -182,10 +182,14 @@ probe() {  # <meta> <id>  -> prints alive|dead|missing|unknown
 # FM_SECONDMATE_REVIVE_RESUME_SECS at stopping, exited, or launching (including
 # their failed: variants) qualifies for immediate completion. Earlier phases
 # and recreating do not establish that a relaunch began stopping the old agent.
-# Completion uses fm-control relaunch --unless-held-stopped, preserving the
-# recorded note via --note-file and target model, including an explicit default,
-# and is logged as completing an interrupted restart. An unreadable recorded
-# note leaves the ordinary confirmed revive path in charge; no note is invented.
+# Completion uses fm-control relaunch --unless-held-stopped and replays the
+# recorded note via --note-file; bin/fm-remote-control-lib.sh owns remote note
+# compatibility. Only a nonempty journaled requested_model becomes --model,
+# including an explicit default. An absent or empty requested_model omits the
+# flag so ordinary model-choice and configuration precedence still applies.
+# Completion is logged as completing an interrupted restart. An unreadable
+# recorded note leaves the ordinary confirmed revive path in charge; no note
+# is invented.
 # A lifecycle action still holding the mate's control lock defers completion
 # without a failure. A failed completion counts once against the revive budget,
 # after which the ordinary confirmed revive path takes over.

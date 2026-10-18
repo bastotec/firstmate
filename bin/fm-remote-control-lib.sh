@@ -18,6 +18,10 @@
 # host over bin/fm-on.sh, and a relaunch rewrites this home's binding from the
 # host's route afterwards. recover-missing launches a gone endpoint again
 # (fm_remote_recover_missing). It reads fm-control.sh's parsed globals.
+# Relaunch without a note keeps the legacy four-argument host call. Either
+# --note or --note-file adds --note <text>; if that call returns usage exit 2,
+# retry once without the note and warn that it could not be carried. Other
+# failures do not trigger this compatibility retry.
 
 # fm_remote_route_parse <route-output>: validate one host route. Sets
 # FM_REMOTE_ROUTE_BACKEND, _TARGET, _HARNESS, _MODEL, _EFFORT, _STREAM_HUB,
