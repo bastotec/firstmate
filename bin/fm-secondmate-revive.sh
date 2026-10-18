@@ -185,8 +185,8 @@ probe() {  # <meta> <id>  -> prints alive|dead|missing|unknown
 # Completion uses fm-control relaunch --unless-held-stopped and replays the
 # recorded note via --note-file; bin/fm-remote-control-lib.sh owns remote note
 # compatibility. Only a nonempty journaled requested_model becomes --model,
-# including an explicit default. An absent or empty requested_model omits the
-# flag so ordinary model-choice and configuration precedence still applies.
+# including an explicit default. An empty requested_model omits the flag so
+# ordinary model-choice and configuration precedence still applies.
 # A journal with no requested_model line (written before this path existed)
 # does not qualify; the ordinary confirmed revive handles it.
 # Completion is logged as completing an interrupted restart. An unreadable
