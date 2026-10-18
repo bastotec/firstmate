@@ -47,6 +47,10 @@
 # question gates over minting a new row. The command records a UTC `Captain
 # hold set:` timestamp in the task body: repeating an active hold preserves the
 # existing timestamp, while re-holding released work starts a new lifecycle.
+# Fresh stamp selection runs under the task lock and advances beyond both the
+# existing leading hold-set stamp and the newest recorded withdrawal's stamp.
+# If the clock has not advanced, it uses one second after the later stamp so
+# withdrawal retries cannot mistake a fresh call for the withdrawn lifecycle.
 # A task already closed is refused rather than reopened. `--until` records the
 # captain's own deferral date through `tasks-axi hold --until`, so a "revisit
 # later" answer is stored as a date rather than an undated live call; its
