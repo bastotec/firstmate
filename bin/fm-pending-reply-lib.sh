@@ -56,6 +56,8 @@
 #   request_summary=        sanitized request excerpt, not secret-redacted;
 #                           fm_pending_reply_summarize below owns filtering and limits
 #   created_epoch=          when the expectation was created
+#   delivery_plane=         inbox | typed; recorded when preparing delivery
+#                           (absent in older records)
 #   delivered_epoch=        when the marked request was confirmed delivered
 #                           (empty until delivery; the captain-direct exception
 #                           above settles after grace, not at delivery)
@@ -108,8 +110,8 @@
 #
 # Retryable undelivered escalation: a delivery-unknown escalation reports that
 # the request may never have reached the mate, so the request stays the owner's
-# to resend under the same correlation (fm-send's FM_PENDING_REPLY_EXISTING_CORR
-# contract; the remote enqueue deduplicates onto the same record). The resend
+# to resend under the same correlation (see fm-send's header for the
+# FM_PENDING_REPLY_EXISTING_CORR contract and enqueue deduplication). The resend
 # resets the record to awaiting_report and leaves the published escalation
 # decision open: a confirmed delivery does not settle the request, only a
 # correlated report does. A later missed-report escalation reuses that key
@@ -119,11 +121,31 @@
 # (bin/fm-backlog-handoff.sh's receiver wake) stayed refused forever once the
 # watcher escalated between the lost transport and the next resume.
 #
+# Stale local inbox attempts: reconciliation runs on watcher ticks and before
+# fm-send refuses a reused correlation with an unresolved attempted=<epoch>
+# sidecar. At FM_PENDING_REPLY_LOCAL_ATTEMPT_STALE_SECS, a local inbox record
+# carrying corr=<id>, in the root or handled/, establishes delivery at the
+# attempt epoch; the scan follows a root record moved into handled/ during
+# acknowledgement. With no matching record, an awaiting_report,
+# delivery_unknown, or escalated request loses its attempt marker and returns
+# to awaiting_report, keeping escalated_epoch so eventual resolution closes
+# the existing decision rather than opening another. Neither outcome resolves
+# the pending reply. Younger attempts still refuse resends. Typed-plane and
+# remote attempts retain their existing unknown-delivery guards; for older
+# records without delivery_plane, a leading slash in request_summary excludes
+# the attempt from inbox settlement. fm-send's header owns same-correlation
+# replay deduplication and the recovery-message exception.
+# Regression: tests/fm-pending-reply.test.sh (stale local attempt, concurrent
+# acknowledgement, correlated resend) and tests/fm-send-remote-delivery.test.sh
+# (typed and historical slash attempts retain their guard).
+#
 # Sourced by bin/fm-send.sh, bin/fm-watch.sh, bin/fm-secondmate-report.sh, and
 # tests. No side effects on source. set -u / set -e safe.
 #
 # Tunables (env):
 #   FM_PENDING_REPLY_GRACE_SECS   default 120
+#   FM_PENDING_REPLY_LOCAL_ATTEMPT_STALE_SECS default 600; nonnegative integer
+#                                 (empty or non-integer values use the default)
 #   FM_PENDING_REPLY_DIR_OVERRIDE override the pending-replies directory (tests)
 #   FM_PENDING_REPLY_SEND_HOOK    optional command template for recovery delivery
 #                                 (tests); receives task_id and full message as args
@@ -448,14 +470,15 @@ fm_pending_reply_write_delivery_confirmation() {  # <state-dir> <corr_id> <state
   mv -f "$tmp" "$marker"
 }
 
-fm_pending_reply_prepare_delivery() {  # <state-dir> <corr_id>
-  local state=$1 corr=$2 rec delivered marker now
+fm_pending_reply_prepare_delivery() {  # <state-dir> <corr_id> [delivery-plane]
+  local state=$1 corr=$2 plane=${3:-} rec delivered marker now
   rec=$(fm_pending_reply_path "$state" "$corr")
   [ -f "$rec" ] || return 1
   delivered=$(fm_pending_reply_get "$rec" delivered_epoch)
   [ -z "$delivered" ] || return 0
   marker=$(fm_pending_reply_delivery_confirmation_path "$state" "$corr")
   [ -f "$marker" ] && return 0
+  [ -z "$plane" ] || fm_pending_reply_set "$rec" delivery_plane "$plane" || return 1
   now=$(fm_pending_reply_now)
   fm_pending_reply_write_delivery_confirmation "$state" "$corr" attempted "$now"
 }
@@ -501,6 +524,48 @@ fm_pending_reply_mark_delivery_unknown() {  # <state-dir> <corr_id>
   fm_pending_reply_set "$rec" phase delivery_unknown
 }
 
+# The header owns stale local inbox attempt eligibility and settlement.
+_fm_pending_reply_settle_stale_local_attempt() {  # <state-dir> <corr_id> <record> <marker> <attempt-epoch>
+  local state=$1 corr=$2 rec=$3 marker=$4 epoch=$5 task_id inbox stale now f
+  task_id=$(fm_pending_reply_get "$rec" task_id)
+  [ -n "$task_id" ] || return 1
+  fm_pending_reply_target_is_remote "$state" "$task_id" && return 1
+  case "$(fm_pending_reply_get "$rec" delivery_plane)" in
+    inbox) ;;
+    '')
+      case "$(fm_pending_reply_get "$rec" request_summary)" in /*) return 1 ;; esac
+      ;;
+    *) return 1 ;;
+  esac
+  stale=${FM_PENDING_REPLY_LOCAL_ATTEMPT_STALE_SECS:-600}
+  case "$stale" in ''|*[!0-9]*) stale=600 ;; esac
+  now=$(fm_pending_reply_now)
+  [ $((now - epoch)) -ge "$stale" ] || return 1
+  inbox="$state/$task_id.inbox"
+  for f in "$inbox"/*.msg "$inbox/handled"/*.msg; do
+    if ! grep -qF "corr=$corr" "$f" 2>/dev/null; then
+      case "$f" in
+        "$inbox"/*.msg)
+          grep -qF "corr=$corr" "$inbox/handled/${f##*/}" 2>/dev/null || continue
+          ;;
+        *) continue ;;
+      esac
+    fi
+    fm_pending_reply_mark_delivered "$state" "$corr" "$epoch" || return 1
+    rm -f "$marker" 2>/dev/null || true
+    return 0
+  done
+  case "$(fm_pending_reply_get "$rec" phase)" in
+    awaiting_report|delivery_unknown|escalated) ;;
+    *) return 1 ;;
+  esac
+  rm -f "$marker" 2>/dev/null || return 1
+  # escalated_epoch stays, so the open blocker is closed when the request
+  # finally resolves and is never raised a second time.
+  fm_pending_reply_set "$rec" phase awaiting_report || return 1
+  return 0
+}
+
 _fm_pending_reply_reconcile_delivery_locked() {  # <state-dir> <corr_id>
   local state=$1 corr=$2 rec delivered marker entry delivery_state value epoch
   local grace now age phase
@@ -527,6 +592,7 @@ _fm_pending_reply_reconcile_delivery_locked() {  # <state-dir> <corr_id>
     attempted)
       epoch=$value
       case "$epoch" in ''|*[!0-9]*) return 1 ;; esac
+      _fm_pending_reply_settle_stale_local_attempt "$state" "$corr" "$rec" "$marker" "$epoch" && return 0
       grace=$(fm_pending_reply_get "$rec" grace_secs)
       case "$grace" in ''|*[!0-9]*) grace=$(fm_pending_reply_grace_secs) ;; esac
       now=$(fm_pending_reply_now)
