@@ -36,10 +36,11 @@ fm_cancel_tool_trees() {  # <deck-pid>
   done
 }
 
-# Stop one child of the calling shell within a bound: TERM, wait up to <secs>
-# for it to exit, then SIGKILL its whole process subtree and reap it. Returns
-# the child's wait status. Used where a shutdown must never hang on a child
-# that defers its TERM trap (a foreground sleep, a slow check).
+# Begin shutdown once: capture the child's tree before TERM can orphan any
+# descendants, and retain it so repeated calls do not interrupt TERM cleanup.
+# fm_stop_child_bounded can follow an earlier begin or initiate the stop itself;
+# it waits up to <secs> for the captured tree, kills surviving trees even if
+# the original child has exited, reaps the child, and returns its wait status.
 fm_begin_child_stop() {  # <pid>
   local pid=$1 key="FM_CHILD_STOP_TREE_$1" tree
   [ -z "${!key:-}" ] || return 0

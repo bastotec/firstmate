@@ -27,6 +27,11 @@
 #
 # relaunch and control run the ordinary control plane's relaunch, interrupt or
 # exit here. Both print what the plane printed; the parent re-reads route.
+# relaunch stages an optional --note in a temporary file for fm-control's
+# --note-file, so note text beginning with -- remains valid.
+# relaunch-journal is read-only: it prints this mate's parent-route relaunch
+# journal plus note_base64 containing the recorded note's bytes (empty when no
+# note was recorded). A missing or unreadable journal or note fails the read.
 # fm-spawn/fm-send/fm-teardown keep owning the local endpoint mechanics.
 # bin/fm-remote-doctor.sh owns that host's readiness for stream.
 # docs/remote-secondmates.md owns why.

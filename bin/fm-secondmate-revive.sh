@@ -175,19 +175,20 @@ probe() {  # <meta> <id>  -> prints alive|dead|missing|unknown
   esac
 }
 
-# INTERRUPTED RELAUNCH. Most dead readings follow a deliberate restart, not a
-# crash: bin/fm-control.sh relaunch delivered the exit, and the old host was
-# still shutting down when that relaunch gave up. Before treating a dead mate as
-# crashed, the scan reads that relaunch's journal (state/<id>.control-relaunch,
-# owned by bin/fm-control.sh). A journal written within
-# FM_SECONDMATE_REVIVE_RESUME_SECS whose phase shows the relaunch got as far as
-# stopping the old agent and never completed is finished at once through the
-# same guarded relaunch, with that
-# relaunch's recorded note and target model, and logged as completing an
-# interrupted restart. A lifecycle action still holding the mate's control lock
-# defers it without a failure. Only a completion that itself fails counts
-# against the revive budget, after which the ordinary confirmed revive path
-# takes over.
+# INTERRUPTED RELAUNCH. Before treating a dead mate as crashed, read its
+# fm-control.sh journal at state/<id>.control-relaunch; for a remote mate,
+# fm-on.sh reads it through the host-local relaunch-journal verb instead.
+# With no failures yet in this down episode, a journal written within
+# FM_SECONDMATE_REVIVE_RESUME_SECS at stopping, exited, or launching (including
+# their failed: variants) qualifies for immediate completion. Earlier phases
+# and recreating do not establish that a relaunch began stopping the old agent.
+# Completion uses fm-control relaunch --unless-held-stopped, preserving the
+# recorded note via --note-file and target model, including an explicit default,
+# and is logged as completing an interrupted restart. An unreadable recorded
+# note leaves the ordinary confirmed revive path in charge; no note is invented.
+# A lifecycle action still holding the mate's control lock defers completion
+# without a failure. A failed completion counts once against the revive budget,
+# after which the ordinary confirmed revive path takes over.
 RESUME_SECS=${FM_SECONDMATE_REVIVE_RESUME_SECS:-900}
 case "$RESUME_SECS" in ''|*[!0-9]*) RESUME_SECS=900 ;; esac
 

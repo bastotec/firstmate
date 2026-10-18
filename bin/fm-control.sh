@@ -80,8 +80,9 @@
 #              Records a durable checkpoint and that note, exits the old agent,
 #              requests cooperative TERM from only its task-bound Deck driver,
 #              and proves both that driver group gone and the endpoint stopped
-#              within FM_CONTROL_RELAUNCH_STOP_WAIT, refusing without forced
-#              termination only past that bound.
+#              within FM_CONTROL_RELAUNCH_STOP_WAIT. A timeout refuses
+#              replacement without forced termination; all preflight refusals
+#              still apply.
 #              Then delegates the launch to its single owner,
 #              bin/fm-spawn.sh --relaunch. Backlog eligibility is proved before
 #              exit: an unheld In-flight dependency blocker is valid recovery,
@@ -221,15 +222,13 @@
 #
 # Environment knobs (all bounded waits, seconds):
 #   FM_CONTROL_POLL              poll interval for postcondition waits (0.5)
-#   FM_CONTROL_EXIT_WAIT         per-wait bound for task-bound Deck driver stop
-#                                and endpoint agent-free proof; also used for
-#                                a recreated shell to finish starting (30)
-#   FM_CONTROL_RELAUNCH_STOP_WAIT  the same two stop proofs on a relaunch,
-#                                which has already delivered its exit and
-#                                must finish what it started: it waits this
-#                                long for the old host to shut down, then
-#                                launches the replacement under the same
-#                                control lock, still never forcing (120)
+#   FM_CONTROL_EXIT_WAIT         plain-exit per-wait bound for task-bound Deck
+#                                driver stop and endpoint agent-free proof;
+#                                also bounds recreated shell startup (30)
+#   FM_CONTROL_RELAUNCH_STOP_WAIT  per-wait bound for the same two stop proofs
+#                                on relaunch; replacement requires both proofs
+#                                under the same control lock, never a forced
+#                                stop (120)
 #   FM_CONTROL_LAUNCH_WAIT       dead->alive wait after a relaunch (90)
 #   FM_CONTROL_EXIT_RETRIES      Enter retries for the exit command (3)
 #   FM_CONTROL_CLEAR_RETRIES     composer clear/re-read attempts in the exit
