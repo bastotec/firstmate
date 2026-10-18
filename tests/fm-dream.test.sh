@@ -252,11 +252,17 @@ changes = [
   "evidence": "ship-x needed 4 fix rounds"},
  {"kind": "code", "repo": "bastotec/deck", "title": "Merge green mate PRs without waiting for a person", "fix": "in the PR step",
   "change": "Merge green mate PRs at once", "target": "waiting to merge", "evidence": "ship-x waited 1h to merge"},
- {"kind": "captain", "change": "Decide whether mates may merge medium-risk PRs", "target": "nonsense",
+ {"kind": "captain", "change": "Decide whether mates may merge medium-risk PRs", "target": "waiting to merge",
   "evidence": "3 PRs waited for a merge"},
+ {"kind": "captain", "change": "A target off the list", "target": "nonsense", "evidence": "e"},
  {"kind": "code", "repo": "nowhere", "title": "Not a fleet repo", "change": "x", "evidence": "y"},
  {"kind": "instructions", "change": "no evidence"}]
 print(json.dumps({"choices": [{"message": {"content": "Plan:\n" + json.dumps({"changes": changes})}}]}))' ;;
+  dup) python3 -c '
+import json
+changes = [{"kind": "code", "repo": "firstmate", "title": "Prevent duplicate worker spawns for a task", "fix": "lock",
+            "change": "Stop duplicate spawns", "target": "fix_rounds", "evidence": "two workers on one task"}]
+print(json.dumps({"choices": [{"message": {"content": json.dumps({"changes": changes})}}]}))' ;;
   down) printf '%s\n' '{"error": {"code": "upstream_error", "message": "selected account has no project-owned enrollment"}}' ;;
 esac
 SH
@@ -264,6 +270,7 @@ SH
   cat > "$d/bin/send" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$STUB_CALLS/$(basename "$0")"
+printf '%s\n' "${FM_SEND_STREAM:-conversation}" >> "$STUB_CALLS/$(basename "$0").stream"
 SH
   cp "$d/bin/send" "$d/bin/inbox"
   cat > "$d/bin/hold" <<'SH'
@@ -780,11 +787,11 @@ import glob, json, sys
 run = json.load(open(sys.argv[1]))
 calls = sys.argv[2]
 st, life = run["steps"]["improve"], run["improve"]
-assert st["status"] == "done" and st["tasks"] == 1 and st["changes"] == 3 and st["dropped"] == 2, st
+assert st["status"] == "done" and st["tasks"] == 1 and st["changes"] == 3 and st["dropped"] == 3, st
 assert life["model"] == "claude/opus-5-5" and life["metrics"]["mate"]["median"] == 6200, life
 kinds = [c["kind"] for c in life["changes"]]
 assert kinds == ["instructions", "code", "captain"], kinds
-assert life["changes"][2]["target"] == "mate median" and life["changes"][0]["before"] == 0, life["changes"]
+assert life["changes"][2]["target"] == "waiting to merge" and life["changes"][0]["before"] == 0, life["changes"]
 assert life["previous"]["date"] == "2026-10-01" and life["change"]["mate_median"] == -800, life
 reqs = glob.glob(calls + "/reflect.*")
 assert len(reqs) == 1, reqs
@@ -806,6 +813,8 @@ assert tonight["code"]["state"] == "dispatch ordered to dave-tools as %s" % key,
 assert open(calls + "/handoff." + key).read().strip() == "dave-tools " + key
 send = open(calls + "/send").read()
 assert send.startswith("dave-tools Priority from fleet dreaming: %s" % key) and "Dispatch a worker on it now" in send, send
+assert open(calls + "/send.stream").read().split() == ["monologue"], "the dispatch order did not go to the operational lane"
+assert [r["key"] for r in run["raised"]] == [key] and run["raised"][0]["mate"] == "dave-tools", run["raised"]
 # captain: one plain card, with the charter proposal on it
 card = tonight["captain"]
 assert card["state"] == "card raised" and card["key"], card
@@ -838,7 +847,9 @@ test_improve_reports_last_night_s_changes_and_their_targets() {
   d=$(new_case improve-last)
   seed_improve "$d"
   printf '%s\n' '{"date": "2026-10-01", "kind": "instructions", "what": "brief names the checks", "pr": "https://github.com/bastotec/firstmate/pull/990", "target": "parked at a gate", "before": 7200}' \
-    '{"date": "2026-10-01", "kind": "code", "what": "retry the hub", "key": "deploy", "target": "fix_rounds", "before": 9}' \
+    '{"date": "2026-10-01", "kind": "code", "what": "retry the hub", "key": "w-9", "mate": "dave-tools", "target": "fix_rounds", "before": 9}' \
+    '{"date": "2026-10-01", "kind": "captain", "what": "a call", "key": "cap-1"}' \
+    '{"date": "2026-10-01", "kind": "code", "what": "PRIVATE ACTION", "key": "p-1", "mate": "finn-finance"}' \
     '{"date": "2026-09-30", "kind": "code", "what": "OLDER NIGHT", "key": "x"}' > "$d/home/state/dream/improve-actions.jsonl"
   STUB_REFLECT=down run_dream "$d" --only collect improve > "$d/out.json" || fail "run exited nonzero"
   log=$(ls "$d"/home/state/dream/runs/*.json)
@@ -846,13 +857,46 @@ test_improve_reports_last_night_s_changes_and_their_targets() {
 import json, sys
 run = json.load(open(sys.argv[1]))
 last = run["improve"]["last_night"]
-assert [a["now_state"] for a in last] == ["merged and deployed", "worker failed"], last
+assert [a["now_state"] for a in last] == ["merged and deployed", "worker failed", "answered or closed"], last
 assert last[0]["now_value"] == 0 and last[1]["now_value"] == 0, last
 s = run["summary"]
 assert "Last night: brief names the checks (merged and deployed, parked at a gate 2.0h -> 0m); retry the hub (worker failed, fix_rounds 9 -> 0)" in s, s
-assert "OLDER NIGHT" not in s, s
+assert "OLDER NIGHT" not in s and "PRIVATE ACTION" not in s, s
 PY
+  # an unreadable fleet report proves nothing about a worker or a card
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$d/bin/report"
+  rm -f "$d"/home/state/dream/runs/*.json
+  STUB_REFLECT=down run_dream "$d" --only collect improve > "$d/out2.json" || fail "second run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  [ "$(jq -c '[.improve.last_night[].now_state]' "$log")" = \
+    '["merged and deployed","state unread: the fleet report could not be read","state unread: the fleet report could not be read"]' ] \
+    || fail "an unreadable report was read as an answer: $(jq -c '.improve.last_night' "$log")"
   pass "improve: last night's changes are reported with their state now and the measurement they targeted, then and now"
+}
+
+test_improve_files_no_duplicate_and_cards_charters_on_a_quiet_night() {
+  local d log
+  d=$(new_case improve-dup)
+  seed_improve "$d"
+  STUB_REFLECT=dup run_dream "$d" --only collect improve triage file track > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  [ "$(jq -r '.improve.tonight[0].state' "$log")" = "already open, not filed again" ] \
+    || fail "a change already in the open work was filed: $(jq -c '.improve.tonight' "$log")"
+  [ ! -e "$d/calls/send" ] || fail "a duplicate got a dispatch order"
+  [ "$(jq -r '.steps.track.status' "$log")" = "nothing changed" ] || fail "an unacted night read as done: $(jq -c .steps.track "$log")"
+  d=$(new_case improve-quiet)
+  sqlite3 "$d/nm.sqlite" "DELETE FROM runs"
+  STUB_INSTR=edit run_dream "$d" --only collect improve instructions file track > "$d/out.json" || fail "quiet run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" <<'PY' || fail "quiet night wrong: $(jq -c '.steps, .summary' "$log")"
+import json, sys
+run = json.load(open(sys.argv[1]))
+assert run["steps"]["improve"]["status"] == "quiet day" and run["steps"]["track"]["status"] == "quiet day", run["steps"]
+card = run["charter_card"]
+assert len(card) == 1 and card[0]["state"] == "card raised" and "cadia: name the kernel repo" in card[0]["what"], card
+assert "Captain card %s for the charter edits (card raised)." % card[0]["key"] in run["summary"], run["summary"]
+PY
+  pass "improve: a change already open is not filed again, and a quiet night still cards its charter proposals"
 }
 
 test_an_unavailable_improve_model_is_named_and_never_replaced() {
@@ -1061,6 +1105,7 @@ test_each_relaunch_is_counted_once
 test_an_interrupted_night_stops_the_gate_and_keeps_the_pr
 test_improve_acts_on_every_kind_of_change
 test_improve_reports_last_night_s_changes_and_their_targets
+test_improve_files_no_duplicate_and_cards_charters_on_a_quiet_night
 test_an_unavailable_improve_model_is_named_and_never_replaced
 test_the_improve_model_comes_from_config_and_a_bad_one_stops_the_run
 test_instructions_open_one_gated_pr_and_propose_charter_edits

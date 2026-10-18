@@ -20,8 +20,11 @@ the report says so.
 
 Runs on branches that are no mate task (Claude sessions and anything unlisted)
 are the benchmark ("session" kind). A run's branch groups with the same name
-without a trailing -<n> retry suffix, unless that name is a task id itself.
-Only runs created or updated in the window count.
+without a trailing -<n> retry suffix, unless that name is a task id itself, and
+only within one repository. Only runs created or updated in the window count; a
+ship or scout task spawned in the window with no run yet is measured too, as
+implementation through now. A PR whose facts cannot be read leaves its task's
+merge unknown (open: null, counted as unknown), never assumed open.
 
 Where a task's time went (seconds), per task and summed by category:
   implementation   start to its first no-mistakes run
@@ -29,7 +32,8 @@ Where a task's time went (seconds), per task and summed by category:
                    (review, test, ci, ...); these include gate waits inside a step
   parked at a gate the runs' parked time
   rework           gaps between one run ending and the next starting
-  waiting to merge from CI ready (or the last run's end) to the merge
+  waiting to merge from CI ready (or the last run's end) to the merge, or to now
+                   for an open PR whose CI readiness is recorded
   deploy           from the merge to the auto-land deploy
 Waits without timestamps (holds, blocks, relaunches, model gateway errors) are
 counted, not timed.
@@ -39,6 +43,7 @@ counted, not timed.
 """
 import argparse
 import json
+import math
 import os
 import re
 import statistics
@@ -77,6 +82,9 @@ for home in homes:
         m = re.search(r'^spawn_gen=s(\d{9,})', body, re.M)
         if m:
             task['spawn'] = int(m.group(1))
+        m = re.search(r'^kind=(\S+)', body, re.M)
+        if m:
+            task['kind'] = m.group(1)
         try:
             status = open(os.path.join(home, 'state', tid + '.status'), encoding='utf-8', errors='replace').read()
             task['waits'] = sorted({w for w in ('captain-held', 'blocked', 'needs-decision', 'paused')
@@ -91,7 +99,7 @@ if os.path.isfile(db):
         tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         cols = {r[1] for r in con.execute('PRAGMA table_info(runs)')}
         pick = [c for c in ('id', 'branch', 'status', 'created_at', 'updated_at', 'parked_ms', 'ci_ready_at',
-                            'pr_url', 'error', 'repo_id') if c in cols]
+                            'pr_url', 'error', 'repo_id', 'worktree_dir') if c in cols]
         repos = {}
         if 'repos' in tables and 'working_path' in {r[1] for r in con.execute('PRAGMA table_info(repos)')}:
             repos = dict(con.execute('SELECT id, working_path FROM repos'))
@@ -106,6 +114,7 @@ if os.path.isfile(db):
                              'created': sec(r.get('created_at')), 'updated': sec(r.get('updated_at')),
                              'parked': round((r.get('parked_ms') or 0) / 1000), 'ci_ready': sec(r.get('ci_ready_at')),
                              'pr': r.get('pr_url') or None, 'repo': repos.get(r.get('repo_id')) or '',
+                             'worktree': r.get('worktree_dir') or '',
                              'steps': {}, 'fix_rounds': 0,
                              'gateway_errors': 1 if GATEWAY.search(r.get('error') or '') else 0}
         if 'step_results' in tables and runs:
@@ -182,32 +191,42 @@ def parse_iso(text):
 
 def deploys(log_text):
     """{pr url: deploy epoch} from auto-land's report.log: the first 'deployed
-    <repo>' line after each 'merged <url>' line for that repository."""
+    <repo>' event after each 'merged <url>' event for that repository. One line
+    holds every event of a tick, joined with '; ', under one timestamp."""
     out, pending = {}, {}
     for line in log_text.splitlines():
-        m = re.match(r'^(\S+Z) autoland: (?:merged (https://\S+/([^/\s]+)/pull/\d+)|deployed ([^\s:]+))', line)
-        if not m:
+        m = re.match(r'^(\S+Z) autoland: (.*)$', line)
+        when = parse_iso(m.group(1)) if m else None
+        if not when:
             continue
-        when = parse_iso(m.group(1))
-        if m.group(2):
-            pending.setdefault(m.group(3), []).append(m.group(2))
-        elif when:
-            for url in pending.pop(m.group(4), []):
-                out[url] = when
+        for event in m.group(2).split('; '):
+            e = re.match(r'(?:merged (https://\S+/([^/\s]+)/pull/\d+)|deployed ([^\s:]+))', event.strip())
+            if not e:
+                continue
+            if e.group(1):
+                pending.setdefault(e.group(2), []).append(e.group(1))
+            else:
+                for url in pending.pop(e.group(3), []):
+                    out[url] = when
     return out
 
 
-def timelines(host, data, now, prs=None, deployed=None):
-    """One record per task on one host, from HOST_PY output and PR facts."""
+def timelines(host, data, now, prs=None, deployed=None, since=None):
+    """One record per task on one host, from HOST_PY output and PR facts. A PR
+    whose facts could not be read leaves its task's merge unknown (open None),
+    never assumed open. A worker task spawned in the window with no run yet is
+    a timeline of implementation only."""
     tasks, groups = data.get('tasks') or {}, {}
     for r in data.get('runs') or []:
         key, kind = task_key(r['branch'], tasks)
-        groups.setdefault((key, kind), []).append(r)
+        # one repository's branch is never another's: names repeat across projects
+        groups.setdefault((key, kind, r.get('repo') or ''), []).append(r)
     out = []
-    for (key, kind), runs in groups.items():
+    for (key, kind, _repo), runs in groups.items():
         runs.sort(key=lambda r: r['created'] or 0)
         info = tasks.get(key, {}) if kind == 'mate' else {}
         pr = next((r['pr'] for r in reversed(runs) if r.get('pr')), None)
+        unread = bool(pr) and not (prs or {}).get(pr)
         facts = (prs or {}).get(pr) or {}
         starts = [t for t in (info.get('spawn'), facts.get('first_commit'), runs[0]['created']) if t]
         start = min(starts)
@@ -221,9 +240,10 @@ def timelines(host, data, now, prs=None, deployed=None):
         sinks['implementation'] = max(0, (runs[0]['created'] or start) - start)
         sinks['parked at a gate'] = sum(r['parked'] for r in runs)
         sinks['rework'] = sum(max(0, (b['created'] or 0) - (a['updated'] or 0)) for a, b in zip(runs, runs[1:]))
-        ready = max([r['ci_ready'] for r in runs if r.get('ci_ready')] or [runs[-1]['updated'] or start])
-        if merged:
-            sinks['waiting to merge'] = max(0, merged - ready)
+        recorded = [r['ci_ready'] for r in runs if r.get('ci_ready')]
+        ready = max(recorded or [runs[-1]['updated'] or start])
+        if merged or (recorded and not unread):
+            sinks['waiting to merge'] = max(0, end - ready)  # an open PR is still waiting
         dep = (deployed or {}).get(pr) if pr else None
         if dep and merged:
             sinks['deploy'] = max(0, dep - merged)
@@ -231,14 +251,26 @@ def timelines(host, data, now, prs=None, deployed=None):
             'host': host, 'task': key, 'kind': kind, 'branches': sorted({r['branch'] for r in runs}),
             'start': start, 'start_from': 'spawn' if info.get('spawn') == start else
             ('first commit' if facts.get('first_commit') == start else 'first run'),
-            'first_run': runs[0]['created'], 'pr': pr, 'pr_opened': facts.get('opened'),
-            'ci_ready': ready if any(r.get('ci_ready') for r in runs) else None, 'merged': merged,
-            'deployed': dep, 'open': not merged, 'seconds': round(end - start),
+            'first_run': runs[0]['created'], 'pr': pr, 'pr_opened': facts.get('opened'), 'pr_unread': unread,
+            'ci_ready': ready if recorded else None, 'merged': merged,
+            'deployed': dep, 'open': None if unread else not merged, 'seconds': round(end - start),
             'runs': len(runs), 'failed_runs': sum(1 for r in runs if r['status'] in ('failed', 'cancelled')),
             'fix_rounds': sum(r['fix_rounds'] for r in runs),
             'gateway_errors': sum(r['gateway_errors'] for r in runs),
             'waits': info.get('waits') or [], 'relaunches': info.get('relaunches', 0),
             'sinks': {k: round(v) for k, v in sorted(sinks.items(), key=lambda kv: -kv[1]) if v >= 1}})
+    seen = {t['task'] for t in out if t['kind'] == 'mate'}
+    for key, info in tasks.items():
+        spawn = info.get('spawn')
+        if key in seen or info.get('kind') not in ('ship', 'scout') or not spawn or (since and spawn < since):
+            continue
+        out.append({
+            'host': host, 'task': key, 'kind': 'mate', 'branches': [], 'start': spawn, 'start_from': 'spawn',
+            'first_run': None, 'pr': None, 'pr_opened': None, 'pr_unread': False, 'ci_ready': None, 'merged': None,
+            'deployed': None, 'open': True, 'seconds': round(now - spawn), 'runs': 0, 'failed_runs': 0,
+            'fix_rounds': 0, 'gateway_errors': 0, 'waits': info.get('waits') or [],
+            'relaunches': info.get('relaunches', 0),
+            'sinks': {'implementation': round(now - spawn)} if now - spawn >= 1 else {}})
     return out
 
 
@@ -247,7 +279,7 @@ def pct(values, q):
     vals = sorted(values)
     if not vals:
         return None
-    return vals[min(len(vals) - 1, max(0, int(round(q / 100 * len(vals) + 0.5)) - 1))]
+    return vals[min(len(vals) - 1, max(0, math.ceil(q / 100 * len(vals)) - 1))]
 
 
 def metrics(items):
@@ -257,8 +289,7 @@ def metrics(items):
         return [t['seconds'] for t in items if t['kind'] == kind and t['merged']]
 
     def commit_to_merge(kind):
-        return [round(t['merged'] - (t['first_run'] if t['start_from'] == 'spawn' else t['start']))
-                for t in items if t['kind'] == kind and t['merged']]
+        return [round(t['merged'] - t['first_run']) for t in items if t['kind'] == kind and t['merged'] and t['first_run']]
     mates = [t for t in items if t['kind'] == 'mate']
     sinks = {}
     for t in mates:
@@ -267,13 +298,15 @@ def metrics(items):
     out = {'tasks': len(mates), 'sessions': sum(1 for t in items if t['kind'] == 'session')}
     for kind, name in (('mate', 'mate'), ('session', 'session')):
         vals = merged(kind)
-        out[name] = {'merged': len(vals), 'open': sum(1 for t in items if t['kind'] == kind and not t['merged']),
+        out[name] = {'merged': len(vals), 'open': sum(1 for t in items if t['kind'] == kind and t['open'] is True),
+                     'unknown': sum(1 for t in items if t['kind'] == kind and t['open'] is None),
                      'median': round(statistics.median(vals)) if vals else None, 'p90': pct(vals, 90),
-                     'run_to_merge_median': round(statistics.median(commit_to_merge(kind))) if vals else None}
+                     'run_to_merge_median': round(statistics.median(commit_to_merge(kind))) if commit_to_merge(kind) else None}
     out['slowest'] = [{'task': t['task'], 'host': t['host'], 'seconds': t['seconds'], 'open': t['open'],
                        'pr': t['pr'], 'top': list(t['sinks'].items())[:3], 'waits': t['waits']}
                       for t in sorted(mates, key=lambda t: -t['seconds'])[:5]]
-    out['sinks'] = sorted(sinks.items(), key=lambda kv: -kv[1])[:6]
+    out['sinks_all'] = dict(sorted(sinks.items(), key=lambda kv: -kv[1]))  # every category, for night-over-night targets
+    out['sinks'] = list(out['sinks_all'].items())[:6]
     out['counted'] = {'fix_rounds': sum(t['fix_rounds'] for t in mates),
                       'failed_runs': sum(t['failed_runs'] for t in mates),
                       'gateway_errors': sum(t['gateway_errors'] for t in items),
@@ -293,9 +326,10 @@ def human(seconds):
 
 def digest(m, items, unread, limit=6000):
     """The bounded text the reflection reads and the night's digest section."""
-    lines = ['Mate tasks: %d (%d merged, %d open); start to merge median %s, p90 %s; first run to merge median %s.' % (
-        m['tasks'], m['mate']['merged'], m['mate']['open'], human(m['mate']['median']), human(m['mate']['p90']),
-        human(m['mate']['run_to_merge_median'])),
+    lines = ['Mate tasks: %d (%d merged, %d open%s); start to merge median %s, p90 %s; first run to merge median %s.' % (
+        m['tasks'], m['mate']['merged'], m['mate']['open'],
+        ', %d with an unread PR' % m['mate']['unknown'] if m['mate']['unknown'] else '',
+        human(m['mate']['median']), human(m['mate']['p90']), human(m['mate']['run_to_merge_median'])),
         'Benchmark, Claude-session and other branches: %d (%d merged); start to merge median %s, p90 %s.' % (
         m['sessions'], m['session']['merged'], human(m['session']['median']), human(m['session']['p90'])),
         'Start is the earliest of spawn, first commit and first no-mistakes run; when the captain asked is not recorded per task.',
@@ -333,11 +367,11 @@ def main(argv):
     if data is None:
         print('fm_lifecycle: the host data could not be read', file=sys.stderr)
         return 1
-    prs = {r['pr']: pr_facts(r['pr'], a.gh) for r in data['runs'] if r.get('pr')}
+    prs = {url: pr_facts(url, a.gh) for url in dict.fromkeys(r['pr'] for r in data['runs'] if r.get('pr'))}
     dep = {}
     if a.autoland_log and os.path.isfile(a.autoland_log):
         dep = deploys(open(a.autoland_log, encoding='utf-8', errors='replace').read())
-    items = timelines('this Mac', data, a.now, prs, dep)
+    items = timelines('this Mac', data, a.now, prs, dep, a.since)
     m = metrics(items)
     print(json.dumps({'timelines': items, 'metrics': m, 'unread': data['unread'],
                       'digest': digest(m, items, data['unread'])}, indent=1))

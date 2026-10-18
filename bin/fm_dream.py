@@ -1104,8 +1104,9 @@ def improve_changes(ctx, raw, repos):
         c['repo'] = next((k for k, slug in repos.items() if c.get('repo') in (k, slug)), c.get('repo'))
         if kind == 'code' and not (c.get('repo') in repos and c.get('title')):
             continue
-        row = {k: str(c.get(k) or '')[:400] for k in ('kind', 'change', 'repo', 'title', 'fix', 'evidence')}
-        row['target'] = c.get('target') if c.get('target') in TARGETS else 'mate median'
+        if c.get('target') not in TARGETS:
+            continue
+        row = {k: str(c.get(k) or '')[:400] for k in ('kind', 'change', 'repo', 'title', 'fix', 'evidence', 'target')}
         if not mentions_excluded(ctx, json.dumps(row, ensure_ascii=False)):
             out.append(row)
     return out[:3]
@@ -1159,18 +1160,25 @@ def last_night(ctx, point):
     dates = sorted({r.get('date') for r in rows if r.get('date') and r['date'] < ctx.day})
     if not dates:
         return []
-    rep = ctx.facts.get('fleet_report') or {}
+    rep = ctx.facts.get('fleet_report')
     dep = autoland_deploys(ctx)
     out = []
     for r in (r for r in rows if r.get('date') == dates[-1]):
+        # an action for a home excluded since is not reported, like the rest of its records
+        if r.get('mate') in ctx.excluded or mentions_excluded(ctx, json.dumps(r, ensure_ascii=False)):
+            continue
         if r.get('pr'):
             state = pr_state(ctx, r['pr'], dep)
+        elif r.get('kind') in ('code', 'captain') and r.get('key') and rep is None:
+            state = 'state unread: the fleet report could not be read'
         elif r.get('kind') == 'code' and r.get('key'):
-            shipped = [x for x in rep.get('shipped') or [] if x.get('task') == r['key']]
-            crew = [x for x in rep.get('crew') or [] if x.get('task') == r['key']]
+            # the fleet report's crew.agent is the task id; crew.task is its title
+            mine = lambda x: x.get('mate') == r.get('mate') or not r.get('mate')
+            shipped = [x for x in rep.get('shipped') or [] if x.get('task') == r['key'] and mine(x)]
+            crew = [x for x in rep.get('crew') or [] if x.get('agent') == r['key'] and mine(x)]
             state = ('merged (%s)' % shipped[0].get('pr') if shipped else
                      'worker %s' % crew[0].get('status') if crew else 'no worker on it yet')
-        elif r.get('kind') == 'captain':
+        elif r.get('kind') == 'captain' and r.get('key'):
             waiting = any(x.get('task') == r.get('key') for x in rep.get('waiting') or [])
             state = 'waiting on the captain' if waiting else 'answered or closed'
         else:
@@ -1195,7 +1203,9 @@ def step_improve(ctx):
         unread += ['%s: %s' % (host, u) for u in data.get('unread') or [] if not mentions_excluded(ctx, u)]
         # An excluded home's work never reaches the timelines: its projects' runs, or any run naming it.
         data['runs'] = [r for r in data.get('runs') or []
-                        if not any(r.get('repo') == p or str(r.get('repo')).startswith(p.rstrip('/') + '/') for p in private)
+                        if not any(place == p or place.startswith(p.rstrip('/') + '/')
+                                   for p in private for place in (str(r.get('repo') or ''), str(r.get('worktree') or ''))
+                                   if place)
                         and not mentions_excluded(ctx, json.dumps(r, ensure_ascii=False))]
         prs = {}
         for url in dict.fromkeys(r['pr'] for r in data['runs'] if r.get('pr')):
@@ -1203,7 +1213,12 @@ def step_improve(ctx):
                 break
             prs_left -= 1
             prs[url] = fl.pr_facts(url, gh, run=run)
-        items += fl.timelines(host, data, ctx.now, prs, dep)
+        items += fl.timelines(host, data, ctx.now, prs, dep, ctx.since)
+    unread_prs = [t['pr'] for t in items if t.get('pr_unread')]
+    if unread_prs:
+        # never counted as open or merged: the split is incomplete, and says so
+        unread.append('%d PR%s unread (%s), so their merge is unknown' % (
+            len(unread_prs), '' if len(unread_prs) == 1 else 's', ', '.join(unread_prs[:3])))
     if not items:
         ctx.facts['improve'] = None
         return {'status': 'quiet day', **({'why': '; '.join(unread)} if unread else {})}
@@ -1220,7 +1235,7 @@ def step_improve(ctx):
         pass
     point = {'date': ctx.day, 'mate_median': m['mate']['median'], 'mate_p90': m['mate']['p90'],
              'session_median': m['session']['median'], 'merged': m['mate']['merged'], 'open': m['mate']['open'],
-             'sinks': dict(m['sinks']), 'counted': m['counted']}
+             'sinks': m['sinks_all'], 'counted': m['counted']}
     change = None
     if prev:
         change = {k: (point[k] - prev[k]) if point.get(k) is not None and prev.get(k) is not None else None
@@ -1267,41 +1282,57 @@ def step_improve(ctx):
 def step_track(ctx):
     """Follows tonight's changes to where they landed: the instructions PR to its
     merge and deploy (auto-land owns both; this waits up to TRACK_WAIT), and
-    records every action for tomorrow's report."""
+    records every action for tomorrow's report. An action counts as taken when
+    its PR is open, merged or deployed, its dispatch order was confirmed, or its
+    card was raised."""
     life = ctx.facts.get('improve')
     if not life:
-        return {'status': 'nothing to track'}
+        return {'status': 'quiet day'}
     tonight = life['tonight']
     ins = ctx.facts.get('instructions') or {}
     pr = ins.get('pr')
+    skipped = ctx.facts.get('instructions_skipped') or []
     planned = [c for c in life['changes'] if c['kind'] == 'instructions']
+    shipped = [c for c in planned if not any(similar(c['change'], str(k.get('change') or '')) for k in skipped)]
     if pr and not ctx.dry_run:
-        state, waited = 'open', 0
+        state, waited, merged = 'open', 0, False
         while True:
-            state = pr_state(ctx, pr, autoland_deploys(ctx))
+            dep = autoland_deploys(ctx)
+            if merged:  # the merge is known: only the deploy log can change now
+                state = 'merged and deployed' if pr in dep else 'merged, deploy pending'
+            else:
+                state = pr_state(ctx, pr, dep)
+                merged = state.startswith('merged')
             if state in ('merged and deployed', 'closed') or waited >= TRACK_WAIT or ctx.left() < TRACK_POLL + 30:
                 break
             time.sleep(TRACK_POLL)
             waited += TRACK_POLL
-        made = {c.get('path') for c in ins.get('changes') or []}
-        tonight.insert(0, {'kind': 'instructions', 'what': '; '.join('%s: %s' % (c.get('path'), c.get('what'))
-                                                                     for c in ins.get('changes') or [])[:400],
-                           'pr': pr, 'state': state, 'files': sorted(made),
-                           'target': planned[0]['target'] if planned else None,
-                           'before': planned[0]['before'] if planned else None})
-    elif planned:
+        what = '; '.join('%s: %s' % (c.get('path'), c.get('what')) for c in ins.get('changes') or [])[:400]
+        files = sorted({c.get('path') for c in ins.get('changes') or []})
+        # one action per proposed change the PR carries, so each keeps its own target
+        for c in reversed(shipped or [None]):
+            tonight.insert(0, {'kind': 'instructions', 'what': what, 'pr': pr, 'state': state, 'files': files,
+                               'change': c['change'][:200] if c else None, 'target': c['target'] if c else None,
+                               'before': c['before'] if c else None})
+    if planned and not (pr and not ctx.dry_run):
         step = ctx.facts.get('instructions_status') or {}
-        tonight.insert(0, {'kind': 'instructions', 'what': planned[0]['change'][:200], 'pr': None,
-                           'state': 'not shipped: %s' % (step.get('why') or step.get('status') or 'the step did not run'),
-                           'target': planned[0]['target'], 'before': planned[0]['before']})
+        for c in reversed(planned):
+            tonight.insert(0, {'kind': 'instructions', 'what': c['change'][:200], 'pr': None,
+                               'state': 'not shipped: %s' % (step.get('why') or step.get('status') or 'the step did not run'),
+                               'target': c['target'], 'before': c['before']})
+    for c in skipped:
+        tonight.append({'kind': 'instructions', 'what': str(c.get('change') or '')[:200], 'pr': None,
+                        'state': 'skipped: %s' % str(c.get('why') or '')[:160]})
     if not ctx.dry_run and not getattr(ctx, 'only', None):
         with open(ctx.dir / 'improve-actions.jsonl', 'a', encoding='utf-8') as fh:
             for a in tonight:
                 fh.write(json.dumps(dict(a, date=ctx.day)) + '\n')
-    acted = [a for a in tonight if a.get('pr') or a.get('key')]
+    taken = lambda a: (a.get('state') in ('open', 'merged and deployed', 'merged, deploy pending') and a.get('pr')
+                       or str(a.get('state')).startswith('dispatch ordered') or a.get('state') == 'card raised')
+    acted = [a for a in tonight if taken(a)]
     if life['changes'] and not acted:
-        return {'status': 'nothing changed', 'why': 'no change was shipped or dispatched tonight: %s'
-                % '; '.join(a.get('state', '') for a in tonight)[:300] or 'none was acted on'}
+        return {'status': 'nothing changed', 'why': ('no change was shipped, dispatched or carded tonight: %s'
+                                                     % '; '.join(str(a.get('state')) for a in tonight))[:300]}
     return {'status': 'done', 'acted': len(acted)}
 
 
@@ -1318,19 +1349,23 @@ def improve_summary(life):
         fl.human(m['session']['median']), m['sessions'], '' if m['sessions'] == 1 else 'es')
     if m['sinks']:
         text += '; slowed by ' + ', '.join('%s %s' % (k, fl.human(v)) for k, v in m['sinks'][:3])
-    done = []
+    done, prs = [], set()
     for a in life.get('tonight') or []:
+        state = a.get('state') or 'state unknown'
         if a['kind'] == 'instructions':
-            done.append('%s (%s%s)' % (a['what'][:160], a['pr'] + ', ' if a.get('pr') else '', a['state']))
+            if a.get('pr') in prs:
+                continue  # one PR carries several changes: named once
+            prs.add(a.get('pr'))
+            done.append('%s (%s%s)' % (a['what'][:160], a['pr'] + ', ' if a.get('pr') else '', state))
         elif a['kind'] == 'code':
-            done.append('%s (%s)' % (a['what'][:120], a['state']))
+            done.append('%s (%s)' % (a['what'][:120], state))
         else:
-            done.append('captain card %s: %s' % (a.get('key'), a['what'][:120]))
+            done.append('captain card %s: %s (%s)' % (a.get('key'), a['what'][:120], state))
     if done:
         text += '. Tonight: ' + '; '.join(done)
-    elif life.get('reflection_error'):
-        text += '. Nothing changed tonight: ' + life['reflection_error']
-    elif life.get('nothing_to_change'):
+    if life.get('reflection_error'):
+        text += '. %s: %s' % ('Model' if done else 'Nothing changed tonight', life['reflection_error'])
+    elif not done and life.get('nothing_to_change'):
         text += '. Nothing changed tonight: %s found nothing worth changing' % life['model']
     before = []
     for a in life.get('last_night') or []:
@@ -1646,6 +1681,7 @@ def step_instructions(ctx):
         doc = read_json(out)
         if not isinstance(doc, dict) or not isinstance(doc.get('changes'), list):
             return {'status': 'failed', 'why': 'the instructions agent wrote no valid %s' % out.name}
+        ctx.facts['instructions_skipped'] = [k for k in doc.get('skipped') or [] if isinstance(k, dict)]
         charters = [c for c in doc.get('charters') or [] if isinstance(c, dict) and c.get('mate')
                     and c.get('mate') not in ctx.excluded]
         if charters:
@@ -1974,6 +2010,7 @@ def step_triage(ctx):
     repos = ctx.config.get('repos') or DEFAULT_REPOS
     owners = ctx.config.get('owners') or {}
     titles, unchecked = open_items(ctx, repos, owners)
+    ctx.facts['open_work'] = (titles, unchecked)  # the file step dedupes the improve step's code changes with it
     out = ctx.dir / ('triage-%s.json' % ctx.day)
     if ctx.dry_run:
         return {'status': 'dry-run', 'open_items': len(titles), 'unchecked': sorted(unchecked)}
@@ -2022,97 +2059,129 @@ def file_improvements(ctx, already):
     owning mate, then one decision card for the captain changes and the night's
     private charter proposals. (rows, errors)."""
     life = ctx.facts.get('improve')
-    if not life:
-        return [], []
+    changes = (life or {}).get('changes') or []
+    # without a measured night the charter card is still raised; it is reported on its own
+    tonight = life['tonight'] if life else ctx.facts.setdefault('charter_card', [])
     owners = ctx.config.get('owners') or {}
     env = dict(os.environ, FM_HOME=str(ctx.home))
     rows, errors = [], []
-    for c in [c for c in life['changes'] if c['kind'] == 'code']:
+    code = [c for c in changes if c['kind'] == 'code']
+    titles, unchecked = ctx.facts.get('open_work') or ((None, None) if not code else
+                                                      open_items(ctx, ctx.config.get('repos') or DEFAULT_REPOS, owners))
+    for c in code:
         mate = owners.get(c['repo'], 'primary')
         entry = {'kind': 'code', 'what': c['title'], 'mate': mate, 'key': None, 'target': c['target'],
-                 'before': c['before']}
-        life['tonight'].append(entry)
-        if any(similar(c['title'], t) for t in already):
+                 'before': c['before'], 'state': 'not filed'}
+        tonight.append(entry)
+        if unchecked:
+            entry['state'] = 'not filed: open work unreadable for %s' % ', '.join(sorted(unchecked))
+            continue
+        if any(similar(c['title'], t) for t in list(already) + list(titles or [])):
             entry['state'] = 'already open, not filed again'
             continue
         if ctx.dry_run:
             entry['state'] = 'dry run: not filed'
             continue
-        body = '\n'.join(['Priority change from fleet dreaming (bin/fm-dream.sh) on %s: dispatch a worker now.' % ctx.day,
-                          '', 'Change: ' + c['change'], '', 'Fix: ' + c['fix'], '', 'Evidence: ' + c['evidence'],
-                          '', 'It should move: %s (now %s).' % (c['target'], shown(c['target'], c['before']))])
-        bf = ctx.dir / '.body.md'
-        write_private(bf, body)
         try:
-            r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'add', '--mint', '--prefix', 'dream', c['title'],
-                         '--kind', 'ship', '--repo', c['repo'], '--priority', '0', '--body-file', str(bf), '--json'],
-                        env=env, timeout=60)
-        finally:
-            bf.unlink()
-        key = task_key_of(r)
-        if r.returncode or not key:
-            entry['state'] = 'not filed'
-            errors.append('%s: add failed (%s)' % (c['title'][:60], (r.stderr or r.stdout).strip()[:120]))
-            continue
-        entry['key'] = key
-        order = ('Priority from fleet dreaming: %s "%s" is in your backlog. Dispatch a worker on it now and see it '
-                 'to merged; tomorrow\'s report follows it.' % (key, c['title']))
-        if mate != 'primary':
-            h = ctx.run([tool('fm-backlog-handoff.sh', 'FM_DREAM_HANDOFF'), mate, key], env=env, timeout=120)
-            s = ctx.run([tool('fm-send.sh', 'FM_DREAM_SEND'), mate, order], env=env, timeout=60) if h.returncode == 0 else h
-        else:
-            s = ctx.run([tool('fm-inbox.sh', 'FM_DREAM_INBOX'), 'note', order], env=env, timeout=60)
-        entry['state'] = 'dispatch ordered to %s as %s' % (mate, key) if s.returncode == 0 else \
-            'filed as %s; dispatch order to %s unconfirmed' % (key, mate)
-        if s.returncode:
-            errors.append('%s: dispatch order to %s unconfirmed (%s)' % (key, mate, (s.stderr or s.stdout).strip()[:120]))
-        already.append(c['title'])
-        with open(ctx.dir / 'raised.jsonl', 'a', encoding='utf-8') as fh:
-            fh.write(json.dumps({'title': c['title'], 'repo': c['repo'], 'mate': mate, 'key': key, 'at': ctx.now}) + '\n')
-    calls = [c for c in life['changes'] if c['kind'] == 'captain']
+            file_one(ctx, c, mate, entry, env, rows, errors, already)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            entry['state'] = '%s; stopped: %s' % (entry['state'], type(exc).__name__)
+            errors.append('%s: %s' % (c['title'][:60], entry['state']))
+            if isinstance(exc, subprocess.TimeoutExpired):
+                break  # the step's budget is spent: nothing after this can run
+    calls = [c for c in changes if c['kind'] == 'captain']
     charters = ctx.facts.get('charter_proposals') or []
     if calls or charters:
-        what = '; '.join([c['change'][:200] for c in calls] + ['charter edit for %s: %s' % (c['mate'], c['what'])
-                                                                for c in charters])[:400]
-        entry = {'kind': 'captain', 'what': what, 'key': None, 'target': calls[0]['target'] if calls else None,
-                 'before': calls[0]['before'] if calls else None}
-        life['tonight'].append(entry)
-        if ctx.dry_run:
-            entry['state'] = 'dry run: no card'
-            return rows, errors
-        title = 'Fleet dreaming needs your call (%s)' % ctx.day
-        card = '\n'.join(['# %s' % title, ''] + ['- %s Evidence: %s' % (c['change'], c['evidence']) for c in calls]
-                         + ['- Apply this charter edit for %s? %s' % (c['mate'], c['what']) for c in charters])
-        bf = ctx.dir / '.card.md'
-        cf = ctx.dir / '.card.json'
-        write_private(bf, card)
-        try:
-            r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'add', '--mint', '--prefix', 'dream-call', title,
-                         '--kind', 'docs', '--body-file', str(bf), '--json'], env=env, timeout=60)
-            key = task_key_of(r)
-            if key and not r.returncode:
-                write_private(cf, json.dumps({
-                    'project': 'firstmate', 'title': 'Apply the proposed fleet changes?',
-                    'situation': "Tonight's improvements need your decision on private settings or mate instructions. "
-                                 'The task contains the proposed changes and their evidence.',
-                    'options': [
-                        {'key': '1', 'label': 'Apply the proposed changes',
-                         'instruction': 'Apply the proposed changes recorded in task %s.' % key},
-                        {'key': '2', 'label': 'Keep the current setup',
-                         'instruction': 'Do not apply the proposed changes recorded in task %s.' % key}],
-                    'recommended': '1'}))
-                h = ctx.run([tool('fm-captain-hold.sh', 'FM_DREAM_HOLD'), 'hold', key, '--reason', what[:200],
-                             '--card-file', str(cf)], env=env, timeout=60)
-            else:
-                h = r
-        finally:
-            bf.unlink()
-            cf.unlink(missing_ok=True)
-        entry['key'] = key
-        entry['state'] = 'card raised' if key and h.returncode == 0 else 'card not raised'
-        if entry['state'] != 'card raised':
-            errors.append('captain card not raised (%s)' % (h.stderr or h.stdout or '').strip()[:120])
+        raise_card(ctx, calls, charters, tonight, env, errors)
     return rows, errors
+
+
+def file_one(ctx, c, mate, entry, env, rows, errors, already):
+    """One code change: a priority task, handed to its owning mate, with an order
+    to dispatch a worker now. entry['state'] always says how far it got."""
+    body = '\n'.join(['Priority change from fleet dreaming (bin/fm-dream.sh) on %s: dispatch a worker now.' % ctx.day,
+                      '', 'Change: ' + c['change'], '', 'Fix: ' + c['fix'], '', 'Evidence: ' + c['evidence'],
+                      '', 'It should move: %s (now %s).' % (c['target'], shown(c['target'], c['before']))])
+    bf = ctx.dir / '.body.md'
+    write_private(bf, body)
+    try:
+        r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'add', '--mint', '--prefix', 'dream', c['title'],
+                     '--kind', 'ship', '--repo', c['repo'], '--priority', '0', '--body-file', str(bf), '--json'],
+                    env=env, timeout=60)
+    finally:
+        bf.unlink()
+    key = task_key_of(r)
+    if r.returncode or not key:
+        entry['state'] = 'not filed'
+        errors.append('%s: add failed (%s)' % (c['title'][:60], (r.stderr or r.stdout).strip()[:120]))
+        return
+    entry['key'] = key
+    entry['state'] = 'filed as %s; dispatch order to %s not sent' % (key, mate)
+    row = {'title': c['title'], 'repo': c['repo'], 'mate': mate, 'key': key, 'why': c['change']}
+    rows.append(row)
+    already.append(c['title'])
+    with open(ctx.dir / 'raised.jsonl', 'a', encoding='utf-8') as fh:
+        fh.write(json.dumps(dict(row, at=ctx.now)) + '\n')
+    order = ('Priority from fleet dreaming: %s "%s" is in your backlog. Dispatch a worker on it now and see it '
+             'to merged; tomorrow\'s report follows it.' % (key, c['title']))
+    if mate != 'primary':
+        h = ctx.run([tool('fm-backlog-handoff.sh', 'FM_DREAM_HANDOFF'), mate, key], env=env, timeout=120)
+        if h.returncode:
+            row['handoff'] = 'unconfirmed'
+        # the operational lane, as fm-backlog-handoff.sh wakes it: a split mate's supervisor reads it
+        s = ctx.run([tool('fm-send.sh', 'FM_DREAM_SEND'), mate, order], env=dict(env, FM_SEND_STREAM='monologue'),
+                    timeout=60) if h.returncode == 0 else h
+    else:
+        s = ctx.run([tool('fm-inbox.sh', 'FM_DREAM_INBOX'), 'note', order], env=env, timeout=60)
+    entry['state'] = 'dispatch ordered to %s as %s' % (mate, key) if s.returncode == 0 else \
+        'filed as %s; dispatch order to %s unconfirmed' % (key, mate)
+    if s.returncode:
+        errors.append('%s: dispatch order to %s unconfirmed (%s)' % (key, mate, (s.stderr or s.stdout).strip()[:120]))
+
+
+def raise_card(ctx, calls, charters, tonight, env, errors):
+    """One plain decision card for the captain-only changes and the night's
+    private charter proposals."""
+    what = '; '.join([c['change'][:200] for c in calls] + ['charter edit for %s: %s' % (c['mate'], c['what'])
+                                                            for c in charters])[:400]
+    entry = {'kind': 'captain', 'what': what, 'key': None, 'target': calls[0]['target'] if calls else None,
+             'before': calls[0]['before'] if calls else None, 'state': 'card not raised'}
+    tonight.append(entry)
+    if ctx.dry_run:
+        entry['state'] = 'dry run: no card'
+        return
+    title = 'Fleet dreaming needs your call (%s)' % ctx.day
+    card = '\n'.join(['# %s' % title, ''] + ['- %s Evidence: %s' % (c['change'], c['evidence']) for c in calls]
+                     + ['- Apply this charter edit for %s? %s' % (c['mate'], c['what']) for c in charters])
+    bf = ctx.dir / '.card.md'
+    cf = ctx.dir / '.card.json'
+    write_private(bf, card)
+    try:
+        r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'add', '--mint', '--prefix', 'dream-call', title,
+                     '--kind', 'docs', '--body-file', str(bf), '--json'], env=env, timeout=60)
+        key = task_key_of(r)
+        if key and not r.returncode:
+            write_private(cf, json.dumps({
+                'project': 'firstmate', 'title': 'Apply the proposed fleet changes?',
+                'situation': "Tonight's improvements need your decision on private settings or mate instructions. "
+                             'The task contains the proposed changes and their evidence.',
+                'options': [
+                    {'key': '1', 'label': 'Apply the proposed changes',
+                     'instruction': 'Apply the proposed changes recorded in task %s.' % key},
+                    {'key': '2', 'label': 'Keep the current setup',
+                     'instruction': 'Do not apply the proposed changes recorded in task %s.' % key}],
+                'recommended': '1'}))
+            h = ctx.run([tool('fm-captain-hold.sh', 'FM_DREAM_HOLD'), 'hold', key, '--reason', what[:200],
+                         '--card-file', str(cf)], env=env, timeout=60)
+        else:
+            h = r
+    finally:
+        bf.unlink()
+        cf.unlink(missing_ok=True)
+    entry['key'] = key
+    entry['state'] = 'card raised' if key and h.returncode == 0 else 'card not raised'
+    if entry['state'] != 'card raised':
+        errors.append('captain card not raised (%s)' % (h.stderr or h.stdout or '').strip()[:120])
 
 
 def task_key_of(r):
@@ -2141,7 +2210,8 @@ def step_file(ctx):
     raised, errors = [], []
     ctx.facts['raised'] = raised  # filled as each item lands, so a later failure keeps them
     try:
-        _rows, errors = file_improvements(ctx, already)
+        rows, errors = file_improvements(ctx, already)
+        raised += rows
     except subprocess.TimeoutExpired:
         raise
     except Exception as exc:  # noqa: BLE001 - the triage items still get filed
@@ -2234,6 +2304,9 @@ def summary_line(run):
         text += ' Instructions: %s; proposed %s%s.' % (
             final, '; '.join('%s: %s' % (c.get('path'), c.get('what')) for c in ins['changes'][:3]),
             ' (PR %s%s)' % (ins['pr'], ', rated %s' % ins['risk'] if ins.get('risk') else '') if ins.get('pr') else '')
+    card = next((a for a in run.get('charter_card') or [] if a.get('key')), None)
+    if card:
+        text += ' Captain card %s for the charter edits (%s).' % (card['key'], card.get('state'))
     if run.get('charter_proposals'):
         text += ' %d charter edit%s proposed (charters-%s.md).' % (
             len(run['charter_proposals']), '' if len(run['charter_proposals']) == 1 else 's', run['date'])
@@ -2295,6 +2368,7 @@ def cmd_run(args):
         run['instructions'] = ctx.facts.get('instructions')
         run['charter_proposals'] = ctx.facts.get('charter_proposals', [])
         run['improve'] = ctx.facts.get('improve')
+        run['charter_card'] = ctx.facts.get('charter_card', [])
         run['captain_memory'] = ctx.facts.get('captain_memory')
         run['status'] = ('done' if all(s.get('status') in CLEAN for s in run['steps'].values()) and not force_partial
                          else 'partial')

@@ -56,8 +56,9 @@ case "\$*" in
 esac
 SH
   chmod +x "$d/bin/gh"
-  printf '%s autoland: merged https://github.com/o/other/pull/1 (deploy follows)\n' "$(iso $((t0 + 5900)))" > "$d/autoland.log"
-  printf '%s autoland: merged https://github.com/o/firstmate/pull/7 (deploy follows)\n' "$(iso $((t0 + 6000)))" >> "$d/autoland.log"
+  # one tick logs every event on one line, joined with "; "
+  printf '%s autoland: merged https://github.com/o/other/pull/1 (deploy follows); merged https://github.com/o/firstmate/pull/7 (deploy follows)\n' \
+    "$(iso $((t0 + 6000)))" > "$d/autoland.log"
   printf '%s autoland: deployed firstmate abc: homes at abc\n' "$(iso $((t0 + 6300)))" >> "$d/autoland.log"
   printf '%s' "$d"
 }
@@ -119,15 +120,50 @@ test_an_open_task_is_measured_to_now_and_a_missing_database_reads_as_empty() {
 import json, sys
 doc = json.load(open(sys.argv[1]))
 a = {x["task"]: x for x in doc["timelines"]}["ship-a"]
-assert a["open"] and a["seconds"] == 20000 and "waiting to merge" not in a["sinks"], a
+# CI was ready at t0+4800 and the PR is not merged: it is still waiting, through now
+assert a["open"] and a["seconds"] == 20000 and a["sinks"]["waiting to merge"] == 15200, a
 assert doc["metrics"]["mate"]["merged"] == 0 and doc["metrics"]["mate"]["open"] == 1, doc["metrics"]
 PY
   python3 "$LIFE" timeline --db "$d/none.sqlite" --home "$d/home" --since $((NOW - 86400)) --now "$NOW" > "$d/empty.json" \
     || fail "a missing database failed the read"
-  [ "$(jq '.timelines | length' "$d/empty.json")" = 0 ] || fail "a missing database produced timelines"
-  pass "lifecycle: an open task is measured to now, and a machine without a database has no timelines"
+  [ "$(jq -c '[.timelines[] | [.task, .runs]]' "$d/empty.json")" = '[["ship-a",0]]' ] \
+    || fail "a missing database produced run timelines: $(jq -c .timelines "$d/empty.json")"
+  pass "lifecycle: an open task is measured to now, and a machine without a database has only its spawned tasks"
+}
+
+test_unread_prs_spawned_tasks_repositories_and_percentiles() {
+  local d t0=$((NOW - 20000))
+  d=$(new_case edges)
+  # gh cannot read pull/8; a second repository has its own fm/quick-fix; ship-b is spawned with no run
+  sed -i.bak 's#\*/pull/8\*)#*/pull/never*)#' "$d/bin/gh" && rm -f "$d/bin/gh.bak"
+  sqlite3 "$d/nm.sqlite" "INSERT INTO repos VALUES('other','/fleet/other');
+    INSERT INTO runs VALUES('o1','other','fm/quick-fix','completed',$((t0 + 100)),$((t0 + 200)),0,NULL,NULL,NULL);"
+  printf -- '- [ ] ship-b - Next (repo: firstmate) (kind: ship)\n- [ ] mate-c - A mate (kind: secondmate)\n' >> "$d/home/data/backlog.md"
+  printf 'kind=ship\nspawn_gen=s%s.1.2\n' $((NOW - 3000)) > "$d/home/state/ship-b.meta"
+  printf 'kind=secondmate\nspawn_gen=s%s.1.2\n' $((NOW - 3000)) > "$d/home/state/mate-c.meta"
+  timeline "$d" > "$d/out.json" || fail "the timeline did not build"
+  python3 - "$d/out.json" "$ROOT/bin" <<'PY' || fail "edge cases wrong: $(cat "$d/out.json")"
+import json, sys
+doc = json.load(open(sys.argv[1]))
+rows = doc["timelines"]
+quick = [t for t in rows if t["task"] == "quick-fix"]
+assert len(quick) == 2 and sorted(t["runs"] for t in quick) == [1, 2], quick  # one per repository
+unread = [t for t in quick if t["runs"] == 2][0]
+assert unread["pr_unread"] and unread["open"] is None and unread["merged"] is None, unread
+b = [t for t in rows if t["task"] == "ship-b"]
+assert len(b) == 1 and b[0]["runs"] == 0 and b[0]["sinks"] == {"implementation": 3000} and b[0]["open"], b
+assert not [t for t in rows if t["task"] == "mate-c"], "a second mate's record became a task"
+m = doc["metrics"]
+assert m["tasks"] == 2 and m["session"]["unknown"] == 1 and m["session"]["merged"] == 0, m
+sys.path.insert(0, sys.argv[2])
+import fm_lifecycle as fl
+assert fl.pct([100, 200, 300, 400, 500, 600, 700, 800, 900, 1000], 90) == 900
+assert fl.pct([5], 90) == 5 and fl.pct([], 90) is None
+PY
+  pass "lifecycle: unread PRs stay unknown, spawned tasks without runs count, repositories never merge, p90 is nearest rank"
 }
 
 test_a_mate_task_s_time_is_split_by_stage
 test_session_branches_are_the_benchmark_and_retries_group
 test_an_open_task_is_measured_to_now_and_a_missing_database_reads_as_empty
+test_unread_prs_spawned_tasks_repositories_and_percentiles
