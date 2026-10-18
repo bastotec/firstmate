@@ -1134,12 +1134,15 @@ def shown(target, value):
 
 def pr_state(ctx, pr, dep):
     """'merged and deployed', 'merged, deploy pending', 'open', 'closed' or 'state unread'."""
-    facts = fl.pr_facts(pr, os.environ.get('FM_DREAM_GH') or 'gh',
-                        run=lambda argv, input=None, timeout=None: ctx.run(argv, input=input, timeout=timeout))
+    gh = os.environ.get('FM_DREAM_GH') or 'gh'
+    run = lambda argv, input=None, timeout=None: ctx.run(argv, input=input, timeout=timeout)
+    merged = ctx.facts.setdefault('merged_prs', {})
+    facts = merged.get(pr) or fl.pr_facts(pr, gh, run=run)
     if not facts:
         return 'state unread'
     if facts.get('merged'):
-        return 'merged and deployed' if pr in dep else 'merged, deploy pending'
+        merged[pr] = facts
+        return 'merged and deployed' if fl.deployed_at(pr, facts, dep, gh, run) else 'merged, deploy pending'
     return 'closed' if str(facts.get('state')).upper() == 'CLOSED' else 'open'
 
 
@@ -1148,6 +1151,17 @@ def autoland_deploys(ctx):
         return fl.deploys((ctx.state / 'autoland' / 'report.log').read_text(encoding='utf-8', errors='replace'))
     except OSError:
         return {}
+
+
+def report_home_unread(rep, mate):
+    if rep is None:
+        return True
+    part = next((m for m in rep.get('mates') or [] if m.get('id') == mate), None)
+    if not part or part.get('freshness') not in ('local', 'remote') or part.get('state') in (None, 'unknown'):
+        return True
+    names = (mate, part.get('name') or mate.replace('-', ' '))
+    return any(any(g.startswith(n + ':') for n in names) and 'crew time' not in g
+               for g in rep.get('gaps') or [])
 
 
 def last_night(ctx, point):
@@ -1169,8 +1183,9 @@ def last_night(ctx, point):
             continue
         if r.get('pr'):
             state = pr_state(ctx, r['pr'], dep)
-        elif r.get('kind') in ('code', 'captain') and r.get('key') and rep is None:
-            state = 'state unread: the fleet report could not be read'
+        elif r.get('kind') in ('code', 'captain') and r.get('key') and report_home_unread(rep, r.get('mate') or 'primary'):
+            state = ('state unread: the fleet report could not be read' if rep is None else
+                     'state unread: %s home records are incomplete or stale' % (r.get('mate') or 'primary'))
         elif r.get('kind') == 'code' and r.get('key'):
             # the fleet report's crew.agent is the task id; crew.task is its title
             mine = lambda x: x.get('mate') == r.get('mate') or not r.get('mate')
@@ -1179,7 +1194,8 @@ def last_night(ctx, point):
             state = ('merged (%s)' % shipped[0].get('pr') if shipped else
                      'worker %s' % crew[0].get('status') if crew else 'no worker on it yet')
         elif r.get('kind') == 'captain' and r.get('key'):
-            waiting = any(x.get('task') == r.get('key') for x in rep.get('waiting') or [])
+            waiting = any(x.get('task') == r.get('key') and x.get('mate') == (r.get('mate') or 'primary')
+                          for x in rep.get('waiting') or [])
             state = 'waiting on the captain' if waiting else 'answered or closed'
         else:
             state = r.get('state') or 'not acted on'
@@ -1213,15 +1229,15 @@ def step_improve(ctx):
                 break
             prs_left -= 1
             prs[url] = fl.pr_facts(url, gh, run=run)
-        items += fl.timelines(host, data, ctx.now, prs, dep, ctx.since)
+        items += fl.timelines(host, data, ctx.now, prs, dep, ctx.since, gh, run)
     unread_prs = [t['pr'] for t in items if t.get('pr_unread')]
     if unread_prs:
         # never counted as open or merged: the split is incomplete, and says so
         unread.append('%d PR%s unread (%s), so their merge is unknown' % (
             len(unread_prs), '' if len(unread_prs) == 1 else 's', ', '.join(unread_prs[:3])))
     if not items:
-        ctx.facts['improve'] = None
-        return {'status': 'quiet day', **({'why': '; '.join(unread)} if unread else {})}
+        ctx.facts['improve'] = ({'measurement_error': '; '.join(unread), 'changes': [], 'tonight': []} if unread else None)
+        return {'status': 'partial' if unread else 'quiet day', **({'why': '; '.join(unread)} if unread else {})}
     m = fl.metrics(items)
     text = fl.digest(m, items, unread)
     write_private(ctx.dir / ('improve-%s.json' % ctx.day), json.dumps({'timelines': items, 'metrics': m}, indent=1))
@@ -1288,6 +1304,8 @@ def step_track(ctx):
     life = ctx.facts.get('improve')
     if not life:
         return {'status': 'quiet day'}
+    if life.get('measurement_error'):
+        return {'status': 'partial', 'why': life['measurement_error']}
     tonight = life['tonight']
     ins = ctx.facts.get('instructions') or {}
     pr = ins.get('pr')
@@ -1295,14 +1313,10 @@ def step_track(ctx):
     planned = [c for c in life['changes'] if c['kind'] == 'instructions']
     shipped = [c for c in planned if not any(similar(c['change'], str(k.get('change') or '')) for k in skipped)]
     if pr and not ctx.dry_run:
-        state, waited, merged = 'open', 0, False
+        state, waited = 'open', 0
         while True:
             dep = autoland_deploys(ctx)
-            if merged:  # the merge is known: only the deploy log can change now
-                state = 'merged and deployed' if pr in dep else 'merged, deploy pending'
-            else:
-                state = pr_state(ctx, pr, dep)
-                merged = state.startswith('merged')
+            state = pr_state(ctx, pr, dep)
             if state in ('merged and deployed', 'closed') or waited >= TRACK_WAIT or ctx.left() < TRACK_POLL + 30:
                 break
             time.sleep(TRACK_POLL)
@@ -1340,6 +1354,8 @@ def improve_summary(life):
     """'Improve: 7 mate tasks (2 merged, 5 open), start to merge median 31m ...; Tonight: ...; Last night: ...'."""
     if not life:
         return ''
+    if life.get('measurement_error'):
+        return 'Improve: measurement incomplete: ' + life['measurement_error']
     m = life['metrics']
     change = life.get('change') or {}
     text = 'Improve: %d mate task%s (%d merged, %d open), start to merge median %s (p90 %s)%s vs %s for %d session branch%s' % (
@@ -1353,9 +1369,10 @@ def improve_summary(life):
     for a in life.get('tonight') or []:
         state = a.get('state') or 'state unknown'
         if a['kind'] == 'instructions':
-            if a.get('pr') in prs:
+            if a.get('pr') and a['pr'] in prs:
                 continue  # one PR carries several changes: named once
-            prs.add(a.get('pr'))
+            if a.get('pr'):
+                prs.add(a['pr'])
             done.append('%s (%s%s)' % (a['what'][:160], a['pr'] + ', ' if a.get('pr') else '', state))
         elif a['kind'] == 'code':
             done.append('%s (%s)' % (a['what'][:120], state))
@@ -2054,17 +2071,15 @@ def step_triage(ctx):
 
 # --- file -------------------------------------------------------------------
 
-def file_improvements(ctx, already):
-    """Tonight's code changes as priority tasks with a dispatch order to their
-    owning mate, then one decision card for the captain changes and the night's
-    private charter proposals. (rows, errors)."""
+def file_improvements(ctx, already, rows, errors):
+    """Publish code filings immediately, then raise one decision card for the
+    captain changes and the night's private charter proposals."""
     life = ctx.facts.get('improve')
     changes = (life or {}).get('changes') or []
     # without a measured night the charter card is still raised; it is reported on its own
     tonight = life['tonight'] if life else ctx.facts.setdefault('charter_card', [])
     owners = ctx.config.get('owners') or {}
     env = dict(os.environ, FM_HOME=str(ctx.home))
-    rows, errors = [], []
     code = [c for c in changes if c['kind'] == 'code']
     titles, unchecked = ctx.facts.get('open_work') or ((None, None) if not code else
                                                       open_items(ctx, ctx.config.get('repos') or DEFAULT_REPOS, owners))
@@ -2088,12 +2103,17 @@ def file_improvements(ctx, already):
             entry['state'] = '%s; stopped: %s' % (entry['state'], type(exc).__name__)
             errors.append('%s: %s' % (c['title'][:60], entry['state']))
             if isinstance(exc, subprocess.TimeoutExpired):
-                break  # the step's budget is spent: nothing after this can run
+                ctx.left()
     calls = [c for c in changes if c['kind'] == 'captain']
     charters = ctx.facts.get('charter_proposals') or []
     if calls or charters:
-        raise_card(ctx, calls, charters, tonight, env, errors)
-    return rows, errors
+        try:
+            raise_card(ctx, calls, charters, tonight, env, errors)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            tonight[-1]['state'] = 'card not raised: %s' % type(exc).__name__
+            errors.append('captain card not raised: %s' % type(exc).__name__)
+            if isinstance(exc, subprocess.TimeoutExpired):
+                ctx.left()
 
 
 def file_one(ctx, c, mate, entry, env, rows, errors, already):
@@ -2160,6 +2180,7 @@ def raise_card(ctx, calls, charters, tonight, env, errors):
         r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'add', '--mint', '--prefix', 'dream-call', title,
                      '--kind', 'docs', '--body-file', str(bf), '--json'], env=env, timeout=60)
         key = task_key_of(r)
+        entry['key'] = key
         if key and not r.returncode:
             write_private(cf, json.dumps({
                 'project': 'firstmate', 'title': 'Apply the proposed fleet changes?',
@@ -2210,8 +2231,7 @@ def step_file(ctx):
     raised, errors = [], []
     ctx.facts['raised'] = raised  # filled as each item lands, so a later failure keeps them
     try:
-        rows, errors = file_improvements(ctx, already)
-        raised += rows
+        file_improvements(ctx, already, raised, errors)
     except subprocess.TimeoutExpired:
         raise
     except Exception as exc:  # noqa: BLE001 - the triage items still get filed

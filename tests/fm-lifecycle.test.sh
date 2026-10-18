@@ -50,8 +50,11 @@ new_case() {
   cat > "$d/bin/gh" <<SH
 #!/usr/bin/env bash
 case "\$*" in
-  */pull/7*) printf '{"createdAt":"$(iso $((t0 + 4000)))","mergedAt":"$(iso $((t0 + 6000)))","state":"MERGED","commits":[{"authoredDate":"$(iso $((t0 + 300)))"}]}\n' ;;
+  */pull/7*) printf '{"createdAt":"$(iso $((t0 + 4000)))","mergedAt":"$(iso $((t0 + 6000)))","state":"MERGED","mergeCommit":{"oid":"abcdef0000000000000000000000000000000000"},"commits":[{"authoredDate":"$(iso $((t0 + 300)))"}]}\n' ;;
   */pull/8*) printf '{"createdAt":"$(iso $((t0 + 850)))","mergedAt":"$(iso $((t0 + 1500)))","state":"MERGED","commits":[{"authoredDate":"$(iso $((t0 + 50)))"}]}\n' ;;
+  api*...1111111) printf '{"status":"behind"}\n' ;;
+  api*...2222222) printf '{"status":"ahead"}\n' ;;
+  api*...3333333) printf '{"status":"diverged"}\n' ;;
   *) exit 1 ;;
 esac
 SH
@@ -59,7 +62,7 @@ SH
   # one tick logs every event on one line, joined with "; "
   printf '%s autoland: merged https://github.com/o/other/pull/1 (deploy follows); merged https://github.com/o/firstmate/pull/7 (deploy follows)\n' \
     "$(iso $((t0 + 6000)))" > "$d/autoland.log"
-  printf '%s autoland: deployed firstmate abc: homes at abc\n' "$(iso $((t0 + 6300)))" >> "$d/autoland.log"
+  printf '%s autoland: deployed firstmate abcdef0: homes at abcdef0\n' "$(iso $((t0 + 6300)))" >> "$d/autoland.log"
   printf '%s' "$d"
 }
 
@@ -163,6 +166,55 @@ PY
   pass "lifecycle: unread PRs stay unknown, spawned tasks without runs count, repositories never merge, p90 is nearest rank"
 }
 
+test_deployments_must_contain_the_pr_merge() {
+  local d t0=$((NOW - 20000))
+  d=$(new_case deploy-sha)
+  printf '%s autoland: merged https://github.com/o/firstmate/pull/7 (deploy follows)\n' "$(iso $((t0 + 6000)))" > "$d/autoland.log"
+  printf '%s autoland: deployed firstmate 1111111: predecessor deployed; deploy of firstmate abcdef0 FAILED\n' \
+    "$(iso $((t0 + 6300)))" >> "$d/autoland.log"
+  printf '%s autoland: deployed firstmate 3333333: unrelated; deployed firstmate 4444444: unread commit\n' \
+    "$(iso $((t0 + 6400)))" >> "$d/autoland.log"
+  timeline "$d" > "$d/out.json" || fail "the timeline did not build"
+  jq -e '.timelines[] | select(.task == "ship-a") | .deployed == null and (.sinks | has("deploy") | not)' "$d/out.json" >/dev/null \
+    || fail "a predecessor or unverified commit counted as deployment"
+  printf '%s autoland: deployed firstmate 2222222: descendant deployed\n' "$(iso $((t0 + 6600)))" >> "$d/autoland.log"
+  timeline "$d" > "$d/out2.json" || fail "the timeline did not build"
+  jq -e --argjson at "$((t0 + 6600))" '.timelines[] | select(.task == "ship-a") | .deployed == $at and .sinks.deploy == 600' "$d/out2.json" >/dev/null \
+    || fail "a verified descendant did not count as deployment"
+  pass "lifecycle: deployments require the merge commit or a verified descendant, never a predecessor or unread commit"
+}
+
+test_task_metadata_stays_with_its_home_and_repository() {
+  local d t0=$((NOW - 20000))
+  d=$(new_case task-homes)
+  mkdir -p "$d/other/data" "$d/other/state" "$d/third/state"
+  printf 'project=/fleet/firstmate\n' >> "$d/home/state/ship-a.meta"
+  printf -- '- [ ] ship-a - Another task (repo: other) (kind: ship)\n' > "$d/other/data/backlog.md"
+  printf 'kind=ship\nproject=/fleet/other\nspawn_gen=s%s.1.2\n' $((t0 + 1800)) > "$d/other/state/ship-a.meta"
+  printf 'paused: awaiting service\n' > "$d/other/state/ship-a.status"
+  printf 'kind=scout\nproject=/fleet/third\nspawn_gen=s%s.1.2\n' $((t0 + 1900)) > "$d/third/state/ship-a.meta"
+  sqlite3 "$d/nm.sqlite" "INSERT INTO repos VALUES('other','/fleet/other');
+    INSERT INTO runs VALUES('other-a','other','fm/ship-a','running',$((t0 + 2000)),$((t0 + 2200)),0,NULL,NULL,NULL);"
+  python3 "$LIFE" timeline --db "$d/nm.sqlite" --home "$d/home" --home "$d/other" --home "$d/third" \
+    --since $((NOW - 86400)) --now "$NOW" --gh "$d/bin/gh" > "$d/out.json" || fail "the timeline did not build"
+  python3 - "$d/out.json" "$d" "$t0" <<'PY' || fail "metadata crossed homes: $(cat "$d/out.json")"
+import json, sys
+rows = [t for t in json.load(open(sys.argv[1]))['timelines'] if t['task'] == 'ship-a']
+root, t0 = sys.argv[2], int(sys.argv[3])
+assert len(rows) == 3, rows
+by_home = {t['home']: t for t in rows}
+a, b, c = (by_home[root + '/' + h] for h in ('home', 'other', 'third'))
+assert a['start'] == t0 and a['sinks']['implementation'] == 600 and a['runs'] == 2, a
+assert a['waits'] == ['blocked'] and a['relaunches'] == 1, a
+assert b['start'] == t0 + 1800 and b['sinks']['implementation'] == 200 and b['runs'] == 1, b
+assert b['waits'] == ['paused'] and b['relaunches'] == 0, b
+assert c['start'] == t0 + 1900 and c['runs'] == 0 and c['waits'] == [], c
+PY
+  pass "lifecycle: repeated task ids retain each home's spawn, waits, relaunches and unstarted work"
+}
+
+test_deployments_must_contain_the_pr_merge
+test_task_metadata_stays_with_its_home_and_repository
 test_a_mate_task_s_time_is_split_by_stage
 test_session_branches_are_the_benchmark_and_retries_group
 test_an_open_task_is_measured_to_now_and_a_missing_database_reads_as_empty

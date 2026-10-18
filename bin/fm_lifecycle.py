@@ -51,7 +51,7 @@ import subprocess
 import sys
 
 # Run on each host with python3: `python3 - <db> <since> <homes JSON>`; prints
-# {runs: [...], tasks: {id: {...}}, unread: [...]}. Missing tables or columns
+# {runs: [...], tasks: [{id, home, ...}], unread: [...]}. Missing tables or columns
 # are read as absent, never guessed.
 HOST_PY = r"""
 import glob, json, os, re, sqlite3, sys
@@ -59,9 +59,10 @@ db, since, homes = os.path.expanduser(sys.argv[1]), int(sys.argv[2]), json.loads
 GATEWAY = re.compile(r'upstream_error|gateway|HTTP 5\d\d|429|overloaded|rate.?limit|no project-owned enrollment', re.I)
 def sec(v):
     return (v / 1000 if v > 1e12 else v) if isinstance(v, (int, float)) and v else None
-out = {'runs': [], 'tasks': {}, 'unread': []}
+out = {'runs': [], 'tasks': [], 'unread': []}
 for home in homes:
     home = os.path.expanduser(home)
+    tasks = {}
     for name in ('backlog.md', 'done-archive.md'):
         try:
             text = open(os.path.join(home, 'data', name), encoding='utf-8', errors='replace').read()
@@ -70,15 +71,22 @@ for home in homes:
         except OSError:
             out['unread'].append('%s/data/%s' % (home, name))
             continue
-        for m in re.finditer(r'^- \[[ x]\] ([A-Za-z0-9._-]+) ', text, re.M):
-            out['tasks'].setdefault(m.group(1), {})
+        for m in re.finditer(r'^- \[[ x]\] ([A-Za-z0-9._-]+) (.*)$', text, re.M):
+            task = tasks.setdefault(m.group(1), {'id': m.group(1), 'home': home})
+            repo = re.search(r'\(repo: ([^,)]+)', m.group(2))
+            if repo:
+                task['repo'] = os.path.join(home, 'projects', repo.group(1))
     for meta in glob.glob(os.path.join(home, 'state', '*.meta')):
         tid = os.path.basename(meta)[:-5]
-        task = out['tasks'].setdefault(tid, {})
+        task = tasks.setdefault(tid, {'id': tid, 'home': home})
         try:
             body = open(meta, encoding='utf-8', errors='replace').read()
         except OSError:
             continue
+        for field, dest in (('project', 'repo'), ('worktree', 'worktree')):
+            m = re.search(r'^%s=(.+)$' % field, body, re.M)
+            if m:
+                task[dest] = os.path.expanduser(m.group(1))
         m = re.search(r'^spawn_gen=s(\d{9,})', body, re.M)
         if m:
             task['spawn'] = int(m.group(1))
@@ -93,6 +101,7 @@ for home in homes:
             pass
         if os.path.exists(os.path.join(home, 'state', tid + '.control-relaunch')):
             task['relaunches'] = 1
+    out['tasks'].extend(tasks.values())
 if os.path.isfile(db):
     try:
         con = sqlite3.connect('file:%s?mode=ro' % db, uri=True, timeout=5)
@@ -169,7 +178,7 @@ def task_key(branch, tasks):
 def pr_facts(url, gh='gh', run=None):
     """{opened, merged, first_commit, state} for one PR url, or None."""
     try:
-        r = (run or _run)([gh, 'pr', 'view', url, '--json', 'createdAt,mergedAt,state,commits'], timeout=30)
+        r = (run or _run)([gh, 'pr', 'view', url, '--json', 'createdAt,mergedAt,state,commits,mergeCommit'], timeout=30)
         doc = json.loads(r.stdout) if r.returncode == 0 else None
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return None
@@ -178,7 +187,8 @@ def pr_facts(url, gh='gh', run=None):
     commits = [c.get('authoredDate') or c.get('committedDate') for c in doc.get('commits') or [] if isinstance(c, dict)]
     stamps = [t for t in (parse_iso(c) for c in commits) if t]
     return {'opened': parse_iso(doc.get('createdAt')), 'merged': parse_iso(doc.get('mergedAt')),
-            'first_commit': min(stamps) if stamps else None, 'state': doc.get('state')}
+            'first_commit': min(stamps) if stamps else None, 'state': doc.get('state'),
+            'merge_commit': (doc.get('mergeCommit') or {}).get('oid')}
 
 
 def parse_iso(text):
@@ -190,9 +200,8 @@ def parse_iso(text):
 
 
 def deploys(log_text):
-    """{pr url: deploy epoch} from auto-land's report.log: the first 'deployed
-    <repo>' event after each 'merged <url>' event for that repository. One line
-    holds every event of a tick, joined with '; ', under one timestamp."""
+    """Candidate deployments after each PR's merge notification, with their SHA.
+    One line holds every event of a tick under one timestamp."""
     out, pending = {}, {}
     for line in log_text.splitlines():
         m = re.match(r'^(\S+Z) autoland: (.*)$', line)
@@ -200,31 +209,64 @@ def deploys(log_text):
         if not when:
             continue
         for event in m.group(2).split('; '):
-            e = re.match(r'(?:merged (https://\S+/([^/\s]+)/pull/\d+)|deployed ([^\s:]+))', event.strip())
+            e = re.match(r'(?:merged (https://\S+/([^/\s]+)/pull/\d+)|deployed ([^\s:]+) ([0-9a-f]{7,40}):)', event.strip())
             if not e:
                 continue
             if e.group(1):
                 pending.setdefault(e.group(2), []).append(e.group(1))
             else:
-                for url in pending.pop(e.group(3), []):
-                    out[url] = when
+                for url in pending.get(e.group(3), []):
+                    out.setdefault(url, []).append({'at': when, 'sha': e.group(4)})
     return out
 
 
-def timelines(host, data, now, prs=None, deployed=None, since=None):
+def deployed_at(url, facts, deployments, gh='gh', run=None):
+    """First successful deployment whose commit contains this PR's merge."""
+    merge = facts.get('merge_commit')
+    repo = re.fullmatch(r'https://github.com/([^/]+/[^/]+)/pull/\d+', url)
+    if not merge or not facts.get('merged') or not repo:
+        return None
+    for dep in deployments.get(url) or []:
+        if dep['at'] < facts['merged']:
+            continue
+        if merge.startswith(dep['sha']):
+            return dep['at']
+        try:
+            r = (run or _run)([gh, 'api', 'repos/%s/compare/%s...%s' % (repo.group(1), merge, dep['sha'])], timeout=30)
+            doc = json.loads(r.stdout) if r.returncode == 0 else {}
+            if doc.get('status') in ('ahead', 'identical'):
+                return dep['at']
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass
+    return None
+
+
+def timelines(host, data, now, prs=None, deployed=None, since=None, gh='gh', run=None):
     """One record per task on one host, from HOST_PY output and PR facts. A PR
     whose facts could not be read leaves its task's merge unknown (open None),
     never assumed open. A worker task spawned in the window with no run yet is
     a timeline of implementation only."""
-    tasks, groups = data.get('tasks') or {}, {}
+    tasks, groups, metadata = data.get('tasks') or [], {}, {}
+    names = {t['id'] for t in tasks}
     for r in data.get('runs') or []:
-        key, kind = task_key(r['branch'], tasks)
-        # one repository's branch is never another's: names repeat across projects
-        groups.setdefault((key, kind, r.get('repo') or ''), []).append(r)
+        key, kind = task_key(r['branch'], names)
+        candidates = [t for t in tasks if t['id'] == key] if kind == 'mate' else []
+        exact = [t for t in candidates if (t.get('repo') and t['repo'] == r.get('repo')) or
+                 (t.get('worktree') and t['worktree'] == r.get('worktree'))]
+        owned = exact or [t for t in candidates if any(p == t['home'] or p.startswith(t['home'] + '/')
+                                                      for p in (r.get('repo') or '', r.get('worktree') or ''))]
+        matches = owned or candidates
+        info = matches[0] if len(matches) == 1 else {}
+        if not info:
+            kind = 'session'
+        group = (key, kind, r.get('repo') or '', info.get('home'))
+        groups.setdefault(group, []).append(r)
+        metadata[group] = info
     out = []
-    for (key, kind, _repo), runs in groups.items():
+    for group, runs in groups.items():
+        key, kind, repo, home = group
         runs.sort(key=lambda r: r['created'] or 0)
-        info = tasks.get(key, {}) if kind == 'mate' else {}
+        info = metadata[group]
         pr = next((r['pr'] for r in reversed(runs) if r.get('pr')), None)
         unread = bool(pr) and not (prs or {}).get(pr)
         facts = (prs or {}).get(pr) or {}
@@ -244,11 +286,11 @@ def timelines(host, data, now, prs=None, deployed=None, since=None):
         ready = max(recorded or [runs[-1]['updated'] or start])
         if merged or (recorded and not unread):
             sinks['waiting to merge'] = max(0, end - ready)  # an open PR is still waiting
-        dep = (deployed or {}).get(pr) if pr else None
+        dep = deployed_at(pr, facts, deployed or {}, gh, run) if pr else None
         if dep and merged:
             sinks['deploy'] = max(0, dep - merged)
         out.append({
-            'host': host, 'task': key, 'kind': kind, 'branches': sorted({r['branch'] for r in runs}),
+            'host': host, 'home': home, 'repo': repo, 'task': key, 'kind': kind, 'branches': sorted({r['branch'] for r in runs}),
             'start': start, 'start_from': 'spawn' if info.get('spawn') == start else
             ('first commit' if facts.get('first_commit') == start else 'first run'),
             'first_run': runs[0]['created'], 'pr': pr, 'pr_opened': facts.get('opened'), 'pr_unread': unread,
@@ -259,13 +301,15 @@ def timelines(host, data, now, prs=None, deployed=None, since=None):
             'gateway_errors': sum(r['gateway_errors'] for r in runs),
             'waits': info.get('waits') or [], 'relaunches': info.get('relaunches', 0),
             'sinks': {k: round(v) for k, v in sorted(sinks.items(), key=lambda kv: -kv[1]) if v >= 1}})
-    seen = {t['task'] for t in out if t['kind'] == 'mate'}
-    for key, info in tasks.items():
+    seen = {(t['home'], t['task']) for t in out if t['kind'] == 'mate'}
+    for info in tasks:
+        key, home = info['id'], info['home']
         spawn = info.get('spawn')
-        if key in seen or info.get('kind') not in ('ship', 'scout') or not spawn or (since and spawn < since):
+        if (home, key) in seen or info.get('kind') not in ('ship', 'scout') or not spawn or (since and spawn < since):
             continue
         out.append({
-            'host': host, 'task': key, 'kind': 'mate', 'branches': [], 'start': spawn, 'start_from': 'spawn',
+            'host': host, 'home': home, 'repo': info.get('repo'), 'task': key, 'kind': 'mate',
+            'branches': [], 'start': spawn, 'start_from': 'spawn',
             'first_run': None, 'pr': None, 'pr_opened': None, 'pr_unread': False, 'ci_ready': None, 'merged': None,
             'deployed': None, 'open': True, 'seconds': round(now - spawn), 'runs': 0, 'failed_runs': 0,
             'fix_rounds': 0, 'gateway_errors': 0, 'waits': info.get('waits') or [],
@@ -371,7 +415,7 @@ def main(argv):
     dep = {}
     if a.autoland_log and os.path.isfile(a.autoland_log):
         dep = deploys(open(a.autoland_log, encoding='utf-8', errors='replace').read())
-    items = timelines('this Mac', data, a.now, prs, dep, a.since)
+    items = timelines('this Mac', data, a.now, prs, dep, a.since, a.gh)
     m = metrics(items)
     print(json.dumps({'timelines': items, 'metrics': m, 'unread': data['unread'],
                       'digest': digest(m, items, data['unread'])}, indent=1))

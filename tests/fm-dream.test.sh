@@ -125,7 +125,7 @@ SH
 #!/usr/bin/env bash
 case "$*" in
   *additions*) printf '{"additions": 3, "deletions": 0, "files": [{"path": "AGENTS.md"}]}\n' ;;
-  *createdAt*) printf '{"createdAt": "2026-10-14T16:23:20Z", "mergedAt": "2026-10-14T17:30:00Z", "state": "MERGED", "commits": []}\n' ;;
+  *createdAt*) printf '{"createdAt": "2026-10-14T16:23:20Z", "mergedAt": "2026-10-14T17:30:00Z", "state": "MERGED", "mergeCommit": {"oid": "abcdef0000000000000000000000000000000000"}, "commits": []}\n' ;;
   *) printf '## Intent\n\nx\n\n## Risk Assessment\n\n✅ Low: a small wording change.\n' ;;
 esac
 SH
@@ -230,6 +230,8 @@ SH
   cat > "$d/bin/report" <<'SH'
 #!/usr/bin/env bash
 printf '{"summary": "fleet ok", "waiting": [], "gaps": [], "power": [], "shipped": [],
+ "mates": [{"id": "primary", "name": "first mate", "freshness": "local", "state": "idle"},
+           {"id": "dave-tools", "name": "dave tools", "freshness": "remote", "state": "working"}],
  "crew": [{"agent": "w-9", "task": "deploy", "status": "failed", "mate": "dave-tools"},
           {"agent": "w-8", "task": "finn-finance-crew", "status": "failed", "mate": "finn-finance"}]}\n'
 SH
@@ -262,6 +264,11 @@ print(json.dumps({"choices": [{"message": {"content": "Plan:\n" + json.dumps({"c
 import json
 changes = [{"kind": "code", "repo": "firstmate", "title": "Prevent duplicate worker spawns for a task", "fix": "lock",
             "change": "Stop duplicate spawns", "target": "fix_rounds", "evidence": "two workers on one task"}]
+print(json.dumps({"choices": [{"message": {"content": json.dumps({"changes": changes})}}]}))' ;;
+  instructions) python3 -c '
+import json
+changes = [{"kind": "instructions", "change": change, "target": "review", "evidence": "ship-x waited in review"}
+           for change in ("Name the required check commands", "Explain how to reproduce a review failure")]
 print(json.dumps({"choices": [{"message": {"content": json.dumps({"changes": changes})}}]}))' ;;
   down) printf '%s\n' '{"error": {"code": "upstream_error", "message": "selected account has no project-owned enrollment"}}' ;;
 esac
@@ -770,8 +777,159 @@ seed_improve() {
   printf 'spawn_gen=s%s.1.2\n' $((NOW - 7200)) > "$d/home/state/ship-x.meta"
   sqlite3 "$d/nm.sqlite" "INSERT INTO runs VALUES('rx','fleet','completed','fm/ship-x','','https://github.com/x/fm/pull/5',$((NOW - 6000)),$((NOW - 5000)));"
   mkdir -p "$d/home/state/autoland" "$d/home/state/dream"
-  printf '%s autoland: merged https://github.com/bastotec/firstmate/pull/990 (deploy follows)\n%s autoland: deployed firstmate abc: homes at abc\n' \
+  printf '%s autoland: merged https://github.com/bastotec/firstmate/pull/990 (deploy follows)\n%s autoland: deployed firstmate abcdef0: homes at abcdef0\n' \
     "$(iso $((NOW - 100)))" "$(iso $((NOW - 50)))" > "$d/home/state/autoland/report.log"
+}
+
+test_last_night_keeps_unread_homes_unresolved() {
+  local d log mode
+  d=$(new_case improve-home-gaps)
+  seed_improve "$d"
+  printf '%s\n' '{"date":"2026-10-01","kind":"captain","what":"a call","key":"cap-1"}' \
+    '{"date":"2026-10-01","kind":"code","what":"retry the hub","key":"w-9","mate":"dave-tools"}' \
+    > "$d/home/state/dream/improve-actions.jsonl"
+  for mode in unread cached incomplete; do
+    python3 - "$d/bin/report" "$mode" <<'PY'
+import json, sys
+primary = {'id': 'primary', 'name': 'first mate', 'state': 'idle', 'freshness': 'local'}
+mate = {'id': 'dave-tools', 'name': 'dave tools', 'state': 'working', 'freshness': 'remote'}
+mode = sys.argv[2]
+gaps = []
+if mode == 'unread':
+    primary.update(state=None, freshness='unreadable')
+    gaps = ['first mate: no readable home summary']
+elif mode == 'cached':
+    mate['freshness'] = 'cached'
+    gaps = ['dave tools: live summary unreachable, using the copy from yesterday']
+else:
+    gaps = ['first mate: 2 more holds not listed', 'dave tools: summary incomplete (child current state unavailable: w-9)']
+report = {'summary': 'partial report', 'waiting': [], 'crew': [], 'shipped': [], 'power': [],
+          'mates': [primary, mate], 'gaps': gaps}
+with open(sys.argv[1], 'w') as f:
+    f.write('#!/usr/bin/env bash\nprintf \'%s\\n\' ' + "'" + json.dumps(report) + "'\n")
+PY
+    STUB_REFLECT=down run_dream "$d" --only collect improve > "$d/$mode.json" || fail "run exited nonzero"
+    log=$(ls "$d"/home/state/dream/runs/*.json)
+    python3 - "$log" "$mode" <<'PY' || fail "a partial home was assumed resolved: $(jq -c .improve.last_night "$log")"
+import json, sys
+rows = json.load(open(sys.argv[1]))['improve']['last_night']
+mode = sys.argv[2]
+assert len(rows) == 2, rows
+assert rows[0]['now_state'].startswith('state unread') if mode != 'cached' else rows[0]['now_state'] == 'answered or closed', rows
+assert rows[1]['now_state'].startswith('state unread') if mode != 'unread' else rows[1]['now_state'] == 'no worker on it yet', rows
+PY
+  done
+  pass "improve: unread, stale or incomplete home reports cannot answer cards or prove workers absent"
+}
+
+test_every_unshipped_instruction_reaches_the_summary() {
+  local d log
+  d=$(new_case improve-unshipped)
+  seed_improve "$d"
+  STUB_REFLECT=instructions STUB_INSTR=none run_dream "$d" --only collect improve instructions track > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" "$ROOT/bin" <<'PY' || fail "unshipped instructions disappeared: $(jq -c '.improve.tonight, .summary' "$log")"
+import json, sys
+run = json.load(open(sys.argv[1]))
+life = run['improve']
+assert len(life['tonight']) == 2, life
+for action in life['tonight']:
+    assert action['pr'] is None and action['what'] in run['summary'] and action['state'] in run['summary'], run['summary']
+sys.path.insert(0, sys.argv[2])
+import fm_dream as dream
+life['tonight'] = [{'kind': 'instructions', 'what': 'First edit', 'pr': None, 'state': 'skipped: missing evidence'},
+                   {'kind': 'instructions', 'what': 'Second edit', 'pr': None, 'state': 'skipped: private file'},
+                   {'kind': 'instructions', 'what': 'Shipped edits', 'pr': 'https://github.com/o/r/pull/1', 'state': 'open'},
+                   {'kind': 'instructions', 'what': 'Shipped edits', 'pr': 'https://github.com/o/r/pull/1', 'state': 'open'}]
+summary = dream.improve_summary(life)
+assert 'First edit (skipped: missing evidence)' in summary and 'Second edit (skipped: private file)' in summary, summary
+assert summary.count('https://github.com/o/r/pull/1') == 1, summary
+PY
+  pass "improve: every unshipped or skipped instruction is reported, and only real PR links deduplicate"
+}
+
+test_failed_empty_measurements_are_not_quiet_days() {
+  local d log
+  d=$(new_case improve-unread-db)
+  printf 'not a sqlite database\n' > "$d/nm.sqlite"
+  run_dream "$d" --only improve track > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  jq -e '.status == "partial" and .steps.improve.status == "partial" and .steps.track.status == "partial"
+    and (.steps.improve.why | test("no-mistakes state"))
+    and (.summary | test("Improve: measurement incomplete:.*no-mistakes state"))' "$log" >/dev/null \
+    || fail "a corrupt database looked quiet: $(cat "$log")"
+  [ ! -e "$d/calls/reflect.0" ] || fail "an unreadable empty measurement called the model"
+  pass "improve: an empty failed measurement stays partial and its reason reaches the morning summary"
+}
+
+test_card_timeouts_keep_filings_and_allow_triage() {
+  local d
+  d=$(new_case improve-card-timeout)
+  python3 - "$d" "$ROOT/bin" <<'PY' || fail "a card timeout lost filings or prevented triage"
+import json, os, pathlib, subprocess, sys, time
+sys.path.insert(0, sys.argv[2])
+import fm_dream as dream
+root = pathlib.Path(sys.argv[1])
+
+class Context(dream.Ctx):
+    def run(self, argv, **kw):
+        self.calls.append(argv)
+        if argv[0] == 'fake-hold' or (self.mode == 'add' and '--prefix' in argv and argv[argv.index('--prefix') + 1] == 'dream-call'):
+            if self.mode == 'budget':
+                self.deadline = time.time() - 1
+            raise subprocess.TimeoutExpired(argv, 60)
+        if argv[0] == 'fake-tasks':
+            self.adds += 1
+            return subprocess.CompletedProcess(argv, 0, json.dumps({'id': 'filed-%s' % self.adds}), '')
+        return subprocess.CompletedProcess(argv, 0, '', '')
+
+os.environ.update(FM_DREAM_TASKS='fake-tasks', FM_DREAM_HOLD='fake-hold', FM_DREAM_INBOX='fake-inbox')
+for mode in ('hold', 'add', 'budget'):
+    home = root / mode
+    ctx = Context(home, False)
+    ctx.mode, ctx.calls, ctx.adds = mode, [], 0
+    ctx.deadline = time.time() + 600
+    ctx.config = {'owners': {'firstmate': 'primary'}}
+    code = {'kind': 'code', 'repo': 'firstmate', 'title': 'Retry the lifecycle read', 'change': 'Retry a transient read',
+            'fix': 'Bound the retry', 'evidence': 'ship-x failed', 'target': 'failed_runs', 'before': 1}
+    captain = {'kind': 'captain', 'change': 'Approve a private setting', 'evidence': 'ship-x waited',
+               'target': 'waiting to merge', 'before': 60}
+    triage = {'repo': 'firstmate', 'title': 'Cache independent measurements', 'evidence': ['slow read'], 'fix': 'cache'}
+    ctx.facts = {'improve': {'changes': [code, captain], 'tonight': []}, 'triage': [triage], 'open_work': ([], [])}
+    if mode == 'budget':
+        try:
+            dream.step_file(ctx)
+            raise AssertionError('step-budget exhaustion was swallowed')
+        except subprocess.TimeoutExpired:
+            pass
+        assert [r['title'] for r in ctx.facts['raised']] == [code['title']], ctx.facts
+    else:
+        result = dream.step_file(ctx)
+        assert result['status'] == 'partial' and 'captain card not raised' in result['why'], result
+        assert [r['title'] for r in result['raised']] == [code['title'], triage['title']], result
+        assert ctx.facts['raised'] == result['raised'], ctx.facts
+        assert ctx.facts['improve']['tonight'][0]['state'].startswith('dispatch ordered'), ctx.facts
+    rows = [json.loads(l) for l in (ctx.dir / 'raised.jsonl').read_text().splitlines()]
+    assert [r['key'] for r in rows] == [r['key'] for r in ctx.facts['raised']], rows
+    card = ctx.facts['improve']['tonight'][-1]
+    assert card['state'] == 'card not raised: TimeoutExpired', card
+    assert card['key'] == ('filed-2' if mode != 'add' else None), card
+    assert not (ctx.dir / '.card.md').exists() and not (ctx.dir / '.card.json').exists()
+PY
+  pass "improve: card timeouts preserve dispatched filings and continue triage unless the step budget is exhausted"
+}
+
+test_track_rejects_a_predecessor_deployment() {
+  local d log
+  d=$(new_case improve-deploy-predecessor)
+  seed_improve "$d"
+  printf '%s autoland: merged https://github.com/bastotec/firstmate/pull/990 (deploy follows)\n%s autoland: deployed firstmate 1111111: previous commit\n' \
+    "$(iso $((NOW - 100)))" "$(iso $((NOW - 50)))" > "$d/home/state/autoland/report.log"
+  STUB_REFLECT=none STUB_INSTR=edit run_dream "$d" --only collect improve instructions track > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  jq -e '.improve.tonight[] | select(.kind == "instructions") | .state == "merged, deploy pending"' "$log" >/dev/null \
+    || fail "track accepted the preceding commit's deployment: $(cat "$log")"
+  pass "improve: tracking retains deploy-pending when only a predecessor has deployed"
 }
 
 test_improve_acts_on_every_kind_of_change() {
@@ -1100,6 +1258,11 @@ PY
   pass "instructions: an interrupted night stops the gate run and still reports the PR"
 }
 
+test_last_night_keeps_unread_homes_unresolved
+test_every_unshipped_instruction_reaches_the_summary
+test_failed_empty_measurements_are_not_quiet_days
+test_card_timeouts_keep_filings_and_allow_triage
+test_track_rejects_a_predecessor_deployment
 test_collect_builds_a_private_digest_of_the_day
 test_each_relaunch_is_counted_once
 test_an_interrupted_night_stops_the_gate_and_keeps_the_pr
