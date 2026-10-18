@@ -661,6 +661,8 @@ portable_serial_weight_hints() {
 # (2026-10-16).
 # fm-parked-run-watch was measured in green serial shard 7 of run 38932286914
 # (2026-10-16), with three family-phase workers.
+# fm-evidence-only-withdrawal was measured in green serial shard 7 of run
+# 39078511171 (2026-10-17).
 # The five tests/fm-watch-triage*.test.sh suites were one 694233 ms script
 # before run 37413095868; their hints start from each suite's share of that,
 # from the per-case output timestamps of run 37401433503's serial shard 1.
@@ -699,6 +701,7 @@ tests/fm-deck-harness.test.sh 128442
 tests/fm-deck-host-live-e2e.test.sh 105
 tests/fm-documentation-audiences.test.sh 1066
 tests/fm-endpoint-rebind-lib.test.sh 1200
+tests/fm-evidence-only-withdrawal.test.sh 32254
 tests/fm-extension-binding.test.sh 14559
 tests/fm-external-wait.test.sh 10095
 tests/fm-fleet-snapshot-view.test.sh 16642
