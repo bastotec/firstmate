@@ -20,7 +20,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-secondmate-reconcile.sh` | Queue Bearings reconcile requests for later supervision delivery and ask each mismatched home through its durable inbox with a per-home cooldown |
 | `fm-update.sh`           | Guarded self-update of firstmate and local or remote secondmate homes, reconciling redundant divergence and classifying every live mate left on the target commit for restart or fallback nudge |
 | `fm-secondmate-restart.sh` | Persist open conversational work, then restart eligible second mates or report the fallback outcome |
-| `fm-secondmate-revive.sh` | Recover a down second mate mid-session through the guarded [secondmate lifecycle](stream-backend.md#secondmate-lifecycle), and relaunch then escalate a live one whose lane keeps failing |
+| [`fm-secondmate-revive.sh`](../bin/fm-secondmate-revive.sh) | Run guarded mid-session second-mate recovery under the [secondmate lifecycle](stream-backend.md#secondmate-lifecycle) and the script's LANE HEALTH contract |
 | [`fm-parked-run-watch.sh`](../bin/fm-parked-run-watch.sh) | Nudge, then escalate, a worker run parked at a review gate or the repair cap for over an hour |
 | [`fm-idle-sweep.sh`](../bin/fm-idle-sweep.sh) | Watcher-run guarded worker cleanup, idle-worker decision cards, and second-mate sweep audits; header owns eligibility and repeat suppression |
 | `fm-secondmate-restart-lib.sh` | Shared second-mate restart capability and persistence-request contract |

@@ -517,6 +517,22 @@ test_remote_restart_refuses_invalid_parent_harness() {
   pass "remote restart refuses an invalid parent harness before reaching the mate"
 }
 
+test_remote_mate_keeps_its_own_model_on_restart() {
+  local dir out rc relaunch_line
+  dir=$(new_case remote-model)
+  setup_remote_case "$dir" sm2 ok
+  export FM_FAKE_ANSWER_STATUS="$dir/home/state/sm2.status"
+  printf 'deck big-model\n' > "$dir/home/config/secondmate-harness"
+  printf 'model=chosen-model\n' >> "$dir/home/state/sm2.meta"
+  out=$(run_restart "$dir" fm-sm2); rc=$?
+  unset FM_FAKE_ANSWER_STATUS
+  expect_code 0 "$rc" "a remote mate should restart"$'\n'"$out"
+  relaunch_line=$(grep '^fm-remote-secondmate-control.sh relaunch' "$dir/ssh.log" | head -1)
+  [ "$relaunch_line" = "fm-remote-secondmate-control.sh relaunch sm2 deck chosen-model default" ] \
+    || fail "a restart must keep the mate's own model, not this home's default: $relaunch_line"
+  pass "a remote mate keeps the model it was launched on across a restart"
+}
+
 test_remote_mate_restarts_over_the_transport_hop() {
   local dir out rc relaunch_line
   dir=$(new_case remote)
@@ -867,6 +883,7 @@ test_unknown_mate_is_accounted_for
 test_refused_restart_falls_back_without_claiming_a_reload
 test_local_restart_uses_the_home_pin_and_reports_what_ran
 test_remote_mate_restarts_over_the_transport_hop
+test_remote_mate_keeps_its_own_model_on_restart
 test_remote_restart_refuses_invalid_parent_harness
 test_unreachable_host_is_reported_unknown
 test_concurrent_reply_cannot_release_persist_gate

@@ -265,11 +265,25 @@ revive_one() {  # <meta> <id>
 # each later closed by "resolved [key=...]". While such a key is open this scan
 # first tries the safe fix once per episode, a `bin/fm-control.sh <id> relaunch`
 # that resumes the mate's recorded sessions, and records it in
-# state/<id>.lane-heal-<supervisor|conversation>, one record per lane. If the
-# key is still open FM_LANE_HEAL_GRACE_SECS (900) after that relaunch, or the relaunch fails, it queues one `check:` wake for
-# the first mate to raise with the captain, naming the mate, the lane, its error
-# and since when. A resolved key removes the record, and a recovery after an
-# escalation queues one "recovered" wake, so the blocker clears.
+# state/<id>.lane-heal-<supervisor|conversation>, one record per lane.
+# If the key is still open FM_LANE_HEAL_GRACE_SECS (900) after a successful
+# relaunch and its error reports HTTP 500-599 (raw or in a model-gateway error),
+# it tries one more relaunch on the most common concrete model among healthy
+# second mates of this home, excluding its current model and empty/default
+# values. A candidate must probe alive and have neither local lane-failure
+# markers nor open supervisor-failing/conversation-failing parent-channel keys.
+# This reuses a model already running in the home, never an unchosen default.
+# A successful switch records model_switched and switched_to in both existing
+# lane records and resets their relaunched timestamps for a shared grace.
+# Other errors, or no eligible alternate, escalate after the first grace;
+# a lane still failing after the switch grace escalates with the switch named.
+# A failed relaunch escalates immediately, except lifecycle contention defers
+# without consuming recovery and a deliberate-stop refusal leaves the mate down.
+# Escalation queues one `check:` wake per lane episode for the first mate to
+# raise with the captain, naming the mate, lane, error and since when.
+# Each completed relaunch is logged once, naming both failing lanes when shared.
+# A resolved key removes the record, and a recovery after an escalation queues
+# one "recovered" wake, so the blocker clears.
 HEAL_GRACE=${FM_LANE_HEAL_GRACE_SECS:-900}
 case "$HEAL_GRACE" in ''|*[!0-9]*) HEAL_GRACE=900 ;; esac
 HEAL_NOTE="Restarted automatically because one of your lanes kept failing. Read your inbox in order and pick up what was waiting."
@@ -279,7 +293,8 @@ HEAL_NOTE="Restarted automatically because one of your lanes kept failing. Read 
 # other. Both lanes share one relaunch per scan.
 lane_heal() {  # <id>
   local id=$1 lane_tag open key verb note supervisor_line='' conversation_line=''
-  local LANE_RELAUNCHED_AT='' LANE_RELAUNCH_RC=0 LANE_RELAUNCH_OUT=''
+  local LANE_RELAUNCHED_AT='' LANE_RELAUNCH_RC=0 LANE_RELAUNCH_OUT='' LANE_FAILING_LANES=''
+  local LANE_SWITCH_MODEL='' LANE_SWITCH_AT='' LANE_SWITCH_RC=0 LANE_SWITCH_OUT=''
   open=$(status_open_decisions_incremental "$STATE/$id.status")
   while IFS=$'\t' read -r key verb note; do
     [ "$verb" = blocked ] || continue
@@ -290,6 +305,10 @@ lane_heal() {  # <id>
   done <<EOF
 $open
 EOF
+  [ -z "$supervisor_line" ] || LANE_FAILING_LANES="inner monologue (supervisor)"
+  if [ -n "$conversation_line" ]; then
+    LANE_FAILING_LANES="${LANE_FAILING_LANES:+$LANE_FAILING_LANES and }conversation lane"
+  fi
   for lane_tag in supervisor conversation; do
     case "$lane_tag" in
       supervisor) lane_heal_one "$id" "$lane_tag" "$supervisor_line" || return 0 ;;
@@ -298,10 +317,39 @@ EOF
   done
 }
 
+# Select an alternate under the LANE HEALTH contract above; empty when none.
+lane_heal_alternate_model() {  # <id>
+  local id=$1 current m other model open
+  current=$(fm_meta_get "$STATE/$id.meta" model)
+  for m in "$STATE"/*.meta; do
+    other=$(basename "$m" .meta)
+    [ "$other" != "$id" ] || continue
+    grep -q '^kind=secondmate$' "$m" 2>/dev/null || continue
+    model=$(fm_meta_get "$m" model)
+    case "$model" in ''|default|"$current") continue ;; esac
+    [ ! -e "$STATE/$other.supervisor-failing" ] && [ ! -e "$STATE/$other.conversation-failing" ] || continue
+    [ "$(probe "$m" "$other")" = alive ] || continue
+    open=$(status_open_decisions "$STATE/$other.status") || continue
+    if printf '%s\n' "$open" | awk -F '\t' -v id="$other" \
+      '$2 == "blocked" && ($1 == "supervisor-failing-" id || $1 == "conversation-failing-" id) {found=1} END {exit !found}'; then
+      continue
+    fi
+    printf '%s\n' "$model"
+  done | sort | uniq -c | sort -rn | awk 'NR==1 {print $2}'
+}
+
+lane_heal_record_switch() {
+  local rec=$1 now=$2 model=$3
+  {
+    sed '/^relaunched=/d;/^relaunch_error=/d;/^model_switched=/d;/^switched_to=/d' "$rec"
+    printf 'relaunched=%s\nmodel_switched=%s\nswitched_to=%s\n' "$now" "$now" "$model"
+  } > "$rec.tmp" && mv -f "$rec.tmp" "$rec"
+}
+
 # Returns 1 only when the mate was stopped on purpose meanwhile, so the caller
 # leaves its other lane alone too.
 lane_heal_one() {  # <id> <supervisor|conversation>
-  local id=$1 tag=$2 rec="$STATE/$1.lane-heal-$2" key="$2-failing-$1" line=$3 now first relaunched escalated out rc lane episode relaunch_error
+  local id=$1 tag=$2 rec="$STATE/$1.lane-heal-$2" key="$2-failing-$1" line=$3 now first relaunched escalated out rc lane episode relaunch_error switched alt sibling_rec
   now=$(date +%s)
   case "$tag" in supervisor) lane="inner monologue (supervisor)" ;; *) lane="conversation lane" ;; esac
   if [ -z "$line" ]; then
@@ -323,11 +371,18 @@ lane_heal_one() {  # <id> <supervisor|conversation>
   first=$(sed -n 's/^first_seen=//p' "$rec"); relaunched=$(sed -n 's/^relaunched=//p' "$rec")
   escalated=$(sed -n 's/^escalated=//p' "$rec")
   [ "$escalated" != 1 ] || return 0
+  if [ -n "$LANE_SWITCH_MODEL" ] && [ "$LANE_SWITCH_RC" -eq 0 ]; then
+    lane_heal_record_switch "$rec" "$LANE_SWITCH_AT" "$LANE_SWITCH_MODEL"
+    return 0
+  fi
   relaunch_error=$(sed -n 's/^relaunch_error=//p' "$rec")
   if [ "$relaunched" = 0 ]; then
     if [ -z "$LANE_RELAUNCHED_AT" ]; then
       LANE_RELAUNCHED_AT=$now
       LANE_RELAUNCH_OUT=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" relaunch --unless-held-stopped --replace-live --note "$HEAL_NOTE" < /dev/null 2>&1) || LANE_RELAUNCH_RC=$?
+      if [ "$LANE_RELAUNCH_RC" -eq 0 ]; then
+        log "relaunched $id because its $LANE_FAILING_LANES kept failing"
+      fi
     fi
     rc=$LANE_RELAUNCH_RC
     out=$LANE_RELAUNCH_OUT
@@ -339,8 +394,6 @@ lane_heal_one() {  # <id> <supervisor|conversation>
       relaunch_error=$(one_line "$out")
       [ -n "$relaunch_error" ] || relaunch_error="exit $rc"
       log "relaunch of $id for its failing $lane failed: $relaunch_error"
-    else
-      log "relaunched $id because its $lane kept failing"
     fi
     relaunched=$LANE_RELAUNCHED_AT
     printf 'key=%s\nepisode=%s\nlane=%s\nfirst_seen=%s\nrelaunched=%s\nescalated=0\nrelaunch_error=%s\n' \
@@ -349,7 +402,41 @@ lane_heal_one() {  # <id> <supervisor|conversation>
   elif [ -z "$relaunch_error" ] && [ $((now - relaunched)) -lt "$HEAL_GRACE" ]; then
     return 0
   fi
+  # A model-service failure may be route-specific; try the bounded alternate
+  # from the LANE HEALTH contract before asking the first mate to intervene.
+  switched=$(sed -n 's/^model_switched=//p' "$rec")
+  if [ -z "$relaunch_error" ] && [ -z "$switched" ]; then
+    case "$line" in
+      *"HTTP 5"[0-9][0-9]*)
+        alt=$LANE_SWITCH_MODEL
+        [ -n "$alt" ] || alt=$(lane_heal_alternate_model "$id")
+        if [ -n "$alt" ]; then
+          if [ -z "$LANE_SWITCH_MODEL" ]; then
+            LANE_SWITCH_MODEL=$alt
+            LANE_SWITCH_OUT=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" relaunch --unless-held-stopped --replace-live \
+              --model "$alt" --note "$HEAL_NOTE Restarted on $alt because the previous model kept failing." < /dev/null 2>&1) || LANE_SWITCH_RC=$?
+            LANE_SWITCH_AT=$(date +%s)
+          fi
+          rc=$LANE_SWITCH_RC
+          out=$LANE_SWITCH_OUT
+          if [ "$rc" -eq 0 ]; then
+            log "relaunched $id on $alt because its $LANE_FAILING_LANES kept failing on its model"
+            for sibling_rec in "$STATE/$id.lane-heal-supervisor" "$STATE/$id.lane-heal-conversation"; do
+              [ ! -f "$sibling_rec" ] || lane_heal_record_switch "$sibling_rec" "$LANE_SWITCH_AT" "$alt"
+            done
+            return 0
+          fi
+          case "$out" in
+            *"another lifecycle action is already running"*) return 0 ;;
+            *"was stopped on purpose"*) rm -f "$STATE/$id.lane-heal-supervisor" "$STATE/$id.lane-heal-conversation"; return 1 ;;
+          esac
+          relaunch_error="switching it to $alt failed: $(one_line "$out")"
+        fi
+        ;;
+    esac
+  fi
   [ -z "$relaunch_error" ] || line="$line (an automatic relaunch failed: $relaunch_error)"
+  [ -z "$switched" ] || line="$line (also after switching it to $(sed -n 's/^switched_to=//p' "$rec"))"
   if fm_wake_append check "lane-heal:$id:$episode" \
       "check: second mate $id is stuck: its $lane keeps failing after an automatic relaunch; tell the captain. Its report: ${line#blocked }"; then
     log "escalated $id: its $lane is still failing"
