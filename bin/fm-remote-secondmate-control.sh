@@ -433,7 +433,7 @@ cmd_launch() {
 # explicitly clears an absent parent pin; `-` remains its compatibility spelling.
 cmd_relaunch() {
   LAUNCH_STARTED=$(date +%s)
-  local id=$1 harness=$2 model=$3 effort=$4 old old_backend old_target current recorded outside pid token out rc
+  local id=$1 harness=$2 model=$3 effort=$4 old old_backend old_target current recorded outside pid token out rc note_file
   local -a control_args
   [ "$#" -eq 4 ] || { [ "$#" -eq 6 ] && [ "$5" = --note ]; } || usage
 
@@ -476,16 +476,23 @@ EOF
   require_identities_gone "$id" "$outside"
   old="$old"$'\n'"$recorded"
   control_args=("$id" relaunch --harness "$harness" --model "$model" --effort "$effort")
-  [ "$#" -eq 4 ] || control_args+=(--note "$6")
   # The same launch-boundary facts cmd_launch establishes: the parent already
   # owns both convergence legs, so the host-local spawn must not re-sync or
   # re-inherit against this host's own Firstmate copy.
   rc=0
-  out=$(FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
-    FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
-    FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_SKIP_SECONDMATE_INHERIT=1 \
-    FM_SKIP_SECONDMATE_SYNC=1 \
-    "$SCRIPT_DIR/fm-control.sh" "${control_args[@]}") || rc=$?
+  out=$(
+    if [ "$#" -eq 6 ]; then
+      note_file=$(mktemp "$CONTROL_STATE/.$id.relaunch-note.XXXXXX") || exit 1
+      trap 'rm -f "$note_file"' EXIT
+      printf '%s\n' "$6" > "$note_file" || exit 1
+      control_args+=(--note-file "$note_file")
+    fi
+    FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
+      FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
+      FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_SKIP_SECONDMATE_INHERIT=1 \
+      FM_SKIP_SECONDMATE_SYNC=1 \
+      "$SCRIPT_DIR/fm-control.sh" "${control_args[@]}"
+  ) || rc=$?
   if [ "$rc" -ne 0 ]; then
     [ -z "$out" ] || printf '%s\n' "$out"
     return "$rc"

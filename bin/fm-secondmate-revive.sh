@@ -211,12 +211,14 @@ interrupted_relaunch() {  # <id> <now> <meta>
   at=$(python3 -c 'import calendar, sys, time; print(calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")))' "$ts" 2>/dev/null) || return 1
   [ $((now - at)) -le "$RESUME_SECS" ] || return 1
   RELAUNCH_NOTE=
+  RELAUNCH_NOTE_FILE=
   note_file=$(journal_get note_file)
   if [ -n "$note_file" ]; then
     if [ -n "$(fm_meta_get "$meta" remote_host)" ]; then
       RELAUNCH_NOTE=$(python3 -c 'import base64, sys; print(base64.b64decode(sys.argv[1], validate=True).decode(), end="")' "$(journal_get note_base64)") || return 1
     else
-      RELAUNCH_NOTE=$(cat "$note_file" 2>/dev/null) || return 1
+      [ -f "$note_file" ] && [ -r "$note_file" ] || return 1
+      RELAUNCH_NOTE_FILE=$note_file
     fi
   else
     [ "$(journal_get note)" = none ] || return 1
@@ -224,12 +226,22 @@ interrupted_relaunch() {  # <id> <now> <meta>
 }
 
 finish_relaunch() {  # <id> <state> <now>
-  local id=$1 state=$2 now=$3 model rc=0 out failures reason
+  local id=$1 state=$2 now=$3 model rc=0 out failures reason note_file
   local -a args=(relaunch --unless-held-stopped)
   model=$(journal_get to_model)
   [ -z "$model" ] || args+=(--model "$model")
   log "completing the interrupted restart of $id (relaunch left at phase $(journal_get phase))"
-  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" "${args[@]}" --note "$RELAUNCH_NOTE" < /dev/null 2>&1) || rc=$?
+  out=$(
+    if [ -n "$RELAUNCH_NOTE_FILE" ]; then
+      args+=(--note-file "$RELAUNCH_NOTE_FILE")
+    elif [ -n "$(journal_get note_file)" ]; then
+      note_file=$(mktemp "$STATE/.$id.relaunch-note.XXXXXX") || exit 1
+      trap 'rm -f "$note_file"' EXIT
+      printf '%s\n' "$RELAUNCH_NOTE" > "$note_file" || exit 1
+      args+=(--note-file "$note_file")
+    fi
+    FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" "${args[@]}" < /dev/null 2>&1
+  ) || rc=$?
   if [ "$rc" -eq 0 ]; then
     rm -f "$STATE/$id.revive"
     log "completed the interrupted restart of $id: $(printf '%s\n' "$out" | grep -E '^relaunched ' | tail -1)"
