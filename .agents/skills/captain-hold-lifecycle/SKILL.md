@@ -84,7 +84,7 @@ Pass it as `bin/fm-captain-hold.sh hold <id> --reason "<reason>" --card-file <pa
 A script that holds on its own leaves a draft card, which is not a judgment.
 The mate whose home holds the call owns its card, a second mate included, and writes its situation and options for the captain in plain words.
 Write it so a person can act on it without context: the title says what happened and asks the question, the situation adds only what the choice needs, and each option says what it does, with no task names, run ids, hashes or other internal jargon (`bin/fm-card.sh` refuses those).
-For example: "PR 1806 is merged. 3 local commits look unmerged, probably because of the squash. Keep them or delete them?"
+For example: "The release is ready. Publish today or wait until Monday?"
 One decision per card: never bundle unrelated questions, and keep each option label a short phrase while its instruction carries the detail; `bin/fm-card.sh` owns the enforced wording limits.
 A card is normal priority; mark it urgent only for production down, customer-facing breakage, money, or a real external secret exposure, using the reason schema in `bin/fm-card.sh`.
 Before raising a token concern or pursuing a side investigation, follow `fm_act_within_scope_section` in `bin/fm-dod-lib.sh`, the owner of exposure triage and the investigation time-box.

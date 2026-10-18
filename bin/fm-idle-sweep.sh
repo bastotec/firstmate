@@ -63,19 +63,25 @@
 # failed retry, a worker that stopped again after its retry, or an unreadable
 # full backlog item or PR state) goes to the home's own first mate, never to
 # the captain as a card: a second mate appends one
-# "needs-decision [key=idle-<id>]" line to its parent channel, and the first
-# mate's own home lists it in the end-of-scan wake below. Each hand-off records
+# "needs-decision [key=idle-<id>]" line to its parent channel, including the
+# ledger fingerprint as an episode stamp so a resolved earlier handoff cannot
+# suppress a new stopped stretch. The first mate's own home lists it in the
+# end-of-scan wake below. Each hand-off records
 # the worker's ledger byte count under state/idle-sweep/<id>.raised only after
 # parent-channel delivery or the main-home wake append succeeds. Each retry is
 # recorded under state/idle-sweep/<id>.retried (ledger size and retry count; at
-# most two retries per worker); an unchanged size suppresses a repeat. An
+# most two retries per worker); an unchanged size suppresses a repeat. A failed
+# relaunch that published its own replacement record also consumes a retry and
+# goes to the first mate; its transaction identity distinguishes it from an
+# unrelated replacement, which is left for a fresh scan. An
 # existing captain hold or settled deferral on the worker or on idle-<id>
 # still takes precedence.
 # Cleanup and retry pass the classified metadata snapshot to their lifecycle
 # owners for a locked check; a changed record is left for a fresh scan with
-# class unknown/action none. Retry also passes the classified status byte
-# count to bin/fm-control.sh's --if-still-stopped admission guard, whose header
-# owns the fresh current-state and live busy checks.
+# class unknown/action none. For stopped workers, both also pass the classified
+# status byte count through --if-still-stopped; the lifecycle owners' headers
+# own the late activity checks. A foreign or unreadable slot owner refuses a
+# retry and goes to the first mate, never relaunching into another task's copy.
 # A main home has no parent audit, so a scan that leaves workers unhandled
 # queues ONE `check:` wake keyed idle-sweep-unhandled:<epoch>, naming those ids.
 # state/idle-sweep/.unhandled stores the sorted id set after a successful queue

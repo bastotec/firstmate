@@ -38,8 +38,8 @@
 # One decision per card: the title asks at most one question and the
 # situation at most one, and each option label is a short phrase of at most 12 words (the
 # details belong in its instruction). Configuration-style tokens ("repeats=1")
-# and hyphenated tokens with an all-caps part ("POST-to-observation") are
-# jargon too. A card is normal priority unless it carries
+# and hyphenated tokens with an all-caps part of two or more letters
+# ("POST-to-observation") are jargon too. A card is normal priority unless it carries
 # "urgent": {"because": <reason>}, and the only reasons are production-down,
 # customer-breakage, money and secret-exposure; the holding mate's urgency
 # policy lives in .agents/skills/captain-hold-lifecycle/SKILL.md.

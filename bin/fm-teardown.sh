@@ -167,7 +167,11 @@
 # For caller admission, --expected-record <metadata> requires the exact
 # metadata snapshot under the task's control lock before any cleanup; exit 3
 # leaves a changed or vanished record for a fresh scan.
-# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--keep-commits] [--merged-pr <url>] [--expected-record <metadata>]
+# --if-still-stopped <status-bytes> requires --expected-record and applies
+# bin/fm-busy-lib.sh's stopped-worker admission check before preflights, before
+# backlog staging, before cleanup, and immediately before the endpoint kill.
+# Changed activity exits 3 rather than stopping a resumed worker.
+# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--keep-commits] [--merged-pr <url>] [--expected-record <metadata>] [--if-still-stopped <status-bytes>]
 #   --keep-commits handles the leftover local commits a squash merge leaves
 #   behind: when a ship task's PR is merged, its worktree has no uncommitted
 #   changes, and its committed work still is not proved landed, teardown first

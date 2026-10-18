@@ -33,6 +33,9 @@
 # id. It checks the caller's snapshot under the control lock before recording
 # an assertion (exit 3 on mismatch), then forwards the same snapshot to
 # teardown's independently locked admission guard; see its header.
+# --if-still-stopped <status-bytes> requires --expected-record, checks stopped
+# activity before recording the assertion, and forwards the guard to teardown.
+# An activity refusal exits 3; teardown's header owns its later rechecks.
 #
 # Absence from the hub is never proof that a worker stopped: a same-protocol
 # restart clears the registry while live agents rejoin on their own schedule,
