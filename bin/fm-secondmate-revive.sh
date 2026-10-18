@@ -283,6 +283,7 @@ HEAL_NOTE="Restarted automatically because one of your lanes kept failing. Read 
 lane_heal() {  # <id>
   local id=$1 lane_tag open key verb note supervisor_line='' conversation_line=''
   local LANE_RELAUNCHED_AT='' LANE_RELAUNCH_RC=0 LANE_RELAUNCH_OUT=''
+  local LANE_SWITCH_MODEL='' LANE_SWITCH_AT='' LANE_SWITCH_RC=0 LANE_SWITCH_OUT=''
   open=$(status_open_decisions_incremental "$STATE/$id.status")
   while IFS=$'\t' read -r key verb note; do
     [ "$verb" = blocked ] || continue
@@ -306,19 +307,35 @@ EOF
 # The model most healthy second mates of this home run, other than <id>'s
 # own: healthy means a live record with no failing lane. Empty when none.
 lane_heal_alternate_model() {  # <id>
-  local id=$1 current m other
+  local id=$1 current m other model open
   current=$(fm_meta_get "$STATE/$id.meta" model)
   for m in "$STATE"/*.meta; do
     other=$(basename "$m" .meta)
     [ "$other" != "$id" ] || continue
     grep -q '^kind=secondmate$' "$m" 2>/dev/null || continue
+    model=$(fm_meta_get "$m" model)
+    case "$model" in ''|default|"$current") continue ;; esac
     [ ! -e "$STATE/$other.supervisor-failing" ] && [ ! -e "$STATE/$other.conversation-failing" ] || continue
-    fm_meta_get "$m" model
-  done | grep -v -x -F -- "${current:-.}" | grep . | sort | uniq -c | sort -rn | awk 'NR==1 {print $2}'
+    [ "$(probe "$m" "$other")" = alive ] || continue
+    open=$(status_open_decisions "$STATE/$other.status") || continue
+    if printf '%s\n' "$open" | awk -F '\t' -v id="$other" \
+      '$2 == "blocked" && ($1 == "supervisor-failing-" id || $1 == "conversation-failing-" id) {found=1} END {exit !found}'; then
+      continue
+    fi
+    printf '%s\n' "$model"
+  done | sort | uniq -c | sort -rn | awk 'NR==1 {print $2}'
+}
+
+lane_heal_record_switch() {
+  local rec=$1 now=$2 model=$3
+  {
+    sed '/^relaunched=/d;/^relaunch_error=/d;/^model_switched=/d;/^switched_to=/d' "$rec"
+    printf 'relaunched=%s\nmodel_switched=%s\nswitched_to=%s\n' "$now" "$now" "$model"
+  } > "$rec.tmp" && mv -f "$rec.tmp" "$rec"
 }
 
 lane_heal_one() {  # <id> <supervisor|conversation>
-  local id=$1 tag=$2 rec="$STATE/$1.lane-heal-$2" key="$2-failing-$1" line=$3 now first relaunched escalated out rc lane episode relaunch_error switched alt
+  local id=$1 tag=$2 rec="$STATE/$1.lane-heal-$2" key="$2-failing-$1" line=$3 now first relaunched escalated out rc lane episode relaunch_error switched alt sibling_rec
   now=$(date +%s)
   case "$tag" in supervisor) lane="inner monologue (supervisor)" ;; *) lane="conversation lane" ;; esac
   if [ -z "$line" ]; then
@@ -340,6 +357,10 @@ lane_heal_one() {  # <id> <supervisor|conversation>
   first=$(sed -n 's/^first_seen=//p' "$rec"); relaunched=$(sed -n 's/^relaunched=//p' "$rec")
   escalated=$(sed -n 's/^escalated=//p' "$rec")
   [ "$escalated" != 1 ] || return 0
+  if [ -n "$LANE_SWITCH_MODEL" ] && [ "$LANE_SWITCH_RC" -eq 0 ]; then
+    lane_heal_record_switch "$rec" "$LANE_SWITCH_AT" "$LANE_SWITCH_MODEL"
+    return 0
+  fi
   relaunch_error=$(sed -n 's/^relaunch_error=//p' "$rec")
   if [ "$relaunched" = 0 ]; then
     if [ -z "$LANE_RELAUNCHED_AT" ]; then
@@ -374,17 +395,28 @@ lane_heal_one() {  # <id> <supervisor|conversation>
   if [ -z "$relaunch_error" ] && [ -z "$switched" ]; then
     case "$line" in
       *"model gateway request failed (HTTP 5"*|*"HTTP 502"*|*"HTTP 503"*|*"HTTP 504"*)
-        alt=$(lane_heal_alternate_model "$id")
+        alt=$LANE_SWITCH_MODEL
+        [ -n "$alt" ] || alt=$(lane_heal_alternate_model "$id")
         if [ -n "$alt" ]; then
-          rc=0
-          out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" relaunch --unless-held-stopped --replace-live \
-            --model "$alt" --note "$HEAL_NOTE Restarted on $alt because the previous model kept failing." < /dev/null 2>&1) || rc=$?
+          if [ -z "$LANE_SWITCH_MODEL" ]; then
+            LANE_SWITCH_MODEL=$alt
+            LANE_SWITCH_OUT=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" relaunch --unless-held-stopped --replace-live \
+              --model "$alt" --note "$HEAL_NOTE Restarted on $alt because the previous model kept failing." < /dev/null 2>&1) || LANE_SWITCH_RC=$?
+            LANE_SWITCH_AT=$(date +%s)
+          fi
+          rc=$LANE_SWITCH_RC
+          out=$LANE_SWITCH_OUT
           if [ "$rc" -eq 0 ]; then
             log "relaunched $id on $alt because its $lane kept failing on its model"
-            printf 'key=%s\nepisode=%s\nlane=%s\nfirst_seen=%s\nrelaunched=%s\nescalated=0\nmodel_switched=%s\nswitched_to=%s\n' \
-              "$key" "$episode" "$lane" "$first" "$now" "$now" "$alt" > "$rec.tmp" && mv -f "$rec.tmp" "$rec"
+            for sibling_rec in "$STATE/$id.lane-heal-supervisor" "$STATE/$id.lane-heal-conversation"; do
+              [ ! -f "$sibling_rec" ] || lane_heal_record_switch "$sibling_rec" "$LANE_SWITCH_AT" "$alt"
+            done
             return 0
           fi
+          case "$out" in
+            *"another lifecycle action is already running"*) return 0 ;;
+            *"was stopped on purpose"*) rm -f "$STATE/$id.lane-heal-supervisor" "$STATE/$id.lane-heal-conversation"; return 1 ;;
+          esac
           relaunch_error="switching it to $alt failed: $(one_line "$out")"
         fi
         ;;
