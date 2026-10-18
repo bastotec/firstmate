@@ -27,6 +27,30 @@ is recorded and never stops the next:
            No-mistakes breakdowns read each included registered host once over
            ssh only when its bridge allows reports; denied or unreadable hosts
            are named in collect's why without the other reasons' three-item cap.
+  improve  acts on the day, every night. It measures each task's day on every
+           included machine (bin/fm_lifecycle.py owns the timeline: sources, task
+           kinds and where time went), writes the timelines to improve-<date>.json
+           and one metrics line per published measured night to improve.jsonl, and
+           asks the pinned gateway model for up to three changes, each tied to
+           evidence and a supported TARGETS measurement (one call, no tools, a
+           bounded digest). docs/configuration.md owns the model pin and failure
+           policy. Dry runs measure but call no model. Empty successful measurements
+           are a quiet day; unread measurements make the step partial, including
+           when no timelines survive. Independent actions still run and are tracked
+           and summarized. The changes are acted on, not just reported:
+             instructions  required edits go through the instructions step below,
+                           under its guards and gated-PR path;
+             code          the file step files each as a priority task for the
+                           repository's owning mate and tells that mate to
+                           dispatch a worker now (the main home through its inbox);
+             captain       the file step raises one plain decision card for all of
+                           them, with the night's private charter proposals.
+           The changes and the measurements are also the digest's "Improve"
+           section, which the instructions and triage agents read.
+           It also reads last night's actions (improve-actions.jsonl) with their
+           state now: a PR merged and deployed or not, a task's worker or merge
+           from the fleet report, a card still waiting, and the measurement each
+           targeted then and now.
   skills   a deck agent in a fresh ~/dotfiles worktree improves skills/ from
            the digest. Same guards as Ziggy's reflection: only skills/, at most
            MAX_DIFF_LINES changed lines, secret scan of all changed staged bytes
@@ -70,15 +94,27 @@ is recorded and never stops the next:
            has an unparsable entry, the agent does not run and nothing is filed.
            Jev scores proposals when configured; without a usable score, keep
            the agent's order and record why. Keep at most MAX_RAISED items.
-  file     files only the items triage kept in this invocation as queued backlog
+  file     files the items triage kept in this invocation as queued backlog
            tasks and hands each to its configured owning mate; it never replays a
            previous run's proposals. An unreadable raised.jsonl prevents filing,
            and an item already in its dedupe window is not filed twice.
-           Dreaming never pushes to or opens PRs on harness repositories,
-           except the instructions step's one PR on firstmate, through the gate.
+           Code changes from the improve step are filed first, as priority-0
+           tasks, and their owning mate is told to dispatch a worker now (fm-send.sh,
+           or the main home's inbox); captain changes and charter proposals become
+           one decision card (fm-captain-hold.sh), even without measured tasks.
+           Command timeouts preserve successful filings and allow remaining triage
+           work while the step budget remains. Dreaming never pushes to or opens
+           PRs on harness repositories, except the instructions step's one PR on
+           firstmate, through the gate.
   memory   runs the captain memory's upkeep (bin/fm_captain_memory.py) and adds
            its one line to the summary; skipped on a dry run. Its findings are
            not failures: only an upkeep that cannot run is not clean.
+  track    follows tonight's instructions PR until auto-land merged and deployed it
+           (at most TRACK_WAIT seconds), then records every action of the night for
+           tomorrow's report. A PR open or merged, a confirmed dispatch order, or
+           a raised card counts as acted on; proposals with none of these yield
+           'nothing changed', which is not clean. An empty model changes list is
+           an honest 'nothing to change' and stays clean.
 
 Runs are serialized by a kernel flock held for the whole run.
 Before each step (dry runs included): skipped when the Mac has less than
@@ -114,10 +150,24 @@ Files under <home>/state/dream/:
                      without a PR, lines is the proposal count and files is null),
                      pr, risk (null if unread)} | null,
                      charter_proposals: [{mate, what}],
-                     no_mistakes: {...} or null, summary}
+                     improve: {metrics (bin/fm_lifecycle.py metrics), model,
+                     changes: [{kind, change, repo, title, fix, target, evidence,
+                     before}], reflection_error, nothing_to_change,
+                     point (tonight's improve.jsonl line),
+                     previous (the last earlier one) | null, change:
+                     {mate_median, mate_p90, merged} | null, tonight: [{kind, what,
+                     pr?, key?, mate?, state, target?, before?}], last_night: [{...,
+                     date, now_state, now_value}]}
+                     | {measurement_error, changes: [], tonight: [actions as above]}
+                     | null (no measured tasks or improve did not produce facts),
+                     charter_card: [actions as above] (private charter card when
+                     improve is null), no_mistakes: {...} or null, summary}
   raised.jsonl       one line per raised item (dedupe across nights)
   digest-<date>.md   the private digest the agents read
   charters-<date>.md private charter-edit proposals, when any are kept
+  improve-<date>.json  the night's task timelines (private)
+  improve.jsonl      one metrics line per published night, for night-over-night change
+  improve-actions.jsonl  one line per action a published night took, for the next report
 
 Step timing starts after the pre-step checks; waited_for_ziggy, when nonzero,
 is the seconds spent polling for Ziggy's dream before that step.
@@ -156,11 +206,16 @@ Configuration: docs/configuration.md "Fleet dreaming" owns config/dream.json.
 Environment: FM_DREAM_DECK (deck binary), FM_DREAM_DOTFILES (~/dotfiles),
 FM_DREAM_JEV (Jev helper command), FM_DREAM_MIN_FREE_GB, FM_DREAM_NO_MISTAKES_DB,
 FM_DREAM_FIRSTMATE (firstmate checkout, default: this code root),
-FM_DREAM_NO_MISTAKES (gate binary, default: no-mistakes), FM_DREAM_GH (gh binary).
+FM_DREAM_NO_MISTAKES (gate binary, default: no-mistakes), FM_DREAM_GH (gh binary),
+PROXAI_BASE_URL (default http://127.0.0.1:8329/v1), PROXAI_API_KEY or, when
+empty, PROXAI_API_KEY_FILE (default ~/.config/proxai/client.key) for improve.
 Tests only: FM_DREAM_NOW (epoch), FM_DREAM_SKIP_ZIGGY_WAIT=1, FM_DREAM_ZIGGY_POLL (seconds), and FM_DREAM_TASKS,
 FM_DREAM_HANDOFF, FM_DREAM_REPORT, FM_DREAM_ON, FM_DREAM_CAPTAIN_MEMORY replacing
 bin/fm-tasks-axi.sh, bin/fm-backlog-handoff.sh, bin/fm-report.sh, bin/fm-on.sh and
-`bin/fm_captain_memory.py upkeep`; FM_DREAM_BRIDGE
+`bin/fm_captain_memory.py upkeep`; FM_DREAM_REFLECT replaces the gateway call (it
+reads the request JSON on stdin and prints the gateway's reply); FM_DREAM_SEND,
+FM_DREAM_INBOX and FM_DREAM_HOLD replace bin/fm-send.sh, bin/fm-inbox.sh and
+bin/fm-captain-hold.sh; FM_DREAM_TRACK_WAIT and FM_DREAM_TRACK_POLL; FM_DREAM_BRIDGE
 and FM_DREAM_SSH replace bin/fm-bridge.sh and ssh for breakdown reads.
 
     fm_dream.py run --home H [--only STEP ...] [--dry-run]
@@ -182,8 +237,15 @@ import time
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-STEPS = ['collect', 'skills', 'instructions', 'triage', 'file', 'memory']
-BUDGET = {'collect': 300, 'skills': 2700, 'instructions': 5400, 'triage': 1200, 'file': 300, 'memory': 120}
+sys.path.insert(0, str(SCRIPT_DIR))
+import fm_lifecycle as fl  # noqa: E402 - the improve step's timeline builder, next to this file
+STEPS = ['collect', 'improve', 'skills', 'instructions', 'triage', 'file', 'memory', 'track']
+BUDGET = {'collect': 300, 'improve': 900, 'skills': 2700, 'instructions': 5400, 'triage': 1200, 'file': 600,
+          'memory': 120, 'track': 1500}
+IMPROVE_MODEL = 'claude/opus-5-5'
+MAX_IMPROVE_PRS = 80
+TRACK_WAIT = int(os.environ.get('FM_DREAM_TRACK_WAIT', '1200'))  # tests shorten the wait for auto-land
+TRACK_POLL = int(os.environ.get('FM_DREAM_TRACK_POLL', '60'))
 INSTRUCTION_PATHS = ('AGENTS.md', '.agents/skills/', 'bin/fm-brief.sh')
 MAX_INSTRUCTION_LINES = 80
 # A changed instruction line matching this is a hard stop: it may be added to, never removed or reworded.
@@ -273,6 +335,9 @@ def load_config(path):
         raise ConfigError('%s: repos must map repositories to owner/name or null' % path)
     if not isinstance(doc.get('model', ''), str):
         raise ConfigError('%s: model must be a string' % path)
+    improve = doc.get('improve', {})
+    if not isinstance(improve, dict) or not isinstance(improve.get('model', ''), str):
+        raise ConfigError('%s: improve must be an object whose model is a string' % path)
     return doc
 
 
@@ -873,6 +938,7 @@ def step_collect(ctx):
         parts += ['- by step: ' + ', '.join('%s %d' % kv for kv in sorted(nmb['by_step'].items(), key=lambda kv: -kv[1]))]
         parts += ['- unread: ' + e for e in nmb_errors] + ['']
     rep = fleet_report(ctx)
+    ctx.facts['fleet_report'] = rep
     lap('fleet report')
     if rep:
         parts += ['## Fleet report', rep.get('summary') or '']
@@ -933,6 +999,417 @@ def step_collect(ctx):
     if gaps:
         result['why'] = '; '.join(gaps)
     return result
+
+
+# --- improve ----------------------------------------------------------------
+
+# What a change may aim to move, read from one night's metrics point.
+TARGETS = ('mate median', 'mate p90', 'implementation', 'review', 'test', 'ci', 'parked at a gate', 'rework',
+           'waiting to merge', 'deploy', 'fix_rounds', 'failed_runs', 'gateway_errors', 'relaunches', 'held_or_blocked')
+
+IMPROVE_PROMPT = """You improve a software fleet's way of working, every night. The fleet is a first \
+mate supervising second mates and their short-lived workers, which ship changes through a validation \
+pipeline (no-mistakes: review, test, fix rounds, PR, CI) to merge and deploy. Claude Code sessions ship \
+the same kind of change without the mates, and are the benchmark. These are today's measurements:
+
+{digest}
+
+Choose the three changes the fleet makes tonight that would most cut the mates' time from start to \
+merge. Each is one of:
+- "instructions": an edit tonight to the instructions every agent reads (AGENTS.md, the shared skills, \
+or the worker brief and second-mate charter templates). A nightly agent makes it and ships it as a PR.
+- "code": a fix in one of these repositories that a worker ships: {repos}.
+- "captain": only when it needs the captain's own decision (merge authority, money, credentials, \
+production, what the fleet promises users); it becomes one question for him.
+Never weaken a safety rule or an approval only the captain can give: a change that would is a "captain" \
+item. Tie each change to the evidence above (a task, a number), and name the one measurement it should \
+move, from: {targets}.
+Answer with JSON only: {{"changes": [{{"kind": "instructions|code|captain", "change": "one or two \
+sentences: exactly what changes", "repo": "for code: one of the repositories", "title": "for code: \
+imperative, under 90 characters", "fix": "for code: where and how", "target": "one measurement", \
+"evidence": "the measurement it rests on"}}]}}"""
+
+
+def improve_hosts(ctx):
+    """[(host, db, homes, ssh argv or None)]: this Mac with the main and every
+    included local home, then each included remote host whose bridge allows
+    reports with its registered homes; refused hosts are returned as errors."""
+    local_db = os.environ.get('FM_DREAM_NO_MISTAKES_DB') or '~/.no-mistakes/state.sqlite'
+    out = [('this Mac', local_db, [str(h) for _mid, h in local_homes(ctx)], None)]
+    errors, remote = [], {}
+    for mid, h, host in registry(ctx.home):
+        if host and h and mid not in ctx.excluded:
+            remote.setdefault(host, []).append(h)
+    env = dict(os.environ, FM_HOME=str(ctx.home))
+    for host in sorted(remote):
+        try:
+            gate = ctx.run([tool('fm-bridge.sh', 'FM_DREAM_BRIDGE'), 'check', host, 'reports'], timeout=30, env=env)
+        except (OSError, subprocess.TimeoutExpired):
+            gate = None
+        if gate is None or gate.returncode != 0:
+            errors.append('%s: bridge does not allow reports' % host)
+            continue
+        ssh = [os.environ.get('FM_DREAM_SSH') or 'ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host]
+        out.append((host, '~/.no-mistakes/state.sqlite', remote[host], ssh))
+    return out, errors
+
+
+def reflect(ctx, model, prompt):
+    """(the reply's change records, None) from one gateway call, or (None, why).
+    No tools, no retry on another model: an unavailable model is the answer."""
+    request = {'model': model, 'max_tokens': 2500, 'messages': [{'role': 'user', 'content': prompt}]}
+    stub = os.environ.get('FM_DREAM_REFLECT')
+    try:
+        if stub:
+            r = ctx.run([stub], input=json.dumps(request), timeout=300)
+            if r.returncode:
+                return None, (r.stderr or r.stdout or 'exit %d' % r.returncode).strip()[:200]
+            reply = json.loads(r.stdout)
+        else:
+            import urllib.error
+            import urllib.request
+            base = (os.environ.get('PROXAI_BASE_URL') or 'http://127.0.0.1:8329/v1').rstrip('/')
+            key = os.environ.get('PROXAI_API_KEY', '').strip() or Path(
+                os.environ.get('PROXAI_API_KEY_FILE') or os.path.expanduser('~/.config/proxai/client.key')).read_text().strip()
+            req = urllib.request.Request(base + '/chat/completions', data=json.dumps(request).encode(),
+                                         headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'})
+            try:
+                with urllib.request.urlopen(req, timeout=min(300, ctx.left())) as resp:
+                    reply = json.load(resp)
+            except urllib.error.HTTPError as e:
+                try:
+                    reply = json.load(e)
+                except ValueError:
+                    return None, 'HTTP %d' % e.code
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        return None, '%s: %s' % (type(e).__name__, str(e)[:160])
+    if isinstance(reply, dict) and reply.get('error'):
+        err = reply['error']
+        return None, str(err.get('message') if isinstance(err, dict) else err)[:200]
+    try:
+        content = reply['choices'][0]['message']['content']
+        if isinstance(content, list):
+            content = ''.join(part.get('text', '') for part in content if isinstance(part, dict))
+        body = re.search(r'\{.*\}', content, re.S)
+        doc = json.loads(body.group(0)) if body else None
+    except (KeyError, IndexError, TypeError, ValueError):
+        doc = None
+    changes = (doc or {}).get('changes') if isinstance(doc, dict) else None
+    return (changes, None) if isinstance(changes, list) else (None, 'the reply held no changes list')
+
+
+def improve_changes(ctx, raw, repos):
+    """The reply's changes the fleet can act on: an evidence-linked change of a
+    known kind, code naming a known repository and a title; at most three."""
+    out = []
+    for c in raw or []:
+        if not (isinstance(c, dict) and c.get('change') and c.get('evidence')):
+            continue
+        kind = c.get('kind')
+        if kind not in ('instructions', 'code', 'captain'):
+            continue
+        if kind == 'code':
+            repo = c.get('repo')
+            if not isinstance(repo, str) or not repo:
+                continue
+            c['repo'] = next((k for k, slug in repos.items() if repo == k or (slug and repo == slug)), repo)
+            if not (c['repo'] in repos and c.get('title')):
+                continue
+        if c.get('target') not in TARGETS:
+            continue
+        row = {k: str(c.get(k) or '')[:400] for k in ('kind', 'change', 'repo', 'title', 'fix', 'evidence', 'target')}
+        if not mentions_excluded(ctx, json.dumps(row, ensure_ascii=False)):
+            out.append(row)
+    return out[:3]
+
+
+def metric_of(point, target):
+    """One measurement from a night's metrics point, or None."""
+    if not point:
+        return None
+    if target in ('mate median', 'mate p90'):
+        return point.get('mate_median' if target == 'mate median' else 'mate_p90')
+    if target in (point.get('counted') or {}):
+        return point['counted'][target]
+    return (point.get('sinks') or {}).get(target, 0 if point.get('sinks') is not None else None)
+
+
+COUNTS = ('fix_rounds', 'failed_runs', 'gateway_errors', 'relaunches', 'held_or_blocked')
+
+
+def shown(target, value):
+    if value is None:
+        return 'n/a'
+    return str(value) if target in COUNTS else fl.human(value)
+
+
+def pr_state(ctx, pr, dep):
+    """'merged and deployed', 'merged, deploy pending', 'open', 'closed' or 'state unread'."""
+    gh = os.environ.get('FM_DREAM_GH') or 'gh'
+    run = lambda argv, input=None, timeout=None: ctx.run(argv, input=input, timeout=timeout)
+    merged = ctx.facts.setdefault('merged_prs', {})
+    facts = merged.get(pr) or fl.pr_facts(pr, gh, run=run)
+    if not facts:
+        return 'state unread'
+    if facts.get('merged'):
+        merged[pr] = facts
+        return 'merged and deployed' if fl.deployed_at(
+            pr, facts, dep, gh, run, ctx.facts.setdefault('deployment_comparisons', {})) else 'merged, deploy pending'
+    return 'closed' if str(facts.get('state')).upper() == 'CLOSED' else 'open'
+
+
+def autoland_deploys(ctx):
+    try:
+        return fl.deploys((ctx.state / 'autoland' / 'report.log').read_text(encoding='utf-8', errors='replace'))
+    except OSError:
+        return {}
+
+
+def report_home_unread(rep, mate):
+    if rep is None:
+        return True
+    part = next((m for m in rep.get('mates') or [] if m.get('id') == mate), None)
+    if not part or part.get('freshness') not in ('local', 'remote') or part.get('state') in (None, 'unknown'):
+        return True
+    names = (mate, part.get('name') or mate.replace('-', ' '))
+    return any(any(g.startswith(n + ':') for n in names) and 'crew time' not in g
+               for g in rep.get('gaps') or [])
+
+
+def last_night(ctx, point):
+    """Last night's actions, each with its state now and its target then and now."""
+    rows = []
+    try:
+        rows = [json.loads(l) for l in (ctx.dir / 'improve-actions.jsonl').read_text(encoding='utf-8').splitlines() if l.strip()]
+    except (OSError, ValueError):
+        return []
+    dates = sorted({r.get('date') for r in rows if r.get('date') and r['date'] < ctx.day})
+    if not dates:
+        return []
+    rep = ctx.facts.get('fleet_report')
+    dep = autoland_deploys(ctx)
+    out = []
+    for r in (r for r in rows if r.get('date') == dates[-1]):
+        # an action for a home excluded since is not reported, like the rest of its records
+        if r.get('mate') in ctx.excluded or mentions_excluded(ctx, json.dumps(r, ensure_ascii=False)):
+            continue
+        if r.get('pr'):
+            state = pr_state(ctx, r['pr'], dep)
+        elif r.get('kind') in ('code', 'captain') and r.get('key') and report_home_unread(rep, r.get('mate') or 'primary'):
+            state = ('state unread: the fleet report could not be read' if rep is None else
+                     'state unread: %s home records are incomplete or stale' % (r.get('mate') or 'primary'))
+        elif r.get('kind') == 'code' and r.get('key'):
+            # the fleet report's crew.agent is the task id; crew.task is its title
+            mine = lambda x: x.get('mate') == r.get('mate') or not r.get('mate')
+            shipped = [x for x in rep.get('shipped') or [] if x.get('task') == r['key'] and mine(x)]
+            crew = [x for x in rep.get('crew') or [] if x.get('agent') == r['key'] and mine(x)]
+            state = ('merged (%s)' % shipped[0].get('pr') if shipped else
+                     'worker %s' % crew[0].get('status') if crew else 'no worker on it yet')
+        elif r.get('kind') == 'captain' and r.get('key'):
+            waiting = any(x.get('task') == r.get('key') and x.get('mate') == (r.get('mate') or 'primary')
+                          for x in rep.get('waiting') or [])
+            resolved = any(x.get('task') == r['key'] and x.get('mate') == (r.get('mate') or 'primary')
+                           for x in rep.get('shipped') or [])
+            state = ('waiting on the captain' if waiting else 'answered or closed'
+                     if r.get('state') == 'card raised' or resolved else r.get('state') or 'card raise unconfirmed')
+        else:
+            state = r.get('state') or 'not acted on'
+        out.append(dict(r, now_state=state, now_value=metric_of(point, r.get('target'))))
+    return out
+
+
+def step_improve(ctx):
+    hosts, errors = improve_hosts(ctx)
+    private = [h for mid, h, host in registry(ctx.home) if mid in ctx.excluded and h]
+    items, unread = [], list(errors)
+    gh = os.environ.get('FM_DREAM_GH') or 'gh'
+    run = lambda argv, input=None, timeout=None: ctx.run(argv, input=input, timeout=timeout)
+    dep = autoland_deploys(ctx)
+    prs_left = MAX_IMPROVE_PRS
+    for host, db, homes, ssh in hosts:
+        data = fl.host_data(db, ctx.since, homes, run=run, ssh=ssh)
+        if data is None:
+            unread.append('%s: task records unreadable' % host)
+            continue
+        unread += ['%s: %s' % (host, u) for u in data.get('unread') or [] if not mentions_excluded(ctx, u)]
+        # An excluded home's work never reaches the timelines: its projects' runs, or any run naming it.
+        data['runs'] = [r for r in data.get('runs') or []
+                        if not any(place == p or place.startswith(p.rstrip('/') + '/')
+                                   for p in private for place in (str(r.get('repo') or ''), str(r.get('worktree') or ''))
+                                   if place)
+                        and not mentions_excluded(ctx, json.dumps(r, ensure_ascii=False))]
+        prs = {}
+        for url in dict.fromkeys(r['pr'] for r in data['runs'] if r.get('pr')):
+            if prs_left <= 0:
+                break
+            prs_left -= 1
+            prs[url] = fl.pr_facts(url, gh, run=run)
+        items += fl.timelines(host, data, ctx.now, prs, dep, ctx.since, gh, run,
+                              ctx.facts.setdefault('deployment_comparisons', {}))
+    unread_prs = [t['pr'] for t in items if t.get('pr_unread')]
+    if unread_prs:
+        # never counted as open or merged: the split is incomplete, and says so
+        unread.append('%d PR%s unread (%s), so their merge is unknown' % (
+            len(unread_prs), '' if len(unread_prs) == 1 else 's', ', '.join(unread_prs[:3])))
+    if not items:
+        ctx.facts['improve'] = ({'measurement_error': '; '.join(unread), 'changes': [], 'tonight': []} if unread else None)
+        return {'status': 'partial' if unread else 'quiet day', **({'why': '; '.join(unread)} if unread else {})}
+    m = fl.metrics(items)
+    text = fl.digest(m, items, unread)
+    write_private(ctx.dir / ('improve-%s.json' % ctx.day), json.dumps({'timelines': items, 'metrics': m}, indent=1))
+    prev = None
+    try:
+        for line in (ctx.dir / 'improve.jsonl').read_text(encoding='utf-8').splitlines():
+            row = json.loads(line)
+            if row.get('date') != ctx.day:
+                prev = row
+    except (OSError, ValueError):
+        pass
+    point = {'date': ctx.day, 'mate_median': m['mate']['median'], 'mate_p90': m['mate']['p90'],
+             'session_median': m['session']['median'], 'merged': m['mate']['merged'], 'open': m['mate']['open'],
+             'sinks': m['sinks_all'], 'counted': m['counted']}
+    change = None
+    if prev:
+        change = {k: (point[k] - prev[k]) if point.get(k) is not None and prev.get(k) is not None else None
+                  for k in ('mate_median', 'mate_p90', 'merged')}
+    model = (ctx.config.get('improve') or {}).get('model') or IMPROVE_MODEL
+    repos = ctx.config.get('repos') or DEFAULT_REPOS
+    if ctx.dry_run:
+        raw, why = None, 'dry run: no model called'
+    else:
+        raw, why = reflect(ctx, model, IMPROVE_PROMPT.format(digest=text, repos=', '.join(repos), targets=', '.join(TARGETS)))
+    changes = improve_changes(ctx, raw, repos) if raw is not None else []
+    nothing = raw == []  # an honest answer: the model found nothing worth changing tonight
+    if raw and not changes:
+        why = 'the reply held no change the fleet can act on'
+    for c in changes:
+        c['before'] = metric_of(point, c['target'])
+    facts = {'metrics': m, 'model': model, 'changes': changes, 'previous': prev, 'change': change, 'point': point,
+             'last_night': last_night(ctx, point), 'tonight': [],
+             'nothing_to_change': nothing,
+             'reflection_error': None if changes or nothing else (
+                 '%s unavailable: %s; no other model was tried' % (model, why) if raw is None else why)}
+    ctx.facts['improve'] = facts
+    section = ['', '## Improve (where today\'s tasks spent their time)', text, '']
+    if changes:
+        section += ['### Changes the fleet makes tonight (%s)' % model] + [
+            '- [%s] %s Target: %s. Evidence: %s' % (c['kind'], c['change'], c['target'], c['evidence']) for c in changes] + ['']
+    try:
+        write_private(ctx.digest, ctx.digest.read_text(encoding='utf-8') + '\n'.join(section))
+    except OSError:
+        unread.append('the digest could not take the improve section')
+    if not ctx.dry_run and not getattr(ctx, 'only', None):
+        with open(ctx.dir / 'improve.jsonl', 'a', encoding='utf-8') as fh:
+            fh.write(json.dumps(point) + '\n')
+    gaps = unread + ([facts['reflection_error']] if facts['reflection_error'] and not ctx.dry_run else [])
+    result = {'status': 'dry-run' if ctx.dry_run else ('partial' if gaps else 'done'), 'tasks': m['tasks'],
+              'sessions': m['sessions'], 'changes': len(changes)}
+    if raw and len(raw) > len(changes):
+        result['dropped'] = len(raw) - len(changes)  # not acted on: unknown kind or repository, or no evidence
+    if gaps:
+        result['why'] = '; '.join(gaps)[:500]
+    return result
+
+
+def step_track(ctx):
+    """Follows tonight's changes to where they landed: the instructions PR to its
+    merge and deploy (auto-land owns both; this waits up to TRACK_WAIT), and
+    records every action for tomorrow's report. An action counts as taken when
+    its PR is open, merged or deployed, its dispatch order was confirmed, or its
+    card was raised."""
+    life = ctx.facts.get('improve')
+    if not life:
+        return {'status': 'quiet day'}
+    tonight = life['tonight']
+    ins = ctx.facts.get('instructions') or {}
+    pr = ins.get('pr')
+    skipped = ctx.facts.get('instructions_skipped') or []
+    planned = [c for c in life['changes'] if c['kind'] == 'instructions']
+    shipped = [c for c in planned if not any(similar(c['change'], str(k.get('change') or '')) for k in skipped)]
+    if pr and not ctx.dry_run:
+        state, waited = 'open', 0
+        while True:
+            dep = autoland_deploys(ctx)
+            state = pr_state(ctx, pr, dep)
+            if state in ('merged and deployed', 'closed') or waited >= TRACK_WAIT or ctx.left() < TRACK_POLL + 30:
+                break
+            time.sleep(TRACK_POLL)
+            waited += TRACK_POLL
+        what = '; '.join('%s: %s' % (c.get('path'), c.get('what')) for c in ins.get('changes') or [])[:400]
+        files = sorted({c.get('path') for c in ins.get('changes') or []})
+        # one action per proposed change the PR carries, so each keeps its own target
+        for c in reversed(shipped or [None]):
+            tonight.insert(0, {'kind': 'instructions', 'what': what, 'pr': pr, 'state': state, 'files': files,
+                               'change': c['change'][:200] if c else None, 'target': c['target'] if c else None,
+                               'before': c['before'] if c else None})
+    if planned and not (pr and not ctx.dry_run):
+        step = ctx.facts.get('instructions_status') or {}
+        for c in reversed(planned):
+            tonight.insert(0, {'kind': 'instructions', 'what': c['change'][:200], 'pr': None,
+                               'state': 'not shipped: %s' % (step.get('why') or step.get('status') or 'the step did not run'),
+                               'target': c['target'], 'before': c['before']})
+    for c in skipped:
+        tonight.append({'kind': 'instructions', 'what': str(c.get('change') or '')[:200], 'pr': None,
+                        'state': 'skipped: %s' % str(c.get('why') or '')[:160]})
+    if not ctx.dry_run and not getattr(ctx, 'only', None):
+        with open(ctx.dir / 'improve-actions.jsonl', 'a', encoding='utf-8') as fh:
+            for a in tonight:
+                fh.write(json.dumps(dict(a, date=ctx.day)) + '\n')
+    taken = lambda a: (a.get('state') in ('open', 'merged and deployed', 'merged, deploy pending') and a.get('pr')
+                       or str(a.get('state')).startswith('dispatch ordered') or a.get('state') == 'card raised')
+    acted = [a for a in tonight if taken(a)]
+    if life.get('measurement_error'):
+        return {'status': 'partial', 'why': life['measurement_error'], 'acted': len(acted)}
+    if life['changes'] and not acted:
+        return {'status': 'nothing changed', 'why': ('no change was shipped, dispatched or carded tonight: %s'
+                                                     % '; '.join(str(a.get('state')) for a in tonight))[:300]}
+    return {'status': 'done', 'acted': len(acted)}
+
+
+def improve_summary(life):
+    """'Improve: 7 mate tasks (2 merged, 5 open), start to merge median 31m ...; Tonight: ...; Last night: ...'."""
+    if not life:
+        return ''
+    if life.get('measurement_error'):
+        text = 'Improve: measurement incomplete: ' + life['measurement_error']
+    else:
+        m = life['metrics']
+        change = life.get('change') or {}
+        text = 'Improve: %d mate task%s (%d merged, %d open), start to merge median %s (p90 %s)%s vs %s for %d session branch%s' % (
+            m['tasks'], '' if m['tasks'] == 1 else 's', m['mate']['merged'], m['mate']['open'], fl.human(m['mate']['median']),
+            fl.human(m['mate']['p90']), ' (%s%s vs %s)' % ('+' if change['mate_median'] >= 0 else '-', fl.human(abs(change['mate_median'])),
+                                                        life['previous']['date']) if change.get('mate_median') is not None else '',
+            fl.human(m['session']['median']), m['sessions'], '' if m['sessions'] == 1 else 'es')
+        if m['sinks']:
+            text += '; slowed by ' + ', '.join('%s %s' % (k, fl.human(v)) for k, v in m['sinks'][:3])
+    done, prs = [], set()
+    for a in life.get('tonight') or []:
+        state = a.get('state') or 'state unknown'
+        if a['kind'] == 'instructions':
+            if a.get('pr') and a['pr'] in prs:
+                continue  # one PR carries several changes: named once
+            if a.get('pr'):
+                prs.add(a['pr'])
+            done.append('%s (%s%s)' % (a['what'][:160], a['pr'] + ', ' if a.get('pr') else '', state))
+        elif a['kind'] == 'code':
+            done.append('%s (%s)' % (a['what'][:120], state))
+        else:
+            done.append('captain card %s: %s (%s)' % (a.get('key'), a['what'][:120], state))
+    if done:
+        text += '. Tonight: ' + '; '.join(done)
+    if life.get('reflection_error'):
+        text += '. %s: %s' % ('Model' if done else 'Nothing changed tonight', life['reflection_error'])
+    elif not done and life.get('nothing_to_change'):
+        text += '. Nothing changed tonight: %s found nothing worth changing' % life['model']
+    before = []
+    for a in life.get('last_night') or []:
+        moved = ''
+        if a.get('target') and (a.get('before') is not None or a.get('now_value') is not None):
+            moved = ', %s %s -> %s' % (a['target'], shown(a['target'], a.get('before')), shown(a['target'], a.get('now_value')))
+        before.append('%s (%s%s)' % ((a.get('what') or '')[:100], a.get('now_state'), moved))
+    if before:
+        text += '. Last night: ' + '; '.join(before)
+    return text
 
 
 # --- skills -----------------------------------------------------------------
@@ -1127,10 +1604,15 @@ Hard rules for this change:
 A mate's own charter (its data/charter.md and data/secondmates.md entry) is private and not in this
 checkout: propose edits to it instead of making them.
 
+The digest's "Improve" section measures where today's tasks spent their time. These changes were
+chosen for tonight and you must make them, within the hard rules above, citing their evidence;
+skip one only if it would break a hard rule or needs a mate's private charter, and say why:
+{required}
+
 Finally write {out} as JSON: {{"changes": [{{"path": "file", "what": "one plain sentence", "why": "what
 happened today", "evidence": ["exact digest lines, at most 3"]}}], "charters": [{{"mate": "<mate id>",
 "what": "the edit, in one or two sentences", "why": "...", "evidence": ["..."]}}]}} - empty lists when
-there is nothing."""
+there is nothing. Add "skipped": [{{"change": "...", "why": "..."}}] for any required change you did not make."""
 
 
 def firstmate_repo(ctx):
@@ -1223,13 +1705,17 @@ def step_instructions(ctx):
     try:
         base = git(ctx, 'rev-parse', 'HEAD', cwd=tree).strip()
         out = ctx.dir / ('instructions-%s.json' % ctx.day)
-        prompt = INSTRUCTIONS_PROMPT.format(digest=ctx.digest, tree=tree, max_lines=MAX_INSTRUCTION_LINES, out=out)
+        required = [c for c in (ctx.facts.get('improve') or {}).get('changes') or [] if c['kind'] == 'instructions']
+        prompt = INSTRUCTIONS_PROMPT.format(digest=ctx.digest, tree=tree, max_lines=MAX_INSTRUCTION_LINES, out=out,
+                                            required='\n'.join('- %s (target: %s; evidence: %s)' % (
+                                                c['change'], c['target'], c['evidence']) for c in required) or '- none')
         failed = run_agent(ctx, prompt, tree, ctx.dir / ('instructions-%s.log' % ctx.day), out)
         if failed:
             return {'status': 'failed', 'why': failed}
         doc = read_json(out)
         if not isinstance(doc, dict) or not isinstance(doc.get('changes'), list):
             return {'status': 'failed', 'why': 'the instructions agent wrote no valid %s' % out.name}
+        ctx.facts['instructions_skipped'] = [k for k in doc.get('skipped') or [] if isinstance(k, dict)]
         charters = [c for c in doc.get('charters') or [] if isinstance(c, dict) and c.get('mate')
                     and c.get('mate') not in ctx.excluded]
         if charters:
@@ -1369,7 +1855,8 @@ fleet's last 24 hours: {digest}
 Propose concrete improvements to the harness repositories, only where the digest shows evidence: a
 bug seen in the logs, a missing guard, a slow path (the slow fm-* commands), a bad default, a
 recurring failure. Repositories: {repos}. You may read code under {projects} to make an item precise,
-but change nothing anywhere.
+but change nothing anywhere. The code changes in the digest's "Improve" section are filed already;
+do not propose them again.
 
 Already open or recently raised (do not propose these again):
 {open_items}
@@ -1557,6 +2044,7 @@ def step_triage(ctx):
     repos = ctx.config.get('repos') or DEFAULT_REPOS
     owners = ctx.config.get('owners') or {}
     titles, unchecked = open_items(ctx, repos, owners)
+    ctx.facts['open_work'] = (titles, unchecked)  # the file step dedupes the improve step's code changes with it
     out = ctx.dir / ('triage-%s.json' % ctx.day)
     if ctx.dry_run:
         return {'status': 'dry-run', 'open_items': len(titles), 'unchecked': sorted(unchecked)}
@@ -1600,9 +2088,158 @@ def step_triage(ctx):
 
 # --- file -------------------------------------------------------------------
 
+def file_improvements(ctx, already, rows, errors):
+    """Publish code filings immediately, then raise one decision card for the
+    captain changes and the night's private charter proposals."""
+    life = ctx.facts.get('improve')
+    changes = (life or {}).get('changes') or []
+    # without a measured night the charter card is still raised; it is reported on its own
+    tonight = life['tonight'] if life else ctx.facts.setdefault('charter_card', [])
+    owners = ctx.config.get('owners') or {}
+    env = dict(os.environ, FM_HOME=str(ctx.home))
+    code = [c for c in changes if c['kind'] == 'code']
+    titles, unchecked = ctx.facts.get('open_work') or ((None, None) if not code else
+                                                      open_items(ctx, ctx.config.get('repos') or DEFAULT_REPOS, owners))
+    for c in code:
+        mate = owners.get(c['repo'], 'primary')
+        entry = {'kind': 'code', 'what': c['title'], 'mate': mate, 'key': None, 'target': c['target'],
+                 'before': c['before'], 'state': 'not filed'}
+        tonight.append(entry)
+        if unchecked:
+            entry['state'] = 'not filed: open work unreadable for %s' % ', '.join(sorted(unchecked))
+            continue
+        if any(similar(c['title'], t) for t in list(already) + list(titles or [])):
+            entry['state'] = 'already open, not filed again'
+            continue
+        if ctx.dry_run:
+            entry['state'] = 'dry run: not filed'
+            continue
+        try:
+            file_one(ctx, c, mate, entry, env, rows, errors, already)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            entry['state'] = '%s; stopped: %s' % (entry['state'], type(exc).__name__)
+            errors.append('%s: %s' % (c['title'][:60], entry['state']))
+            if isinstance(exc, subprocess.TimeoutExpired):
+                ctx.left()
+    calls = [c for c in changes if c['kind'] == 'captain']
+    charters = ctx.facts.get('charter_proposals') or []
+    if calls or charters:
+        try:
+            raise_card(ctx, calls, charters, tonight, env, errors)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            tonight[-1]['state'] = 'card not raised: %s' % type(exc).__name__
+            errors.append('captain card not raised: %s' % type(exc).__name__)
+            if isinstance(exc, subprocess.TimeoutExpired):
+                ctx.left()
+
+
+def file_one(ctx, c, mate, entry, env, rows, errors, already):
+    """One code change: a priority task, handed to its owning mate, with an order
+    to dispatch a worker now. entry['state'] always says how far it got."""
+    body = '\n'.join(['Priority change from fleet dreaming (bin/fm-dream.sh) on %s: dispatch a worker now.' % ctx.day,
+                      '', 'Change: ' + c['change'], '', 'Fix: ' + c['fix'], '', 'Evidence: ' + c['evidence'],
+                      '', 'It should move: %s (now %s).' % (c['target'], shown(c['target'], c['before']))])
+    bf = ctx.dir / '.body.md'
+    write_private(bf, body)
+    try:
+        r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'add', '--mint', '--prefix', 'dream', c['title'],
+                     '--kind', 'ship', '--repo', c['repo'], '--priority', '0', '--body-file', str(bf), '--json'],
+                    env=env, timeout=60)
+    finally:
+        bf.unlink()
+    key = task_key_of(r)
+    if r.returncode or not key:
+        entry['state'] = 'not filed'
+        errors.append('%s: add failed (%s)' % (c['title'][:60], (r.stderr or r.stdout).strip()[:120]))
+        return
+    entry['key'] = key
+    entry['state'] = 'filed as %s; dispatch order to %s not sent' % (key, mate)
+    row = {'title': c['title'], 'repo': c['repo'], 'mate': mate, 'key': key, 'why': c['change']}
+    rows.append(row)
+    already.append(c['title'])
+    with open(ctx.dir / 'raised.jsonl', 'a', encoding='utf-8') as fh:
+        fh.write(json.dumps(dict(row, at=ctx.now)) + '\n')
+    order = ('Priority from fleet dreaming: %s "%s" is in your backlog. Dispatch a worker on it now and see it '
+             'to merged; tomorrow\'s report follows it.' % (key, c['title']))
+    if mate != 'primary':
+        h = ctx.run([tool('fm-backlog-handoff.sh', 'FM_DREAM_HANDOFF'), mate, key], env=env, timeout=120)
+        if h.returncode:
+            row['handoff'] = 'unconfirmed'
+        # the operational lane, as fm-backlog-handoff.sh wakes it: a split mate's supervisor reads it
+        s = ctx.run([tool('fm-send.sh', 'FM_DREAM_SEND'), mate, order], env=dict(env, FM_SEND_STREAM='monologue'),
+                    timeout=60) if h.returncode == 0 else h
+    else:
+        s = ctx.run([tool('fm-inbox.sh', 'FM_DREAM_INBOX'), 'note', order], env=env, timeout=60)
+    entry['state'] = 'dispatch ordered to %s as %s' % (mate, key) if s.returncode == 0 else \
+        'filed as %s; dispatch order to %s unconfirmed' % (key, mate)
+    if s.returncode:
+        errors.append('%s: dispatch order to %s unconfirmed (%s)' % (key, mate, (s.stderr or s.stdout).strip()[:120]))
+
+
+def raise_card(ctx, calls, charters, tonight, env, errors):
+    """One plain decision card for the captain-only changes and the night's
+    private charter proposals."""
+    what = '; '.join([c['change'][:200] for c in calls] + ['charter edit for %s: %s' % (c['mate'], c['what'])
+                                                            for c in charters])[:400]
+    entry = {'kind': 'captain', 'what': what, 'key': None, 'target': calls[0]['target'] if calls else None,
+             'before': calls[0]['before'] if calls else None, 'state': 'card not raised'}
+    tonight.append(entry)
+    if ctx.dry_run:
+        entry['state'] = 'dry run: no card'
+        return
+    title = 'Fleet dreaming needs your call (%s)' % ctx.day
+    card = '\n'.join(['# %s' % title, ''] + ['- %s Evidence: %s' % (c['change'], c['evidence']) for c in calls]
+                     + ['- Apply this charter edit for %s? %s' % (c['mate'], c['what']) for c in charters])
+    bf = ctx.dir / '.card.md'
+    cf = ctx.dir / '.card.json'
+    write_private(bf, card)
+    try:
+        r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'add', '--mint', '--prefix', 'dream-call', title,
+                     '--kind', 'docs', '--body-file', str(bf), '--json'], env=env, timeout=60)
+        key = task_key_of(r)
+        entry['key'] = key
+        if key and not r.returncode:
+            write_private(cf, json.dumps({
+                'project': 'firstmate', 'title': 'Apply the proposed fleet changes?',
+                'situation': "Tonight's improvements need your decision on private settings or mate instructions. "
+                             'The task contains the proposed changes and their evidence.',
+                'options': [
+                    {'key': '1', 'label': 'Apply the proposed changes',
+                     'instruction': 'Apply the proposed changes recorded in task %s.' % key},
+                    {'key': '2', 'label': 'Keep the current setup',
+                     'instruction': 'Do not apply the proposed changes recorded in task %s.' % key}],
+                'recommended': '1'}))
+            h = ctx.run([tool('fm-captain-hold.sh', 'FM_DREAM_HOLD'), 'hold', key, '--reason', what[:200],
+                         '--card-file', str(cf)], env=env, timeout=60)
+        else:
+            h = r
+    finally:
+        bf.unlink()
+        cf.unlink(missing_ok=True)
+    entry['key'] = key
+    entry['state'] = 'card raised' if key and h.returncode == 0 else 'card not raised'
+    if entry['state'] != 'card raised':
+        errors.append('captain card not raised (%s)' % (h.stderr or h.stdout or '').strip()[:120])
+
+
+def task_key_of(r):
+    """The new task's id from a tasks-axi add, or None."""
+    try:
+        # strict=False: tasks-axi has been seen printing raw control
+        # characters inside string values, and a plain json.loads would
+        # reject a successful add.
+        doc = json.loads(r.stdout, strict=False)
+        return (doc.get('task') or {}).get('id') or doc.get('id')
+    except (ValueError, AttributeError):
+        key = re.search(r'"id"\s*:\s*"([^"]+)"', r.stdout or '')
+        return key.group(1) if key else None
+
+
 def step_file(ctx):
-    items = ctx.facts.get('triage')
-    if not items:
+    items = ctx.facts.get('triage') or []
+    life = ctx.facts.get('improve')
+    acting = life and any(c['kind'] != 'instructions' for c in life['changes']) or ctx.facts.get('charter_proposals')
+    if not items and not acting:
         return {'status': 'nothing to file'}
     owners = ctx.config.get('owners') or {}
     already = raised_titles(ctx)
@@ -1610,6 +2247,12 @@ def step_file(ctx):
         return {'status': 'partial', 'why': 'raised.jsonl is unreadable; nothing filed'}
     raised, errors = [], []
     ctx.facts['raised'] = raised  # filled as each item lands, so a later failure keeps them
+    try:
+        file_improvements(ctx, already, raised, errors)
+    except subprocess.TimeoutExpired:
+        raise
+    except Exception as exc:  # noqa: BLE001 - the triage items still get filed
+        errors.append('improve actions failed: %s: %s' % (type(exc).__name__, str(exc)[:200]))
     for it in items:
         if any(similar(it['title'], t) for t in already):
             continue
@@ -1632,15 +2275,7 @@ def step_file(ctx):
                         env=env, timeout=60)
         finally:
             bf.unlink()
-        try:
-            # strict=False: tasks-axi has been seen printing raw control
-            # characters inside string values, and a plain json.loads would
-            # reject a successful add.
-            doc = json.loads(r.stdout, strict=False)
-            key = (doc.get('task') or {}).get('id') or doc.get('id')
-        except (ValueError, AttributeError):
-            key = re.search(r'"id"\s*:\s*"([^"]+)"', r.stdout) or None
-            key = key.group(1) if key else None
+        key = task_key_of(r)
         if r.returncode or not key:
             errors.append('%s: add failed (%s)' % (it['title'][:60], (r.stderr or r.stdout).strip()[:120]))
             continue
@@ -1706,6 +2341,9 @@ def summary_line(run):
         text += ' Instructions: %s; proposed %s%s.' % (
             final, '; '.join('%s: %s' % (c.get('path'), c.get('what')) for c in ins['changes'][:3]),
             ' (PR %s%s)' % (ins['pr'], ', rated %s' % ins['risk'] if ins.get('risk') else '') if ins.get('pr') else '')
+    card = next((a for a in run.get('charter_card') or [] if a.get('key')), None)
+    if card:
+        text += ' Captain card %s for the charter edits (%s).' % (card['key'], card.get('state'))
     if run.get('charter_proposals'):
         text += ' %d charter edit%s proposed (charters-%s.md).' % (
             len(run['charter_proposals']), '' if len(run['charter_proposals']) == 1 else 's', run['date'])
@@ -1713,6 +2351,9 @@ def summary_line(run):
     if odd:
         text += ' %d home record%s (%s%s).' % (
             len(odd), ' disagrees' if len(odd) == 1 else 's disagree', odd[0][:120], '; and more' if len(odd) > 1 else '')
+    life = improve_summary(run.get('improve'))
+    if life:
+        text += ' ' + life.rstrip('.') + '.'
     nm = nm_summary(run.get('no_mistakes'))
     if nm:
         text += ' ' + nm[0].upper() + nm[1:] + '.'
@@ -1737,6 +2378,7 @@ def cmd_run(args):
     except ConfigError as e:
         print('fm-dream: %s' % e, file=sys.stderr)
         return 1
+    ctx.only = args.only
     # The kernel holds this lock for the whole run and drops it if the run dies.
     lock_fd = os.open(ctx.dir / '.lock', os.O_CREAT | os.O_WRONLY, 0o600)
     try:
@@ -1762,6 +2404,8 @@ def cmd_run(args):
         run['disagreements'] = ctx.facts.get('disagreements', [])
         run['instructions'] = ctx.facts.get('instructions')
         run['charter_proposals'] = ctx.facts.get('charter_proposals', [])
+        run['improve'] = ctx.facts.get('improve')
+        run['charter_card'] = ctx.facts.get('charter_card', [])
         run['captain_memory'] = ctx.facts.get('captain_memory')
         run['status'] = ('done' if all(s.get('status') in CLEAN for s in run['steps'].values()) and not force_partial
                          else 'partial')
@@ -1799,6 +2443,8 @@ def cmd_run(args):
                 run['steps'][name]['waited_for_ziggy'] = WAITED[name]
             if name == 'triage':
                 run['steps'][name]['items'] = ctx.facts.get('triage', [])
+            if name == 'instructions':
+                ctx.facts['instructions_status'] = run['steps'][name]
             write_json(log_path, run)
         finalize()
         return 0

@@ -125,6 +125,7 @@ SH
 #!/usr/bin/env bash
 case "$*" in
   *additions*) printf '{"additions": 3, "deletions": 0, "files": [{"path": "AGENTS.md"}]}\n' ;;
+  *createdAt*) printf '{"createdAt": "2026-10-14T16:23:20Z", "mergedAt": "2026-10-14T17:30:00Z", "state": "MERGED", "mergeCommit": {"oid": "abcdef0000000000000000000000000000000000"}, "commits": []}\n' ;;
   *) printf '## Intent\n\nx\n\n## Risk Assessment\n\n✅ Low: a small wording change.\n' ;;
 esac
 SH
@@ -209,7 +210,12 @@ SH
 case "$1" in
   list) case "$*" in *--fields*) echo "unexpected --fields" >&2; exit 2 ;; esac
         printf 'count: 3\ntasks[3]{id,state,kind,repo,title}:\n  fm-old,done,ship,firstmate,"Cache the drain result in fm-wake-drain.sh"\n  fm-dupes,queued,ship,"-","Prevent duplicate worker spawns, for a task"\n  fm-q,queued,ship,deck,"Handle \\"a,b\\" retry arguments in deck"\nhelp[2]:\n  - Run `tasks-axi show <id>` for full notes on a task\n  - Run `tasks-axi ready` to see unblocked queued work\n' ;;
-  add) n=$(find "$STUB_CALLS" -name 'add.*' | wc -l | tr -d ' '); printf '%s\n' "$*" > "$STUB_CALLS/add.$n"; printf '{\n  "ok": true,\n  "action": "add",\n  "task": {"id": "dream-k%s"}\n}\n' "$n" ;;
+  add) n=$(find "$STUB_CALLS" -name 'add.*' | wc -l | tr -d ' '); printf '%s\n' "$*" > "$STUB_CALLS/add.$n"
+       while [ "$#" -gt 0 ]; do
+         if [ "$1" = --body-file ]; then cp "$2" "$STUB_CALLS/body.$n.md"; break; fi
+         shift
+       done
+       printf '{\n  "ok": true,\n  "action": "add",\n  "task": {"id": "dream-k%s"}\n}\n' "$n" ;;
 esac
 SH
   cat > "$d/bin/handoff" <<'SH'
@@ -224,6 +230,8 @@ SH
   cat > "$d/bin/report" <<'SH'
 #!/usr/bin/env bash
 printf '{"summary": "fleet ok", "waiting": [], "gaps": [], "power": [], "shipped": [],
+ "mates": [{"id": "primary", "name": "first mate", "freshness": "local", "state": "idle"},
+           {"id": "dave-tools", "name": "dave tools", "freshness": "remote", "state": "working"}],
  "crew": [{"agent": "w-9", "task": "deploy", "status": "failed", "mate": "dave-tools"},
           {"agent": "w-8", "task": "finn-finance-crew", "status": "failed", "mate": "finn-finance"}]}\n'
 SH
@@ -233,6 +241,67 @@ SH
 printf '%s\n' "$*" > "$STUB_CALLS/memory"
 [ ! -e "$STUB_CALLS/memory-fails" ] || { echo "cannot read the shared file" >&2; exit 1; }
 echo "captain-memory: 12 entries, 2 new candidates in x, oversized: none, repeats since last upkeep: 1"
+SH
+  cat > "$d/bin/reflect" <<'SH'
+#!/usr/bin/env bash
+cat > "$STUB_CALLS/reflect.$(find "$STUB_CALLS" -name 'reflect.*' | wc -l | tr -d ' ')"
+case "${STUB_REFLECT:-none}" in
+  none) printf '%s\n' '{"choices": [{"message": {"content": "{\"changes\": []}"}}]}' ;;
+  ok) python3 -c '
+import json
+changes = [
+ {"kind": "instructions", "change": "Tell workers to run the repo checks before the first run", "target": "fix_rounds",
+  "evidence": "ship-x needed 4 fix rounds"},
+ {"kind": "code", "repo": "bastotec/deck", "title": "Merge green mate PRs without waiting for a person", "fix": "in the PR step",
+  "change": "Merge green mate PRs at once", "target": "waiting to merge", "evidence": "ship-x waited 1h to merge"},
+ {"kind": "captain", "change": "Decide whether mates may merge medium-risk PRs", "target": "waiting to merge",
+  "evidence": "3 PRs waited for a merge"},
+ {"kind": "captain", "change": "A target off the list", "target": "nonsense", "evidence": "e"},
+ {"kind": "code", "repo": "nowhere", "title": "Not a fleet repo", "change": "x", "evidence": "y"},
+ {"kind": "instructions", "change": "no evidence"}]
+print(json.dumps({"choices": [{"message": {"content": "Plan:\n" + json.dumps({"changes": changes})}}]}))' ;;
+  dup) python3 -c '
+import json
+changes = [{"kind": "code", "repo": "firstmate", "title": "Prevent duplicate worker spawns for a task", "fix": "lock",
+            "change": "Stop duplicate spawns", "target": "fix_rounds", "evidence": "two workers on one task"}]
+print(json.dumps({"choices": [{"message": {"content": json.dumps({"changes": changes})}}]}))' ;;
+  instructions) python3 -c '
+import json
+changes = [{"kind": "instructions", "change": change, "target": "review", "evidence": "ship-x waited in review"}
+           for change in ("Name the required check commands", "Explain how to reproduce a review failure")]
+print(json.dumps({"choices": [{"message": {"content": json.dumps({"changes": changes})}}]}))' ;;
+  bad-repos) python3 -c '
+import json
+base = {"kind": "code", "title": "Reject a projectless fix", "change": "Retry a read", "fix": "retry",
+        "target": "failed_runs", "evidence": "one failed read"}
+changes = [base, dict(base, repo=None), dict(base, repo=""),
+           dict(base, repo="phone-harness", title="Retry the phone connection"),
+           dict(base, repo="bastotec/deck", title="Retry a disconnected tool session")]
+print(json.dumps({"choices": [{"message": {"content": json.dumps({"changes": changes})}}]}))' ;;
+  down) printf '%s\n' '{"error": {"code": "upstream_error", "message": "selected account has no project-owned enrollment"}}' ;;
+esac
+SH
+  # send, inbox and hold record their arguments under their own name
+  cat > "$d/bin/send" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$STUB_CALLS/$(basename "$0")"
+printf '%s\n' "${FM_SEND_STREAM:-conversation}" >> "$STUB_CALLS/$(basename "$0").stream"
+SH
+  cp "$d/bin/send" "$d/bin/inbox"
+  cat > "$d/bin/hold" <<'SH'
+#!/usr/bin/env bash
+set -eu
+printf '%s\n' "$*" >> "$STUB_CALLS/hold"
+key=$2
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --card-file ]; then
+    "$ROOT/bin/fm-card.sh" validate --file "$2" --task "$key"
+    cp "$2" "$STUB_CALLS/captain-card.json"
+    exit 0
+  fi
+  shift
+done
+exit 1
 SH
   chmod +x "$d/bin/"*
   printf '%s' "$d"
@@ -244,7 +313,8 @@ run_dream() {  # <case-dir> <args...>
     FM_DREAM_JEV="$d/bin/jev" FM_DREAM_TASKS="$d/bin/tasks" FM_DREAM_HANDOFF="$d/bin/handoff" \
     FM_DREAM_REPORT="$d/bin/report" FM_DREAM_CAPTAIN_MEMORY="$d/bin/memory" FM_DREAM_NO_MISTAKES_DB="$d/nm.sqlite" STUB_CALLS="$d/calls" \
     FM_DREAM_FIRSTMATE="$d/firstmate" FM_DREAM_NO_MISTAKES="$d/bin/no-mistakes" FM_DREAM_GH="$d/bin/gh-pr" \
-    python3 "$DREAM" run --home "$d/home" "$@"
+    FM_DREAM_REFLECT="$d/bin/reflect" FM_DREAM_SEND="$d/bin/send" FM_DREAM_INBOX="$d/bin/inbox" FM_DREAM_HOLD="$d/bin/hold" \
+    ROOT="$ROOT" FM_DREAM_TRACK_WAIT=0 python3 "$DREAM" run --home "$d/home" "$@"
 }
 
 test_each_relaunch_is_counted_once() {
@@ -707,6 +777,327 @@ PY
   pass "time spent waiting for Ziggy's dream is recorded apart from the step's own time, with collect's phases"
 }
 
+# seed_improve <case-dir>: ship-x is a task of the home, with one run spawned
+# 2 h before NOW whose PR the gh stub reports merged at NOW - 1000.
+seed_improve() {
+  local d=$1
+  printf '# Backlog\n\n## In flight\n- [ ] ship-x - Do the thing (repo: firstmate) (kind: ship)\n' > "$d/home/data/backlog.md"
+  printf 'spawn_gen=s%s.1.2\n' $((NOW - 7200)) > "$d/home/state/ship-x.meta"
+  sqlite3 "$d/nm.sqlite" "INSERT INTO runs VALUES('rx','fleet','completed','fm/ship-x','','https://github.com/x/fm/pull/5',$((NOW - 6000)),$((NOW - 5000)));"
+  mkdir -p "$d/home/state/autoland" "$d/home/state/dream"
+  printf '%s autoland: merged https://github.com/bastotec/firstmate/pull/990 (deploy follows)\n%s autoland: deployed firstmate abcdef0: homes at abcdef0\n' \
+    "$(iso $((NOW - 100)))" "$(iso $((NOW - 50)))" > "$d/home/state/autoland/report.log"
+}
+
+test_last_night_keeps_unread_homes_unresolved() {
+  local d log mode
+  d=$(new_case improve-home-gaps)
+  seed_improve "$d"
+  printf '%s\n' '{"date":"2026-10-01","kind":"captain","what":"a call","key":"cap-1","state":"card raised"}' \
+    '{"date":"2026-10-01","kind":"code","what":"retry the hub","key":"w-9","mate":"dave-tools"}' \
+    > "$d/home/state/dream/improve-actions.jsonl"
+  for mode in unread cached incomplete; do
+    python3 - "$d/bin/report" "$mode" <<'PY'
+import json, sys
+primary = {'id': 'primary', 'name': 'first mate', 'state': 'idle', 'freshness': 'local'}
+mate = {'id': 'dave-tools', 'name': 'dave tools', 'state': 'working', 'freshness': 'remote'}
+mode = sys.argv[2]
+gaps = []
+if mode == 'unread':
+    primary.update(state=None, freshness='unreadable')
+    gaps = ['first mate: no readable home summary']
+elif mode == 'cached':
+    mate['freshness'] = 'cached'
+    gaps = ['dave tools: live summary unreachable, using the copy from yesterday']
+else:
+    gaps = ['first mate: 2 more holds not listed', 'dave tools: summary incomplete (child current state unavailable: w-9)']
+report = {'summary': 'partial report', 'waiting': [], 'crew': [], 'shipped': [], 'power': [],
+          'mates': [primary, mate], 'gaps': gaps}
+with open(sys.argv[1], 'w') as f:
+    f.write('#!/usr/bin/env bash\nprintf \'%s\\n\' ' + "'" + json.dumps(report) + "'\n")
+PY
+    STUB_REFLECT=down run_dream "$d" --only collect improve > "$d/$mode.json" || fail "run exited nonzero"
+    log=$(ls "$d"/home/state/dream/runs/*.json)
+    python3 - "$log" "$mode" <<'PY' || fail "a partial home was assumed resolved: $(jq -c .improve.last_night "$log")"
+import json, sys
+rows = json.load(open(sys.argv[1]))['improve']['last_night']
+mode = sys.argv[2]
+assert len(rows) == 2, rows
+assert rows[0]['now_state'].startswith('state unread') if mode != 'cached' else rows[0]['now_state'] == 'answered or closed', rows
+assert rows[1]['now_state'].startswith('state unread') if mode != 'unread' else rows[1]['now_state'] == 'no worker on it yet', rows
+PY
+  done
+  pass "improve: unread, stale or incomplete home reports cannot answer cards or prove workers absent"
+}
+
+test_every_unshipped_instruction_reaches_the_summary() {
+  local d log
+  d=$(new_case improve-unshipped)
+  seed_improve "$d"
+  STUB_REFLECT=instructions STUB_INSTR=none run_dream "$d" --only collect improve instructions track > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" "$ROOT/bin" <<'PY' || fail "unshipped instructions disappeared: $(jq -c '.improve.tonight, .summary' "$log")"
+import json, sys
+run = json.load(open(sys.argv[1]))
+life = run['improve']
+assert len(life['tonight']) == 2, life
+for action in life['tonight']:
+    assert action['pr'] is None and action['what'] in run['summary'] and action['state'] in run['summary'], run['summary']
+sys.path.insert(0, sys.argv[2])
+import fm_dream as dream
+life['tonight'] = [{'kind': 'instructions', 'what': 'First edit', 'pr': None, 'state': 'skipped: missing evidence'},
+                   {'kind': 'instructions', 'what': 'Second edit', 'pr': None, 'state': 'skipped: private file'},
+                   {'kind': 'instructions', 'what': 'Shipped edits', 'pr': 'https://github.com/o/r/pull/1', 'state': 'open'},
+                   {'kind': 'instructions', 'what': 'Shipped edits', 'pr': 'https://github.com/o/r/pull/1', 'state': 'open'}]
+summary = dream.improve_summary(life)
+assert 'First edit (skipped: missing evidence)' in summary and 'Second edit (skipped: private file)' in summary, summary
+assert summary.count('https://github.com/o/r/pull/1') == 1, summary
+PY
+  pass "improve: every unshipped or skipped instruction is reported, and only real PR links deduplicate"
+}
+
+test_failed_empty_measurements_are_not_quiet_days() {
+  local d log
+  d=$(new_case improve-unread-db)
+  printf 'not a sqlite database\n' > "$d/nm.sqlite"
+  run_dream "$d" --only improve track > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  jq -e '.status == "partial" and .steps.improve.status == "partial" and .steps.track.status == "partial"
+    and (.steps.improve.why | test("no-mistakes state"))
+    and (.summary | test("Improve: measurement incomplete:.*no-mistakes state"))' "$log" >/dev/null \
+    || fail "a corrupt database looked quiet: $(cat "$log")"
+  [ ! -e "$d/calls/reflect.0" ] || fail "an unreadable empty measurement called the model"
+  pass "improve: an empty failed measurement stays partial and its reason reaches the morning summary"
+}
+
+test_card_timeouts_keep_filings_and_allow_triage() {
+  local d
+  d=$(new_case improve-card-timeout)
+  python3 - "$d" "$ROOT/bin" <<'PY' || fail "a card timeout lost filings or prevented triage"
+import json, os, pathlib, subprocess, sys, time
+sys.path.insert(0, sys.argv[2])
+import fm_dream as dream
+root = pathlib.Path(sys.argv[1])
+
+class Context(dream.Ctx):
+    def run(self, argv, **kw):
+        self.calls.append(argv)
+        if argv[0] == 'fake-hold' or (self.mode == 'add' and '--prefix' in argv and argv[argv.index('--prefix') + 1] == 'dream-call'):
+            if self.mode == 'budget':
+                self.deadline = time.time() - 1
+            raise subprocess.TimeoutExpired(argv, 60)
+        if argv[0] == 'fake-tasks':
+            self.adds += 1
+            return subprocess.CompletedProcess(argv, 0, json.dumps({'id': 'filed-%s' % self.adds}), '')
+        return subprocess.CompletedProcess(argv, 0, '', '')
+
+os.environ.update(FM_DREAM_TASKS='fake-tasks', FM_DREAM_HOLD='fake-hold', FM_DREAM_INBOX='fake-inbox')
+for mode in ('hold', 'add', 'budget'):
+    home = root / mode
+    ctx = Context(home, False)
+    ctx.mode, ctx.calls, ctx.adds = mode, [], 0
+    ctx.deadline = time.time() + 600
+    ctx.config = {'owners': {'firstmate': 'primary'}}
+    code = {'kind': 'code', 'repo': 'firstmate', 'title': 'Retry the lifecycle read', 'change': 'Retry a transient read',
+            'fix': 'Bound the retry', 'evidence': 'ship-x failed', 'target': 'failed_runs', 'before': 1}
+    captain = {'kind': 'captain', 'change': 'Approve a private setting', 'evidence': 'ship-x waited',
+               'target': 'waiting to merge', 'before': 60}
+    triage = {'repo': 'firstmate', 'title': 'Cache independent measurements', 'evidence': ['slow read'], 'fix': 'cache'}
+    ctx.facts = {'improve': {'changes': [code, captain], 'tonight': []}, 'triage': [triage], 'open_work': ([], [])}
+    if mode == 'budget':
+        try:
+            dream.step_file(ctx)
+            raise AssertionError('step-budget exhaustion was swallowed')
+        except subprocess.TimeoutExpired:
+            pass
+        assert [r['title'] for r in ctx.facts['raised']] == [code['title']], ctx.facts
+    else:
+        result = dream.step_file(ctx)
+        assert result['status'] == 'partial' and 'captain card not raised' in result['why'], result
+        assert [r['title'] for r in result['raised']] == [code['title'], triage['title']], result
+        assert ctx.facts['raised'] == result['raised'], ctx.facts
+        assert ctx.facts['improve']['tonight'][0]['state'].startswith('dispatch ordered'), ctx.facts
+    rows = [json.loads(l) for l in (ctx.dir / 'raised.jsonl').read_text().splitlines()]
+    assert [r['key'] for r in rows] == [r['key'] for r in ctx.facts['raised']], rows
+    card = ctx.facts['improve']['tonight'][-1]
+    assert card['state'] == 'card not raised: TimeoutExpired', card
+    assert card['key'] == ('filed-2' if mode != 'add' else None), card
+    assert not (ctx.dir / '.card.md').exists() and not (ctx.dir / '.card.json').exists()
+PY
+  pass "improve: card timeouts preserve dispatched filings and continue triage unless the step budget is exhausted"
+}
+
+test_track_rejects_a_predecessor_deployment() {
+  local d log
+  d=$(new_case improve-deploy-predecessor)
+  seed_improve "$d"
+  printf '%s autoland: merged https://github.com/bastotec/firstmate/pull/990 (deploy follows)\n%s autoland: deployed firstmate 1111111: previous commit\n' \
+    "$(iso $((NOW - 100)))" "$(iso $((NOW - 50)))" > "$d/home/state/autoland/report.log"
+  STUB_REFLECT=none STUB_INSTR=edit run_dream "$d" --only collect improve instructions track > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  jq -e '.improve.tonight[] | select(.kind == "instructions") | .state == "merged, deploy pending"' "$log" >/dev/null \
+    || fail "track accepted the preceding commit's deployment: $(cat "$log")"
+  pass "improve: tracking retains deploy-pending when only a predecessor has deployed"
+}
+
+test_improve_acts_on_every_kind_of_change() {
+  local d log
+  d=$(new_case improve)
+  seed_improve "$d"
+  printf '{"date": "2026-10-01", "mate_median": 7000, "mate_p90": 9000, "session_median": 600, "merged": 0, "open": 2}\n' \
+    > "$d/home/state/dream/improve.jsonl"
+  STUB_REFLECT=ok STUB_INSTR=edit run_dream "$d" --only collect improve instructions file track > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" "$d/calls" <<'PY' || fail "improve wrong: $(jq -c '.steps, .summary' "$log")"
+import glob, json, sys
+run = json.load(open(sys.argv[1]))
+calls = sys.argv[2]
+st, life = run["steps"]["improve"], run["improve"]
+assert st["status"] == "done" and st["tasks"] == 1 and st["changes"] == 3 and st["dropped"] == 3, st
+assert life["model"] == "claude/opus-5-5" and life["metrics"]["mate"]["median"] == 6200, life
+kinds = [c["kind"] for c in life["changes"]]
+assert kinds == ["instructions", "code", "captain"], kinds
+assert life["changes"][2]["target"] == "waiting to merge" and life["changes"][0]["before"] == 0, life["changes"]
+assert life["previous"]["date"] == "2026-10-01" and life["change"]["mate_median"] == -800, life
+reqs = glob.glob(calls + "/reflect.*")
+assert len(reqs) == 1, reqs
+req = json.load(open(reqs[0]))
+assert req["model"] == "claude/opus-5-5" and "tools" not in req and len(req["messages"]) == 1, req
+assert "ship-x" in req["messages"][0]["content"], req
+# instructions: the agent was told to make the change, and its PR is followed to deploy
+prompts = [open(f).read() for f in glob.glob(calls + "/deck.*")]
+assert any("must make them" in p and "Tell workers to run the repo checks" in p for p in prompts), "required change not in the prompt"
+tonight = {a["kind"]: a for a in life["tonight"]}
+assert tonight["instructions"]["pr"].endswith("/pull/990") and tonight["instructions"]["state"] == "merged and deployed", tonight
+assert run["steps"]["track"]["status"] == "done" and run["steps"]["track"]["acted"] == 3, run["steps"]["track"]
+# code: a priority task, handed to the owning mate, with a dispatch order
+adds = [open(f).read() for f in sorted(glob.glob(calls + "/add.*"))]
+code_add = [a for a in adds if "Merge green mate PRs" in a]
+assert code_add and "--priority 0" in code_add[0] and "--repo deck" in code_add[0], adds
+key = tonight["code"]["key"]
+assert tonight["code"]["state"] == "dispatch ordered to dave-tools as %s" % key, tonight["code"]
+assert open(calls + "/handoff." + key).read().strip() == "dave-tools " + key
+send = open(calls + "/send").read()
+assert send.startswith("dave-tools Priority from fleet dreaming: %s" % key) and "Dispatch a worker on it now" in send, send
+assert open(calls + "/send.stream").read().split() == ["monologue"], "the dispatch order did not go to the operational lane"
+assert [r["key"] for r in run["raised"]] == [key] and run["raised"][0]["mate"] == "dave-tools", run["raised"]
+# captain: one plain card, with the charter proposal on it
+card = tonight["captain"]
+assert card["state"] == "card raised" and card["key"], card
+hold = open(calls + "/hold").read()
+assert hold.startswith("hold %s --reason Decide whether mates may merge medium-risk PRs" % card["key"]), hold
+assert "charter edit for cadia: name the kernel repo" in card["what"], card
+payload = json.load(open(calls + "/captain-card.json"))
+assert payload["project"] == "firstmate" and payload["recommended"] == "1", payload
+assert [o["key"] for o in payload["options"]] == ["1", "2"], payload
+assert all(card["key"] in o["instruction"] for o in payload["options"]), payload
+body = open(calls + "/body.%s.md" % card["key"][len("dream-k"):]).read()
+assert "Decide whether mates may merge medium-risk PRs" in body and "3 PRs waited for a merge" in body, body
+assert "Apply this charter edit for cadia? name the kernel repo" in body, body
+s = run["summary"]
+assert "Improve: 1 mate task (1 merged, 0 open), start to merge median 1.7h (p90 1.7h) (-13m vs 2026-10-01)" in s, s
+assert "Tonight: AGENTS.md: says how to answer a peer (https://github.com/bastotec/firstmate/pull/990, merged and deployed)" in s, s
+assert "Merge green mate PRs without waiting for a person (dispatch ordered to dave-tools as %s)" % key in s, s
+assert "captain card %s" % card["key"] in s, s
+PY
+  grep -q '^## Improve' "$d"/home/state/dream/digest-*.md || fail "the digest has no improve section"
+  python3 -c 'import os, stat, sys; sys.exit(stat.S_IMODE(os.stat(sys.argv[1]).st_mode) != 0o600)' "$d"/home/state/dream/digest-*.md \
+    || fail "the digest is no longer private"
+  [ ! -e "$d/home/state/dream/improve-actions.jsonl" ] || fail "an --only run recorded the night's actions"
+  [ "$(wc -l < "$d/home/state/dream/improve.jsonl" | tr -d ' ')" = 1 ] || fail "an --only run wrote the night-over-night history"
+  pass "improve: Opus is asked once, and its instructions, code and captain changes are shipped, dispatched and carded"
+}
+
+test_improve_reports_last_night_s_changes_and_their_targets() {
+  local d log
+  d=$(new_case improve-last)
+  seed_improve "$d"
+  printf '%s\n' '{"date": "2026-10-01", "kind": "instructions", "what": "brief names the checks", "pr": "https://github.com/bastotec/firstmate/pull/990", "target": "parked at a gate", "before": 7200}' \
+    '{"date": "2026-10-01", "kind": "code", "what": "retry the hub", "key": "w-9", "mate": "dave-tools", "target": "fix_rounds", "before": 9}' \
+    '{"date": "2026-10-01", "kind": "captain", "what": "a call", "key": "cap-1", "state": "card raised"}' \
+    '{"date": "2026-10-01", "kind": "code", "what": "PRIVATE ACTION", "key": "p-1", "mate": "finn-finance"}' \
+    '{"date": "2026-09-30", "kind": "code", "what": "OLDER NIGHT", "key": "x"}' > "$d/home/state/dream/improve-actions.jsonl"
+  STUB_REFLECT=down run_dream "$d" --only collect improve > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" <<'PY' || fail "last night wrong: $(jq -c '.improve.last_night, .summary' "$log")"
+import json, sys
+run = json.load(open(sys.argv[1]))
+last = run["improve"]["last_night"]
+assert [a["now_state"] for a in last] == ["merged and deployed", "worker failed", "answered or closed"], last
+assert last[0]["now_value"] == 0 and last[1]["now_value"] == 0, last
+s = run["summary"]
+assert "Last night: brief names the checks (merged and deployed, parked at a gate 2.0h -> 0m); retry the hub (worker failed, fix_rounds 9 -> 0)" in s, s
+assert "OLDER NIGHT" not in s and "PRIVATE ACTION" not in s, s
+PY
+  # an unreadable fleet report proves nothing about a worker or a card
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$d/bin/report"
+  rm -f "$d"/home/state/dream/runs/*.json
+  STUB_REFLECT=down run_dream "$d" --only collect improve > "$d/out2.json" || fail "second run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  [ "$(jq -c '[.improve.last_night[].now_state]' "$log")" = \
+    '["merged and deployed","state unread: the fleet report could not be read","state unread: the fleet report could not be read"]' ] \
+    || fail "an unreadable report was read as an answer: $(jq -c '.improve.last_night' "$log")"
+  pass "improve: last night's changes are reported with their state now and the measurement they targeted, then and now"
+}
+
+test_improve_files_no_duplicate_and_cards_charters_on_a_quiet_night() {
+  local d log
+  d=$(new_case improve-dup)
+  seed_improve "$d"
+  STUB_REFLECT=dup run_dream "$d" --only collect improve triage file track > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  [ "$(jq -r '.improve.tonight[0].state' "$log")" = "already open, not filed again" ] \
+    || fail "a change already in the open work was filed: $(jq -c '.improve.tonight' "$log")"
+  [ ! -e "$d/calls/send" ] || fail "a duplicate got a dispatch order"
+  [ "$(jq -r '.steps.track.status' "$log")" = "nothing changed" ] || fail "an unacted night read as done: $(jq -c .steps.track "$log")"
+  d=$(new_case improve-quiet)
+  sqlite3 "$d/nm.sqlite" "DELETE FROM runs"
+  STUB_INSTR=edit run_dream "$d" --only collect improve instructions file track > "$d/out.json" || fail "quiet run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" <<'PY' || fail "quiet night wrong: $(jq -c '.steps, .summary' "$log")"
+import json, sys
+run = json.load(open(sys.argv[1]))
+assert run["steps"]["improve"]["status"] == "quiet day" and run["steps"]["track"]["status"] == "quiet day", run["steps"]
+card = run["charter_card"]
+assert len(card) == 1 and card[0]["state"] == "card raised" and "cadia: name the kernel repo" in card[0]["what"], card
+assert "Captain card %s for the charter edits (card raised)." % card[0]["key"] in run["summary"], run["summary"]
+PY
+  pass "improve: a change already open is not filed again, and a quiet night still cards its charter proposals"
+}
+
+test_an_unavailable_improve_model_is_named_and_never_replaced() {
+  local d log
+  d=$(new_case improve-down)
+  seed_improve "$d"
+  STUB_REFLECT=down run_dream "$d" --only collect improve track > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" "$d/calls" <<'PY' || fail "unavailable model handled wrong: $(jq -c '.steps, .summary' "$log")"
+import glob, json, sys
+run = json.load(open(sys.argv[1]))
+st = run["steps"]["improve"]
+assert st["status"] == "partial", st
+note = "claude/opus-5-5 unavailable: selected account has no project-owned enrollment; no other model was tried"
+assert note in st["why"] and "Nothing changed tonight: " + note in run["summary"], (st, run["summary"])
+assert run["improve"]["metrics"]["tasks"] == 1 and run["improve"]["changes"] == [], run["improve"]
+assert [json.load(open(c))["model"] for c in glob.glob(sys.argv[2] + "/reflect.*")] == ["claude/opus-5-5"]
+assert run["steps"]["track"]["status"] == "done", run["steps"]["track"]
+PY
+  pass "improve: an unavailable Opus is named in the report, the measurements still land, and no other model is tried"
+}
+
+test_the_improve_model_comes_from_config_and_a_bad_one_stops_the_run() {
+  local d
+  d=$(new_case improve-config)
+  seed_improve "$d"
+  printf '{"exclude_homes": ["finn-finance"], "model": "stub/model", "improve": {"model": "claude/opus-9"}}\n' > "$d/home/config/dream.json"
+  STUB_REFLECT=ok run_dream "$d" --only collect improve > "$d/out.json" || fail "run exited nonzero"
+  [ "$(jq -r .model "$d"/calls/reflect.0)" = claude/opus-9 ] || fail "the configured improve model was not used"
+  printf '{"improve": {"model": 5}}\n' > "$d/home/config/dream.json"
+  if run_dream "$d" --only improve > "$d/out2.json" 2> "$d/err"; then fail "a malformed improve model did not stop the run"; fi
+  grep -q 'improve must be an object whose model is a string' "$d/err" || fail "the refusal is unclear: $(cat "$d/err")"
+  pass "improve: config/dream.json pins the model, and a malformed one stops the run"
+}
+
 test_instructions_open_one_gated_pr_and_propose_charter_edits() {
   local d log
   d=$(new_case instr-edit)
@@ -875,9 +1266,146 @@ PY
   pass "instructions: an interrupted night stops the gate run and still reports the PR"
 }
 
+test_improve_rejects_missing_repositories_before_filing() {
+  local d log
+  d=$(new_case improve-missing-repos)
+  seed_improve "$d"
+  STUB_REFLECT=bad-repos run_dream "$d" --only collect improve file track > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" "$d/calls" <<'PY' || fail "a projectless change was dispatched"
+import glob, json, sys
+run = json.load(open(sys.argv[1]))
+assert run['steps']['improve']['changes'] == 2 and run['steps']['improve']['dropped'] == 3, run['steps']
+assert [c['repo'] for c in run['improve']['changes']] == ['phone-harness', 'deck'], run['improve']
+adds = [open(p).read() for p in glob.glob(sys.argv[2] + '/add.*')]
+assert len(adds) == 2 and not any('Reject a projectless fix' in a for a in adds), adds
+assert any('--repo phone-harness' in a for a in adds) and any('--repo deck' in a for a in adds), adds
+assert all(a['state'].startswith('dispatch ordered') for a in run['improve']['tonight']), run['improve']
+PY
+  pass "improve: missing, null and empty repositories are dropped while explicit keys and slugs still dispatch"
+}
+
+test_measurement_failure_preserves_independent_actions() {
+  local d log
+  d=$(new_case improve-unread-actions)
+  printf 'not a sqlite database\n' > "$d/nm.sqlite"
+  mkdir -p "$d/home/state/autoland"
+  printf '%s autoland: merged https://github.com/bastotec/firstmate/pull/990 (deploy follows)\n%s autoland: deployed firstmate abcdef0: homes at abcdef0\n' \
+    "$(iso $((NOW - 100)))" "$(iso $((NOW - 50)))" > "$d/home/state/autoland/report.log"
+  STUB_INSTR=edit STUB_NO_TRIAGE=1 STUB_SKILLS=none run_dream "$d" > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" "$d/home/state/dream" <<'PY' || fail "measurement failure lost successful actions: $(cat "$log")"
+import json, pathlib, sys
+run = json.load(open(sys.argv[1]))
+root = pathlib.Path(sys.argv[2])
+assert run['status'] == 'partial' and run['steps']['improve']['status'] == 'partial', run['steps']
+assert run['steps']['track']['status'] == 'partial' and run['steps']['track']['acted'] == 2, run['steps']
+assert 'no-mistakes state' in run['steps']['track']['why'], run['steps']['track']
+life = run['improve']
+assert life['changes'] == [] and life['measurement_error'], life
+instructions, card = life['tonight']
+assert instructions['kind'] == 'instructions' and instructions['state'] == 'merged and deployed', instructions
+assert instructions['pr'].endswith('/pull/990'), instructions
+assert card['kind'] == 'captain' and card['state'] == 'card raised' and card['key'], card
+rows = [json.loads(l) for l in (root / 'improve-actions.jsonl').read_text().splitlines()]
+assert rows == [dict(a, date=run['date']) for a in life['tonight']], rows
+assert not (root / 'improve.jsonl').exists(), 'failed measurements were persisted as metrics'
+summary = run['summary']
+assert 'Improve: measurement incomplete:' in summary and '. Tonight: AGENTS.md:' in summary, summary
+assert instructions['pr'] + ', merged and deployed' in summary and 'captain card ' + card['key'] in summary, summary
+PY
+  [ ! -e "$d/calls/reflect.0" ] || fail "failed measurements called the reflection model"
+  pass "improve: failed measurements stay partial but independent PRs and cards are tracked, recorded and summarized"
+}
+
+test_last_night_requires_evidence_before_resolving_failed_cards() {
+  local d log
+  d=$(new_case improve-failed-cards)
+  seed_improve "$d"
+  printf '%s\n' \
+    '{"date":"2026-10-01","kind":"captain","what":"queued after failure","key":"cap-queued","state":"card not raised: TimeoutExpired"}' \
+    '{"date":"2026-10-01","kind":"captain","what":"held later","key":"cap-held","state":"card not raised"}' \
+    '{"date":"2026-10-01","kind":"captain","what":"completed later","key":"cap-done","state":"card not raised"}' \
+    '{"date":"2026-10-01","kind":"captain","what":"confirmed card","key":"cap-confirmed","state":"card raised"}' \
+    > "$d/home/state/dream/improve-actions.jsonl"
+  cat > "$d/bin/report" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' '{"summary":"fleet ok","gaps":[],"crew":[],"power":[],
+ "mates":[{"id":"primary","name":"first mate","freshness":"local","state":"idle"}],
+ "waiting":[{"task":"cap-held","mate":"primary"}],"shipped":[{"task":"cap-done","mate":"primary"}]}'
+SH
+  STUB_REFLECT=none run_dream "$d" --only collect improve > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  jq -e '[.improve.last_night[].now_state] == ["card not raised: TimeoutExpired", "waiting on the captain", "answered or closed", "answered or closed"]
+    and (.summary | contains("queued after failure (card not raised: TimeoutExpired)"))' "$log" >/dev/null \
+    || fail "a failed card was assumed answered: $(cat "$log")"
+  pass "improve: failed cards stay unresolved until a hold or completion is observed"
+}
+
+test_deployment_polls_cache_confirmed_comparisons_only() {
+  local d
+  d=$(new_case improve-compare-cache)
+  python3 - "$d/home" "$ROOT/bin" <<'PY' || fail "deployment comparisons were repeated or unread results were cached"
+import collections, json, subprocess, sys
+sys.path.insert(0, sys.argv[2])
+import fm_dream as dream
+
+class Context(dream.Ctx):
+    def run(self, argv, **kw):
+        self.calls[tuple(argv)] += 1
+        if argv[1:3] == ['pr', 'view']:
+            body = {'state': 'MERGED', 'mergedAt': '2026-10-14T17:30:00Z', 'mergeCommit': {'oid': self.merge}}
+        else:
+            count = self.calls[tuple(argv)]
+            sha = argv[-1].split('...')[-1]
+            if sha == '4444444' and count == 1:
+                return subprocess.CompletedProcess(argv, 1, '', 'unread')
+            if sha == '4444444' and count == 2:
+                return subprocess.CompletedProcess(argv, 0, '{', '')
+            body = {'status': {'1111111': 'behind', '3333333': 'diverged', '4444444': 'behind', '2222222': 'ahead'}[sha]}
+        return subprocess.CompletedProcess(argv, 0, json.dumps(body), '')
+
+ctx = Context(sys.argv[1], False)
+ctx.calls = collections.Counter()
+ctx.merge = 'abcdef0000000000000000000000000000000000'
+pr = 'https://github.com/o/firstmate/pull/1'
+deps = {pr: [{'at': 1792000000, 'sha': sha} for sha in ('1111111', '3333333', '4444444')]}
+for _ in range(4):
+    assert dream.pr_state(ctx, pr, deps) == 'merged, deploy pending'
+api = lambda: {argv[-1]: count for argv, count in ctx.calls.items() if argv[1] == 'api'}
+assert sorted(api().values()) == [1, 1, 3], api()
+assert sum(count for argv, count in ctx.calls.items() if argv[1] == 'pr') == 1, ctx.calls
+deps[pr].append({'at': 1792000010, 'sha': '2222222'})
+assert dream.pr_state(ctx, pr, deps) == 'merged and deployed'
+assert dream.pr_state(ctx, pr, deps) == 'merged and deployed'
+assert sorted(api().values()) == [1, 1, 1, 3], api()
+other = 'https://github.com/o/other/pull/1'
+assert dream.pr_state(ctx, other, {other: deps[pr][:1]}) == 'merged, deploy pending'
+ctx.merge = 'fedcba0000000000000000000000000000000000'
+next_pr = 'https://github.com/o/firstmate/pull/2'
+assert dream.pr_state(ctx, next_pr, {next_pr: deps[pr][:1]}) == 'merged, deploy pending'
+assert len(api()) == 6 and sorted(api().values()) == [1, 1, 1, 1, 1, 3], api()
+PY
+  pass "improve: polling caches confirmed commit comparisons per repository and pair, retries unread results and checks new deployments"
+}
+
+test_improve_rejects_missing_repositories_before_filing
+test_measurement_failure_preserves_independent_actions
+test_last_night_requires_evidence_before_resolving_failed_cards
+test_deployment_polls_cache_confirmed_comparisons_only
+test_last_night_keeps_unread_homes_unresolved
+test_every_unshipped_instruction_reaches_the_summary
+test_failed_empty_measurements_are_not_quiet_days
+test_card_timeouts_keep_filings_and_allow_triage
+test_track_rejects_a_predecessor_deployment
 test_collect_builds_a_private_digest_of_the_day
 test_each_relaunch_is_counted_once
 test_an_interrupted_night_stops_the_gate_and_keeps_the_pr
+test_improve_acts_on_every_kind_of_change
+test_improve_reports_last_night_s_changes_and_their_targets
+test_improve_files_no_duplicate_and_cards_charters_on_a_quiet_night
+test_an_unavailable_improve_model_is_named_and_never_replaced
+test_the_improve_model_comes_from_config_and_a_bad_one_stops_the_run
 test_instructions_open_one_gated_pr_and_propose_charter_edits
 test_instructions_prune_landed_or_old_worktrees
 test_instructions_guards_reject_out_of_scope_hard_stop_and_big_changes
