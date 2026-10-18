@@ -31,9 +31,9 @@
 #     once per change, without reopening the captain call.
 #   - working or parked, or done with its PR (recorded, or the last PR link in
 #     its ledger) still open or unreadable: left alone;
-#   - a done ship with no PR, or a closed-unmerged PR, is never cleaned up
-#     automatically, since a pushed but unmerged branch passes cleanup's checks;
-#     it becomes the clean-it-up-or-keep-it decision below;
+#   - a done ship with no PR is referred to the owning mate to assess landing
+#     and guarded retirement, once per evidence change, without automatic
+#     cleanup or a captain card; a closed-unmerged PR remains a cleanup decision;
 #   - otherwise done, quiet for 15 minutes (a ship's PR must be merged):
 #     cleaned up with bin/fm-teardown.sh --keep-commits, never --force;
 #     teardown's header owns committed-work preservation and its limits.
@@ -57,7 +57,9 @@
 #   and settled deferrals on idle-orphan-<task> (or its follow-up), durable
 #   mate waits on those or the original task, and an unchanged raised
 #   fingerprint of the actual task's ledger, leave the endpoint alone;
-#   otherwise a refused close becomes a decision under idle-orphan-<task>.
+#   otherwise a refused close is referred to the owning mate under
+#   idle-orphan-<task>, without a captain card or another close attempt until
+#   the task ledger or endpoint identity changes.
 # Metadata-less pending backlog closes also appear as unhandled on every scan
 # until the lifecycle owner clears them; the sweep reports but never retries
 # or changes those recovery records.
@@ -71,8 +73,7 @@
 # state/idle-sweep/<id>.raised; unchanged size suppresses another decision
 # even when the classification changes. Holds and settled deferrals on either
 # the worker or follow-up id take precedence over a changed fingerprint.
-# Worker holds use bin/fm-captain-hold.sh's --expected-record contract; only
-# the explicit record-less orphan caller is exempt, never a worker id prefix.
+# Worker holds use bin/fm-captain-hold.sh's --expected-record contract.
 # A rejected metadata snapshot is left for a fresh scan (class unknown,
 # action none), without attempting another linked hold or reporting it unhandled.
 # A main home has no parent audit, so a scan that leaves workers unhandled
@@ -102,7 +103,7 @@
 # {id, class, age_seconds, detail, action, hold_id}); hold_id names the raised
 # captain call, or is null; action is one of none, cleaned,
 # carded, referred (to the owning mate), or unhandled. Refused orphan closes
-# are included even when their hold fails; held or unchanged raised orphans
+# are included even when their referral fails; held or unchanged raised orphans
 # appear with action none.
 # Exit 1 when no scan has published a summary yet.
 #
@@ -310,9 +311,9 @@ classify() {
           *) CLASS=settling; DETAIL="cannot read whether $pr merged"; return ;;
         esac
       elif [ "$(fm_meta_get "$STATE/$id.meta" kind)" != scout ]; then
-        # nothing proves a ship without a PR landed, so it is never cleaned up
-        # automatically: a pushed, unmerged branch would pass cleanup's checks
-        UNPROVEN=1
+        CLASS=mate-review
+        MATE_EVIDENCE=$(mate_evidence "$id" "$worktree" "$line")
+        return
       fi
       ;;
     failed) CLASS=failed ;;
@@ -352,7 +353,7 @@ hours() {  # <secs>
 # raise <id> <class> <why> <project>: hold the worker for the captain with a
 # full card. Prints nothing; sets RAISED=1 on success.
 raise() {
-  local id=$1 class=$2 why=$3 project=$4 card title situation reason rec o1 o2 l1 l2 rc=0 out call_id=$1 ledger_id=${5:-$1}
+  local id=$1 class=$2 why=$3 project=$4 card title situation reason rec o1 o2 l1 l2 rc=0 out call_id=$1
   local hold_args=()
   HOLD_ID=
   RAISE_SKIPPED=0
@@ -362,31 +363,17 @@ raise() {
   # internal jargon): name the PR, never the task id, and say the refusal in
   # plain words; the exact refusal stays in the instruction and the reason.
   local about="A worker" pr
-  pr=
-  [ "${6:-}" = orphan ] || pr=$(fm_meta_get "$STATE/$ledger_id.meta" pr 2>/dev/null || true)
+  pr=$(fm_meta_get "$STATE/$id.meta" pr 2>/dev/null || true)
   case "$pr" in */pull/[0-9]*) about="The worker on PR ${pr##*/pull/}" ;; esac
-  case "$class" in
-    finished)
-      title="A finished worker's cleanup was refused. Clean it up or keep it?"
-      case "$why" in
-        *uncommitted*) situation="$about is done, but its local copy has uncommitted changes." ;;
-        *"not landed"*|*unlanded*) situation="$about is done, but its local copy has commits that are not in main." ;;
-        *) situation="$about is done, but cleaning up its local copy was refused." ;;
-      esac
-      l1="Clean it up"; o1="Worker $id in $where is done but its cleanup refused: $why. Resolve that refusal and clean it up through the guarded cleanup; never discard unlanded work without my explicit word."
-      l2="Keep it"; o2="Keep worker $id in $where as it is for now."
-      rec=1 ;;
-    *)
-      case "$class" in
-        failed) situation="$about failed and nothing retried it." ;;
-        stalled) situation="$about has been waiting with nobody acting on it." ;;
-        *) situation="$about is gone, but its record was left behind." ;;
-      esac
-      title="Retire or retry a worker that stopped?"
-      l1="Retire it"; o1="Retire worker $id in $where: push any unlanded work to a branch, then clean it up through the guarded cleanup path."
-      l2="Retry it"; o2="Relaunch worker $id in $where on its existing instructions and local copy, and have it finish its task."
-      rec=1; [ "$class" = stalled ] && rec=2 ;;
+  title="A finished worker's cleanup was refused. Clean it up or keep it?"
+  case "$why" in
+    *uncommitted*) situation="$about is done, but its local copy has uncommitted changes." ;;
+    *"not landed"*|*unlanded*) situation="$about is done, but its local copy has commits that are not in main." ;;
+    *) situation="$about is done, but cleaning up its local copy was refused." ;;
   esac
+  l1="Clean it up"; o1="Worker $id in $where is done but its cleanup refused: $why. Resolve that refusal and clean it up through the guarded cleanup; never discard unlanded work without my explicit word."
+  l2="Keep it"; o2="Keep worker $id in $where as it is for now."
+  rec=1
   reason="$(printf '%s: %s' "$id" "$why" | tr -d '()' | cut -c1-200); quiet $(hours "$AGE"); $l1 or $l2"
   situation="$(printf '%s' "$situation" | cut -c1-240) ($(hours "$AGE") quiet)"
   card=$(mktemp "$STATE/.idle-sweep-card.XXXXXX") || return 0
@@ -395,14 +382,7 @@ raise() {
     '{project:$project, title:$title, situation:$situation,
       options:[{key:"1",label:$l1,instruction:$o1},{key:"2",label:$l2,instruction:$o2}],
       recommended:$rec}' > "$card" || { rm -f "$card"; return 0; }
-  hold_args=(--reason "$reason" --card-file "$card")
-  # only the record-less orphan caller passes "orphan"; a worker whose own id
-  # happens to start with idle-orphan- still gets the locked record check
-  if [ "${6:-}" = orphan ]; then
-    hold_args+=(--title "${title:0:120}" --repo "$project")
-  else
-    hold_args+=(--expected-record "$RECORD")
-  fi
+  hold_args=(--reason "$reason" --card-file "$card" --expected-record "$RECORD")
   out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-captain-hold.sh" hold "$id" \
     "${hold_args[@]}" 2>&1) || rc=$?
   if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then
@@ -422,7 +402,7 @@ raise() {
     return 0
   fi
   mkdir -p "$RAISED_DIR" 2>/dev/null || true
-  fingerprint "$id" "$ledger_id" > "$RAISED_DIR/$id.raised" 2>/dev/null || true
+  fingerprint "$id" > "$RAISED_DIR/$id.raised" 2>/dev/null || true
   log "raised $id ($class): $why"
   RAISED=1
   HOLD_ID=$call_id
@@ -520,7 +500,7 @@ while IFS= read -r meta; do
         DETAIL=$CLEANUP_WHY
       fi
       ;;
-    failed|stalled|dead)
+    mate-review|failed|stalled|dead)
       if notify_mate "$id" "$MATE_EVIDENCE" mate-review; then
         action=referred
       else
@@ -567,6 +547,11 @@ while IFS=$'\t' read -r otask oeid; do
     add_row "idle-orphan-$otask" raised "$detail" none
     continue
   fi
+  orphan_evidence=$(mate_evidence "$otask" "" "$oeid")
+  if [ "$(cat "$RAISED_DIR/idle-orphan-$otask.mate-review" 2>/dev/null)" = "$orphan_evidence" ]; then
+    add_row "idle-orphan-$otask" dead "$detail; awaiting mate assessment" referred
+    continue
+  fi
   rc=0
   out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-retire-endpoint.sh" --orphan "$otask" --endpoint "$oeid" </dev/null 2>&1) || rc=$?
   if [ "$rc" -eq 0 ]; then
@@ -575,9 +560,12 @@ while IFS=$'\t' read -r otask oeid; do
     continue
   fi
   detail="$detail and its close refused: $(one_line "$out")"
-  RAISED=0
-  raise "idle-orphan-$otask" dead "$detail" "$(basename "$FM_HOME")" "$otask" orphan
-  if [ "$RAISED" = 1 ]; then action=carded; NEW="$NEW $HOLD_ID"; elif [ "${RAISE_SKIPPED:-0}" = 1 ]; then CLASS=unknown; DETAIL="worker record changed during scan"; else action=unhandled; fi
+  if notify_mate "idle-orphan-$otask" "$orphan_evidence" mate-review; then
+    action=referred
+  else
+    action=unhandled
+    detail="could not notify owning mate: $detail"
+  fi
   add_row "idle-orphan-$otask" dead "$detail" "$action"
 done <<< "$orphans"
 
