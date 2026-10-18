@@ -6,6 +6,7 @@
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
 #                                         [--effort <level>] [--unless-held-stopped [--replace-live]]
+#                                         [--if-still-stopped <status-bytes> --expected-record <metadata>]
 #                                         (--note <text> | --note-file <path>)
 #        fm-control.sh <task-id> reincarnate
 #                                         (--note <text> | --note-file <path>)
@@ -91,6 +92,11 @@
 #              the prior durable record in place and reports the concrete
 #              state; it never leaves a half-transitioned task claiming to be
 #              running.
+#              --if-still-stopped admits a local ship or scout retry only under
+#              the control lock, with an unchanged --expected-record and status
+#              byte count, a fresh failed/blocked/paused/gone crew state, and no
+#              live semantic busy turn. Exit 3 leaves changed or active workers
+#              for a fresh scan without starting a relaunch transaction.
 #
 #   recover-missing For a local record, restore a terminal whose endpoint reads
 #              missing, then hand the launch to the existing owner
@@ -363,6 +369,9 @@ NOTE=
 NOTE_SET=0
 UNLESS_HELD_STOPPED=0
 REPLACE_LIVE=0
+EXPECTED_RECORD=
+EXPECTED_RECORD_SET=0
+STOPPED_STATUS_SIZE=
 control_want_value=
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
@@ -374,6 +383,13 @@ for control_arg in "$@"; do
       model) NEW_MODEL=$control_arg; MODEL_SET=1 ;;
       effort) NEW_EFFORT=$control_arg; EFFORT_SET=1 ;;
       note) NOTE=$control_arg; NOTE_SET=1 ;;
+      expected_record) EXPECTED_RECORD=$control_arg; EXPECTED_RECORD_SET=1 ;;
+      if_still_stopped)
+        case "$control_arg" in
+          ''|*[!0-9]*) die "--if-still-stopped requires a status byte count" ;;
+        esac
+        STOPPED_STATUS_SIZE=$control_arg
+        ;;
       note_file)
         [ -f "$control_arg" ] || die "--note-file '$control_arg' is not a readable file"
         NOTE=$(cat "$control_arg")
@@ -394,6 +410,8 @@ for control_arg in "$@"; do
     --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
     --note-file) control_want_value=note_file ;;
     --unless-held-stopped) UNLESS_HELD_STOPPED=1 ;;
+    --expected-record) control_want_value=expected_record ;;
+    --if-still-stopped) control_want_value=if_still_stopped ;;
     --replace-live) REPLACE_LIVE=1 ;;
     --note-file=*)
       [ -f "${control_arg#--note-file=}" ] || die "--note-file '${control_arg#--note-file=}' is not a readable file"
@@ -428,6 +446,11 @@ case "$NEW_EFFORT" in
   *) die "--effort must be one of default, low, medium, high, xhigh, max" ;;
 esac
 
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  [ "$VERB" = relaunch ] && [ "$EXPECTED_RECORD_SET" = 1 ] \
+    || die "--if-still-stopped requires relaunch with --expected-record"
+fi
+
 # --- exact task-id resolution ----------------------------------------------
 
 case "$RAW_ID" in
@@ -443,6 +466,19 @@ fm_lock_try_acquire "$CONTROL_LOCK" \
   || die "another lifecycle action is already running for task $ID"
 CONTROL_LOCK_HELD=1
 META="$STATE/$ID.meta"
+if [ "$EXPECTED_RECORD_SET" = 1 ] && { [ ! -f "$META" ] \
+  || ! current_record=$(cat "$META" 2>/dev/null) || [ "$current_record" != "$EXPECTED_RECORD" ]; }; then
+  printf 'worker record %s changed or vanished\n' "$ID" >&2
+  exit 3
+fi
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  case "$(fm_meta_get "$META" kind)" in
+    ship|scout) ;;
+    *) die "--if-still-stopped applies to local ship or scout workers only" ;;
+  esac
+  [ -z "$(fm_meta_get "$META" remote_host)" ] \
+    || die "--if-still-stopped applies to local ship or scout workers only"
+fi
 if [ ! -f "$META" ]; then
   case "$RAW_ID" in
     fm-*)
@@ -577,6 +613,33 @@ fi
 
 busy_verdict() {
   fm_busy_classify_meta "$META" "$ID" "$STATE"
+}
+
+admit_stopped_retry() {
+  [ -n "$STOPPED_STATUS_SIZE" ] || return 0
+  local line verb busy changed=0 size=0
+  line=$(fm_run_timed 60 "$SCRIPT_DIR/fm-crew-state.sh" "$ID" 2>/dev/null) || line=
+  verb=$(printf '%s\n' "$line" | sed -n '1s/^state: \([a-z]*\).*/\1/p')
+  case "$verb" in
+    failed|blocked|paused) ;;
+    unknown)
+      case "$line" in
+        'state: unknown · source: none · backend target gone:'*|'state: unknown · source: none · worktree gone ('*) ;;
+        *) changed=1 ;;
+      esac
+      ;;
+    *) changed=1 ;;
+  esac
+  busy=$(fm_busy_classify_live "$BACKEND" "$T" "$RECORDED_HARNESS" "$ID" "$STATE" "$LABEL")
+  case "$busy" in busy*) changed=1 ;; esac
+  if [ -e "$STATE/$ID.status" ]; then
+    size=$(wc -c < "$STATE/$ID.status" 2>/dev/null | tr -d ' ')
+  fi
+  if [ "$changed" = 1 ] || [ "$size" != "$STOPPED_STATUS_SIZE" ] \
+    || [ "$(cat "$META" 2>/dev/null)" != "$EXPECTED_RECORD" ]; then
+    printf 'worker record or activity %s changed during scan\n' "$ID" >&2
+    exit 3
+  fi
 }
 
 # A relaunch is existing-task recovery, not fresh dispatch. Prove its backlog
@@ -1313,6 +1376,7 @@ do_relaunch() {
 
   relaunch_backlog_preflight
   safe_checkpoint
+  admit_stopped_retry
   cp -p "$META" "$META_PRIOR" 2>/dev/null || true
   RELAUNCH_ACTIVE=1
   journal_write checkpoint "${CHECKPOINT_LINES[@]}"

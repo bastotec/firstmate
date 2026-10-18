@@ -164,7 +164,10 @@
 # leased home and state in place instead of hiding a still-held lease.
 # bin/fm-deck-worker.sh's SECOND MATE SESSION CONTINUITY header owns the
 # conversation binding retired with a secondmate and its forced descendants.
-# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--keep-commits] [--merged-pr <url>]
+# For caller admission, --expected-record <metadata> requires the exact
+# metadata snapshot under the task's control lock before any cleanup; exit 3
+# leaves a changed or vanished record for a fresh scan.
+# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--keep-commits] [--merged-pr <url>] [--expected-record <metadata>]
 #   --keep-commits handles the leftover local commits a squash merge leaves
 #   behind: when a ship task's PR is merged, its worktree has no uncommitted
 #   changes, and its committed work still is not proved landed, teardown first
@@ -334,6 +337,8 @@ ID=$1
 FORCE=
 LEGACY_RECORD_GIVEN=0
 KEEP_COMMITS=0
+EXPECTED_RECORD=
+EXPECTED_RECORD_SET=0
 MERGED_PR_URL=
 shift
 while [ "$#" -gt 0 ]; do
@@ -341,6 +346,12 @@ while [ "$#" -gt 0 ]; do
     --force) FORCE=--force ;;
     --legacy-record) LEGACY_RECORD_GIVEN=1 ;;
     --keep-commits) KEEP_COMMITS=1 ;;
+    --expected-record)
+      shift
+      [ "$#" -gt 0 ] || exit 2
+      EXPECTED_RECORD=$1
+      EXPECTED_RECORD_SET=1
+      ;;
     --merged-pr)
       shift
       if [ "$#" -eq 0 ] || ! fm_pr_url_parse "$1"; then
@@ -434,6 +445,11 @@ fm_lock_try_acquire "$CONTROL_LOCK" || {
   exit 1
 }
 CONTROL_LOCK_HELD=1
+if [ "$EXPECTED_RECORD_SET" = 1 ] && { [ ! -f "$META" ] \
+  || ! current_record=$(cat "$META" 2>/dev/null) || [ "$current_record" != "$EXPECTED_RECORD" ]; }; then
+  printf 'worker record %s changed or vanished\n' "$ID" >&2
+  exit 3
+fi
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never tear
 # down a worktree (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent

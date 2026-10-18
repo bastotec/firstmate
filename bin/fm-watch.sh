@@ -1737,7 +1737,7 @@ procevent_surface_after_output() {
 }
 
 procevent_surface_queued() {
-  local key reason captured="" stranded="" unstarted="" notes="" revive="" idle="" idle_audit="" idle_left="" mates="" lanes="" parked=""
+  local key reason captured="" stranded="" unstarted="" notes="" revive="" idle="" idle_audit="" idle_left="" mates="" lanes="" parked="" quiet=""
   PROCEVENT_SURFACED=
   [ -s "$FM_WAKE_QUEUE" ] || return 0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
@@ -1749,7 +1749,7 @@ procevent_surface_queued() {
         notes="$notes ${key#inbox:}"
         continue
         ;;
-      procevent:*|secondmate-revive:*|lane-heal:*|parked-run:*|idle-sweep:*|idle-sweep-audit:*|idle-sweep-unhandled:*|mate-mail:*) ;;
+      procevent:*|secondmate-revive:*|lane-heal:*|parked-run:*|worker-quiet:*|idle-sweep:*|idle-sweep-audit:*|idle-sweep-unhandled:*|mate-mail:*) ;;
       *) continue ;;
     esac
     [ -e "$(procevent_surfaced_marker "$key")" ] && continue
@@ -1766,6 +1766,10 @@ procevent_surface_queued() {
       lane-heal:*)
         key=${key#lane-heal:}
         lanes="$lanes ${key%%:*}"
+        ;;
+      worker-quiet:*)
+        key=${key#worker-quiet:}
+        quiet="$quiet ${key%%:*}"
         ;;
       parked-run:*)
         key=${key#parked-run:}
@@ -1800,6 +1804,10 @@ procevent_surface_queued() {
   if [ -n "$parked" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
     reason="$reason worker run parked too long:$parked"
+  fi
+  if [ -n "$quiet" ]; then
+    [ "$reason" = "check:" ] || reason="$reason;"
+    reason="$reason worker check-in:$quiet"
   fi
   if [ -n "$idle" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"

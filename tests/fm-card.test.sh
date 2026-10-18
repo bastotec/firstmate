@@ -70,7 +70,7 @@ test_run_together_identifiers_and_product_names() {
   home=$(make_home mixed-tokens)
   in="$home/in.json"
   for field in title situation label; do
-    for token in PR1806 Direction7 A1 1A 2FA4K IPv7 OAuth3; do
+    for token in PR1806 Direction7 A1 1A 2FA4K IPv7 OAuth3 CI-only PR-to-review only-CI review-PR-now POST-to-observation; do
       good_card "$in"
       jq --arg field "$field" --arg token "$token" '
         if $field == "label" then .options[0].label=$token else .[$field]=$token end
@@ -101,6 +101,41 @@ test_drafts_replace_jargon_with_plain_words() {
   assert_equals 'this task this task this task this task this task need IPv4 and OAuth2.' \
     "$(printf '%s' "$card" | jq -r .situation)" "only jargon is replaced in the situation"
   pass "fm-card: new drafts replace jargon tokens and preserve ordinary product names"
+}
+
+test_cards_are_calm_single_and_short() {
+  local home in err out
+  home=$(make_home calm)
+  in="$home/in.json"
+  good_card "$in"
+  jq '.urgent={"because":"security"}' "$in" > "$in.tmp" && mv "$in.tmp" "$in"
+  err=$(run_card "$home" validate --file "$in" 2>&1) && fail "a vague urgency reason was accepted"
+  assert_contains "$err" "normal priority" "only the four real reasons make a card urgent"
+  for why in production-down customer-breakage money secret-exposure; do
+    good_card "$in"
+    jq --arg w "$why" '.urgent={"because":$w}' "$in" > "$in.tmp" && mv "$in.tmp" "$in"
+    run_card "$home" validate --file "$in" || fail "$why is a real reason to mark a card urgent"
+  done
+  run_card "$home" write calm-one --file "$in" >/dev/null || fail "an urgent card could not be written"
+  out=$(run_card "$home" show calm-one)
+  assert_equals secret-exposure "$(jq -r .urgent.because <<<"$out")" "the stored card keeps its urgency reason"
+  good_card "$in"
+  run_card "$home" write calm-two --file "$in" >/dev/null || fail "a normal card could not be written"
+  assert_equals null "$(run_card "$home" show calm-two | jq -r .urgent)" "a card without a reason is normal priority"
+  good_card "$in"
+  jq '.title="Publish the draft PR? And ask GitHub support?"' "$in" > "$in.tmp" && mv "$in.tmp" "$in"
+  err=$(run_card "$home" validate --file "$in" 2>&1) && fail "a card bundling two questions was accepted"
+  assert_contains "$err" "one question per card" "bundled decisions are split"
+  good_card "$in"
+  jq '.options[0].label="Publish upstream then compare all of the eight synthetic tests"' "$in" > "$in.tmp" && mv "$in.tmp" "$in"
+  err=$(run_card "$home" validate --file "$in" 2>&1) && fail "a long option label was accepted"
+  good_card "$in"
+  jq '.situation="Checks green with repeats=1."' "$in" > "$in.tmp" && mv "$in.tmp" "$in"
+  err=$(run_card "$home" validate --file "$in" 2>&1) && fail "a setting=value token was accepted"
+  good_card "$in"
+  jq '.situation="Waited 2 minutes after the POST-to-observation step."' "$in" > "$in.tmp" && mv "$in.tmp" "$in"
+  err=$(run_card "$home" validate --file "$in" 2>&1) && fail "a run-together hyphenated token was accepted"
+  pass "fm-card: urgency needs a real reason, one card asks one question, and labels stay short and plain"
 }
 
 test_write_and_show_round_trip() {
@@ -357,6 +392,39 @@ test_hold_with_card_file_writes_the_full_card() {
   pass "fm-captain-hold: a hold with --card-file stores the full card"
 }
 
+test_unrelated_review_calls_have_independent_cards_and_answers() {
+  local home choice title situation instruction card report
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home separate-review-calls)
+  report=data/systems-review/report.md
+  mkdir -p "$home/data/systems-review"
+  printf 'Choose a route and an access policy.\n' > "$home/$report"
+  for choice in route access; do
+    case "$choice" in
+      route) title='Choose the route?'; situation='Two routes are available.'; instruction='Use the north route.' ;;
+      access) title='Restrict access?'; situation='Public and restricted access are available.'; instruction='Restrict access to the team.' ;;
+    esac
+    card="$home/$choice.json"
+    jq -n --arg title "$title" --arg situation "$situation" --arg report "$report" --arg instruction "$instruction" \
+      '{project:"cadia",title:$title,situation:$situation,
+        options:[{key:"1",label:"Use the recommendation",instruction:("Read " + $report + ". " + $instruction)}],recommended:"1"}' > "$card"
+    run_captain "$home" hold "$choice-call" --title "$title" --repo cadia --origin systems-review \
+      --reason "$title Report: $report" --card-file "$card" >/dev/null || fail "could not hold the $choice decision"
+    run_captain "$home" open "$choice-call" || fail "$choice decision is not open"
+    assert_equals "$title" "$(run_card "$home" show "$choice-call" | jq -r .title)" "$choice card lost its own decision"
+    assert_contains "$(run_card "$home" show "$choice-call" | jq -r '.options[0].instruction')" "$report" "$choice card lost the shared report"
+  done
+  run_captain "$home" complete systems-review route-call access-call >/dev/null || fail "separate decisions did not complete the shared review inventory"
+  assert_equals 2 "$(run_card "$home" calls | wc -l | tr -d ' ')" "both unrelated decisions must remain visible"
+  printf 'Use the north route.\n' > "$home/answer.txt"
+  run_captain "$home" answer route-call --decision-file "$home/answer.txt" >/dev/null || fail "could not answer the route decision"
+  assert_absent "$home/state/cards/route-call.json" "answered decision still has a card"
+  run_captain "$home" open access-call || fail "answering the route also settled the access policy"
+  assert_equals 'Restrict access?' "$(run_card "$home" show access-call | jq -r .title)" "the unanswered card changed"
+  assert_equals 1 "$(run_card "$home" calls | wc -l | tr -d ' ')" "only the unanswered decision should remain visible"
+  pass "fm-card: unrelated decisions share report evidence but keep separate cards and answers"
+}
+
 test_hold_refuses_an_invalid_card_before_holding() {
   local home bad rc=0
   command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
@@ -558,6 +626,7 @@ test_clear_then_restore_round_trips() {
   FM_CAPTAIN_HOLD_NOW=2026-10-01T00:00:00Z hold_it "$home" old-one "Old call" 'waiting on "quotes" and é'
   card="$home/card.json"
   good_card "$card"
+  jq '.urgent={because:"production-down"}' "$card" > "$card.tmp" && mv "$card.tmp" "$card"
   run_captain "$home" hold old-one --reason 'waiting on "quotes" and é' --card-file "$card" >/dev/null || fail "card hold failed"
   run_card "$home" clear old-one --why "idle 6 days, no activity" >/dev/null || fail "clear failed"
   assert_absent "$home/state/cards/old-one.json" "card gone"
@@ -568,6 +637,7 @@ test_clear_then_restore_round_trips() {
   run_card "$home" restore old-one >/dev/null || fail "restore failed"
   run_captain "$home" open old-one || fail "task is not held again"
   assert_equals false "$(jq -r .draft "$home/state/cards/old-one.json")" "full card back"
+  assert_equals production-down "$(jq -r .urgent.because "$home/state/cards/old-one.json")" "restoring a full card preserves urgency"
   assert_equals restored "$(tail -n 1 "$home/state/cards-cleared.log" | jq -r .event)" "restore logged"
   pass "fm-card: clear then restore brings back the hold, reason and card"
 }
@@ -613,6 +683,26 @@ test_restore_preflights_saved_card_before_reopening() {
   assert_absent "$card" "preflight refusal creates no card"
   assert_equals cleared "$(tail -n 1 "$home/state/cards-cleared.log" | jq -r .event)" "the clear remains recoverable"
   pass "fm-card: restore validates saved cards before reopening a task"
+}
+
+test_restore_rejects_invalid_saved_urgency_before_reopening() {
+  local home invalid before rc
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  for invalid in 'null' '"money"' '{}' '{"because":"internal-worry"}'; do
+    home=$(make_home "restore-urgency-$RANDOM")
+    hold_it "$home" old-one "Original call" 'Review the old repair'
+    good_card "$home/input.json"
+    run_card "$home" write old-one --file "$home/input.json" >/dev/null || fail "card write failed"
+    run_card "$home" clear old-one --why idle >/dev/null || fail "clear failed"
+    jq -c --argjson urgent "$invalid" '.card.urgent=$urgent' "$home/state/cards-cleared.log" > "$home/log.tmp" && mv "$home/log.tmp" "$home/state/cards-cleared.log"
+    before=$(tasks_in "$home" show old-one --full)
+    rc=0
+    run_card "$home" restore old-one >/dev/null 2>&1 || rc=$?
+    assert_not_equals 0 "$rc" "invalid saved urgency must refuse restoration"
+    assert_equals "$before" "$(tasks_in "$home" show old-one --full)" "invalid urgency must leave the closed task alone"
+    assert_absent "$home/state/cards/old-one.json" "invalid urgency must not publish a card"
+  done
+  pass "fm-card: restore validates saved urgency before reopening"
 }
 
 test_clear_removes_an_orphan_card_without_touching_the_backlog() {
@@ -1059,6 +1149,7 @@ test_interrupted_reopening_can_be_retried() {
 }
 
 test_write_and_show_round_trip
+test_cards_are_calm_single_and_short
 test_cards_use_plain_words
 test_run_together_identifiers_and_product_names
 test_drafts_replace_jargon_with_plain_words
@@ -1074,6 +1165,7 @@ test_backfill_drafts_every_uncarded_captain_hold
 test_expired_deferral_is_backfilled_and_listed_by_drafts
 test_hold_without_card_writes_a_draft
 test_hold_with_card_file_writes_the_full_card
+test_unrelated_review_calls_have_independent_cards_and_answers
 test_hold_refuses_an_invalid_card_before_holding
 test_answer_removes_the_card
 test_answer_replays_and_repairs_remove_leftover_cards
@@ -1086,6 +1178,7 @@ test_stale_uses_the_fixed_three_day_cutoff
 test_clear_then_restore_round_trips
 test_restore_rewrites_legacy_jargon_as_a_plain_draft
 test_restore_preflights_saved_card_before_reopening
+test_restore_rejects_invalid_saved_urgency_before_reopening
 test_clear_removes_an_orphan_card_without_touching_the_backlog
 test_clear_refuses_a_task_that_is_not_a_captain_call
 test_restore_refuses_when_held_again

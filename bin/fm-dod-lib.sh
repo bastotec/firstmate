@@ -95,6 +95,9 @@ These need an explicit, current instruction that names the action, and nothing e
 Before you call anything a credential, access or tooling blocker, read the project's own guidance - its `.agents/skills/`, `AGENTS.md` and `INTERNAL.md` - and try the path it documents; a documented helper that uses access already on this machine is the normal route, not entering a secret.
 A blocker is real only after you tried the obvious fix and any documented path: say what you checked and tried and what failed.
 A blocker that is not the captain's call goes to your mate, who solves it; a credential, access or tooling blocker becomes the captain's only when no documented path exists.
+A token that showed up in your own tool output or a local file, from your own authorized account (a GitHub `temp_clone_token`, a short-lived OAuth or IAP identity token you minted, a gcloud access token), is not an exposure: redact it and move on, with no card and no report.
+An exposure is a secret that left the machine - committed, pushed, posted, sent to an outside service, or shown in a shared channel - and it goes to your mate with the concrete rotation step, never a suggestion to ask the vendor's support.
+Time-box anything your task did not ask for: after 30 minutes on it, tell your mate what you found as `needs-decision` and stop.
 Write status lines as plain sentences a person understands at a glance.
 EOF
 }

@@ -31,9 +31,21 @@
 # worker leaving never has a blocker raised after its close resolved it. A scan
 # drops a record whose worker has left.
 #
+# Separately, a live worker classified busy by bin/fm-busy-lib.sh gets one
+# check-in wake after FM_WORKER_QUIET_SECS without a status change, whether or
+# not it has a validation run. The quiet stretch is keyed by status-file mtime,
+# or by the busy-state timestamp when no status file exists. A successful
+# append of worker-quiet:<id>:<timestamp> records state/<id>.quiet-noted;
+# failed appends remain eligible. bin/fm-watch.sh surfaces it as a worker
+# check-in, not a parked-run alarm. The mate checks what the worker is doing
+# under fm_act_within_scope_section in bin/fm-dod-lib.sh, which owns the
+# side-investigation time-box. `close` also removes the quiet marker.
+#
 # Environment knobs:
 #   FM_HOME              required
 #   FM_PARKED_RUN_SECS   seconds parked before each step (3600)
+#   FM_WORKER_QUIET_SECS seconds a busy worker may go without a status line
+#                        before its mate gets one check-in wake (7200)
 #
 # Exit: 0 after a scan or close; 1 when close could not resolve an escalated
 # blocker (the record is kept, so a retry resolves it); 2 on invalid use.
@@ -53,7 +65,11 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-parent-channel-lib.sh
 . "$SCRIPT_DIR/fm-parent-channel-lib.sh"
+. "$SCRIPT_DIR/fm-backend.sh"
+. "$SCRIPT_DIR/fm-busy-lib.sh"
 
+QUIET=${FM_WORKER_QUIET_SECS:-7200}
+case "$QUIET" in ''|*[!0-9]*) QUIET=7200 ;; esac
 LIMIT=${FM_PARKED_RUN_SECS:-3600}
 case "$LIMIT" in ''|*[!0-9]*) LIMIT=3600 ;; esac
 NOW=$(date +%s)
@@ -94,13 +110,14 @@ if [ "$1" = close ]; then
   id=${2:-}
   case "$id" in ''|*[!A-Za-z0-9._-]*) echo "error: close needs a worker id" >&2; exit 2 ;; esac
   rec="$STATE/$id.parked-run"
+  rm -f "$STATE/$id.quiet-noted"
   [ -f "$rec" ] || exit 0
   fm_lock_acquire_wait "$(lock_of "$id")" || { echo "error: cannot lock $id's parked-run record" >&2; exit 1; }
   rc=0
   if [ -f "$rec" ] && [ "$(field "$rec" escalated)" = 1 ]; then
     escalate "$id" resolved "worker $id's run $(field "$rec" run) left the fleet while parked at $(field "$rec" step) (parked since $(field "$rec" since))" || rc=1
   fi
-  [ "$rc" != 0 ] || rm -f "$rec"
+  [ "$rc" != 0 ] || rm -f "$rec" "$STATE/$id.quiet-noted"
   fm_lock_release "$(lock_of "$id")" >/dev/null 2>&1 || true
   exit "$rc"
 fi
@@ -171,12 +188,35 @@ scan_one() {  # <id>
   fi
 }
 
+quiet_one() {  # <id>
+  local id=$1 meta="$STATE/$1.meta" status changed noted classification
+  status="$STATE/$id.status"
+  classification=$(fm_busy_classify_live "$(fm_backend_of_meta "$meta")" \
+    "$(fm_backend_target_of_meta "$meta")" "$(fm_meta_get "$meta" harness)" \
+    "$id" "$STATE" "fm-$id")
+  [ "${classification%% *}" = busy ] || return 0
+  if [ -f "$status" ]; then
+    changed=$(fm_path_mtime "$status") || return 0
+  else
+    changed=$(tr ' ' '\n' < "$STATE/$id.busy-state" | sed -n 's/^ts=//p')
+  fi
+  case "$changed" in ''|*[!0-9]*) return 0 ;; esac
+  [ $((NOW - changed)) -ge "$QUIET" ] || return 0
+  noted=$(cat "$STATE/$id.quiet-noted" 2>/dev/null || true)
+  [ "$noted" != "$changed" ] || return 0
+  if fm_wake_append check "worker-quiet:$id:$changed" \
+      "check: worker $id has been busy for $(minutes $((NOW - changed))) minutes without reporting: ask it what it is working on and whether its task asked for it; anything the task did not ask for is time-boxed to 30 minutes"; then
+    printf '%s\n' "$changed" > "$STATE/$id.quiet-noted"
+  fi
+}
+
 for meta in "$STATE"/*.meta; do
   [ -f "$meta" ] || continue
   grep -qE '^kind=(ship|scout)$' "$meta" 2>/dev/null || continue
   id=$(basename "$meta" .meta)
   # A close of this worker is running: leave it to the close.
   fm_lock_try_acquire "$(lock_of "$id")" || continue
+  quiet_one "$id"
   scan_one "$id"
   fm_lock_release "$(lock_of "$id")" >/dev/null 2>&1 || true
 done
