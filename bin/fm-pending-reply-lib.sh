@@ -448,14 +448,15 @@ fm_pending_reply_write_delivery_confirmation() {  # <state-dir> <corr_id> <state
   mv -f "$tmp" "$marker"
 }
 
-fm_pending_reply_prepare_delivery() {  # <state-dir> <corr_id>
-  local state=$1 corr=$2 rec delivered marker now
+fm_pending_reply_prepare_delivery() {  # <state-dir> <corr_id> [delivery-plane]
+  local state=$1 corr=$2 plane=${3:-} rec delivered marker now
   rec=$(fm_pending_reply_path "$state" "$corr")
   [ -f "$rec" ] || return 1
   delivered=$(fm_pending_reply_get "$rec" delivered_epoch)
   [ -z "$delivered" ] || return 0
   marker=$(fm_pending_reply_delivery_confirmation_path "$state" "$corr")
   [ -f "$marker" ] && return 0
+  [ -z "$plane" ] || fm_pending_reply_set "$rec" delivery_plane "$plane" || return 1
   now=$(fm_pending_reply_now)
   fm_pending_reply_write_delivery_confirmation "$state" "$corr" attempted "$now"
 }
@@ -517,18 +518,30 @@ _fm_pending_reply_settle_stale_local_attempt() {  # <state-dir> <corr_id> <recor
   task_id=$(fm_pending_reply_get "$rec" task_id)
   [ -n "$task_id" ] || return 1
   fm_pending_reply_target_is_remote "$state" "$task_id" && return 1
+  case "$(fm_pending_reply_get "$rec" delivery_plane)" in
+    inbox) ;;
+    '')
+      case "$(fm_pending_reply_get "$rec" request_summary)" in /*) return 1 ;; esac
+      ;;
+    *) return 1 ;;
+  esac
   stale=${FM_PENDING_REPLY_LOCAL_ATTEMPT_STALE_SECS:-600}
   case "$stale" in ''|*[!0-9]*) stale=600 ;; esac
   now=$(fm_pending_reply_now)
   [ $((now - epoch)) -ge "$stale" ] || return 1
   inbox="$state/$task_id.inbox"
   for f in "$inbox"/*.msg "$inbox/handled"/*.msg; do
-    [ -f "$f" ] || continue
-    if grep -qF "corr=$corr" "$f" 2>/dev/null; then
-      fm_pending_reply_mark_delivered "$state" "$corr" "$epoch" || return 1
-      rm -f "$marker" 2>/dev/null || true
-      return 0
+    if ! grep -qF "corr=$corr" "$f" 2>/dev/null; then
+      case "$f" in
+        "$inbox"/*.msg)
+          grep -qF "corr=$corr" "$inbox/handled/${f##*/}" 2>/dev/null || continue
+          ;;
+        *) continue ;;
+      esac
     fi
+    fm_pending_reply_mark_delivered "$state" "$corr" "$epoch" || return 1
+    rm -f "$marker" 2>/dev/null || true
+    return 0
   done
   case "$(fm_pending_reply_get "$rec" phase)" in
     awaiting_report|delivery_unknown|escalated) ;;

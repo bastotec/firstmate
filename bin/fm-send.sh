@@ -1024,6 +1024,12 @@ else
     if [ -n "$existing_corr" ] \
       && fm_pending_reply_corr_reusable "$STATE" "$existing_corr" "$TARGET_TASK_ID"; then
       PENDING_REPLY_CORR=$existing_corr
+      if [ "$INBOX_PLANE" = 1 ] && [ "$TARGET_BACKEND" != remote ]; then
+        case "$(fm_pending_reply_get "$(fm_pending_reply_path "$STATE" "$PENDING_REPLY_CORR")" phase)" in
+          recovery_sending|recovery_sent) ;;
+          *) FM_SEND_IDEMPOTENT=1 ;;
+        esac
+      fi
     else
       if [ "$existing_corr_explicit" = 1 ]; then
         echo "error: explicitly requested pending-reply correlation '${existing_corr:-empty}' is not reusable for $TARGET_TASK_ID; refusing to mint a replacement correlation" >&2
@@ -1054,7 +1060,9 @@ else
         exit 1
       fi
     fi
-    if ! fm_pending_reply_prepare_delivery "$STATE" "$PENDING_REPLY_CORR"; then
+    delivery_plane=typed
+    [ "$INBOX_PLANE" != 1 ] || delivery_plane=inbox
+    if ! fm_pending_reply_prepare_delivery "$STATE" "$PENDING_REPLY_CORR" "$delivery_plane"; then
       [ "$PENDING_REPLY_CREATED" != 1 ] \
         || fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
       echo "error: failed to durably prepare pending-reply delivery for $TARGET_TASK_ID" >&2

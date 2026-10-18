@@ -145,6 +145,72 @@ test_stale_local_attempt_never_blocks_resends() {
   pass "a stale unconfirmed local send is settled from the inbox and never blocks later resends"
 }
 
+test_local_correlated_resend_is_idempotent() (
+  local home state fb log corr rec inbox_record location count msg
+  msg='New routed work is in your backlog.'
+  for location in root handled; do
+    home=$(setup_parent "correlated-resend-$location")
+    state="$home/state"
+    fb=$(make_stubs "$home"); log="$home/send.log"
+    fm_test_stream_secondmate_meta "$state/runtime.meta" "$home/sm" alpha echo "$log"
+    export FM_PENDING_REPLY_NOW=1000
+    run_send "$fb" "$home" "$log" runtime "$msg" || fail "initial send failed"
+    corr=$(fm_pending_reply_extract_corr "$(latest_record_body "$home" runtime)")
+    rec=$(fm_pending_reply_path "$state" "$corr")
+    inbox_record=$(find "$state/runtime.inbox" -maxdepth 1 -name '*.msg')
+    [ -n "$inbox_record" ] || fail "initial send did not enqueue"
+    if [ "$location" = handled ]; then
+      mv "$inbox_record" "$state/runtime.inbox/handled/" || fail "acknowledgement failed"
+    fi
+    fm_pending_reply_set "$rec" delivered_epoch ''
+    fm_pending_reply_write_delivery_confirmation "$state" "$corr" attempted 1000
+    export FM_PENDING_REPLY_NOW=1700 FM_PENDING_REPLY_EXISTING_CORR="$corr"
+    run_send "$fb" "$home" "$log" runtime "$msg" || fail "stale local resend failed"
+    count=$(find "$state/runtime.inbox" -name '*.msg' | wc -l | tr -d ' ')
+    [ "$count" = 1 ] || fail "correlated resend duplicated the $location request"
+    [ "$(fm_pending_reply_get "$rec" delivered_epoch)" = 1000 ] \
+      || fail "resend lost the original delivery time"
+    fm_pending_reply_set "$rec" phase recovery_sending
+    run_send "$fb" "$home" "$log" runtime "$(fm_pending_reply_recovery_message "$rec")" \
+      || fail "intentional recovery send failed"
+    count=$(find "$state/runtime.inbox" -name '*.msg' | wc -l | tr -d ' ')
+    [ "$count" = 2 ] || fail "recovery must enqueue its own message"
+    unset FM_PENDING_REPLY_EXISTING_CORR
+    run_send "$fb" "$home" "$log" runtime "$msg" || fail "new identical request failed"
+    count=$(find "$state/runtime.inbox" -name '*.msg' | wc -l | tr -d ' ')
+    [ "$count" = 3 ] || fail "a brand-new request must not collapse onto an older request"
+  done
+  pass "fm-send deduplicates correlated local resends without suppressing recovery or new requests"
+)
+
+test_stale_attempt_follows_concurrent_ack() (
+  local home state corr rec inbox_record marker
+  home=$(setup_parent stale-ack-race)
+  state="$home/state"
+  export FM_PENDING_REPLY_NOW=1000
+  corr=$(fm_pending_reply_create "$home" "$state" runtime "New routed work is in your backlog.")
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  fm_pending_reply_prepare_delivery "$state" "$corr" inbox || fail "prepare attempt failed"
+  marker=$(fm_pending_reply_delivery_confirmation_path "$state" "$corr")
+  mkdir -p "$state/runtime.inbox/handled"
+  inbox_record="$state/runtime.inbox/001.msg"
+  printf 'schema=fm-task-inbox.v1\n--\ncorr=%s New routed work is in your backlog.\n' "$corr" > "$inbox_record"
+  grep() {
+    local candidate=${!#}
+    if [ "$candidate" = "$inbox_record" ] && [ -f "$candidate" ]; then
+      mv "$candidate" "${candidate%/*}/handled/" || return 1
+    fi
+    command grep "$@"
+  }
+  export FM_PENDING_REPLY_NOW=1700
+  fm_pending_reply_reconcile_delivery "$state" "$corr" || fail "reconciliation failed"
+  [ -f "$state/runtime.inbox/handled/001.msg" ] || fail "the concurrent acknowledgement did not run"
+  [ "$(fm_pending_reply_get "$rec" delivered_epoch)" = 1000 ] \
+    || fail "an acknowledgement racing the scan must still establish delivery"
+  [ ! -e "$marker" ] || fail "settled delivery retained its attempt marker"
+  pass "stale-attempt reconciliation follows an acknowledgement racing its inbox scan"
+)
+
 test_normal_correlated_reply_resolves_once() {
   local home state corr status rec
   home=$(setup_parent resolve-once)
@@ -1657,6 +1723,8 @@ test_escalated_undelivered_correlation_stays_retryable() {
 
 test_normal_correlated_reply_resolves_once
 test_stale_local_attempt_never_blocks_resends
+test_local_correlated_resend_is_idempotent
+test_stale_attempt_follows_concurrent_ack
 test_completed_turn_no_report_triggers_one_recovery
 test_recovery_attempt_is_never_reinjected
 test_recovery_reply_resolves_original
