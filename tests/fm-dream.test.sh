@@ -125,6 +125,7 @@ SH
 #!/usr/bin/env bash
 case "$*" in
   *additions*) printf '{"additions": 3, "deletions": 0, "files": [{"path": "AGENTS.md"}]}\n' ;;
+  *createdAt*) printf '{"createdAt": "2026-10-14T16:23:20Z", "mergedAt": "2026-10-14T17:30:00Z", "state": "MERGED", "commits": []}\n' ;;
   *) printf '## Intent\n\nx\n\n## Risk Assessment\n\n✅ Low: a small wording change.\n' ;;
 esac
 SH
@@ -234,6 +235,14 @@ printf '%s\n' "$*" > "$STUB_CALLS/memory"
 [ ! -e "$STUB_CALLS/memory-fails" ] || { echo "cannot read the shared file" >&2; exit 1; }
 echo "captain-memory: 12 entries, 2 new candidates in x, oversized: none, repeats since last upkeep: 1"
 SH
+  cat > "$d/bin/reflect" <<'SH'
+#!/usr/bin/env bash
+cat > "$STUB_CALLS/reflect.$(find "$STUB_CALLS" -name 'reflect.*' | wc -l | tr -d ' ')"
+case "${STUB_REFLECT:-ok}" in
+  ok) printf '%s\n' '{"choices": [{"message": {"content": "Here:\n{\"changes\": [{\"change\": \"Give workers the reviewer rubric in their brief\", \"area\": \"briefs\", \"owner\": \"instructions\", \"evidence\": \"ship-x parked 2h at review\"}, {\"change\": \"no evidence\"}]}"}}]}' ;;
+  down) printf '%s\n' '{"error": {"code": "upstream_error", "message": "selected account has no project-owned enrollment"}}' ;;
+esac
+SH
   chmod +x "$d/bin/"*
   printf '%s' "$d"
 }
@@ -244,7 +253,7 @@ run_dream() {  # <case-dir> <args...>
     FM_DREAM_JEV="$d/bin/jev" FM_DREAM_TASKS="$d/bin/tasks" FM_DREAM_HANDOFF="$d/bin/handoff" \
     FM_DREAM_REPORT="$d/bin/report" FM_DREAM_CAPTAIN_MEMORY="$d/bin/memory" FM_DREAM_NO_MISTAKES_DB="$d/nm.sqlite" STUB_CALLS="$d/calls" \
     FM_DREAM_FIRSTMATE="$d/firstmate" FM_DREAM_NO_MISTAKES="$d/bin/no-mistakes" FM_DREAM_GH="$d/bin/gh-pr" \
-    python3 "$DREAM" run --home "$d/home" "$@"
+    FM_DREAM_REFLECT="$d/bin/reflect" python3 "$DREAM" run --home "$d/home" "$@"
 }
 
 test_each_relaunch_is_counted_once() {
@@ -707,6 +716,84 @@ PY
   pass "time spent waiting for Ziggy's dream is recorded apart from the step's own time, with collect's phases"
 }
 
+# seed_lifecycle <case-dir>: ship-x is a task of the home, with one run spawned
+# 2 h before NOW whose PR the gh stub reports merged at NOW - 1000.
+seed_lifecycle() {
+  local d=$1
+  printf '# Backlog\n\n## In flight\n- [ ] ship-x - Do the thing (repo: firstmate) (kind: ship)\n' > "$d/home/data/backlog.md"
+  printf 'spawn_gen=s%s.1.2\n' $((NOW - 7200)) > "$d/home/state/ship-x.meta"
+  sqlite3 "$d/nm.sqlite" "INSERT INTO runs VALUES('rx','fleet','completed','fm/ship-x','','https://github.com/x/fm/pull/5',$((NOW - 6000)),$((NOW - 5000)));"
+}
+
+test_lifecycle_measures_the_day_and_feeds_the_night_s_changes() {
+  local d log
+  d=$(new_case life)
+  seed_lifecycle "$d"
+  mkdir -p "$d/home/state/dream"
+  printf '{"date": "2026-10-01", "mate_median": 7000, "mate_p90": 9000, "session_median": 600, "merged": 0, "open": 2}\n' \
+    > "$d/home/state/dream/lifecycle.jsonl"
+  run_dream "$d" --only collect lifecycle > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" "$d/calls" <<'PY' || fail "lifecycle step wrong: $(jq -c '.steps.lifecycle, .summary' "$log")"
+import glob, json, sys
+run = json.load(open(sys.argv[1]))
+st, life = run["steps"]["lifecycle"], run["lifecycle"]
+assert st["status"] == "done" and st["tasks"] == 1 and st["recommendations"] == 1, st
+assert life["model"] == "claude/opus-5-5" and life["metrics"]["mate"]["median"] == 6200, life
+assert life["recommendations"] == [{"change": "Give workers the reviewer rubric in their brief", "area": "briefs",
+                                    "owner": "instructions", "evidence": "ship-x parked 2h at review"}], life
+assert life["previous"]["date"] == "2026-10-01" and life["change"]["mate_median"] == -800, life
+calls = glob.glob(sys.argv[2] + "/reflect.*")
+assert len(calls) == 1, calls
+req = json.load(open(calls[0]))
+assert req["model"] == "claude/opus-5-5" and "tools" not in req and len(req["messages"]) == 1, req
+assert "ship-x" in req["messages"][0]["content"], req
+s = run["summary"]
+assert "Lifecycle: 1 mate task (1 merged, 0 open), start to merge median 1.7h (p90 1.7h) (-13m vs 2026-10-01)" in s, s
+assert "Changing: Give workers the reviewer rubric in their brief." in s, s
+PY
+  grep -q '^## Lifecycle' "$d"/home/state/dream/digest-*.md || fail "the digest has no lifecycle section"
+  grep -q 'Give workers the reviewer rubric in their brief \[briefs, owner: instructions\]' "$d"/home/state/dream/digest-*.md \
+    || fail "the night's changes did not reach the digest the instructions and triage agents read"
+  [ "$(stat -f %Lp "$d"/home/state/dream/digest-*.md 2>/dev/null || stat -c %a "$d"/home/state/dream/digest-*.md)" = 600 ] \
+    || fail "the digest is no longer private"
+  [ "$(wc -l < "$d/home/state/dream/lifecycle.jsonl" | tr -d ' ')" = 1 ] || fail "an --only run wrote the night-over-night history"
+  pass "lifecycle: the day is measured, Opus is asked once with no tools, and its changes reach the digest and the summary"
+}
+
+test_an_unavailable_reflection_model_is_named_and_never_replaced() {
+  local d log
+  d=$(new_case life-down)
+  seed_lifecycle "$d"
+  STUB_REFLECT=down run_dream "$d" --only collect lifecycle > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" "$d/calls" <<'PY' || fail "unavailable model handled wrong: $(jq -c '.steps.lifecycle, .summary' "$log")"
+import glob, json, sys
+run = json.load(open(sys.argv[1]))
+st = run["steps"]["lifecycle"]
+assert st["status"] == "partial", st
+note = "claude/opus-5-5 unavailable: selected account has no project-owned enrollment; no other model was tried"
+assert note in st["why"] and note in run["summary"], (st, run["summary"])
+assert run["lifecycle"]["metrics"]["tasks"] == 1 and run["lifecycle"]["recommendations"] == [], run["lifecycle"]
+calls = glob.glob(sys.argv[2] + "/reflect.*")
+assert [json.load(open(c))["model"] for c in calls] == ["claude/opus-5-5"], calls
+PY
+  pass "lifecycle: an unavailable Opus is named in the report, the measurements still land, and no other model is tried"
+}
+
+test_the_lifecycle_model_comes_from_config_and_a_bad_one_stops_the_run() {
+  local d
+  d=$(new_case life-config)
+  seed_lifecycle "$d"
+  printf '{"exclude_homes": ["finn-finance"], "model": "stub/model", "lifecycle": {"model": "claude/opus-9"}}\n' > "$d/home/config/dream.json"
+  run_dream "$d" --only collect lifecycle > "$d/out.json" || fail "run exited nonzero"
+  [ "$(jq -r .model "$d"/calls/reflect.0)" = claude/opus-9 ] || fail "the configured lifecycle model was not used"
+  printf '{"lifecycle": {"model": 5}}\n' > "$d/home/config/dream.json"
+  if run_dream "$d" --only lifecycle > "$d/out2.json" 2> "$d/err"; then fail "a malformed lifecycle model did not stop the run"; fi
+  grep -q 'lifecycle must be an object whose model is a string' "$d/err" || fail "the refusal is unclear: $(cat "$d/err")"
+  pass "lifecycle: config/dream.json pins the reflection model, and a malformed one stops the run"
+}
+
 test_instructions_open_one_gated_pr_and_propose_charter_edits() {
   local d log
   d=$(new_case instr-edit)
@@ -878,6 +965,9 @@ PY
 test_collect_builds_a_private_digest_of_the_day
 test_each_relaunch_is_counted_once
 test_an_interrupted_night_stops_the_gate_and_keeps_the_pr
+test_lifecycle_measures_the_day_and_feeds_the_night_s_changes
+test_an_unavailable_reflection_model_is_named_and_never_replaced
+test_the_lifecycle_model_comes_from_config_and_a_bad_one_stops_the_run
 test_instructions_open_one_gated_pr_and_propose_charter_edits
 test_instructions_prune_landed_or_old_worktrees
 test_instructions_guards_reject_out_of_scope_hard_stop_and_big_changes

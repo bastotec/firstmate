@@ -27,6 +27,19 @@ is recorded and never stops the next:
            No-mistakes breakdowns read each included registered host once over
            ssh only when its bridge allows reports; denied or unreadable hosts
            are named in collect's why without the other reasons' three-item cap.
+  lifecycle
+           measures each task's day on every included machine (bin/fm_lifecycle.py
+           owns the timeline: sources, task kinds and where time went), writes the
+           timelines to lifecycle-<date>.json and one metrics line per night to
+           lifecycle.jsonl, then asks one model (config lifecycle.model, default
+           LIFECYCLE_MODEL, through the proxai gateway; one call, no tools, a
+           bounded digest) for the three highest-leverage changes, each tied to
+           evidence. An unavailable model is named in the step reason and never
+           replaced by another. The measurements and the changes are appended to
+           the digest as its "Lifecycle" section, so the instructions step carries
+           out the charter, brief and instruction changes and triage files the tool
+           and code ones with their owning mates. A machine whose records cannot be
+           read is named, and makes the step partial.
   skills   a deck agent in a fresh ~/dotfiles worktree improves skills/ from
            the digest. Same guards as Ziggy's reflection: only skills/, at most
            MAX_DIFF_LINES changed lines, secret scan of all changed staged bytes
@@ -114,10 +127,17 @@ Files under <home>/state/dream/:
                      without a PR, lines is the proposal count and files is null),
                      pr, risk (null if unread)} | null,
                      charter_proposals: [{mate, what}],
+                     lifecycle: {metrics (bin/fm_lifecycle.py metrics), model,
+                     recommendations: [{change, area, owner, evidence}],
+                     reflection_error, previous: {date, mate_median, mate_p90,
+                     session_median, merged, open} | null, change: {mate_median,
+                     mate_p90, merged} | null} | null,
                      no_mistakes: {...} or null, summary}
   raised.jsonl       one line per raised item (dedupe across nights)
   digest-<date>.md   the private digest the agents read
   charters-<date>.md private charter-edit proposals, when any are kept
+  lifecycle-<date>.json  the night's task timelines (private)
+  lifecycle.jsonl    one metrics line per published night, for night-over-night change
 
 Step timing starts after the pre-step checks; waited_for_ziggy, when nonzero,
 is the seconds spent polling for Ziggy's dream before that step.
@@ -156,11 +176,13 @@ Configuration: docs/configuration.md "Fleet dreaming" owns config/dream.json.
 Environment: FM_DREAM_DECK (deck binary), FM_DREAM_DOTFILES (~/dotfiles),
 FM_DREAM_JEV (Jev helper command), FM_DREAM_MIN_FREE_GB, FM_DREAM_NO_MISTAKES_DB,
 FM_DREAM_FIRSTMATE (firstmate checkout, default: this code root),
-FM_DREAM_NO_MISTAKES (gate binary, default: no-mistakes), FM_DREAM_GH (gh binary).
+FM_DREAM_NO_MISTAKES (gate binary, default: no-mistakes), FM_DREAM_GH (gh binary),
+PROXAI_BASE_URL and PROXAI_API_KEY_FILE (the lifecycle reflection's gateway).
 Tests only: FM_DREAM_NOW (epoch), FM_DREAM_SKIP_ZIGGY_WAIT=1, FM_DREAM_ZIGGY_POLL (seconds), and FM_DREAM_TASKS,
 FM_DREAM_HANDOFF, FM_DREAM_REPORT, FM_DREAM_ON, FM_DREAM_CAPTAIN_MEMORY replacing
 bin/fm-tasks-axi.sh, bin/fm-backlog-handoff.sh, bin/fm-report.sh, bin/fm-on.sh and
-`bin/fm_captain_memory.py upkeep`; FM_DREAM_BRIDGE
+`bin/fm_captain_memory.py upkeep`; FM_DREAM_REFLECT replaces the gateway call (it
+reads the request JSON on stdin and prints the gateway's reply); FM_DREAM_BRIDGE
 and FM_DREAM_SSH replace bin/fm-bridge.sh and ssh for breakdown reads.
 
     fm_dream.py run --home H [--only STEP ...] [--dry-run]
@@ -182,8 +204,13 @@ import time
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-STEPS = ['collect', 'skills', 'instructions', 'triage', 'file', 'memory']
-BUDGET = {'collect': 300, 'skills': 2700, 'instructions': 5400, 'triage': 1200, 'file': 300, 'memory': 120}
+sys.path.insert(0, str(SCRIPT_DIR))
+import fm_lifecycle as fl  # noqa: E402 - the lifecycle step's timeline builder, next to this file
+STEPS = ['collect', 'lifecycle', 'skills', 'instructions', 'triage', 'file', 'memory']
+BUDGET = {'collect': 300, 'lifecycle': 900, 'skills': 2700, 'instructions': 5400, 'triage': 1200, 'file': 300,
+          'memory': 120}
+LIFECYCLE_MODEL = 'claude/opus-5-5'
+MAX_LIFECYCLE_PRS = 80
 INSTRUCTION_PATHS = ('AGENTS.md', '.agents/skills/', 'bin/fm-brief.sh')
 MAX_INSTRUCTION_LINES = 80
 # A changed instruction line matching this is a hard stop: it may be added to, never removed or reworded.
@@ -273,6 +300,9 @@ def load_config(path):
         raise ConfigError('%s: repos must map repositories to owner/name or null' % path)
     if not isinstance(doc.get('model', ''), str):
         raise ConfigError('%s: model must be a string' % path)
+    life = doc.get('lifecycle', {})
+    if not isinstance(life, dict) or not isinstance(life.get('model', ''), str):
+        raise ConfigError('%s: lifecycle must be an object whose model is a string' % path)
     return doc
 
 
@@ -935,6 +965,188 @@ def step_collect(ctx):
     return result
 
 
+# --- lifecycle --------------------------------------------------------------
+
+LIFECYCLE_PROMPT = """You review a software fleet's day: a first mate supervising second mates and \
+their short-lived workers, which ship changes through a validation pipeline (no-mistakes: review, \
+test, fix rounds, PR, CI) to merge and deploy. Claude Code sessions ship the same kind of change \
+without the mates, and are the benchmark. These are today's measurements:
+
+{digest}
+
+Name the three changes that would most cut the mates' time from start to merge: to their tools, \
+their charters, their worker briefs, the models they use, or the flow itself. Tie each to the \
+evidence above (a task, a number). Prefer small changes that remove a whole wait. Answer with JSON \
+only: {{"changes": [{{"change": "one or two sentences", "area": "tools|charters|briefs|models|flow", \
+"owner": "instructions (AGENTS.md, skills, briefs, charters) or the repository to change", \
+"evidence": "the measurement it rests on"}}]}}"""
+
+
+def lifecycle_hosts(ctx):
+    """[(host, db, homes, ssh argv or None)]: this Mac with the main and every
+    included local home, then each included remote host whose bridge allows
+    reports with its registered homes; refused hosts are returned as errors."""
+    local_db = os.environ.get('FM_DREAM_NO_MISTAKES_DB') or '~/.no-mistakes/state.sqlite'
+    out = [('this Mac', local_db, [str(h) for _mid, h in local_homes(ctx)], None)]
+    errors, remote = [], {}
+    for mid, h, host in registry(ctx.home):
+        if host and h and mid not in ctx.excluded:
+            remote.setdefault(host, []).append(h)
+    env = dict(os.environ, FM_HOME=str(ctx.home))
+    for host in sorted(remote):
+        try:
+            gate = ctx.run([tool('fm-bridge.sh', 'FM_DREAM_BRIDGE'), 'check', host, 'reports'], timeout=30, env=env)
+        except (OSError, subprocess.TimeoutExpired):
+            gate = None
+        if gate is None or gate.returncode != 0:
+            errors.append('%s: bridge does not allow reports' % host)
+            continue
+        ssh = [os.environ.get('FM_DREAM_SSH') or 'ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host]
+        out.append((host, '~/.no-mistakes/state.sqlite', remote[host], ssh))
+    return out, errors
+
+
+def reflect(ctx, model, text):
+    """(changes, None) from one gateway call, or (None, why). No tools, no retry
+    on another model: an unavailable model is the answer."""
+    request = {'model': model, 'max_tokens': 2000,
+               'messages': [{'role': 'user', 'content': LIFECYCLE_PROMPT.format(digest=text)}]}
+    stub = os.environ.get('FM_DREAM_REFLECT')
+    try:
+        if stub:
+            r = ctx.run([stub], input=json.dumps(request), timeout=300)
+            if r.returncode:
+                return None, (r.stderr or r.stdout or 'exit %d' % r.returncode).strip()[:200]
+            reply = json.loads(r.stdout)
+        else:
+            import urllib.error
+            import urllib.request
+            base = (os.environ.get('PROXAI_BASE_URL') or 'http://127.0.0.1:8329/v1').rstrip('/')
+            key = os.environ.get('PROXAI_API_KEY', '').strip() or Path(
+                os.environ.get('PROXAI_API_KEY_FILE') or os.path.expanduser('~/.config/proxai/client.key')).read_text().strip()
+            req = urllib.request.Request(base + '/chat/completions', data=json.dumps(request).encode(),
+                                         headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'})
+            try:
+                with urllib.request.urlopen(req, timeout=min(300, ctx.left())) as resp:
+                    reply = json.load(resp)
+            except urllib.error.HTTPError as e:
+                try:
+                    reply = json.load(e)
+                except ValueError:
+                    return None, 'HTTP %d' % e.code
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        return None, '%s: %s' % (type(e).__name__, str(e)[:160])
+    if isinstance(reply, dict) and reply.get('error'):
+        err = reply['error']
+        return None, str(err.get('message') if isinstance(err, dict) else err)[:200]
+    try:
+        content = reply['choices'][0]['message']['content']
+        if isinstance(content, list):
+            content = ''.join(part.get('text', '') for part in content if isinstance(part, dict))
+        body = re.search(r'\{.*\}', content, re.S)
+        doc = json.loads(body.group(0)) if body else None
+    except (KeyError, IndexError, TypeError, ValueError):
+        doc = None
+    changes = [c for c in (doc or {}).get('changes') or []
+               if isinstance(c, dict) and c.get('change') and c.get('evidence')] if isinstance(doc, dict) else []
+    if not changes:
+        return None, 'the reply held no evidence-linked changes'
+    return [{k: str(c.get(k, ''))[:400] for k in ('change', 'area', 'owner', 'evidence')} for c in changes[:3]], None
+
+
+def step_lifecycle(ctx):
+    hosts, errors = lifecycle_hosts(ctx)
+    private = [h for mid, h, host in registry(ctx.home) if mid in ctx.excluded and h]
+    items, unread = [], list(errors)
+    gh = os.environ.get('FM_DREAM_GH') or 'gh'
+    run = lambda argv, input=None, timeout=None: ctx.run(argv, input=input, timeout=timeout)
+    try:
+        dep = fl.deploys((ctx.state / 'autoland' / 'report.log').read_text(encoding='utf-8', errors='replace'))
+    except OSError:
+        dep = {}
+    prs_left = MAX_LIFECYCLE_PRS
+    for host, db, homes, ssh in hosts:
+        data = fl.host_data(db, ctx.since, homes, run=run, ssh=ssh)
+        if data is None:
+            unread.append('%s: task records unreadable' % host)
+            continue
+        unread += ['%s: %s' % (host, u) for u in data.get('unread') or [] if not mentions_excluded(ctx, u)]
+        # An excluded home's work never reaches the timelines: its projects' runs, or any run naming it.
+        data['runs'] = [r for r in data.get('runs') or []
+                        if not any(r.get('repo') == p or str(r.get('repo')).startswith(p.rstrip('/') + '/') for p in private)
+                        and not mentions_excluded(ctx, json.dumps(r, ensure_ascii=False))]
+        prs = {}
+        for url in dict.fromkeys(r['pr'] for r in data['runs'] if r.get('pr')):
+            if prs_left <= 0:
+                break
+            prs_left -= 1
+            prs[url] = fl.pr_facts(url, gh, run=run)
+        items += fl.timelines(host, data, ctx.now, prs, dep)
+    if not items:
+        ctx.facts['lifecycle'] = None
+        return {'status': 'quiet day', **({'why': '; '.join(unread)} if unread else {})}
+    m = fl.metrics(items)
+    text = fl.digest(m, items, unread)
+    write_private(ctx.dir / ('lifecycle-%s.json' % ctx.day), json.dumps({'timelines': items, 'metrics': m}, indent=1))
+    history = ctx.dir / 'lifecycle.jsonl'
+    prev = None
+    try:
+        for line in history.read_text(encoding='utf-8').splitlines():
+            row = json.loads(line)
+            if row.get('date') != ctx.day:
+                prev = row
+    except (OSError, ValueError):
+        pass
+    point = {'date': ctx.day, 'mate_median': m['mate']['median'], 'mate_p90': m['mate']['p90'],
+             'session_median': m['session']['median'], 'merged': m['mate']['merged'], 'open': m['mate']['open']}
+    change = None
+    if prev:
+        change = {k: (point[k] - prev[k]) if point.get(k) is not None and prev.get(k) is not None else None
+                  for k in ('mate_median', 'mate_p90', 'merged')}
+    model = (ctx.config.get('lifecycle') or {}).get('model') or LIFECYCLE_MODEL
+    changes, why = (None, 'dry run: no model called') if ctx.dry_run else reflect(ctx, model, text)
+    facts = {'metrics': m, 'model': model, 'recommendations': changes or [], 'previous': prev, 'change': change,
+             'reflection_error': None if changes else '%s unavailable: %s; no other model was tried' % (model, why)}
+    ctx.facts['lifecycle'] = facts
+    section = ['', '## Lifecycle (where today\'s tasks spent their time)', text, '']
+    if changes:
+        section += ['### Highest-leverage changes (%s)' % model] + [
+            '- %s [%s, owner: %s] Evidence: %s' % (c['change'], c['area'], c['owner'], c['evidence']) for c in changes] + ['']
+    try:
+        write_private(ctx.digest, ctx.digest.read_text(encoding='utf-8') + '\n'.join(section))
+    except OSError:
+        unread.append('the digest could not take the lifecycle section')
+    if not ctx.dry_run and not getattr(ctx, 'only', None):
+        with open(history, 'a', encoding='utf-8') as fh:
+            fh.write(json.dumps(point) + '\n')
+    gaps = unread + ([facts['reflection_error']] if facts['reflection_error'] and not ctx.dry_run else [])
+    result = {'status': 'dry-run' if ctx.dry_run else ('partial' if gaps else 'done'), 'tasks': m['tasks'],
+              'sessions': m['sessions'], 'recommendations': len(changes or [])}
+    if gaps:
+        result['why'] = '; '.join(gaps)[:500]
+    return result
+
+
+def lifecycle_summary(life):
+    """'Lifecycle: 7 mate tasks (2 merged, 5 open), start to merge median 31m ...'."""
+    if not life:
+        return ''
+    m = life['metrics']
+    change = life.get('change') or {}
+    text = 'Lifecycle: %d mate task%s (%d merged, %d open), start to merge median %s (p90 %s)%s vs %s for %d session branch%s' % (
+        m['tasks'], '' if m['tasks'] == 1 else 's', m['mate']['merged'], m['mate']['open'], fl.human(m['mate']['median']),
+        fl.human(m['mate']['p90']), ' (%s%s vs %s)' % ('+' if change['mate_median'] >= 0 else '-', fl.human(abs(change['mate_median'])),
+                                                    life['previous']['date']) if change.get('mate_median') is not None else '',
+        fl.human(m['session']['median']), m['sessions'], '' if m['sessions'] == 1 else 'es')
+    if m['sinks']:
+        text += '; slowed by ' + ', '.join('%s %s' % (k, fl.human(v)) for k, v in m['sinks'][:3])
+    if life.get('recommendations'):
+        text += '. Changing: ' + '; '.join(c['change'][:140] for c in life['recommendations'])
+    elif life.get('reflection_error'):
+        text += '. No changes proposed: ' + life['reflection_error']
+    return text
+
+
 # --- skills -----------------------------------------------------------------
 
 SKILLS_PROMPT = """You are the firstmate fleet's nightly reflection. The fleet is a first mate (deck \
@@ -1126,6 +1338,10 @@ Hard rules for this change:
 
 A mate's own charter (its data/charter.md and data/secondmates.md entry) is private and not in this
 checkout: propose edits to it instead of making them.
+
+The digest's "Lifecycle" section measures where today's tasks spent their time and names the
+night's highest-leverage changes. Carry out first the ones about instructions, briefs or charters
+that fit the rules above, citing the lifecycle evidence.
 
 Finally write {out} as JSON: {{"changes": [{{"path": "file", "what": "one plain sentence", "why": "what
 happened today", "evidence": ["exact digest lines, at most 3"]}}], "charters": [{{"mate": "<mate id>",
@@ -1369,7 +1585,8 @@ fleet's last 24 hours: {digest}
 Propose concrete improvements to the harness repositories, only where the digest shows evidence: a
 bug seen in the logs, a missing guard, a slow path (the slow fm-* commands), a bad default, a
 recurring failure. Repositories: {repos}. You may read code under {projects} to make an item precise,
-but change nothing anywhere.
+but change nothing anywhere. The digest's "Lifecycle" section names the night's highest-leverage
+changes: propose first the ones that are tool or code changes in these repositories.
 
 Already open or recently raised (do not propose these again):
 {open_items}
@@ -1713,6 +1930,9 @@ def summary_line(run):
     if odd:
         text += ' %d home record%s (%s%s).' % (
             len(odd), ' disagrees' if len(odd) == 1 else 's disagree', odd[0][:120], '; and more' if len(odd) > 1 else '')
+    life = lifecycle_summary(run.get('lifecycle'))
+    if life:
+        text += ' ' + life.rstrip('.') + '.'
     nm = nm_summary(run.get('no_mistakes'))
     if nm:
         text += ' ' + nm[0].upper() + nm[1:] + '.'
@@ -1737,6 +1957,7 @@ def cmd_run(args):
     except ConfigError as e:
         print('fm-dream: %s' % e, file=sys.stderr)
         return 1
+    ctx.only = args.only
     # The kernel holds this lock for the whole run and drops it if the run dies.
     lock_fd = os.open(ctx.dir / '.lock', os.O_CREAT | os.O_WRONLY, 0o600)
     try:
@@ -1762,6 +1983,7 @@ def cmd_run(args):
         run['disagreements'] = ctx.facts.get('disagreements', [])
         run['instructions'] = ctx.facts.get('instructions')
         run['charter_proposals'] = ctx.facts.get('charter_proposals', [])
+        run['lifecycle'] = ctx.facts.get('lifecycle')
         run['captain_memory'] = ctx.facts.get('captain_memory')
         run['status'] = ('done' if all(s.get('status') in CLEAN for s in run['steps'].values()) and not force_partial
                          else 'partial')
