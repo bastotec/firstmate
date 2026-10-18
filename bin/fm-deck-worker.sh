@@ -397,6 +397,7 @@ lane_stop() {
 
 # The header's HOST SHUTDOWN section owns this order and its bounds.
 cleanup() {
+  trap '' TERM INT HUP
   deck_stream_end
   [ -z "$WATCH_PID" ] || fm_begin_child_stop "$WATCH_PID"
   [ -z "$LANE_PID" ] || fm_begin_child_stop "$LANE_PID"

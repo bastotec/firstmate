@@ -1729,7 +1729,7 @@ PYTHON
 # and the old watcher cannot keep writing after the host is gone.
 test_secondmate_host_shutdown_bounds_a_watcher_that_ignores_term() {
   local dir mode
-  for mode in stubborn exits real-arm; do
+  for mode in stubborn exits real-arm quit-term; do
   dir="$TMP_ROOT/host-shutdown-watcher-$mode"
   make_secondmate_host_fixture "$dir"
   cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
@@ -1741,7 +1741,17 @@ printf '%s\n' "$$" > "$FM_HOME/arm-pid"
 printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
 while :; do sleep 0.1; done
 SH
-  if [ "$mode" = exits ]; then
+  if [ "$mode" = quit-term ]; then
+    sed "s/trap '' TERM/trap ': > \"\$FM_HOME\/cleanup-started\"' TERM/" "$dir/bin/fm-watch-arm.sh" > "$dir/arm-quit"
+    mv "$dir/arm-quit" "$dir/bin/fm-watch-arm.sh"
+    touch "$dir/home/config/primary-split"
+    cat > "$dir/bin/fm-captain-lane.sh" <<'SH'
+#!/usr/bin/env bash
+trap '' TERM INT HUP
+printf '%s\n' "$$" > "$FM_HOME/lane-pid"
+while :; do sleep 0.1; done
+SH
+  elif [ "$mode" = exits ]; then
     sed "s/trap '' TERM/trap 'exit 143' TERM/" "$dir/bin/fm-watch-arm.sh" > "$dir/arm-exits"
     mv "$dir/arm-exits" "$dir/bin/fm-watch-arm.sh"
   elif [ "$mode" = real-arm ]; then
@@ -1791,15 +1801,25 @@ with (root/'pane').open('w') as output:
         wait_for(lambda: (home/'writer-pid').exists() and (home/'arm-pid').exists(), 'watcher arm start')
         arm = int((home/'arm-pid').read_text()); writer = int((home/'writer-pid').read_text())
         pids = [arm, writer]
-        if sys.argv[2] == 'real-arm':
+        if sys.argv[2] in ('real-arm', 'quit-term'):
             wait_for(lambda: 'idle since' in (root/'pane').read_text(), 'idle host')
+        if sys.argv[2] == 'quit-term':
+            wait_for(lambda: (home/'lane-pid').exists(), 'captain lane start')
+            pids.append(int((home/'lane-pid').read_text()))
         started = time.monotonic()
+        if sys.argv[2] == 'quit-term':
+            p.stdin.write('/quit\n'); p.stdin.flush()
+            wait_for(lambda: (home/'cleanup-started').exists(), 'quit cleanup start', bound=10)
         os.kill(p.pid, signal.SIGTERM)
         p.wait(timeout=30)
         took = time.monotonic() - started
         assert took < 8, (took, (root/'pane').read_text())
         assert not alive(arm), 'the host left its watcher arm running'
         assert not alive(writer), "the host left its watcher's helper running"
+        if sys.argv[2] == 'quit-term':
+            assert p.returncode == 0, 'TERM interrupted the successful /quit cleanup'
+            assert not alive(pids[-1]), 'the host left its captain lane running'
+            assert not (root/'parent/host.captain-lane').exists(), 'the captain lane marker outlived cleanup'
         size = (home/'watch-writes').stat().st_size
         time.sleep(.5)
         assert (home/'watch-writes').stat().st_size == size, 'the old watcher kept writing after the host stopped'
