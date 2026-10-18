@@ -123,6 +123,15 @@ SH
   cat > "$dir/bin/tasks-axi" <<'SH'
 #!/usr/bin/env bash
 if [ "$1" = show ]; then
+  if [ "${3:-}" = --full ]; then
+    case "$(cat "$FM_HOME/backlog-read-mode" 2>/dev/null)" in
+      failed) echo 'backend unavailable' >&2; exit 1 ;;
+      timeout) printf 'task:\n  state: queued\n'; sleep 3; exit 0 ;;
+      empty) exit 0 ;;
+      missing-state) printf 'task:\n  body: "Superseded: replacement"\n'; exit 0 ;;
+      malformed-body) printf 'task:\n  state: queued\n  body: "unterminated\n'; exit 0 ;;
+    esac
+  fi
   cat "$FM_HOME/rows/$2" 2>/dev/null && exit 0
   echo 'code: NOT_FOUND'
 fi
@@ -164,6 +173,7 @@ add_worker() {
   printf 'working: started\n' > "$dir/home/state/$id.status"
   age_file "$dir/home/state/$id.status" "$quiet"
   printf '%s\n' "$line" > "$dir/home/crew/$id"
+  printf -- '- %s: Open work\n  state: in_flight\n' "$id" > "$dir/home/rows/$id"
   # a run whose PR merged carries that PR, as a delivered ship's record does
   case "$line" in
     *'PR merged/closed'*)
@@ -210,12 +220,42 @@ wake_count() {  # <dir> <fixed-pattern>
   grep -cF -- "$2" "$1/home/state/.wake-queue" 2>/dev/null || true
 }
 
+test_unreadable_backlog_items_are_handed_to_the_first_mate() {
+  local dir mode home
+  for home in main second-mate; do
+    for mode in failed timeout missing empty missing-state malformed-body; do
+      dir=$(new_case "unreadable-backlog-$home-$mode")
+      [ "$home" != second-mate ] || make_secondmate_home "$dir" mate
+      add_worker "$dir" stopped 'state: paused · source: status-log · waiting' 90000
+      printf -- '- stopped: Old work\n  state: queued\n  body: "Superseded: replacement"\n' > "$dir/home/rows/stopped"
+      printf '%s\n' "$mode" > "$dir/home/backlog-read-mode"
+      [ "$mode" != missing ] || rm "$dir/home/rows/stopped"
+      cp "$dir/home/state/stopped.meta" "$dir/before.meta"
+      FM_BACKLOG_ROW_TIMEOUT_SECS=1 sweep "$dir" scan --now || fail "unreadable backlog scan failed"
+      assert_equals 'stalled asked' "$(summary_of "$dir" stopped)" "$mode backlog reads need the first mate's decision"
+      assert_absent "$dir/home/control-calls" "$mode backlog reads must never authorize a retry"
+      assert_absent "$dir/home/teardown-calls" "$mode backlog reads must never authorize retirement"
+      assert_absent "$dir/home/state/idle-sweep/stopped.retried" "$mode backlog reads must not consume retry authority"
+      cmp -s "$dir/before.meta" "$dir/home/state/stopped.meta" || fail "an unreadable backlog read changed the worker"
+      assert_present "$dir/home/state/idle-sweep/stopped.raised" "the backlog handoff must be recorded"
+      if [ "$home" = main ]; then
+        assert_contains "$(cat "$dir/home/state/.wake-queue")" 'decide yourself whether to retire or retry stopped' "the first mate was not asked"
+      else
+        assert_contains "$(cat "$dir/parent/state/mate.status")" 'needs-decision [key=idle-stopped]' "the parent mate was not asked"
+        assert_contains "$(cat "$dir/parent/state/mate.status")" 'the full backlog item could not be read' "the parent needs the uncertainty reason"
+      fi
+      assert_no_captain_call "$dir" "an unreadable backlog item"
+    done
+  done
+  pass "fm-idle-sweep: failed, timed-out and incomplete backlog reads go to the first mate, never retry"
+}
+
 test_unreadable_prs_are_handed_to_the_first_mate() {
   local dir state
   for state in missing empty unknown; do
     dir=$(new_case "unreadable-pr-$state")
     add_worker "$dir" stopped 'state: failed · source: run-step · run failed' 90000
-    printf -- '- stopped: Open work\n  state: in-flight\n' > "$dir/home/rows/stopped"
+    printf -- '- stopped: Open work\n  state: in_flight\n' > "$dir/home/rows/stopped"
     printf 'pr=https://github.com/owner/repo/pull/71\n' >> "$dir/home/state/stopped.meta"
     case "$state" in
       empty) : > "$dir/home/pr-states/71" ;;
@@ -405,7 +445,7 @@ test_a_stopped_worker_with_open_work_is_retried_once_without_a_card() {
   local dir
   dir=$(new_case retry-open)
   add_worker "$dir" open-work 'state: failed · source: run-step · run failed' 90000
-  printf -- '- open-work: Open work\n  state: in-flight\n' > "$dir/home/rows/open-work"
+  printf -- '- open-work: Open work\n  state: in_flight\n' > "$dir/home/rows/open-work"
   printf 'pr=https://github.com/owner/repo/pull/71\n' >> "$dir/home/state/open-work.meta"
   printf 'OPEN\n' > "$dir/home/pr-states/71"
   add_worker "$dir" no-pr 'state: blocked · source: status-log · needs a token' 90000
@@ -478,10 +518,10 @@ test_supersession_requires_a_decoded_body_marker() {
   for id in title-only body-only note-only empty-marker; do
     add_worker "$dir" "$id" 'state: failed · source: run-step · run failed' 90000
   done
-  printf -- '- title-only: Fix superseded request handling\n  state: in-flight\n' > "$dir/home/rows/title-only"
-  printf -- '- body-only: Fix request handling\n  state: in-flight\n  body: "This work is not superseded."\n' > "$dir/home/rows/body-only"
-  printf -- '- note-only: Fix request handling\n  state: in-flight\n  note: Investigate superseded requests\n' > "$dir/home/rows/note-only"
-  printf -- '- empty-marker: Fix request handling\n  state: in-flight\n  body: "Superseded: "\n' > "$dir/home/rows/empty-marker"
+  printf -- '- title-only: Fix superseded request handling\n  state: in_flight\n' > "$dir/home/rows/title-only"
+  printf -- '- body-only: Fix request handling\n  state: in_flight\n  body: "This work is not superseded."\n' > "$dir/home/rows/body-only"
+  printf -- '- note-only: Fix request handling\n  state: in_flight\n  note: Investigate superseded requests\n' > "$dir/home/rows/note-only"
+  printf -- '- empty-marker: Fix request handling\n  state: in_flight\n  body: "Superseded: "\n' > "$dir/home/rows/empty-marker"
 
   sweep "$dir" scan --now || fail "scan failed"
 
@@ -1264,6 +1304,7 @@ test_watcher_runs_the_sweep_and_surfaces_its_decision() {
   pass "fm-idle-sweep: the watcher runs the sweep with no model turn and surfaces what it queues"
 }
 
+test_unreadable_backlog_items_are_handed_to_the_first_mate
 test_unreadable_prs_are_handed_to_the_first_mate
 test_replacements_during_forge_reads_are_left_for_a_fresh_scan
 test_recovered_workers_are_not_retried_with_unchanged_metadata

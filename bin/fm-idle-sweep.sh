@@ -323,9 +323,15 @@ raise() {
 decide_stopped() {
   local id=$1 row body pr pr_state retire=0 out rc=0 tries count
   STOPPED_ACTION=
-  row=$(fm_backlog_row_show "${FM_DATA_OVERRIDE:-$FM_HOME/data}" "$id" --full 2>/dev/null) || row=
+  if ! row=$(fm_backlog_row_show "${FM_DATA_OVERRIDE:-$FM_HOME/data}" "$id" --full 2>/dev/null) \
+      || ! printf '%s\n' "$row" | grep -qE '^  state: (queued|in_flight|done)$' \
+      || ! body=$(fm_pr_task_body "$row" 2>/dev/null); then
+    RAISED=0
+    raise "$id" "$CLASS" "the full backlog item could not be read"
+    STOPPED_ACTION=asked
+    return 0
+  fi
   case "$row" in *$'\n'"  state: done"*) retire=1 ;; esac
-  body=$(fm_pr_task_body "$row") || body=
   if fm_pr_superseded_recorded "$body"; then retire=1; fi
   pr=$(fm_pr_task_url "$row" "$STATE/$id.meta") || pr=
   [ -n "$pr" ] || pr=$(grep -Eo 'https://[^[:space:]]+/(pull|merge_requests)/[0-9]+' "$STATE/$id.status" 2>/dev/null | tail -1) || pr=

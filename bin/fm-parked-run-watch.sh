@@ -187,7 +187,7 @@ quiet_one() {  # <id>
   status="$STATE/$id.status"
   classification=$(fm_busy_classify_live "$(fm_backend_of_meta "$meta")" \
     "$(fm_backend_target_of_meta "$meta")" "$(fm_meta_get "$meta" harness)" \
-    "$id" "$STATE" "$(fm_meta_get "$meta" endpoint_task_id)")
+    "$id" "$STATE" "fm-$id")
   [ "${classification%% *}" = busy ] || return 0
   if [ -f "$status" ]; then
     changed=$(fm_path_mtime "$status") || return 0

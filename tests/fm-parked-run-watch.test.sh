@@ -34,7 +34,7 @@ SH
   cat > "$dir/bin/backends/stream.sh" <<'SH'
 fm_backend_stream_target_ready() {
   printf '%s %s\n' "$1" "$2" >> "$FM_HOME/endpoint-probes"
-  [ "$1" = fixture:w1 ] && [ "$2" = w1 ] && [ ! -f "$FM_HOME/endpoint-dead" ]
+  [ "$1" = fixture:w1 ] && [ "$2" = fm-w1 ] && [ ! -f "$FM_HOME/endpoint-dead" ]
 }
 SH
   printf 'kind=ship\nharness=deck\nbackend=stream\nwindow=fixture:w1\nendpoint_task_id=w1\n' > "$dir/home/state/w1.meta"
@@ -118,7 +118,7 @@ test_a_busy_worker_without_a_status_ledger_uses_its_busy_timestamp() {
   scan "$dir"
   assert_equals 2 "$(wakes "$dir" 'worker-quiet:w1:')" "a later silent turn gets its own check-in"
   assert_absent "$dir/home/state/w1.status" "checking a silent worker must not invent status"
-  assert_grep 'fixture:w1 w1' "$dir/home/endpoint-probes" "liveness is checked against the recorded endpoint and identity"
+  assert_grep 'fixture:w1 fm-w1' "$dir/home/endpoint-probes" "liveness is checked against the recorded endpoint and spawn label"
   pass "parked-run watch: a worker that never reports is checked in on from its busy timestamp"
 }
 
