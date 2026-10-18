@@ -113,6 +113,10 @@ case "${STUB_NM:-pass}" in
   gate) case "$*" in *abort*) echo "run_status: cancelled" ;; *)
           printf 'gate:\n  step: review\n  status: awaiting_approval\n  findings[1]{id,severity,file,action,description}:\n    R1,error,AGENTS.md,ask-user,"too broad"\n' ;; esac ;;
   broken) echo "error: daemon unreachable: dial ipc: no such file" >&2; exit 1 ;;
+  slow) case "$*" in *abort*) echo "run_status: cancelled" ;;
+          *) if [ ! -e "$STUB_CALLS/nm-first" ]; then : > "$STUB_CALLS/nm-first"
+               printf 'pr: "https://github.com/bastotec/firstmate/pull/991"\nerror: wait of 8m0s elapsed while driving the run\n'; exit 1
+             fi; sleep 30 ;; esac ;;
   scalar) case "$*" in *abort*) echo "run_status: cancelled" ;; *)
           printf 'run:\n  id: "r1"\n  status: running\n  findings[1]{id,severity,file,action,description}:\n    R2,warning,AGENTS.md,ask-user,"unclear"\ngate: review\n' ;; esac ;;
 esac
@@ -848,8 +852,32 @@ test_instructions_stop_a_parked_gate_and_report_it() {
   pass "instructions: a gate --yes cannot pass is stopped and reported for the captain"
 }
 
+test_an_interrupted_night_stops_the_gate_and_keeps_the_pr() {
+  local d pid waited=0 log
+  d=$(new_case instr-interrupted)
+  STUB_INSTR=edit STUB_NM=slow run_dream "$d" --only collect instructions > "$d/out.json" &
+  pid=$!
+  while [ ! -e "$d/calls/nm-first" ] || [ "$(grep -c '|axi run' "$d/calls/nm" 2>/dev/null)" -lt 2 ]; do
+    sleep 0.2; waited=$((waited + 1)); [ "$waited" -lt 300 ] || { kill "$pid"; fail "the gate never reattached"; }
+  done
+  # run_dream is a shell function: signal the dreaming process itself, as launchd would.
+  pkill -TERM -f "fm_dream.py run --home $d/home" || fail "no dreaming process to signal"
+  wait "$pid" 2>/dev/null
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" <<'PY' || fail "an interrupted night lost the gate state: $(jq -c '.steps.instructions, .instructions' "$log")"
+import json, sys
+run = json.load(open(sys.argv[1]))
+st, ins = run["steps"]["instructions"], run["instructions"]
+assert st["status"] == "interrupted" and "stopping the gate run was confirmed" in st["why"], st
+assert ins["pr"].endswith("/pull/991") and ins["proposed_lines"] == 1 and ins["risk"] == "Low", ins
+PY
+  grep -q '|axi abort' "$d/calls/nm" || fail "the gate run was not stopped"
+  pass "instructions: an interrupted night stops the gate run and still reports the PR"
+}
+
 test_collect_builds_a_private_digest_of_the_day
 test_each_relaunch_is_counted_once
+test_an_interrupted_night_stops_the_gate_and_keeps_the_pr
 test_instructions_open_one_gated_pr_and_propose_charter_edits
 test_instructions_prune_landed_or_old_worktrees
 test_instructions_guards_reject_out_of_scope_hard_stop_and_big_changes

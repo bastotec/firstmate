@@ -1168,6 +1168,8 @@ def drive_gate(ctx, tree, intent):
         out = (r.stdout or '') + (r.stderr or '')
         m = re.search(r'https://github\.com/[^\s"\']+/pull/\d+', out)
         pr = m.group(0) if m else pr
+        if pr and isinstance(ctx.facts.get('instructions'), dict):
+            ctx.facts['instructions']['pr'] = pr  # known even if the night is interrupted next
         outcome = re.search(r'^outcome: (\S+)', out, re.M)
         if outcome:
             return outcome.group(1), pr, ''
@@ -1285,11 +1287,28 @@ def step_instructions(ctx):
                   'production, outward messages, destructive or irreversible actions, captain approval) removed '
                   'or reworded. Each change and its evidence:\n%s\nRisk policy: auto-land at its cap; anything '
                   'above it waits for the captain.' % (ctx.day, MAX_INSTRUCTION_LINES, body))
+        proposed = len(removed) + len(added)
+        # Recorded before the gate runs, so an interrupted night still reports the proposal and its PR.
+        summary = {'changes': changes, 'proposed_lines': proposed, 'lines': proposed, 'pr': None,
+                   'files': None, 'risk': None}
+        ctx.facts['instructions'] = summary
+
+        def read_pr_back():
+            pr_now = summary['pr']
+            if pr_now:
+                # Whatever the outcome, the gate may have repaired the patch: report what the PR holds.
+                final_lines, files = pr_diff(ctx, pr_now)
+                summary.update(risk=pr_risk(ctx, pr_now), lines=final_lines, files=files)
+
         try:
             outcome, pr, detail = drive_gate(ctx, tree, intent)
         except KeyboardInterrupt as exc:
             # An interrupted night (SIGTERM, SIGHUP) must not leave the gate publishing alone.
             stopped = stop_run(tree)
+            try:
+                read_pr_back()
+            except Exception:  # noqa: BLE001 - the stop, not the metadata, is what matters here
+                pass
             raise KeyboardInterrupt('%s; stopping the gate run was %s' % (exc, 'confirmed' if stopped else 'not confirmed'))
         except BaseException:
             stop_run(tree)
@@ -1298,16 +1317,9 @@ def step_instructions(ctx):
             # Nothing waits on a parked run overnight: stop it, keep the branch for a person.
             if not stop_run(tree):
                 detail = (detail or outcome) + '; stopping the run was not confirmed'
-        lines = len(removed) + len(added)
-        summary = {'changes': changes, 'lines': lines, 'pr': pr}
-        ctx.facts['instructions'] = summary
-        summary.update(proposed_lines=lines, files=None, risk=None)
-        if pr:
-            # Whatever the outcome, the gate may have repaired the patch: report what the PR holds.
-            final_lines, files = pr_diff(ctx, pr)
-            summary.update(risk=pr_risk(ctx, pr), lines=final_lines, files=files)
-            lines = final_lines
-        risk = summary['risk']
+        summary['pr'] = pr
+        read_pr_back()
+        lines, risk = summary['lines'], summary['risk']
         if outcome in ('checks-passed', 'passed') and pr:
             return {'status': 'pr opened', 'pr': pr, 'risk': risk, 'lines': lines, 'changes': changes}
         return {'status': 'needs a decision' if outcome == 'gate' else outcome, 'why': detail or outcome,
