@@ -78,9 +78,10 @@
 # still takes precedence.
 # Cleanup and retry pass the classified metadata snapshot to their lifecycle
 # owners for a locked check; a changed record is left for a fresh scan with
-# class unknown/action none. For stopped workers, both also pass the classified
-# status byte count through --if-still-stopped; the lifecycle owners' headers
-# own the late activity checks. A foreign or unreadable slot owner refuses a
+# class unknown/action none. Both also pass the classified status byte count
+# through --if-still-stopped, with --expected-state done for finished-worker
+# cleanup; the lifecycle owners' headers own the late activity checks.
+# A foreign or unreadable slot owner refuses a
 # retry and goes to the first mate, never relaunching into another task's copy.
 # A main home has no parent audit, so a scan that leaves workers unhandled
 # queues ONE `check:` wake keyed idle-sweep-unhandled:<epoch>, naming those ids.

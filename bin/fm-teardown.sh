@@ -168,10 +168,15 @@
 # metadata snapshot under the task's control lock before any cleanup; exit 3
 # leaves a changed or vanished record for a fresh scan.
 # --if-still-stopped <status-bytes> requires --expected-record and applies
-# bin/fm-busy-lib.sh's stopped-worker admission check before preflights, before
+# bin/fm-busy-lib.sh's activity admission check before preflights, before
 # backlog staging, before cleanup, and immediately before the endpoint kill.
+# It admits only a local ship (including an absent kind=) or scout whose
+# metadata and status byte count match, with no live semantic busy turn and a
+# fresh failed/blocked/paused/gone crew state. --expected-state done instead
+# requires a fresh done state at those same boundaries; it requires
+# --if-still-stopped and protects finished-worker cleanup from resumed activity.
 # Changed activity exits 3 rather than stopping a resumed worker.
-# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--keep-commits] [--merged-pr <url>] [--expected-record <metadata>] [--if-still-stopped <status-bytes>]
+# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--keep-commits] [--merged-pr <url>] [--expected-record <metadata>] [--if-still-stopped <status-bytes> [--expected-state done]]
 #   --keep-commits handles the leftover local commits a squash merge leaves
 #   behind: when a ship task's PR is merged, its worktree has no uncommitted
 #   changes, and its committed work still is not proved landed, teardown first

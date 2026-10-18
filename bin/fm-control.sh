@@ -95,13 +95,19 @@
 #              Before stopping or launching, the checkpoint rejects a foreign
 #              or unreadable worktree owner claim; an absent claim keeps legacy
 #              recovery eligible. This also protects recover-missing.
-#              --if-still-stopped admits a local ship or scout retry only under
-#              the control lock, with an unchanged --expected-record and status
-#              byte count, a fresh failed/blocked/paused/gone crew state, and no
+#              --if-still-stopped admits a local ship (absent kind= also means
+#              ship) or scout retry only under the control lock, with unchanged
+#              --expected-record metadata and status byte count, a fresh
+#              failed/blocked/paused/gone crew state, and no
 #              live semantic busy turn. It rechecks after the endpoint probe
 #              and composer preflight, refusing resumed activity without an
 #              interrupt or exit submission. Exit 3 leaves the worker for a
 #              fresh scan; a late refusal may leave a failed transaction journal.
+#              A local caller may set FM_CONTROL_RELAUNCH_TX to a unique id
+#              (letters, digits, dots, underscores and hyphens only) to bind
+#              replacement publication to its invocation; otherwise relaunch
+#              generates one. The journal records relaunch_tx and the launch
+#              owner publishes control_relaunch_tx in the replacement metadata.
 #
 #   recover-missing For a local record, restore a terminal whose endpoint reads
 #              missing, then hand the launch to the existing owner
