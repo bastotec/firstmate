@@ -112,6 +112,7 @@ case "${STUB_NM:-pass}" in
   pass) printf 'outcome: checks-passed\nhelp[1]: "CI checks passed - the PR is ready: https://github.com/bastotec/firstmate/pull/990"\n' ;;
   gate) case "$*" in *abort*) echo "run_status: cancelled" ;; *)
           printf 'gate:\n  step: review\n  status: awaiting_approval\n  findings[1]{id,severity,file,action,description}:\n    R1,error,AGENTS.md,ask-user,"too broad"\n' ;; esac ;;
+  broken) echo "error: daemon unreachable: dial ipc: no such file" >&2; exit 1 ;;
   scalar) case "$*" in *abort*) echo "run_status: cancelled" ;; *)
           printf 'run:\n  id: "r1"\n  status: running\n  findings[1]{id,severity,file,action,description}:\n    R2,warning,AGENTS.md,ask-user,"unclear"\ngate: review\n' ;; esac ;;
 esac
@@ -751,6 +752,11 @@ test_instructions_stop_a_parked_gate_and_report_it() {
   jq -e '.steps.instructions.status == "needs a decision" and (.steps.instructions.why | test("review gate: R2 warning"))' "$d/out.json" >/dev/null \
     || fail "a scalar gate was not recognized: $(jq -c .steps.instructions "$d/out.json")"
   [ "$(grep -c '|axi run' "$d/calls/nm")" = 1 ] || fail "a scalar gate was reattached instead of stopped"
+  d=$(new_case instr-gate-broken)
+  STUB_INSTR=edit STUB_NM=broken run_dream "$d" --only collect instructions > "$d/out.json" || fail "run exited nonzero"
+  jq -e '.steps.instructions.status == "failed" and (.steps.instructions.why | test("daemon unreachable"))' "$d/out.json" >/dev/null \
+    || fail "a no-mistakes error was retried or hidden: $(jq -c .steps.instructions "$d/out.json")"
+  [ "$(grep -c '|axi run' "$d/calls/nm")" = 1 ] || fail "a no-mistakes error was retried"
   pass "instructions: a gate --yes cannot pass is stopped and reported for the captain"
 }
 

@@ -1155,6 +1155,10 @@ def drive_gate(ctx, tree, intent):
         if gate:
             findings = ', '.join('%s %s' % (f.get('id'), f.get('severity')) for f in gate['findings'][:4])
             return 'gate', pr, '%s gate%s' % (gate.get('step') or 'a', ': ' + findings if findings else '')
+        if r.returncode and not re.search(r'wait of \S+ elapsed', out):
+            # Anything but the bounded hold ending is an error to report, not to retry.
+            last = [l for l in out.splitlines() if l.strip()][-1:] or ['no-mistakes exited %d' % r.returncode]
+            return 'failed', pr, last[0][:300]
         args = [nm_bin(), 'axi', 'run', '--yes', '--intent', 'x']  # reattach: the run keeps its intent
     return 'timed out', pr, 'no outcome within the step budget'
 
@@ -1253,24 +1257,28 @@ def step_instructions(ctx):
                   'above it waits for the captain.' % (ctx.day, MAX_INSTRUCTION_LINES, body))
         try:
             outcome, pr, detail = drive_gate(ctx, tree, intent)
-        except BaseException:
+        except KeyboardInterrupt as exc:
             # An interrupted night (SIGTERM, SIGHUP) must not leave the gate publishing alone.
+            stopped = stop_run(tree)
+            raise KeyboardInterrupt('%s; stopping the gate run was %s' % (exc, 'confirmed' if stopped else 'not confirmed'))
+        except BaseException:
             stop_run(tree)
             raise
-        if outcome in ('gate', 'timed out'):
+        if outcome in ('gate', 'timed out', 'failed'):
             # Nothing waits on a parked run overnight: stop it, keep the branch for a person.
             if not stop_run(tree):
                 detail = (detail or outcome) + '; stopping the run was not confirmed'
         lines = len(removed) + len(added)
         summary = {'changes': changes, 'lines': lines, 'pr': pr}
         ctx.facts['instructions'] = summary
-        if outcome in ('checks-passed', 'passed') and pr:
-            risk = pr_risk(ctx, pr)
-            summary['risk'] = risk
+        summary.update(proposed_lines=lines, files=None, risk=None)
+        if pr:
+            # Whatever the outcome, the gate may have repaired the patch: report what the PR holds.
             final_lines, files = pr_diff(ctx, pr)
-            # The gate may have repaired the patch: report what the PR now holds.
-            summary.update(proposed_lines=lines, lines=final_lines, files=files)
+            summary.update(risk=pr_risk(ctx, pr), lines=final_lines, files=files)
             lines = final_lines
+        risk = summary['risk']
+        if outcome in ('checks-passed', 'passed') and pr:
             return {'status': 'pr opened', 'pr': pr, 'risk': risk, 'lines': lines, 'changes': changes}
         return {'status': 'needs a decision' if outcome == 'gate' else outcome, 'why': detail or outcome,
                 'pr': pr, 'lines': lines, 'changes': changes}
