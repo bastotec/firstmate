@@ -361,6 +361,7 @@ MODEL_SET=0
 EFFORT_SET=0
 NOTE=
 NOTE_SET=0
+NOTE_FROM_FILE=0
 UNLESS_HELD_STOPPED=0
 REPLACE_LIVE=0
 control_want_value=
@@ -373,11 +374,12 @@ for control_arg in "$@"; do
       harness) NEW_HARNESS=$control_arg; HARNESS_SET=1 ;;
       model) NEW_MODEL=$control_arg; MODEL_SET=1 ;;
       effort) NEW_EFFORT=$control_arg; EFFORT_SET=1 ;;
-      note) NOTE=$control_arg; NOTE_SET=1 ;;
+      note) NOTE=$control_arg; NOTE_SET=1; NOTE_FROM_FILE=0 ;;
       note_file)
         [ -f "$control_arg" ] || die "--note-file '$control_arg' is not a readable file"
         NOTE=$(cat "$control_arg")
         NOTE_SET=1
+        NOTE_FROM_FILE=1
         ;;
     esac
     control_want_value=
@@ -391,7 +393,7 @@ for control_arg in "$@"; do
     --effort) control_want_value=effort ;;
     --effort=*) NEW_EFFORT=${control_arg#--effort=}; EFFORT_SET=1 ;;
     --note) control_want_value=note ;;
-    --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
+    --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1; NOTE_FROM_FILE=0 ;;
     --note-file) control_want_value=note_file ;;
     --unless-held-stopped) UNLESS_HELD_STOPPED=1 ;;
     --replace-live) REPLACE_LIVE=1 ;;
@@ -399,6 +401,7 @@ for control_arg in "$@"; do
       [ -f "${control_arg#--note-file=}" ] || die "--note-file '${control_arg#--note-file=}' is not a readable file"
       NOTE=$(cat "${control_arg#--note-file=}")
       NOTE_SET=1
+      NOTE_FROM_FILE=1
       ;;
     *) die "unexpected argument '$control_arg'" ;;
   esac

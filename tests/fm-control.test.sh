@@ -349,6 +349,101 @@ test_unconfigured_remote_secondmate_route_is_refused() {
   pass "fm-control: an unconfigured remote route refuses without misdiagnosing metadata or touching a local agent"
 }
 
+test_remote_relaunch_preserves_legacy_protocol_and_replays_notes() {
+  local code="$TMP_ROOT/remote-control-code" dir scenario mode out rc expected_rc expected_calls
+  local note=$'---\nRestarted to pick up the new charter.\n---'
+  local -a args
+  mkdir -p "$code"
+  cp -R "$ROOT/bin" "$code/bin"
+  cat > "$code/bin/fm-on.sh" <<'SH'
+#!/usr/bin/env bash
+shift
+case "$1" in
+  fm-remote-doctor.sh) exit 0 ;;
+  fm-remote-secondmate-control.sh) shift ;;
+  *) exit 1 ;;
+esac
+verb=$1
+shift
+case "$verb" in
+  state) echo dead ;;
+  relaunch)
+    printf '%s\n' "$#" >> "$FM_HOME/relaunch-counts"
+    printf '%s\n' "${@:1:4}" > "$FM_HOME/relaunch-profile"
+    case "$(cat "$FM_HOME/remote-mode")" in
+      refuse) echo 'replacement refused' >&2; exit 1 ;;
+      unreachable) exit 255 ;;
+      reject-all) echo usage >&2; exit 2 ;;
+      legacy) [ "$#" -eq 4 ] || { echo usage >&2; exit 2; } ;;
+    esac
+    [ "$#" -ne 6 ] || printf '%s\n' "$6" > "$FM_HOME/carried-note"
+    echo "relaunched $1 harness=$2"
+    ;;
+  route)
+    printf '%s\n' backend=stream target=host:0123456789abcdef0123456789abcdef \
+      harness=deck model=default effort=default stream_hub=http://host:1234 \
+      stream_endpoint_id=0123456789abcdef0123456789abcdef
+    ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$code/bin/fm-on.sh"
+  for scenario in plain revive replay replay-equals modern refuse unreachable reject-all override; do
+    dir=$(new_case "remote-protocol-$scenario")
+    printf '%s\n' kind=secondmate remote_host=oldhost harness=deck model=default effort=default \
+      remote_target=old:endpoint > "$dir/home/state/t1.meta"
+    printf '%s\n' "$note" > "$dir/note"
+    mode=legacy
+    expected_rc=0
+    expected_calls=4
+    args=()
+    case "$scenario" in
+      plain) ;;
+      revive) args=(--unless-held-stopped --note 'Restarted automatically after this second mate was found down') ;;
+      replay|replay-equals)
+        expected_calls=$'6\n4'
+        args=(--note-file "$dir/note")
+        [ "$scenario" != replay-equals ] || args=("--note-file=$dir/note")
+        ;;
+      modern|refuse|unreachable|reject-all)
+        mode=$scenario
+        expected_calls=6
+        args=(--note-file "$dir/note")
+        case "$scenario" in
+          refuse) expected_rc=1 ;;
+          unreachable) expected_rc=255 ;;
+          reject-all) expected_rc=2; expected_calls=$'6\n4' ;;
+        esac
+        ;;
+      override) args=(--note-file "$dir/note" --note=ordinary) ;;
+    esac
+    printf '%s\n' "$mode" > "$dir/home/remote-mode"
+    out=$(FM_HOME="$dir/home" "$code/bin/fm-control.sh" t1 relaunch ${args[@]+"${args[@]}"} 2>&1); rc=$?
+    expect_code "$expected_rc" "$rc" "$scenario remote relaunch outcome: $out"
+    assert_equals "$expected_calls" "$(cat "$dir/home/relaunch-counts")" "$scenario remote call arities"
+    assert_equals $'t1\ndeck\ndefault\ndefault' "$(cat "$dir/home/relaunch-profile")" "$scenario keeps the legacy profile arguments"
+    case "$scenario" in
+      replay|replay-equals|reject-all)
+        assert_contains "$out" 'note could not be carried' "$scenario reports note loss"
+        ;;
+      *) assert_not_contains "$out" 'note could not be carried' "$scenario must not fall back" ;;
+    esac
+    if [ "$scenario" = modern ]; then
+      cmp -s "$dir/note" "$dir/home/carried-note" || fail "a capable remote did not receive the replayed note bytes"
+    else
+      [ ! -e "$dir/home/carried-note" ] || fail "$scenario unexpectedly carried a note"
+    fi
+    if [ "$rc" -eq 0 ]; then
+      assert_contains "$(cat "$dir/home/state/t1.meta")" 'remote_target=host:0123456789abcdef0123456789abcdef' \
+        "$scenario rebinds the replacement route"
+    else
+      assert_contains "$(cat "$dir/home/state/t1.meta")" 'remote_target=old:endpoint' \
+        "$scenario preserves the route on refusal"
+    fi
+  done
+  pass "fm-control: ordinary remote relaunches keep four arguments and note replay falls back only once on usage errors"
+}
+
 hold_lifecycle_lock() {  # <lock-path>
   local lifecycle_lock_path=$1
   . "$ROOT/bin/fm-wake-lib.sh"
@@ -942,6 +1037,7 @@ PY
   pass "host route: exact worker answer and guarded lifecycle reach their existing owners"
 }
 
+test_remote_relaunch_preserves_legacy_protocol_and_replays_notes
 test_host_route_reaches_guarded_worker_owners
 test_secondmate_exit_records_a_deliberate_stop
 test_automatic_recovery_refuses_an_already_live_secondmate
