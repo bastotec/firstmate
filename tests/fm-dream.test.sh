@@ -1052,15 +1052,23 @@ test_improve_files_no_duplicate_and_cards_charters_on_a_quiet_night() {
   [ "$(jq -r '.steps.track.status' "$log")" = "nothing changed" ] || fail "an unacted night read as done: $(jq -c .steps.track "$log")"
   d=$(new_case improve-quiet)
   sqlite3 "$d/nm.sqlite" "DELETE FROM runs"
+  mkdir -p "$d/home/state/autoland"
+  printf '%s autoland: merged https://github.com/bastotec/firstmate/pull/990 (deploy follows)\n%s autoland: deployed firstmate abcdef0: homes at abcdef0\n' \
+    "$(iso $((NOW - 100)))" "$(iso $((NOW - 50)))" > "$d/home/state/autoland/report.log"
   STUB_INSTR=edit run_dream "$d" --only collect improve instructions file track > "$d/out.json" || fail "quiet run exited nonzero"
   log=$(ls "$d"/home/state/dream/runs/*.json)
   python3 - "$log" <<'PY' || fail "quiet night wrong: $(jq -c '.steps, .summary' "$log")"
 import json, sys
 run = json.load(open(sys.argv[1]))
-assert run["steps"]["improve"]["status"] == "quiet day" and run["steps"]["track"]["status"] == "quiet day", run["steps"]
-card = run["charter_card"]
+assert run["steps"]["improve"]["status"] == "quiet day", run["steps"]
+card = [a for a in run["charter_card"] if a["kind"] == "captain"]
 assert len(card) == 1 and card[0]["state"] == "card raised" and "cadia: name the kernel repo" in card[0]["what"], card
 assert "Captain card %s for the charter edits (card raised)." % card[0]["key"] in run["summary"], run["summary"]
+# the instructions PR from the collected sessions is still followed to its deploy and kept for tomorrow
+pr = [a for a in run["charter_card"] if a["kind"] == "instructions"]
+assert len(pr) == 1 and pr[0]["pr"].endswith("/pull/990") and pr[0]["state"] == "merged and deployed", pr
+assert "Instructions PR https://github.com/bastotec/firstmate/pull/990: merged and deployed." in run["summary"], run["summary"]
+assert run["steps"]["track"]["status"] == "done" and run["steps"]["track"]["acted"] == 2, run["steps"]["track"]
 PY
   pass "improve: a change already open is not filed again, and a quiet night still cards its charter proposals"
 }

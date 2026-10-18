@@ -160,8 +160,9 @@ Files under <home>/state/dream/:
                      date, now_state, now_value}]}
                      | {measurement_error, changes: [], tonight: [actions as above]}
                      | null (no measured tasks or improve did not produce facts),
-                     charter_card: [actions as above] (private charter card when
-                     improve is null), no_mistakes: {...} or null, summary}
+                     charter_card: [actions as above] (the charter card and the
+                     tracked instructions PR of a night improve did not measure),
+                     no_mistakes: {...} or null, summary}
   raised.jsonl       one line per raised item (dedupe across nights)
   digest-<date>.md   the private digest the agents read
   charters-<date>.md private charter-edit proposals, when any are kept
@@ -1318,11 +1319,15 @@ def step_track(ctx):
     its PR is open, merged or deployed, its dispatch order was confirmed, or its
     card was raised."""
     life = ctx.facts.get('improve')
-    if not life:
-        return {'status': 'quiet day'}
-    tonight = life['tonight']
     ins = ctx.facts.get('instructions') or {}
     pr = ins.get('pr')
+    if not life:
+        # nothing measured, but the instructions step and the charter card act on
+        # the collected sessions alone: their actions are tracked and kept the same way
+        if not pr and not ctx.facts.get('charter_card'):
+            return {'status': 'quiet day'}
+        life = {'changes': [], 'tonight': ctx.facts.setdefault('charter_card', [])}
+    tonight = life['tonight']
     skipped = ctx.facts.get('instructions_skipped') or []
     planned = [c for c in life['changes'] if c['kind'] == 'instructions']
     shipped = [c for c in planned if not any(similar(c['change'], str(k.get('change') or '')) for k in skipped)]
@@ -2344,6 +2349,9 @@ def summary_line(run):
     card = next((a for a in run.get('charter_card') or [] if a.get('key')), None)
     if card:
         text += ' Captain card %s for the charter edits (%s).' % (card['key'], card.get('state'))
+    shipped = next((a for a in run.get('charter_card') or [] if a.get('kind') == 'instructions' and a.get('pr')), None)
+    if shipped:
+        text += ' Instructions PR %s: %s.' % (shipped['pr'], shipped.get('state'))
     if run.get('charter_proposals'):
         text += ' %d charter edit%s proposed (charters-%s.md).' % (
             len(run['charter_proposals']), '' if len(run['charter_proposals']) == 1 else 's', run['date'])
