@@ -388,7 +388,7 @@ case "$verb" in
 esac
 SH
   chmod +x "$code/bin/fm-on.sh"
-  for scenario in plain revive replay replay-equals modern refuse unreachable reject-all override; do
+  for scenario in plain revive replay replay-equals modern inline override refuse unreachable reject-all; do
     dir=$(new_case "remote-protocol-$scenario")
     printf '%s\n' kind=secondmate remote_host=oldhost harness=deck model=default effort=default \
       remote_target=old:endpoint > "$dir/home/state/t1.meta"
@@ -399,7 +399,10 @@ SH
     args=()
     case "$scenario" in
       plain) ;;
-      revive) args=(--unless-held-stopped --note 'Restarted automatically after this second mate was found down') ;;
+      revive)
+        expected_calls=$'6\n4'
+        args=(--unless-held-stopped --note 'Restarted automatically after this second mate was found down')
+        ;;
       replay|replay-equals)
         expected_calls=$'6\n4'
         args=(--note-file "$dir/note")
@@ -415,7 +418,12 @@ SH
           reject-all) expected_rc=2; expected_calls=$'6\n4' ;;
         esac
         ;;
-      override) args=(--note-file "$dir/note" --note=ordinary) ;;
+      inline|override)
+        mode=modern
+        expected_calls=6
+        args=("--note=$note")
+        [ "$scenario" != override ] || args=(--note-file "$dir/note" --note=ordinary)
+        ;;
     esac
     printf '%s\n' "$mode" > "$dir/home/remote-mode"
     out=$(FM_HOME="$dir/home" "$code/bin/fm-control.sh" t1 relaunch ${args[@]+"${args[@]}"} 2>&1); rc=$?
@@ -423,13 +431,15 @@ SH
     assert_equals "$expected_calls" "$(cat "$dir/home/relaunch-counts")" "$scenario remote call arities"
     assert_equals $'t1\ndeck\ndefault\ndefault' "$(cat "$dir/home/relaunch-profile")" "$scenario keeps the legacy profile arguments"
     case "$scenario" in
-      replay|replay-equals|reject-all)
+      revive|replay|replay-equals|reject-all)
         assert_contains "$out" 'note could not be carried' "$scenario reports note loss"
         ;;
       *) assert_not_contains "$out" 'note could not be carried' "$scenario must not fall back" ;;
     esac
-    if [ "$scenario" = modern ]; then
-      cmp -s "$dir/note" "$dir/home/carried-note" || fail "a capable remote did not receive the replayed note bytes"
+    if [ "$scenario" = modern ] || [ "$scenario" = inline ]; then
+      cmp -s "$dir/note" "$dir/home/carried-note" || fail "a capable remote did not receive the note bytes"
+    elif [ "$scenario" = override ]; then
+      assert_equals ordinary "$(cat "$dir/home/carried-note")" "the last supplied note is forwarded"
     else
       [ ! -e "$dir/home/carried-note" ] || fail "$scenario unexpectedly carried a note"
     fi
@@ -441,7 +451,7 @@ SH
         "$scenario preserves the route on refusal"
     fi
   done
-  pass "fm-control: ordinary remote relaunches keep four arguments and note replay falls back only once on usage errors"
+  pass "fm-control: remote relaunches without notes keep four arguments and supplied notes fall back only once on usage errors"
 }
 
 hold_lifecycle_lock() {  # <lock-path>

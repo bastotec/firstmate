@@ -870,8 +870,10 @@ SH
 }
 
 produce_relaunch_journal() {  # <case-dir> <id> <phase> [model] [state] [note]
-  local dir=$1 id=$2 phase=$3 model=${4:-route-b} target rc=0 out verb=relaunch state=${5:-$1/home/state}
+  local dir=$1 id=$2 phase=$3 model=${4-route-b} target rc=0 out verb=relaunch state=${5:-$1/home/state}
   local note=${6:-Restarted to pick up the new charter.}
+  local -a model_args=()
+  [ -z "$model" ] || model_args=(--model "$model")
   printf '%s\n' "$note" > "$dir/input-note"
   mkdir -p "$dir/producer-bin" "$dir/user-home" "$dir/mate/state" "$dir/mate/bin" "$state"
   [ "$state" = "$dir/home/state" ] || cp "$dir/home/state/$id.meta" "$state/$id.meta"
@@ -880,8 +882,13 @@ produce_relaunch_journal() {  # <case-dir> <id> <phase> [model] [state] [note]
   printf '# agents\n' > "$dir/mate/AGENTS.md"
   awk -F= '$1 != "worktree" && $1 != "project" && $1 != "home" && $1 != "model" && $1 != "model_choice"' \
     "$state/$id.meta" > "$dir/producer.meta"
-  printf '%s\n' "worktree=$dir/mate" "project=$dir/mate" "home=$dir/mate" model=route-a model_choice=route-a \
+  printf '%s\n' "worktree=$dir/mate" "project=$dir/mate" "home=$dir/mate" model=route-a \
     >> "$dir/producer.meta"
+  if [ -n "$model" ]; then
+    echo model_choice=route-a >> "$dir/producer.meta"
+  else
+    printf 'deck route-a\n' > "$dir/home/config/secondmate-harness"
+  fi
   mv "$dir/producer.meta" "$state/$id.meta"
   target=$(fm_test_stream_target_of "$dir/home/state" "$id")
   fm_test_fake_stream_foreground "$target" fm-deck-worker
@@ -909,7 +916,7 @@ SH
   if [ "$state" = "$dir/home/state" ]; then
     out=$(PATH="$dir/producer-bin:$PATH" FM_TEST_REAL_MV="$(command -v mv)" FM_TEST_JOURNAL_PHASE="$phase" \
       HOME="$dir/user-home" FM_HOME="$dir/home" FM_CONTROL_POLL=0.01 FM_CONTROL_RELAUNCH_STOP_WAIT=0.01 \
-      "$dir/bin/fm-control-producer.sh" "$id" "$verb" --model "$model" --note-file "$dir/input-note" 2>&1) || rc=$?
+      "$dir/bin/fm-control-producer.sh" "$id" "$verb" ${model_args[@]+"${model_args[@]}"} --note-file "$dir/input-note" 2>&1) || rc=$?
   else
     cp "$dir/bin/fm-control.sh" "$dir/bin/fm-control-scan.sh"
     cp "$ROOT/bin/fm-control.sh" "$dir/bin/fm-control.sh"
@@ -979,6 +986,29 @@ test_old_or_finished_relaunch_journals_leave_the_ordinary_revive_alone() {
     esac
   done
   pass "a completed, refused, or old relaunch journal leaves the ordinary confirmed revive in charge"
+}
+
+test_interrupted_configured_model_remains_configured() {
+  local dir
+  dir=$(new_case interrupted-configured-model)
+  add_local_mate "$dir" sm1 zsh >/dev/null
+  produce_relaunch_journal "$dir" sm1 stopping ''
+  assert_grep 'to_model=route-a' "$dir/home/state/sm1.control-relaunch" "the interrupted relaunch resolved its configured model"
+  printf 'deck route-b\n' > "$dir/home/config/secondmate-harness"
+  cp "$ROOT/bin/fm-control.sh" "$dir/bin/fm-control.sh"
+  cat > "$dir/bin/fm-spawn.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$FM_CONTROL_MODEL_CHOICE_ACTION" > "$FM_HOME/choice-action"
+printf '%s\n' "$@" > "$FM_HOME/spawn-args"
+exit 1
+SH
+  chmod +x "$dir/bin/fm-spawn.sh"
+  HOME="$dir/user-home" FM_CONTROL_POLL=0.01 FM_CONTROL_RELAUNCH_STOP_WAIT=0.01 scan "$dir"
+  assert_equals keep "$(cat "$dir/home/choice-action")" "completion must not create a durable explicit model choice"
+  assert_equals $'sm1\n--relaunch\n--harness\ndeck\n--model\nroute-b' "$(cat "$dir/home/spawn-args")" \
+    "completion re-resolves configuration instead of pinning the old resolved model"
+  assert_grep 'phase=failed:launching' "$dir/home/state/sm1.control-relaunch" "completion reached the launch boundary"
+  pass "an interrupted relaunch without an explicit model continues to follow configuration"
 }
 
 test_interrupted_default_model_reset_is_preserved() {
@@ -1056,6 +1086,7 @@ test_dead_local_mate_is_relaunched_after_a_confirmed_reading
 test_missing_local_mate_is_recovered
 test_interrupted_markdown_note_is_replayed_through_note_files
 test_an_interrupted_relaunch_is_finished_not_revived
+test_interrupted_configured_model_remains_configured
 test_interrupted_default_model_reset_is_preserved
 test_remote_interrupted_relaunch_uses_the_host_journal
 test_old_or_finished_relaunch_journals_leave_the_ordinary_revive_alone

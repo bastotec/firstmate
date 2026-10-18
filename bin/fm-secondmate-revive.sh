@@ -229,7 +229,7 @@ interrupted_relaunch() {  # <id> <now> <meta>
 finish_relaunch() {  # <id> <state> <now>
   local id=$1 state=$2 now=$3 model rc=0 out failures reason note_file
   local -a args=(relaunch --unless-held-stopped)
-  model=$(journal_get to_model)
+  model=$(journal_get requested_model)
   [ -z "$model" ] || args+=(--model "$model")
   log "completing the interrupted restart of $id (relaunch left at phase $(journal_get phase))"
   out=$(

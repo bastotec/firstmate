@@ -1727,6 +1727,53 @@ PYTHON
 # arm that defers or ignores TERM: it kills that arm's process tree after
 # FM_DECK_CHILD_STOP_SECS, so its shutdown stays well inside the relaunch wait
 # and the old watcher cannot keep writing after the host is gone.
+test_child_stop_grace_starts_at_term() {
+  local dir="$TMP_ROOT/child-stop-deadline"
+  mkdir -p "$dir"
+  python3 - "$ROOT/bin/fm-process-tree-lib.sh" "$dir" <<'PYTHON' || fail "child stop restarted its grace period after intervening work"
+import os, pathlib, signal, subprocess, sys, time
+script = r'''
+. "$1"
+python3 -c 'import pathlib, signal, sys, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); pathlib.Path(sys.argv[1]).touch(); time.sleep(60)' "$2/ready" &
+child=$!
+trap 'kill_tree "$child"; wait "$child" 2>/dev/null || true' EXIT
+for ((i=0; i<100; i++)); do
+  [ ! -e "$2/ready" ] || break
+  sleep 0.05
+done
+[ -e "$2/ready" ] || exit 1
+fm_begin_child_stop "$child"
+sleep 3.5
+fm_begin_child_stop "$child"
+echo waiting
+rc=0
+fm_stop_child_bounded "$child" 3 || rc=$?
+[ "$rc" -eq 137 ] || exit 1
+! kill -0 "$child" 2>/dev/null || exit 1
+echo stopped
+'''
+p = subprocess.Popen(['bash', '-c', script, '_', *sys.argv[1:]], stdout=subprocess.PIPE,
+                     stderr=subprocess.PIPE, text=True, start_new_session=True)
+try:
+    started = time.monotonic()
+    try:
+        out, err = p.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)
+        out, err = p.communicate()
+        raise AssertionError(('child-stop deadline test timed out', out, err))
+    elapsed = time.monotonic() - started
+    assert p.returncode == 0, (out, err)
+    assert out.splitlines() == ['waiting', 'stopped'], (out, err)
+    assert elapsed < 5, f'child received a fresh grace period after a slow intervening step: {elapsed:.2f}s'
+finally:
+    try: os.killpg(p.pid, signal.SIGKILL)
+    except ProcessLookupError: pass
+    p.wait()
+PYTHON
+  pass "child shutdown consumes its grace from the first TERM, including intervening work"
+}
+
 test_secondmate_host_shutdown_bounds_a_watcher_that_ignores_term() {
   local dir mode
   for mode in stubborn exits real-arm quit-term; do
@@ -3854,6 +3901,7 @@ test_idle_interrupt_does_not_echo_fake_input
 test_secondmate_host_serializes_wakes_and_steering
 test_secondmate_routine_wakes_think_less
 test_secondmate_stops_a_turn_inside_a_long_tool
+test_child_stop_grace_starts_at_term
 test_secondmate_host_shutdown_bounds_a_watcher_that_ignores_term
 test_secondmate_retries_a_captain_wake_whose_turn_failed
 test_split_secondmate_answers_the_captain_beside_a_busy_supervisor

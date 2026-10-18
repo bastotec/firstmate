@@ -42,7 +42,7 @@ fm_cancel_tool_trees() {  # <deck-pid>
 # it waits up to <secs> for the captured tree, kills surviving trees even if
 # the original child has exited, reaps the child, and returns its wait status.
 fm_begin_child_stop() {  # <pid>
-  local pid=$1 key="FM_CHILD_STOP_TREE_$1" tree
+  local pid=$1 key="FM_CHILD_STOP_TREE_$1" time_key="FM_CHILD_STOP_TIME_$1" tree
   [ -z "${!key:-}" ] || return 0
   tree=$(ps -A -o pid= -o ppid= 2>/dev/null | awk -v root="$pid" '
     { parent[$1] = $2 }
@@ -58,7 +58,12 @@ fm_begin_child_stop() {  # <pid>
       for (pid in tree) print pid
     }')
   printf -v "$key" '%s' "${tree:-$pid}"
+  printf -v "$time_key" '%s' "$(fm_child_stop_now)"
   kill -TERM "$pid" 2>/dev/null || true
+}
+
+fm_child_stop_now() {
+  python3 -c 'import time; print(time.clock_gettime_ns(time.CLOCK_MONOTONIC) // 1000000)'
 }
 
 fm_child_stop_pending() {  # <captured-pids>
@@ -70,15 +75,15 @@ fm_child_stop_pending() {  # <captured-pids>
 }
 
 fm_stop_child_bounded() {  # <pid> <secs>
-  local pid=$1 limit=$2 waited=0 rc=0 key="FM_CHILD_STOP_TREE_$1" tree member
+  local pid=$1 limit=$2 rc=0 key="FM_CHILD_STOP_TREE_$1" time_key="FM_CHILD_STOP_TIME_$1" tree member deadline
   fm_begin_child_stop "$pid"
   tree=${!key}
-  while fm_child_stop_pending "$tree" && [ "$waited" -lt $((limit * 10)) ]; do
+  deadline=$(( ${!time_key} + limit * 1000 ))
+  while fm_child_stop_pending "$tree" && [ "$(fm_child_stop_now)" -lt "$deadline" ]; do
     sleep 0.1
-    waited=$((waited + 1))
   done
   for member in $tree; do kill_tree "$member"; done
   wait "$pid" 2>/dev/null || rc=$?
-  unset "$key"
+  unset "$key" "$time_key"
   return "$rc"
 }
