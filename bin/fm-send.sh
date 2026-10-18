@@ -207,9 +207,16 @@
 # inspect (it can no longer reconcile or escalate on its own). Only a
 # failed enqueue discards the expectation. On the typed plane an unconfirmed submit (exit 3) keeps
 # it armed rather than dropping it, and only a proven send failure discards it.
-# Set FM_PENDING_REPLY_EXISTING_CORR=<id> when re-sending a recovery request
-# for an already-open expectation so a second record is not created. Direct
-# unmarked captain input never creates one. A marked secondmate instruction
+# Set FM_PENDING_REPLY_EXISTING_CORR=<id> to reuse an already-open expectation
+# for a resend or its recovery request instead of creating another expectation.
+# A local inbox resend deduplicates the same correlated request onto its
+# existing root or handled record, even after recovery begins. Only the exact
+# text from fm_pending_reply_recovery_message bypasses that deduplication so
+# recovery can enqueue its own message; a new request without a reused
+# correlation still gets a separate record. Before refusing an unresolved
+# delivery attempt, fm-send reconciles it under the stale-local-inbox rule
+# owned by bin/fm-pending-reply-lib.sh's header. Direct
+# unmarked captain input never creates an expectation. A marked secondmate instruction
 # sent with --fire-and-forget <16-hex-delivery-id> uses the same inbox transport
 # without creating a reply expectation; its delivery id makes uncertain retries
 # idempotent while allowing a later identical instruction to be distinct.

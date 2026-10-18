@@ -56,6 +56,8 @@
 #   request_summary=        sanitized request excerpt, not secret-redacted;
 #                           fm_pending_reply_summarize below owns filtering and limits
 #   created_epoch=          when the expectation was created
+#   delivery_plane=         inbox | typed; recorded when preparing delivery
+#                           (absent in older records)
 #   delivered_epoch=        when the marked request was confirmed delivered
 #                           (empty until delivery; the captain-direct exception
 #                           above settles after grace, not at delivery)
@@ -108,8 +110,8 @@
 #
 # Retryable undelivered escalation: a delivery-unknown escalation reports that
 # the request may never have reached the mate, so the request stays the owner's
-# to resend under the same correlation (fm-send's FM_PENDING_REPLY_EXISTING_CORR
-# contract; the remote enqueue deduplicates onto the same record). The resend
+# to resend under the same correlation (see fm-send's header for the
+# FM_PENDING_REPLY_EXISTING_CORR contract and enqueue deduplication). The resend
 # resets the record to awaiting_report and leaves the published escalation
 # decision open: a confirmed delivery does not settle the request, only a
 # correlated report does. A later missed-report escalation reuses that key
@@ -119,11 +121,31 @@
 # (bin/fm-backlog-handoff.sh's receiver wake) stayed refused forever once the
 # watcher escalated between the lost transport and the next resume.
 #
+# Stale local inbox attempts: reconciliation runs on watcher ticks and before
+# fm-send refuses a reused correlation with an unresolved attempted=<epoch>
+# sidecar. At FM_PENDING_REPLY_LOCAL_ATTEMPT_STALE_SECS, a local inbox record
+# carrying corr=<id>, in the root or handled/, establishes delivery at the
+# attempt epoch; the scan follows a root record moved into handled/ during
+# acknowledgement. With no matching record, an awaiting_report,
+# delivery_unknown, or escalated request loses its attempt marker and returns
+# to awaiting_report, keeping escalated_epoch so eventual resolution closes
+# the existing decision rather than opening another. Neither outcome resolves
+# the pending reply. Younger attempts still refuse resends. Typed-plane and
+# remote attempts retain their existing unknown-delivery guards; for older
+# records without delivery_plane, a leading slash in request_summary excludes
+# the attempt from inbox settlement. fm-send's header owns same-correlation
+# replay deduplication and the recovery-message exception.
+# Regression: tests/fm-pending-reply.test.sh (stale local attempt, concurrent
+# acknowledgement, correlated resend) and tests/fm-send-remote-delivery.test.sh
+# (typed and historical slash attempts retain their guard).
+#
 # Sourced by bin/fm-send.sh, bin/fm-watch.sh, bin/fm-secondmate-report.sh, and
 # tests. No side effects on source. set -u / set -e safe.
 #
 # Tunables (env):
 #   FM_PENDING_REPLY_GRACE_SECS   default 120
+#   FM_PENDING_REPLY_LOCAL_ATTEMPT_STALE_SECS default 600; nonnegative integer
+#                                 (empty or non-integer values use the default)
 #   FM_PENDING_REPLY_DIR_OVERRIDE override the pending-replies directory (tests)
 #   FM_PENDING_REPLY_SEND_HOOK    optional command template for recovery delivery
 #                                 (tests); receives task_id and full message as args
@@ -502,17 +524,7 @@ fm_pending_reply_mark_delivery_unknown() {  # <state-dir> <corr_id>
   fm_pending_reply_set "$rec" phase delivery_unknown
 }
 
-# A LOCAL delivery attempt that never confirmed (its sender was killed between
-# writing and confirming) would otherwise stay unresolved forever: the owner's
-# resend is refused and every later handoff to that mate with it. Once the
-# attempt is FM_PENDING_REPLY_LOCAL_ATTEMPT_STALE_SECS old (600), the local
-# inbox settles it, because a local send's durable effect is exactly an inbox
-# record carrying corr=<id>: a record there (unhandled or handled) marks the
-# request delivered at the attempt time; no record makes the correlation
-# retryable again (awaiting_report, attempt marker removed), so the same
-# correlation can be resent and still lands at most once. Remote targets keep
-# their own idempotent resend path and are left alone.
-# Regression: tests/fm-pending-reply.test.sh (stale local attempt).
+# The header owns stale local inbox attempt eligibility and settlement.
 _fm_pending_reply_settle_stale_local_attempt() {  # <state-dir> <corr_id> <record> <marker> <attempt-epoch>
   local state=$1 corr=$2 rec=$3 marker=$4 epoch=$5 task_id inbox stale now f
   task_id=$(fm_pending_reply_get "$rec" task_id)
