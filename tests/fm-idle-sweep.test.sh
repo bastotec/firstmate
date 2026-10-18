@@ -66,11 +66,12 @@ SH
   cat > "$dir/bin/fm-captain-hold.sh" <<'SH'
 #!/usr/bin/env bash
 case "$1" in
-  open|deferred) [ -f "$FM_HOME/unreadable/$1-$2" ] && exit 2 ;;
+  open|deferred|withdrawn-parked) [ -f "$FM_HOME/unreadable/$1-$2" ] && exit 2 ;;
 esac
 case "$1" in
   open) [ -f "$FM_HOME/held/$2" ] && exit 0; exit 1 ;;
   deferred) [ -f "$FM_HOME/deferred/$2" ] && exit 0; exit 1 ;;
+  withdrawn-parked) [ -f "$FM_HOME/parked/$2" ] && { cat "$FM_HOME/parked/$2"; exit 0; }; exit 1 ;;
   hold)
     id=$2; shift 2
     card= reason= title= origin= expected= guarded=0
@@ -993,6 +994,90 @@ test_watcher_runs_the_sweep_and_surfaces_its_decision() {
   pass "fm-idle-sweep: the watcher runs the sweep with no model turn and surfaces what it queues"
 }
 
+test_real_parked_withdrawals_survive_later_sweeps() {
+  local dir real_tasks path target kind round evidence
+  real_tasks=$(command -v tasks-axi || true)
+  [ -n "$real_tasks" ] || { echo 'skip: tasks-axi not found for real parked withdrawals'; return; }
+  for path in direct linked; do
+    for kind in retry capability-wait; do
+      case "$path:$kind" in direct:capability-wait|linked:retry) continue ;; esac
+      dir=$(new_case "park-$path-$kind")
+      cp "$ROOT/bin/fm-captain-hold.sh" "$dir/bin/fm-captain-hold.sh"
+      cp "$ROOT/.tasks.toml" "$dir/home/.tasks.toml"
+      printf '## In flight\n\n## Queued\n\n## Done\n' > "$dir/home/data/backlog.md"
+      printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$real_tasks" > "$dir/bin/tasks-axi"
+      add_worker "$dir" worker 'state: blocked · source: status-log · awaiting preview capability' 90000
+      (cd "$dir/home" && "$real_tasks" add worker 'Synthetic unfinished work' --repo firstmate >/dev/null) || fail 'seed failed'
+      target=worker
+      if [ "$path" = linked ]; then
+        (cd "$dir/home" && "$real_tasks" 'done' worker >/dev/null) || fail 'close failed'
+        target=idle-worker
+      fi
+      sweep "$dir" scan --now || fail 'initial retry scan failed'
+      assert_present "$dir/home/state/cards/$target.json" 'initial retry question missing'
+      printf 'The mate owns %s for this unfinished task; preserve its local work.\n' "$kind" > "$dir/evidence"
+      PATH="$dir/bin:$PATH" TASKS_AXI_BACKEND=markdown FM_HOME="$dir/home" \
+        "$dir/bin/fm-captain-hold.sh" withdraw "$target" --evidence-file "$dir/evidence" \
+        --park "Mate owns $kind" > "$dir/withdraw.out" || fail 'supported park operation failed'
+      assert_absent "$dir/home/state/cards/$target.json" 'withdraw did not retire card'
+      # Recording the mate's disposition changes the ledger, not the task's
+      # retry evidence, and must not defeat the durable park on the next scan.
+      printf 'resolved: retry or wait belongs to the mate\n' >> "$dir/home/state/worker.status"
+      age_file "$dir/home/state/worker.status" 90000
+      for round in 1 2 3; do
+        sweep "$dir" scan --now || fail 'later parked sweep failed'
+        assert_absent "$dir/home/state/cards/$target.json" 'unchanged evidence raised another retry card'
+        assert_equals mate-wait "$(jq -r '.workers[0].class' "$dir/home/state/idle-sweep.json")" 'durable mate disposition ignored'
+      done
+      [ ! -s "$dir/home/teardown-calls" ] || fail 'parked work was cleaned up'
+      if grep -q 'idle-sweep-mate:' "$dir/home/state/.wake-queue"; then fail 'unchanged evidence woke mate'; fi
+      evidence=$(cat "$dir/home/state/idle-sweep/worker.mate-wait")
+      printf 'blocked: capability is available; retry now\n' > "$dir/home/state/worker.status"
+      age_file "$dir/home/state/worker.status" 90000
+      sweep "$dir" scan --now || fail 'changed evidence scan failed'
+      [ "$evidence" != "$(cat "$dir/home/state/idle-sweep/worker.mate-wait")" ] || fail 'evidence fingerprint unchanged'
+      assert_contains "$(cat "$dir/home/state/.wake-queue")" 'idle-sweep-mate:worker:' 'material change did not reach mate'
+      assert_absent "$dir/home/state/cards/$target.json" 'changed evidence went to captain instead of mate'
+      sweep "$dir" scan --now || fail 'repeat changed scan failed'
+      assert_equals 1 "$(grep -c 'idle-sweep-mate:' "$dir/home/state/.wake-queue")" 'unchanged new evidence notified twice'
+      assert_present "$dir/home/state/worker.meta" 'unfinished work was removed'
+    done
+  done
+  pass 'fm-idle-sweep: real withdraw --park preserves retry and capability waits; changed evidence goes to mate'
+}
+
+test_parked_evidence_ignores_observation_time_but_tracks_git_changes() {
+  local dir id
+  dir=$(new_case parked-evidence)
+  id=waiting
+  add_worker "$dir" "$id" 'state: blocked · source: status-log · awaiting preview; observed=old' 90000
+  mkdir -p "$dir/home/parked" "$dir/pool/1/firstmate"
+  printf 'synthetic-disposition\n' > "$dir/home/parked/$id"
+  git init -q "$dir/pool/1/firstmate"
+  git -C "$dir/pool/1/firstmate" -c user.name=Fixture -c user.email=fixture@example.invalid \
+    commit --allow-empty -qm seed
+  sweep "$dir" scan --now || fail 'initial parked evidence scan failed'
+  printf 'state: blocked · source: status-log · awaiting preview; observed=new\n' > "$dir/home/crew/$id"
+  sweep "$dir" scan --now || fail 'later observation scan failed'
+  [ ! -s "$dir/home/state/.wake-queue" ] || fail 'observation time alone notified mate'
+  git -C "$dir/pool/1/firstmate" -c user.name=Fixture -c user.email=fixture@example.invalid \
+    commit --allow-empty -qm follow-up
+  sweep "$dir" scan --now || fail 'changed head scan failed'
+  assert_equals 1 "$(grep -c 'idle-sweep-mate:' "$dir/home/state/.wake-queue")" 'new head did not reach mate'
+  printf 'unlanded local work\n' > "$dir/pool/1/firstmate/leftover"
+  sweep "$dir" scan --now || fail 'dirty local copy scan failed'
+  assert_equals 2 "$(grep -c 'idle-sweep-mate:' "$dir/home/state/.wake-queue")" 'dirty local copy did not reach mate'
+  [ ! -s "$dir/home/hold-attempts" ] || fail 'changed parked evidence raised a captain card'
+  [ ! -s "$dir/home/teardown-calls" ] || fail 'changed parked evidence triggered cleanup'
+  assert_present "$dir/pool/1/firstmate/leftover" 'local work was removed'
+  : > "$dir/home/held/$id"
+  sweep "$dir" scan --now || fail 'fresh unresolved choice scan failed'
+  assert_equals held "$(jq -r '.workers[0].class' "$dir/home/state/idle-sweep.json")" 'new unresolved captain choice was suppressed'
+  pass 'fm-idle-sweep: parked evidence ignores read timestamps, reports Git changes to mate and preserves unresolved choices and local work'
+}
+
+test_parked_evidence_ignores_observation_time_but_tracks_git_changes
+test_real_parked_withdrawals_survive_later_sweeps
 test_real_holds_check_worker_records_inside_the_lifecycle_lock
 test_done_workers_are_cleaned_up_without_force
 test_closed_unmerged_prs_require_a_cleanup_decision

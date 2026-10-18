@@ -33,6 +33,7 @@
 #   fm-captain-hold.sh verify <origin-id>
 #   fm-captain-hold.sh open <task-id> [--identity] [--distinguish-absent]
 #   fm-captain-hold.sh deferred <task-id>
+#   fm-captain-hold.sh withdrawn-parked <task-id>
 #   fm-captain-hold.sh diverged
 #   fm-captain-hold.sh reconcile list
 #   fm-captain-hold.sh stale-clear <task-id> --evidence-file <path>
@@ -193,6 +194,9 @@
 # request are retired and the matching parent key resolved. Matching evidence,
 # mode and normalized park reason finish interrupted finalization exactly once;
 # changed retries, settled deferrals, and closed tasks are refused.
+# `withdrawn-parked <task-id>` is a read-only probe (0 yes, 1 no, 2 unreadable)
+# for that durable mate disposition: the task must remain open, parked with
+# the recorded withdrawal reason, and have withdrawn-parked as its latest mode.
 #
 # A channel's ONLY job is to turn whatever it received into those keyed lines
 # and pipe them here. It must never map keys to tasks, build decision records,
@@ -2352,7 +2356,7 @@ command_probe() {
   fm_tasks_axi_compatible || { printf 'fm-captain-hold: compatible tasks-axi is required\n' >&2; exit 2; }
   if fm_backlog_row_probe "$data" "$id"; then
     state=${FM_BACKLOG_ROW_STATE%% *}
-    if [ "$predicate" = deferred ] || { [ "$state" != "done" ] && [ "$FM_BACKLOG_ROW_HOLD_KIND" = captain ]; }; then
+    if [ "$predicate" != open ] || { [ "$state" != "done" ] && [ "$FM_BACKLOG_ROW_HOLD_KIND" = captain ]; }; then
       show=$(fm_backlog_row_show "$data" "$id" --full) || {
         printf 'fm-captain-hold: task %s exists but its record could not be read\n' "$id" >&2
         exit 2
@@ -2361,6 +2365,13 @@ command_probe() {
         printf 'fm-captain-hold: could not decode the body for %s\n' "$id" >&2
         exit 2
       }
+      if [ "$predicate" = withdrawn-parked ]; then
+        [ "$state" != 'done' ] && [ "$FM_BACKLOG_ROW_HOLD_KIND" = parked ] \
+          && [ "$(recorded_resolution_mode "$shown_body")" = withdrawn-parked ] \
+          && [ "$(show_field_value "$show" hold_reason)" = "$(printf '%s\n' "$shown_body" | sed -n 's/^Withdrawal hold reason: //p' | head -1)" ] || return 1
+        printf '%s\n' "$(recorded_decision_digest "$shown_body")"
+        return 0
+      fi
       if [ "$predicate" = deferred ]; then
         state=$(body_deferral_state "$shown_body")
         [ "$state" = settled ] || { [ "$state" = reopened ] && [ "$FM_BACKLOG_ROW_HOLD_KIND" != captain ]; } || return 1
@@ -2399,7 +2410,7 @@ case "${1:-}" in
   complete) shift; command_complete "$@" ;;
   verify) shift; command_verify "$@" ;;
   open) shift; command_open "$@" ;;
-  deferred) shift; command_probe deferred "$@" ;;
+  deferred|withdrawn-parked) predicate=$1; shift; command_probe "$predicate" "$@" ;;
   diverged) shift; command_diverged "$@" ;;
   reconcile) shift; command_reconcile "$@" ;;
   stale-clear) shift; command_stale_clear "$@" ;;

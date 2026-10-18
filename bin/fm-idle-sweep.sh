@@ -24,6 +24,11 @@
 #     from the claimant's run; all other records take one bin/fm-crew-state.sh
 #     read bounded to 60 seconds; age is the time since the status ledger
 #     (else metadata record) changed;
+#   - an evidence-only withdrawn-parked disposition on the worker or follow-up
+#     stays with its mate, never another retry card or automatic cleanup.
+#     The first observation records the evidence; subsequent changes to the
+#     ledger, metadata, crew-state result or local Git head/status wake the mate
+#     once per change, without reopening the captain call.
 #   - working or parked, or done with its PR (recorded, or the last PR link in
 #     its ledger) still open or unreadable: left alone;
 #   - a done ship with no PR, or a closed-unmerged PR, is never cleaned up
@@ -215,7 +220,7 @@ already_raised() {  # <id>
 
 # classify <id>: sets CLASS, DETAIL, AGE
 classify() {
-  local id=$1 line verb worktree row pr pr_state hold_rc=0
+  local id=$1 line verb worktree row pr pr_state hold_rc=0 disposition call_id evidence previous
   UNPROVEN=0
   MERGED_PR_URL=
   AGE=$(record_age "$id")
@@ -236,6 +241,33 @@ classify() {
   fi
   verb=$(printf '%s' "$line" | sed -n 's/^state: \([a-z]*\).*/\1/p')
   DETAIL=$(printf '%s' "$line" | sed 's/^state: [a-z]* · source: [a-z-]* · //' | cut -c1-200)
+  for call_id in "$id" "idle-$id"; do
+    hold_rc=0
+    disposition=$("$SCRIPT_DIR/fm-captain-hold.sh" withdrawn-parked "$call_id" 2>/dev/null) || hold_rc=$?
+    case "$hold_rc" in
+      0)
+        evidence=$({
+          cat "$STATE/$id.meta" "$STATE/$id.status" 2>/dev/null
+          printf '%s\n' "${line%; observed=*}" "$call_id" "$disposition"
+          if [ -d "$worktree" ]; then
+            git -C "$worktree" rev-parse HEAD 2>/dev/null
+            GIT_OPTIONAL_LOCKS=0 git -C "$worktree" status --porcelain 2>/dev/null
+          fi
+        } | shasum -a 256)
+        mkdir -p "$RAISED_DIR"
+        previous=$(cat "$RAISED_DIR/$id.mate-wait" 2>/dev/null) || previous=
+        if [ -n "$previous" ] && [ "$previous" != "$evidence" ]; then
+          fm_wake_append check "idle-sweep-mate:$id:$NOW" \
+            "check: parked worker $id has changed evidence; its mate must reassess the retry or wait" \
+            || { CLASS=unknown; DETAIL="could not notify mate of changed evidence"; return; }
+        fi
+        printf '%s\n' "$evidence" > "$RAISED_DIR/$id.mate-wait"
+        CLASS='mate-wait'
+        return ;;
+      1) ;;
+      *) CLASS=unknown; DETAIL="mate disposition could not be read"; return ;;
+    esac
+  done
   case "$verb" in
     working|parked) CLASS=active; return ;;
     done)
