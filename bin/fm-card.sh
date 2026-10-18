@@ -35,6 +35,14 @@
 # Option instructions are for the first mate and are exempt. Drafts replace
 # jargon tokens in titles and situations with "this task". `show` still accepts
 # cards stored before the wording check; it does not apply that check on reads.
+# One decision per card: the title asks at most one question and the
+# situation at most one, and each option label is a short phrase of at most 12 words (the
+# details belong in its instruction). Configuration-style tokens ("repeats=1")
+# and hyphenated tokens with an all-caps part ("POST-to-observation") are
+# jargon too. A card is normal priority unless it carries
+# "urgent": {"because": <reason>}, and the only reasons are production-down,
+# customer-breakage, money and secret-exposure (a secret that left the
+# machine); Fleet Town shows "Urgent - needs you now" only for those.
 # Limits: title <= 120 chars; situation <= 280 chars and <= 2 lines; 1-9
 # options keyed "1".."9" in order; label <= 40 chars; instruction <= 1000
 # chars; recommended names one option; no control characters except newlines
@@ -123,9 +131,13 @@ PLAIN_WORDS_JQ='
       or (($t|test("^[a-z0-9]+(-[a-z0-9]+){2,}$")) and ((plainok|index($t)) == null))
       or ($t|test("^[a-z]+(_[a-z0-9]+)+$"))
       or (($t|test("^[0-9a-f]{7,}$")) and ($t|test("[a-f]")) and ($t|test("[0-9]")))
-      or (($t|test("[A-Za-z][0-9]|[0-9][A-Za-z]")) and ((products|index($t)) == null));
-  def jargon: [scan("[A-Za-z0-9_-]+") | select(jargontoken)] | first;
-  def plainwords: gsub("(?<token>[A-Za-z0-9_-]+)"; .token | if jargontoken then "this task" else . end);
+      or (($t|test("[A-Za-z][0-9]|[0-9][A-Za-z]")) and ((products|index($t)) == null))
+      or ($t|test("^[A-Z]{3,}-|-[A-Z]{3,}(-|$)"));
+  def jargon: ([scan("[A-Za-z_][A-Za-z0-9_.-]*=[^[:space:]]*")] + [scan("[A-Za-z0-9_-]+") | select(jargontoken)]) | first;
+  def plainwords: gsub("(?<token>[A-Za-z_][A-Za-z0-9_.-]*=[^[:space:]]*)"; "this setting")
+    | gsub("(?<token>[A-Za-z0-9_-]+)"; .token | if jargontoken then "this task" else . end);
+  def urgentok: ["production-down","customer-breakage","money","secret-exposure"];
+  def words: [splits("[[:space:]]+") | select(length > 0)] | length;
 '
 
 # Prints the first validation error as "<field>: <why>", or nothing when valid.
@@ -150,6 +162,10 @@ card_error() {  # <path> [task-id] [plain]
     elif $plain == "plain" and (.title|jargon) != null then "title: use plain words a person can act on, not \"\(.title|jargon)\""
     elif $plain == "plain" and (.situation|jargon) != null then "situation: use plain words a person can act on, not \"\(.situation|jargon)\""
     elif $plain == "plain" and ([.options[].label|jargon|select(. != null)]|first) != null then "options: use plain words in each label, not \"\([.options[].label|jargon|select(. != null)]|first)\""
+    elif $plain == "plain" and ([.options[].label|select(words > 12)]|length) > 0 then "options: keep each label to a short phrase of at most 12 words; the details go in its instruction"
+    elif $plain == "plain" and (((.title|[scan("[?]")]|length) > 1) or ((.situation|[scan("[?]")]|length) > 1)) then "card: ask one question per card; split unrelated decisions into separate cards"
+    elif has("urgent") and (.urgent|type) != "object" then "urgent: an object {\"because\": ...} or absent"
+    elif has("urgent") and ((.urgent.because|type) != "string" or ((.urgent.because as $b | urgentok|index($b)) == null)) then "urgent: only production-down, customer-breakage, money or secret-exposure make a card urgent; anything else is normal priority"
     else empty end end
   ' "$1" 2>/dev/null || printf 'card: not valid JSON\n'
 }
@@ -198,7 +214,8 @@ cmd_write() {
   [ -n "$created" ] || created=$ts
   jq -c --arg task "$id" --arg created "$created" --arg updated "$ts" '
     {version: 1, task: $task, project, title, situation, options, recommended,
-     draft: false, created: $created, updated: $updated}' "$file" | store_card "$id"
+     draft: false, created: $created, updated: $updated}
+     + (if has("urgent") then {urgent} else {} end)' "$file" | store_card "$id"
 }
 
 cmd_show() {

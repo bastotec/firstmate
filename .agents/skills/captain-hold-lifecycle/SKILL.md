@@ -84,6 +84,9 @@ A script that holds on its own leaves a draft card, which is not a judgment.
 The mate whose home holds the call owns its card, a second mate included, and writes its situation and options for the captain in plain words.
 Write it so a person can act on it without context: the title says what happened and asks the question, the situation adds only what the choice needs, and each option says what it does, with no task names, run ids, hashes or other internal jargon (`bin/fm-card.sh` refuses those).
 For example: "PR 1806 is merged. 3 local commits look unmerged, probably because of the squash. Keep them or delete them?"
+One decision per card: never bundle unrelated questions, and keep each option label a short phrase (at most 12 words) while its instruction carries the detail.
+A card is normal priority; mark it urgent (`"urgent": {"because": ...}`) only for production down, customer-facing breakage, money, or a secret that really left the machine, and `bin/fm-card.sh` refuses any other reason.
+A token that only appeared in our own tool output or a local file is redacted and dropped, never a card (`fm_act_within_scope_section` in `bin/fm-dod-lib.sh` owns the exposure rule).
 Housekeeping is never a captain call: leftover branches or local commits after a merge, worktree or slot cleanup, and stale scratch are yours to resolve (see `task-delivery`'s finished-work sweep), at most mentioned as an FYI.
 To replace a draft without touching the hold, run `bin/fm-card.sh write <id> --file <path>`.
 When the session-start digest's `DECISION CARDS` subsection lists calls without a full card, write one for each before going idle, once this session has verified lock ownership.

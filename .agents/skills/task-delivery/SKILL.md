@@ -83,14 +83,19 @@ For each finished worker:
    If the verified PR/MR URL is known only from the status ledger, supply it through the header's merged-PR input rather than relying on GitHub branch discovery.
    Handle preserved work yourself under [the housekeeping policy](../captain-hold-lifecycle/SKILL.md#decision-cards), mentioning it as an FYI at most.
 2. If cleanup refuses only because the endpoint is on a retired backend and could never be confirmed gone, retire the record with `FM_HOME=<this home> bin/fm-retire-endpoint.sh --finished <id>`, carrying the same verified PR/MR URL when supplied to teardown; its [header](../../../bin/fm-retire-endpoint.sh) owns eligibility and forwarding to guarded cleanup.
-3. Treat any other refusal - uncommitted work, unlanded work without a merged PR, a missing report, an open captain decision, a stream endpoint that would not confirm its stop, a window still listed - as not provably finished: stop, never retry around it, and hold one plain decision for the captain through `bin/fm-captain-hold.sh` naming the worker, the evidence, and the choice between cleaning it up and keeping it.
+3. Treat any other refusal - uncommitted work, unlanded work without a merged PR, a missing report, an open captain decision, a stream endpoint that would not confirm its stop, a window still listed - as not provably finished: never force or retry around it, and decide it yourself under the rule below.
+
+Deciding a stopped or unproven worker is yours, never the captain's (his rule of 2026-10-18: "i dont want to make those decisions"):
+- Retire it when its work is done, merged, superseded or abandoned: run the cleanup in step 1, which saves leftover commits on a `kept/` branch first.
+- Retry it when the work is still wanted and unfinished - its task is open, no PR of it landed, and nothing superseded it: relaunch it with `bin/fm-control.sh <id> relaunch`, once per stopped stretch.
+- If you really cannot tell, ask your own first mate (in a second mate home, one `needs-decision` line on the parent channel); the captain sees at most a one-line FYI in your chat or notes, never a card.
+[`bin/fm-idle-sweep.sh`'s header](../../../bin/fm-idle-sweep.sh) owns the automatic version of this rule.
 
 Then close this home's record-less leftovers: endpoints the hub still lists live for a task whose record here is already gone.
 Use `fm-retire-endpoint.sh`'s read-only orphan listing, then close each listed task/endpoint pair with its orphan mode and endpoint pin; its help owns invocation mechanics and listing limits, and [`fm-retire-orphan-lib.sh`'s header](../../../bin/fm-retire-orphan-lib.sh) owns eligibility and timing limits.
-Treat its refusal like step 3: never retry around it, and hold one plain decision for the captain naming the endpoint and the reason.
+Treat its refusal the same way: never retry around it, and settle it yourself or ask your first mate, never the captain.
 
-Once a worker's decision is held, later sweeps leave it to that decision rather than raising it again.
-In a secondmate home that decision reaches the captain through the parent channel, as every escalation there does.
+Once a worker was handed to the first mate, later sweeps leave it to that decision rather than raising it again.
 
 On every heartbeat sweep, also run `bin/fm-pr-record-audit.sh` for this home, plus `FM_HOME=<home> bin/fm-pr-record-audit.sh` for each local secondmate home in the main home.
 Its [header](../../../bin/fm-pr-record-audit.sh) owns mismatch selection, diagnostics, and exit status.

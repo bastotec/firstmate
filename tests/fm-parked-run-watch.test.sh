@@ -49,6 +49,27 @@ wakes() {  # <dir> <pattern>
   printf '%s' "${n:-0}"
 }
 
+test_a_busy_worker_quiet_for_hours_gets_one_check_in() {
+  local dir
+  dir=$(new_home quiet)
+  printf 'v1 gen=g1 seq=1 state=busy source=deck-wrapper event=turn-start ts=1\n' > "$dir/home/state/w1.busy-state"
+  printf 'working: started\n' > "$dir/home/state/w1.status"
+  touch -t 202001010000 "$dir/home/state/w1.status"
+  FM_HOME="$dir/home" FM_WORKER_QUIET_SECS=3600 "$dir/bin/fm-parked-run-watch.sh" scan
+  FM_HOME="$dir/home" FM_WORKER_QUIET_SECS=3600 "$dir/bin/fm-parked-run-watch.sh" scan
+  [ "$(wakes "$dir" 'parked-run:w1:quiet:')" = 1 ] || fail "a busy worker silent past the limit gets exactly one check-in"
+  assert_grep "ask it what it is working on and whether its task asked for it" "$dir/home/state/.wake-queue" "the check-in asks the mate to ask the worker"
+  printf 'working: still on it\n' >> "$dir/home/state/w1.status"
+  touch -t 202001020000 "$dir/home/state/w1.status"
+  FM_HOME="$dir/home" FM_WORKER_QUIET_SECS=3600 "$dir/bin/fm-parked-run-watch.sh" scan
+  [ "$(wakes "$dir" 'parked-run:w1:quiet:')" = 2 ] || fail "a new quiet stretch gets its own check-in"
+  printf 'v1 gen=g1 seq=2 state=idle source=deck-wrapper event=turn-end ts=2\n' > "$dir/home/state/w1.busy-state"
+  touch -t 202001030000 "$dir/home/state/w1.status"
+  FM_HOME="$dir/home" FM_WORKER_QUIET_SECS=3600 "$dir/bin/fm-parked-run-watch.sh" scan
+  [ "$(wakes "$dir" 'parked-run:w1:quiet:')" = 2 ] || fail "an idle worker is not checked in on"
+  pass "parked-run watch: a busy worker quiet for hours gets one check-in per quiet stretch"
+}
+
 test_first_mate_home_nudges_then_raises_once_and_clears() {
   local dir
   dir=$(new_home main)
@@ -225,6 +246,7 @@ test_a_left_worker_is_never_raised_and_its_record_is_dropped() {
 }
 
 test_first_mate_home_nudges_then_raises_once_and_clears
+test_a_busy_worker_quiet_for_hours_gets_one_check_in
 test_a_close_that_cannot_resolve_keeps_the_record_and_fails
 test_a_left_worker_is_never_raised_and_its_record_is_dropped
 test_second_mate_home_raises_to_its_parent_channel

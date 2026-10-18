@@ -103,6 +103,41 @@ test_drafts_replace_jargon_with_plain_words() {
   pass "fm-card: new drafts replace jargon tokens and preserve ordinary product names"
 }
 
+test_cards_are_calm_single_and_short() {
+  local home in err out
+  home=$(make_home calm)
+  in="$home/in.json"
+  good_card "$in"
+  jq '.urgent={"because":"security"}' "$in" > "$in.tmp" && mv "$in.tmp" "$in"
+  err=$(run_card "$home" validate --file "$in" 2>&1) && fail "a vague urgency reason was accepted"
+  assert_contains "$err" "normal priority" "only the four real reasons make a card urgent"
+  for why in production-down customer-breakage money secret-exposure; do
+    good_card "$in"
+    jq --arg w "$why" '.urgent={"because":$w}' "$in" > "$in.tmp" && mv "$in.tmp" "$in"
+    run_card "$home" validate --file "$in" || fail "$why is a real reason to mark a card urgent"
+  done
+  run_card "$home" write calm-one --file "$in" >/dev/null || fail "an urgent card could not be written"
+  out=$(run_card "$home" show calm-one)
+  assert_equals secret-exposure "$(jq -r .urgent.because <<<"$out")" "the stored card keeps its urgency reason"
+  good_card "$in"
+  run_card "$home" write calm-two --file "$in" >/dev/null || fail "a normal card could not be written"
+  assert_equals null "$(run_card "$home" show calm-two | jq -r .urgent)" "a card without a reason is normal priority"
+  good_card "$in"
+  jq '.title="Publish the draft PR? And ask GitHub support?"' "$in" > "$in.tmp" && mv "$in.tmp" "$in"
+  err=$(run_card "$home" validate --file "$in" 2>&1) && fail "a card bundling two questions was accepted"
+  assert_contains "$err" "one question per card" "bundled decisions are split"
+  good_card "$in"
+  jq '.options[0].label="Publish upstream then compare all of the eight synthetic tests"' "$in" > "$in.tmp" && mv "$in.tmp" "$in"
+  err=$(run_card "$home" validate --file "$in" 2>&1) && fail "a long option label was accepted"
+  good_card "$in"
+  jq '.situation="Checks green with repeats=1."' "$in" > "$in.tmp" && mv "$in.tmp" "$in"
+  err=$(run_card "$home" validate --file "$in" 2>&1) && fail "a setting=value token was accepted"
+  good_card "$in"
+  jq '.situation="Waited 2 minutes after the POST-to-observation step."' "$in" > "$in.tmp" && mv "$in.tmp" "$in"
+  err=$(run_card "$home" validate --file "$in" 2>&1) && fail "a run-together hyphenated token was accepted"
+  pass "fm-card: urgency needs a real reason, one card asks one question, and labels stay short and plain"
+}
+
 test_write_and_show_round_trip() {
   local home in out mode
   home=$(make_home roundtrip)
@@ -1059,6 +1094,7 @@ test_interrupted_reopening_can_be_retried() {
 }
 
 test_write_and_show_round_trip
+test_cards_are_calm_single_and_short
 test_cards_use_plain_words
 test_run_together_identifiers_and_product_names
 test_drafts_replace_jargon_with_plain_words
