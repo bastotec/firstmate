@@ -175,6 +175,7 @@ fm_remote_control_run() {
   [ -n "$effort" ] || effort=default
   [ -n "$harness" ] || { echo "error: task $ID has no recorded harness; pass --harness" >&2; return 1; }
   args=("$ID" "$harness" "$model" "$effort")
+  [ "$NOTE_SET" != 1 ] || args+=(--note "$NOTE")
   # shellcheck source=bin/fm-remote-readiness-lib.sh
   . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
   rc=0

@@ -3,10 +3,11 @@
 #
 # Usage:
 #   fm-remote-secondmate-control.sh launch <id> <harness> <model|-> <effort|-> stream [traceparent]
-#   fm-remote-secondmate-control.sh relaunch <id> <harness> <model|default|-> <effort|default|->
+#   fm-remote-secondmate-control.sh relaunch <id> <harness> <model|default|-> <effort|default|-> [--note <text>]
 #   fm-remote-secondmate-control.sh control <id> <interrupt|exit>
 #   fm-remote-secondmate-control.sh model <id> <route>
 #   fm-remote-secondmate-control.sh state <id>
+#   fm-remote-secondmate-control.sh relaunch-journal <id>
 #   fm-remote-secondmate-control.sh route <id>
 #   fm-remote-secondmate-control.sh send <id> <message> [fire-and-forget]
 #   fm-remote-secondmate-control.sh send-stream <conversation|monologue> <id> <message> [fire-and-forget]
@@ -434,7 +435,7 @@ cmd_relaunch() {
   LAUNCH_STARTED=$(date +%s)
   local id=$1 harness=$2 model=$3 effort=$4 old old_backend old_target current recorded outside pid token out rc
   local -a control_args
-  [ "$#" -eq 4 ] || usage
+  [ "$#" -eq 4 ] || { [ "$#" -eq 6 ] && [ "$5" = --note ]; } || usage
 
   validate_id "$id"
   validate_home "$id"
@@ -475,6 +476,7 @@ EOF
   require_identities_gone "$id" "$outside"
   old="$old"$'\n'"$recorded"
   control_args=("$id" relaunch --harness "$harness" --model "$model" --effort "$effort")
+  [ "$#" -eq 4 ] || control_args+=(--note "$6")
   # The same launch-boundary facts cmd_launch establishes: the parent already
   # owns both convergence legs, so the host-local spawn must not re-sync or
   # re-inherit against this host's own Firstmate copy.
@@ -697,10 +699,24 @@ cmd_retire() {
 
 case "${1:-}" in
   launch) shift; [ "$#" -ge 5 ] && [ "$#" -le 6 ] || usage; cmd_launch "$@" ;;
-  relaunch) shift; [ "$#" -eq 4 ] || usage; cmd_relaunch "$@" ;;
+  relaunch) shift; [ "$#" -eq 4 ] || [ "$#" -eq 6 ] || usage; cmd_relaunch "$@" ;;
   control) shift; [ "$#" -eq 2 ] || usage; cmd_control "$@" ;;
   model) shift; [ "$#" -eq 2 ] || usage; cmd_model "$@" ;;
   state) shift; [ "$#" -eq 1 ] || usage; validate_id "$1"; validate_home "$1"; state_value "$1" ;;
+  relaunch-journal)
+    shift; [ "$#" -eq 1 ] || usage; validate_id "$1"; validate_home "$1"
+    python3 - "$CONTROL_STATE/$1.control-relaunch" <<'PYTHON'
+import base64
+import pathlib
+import sys
+
+journal = pathlib.Path(sys.argv[1]).read_text()
+fields = dict(line.split("=", 1) for line in journal.splitlines() if "=" in line)
+note = pathlib.Path(fields["note_file"]).read_bytes() if "note_file" in fields else b""
+print(journal, end="" if journal.endswith("\n") else "\n")
+print("note_base64=" + base64.b64encode(note).decode())
+PYTHON
+    ;;
   route) shift; [ "$#" -eq 1 ] || usage; cmd_route "$1" ;;
   send) shift; [ "$#" -ge 2 ] && [ "$#" -le 3 ] || usage; cmd_send "$@" ;;
   send-stream)

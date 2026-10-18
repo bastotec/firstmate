@@ -1728,7 +1728,9 @@ PYTHON
 # FM_DECK_CHILD_STOP_SECS, so its shutdown stays well inside the relaunch wait
 # and the old watcher cannot keep writing after the host is gone.
 test_secondmate_host_shutdown_bounds_a_watcher_that_ignores_term() {
-  local dir="$TMP_ROOT/host-shutdown-watcher"
+  local dir mode
+  for mode in stubborn exits real-arm; do
+  dir="$TMP_ROOT/host-shutdown-watcher-$mode"
   make_secondmate_host_fixture "$dir"
   cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
 #!/usr/bin/env bash
@@ -1739,8 +1741,29 @@ printf '%s\n' "$$" > "$FM_HOME/arm-pid"
 printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
 while :; do sleep 0.1; done
 SH
+  if [ "$mode" = exits ]; then
+    sed "s/trap '' TERM/trap 'exit 143' TERM/" "$dir/bin/fm-watch-arm.sh" > "$dir/arm-exits"
+    mv "$dir/arm-exits" "$dir/bin/fm-watch-arm.sh"
+  elif [ "$mode" = real-arm ]; then
+    cp "$ROOT/bin/fm-watch-arm.sh" "$dir/bin/fm-watch-arm.sh"
+    cat > "$dir/bin/fm-watch.sh" <<'SH'
+#!/usr/bin/env bash
+. "${BASH_SOURCE[0]%/*}/fm-wake-lib.sh"
+trap 'exit 143' TERM
+fm_lock_try_acquire "$STATE/.watch.lock" || exit 2
+printf '%s\n' "$FM_HOME" > "$STATE/.watch.lock/fm-home"
+printf '%s\n' "${BASH_SOURCE[0]}" > "$STATE/.watch.lock/watcher-path"
+fm_pid_identity "$$" > "$STATE/.watch.lock/pid-identity"
+touch "$STATE/.last-watcher-beat"
+( trap '' TERM; while :; do printf x >> "$FM_HOME/watch-writes"; sleep 0.1; done ) &
+printf '%s\n' "$!" > "$FM_HOME/writer-pid"
+printf '%s\n' "$PPID" > "$FM_HOME/arm-pid"
+sleep 60
+SH
+    chmod +x "$dir/bin/fm-watch.sh"
+  fi
   chmod +x "$dir/bin/fm-watch-arm.sh"
-  FM_TEST_SYSTEM_PS="$FM_TEST_SYSTEM_PS" FM_DECK_CHILD_STOP_SECS=1 python3 - "$dir" <<'PYTHON' || fail "a secondmate host did not bound its watcher stop at shutdown"
+  FM_TEST_SYSTEM_PS="$FM_TEST_SYSTEM_PS" FM_DECK_CHILD_STOP_SECS=2 FM_ARM_CHILD_STOP_SECS=1 python3 - "$dir" "$mode" <<'PYTHON' || fail "a secondmate host did not bound its watcher stop at shutdown"
 import os, pathlib, signal, subprocess, sys, time
 root = pathlib.Path(sys.argv[1])
 home = root / 'home'
@@ -1768,25 +1791,31 @@ with (root/'pane').open('w') as output:
         wait_for(lambda: (home/'writer-pid').exists() and (home/'arm-pid').exists(), 'watcher arm start')
         arm = int((home/'arm-pid').read_text()); writer = int((home/'writer-pid').read_text())
         pids = [arm, writer]
+        if sys.argv[2] == 'real-arm':
+            wait_for(lambda: 'idle since' in (root/'pane').read_text(), 'idle host')
         started = time.monotonic()
         os.kill(p.pid, signal.SIGTERM)
         p.wait(timeout=30)
         took = time.monotonic() - started
-        assert took < 6, (took, (root/'pane').read_text())
+        assert took < 8, (took, (root/'pane').read_text())
         assert not alive(arm), 'the host left its watcher arm running'
         assert not alive(writer), "the host left its watcher's helper running"
         size = (home/'watch-writes').stat().st_size
         time.sleep(.5)
         assert (home/'watch-writes').stat().st_size == size, 'the old watcher kept writing after the host stopped'
-        print(f'host stopped {took:.1f}s after TERM')
+        if sys.argv[2] == 'real-arm':
+            assert 'reason=arm-interrupted' in (home/'state/.watch-cycle-exits.log').read_text(), 'a second TERM aborted arm cleanup'
+        print(f'host stopped {took:.1f}s after TERM ({sys.argv[2]})')
     finally:
-        if p.poll() is None:
-            os.killpg(p.pid, signal.SIGKILL); p.wait()
+        try: os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError: pass
+        p.wait()
         for pid in pids:
             try: os.kill(pid, signal.SIGKILL)
             except ProcessLookupError: pass
 PYTHON
-  pass "a secondmate host stops a watcher that ignores TERM within its bound at shutdown"
+  done
+  pass "a secondmate host signals once and stops the captured watcher tree even after the arm exits"
 }
 
 # A captain wake whose turn failed before the model ran (a gateway outage) is

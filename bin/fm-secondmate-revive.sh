@@ -181,9 +181,8 @@ probe() {  # <meta> <id>  -> prints alive|dead|missing|unknown
 # crashed, the scan reads that relaunch's journal (state/<id>.control-relaunch,
 # owned by bin/fm-control.sh). A journal written within
 # FM_SECONDMATE_REVIVE_RESUME_SECS whose phase shows the relaunch got as far as
-# stopping the old agent and never completed (anything but complete,
-# failed:checkpoint, and failed:noted, which were refused before the agent was
-# touched) is finished at once through the same guarded relaunch, with that
+# stopping the old agent and never completed is finished at once through the
+# same guarded relaunch, with that
 # relaunch's recorded note and target model, and logged as completing an
 # interrupted restart. A lifecycle action still holding the mate's control lock
 # defers it without a failure. Only a completion that itself fails counts
@@ -191,34 +190,46 @@ probe() {  # <meta> <id>  -> prints alive|dead|missing|unknown
 # takes over.
 RESUME_SECS=${FM_SECONDMATE_REVIVE_RESUME_SECS:-900}
 case "$RESUME_SECS" in ''|*[!0-9]*) RESUME_SECS=900 ;; esac
-RESUME_NOTE="Restarted to finish a relaunch that was interrupted while the previous session was shutting down. Read your inbox in order and answer anything the captain is waiting on."
 
-journal_get() {  # <id> <key>
-  sed -n "s/^$2=//p" "$STATE/$1.control-relaunch" 2>/dev/null | tail -1
+journal_get() {  # <key>
+  printf '%s\n' "$RELAUNCH_JOURNAL" | sed -n "s/^$1=//p" | tail -1
 }
 
-interrupted_relaunch() {  # <id> <now>
-  local id=$1 now=$2 phase ts at
-  [ -f "$STATE/$id.control-relaunch" ] || return 1
-  phase=$(journal_get "$id" phase)
-  case "$phase" in ''|complete|failed:checkpoint|failed:noted) return 1 ;; esac
-  ts=$(journal_get "$id" ts)
+interrupted_relaunch() {  # <id> <now> <meta>
+  local id=$1 now=$2 meta=$3 phase ts at note_file
+  if [ -n "$(fm_meta_get "$meta" remote_host)" ]; then
+    RELAUNCH_JOURNAL=$("$SCRIPT_DIR/fm-on.sh" "$id" fm-remote-secondmate-control.sh relaunch-journal "$id" < /dev/null 2>/dev/null) || return 1
+  else
+    RELAUNCH_JOURNAL=$(cat "$STATE/$id.control-relaunch" 2>/dev/null) || return 1
+  fi
+  phase=$(journal_get phase)
+  case "$phase" in
+    stopping|exited|launching|failed:stopping|failed:exited|failed:launching) ;;
+    *) return 1 ;;
+  esac
+  ts=$(journal_get ts)
   at=$(python3 -c 'import calendar, sys, time; print(calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")))' "$ts" 2>/dev/null) || return 1
-  [ $((now - at)) -le "$RESUME_SECS" ]
+  [ $((now - at)) -le "$RESUME_SECS" ] || return 1
+  RELAUNCH_NOTE=
+  note_file=$(journal_get note_file)
+  if [ -n "$note_file" ]; then
+    if [ -n "$(fm_meta_get "$meta" remote_host)" ]; then
+      RELAUNCH_NOTE=$(python3 -c 'import base64, sys; print(base64.b64decode(sys.argv[1], validate=True).decode(), end="")' "$(journal_get note_base64)") || return 1
+    else
+      RELAUNCH_NOTE=$(cat "$note_file" 2>/dev/null) || return 1
+    fi
+  else
+    [ "$(journal_get note)" = none ] || return 1
+  fi
 }
 
 finish_relaunch() {  # <id> <state> <now>
-  local id=$1 state=$2 now=$3 note note_file model rc=0 out failures reason
+  local id=$1 state=$2 now=$3 model rc=0 out failures reason
   local -a args=(relaunch --unless-held-stopped)
-  note=$RESUME_NOTE
-  note_file=$(journal_get "$id" note_file)
-  if [ -n "$note_file" ] && [ -s "$note_file" ]; then
-    note=$(cat "$note_file")
-  fi
-  model=$(journal_get "$id" to_model)
-  case "$model" in ''|default) ;; *) args+=(--model "$model") ;; esac
-  log "completing the interrupted restart of $id (relaunch left at phase $(journal_get "$id" phase))"
-  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" "${args[@]}" --note "$note" < /dev/null 2>&1) || rc=$?
+  model=$(journal_get to_model)
+  [ -z "$model" ] || args+=(--model "$model")
+  log "completing the interrupted restart of $id (relaunch left at phase $(journal_get phase))"
+  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" "${args[@]}" --note "$RELAUNCH_NOTE" < /dev/null 2>&1) || rc=$?
   if [ "$rc" -eq 0 ]; then
     rm -f "$STATE/$id.revive"
     log "completed the interrupted restart of $id: $(printf '%s\n' "$out" | grep -E '^relaunched ' | tail -1)"
@@ -278,7 +289,7 @@ revive_one() {  # <meta> <id>
       && record_write "$id" "$REC_STATE" "$REC_SEEN" "$REC_FAILURES" 1 "$reason"
     return 0
   fi
-  if [ "$state" = dead ] && [ "$REC_FAILURES" -eq 0 ] && interrupted_relaunch "$id" "$now"; then
+  if [ "$state" = dead ] && [ "$REC_FAILURES" -eq 0 ] && interrupted_relaunch "$id" "$now" "$meta"; then
     finish_relaunch "$id" "$state" "$now"
     return 0
   fi

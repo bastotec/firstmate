@@ -962,6 +962,11 @@ journal_write() {  # <phase> [extra-line]...
     echo "to_harness=$TARGET_HARNESS"
     echo "to_model=$TARGET_MODEL"
     echo "to_effort=$TARGET_EFFORT"
+    if [ -n "$NOTE" ]; then
+      echo "note_file=$NOTE_FILE"
+    else
+      echo "note=none"
+    fi
     local line
     for line in "$@"; do
       echo "$line"
@@ -1274,7 +1279,7 @@ record_note() {
 }
 
 do_relaunch() {
-  local exit_result state note_line
+  local exit_result state
   local -a spawn_args
 
   local -x FM_CONTROL_MODEL_CHOICE_ACTION=keep
@@ -1307,27 +1312,22 @@ do_relaunch() {
   esac
 
   relaunch_backlog_preflight
-  if [ -n "$NOTE" ]; then
-    note_line="note_file=$NOTE_FILE"
-  else
-    note_line="note=none"
-  fi
   safe_checkpoint
   cp -p "$META" "$META_PRIOR" 2>/dev/null || true
   RELAUNCH_ACTIVE=1
-  journal_write checkpoint "${CHECKPOINT_LINES[@]}" "$note_line"
+  journal_write checkpoint "${CHECKPOINT_LINES[@]}"
 
   record_note
-  journal_write noted "${CHECKPOINT_LINES[@]}" "$note_line"
+  journal_write noted "${CHECKPOINT_LINES[@]}"
 
-  journal_write stopping "${CHECKPOINT_LINES[@]}" "$note_line"
+  journal_write stopping "${CHECKPOINT_LINES[@]}"
   exit_result=$(do_exit)
-  journal_write exited "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
+  journal_write exited "${CHECKPOINT_LINES[@]}" "exit_result=$exit_result"
 
   # The launch owner (fm-spawn --relaunch) clears the previous incarnation's
   # per-task harness wiring before arming the new one, so nothing to do here.
   RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
-  journal_write launching "${CHECKPOINT_LINES[@]}" "$note_line" "relaunch_tx=$RELAUNCH_TX"
+  journal_write launching "${CHECKPOINT_LINES[@]}" "relaunch_tx=$RELAUNCH_TX"
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   # A chained surface was only pre-flighted above: the ORIGINAL chain is what
   # the launch owner resolves and records the lane for, so its cooldown
@@ -1353,7 +1353,7 @@ do_relaunch() {
   }
   RELAUNCH_AGENT_CONFIRMED=1
 
-  journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
+  journal_write complete "${CHECKPOINT_LINES[@]}" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
   echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT"
 }
@@ -1435,7 +1435,7 @@ reincarnate_preflight() {
 }
 
 do_recover_missing() {
-  local state note_line wt wname proj_abs
+  local state wt wname proj_abs
   local -a spawn_args
 
   if [ "$VERB" != reincarnate ]; then
@@ -1488,11 +1488,6 @@ do_recover_missing() {
     esac
   fi
 
-  if [ -n "$NOTE" ]; then
-    note_line="note_file=$NOTE_FILE"
-  else
-    note_line="note=none"
-  fi
   # recover-missing has no dirty-copy refusal; reincarnate checked cleanliness
   # in its preflight. A missing-endpoint rescue is mid-work by definition,
   # so uncommitted changes are its normal state, and
@@ -1502,12 +1497,12 @@ do_recover_missing() {
   safe_checkpoint
   cp -p "$META" "$META_PRIOR" 2>/dev/null || true
   RELAUNCH_ACTIVE=1
-  journal_write checkpoint "${CHECKPOINT_LINES[@]}" "$note_line"
+  journal_write checkpoint "${CHECKPOINT_LINES[@]}"
 
   record_note
-  journal_write noted "${CHECKPOINT_LINES[@]}" "$note_line"
+  journal_write noted "${CHECKPOINT_LINES[@]}"
 
-  journal_write recreating "${CHECKPOINT_LINES[@]}" "$note_line"
+  journal_write recreating "${CHECKPOINT_LINES[@]}"
   wname="fm-$ID"
   proj_abs=$(cd "$wt" && pwd -P)
   # recover_stream_endpoint makes a new endpoint and rebinds the record and $T
@@ -1523,7 +1518,7 @@ do_recover_missing() {
   }
 
   RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
-  journal_write launching "${CHECKPOINT_LINES[@]}" "$note_line" "relaunch_tx=$RELAUNCH_TX"
+  journal_write launching "${CHECKPOINT_LINES[@]}" "relaunch_tx=$RELAUNCH_TX"
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   # A chained surface was only pre-flighted above: the ORIGINAL chain is what
   # the launch owner resolves and records the lane for, so its cooldown
@@ -1549,7 +1544,7 @@ do_recover_missing() {
   }
   RELAUNCH_AGENT_CONFIRMED=1
 
-  journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=recreated"
+  journal_write complete "${CHECKPOINT_LINES[@]}" "exit_result=recreated"
   RELAUNCH_ACTIVE=0
   echo "recovered $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$wt"
 }

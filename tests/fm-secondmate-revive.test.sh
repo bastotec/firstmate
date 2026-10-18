@@ -63,7 +63,11 @@ SH
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_HOME/on-calls"
 [ -f "$FM_HOME/remote-unreachable" ] && exit 255
-cat "$FM_HOME/remote-state"
+case "$3" in
+  relaunch-journal)
+    FM_HOME="$FM_HOME/remote-home" exec "$(dirname "$0")/fm-remote-secondmate-control.sh" relaunch-journal "$4" ;;
+  *) cat "$FM_HOME/remote-state" ;;
+esac
 SH
   chmod +x "$dir/bin/fm-control.sh" "$dir/bin/fm-on.sh"
   printf '%s\n' "$dir"
@@ -618,23 +622,67 @@ SH
   pass "the watcher revives a dead second mate on its own cadence without blocking"
 }
 
-# write_relaunch_journal <case-dir> <id> <phase> <iso-ts>: the journal a
-# control-plane relaunch leaves behind, with its note and target model.
-write_relaunch_journal() {
-  local dir=$1 id=$2 journal="$1/home/state/$2.control-relaunch"
-  printf 'Restarted to pick up the new charter.\n' > "$journal.note"
-  printf '%s\n' v1 "task=$id" "phase=$3" "ts=$4" kind=secondmate from_harness=deck \
-    from_model=default to_harness=deck to_model=route-b "note_file=$journal.note" > "$journal"
+produce_relaunch_journal() {  # <case-dir> <id> <phase> [model]
+  local dir=$1 id=$2 phase=$3 model=${4:-route-b} target rc=0 out verb=relaunch state=${5:-$1/home/state}
+  mkdir -p "$dir/producer-bin" "$dir/user-home" "$dir/mate/state" "$dir/mate/bin" "$state"
+  [ "$state" = "$dir/home/state" ] || cp "$dir/home/state/$id.meta" "$state/$id.meta"
+  git -C "$dir/mate" init -q
+  printf '%s\n' "$id" > "$dir/mate/.fm-secondmate-home"
+  printf '# agents\n' > "$dir/mate/AGENTS.md"
+  awk -F= '$1 != "worktree" && $1 != "project" && $1 != "home" && $1 != "model" && $1 != "model_choice"' \
+    "$state/$id.meta" > "$dir/producer.meta"
+  printf '%s\n' "worktree=$dir/mate" "project=$dir/mate" "home=$dir/mate" model=route-a model_choice=route-a \
+    >> "$dir/producer.meta"
+  mv "$dir/producer.meta" "$state/$id.meta"
+  target=$(fm_test_stream_target_of "$dir/home/state" "$id")
+  fm_test_fake_stream_foreground "$target" fm-deck-worker
+  fm_test_fake_stream_set "$target" '{"never_dies": true}'
+  cp "$ROOT/bin/fm-control.sh" "$dir/bin/fm-control-producer.sh"
+  cat > "$dir/producer-bin/mv" <<'SH'
+#!/usr/bin/env bash
+for path in "$@"; do
+  case "$path" in
+    *.control-relaunch.tmp)
+      if grep -qx "phase=$FM_TEST_JOURNAL_PHASE" "$path"; then
+        "$FM_TEST_REAL_MV" "$@" || exit
+        kill -KILL "$PPID"
+        exit 0
+      fi ;;
+  esac
+done
+exec "$FM_TEST_REAL_MV" "$@"
+SH
+  chmod +x "$dir/producer-bin/mv"
+  if [ "$phase" = recreating ]; then
+    verb=recover-missing
+    fm_test_fake_stream_set "$target" '{"forget": true}'
+  fi
+  if [ "$state" = "$dir/home/state" ]; then
+    out=$(PATH="$dir/producer-bin:$PATH" FM_TEST_REAL_MV="$(command -v mv)" FM_TEST_JOURNAL_PHASE="$phase" \
+      HOME="$dir/user-home" FM_HOME="$dir/home" FM_CONTROL_POLL=0.01 FM_CONTROL_RELAUNCH_STOP_WAIT=0.01 \
+      "$dir/bin/fm-control-producer.sh" "$id" "$verb" --model "$model" --note 'Restarted to pick up the new charter.' 2>&1) || rc=$?
+  else
+    cp "$dir/bin/fm-control.sh" "$dir/bin/fm-control-scan.sh"
+    cp "$ROOT/bin/fm-control.sh" "$dir/bin/fm-control.sh"
+    out=$(PATH="$dir/producer-bin:$PATH" FM_TEST_REAL_MV="$(command -v mv)" FM_TEST_JOURNAL_PHASE="$phase" \
+      HOME="$dir/user-home" FM_HOME="$dir/home/remote-home" FM_ROOT_OVERRIDE="$dir/home" \
+      FM_CONTROL_POLL=0.01 FM_CONTROL_RELAUNCH_STOP_WAIT=0.01 \
+      "$dir/bin/fm-remote-secondmate-control.sh" relaunch "$id" deck "$model" default --note 'Restarted to pick up the new charter.' 2>&1) || rc=$?
+    mv "$dir/bin/fm-control-scan.sh" "$dir/bin/fm-control.sh"
+  fi
+  [ "$rc" -ne 0 ] || fail "the producer unexpectedly completed: $out"
+  assert_grep "phase=$phase" "$state/$id.control-relaunch" "the real control plane left $phase: $out"
+  fm_test_stream_task "$dir/home/state" "$id" >/dev/null || fail "could not restore the producer's endpoint"
+  fm_test_fake_stream_foreground "$target" zsh
 }
 
 test_an_interrupted_relaunch_is_finished_not_revived() {
-  local dir now
+  local dir
   dir=$(new_case interrupted-relaunch)
   add_local_mate "$dir" sm1 zsh >/dev/null
-  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  write_relaunch_journal "$dir" sm1 failed:stopping "$now"
+  produce_relaunch_journal "$dir" sm1 failed:stopping default
   scan "$dir" || fail "the scan failed"
-  [ "$(calls "$dir")" = "sm1 relaunch --unless-held-stopped --model route-b --note Restarted to pick up the new charter." ] \
+  [ "$(calls "$dir")" = "sm1 relaunch --unless-held-stopped --model default --note Restarted to pick up the new charter." ] \
     || fail "an interrupted relaunch was not finished at once with its own note and model: $(calls "$dir")"
   grep -q 'completed the interrupted restart of sm1' "$dir/home/state/secondmate-revive.log" \
     || fail "the completion was not logged as finishing an interrupted restart"
@@ -645,7 +693,7 @@ test_an_interrupted_relaunch_is_finished_not_revived() {
   # One still running holds the control lock: that is no failure.
   dir=$(new_case interrupted-relaunch-busy)
   add_local_mate "$dir" sm1 zsh >/dev/null
-  write_relaunch_journal "$dir" sm1 stopping "$now"
+  produce_relaunch_journal "$dir" sm1 stopping
   : > "$dir/home/control-busy"
   scan "$dir"
   [ ! -e "$dir/home/state/sm1.revive" ] || fail "a relaunch still in progress was counted against the mate"
@@ -653,7 +701,7 @@ test_an_interrupted_relaunch_is_finished_not_revived() {
   # A failed completion counts once, then the ordinary confirmed path takes over.
   dir=$(new_case interrupted-relaunch-fails)
   add_local_mate "$dir" sm1 zsh >/dev/null
-  write_relaunch_journal "$dir" sm1 failed:stopping "$now"
+  produce_relaunch_journal "$dir" sm1 failed:stopping
   : > "$dir/home/control-fails"
   scan "$dir"
   grep -q '^failures=1$' "$dir/home/state/sm1.revive" || fail "a failed completion was not counted once"
@@ -665,12 +713,14 @@ test_an_interrupted_relaunch_is_finished_not_revived() {
 
 test_old_or_finished_relaunch_journals_leave_the_ordinary_revive_alone() {
   local dir phase ts
-  for phase in complete old failed:noted; do
+  for phase in checkpoint noted recreating old; do
     dir=$(new_case "journal-$phase")
     add_local_mate "$dir" sm1 zsh >/dev/null
     ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     [ "$phase" != old ] || ts=2020-01-01T00:00:00Z
-    write_relaunch_journal "$dir" sm1 "${phase/old/failed:stopping}" "$ts"
+    produce_relaunch_journal "$dir" sm1 "${phase/old/failed:stopping}"
+    [ "$phase" != old ] || sed "s/^ts=.*/ts=$ts/" "$dir/home/state/sm1.control-relaunch" > "$dir/old-journal"
+    [ "$phase" != old ] || mv "$dir/old-journal" "$dir/home/state/sm1.control-relaunch"
     scan "$dir"
     [ -z "$(calls "$dir")" ] || fail "$phase: a single down reading acted at once: $(calls "$dir")"
     scan "$dir"
@@ -682,9 +732,40 @@ test_old_or_finished_relaunch_journals_leave_the_ordinary_revive_alone() {
   pass "a completed, refused, or old relaunch journal leaves the ordinary confirmed revive in charge"
 }
 
+test_interrupted_default_model_reset_is_preserved() {
+  local dir
+  dir=$(new_case interrupted-default)
+  add_local_mate "$dir" sm1 zsh >/dev/null
+  produce_relaunch_journal "$dir" sm1 stopping default
+  scan "$dir"
+  assert_equals 'sm1 relaunch --unless-held-stopped --model default --note Restarted to pick up the new charter.' \
+    "$(calls "$dir")" "an explicit default survives an interruption before metadata publication"
+  pass "an interrupted explicit model reset is completed with default, not the old model choice"
+}
+
+test_remote_interrupted_relaunch_uses_the_host_journal() {
+  local dir
+  dir=$(new_case remote-interrupted)
+  add_local_mate "$dir" sm1 zsh >/dev/null
+  mkdir -p "$dir/home/remote-home/state/parent-route" "$dir/home/remote-home/bin"
+  printf 'sm1\n' > "$dir/home/remote-home/.fm-secondmate-home"
+  printf '# agents\n' > "$dir/home/remote-home/AGENTS.md"
+  produce_relaunch_journal "$dir" sm1 failed:stopping default "$dir/home/remote-home/state/parent-route"
+  [ ! -e "$dir/home/state/sm1.control-relaunch" ] || fail "a remote relaunch wrote a parent-local journal"
+  add_remote_mate "$dir" sm1
+  printf 'dead\n' > "$dir/home/remote-state"
+  scan "$dir"
+  assert_equals 'sm1 relaunch --unless-held-stopped --model default --note Restarted to pick up the new charter.' \
+    "$(calls "$dir")" "the remote transaction kept its model and note"
+  assert_grep 'completed the interrupted restart of sm1' "$dir/home/state/secondmate-revive.log" "the remote restart was completed, not treated as a death"
+  pass "a remote interrupted relaunch is read through its host-local journal owner"
+}
+
 test_dead_local_mate_is_relaunched_after_a_confirmed_reading
 test_missing_local_mate_is_recovered
 test_an_interrupted_relaunch_is_finished_not_revived
+test_interrupted_default_model_reset_is_preserved
+test_remote_interrupted_relaunch_uses_the_host_journal
 test_old_or_finished_relaunch_journals_leave_the_ordinary_revive_alone
 test_live_unknown_held_and_non_secondmate_records_are_left_alone
 test_a_live_mate_with_a_failing_lane_is_relaunched_then_escalated_once

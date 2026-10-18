@@ -1086,7 +1086,7 @@ test_remote_relaunch_publishes_the_model_choice_with_the_route() {
 #!/usr/bin/env bash
 [ "$2" != fm-remote-doctor.sh ] || exit 0
 case "$3" in
-  relaunch) exit "${FM_TEST_REMOTE_RELAUNCH_RC:-0}" ;;
+  relaunch) printf '%s\n' "$@" > "$FM_HOME/remote-relaunch-args"; exit "${FM_TEST_REMOTE_RELAUNCH_RC:-0}" ;;
   route)
     printf '%s\n' backend=stream 'target=fixture:0123456789abcdef0123456789abcdef' \
       stream_hub=http://fixture:8328 stream_endpoint_id=0123456789abcdef0123456789abcdef \
@@ -1111,8 +1111,10 @@ SH
       x_keep=preserved > "$dir/home/state/rlremotechoice.meta"
     rc=0
     out=$(FM_HOME="$dir/home" FM_TEST_REMOTE_MODEL="$route" FM_TEST_REMOTE_RELAUNCH_RC="$wanted_rc" \
-      "$dir/bin/fm-control.sh" rlremotechoice relaunch "${args[@]+"${args[@]}"}" 2>&1) || rc=$?
+      "$dir/bin/fm-control.sh" rlremotechoice relaunch --note 'Keep the recorded restart note.' "${args[@]+"${args[@]}"}" 2>&1) || rc=$?
     expect_code "$wanted_rc" "$rc" "remote $action outcome: $out"
+    assert_equals '--note
+Keep the recorded restart note.' "$(tail -2 "$dir/home/remote-relaunch-args")" "remote $action forwards the note to its owner"
     assert_equals "$route" "$(meta_field "$dir" rlremotechoice model)" "remote $action publishes the host's model"
     assert_equals "$expected" "$(meta_field "$dir" rlremotechoice model_choice)" "remote $action publishes the matching choice"
     assert_equals preserved "$(meta_field "$dir" rlremotechoice x_keep)" "remote $action preserves unrelated metadata"

@@ -40,14 +40,44 @@ fm_cancel_tool_trees() {  # <deck-pid>
 # for it to exit, then SIGKILL its whole process subtree and reap it. Returns
 # the child's wait status. Used where a shutdown must never hang on a child
 # that defers its TERM trap (a foreground sleep, a slow check).
-fm_stop_child_bounded() {  # <pid> <secs>
-  local pid=$1 limit=$2 waited=0 rc=0
+fm_begin_child_stop() {  # <pid>
+  local pid=$1 key="FM_CHILD_STOP_TREE_$1" tree
+  [ -z "${!key:-}" ] || return 0
+  tree=$(ps -A -o pid= -o ppid= 2>/dev/null | awk -v root="$pid" '
+    { parent[$1] = $2 }
+    END {
+      tree[root] = 1
+      do {
+        changed = 0
+        for (pid in parent) if (!(pid in tree) && (parent[pid] in tree)) {
+          tree[pid] = 1
+          changed = 1
+        }
+      } while (changed)
+      for (pid in tree) print pid
+    }')
+  printf -v "$key" '%s' "${tree:-$pid}"
   kill -TERM "$pid" 2>/dev/null || true
-  while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt $((limit * 10)) ]; do
+}
+
+fm_child_stop_pending() {  # <captured-pids>
+  local pid
+  for pid in $1; do
+    kill -0 "$pid" 2>/dev/null && return 0
+  done
+  return 1
+}
+
+fm_stop_child_bounded() {  # <pid> <secs>
+  local pid=$1 limit=$2 waited=0 rc=0 key="FM_CHILD_STOP_TREE_$1" tree member
+  fm_begin_child_stop "$pid"
+  tree=${!key}
+  while fm_child_stop_pending "$tree" && [ "$waited" -lt $((limit * 10)) ]; do
     sleep 0.1
     waited=$((waited + 1))
   done
-  ! kill -0 "$pid" 2>/dev/null || kill_tree "$pid"
+  for member in $tree; do kill_tree "$member"; done
   wait "$pid" 2>/dev/null || rc=$?
+  unset "$key"
   return "$rc"
 }
