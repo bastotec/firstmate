@@ -252,7 +252,7 @@ mate_disposition() {
     case "$rc" in
       0)
         if notify_mate "$id" "$(mate_evidence "$ledger_id" "$worktree" "$line" "$call_id:$disposition")" mate-wait; then
-          CLASS=mate-wait
+          CLASS="mate-wait"
         else
           CLASS=unknown; DETAIL="could not notify mate of changed evidence"
         fi
@@ -305,7 +305,7 @@ classify() {
           merged) MERGED_PR_URL=$pr ;;
           open) CLASS=awaiting-merge; return ;;
           closed)
-            CLASS=mate-review
+            CLASS="mate-review"
             DETAIL="$pr closed without merging; owning mate must assess supersession or unfinished work"
             MATE_EVIDENCE=$(mate_evidence "$id" "$worktree" "$line" "$row")
             return
@@ -313,7 +313,7 @@ classify() {
           *) CLASS=settling; DETAIL="cannot read whether $pr merged"; return ;;
         esac
       elif [ "$(fm_meta_get "$STATE/$id.meta" kind)" != scout ]; then
-        CLASS=mate-review
+        CLASS="mate-review"
         MATE_EVIDENCE=$(mate_evidence "$id" "$worktree" "$line")
         return
       fi
