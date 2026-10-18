@@ -47,6 +47,10 @@
 # question gates over minting a new row. The command records a UTC `Captain
 # hold set:` timestamp in the task body: repeating an active hold preserves the
 # existing timestamp, while re-holding released work starts a new lifecycle.
+# Fresh stamp selection runs under the task lock and advances beyond both the
+# existing leading hold-set stamp and the newest recorded withdrawal's stamp.
+# If the clock has not advanced, it uses one second after the later stamp so
+# withdrawal retries cannot mistake a fresh call for the withdrawn lifecycle.
 # A task already closed is refused rather than reopened. `--until` records the
 # captain's own deferral date through `tasks-axi hold --until`, so a "revisit
 # later" answer is stored as a date rather than an undated live call; its
@@ -914,12 +918,29 @@ body_hold_set_timestamp() {  # <decoded-task-body>
 }
 
 write_hold_set_stamp() {  # <task-id> <shown-body> <timestamp> <preserve-existing-0-or-1>
-  local id=$1 body=$2 hold_set=$3 preserve=$4 existing new_body tmp
+  local id=$1 body=$2 hold_set=$3 preserve=$4 existing new_body tmp withdrawn_hold_set
   body=$(decode_shown_value "$body") \
     || fail "could not decode the existing body for $id"
   existing=$(body_hold_set_timestamp "$body")
   if [ "$preserve" = 1 ] && [ -n "$existing" ]; then
     return 0
+  fi
+  # Under the task lock, a fresh call must advance beyond stamps that its
+  # withdrawal replay guard can still see, even when the wall clock repeats.
+  withdrawn_hold_set=$(printf '%s\n' "$body" | sed -n 's/^Withdrawal hold set: //p' | head -1)
+  if [ -n "$existing$withdrawn_hold_set" ]; then
+    hold_set=$(python3 - "$hold_set" "$existing" "$withdrawn_hold_set" <<'PY'
+import datetime
+import sys
+
+stamp = sys.argv[1]
+previous = max(sys.argv[2:])
+if stamp <= previous:
+    form = "%Y-%m-%dT%H:%M:%SZ" if "T" in previous else "%Y-%m-%d"
+    stamp = (datetime.datetime.strptime(previous, form) + datetime.timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+print(stamp)
+PY
+    ) || fail "could not advance the hold-set stamp for $id"
   fi
   if [ -n "$existing" ]; then
     body=${body#"Captain hold set: $existing"}
