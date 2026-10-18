@@ -615,8 +615,21 @@ busy_verdict() {
   fm_busy_classify_meta "$META" "$ID" "$STATE"
 }
 
+require_worktree_ownership() {
+  if [ "$KIND" = secondmate ] \
+    && ! fm_treehouse_pool_slot "$(fm_meta_get "$META" project)" "$WT" >/dev/null 2>&1; then
+    return 0
+  fi
+  fm_treehouse_slot_owner_state "$WT" "$ID"
+  case "$FM_TREEHOUSE_SLOT_OWNER" in
+    other) die "task $ID's recorded worktree $WT is currently claimed by task $FM_TREEHOUSE_SLOT_OWNER_ID; refusing to $VERB and tangle ownership" ;;
+    unsafe) die "task $ID's recorded worktree $WT has an unreadable owner claim; refusing to $VERB and risk a conflict" ;;
+  esac
+}
+
 admit_stopped_retry() {
   [ -n "$STOPPED_STATUS_SIZE" ] || return 0
+  require_worktree_ownership
   fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" || exit $?
 }
 
@@ -1009,6 +1022,7 @@ journal_write() {  # <phase> [extra-line]...
     echo "to_model=$TARGET_MODEL"
     echo "requested_model=$NEW_MODEL"
     echo "to_effort=$TARGET_EFFORT"
+    [ -z "$RELAUNCH_TX" ] || echo "relaunch_tx=$RELAUNCH_TX"
     if [ -n "$NOTE" ]; then
       echo "note_file=$NOTE_FILE"
     else
@@ -1236,6 +1250,7 @@ safe_checkpoint() {
   CHECKPOINT_LINES=()
   [ -n "$WT" ] || die "task $ID has no recorded worktree; refusing to relaunch without a recorded local copy to preserve"
   [ -d "$WT" ] || die "task $ID's recorded worktree $WT is missing; refusing to relaunch and lose track of its work"
+  require_worktree_ownership
   wt_real=$(cd "$WT" 2>/dev/null && pwd -P) || die "task $ID's recorded worktree $WT cannot be resolved"
   wt_top=$(git -C "$WT" rev-parse --show-toplevel 2>/dev/null) \
     || die "task $ID's recorded worktree $WT is not a git worktree; refusing to relaunch without a checkout whose unlanded work can be accounted for"
@@ -1375,7 +1390,7 @@ do_relaunch() {
   # The launch owner (fm-spawn --relaunch) clears the previous incarnation's
   # per-task harness wiring before arming the new one, so nothing to do here.
   RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
-  journal_write launching "${CHECKPOINT_LINES[@]}" "relaunch_tx=$RELAUNCH_TX"
+  journal_write launching "${CHECKPOINT_LINES[@]}"
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   # A chained surface was only pre-flighted above: the ORIGINAL chain is what
   # the launch owner resolves and records the lane for, so its cooldown
@@ -1528,14 +1543,6 @@ do_recover_missing() {
   wt=$(fm_meta_get "$META" worktree)
   [ -n "$wt" ] && [ -d "$wt" ] || die "task $ID's recorded worktree '${wt:-none}' is absent; refusing to recover without the local copy its work lives in"
 
-  if fm_treehouse_pool_slot "$(fm_meta_get "$META" project)" "$wt" >/dev/null 2>&1; then
-    fm_treehouse_slot_owner_state "$wt" "$ID"
-    case "$FM_TREEHOUSE_SLOT_OWNER" in
-      other) die "task $ID's recorded pool slot $wt is currently claimed by task $FM_TREEHOUSE_SLOT_OWNER_ID; refusing to recover and tangle ownership" ;;
-      unsafe) die "task $ID's recorded pool slot $wt has an unreadable owner claim; refusing to recover and risk a conflict" ;;
-    esac
-  fi
-
   # recover-missing has no dirty-copy refusal; reincarnate checked cleanliness
   # in its preflight. A missing-endpoint rescue is mid-work by definition,
   # so uncommitted changes are its normal state, and
@@ -1566,7 +1573,7 @@ do_recover_missing() {
   }
 
   RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
-  journal_write launching "${CHECKPOINT_LINES[@]}" "relaunch_tx=$RELAUNCH_TX"
+  journal_write launching "${CHECKPOINT_LINES[@]}"
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   # A chained surface was only pre-flighted above: the ORIGINAL chain is what
   # the launch owner resolves and records the lane for, so its cooldown

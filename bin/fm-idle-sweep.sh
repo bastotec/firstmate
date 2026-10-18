@@ -336,7 +336,7 @@ raise() {
 # stopped stretch through bin/fm-control.sh. Anything it cannot settle goes to
 # raise above. Sets STOPPED_ACTION to retired, retried or asked.
 decide_stopped() {
-  local id=$1 row body pr pr_state retire=0 out rc=0 tries count
+  local id=$1 row body pr pr_state retire=0 out rc=0 tries count retry_tx partial=0
   STOPPED_ACTION=
   if ! row=$(fm_backlog_row_show "${FM_DATA_OVERRIDE:-$FM_HOME/data}" "$id" --full 2>/dev/null) \
       || ! printf '%s\n' "$row" | grep -qE '^  state: (queued|in_flight|done)$' \
@@ -386,6 +386,20 @@ decide_stopped() {
     STOPPED_ACTION=asked
     return 0
   fi
+  if [ "$(cat "$STATE/$id.meta" 2>/dev/null)" != "$record" ]; then
+    CLASS=unknown
+    DETAIL="worker record or activity changed during scan"
+    return 0
+  fi
+  fm_treehouse_slot_owner_state "$(fm_meta_get "$STATE/$id.meta" worktree)" "$id"
+  case "$FM_TREEHOUSE_SLOT_OWNER" in
+    other|unsafe)
+      RAISED=0
+      raise "$id" "$CLASS" "its local copy has a conflicting or unreadable slot owner"
+      STOPPED_ACTION=asked
+      return 0
+      ;;
+  esac
   # One retry per stopped stretch, and at most two in all: a worker that
   # stops again without progress, or keeps stopping, goes to the first mate.
   tries=$(cat "$RAISED_DIR/$id.retried" 2>/dev/null || true)
@@ -400,14 +414,24 @@ decide_stopped() {
   out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" relaunch --expected-record "$record" \
     --if-still-stopped "$stopped_status_size" \
     --note 'Restarted by the idle sweep: your task is still open and unfinished. Read your inbox in order and continue it.' </dev/null 2>&1) || rc=$?
-  if [ "$rc" -eq 0 ]; then
+  if [ "$rc" -ne 0 ]; then
+    retry_tx=$(fm_meta_get "$STATE/$id.meta" control_relaunch_tx)
+    if [ -n "$retry_tx" ] \
+      && [ "$(cat "$STATE/$id.meta" 2>/dev/null)" != "$record" ] \
+      && [ "$(fm_meta_get "$STATE/$id.control-relaunch" relaunch_tx)" = "$retry_tx" ] \
+      && [ "$(cat "$STATE/$id.control-relaunch.meta-prior" 2>/dev/null)" = "$record" ]; then
+      partial=1
+    fi
+  fi
+  if [ "$rc" -eq 0 ] || [ "$partial" = 1 ]; then
     mkdir -p "$RAISED_DIR" 2>/dev/null || true
     printf '%s %s\n' "$(fingerprint "$id")" "$((count + 1))" > "$RAISED_DIR/$id.retried" 2>/dev/null || true
-    STOPPED_ACTION=retried
-    log "retried $id: its work is still wanted and unfinished"
-    return 0
-  fi
-  if [ "$rc" -eq 3 ] || [ "$(cat "$STATE/$id.meta" 2>/dev/null)" != "$record" ]; then
+    if [ "$rc" -eq 0 ]; then
+      STOPPED_ACTION=retried
+      log "retried $id: its work is still wanted and unfinished"
+      return 0
+    fi
+  elif [ "$rc" -eq 3 ] || [ "$(cat "$STATE/$id.meta" 2>/dev/null)" != "$record" ]; then
     CLASS=unknown
     DETAIL="worker record or activity changed during scan"
     return 0

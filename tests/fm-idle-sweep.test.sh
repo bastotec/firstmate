@@ -172,6 +172,7 @@ age_file() {  # <path> <seconds-ago>
 # add_worker <dir> <id> <crew-state-line> <seconds-quiet>
 add_worker() {
   local dir=$1 id=$2 line=$3 quiet=$4 n
+  mkdir -p "$dir/pool/1/firstmate"
   fm_write_meta "$dir/home/state/$id.meta" "kind=ship" "worktree=$dir/pool/1/firstmate"
   printf 'working: started\n' > "$dir/home/state/$id.status"
   age_file "$dir/home/state/$id.status" "$quiet"
@@ -1242,7 +1243,9 @@ test_reassigned_slots_cannot_supply_completion() {
   [ "$(calls "$dir" teardown-calls)" = claimant ] || fail "cleanup touched the stale task"
   [ "$(jq -r '.workers[] | select(.id=="stale") | .class' "$dir/home/state/idle-sweep.json")" = dead ] \
     || fail "the stale task was not classified as dead"
-  [ "$(calls "$dir" control-calls)" = 'stale relaunch' ] || fail "the stale unfinished task was not retried: $(calls "$dir" control-calls)"
+  [ ! -s "$dir/home/control-calls" ] || fail "the stale task was relaunched into the claimant's copy"
+  assert_equals 'dead asked' "$(summary_of "$dir" stale)" "a reassigned task needs the first mate's decision"
+  assert_present "$dir/home/state/idle-sweep/stale.raised" "the ownership conflict was not handed off"
   if grep -qx stale "$dir/home/crew-state-calls"; then fail "the stale task read the claimant's run"; fi
   assert_no_captain_call "$dir" "a reassigned slot"
   pass "fm-idle-sweep: a reassigned slot cannot close an unfinished task"
@@ -1489,6 +1492,8 @@ test_watcher_runs_the_sweep_and_surfaces_its_decision() {
     || fail "the watcher did not wake the first mate for the sweep's escalation: $(cat "$dir/watch.out") $(cat "$dir/watch.err")"
   pass "fm-idle-sweep: the watcher runs the sweep with no model turn and surfaces what it queues"
 }
+
+[ "${FM_IDLE_SWEEP_TEST_SKIP_RUN:-0}" != 1 ] || return 0
 
 test_unreadable_backlog_items_are_handed_to_the_first_mate
 test_unreadable_prs_are_handed_to_the_first_mate
