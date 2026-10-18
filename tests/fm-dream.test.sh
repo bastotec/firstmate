@@ -729,6 +729,56 @@ PY
   pass "instructions: one small change ships through the gate as a PR, charter edits are proposed, main is untouched"
 }
 
+test_instructions_prune_landed_or_old_worktrees() {
+  local d trees day branch tree current
+  d=$(new_case instr-prune)
+  trees="$d/home/state/dream"
+  mkdir -p "$trees"
+  current=$(python3 -c 'import datetime, os; print(datetime.datetime.fromtimestamp(int(os.environ["FM_DREAM_NOW"])).strftime("%Y-%m-%d"))')
+  for day in 2026-10-01 2026-10-02 2026-10-03 2026-10-04 2026-10-05 2026-10-06 "$current"; do
+    branch="fm/dream-instructions-$day"
+    tree="$trees/firstmate-${branch//\//-}"
+    git -C "$d/firstmate" worktree add -qb "$branch" "$tree" origin/main || fail "could not seed worktree"
+    printf '%s\n' "$day" > "$tree/proposal-$day.txt"
+    git -C "$tree" add -A && git -C "$tree" commit -qm "proposal $day" || fail "could not seed proposal"
+  done
+  git -C "$d/firstmate" merge -q --no-edit fm/dream-instructions-2026-10-01 || fail "could not seed ancestor merge"
+  git -C "$d/firstmate" merge -q --squash fm/dream-instructions-2026-10-02 \
+    && git -C "$d/firstmate" commit -qm 'squash proposal' \
+    && git -C "$d/firstmate" push -q origin HEAD:main || fail "could not seed squash merge"
+  git -C "$d/firstmate" merge-base --is-ancestor fm/dream-instructions-2026-10-02 origin/main \
+    && fail "squash fixture unexpectedly has commit ancestry"
+  python3 - "$trees" "$NOW" <<'PY'
+import os, pathlib, sys
+for path in pathlib.Path(sys.argv[1]).glob('firstmate-*'):
+    stamp = int(sys.argv[2]) - (8 * 86400 if path.name.endswith('2026-10-06') else 0)
+    os.utime(path, (stamp, stamp))
+PY
+  cat > "$d/bin/gh-pr" <<'SH'
+#!/usr/bin/env bash
+printf '%s|%s\n' "$PWD" "$*" >> "$STUB_CALLS/pr-list"
+[ "$1 $2 $3" = 'pr list --head' ] && [ "$5 $6 $7 $8" = '--state merged --json number' ] || exit 2
+case "$4" in
+  *2026-10-02) printf '[{"number": 990}]\n' ;;
+  *2026-10-04) printf '[{"number": 991}]\n'; exit 1 ;;
+  *2026-10-05) printf 'unreadable\n' ;;
+  *) printf '[]\n' ;;
+esac
+SH
+  STUB_INSTR=none run_dream "$d" --only collect instructions > "$d/out.json" || fail "prune run failed"
+  jq -e '.steps.instructions.status == "rejected" and (.steps.instructions.why | test("already exists"))' "$d/out.json" >/dev/null \
+    || fail "current night's branch was not preserved"
+  for day in 2026-10-01 2026-10-02 2026-10-06; do
+    [ ! -d "$trees/firstmate-fm-dream-instructions-$day" ] || fail "$day landed or old tree survived"
+  done
+  for day in 2026-10-03 2026-10-04 2026-10-05 "$current"; do
+    [ -d "$trees/firstmate-fm-dream-instructions-$day" ] || fail "$day unconfirmed or current tree was pruned"
+  done
+  grep -Fxq "$d/firstmate|pr list --head fm/dream-instructions-2026-10-02 --state merged --json number" "$d/calls/pr-list" \
+    || fail "merged PR lookup did not use the configured gh in the firstmate repo"
+  pass "instructions: ancestry and squash landings or age prune old trees, uncertain and current trees stay"
+}
+
 test_instructions_guards_reject_out_of_scope_hard_stop_and_big_changes() {
   local d mode
   for mode in outside hardstop big unlisted noevidence moved; do
@@ -801,6 +851,7 @@ test_instructions_stop_a_parked_gate_and_report_it() {
 test_collect_builds_a_private_digest_of_the_day
 test_each_relaunch_is_counted_once
 test_instructions_open_one_gated_pr_and_propose_charter_edits
+test_instructions_prune_landed_or_old_worktrees
 test_instructions_guards_reject_out_of_scope_hard_stop_and_big_changes
 test_instructions_count_delimiter_content_and_check_its_hard_stops
 test_instructions_stop_a_parked_gate_and_report_it

@@ -1314,7 +1314,18 @@ def prune_instruction_trees(ctx, repo):
             old = (ctx.now - path.stat().st_mtime) > 7 * 86400
         except OSError:
             continue
-        if day != ctx.day and (branch in merged or old):
+        if day == ctx.day:
+            continue
+        landed = branch in merged
+        if not landed and not old:
+            try:
+                r = ctx.run([os.environ.get('FM_DREAM_GH') or 'gh', 'pr', 'list', '--head', branch,
+                             '--state', 'merged', '--json', 'number'], cwd=repo, timeout=60)
+                prs = json.loads(r.stdout)
+                landed = r.returncode == 0 and isinstance(prs, list) and bool(prs)
+            except (OSError, subprocess.TimeoutExpired, ValueError):
+                pass
+        if landed or old:
             ctx.run(['git', 'worktree', 'remove', '--force', str(path)], cwd=repo, timeout=60)
 
 
