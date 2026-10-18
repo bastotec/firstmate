@@ -306,20 +306,21 @@ hours() {  # <secs>
 # decides retire or retry. Sets RAISED=1 on success; the worker's ledger
 # fingerprint suppresses a repeat until the ledger changes.
 raise() {
-  local id=$1 class=$2 why=$3 ledger_id=${4:-$1} line rc=0
+  local id=$1 class=$2 why=$3 ledger_id=${4:-$1} line episode rc=0
   HOLD_ID=
+  episode=$(fingerprint "$id" "$ledger_id")
   case "$class" in
     finished) line="worker $id is done, but its cleanup was refused ($why); decide whether to clean it up or keep it" ;;
     *) line="worker $id stopped ($class: $why) and I could not settle it myself; decide whether to retire or retry it" ;;
   esac
-  fm_parent_channel_report "$FM_HOME" "$STATE" "needs-decision [key=idle-$id]: $(fm_parent_channel_clean_note "$line")" || rc=$?
+  fm_parent_channel_report "$FM_HOME" "$STATE" "needs-decision [key=idle-$id]: [episode=$episode] $(fm_parent_channel_clean_note "$line")" || rc=$?
   case "$rc" in
     0)
       mkdir -p "$RAISED_DIR" 2>/dev/null || true
-      fingerprint "$id" "$ledger_id" > "$RAISED_DIR/$id.raised" 2>/dev/null || true
+      printf '%s\n' "$episode" > "$RAISED_DIR/$id.raised" 2>/dev/null || true
       ;;
     1)
-      PENDING_RAISED="$PENDING_RAISED$(jq -cn --arg id "$id" --arg fingerprint "$(fingerprint "$id" "$ledger_id")" '{id:$id,fingerprint:$fingerprint}')"$'\n'
+      PENDING_RAISED="$PENDING_RAISED$(jq -cn --arg id "$id" --arg fingerprint "$episode" '{id:$id,fingerprint:$fingerprint}')"$'\n'
       ;;
     *) log "could not hand $id to the first mate"; return 0 ;;
   esac

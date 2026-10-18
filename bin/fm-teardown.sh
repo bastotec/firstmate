@@ -3487,6 +3487,10 @@ if teardown_owns_worktree && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
   fi
 fi
 
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" || exit $?
+fi
+
 BACKLOG_CLOSED=0
 BACKLOG_TRANSITION=$TEARDOWN_BACKLOG_TRANSITION
 BACKLOG_TRANSITION_FLAGS=()
@@ -3570,6 +3574,9 @@ else
 fi
 
 # Apply the pre-teardown cleanup sequence owned by the script header.
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" || exit $?
+fi
 if [ "$KIND" != secondmate ] && teardown_owns_worktree; then
   conclude_task_no_mistakes_run "$WT"
 fi
@@ -3578,6 +3585,9 @@ if [ "$KIND" != secondmate ] && task_operator_retirement_pending; then
   TASK_ENDPOINT_RETIREMENT_PENDING=1
 fi
 if [ "$KIND" != secondmate ] && [ "$TASK_ENDPOINT_RETIREMENT_PENDING" = 0 ]; then
+  if [ -n "$STOPPED_STATUS_SIZE" ]; then
+    fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" || exit $?
+  fi
   fm_backend_kill "$BACKEND" "$T" "" "fm-$ID" \
     && TASK_KILL_RC=0 || TASK_KILL_RC=$?
   require_task_endpoint_gone "$TASK_KILL_RC" || exit 1

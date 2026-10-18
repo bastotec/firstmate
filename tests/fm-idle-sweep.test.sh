@@ -398,7 +398,7 @@ SH
 
 test_resumed_workers_are_not_retired_after_a_merged_pr_read() {
   local dir recovery before target
-  for recovery in working parked done unknown busy newer-status during-refresh; do
+  for recovery in working parked done unknown busy newer-status during-refresh teardown-busy teardown-newer-status; do
     dir=$(new_case "retirement-recovery-$recovery")
     add_worker "$dir" stopped 'state: paused · source: status-log · waiting' 90000
     fm_git_init_commit "$dir/pool/1/firstmate"
@@ -421,6 +421,16 @@ case "$(cat "$FM_HOME/recovery")" in
     "$FM_HOME/../bin/fm-busy-event.sh" apply "$FM_HOME/state" stopped busy --current-gen --source deck-wrapper --event turn-start
     ;;
   newer-status) printf 'working: resumed\n' >> "$FM_HOME/state/stopped.status" ;;
+  teardown-*)
+    [ -d "$FM_HOME/state/.control-stopped.lock" ] || exit 0
+    printf '%s\n' 'resumed during teardown PR lookup' > "$FM_HOME/resumed-at-teardown"
+    case "$(cat "$FM_HOME/recovery")" in
+      teardown-busy)
+        "$FM_HOME/../bin/fm-busy-event.sh" apply "$FM_HOME/state" stopped busy --current-gen --source deck-wrapper --event turn-start
+        ;;
+      teardown-newer-status) printf 'working: resumed\n' >> "$FM_HOME/state/stopped.status" ;;
+    esac
+    ;;
 esac
 SH
     cat > "$dir/home/on-crew-state" <<'SH'
@@ -436,14 +446,34 @@ SH
 
     assert_equals 'unknown none' "$(summary_of "$dir" stopped)" "$recovery must skip retirement this scan"
     assert_equals "$before" "$(cat "$dir/home/state/stopped.meta")" "$recovery changed the worker incarnation"
-    assert_equals 2 "$(wc -l < "$dir/home/crew-state-calls" | tr -d ' ')" "$recovery must refresh state before retirement"
-    assert_equals stopped "$(cat "$dir/home/crew-state-locked")" "$recovery must be checked under the lifecycle lock"
+    case "$recovery" in
+      teardown-*)
+        assert_present "$dir/home/resumed-at-teardown" "$recovery did not reach teardown's PR lookup"
+        [ "$(wc -l < "$dir/home/crew-state-calls" | tr -d ' ')" -ge 3 ] \
+          || fail "$recovery must refresh activity after teardown's PR lookup"
+        ;;
+      *)
+        assert_equals 2 "$(wc -l < "$dir/home/crew-state-calls" | tr -d ' ')" "$recovery must refresh state before retirement"
+        ;;
+    esac
+    assert_equals stopped "$(tail -1 "$dir/home/crew-state-locked")" "$recovery must be checked under the lifecycle lock"
+    fm_test_fake_stream_endpoints | jq -e --arg endpoint "${target##*:}" \
+      '.endpoints | any(.endpoint_id == $endpoint)' >/dev/null \
+      || fail "$recovery killed the resumed endpoint"
     assert_absent "$dir/home/state/stopped.backlog-close" "$recovery staged a backlog close"
     assert_absent "$dir/home/control-calls" "$recovery was retried instead of preserved"
     assert_absent "$dir/home/state/idle-sweep/stopped.raised" "$recovery was handed off"
     [ ! -s "$dir/endpoint-input" ] || fail "$recovery sent input to the resumed endpoint"
     [ ! -s "$dir/home/state/.wake-queue" ] || fail "$recovery queued a stale decision"
     assert_no_captain_call "$dir" "$recovery retirement"
+    case "$recovery" in
+      teardown-*)
+        rm "$dir/home/on-forge" "$dir/home/pr-states/71"
+        age_file "$dir/home/state/stopped.status" 90000
+        sweep "$dir" scan --now || fail "$recovery follow-up scan failed"
+        assert_equals 'stalled asked' "$(summary_of "$dir" stopped)" "$recovery must remain eligible for a later hand-off"
+        ;;
+    esac
   done
   pass "fm-idle-sweep: merged PRs never retire workers that resumed or wrote newer status"
 }
@@ -692,6 +722,35 @@ test_a_second_mate_hands_its_stopped_worker_to_the_parent_channel() {
   sweep "$dir" scan --now || fail "second scan failed"
   [ "$(grep -c '^needs-decision \[key=idle-stuck\]: ' "$channel")" = 1 ] || fail "an unchanged worker was handed off twice"
   pass "fm-idle-sweep: a second mate hands what it cannot settle to its parent channel as needs-decision, never the captain"
+}
+
+test_resolved_parent_handoffs_reopen_for_a_new_stopped_stretch() {
+  local dir channel open
+  dir=$(new_case secondmate-recurrent-handoff)
+  make_secondmate_home "$dir" mate-a
+  channel="$dir/parent/state/mate-a.status"
+  add_worker "$dir" stuck 'state: paused · source: status-log · waiting' 90000
+  printf 'pr=https://github.com/owner/repo/pull/71\n' >> "$dir/home/state/stuck.meta"
+
+  sweep "$dir" scan --now || fail "first hand-off scan failed"
+  sweep "$dir" scan --now || fail "unchanged hand-off scan failed"
+  assert_equals 1 "$(grep -c '^needs-decision \[key=idle-stuck\]:' "$channel")" "an unchanged episode was published twice"
+  printf 'resolved [key=idle-stuck]: Continue the task\n' >> "$channel"
+  open=$(bash -c '. "$1/bin/fm-classify-lib.sh"; status_open_decisions "$2"' _ "$ROOT" "$channel")
+  assert_equals '' "$open" "the parent's answer did not close the first episode"
+
+  printf 'working: continued after the answer\npaused: waiting again\n' >> "$dir/home/state/stuck.status"
+  age_file "$dir/home/state/stuck.status" 90000
+  sweep "$dir" scan --now || fail "recurrent hand-off scan failed"
+  assert_equals 'stalled asked' "$(summary_of "$dir" stuck)" "a new stopped stretch was not handed off"
+  assert_equals 2 "$(grep -c '^needs-decision \[key=idle-stuck\]:' "$channel")" "the resolved hand-off swallowed a new episode"
+  open=$(bash -c '. "$1/bin/fm-classify-lib.sh"; status_open_decisions "$2"' _ "$ROOT" "$channel")
+  assert_contains "$open" 'idle-stuck' "the new episode did not reopen the parent's decision"
+
+  sweep "$dir" scan --now || fail "unchanged recurrent scan failed"
+  assert_equals 2 "$(grep -c '^needs-decision \[key=idle-stuck\]:' "$channel")" "the new episode was published more than once"
+  assert_no_captain_call "$dir" "a recurrent parent hand-off"
+  pass "fm-idle-sweep: resolved parent hand-offs reopen once for each new stopped stretch"
 }
 
 test_a_main_home_is_woken_once_for_what_the_sweep_could_not_handle() {
@@ -1443,6 +1502,7 @@ test_a_stopped_worker_whose_work_landed_or_ended_is_retired
 test_supersession_requires_a_decoded_body_marker
 test_a_worker_that_stops_again_after_its_retry_goes_to_the_first_mate
 test_a_second_mate_hands_its_stopped_worker_to_the_parent_channel
+test_resolved_parent_handoffs_reopen_for_a_new_stopped_stretch
 test_done_workers_are_cleaned_up_without_force
 test_closed_unmerged_prs_go_to_the_first_mate_not_cleanup
 test_merged_mr_in_ledger_is_passed_to_teardown
