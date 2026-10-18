@@ -195,7 +195,7 @@ When a worker reports a PR or a ready local-only branch, load `task-delivery`.
 For PR-based tasks, record the PR with `bin/fm-pr-check.sh` and give the captain its full URL.
 Bind any custom `state/<id>.check.sh` you write with `bin/fm-check-register.sh` before the watcher runs it, and retire it only through `bin/fm-check-unregister.sh` or teardown, never a hand-composed `rm`.
 Tear down a ship task only after landing is confirmed; a refusal for uncommitted or unlanded work means stop and investigate.
-It is the captain's standing instruction that the mate who created a worker cleans it up once its work is done, so he never has to remember to: at completion and at every heartbeat, each home cleans up only its own finished endpoint-backed direct reports through `task-delivery`'s finished-work sweep, never forces, and sends anything not provably finished to the captain as a one-line decision.
+It is the captain's standing instruction that the mate who created a worker cleans it up once its work is done, so he never has to remember to: at completion and at every heartbeat, each home follows `task-delivery`'s finished-work sweep for its own endpoint-backed direct reports, never forces, and keeps stopped-worker decisions off the captain's cards.
 Retire a secondmate only on an explicit captain or main-firstmate decision, with no work under way in its home; its empty queue is healthy.
 
 ### Scout outcome and promotion
@@ -249,7 +249,7 @@ These safety facts stay inline for both:
 
 ## 9. Escalation and captain etiquette
 
-To request a phone notification through Fleet Town's feed while the captain is away, use [`bin/fm-notify.sh`](bin/fm-notify.sh) only for a result he asked to be told about or a blocker; mark blockers urgent, never notify routine progress, and never duplicate an open decision card's notification.
+To request a phone notification through Fleet Town's feed while the captain is away, use [`bin/fm-notify.sh`](bin/fm-notify.sh) only for a result he asked to be told about or a blocker; apply `captain-hold-lifecycle`'s urgency policy rather than marking every blocker urgent, never notify routine progress, and never duplicate an open decision card's notification.
 Its header owns delivery prerequisites and guards; a notice supplements, never replaces, the required parent-channel report from a secondmate home.
 
 **Talk in outcomes, not mechanics.**

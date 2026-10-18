@@ -86,6 +86,7 @@ The steps below describe `relaunch`; [missing-terminal recovery](#recovering-a-m
    Both recovery verbs use the same predicate before creating a terminal.
 3. **Safe checkpoint.**
    The recorded worktree must exist and be a worktree root; its head and dirty state are recorded.
+   The [`fm-control.sh` header](../bin/fm-control.sh) owns the worktree-owner claim guard shared by relaunch and missing-terminal recovery.
    For a `kind=secondmate` task, the home's identity marker must match and its child records must be readable, so a relaunch can never strand child work behind an unreadable home.
    A secondmate's own crewmates run in their own endpoints and outlive its relaunch; the relaunched secondmate reconciles them from its home's durable records at startup.
 4. **Record the note.**
@@ -112,7 +113,7 @@ It differs from the steps above in exactly three places.
   A named replacement is a deliberate choice, never a config re-read, so the same flag never silently picks up a changed secondmate pin.
   A ship or scout still requires `--note`/`--note-file` for the same reason a relaunch does; the automatic-admission flag is owned by the [`fm-control.sh` header](../bin/fm-control.sh).
   A held backlog row, a missing local copy, or an ownership conflict refuses exactly as it does for an ordinary recovery, replacement profile or not.
-- Two extra preconditions around the checkpoint: the endpoint must read the positively `missing` state, and the recorded local copy must be present and - for a Treehouse pool slot - still claimed by this task.
+- Two extra preconditions around the checkpoint: the endpoint must read the positively `missing` state, and the recorded local copy must pass the shared checkpoint and ownership guard above.
   Each of those refuses rather than cleaning, reallocating, or repairing anything; no worktree and no pool slot is ever created here.
   Uncommitted changes in that copy are not a precondition at all.
   A task worth recovering is mid-work by definition, so unlanded changes are its normal state, and recovery recreates the terminal beside that work without cleaning, resetting, or stashing any of it.

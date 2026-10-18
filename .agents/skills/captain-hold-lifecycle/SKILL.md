@@ -22,8 +22,9 @@ The parent decides whatever is within its authority; otherwise it holds the call
 A scout that finds captain questions appends them as keyed `needs-decision` lines and stops; its parent holds them and runs `complete` for it.
 
 Every unresolved question that belongs to the captain and is discovered while producing, reading, presenting, or ending an investigation or visual review must be carried by a captain-held task in the authoritative backlog of the home that owns the originating work before that work or review may be treated as complete.
-Prefer holding the work item the question gates over minting a new row; create a new task only when no work item exists to hold.
-Put the question and its options in the hold reason, and keep one held task per genuine gate: a multi-question review is one held task pointing at its report, not a row per question. Represent that task with exactly one board card that consolidates its questions and options; never fan one task id into duplicate same-key cards.
+Prefer holding the work item the question gates over minting a new row; create separate calls only when no work item exists to hold or one item would otherwise bundle unrelated decisions.
+Put the question and its options in the hold reason, and keep one held task and one card per genuine decision.
+Unrelated questions from one review become separate held tasks and cards, each pointing at the same report; never fan one task id into duplicate same-key cards.
 Register or re-hold through `bin/fm-captain-hold.sh hold`, which is idempotent per task id.
 After inventorying the whole report and review surface, run `bin/fm-captain-hold.sh complete` with every captain-held task id, or with `--none` only when the reviewed surface leaves nothing waiting on the captain.
 A completed investigation and an ended visual review use this same owner and completion command; a visual tool, including Lavish, never owns a parallel completion policy.
@@ -69,7 +70,7 @@ This sequence is the parent mate's responsibility, not the worker's; the scout's
 
 1. Read the complete investigation result and complete the visual review before declaring either complete.
 2. Inventory only genuine unresolved choices that require the captain, and find the task each one gates.
-3. Hold that task - or create one captain-held task for the review's open questions - with a concise reason carrying the question and options, and its decision card (below).
+3. Hold the task each decision gates, or create a separate held call for each unrelated question, with a concise reason, its own decision card (below), and a pointer to the shared report.
 4. Run `complete` with the full captain-held inventory for that review pass.
 5. Relay the choices to the captain as decisions from Bearings' Captain's Call section under `AGENTS.md` section 9; do not use the word hold in captain chat.
 6. Choose the answer, evidence, or deferral outcome under Policy above, record a still-active reconciliation through `reconcile note`, or confirm a channel already settled the call.
@@ -83,7 +84,10 @@ Pass it as `bin/fm-captain-hold.sh hold <id> --reason "<reason>" --card-file <pa
 A script that holds on its own leaves a draft card, which is not a judgment.
 The mate whose home holds the call owns its card, a second mate included, and writes its situation and options for the captain in plain words.
 Write it so a person can act on it without context: the title says what happened and asks the question, the situation adds only what the choice needs, and each option says what it does, with no task names, run ids, hashes or other internal jargon (`bin/fm-card.sh` refuses those).
-For example: "PR 1806 is merged. 3 local commits look unmerged, probably because of the squash. Keep them or delete them?"
+For example: "The release is ready. Publish today or wait until Monday?"
+One decision per card: never bundle unrelated questions, and keep each option label a short phrase while its instruction carries the detail; `bin/fm-card.sh` owns the enforced wording limits.
+A card is normal priority; mark it urgent only for production down, customer-facing breakage, money, or a real external secret exposure, using the reason schema in `bin/fm-card.sh`.
+Before raising a token concern or pursuing a side investigation, follow `fm_act_within_scope_section` in `bin/fm-dod-lib.sh`, the owner of exposure triage and the investigation time-box.
 Housekeeping is never a captain call: leftover branches or local commits after a merge, worktree or slot cleanup, and stale scratch are yours to resolve (see `task-delivery`'s finished-work sweep), at most mentioned as an FYI.
 To replace a draft without touching the hold, run `bin/fm-card.sh write <id> --file <path>`.
 When the session-start digest's `DECISION CARDS` subsection lists calls without a full card, write one for each before going idle, once this session has verified lock ownership.

@@ -6,6 +6,7 @@
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
 #                                         [--effort <level>] [--unless-held-stopped [--replace-live]]
+#                                         [--if-still-stopped <status-bytes> --expected-record <metadata>]
 #                                         (--note <text> | --note-file <path>)
 #        fm-control.sh <task-id> reincarnate
 #                                         (--note <text> | --note-file <path>)
@@ -91,6 +92,22 @@
 #              the prior durable record in place and reports the concrete
 #              state; it never leaves a half-transitioned task claiming to be
 #              running.
+#              Before stopping or launching, the checkpoint rejects a foreign
+#              or unreadable worktree owner claim; an absent claim keeps legacy
+#              recovery eligible. This also protects recover-missing.
+#              --if-still-stopped admits a local ship (absent kind= also means
+#              ship) or scout retry only under the control lock, with unchanged
+#              --expected-record metadata and status byte count, a fresh
+#              failed/blocked/paused/gone crew state, and no
+#              live semantic busy turn. It rechecks after the endpoint probe
+#              and composer preflight, refusing resumed activity without an
+#              interrupt or exit submission. Exit 3 leaves the worker for a
+#              fresh scan; a late refusal may leave a failed transaction journal.
+#              A local caller may set FM_CONTROL_RELAUNCH_TX to a unique id
+#              (letters, digits, dots, underscores and hyphens only) to bind
+#              replacement publication to its invocation; otherwise relaunch
+#              generates one. The journal records relaunch_tx and the launch
+#              owner publishes control_relaunch_tx in the replacement metadata.
 #
 #   recover-missing For a local record, restore a terminal whose endpoint reads
 #              missing, then hand the launch to the existing owner
@@ -363,6 +380,9 @@ NOTE=
 NOTE_SET=0
 UNLESS_HELD_STOPPED=0
 REPLACE_LIVE=0
+EXPECTED_RECORD=
+EXPECTED_RECORD_SET=0
+STOPPED_STATUS_SIZE=
 control_want_value=
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
@@ -374,6 +394,13 @@ for control_arg in "$@"; do
       model) NEW_MODEL=$control_arg; MODEL_SET=1 ;;
       effort) NEW_EFFORT=$control_arg; EFFORT_SET=1 ;;
       note) NOTE=$control_arg; NOTE_SET=1 ;;
+      expected_record) EXPECTED_RECORD=$control_arg; EXPECTED_RECORD_SET=1 ;;
+      if_still_stopped)
+        case "$control_arg" in
+          ''|*[!0-9]*) die "--if-still-stopped requires a status byte count" ;;
+        esac
+        STOPPED_STATUS_SIZE=$control_arg
+        ;;
       note_file)
         [ -f "$control_arg" ] || die "--note-file '$control_arg' is not a readable file"
         NOTE=$(cat "$control_arg")
@@ -394,6 +421,8 @@ for control_arg in "$@"; do
     --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
     --note-file) control_want_value=note_file ;;
     --unless-held-stopped) UNLESS_HELD_STOPPED=1 ;;
+    --expected-record) control_want_value=expected_record ;;
+    --if-still-stopped) control_want_value=if_still_stopped ;;
     --replace-live) REPLACE_LIVE=1 ;;
     --note-file=*)
       [ -f "${control_arg#--note-file=}" ] || die "--note-file '${control_arg#--note-file=}' is not a readable file"
@@ -428,6 +457,14 @@ case "$NEW_EFFORT" in
   *) die "--effort must be one of default, low, medium, high, xhigh, max" ;;
 esac
 
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  [ "$VERB" = relaunch ] && [ "$EXPECTED_RECORD_SET" = 1 ] \
+    || die "--if-still-stopped requires relaunch with --expected-record"
+fi
+case "${FM_CONTROL_RELAUNCH_TX:-}" in
+  *[!a-zA-Z0-9._-]*) die "FM_CONTROL_RELAUNCH_TX must contain only letters, digits, dots, underscores, or hyphens" ;;
+esac
+
 # --- exact task-id resolution ----------------------------------------------
 
 case "$RAW_ID" in
@@ -443,6 +480,19 @@ fm_lock_try_acquire "$CONTROL_LOCK" \
   || die "another lifecycle action is already running for task $ID"
 CONTROL_LOCK_HELD=1
 META="$STATE/$ID.meta"
+if [ "$EXPECTED_RECORD_SET" = 1 ] && { [ ! -f "$META" ] \
+  || ! current_record=$(cat "$META" 2>/dev/null) || [ "$current_record" != "$EXPECTED_RECORD" ]; }; then
+  printf 'worker record %s changed or vanished\n' "$ID" >&2
+  exit 3
+fi
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  case "$(fm_meta_get "$META" kind)" in
+    ''|ship|scout) ;;
+    *) die "--if-still-stopped applies to local ship or scout workers only" ;;
+  esac
+  [ -z "$(fm_meta_get "$META" remote_host)" ] \
+    || die "--if-still-stopped applies to local ship or scout workers only"
+fi
 if [ ! -f "$META" ]; then
   case "$RAW_ID" in
     fm-*)
@@ -577,6 +627,24 @@ fi
 
 busy_verdict() {
   fm_busy_classify_meta "$META" "$ID" "$STATE"
+}
+
+require_worktree_ownership() {
+  if [ "$KIND" = secondmate ] \
+    && ! fm_treehouse_pool_slot "$(fm_meta_get "$META" project)" "$WT" >/dev/null 2>&1; then
+    return 0
+  fi
+  fm_treehouse_slot_owner_state "$WT" "$ID"
+  case "$FM_TREEHOUSE_SLOT_OWNER" in
+    other) die "task $ID's recorded worktree $WT is currently claimed by task $FM_TREEHOUSE_SLOT_OWNER_ID; refusing to $VERB and tangle ownership" ;;
+    unsafe) die "task $ID's recorded worktree $WT has an unreadable owner claim; refusing to $VERB and risk a conflict" ;;
+  esac
+}
+
+admit_stopped_retry() {
+  [ -n "$STOPPED_STATUS_SIZE" ] || return 0
+  require_worktree_ownership
+  fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" || exit $?
 }
 
 # A relaunch is existing-task recovery, not fresh dispatch. Prove its backlog
@@ -837,6 +905,7 @@ do_exit() {
   local state cmd verdict cancel interrupt_result=not-needed
   require_state_verified_backend exit "the agent actually stopped"
   state=$(agent_state)
+  admit_stopped_retry
   case "$state" in
     dead)
       stop_deck_residual_drivers
@@ -850,6 +919,10 @@ do_exit() {
   # A busy agent is interrupted first before the exit command is submitted.
   case "$(busy_verdict)" in
     busy*)
+      if [ -n "$STOPPED_STATUS_SIZE" ]; then
+        printf 'worker record or activity %s changed during scan\n' "$ID" >&2
+        return 3
+      fi
       cancel=$(deliver_interrupt) || return $?
       state=$(agent_state)
       case "$state" in
@@ -867,6 +940,7 @@ do_exit() {
   esac
   cmd=$(fm_control_exit_command "$HARNESS")
   gate_exit_composer "$cmd"
+  admit_stopped_retry
   if [ "$EXIT_COMPOSER_OUTCOME" = agent-gone ]; then
     # The agent is gone: nothing may be typed at the endpoint, and the right
     # remedy is a respawn (relaunch / recover-missing), not a composer clear.
@@ -962,6 +1036,7 @@ journal_write() {  # <phase> [extra-line]...
     echo "to_model=$TARGET_MODEL"
     echo "requested_model=$NEW_MODEL"
     echo "to_effort=$TARGET_EFFORT"
+    [ -z "$RELAUNCH_TX" ] || echo "relaunch_tx=$RELAUNCH_TX"
     if [ -n "$NOTE" ]; then
       echo "note_file=$NOTE_FILE"
     else
@@ -1189,6 +1264,7 @@ safe_checkpoint() {
   CHECKPOINT_LINES=()
   [ -n "$WT" ] || die "task $ID has no recorded worktree; refusing to relaunch without a recorded local copy to preserve"
   [ -d "$WT" ] || die "task $ID's recorded worktree $WT is missing; refusing to relaunch and lose track of its work"
+  require_worktree_ownership
   wt_real=$(cd "$WT" 2>/dev/null && pwd -P) || die "task $ID's recorded worktree $WT cannot be resolved"
   wt_top=$(git -C "$WT" rev-parse --show-toplevel 2>/dev/null) \
     || die "task $ID's recorded worktree $WT is not a git worktree; refusing to relaunch without a checkout whose unlanded work can be accounted for"
@@ -1313,6 +1389,7 @@ do_relaunch() {
 
   relaunch_backlog_preflight
   safe_checkpoint
+  admit_stopped_retry
   cp -p "$META" "$META_PRIOR" 2>/dev/null || true
   RELAUNCH_ACTIVE=1
   journal_write checkpoint "${CHECKPOINT_LINES[@]}"
@@ -1326,8 +1403,8 @@ do_relaunch() {
 
   # The launch owner (fm-spawn --relaunch) clears the previous incarnation's
   # per-task harness wiring before arming the new one, so nothing to do here.
-  RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
-  journal_write launching "${CHECKPOINT_LINES[@]}" "relaunch_tx=$RELAUNCH_TX"
+  RELAUNCH_TX="${FM_CONTROL_RELAUNCH_TX:-${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM}"
+  journal_write launching "${CHECKPOINT_LINES[@]}"
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   # A chained surface was only pre-flighted above: the ORIGINAL chain is what
   # the launch owner resolves and records the lane for, so its cooldown
@@ -1480,14 +1557,6 @@ do_recover_missing() {
   wt=$(fm_meta_get "$META" worktree)
   [ -n "$wt" ] && [ -d "$wt" ] || die "task $ID's recorded worktree '${wt:-none}' is absent; refusing to recover without the local copy its work lives in"
 
-  if fm_treehouse_pool_slot "$(fm_meta_get "$META" project)" "$wt" >/dev/null 2>&1; then
-    fm_treehouse_slot_owner_state "$wt" "$ID"
-    case "$FM_TREEHOUSE_SLOT_OWNER" in
-      other) die "task $ID's recorded pool slot $wt is currently claimed by task $FM_TREEHOUSE_SLOT_OWNER_ID; refusing to recover and tangle ownership" ;;
-      unsafe) die "task $ID's recorded pool slot $wt has an unreadable owner claim; refusing to recover and risk a conflict" ;;
-    esac
-  fi
-
   # recover-missing has no dirty-copy refusal; reincarnate checked cleanliness
   # in its preflight. A missing-endpoint rescue is mid-work by definition,
   # so uncommitted changes are its normal state, and
@@ -1518,7 +1587,7 @@ do_recover_missing() {
   }
 
   RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
-  journal_write launching "${CHECKPOINT_LINES[@]}" "relaunch_tx=$RELAUNCH_TX"
+  journal_write launching "${CHECKPOINT_LINES[@]}"
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   # A chained surface was only pre-flighted above: the ORIGINAL chain is what
   # the launch owner resolves and records the lane for, so its cooldown

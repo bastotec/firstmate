@@ -1,0 +1,30 @@
+fm-test-run: coverage guard: 28 of 178 portable serial scripts have no measured duration hint (max 15%)
+fm-test-run: refresh the hints from a green run's timing artifacts: docs/fm-test-portable-shards.md
+tests/fm-bridge.test.sh
+tests/fm-captain-direct-echo.test.sh
+tests/fm-captain-lane.test.sh
+tests/fm-captain-memory.test.sh
+tests/fm-card.test.sh
+tests/fm-control-model.test.sh
+tests/fm-control-stopped-relaunch.test.sh
+tests/fm-deck-turn-failure-supersession.test.sh
+tests/fm-dream.test.sh
+tests/fm-effort-policy.test.sh
+tests/fm-group.test.sh
+tests/fm-idle-sweep-retry-admission.test.sh
+tests/fm-idle-sweep.test.sh
+tests/fm-machine-blocker.test.sh
+tests/fm-machine-instructions.test.sh
+tests/fm-machine-rules.test.sh
+tests/fm-machine-skills.test.sh
+tests/fm-machine-tunnels.test.sh
+tests/fm-machine-vnc.test.sh
+tests/fm-order.test.sh
+tests/fm-pr-record-audit.test.sh
+tests/fm-pr-unbind.test.sh
+tests/fm-retire-orphan-endpoint.test.sh
+tests/fm-secondmate-create.test.sh
+tests/fm-specialist.test.sh
+tests/fm-stream-agent-diagnostics.test.sh
+tests/fm-stream-attach-boundaries.test.sh
+tests/fm-worker-guard.test.sh

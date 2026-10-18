@@ -1,0 +1,72 @@
+FM_TEST_BEGIN 2026-10-18T19:43:02Z tests/fm-idle-sweep.test.sh family=unclassified expected_gate_skip=none
+ok - fm-idle-sweep: failed, timed-out and incomplete backlog reads go to the first mate, never retry
+ok - fm-idle-sweep: unreadable PR states go to the first mate, never retry
+ok - fm-idle-sweep: lifecycle owners refuse stale retry and retirement snapshots
+ok - fm-idle-sweep: recovered workers and newer status are skipped under the control lock
+ok - fm-idle-sweep: merged PRs never retire workers that resumed or wrote newer status
+ok - fm-idle-sweep: done scouts are cleaned only while their activity remains unchanged
+ok - fm-idle-sweep: retired-backend cleanup revalidates records and activity before and inside teardown
+/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-idle-sweep.sXuvyR/failed-wake/bin/fm-wake-lib.sh: line 1353: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-idle-sweep.sXuvyR/failed-wake/home/state/.wake-queue: Is a directory
+ok - fm-idle-sweep: failed main-home delivery remains eligible until a wake is queued
+ok - fm-idle-sweep: a stopped worker whose work is still open is retried once through relaunch, never carded
+ok - fm-idle-sweep: a stopped worker whose PR merged or closed, or whose item is done or superseded, is retired with --keep-commits
+ok - fm-idle-sweep: supersession comes from the decoded body marker, not task prose
+ok - fm-idle-sweep: a worker that stops again after its retry, or whose relaunch fails, goes to the first mate once
+ok - fm-idle-sweep: a second mate hands what it cannot settle to its parent channel as needs-decision, never the captain
+ok - fm-idle-sweep: resolved parent hand-offs reopen once for each new stopped stretch
+ok - fm-idle-sweep: done workers are cleaned up through the guarded paths, never forced
+ok - fm-idle-sweep: only merged PRs admit cleanup; closed-unmerged PRs go to the first mate
+ok - fm-idle-sweep: verified ledger-only MR URLs reach teardown without becoming cards
+ok - fm-idle-sweep: retirement preserves ledger-only merged MR commits without a card in manual mode
+not ok - both teardown attempts and the fallback must refresh stopped activity (expected '4', got '9')
+FM_TEST_END 2026-10-18T19:45:43Z tests/fm-idle-sweep.test.sh exit=1 duration_ms=161396 gate_skip=false
+FM_TEST_BEGIN 2026-10-18T19:45:43Z tests/fm-test-run.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - exact suite coverage: --all lists every tests/*.test.sh once
+ok - family selection returns a proper subset of the suite
+ok - single-script selection lists exactly that path
+ok - changed-file selection stays conservative (never silent full suite)
+ok - a task marker refuses execution in the primary checkout and leaves worktrees and inspection alone
+ok - runner and its documentation surfaces select their curated family, not just their contract owners
+ok - shell line-ending policy selects runner coverage
+fm-test-run: no tests selected for changes vs HEAD (map is conservative; use --all for the complete suite)
+ok - changed selection covers dependents, fails closed for live unmapped source, and accepts retired unconsumed source
+ok - a bin reference selects the referencing scripts, and consumers still select their curated families
+ok - changed defaults to bounded automatic scheduling with serial override
+ok - Windows emulation exempts only synthetic POSIX modes
+ok - a plain script list defaults to bounded automatic concurrency without an automatic timeout
+ok - family proofs run concurrently only within separate family phases
+ok - a CI serial shard runs family phases concurrently, then its unproven scripts serially
+ok - empty changed selection emits deterministic text and JSON summaries
+ok - timing markers and JSON artifact are valid
+ok - aggregate exit reflects any script failure
+ok - gate-skip accounting is honest and non-failing
+ok - a gate skip records why it skipped
+ok - a script that actually ran records no skip reason
+ok - live guards are recorded as a capability class, not a bare env opt-in
+ok - fail-on-gate-skip converts tasks-axi-not-found into a hard failure
+ok - exclude-family drops the named primary family after selection
+ok - proven-isolated scheduling starts the longest measured script first
+ok - family, all, changed, and script selections ignore parallel hints
+ok - portable shard union, disjointness, and coverage guard hold
+ok - portable parallel lanes are fully hinted and packed within 5% of each other
+ok - portable serial shards are a deterministic disjoint cover of the serial lane
+ok - coverage guard reports and bounds the unmeasured portable serial share
+ok - portable serial shard lanes refuse mismatched, out-of-range, and countless names
+ok - portable serial shard assignment survives a stalled consumer and a child exit
+ok - --jobs refuses non-proven / stateful selections
+ok - --jobs admits and schedules a family with a recorded concurrent proof
+ok - an unclassified new test stays serial while the proven residual family runs concurrently
+ok - a changed shared test fixture selects its readers while an unread tests/ path still refuses
+ok - a concurrent run starts the longest-hint script first
+ok - --per-script-timeout-secs turns a hung script into a bounded failure
+ok - --max-wall-ms fails an over-budget run and refuses a malformed budget
+ok - jobs scheduler runs proven scripts; failure propagates; non-proven refused
+ok - aggregate-json merges lane timing artifacts
+ok - fm-test-run: suites cannot change or load real launchd/systemd units
+FM_TEST_END 2026-10-18T19:50:13Z tests/fm-test-run.test.sh exit=0 duration_ms=270022 gate_skip=false
+FM_TEST_SUMMARY total=2 failed=1 skipped_gate=0 duration_ms=431543
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=1 duration_ms=270022 failed=0
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=161396 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-test-run.test.sh duration_ms=270022
+FM_TEST_SLOWEST rank=2 script=tests/fm-idle-sweep.test.sh duration_ms=161396
+fm-test-run: wrote timing artifact: .ci-debug/recheck-ci.json

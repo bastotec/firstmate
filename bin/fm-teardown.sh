@@ -164,7 +164,19 @@
 # leased home and state in place instead of hiding a still-held lease.
 # bin/fm-deck-worker.sh's SECOND MATE SESSION CONTINUITY header owns the
 # conversation binding retired with a secondmate and its forced descendants.
-# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--keep-commits] [--merged-pr <url>]
+# For caller admission, --expected-record <metadata> requires the exact
+# metadata snapshot under the task's control lock before any cleanup; exit 3
+# leaves a changed or vanished record for a fresh scan.
+# --if-still-stopped <status-bytes> requires --expected-record and applies
+# bin/fm-busy-lib.sh's activity admission check before preflights, before
+# backlog staging, before cleanup, and immediately before the endpoint kill.
+# It admits only a local ship (including an absent kind=) or scout whose
+# metadata and status byte count match, with no live semantic busy turn and a
+# fresh failed/blocked/paused/gone crew state. --expected-state done instead
+# requires a fresh done state at those same boundaries; it requires
+# --if-still-stopped and protects finished-worker cleanup from resumed activity.
+# Changed activity exits 3 rather than stopping a resumed worker.
+# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--keep-commits] [--merged-pr <url>] [--expected-record <metadata>] [--if-still-stopped <status-bytes> [--expected-state done]]
 #   --keep-commits handles the leftover local commits a squash merge leaves
 #   behind: when a ship task's PR is merged, its worktree has no uncommitted
 #   changes, and its committed work still is not proved landed, teardown first
@@ -308,6 +320,8 @@ SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-control-lib.sh
 . "$SCRIPT_DIR/fm-control-lib.sh"
+# shellcheck source=bin/fm-busy-lib.sh
+. "$SCRIPT_DIR/fm-busy-lib.sh"
 # shellcheck source=bin/fm-lock-lib.sh
 . "$SCRIPT_DIR/fm-lock-lib.sh"
 # shellcheck source=bin/fm-classify-lib.sh
@@ -334,6 +348,10 @@ ID=$1
 FORCE=
 LEGACY_RECORD_GIVEN=0
 KEEP_COMMITS=0
+EXPECTED_RECORD=
+EXPECTED_RECORD_SET=0
+STOPPED_STATUS_SIZE=
+EXPECTED_STATE=stopped
 MERGED_PR_URL=
 shift
 while [ "$#" -gt 0 ]; do
@@ -341,6 +359,23 @@ while [ "$#" -gt 0 ]; do
     --force) FORCE=--force ;;
     --legacy-record) LEGACY_RECORD_GIVEN=1 ;;
     --keep-commits) KEEP_COMMITS=1 ;;
+    --expected-record)
+      shift
+      [ "$#" -gt 0 ] || exit 2
+      EXPECTED_RECORD=$1
+      EXPECTED_RECORD_SET=1
+      ;;
+    --expected-state)
+      shift
+      [ "$#" -gt 0 ] && [ "$1" = 'done' ] || exit 2
+      EXPECTED_STATE=$1
+      ;;
+    --if-still-stopped)
+      shift
+      [ "$#" -gt 0 ] || exit 2
+      case "$1" in ''|*[!0-9]*) exit 2 ;; esac
+      STOPPED_STATUS_SIZE=$1
+      ;;
     --merged-pr)
       shift
       if [ "$#" -eq 0 ] || ! fm_pr_url_parse "$1"; then
@@ -356,6 +391,12 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+if [ "$EXPECTED_STATE" = 'done' ]; then
+  [ -n "$STOPPED_STATUS_SIZE" ] || exit 2
+fi
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  [ "$EXPECTED_RECORD_SET" = 1 ] || exit 2
+fi
 fm_backlog_directory_present "$STATE" "state directory" || {
   echo "error: teardown refused: $FM_BACKLOG_TRANSITION_ERROR" >&2
   exit 1
@@ -434,6 +475,11 @@ fm_lock_try_acquire "$CONTROL_LOCK" || {
   exit 1
 }
 CONTROL_LOCK_HELD=1
+if [ "$EXPECTED_RECORD_SET" = 1 ] && { [ ! -f "$META" ] \
+  || ! current_record=$(cat "$META" 2>/dev/null) || [ "$current_record" != "$EXPECTED_RECORD" ]; }; then
+  printf 'worker record %s changed or vanished\n' "$ID" >&2
+  exit 3
+fi
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never tear
 # down a worktree (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -450,6 +496,9 @@ fm_backlog_record_present "$META" "task record" "$STATE" || {
   echo "error: teardown refused after locking: $FM_BACKLOG_TRANSITION_ERROR" >&2
   exit 1
 }
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" "$EXPECTED_STATE" || exit $?
+fi
 TEARDOWN_META_KIND=$(fm_meta_get "$META" kind)
 [ -n "$TEARDOWN_META_KIND" ] || TEARDOWN_META_KIND=ship
 TEARDOWN_META_SPAWN_GEN=
@@ -3457,6 +3506,10 @@ if teardown_owns_worktree && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
   fi
 fi
 
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" "$EXPECTED_STATE" || exit $?
+fi
+
 BACKLOG_CLOSED=0
 BACKLOG_TRANSITION=$TEARDOWN_BACKLOG_TRANSITION
 BACKLOG_TRANSITION_FLAGS=()
@@ -3540,6 +3593,9 @@ else
 fi
 
 # Apply the pre-teardown cleanup sequence owned by the script header.
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" "$EXPECTED_STATE" || exit $?
+fi
 if [ "$KIND" != secondmate ] && teardown_owns_worktree; then
   conclude_task_no_mistakes_run "$WT"
 fi
@@ -3548,6 +3604,9 @@ if [ "$KIND" != secondmate ] && task_operator_retirement_pending; then
   TASK_ENDPOINT_RETIREMENT_PENDING=1
 fi
 if [ "$KIND" != secondmate ] && [ "$TASK_ENDPOINT_RETIREMENT_PENDING" = 0 ]; then
+  if [ -n "$STOPPED_STATUS_SIZE" ]; then
+    fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" "$EXPECTED_STATE" || exit $?
+  fi
   fm_backend_kill "$BACKEND" "$T" "" "fm-$ID" \
     && TASK_KILL_RC=0 || TASK_KILL_RC=$?
   require_task_endpoint_gone "$TASK_KILL_RC" || exit 1

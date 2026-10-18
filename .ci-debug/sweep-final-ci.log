@@ -1,0 +1,36 @@
+FM_TEST_BEGIN 2026-10-18T19:50:16Z tests/fm-idle-sweep.test.sh family=unclassified expected_gate_skip=none
+ok - fm-idle-sweep: failed, timed-out and incomplete backlog reads go to the first mate, never retry
+ok - fm-idle-sweep: unreadable PR states go to the first mate, never retry
+ok - fm-idle-sweep: lifecycle owners refuse stale retry and retirement snapshots
+ok - fm-idle-sweep: recovered workers and newer status are skipped under the control lock
+ok - fm-idle-sweep: merged PRs never retire workers that resumed or wrote newer status
+ok - fm-idle-sweep: done scouts are cleaned only while their activity remains unchanged
+ok - fm-idle-sweep: retired-backend cleanup revalidates records and activity before and inside teardown
+/private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-idle-sweep.vLSeSd/failed-wake/bin/fm-wake-lib.sh: line 1353: /private/var/folders/zk/8g327wwn58x475n0vfwjlkph0000gn/T/fm-idle-sweep.vLSeSd/failed-wake/home/state/.wake-queue: Is a directory
+ok - fm-idle-sweep: failed main-home delivery remains eligible until a wake is queued
+ok - fm-idle-sweep: a stopped worker whose work is still open is retried once through relaunch, never carded
+ok - fm-idle-sweep: a stopped worker whose PR merged or closed, or whose item is done or superseded, is retired with --keep-commits
+ok - fm-idle-sweep: supersession comes from the decoded body marker, not task prose
+ok - fm-idle-sweep: a worker that stops again after its retry, or whose relaunch fails, goes to the first mate once
+ok - fm-idle-sweep: a second mate hands what it cannot settle to its parent channel as needs-decision, never the captain
+ok - fm-idle-sweep: resolved parent hand-offs reopen once for each new stopped stretch
+ok - fm-idle-sweep: done workers are cleaned up through the guarded paths, never forced
+ok - fm-idle-sweep: only merged PRs admit cleanup; closed-unmerged PRs go to the first mate
+ok - fm-idle-sweep: verified ledger-only MR URLs reach teardown without becoming cards
+ok - fm-idle-sweep: retirement preserves ledger-only merged MR commits without a card in manual mode
+ok - fm-idle-sweep: retirement preserves ledger-only merged MR commits without a card in manual mode
+ok - fm-idle-sweep: only supported lifecycle contention defers a cleanup hand-off
+ok - fm-idle-sweep: stopped-worker partial cleanup stays unhandled in the same scan
+ok - fm-idle-sweep: metadata-less pending closes stay unhandled until their owner clears them
+ok - fm-idle-sweep: open PR workers wait for merge; merged workers retain guarded cleanup
+ok - fm-idle-sweep: concurrent removal or replacement cannot create stale cleanup hand-offs
+ok - fm-idle-sweep: the sweep retries or hands off stopped and refused workers itself; active, recent and held ones are left
+ok - fm-idle-sweep: a handed-off worker waits for its ledger to change, and scans keep their cadence
+ok - fm-idle-sweep: a reassigned slot cannot close an unfinished task
+ok - fm-idle-sweep: record-less live endpoints are closed through the orphan close
+ok - fm-idle-sweep: refused orphan summaries reflect the actual hand-off result
+ok - fm-idle-sweep: orphan hand-offs gate closure until the actual task ledger changes
+ok - fm-idle-sweep: unreadable open or deferred calls leave workers and orphans untouched
+ok - fm-idle-sweep: a second mate whose sweep is missing, stale or stuck is escalated once per episode
+ok - fm-idle-sweep: local mates with missing homes or state directories escalate once
+ok - fm-idle-sweep: scans use fixed quiet and audit bounds, with no list mode

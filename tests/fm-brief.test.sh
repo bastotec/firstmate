@@ -862,6 +862,9 @@ test_every_agent_is_told_to_act_within_scope() {
   assert_contains "$role" "read the project's own guidance" "a credential or access blocker is checked against the project's own guidance first"
   assert_contains "$role" 'INTERNAL.md' "the project's internal docs are named as a place to look"
   assert_contains "$role" 'say what you checked and tried' "a blocker names what was checked"
+  assert_contains "$role" 'is not an exposure: redact it and move on, with no card and no report' "a local token from our own account is not an incident"
+  assert_contains "$role" 'never a suggestion to ask the vendor' "a real exposure comes with a rotation step"
+  assert_contains "$role" 'after 30 minutes on it, tell your mate' "side investigations are time-boxed"
   assert_contains "$role" "becomes the captain's only when no documented path exists" "an access blocker reaches the captain only without a documented path"
   FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise assigned work.' \
     "$ROOT/bin/fm-brief.sh" mate --secondmate --no-projects >/dev/null || fail "secondmate scaffold failed"

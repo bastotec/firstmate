@@ -31,7 +31,13 @@ else
 fi
 SH
   chmod +x "$dir/bin/fm-crew-state.sh"
-  printf 'kind=ship\nharness=deck\n' > "$dir/home/state/w1.meta"
+  cat > "$dir/bin/backends/stream.sh" <<'SH'
+fm_backend_stream_target_ready() {
+  printf '%s %s\n' "$1" "$2" >> "$FM_HOME/endpoint-probes"
+  [ "$1" = fixture:w1 ] && [ "$2" = fm-w1 ] && [ ! -f "$FM_HOME/endpoint-dead" ]
+}
+SH
+  printf 'kind=ship\nharness=deck\nbackend=stream\nwindow=fixture:w1\nendpoint_task_id=w1\n' > "$dir/home/state/w1.meta"
   printf '%s\n' "$dir"
 }
 
@@ -47,6 +53,96 @@ wakes() {  # <dir> <pattern>
   local n
   n=$(grep -c "$2" "$1/home/state/.wake-queue" 2>/dev/null) || n=0
   printf '%s' "${n:-0}"
+}
+
+test_a_busy_worker_quiet_for_hours_gets_one_check_in() {
+  local dir
+  dir=$(new_home quiet)
+  printf 'g1\n' > "$dir/home/state/w1.busy-gen"
+  printf 'v1 gen=g1 seq=1 state=busy source=deck-wrapper event=turn-start ts=1\n' > "$dir/home/state/w1.busy-state"
+  printf 'working: started\n' > "$dir/home/state/w1.status"
+  touch -t 202001010000 "$dir/home/state/w1.status"
+  FM_HOME="$dir/home" FM_WORKER_QUIET_SECS=3600 "$dir/bin/fm-parked-run-watch.sh" scan
+  FM_HOME="$dir/home" FM_WORKER_QUIET_SECS=3600 "$dir/bin/fm-parked-run-watch.sh" scan
+  [ "$(wakes "$dir" 'worker-quiet:w1:')" = 1 ] || fail "a busy worker silent past the limit gets exactly one check-in"
+  assert_grep "ask it what it is working on and whether its task asked for it" "$dir/home/state/.wake-queue" "the check-in asks the mate to ask the worker"
+  printf 'working: still on it\n' >> "$dir/home/state/w1.status"
+  touch -t 202001020000 "$dir/home/state/w1.status"
+  FM_HOME="$dir/home" FM_WORKER_QUIET_SECS=3600 "$dir/bin/fm-parked-run-watch.sh" scan
+  [ "$(wakes "$dir" 'worker-quiet:w1:')" = 2 ] || fail "a new quiet stretch gets its own check-in"
+  printf 'v1 gen=g1 seq=2 state=idle source=deck-wrapper event=turn-end ts=2\n' > "$dir/home/state/w1.busy-state"
+  touch -t 202001030000 "$dir/home/state/w1.status"
+  FM_HOME="$dir/home" FM_WORKER_QUIET_SECS=3600 "$dir/bin/fm-parked-run-watch.sh" scan
+  [ "$(wakes "$dir" 'worker-quiet:w1:')" = 2 ] || fail "an idle worker is not checked in on"
+  pass "parked-run watch: a busy worker quiet for hours gets one check-in per quiet stretch"
+}
+
+test_the_watcher_surfaces_quiet_workers_as_check_ins() {
+  local dir watcher i=0
+  dir=$(new_home quiet-surfacing)
+  printf 'g1\n' > "$dir/home/state/w1.busy-gen"
+  printf 'v1 gen=g1 seq=1 state=busy source=deck-wrapper event=turn-start ts=1\n' > "$dir/home/state/w1.busy-state"
+  scan "$dir"
+  rm "$dir/home/state/w1.meta"
+  touch "$dir/home/state/.last-idle-sweep"
+  FM_HOME="$dir/home" FM_POLL=0.1 FM_HEARTBEAT=999999 FM_CHECK_INTERVAL=999999 \
+    "$dir/bin/fm-watch.sh" > "$dir/watch.out" 2> "$dir/watch.err" &
+  watcher=$!
+  while kill -0 "$watcher" 2>/dev/null && [ "$i" -lt 100 ]; do
+    sleep 0.1; i=$((i + 1))
+  done
+  if kill -0 "$watcher" 2>/dev/null; then
+    kill "$watcher" 2>/dev/null || true
+    wait "$watcher" 2>/dev/null || true
+    fail "the watcher never surfaced the quiet check-in: $(cat "$dir/watch.err")"
+  fi
+  wait "$watcher" || fail "the watcher failed to surface a check-in"
+  assert_contains "$(cat "$dir/watch.out")" 'check: worker check-in: w1' "quiet workers must surface as check-ins"
+  assert_not_contains "$(cat "$dir/watch.out")" 'worker run parked too long' "a quiet worker has no parked validation run"
+  assert_equals 1 "$(wakes "$dir" 'worker-quiet:w1:')" "surfacing must leave the durable check-in for handling"
+  pass "parked-run watch: quiet events surface as worker check-ins, not parked runs"
+}
+
+test_a_busy_worker_without_a_status_ledger_uses_its_busy_timestamp() {
+  local dir
+  dir=$(new_home never-reported)
+  printf 'g1\n' > "$dir/home/state/w1.busy-gen"
+  printf 'v1 gen=g1 seq=1 state=busy source=fm-spawn event=launch-brief ts=%s\n' "$(date +%s)" > "$dir/home/state/w1.busy-state"
+  scan "$dir"
+  assert_equals 0 "$(wakes "$dir" 'worker-quiet:w1:')" "a fresh launch is not overdue"
+  printf 'v1 gen=g1 seq=1 state=busy source=fm-spawn event=launch-brief ts=1\n' > "$dir/home/state/w1.busy-state"
+  scan "$dir"; scan "$dir"
+  assert_equals 1 "$(wakes "$dir" 'worker-quiet:w1:')" "a worker that never reported gets one check-in"
+  assert_equals '1' "$(cat "$dir/home/state/w1.quiet-noted")" "the busy timestamp keys the quiet stretch"
+  printf 'v1 gen=g1 seq=2 state=busy source=deck-wrapper event=turn-start ts=2\n' > "$dir/home/state/w1.busy-state"
+  scan "$dir"
+  assert_equals 2 "$(wakes "$dir" 'worker-quiet:w1:')" "a later silent turn gets its own check-in"
+  assert_absent "$dir/home/state/w1.status" "checking a silent worker must not invent status"
+  assert_grep 'fixture:w1 fm-w1' "$dir/home/endpoint-probes" "liveness is checked against the recorded endpoint and spawn label"
+  pass "parked-run watch: a worker that never reports is checked in on from its busy timestamp"
+}
+
+test_quiet_check_ins_require_a_live_valid_busy_incarnation() {
+  local dir mode
+  for mode in dead no-target stale-gen no-gen untrusted malformed; do
+    dir=$(new_home "quiet-$mode")
+    printf 'g1\n' > "$dir/home/state/w1.busy-gen"
+    printf 'v1 gen=g1 seq=1 state=busy source=deck-wrapper event=turn-start ts=1\n' > "$dir/home/state/w1.busy-state"
+    printf 'working: started\n' > "$dir/home/state/w1.status"
+    touch -t 202001010000 "$dir/home/state/w1.status"
+    case "$mode" in
+      dead) touch "$dir/home/endpoint-dead" ;;
+      no-target) printf 'kind=ship\nharness=deck\nbackend=stream\n' > "$dir/home/state/w1.meta" ;;
+      stale-gen) printf 'g2\n' > "$dir/home/state/w1.busy-gen" ;;
+      no-gen) rm "$dir/home/state/w1.busy-gen" ;;
+      untrusted) printf 'v1 gen=g1 seq=1 state=busy source=untrusted event=turn-start ts=1\n' > "$dir/home/state/w1.busy-state" ;;
+      malformed) printf 'v1 gen=g1 seq=1 state=busy source=deck-wrapper event=turn-start ts=bad\n' > "$dir/home/state/w1.busy-state" ;;
+    esac
+    scan "$dir"
+    assert_equals 0 "$(wakes "$dir" 'worker-quiet:w1:')" "$mode must not queue a check-in"
+    assert_absent "$dir/home/state/w1.quiet-noted" "$mode must not consume a quiet stretch"
+  done
+  pass "parked-run watch: dead, unknown, stale and untrusted busy workers never get a check-in"
 }
 
 test_first_mate_home_nudges_then_raises_once_and_clears() {
@@ -225,6 +321,10 @@ test_a_left_worker_is_never_raised_and_its_record_is_dropped() {
 }
 
 test_first_mate_home_nudges_then_raises_once_and_clears
+test_a_busy_worker_quiet_for_hours_gets_one_check_in
+test_the_watcher_surfaces_quiet_workers_as_check_ins
+test_a_busy_worker_without_a_status_ledger_uses_its_busy_timestamp
+test_quiet_check_ins_require_a_live_valid_busy_incarnation
 test_a_close_that_cannot_resolve_keeps_the_record_and_fails
 test_a_left_worker_is_never_raised_and_its_record_is_dropped
 test_second_mate_home_raises_to_its_parent_channel

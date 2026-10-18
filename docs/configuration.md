@@ -76,7 +76,7 @@ state/
   <id>.supervisor-failing <id>.conversation-failing  secondmate lane-health episodes (bin/fm-deck-worker.sh "SUPERVISOR HEALTH", bin/fm-captain-lane.sh lane-health comment own escalation and recovery)
   <id>.supervisor-notes   owed supervisor conversation notes, one note text per line, oldest first; failed delivery is queued independently of health episodes and retried in order at every turn start and recovery; teardown removes it
   <id>.lane-heal-<lane>  the first mate's automatic relaunch and escalation of a second mate whose lane keeps failing, one record per lane (bin/fm-secondmate-revive.sh "LANE HEALTH")
-  <id>.parked-run  a worker's parked validation run being nudged and escalated (bin/fm-parked-run-watch.sh header)
+  <id>.parked-run <id>.quiet-noted  parked validation episode and quiet-worker check-in marker (bin/fm-parked-run-watch.sh header)
   <id>.model <id>.deck-caps  in-place model choice and live driver capability (bin/fm-control.sh owns public behavior; bin/fm_model_switch.py owns capability checks)
   <id>.progress           in-turn native activity, read for the busy-age bound only (bin/fm-busy-event.sh)
   <id>.crew-state         local ship task's validation record for file watchers; bin/fm-task-state-lib.sh "PUBLISHED RECORD" owns fields, refreshes, and cleanup
@@ -94,7 +94,7 @@ state/
   <id>.reconcile-nudged   last inventory-reconcile nudge time (bin/fm-secondmate-reconcile.sh)
   <id>.revive secondmate-revive.log  mid-session second-mate revival record and log (bin/fm-secondmate-revive.sh)
   <id>.held-stopped       deliberate secondmate stop marker (bin/fm-control.sh)
-  idle-sweep.json idle-sweep.log idle-sweep/<id>.raised <mate>.idle-audit <mate>.idle-audit-missing  idle-worker sweep summary, log, raised-decision fingerprints, second-mate audit episodes and missing-summary grace marks (bin/fm-idle-sweep.sh)
+  idle-sweep.json idle-sweep.log idle-sweep/<id>.raised idle-sweep/<id>.retried <mate>.idle-audit <mate>.idle-audit-missing  idle-worker sweep summary, log, handoff and retry markers, second-mate audit episodes and missing-summary grace marks (bin/fm-idle-sweep.sh)
   idle-sweep/.unhandled   main-home unhandled-set wake suppression marker; bin/fm-idle-sweep.sh owns its contents and reset contract
   <id>.check.sh <id>.check-trust  authenticated slow poll and custom-check binding (bin/fm-check-register.sh)
   <id>.pr-poll <id>.pr-poll-registration <id>.pr-poll-retirement <id>.pr-poll-merge-notified  PR merge poll records (bin/fm-pr-lib.sh)
@@ -744,7 +744,7 @@ Variables documented in a section above are not repeated: mail plane, auto-land 
 Script headers own the exact parsing and fallback of each value.
 [`bin/fm-idle-sweep.sh`](../bin/fm-idle-sweep.sh) owns `FM_IDLE_SWEEP_SECS` and the watcher-run cleanup, decision, and second-mate audit contract.
 For lane-failure thresholds, overdue hand-offs, and recovery tuning, see the health comments in [`fm-deck-worker.sh`](../bin/fm-deck-worker.sh), [`fm-captain-lane.sh`](../bin/fm-captain-lane.sh), and [`fm-secondmate-revive.sh`](../bin/fm-secondmate-revive.sh).
-[`fm-parked-run-watch.sh`'s header](../bin/fm-parked-run-watch.sh) owns parked-run timing; [`fm-watch.sh`](../bin/fm-watch.sh) owns detached scan cadences.
+[`fm-parked-run-watch.sh`'s header](../bin/fm-parked-run-watch.sh) owns parked-run and quiet-worker check-in timing; [`fm-watch.sh`](../bin/fm-watch.sh) owns detached scan cadences.
 
 ```sh
 # homes and paths ("FM_HOME")
