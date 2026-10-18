@@ -372,6 +372,7 @@ decide_stopped() {
     return 0
   fi
   out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" relaunch --expected-record "$record" \
+    --if-still-stopped "$stopped_status_size" \
     --note 'Restarted by the idle sweep: your task is still open and unfinished. Read your inbox in order and continue it.' </dev/null 2>&1) || rc=$?
   if [ "$rc" -eq 0 ]; then
     mkdir -p "$RAISED_DIR" 2>/dev/null || true
@@ -382,7 +383,7 @@ decide_stopped() {
   fi
   if [ "$rc" -eq 3 ] || [ "$(cat "$STATE/$id.meta" 2>/dev/null)" != "$record" ]; then
     CLASS=unknown
-    DETAIL="worker record changed during scan"
+    DETAIL="worker record or activity changed during scan"
     return 0
   fi
   RAISED=0
@@ -459,6 +460,7 @@ add_row() {  # <id> <class> <detail> <action>
 while IFS= read -r meta; do
   id=$(basename "$meta" .meta)
   record=$(cat "$meta" 2>/dev/null) || continue
+  stopped_status_size=$(fingerprint "$id")
   classify "$id"
   action=none
   HOLD_ID=

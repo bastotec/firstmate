@@ -12,8 +12,8 @@
 # observed directly.
 set -u
 
-# shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/fixtures.sh
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 command -v jq >/dev/null 2>&1 || { echo "skip: jq not found"; exit 0; }
 
@@ -26,6 +26,10 @@ new_case() {  # <name> -> case dir; its home is <dir>/home
   cat > "$dir/bin/fm-crew-state.sh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$1" >> "$FM_HOME/crew-state-calls"
+if [ -d "$FM_HOME/state/.control-$1.lock" ]; then
+  printf '%s\n' "$1" >> "$FM_HOME/crew-state-locked"
+fi
+[ ! -x "$FM_HOME/on-crew-state" ] || "$FM_HOME/on-crew-state" "$1"
 cat "$FM_HOME/crew/$1" 2>/dev/null || echo 'state: unknown · source: none · no fixture'
 SH
   cat > "$dir/bin/fm-teardown.sh" <<'SH'
@@ -67,8 +71,9 @@ SH
 #!/usr/bin/env bash
 printf '%s %s\n' "$1" "$2" >> "$FM_HOME/control-calls"
 if [ "$2" = relaunch ]; then
-  if [ "$#" -ne 6 ] || [ "$3" != --expected-record ] || [ "$(cat "$FM_HOME/state/$1.meta")" != "$4" ]; then exit 3; fi
-  set -- "$1" "$2" "$5" "$6"
+  if [ "$#" -ne 8 ] || [ "$3" != --expected-record ] || [ "$(cat "$FM_HOME/state/$1.meta")" != "$4" ]; then exit 3; fi
+  [ "$5" = --if-still-stopped ] && [ "$6" = "$(wc -c < "$FM_HOME/state/$1.status" | tr -d ' ')" ] || exit 3
+  set -- "$1" "$2" "$7" "$8"
   if [ "$3" != --note ] || [ -z "$4" ]; then
     echo 'REFUSED: relaunch requires a nonempty --note' >&2
     exit 1
@@ -130,6 +135,7 @@ if [ -f "$FM_HOME/replace-on-forge" ]; then
   id=$(cat "$FM_HOME/replace-on-forge")
   cp "$FM_HOME/replacement/$id" "$FM_HOME/state/$id.meta"
 fi
+[ ! -x "$FM_HOME/on-forge" ] || "$FM_HOME/on-forge"
 cat "$FM_HOME/pr-states/${3##*/}" 2>/dev/null || exit 1
 SH
   cat > "$dir/bin/glab" <<'SH'
@@ -255,6 +261,85 @@ test_replacements_during_forge_reads_are_left_for_a_fresh_scan() {
     done
   done
   pass "fm-idle-sweep: lifecycle owners refuse stale retry and retirement snapshots"
+}
+
+test_recovered_workers_are_not_retried_with_unchanged_metadata() {
+  local dir recovery before target
+  for recovery in working parked done unknown busy newer-status during-refresh still-blocked still-failed still-paused; do
+    dir=$(new_case "recovered-$recovery")
+    add_worker "$dir" stopped 'state: blocked · source: status-log · waiting for an unblock' 90000
+    fm_git_init_commit "$dir/pool/1/firstmate"
+    fm_test_stream_task "$dir/home/state" stopped "$dir/endpoint-input" >> "$dir/home/state/stopped.meta"
+    printf 'harness=deck\nproject=%s\npr=https://github.com/owner/repo/pull/71\n' "$dir/pool/1/firstmate" \
+      >> "$dir/home/state/stopped.meta"
+    target=$(sed -n 's/^window=//p' "$dir/home/state/stopped.meta")
+    fm_test_fake_stream_foreground "$target" fm-deck-worker
+    case "$recovery" in
+      still-*)
+        printf 'state: %s · source: status-log · stopped\n' "${recovery#still-}" > "$dir/home/crew/stopped"
+        fm_test_fake_stream_foreground "$target" zsh
+        ;;
+    esac
+    "$dir/bin/fm-busy-event.sh" arm "$dir/home/state" stopped --state idle >/dev/null
+    mkdir -p "$dir/home/data/stopped"
+    printf '# Continue the task\n' > "$dir/home/data/stopped/brief.md"
+    printf 'OPEN\n' > "$dir/home/pr-states/71"
+    printf '%s\n' "$recovery" > "$dir/home/recovery"
+    cp "$ROOT/bin/fm-control.sh" "$dir/bin/"
+    cat > "$dir/bin/fm-spawn.sh" <<'SH'
+#!/usr/bin/env bash
+id=$(sed -n 's/^stream_endpoint_id=//p' "$FM_HOME/state/$1.meta")
+curl -fsS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") \
+  -X POST -H 'Content-Type: application/json' \
+  --data-binary '{"foreground":[{"pid":"","name":"fm-deck-worker","argv0":"fm-deck-worker","args":"fm-deck-worker"}]}' \
+  "$FM_TEST_STREAM_URL/v1/test/endpoints/$id" >/dev/null || exit 1
+printf '%s\n' "$1" >> "$FM_HOME/spawn-calls"
+SH
+    chmod +x "$dir/bin/fm-spawn.sh"
+    cat > "$dir/home/on-forge" <<'SH'
+#!/usr/bin/env bash
+case "$(cat "$FM_HOME/recovery")" in
+  working|parked|done|unknown)
+    printf 'state: %s · source: run-step · fresh activity\n' "$(cat "$FM_HOME/recovery")" > "$FM_HOME/crew/stopped"
+    ;;
+  busy)
+    "$FM_HOME/../bin/fm-busy-event.sh" apply "$FM_HOME/state" stopped busy --current-gen --source deck-wrapper --event turn-start
+    ;;
+  newer-status) printf 'blocked: a newer concern\n' >> "$FM_HOME/state/stopped.status" ;;
+esac
+SH
+    cat > "$dir/home/on-crew-state" <<'SH'
+#!/usr/bin/env bash
+if [ "$(cat "$FM_HOME/recovery")" = during-refresh ] && [ -d "$FM_HOME/state/.control-$1.lock" ]; then
+  printf 'blocked: a newer concern during the state read\n' >> "$FM_HOME/state/$1.status"
+fi
+SH
+    chmod +x "$dir/home/on-forge" "$dir/home/on-crew-state"
+    before=$(cat "$dir/home/state/stopped.meta")
+
+    sweep "$dir" scan --now || fail "recovery scan failed for $recovery"
+
+    assert_equals "$before" "$(cat "$dir/home/state/stopped.meta")" "$recovery changed the worker incarnation"
+    assert_equals 2 "$(wc -l < "$dir/home/crew-state-calls" | tr -d ' ')" "$recovery must refresh the current state"
+    assert_equals stopped "$(cat "$dir/home/crew-state-locked")" "$recovery must be revalidated under the lifecycle lock"
+    case "$recovery" in
+      still-*)
+        assert_contains "$(summary_of "$dir" stopped)" ' retried' "$recovery must remain eligible for retry"
+        assert_equals stopped "$(cat "$dir/home/spawn-calls")" "$recovery did not reach the launch owner"
+        assert_present "$dir/home/state/idle-sweep/stopped.retried" "$recovery did not record the retry"
+        assert_no_captain_call "$dir" "$recovery"
+        continue
+        ;;
+    esac
+    assert_equals 'unknown none' "$(summary_of "$dir" stopped)" "$recovery should wait for a fresh scan"
+    assert_absent "$dir/home/state/stopped.control-relaunch" "$recovery opened a relaunch transaction"
+    [ ! -s "$dir/endpoint-input" ] || fail "$recovery sent lifecycle input to the recovered worker"
+    assert_absent "$dir/home/state/idle-sweep/stopped.retried" "$recovery consumed a retry"
+    assert_absent "$dir/home/state/idle-sweep/stopped.raised" "$recovery was handed off"
+    [ ! -s "$dir/home/state/.wake-queue" ] || fail "$recovery queued a stale decision wake"
+    assert_no_captain_call "$dir" "$recovery"
+  done
+  pass "fm-idle-sweep: recovered workers and newer status are skipped under the control lock"
 }
 
 test_retired_backend_cleanup_preserves_the_expected_record_guard() {
@@ -1181,6 +1266,7 @@ test_watcher_runs_the_sweep_and_surfaces_its_decision() {
 
 test_unreadable_prs_are_handed_to_the_first_mate
 test_replacements_during_forge_reads_are_left_for_a_fresh_scan
+test_recovered_workers_are_not_retried_with_unchanged_metadata
 test_retired_backend_cleanup_preserves_the_expected_record_guard
 test_a_failed_main_home_delivery_is_retried_next_scan
 test_a_stopped_worker_with_open_work_is_retried_once_without_a_card
