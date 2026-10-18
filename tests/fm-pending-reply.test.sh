@@ -145,6 +145,7 @@ test_stale_local_attempt_never_blocks_resends() {
   pass "a stale unconfirmed local send is settled from the inbox and never blocks later resends"
 }
 
+# shellcheck disable=SC2030 # Environment overrides intentionally stay in this test's subshell.
 test_local_correlated_resend_is_idempotent() (
   local home state fb log corr rec inbox_record location count msg
   msg='New routed work is in your backlog.'
@@ -190,6 +191,7 @@ test_local_correlated_resend_is_idempotent() (
   pass "fm-send deduplicates correlated local resends without suppressing recovery or new requests"
 )
 
+# shellcheck disable=SC2030,SC2031 # This isolated test sets its own clock independently.
 test_stale_attempt_follows_concurrent_ack() (
   local home state corr rec inbox_record marker
   home=$(setup_parent stale-ack-race)
@@ -222,6 +224,7 @@ test_normal_correlated_reply_resolves_once() {
   local home state corr status rec
   home=$(setup_parent resolve-once)
   state="$home/state"
+  # shellcheck disable=SC2031 # This test resets its clock rather than inheriting subshell changes.
   export FM_PENDING_REPLY_NOW=1000
   corr=$(fm_pending_reply_create "$home" "$state" "hibit" "audit the ledger")
   fm_pending_reply_mark_delivered "$state" "$corr"
@@ -1239,6 +1242,7 @@ test_correlations_reuse_only_for_matching_open_task() {
   run_send "$fb" "$home" "$log" domain "first request" || fail "first marked send failed"
   got=$(latest_record_body "$home" domain)
   corr1=$(fm_pending_reply_extract_corr "$got")
+  # shellcheck disable=SC2031 # This test selects its own correlation independently of earlier subshells.
   export FM_PENDING_REPLY_EXISTING_CORR=$corr1
   if run_send "$fb" "$home" "$log" other "forwarded request"; then
     fail "an explicit cross-task correlation must be refused"
