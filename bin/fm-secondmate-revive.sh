@@ -187,6 +187,8 @@ probe() {  # <meta> <id>  -> prints alive|dead|missing|unknown
 # compatibility. Only a nonempty journaled requested_model becomes --model,
 # including an explicit default. An absent or empty requested_model omits the
 # flag so ordinary model-choice and configuration precedence still applies.
+# A journal with no requested_model line (written before this path existed)
+# does not qualify; the ordinary confirmed revive handles it.
 # Completion is logged as completing an interrupted restart. An unreadable
 # recorded note leaves the ordinary confirmed revive path in charge; no note
 # is invented.
@@ -207,6 +209,10 @@ interrupted_relaunch() {  # <id> <now> <meta>
   else
     RELAUNCH_JOURNAL=$(cat "$STATE/$id.control-relaunch" 2>/dev/null) || return 1
   fi
+  # A journal without requested_model predates this completion path and cannot
+  # tell an explicit model switch from a configured one: leave it to the
+  # ordinary confirmed revive.
+  printf '%s\n' "$RELAUNCH_JOURNAL" | grep -q '^requested_model=' || return 1
   phase=$(journal_get phase)
   case "$phase" in
     stopping|exited|launching|failed:stopping|failed:exited|failed:launching) ;;

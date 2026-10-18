@@ -968,15 +968,21 @@ test_an_interrupted_relaunch_is_finished_not_revived() {
 }
 
 test_old_or_finished_relaunch_journals_leave_the_ordinary_revive_alone() {
-  local dir phase ts
-  for phase in checkpoint noted recreating old; do
+  local dir phase ts journal_phase
+  for phase in checkpoint noted recreating old legacy; do
     dir=$(new_case "journal-$phase")
     add_local_mate "$dir" sm1 zsh >/dev/null
     ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     [ "$phase" != old ] || ts=2020-01-01T00:00:00Z
-    produce_relaunch_journal "$dir" sm1 "${phase/old/failed:stopping}"
+    journal_phase=$phase
+    case "$phase" in old|legacy) journal_phase=failed:stopping ;; esac
+    produce_relaunch_journal "$dir" sm1 "$journal_phase" default
     [ "$phase" != old ] || sed "s/^ts=.*/ts=$ts/" "$dir/home/state/sm1.control-relaunch" > "$dir/old-journal"
     [ "$phase" != old ] || mv "$dir/old-journal" "$dir/home/state/sm1.control-relaunch"
+    if [ "$phase" = legacy ]; then
+      grep -v '^requested_model=' "$dir/home/state/sm1.control-relaunch" > "$dir/legacy-journal"
+      mv "$dir/legacy-journal" "$dir/home/state/sm1.control-relaunch"
+    fi
     scan "$dir"
     [ -z "$(calls "$dir")" ] || fail "$phase: a single down reading acted at once: $(calls "$dir")"
     scan "$dir"
@@ -985,7 +991,7 @@ test_old_or_finished_relaunch_journals_leave_the_ordinary_revive_alone() {
       *) fail "$phase: the ordinary revive did not run: $(calls "$dir")" ;;
     esac
   done
-  pass "a completed, refused, or old relaunch journal leaves the ordinary confirmed revive in charge"
+  pass "a completed, refused, old, or pre-requested_model relaunch journal leaves the ordinary confirmed revive in charge"
 }
 
 test_interrupted_configured_model_remains_configured() {
