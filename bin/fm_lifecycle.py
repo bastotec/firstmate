@@ -12,19 +12,24 @@ A task is one branch of work, measured from the records that carry timestamps:
     are mate tasks (fm/<task id>), and a live task's state/<id>.meta spawn_gen
     gives its spawn time, its state/<id>.status its current waits (captain-held,
     blocked, needs-decision, paused) and state/<id>.control-relaunch a relaunch;
-  - GitHub for each PR's creation, merge and first commit times;
-  - the main home's auto-land log for the deploy after a firstmate merge.
+  - GitHub for each PR's creation, closure, merge and first commit times,
+    and its merge commit;
+  - the main home's auto-land log for successful deployment candidates, confirmed
+    only when their commit contains the PR's merge (GitHub comparison when needed).
 When the captain asked for a task is not recorded per task, so a task's start is
 the earliest of its spawn, its first commit and its first no-mistakes run, and
 the report says so.
 
 Runs on branches that are no mate task (Claude sessions and anything unlisted)
-are the benchmark ("session" kind). A run's branch groups with the same name
-without a trailing -<n> retry suffix, unless that name is a task id itself, and
-only within one repository. Only runs created or updated in the window count; a
-ship or scout task spawned in the window with no run yet is measured too, as
-implementation through now. A PR whose facts cannot be read leaves its task's
-merge unknown (open: null, counted as unknown), never assumed open.
+are the benchmark ("session" kind). Repository/worktree ownership scopes task-id
+matching before resolving a trailing -<n> retry suffix; an exact task id in that
+scope takes precedence. Ambiguous task metadata stays in the benchmark.
+Runs group only within one repository and owning home. Only runs created or
+updated in the window count; a ship or scout task spawned in the window with
+no run yet is measured too, as implementation through now. A PR whose facts
+cannot be read leaves its task's merge unknown (open: null, counted as unknown),
+never assumed open. Closed, unmerged PRs stop at their closure time (the last
+run's update when absent) and count as neither open nor merged.
 
 Where a task's time went (seconds), per task and summed by category:
   implementation   start to its first no-mistakes run
@@ -32,9 +37,9 @@ Where a task's time went (seconds), per task and summed by category:
                    (review, test, ci, ...); these include gate waits inside a step
   parked at a gate the runs' parked time
   rework           gaps between one run ending and the next starting
-  waiting to merge from CI ready (or the last run's end) to the merge, or to now
-                   for an open PR whose CI readiness is recorded
-  deploy           from the merge to the auto-land deploy
+  waiting to merge from CI ready (or the last run's end) to the merge; with
+                   recorded CI readiness, to now if open or to closure if closed
+  deploy           from the merge to the confirmed auto-land deploy
 Waits without timestamps (holds, blocks, relaunches, model gateway errors) are
 counted, not timed.
 
@@ -176,7 +181,7 @@ def task_key(branch, tasks):
 
 
 def pr_facts(url, gh='gh', run=None):
-    """{opened, merged, closed, first_commit, state} for one PR url, or None."""
+    """{opened, merged, closed, first_commit, state, merge_commit} for a PR, or None."""
     try:
         r = (run or _run)([gh, 'pr', 'view', url, '--json', 'createdAt,mergedAt,closedAt,state,commits,mergeCommit'], timeout=30)
         doc = json.loads(r.stdout) if r.returncode == 0 else None

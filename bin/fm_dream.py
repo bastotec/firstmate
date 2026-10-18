@@ -30,17 +30,16 @@ is recorded and never stops the next:
   improve  acts on the day, every night. It measures each task's day on every
            included machine (bin/fm_lifecycle.py owns the timeline: sources, task
            kinds and where time went), writes the timelines to improve-<date>.json
-           and one metrics line per published night to improve.jsonl, and asks one
-           model (config improve.model, default IMPROVE_MODEL, through the proxai
-           gateway; one call, no tools, a bounded digest) for the three changes the
-           fleet makes tonight, each tied to evidence and to the one measurement it
-           should move (TARGETS). An unavailable model is named in the step reason
-           and never replaced by another; the measurement and every step that needs
-           no model still run. The changes are acted on, not reported:
-             instructions  the instructions step must make them (AGENTS.md, the
-                           shared skills, the brief and charter templates) and
-                           ship them as its one gated PR, which auto-land merges
-                           on green and deploys to every home;
+           and one metrics line per published measured night to improve.jsonl, and
+           asks the pinned gateway model for up to three changes, each tied to
+           evidence and a supported TARGETS measurement (one call, no tools, a
+           bounded digest). docs/configuration.md owns the model pin and failure
+           policy. Dry runs measure but call no model. Empty successful measurements
+           are a quiet day; unread measurements make the step partial, including
+           when no timelines survive. Independent actions still run and are tracked
+           and summarized. The changes are acted on, not just reported:
+             instructions  required edits go through the instructions step below,
+                           under its guards and gated-PR path;
              code          the file step files each as a priority task for the
                            repository's owning mate and tells that mate to
                            dispatch a worker now (the main home through its inbox);
@@ -95,23 +94,27 @@ is recorded and never stops the next:
            has an unparsable entry, the agent does not run and nothing is filed.
            Jev scores proposals when configured; without a usable score, keep
            the agent's order and record why. Keep at most MAX_RAISED items.
-  file     files only the items triage kept in this invocation as queued backlog
+  file     files the items triage kept in this invocation as queued backlog
            tasks and hands each to its configured owning mate; it never replays a
            previous run's proposals. An unreadable raised.jsonl prevents filing,
            and an item already in its dedupe window is not filed twice.
            Code changes from the improve step are filed first, as priority-0
            tasks, and their owning mate is told to dispatch a worker now (fm-send.sh,
            or the main home's inbox); captain changes and charter proposals become
-           one decision card (fm-captain-hold.sh). Dreaming never pushes to or opens
+           one decision card (fm-captain-hold.sh), even without measured tasks.
+           Command timeouts preserve successful filings and allow remaining triage
+           work while the step budget remains. Dreaming never pushes to or opens
            PRs on harness repositories, except the instructions step's one PR on
            firstmate, through the gate.
-  track    follows tonight's instructions PR until auto-land merged and deployed it
-           (at most TRACK_WAIT seconds), then records every action of the night for
-           tomorrow's report. Changes proposed but none shipped or dispatched is
-           'nothing changed', which is not clean.
   memory   runs the captain memory's upkeep (bin/fm_captain_memory.py) and adds
            its one line to the summary; skipped on a dry run. Its findings are
            not failures: only an upkeep that cannot run is not clean.
+  track    follows tonight's instructions PR until auto-land merged and deployed it
+           (at most TRACK_WAIT seconds), then records every action of the night for
+           tomorrow's report. A PR open or merged, a confirmed dispatch order, or
+           a raised card counts as acted on; proposals with none of these yield
+           'nothing changed', which is not clean. An empty model changes list is
+           an honest 'nothing to change' and stays clean.
 
 Runs are serialized by a kernel flock held for the whole run.
 Before each step (dry runs included): skipped when the Mac has less than
@@ -149,12 +152,16 @@ Files under <home>/state/dream/:
                      charter_proposals: [{mate, what}],
                      improve: {metrics (bin/fm_lifecycle.py metrics), model,
                      changes: [{kind, change, repo, title, fix, target, evidence,
-                     before}], reflection_error, point (tonight's improve.jsonl
-                     line), previous (the last earlier one) | null, change:
+                     before}], reflection_error, nothing_to_change,
+                     point (tonight's improve.jsonl line),
+                     previous (the last earlier one) | null, change:
                      {mate_median, mate_p90, merged} | null, tonight: [{kind, what,
-                     pr?, key?, mate?, state, target, before}], last_night: [{...,
-                     date, now_state, now_value}]} | null,
-                     no_mistakes: {...} or null, summary}
+                     pr?, key?, mate?, state, target?, before?}], last_night: [{...,
+                     date, now_state, now_value}]}
+                     | {measurement_error, changes: [], tonight: [actions as above]}
+                     | null (no measured tasks or improve did not produce facts),
+                     charter_card: [actions as above] (private charter card when
+                     improve is null), no_mistakes: {...} or null, summary}
   raised.jsonl       one line per raised item (dedupe across nights)
   digest-<date>.md   the private digest the agents read
   charters-<date>.md private charter-edit proposals, when any are kept
@@ -200,7 +207,8 @@ Environment: FM_DREAM_DECK (deck binary), FM_DREAM_DOTFILES (~/dotfiles),
 FM_DREAM_JEV (Jev helper command), FM_DREAM_MIN_FREE_GB, FM_DREAM_NO_MISTAKES_DB,
 FM_DREAM_FIRSTMATE (firstmate checkout, default: this code root),
 FM_DREAM_NO_MISTAKES (gate binary, default: no-mistakes), FM_DREAM_GH (gh binary),
-PROXAI_BASE_URL and PROXAI_API_KEY_FILE (the improve step's gateway).
+PROXAI_BASE_URL (default http://127.0.0.1:8329/v1), PROXAI_API_KEY or, when
+empty, PROXAI_API_KEY_FILE (default ~/.config/proxai/client.key) for improve.
 Tests only: FM_DREAM_NOW (epoch), FM_DREAM_SKIP_ZIGGY_WAIT=1, FM_DREAM_ZIGGY_POLL (seconds), and FM_DREAM_TASKS,
 FM_DREAM_HANDOFF, FM_DREAM_REPORT, FM_DREAM_ON, FM_DREAM_CAPTAIN_MEMORY replacing
 bin/fm-tasks-axi.sh, bin/fm-backlog-handoff.sh, bin/fm-report.sh, bin/fm-on.sh and
