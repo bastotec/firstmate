@@ -128,7 +128,11 @@
 #     or a backlog-vs-metadata inventory mismatch makes their summary incomplete;
 #     they retain independently trustworthy structured surfaces.
 #     The home summary's unknown_children lists unknown non-secondmate task ids
-#     owned by structured In flight rows, independently of its first invalidity.
+#     owned by structured In flight rows, independently of its first invalidity,
+#     except the reader's final fallback: source "none" with detail starting
+#     "no current-state source available" means readable idle, nothing claimed.
+#     That task's endpoint state stays unknown; every other unknown still counts,
+#     including missing worktrees or endpoints, unreadable runs, and timeouts.
 #     An unowned leftover is instead an unowned_current inventory mismatch.
 #     The producer keeps its computed state for inventory disagreements, including
 #     unstructured_current, while retaining valid=false, reason, and invalidity.
@@ -1097,7 +1101,11 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
     # live state is needed.
     # Only owned in-flight work needs a readable live state; a leftover record
     # that no current item owns is reported as unowned instead.
+    # A worker the reader found idle with nothing claimed (every source read, no
+    # state asserted, its final fallback) was read; it is not an unread child.
     | ([ $tasks[] | select(.kind != "secondmate" and .current_state.state == "unknown")
+         | select((.current_state.source == "none"
+                   and ((.current_state.detail // "") | startswith("no current-state source available"))) | not)
          | select(.id as $id | [$owned_in_flight[].id] | index($id) != null) ]) as $unknown_children
     | ([ $owned_in_flight[]
          | select(.requires_child_metadata)
