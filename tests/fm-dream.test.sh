@@ -740,12 +740,12 @@ test_instructions_prune_landed_or_old_worktrees() {
     tree="$trees/firstmate-${branch//\//-}"
     git -C "$d/firstmate" worktree add -qb "$branch" "$tree" origin/main || fail "could not seed worktree"
     printf '%s\n' "$day" > "$tree/proposal-$day.txt"
-    git -C "$tree" add -A && git -C "$tree" commit -qm "proposal $day" || fail "could not seed proposal"
+    { git -C "$tree" add -A && git -C "$tree" commit -qm "proposal $day"; } || fail "could not seed proposal"
   done
   git -C "$d/firstmate" merge -q --no-edit fm/dream-instructions-2026-10-01 || fail "could not seed ancestor merge"
-  git -C "$d/firstmate" merge -q --squash fm/dream-instructions-2026-10-02 \
+  { git -C "$d/firstmate" merge -q --squash fm/dream-instructions-2026-10-02 \
     && git -C "$d/firstmate" commit -qm 'squash proposal' \
-    && git -C "$d/firstmate" push -q origin HEAD:main || fail "could not seed squash merge"
+    && git -C "$d/firstmate" push -q origin HEAD:main; } || fail "could not seed squash merge"
   git -C "$d/firstmate" merge-base --is-ancestor fm/dream-instructions-2026-10-02 origin/main \
     && fail "squash fixture unexpectedly has commit ancestry"
   python3 - "$trees" "$NOW" <<'PY'
@@ -801,8 +801,8 @@ test_instructions_count_delimiter_content_and_check_its_hard_stops() {
     d=$(new_case "instr-delimiters-$mode")
     if [ "$mode" = hardstop ]; then
       printf -- '-- Never move money.\n' >> "$d/firstmate/.agents/skills/guide/SKILL.md"
-      git -C "$d/firstmate" add -A && git -C "$d/firstmate" commit -qm 'add safety rule' \
-        && git -C "$d/firstmate" push -q origin HEAD:main || fail "could not seed safety rule"
+      { git -C "$d/firstmate" add -A && git -C "$d/firstmate" commit -qm 'add safety rule' \
+        && git -C "$d/firstmate" push -q origin HEAD:main; } || fail "could not seed safety rule"
     fi
     STUB_INSTR="delimiters-$mode" run_dream "$d" --only collect instructions > "$d/out.json" || fail "run exited nonzero"
     case "$mode" in
