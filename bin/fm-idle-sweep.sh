@@ -453,6 +453,7 @@ cleanup() {
   local id=$1 out rc=0 args
   args=("$id" --keep-commits --expected-record "$record")
   [ -z "${2:-}" ] || args+=(--if-still-stopped "$2")
+  [ "$CLASS" != finished ] || args+=(--expected-state done)
   [ -z "$MERGED_PR_URL" ] || args+=(--merged-pr "$MERGED_PR_URL")
   CLEANUP_WHY=
   CLEANUP_STALE=0
@@ -469,6 +470,7 @@ cleanup() {
     rc=0
     args=(--finished "$id" --expected-record "$record")
     [ -z "${2:-}" ] || args+=(--if-still-stopped "$2")
+    [ "$CLASS" != finished ] || args+=(--expected-state done)
     [ -z "$MERGED_PR_URL" ] || args+=(--merged-pr "$MERGED_PR_URL")
     out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-retire-endpoint.sh" "${args[@]}" </dev/null 2>&1) || rc=$?
     [ "$rc" -eq 0 ] && return 0
@@ -530,7 +532,7 @@ while IFS= read -r meta; do
         raise "$id" finished "$CLEANUP_WHY"
         if [ "$RAISED" = 1 ]; then action=asked; NEW="$NEW $id"; else action=unhandled; fi
         DETAIL=$CLEANUP_WHY
-      elif cleanup "$id"; then
+      elif cleanup "$id" "$stopped_status_size"; then
         action=cleaned
         log "cleaned up $id"
       elif [ ! -e "$meta" ] && [ ! -L "$meta" ] && [ -e "$STATE/$id.backlog-close" ]; then
@@ -539,9 +541,9 @@ while IFS= read -r meta; do
       elif [ ! -e "$meta" ] && [ ! -L "$meta" ]; then
         action=cleaned
         DETAIL="worker record already removed"
-      elif [ "$(cat "$meta" 2>/dev/null)" != "$record" ]; then
+      elif [ "$CLEANUP_STALE" = 1 ]; then
         CLASS=unknown
-        DETAIL="worker record changed during scan"
+        DETAIL="worker record or activity changed during scan"
       elif printf '%s' "$CLEANUP_WHY" | grep -Eq '^another lifecycle action is already running for task |^another Treehouse slot allocation or return is in progress for '; then
         CLASS=settling
         DETAIL="another cleanup or lifecycle action holds it: $CLEANUP_WHY"

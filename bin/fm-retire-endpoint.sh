@@ -238,6 +238,7 @@ MERGED_PR_URL=
 EXPECTED_RECORD=
 EXPECTED_RECORD_SET=0
 STOPPED_STATUS_SIZE=
+EXPECTED_STATE=stopped
 OVERRIDE_RUNTIME_REFUSAL=0
 ORPHAN=0
 LIST_ORPHANS=0
@@ -264,6 +265,11 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -gt 0 ] || refuse "--expected-record needs metadata"
       EXPECTED_RECORD=$1
       EXPECTED_RECORD_SET=1
+      shift
+      ;;
+    --expected-state)
+      [ "$#" -gt 0 ] && [ "$1" = done ] || refuse "--expected-state requires done"
+      EXPECTED_STATE=$1
       shift
       ;;
     --if-still-stopped)
@@ -307,6 +313,9 @@ if [ "$EXPECTED_RECORD_SET" = 1 ]; then
     || refuse "--expected-record requires --finished with exactly one task id"
 fi
 
+if [ "$EXPECTED_STATE" = done ]; then
+  [ -n "$STOPPED_STATUS_SIZE" ] || refuse "--expected-state requires --if-still-stopped"
+fi
 if [ -n "$STOPPED_STATUS_SIZE" ]; then
   [ "$EXPECTED_RECORD_SET" = 1 ] || refuse "--if-still-stopped requires --expected-record"
 fi
@@ -663,7 +672,7 @@ for id in "${IDS[@]}"; do
       exit 3
     fi
     if [ -n "$STOPPED_STATUS_SIZE" ]; then
-      fm_busy_admit_stopped "$STATE/$id.meta" "$id" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" || exit $?
+      fm_busy_admit_stopped "$STATE/$id.meta" "$id" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" "$EXPECTED_STATE" || exit $?
     fi
   fi
   worktree=$(fm_meta_get "$STATE/$id.meta" worktree)
@@ -693,6 +702,7 @@ for id in "${IDS[@]}"; do
     EXPECTED_LOCK_HELD=0
   fi
   [ -z "$STOPPED_STATUS_SIZE" ] || teardown_args+=(--if-still-stopped "$STOPPED_STATUS_SIZE")
+  [ "$EXPECTED_STATE" != done ] || teardown_args+=(--expected-state done)
   [ "$FINISHED" = 0 ] || teardown_args+=(--keep-commits)
   [ -z "$MERGED_PR_URL" ] || teardown_args+=(--merged-pr "$MERGED_PR_URL")
   "$SCRIPT_DIR/fm-teardown.sh" "${teardown_args[@]}" || teardown_rc=$?

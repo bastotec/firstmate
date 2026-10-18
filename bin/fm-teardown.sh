@@ -345,6 +345,7 @@ KEEP_COMMITS=0
 EXPECTED_RECORD=
 EXPECTED_RECORD_SET=0
 STOPPED_STATUS_SIZE=
+EXPECTED_STATE=stopped
 MERGED_PR_URL=
 shift
 while [ "$#" -gt 0 ]; do
@@ -357,6 +358,11 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -gt 0 ] || exit 2
       EXPECTED_RECORD=$1
       EXPECTED_RECORD_SET=1
+      ;;
+    --expected-state)
+      shift
+      [ "$#" -gt 0 ] && [ "$1" = done ] || exit 2
+      EXPECTED_STATE=$1
       ;;
     --if-still-stopped)
       shift
@@ -379,6 +385,9 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+if [ "$EXPECTED_STATE" = done ]; then
+  [ -n "$STOPPED_STATUS_SIZE" ] || exit 2
+fi
 if [ -n "$STOPPED_STATUS_SIZE" ]; then
   [ "$EXPECTED_RECORD_SET" = 1 ] || exit 2
 fi
@@ -482,7 +491,7 @@ fm_backlog_record_present "$META" "task record" "$STATE" || {
   exit 1
 }
 if [ -n "$STOPPED_STATUS_SIZE" ]; then
-  fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" || exit $?
+  fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" "$EXPECTED_STATE" || exit $?
 fi
 TEARDOWN_META_KIND=$(fm_meta_get "$META" kind)
 [ -n "$TEARDOWN_META_KIND" ] || TEARDOWN_META_KIND=ship
@@ -3492,7 +3501,7 @@ if teardown_owns_worktree && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
 fi
 
 if [ -n "$STOPPED_STATUS_SIZE" ]; then
-  fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" || exit $?
+  fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" "$EXPECTED_STATE" || exit $?
 fi
 
 BACKLOG_CLOSED=0
@@ -3579,7 +3588,7 @@ fi
 
 # Apply the pre-teardown cleanup sequence owned by the script header.
 if [ -n "$STOPPED_STATUS_SIZE" ]; then
-  fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" || exit $?
+  fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" "$EXPECTED_STATE" || exit $?
 fi
 if [ "$KIND" != secondmate ] && teardown_owns_worktree; then
   conclude_task_no_mistakes_run "$WT"
@@ -3590,7 +3599,7 @@ if [ "$KIND" != secondmate ] && task_operator_retirement_pending; then
 fi
 if [ "$KIND" != secondmate ] && [ "$TASK_ENDPOINT_RETIREMENT_PENDING" = 0 ]; then
   if [ -n "$STOPPED_STATUS_SIZE" ]; then
-    fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" || exit $?
+    fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" "$EXPECTED_STATE" || exit $?
   fi
   fm_backend_kill "$BACKEND" "$T" "" "fm-$ID" \
     && TASK_KILL_RC=0 || TASK_KILL_RC=$?

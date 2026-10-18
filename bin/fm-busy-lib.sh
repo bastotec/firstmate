@@ -241,7 +241,7 @@ fm_busy_classify_meta() {  # <meta-file> <id> <state-dir> [tail40]
 }
 
 fm_busy_admit_stopped() {
-  local meta=$1 id=$2 state=$3 expected_record=$4 expected_size=$5 script_dir=$6
+  local meta=$1 id=$2 state=$3 expected_record=$4 expected_size=$5 script_dir=$6 expected_state=${7:-stopped}
   local line verb busy backend target harness changed=0 size=0
   case "$(fm_meta_get "$meta" kind)" in
     ''|ship|scout) ;;
@@ -250,16 +250,20 @@ fm_busy_admit_stopped() {
   [ -z "$(fm_meta_get "$meta" remote_host)" ] || changed=1
   line=$(fm_run_timed 60 "$script_dir/fm-crew-state.sh" "$id" 2>/dev/null) || line=
   verb=$(printf '%s\n' "$line" | sed -n '1s/^state: \([a-z]*\).*/\1/p')
-  case "$verb" in
-    failed|blocked|paused) ;;
-    unknown)
-      case "$line" in
-        'state: unknown · source: none · backend target gone:'*|'state: unknown · source: none · worktree gone ('*) ;;
-        *) changed=1 ;;
-      esac
-      ;;
-    *) changed=1 ;;
-  esac
+  if [ "$expected_state" = done ]; then
+    [ "$verb" = done ] || changed=1
+  else
+    case "$verb" in
+      failed|blocked|paused) ;;
+      unknown)
+        case "$line" in
+          'state: unknown · source: none · backend target gone:'*|'state: unknown · source: none · worktree gone ('*) ;;
+          *) changed=1 ;;
+        esac
+        ;;
+      *) changed=1 ;;
+    esac
+  fi
   backend=$(fm_backend_of_meta "$meta")
   target=$(fm_backend_target_of_meta "$meta")
   harness=$(fm_meta_get "$meta" harness)

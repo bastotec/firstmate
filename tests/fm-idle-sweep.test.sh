@@ -40,6 +40,9 @@ while [ "$#" -gt 0 ]; do
   if [ "$1" = --expected-record ]; then
     shift
     [ "$(cat "$FM_HOME/state/$id.meta")" = "$1" ] || exit 3
+  elif [ "$1" = --expected-state ]; then
+    shift
+    [ "$1" = done ] || exit 2
   elif [ "$1" = --if-still-stopped ]; then
     shift
     printf '%s %s\n' "$id" "$1" >> "$FM_HOME/cleanup-guards"
@@ -477,6 +480,72 @@ SH
     esac
   done
   pass "fm-idle-sweep: merged PRs never retire workers that resumed or wrote newer status"
+}
+
+test_done_scout_cleanup_rechecks_activity() {
+  local dir recovery before target
+  for recovery in idle busy-2 status-2 busy-4 status-4 busy-5 status-5; do
+    dir=$(new_case "done-scout-$recovery")
+    add_worker "$dir" scout 'state: done · source: status-log · report delivered' 7200
+    fm_write_meta "$dir/home/state/scout.meta" "kind=scout" "harness=deck" "worktree=$dir/pool/1/firstmate" "project=$dir/pool/1/firstmate"
+    fm_git_init_commit "$dir/pool/1/firstmate"
+    fm_test_stream_task "$dir/home/state" scout "$dir/endpoint-input" >> "$dir/home/state/scout.meta"
+    target=$(sed -n 's/^window=//p' "$dir/home/state/scout.meta")
+    fm_test_fake_stream_foreground "$target" fm-deck-worker
+    "$dir/bin/fm-busy-event.sh" arm "$dir/home/state" scout --state idle >/dev/null
+    mkdir -p "$dir/home/data/scout"
+    printf '# Report delivered\n' > "$dir/home/data/scout/report.md"
+    printf 'manual\n' > "$dir/home/config/backlog-backend"
+    printf '%s\n' "$recovery" > "$dir/home/recovery"
+    cp "$ROOT/bin/fm-teardown.sh" "$dir/bin/"
+    fm_test_fake_no_mistakes "$dir/bin"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/bin/treehouse"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/bin/fm-remote-job-reap-orphans.sh"
+    chmod +x "$dir/bin/treehouse" "$dir/bin/fm-remote-job-reap-orphans.sh"
+    cat > "$dir/bin/fm-captain-hold.sh" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  open|deferred) exit 1 ;;
+  verify) exit 0 ;;
+  *) printf '%s\n' "$*" >> "$FM_HOME/hold-attempts"; exit 1 ;;
+esac
+SH
+    cat > "$dir/home/on-crew-state" <<'SH'
+#!/usr/bin/env bash
+recovery=$(cat "$FM_HOME/recovery")
+[ "$recovery" != idle ] || exit 0
+[ "$(wc -l < "$FM_HOME/crew-state-calls" | tr -d ' ')" = "${recovery##*-}" ] || exit 0
+printf '%s\n' "$recovery" > "$FM_HOME/resumed-at-teardown"
+case "$recovery" in
+  busy-*)
+    "$FM_HOME/../bin/fm-busy-event.sh" apply "$FM_HOME/state" "$1" busy --current-gen --source deck-wrapper --event turn-start
+    ;;
+  status-*) printf 'working: follow-up steer received\n' >> "$FM_HOME/state/$1.status" ;;
+esac
+SH
+    chmod +x "$dir/home/on-crew-state"
+    before=$(cat "$dir/home/state/scout.meta")
+
+    sweep "$dir" scan --now || fail "done scout cleanup scan failed for $recovery"
+
+    if [ "$recovery" = idle ]; then
+      assert_equals 'finished cleaned' "$(summary_of "$dir" scout)" "an unchanged done scout must remain eligible for cleanup: $(cat "$dir/home/state/idle-sweep.json")"
+      assert_absent "$dir/home/state/scout.meta" "an unchanged done scout was not cleaned up"
+    else
+      assert_present "$dir/home/resumed-at-teardown" "$recovery did not reach the activity check"
+      assert_equals 'unknown none' "$(summary_of "$dir" scout)" "$recovery must wait for a fresh scan"
+      assert_equals "$before" "$(cat "$dir/home/state/scout.meta")" "$recovery changed the worker incarnation"
+      fm_test_fake_stream_endpoints | jq -e --arg endpoint "${target##*:}" \
+        '.endpoints | any(.endpoint_id == $endpoint)' >/dev/null \
+        || fail "$recovery killed the resumed scout"
+      assert_absent "$dir/home/state/scout.backlog-close" "$recovery staged a backlog close"
+      assert_absent "$dir/home/state/idle-sweep/scout.raised" "$recovery was handed off"
+      [ ! -s "$dir/endpoint-input" ] || fail "$recovery sent input to the resumed scout"
+      [ ! -s "$dir/home/state/.wake-queue" ] || fail "$recovery queued a stale decision"
+    fi
+    assert_no_captain_call "$dir" "done scout $recovery"
+  done
+  pass "fm-idle-sweep: done scouts are cleaned only while their activity remains unchanged"
 }
 
 test_retired_backend_cleanup_preserves_the_expected_record_guard() {
@@ -1512,6 +1581,7 @@ test_unreadable_prs_are_handed_to_the_first_mate
 test_replacements_during_forge_reads_are_left_for_a_fresh_scan
 test_recovered_workers_are_not_retried_with_unchanged_metadata
 test_resumed_workers_are_not_retired_after_a_merged_pr_read
+test_done_scout_cleanup_rechecks_activity
 test_retired_backend_cleanup_preserves_the_expected_record_guard
 test_a_failed_main_home_delivery_is_retried_next_scan
 test_a_stopped_worker_with_open_work_is_retried_once_without_a_card
