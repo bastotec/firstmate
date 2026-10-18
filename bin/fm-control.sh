@@ -617,29 +617,7 @@ busy_verdict() {
 
 admit_stopped_retry() {
   [ -n "$STOPPED_STATUS_SIZE" ] || return 0
-  local line verb busy changed=0 size=0
-  line=$(fm_run_timed 60 "$SCRIPT_DIR/fm-crew-state.sh" "$ID" 2>/dev/null) || line=
-  verb=$(printf '%s\n' "$line" | sed -n '1s/^state: \([a-z]*\).*/\1/p')
-  case "$verb" in
-    failed|blocked|paused) ;;
-    unknown)
-      case "$line" in
-        'state: unknown · source: none · backend target gone:'*|'state: unknown · source: none · worktree gone ('*) ;;
-        *) changed=1 ;;
-      esac
-      ;;
-    *) changed=1 ;;
-  esac
-  busy=$(fm_busy_classify_live "$BACKEND" "$T" "$RECORDED_HARNESS" "$ID" "$STATE" "$LABEL")
-  case "$busy" in busy*) changed=1 ;; esac
-  if [ -e "$STATE/$ID.status" ]; then
-    size=$(wc -c < "$STATE/$ID.status" 2>/dev/null | tr -d ' ')
-  fi
-  if [ "$changed" = 1 ] || [ "$size" != "$STOPPED_STATUS_SIZE" ] \
-    || [ "$(cat "$META" 2>/dev/null)" != "$EXPECTED_RECORD" ]; then
-    printf 'worker record or activity %s changed during scan\n' "$ID" >&2
-    exit 3
-  fi
+  fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" || exit $?
 }
 
 # A relaunch is existing-task recovery, not fresh dispatch. Prove its backlog

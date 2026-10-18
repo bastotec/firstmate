@@ -40,6 +40,9 @@ while [ "$#" -gt 0 ]; do
   if [ "$1" = --expected-record ]; then
     shift
     [ "$(cat "$FM_HOME/state/$id.meta")" = "$1" ] || exit 3
+  elif [ "$1" = --if-still-stopped ]; then
+    shift
+    printf '%s %s\n' "$id" "$1" >> "$FM_HOME/cleanup-guards"
   else
     args+=("$1")
   fi
@@ -305,7 +308,7 @@ test_replacements_during_forge_reads_are_left_for_a_fresh_scan() {
 
 test_recovered_workers_are_not_retried_with_unchanged_metadata() {
   local dir recovery before target
-  for recovery in working parked 'done' unknown busy newer-status during-refresh still-blocked still-failed still-paused; do
+  for recovery in working parked 'done' unknown busy newer-status during-refresh still-blocked still-failed still-paused no-ledger; do
     dir=$(new_case "recovered-$recovery")
     add_worker "$dir" stopped 'state: blocked · source: status-log · waiting for an unblock' 90000
     fm_git_init_commit "$dir/pool/1/firstmate"
@@ -315,11 +318,16 @@ test_recovered_workers_are_not_retried_with_unchanged_metadata() {
     target=$(sed -n 's/^window=//p' "$dir/home/state/stopped.meta")
     fm_test_fake_stream_foreground "$target" fm-deck-worker
     case "$recovery" in
-      still-*)
+      still-*|no-ledger)
         printf 'state: %s · source: status-log · stopped\n' "${recovery#still-}" > "$dir/home/crew/stopped"
         fm_test_fake_stream_foreground "$target" zsh
         ;;
     esac
+    if [ "$recovery" = no-ledger ]; then
+      printf 'state: failed · source: run-step · run failed\n' > "$dir/home/crew/stopped"
+      rm "$dir/home/state/stopped.status"
+      age_file "$dir/home/state/stopped.meta" 90000
+    fi
     "$dir/bin/fm-busy-event.sh" arm "$dir/home/state" stopped --state idle >/dev/null
     mkdir -p "$dir/home/data/stopped"
     printf '# Continue the task\n' > "$dir/home/data/stopped/brief.md"
@@ -363,10 +371,16 @@ SH
     assert_equals 2 "$(wc -l < "$dir/home/crew-state-calls" | tr -d ' ')" "$recovery must refresh the current state"
     assert_equals stopped "$(cat "$dir/home/crew-state-locked")" "$recovery must be revalidated under the lifecycle lock"
     case "$recovery" in
-      still-*)
+      still-*|no-ledger)
         assert_contains "$(summary_of "$dir" stopped)" ' retried' "$recovery must remain eligible for retry"
         assert_equals stopped "$(cat "$dir/home/spawn-calls")" "$recovery did not reach the launch owner"
         assert_present "$dir/home/state/idle-sweep/stopped.retried" "$recovery did not record the retry"
+        if [ "$recovery" = no-ledger ]; then
+          assert_equals '0 1' "$(cat "$dir/home/state/idle-sweep/stopped.retried")" "a missing ledger must consume exactly one retry at size zero"
+          sweep "$dir" scan --now || fail "repeat missing-ledger scan failed"
+          assert_equals 'failed asked' "$(summary_of "$dir" stopped)" "an unchanged missing ledger must not authorize another retry"
+          assert_equals stopped "$(cat "$dir/home/spawn-calls")" "the missing-ledger worker was relaunched twice"
+        fi
         assert_no_captain_call "$dir" "$recovery"
         continue
         ;;
@@ -382,44 +396,125 @@ SH
   pass "fm-idle-sweep: recovered workers and newer status are skipped under the control lock"
 }
 
+test_resumed_workers_are_not_retired_after_a_merged_pr_read() {
+  local dir recovery before target
+  for recovery in working parked done unknown busy newer-status during-refresh; do
+    dir=$(new_case "retirement-recovery-$recovery")
+    add_worker "$dir" stopped 'state: paused · source: status-log · waiting' 90000
+    fm_git_init_commit "$dir/pool/1/firstmate"
+    fm_test_stream_task "$dir/home/state" stopped "$dir/endpoint-input" >> "$dir/home/state/stopped.meta"
+    printf 'harness=deck\nproject=%s\npr=https://github.com/owner/repo/pull/71\n' "$dir/pool/1/firstmate" \
+      >> "$dir/home/state/stopped.meta"
+    target=$(sed -n 's/^window=//p' "$dir/home/state/stopped.meta")
+    fm_test_fake_stream_foreground "$target" fm-deck-worker
+    "$dir/bin/fm-busy-event.sh" arm "$dir/home/state" stopped --state idle >/dev/null
+    printf 'MERGED\n' > "$dir/home/pr-states/71"
+    printf '%s\n' "$recovery" > "$dir/home/recovery"
+    cp "$ROOT/bin/fm-teardown.sh" "$dir/bin/"
+    cat > "$dir/home/on-forge" <<'SH'
+#!/usr/bin/env bash
+case "$(cat "$FM_HOME/recovery")" in
+  working|parked|done|unknown)
+    printf 'state: %s · source: run-step · fresh activity\n' "$(cat "$FM_HOME/recovery")" > "$FM_HOME/crew/stopped"
+    ;;
+  busy)
+    "$FM_HOME/../bin/fm-busy-event.sh" apply "$FM_HOME/state" stopped busy --current-gen --source deck-wrapper --event turn-start
+    ;;
+  newer-status) printf 'working: resumed\n' >> "$FM_HOME/state/stopped.status" ;;
+esac
+SH
+    cat > "$dir/home/on-crew-state" <<'SH'
+#!/usr/bin/env bash
+if [ "$(cat "$FM_HOME/recovery")" = during-refresh ] && [ -d "$FM_HOME/state/.control-$1.lock" ]; then
+  printf 'working: resumed during the state read\n' >> "$FM_HOME/state/$1.status"
+fi
+SH
+    chmod +x "$dir/home/on-forge" "$dir/home/on-crew-state"
+    before=$(cat "$dir/home/state/stopped.meta")
+
+    sweep "$dir" scan --now || fail "retirement recovery scan failed for $recovery"
+
+    assert_equals 'unknown none' "$(summary_of "$dir" stopped)" "$recovery must skip retirement this scan"
+    assert_equals "$before" "$(cat "$dir/home/state/stopped.meta")" "$recovery changed the worker incarnation"
+    assert_equals 2 "$(wc -l < "$dir/home/crew-state-calls" | tr -d ' ')" "$recovery must refresh state before retirement"
+    assert_equals stopped "$(cat "$dir/home/crew-state-locked")" "$recovery must be checked under the lifecycle lock"
+    assert_absent "$dir/home/state/stopped.backlog-close" "$recovery staged a backlog close"
+    assert_absent "$dir/home/control-calls" "$recovery was retried instead of preserved"
+    assert_absent "$dir/home/state/idle-sweep/stopped.raised" "$recovery was handed off"
+    [ ! -s "$dir/endpoint-input" ] || fail "$recovery sent input to the resumed endpoint"
+    [ ! -s "$dir/home/state/.wake-queue" ] || fail "$recovery queued a stale decision"
+    assert_no_captain_call "$dir" "$recovery retirement"
+  done
+  pass "fm-idle-sweep: merged PRs never retire workers that resumed or wrote newer status"
+}
+
 test_retired_backend_cleanup_preserves_the_expected_record_guard() {
-  local dir expected rc mode
-  for mode in stale matching replaced-at-teardown; do
+  local dir expected rc mode size
+  for mode in stale matching replaced-at-teardown working busy newer-status during-refresh recovered-at-teardown; do
     dir=$(new_case "retire-guard-$mode")
     cp "$ROOT/bin/fm-retire-endpoint.sh" "$dir/bin/"
-    fm_write_meta "$dir/home/state/stopped.meta" "kind=scout" "backend=herdr" "window=fixture:stopped" "spawn_gen=old"
+    cp "$ROOT/bin/fm-teardown.sh" "$dir/bin/fm-teardown-real.sh"
+    fm_write_meta "$dir/home/state/stopped.meta" "kind=scout" "harness=deck" "backend=herdr" "window=fixture:stopped" "spawn_gen=old"
+    printf 'paused: waiting\n' > "$dir/home/state/stopped.status"
+    printf 'state: paused · source: status-log · waiting\n' > "$dir/home/crew/stopped"
+    size=$(wc -c < "$dir/home/state/stopped.status" | tr -d ' ')
     expected=$(cat "$dir/home/state/stopped.meta")
     fm_write_meta "$dir/home/replacement/stopped" "kind=scout" "backend=herdr" "window=fixture:stopped" "spawn_gen=new"
-    if [ "$mode" = matching ]; then
-      rm "$dir/home/replacement/stopped"
-    elif [ "$mode" = stale ]; then
-      cp "$dir/home/replacement/stopped" "$dir/home/state/stopped.meta"
-    elif [ "$mode" = replaced-at-teardown ]; then
-      cat > "$dir/bin/fm-teardown.sh" <<'SH'
+    case "$mode" in
+      matching) rm "$dir/home/replacement/stopped" ;;
+      stale) cp "$dir/home/replacement/stopped" "$dir/home/state/stopped.meta" ;;
+      replaced-at-teardown)
+        cat > "$dir/bin/fm-teardown.sh" <<'SH'
 #!/usr/bin/env bash
 cp "$FM_HOME/replacement/$1" "$FM_HOME/state/$1.meta"
 exec "$REAL_TEARDOWN" "$@"
 SH
-    fi
+        ;;
+      working) printf 'state: working · source: run-step · resumed\n' > "$dir/home/crew/stopped" ;;
+      busy)
+        "$dir/bin/fm-busy-event.sh" arm "$dir/home/state" stopped --state busy >/dev/null
+        ;;
+      newer-status) printf 'working: resumed\n' >> "$dir/home/state/stopped.status" ;;
+      during-refresh)
+        cat > "$dir/home/on-crew-state" <<'SH'
+#!/usr/bin/env bash
+printf 'working: resumed during the state read\n' >> "$FM_HOME/state/$1.status"
+SH
+        chmod +x "$dir/home/on-crew-state"
+        ;;
+      recovered-at-teardown)
+        cat > "$dir/bin/fm-teardown.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'state: working · source: run-step · resumed\n' > "$FM_HOME/crew/$1"
+exec "$REAL_TEARDOWN" "$@"
+SH
+        ;;
+    esac
     rc=0
-    REAL_TEARDOWN="$ROOT/bin/fm-teardown.sh" FM_HOME="$dir/home" PATH="$dir/bin:$PATH" \
-      "$dir/bin/fm-retire-endpoint.sh" --finished stopped --expected-record "$expected" > "$dir/retire.out" 2>&1 || rc=$?
+    REAL_TEARDOWN="$dir/bin/fm-teardown-real.sh" FM_HOME="$dir/home" PATH="$dir/bin:$PATH" \
+      "$dir/bin/fm-retire-endpoint.sh" --finished stopped --expected-record "$expected" --if-still-stopped "$size" \
+      > "$dir/retire.out" 2>&1 || rc=$?
     if [ "$mode" = matching ]; then
       assert_equals 0 "$rc" "matching retired records should still clean up: $(cat "$dir/retire.out")"
       assert_absent "$dir/home/state/stopped.meta" "a matching record was not cleaned"
     else
-      assert_not_equals 0 "$rc" "stale retirement evidence must be refused"
-      cmp -s "$dir/home/replacement/stopped" "$dir/home/state/stopped.meta" || fail "retirement changed a replacement"
-      assert_absent "$dir/home/state/stopped.backlog-close" "stale retirement must not close a replacement's task"
-      if [ "$mode" = stale ]; then
-        assert_equals 3 "$rc" "a changed snapshot should be distinguished from cleanup refusals"
-        assert_absent "$dir/home/state/endpoint-retirements.log" "a stale snapshot must not record a retirement assertion"
-      fi
+      assert_equals 3 "$rc" "$mode retirement evidence must be refused as stale: $(cat "$dir/retire.out")"
+      case "$mode" in
+        stale|replaced-at-teardown)
+          cmp -s "$dir/home/replacement/stopped" "$dir/home/state/stopped.meta" || fail "retirement changed a replacement"
+          ;;
+        *) assert_equals "$expected" "$(cat "$dir/home/state/stopped.meta")" "$mode retirement changed the worker" ;;
+      esac
+      assert_absent "$dir/home/state/stopped.backlog-close" "$mode retirement must not close the task"
+      case "$mode" in
+        replaced-at-teardown|recovered-at-teardown) ;;
+        *) assert_absent "$dir/home/state/endpoint-retirements.log" "$mode evidence must not record a retirement assertion" ;;
+      esac
     fi
     assert_absent "$dir/home/state/stopped.endpoint-retired" "retirement must release its temporary assertion"
     assert_absent "$dir/home/state/.control-stopped.lock" "retirement must release its lifecycle lock"
   done
-  pass "fm-idle-sweep: retired-backend cleanup revalidates snapshots and forwards them to teardown"
+  pass "fm-idle-sweep: retired-backend cleanup revalidates records and activity before and inside teardown"
 }
 
 test_a_failed_main_home_delivery_is_retried_next_scan() {
@@ -492,6 +587,8 @@ test_a_stopped_worker_whose_work_landed_or_ended_is_retired() {
 
   assert_grep 'merged --keep-commits --merged-pr https://github.com/owner/repo/pull/61' "$dir/home/teardown-args" \
     "a merged worker was not retired through teardown with its verified PR"
+  assert_equals "merged $(wc -c < "$dir/home/state/merged.status" | tr -d ' ')" \
+    "$(grep '^merged ' "$dir/home/cleanup-guards")" "retirement must carry the classified activity snapshot"
   for id in closed done-row superseded refused; do
     grep -qx "$id --keep-commits" "$dir/home/teardown-args" || fail "$id was not retired through teardown --keep-commits: $(calls "$dir" teardown-args)"
   done
@@ -768,8 +865,8 @@ test_merged_mr_in_ledger_is_passed_to_teardown() {
 }
 
 test_retired_worker_keeps_ledger_only_merged_mr_without_a_card() {
-  local dir later kept
-  dir=$(new_case retired-ledger-mr)
+  local dir later kept phase=${1:-finished}
+  dir=$(new_case "retired-ledger-mr-$phase")
   cp "$ROOT/bin/fm-teardown.sh" "$ROOT/bin/fm-retire-endpoint.sh" "$dir/bin/"
   fm_git_identity fmtest fmtest@example.invalid
   printf 'manual\n' > "$dir/home/config/backlog-backend"
@@ -794,6 +891,10 @@ test_retired_worker_keeps_ledger_only_merged_mr_without_a_card() {
     'mode=no-mistakes' 'spawn_gen=ledger-mr-test'
   printf 'done: MR https://gitlab.example/group/repo/-/merge_requests/57\n' >> "$dir/home/state/ledger-mr.status"
   age_file "$dir/home/state/ledger-mr.status" 7200
+  if [ "$phase" = stopped ]; then
+    printf 'state: paused · source: status-log · waiting\n' > "$dir/home/crew/ledger-mr"
+    age_file "$dir/home/state/ledger-mr.status" 90000
+  fi
   printf 'merged\n' > "$dir/home/pr-states/57"
   cat > "$dir/bin/treehouse" <<'SH'
 #!/usr/bin/env bash
@@ -826,8 +927,12 @@ SH
   [ "$(grep -c '^mr view 57 -R https://gitlab.example/group/repo$' "$dir/home/forge-calls")" -ge 3 ] \
     || fail 'the sweep and both teardown attempts did not verify the merged MR'
   assert_no_captain_call "$dir" 'ledger-only merged MR housekeeping'
-  [ "$(jq -r '.workers[] | select(.id=="ledger-mr") | .action' "$dir/home/state/idle-sweep.json")" = cleaned ] \
-    || fail "retired MR cleanup was not reported: $(cat "$dir/home/state/idle-sweep.json")"
+  if [ "$phase" = stopped ]; then
+    assert_equals 'stalled retired' "$(summary_of "$dir" ledger-mr)" "the stopped retired-backend worker must pass guarded retirement"
+    assert_equals 4 "$(wc -l < "$dir/home/crew-state-calls" | tr -d ' ')" "both teardown attempts and the fallback must refresh stopped activity"
+  else
+    assert_equals 'finished cleaned' "$(summary_of "$dir" ledger-mr)" "retired MR cleanup was not reported"
+  fi
   pass 'fm-idle-sweep: retirement preserves ledger-only merged MR commits without a card in manual mode'
 }
 
@@ -893,6 +998,28 @@ test_only_lifecycle_contention_defers_cleanup_refusals() {
   [ "$(wc -l < "$dir/home/teardown-calls" | tr -d ' ')" = 5 ] || fail "not all refusal paths were exercised"
   assert_no_captain_call "$dir" "cleanup refusals"
   pass "fm-idle-sweep: only supported lifecycle contention defers a cleanup hand-off"
+}
+
+test_stopped_worker_pending_closes_wake_the_first_mate_immediately() {
+  local dir state
+  for state in failed paused; do
+    dir=$(new_case "stopped-pending-close-$state")
+    add_worker "$dir" pending "state: $state · source: status-log · stopped" 90000
+    printf -- '- pending: Finished work\n  state: done\n' > "$dir/home/rows/pending"
+    : > "$dir/home/pending-close/pending"
+
+    sweep "$dir" scan --now || fail "stopped pending close scan failed"
+
+    assert_absent "$dir/home/state/pending.meta" "the partial cleanup must remove the worker record"
+    assert_present "$dir/home/state/pending.backlog-close" "the partial cleanup must retain its recovery record"
+    assert_equals unhandled "$(summary_of "$dir" pending | cut -d' ' -f2)" "the current scan must expose the failed backlog close"
+    assert_contains "$(cat "$dir/home/state/.wake-queue")" 'idle sweep could neither clean up nor raise: pending' \
+      "the first mate must see the partial cleanup failure immediately"
+    assert_absent "$dir/home/state/idle-sweep/pending.raised" "partial cleanup must not be suppressed as a stale decision"
+    assert_absent "$dir/home/control-calls" "partial cleanup must not retry the worker"
+    assert_no_captain_call "$dir" "stopped pending close"
+  done
+  pass "fm-idle-sweep: stopped-worker partial cleanup stays unhandled in the same scan"
 }
 
 test_pending_backlog_closes_remain_visible_until_cleared() {
@@ -1308,6 +1435,7 @@ test_unreadable_backlog_items_are_handed_to_the_first_mate
 test_unreadable_prs_are_handed_to_the_first_mate
 test_replacements_during_forge_reads_are_left_for_a_fresh_scan
 test_recovered_workers_are_not_retried_with_unchanged_metadata
+test_resumed_workers_are_not_retired_after_a_merged_pr_read
 test_retired_backend_cleanup_preserves_the_expected_record_guard
 test_a_failed_main_home_delivery_is_retried_next_scan
 test_a_stopped_worker_with_open_work_is_retried_once_without_a_card
@@ -1319,7 +1447,9 @@ test_done_workers_are_cleaned_up_without_force
 test_closed_unmerged_prs_go_to_the_first_mate_not_cleanup
 test_merged_mr_in_ledger_is_passed_to_teardown
 test_retired_worker_keeps_ledger_only_merged_mr_without_a_card
+test_retired_worker_keeps_ledger_only_merged_mr_without_a_card stopped
 test_only_lifecycle_contention_defers_cleanup_refusals
+test_stopped_worker_pending_closes_wake_the_first_mate_immediately
 test_pending_backlog_closes_remain_visible_until_cleared
 test_open_pr_workers_wait_for_merge_without_a_cleanup_decision
 test_concurrent_cleanup_does_not_raise_stale_decisions

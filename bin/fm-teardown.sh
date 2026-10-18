@@ -311,6 +311,7 @@ SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-control-lib.sh
 . "$SCRIPT_DIR/fm-control-lib.sh"
+. "$SCRIPT_DIR/fm-busy-lib.sh"
 # shellcheck source=bin/fm-lock-lib.sh
 . "$SCRIPT_DIR/fm-lock-lib.sh"
 # shellcheck source=bin/fm-classify-lib.sh
@@ -339,6 +340,7 @@ LEGACY_RECORD_GIVEN=0
 KEEP_COMMITS=0
 EXPECTED_RECORD=
 EXPECTED_RECORD_SET=0
+STOPPED_STATUS_SIZE=
 MERGED_PR_URL=
 shift
 while [ "$#" -gt 0 ]; do
@@ -351,6 +353,12 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -gt 0 ] || exit 2
       EXPECTED_RECORD=$1
       EXPECTED_RECORD_SET=1
+      ;;
+    --if-still-stopped)
+      shift
+      [ "$#" -gt 0 ] || exit 2
+      case "$1" in ''|*[!0-9]*) exit 2 ;; esac
+      STOPPED_STATUS_SIZE=$1
       ;;
     --merged-pr)
       shift
@@ -367,6 +375,9 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  [ "$EXPECTED_RECORD_SET" = 1 ] || exit 2
+fi
 fm_backlog_directory_present "$STATE" "state directory" || {
   echo "error: teardown refused: $FM_BACKLOG_TRANSITION_ERROR" >&2
   exit 1
@@ -466,6 +477,9 @@ fm_backlog_record_present "$META" "task record" "$STATE" || {
   echo "error: teardown refused after locking: $FM_BACKLOG_TRANSITION_ERROR" >&2
   exit 1
 }
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" || exit $?
+fi
 TEARDOWN_META_KIND=$(fm_meta_get "$META" kind)
 [ -n "$TEARDOWN_META_KIND" ] || TEARDOWN_META_KIND=ship
 TEARDOWN_META_SPAWN_GEN=

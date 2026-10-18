@@ -93,6 +93,7 @@ if [ "$#" -eq 1 ] && [ "$1" = --list-orphans ] \
 fi
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
+. "$SCRIPT_DIR/fm-busy-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
@@ -232,6 +233,7 @@ FINISHED=0
 MERGED_PR_URL=
 EXPECTED_RECORD=
 EXPECTED_RECORD_SET=0
+STOPPED_STATUS_SIZE=
 OVERRIDE_RUNTIME_REFUSAL=0
 ORPHAN=0
 LIST_ORPHANS=0
@@ -258,6 +260,12 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -gt 0 ] || refuse "--expected-record needs metadata"
       EXPECTED_RECORD=$1
       EXPECTED_RECORD_SET=1
+      shift
+      ;;
+    --if-still-stopped)
+      [ "$#" -gt 0 ] || refuse "--if-still-stopped needs a status byte count"
+      case "$1" in ''|*[!0-9]*) refuse "--if-still-stopped needs a status byte count" ;; esac
+      STOPPED_STATUS_SIZE=$1
       shift
       ;;
     --override-runtime-refusal)
@@ -293,6 +301,10 @@ done
 if [ "$EXPECTED_RECORD_SET" = 1 ]; then
   [ "$FINISHED" = 1 ] && [ "${#IDS[@]}" -eq 1 ] \
     || refuse "--expected-record requires --finished with exactly one task id"
+fi
+
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  [ "$EXPECTED_RECORD_SET" = 1 ] || refuse "--if-still-stopped requires --expected-record"
 fi
 
 if [ -n "$MERGED_PR_URL" ]; then
@@ -646,6 +658,9 @@ for id in "${IDS[@]}"; do
       printf 'worker record %s changed or vanished\n' "$id" >&2
       exit 3
     fi
+    if [ -n "$STOPPED_STATUS_SIZE" ]; then
+      fm_busy_admit_stopped "$STATE/$id.meta" "$id" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" || exit $?
+    fi
   fi
   worktree=$(fm_meta_get "$STATE/$id.meta" worktree)
   endpoint=$(fm_backend_target_of_meta "$STATE/$id.meta")
@@ -673,11 +688,14 @@ for id in "${IDS[@]}"; do
     fm_lock_release "$expected_lock"
     EXPECTED_LOCK_HELD=0
   fi
+  [ -z "$STOPPED_STATUS_SIZE" ] || teardown_args+=(--if-still-stopped "$STOPPED_STATUS_SIZE")
   [ "$FINISHED" = 0 ] || teardown_args+=(--keep-commits)
   [ -z "$MERGED_PR_URL" ] || teardown_args+=(--merged-pr "$MERGED_PR_URL")
   "$SCRIPT_DIR/fm-teardown.sh" "${teardown_args[@]}" || teardown_rc=$?
   if [ "$teardown_rc" = 0 ]; then
     echo "note: $id retired; cleanup completed under the retirement recorded for $retired_by at $retired_at" >&2
+  elif [ "$teardown_rc" = 3 ] && [ -n "$STOPPED_STATUS_SIZE" ]; then
+    status=3
   elif [ "$teardown_rc" = "$RUNTIME_REFUSAL_EXIT" ]; then
     status=1
     echo "error: $id's runtime reported the endpoint still present and this retirement did not override that; nothing was retired - rerun with --override-runtime-refusal if you have verified no worker is still running behind it" >&2

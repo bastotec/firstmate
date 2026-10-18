@@ -191,7 +191,12 @@ mtime_of() {  # <path>
 }
 
 size_of() {  # <path>
-  wc -c < "$1" 2>/dev/null | tr -d ' ' || printf 0
+  local size
+  if size=$(wc -c 2>/dev/null < "$1"); then
+    printf '%s' "$size" | tr -d '[:space:]'
+  else
+    printf 0
+  fi
 }
 
 record_age() {  # <id>
@@ -360,14 +365,19 @@ decide_stopped() {
     esac
   fi
   if [ "$retire" = 1 ]; then
-    if cleanup "$id"; then
+    if cleanup "$id" "$stopped_status_size"; then
       STOPPED_ACTION=retired
       log "retired $id: its work is done, merged, superseded or abandoned"
       return 0
     fi
+    if [ ! -e "$STATE/$id.meta" ] && [ ! -L "$STATE/$id.meta" ] && [ -e "$STATE/$id.backlog-close" ]; then
+      STOPPED_ACTION=unhandled
+      DETAIL="its record is gone but its backlog close is still pending: $CLEANUP_WHY"
+      return 0
+    fi
     if [ "$CLEANUP_STALE" = 1 ]; then
       CLASS=unknown
-      DETAIL="worker record changed during scan"
+      DETAIL="worker record or activity changed during scan"
       return 0
     fi
     RAISED=0
@@ -411,6 +421,7 @@ decide_stopped() {
 cleanup() {
   local id=$1 out rc=0 args
   args=("$id" --keep-commits --expected-record "$record")
+  [ -z "${2:-}" ] || args+=(--if-still-stopped "$2")
   [ -z "$MERGED_PR_URL" ] || args+=(--merged-pr "$MERGED_PR_URL")
   CLEANUP_WHY=
   CLEANUP_STALE=0
@@ -426,6 +437,7 @@ cleanup() {
   if printf '%s' "$out" | grep -q "on the retired '"; then
     rc=0
     args=(--finished "$id" --expected-record "$record")
+    [ -z "${2:-}" ] || args+=(--if-still-stopped "$2")
     [ -z "$MERGED_PR_URL" ] || args+=(--merged-pr "$MERGED_PR_URL")
     out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-retire-endpoint.sh" "${args[@]}" </dev/null 2>&1) || rc=$?
     [ "$rc" -eq 0 ] && return 0
@@ -514,6 +526,7 @@ while IFS= read -r meta; do
       decide_stopped "$id"
       case "$STOPPED_ACTION" in
         retired|retried) action=$STOPPED_ACTION; NEW="$NEW $id" ;;
+        unhandled) action=unhandled ;;
         asked) if [ "$RAISED" = 1 ]; then action=asked; NEW="$NEW $id"; else action=unhandled; fi ;;
       esac
       ;;
