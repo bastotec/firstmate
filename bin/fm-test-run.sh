@@ -665,6 +665,8 @@ portable_serial_weight_hints() {
 # 39078511171 (2026-10-17).
 # fm-card and fm-control-stopped-relaunch completed successfully in run
 # 39157209916 (2026-10-18), serial shards 8 and 3; other scripts failed.
+# fm-lifecycle was measured in green serial shard 9 of run 39168927563
+# (2026-10-18); that run failed other checks.
 # The five tests/fm-watch-triage*.test.sh suites were one 694233 ms script
 # before run 37413095868; their hints start from each suite's share of that,
 # from the per-case output timestamps of run 37401433503's serial shard 1.
@@ -719,6 +721,7 @@ tests/fm-harness-adapter-references.test.sh 84
 tests/fm-harness-precedence.test.sh 5239
 tests/fm-home-summary-refresh.test.sh 37203
 tests/fm-inactive-reconcile.test.sh 49894
+tests/fm-lifecycle.test.sh 2696
 tests/fm-line-cap-lib.test.sh 111
 tests/fm-lint-workflows.test.sh 1203
 tests/fm-live-gate.test.sh 2469

@@ -65,6 +65,7 @@ The `tests/fm-backend-identity.test.sh` hint is its completed 160 ms measurement
 The added `tests/fm-parked-run-watch.test.sh` hint is its completed 6057 ms measurement from green serial shard 7 of run [38932286914](https://github.com/bastotec/firstmate/actions/runs/38932286914) on 2026-10-16, with three family-phase workers; that run failed other checks.
 The added `tests/fm-evidence-only-withdrawal.test.sh` hint is its completed 32254 ms measurement from green serial shard 7 of run [39078511171](https://github.com/bastotec/firstmate/actions/runs/39078511171) on 2026-10-17; all nine serial shards passed, although the run failed other checks.
 The added `tests/fm-card.test.sh` and `tests/fm-control-stopped-relaunch.test.sh` hints are their successful completed 169480 ms and 14329 ms measurements from serial shards 8 and 3 of run [39157209916](https://github.com/bastotec/firstmate/actions/runs/39157209916) on 2026-10-18; those shards failed other scripts.
+The added `tests/fm-lifecycle.test.sh` hint is its completed 2696 ms measurement from green serial shard 9 of run [39168927563](https://github.com/bastotec/firstmate/actions/runs/39168927563) on 2026-10-18; that run failed other checks.
 Taking the slowest of several CI runs rather than a single run keeps the balance honest on a slow runner.
 A script with no hint gets the conservative `PORTABLE_SERIAL_DEFAULT_WEIGHT_MS` default.
 Hints only affect balance: the coverage guard keeps the partition complete and disjoint whatever they say, so a stale hint costs a slower shard rather than lost coverage.

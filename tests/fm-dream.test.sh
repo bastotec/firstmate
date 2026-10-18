@@ -1001,7 +1001,7 @@ assert "Merge green mate PRs without waiting for a person (dispatch ordered to d
 assert "captain card %s" % card["key"] in s, s
 PY
   grep -q '^## Improve' "$d"/home/state/dream/digest-*.md || fail "the digest has no improve section"
-  [ "$(stat -f %Lp "$d"/home/state/dream/digest-*.md 2>/dev/null || stat -c %a "$d"/home/state/dream/digest-*.md)" = 600 ] \
+  python3 -c 'import os, stat, sys; sys.exit(stat.S_IMODE(os.stat(sys.argv[1]).st_mode) != 0o600)' "$d"/home/state/dream/digest-*.md \
     || fail "the digest is no longer private"
   [ ! -e "$d/home/state/dream/improve-actions.jsonl" ] || fail "an --only run recorded the night's actions"
   [ "$(wc -l < "$d/home/state/dream/improve.jsonl" | tr -d ' ')" = 1 ] || fail "an --only run wrote the night-over-night history"
