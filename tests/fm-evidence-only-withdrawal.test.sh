@@ -82,7 +82,7 @@ refuses() {
 test_release_retry() {
   local home show before
   home=$(make_home release)
-  prepare "$home"
+  FM_CAPTAIN_HOLD_NOW=2026-10-17T12:00:00Z prepare "$home"
   : > "$home/interrupt"
   refuses "$home" 'could not release' withdraw work --evidence-file "$home/evidence" --release
   assert_preserved "$home"
@@ -98,7 +98,7 @@ test_release_retry() {
   refuses "$home" 'withdrawal retry mismatch' withdraw work --evidence-file "$home/evidence" --park 'Wait for tooling'
   printf 'Different evidence\n' > "$home/different"
   refuses "$home" 'withdrawal retry mismatch' withdraw work --evidence-file "$home/different" --release
-  FM_CAPTAIN_HOLD_NOW=2030-01-01T00:00:00Z run_captain "$home" hold work --reason 'A new independent question' >/dev/null
+  FM_CAPTAIN_HOLD_NOW=2026-10-17T12:00:00Z run_captain "$home" hold work --reason 'A new independent question' >/dev/null
   cp "$home/state/cards/work.json" "$home/new-card.before"
   before=$(tasks_in "$home" show work --full)
   refuses "$home" 'withdrawal ownership mismatch' withdraw work --evidence-file "$home/evidence" --release
