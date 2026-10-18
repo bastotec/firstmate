@@ -198,7 +198,7 @@ quiet_one() {  # <id>
   [ $((NOW - changed)) -ge "$QUIET" ] || return 0
   noted=$(cat "$STATE/$id.quiet-noted" 2>/dev/null || true)
   [ "$noted" != "$changed" ] || return 0
-  if fm_wake_append check "parked-run:$id:quiet:$changed" \
+  if fm_wake_append check "worker-quiet:$id:$changed" \
       "check: worker $id has been busy for $(minutes $((NOW - changed))) minutes without reporting: ask it what it is working on and whether its task asked for it; anything the task did not ask for is time-boxed to 30 minutes"; then
     printf '%s\n' "$changed" > "$STATE/$id.quiet-noted"
   fi

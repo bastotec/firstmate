@@ -30,6 +30,18 @@ cat "$FM_HOME/crew/$1" 2>/dev/null || echo 'state: unknown · source: none · no
 SH
   cat > "$dir/bin/fm-teardown.sh" <<'SH'
 #!/usr/bin/env bash
+id=$1
+args=()
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --expected-record ]; then
+    shift
+    [ "$(cat "$FM_HOME/state/$id.meta")" = "$1" ] || exit 3
+  else
+    args+=("$1")
+  fi
+  shift
+done
+set -- "${args[@]}"
 printf '%s\n' "$1" >> "$FM_HOME/teardown-calls"
 printf '%s\n' "$*" >> "$FM_HOME/teardown-args"
 if [ -f "$FM_HOME/pending-close/$1" ]; then
@@ -55,7 +67,9 @@ SH
 #!/usr/bin/env bash
 printf '%s %s\n' "$1" "$2" >> "$FM_HOME/control-calls"
 if [ "$2" = relaunch ]; then
-  if [ "$#" -ne 4 ] || [ "$3" != --note ] || [ -z "$4" ]; then
+  if [ "$#" -ne 6 ] || [ "$3" != --expected-record ] || [ "$(cat "$FM_HOME/state/$1.meta")" != "$4" ]; then exit 3; fi
+  set -- "$1" "$2" "$5" "$6"
+  if [ "$3" != --note ] || [ -z "$4" ]; then
     echo 'REFUSED: relaunch requires a nonempty --note' >&2
     exit 1
   fi
@@ -112,6 +126,10 @@ SH
   cat > "$dir/bin/gh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_HOME/forge-calls"
+if [ -f "$FM_HOME/replace-on-forge" ]; then
+  id=$(cat "$FM_HOME/replace-on-forge")
+  cp "$FM_HOME/replacement/$id" "$FM_HOME/state/$id.meta"
+fi
 cat "$FM_HOME/pr-states/${3##*/}" 2>/dev/null || exit 1
 SH
   cat > "$dir/bin/glab" <<'SH'
@@ -184,6 +202,118 @@ assert_no_captain_call() {  # <dir> <context>
 
 wake_count() {  # <dir> <fixed-pattern>
   grep -cF -- "$2" "$1/home/state/.wake-queue" 2>/dev/null || true
+}
+
+test_unreadable_prs_are_handed_to_the_first_mate() {
+  local dir state
+  for state in missing empty unknown; do
+    dir=$(new_case "unreadable-pr-$state")
+    add_worker "$dir" stopped 'state: failed · source: run-step · run failed' 90000
+    printf -- '- stopped: Open work\n  state: in-flight\n' > "$dir/home/rows/stopped"
+    printf 'pr=https://github.com/owner/repo/pull/71\n' >> "$dir/home/state/stopped.meta"
+    case "$state" in
+      empty) : > "$dir/home/pr-states/71" ;;
+      unknown) printf 'UNKNOWN\n' > "$dir/home/pr-states/71" ;;
+    esac
+    sweep "$dir" scan --now || fail "unreadable PR scan failed"
+    assert_equals 'failed asked' "$(summary_of "$dir" stopped)" "an unreadable PR needs the first mate's decision"
+    assert_absent "$dir/home/control-calls" "an unreadable PR must never authorize a retry"
+    assert_absent "$dir/home/teardown-calls" "an unreadable PR must never authorize retirement"
+    assert_contains "$(cat "$dir/home/state/.wake-queue")" 'decide yourself whether to retire or retry stopped' "the first mate was not asked"
+    assert_no_captain_call "$dir" "an unreadable PR"
+  done
+  pass "fm-idle-sweep: unreadable PR states go to the first mate, never retry"
+}
+
+test_replacements_during_forge_reads_are_left_for_a_fresh_scan() {
+  local dir verdict outcome line
+  for verdict in failed dead finished; do
+    for outcome in OPEN MERGED; do
+      dir=$(new_case "replace-$verdict-$outcome")
+      case "$verdict" in
+        failed) line='state: failed · source: run-step · run failed' ;;
+        dead) line='state: unknown · source: none · backend target gone' ;;
+        finished) line='state: done · source: run-step · run passed' ;;
+      esac
+      add_worker "$dir" stopped "$line" 90000
+      printf 'pr=https://github.com/owner/repo/pull/71\nspawn_gen=old\n' >> "$dir/home/state/stopped.meta"
+      printf '%s\n' "$outcome" > "$dir/home/pr-states/71"
+      fm_write_meta "$dir/home/replacement/stopped" "kind=ship" "spawn_gen=new" "worktree=$dir/new-worker"
+      printf 'stopped\n' > "$dir/home/replace-on-forge"
+      cp "$ROOT/bin/fm-control.sh" "$ROOT/bin/fm-teardown.sh" "$dir/bin/"
+      sweep "$dir" scan --now || fail "replacement scan failed"
+      if [ "$verdict-$outcome" = finished-OPEN ]; then
+        assert_equals 'awaiting-merge none' "$(summary_of "$dir" stopped)" "an open PR should still wait for merge"
+      else
+        assert_equals 'unknown none' "$(summary_of "$dir" stopped)" "a replacement must wait for a fresh scan"
+      fi
+      cmp -s "$dir/home/replacement/stopped" "$dir/home/state/stopped.meta" || fail "a replacement was changed"
+      assert_absent "$dir/home/state/idle-sweep/stopped.raised" "a stale decision must not be suppressed"
+      assert_absent "$dir/home/state/idle-sweep/stopped.retried" "a replacement must not count as a retry"
+      [ ! -s "$dir/home/state/.wake-queue" ] || fail "a replacement got a stale decision wake"
+      assert_no_captain_call "$dir" "a replacement"
+    done
+  done
+  pass "fm-idle-sweep: lifecycle owners refuse stale retry and retirement snapshots"
+}
+
+test_retired_backend_cleanup_preserves_the_expected_record_guard() {
+  local dir expected rc mode
+  for mode in stale matching replaced-at-teardown; do
+    dir=$(new_case "retire-guard-$mode")
+    cp "$ROOT/bin/fm-retire-endpoint.sh" "$dir/bin/"
+    fm_write_meta "$dir/home/state/stopped.meta" "kind=scout" "backend=herdr" "window=fixture:stopped" "spawn_gen=old"
+    expected=$(cat "$dir/home/state/stopped.meta")
+    fm_write_meta "$dir/home/replacement/stopped" "kind=scout" "backend=herdr" "window=fixture:stopped" "spawn_gen=new"
+    if [ "$mode" = matching ]; then
+      rm "$dir/home/replacement/stopped"
+    elif [ "$mode" = stale ]; then
+      cp "$dir/home/replacement/stopped" "$dir/home/state/stopped.meta"
+    elif [ "$mode" = replaced-at-teardown ]; then
+      cat > "$dir/bin/fm-teardown.sh" <<'SH'
+#!/usr/bin/env bash
+cp "$FM_HOME/replacement/$1" "$FM_HOME/state/$1.meta"
+exec "$REAL_TEARDOWN" "$@"
+SH
+    fi
+    rc=0
+    REAL_TEARDOWN="$ROOT/bin/fm-teardown.sh" FM_HOME="$dir/home" PATH="$dir/bin:$PATH" \
+      "$dir/bin/fm-retire-endpoint.sh" --finished stopped --expected-record "$expected" > "$dir/retire.out" 2>&1 || rc=$?
+    if [ "$mode" = matching ]; then
+      assert_equals 0 "$rc" "matching retired records should still clean up: $(cat "$dir/retire.out")"
+      assert_absent "$dir/home/state/stopped.meta" "a matching record was not cleaned"
+    else
+      assert_not_equals 0 "$rc" "stale retirement evidence must be refused"
+      cmp -s "$dir/home/replacement/stopped" "$dir/home/state/stopped.meta" || fail "retirement changed a replacement"
+      assert_absent "$dir/home/state/stopped.backlog-close" "stale retirement must not close a replacement's task"
+      if [ "$mode" = stale ]; then
+        assert_equals 3 "$rc" "a changed snapshot should be distinguished from cleanup refusals"
+        assert_absent "$dir/home/state/endpoint-retirements.log" "a stale snapshot must not record a retirement assertion"
+      fi
+    fi
+    assert_absent "$dir/home/state/stopped.endpoint-retired" "retirement must release its temporary assertion"
+    assert_absent "$dir/home/state/.control-stopped.lock" "retirement must release its lifecycle lock"
+  done
+  pass "fm-idle-sweep: retired-backend cleanup revalidates snapshots and forwards them to teardown"
+}
+
+test_a_failed_main_home_delivery_is_retried_next_scan() {
+  local dir
+  dir=$(new_case failed-wake)
+  add_worker "$dir" stopped 'state: failed · source: run-step · run failed' 90000
+  printf 'REFUSED: recovery could not start\n' > "$dir/home/control-refuse/stopped"
+  mkdir "$dir/home/state/.wake-queue"
+  sweep "$dir" scan --now || fail "failed delivery scan failed"
+  assert_absent "$dir/home/state/idle-sweep/stopped.raised" "a failed wake must not suppress the next handoff"
+  rmdir "$dir/home/state/.wake-queue"
+  sweep "$dir" scan --now || fail "redelivery scan failed"
+  assert_equals 'failed asked' "$(summary_of "$dir" stopped)" "failed delivery was not retried"
+  assert_equals 1 "$(wake_count "$dir" 'decide yourself whether to retire or retry stopped')" "the handoff was not delivered once"
+  assert_present "$dir/home/state/idle-sweep/stopped.raised" "successful delivery must commit suppression"
+  sweep "$dir" scan --now || fail "suppressed scan failed"
+  assert_equals 'raised none' "$(summary_of "$dir" stopped)" "successful redelivery was not suppressed"
+  assert_equals 1 "$(wake_count "$dir" 'decide yourself whether to retire or retry stopped')" "successful handoff was repeated"
+  pass "fm-idle-sweep: failed main-home delivery remains eligible until a wake is queued"
 }
 
 test_a_stopped_worker_with_open_work_is_retried_once_without_a_card() {
@@ -1049,6 +1179,10 @@ test_watcher_runs_the_sweep_and_surfaces_its_decision() {
   pass "fm-idle-sweep: the watcher runs the sweep with no model turn and surfaces what it queues"
 }
 
+test_unreadable_prs_are_handed_to_the_first_mate
+test_replacements_during_forge_reads_are_left_for_a_fresh_scan
+test_retired_backend_cleanup_preserves_the_expected_record_guard
+test_a_failed_main_home_delivery_is_retried_next_scan
 test_a_stopped_worker_with_open_work_is_retried_once_without_a_card
 test_a_stopped_worker_whose_work_landed_or_ended_is_retired
 test_supersession_requires_a_decoded_body_marker

@@ -356,6 +356,8 @@ NOTE=
 NOTE_SET=0
 UNLESS_HELD_STOPPED=0
 REPLACE_LIVE=0
+EXPECTED_RECORD=
+EXPECTED_RECORD_SET=0
 control_want_value=
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
@@ -367,6 +369,7 @@ for control_arg in "$@"; do
       model) NEW_MODEL=$control_arg; MODEL_SET=1 ;;
       effort) NEW_EFFORT=$control_arg; EFFORT_SET=1 ;;
       note) NOTE=$control_arg; NOTE_SET=1 ;;
+      expected_record) EXPECTED_RECORD=$control_arg; EXPECTED_RECORD_SET=1 ;;
       note_file)
         [ -f "$control_arg" ] || die "--note-file '$control_arg' is not a readable file"
         NOTE=$(cat "$control_arg")
@@ -387,6 +390,7 @@ for control_arg in "$@"; do
     --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
     --note-file) control_want_value=note_file ;;
     --unless-held-stopped) UNLESS_HELD_STOPPED=1 ;;
+    --expected-record) control_want_value=expected_record ;;
     --replace-live) REPLACE_LIVE=1 ;;
     --note-file=*)
       [ -f "${control_arg#--note-file=}" ] || die "--note-file '${control_arg#--note-file=}' is not a readable file"
@@ -436,6 +440,11 @@ fm_lock_try_acquire "$CONTROL_LOCK" \
   || die "another lifecycle action is already running for task $ID"
 CONTROL_LOCK_HELD=1
 META="$STATE/$ID.meta"
+if [ "$EXPECTED_RECORD_SET" = 1 ] && { [ ! -f "$META" ] \
+  || ! current_record=$(cat "$META" 2>/dev/null) || [ "$current_record" != "$EXPECTED_RECORD" ]; }; then
+  printf 'worker record %s changed or vanished\n' "$ID" >&2
+  exit 3
+fi
 if [ ! -f "$META" ]; then
   case "$RAW_ID" in
     fm-*)

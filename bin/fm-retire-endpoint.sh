@@ -226,6 +226,8 @@ refuse() {
 IDS=()
 FINISHED=0
 MERGED_PR_URL=
+EXPECTED_RECORD=
+EXPECTED_RECORD_SET=0
 OVERRIDE_RUNTIME_REFUSAL=0
 ORPHAN=0
 LIST_ORPHANS=0
@@ -246,6 +248,12 @@ while [ "$#" -gt 0 ]; do
         refuse "--merged-pr requires a supported PR/MR URL"
       fi
       MERGED_PR_URL=$1
+      shift
+      ;;
+    --expected-record)
+      [ "$#" -gt 0 ] || refuse "--expected-record needs metadata"
+      EXPECTED_RECORD=$1
+      EXPECTED_RECORD_SET=1
       shift
       ;;
     --override-runtime-refusal)
@@ -277,6 +285,11 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ "$EXPECTED_RECORD_SET" = 1 ]; then
+  [ "$FINISHED" = 1 ] && [ "${#IDS[@]}" -eq 1 ] \
+    || refuse "--expected-record requires --finished with exactly one task id"
+fi
 
 if [ -n "$MERGED_PR_URL" ]; then
   [ "$FINISHED" = 1 ] && [ "${#IDS[@]}" -eq 1 ] \
@@ -323,7 +336,12 @@ for id in "${IDS[@]}"; do
 done
 
 NOTE=
+EXPECTED_LOCK_HELD=0
 cleanup_note() {
+  if [ "$EXPECTED_LOCK_HELD" = 1 ]; then
+    fm_lock_release "$expected_lock" || true
+    EXPECTED_LOCK_HELD=0
+  fi
   [ -z "$NOTE" ] || rm -f "$NOTE"
   NOTE=
 }
@@ -616,9 +634,19 @@ for id in "${IDS[@]}"; do
     echo "error: $id's task record could not be read before retirement; nothing was retired" >&2
     continue
   fi
+  if [ "$EXPECTED_RECORD_SET" = 1 ]; then
+    expected_lock="$STATE/.control-$id.lock"
+    fm_lock_try_acquire "$expected_lock" || refuse "another lifecycle action is already running for task $id"
+    EXPECTED_LOCK_HELD=1
+    if ! retirement_record=$(cat "$STATE/$id.meta" 2>/dev/null) || [ "$retirement_record" != "$EXPECTED_RECORD" ]; then
+      printf 'worker record %s changed or vanished\n' "$id" >&2
+      exit 3
+    fi
+  fi
   worktree=$(fm_meta_get "$STATE/$id.meta" worktree)
   endpoint=$(fm_backend_target_of_meta "$STATE/$id.meta")
   if ! record_retirement_assertion "$id"; then
+    cleanup_note
     status=1
     echo "error: the assertion that $id should be retired could not be recorded in $RETIREMENT_LOG; nothing was retired - a record is never removed without a durable author" >&2
     continue
@@ -636,6 +664,11 @@ for id in "${IDS[@]}"; do
   fi
   teardown_rc=0
   teardown_args=("$id")
+  if [ "$EXPECTED_RECORD_SET" = 1 ]; then
+    teardown_args+=(--expected-record "$EXPECTED_RECORD")
+    fm_lock_release "$expected_lock"
+    EXPECTED_LOCK_HELD=0
+  fi
   [ "$FINISHED" = 0 ] || teardown_args+=(--keep-commits)
   [ -z "$MERGED_PR_URL" ] || teardown_args+=(--merged-pr "$MERGED_PR_URL")
   "$SCRIPT_DIR/fm-teardown.sh" "${teardown_args[@]}" || teardown_rc=$?

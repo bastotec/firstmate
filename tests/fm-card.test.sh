@@ -626,6 +626,7 @@ test_clear_then_restore_round_trips() {
   FM_CAPTAIN_HOLD_NOW=2026-10-01T00:00:00Z hold_it "$home" old-one "Old call" 'waiting on "quotes" and é'
   card="$home/card.json"
   good_card "$card"
+  jq '.urgent={because:"production-down"}' "$card" > "$card.tmp" && mv "$card.tmp" "$card"
   run_captain "$home" hold old-one --reason 'waiting on "quotes" and é' --card-file "$card" >/dev/null || fail "card hold failed"
   run_card "$home" clear old-one --why "idle 6 days, no activity" >/dev/null || fail "clear failed"
   assert_absent "$home/state/cards/old-one.json" "card gone"
@@ -636,6 +637,7 @@ test_clear_then_restore_round_trips() {
   run_card "$home" restore old-one >/dev/null || fail "restore failed"
   run_captain "$home" open old-one || fail "task is not held again"
   assert_equals false "$(jq -r .draft "$home/state/cards/old-one.json")" "full card back"
+  assert_equals production-down "$(jq -r .urgent.because "$home/state/cards/old-one.json")" "restoring a full card preserves urgency"
   assert_equals restored "$(tail -n 1 "$home/state/cards-cleared.log" | jq -r .event)" "restore logged"
   pass "fm-card: clear then restore brings back the hold, reason and card"
 }
@@ -681,6 +683,26 @@ test_restore_preflights_saved_card_before_reopening() {
   assert_absent "$card" "preflight refusal creates no card"
   assert_equals cleared "$(tail -n 1 "$home/state/cards-cleared.log" | jq -r .event)" "the clear remains recoverable"
   pass "fm-card: restore validates saved cards before reopening a task"
+}
+
+test_restore_rejects_invalid_saved_urgency_before_reopening() {
+  local home invalid before rc
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  for invalid in 'null' '"money"' '{}' '{"because":"internal-worry"}'; do
+    home=$(make_home "restore-urgency-$RANDOM")
+    hold_it "$home" old-one "Original call" 'Review the old repair'
+    good_card "$home/input.json"
+    run_card "$home" write old-one --file "$home/input.json" >/dev/null || fail "card write failed"
+    run_card "$home" clear old-one --why idle >/dev/null || fail "clear failed"
+    jq -c --argjson urgent "$invalid" '.card.urgent=$urgent' "$home/state/cards-cleared.log" > "$home/log.tmp" && mv "$home/log.tmp" "$home/state/cards-cleared.log"
+    before=$(tasks_in "$home" show old-one --full)
+    rc=0
+    run_card "$home" restore old-one >/dev/null 2>&1 || rc=$?
+    assert_not_equals 0 "$rc" "invalid saved urgency must refuse restoration"
+    assert_equals "$before" "$(tasks_in "$home" show old-one --full)" "invalid urgency must leave the closed task alone"
+    assert_absent "$home/state/cards/old-one.json" "invalid urgency must not publish a card"
+  done
+  pass "fm-card: restore validates saved urgency before reopening"
 }
 
 test_clear_removes_an_orphan_card_without_touching_the_backlog() {
@@ -1156,6 +1178,7 @@ test_stale_uses_the_fixed_three_day_cutoff
 test_clear_then_restore_round_trips
 test_restore_rewrites_legacy_jargon_as_a_plain_draft
 test_restore_preflights_saved_card_before_reopening
+test_restore_rejects_invalid_saved_urgency_before_reopening
 test_clear_removes_an_orphan_card_without_touching_the_backlog
 test_clear_refuses_a_task_that_is_not_a_captain_call
 test_restore_refuses_when_held_again

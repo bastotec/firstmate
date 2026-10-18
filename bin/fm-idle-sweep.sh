@@ -300,12 +300,15 @@ raise() {
   esac
   fm_parent_channel_report "$FM_HOME" "$STATE" "needs-decision [key=idle-$id]: $(fm_parent_channel_clean_note "$line")" || rc=$?
   case "$rc" in
-    0) ;;
-    1) ;;  # the first mate's own home: the end-of-scan wake below carries it
+    0)
+      mkdir -p "$RAISED_DIR" 2>/dev/null || true
+      fingerprint "$id" "$ledger_id" > "$RAISED_DIR/$id.raised" 2>/dev/null || true
+      ;;
+    1)
+      PENDING_RAISED="$PENDING_RAISED$(jq -cn --arg id "$id" --arg fingerprint "$(fingerprint "$id" "$ledger_id")" '{id:$id,fingerprint:$fingerprint}')"$'\n'
+      ;;
     *) log "could not hand $id to the first mate"; return 0 ;;
   esac
-  mkdir -p "$RAISED_DIR" 2>/dev/null || true
-  fingerprint "$id" "$ledger_id" > "$RAISED_DIR/$id.raised" 2>/dev/null || true
   log "asked the first mate about $id ($class): $why"
   RAISED=1
 }
@@ -332,12 +335,24 @@ decide_stopped() {
     case "$pr_state" in
       merged) retire=1; MERGED_PR_URL=$pr ;;
       closed) retire=1 ;;
+      open) ;;
+      *)
+        RAISED=0
+        raise "$id" "$CLASS" "the PR state could not be read: $pr"
+        STOPPED_ACTION=asked
+        return 0
+        ;;
     esac
   fi
   if [ "$retire" = 1 ]; then
     if cleanup "$id"; then
       STOPPED_ACTION=retired
       log "retired $id: its work is done, merged, superseded or abandoned"
+      return 0
+    fi
+    if [ "$CLEANUP_STALE" = 1 ]; then
+      CLASS=unknown
+      DETAIL="worker record changed during scan"
       return 0
     fi
     RAISED=0
@@ -356,13 +371,18 @@ decide_stopped() {
     STOPPED_ACTION=asked
     return 0
   fi
-  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" relaunch \
+  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" relaunch --expected-record "$record" \
     --note 'Restarted by the idle sweep: your task is still open and unfinished. Read your inbox in order and continue it.' </dev/null 2>&1) || rc=$?
   if [ "$rc" -eq 0 ]; then
     mkdir -p "$RAISED_DIR" 2>/dev/null || true
     printf '%s %s\n' "$(fingerprint "$id")" "$((count + 1))" > "$RAISED_DIR/$id.retried" 2>/dev/null || true
     STOPPED_ACTION=retried
     log "retried $id: its work is still wanted and unfinished"
+    return 0
+  fi
+  if [ "$rc" -eq 3 ] || [ "$(cat "$STATE/$id.meta" 2>/dev/null)" != "$record" ]; then
+    CLASS=unknown
+    DETAIL="worker record changed during scan"
     return 0
   fi
   RAISED=0
@@ -374,19 +394,30 @@ decide_stopped() {
 # CLEANUP_WHY holds the refusal.
 cleanup() {
   local id=$1 out rc=0 args
-  args=("$id" --keep-commits)
+  args=("$id" --keep-commits --expected-record "$record")
   [ -z "$MERGED_PR_URL" ] || args+=(--merged-pr "$MERGED_PR_URL")
   CLEANUP_WHY=
+  CLEANUP_STALE=0
   # --keep-commits: leftover local commits after a merged PR are saved on a
   # kept/ branch rather than raised (housekeeping is never a captain call).
   out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-teardown.sh" "${args[@]}" </dev/null 2>&1) || rc=$?
   [ "$rc" -eq 0 ] && return 0
+  if [ "$rc" -eq 3 ] || [ "$(cat "$STATE/$id.meta" 2>/dev/null)" != "$record" ]; then
+    CLEANUP_STALE=1
+    CLEANUP_WHY="worker record changed during scan"
+    return 1
+  fi
   if printf '%s' "$out" | grep -q "on the retired '"; then
     rc=0
-    args=(--finished "$id")
+    args=(--finished "$id" --expected-record "$record")
     [ -z "$MERGED_PR_URL" ] || args+=(--merged-pr "$MERGED_PR_URL")
     out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-retire-endpoint.sh" "${args[@]}" </dev/null 2>&1) || rc=$?
     [ "$rc" -eq 0 ] && return 0
+    if [ "$rc" -eq 3 ] || [ "$(cat "$STATE/$id.meta" 2>/dev/null)" != "$record" ]; then
+      CLEANUP_STALE=1
+      CLEANUP_WHY="worker record changed during scan"
+      return 1
+    fi
   fi
   CLEANUP_WHY=$(printf '%s\n' "$out" | grep -m1 -E '^(REFUSED|error|refus)' || true)
   [ -n "$CLEANUP_WHY" ] || CLEANUP_WHY=$out
@@ -416,6 +447,7 @@ touch "$STATE/.last-idle-sweep"
 
 RAISED=0
 NEW=
+PENDING_RAISED=
 ROWS=
 add_row() {  # <id> <class> <detail> <action>
   ROWS="$ROWS$(jq -cn --arg id "$1" --arg class "$2" --argjson age "$AGE" \
@@ -611,8 +643,15 @@ if [ -n "$NEW" ]; then
         (ids("retried") | select(. != "") | "retried " + .),
         (ids("asked") | select(. != "") | "decide yourself whether to retire or retry " + .) ] | join("; ")' 2>/dev/null) || fyi=
     [ -n "$fyi" ] || fyi="settled:$NEW"
-    fm_wake_append check "idle-sweep:$NOW" "check: idle sweep: $fyi (never send the captain a card for these)" \
-      || log "could not queue the idle sweep wake for:$NEW"
+    if fm_wake_append check "idle-sweep:$NOW" "check: idle sweep: $fyi (never send the captain a card for these)"; then
+      mkdir -p "$RAISED_DIR" 2>/dev/null || true
+      while IFS=$'\t' read -r raised_id raised_fingerprint; do
+        [ -n "$raised_id" ] || continue
+        printf '%s\n' "$raised_fingerprint" > "$RAISED_DIR/$raised_id.raised" 2>/dev/null || true
+      done < <(printf '%s' "$PENDING_RAISED" | jq -rs '.[] | [.id,.fingerprint] | @tsv')
+    else
+      log "could not queue the idle sweep wake for:$NEW"
+    fi
   fi
 fi
 exit 0

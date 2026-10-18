@@ -471,7 +471,7 @@ cmd_restore() {
   card=$(printf '%s' "$line" | jq -c .card)
   if [ "$card" != null ] && [ "$(printf '%s' "$card" | jq -r .draft)" = false ]; then
     input=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-card-restore.XXXXXX") || die "cannot stage the card"
-    printf '%s' "$card" | jq '{project, title, situation, options, recommended}' > "$input"
+    printf '%s' "$card" | jq '{project, title, situation, options, recommended} + (if has("urgent") then {urgent} else {} end)' > "$input"
     err=$(card_error "$input" "$id")
     if [ -n "$err" ]; then
       rm -f -- "$input"
