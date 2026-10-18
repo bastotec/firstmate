@@ -305,7 +305,7 @@ test_replacements_during_forge_reads_are_left_for_a_fresh_scan() {
 
 test_recovered_workers_are_not_retried_with_unchanged_metadata() {
   local dir recovery before target
-  for recovery in working parked done unknown busy newer-status during-refresh still-blocked still-failed still-paused; do
+  for recovery in working parked 'done' unknown busy newer-status during-refresh still-blocked still-failed still-paused; do
     dir=$(new_case "recovered-$recovery")
     add_worker "$dir" stopped 'state: blocked · source: status-log · waiting for an unblock' 90000
     fm_git_init_commit "$dir/pool/1/firstmate"
