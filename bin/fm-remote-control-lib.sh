@@ -18,6 +18,10 @@
 # host over bin/fm-on.sh, and a relaunch rewrites this home's binding from the
 # host's route afterwards. recover-missing launches a gone endpoint again
 # (fm_remote_recover_missing). It reads fm-control.sh's parsed globals.
+# Relaunch without a note keeps the legacy four-argument host call. Either
+# --note or --note-file adds --note <text>; if that call returns usage exit 2,
+# retry once without the note and warn that it could not be carried. Other
+# failures do not trigger this compatibility retry.
 
 # fm_remote_route_parse <route-output>: validate one host route. Sets
 # FM_REMOTE_ROUTE_BACKEND, _TARGET, _HARNESS, _MODEL, _EFFORT, _STREAM_HUB,
@@ -175,6 +179,7 @@ fm_remote_control_run() {
   [ -n "$effort" ] || effort=default
   [ -n "$harness" ] || { echo "error: task $ID has no recorded harness; pass --harness" >&2; return 1; }
   args=("$ID" "$harness" "$model" "$effort")
+  [ "$NOTE_SET" != 1 ] || args+=(--note "$NOTE")
   # shellcheck source=bin/fm-remote-readiness-lib.sh
   . "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
   rc=0
@@ -190,6 +195,11 @@ fm_remote_control_run() {
   fi
   rc=0
   out=$("$SCRIPT_DIR/fm-on.sh" "$ID" fm-remote-secondmate-control.sh relaunch "${args[@]}" < /dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 2 ] && [ "${#args[@]}" -eq 6 ]; then
+    echo "warning: remote secondmate $ID on $host rejected note forwarding; the replayed note could not be carried, retrying relaunch without it" >&2
+    rc=0
+    out=$("$SCRIPT_DIR/fm-on.sh" "$ID" fm-remote-secondmate-control.sh relaunch "${args[@]:0:4}" < /dev/null 2>&1) || rc=$?
+  fi
   if [ "$rc" -ne 0 ]; then
     [ -z "$out" ] || printf '%s\n' "$out" >&2
     [ "$rc" -ne 255 ] || echo "error: remote secondmate $ID on $host is unreachable or the relaunch outcome is unknown; reconcile with bin/fm-control.sh $ID relaunch once the host answers" >&2

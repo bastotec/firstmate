@@ -390,8 +390,34 @@ test_every_turn_carries_the_captains_recorded_rules() {
   pass "fm-captain-lane: every conversation turn carries the captain's recorded rules"
 }
 
+# A lane parked in its longest wait (an unwritable turn journal) still stops
+# within a second of TERM, so the host stopping it is never held up.
+test_term_ends_a_waiting_lane_at_once() {
+  local lane_pid i
+  setup
+  : > "$DIR/state/mate.captain-lane.answered"
+  chmod 444 "$DIR/state/mate.captain-lane.answered"
+  FM_HOME="$DIR/home" XDG_STATE_HOME="$DIR/xdg" FAKE_TURNS="$DIR/turns" \
+    "$LANE" --state "$DIR/state" --id mate --deck "$DIR/deck" 2>>"$DIR/lane.err" &
+  lane_pid=$!
+  wait_until 50 grep -q 'taking no captain turns' "$DIR/lane.err" || fail "the lane never reached its journal wait"
+  sleep 0.5
+  kill -TERM "$lane_pid"
+  i=0
+  while [ "$i" -lt 15 ] && kill -0 "$lane_pid" 2>/dev/null; do sleep 0.1; i=$((i + 1)); done
+  if kill -0 "$lane_pid" 2>/dev/null; then
+    kill -KILL "$lane_pid" 2>/dev/null
+    wait "$lane_pid" 2>/dev/null
+    fail "a waiting lane was still running 1.5s after TERM"
+  fi
+  wait "$lane_pid" 2>/dev/null
+  chmod 644 "$DIR/state/mate.captain-lane.answered"
+  pass "fm-captain-lane: TERM ends a waiting lane at once"
+}
+
 test_every_turn_carries_the_captains_recorded_rules
 test_unacknowledged_answer_is_never_repeated
+test_term_ends_a_waiting_lane_at_once
 test_relaunched_lane_resolves_the_open_blocker
 test_remote_lane_reports_through_its_parent_channel
 test_failing_conversation_is_reported_and_cleared

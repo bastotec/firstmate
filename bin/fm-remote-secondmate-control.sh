@@ -3,10 +3,11 @@
 #
 # Usage:
 #   fm-remote-secondmate-control.sh launch <id> <harness> <model|-> <effort|-> stream [traceparent]
-#   fm-remote-secondmate-control.sh relaunch <id> <harness> <model|default|-> <effort|default|->
+#   fm-remote-secondmate-control.sh relaunch <id> <harness> <model|default|-> <effort|default|-> [--note <text>]
 #   fm-remote-secondmate-control.sh control <id> <interrupt|exit>
 #   fm-remote-secondmate-control.sh model <id> <route>
 #   fm-remote-secondmate-control.sh state <id>
+#   fm-remote-secondmate-control.sh relaunch-journal <id>
 #   fm-remote-secondmate-control.sh route <id>
 #   fm-remote-secondmate-control.sh send <id> <message> [fire-and-forget]
 #   fm-remote-secondmate-control.sh send-stream <conversation|monologue> <id> <message> [fire-and-forget]
@@ -26,6 +27,11 @@
 #
 # relaunch and control run the ordinary control plane's relaunch, interrupt or
 # exit here. Both print what the plane printed; the parent re-reads route.
+# relaunch stages an optional --note in a temporary file for fm-control's
+# --note-file, so note text beginning with -- remains valid.
+# relaunch-journal is read-only: it prints this mate's parent-route relaunch
+# journal plus note_base64 containing the recorded note's bytes (empty when no
+# note was recorded). A missing or unreadable journal or note fails the read.
 # fm-spawn/fm-send/fm-teardown keep owning the local endpoint mechanics.
 # bin/fm-remote-doctor.sh owns that host's readiness for stream.
 # docs/remote-secondmates.md owns why.
@@ -432,9 +438,9 @@ cmd_launch() {
 # explicitly clears an absent parent pin; `-` remains its compatibility spelling.
 cmd_relaunch() {
   LAUNCH_STARTED=$(date +%s)
-  local id=$1 harness=$2 model=$3 effort=$4 old old_backend old_target current recorded outside pid token out rc
+  local id=$1 harness=$2 model=$3 effort=$4 old old_backend old_target current recorded outside pid token out rc note_file
   local -a control_args
-  [ "$#" -eq 4 ] || usage
+  [ "$#" -eq 4 ] || { [ "$#" -eq 6 ] && [ "$5" = --note ]; } || usage
 
   validate_id "$id"
   validate_home "$id"
@@ -479,11 +485,19 @@ EOF
   # owns both convergence legs, so the host-local spawn must not re-sync or
   # re-inherit against this host's own Firstmate copy.
   rc=0
-  out=$(FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
-    FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
-    FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_SKIP_SECONDMATE_INHERIT=1 \
-    FM_SKIP_SECONDMATE_SYNC=1 \
-    "$SCRIPT_DIR/fm-control.sh" "${control_args[@]}") || rc=$?
+  out=$(
+    if [ "$#" -eq 6 ]; then
+      note_file=$(mktemp "$CONTROL_STATE/.$id.relaunch-note.XXXXXX") || exit 1
+      trap 'rm -f "$note_file"' EXIT
+      printf '%s\n' "$6" > "$note_file" || exit 1
+      control_args+=(--note-file "$note_file")
+    fi
+    FM_HOME="$FM_ROOT" FM_ROOT_OVERRIDE="$FM_ROOT" \
+      FM_STATE_OVERRIDE="$CONTROL_STATE" FM_DATA_OVERRIDE="$CONTROL_DATA" \
+      FM_CONFIG_OVERRIDE="$TARGET_HOME/config" FM_SKIP_SECONDMATE_INHERIT=1 \
+      FM_SKIP_SECONDMATE_SYNC=1 \
+      "$SCRIPT_DIR/fm-control.sh" "${control_args[@]}"
+  ) || rc=$?
   if [ "$rc" -ne 0 ]; then
     [ -z "$out" ] || printf '%s\n' "$out"
     return "$rc"
@@ -697,10 +711,24 @@ cmd_retire() {
 
 case "${1:-}" in
   launch) shift; [ "$#" -ge 5 ] && [ "$#" -le 6 ] || usage; cmd_launch "$@" ;;
-  relaunch) shift; [ "$#" -eq 4 ] || usage; cmd_relaunch "$@" ;;
+  relaunch) shift; [ "$#" -eq 4 ] || [ "$#" -eq 6 ] || usage; cmd_relaunch "$@" ;;
   control) shift; [ "$#" -eq 2 ] || usage; cmd_control "$@" ;;
   model) shift; [ "$#" -eq 2 ] || usage; cmd_model "$@" ;;
   state) shift; [ "$#" -eq 1 ] || usage; validate_id "$1"; validate_home "$1"; state_value "$1" ;;
+  relaunch-journal)
+    shift; [ "$#" -eq 1 ] || usage; validate_id "$1"; validate_home "$1"
+    python3 - "$CONTROL_STATE/$1.control-relaunch" <<'PYTHON'
+import base64
+import pathlib
+import sys
+
+journal = pathlib.Path(sys.argv[1]).read_text()
+fields = dict(line.split("=", 1) for line in journal.splitlines() if "=" in line)
+note = pathlib.Path(fields["note_file"]).read_bytes() if "note_file" in fields else b""
+print(journal, end="" if journal.endswith("\n") else "\n")
+print("note_base64=" + base64.b64encode(note).decode())
+PYTHON
+    ;;
   route) shift; [ "$#" -eq 1 ] || usage; cmd_route "$1" ;;
   send) shift; [ "$#" -ge 2 ] && [ "$#" -le 3 ] || usage; cmd_send "$@" ;;
   send-stream)
