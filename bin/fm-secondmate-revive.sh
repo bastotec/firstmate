@@ -265,14 +265,25 @@ revive_one() {  # <meta> <id>
 # each later closed by "resolved [key=...]". While such a key is open this scan
 # first tries the safe fix once per episode, a `bin/fm-control.sh <id> relaunch`
 # that resumes the mate's recorded sessions, and records it in
-# state/<id>.lane-heal-<supervisor|conversation>, one record per lane. If the
-# key is still open FM_LANE_HEAL_GRACE_SECS (900) after that relaunch and its
-# error is a model-service failure (HTTP 5xx), it relaunches the mate once more
-# on the model most healthy second mates of this home run, when one differs;
-# if it is still open a grace later, or the relaunch fails, it queues one `check:` wake for
-# the first mate to raise with the captain, naming the mate, the lane, its error
-# and since when. A resolved key removes the record, and a recovery after an
-# escalation queues one "recovered" wake, so the blocker clears.
+# state/<id>.lane-heal-<supervisor|conversation>, one record per lane.
+# If the key is still open FM_LANE_HEAL_GRACE_SECS (900) after a successful
+# relaunch and its error reports HTTP 500-599 (raw or in a model-gateway error),
+# it tries one more relaunch on the most common concrete model among healthy
+# second mates of this home, excluding its current model and empty/default
+# values. A candidate must probe alive and have neither local lane-failure
+# markers nor open supervisor-failing/conversation-failing parent-channel keys.
+# This reuses a model already running in the home, never an unchosen default.
+# A successful switch records model_switched and switched_to in both existing
+# lane records and resets their relaunched timestamps for a shared grace.
+# Other errors, or no eligible alternate, escalate after the first grace;
+# a lane still failing after the switch grace escalates with the switch named.
+# A failed relaunch escalates immediately, except lifecycle contention defers
+# without consuming recovery and a deliberate-stop refusal leaves the mate down.
+# Escalation queues one `check:` wake per lane episode for the first mate to
+# raise with the captain, naming the mate, lane, error and since when.
+# Each completed relaunch is logged once, naming both failing lanes when shared.
+# A resolved key removes the record, and a recovery after an escalation queues
+# one "recovered" wake, so the blocker clears.
 HEAL_GRACE=${FM_LANE_HEAL_GRACE_SECS:-900}
 case "$HEAL_GRACE" in ''|*[!0-9]*) HEAL_GRACE=900 ;; esac
 HEAL_NOTE="Restarted automatically because one of your lanes kept failing. Read your inbox in order and pick up what was waiting."
@@ -306,10 +317,7 @@ EOF
   done
 }
 
-# Returns 1 only when the mate was stopped on purpose meanwhile, so the caller
-# leaves its other lane alone too.
-# The model most healthy second mates of this home run, other than <id>'s
-# own: healthy means a live record with no failing lane. Empty when none.
+# Select an alternate under the LANE HEALTH contract above; empty when none.
 lane_heal_alternate_model() {  # <id>
   local id=$1 current m other model open
   current=$(fm_meta_get "$STATE/$id.meta" model)
@@ -338,6 +346,8 @@ lane_heal_record_switch() {
   } > "$rec.tmp" && mv -f "$rec.tmp" "$rec"
 }
 
+# Returns 1 only when the mate was stopped on purpose meanwhile, so the caller
+# leaves its other lane alone too.
 lane_heal_one() {  # <id> <supervisor|conversation>
   local id=$1 tag=$2 rec="$STATE/$1.lane-heal-$2" key="$2-failing-$1" line=$3 now first relaunched escalated out rc lane episode relaunch_error switched alt sibling_rec
   now=$(date +%s)
@@ -392,10 +402,8 @@ lane_heal_one() {  # <id> <supervisor|conversation>
   elif [ -z "$relaunch_error" ] && [ $((now - relaunched)) -lt "$HEAL_GRACE" ]; then
     return 0
   fi
-  # Still failing after the relaunch, on a model-service error: the model the
-  # mate runs on is the likely cause, so try once more on a model a healthy
-  # mate of this home already runs before raising it (never a model nobody
-  # chose, so the mate is never silently moved to a weaker class).
+  # A model-service failure may be route-specific; try the bounded alternate
+  # from the LANE HEALTH contract before asking the first mate to intervene.
   switched=$(sed -n 's/^model_switched=//p' "$rec")
   if [ -z "$relaunch_error" ] && [ -z "$switched" ]; then
     case "$line" in

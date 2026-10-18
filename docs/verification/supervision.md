@@ -47,9 +47,11 @@ It also exercises deliberate-stop marker withdrawal under the lifecycle lock, re
 The liveness suite covers startup's held-stop and live-lock skips and the fresh liveness recheck after taking that lock.
 The control and remote stream suites cover secondmate exit protection, locked alive-admission refusal, and the primary stop marker after a lost remote exit response.
 The control suite also covers the lane-health live-replacement exception while preserving the deliberate-stop refusal.
-The revival suite covers per-lane recovery and escalation, a shared relaunch for two failing lanes, failed or deferred relaunches, and incremental status reads that preserve episode identity.
+The revival suite covers per-lane recovery and escalation, shared relaunches, failed or deferred relaunches, and incremental status reads that preserve episode identity.
+Its model-switch cases exercise raw and gateway HTTP 5xx classification, majority selection among eligible local or remote siblings, exclusion of unset/default and unhealthy candidates, shared switch grace and escalation context, and busy, deliberate-stop and failure outcomes.
+It also feeds real two-lane heal logs into the dream collector to check that shared relaunches count once; [`tests/fm-dream.test.sh`](../../tests/fm-dream.test.sh) separately covers mixed revival-log lines.
 The remote stream suite also covers refusal of explicit recovery-profile flags before contacting the host, restarts its real hub to make a remote mate's endpoint missing, proves recovery refuses while the forgotten agent still runs on the host, and proves the revive scan alone brings the mate back on a new endpoint once that agent is gone.
-The restart suite covers selection of the deciding failure instead of a preceding warning; [Deck portable regression](deck.md#portable-regression) owns queued-exit ordering coverage.
+The restart suite covers selection of the deciding failure instead of a preceding warning and preservation of a remote mate's recorded model over the home default; [Deck portable regression](deck.md#portable-regression) owns queued-exit ordering coverage.
 These are regression entry points, not a new dated live-harness result.
 
 ## Parked validation runs

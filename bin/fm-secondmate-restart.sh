@@ -59,12 +59,12 @@
 # clean reload. Once a relaunch is attempted, any failed or ambiguous result is
 # reported as unknown rather than attributing it to either incarnation.
 #
-# Placement changes the transport and nothing else. A local mate is restarted
-# with bin/fm-control.sh <id> relaunch; a remote mate is restarted by running THAT
-# SAME command on its host over bin/fm-on.sh, through the host-local
-# fm-remote-secondmate-control.sh relaunch verb. The restart decision, the
-# profile, the request text, the bound, the failure vocabulary, and this report
-# are all computed here in the primary and are identical for both.
+# A local mate uses bin/fm-control.sh <id> relaunch and its profile rules.
+# A remote mate uses fm-remote-secondmate-control.sh relaunch on its host over
+# bin/fm-on.sh, with the primary home's harness and effort. Its model comes
+# from its own model_choice, else recorded model, else the home default;
+# empty and literal default values count as unset. Both placements share
+# the persist gate, request text, wait bound, failure vocabulary and report.
 #
 # Nothing here forces, stashes, or discards anything. bin/fm-control.sh owns the
 # restart transaction, its checkpoint, its journal, and its rollback; a refusal
@@ -323,12 +323,10 @@ while [ "$i" -lt "${#IDS[@]}" ]; do
     # a home whose config/secondmate-harness is deliberately NOT inherited, so
     # the file on that host belongs to a different home and re-resolving there
     # would silently move the mate onto another runtime. Resolve the pin here and
-    # pass it explicitly, so both placements land on the same decision.
+    # pass the harness and effort explicitly rather than using host defaults.
     HARNESS[i]=$("$SCRIPT_DIR/fm-harness.sh" secondmate) || exit 1
     [ -n "${HARNESS[i]}" ] || HARNESS[i]=$FM_SECONDMATE_RESTART_HARNESS
-    # The mate's own model wins: an explicit choice (the model chip), else the
-    # model it was last launched on; this home's default applies only to a
-    # mate with neither, so a restart never moves a mate off its model.
+    # Apply the header's remote model precedence, not the host's home default.
     MODEL[i]=$(fm_meta_get "$STATE/$id.meta" model_choice 2>/dev/null || true)
     [ "${MODEL[i]}" != default ] || MODEL[i]=
     [ -n "${MODEL[i]}" ] || MODEL[i]=$(fm_meta_get "$STATE/$id.meta" model 2>/dev/null || true)
