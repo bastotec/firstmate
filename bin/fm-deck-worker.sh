@@ -169,6 +169,14 @@
 # tests/fm-deck-harness.test.sh pins cancellation, exec replacement, fork races,
 # and MCP exclusion in test_secondmate_stops_a_turn_inside_a_long_tool.
 #
+# HOST SHUTDOWN (cleanup on /quit, end of input, TERM, or HUP)
+# The host first sends TERM to its watcher arm and its captain lane, so they
+# stop while it stops its own Deck turn with the bounded stop above. It then
+# gives each of them at most FM_DECK_CHILD_STOP_SECS more to exit and, past
+# that, kills that child's whole process subtree, so a watcher check or a lane
+# turn can never hold the host up. The total stays well under the time
+# bin/fm-control.sh waits for a relaunched driver to stop.
+#
 # ENVIRONMENT
 #   FM_DECK_MAX_TURNS       model calls per turn (default 200; Deck's own 24 is
 #                           sized for a single question, not a coding task)
@@ -185,6 +193,9 @@
 #                           cancelling running tool and hook trees (default 1)
 #   FM_DECK_STOP_KILL_SECS  secondmate stop bound in seconds before killing
 #                           Deck itself if it has not exited (default 15)
+#   FM_DECK_CHILD_STOP_SECS  bound in seconds on waiting for the watcher arm
+#                           and the captain lane at host shutdown before
+#                           killing that child's process tree (default 5)
 #   FM_DECK_WATCH_FAILURE_LIMIT  consecutive failed watcher cycles after which a
 #                           secondmate host stops (default 5); fewer are
 #                           retried with a fresh watcher; empty, zero, or
@@ -275,6 +286,8 @@ WATCH_FAILURE_LIMIT=${FM_DECK_WATCH_FAILURE_LIMIT:-5}
 case "$WATCH_FAILURE_LIMIT" in ''|*[!0-9]*|0) WATCH_FAILURE_LIMIT=5 ;; esac
 WATCH_CONFIRM_SECS=${FM_DECK_WATCH_CONFIRM_SECS:-15}
 case "$WATCH_CONFIRM_SECS" in ''|*[!0-9]*|0) WATCH_CONFIRM_SECS=15 ;; esac
+CHILD_STOP=${FM_DECK_CHILD_STOP_SECS:-5}
+case "$CHILD_STOP" in ''|*[!0-9]*) CHILD_STOP=5 ;; esac
 # Match the stream backend's config-directory resolution, not the parent task's
 # --state directory: a secondmate host and its workers use its own home.
 if [ "${FM_DECK_MCP_CONFIG+set}" = set ]; then
@@ -377,14 +390,16 @@ lane_start() {
 }
 lane_stop() {
   [ -n "$LANE_PID" ] || return 0
-  kill -TERM "$LANE_PID" 2>/dev/null || true
-  wait "$LANE_PID" 2>/dev/null || true
+  fm_stop_child_bounded "$LANE_PID" "$CHILD_STOP" || true
   LANE_PID=''
   rm -f "$LANE_MARK"
 }
 
+# The header's HOST SHUTDOWN section owns this order and its bounds.
 cleanup() {
   deck_stream_end
+  [ -z "$WATCH_PID" ] || kill -TERM "$WATCH_PID" 2>/dev/null || true
+  [ -z "$LANE_PID" ] || kill -TERM "$LANE_PID" 2>/dev/null || true
   stop_turn
   # Deck may have saved this turn's session after the loop last looked; record
   # it before the turn's files go.
@@ -397,10 +412,7 @@ cleanup() {
     kill -TERM "$INPUT_PID" 2>/dev/null || true
     wait "$INPUT_PID" 2>/dev/null || true
   fi
-  if [ -n "$WATCH_PID" ]; then
-    kill -TERM "$WATCH_PID" 2>/dev/null || true
-    wait "$WATCH_PID" 2>/dev/null || true
-  fi
+  [ -z "$WATCH_PID" ] || fm_stop_child_bounded "$WATCH_PID" "$CHILD_STOP" || true
   lane_stop
   [ -z "$TTY_SETTINGS" ] || stty "$TTY_SETTINGS" 2>/dev/null || true
   rm -rf -- "$WORK"

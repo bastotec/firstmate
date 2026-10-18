@@ -25,7 +25,9 @@
 #     host for a remote route), so a hub that merely forgot a live endpoint is
 #     never duplicated;
 #   - anything else (ambiguous, unreadable, unknown) is left alone.
-# A down reading is acted on only after it has been seen on two scans at least
+# A dead reading that an interrupted relaunch explains is finished at once
+# instead (the INTERRUPTED RELAUNCH block below owns it).
+# Any other down reading is acted on only after it has been seen on two scans at least
 # FM_SECONDMATE_REVIVE_CONFIRM_SECS apart. fm-control refuses a second lifecycle
 # action while the mate's control lock is held; that refusal consumes no failure
 # and starts a fresh confirmation window. A fresh alive reading at automatic
@@ -58,6 +60,8 @@
 #   FM_HOME                            required
 #   FM_SECONDMATE_REVIVE_CONFIRM_SECS  down-reading confirmation window (45)
 #   FM_SECONDMATE_REVIVE_ATTEMPTS      failed revivals before escalation (2)
+#   FM_SECONDMATE_REVIVE_RESUME_SECS   how recent an interrupted relaunch must
+#                                      be to be finished instead (900)
 #
 # Exit: 0 after a scan; 2 on invalid use.
 set -u
@@ -171,6 +175,71 @@ probe() {  # <meta> <id>  -> prints alive|dead|missing|unknown
   esac
 }
 
+# INTERRUPTED RELAUNCH. Most dead readings follow a deliberate restart, not a
+# crash: bin/fm-control.sh relaunch delivered the exit, and the old host was
+# still shutting down when that relaunch gave up. Before treating a dead mate as
+# crashed, the scan reads that relaunch's journal (state/<id>.control-relaunch,
+# owned by bin/fm-control.sh). A journal written within
+# FM_SECONDMATE_REVIVE_RESUME_SECS whose phase shows the relaunch got as far as
+# stopping the old agent and never completed (anything but complete,
+# failed:checkpoint, and failed:noted, which were refused before the agent was
+# touched) is finished at once through the same guarded relaunch, with that
+# relaunch's recorded note and target model, and logged as completing an
+# interrupted restart. A lifecycle action still holding the mate's control lock
+# defers it without a failure. Only a completion that itself fails counts
+# against the revive budget, after which the ordinary confirmed revive path
+# takes over.
+RESUME_SECS=${FM_SECONDMATE_REVIVE_RESUME_SECS:-900}
+case "$RESUME_SECS" in ''|*[!0-9]*) RESUME_SECS=900 ;; esac
+RESUME_NOTE="Restarted to finish a relaunch that was interrupted while the previous session was shutting down. Read your inbox in order and answer anything the captain is waiting on."
+
+journal_get() {  # <id> <key>
+  sed -n "s/^$2=//p" "$STATE/$1.control-relaunch" 2>/dev/null | tail -1
+}
+
+interrupted_relaunch() {  # <id> <now>
+  local id=$1 now=$2 phase ts at
+  [ -f "$STATE/$id.control-relaunch" ] || return 1
+  phase=$(journal_get "$id" phase)
+  case "$phase" in ''|complete|failed:checkpoint|failed:noted) return 1 ;; esac
+  ts=$(journal_get "$id" ts)
+  at=$(python3 -c 'import calendar, sys, time; print(calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")))' "$ts" 2>/dev/null) || return 1
+  [ $((now - at)) -le "$RESUME_SECS" ]
+}
+
+finish_relaunch() {  # <id> <state> <now>
+  local id=$1 state=$2 now=$3 note note_file model rc=0 out failures reason
+  local -a args=(relaunch --unless-held-stopped)
+  note=$RESUME_NOTE
+  note_file=$(journal_get "$id" note_file)
+  if [ -n "$note_file" ] && [ -s "$note_file" ]; then
+    note=$(cat "$note_file")
+  fi
+  model=$(journal_get "$id" to_model)
+  case "$model" in ''|default) ;; *) args+=(--model "$model") ;; esac
+  log "completing the interrupted restart of $id (relaunch left at phase $(journal_get "$id" phase))"
+  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" "${args[@]}" --note "$note" < /dev/null 2>&1) || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    rm -f "$STATE/$id.revive"
+    log "completed the interrupted restart of $id: $(printf '%s\n' "$out" | grep -E '^relaunched ' | tail -1)"
+    return 0
+  fi
+  case "$out" in
+    *"is not down"*|*"was stopped on purpose"*)
+      rm -f "$STATE/$id.revive"
+      log "$id needs no restart now: $(one_line "$out")"
+      return 0
+      ;;
+    *"another lifecycle action is already running"*)
+      return 0
+      ;;
+  esac
+  failures=$((REC_FAILURES + 1))
+  reason=$(one_line "$out")
+  log "completing the interrupted restart of $id failed ($failures/$ATTEMPTS): $reason"
+  record_write "$id" "$state" "$now" "$failures" 0 "$reason"
+}
+
 revive_one() {  # <meta> <id>
   local meta=$1 id=$2 state now verb out rc failures reason
   state=$(probe "$meta" "$id")
@@ -207,6 +276,10 @@ revive_one() {  # <meta> <id>
     reason=$(sed -n 's/^last=//p' "$STATE/$id.revive" | tail -1)
     escalate "$id" "$(budget_spent "$reason")" \
       && record_write "$id" "$REC_STATE" "$REC_SEEN" "$REC_FAILURES" 1 "$reason"
+    return 0
+  fi
+  if [ "$state" = dead ] && [ "$REC_FAILURES" -eq 0 ] && interrupted_relaunch "$id" "$now"; then
+    finish_relaunch "$id" "$state" "$now"
     return 0
   fi
   if [ "$REC_STATE" != "$state" ] || [ "$REC_SEEN" -eq 0 ]; then

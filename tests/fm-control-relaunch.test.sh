@@ -218,6 +218,7 @@ run_control() {  # <case-dir> <args...>
     HOME="$dir/user-home" \
     FM_SPAWN_NO_GUARD=1 \
     FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT="${FM_TEST_EXIT_WAIT:-0.05}" FM_CONTROL_LAUNCH_WAIT=0.05 \
+    FM_CONTROL_RELAUNCH_STOP_WAIT="${FM_TEST_RELAUNCH_STOP_WAIT:-${FM_TEST_EXIT_WAIT:-0.05}}" \
     FM_REAL_GIT="${FM_REAL_GIT:-}" FM_FAKE_GIT_FAILURE="${FM_FAKE_GIT_FAILURE:-}" \
     FM_REAL_MV="${FM_REAL_MV:-}" FM_FAKE_COMPLETE_JOURNAL_MV_FAIL="${FM_FAKE_COMPLETE_JOURNAL_MV_FAIL:-}" \
     FM_FAKE_META_PUBLISH_MV_FAIL="${FM_FAKE_META_PUBLISH_MV_FAIL:-}" \
@@ -863,6 +864,72 @@ SH
   [ ! -e "$dir/prior-live-at-launch" ] || fail "replacement launched before the prior driver stopped"
   assert_grep 'encode launch-brief' "$dir/fake/literal" "replacement did not launch after both stop proofs"
   pass "fm-control relaunch: Deck control protocol precedes residual process cleanup"
+}
+
+# A restart whose old host takes longer than the exit wait to shut down (its
+# Deck turn finishes its stop slowly) is waited out on the relaunch stop bound
+# and replaced, instead of being abandoned stopped with no replacement.
+test_relaunch_waits_out_a_slow_host_shutdown_and_finishes() {
+  local dir out rc gen pid observer_pid
+  dir=$(new_case slow-host-stop rl-deck-slow)
+  add_ship_task "$dir" rl-deck-slow deck
+  cat > "$dir/fakebin/deck" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+import signal
+import sys
+import time
+
+def stop(*_):
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    time.sleep(3)
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, stop)
+print(json.dumps({"type": "run_started", "session": "slow-session"}), flush=True)
+open(os.environ["FM_DECK_TEST_READY"], "w").close()
+time.sleep(600)
+PY
+  chmod +x "$dir/fakebin/deck"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl-deck-slow)
+  FM_DECK_TEST_READY="$dir/ready" \
+    python3 -c 'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
+    "$ROOT/bin/fm-deck-worker.sh" --id rl-deck-slow --state "$dir/home/state" \
+    --gen "$gen" --deck "$dir/fakebin/deck" -- old-brief </dev/null > "$dir/driver.out" 2>&1 &
+  pid=$!
+  for _ in $(seq 100); do [ ! -e "$dir/ready" ] || break; /bin/sleep 0.05; done
+  [ -e "$dir/ready" ] || fail "slow Deck driver never started"
+  printf deck > "$dir/fake/command"
+  printf deck > "$dir/fake/becomes"
+  fake_push "$dir"
+  # The endpoint reads the agent gone only once the driver's group has exited.
+  (
+    while ps -ax -o pgid=,stat= | awk -v g="$pid" '$1 == g && $2 !~ /^Z/ { live=1 } END { exit !live }'; do
+      [ -d "$dir" ] || exit 1
+      /bin/sleep 0.1
+    done
+    curl -fsS -m 5 -H "Authorization: Bearer $FM_STREAM_TOKEN" \
+      -H 'Content-Type: application/json' -X POST \
+      --data-binary '{"foreground":[{"pid":"","name":"bash","argv0":"bash","args":"bash"}]}' \
+      "$FM_TEST_STREAM_URL/v1/test/endpoints/$(sed 's/.*://' "$dir/fake/target")" >/dev/null
+  ) &
+  observer_pid=$!
+  fm_test_track_helper_pid "$observer_pid"
+  out=$(FM_TEST_EXIT_WAIT=1 FM_TEST_RELAUNCH_STOP_WAIT=30 FM_FAKE_NEVER_DIES=1 \
+    run_control "$dir" rl-deck-slow relaunch --note 'restart through a slow shutdown'); rc=$?
+  wait "$observer_pid" 2>/dev/null || true
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL -- -"$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "relaunch left the slow Deck driver alive: $out"
+  fi
+  wait "$pid" 2>/dev/null || true
+  expect_code 0 "$rc" "a relaunch through a slow host shutdown should finish: $out"
+  [ "$(journal_field "$dir" rl-deck-slow phase)" = complete ] \
+    || fail "the relaunch journal did not reach complete: $(journal_field "$dir" rl-deck-slow phase)"
+  assert_grep 'encode launch-brief' "$dir/fake/literal" "the replacement did not launch after the slow shutdown"
+  pass "fm-control relaunch: a slow host shutdown is waited out and the replacement launched"
 }
 
 test_relaunch_onto_deck_with_effort_refuses_before_stop() {
@@ -2030,6 +2097,7 @@ test_relaunch_onto_an_unverified_harness_is_refused
 test_relaunch_onto_verified_deck_replaces_the_agent
 test_relaunch_stops_stale_deck_driver_before_replacement_launch
 test_live_deck_relaunch_uses_control_protocol_before_residual_stop
+test_relaunch_waits_out_a_slow_host_shutdown_and_finishes
 test_relaunch_onto_deck_with_effort_refuses_before_stop
 test_secondmate_relaunch_picks_up_the_configured_harness_pin
 test_secondmate_relaunch_ignores_invalid_configured_effort_before_stop

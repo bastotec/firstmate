@@ -80,7 +80,8 @@
 #              Records a durable checkpoint and that note, exits the old agent,
 #              requests cooperative TERM from only its task-bound Deck driver,
 #              and proves both that driver group gone and the endpoint stopped
-#              within bounded waits, refusing without forced termination.
+#              within FM_CONTROL_RELAUNCH_STOP_WAIT, refusing without forced
+#              termination only past that bound.
 #              Then delegates the launch to its single owner,
 #              bin/fm-spawn.sh --relaunch. Backlog eligibility is proved before
 #              exit: an unheld In-flight dependency blocker is valid recovery,
@@ -223,6 +224,12 @@
 #   FM_CONTROL_EXIT_WAIT         per-wait bound for task-bound Deck driver stop
 #                                and endpoint agent-free proof; also used for
 #                                a recreated shell to finish starting (30)
+#   FM_CONTROL_RELAUNCH_STOP_WAIT  the same two stop proofs on a relaunch,
+#                                which has already delivered its exit and
+#                                must finish what it started: it waits this
+#                                long for the old host to shut down, then
+#                                launches the replacement under the same
+#                                control lock, still never forcing (120)
 #   FM_CONTROL_LAUNCH_WAIT       dead->alive wait after a relaunch (90)
 #   FM_CONTROL_EXIT_RETRIES      Enter retries for the exit command (3)
 #   FM_CONTROL_CLEAR_RETRIES     composer clear/re-read attempts in the exit
@@ -291,6 +298,7 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 
 POLL=${FM_CONTROL_POLL:-0.5}
 EXIT_WAIT=${FM_CONTROL_EXIT_WAIT:-30}
+RELAUNCH_STOP_WAIT=${FM_CONTROL_RELAUNCH_STOP_WAIT:-120}
 LAUNCH_WAIT=${FM_CONTROL_LAUNCH_WAIT:-90}
 EXIT_RETRIES=${FM_CONTROL_EXIT_RETRIES:-3}
 CLEAR_RETRIES=${FM_CONTROL_CLEAR_RETRIES:-3}
@@ -717,6 +725,17 @@ do_interrupt() {
   printf '%s cancel=%s' "$proof" "$cancel"
 }
 
+# stop_wait: the bound on proving the old agent stopped once its exit is under
+# way. A relaunch waits FM_CONTROL_RELAUNCH_STOP_WAIT so a host still shutting
+# down is waited out and replaced rather than abandoned half-stopped.
+stop_wait() {
+  if [ "$VERB" = relaunch ]; then
+    printf '%s' "$RELAUNCH_STOP_WAIT"
+  else
+    printf '%s' "$EXIT_WAIT"
+  fi
+}
+
 retire_busy_incarnation() {
   if [ -f "$STATE/$ID.busy-gen" ]; then
     "$SCRIPT_DIR/fm-busy-event.sh" retire "$STATE" "$ID" --current-gen >/dev/null 2>&1 || true
@@ -724,7 +743,7 @@ retire_busy_incarnation() {
 }
 
 stop_deck_residual_drivers() {
-  local args=("$STATE" "$ID" "$EXIT_WAIT")
+  local args=("$STATE" "$ID" "$(stop_wait)")
   # Relaunch must never turn a bounded stop refusal into a forced kill.
   [ "$VERB" != relaunch ] || args+=(--cooperative)
   [ "$HARNESS" != deck ] || python3 "$SCRIPT_DIR/fm-deck-stop.py" "${args[@]}" \
@@ -876,8 +895,8 @@ do_exit() {
   # cooperatively, proving its group gone before accepting endpoint liveness.
   # The endpoint's own fresh/dead or agent-closed proof remains mandatory.
   [ "$VERB" != relaunch ] || stop_deck_residual_drivers
-  state=$(wait_agent_state "$EXIT_WAIT" dead) || {
-    die "exit-delivered $ID interrupt=$interrupt_result exit-command=delivered agent-state=$state exit=unconfirmed; the agent did not stop within ${EXIT_WAIT}s"
+  state=$(wait_agent_state "$(stop_wait)" dead) || {
+    die "exit-delivered $ID interrupt=$interrupt_result exit-command=delivered agent-state=$state exit=unconfirmed; the agent did not stop within $(stop_wait)s"
   }
   # The incarnation is over: retire its busy wiring so no stale record or
   # orphaned generation survives the agent that produced it.

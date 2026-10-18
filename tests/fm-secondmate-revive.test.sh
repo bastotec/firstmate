@@ -618,8 +618,74 @@ SH
   pass "the watcher revives a dead second mate on its own cadence without blocking"
 }
 
+# write_relaunch_journal <case-dir> <id> <phase> <iso-ts>: the journal a
+# control-plane relaunch leaves behind, with its note and target model.
+write_relaunch_journal() {
+  local dir=$1 id=$2 journal="$1/home/state/$2.control-relaunch"
+  printf 'Restarted to pick up the new charter.\n' > "$journal.note"
+  printf '%s\n' v1 "task=$id" "phase=$3" "ts=$4" kind=secondmate from_harness=deck \
+    from_model=default to_harness=deck to_model=route-b "note_file=$journal.note" > "$journal"
+}
+
+test_an_interrupted_relaunch_is_finished_not_revived() {
+  local dir now
+  dir=$(new_case interrupted-relaunch)
+  add_local_mate "$dir" sm1 zsh >/dev/null
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  write_relaunch_journal "$dir" sm1 failed:stopping "$now"
+  scan "$dir" || fail "the scan failed"
+  [ "$(calls "$dir")" = "sm1 relaunch --unless-held-stopped --model route-b --note Restarted to pick up the new charter." ] \
+    || fail "an interrupted relaunch was not finished at once with its own note and model: $(calls "$dir")"
+  grep -q 'completed the interrupted restart of sm1' "$dir/home/state/secondmate-revive.log" \
+    || fail "the completion was not logged as finishing an interrupted restart"
+  ! grep -q 'reviving sm1' "$dir/home/state/secondmate-revive.log" || fail "the restart was logged as a death"
+  [ ! -e "$dir/home/state/sm1.revive" ] || fail "finishing a restart left a revive record"
+  [ "$(queued_revive_wakes "$dir")" = 0 ] || fail "finishing a restart woke the first mate"
+
+  # One still running holds the control lock: that is no failure.
+  dir=$(new_case interrupted-relaunch-busy)
+  add_local_mate "$dir" sm1 zsh >/dev/null
+  write_relaunch_journal "$dir" sm1 stopping "$now"
+  : > "$dir/home/control-busy"
+  scan "$dir"
+  [ ! -e "$dir/home/state/sm1.revive" ] || fail "a relaunch still in progress was counted against the mate"
+
+  # A failed completion counts once, then the ordinary confirmed path takes over.
+  dir=$(new_case interrupted-relaunch-fails)
+  add_local_mate "$dir" sm1 zsh >/dev/null
+  write_relaunch_journal "$dir" sm1 failed:stopping "$now"
+  : > "$dir/home/control-fails"
+  scan "$dir"
+  grep -q '^failures=1$' "$dir/home/state/sm1.revive" || fail "a failed completion was not counted once"
+  scan "$dir"
+  [ "$(calls "$dir" | grep -c 'Restarted automatically after this second mate was found down')" = 1 ] \
+    || fail "after a failed completion the ordinary revive did not take over: $(calls "$dir")"
+  pass "a mate left down by its own interrupted relaunch has that relaunch finished, not revived as a crash"
+}
+
+test_old_or_finished_relaunch_journals_leave_the_ordinary_revive_alone() {
+  local dir phase ts
+  for phase in complete old failed:noted; do
+    dir=$(new_case "journal-$phase")
+    add_local_mate "$dir" sm1 zsh >/dev/null
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    [ "$phase" != old ] || ts=2020-01-01T00:00:00Z
+    write_relaunch_journal "$dir" sm1 "${phase/old/failed:stopping}" "$ts"
+    scan "$dir"
+    [ -z "$(calls "$dir")" ] || fail "$phase: a single down reading acted at once: $(calls "$dir")"
+    scan "$dir"
+    case "$(calls "$dir")" in
+      "sm1 relaunch --unless-held-stopped --note Restarted automatically after this second mate was found down"*) ;;
+      *) fail "$phase: the ordinary revive did not run: $(calls "$dir")" ;;
+    esac
+  done
+  pass "a completed, refused, or old relaunch journal leaves the ordinary confirmed revive in charge"
+}
+
 test_dead_local_mate_is_relaunched_after_a_confirmed_reading
 test_missing_local_mate_is_recovered
+test_an_interrupted_relaunch_is_finished_not_revived
+test_old_or_finished_relaunch_journals_leave_the_ordinary_revive_alone
 test_live_unknown_held_and_non_secondmate_records_are_left_alone
 test_a_live_mate_with_a_failing_lane_is_relaunched_then_escalated_once
 test_a_lane_that_recovers_after_the_relaunch_is_never_raised
