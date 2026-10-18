@@ -170,11 +170,18 @@ test_local_correlated_resend_is_idempotent() (
     [ "$count" = 1 ] || fail "correlated resend duplicated the $location request"
     [ "$(fm_pending_reply_get "$rec" delivered_epoch)" = 1000 ] \
       || fail "resend lost the original delivery time"
-    fm_pending_reply_set "$rec" phase recovery_sending
-    run_send "$fb" "$home" "$log" runtime "$(fm_pending_reply_recovery_message "$rec")" \
-      || fail "intentional recovery send failed"
+    fm_pending_reply_mark_turn_completed "$state" "$corr" request
+    (
+      export PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_SEND_LOG="$log"
+      unset FM_PENDING_REPLY_SEND_HOOK
+      fm_pending_reply_send_recovery "$state" "$corr"
+    ) || fail "intentional recovery send failed"
+    [ "$(phase_of "$state" "$corr")" = recovery_sent ] || fail "recovery did not finish"
     count=$(find "$state/runtime.inbox" -name '*.msg' | wc -l | tr -d ' ')
     [ "$count" = 2 ] || fail "recovery must enqueue its own message"
+    run_send "$fb" "$home" "$log" runtime "$msg" || fail "resend after recovery failed"
+    count=$(find "$state/runtime.inbox" -name '*.msg' | wc -l | tr -d ' ')
+    [ "$count" = 2 ] || fail "resend after recovery duplicated the $location request"
     unset FM_PENDING_REPLY_EXISTING_CORR
     run_send "$fb" "$home" "$log" runtime "$msg" || fail "new identical request failed"
     count=$(find "$state/runtime.inbox" -name '*.msg' | wc -l | tr -d ' ')

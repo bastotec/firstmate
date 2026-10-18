@@ -1024,11 +1024,9 @@ else
     if [ -n "$existing_corr" ] \
       && fm_pending_reply_corr_reusable "$STATE" "$existing_corr" "$TARGET_TASK_ID"; then
       PENDING_REPLY_CORR=$existing_corr
-      if [ "$INBOX_PLANE" = 1 ] && [ "$TARGET_BACKEND" != remote ]; then
-        case "$(fm_pending_reply_get "$(fm_pending_reply_path "$STATE" "$PENDING_REPLY_CORR")" phase)" in
-          recovery_sending|recovery_sent) ;;
-          *) FM_SEND_IDEMPOTENT=1 ;;
-        esac
+      if [ "$INBOX_PLANE" = 1 ] && [ "$TARGET_BACKEND" != remote ] \
+        && [ "$MESSAGE" != "$(fm_pending_reply_recovery_message "$(fm_pending_reply_path "$STATE" "$PENDING_REPLY_CORR")")" ]; then
+        FM_SEND_IDEMPOTENT=1
       fi
     else
       if [ "$existing_corr_explicit" = 1 ]; then
