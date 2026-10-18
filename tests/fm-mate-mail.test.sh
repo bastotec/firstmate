@@ -34,7 +34,8 @@ record_body() {  # <record-path>
 # A parent home with recorded secondmates <ids...> on the fake stream hub, and
 # a local mate home for each. Prints the parent home.
 make_fleet() {  # <name> <ids...>
-  local parent="$TMP_ROOT/$1-$RANDOM" id fb
+  local parent id fb
+  parent=$(mktemp -d "$TMP_ROOT/$1.XXXXXX") || return 1
   shift
   mkdir -p "$parent/state" "$parent/fakebin"
   fb="$parent/fakebin"

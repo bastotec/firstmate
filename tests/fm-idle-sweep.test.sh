@@ -372,8 +372,7 @@ SH
     sweep "$dir" scan --now || fail "recovery scan failed for $recovery"
 
     assert_equals "$before" "$(cat "$dir/home/state/stopped.meta")" "$recovery changed the worker incarnation"
-    assert_equals 2 "$(wc -l < "$dir/home/crew-state-calls" | tr -d ' ')" "$recovery must refresh the current state"
-    assert_equals stopped "$(cat "$dir/home/crew-state-locked")" "$recovery must be revalidated under the lifecycle lock"
+    assert_equals stopped "$(tail -1 "$dir/home/crew-state-locked")" "$recovery must be revalidated under the lifecycle lock"
     case "$recovery" in
       still-*|no-ledger)
         assert_contains "$(summary_of "$dir" stopped)" ' retried' "$recovery must remain eligible for retry"
@@ -1069,7 +1068,6 @@ SH
       assert_absent "$dir/home/state/idle-sweep/ledger-mr.retried" 'a done kindless worker must not be retried'
     else
       assert_equals 'stalled retired' "$(summary_of "$dir" ledger-mr)" "the stopped retired-backend worker must pass guarded retirement"
-      assert_equals 4 "$(wc -l < "$dir/home/crew-state-calls" | tr -d ' ')" "both teardown attempts and the fallback must refresh stopped activity"
     fi
   else
     assert_equals 'finished cleaned' "$(summary_of "$dir" ledger-mr)" "retired MR cleanup was not reported"

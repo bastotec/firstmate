@@ -663,6 +663,8 @@ portable_serial_weight_hints() {
 # (2026-10-16), with three family-phase workers.
 # fm-evidence-only-withdrawal was measured in green serial shard 7 of run
 # 39078511171 (2026-10-17).
+# fm-card and fm-control-stopped-relaunch completed successfully in run
+# 39157209916 (2026-10-18), serial shards 8 and 3; other scripts failed.
 # The five tests/fm-watch-triage*.test.sh suites were one 694233 ms script
 # before run 37413095868; their hints start from each suite's share of that,
 # from the per-case output timestamps of run 37401433503's serial shard 1.
@@ -688,12 +690,14 @@ tests/fm-bootstrap-network-parallel.test.sh 17328
 tests/fm-bootstrap.test.sh 119612
 tests/fm-busy-adapter-wiring.test.sh 50547
 tests/fm-busy-state.test.sh 3394
+tests/fm-card.test.sh 169480
 tests/fm-check-unregister.test.sh 494
 tests/fm-ci-workflow.test.sh 3891
 tests/fm-classify-corr-token.test.sh 65224
 tests/fm-classify-decision-key.test.sh 1664
 tests/fm-control-recover-missing.test.sh 37080
 tests/fm-control-relaunch.test.sh 103083
+tests/fm-control-stopped-relaunch.test.sh 14329
 tests/fm-control.test.sh 45346
 tests/fm-daemon.test.sh 36415
 tests/fm-deck-chat.test.sh 300241
