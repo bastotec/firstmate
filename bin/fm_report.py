@@ -64,7 +64,8 @@ JSON shape (schema fm-report.v1; new fields may be added, none removed):
 Record disagreements are listed under "Records that disagree" in markdown,
 separately from unread data in the footer. INCONSISTENT_KINDS owns the set of
 home-summary invalidities treated this way. unknown_children still names read
-gaps even when a disagreement is the first invalidity; for older summaries
+gaps even when a disagreement is the first invalidity; its child-state gap is
+listed once, not repeated through the summary's reason. For older summaries
 without that field, state unknown plus an unknown endpoint conservatively
 remains a read gap.
 """

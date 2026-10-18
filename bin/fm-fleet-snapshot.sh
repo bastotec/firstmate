@@ -128,7 +128,11 @@
 #     or a backlog-vs-metadata inventory mismatch makes their summary incomplete;
 #     they retain independently trustworthy structured surfaces.
 #     The home summary's unknown_children lists unknown non-secondmate task ids
-#     owned by structured In flight rows, independently of its first invalidity.
+#     owned by structured In flight rows, independently of its first invalidity,
+#     except the reader's final fallback: source "none" with detail starting
+#     "no current-state source available" means readable idle, nothing claimed.
+#     That task's endpoint state stays unknown; every other unknown still counts,
+#     including missing worktrees or endpoints, unreadable runs, and timeouts.
 #     An unowned leftover is instead an unowned_current inventory mismatch.
 #     The producer keeps its computed state for inventory disagreements, including
 #     unstructured_current, while retaining valid=false, reason, and invalidity.
