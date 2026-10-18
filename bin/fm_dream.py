@@ -1120,26 +1120,51 @@ def nm_bin():
     return os.environ.get('FM_DREAM_NO_MISTAKES') or 'no-mistakes'
 
 
+def stop_run(tree):
+    """Stop the owned no-mistakes run in tree with its own short bound, so a
+    spent step budget never leaves the daemon publishing on its own."""
+    try:
+        subprocess.run([nm_bin(), 'axi', 'abort'], cwd=tree, capture_output=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def drive_gate(ctx, tree, intent):
     """Drive one no-mistakes run in tree to its outcome with --yes, within the
     step budget. Returns (outcome, pr_url, detail); outcome is the pipeline's
-    word, or 'gate' when a gate --yes cannot pass, or 'timed out'."""
+    word, 'gate' when a gate --yes cannot pass, or 'timed out'. Gates are read
+    by bin/fm_gate_record.py's parser, which knows both AXI response shapes."""
+    from fm_gate_record import parse as parse_gate
     args = [nm_bin(), 'axi', 'run', '--yes', '--intent', intent]
     pr = None
-    while ctx.left() > 60:
-        r = ctx.run(args, cwd=tree, timeout=min(600, ctx.left() - 30))
+    while ctx.left() > 180:
+        try:
+            r = ctx.run(args, cwd=tree, timeout=min(600, ctx.left() - 150))
+        except subprocess.TimeoutExpired:
+            break
         out = (r.stdout or '') + (r.stderr or '')
         m = re.search(r'https://github\.com/[^\s"\']+/pull/\d+', out)
         pr = m.group(0) if m else pr
         outcome = re.search(r'^outcome: (\S+)', out, re.M)
         if outcome:
             return outcome.group(1), pr, ''
-        gate = re.search(r'^gate:\n\s+step: (\S+)', out, re.M)
+        _run, gate = parse_gate(out)
         if gate:
-            findings = re.findall(r'^ {4}([A-Za-z0-9-]+),(error|warning|info),', out, re.M)
-            return 'gate', pr, '%s gate: %s' % (gate.group(1), ', '.join('%s %s' % (f[0], f[1]) for f in findings[:4]))
+            findings = ', '.join('%s %s' % (f.get('id'), f.get('severity')) for f in gate['findings'][:4])
+            return 'gate', pr, '%s gate%s' % (gate.get('step') or 'a', ': ' + findings if findings else '')
         args = [nm_bin(), 'axi', 'run', '--yes', '--intent', 'x']  # reattach: the run keeps its intent
     return 'timed out', pr, 'no outcome within the step budget'
+
+
+def pr_diff(ctx, pr):
+    """(changed lines, files) of the PR as finally reviewed, or (None, None)."""
+    try:
+        r = ctx.run([os.environ.get('FM_DREAM_GH') or 'gh', 'pr', 'view', pr, '--json', 'additions,deletions,files'],
+                    timeout=60)
+        doc = json.loads(r.stdout)
+        return doc['additions'] + doc['deletions'], [f['path'] for f in doc.get('files') or []]
+    except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
+        return None, None
 
 
 def pr_risk(ctx, pr):
@@ -1201,9 +1226,14 @@ def step_instructions(ctx):
         stops = [l.strip()[:80] for l in removed if HARD_STOPS.search(l)]
         if stops:
             return {'status': 'rejected', 'why': 'would remove or reword a hard-stop line: %s' % stops[0]}
-        changes = [c for c in doc['changes'] if isinstance(c, dict)]
-        if not changes:
-            return {'status': 'rejected', 'why': 'the instructions agent changed files but listed none'}
+        changes = doc['changes']
+        complete = lambda c: (isinstance(c, dict) and c.get('path') in changed and c.get('what') and c.get('why')
+                              and isinstance(c.get('evidence'), list) and any(c['evidence']))
+        if not changes or not all(complete(c) for c in changes):
+            return {'status': 'rejected', 'why': 'every change must name a changed file, what, why and its digest evidence'}
+        unlisted = sorted(set(changed) - {c['path'] for c in changes})
+        if unlisted:
+            return {'status': 'rejected', 'why': 'changed files the agent did not list: %s' % unlisted[:3]}
         title = 'Improves fleet instructions from the %s sessions (fleet dreaming)' % ctx.day
         body = '\n'.join('- %s: %s (%s)' % (c.get('path'), c.get('what'), c.get('why')) for c in changes)
         message = title + '\n\n' + body + '\n\nProposed by the fleet\'s nightly reflection (bin/fm-dream.sh); shipped through the no-mistakes gate.'
@@ -1221,13 +1251,18 @@ def step_instructions(ctx):
         outcome, pr, detail = drive_gate(ctx, tree, intent)
         if outcome in ('gate', 'timed out'):
             # Nothing waits on a parked run overnight: stop it, keep the branch for a person.
-            ctx.run([nm_bin(), 'axi', 'abort'], cwd=tree, timeout=120)
+            stop_run(tree)
         lines = len(removed) + len(added)
         summary = {'changes': changes, 'lines': lines, 'pr': pr}
         ctx.facts['instructions'] = summary
         if outcome in ('checks-passed', 'passed') and pr:
             risk = pr_risk(ctx, pr)
             summary['risk'] = risk
+            final_lines, files = pr_diff(ctx, pr)
+            if final_lines is not None:
+                # The gate may have repaired the patch: report what the PR now holds.
+                summary.update(lines=final_lines, files=files, proposed_lines=lines)
+                lines = final_lines
             return {'status': 'pr opened', 'pr': pr, 'risk': risk, 'lines': lines, 'changes': changes}
         return {'status': 'needs a decision' if outcome == 'gate' else outcome, 'why': detail or outcome,
                 'pr': pr, 'lines': lines, 'changes': changes}

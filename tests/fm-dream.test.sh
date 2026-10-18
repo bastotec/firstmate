@@ -112,11 +112,16 @@ case "${STUB_NM:-pass}" in
   pass) printf 'outcome: checks-passed\nhelp[1]: "CI checks passed - the PR is ready: https://github.com/bastotec/firstmate/pull/990"\n' ;;
   gate) case "$*" in *abort*) echo "run_status: cancelled" ;; *)
           printf 'gate:\n  step: review\n  status: awaiting_approval\n  findings[1]{id,severity,file,action,description}:\n    R1,error,AGENTS.md,ask-user,"too broad"\n' ;; esac ;;
+  scalar) case "$*" in *abort*) echo "run_status: cancelled" ;; *)
+          printf 'run:\n  id: "r1"\n  status: running\n  findings[1]{id,severity,file,action,description}:\n    R2,warning,AGENTS.md,ask-user,"unclear"\ngate: review\n' ;; esac ;;
 esac
 SH
   cat > "$d/bin/gh-pr" <<'SH'
 #!/usr/bin/env bash
-printf '## Intent\n\nx\n\n## Risk Assessment\n\n✅ Low: a small wording change.\n'
+case "$*" in
+  *additions*) printf '{"additions": 3, "deletions": 0, "files": [{"path": "AGENTS.md"}]}\n' ;;
+  *) printf '## Intent\n\nx\n\n## Risk Assessment\n\n✅ Low: a small wording change.\n' ;;
+esac
 SH
   cat > "$d/bin/deck" <<'SH'
 #!/usr/bin/env bash
@@ -140,6 +145,10 @@ if [ -n "$instructions" ]; then
           printf '{"changes": [{"path": "AGENTS.md", "what": "says how to answer a peer", "why": "a mate answered on its parent channel", "evidence": ["x"]}],
                    "charters": [{"mate": "cadia", "what": "name the kernel repo", "why": "asked twice", "evidence": ["y"]},
                                 {"mate": "finn-finance", "what": "PRIVATE CHARTER EDIT", "why": "z"}]}' > "$instructions" ;;
+    unlisted) printf 'one\n' >> AGENTS.md; printf 'two\n' >> .agents/skills/guide/SKILL.md
+              printf '{"changes": [{"path": "AGENTS.md", "what": "x", "why": "y", "evidence": ["e"]}]}' > "$instructions" ;;
+    noevidence) printf 'one\n' >> AGENTS.md
+                printf '{"changes": [{"path": "AGENTS.md", "what": "x", "why": "y"}]}' > "$instructions" ;;
     outside) printf 'x\n' > README.md
              printf '{"changes": [{"path": "README.md", "what": "x", "why": "y"}]}' > "$instructions" ;;
     hardstop) sed -i.bak '/money/d' AGENTS.md && rm -f AGENTS.md.bak
@@ -695,8 +704,9 @@ import json, sys
 run = json.load(open(sys.argv[1]))
 st = run["steps"]["instructions"]
 assert st["status"] == "pr opened" and st["pr"].endswith("/pull/990") and st["risk"] == "Low", st
-assert run["instructions"]["lines"] == 1, run["instructions"]
-assert "Instructions: 1 change, 1 lines (AGENTS.md: says how to answer a peer), PR https://github.com/bastotec/firstmate/pull/990, rated Low" in run["summary"], run["summary"]
+# The gate repaired the one proposed line into three: the report shows what the PR holds.
+assert run["instructions"]["lines"] == 3 and run["instructions"]["proposed_lines"] == 1, run["instructions"]
+assert "Instructions: 1 change, 3 lines (AGENTS.md: says how to answer a peer), PR https://github.com/bastotec/firstmate/pull/990, rated Low" in run["summary"], run["summary"]
 assert run["charter_proposals"] == [{"mate": "cadia", "what": "name the kernel repo"}], run["charter_proposals"]
 PY
   grep -q -- '--yes --intent Nightly fleet dreaming instructions change' "$d/calls/nm" || fail "the change did not go through the gate"
@@ -711,7 +721,7 @@ PY
 
 test_instructions_guards_reject_out_of_scope_hard_stop_and_big_changes() {
   local d mode
-  for mode in outside hardstop big; do
+  for mode in outside hardstop big unlisted noevidence; do
     d=$(new_case "instr-$mode")
     STUB_INSTR=$mode run_dream "$d" --only collect instructions > "$d/out.json" || fail "run exited nonzero"
     jq -e '.steps.instructions.status == "rejected"' "$d/out.json" >/dev/null \
@@ -732,6 +742,11 @@ test_instructions_stop_a_parked_gate_and_report_it() {
   jq -e '.steps.instructions.status == "needs a decision" and (.steps.instructions.why | test("review gate: R1 error"))' "$d/out.json" >/dev/null \
     || fail "a parked gate was not reported: $(jq -c .steps.instructions "$d/out.json")"
   grep -q '|axi abort' "$d/calls/nm" || fail "the parked run was not stopped"
+  d=$(new_case instr-gate-scalar)
+  STUB_INSTR=edit STUB_NM=scalar run_dream "$d" --only collect instructions > "$d/out.json" || fail "run exited nonzero"
+  jq -e '.steps.instructions.status == "needs a decision" and (.steps.instructions.why | test("review gate: R2 warning"))' "$d/out.json" >/dev/null \
+    || fail "a scalar gate was not recognized: $(jq -c .steps.instructions "$d/out.json")"
+  [ "$(grep -c '|axi run' "$d/calls/nm")" = 1 ] || fail "a scalar gate was reattached instead of stopped"
   pass "instructions: a gate --yes cannot pass is stopped and reported for the captain"
 }
 
