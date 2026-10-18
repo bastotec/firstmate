@@ -1226,8 +1226,18 @@ def step_instructions(ctx):
         if outside:
             return {'status': 'rejected', 'why': 'touched %s' % outside[:3]}
         diff = git(ctx, 'diff', '--cached', '-U0', '--no-renames', base, cwd=tree)  # a move is a removal and an addition
-        removed = [l[1:] for l in diff.splitlines() if l.startswith('-') and not l.startswith('---')]
-        added = [l for l in diff.splitlines() if l.startswith('+') and not l.startswith('+++')]
+        removed, added = [], []
+        in_hunk = False
+        for line in diff.splitlines():
+            if line.startswith('diff --git '):
+                in_hunk = False
+            elif line.startswith('@@ '):
+                in_hunk = True
+            elif in_hunk:
+                if line.startswith('-'):
+                    removed.append(line[1:])
+                elif line.startswith('+'):
+                    added.append(line[1:])
         if len(removed) + len(added) > MAX_INSTRUCTION_LINES:
             return {'status': 'rejected', 'why': '%d changed lines (cap %d)' % (len(removed) + len(added), MAX_INSTRUCTION_LINES)}
         stops = [l.strip()[:80] for l in removed if HARD_STOPS.search(l)]

@@ -158,6 +158,12 @@ if [ -n "$instructions" ]; then
            printf '{"changes": [{"path": "AGENTS.md", "what": "x", "why": "y", "evidence": ["e"]}, {"path": ".agents/skills/archived/SKILL.md", "what": "x", "why": "y", "evidence": ["e"]}]}' > "$instructions" ;;
     big) for i in $(seq 1 90); do printf 'line %s\n' "$i" >> AGENTS.md; done
          printf '{"changes": [{"path": "AGENTS.md", "what": "x", "why": "y"}]}' > "$instructions" ;;
+    delimiters-small|delimiters-big|delimiters-hardstop)
+         rm .agents/skills/guide/SKILL.md
+         count=1; [ "$STUB_INSTR" != delimiters-big ] || count=78
+         for i in $(seq 1 "$count"); do printf '++ tip %s\n' "$i"; done > .agents/skills/guide/NOTES.md
+         printf '{"changes": [{"path": ".agents/skills/guide/SKILL.md", "what": "replace guide", "why": "unclear", "evidence": ["x"]},
+                              {"path": ".agents/skills/guide/NOTES.md", "what": "add tips", "why": "unclear", "evidence": ["x"]}]}' > "$instructions" ;;
   esac
 fi
 if [ -n "$summary" ]; then
@@ -739,6 +745,38 @@ test_instructions_guards_reject_out_of_scope_hard_stop_and_big_changes() {
   pass "instructions: changes outside the instruction files, to a hard stop, or too big are rejected before the gate"
 }
 
+test_instructions_count_delimiter_content_and_check_its_hard_stops() {
+  local d mode
+  for mode in small big hardstop; do
+    d=$(new_case "instr-delimiters-$mode")
+    if [ "$mode" = hardstop ]; then
+      printf -- '-- Never move money.\n' >> "$d/firstmate/.agents/skills/guide/SKILL.md"
+      git -C "$d/firstmate" add -A && git -C "$d/firstmate" commit -qm 'add safety rule' \
+        && git -C "$d/firstmate" push -q origin HEAD:main || fail "could not seed safety rule"
+    fi
+    STUB_INSTR="delimiters-$mode" run_dream "$d" --only collect instructions > "$d/out.json" || fail "run exited nonzero"
+    case "$mode" in
+      small)
+        jq -e '.steps.instructions.status == "pr opened"' "$d/out.json" >/dev/null \
+          || fail "a small delimiter change was rejected: $(cat "$d/out.json")"
+        jq -e '.instructions.proposed_lines == 5' "$d"/home/state/dream/runs/*.json >/dev/null \
+          || fail "the four removed lines and one added line were not all counted" ;;
+      big|hardstop)
+        jq -e '.steps.instructions.status == "rejected"' "$d/out.json" >/dev/null \
+          || fail "$mode delimiter change was not rejected: $(cat "$d/out.json")"
+        [ ! -e "$d/calls/nm" ] || fail "a rejected delimiter change reached the gate"
+        if [ "$mode" = big ]; then
+          jq -e '.steps.instructions.why == "82 changed lines (cap 80)"' "$d/out.json" >/dev/null \
+            || fail "the delimiter content was not counted toward the cap"
+        else
+          jq -e '.steps.instructions.why | test("hard-stop")' "$d/out.json" >/dev/null \
+            || fail "the removed -- safety rule was not checked"
+        fi ;;
+    esac
+  done
+  pass "instructions: delimiter content counts toward the proposal cap and removed hard-stop checks"
+}
+
 test_instructions_stop_a_parked_gate_and_report_it() {
   local d
   d=$(new_case instr-gate)
@@ -764,6 +802,7 @@ test_collect_builds_a_private_digest_of_the_day
 test_each_relaunch_is_counted_once
 test_instructions_open_one_gated_pr_and_propose_charter_edits
 test_instructions_guards_reject_out_of_scope_hard_stop_and_big_changes
+test_instructions_count_delimiter_content_and_check_its_hard_stops
 test_instructions_stop_a_parked_gate_and_report_it
 test_waiting_for_ziggy_is_not_the_step_s_own_time
 test_no_mistakes_failures_are_broken_down_by_step_cause_and_host
