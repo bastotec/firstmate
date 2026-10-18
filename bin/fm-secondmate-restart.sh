@@ -326,7 +326,14 @@ while [ "$i" -lt "${#IDS[@]}" ]; do
     # pass it explicitly, so both placements land on the same decision.
     HARNESS[i]=$("$SCRIPT_DIR/fm-harness.sh" secondmate) || exit 1
     [ -n "${HARNESS[i]}" ] || HARNESS[i]=$FM_SECONDMATE_RESTART_HARNESS
-    MODEL[i]=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model 2>/dev/null || true)
+    # The mate's own model wins: an explicit choice (the model chip), else the
+    # model it was last launched on; this home's default applies only to a
+    # mate with neither, so a restart never moves a mate off its model.
+    MODEL[i]=$(fm_meta_get "$STATE/$id.meta" model_choice 2>/dev/null || true)
+    [ "${MODEL[i]}" != default ] || MODEL[i]=
+    [ -n "${MODEL[i]}" ] || MODEL[i]=$(fm_meta_get "$STATE/$id.meta" model 2>/dev/null || true)
+    [ "${MODEL[i]}" != default ] || MODEL[i]=
+    [ -n "${MODEL[i]}" ] || MODEL[i]=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model 2>/dev/null || true)
     EFFORT[i]=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort 2>/dev/null || true)
     case "${EFFORT[i]}" in
       ''|low|medium|high|xhigh|max) ;;
