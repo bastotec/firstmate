@@ -204,7 +204,7 @@
 # send remains successful and watcher reconciliation owns the repair, and when
 # the commit and marker are BOTH lost the send still remains successful with a
 # reply-tracking-degraded warning naming the expectation an operator must
-# inspect (it can no longer reconcile or escalate on its own). Only a
+# inspect rather than assuming automatic reconciliation. Only a
 # failed enqueue discards the expectation. On the typed plane an unconfirmed submit (exit 3) keeps
 # it armed rather than dropping it, and only a proven send failure discards it.
 # Set FM_PENDING_REPLY_EXISTING_CORR=<id> to reuse an already-open expectation
