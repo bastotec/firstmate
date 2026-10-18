@@ -501,6 +501,46 @@ fm_pending_reply_mark_delivery_unknown() {  # <state-dir> <corr_id>
   fm_pending_reply_set "$rec" phase delivery_unknown
 }
 
+# A LOCAL delivery attempt that never confirmed (its sender was killed between
+# writing and confirming) would otherwise stay unresolved forever: the owner's
+# resend is refused and every later handoff to that mate with it. Once the
+# attempt is FM_PENDING_REPLY_LOCAL_ATTEMPT_STALE_SECS old (600), the local
+# inbox settles it, because a local send's durable effect is exactly an inbox
+# record carrying corr=<id>: a record there (unhandled or handled) marks the
+# request delivered at the attempt time; no record makes the correlation
+# retryable again (awaiting_report, attempt marker removed), so the same
+# correlation can be resent and still lands at most once. Remote targets keep
+# their own idempotent resend path and are left alone.
+# Regression: tests/fm-pending-reply.test.sh (stale local attempt).
+_fm_pending_reply_settle_stale_local_attempt() {  # <state-dir> <corr_id> <record> <marker> <attempt-epoch>
+  local state=$1 corr=$2 rec=$3 marker=$4 epoch=$5 task_id inbox stale now f
+  task_id=$(fm_pending_reply_get "$rec" task_id)
+  [ -n "$task_id" ] || return 1
+  fm_pending_reply_target_is_remote "$state" "$task_id" && return 1
+  stale=${FM_PENDING_REPLY_LOCAL_ATTEMPT_STALE_SECS:-600}
+  case "$stale" in ''|*[!0-9]*) stale=600 ;; esac
+  now=$(fm_pending_reply_now)
+  [ $((now - epoch)) -ge "$stale" ] || return 1
+  inbox="$state/$task_id.inbox"
+  for f in "$inbox"/*.msg "$inbox/handled"/*.msg; do
+    [ -f "$f" ] || continue
+    if grep -qF "corr=$corr" "$f" 2>/dev/null; then
+      fm_pending_reply_mark_delivered "$state" "$corr" "$epoch" || return 1
+      rm -f "$marker" 2>/dev/null || true
+      return 0
+    fi
+  done
+  case "$(fm_pending_reply_get "$rec" phase)" in
+    awaiting_report|delivery_unknown|escalated) ;;
+    *) return 1 ;;
+  esac
+  rm -f "$marker" 2>/dev/null || return 1
+  # escalated_epoch stays, so the open blocker is closed when the request
+  # finally resolves and is never raised a second time.
+  fm_pending_reply_set "$rec" phase awaiting_report || return 1
+  return 0
+}
+
 _fm_pending_reply_reconcile_delivery_locked() {  # <state-dir> <corr_id>
   local state=$1 corr=$2 rec delivered marker entry delivery_state value epoch
   local grace now age phase
@@ -527,6 +567,7 @@ _fm_pending_reply_reconcile_delivery_locked() {  # <state-dir> <corr_id>
     attempted)
       epoch=$value
       case "$epoch" in ''|*[!0-9]*) return 1 ;; esac
+      _fm_pending_reply_settle_stale_local_attempt "$state" "$corr" "$rec" "$marker" "$epoch" && return 0
       grace=$(fm_pending_reply_get "$rec" grace_secs)
       case "$grace" in ''|*[!0-9]*) grace=$(fm_pending_reply_grace_secs) ;; esac
       now=$(fm_pending_reply_now)

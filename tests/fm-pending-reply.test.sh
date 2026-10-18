@@ -105,6 +105,46 @@ latest_record_body() {  # <home> <task>
 
 # --- tests ------------------------------------------------------------------
 
+test_stale_local_attempt_never_blocks_resends() {
+  local home state corr rec marker
+  home=$(setup_parent stale-attempt)
+  state="$home/state"
+  export FM_PENDING_REPLY_NOW=1000
+  # An interrupted local send: attempted, never confirmed, then escalated.
+  corr=$(fm_pending_reply_create "$home" "$state" "runtime" "New routed work is in your backlog.")
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  fm_pending_reply_write_delivery_confirmation "$state" "$corr" attempted 1000 || fail "setup: attempt marker"
+  fm_pending_reply_set "$rec" phase escalated
+  fm_pending_reply_set "$rec" escalated_epoch 1100
+  marker=$(fm_pending_reply_delivery_confirmation_path "$state" "$corr")
+  export FM_PENDING_REPLY_NOW=1300
+  fm_pending_reply_reconcile_delivery "$state" "$corr" >/dev/null 2>&1 || true
+  fm_pending_reply_delivery_attempt_unresolved "$state" "$corr" \
+    || fail "a young unconfirmed attempt must still guard against a duplicate send"
+  # Ten minutes on, with no inbox record carrying the correlation, it is retryable.
+  export FM_PENDING_REPLY_NOW=1700
+  fm_pending_reply_reconcile_delivery "$state" "$corr" >/dev/null 2>&1 || true
+  fm_pending_reply_delivery_attempt_unresolved "$state" "$corr" \
+    && fail "a stale attempt with nothing in the inbox must not block every resend"
+  [ ! -e "$marker" ] || fail "the stale attempt marker is cleared"
+  [ "$(phase_of "$state" "$corr")" = awaiting_report ] || fail "the request is waiting for its report again"
+  fm_pending_reply_corr_reusable "$state" "$corr" runtime || fail "the same correlation can be resent"
+  [ "$(fm_pending_reply_get "$rec" escalated_epoch)" = 1100 ] || fail "the open blocker stays tracked so it is closed, not raised again"
+
+  # The same interruption after the record DID reach the inbox counts as delivered.
+  corr=$(fm_pending_reply_create "$home" "$state" "runtime" "New routed work is in your backlog.")
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  export FM_PENDING_REPLY_NOW=2000
+  fm_pending_reply_write_delivery_confirmation "$state" "$corr" attempted 2000 || fail "setup: attempt marker"
+  mkdir -p "$state/runtime.inbox/handled"
+  printf 'schema=fm-task-inbox.v1\n--\ncorr=%s New routed work is in your backlog.\n' "$corr" > "$state/runtime.inbox/handled/1.msg"
+  export FM_PENDING_REPLY_NOW=2700
+  fm_pending_reply_reconcile_delivery "$state" "$corr" >/dev/null 2>&1 || true
+  [ "$(fm_pending_reply_get "$rec" delivered_epoch)" = 2000 ] || fail "a stale attempt found in the inbox is marked delivered at its attempt time"
+  unset FM_PENDING_REPLY_NOW
+  pass "a stale unconfirmed local send is settled from the inbox and never blocks later resends"
+}
+
 test_normal_correlated_reply_resolves_once() {
   local home state corr status rec
   home=$(setup_parent resolve-once)
@@ -1616,6 +1656,7 @@ test_escalated_undelivered_correlation_stays_retryable() {
 # --- run --------------------------------------------------------------------
 
 test_normal_correlated_reply_resolves_once
+test_stale_local_attempt_never_blocks_resends
 test_completed_turn_no_report_triggers_one_recovery
 test_recovery_attempt_is_never_reinjected
 test_recovery_reply_resolves_original

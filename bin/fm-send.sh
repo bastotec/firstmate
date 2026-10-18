@@ -1038,6 +1038,10 @@ else
       PENDING_REPLY_CREATED=1
     fi
     fm_pending_reply_embed_corr "$MESSAGE" "$PENDING_REPLY_CORR" MESSAGE
+    # Settle a stale unconfirmed attempt first (bin/fm-pending-reply-lib.sh
+    # owns the rule), so one interrupted send cannot block every resend.
+    [ "$PENDING_REPLY_CREATED" = 1 ] \
+      || fm_pending_reply_reconcile_delivery "$STATE" "$PENDING_REPLY_CORR" >/dev/null 2>&1 || true
     if [ "$PENDING_REPLY_CREATED" != 1 ] \
       && fm_pending_reply_delivery_attempt_unresolved "$STATE" "$PENDING_REPLY_CORR"; then
       if [ "$TARGET_BACKEND" = remote ]; then
