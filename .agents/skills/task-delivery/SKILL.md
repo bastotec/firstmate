@@ -87,7 +87,7 @@ For each finished worker:
 
 Deciding a stopped or unproven worker is yours, never the captain's (his rule of 2026-10-18: "i dont want to make those decisions"):
 - Retire it when its work is done, merged, superseded or abandoned: run the cleanup in step 1, which saves leftover commits on a `kept/` branch first.
-- Retry it when the work is still wanted and unfinished - its task is open, no PR of it landed, and nothing superseded it: relaunch it with `bin/fm-control.sh <id> relaunch`, once per stopped stretch.
+- Retry it when the work is still wanted and unfinished - its task is open, no PR of it landed, and nothing superseded it: relaunch it with `bin/fm-control.sh <id> relaunch --note 'Restarted by the idle sweep: your task is still open and unfinished. Read your inbox in order and continue it.'`, once per stopped stretch.
 - If you really cannot tell, ask your own first mate (in a second mate home, one `needs-decision` line on the parent channel); the captain sees at most a one-line FYI in your chat or notes, never a card.
 [`bin/fm-idle-sweep.sh`'s header](../../../bin/fm-idle-sweep.sh) owns the automatic version of this rule.
 

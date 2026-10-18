@@ -132,7 +132,7 @@ PLAIN_WORDS_JQ='
       or ($t|test("^[a-z]+(_[a-z0-9]+)+$"))
       or (($t|test("^[0-9a-f]{7,}$")) and ($t|test("[a-f]")) and ($t|test("[0-9]")))
       or (($t|test("[A-Za-z][0-9]|[0-9][A-Za-z]")) and ((products|index($t)) == null))
-      or ($t|test("^[A-Z]{3,}-|-[A-Z]{3,}(-|$)"));
+      or ($t|test("^[A-Z]{2,}-|-[A-Z]{2,}(-|$)"));
   def jargon: ([scan("[A-Za-z_][A-Za-z0-9_.-]*=[^[:space:]]*")] + [scan("[A-Za-z0-9_-]+") | select(jargontoken)]) | first;
   def plainwords: gsub("(?<token>[A-Za-z_][A-Za-z0-9_.-]*=[^[:space:]]*)"; "this setting")
     | gsub("(?<token>[A-Za-z0-9_-]+)"; .token | if jargontoken then "this task" else . end);

@@ -55,6 +55,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-parent-channel-lib.sh
 . "$SCRIPT_DIR/fm-parent-channel-lib.sh"
+. "$SCRIPT_DIR/fm-backend.sh"
+. "$SCRIPT_DIR/fm-busy-lib.sh"
 
 QUIET=${FM_WORKER_QUIET_SECS:-7200}
 case "$QUIET" in ''|*[!0-9]*) QUIET=7200 ;; esac
@@ -181,12 +183,17 @@ scan_one() {  # <id>
 # wake per quiet stretch (keyed by the status file's last change, recorded in
 # state/<id>.quiet-noted), so it asks the worker what it is on.
 quiet_one() {  # <id>
-  local id=$1 busy status changed noted
-  busy="$STATE/$id.busy-state"
+  local id=$1 meta="$STATE/$1.meta" status changed noted classification
   status="$STATE/$id.status"
-  grep -q ' state=busy ' "$busy" 2>/dev/null || return 0
-  [ -f "$status" ] || return 0
-  changed=$(fm_path_mtime "$status") || return 0
+  classification=$(fm_busy_classify_live "$(fm_backend_of_meta "$meta")" \
+    "$(fm_backend_target_of_meta "$meta")" "$(fm_meta_get "$meta" harness)" \
+    "$id" "$STATE" "$(fm_meta_get "$meta" endpoint_task_id)")
+  [ "${classification%% *}" = busy ] || return 0
+  if [ -f "$status" ]; then
+    changed=$(fm_path_mtime "$status") || return 0
+  else
+    changed=$(tr ' ' '\n' < "$STATE/$id.busy-state" | sed -n 's/^ts=//p')
+  fi
   case "$changed" in ''|*[!0-9]*) return 0 ;; esac
   [ $((NOW - changed)) -ge "$QUIET" ] || return 0
   noted=$(cat "$STATE/$id.quiet-noted" 2>/dev/null || true)

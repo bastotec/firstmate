@@ -280,20 +280,11 @@ classify() {
   fi
 }
 
-project_of() {  # <meta>
-  local p
-  p=$(fm_meta_get "$1" worktree)
-  [ -n "$p" ] || p=$(fm_meta_get "$1" project)
-  p=${p%/}
-  p=${p##*/}
-  printf '%s' "${p:-firstmate}"
-}
-
 hours() {  # <secs>
   printf '%s hours' $(($1 / 3600))
 }
 
-# raise <id> <class> <why> <project> [ledger-id] [orphan]: hand a worker this
+# raise <id> <class> <why> [ledger-id]: hand a worker this
 # home could not settle itself to its own first mate, never to the captain (the
 # captain's 2026-10-18 rule: "i dont want to make those decisions"). A second
 # mate appends one "needs-decision [key=idle-<id>]" line to its parent channel;
@@ -301,9 +292,8 @@ hours() {  # <secs>
 # decides retire or retry. Sets RAISED=1 on success; the worker's ledger
 # fingerprint suppresses a repeat until the ledger changes.
 raise() {
-  local id=$1 class=$2 why=$3 ledger_id=${5:-$1} line rc=0
+  local id=$1 class=$2 why=$3 ledger_id=${4:-$1} line rc=0
   HOLD_ID=
-  RAISE_SKIPPED=0
   case "$class" in
     finished) line="worker $id is done, but its cleanup was refused ($why); decide whether to clean it up or keep it" ;;
     *) line="worker $id stopped ($class: $why) and I could not settle it myself; decide whether to retire or retry it" ;;
@@ -328,10 +318,12 @@ raise() {
 # stopped stretch through bin/fm-control.sh. Anything it cannot settle goes to
 # raise above. Sets STOPPED_ACTION to retired, retried or asked.
 decide_stopped() {
-  local id=$1 row pr pr_state retire=0 out rc=0 tries count
+  local id=$1 row body pr pr_state retire=0 out rc=0 tries count
   STOPPED_ACTION=
   row=$(fm_backlog_row_show "${FM_DATA_OVERRIDE:-$FM_HOME/data}" "$id" --full 2>/dev/null) || row=
-  case "$row" in *$'\n'"  state: done"*|*"superseded"*) retire=1 ;; esac
+  case "$row" in *$'\n'"  state: done"*) retire=1 ;; esac
+  body=$(fm_pr_task_body "$row") || body=
+  if fm_pr_superseded_recorded "$body"; then retire=1; fi
   pr=$(fm_pr_task_url "$row" "$STATE/$id.meta") || pr=
   [ -n "$pr" ] || pr=$(grep -Eo 'https://[^[:space:]]+/(pull|merge_requests)/[0-9]+' "$STATE/$id.status" 2>/dev/null | tail -1) || pr=
   if [ -n "$pr" ]; then
@@ -349,7 +341,7 @@ decide_stopped() {
       return 0
     fi
     RAISED=0
-    raise "$id" "$CLASS" "retiring it was refused: $CLEANUP_WHY" ""
+    raise "$id" "$CLASS" "retiring it was refused: $CLEANUP_WHY"
     STOPPED_ACTION=asked
     return 0
   fi
@@ -360,11 +352,12 @@ decide_stopped() {
   case "$count" in ''|*[!0-9]*) count=0 ;; esac
   if [ "${tries%% *}" = "$(fingerprint "$id")" ] || [ "$count" -ge 2 ]; then
     RAISED=0
-    raise "$id" "$CLASS" "it stopped again after $count automatic retries: $DETAIL" ""
+    raise "$id" "$CLASS" "it stopped again after $count automatic retries: $DETAIL"
     STOPPED_ACTION=asked
     return 0
   fi
-  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" relaunch </dev/null 2>&1) || rc=$?
+  out=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-control.sh" "$id" relaunch \
+    --note 'Restarted by the idle sweep: your task is still open and unfinished. Read your inbox in order and continue it.' </dev/null 2>&1) || rc=$?
   if [ "$rc" -eq 0 ]; then
     mkdir -p "$RAISED_DIR" 2>/dev/null || true
     printf '%s %s\n' "$(fingerprint "$id")" "$((count + 1))" > "$RAISED_DIR/$id.retried" 2>/dev/null || true
@@ -373,7 +366,7 @@ decide_stopped() {
     return 0
   fi
   RAISED=0
-  raise "$id" "$CLASS" "retrying it failed: $(one_line "$out")" ""
+  raise "$id" "$CLASS" "retrying it failed: $(one_line "$out")"
   STOPPED_ACTION=asked
 }
 
@@ -434,7 +427,6 @@ add_row() {  # <id> <class> <detail> <action>
 while IFS= read -r meta; do
   id=$(basename "$meta" .meta)
   record=$(cat "$meta" 2>/dev/null) || continue
-  project=$(project_of "$meta")
   classify "$id"
   action=none
   HOLD_ID=
@@ -443,8 +435,8 @@ while IFS= read -r meta; do
       if [ "$UNPROVEN" = 1 ]; then
         CLEANUP_WHY="no merged PR is recorded for it, so nothing proves its work landed"
         RAISED=0
-        raise "$id" finished "$CLEANUP_WHY" "$project"
-        if [ "$RAISED" = 1 ]; then action=asked; NEW="$NEW $id"; elif [ "${RAISE_SKIPPED:-0}" = 1 ]; then CLASS=unknown; DETAIL="worker record changed during scan"; else action=unhandled; fi
+        raise "$id" finished "$CLEANUP_WHY"
+        if [ "$RAISED" = 1 ]; then action=asked; NEW="$NEW $id"; else action=unhandled; fi
         DETAIL=$CLEANUP_WHY
       elif cleanup "$id"; then
         action=cleaned
@@ -463,8 +455,8 @@ while IFS= read -r meta; do
         DETAIL="another cleanup or lifecycle action holds it: $CLEANUP_WHY"
       else
         RAISED=0
-        raise "$id" finished "$CLEANUP_WHY" "$project"
-        if [ "$RAISED" = 1 ]; then action=asked; NEW="$NEW $id"; elif [ "${RAISE_SKIPPED:-0}" = 1 ]; then CLASS=unknown; DETAIL="worker record changed during scan"; else action=unhandled; fi
+        raise "$id" finished "$CLEANUP_WHY"
+        if [ "$RAISED" = 1 ]; then action=asked; NEW="$NEW $id"; else action=unhandled; fi
         DETAIL=$CLEANUP_WHY
       fi
       ;;
@@ -518,8 +510,8 @@ while IFS=$'\t' read -r otask oeid; do
   fi
   detail="$detail and its close refused: $(one_line "$out")"
   RAISED=0
-  raise "idle-orphan-$otask" dead "$detail" "$(basename "$FM_HOME")" "$otask" orphan
-  if [ "$RAISED" = 1 ]; then action=asked; NEW="$NEW idle-orphan-$otask"; elif [ "${RAISE_SKIPPED:-0}" = 1 ]; then CLASS=unknown; DETAIL="worker record changed during scan"; else action=unhandled; fi
+  raise "idle-orphan-$otask" dead "$detail" "$otask"
+  if [ "$RAISED" = 1 ]; then action=asked; NEW="$NEW idle-orphan-$otask"; else action=unhandled; fi
   add_row "idle-orphan-$otask" dead "$detail" "$action"
 done <<< "$orphans"
 

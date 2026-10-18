@@ -70,7 +70,7 @@ test_run_together_identifiers_and_product_names() {
   home=$(make_home mixed-tokens)
   in="$home/in.json"
   for field in title situation label; do
-    for token in PR1806 Direction7 A1 1A 2FA4K IPv7 OAuth3; do
+    for token in PR1806 Direction7 A1 1A 2FA4K IPv7 OAuth3 CI-only PR-to-review only-CI review-PR-now POST-to-observation; do
       good_card "$in"
       jq --arg field "$field" --arg token "$token" '
         if $field == "label" then .options[0].label=$token else .[$field]=$token end
@@ -390,6 +390,39 @@ test_hold_with_card_file_writes_the_full_card() {
   assert_equals false "$(jq -r .draft "$home/state/cards/card-b.json")" "full card stored"
   assert_equals 2 "$(jq -r .recommended "$home/state/cards/card-b.json")" "recommendation stored"
   pass "fm-captain-hold: a hold with --card-file stores the full card"
+}
+
+test_unrelated_review_calls_have_independent_cards_and_answers() {
+  local home choice title situation instruction card report
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: tasks-axi not found"; return 0; }
+  home=$(make_home separate-review-calls)
+  report=data/systems-review/report.md
+  mkdir -p "$home/data/systems-review"
+  printf 'Choose a route and an access policy.\n' > "$home/$report"
+  for choice in route access; do
+    case "$choice" in
+      route) title='Choose the route?'; situation='Two routes are available.'; instruction='Use the north route.' ;;
+      access) title='Restrict access?'; situation='Public and restricted access are available.'; instruction='Restrict access to the team.' ;;
+    esac
+    card="$home/$choice.json"
+    jq -n --arg title "$title" --arg situation "$situation" --arg report "$report" --arg instruction "$instruction" \
+      '{project:"cadia",title:$title,situation:$situation,
+        options:[{key:"1",label:"Use the recommendation",instruction:("Read " + $report + ". " + $instruction)}],recommended:"1"}' > "$card"
+    run_captain "$home" hold "$choice-call" --title "$title" --repo cadia --origin systems-review \
+      --reason "$title Report: $report" --card-file "$card" >/dev/null || fail "could not hold the $choice decision"
+    run_captain "$home" open "$choice-call" || fail "$choice decision is not open"
+    assert_equals "$title" "$(run_card "$home" show "$choice-call" | jq -r .title)" "$choice card lost its own decision"
+    assert_contains "$(run_card "$home" show "$choice-call" | jq -r '.options[0].instruction')" "$report" "$choice card lost the shared report"
+  done
+  run_captain "$home" complete systems-review route-call access-call >/dev/null || fail "separate decisions did not complete the shared review inventory"
+  assert_equals 2 "$(run_card "$home" calls | wc -l | tr -d ' ')" "both unrelated decisions must remain visible"
+  printf 'Use the north route.\n' > "$home/answer.txt"
+  run_captain "$home" answer route-call --decision-file "$home/answer.txt" >/dev/null || fail "could not answer the route decision"
+  assert_absent "$home/state/cards/route-call.json" "answered decision still has a card"
+  run_captain "$home" open access-call || fail "answering the route also settled the access policy"
+  assert_equals 'Restrict access?' "$(run_card "$home" show access-call | jq -r .title)" "the unanswered card changed"
+  assert_equals 1 "$(run_card "$home" calls | wc -l | tr -d ' ')" "only the unanswered decision should remain visible"
+  pass "fm-card: unrelated decisions share report evidence but keep separate cards and answers"
 }
 
 test_hold_refuses_an_invalid_card_before_holding() {
@@ -1110,6 +1143,7 @@ test_backfill_drafts_every_uncarded_captain_hold
 test_expired_deferral_is_backfilled_and_listed_by_drafts
 test_hold_without_card_writes_a_draft
 test_hold_with_card_file_writes_the_full_card
+test_unrelated_review_calls_have_independent_cards_and_answers
 test_hold_refuses_an_invalid_card_before_holding
 test_answer_removes_the_card
 test_answer_replays_and_repairs_remove_leftover_cards

@@ -22,8 +22,9 @@ The parent decides whatever is within its authority; otherwise it holds the call
 A scout that finds captain questions appends them as keyed `needs-decision` lines and stops; its parent holds them and runs `complete` for it.
 
 Every unresolved question that belongs to the captain and is discovered while producing, reading, presenting, or ending an investigation or visual review must be carried by a captain-held task in the authoritative backlog of the home that owns the originating work before that work or review may be treated as complete.
-Prefer holding the work item the question gates over minting a new row; create a new task only when no work item exists to hold.
-Put the question and its options in the hold reason, and keep one held task per genuine gate: a multi-question review is one held task pointing at its report, not a row per question. Represent that task with exactly one board card that consolidates its questions and options; never fan one task id into duplicate same-key cards.
+Prefer holding the work item the question gates over minting a new row; create separate calls only when no work item exists to hold or one item would otherwise bundle unrelated decisions.
+Put the question and its options in the hold reason, and keep one held task and one card per genuine decision.
+Unrelated questions from one review become separate held tasks and cards, each pointing at the same report; never fan one task id into duplicate same-key cards.
 Register or re-hold through `bin/fm-captain-hold.sh hold`, which is idempotent per task id.
 After inventorying the whole report and review surface, run `bin/fm-captain-hold.sh complete` with every captain-held task id, or with `--none` only when the reviewed surface leaves nothing waiting on the captain.
 A completed investigation and an ended visual review use this same owner and completion command; a visual tool, including Lavish, never owns a parallel completion policy.
@@ -69,7 +70,7 @@ This sequence is the parent mate's responsibility, not the worker's; the scout's
 
 1. Read the complete investigation result and complete the visual review before declaring either complete.
 2. Inventory only genuine unresolved choices that require the captain, and find the task each one gates.
-3. Hold that task - or create one captain-held task for the review's open questions - with a concise reason carrying the question and options, and its decision card (below).
+3. Hold the task each decision gates, or create a separate held call for each unrelated question, with a concise reason, its own decision card (below), and a pointer to the shared report.
 4. Run `complete` with the full captain-held inventory for that review pass.
 5. Relay the choices to the captain as decisions from Bearings' Captain's Call section under `AGENTS.md` section 9; do not use the word hold in captain chat.
 6. Choose the answer, evidence, or deferral outcome under Policy above, record a still-active reconciliation through `reconcile note`, or confirm a channel already settled the call.

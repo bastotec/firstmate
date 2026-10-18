@@ -53,7 +53,14 @@ rm -f "$FM_HOME/state/$1.meta"
 SH
   cat > "$dir/bin/fm-control.sh" <<'SH'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$FM_HOME/control-calls"
+printf '%s %s\n' "$1" "$2" >> "$FM_HOME/control-calls"
+if [ "$2" = relaunch ]; then
+  if [ "$#" -ne 4 ] || [ "$3" != --note ] || [ -z "$4" ]; then
+    echo 'REFUSED: relaunch requires a nonempty --note' >&2
+    exit 1
+  fi
+  printf '%s\n' "$4" > "$FM_HOME/control-note-$1"
+fi
 if [ -f "$FM_HOME/control-refuse/$1" ]; then cat "$FM_HOME/control-refuse/$1" >&2; exit 1; fi
 exit 0
 SH
@@ -194,6 +201,8 @@ test_a_stopped_worker_with_open_work_is_retried_once_without_a_card() {
     || fail "stopped workers with unfinished work were not relaunched once each: $(calls "$dir" control-calls)"
   [ ! -s "$dir/home/teardown-calls" ] || fail "a worker with unfinished work was retired: $(calls "$dir" teardown-calls)"
   for id in open-work no-pr; do
+    assert_equals 'Restarted by the idle sweep: your task is still open and unfinished. Read your inbox in order and continue it.' \
+      "$(cat "$dir/home/control-note-$id")" "retrying $id did not supply the recovery note"
     assert_present "$dir/home/state/$id.meta" "retrying $id removed its record"
     assert_present "$dir/home/state/idle-sweep/$id.retried" "the retry of $id was not recorded"
     assert_absent "$dir/home/state/idle-sweep/$id.raised" "a retried worker was also handed off"
@@ -219,7 +228,7 @@ test_a_stopped_worker_whose_work_landed_or_ended_is_retired() {
   add_worker "$dir" done-row 'state: unknown · source: none · backend target gone: hub:abc' 90000
   printf -- '- done-row: Done row\n  state: done\n' > "$dir/home/rows/done-row"
   add_worker "$dir" superseded 'state: paused · source: status-log · waiting' 90000
-  printf -- '- superseded: Old take\n  state: queued\n  note: superseded by new-take\n' > "$dir/home/rows/superseded"
+  printf -- '- superseded: Old take\n  state: queued\n  body: "Earlier investigation.\\nSuperseded: replaced by new-take"\n' > "$dir/home/rows/superseded"
   add_worker "$dir" refused 'state: failed · source: run-step · run failed' 90000
   printf -- '- refused: Refused\n  state: done\n' > "$dir/home/rows/refused"
   printf 'REFUSED: worktree /pool/refused has uncommitted changes\n' > "$dir/home/refuse/refused"
@@ -246,6 +255,29 @@ test_a_stopped_worker_whose_work_landed_or_ended_is_retired() {
   assert_contains "$(cat "$dir/home/state/.wake-queue")" 'decide yourself whether to retire or retry refused' \
     "the wake should hand the refused retirement to the first mate"
   pass "fm-idle-sweep: a stopped worker whose PR merged or closed, or whose item is done or superseded, is retired with --keep-commits"
+}
+
+test_supersession_requires_a_decoded_body_marker() {
+  local dir id
+  dir=$(new_case supersession-marker)
+  for id in title-only body-only note-only empty-marker; do
+    add_worker "$dir" "$id" 'state: failed · source: run-step · run failed' 90000
+  done
+  printf -- '- title-only: Fix superseded request handling\n  state: in-flight\n' > "$dir/home/rows/title-only"
+  printf -- '- body-only: Fix request handling\n  state: in-flight\n  body: "This work is not superseded."\n' > "$dir/home/rows/body-only"
+  printf -- '- note-only: Fix request handling\n  state: in-flight\n  note: Investigate superseded requests\n' > "$dir/home/rows/note-only"
+  printf -- '- empty-marker: Fix request handling\n  state: in-flight\n  body: "Superseded: "\n' > "$dir/home/rows/empty-marker"
+
+  sweep "$dir" scan --now || fail "scan failed"
+
+  assert_equals 4 "$(wc -l < "$dir/home/control-calls" | tr -d ' ')" "all unfinished tasks should be retried"
+  assert_absent "$dir/home/teardown-calls" "ordinary task prose must not authorize retirement"
+  for id in title-only body-only note-only empty-marker; do
+    assert_equals 'failed retried' "$(summary_of "$dir" "$id")" "$id was mistaken for superseded work"
+    assert_present "$dir/home/state/$id.meta" "$id was retired while unfinished"
+  done
+  assert_no_captain_call "$dir" "supersession markers"
+  pass "fm-idle-sweep: supersession comes from the decoded body marker, not task prose"
 }
 
 test_a_worker_that_stops_again_after_its_retry_goes_to_the_first_mate() {
@@ -1019,6 +1051,7 @@ test_watcher_runs_the_sweep_and_surfaces_its_decision() {
 
 test_a_stopped_worker_with_open_work_is_retried_once_without_a_card
 test_a_stopped_worker_whose_work_landed_or_ended_is_retired
+test_supersession_requires_a_decoded_body_marker
 test_a_worker_that_stops_again_after_its_retry_goes_to_the_first_mate
 test_a_second_mate_hands_its_stopped_worker_to_the_parent_channel
 test_done_workers_are_cleaned_up_without_force
