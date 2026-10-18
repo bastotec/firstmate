@@ -878,6 +878,7 @@ do_exit() {
   local state cmd verdict cancel interrupt_result=not-needed
   require_state_verified_backend exit "the agent actually stopped"
   state=$(agent_state)
+  admit_stopped_retry
   case "$state" in
     dead)
       stop_deck_residual_drivers
@@ -891,6 +892,10 @@ do_exit() {
   # A busy agent is interrupted first before the exit command is submitted.
   case "$(busy_verdict)" in
     busy*)
+      if [ -n "$STOPPED_STATUS_SIZE" ]; then
+        printf 'worker record or activity %s changed during scan\n' "$ID" >&2
+        return 3
+      fi
       cancel=$(deliver_interrupt) || return $?
       state=$(agent_state)
       case "$state" in
@@ -908,6 +913,7 @@ do_exit() {
   esac
   cmd=$(fm_control_exit_command "$HARNESS")
   gate_exit_composer "$cmd"
+  admit_stopped_retry
   if [ "$EXIT_COMPOSER_OUTCOME" = agent-gone ]; then
     # The agent is gone: nothing may be typed at the endpoint, and the right
     # remedy is a respawn (relaunch / recover-missing), not a composer clear.
