@@ -466,7 +466,7 @@ def build(home, scope_raw, days, now=None):
                                 % (name, ', '.join(rec['unknown_children'])))
                 if kind in INCONSISTENT_KINDS:
                     inconsistencies.append('%s: %s' % (name, rec['reason']))
-                else:
+                elif not (legacy_unknown or rec.get('unknown_children')):
                     gaps.append('%s: summary incomplete (%s)' % (name, rec['reason']))
             ct = rec.get('crew_time') or {}
             if rec.get('crew_time') is None:

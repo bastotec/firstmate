@@ -673,6 +673,18 @@ d = json.load(sys.stdin)
 assert any("child current state unavailable: dave-w9" in g for g in d["gaps"]), d["gaps"]
 assert any("no child metadata" in x for x in d["inconsistencies"]), d["inconsistencies"]
 ' || fail "an unreadable child hid behind a disagreement"
+  python3 - "$parent/homes/dave/state/home-summary.json" <<'PY'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p))
+d.update(reason="child current state unavailable: dave-w9",
+         invalidity={"kind": "child_current_unavailable", "ids": ["dave-w9"]}, unknown_children=["dave-w9"])
+json.dump(d, open(p, "w"))
+PY
+  FM_HOME="$parent" "$ROOT/bin/fm-report.sh" dave --json | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert sum("child current state unavailable" in g for g in d["gaps"]) == 1, d["gaps"]
+' || fail "an unread child was reported twice"
   pass "fm-report: a mate's report comes from records, read-only, from the main or a local mate home"
 }
 

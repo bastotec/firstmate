@@ -183,6 +183,21 @@ EOF
   printf '%s' "$out" | jq -e '
     .invalidity.kind == "unstructured_current" and .state != "unknown"
   ' >/dev/null || fail "a stray backlog line blanked the home state: $out"
+  # A worker read as idle with nothing claimed (its blocker was just resolved)
+  # was read, so it is not an unread child.
+  awk '/^## In flight/{print; print "- [ ] idle-ship - An answered worker (repo: alpha) (kind: ship) (since 2026-10-17)"; next} {print}' \
+    "$home/data/backlog.md" > "$home/data/backlog.md.tmp" && mv "$home/data/backlog.md.tmp" "$home/data/backlog.md"
+  mkdir -p "$home/projects/idle"
+  fm_write_meta "$home/state/idle-ship.meta" \
+    $(snap_identity "$home" idle-ship idle-ship) \
+    "worktree=$home/projects/idle" "project=alpha" "harness=deck" "kind=ship" "mode=local-only"
+  record_deck_idle "$home/state" idle-ship
+  printf 'blocked: waiting on a choice\nresolved: answered: go ahead\n' > "$home/state/idle-ship.status"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '
+    (.unknown_children | index("idle-ship") | not)
+      and any(.endpoints[]; .id == "idle-ship" and .state == "unknown")
+  ' >/dev/null || fail "an idle worker with nothing claimed was reported as unread: $out"
   pass "home summary reads remote mates, retained records and local-only ships"
 }
 

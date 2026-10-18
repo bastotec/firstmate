@@ -1097,7 +1097,11 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
     # live state is needed.
     # Only owned in-flight work needs a readable live state; a leftover record
     # that no current item owns is reported as unowned instead.
+    # A worker the reader found idle with nothing claimed (every source read, no
+    # state asserted, its final fallback) was read; it is not an unread child.
     | ([ $tasks[] | select(.kind != "secondmate" and .current_state.state == "unknown")
+         | select((.current_state.source == "none"
+                   and ((.current_state.detail // "") | startswith("no current-state source available"))) | not)
          | select(.id as $id | [$owned_in_flight[].id] | index($id) != null) ]) as $unknown_children
     | ([ $owned_in_flight[]
          | select(.requires_child_metadata)
