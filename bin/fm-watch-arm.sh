@@ -53,6 +53,10 @@
 # failure, the arm prints that temporary capture to stdout before removing it.
 # Interruption, timeout, and inspection failure stop and wait for the child first,
 # preserving termination diagnostics too.
+# A HUP, TERM, or INT to this arm gives its owned watcher at most
+# FM_ARM_CHILD_STOP_SECS (3) to exit after TERM, then kills the watcher's whole
+# process tree, so a watcher busy in a check or a sleep never outlives its arm
+# or holds up the host stopping it (bin/fm-deck-worker.sh "HOST SHUTDOWN").
 # Non-handoff starts keep their existing stdout-only capture and cleanup order.
 #
 # --restart: stop ONLY this FM_HOME's watcher (the pid recorded in THIS home's
@@ -145,6 +149,11 @@ trap - EXIT
 
 WATCH="$SCRIPT_DIR/fm-watch.sh"
 WATCH_LOCK="$STATE/.watch.lock"
+# shellcheck source=bin/fm-process-tree-lib.sh
+. "$SCRIPT_DIR/fm-process-tree-lib.sh"
+# Bound on waiting for the owned watcher after this arm is signalled (header).
+CHILD_STOP=${FM_ARM_CHILD_STOP_SECS:-3}
+case "$CHILD_STOP" in ''|*[!0-9]*) CHILD_STOP=3 ;; esac
 BEAT="$STATE/.last-watcher-beat"
 # "Fresh" reuses the guard's threshold so there is one definition of liveness.
 GRACE=${FM_GUARD_GRACE:-300}
@@ -552,8 +561,7 @@ handle_arm_signal() {
   local signal=$1 rc=$2
   trap - HUP TERM INT
   if [ -n "$child" ] && fm_pid_alive "$child"; then
-    kill -TERM "$child" 2>/dev/null || true
-    wait "$child" 2>/dev/null || true
+    fm_stop_child_bounded "$child" "$CHILD_STOP" || true
   fi
   cycle_log_append "$rc" "$signal" arm-interrupted none
   if [ -n "$child" ] && [ -n "${FM_WATCH_PREDECESSOR_ARM_PID:-}" ]; then

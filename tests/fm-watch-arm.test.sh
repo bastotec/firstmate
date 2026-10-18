@@ -1200,7 +1200,47 @@ SH
   pass "watch-arm: handling inspection failure retains startup and termination diagnostics"
 }
 
+# A watcher that defers its TERM trap behind a long foreground sleep, with a
+# helper of its own still writing, must not keep its arm (or the host stopping
+# that arm) waiting: the arm gives it a bounded window, then kills the tree.
+test_interrupted_arm_stops_a_slow_watcher_within_its_bound() {
+  local dir rc child_pid writer_pid size i
+  dir=$(make_case slow-watcher-stop)
+  mkdir -p "$dir/bin" "$dir/home"
+  cp -R "$ROOT/bin/." "$dir/bin/"
+  cat > "$dir/bin/fm-watch.sh" <<'SH'
+#!/usr/bin/env bash
+trap 'exit 143' TERM
+( while :; do printf 'x' >> "$FM_HOME/writes"; sleep 0.1; done ) &
+printf '%s\n' "$!" > "$FM_HOME/writer-pid"
+printf '%s\n' "$$" > "$FM_HOME/child-pid"
+sleep 60
+SH
+  chmod +x "$dir/bin/fm-watch.sh"
+  FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/state" FM_ARM_CONFIRM_TIMEOUT=60 \
+    FM_ARM_CHILD_STOP_SECS=1 "$dir/bin/fm-watch-arm.sh" > "$dir/arm.out" 2>&1 &
+  ARM_PID=$!
+  i=0
+  while [ "$i" -lt 100 ] && [ ! -s "$dir/home/child-pid" ]; do sleep 0.1; i=$((i + 1)); done
+  [ -s "$dir/home/child-pid" ] || fail "the slow watcher never started"
+  child_pid=$(cat "$dir/home/child-pid")
+  writer_pid=$(cat "$dir/home/writer-pid")
+  kill -TERM "$ARM_PID" || fail "could not interrupt the arm"
+  wait_for_exit "$ARM_PID" 50
+  rc=$?
+  [ "$rc" -eq 143 ] || fail "the arm did not stop within its bound after TERM (exit $rc)"
+  ! is_live_non_zombie "$child_pid" || fail "the interrupted arm left its watcher running"
+  ! is_live_non_zombie "$writer_pid" || fail "the interrupted arm left its watcher's helper running"
+  size=$(wc -c < "$dir/home/writes")
+  sleep 0.5
+  [ "$(wc -c < "$dir/home/writes")" = "$size" ] || fail "the stopped watcher's helper kept writing"
+  grep -q 'reason=arm-interrupted' "$dir/state/.watch-cycle-exits.log" \
+    || fail "the bounded stop was not recorded as an interrupted arm"
+  pass "watch-arm: a TERM stops a slow watcher and its helpers within the arm's bound"
+}
+
 test_handling_child_stderr_is_retained
+test_interrupted_arm_stops_a_slow_watcher_within_its_bound
 test_handling_inspection_failure_retains_completed_capture
 test_attached_arm_reports_the_delivered_wake
 test_attached_arm_reports_the_delivered_wake_after_drain

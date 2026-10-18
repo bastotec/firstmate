@@ -44,6 +44,7 @@ bin/fm-test-run.sh tests/fm-secondmate-revive.test.sh tests/fm-secondmate-livene
 
 The revival suite exercises confirmed local and remote down readings, local and remote missing-endpoint recovery, escalation of a remote endpoint that will not come back after its attempt budget, exclusion of non-secondmate records, per-mate concurrency across overlapping scans, retry exhaustion, escalation publication retries, and watcher-driven recovery without a model turn.
 It also exercises deliberate-stop marker withdrawal under the lifecycle lock, recovery between probing and automatic admission without consuming a failure, and fresh confirmation of legacy unattempted remote-missing escalations while held and spent-budget episodes remain untouched.
+Interrupted-restart cases use journals from the real local and host-local control producers, covering explicit model reset, Markdown notes beginning with `---`, contention, failure accounting, and rejection of pre-stop, recreating, or expired journals.
 The liveness suite covers startup's held-stop and live-lock skips and the fresh liveness recheck after taking that lock.
 The control and remote stream suites cover secondmate exit protection, locked alive-admission refusal, and the primary stop marker after a lost remote exit response.
 The control suite also covers the lane-health live-replacement exception while preserving the deliberate-stop refusal.
