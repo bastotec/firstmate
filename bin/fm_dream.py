@@ -94,7 +94,8 @@ Files under <home>/state/dream/:
                      raised: [{title, repo, mate, key, why}],
                      slow_commands: [{command, seconds, count}], counts: {...},
                      disagreements: [<home records read but disagreeing>],
-                     instructions: {changes, lines, pr, risk} | null,
+                     instructions: {changes (as proposed), proposed_lines, lines
+                     and files (the PR's final diff; null when unread), pr, risk} | null,
                      charter_proposals: [{mate, what}],
                      no_mistakes: {...} or null, summary}
   raised.jsonl       one line per raised item (dedupe across nights)
@@ -1122,11 +1123,13 @@ def nm_bin():
 
 def stop_run(tree):
     """Stop the owned no-mistakes run in tree with its own short bound, so a
-    spent step budget never leaves the daemon publishing on its own."""
+    spent step budget never leaves the daemon publishing on its own. True only
+    when the abort says the run is cancelled."""
     try:
-        subprocess.run([nm_bin(), 'axi', 'abort'], cwd=tree, capture_output=True, timeout=120)
+        r = subprocess.run([nm_bin(), 'axi', 'abort'], cwd=tree, capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.TimeoutExpired):
-        pass
+        return False
+    return r.returncode == 0 and 'cancelled' in (r.stdout or '')
 
 
 def drive_gate(ctx, tree, intent):
@@ -1218,7 +1221,7 @@ def step_instructions(ctx):
         outside = [p for p in changed if not (p in INSTRUCTION_PATHS or p.startswith('.agents/skills/'))]
         if outside:
             return {'status': 'rejected', 'why': 'touched %s' % outside[:3]}
-        diff = git(ctx, 'diff', '--cached', '-U0', base, cwd=tree)
+        diff = git(ctx, 'diff', '--cached', '-U0', '--no-renames', base, cwd=tree)  # a move is a removal and an addition
         removed = [l[1:] for l in diff.splitlines() if l.startswith('-') and not l.startswith('---')]
         added = [l for l in diff.splitlines() if l.startswith('+') and not l.startswith('+++')]
         if len(removed) + len(added) > MAX_INSTRUCTION_LINES:
@@ -1248,10 +1251,16 @@ def step_instructions(ctx):
                   'production, outward messages, destructive or irreversible actions, captain approval) removed '
                   'or reworded. Each change and its evidence:\n%s\nRisk policy: auto-land at its cap; anything '
                   'above it waits for the captain.' % (ctx.day, MAX_INSTRUCTION_LINES, body))
-        outcome, pr, detail = drive_gate(ctx, tree, intent)
+        try:
+            outcome, pr, detail = drive_gate(ctx, tree, intent)
+        except BaseException:
+            # An interrupted night (SIGTERM, SIGHUP) must not leave the gate publishing alone.
+            stop_run(tree)
+            raise
         if outcome in ('gate', 'timed out'):
             # Nothing waits on a parked run overnight: stop it, keep the branch for a person.
-            stop_run(tree)
+            if not stop_run(tree):
+                detail = (detail or outcome) + '; stopping the run was not confirmed'
         lines = len(removed) + len(added)
         summary = {'changes': changes, 'lines': lines, 'pr': pr}
         ctx.facts['instructions'] = summary
@@ -1259,10 +1268,9 @@ def step_instructions(ctx):
             risk = pr_risk(ctx, pr)
             summary['risk'] = risk
             final_lines, files = pr_diff(ctx, pr)
-            if final_lines is not None:
-                # The gate may have repaired the patch: report what the PR now holds.
-                summary.update(lines=final_lines, files=files, proposed_lines=lines)
-                lines = final_lines
+            # The gate may have repaired the patch: report what the PR now holds.
+            summary.update(proposed_lines=lines, lines=final_lines, files=files)
+            lines = final_lines
             return {'status': 'pr opened', 'pr': pr, 'risk': risk, 'lines': lines, 'changes': changes}
         return {'status': 'needs a decision' if outcome == 'gate' else outcome, 'why': detail or outcome,
                 'pr': pr, 'lines': lines, 'changes': changes}
@@ -1628,10 +1636,15 @@ def summary_line(run):
         text += " Waited %d min for Ziggy's dream to finish." % round(waited / 60)
     ins = run.get('instructions')
     if ins:
-        text += ' Instructions: %d change%s, %d lines (%s)%s.' % (
-            len(ins['changes']), '' if len(ins['changes']) == 1 else 's', ins['lines'],
-            '; '.join('%s: %s' % (c.get('path'), c.get('what')) for c in ins['changes'][:3]),
-            ', PR %s%s' % (ins['pr'], ', rated %s' % ins['risk'] if ins.get('risk') else '') if ins.get('pr') else '')
+        if ins.get('files') is not None:
+            final = 'PR holds %s lines in %s' % (ins['lines'], ', '.join(ins['files'][:4]) or 'no files')
+        elif ins.get('pr'):
+            final = 'final PR diff unavailable'
+        else:
+            final = '%d lines' % ins['lines']
+        text += ' Instructions: %s; proposed %s%s.' % (
+            final, '; '.join('%s: %s' % (c.get('path'), c.get('what')) for c in ins['changes'][:3]),
+            ' (PR %s%s)' % (ins['pr'], ', rated %s' % ins['risk'] if ins.get('risk') else '') if ins.get('pr') else '')
     if run.get('charter_proposals'):
         text += ' %d charter edit%s proposed (charters-%s.md).' % (
             len(run['charter_proposals']), '' if len(run['charter_proposals']) == 1 else 's', run['date'])

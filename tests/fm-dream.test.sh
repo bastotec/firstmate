@@ -153,6 +153,8 @@ if [ -n "$instructions" ]; then
              printf '{"changes": [{"path": "README.md", "what": "x", "why": "y"}]}' > "$instructions" ;;
     hardstop) sed -i.bak '/money/d' AGENTS.md && rm -f AGENTS.md.bak
               printf '{"changes": [{"path": "AGENTS.md", "what": "shorter", "why": "y"}]}' > "$instructions" ;;
+    moved) mkdir -p .agents/skills/archived && git mv AGENTS.md .agents/skills/archived/SKILL.md
+           printf '{"changes": [{"path": "AGENTS.md", "what": "x", "why": "y", "evidence": ["e"]}, {"path": ".agents/skills/archived/SKILL.md", "what": "x", "why": "y", "evidence": ["e"]}]}' > "$instructions" ;;
     big) for i in $(seq 1 90); do printf 'line %s\n' "$i" >> AGENTS.md; done
          printf '{"changes": [{"path": "AGENTS.md", "what": "x", "why": "y"}]}' > "$instructions" ;;
   esac
@@ -706,7 +708,8 @@ st = run["steps"]["instructions"]
 assert st["status"] == "pr opened" and st["pr"].endswith("/pull/990") and st["risk"] == "Low", st
 # The gate repaired the one proposed line into three: the report shows what the PR holds.
 assert run["instructions"]["lines"] == 3 and run["instructions"]["proposed_lines"] == 1, run["instructions"]
-assert "Instructions: 1 change, 3 lines (AGENTS.md: says how to answer a peer), PR https://github.com/bastotec/firstmate/pull/990, rated Low" in run["summary"], run["summary"]
+assert run["instructions"]["files"] == ["AGENTS.md"], run["instructions"]
+assert "Instructions: PR holds 3 lines in AGENTS.md; proposed AGENTS.md: says how to answer a peer (PR https://github.com/bastotec/firstmate/pull/990, rated Low)" in run["summary"], run["summary"]
 assert run["charter_proposals"] == [{"mate": "cadia", "what": "name the kernel repo"}], run["charter_proposals"]
 PY
   grep -q -- '--yes --intent Nightly fleet dreaming instructions change' "$d/calls/nm" || fail "the change did not go through the gate"
@@ -721,7 +724,7 @@ PY
 
 test_instructions_guards_reject_out_of_scope_hard_stop_and_big_changes() {
   local d mode
-  for mode in outside hardstop big unlisted noevidence; do
+  for mode in outside hardstop big unlisted noevidence moved; do
     d=$(new_case "instr-$mode")
     STUB_INSTR=$mode run_dream "$d" --only collect instructions > "$d/out.json" || fail "run exited nonzero"
     jq -e '.steps.instructions.status == "rejected"' "$d/out.json" >/dev/null \
@@ -739,7 +742,8 @@ test_instructions_stop_a_parked_gate_and_report_it() {
   local d
   d=$(new_case instr-gate)
   STUB_INSTR=edit STUB_NM=gate run_dream "$d" --only collect instructions > "$d/out.json" || fail "run exited nonzero"
-  jq -e '.steps.instructions.status == "needs a decision" and (.steps.instructions.why | test("review gate: R1 error"))' "$d/out.json" >/dev/null \
+  jq -e '.steps.instructions.status == "needs a decision" and (.steps.instructions.why | test("review gate: R1 error"))
+         and (.steps.instructions.why | test("not confirmed") | not)' "$d/out.json" >/dev/null \
     || fail "a parked gate was not reported: $(jq -c .steps.instructions "$d/out.json")"
   grep -q '|axi abort' "$d/calls/nm" || fail "the parked run was not stopped"
   d=$(new_case instr-gate-scalar)
