@@ -96,7 +96,28 @@ PY
   printf -- '---\nname: merge\ndescription: merging\n---\nUse gh.\n' > "$d/dotfiles/skills/merge/SKILL.md"
   git -C "$d/dotfiles" add -A && git -C "$d/dotfiles" commit -qm init && git -C "$d/dotfiles" push -q origin HEAD:main 2>/dev/null
   git -C "$d/dotfiles" branch -q -u origin/main 2>/dev/null || true
+  # firstmate: a bare origin with the instruction files, and a local clone
+  git init -q --bare "$d/fm-origin.git"
+  git clone -q "$d/fm-origin.git" "$d/firstmate" 2>/dev/null
+  mkdir -p "$d/firstmate/.agents/skills/guide" "$d/firstmate/bin"
+  printf '# Agents\n\nNever move money without the captain'"'"'s explicit word.\nBe brief.\n' > "$d/firstmate/AGENTS.md"
+  printf -- '---\nname: guide\n---\nOne rule.\n' > "$d/firstmate/.agents/skills/guide/SKILL.md"
+  printf '#!/usr/bin/env bash\n# brief templates\n' > "$d/firstmate/bin/fm-brief.sh"
+  git -C "$d/firstmate" add -A && git -C "$d/firstmate" commit -qm init && git -C "$d/firstmate" push -q origin HEAD:main 2>/dev/null
   # stubs
+  cat > "$d/bin/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+printf '%s|%s\n' "$PWD" "$*" >> "$STUB_CALLS/nm"
+case "${STUB_NM:-pass}" in
+  pass) printf 'outcome: checks-passed\nhelp[1]: "CI checks passed - the PR is ready: https://github.com/bastotec/firstmate/pull/990"\n' ;;
+  gate) case "$*" in *abort*) echo "run_status: cancelled" ;; *)
+          printf 'gate:\n  step: review\n  status: awaiting_approval\n  findings[1]{id,severity,file,action,description}:\n    R1,error,AGENTS.md,ask-user,"too broad"\n' ;; esac ;;
+esac
+SH
+  cat > "$d/bin/gh-pr" <<'SH'
+#!/usr/bin/env bash
+printf '## Intent\n\nx\n\n## Risk Assessment\n\n✅ Low: a small wording change.\n'
+SH
   cat > "$d/bin/deck" <<'SH'
 #!/usr/bin/env bash
 prompt=$(cat)
@@ -111,6 +132,22 @@ fi
 printf '%s\n' "$prompt" > "$STUB_CALLS/deck.$$"
 summary=$(printf '%s' "$prompt" | grep -o '/[^ ]*skills-[0-9-]*\.json' | head -1)
 triage=$(printf '%s' "$prompt" | grep -o '/[^ ]*triage-[0-9-]*\.json' | head -1)
+instructions=$(printf '%s' "$prompt" | grep -o '/[^ ]*instructions-[0-9-]*\.json' | head -1)
+if [ -n "$instructions" ]; then
+  case "${STUB_INSTR:-none}" in
+    none) printf '{"changes": [], "charters": []}' > "$instructions" ;;
+    edit) printf 'Answer a peer with --reply-to, never on the parent channel.\n' >> AGENTS.md
+          printf '{"changes": [{"path": "AGENTS.md", "what": "says how to answer a peer", "why": "a mate answered on its parent channel", "evidence": ["x"]}],
+                   "charters": [{"mate": "cadia", "what": "name the kernel repo", "why": "asked twice", "evidence": ["y"]},
+                                {"mate": "finn-finance", "what": "PRIVATE CHARTER EDIT", "why": "z"}]}' > "$instructions" ;;
+    outside) printf 'x\n' > README.md
+             printf '{"changes": [{"path": "README.md", "what": "x", "why": "y"}]}' > "$instructions" ;;
+    hardstop) sed -i.bak '/money/d' AGENTS.md && rm -f AGENTS.md.bak
+              printf '{"changes": [{"path": "AGENTS.md", "what": "shorter", "why": "y"}]}' > "$instructions" ;;
+    big) for i in $(seq 1 90); do printf 'line %s\n' "$i" >> AGENTS.md; done
+         printf '{"changes": [{"path": "AGENTS.md", "what": "x", "why": "y"}]}' > "$instructions" ;;
+  esac
+fi
 if [ -n "$summary" ]; then
   [ "${STUB_SKILLS:-edit}" = nosummary ] || printf '{"changes":[{"skill":"merge","what":"edit","why":"why"}]}' > "$summary"
   case "${STUB_SKILLS:-edit}" in
@@ -184,6 +221,7 @@ run_dream() {  # <case-dir> <args...>
   PATH="$d/bin:$PATH" DECK_STATE="$d/deck" FM_DREAM_DECK="$d/bin/deck" FM_DREAM_DOTFILES="$d/dotfiles" \
     FM_DREAM_JEV="$d/bin/jev" FM_DREAM_TASKS="$d/bin/tasks" FM_DREAM_HANDOFF="$d/bin/handoff" \
     FM_DREAM_REPORT="$d/bin/report" FM_DREAM_CAPTAIN_MEMORY="$d/bin/memory" FM_DREAM_NO_MISTAKES_DB="$d/nm.sqlite" STUB_CALLS="$d/calls" \
+    FM_DREAM_FIRSTMATE="$d/firstmate" FM_DREAM_NO_MISTAKES="$d/bin/no-mistakes" FM_DREAM_GH="$d/bin/gh-pr" \
     python3 "$DREAM" run --home "$d/home" "$@"
 }
 
@@ -647,8 +685,61 @@ PY
   pass "time spent waiting for Ziggy's dream is recorded apart from the step's own time, with collect's phases"
 }
 
+test_instructions_open_one_gated_pr_and_propose_charter_edits() {
+  local d log
+  d=$(new_case instr-edit)
+  STUB_INSTR=edit run_dream "$d" --only collect instructions > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" <<'PY' || fail "instructions step wrong: $(jq -c '.steps.instructions, .summary' "$log")"
+import json, sys
+run = json.load(open(sys.argv[1]))
+st = run["steps"]["instructions"]
+assert st["status"] == "pr opened" and st["pr"].endswith("/pull/990") and st["risk"] == "Low", st
+assert run["instructions"]["lines"] == 1, run["instructions"]
+assert "Instructions: 1 change, 1 lines (AGENTS.md: says how to answer a peer), PR https://github.com/bastotec/firstmate/pull/990, rated Low" in run["summary"], run["summary"]
+assert run["charter_proposals"] == [{"mate": "cadia", "what": "name the kernel repo"}], run["charter_proposals"]
+PY
+  grep -q -- '--yes --intent Nightly fleet dreaming instructions change' "$d/calls/nm" || fail "the change did not go through the gate"
+  git -C "$d/firstmate" log -1 --format=%s "fm/dream-instructions-$(jq -r .date "$log")" | grep -q 'Improves fleet instructions' \
+    || fail "the gated branch has no commit"
+  [ "$(git -C "$d/fm-origin.git" rev-parse main)" = "$(git -C "$d/firstmate" rev-parse origin/main)" ] || fail "main moved"
+  git -C "$d/fm-origin.git" log -1 --format=%s main | grep -q init || fail "dreaming pushed to main"
+  grep -q 'cadia: name the kernel repo' "$d"/home/state/dream/charters-*.md || fail "charter proposal missing"
+  grep -q 'PRIVATE CHARTER EDIT' "$d"/home/state/dream/charters-*.md && fail "an excluded mate's charter proposal leaked"
+  pass "instructions: one small change ships through the gate as a PR, charter edits are proposed, main is untouched"
+}
+
+test_instructions_guards_reject_out_of_scope_hard_stop_and_big_changes() {
+  local d mode
+  for mode in outside hardstop big; do
+    d=$(new_case "instr-$mode")
+    STUB_INSTR=$mode run_dream "$d" --only collect instructions > "$d/out.json" || fail "run exited nonzero"
+    jq -e '.steps.instructions.status == "rejected"' "$d/out.json" >/dev/null \
+      || fail "$mode change was not rejected: $(jq -c .steps.instructions "$d/out.json")"
+    [ ! -e "$d/calls/nm" ] || fail "a rejected $mode change reached the gate"
+    git -C "$d/firstmate" rev-parse -q --verify "refs/heads/fm/dream-instructions-$(jq -r .date "$(ls "$d"/home/state/dream/runs/*.json)")" >/dev/null \
+      && fail "a rejected $mode change left its branch"
+  done
+  jq -e '.steps.instructions.why | test("hard-stop")' "$TMP_ROOT/instr-hardstop/out.json" >/dev/null \
+    || fail "the hard-stop rejection does not say why"
+  pass "instructions: changes outside the instruction files, to a hard stop, or too big are rejected before the gate"
+}
+
+test_instructions_stop_a_parked_gate_and_report_it() {
+  local d
+  d=$(new_case instr-gate)
+  STUB_INSTR=edit STUB_NM=gate run_dream "$d" --only collect instructions > "$d/out.json" || fail "run exited nonzero"
+  jq -e '.steps.instructions.status == "needs a decision" and (.steps.instructions.why | test("review gate: R1 error"))' "$d/out.json" >/dev/null \
+    || fail "a parked gate was not reported: $(jq -c .steps.instructions "$d/out.json")"
+  grep -q '|axi abort' "$d/calls/nm" || fail "the parked run was not stopped"
+  pass "instructions: a gate --yes cannot pass is stopped and reported for the captain"
+}
+
 test_collect_builds_a_private_digest_of_the_day
 test_each_relaunch_is_counted_once
+test_instructions_open_one_gated_pr_and_propose_charter_edits
+test_instructions_guards_reject_out_of_scope_hard_stop_and_big_changes
+test_instructions_stop_a_parked_gate_and_report_it
 test_waiting_for_ziggy_is_not_the_step_s_own_time
 test_no_mistakes_failures_are_broken_down_by_step_cause_and_host
 test_a_bridge_without_reports_skips_the_host_and_says_so
