@@ -777,7 +777,7 @@ PY
 }
 
 test_live_deck_relaunch_uses_control_protocol_before_residual_stop() {
-  local dir out rc gen pid
+  local dir out rc gen pid observer_pid observer_rc
   dir=$(new_case live-deck-stop rl-deck-live)
   add_ship_task "$dir" rl-deck-live deck
   cat > "$dir/fakebin/deck" <<'PY'
@@ -824,16 +824,30 @@ if ps -ax -o pgid=,stat= | awk '\$1 == $pid && \$2 !~ /^Z/ { live=1 } END { exit
   exit 0
 fi
 : > '$dir/group-stopped'
-curl -fsS -m 5 -H 'Authorization: Bearer $FM_STREAM_TOKEN' \
-  -H 'Content-Type: application/json' -X POST \
-  --data-binary '{"foreground":[{"pid":"","name":"bash","argv0":"bash","args":"bash"}]}' \
-  '$FM_TEST_STREAM_URL/v1/test/endpoints/$(cat "$dir/fake/target" | sed 's/.*://')' >/dev/null
 SH
   chmod +x "$dir/observe-stop"
+  # The request hook runs under the hub lock: publish its observation there,
+  # then update the endpoint once from outside the synchronous request.
+  (
+    for _ in $(seq 200); do
+      [ ! -d "$dir" ] && exit 1
+      [ ! -e "$dir/group-stopped" ] || break
+      /bin/sleep 0.1
+    done
+    [ -e "$dir/group-stopped" ] || exit 1
+    curl -fsS -m 5 -H "Authorization: Bearer $FM_STREAM_TOKEN" \
+      -H 'Content-Type: application/json' -X POST \
+      --data-binary '{"foreground":[{"pid":"","name":"bash","argv0":"bash","args":"bash"}]}' \
+      "$FM_TEST_STREAM_URL/v1/test/endpoints/$(cat "$dir/fake/target" | sed 's/.*://')" >/dev/null
+  ) &
+  observer_pid=$!
+  fm_test_track_helper_pid "$observer_pid"
   out=$(FM_TEST_EXIT_WAIT=5 FM_FAKE_PROTOCOL_FIRST="$dir/protocol-first" \
     FM_FAKE_PRIOR_PID="$pid" FM_FAKE_PRIOR_LIVE_MARKER="$dir/prior-live-at-launch" \
     FM_FAKE_NEVER_DIES=1 FM_FAKE_ON_REQUEST="$dir/observe-stop" \
     run_control "$dir" rl-deck-live relaunch --note 'replace live driver'); rc=$?
+  wait "$observer_pid"; observer_rc=$?
+  expect_code 0 "$observer_rc" "endpoint stop observer failed"
   if kill -0 "$pid" 2>/dev/null; then
     kill -KILL -- -"$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
