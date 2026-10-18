@@ -68,8 +68,10 @@
 # Existing captain holds, settled deferrals, and legacy raised fingerprints
 # remain admission guards; this sweep never creates a captain call.
 # Mate referrals queue `check:` rows keyed idle-sweep-mate:<id>:<epoch>:<digest>.
-# state/idle-sweep/<id>.mate-review stores the last successfully queued referral
-# evidence; <id>.mate-wait stores the last observed durable-wait evidence.
+# state/idle-sweep/<marker>.mate-review stores the last successfully queued
+# referral evidence; <marker>.mate-wait stores the last observed durable wait.
+# A worker's marker is its task ID; orphan markers add a SHA-256 endpoint suffix
+# so endpoints belonging to the same task never overwrite each other's evidence.
 # The evidence digest includes metadata, ledger, crew-state (excluding its
 # observed timestamp), local Git head/status when available, and any probed
 # withdrawal identity; closed-unmerged PR referrals also include the backlog row.
@@ -233,7 +235,7 @@ mate_evidence() {
 
 notify_mate() {
   local id=$1 evidence=$2 mode=$3 previous marker
-  marker="$RAISED_DIR/$id.$mode"
+  marker="$RAISED_DIR/${4:-$id}.$mode"
   mkdir -p "$RAISED_DIR" || return 1
   previous=$(cat "$marker" 2>/dev/null) || previous=
   if [ "$previous" != "$evidence" ] && { [ "$mode" = mate-review ] || [ -n "$previous" ]; }; then
@@ -244,14 +246,14 @@ notify_mate() {
 }
 
 mate_disposition() {
-  local id=$1 ledger_id=$2 worktree=$3 line=$4 call_id disposition rc
-  shift 4
+  local id=$1 ledger_id=$2 worktree=$3 line=$4 marker_id=$5 call_id disposition rc
+  shift 5
   for call_id in "$@"; do
     rc=0
     disposition=$("$SCRIPT_DIR/fm-captain-hold.sh" withdrawn-parked "$call_id" 2>/dev/null) || rc=$?
     case "$rc" in
       0)
-        if notify_mate "$id" "$(mate_evidence "$ledger_id" "$worktree" "$line" "$call_id:$disposition")" mate-wait; then
+        if notify_mate "$id" "$(mate_evidence "$ledger_id" "$worktree" "$line" "$call_id:$disposition")" mate-wait "$marker_id"; then
           CLASS="mate-wait"
         else
           CLASS=unknown; DETAIL="could not notify mate of changed evidence"
@@ -286,7 +288,7 @@ classify() {
   fi
   verb=$(printf '%s' "$line" | sed -n 's/^state: \([a-z]*\).*/\1/p')
   DETAIL=$(printf '%s' "$line" | sed 's/^state: [a-z]* · source: [a-z-]* · //' | cut -c1-200)
-  mate_disposition "$id" "$id" "$worktree" "$line" "$id" "idle-$id" && return
+  mate_disposition "$id" "$id" "$worktree" "$line" "$id" "$id" "idle-$id" && return
   case "$verb" in
     working|parked) CLASS=active; return ;;
     done)
@@ -466,7 +468,10 @@ while IFS=$'\t' read -r otask oeid; do
     *) add_row "idle-orphan-$otask" unknown "$detail; captain hold could not be read" none; continue ;;
   esac
   DETAIL=$detail
-  if mate_disposition "idle-orphan-$otask" "$otask" "" "$oeid" \
+  # Each endpoint keeps its own evidence marker while referrals name the task.
+  endpoint_marker=$(printf '%s' "$oeid" | shasum -a 256)
+  orphan_marker="idle-orphan-$otask.${endpoint_marker%% *}"
+  if mate_disposition "idle-orphan-$otask" "$otask" "" "$oeid" "$orphan_marker" \
     "$otask" "idle-$otask" "idle-orphan-$otask" "idle-idle-orphan-$otask"; then
     add_row "idle-orphan-$otask" "$CLASS" "$DETAIL" none
     continue
@@ -476,7 +481,7 @@ while IFS=$'\t' read -r otask oeid; do
     continue
   fi
   orphan_evidence=$(mate_evidence "$otask" "" "$oeid")
-  if [ "$(cat "$RAISED_DIR/idle-orphan-$otask.mate-review" 2>/dev/null)" = "$orphan_evidence" ]; then
+  if [ "$(cat "$RAISED_DIR/$orphan_marker.mate-review" 2>/dev/null)" = "$orphan_evidence" ]; then
     add_row "idle-orphan-$otask" dead "$detail; awaiting mate assessment" referred
     continue
   fi
@@ -488,7 +493,7 @@ while IFS=$'\t' read -r otask oeid; do
     continue
   fi
   detail="$detail and its close refused: $(one_line "$out")"
-  if notify_mate "idle-orphan-$otask" "$orphan_evidence" mate-review; then
+  if notify_mate "idle-orphan-$otask" "$orphan_evidence" mate-review "$orphan_marker"; then
     action=referred
   else
     action=unhandled

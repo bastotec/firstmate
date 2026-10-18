@@ -838,7 +838,8 @@ test_refused_orphans_are_referred_without_captain_calls() {
       if [ "$expected" = referred ]; then
         assert_contains "$(cat "$dir/home/state/.wake-queue")" 'idle-sweep-mate:idle-orphan-gone-task:' 'orphan did not reach its mate'
       else
-        assert_absent "$dir/home/state/idle-sweep/idle-orphan-gone-task.mate-review" 'a failed referral was marked handled'
+        [ -z "$(find "$dir/home/state/idle-sweep" -name 'idle-orphan-gone-task*.mate-review' -print)" ] \
+          || fail 'a failed referral was marked handled'
         rmdir "$dir/home/state/.wake-queue"
         sweep "$dir" scan --now || fail 'referral recovery scan failed'
         assert_equals referred "$(jq -r '.workers[0].action' "$dir/home/state/idle-sweep.json")" 'failed referral was not retried'
@@ -1115,11 +1116,11 @@ test_real_parked_withdrawals_survive_later_sweeps() {
       done
       [ ! -s "$dir/home/teardown-calls" ] || fail 'parked work was cleaned up'
       if grep -q 'idle-sweep-mate:' "$dir/home/state/.wake-queue"; then fail 'unchanged evidence woke mate'; fi
-      evidence=$(cat "$dir/home/state/idle-sweep/$summary_id.mate-wait")
+      evidence=$(cat "$dir/home/state/idle-sweep/$summary_id"*.mate-wait)
       printf 'blocked: capability is available; retry now\n' > "$dir/home/state/worker.status"
       age_file "$dir/home/state/worker.status" 90000
       sweep "$dir" scan --now || fail 'changed evidence scan failed'
-      [ "$evidence" != "$(cat "$dir/home/state/idle-sweep/$summary_id.mate-wait")" ] || fail 'evidence fingerprint unchanged'
+      [ "$evidence" != "$(cat "$dir/home/state/idle-sweep/$summary_id"*.mate-wait)" ] || fail 'evidence fingerprint unchanged'
       assert_contains "$(cat "$dir/home/state/.wake-queue")" "idle-sweep-mate:$summary_id:" 'material change did not reach mate'
       assert_absent "$dir/home/state/cards/$target.json" 'changed evidence went to captain instead of mate'
       sweep "$dir" scan --now || fail 'repeat changed scan failed'
@@ -1278,6 +1279,44 @@ test_long_mate_wake_keys_are_marked_once_per_evidence_change() {
   pass 'fm-idle-sweep: long mate wake keys surface once per evidence change, not once per successor'
 }
 
+test_multiple_orphan_endpoints_keep_stable_evidence_markers() {
+  local dir mode expected
+  for mode in parked referral; do
+    dir=$(new_case "multiple-orphans-$mode")
+    printf 'gone-task\teid123\ngone-task\teid456\n' > "$dir/home/orphans"
+    printf 'blocked: waiting for capability\n' > "$dir/home/state/gone-task.status"
+    : > "$dir/home/orphan-refused"
+    : > "$dir/home/state/.wake-queue"
+    expected=2
+    if [ "$mode" = parked ]; then
+      mkdir -p "$dir/home/parked"
+      printf 'mate owns capability wait\n' > "$dir/home/parked/idle-orphan-gone-task"
+      expected=0
+    fi
+    sweep "$dir" scan --now || fail 'initial multiple-orphan scan failed'
+    assert_equals "$expected" "$(grep -c 'idle-sweep-mate:idle-orphan-gone-task:' "$dir/home/state/.wake-queue")" 'initial endpoint evidence overwrote another endpoint'
+    printf 'gone-task\teid456\ngone-task\teid123\n' > "$dir/home/orphans"
+    sweep "$dir" scan --now || fail 'reordered multiple-orphan scan failed'
+    sweep "$dir" scan --now || fail 'unchanged multiple-orphan scan failed'
+    assert_equals "$expected" "$(grep -c 'idle-sweep-mate:idle-orphan-gone-task:' "$dir/home/state/.wake-queue")" 'unchanged endpoints repeatedly notified the mate'
+    printf 'blocked: capability became available\n' >> "$dir/home/state/gone-task.status"
+    expected=$((expected + 2))
+    sweep "$dir" scan --now || fail 'changed multiple-orphan evidence scan failed'
+    assert_equals "$expected" "$(grep -c 'idle-sweep-mate:idle-orphan-gone-task:' "$dir/home/state/.wake-queue")" 'changed evidence did not notify for each endpoint'
+    sweep "$dir" scan --now || fail 'unchanged changed-evidence scan failed'
+    assert_equals "$expected" "$(grep -c 'idle-sweep-mate:idle-orphan-gone-task:' "$dir/home/state/.wake-queue")" 'changed evidence was notified more than once per endpoint'
+    [ ! -s "$dir/home/hold-attempts" ] || fail 'multiple orphan endpoints raised a captain card'
+    [ ! -s "$dir/home/teardown-calls" ] || fail 'multiple orphan endpoints triggered worker cleanup'
+    if [ "$mode" = parked ]; then
+      if grep -q '^--orphan ' "$dir/home/retire-calls"; then fail 'parked endpoint closure was retried'; fi
+    else
+      assert_equals 4 "$(grep -c '^--orphan ' "$dir/home/retire-calls")" 'unchanged refused endpoints were closed again'
+    fi
+  done
+  pass 'fm-idle-sweep: multiple endpoints retain independent evidence; unchanged scans stay quiet and changed evidence reaches the mate once per endpoint'
+}
+
+test_multiple_orphan_endpoints_keep_stable_evidence_markers
 test_finished_cleanup_refusals_are_assessed_by_the_mate
 test_long_mate_wake_keys_are_marked_once_per_evidence_change
 test_local_only_completion_is_assessed_by_the_mate
