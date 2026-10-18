@@ -210,7 +210,12 @@ SH
 case "$1" in
   list) case "$*" in *--fields*) echo "unexpected --fields" >&2; exit 2 ;; esac
         printf 'count: 3\ntasks[3]{id,state,kind,repo,title}:\n  fm-old,done,ship,firstmate,"Cache the drain result in fm-wake-drain.sh"\n  fm-dupes,queued,ship,"-","Prevent duplicate worker spawns, for a task"\n  fm-q,queued,ship,deck,"Handle \\"a,b\\" retry arguments in deck"\nhelp[2]:\n  - Run `tasks-axi show <id>` for full notes on a task\n  - Run `tasks-axi ready` to see unblocked queued work\n' ;;
-  add) n=$(find "$STUB_CALLS" -name 'add.*' | wc -l | tr -d ' '); printf '%s\n' "$*" > "$STUB_CALLS/add.$n"; printf '{\n  "ok": true,\n  "action": "add",\n  "task": {"id": "dream-k%s"}\n}\n' "$n" ;;
+  add) n=$(find "$STUB_CALLS" -name 'add.*' | wc -l | tr -d ' '); printf '%s\n' "$*" > "$STUB_CALLS/add.$n"
+       while [ "$#" -gt 0 ]; do
+         if [ "$1" = --body-file ]; then cp "$2" "$STUB_CALLS/body.$n.md"; break; fi
+         shift
+       done
+       printf '{\n  "ok": true,\n  "action": "add",\n  "task": {"id": "dream-k%s"}\n}\n' "$n" ;;
 esac
 SH
   cat > "$d/bin/handoff" <<'SH'
@@ -260,7 +265,22 @@ SH
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$STUB_CALLS/$(basename "$0")"
 SH
-  cp "$d/bin/send" "$d/bin/inbox"; cp "$d/bin/send" "$d/bin/hold"
+  cp "$d/bin/send" "$d/bin/inbox"
+  cat > "$d/bin/hold" <<'SH'
+#!/usr/bin/env bash
+set -eu
+printf '%s\n' "$*" >> "$STUB_CALLS/hold"
+key=$2
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --card-file ]; then
+    "$ROOT/bin/fm-card.sh" validate --file "$2" --task "$key"
+    cp "$2" "$STUB_CALLS/captain-card.json"
+    exit 0
+  fi
+  shift
+done
+exit 1
+SH
   chmod +x "$d/bin/"*
   printf '%s' "$d"
 }
@@ -272,7 +292,7 @@ run_dream() {  # <case-dir> <args...>
     FM_DREAM_REPORT="$d/bin/report" FM_DREAM_CAPTAIN_MEMORY="$d/bin/memory" FM_DREAM_NO_MISTAKES_DB="$d/nm.sqlite" STUB_CALLS="$d/calls" \
     FM_DREAM_FIRSTMATE="$d/firstmate" FM_DREAM_NO_MISTAKES="$d/bin/no-mistakes" FM_DREAM_GH="$d/bin/gh-pr" \
     FM_DREAM_REFLECT="$d/bin/reflect" FM_DREAM_SEND="$d/bin/send" FM_DREAM_INBOX="$d/bin/inbox" FM_DREAM_HOLD="$d/bin/hold" \
-    FM_DREAM_TRACK_WAIT=0 python3 "$DREAM" run --home "$d/home" "$@"
+    ROOT="$ROOT" FM_DREAM_TRACK_WAIT=0 python3 "$DREAM" run --home "$d/home" "$@"
 }
 
 test_each_relaunch_is_counted_once() {
@@ -792,6 +812,13 @@ assert card["state"] == "card raised" and card["key"], card
 hold = open(calls + "/hold").read()
 assert hold.startswith("hold %s --reason Decide whether mates may merge medium-risk PRs" % card["key"]), hold
 assert "charter edit for cadia: name the kernel repo" in card["what"], card
+payload = json.load(open(calls + "/captain-card.json"))
+assert payload["project"] == "firstmate" and payload["recommended"] == "1", payload
+assert [o["key"] for o in payload["options"]] == ["1", "2"], payload
+assert all(card["key"] in o["instruction"] for o in payload["options"]), payload
+body = open(calls + "/body.%s.md" % card["key"][len("dream-k"):]).read()
+assert "Decide whether mates may merge medium-risk PRs" in body and "3 PRs waited for a merge" in body, body
+assert "Apply this charter edit for cadia? name the kernel repo" in body, body
 s = run["summary"]
 assert "Improve: 1 mate task (1 merged, 0 open), start to merge median 1.7h (p90 1.7h) (-13m vs 2026-10-01)" in s, s
 assert "Tonight: AGENTS.md: says how to answer a peer (https://github.com/bastotec/firstmate/pull/990, merged and deployed)" in s, s

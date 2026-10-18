@@ -2084,15 +2084,30 @@ def file_improvements(ctx, already):
         card = '\n'.join(['# %s' % title, ''] + ['- %s Evidence: %s' % (c['change'], c['evidence']) for c in calls]
                          + ['- Apply this charter edit for %s? %s' % (c['mate'], c['what']) for c in charters])
         bf = ctx.dir / '.card.md'
+        cf = ctx.dir / '.card.json'
         write_private(bf, card)
         try:
             r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'add', '--mint', '--prefix', 'dream-call', title,
                          '--kind', 'docs', '--body-file', str(bf), '--json'], env=env, timeout=60)
             key = task_key_of(r)
-            h = ctx.run([tool('fm-captain-hold.sh', 'FM_DREAM_HOLD'), 'hold', key, '--reason', what[:200],
-                         '--card-file', str(bf)], env=env, timeout=60) if key and not r.returncode else r
+            if key and not r.returncode:
+                write_private(cf, json.dumps({
+                    'project': 'firstmate', 'title': 'Apply the proposed fleet changes?',
+                    'situation': "Tonight's improvements need your decision on private settings or mate instructions. "
+                                 'The task contains the proposed changes and their evidence.',
+                    'options': [
+                        {'key': '1', 'label': 'Apply the proposed changes',
+                         'instruction': 'Apply the proposed changes recorded in task %s.' % key},
+                        {'key': '2', 'label': 'Keep the current setup',
+                         'instruction': 'Do not apply the proposed changes recorded in task %s.' % key}],
+                    'recommended': '1'}))
+                h = ctx.run([tool('fm-captain-hold.sh', 'FM_DREAM_HOLD'), 'hold', key, '--reason', what[:200],
+                             '--card-file', str(cf)], env=env, timeout=60)
+            else:
+                h = r
         finally:
             bf.unlink()
+            cf.unlink(missing_ok=True)
         entry['key'] = key
         entry['state'] = 'card raised' if key and h.returncode == 0 else 'card not raised'
         if entry['state'] != 'card raised':
