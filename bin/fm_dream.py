@@ -860,7 +860,12 @@ def step_collect(ctx):
     ctx.facts['slow_commands'] = [{'command': k, 'count': v[0], 'seconds': round(v[1])}
                                   for k, v in sorted(agg.items(), key=lambda kv: -kv[1][1])][:8]
     ctx.facts['counts'] = {'sessions': len(sessions), 'captain_messages': len(captain),
-                           'no_mistakes_failed': len(nm), 'revives': len(revives), 'restarts': len(restarts),
+                           'no_mistakes_failed': len(nm),
+                           # one relaunch is logged as "reviving ..." then
+                           # "revived ..." (bin/fm-secondmate-revive.sh), so
+                           # only completed relaunches are counted, once each
+                           'revives': sum(1 for l in revives if ' revived ' in l or ' relaunched ' in l),
+                           'restarts': len(restarts),
                            'idle_sweep': len(sweep), 'digest_chars': len(text)}
     unread = ['%s: %s' % (m.get('id'), m.get('freshness')) for m in (rep or {}).get('mates', [])
               if m.get('id') not in ctx.excluded and m.get('freshness') not in ('fresh', 'local', 'remote', None)]

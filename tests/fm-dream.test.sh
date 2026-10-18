@@ -187,6 +187,23 @@ run_dream() {  # <case-dir> <args...>
     python3 "$DREAM" run --home "$d/home" "$@"
 }
 
+test_each_relaunch_is_counted_once() {
+  local d ts runs
+  d=$(new_case revives)
+  ts=$(date -u -r "$NOW" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$NOW" +%Y-%m-%dT%H:%M:%SZ)
+  {
+    printf '%s reviving mate-a (dead endpoint) with relaunch\n' "$ts"
+    printf '%s revived mate-a: relaunched mate-a harness=deck model=m\n' "$ts"
+    printf '%s mate-a is alive again\n' "$ts"
+    printf '%s relaunched mate-b because its inner monologue (supervisor) kept failing\n' "$ts"
+  } > "$d/home/state/secondmate-revive.log"
+  run_dream "$d" --only collect > "$d/out.json" || true
+  runs=$(find "$d/home/state/dream/runs" -name '*.json' | head -1)
+  [ -n "$runs" ] || fail "no run record"
+  [ "$(jq -r '.counts.revives' "$runs")" = 2 ] || fail "two relaunches must count as two, not every log line ($(jq -c .counts "$runs"))"
+  pass "fm-dream: each relaunch is counted once, not once per log line"
+}
+
 test_collect_builds_a_private_digest_of_the_day() {
   local d digest
   d=$(new_case collect)
@@ -631,6 +648,7 @@ PY
 }
 
 test_collect_builds_a_private_digest_of_the_day
+test_each_relaunch_is_counted_once
 test_waiting_for_ziggy_is_not_the_step_s_own_time
 test_no_mistakes_failures_are_broken_down_by_step_cause_and_host
 test_a_bridge_without_reports_skips_the_host_and_says_so
