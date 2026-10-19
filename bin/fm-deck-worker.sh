@@ -366,6 +366,8 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/fm-deck-worker.XXXXXX") || exit 2
 TURN_MARK="$WORK/turn-start"
 EVENTS="$WORK/events.ndjson"
 WATCH_PENDING="$WORK/watch.pending"
+WATCH_PUBLICATION="$WORK/watch.publication"
+WATCH_PUBLICATION_SEQ=0
 TURN_STATUS="$WORK/turn-pipeline.status"
 TURN_PIPE="$WORK/turn-events.pipe"
 mkfifo "$TURN_PIPE" || exit 1
@@ -759,8 +761,9 @@ watch_doorbell() (
   local record pending
   # shellcheck source=bin/fm-task-inbox-lib.sh
   . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
-  pending=$(cat "$WATCH_PENDING") || exit 1
-  record=$(FM_TASK_INBOX_STREAM=monologue fm_task_inbox_write "$STATE" "$ID" "$WAKE_PREAMBLE
+  pending=$(cat "$WATCH_PUBLICATION") || exit 1
+  record=$(FM_TASK_INBOX_STREAM=monologue fm_task_inbox_write_idempotent "$STATE" "$ID" "$WAKE_PREAMBLE
+Watcher publication: $GEN:${WORK##*/}:$WATCH_PUBLICATION_SEQ
 $pending") || exit 1
   fm_task_inbox_doorbell_line "$record" || exit 2
 )
@@ -777,7 +780,7 @@ watch_effort() {
   for f in "$STATE/$ID.inbox"/*.msg; do
     if [ -e "$f" ] || [ -L "$f" ]; then return 0; fi
   done
-  printf '%s\n%s' "$WAKE_PREAMBLE" "$(cat "$WATCH_PENDING")" \
+  printf '%s\n%s' "$WAKE_PREAMBLE" "$(cat "$WATCH_PUBLICATION")" \
     | "$SCRIPT_DIR/fm-effort-policy.sh" classify --home "$FM_HOME" 2>/dev/null
 }
 
@@ -1450,7 +1453,11 @@ while :; do
       show_prompt=1
     done
     exit_if_queued
-    if [ -s "$WATCH_PENDING" ]; then
+    if [ -s "$WATCH_PUBLICATION" ] || [ -s "$WATCH_PENDING" ]; then
+      if [ ! -s "$WATCH_PUBLICATION" ]; then
+        mv "$WATCH_PENDING" "$WATCH_PUBLICATION" || { host_failure 'could not retain watcher publication'; exit 1; }
+        WATCH_PUBLICATION_SEQ=$((WATCH_PUBLICATION_SEQ + 1))
+      fi
       if [ "$watch_publish_failures" -ge 3 ]; then
         host_failure 'could not publish watcher steering doorbell'; exit 1
       fi
@@ -1477,7 +1484,7 @@ while :; do
       exit_if_queued
       watch_publish_failures=0
       watch_publish_retry_at=0
-      : > "$WATCH_PENDING"
+      : > "$WATCH_PUBLICATION"
       drive_turn "$doorbell"
       show_prompt=1
       continue

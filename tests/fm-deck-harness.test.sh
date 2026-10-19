@@ -2459,26 +2459,61 @@ PYTHON
 # while exhausted retries must not steal a live holder or dispatch a lost wake.
 test_secondmate_host_retries_watcher_publication() {
   local mode dir
-  for mode in transient held quit-backoff quit-published; do
+  for mode in accepted-error doorbell-error equal-output transient held quit-backoff quit-published; do
     dir="$TMP_ROOT/host-publication-$mode"
     make_secondmate_host_fixture "$dir"
-    if [ "$mode" = quit-published ]; then
-      cat > "$dir/bin/mv" <<'SH'
+    cat > "$dir/bin/mv" <<'SH'
 #!/usr/bin/env bash
 "$FM_TEST_REAL_MV" "$@" || exit $?
 case "${2:-}" in
-  "${FM_HOME%/*}/parent/host.inbox/"*.msg)
-    : > "$FM_HOME/published"
-    for ((i=0; i<200; i++)); do
-      [ -d "$FM_HOME" ] || exit 2
-      [ ! -e "$FM_HOME/release-publication" ] || exit 0
-      sleep .1
-    done
-    exit 2
+  "${FM_HOME%/*}/parent/host.inbox/"[0-9]*.msg)
+    printf '%s\n' "$2" >> "$FM_HOME/published-records"
+    case "$FM_TEST_PUBLICATION_MODE" in
+      accepted-error|equal-output)
+        if [ ! -e "$FM_HOME/accepted-error" ]; then
+          : > "$FM_HOME/accepted-error"
+          exit 1
+        fi
+        ;;
+      quit-published)
+        : > "$FM_HOME/published"
+        for ((i=0; i<200; i++)); do
+          [ -d "$FM_HOME" ] || exit 2
+          [ ! -e "$FM_HOME/release-publication" ] || exit 0
+          sleep .1
+        done
+        exit 2
+        ;;
+    esac
     ;;
 esac
 SH
-      chmod +x "$dir/bin/mv"
+    chmod +x "$dir/bin/mv"
+    if [ "$mode" = doorbell-error ]; then
+      cat >> "$dir/bin/fm-task-inbox-lib.sh" <<'SH'
+fm_task_inbox_doorbell_line() {
+  printf '%s\n' "$1" >> "$FM_HOME/doorbell-failures"
+  return 1
+}
+SH
+    elif [ "$mode" = equal-output ]; then
+      cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" != --handling-delivered ] || exit 0
+trap 'exit 143' TERM INT
+printf '%s\n' "$$" >> "$FM_HOME/watch-starts"
+printf 'watcher: started pid=1 (beacon fresh)\n'
+for ((i=0; i<600; i++)); do
+  [ -d "$FM_HOME" ] || exit 2
+  if [ -f "$FM_HOME/trigger" ]; then
+    rm "$FM_HOME/trigger"
+    printf 'check: example\n'
+    exit 0
+  fi
+  sleep .1
+done
+exit 2
+SH
     fi
     python3 - "$dir" "$mode" <<'PYTHON' || fail "watcher publication contention: $mode"
 import json, os, pathlib, shutil, signal, subprocess, sys, time
@@ -2489,7 +2524,8 @@ state = root/'parent'
 (root/'tmp').mkdir()
 env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='',
            FM_CONFIG_OVERRIDE='', FM_TASK_INBOX_LOCK_WAIT_SECS='1', TMPDIR=str(root/'tmp'),
-           FM_TEST_REAL_MV=shutil.which('mv'), PATH=str(root/'bin')+os.pathsep+os.environ['PATH'])
+           FM_TEST_REAL_MV=shutil.which('mv'), FM_TEST_PUBLICATION_MODE=mode,
+           PATH=str(root/'bin')+os.pathsep+os.environ['PATH'])
 p = holder = None
 def pane(): return (root/'pane').read_text()
 def rows():
@@ -2534,7 +2570,46 @@ exit 2
     wait_for(lambda: 'retrying watcher steering publication' in pane(), 'publication retry')
     assert holder.poll() is None and os.readlink(lock) == owner
     assert not list(inbox.glob('*.msg')) and len(rows()) == 1
-    if mode == 'transient':
+    if mode in ('accepted-error', 'doorbell-error', 'equal-output'):
+        (root/'release-holder').touch()
+        assert holder.wait(timeout=10) == 0
+        if mode == 'doorbell-error':
+            assert p.wait(timeout=30) != 0
+            assert 'could not publish watcher steering doorbell' in pane()
+            assert len((home/'doorbell-failures').read_text().splitlines()) == 1
+            assert len((home/'published-records').read_text().splitlines()) == 1
+            records = list(inbox.glob('*.msg'))
+            assert len(records) == 1 and 'check: example' in records[0].read_text()
+            assert not list((inbox/'handled').glob('*.msg')) and len(rows()) == 1
+        else:
+            wait_for(lambda: (home/'accepted-error').exists(), 'accepted write with error return')
+            records = list(inbox.glob('*.msg'))
+            assert len(records) == 1
+            accepted = records[0].read_bytes()
+            if mode == 'equal-output':
+                wait_for(lambda: len((home/'watch-starts').read_text().splitlines()) >= 2, 'second watcher')
+                (home/'trigger').touch()
+            expected = 3 if mode == 'equal-output' else 2
+            wait_for(lambda: len(rows()) >= expected and 'state=idle' in (state/'host.busy-state').read_text(), 'accepted wake turns')
+            time.sleep(.5)
+            assert len(rows()) == expected, 'an accepted publication dispatched duplicate turns'
+            handled = sorted((inbox/'handled').glob('*.msg'))
+            assert len(handled) == expected - 1, 'one publication produced extra durable records'
+            assert not list(inbox.glob('*.msg'))
+            assert (inbox/'handled'/records[0].name).read_bytes() == accepted
+            assert len((home/'published-records').read_text().splitlines()) == expected - 1, 'replay renamed another record'
+            assert all('check: example' in row['inbox'] for row in rows()[1:])
+            assert 'retrying watcher steering publication (2/3)' in pane()
+            if mode == 'equal-output':
+                def payload(record):
+                    body = record.read_text().split('--\n', 1)[1]
+                    return '\n'.join(line for line in body.splitlines() if not line.startswith('Watcher publication: '))
+                assert payload(handled[0]) == payload(handled[1]), 'control did not publish equal watcher output'
+                assert handled[0].read_bytes() != handled[1].read_bytes()
+            p.stdin.write('/quit\n'); p.stdin.flush()
+            assert p.wait(timeout=30) == 0
+        assert queue.read_text() == 'fixture durable wake\n', 'host consumed the durable wake'
+    elif mode == 'transient':
         (root/'release-holder').touch()
         assert holder.wait(timeout=10) == 0
         wait_for(lambda: len(rows()) == 2 and 'state=idle' in (state/'host.busy-state').read_text(), 'retained wake turn')
@@ -2585,7 +2660,7 @@ finally:
             child.wait()
 PYTHON
   done
-  pass "Deck host retries publication, preserves lock custody, and honors queued exits without consuming wakes"
+  pass "Deck host replays accepted publications once, separates equal wakes, preserves lock custody, and honors queued exits"
 }
 
 # A watcher cycle that fails used to end the host ("watcher failed (exit 1)"),
