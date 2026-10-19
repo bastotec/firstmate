@@ -811,9 +811,25 @@ fm_backlog_retain() {  # <data-dir> <id> [flag...]
 fm_backlog_canonical_existing() {
   LC_ALL=C perl -MCwd=realpath -e '
     my $resolved = realpath($ARGV[0]);
-    exit 1 unless defined $resolved;
+    unless (defined $resolved) {
+      warn "fm-backlog resolver: realpath failed: $!\n";
+      exit 1;
+    }
     print $resolved;
-  ' "$1" 2>/dev/null
+  ' "$1"
+}
+
+# Failure-only context: keep the original refusal and child status, with a
+# bounded, shell-escaped stdout preview rather than silently losing evidence.
+# The successful resolver remains a single Perl command with no extra capture.
+fm_backlog_canonical_error() {  # <status> <refusal> <captured-stdout>
+  local status=$1 refusal=$2 output=$3 quoted truncated='' LC_ALL=C
+  if [ "${#output}" -gt 256 ]; then
+    output=${output:0:256}
+    truncated=' (truncated)'
+  fi
+  printf -v quoted '%q' "$output"
+  FM_BACKLOG_TRANSITION_ERROR="$refusal (resolver status=$status; stdout=$quoted$truncated; source=${BASH_SOURCE[0]}:fm_backlog_canonical_existing)"
 }
 
 fm_backlog_record_parent_authorized() {  # <path> <label> <root> [parent-only]
@@ -823,7 +839,7 @@ fm_backlog_record_parent_authorized() {  # <path> <label> <root> [parent-only]
   [ "$parent" != "$path" ] || parent=.
   base=${path##*/}
   root_resolved=$(fm_backlog_canonical_existing "$root") || {
-    FM_BACKLOG_TRANSITION_ERROR="$label authorized directory cannot be resolved at $root"
+    fm_backlog_canonical_error "$?" "$label authorized directory cannot be resolved at $root" "$root_resolved"
     return 1
   }
   [ -d "$root_resolved" ] || {
@@ -834,7 +850,7 @@ fm_backlog_record_parent_authorized() {  # <path> <label> <root> [parent-only]
     case "$root" in
       "$FM_HOME"|"$FM_HOME"/*)
         home_resolved=$(fm_backlog_canonical_existing "$FM_HOME") || {
-          FM_BACKLOG_TRANSITION_ERROR="$label home directory cannot be resolved at $FM_HOME"
+          fm_backlog_canonical_error "$?" "$label home directory cannot be resolved at $FM_HOME" "$home_resolved"
           return 1
         }
         case "$root_resolved" in
@@ -848,13 +864,13 @@ fm_backlog_record_parent_authorized() {  # <path> <label> <root> [parent-only]
     esac
   fi
   parent_resolved=$(fm_backlog_canonical_existing "$parent") || {
-    FM_BACKLOG_TRANSITION_ERROR="$label parent directory cannot be resolved at $path"
+    fm_backlog_canonical_error "$?" "$label parent directory cannot be resolved at $path" "$parent_resolved"
     return 1
   }
   expected_path=${parent_resolved%/}/$base
   if [ -z "$parent_only" ] && { [ -e "$path" ] || [ -L "$path" ]; }; then
     path_resolved=$(fm_backlog_canonical_existing "$path") || {
-      FM_BACKLOG_TRANSITION_ERROR="$label cannot be resolved at $path"
+      fm_backlog_canonical_error "$?" "$label cannot be resolved at $path" "$path_resolved"
       return 1
     }
     [ "$path_resolved" = "$expected_path" ] || final_matches=0
