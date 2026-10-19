@@ -66,6 +66,25 @@ if [ -L "$FILE" ]; then
   exit 1
 fi
 
+LOCK="$FILE.lock"
+LOCK_TOKEN="$$:$(date +%s):$RANDOM:$RANDOM"
+tmp=
+cleanup() {
+  [ -z "$tmp" ] || rm -f -- "$tmp"
+  if [ "$(cat "$LOCK" 2>/dev/null)" = "$LOCK_TOKEN" ]; then
+    rm -f -- "$LOCK"
+  fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+attempt=0
+until (set -C; printf '%s\n' "$LOCK_TOKEN" > "$LOCK") 2>/dev/null; do
+  attempt=$((attempt + 1))
+  [ "$attempt" -lt 26 ] || exit 0
+  sleep 0.1
+done
+
 # Prints the rewritten backlog on stdout and "<count> <ids>" on fd 3.
 rewrite() {  # <file>
   awk '
@@ -101,10 +120,16 @@ rewrite() {  # <file>
           ids = ids (ids == "" ? "" : ", ") row_id(l)
           block[++n] = l
           j = i + 1
-          while (j <= NR && line[j] ~ /^[[:space:]]+[^[:space:]]/) {
-            block[++n] = line[j]
+          while (j <= NR) {
+            if (line[j] ~ /^[[:space:]]*$/) {
+              k = j + 1
+              while (k <= NR && line[k] ~ /^[[:space:]]*$/) k++
+              if (k > NR || line[k] !~ /^[[:space:]]+[^[:space:]]/) break
+              j = k
+            } else if (line[j] !~ /^[[:space:]]+[^[:space:]]/) break
             j++
           }
+          for (k = i + 1; k < j; k++) block[++n] = line[k]
           i = j - 1
           continue
         }

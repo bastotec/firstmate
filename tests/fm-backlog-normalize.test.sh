@@ -58,9 +58,82 @@ test_moves_done_rows_with_their_bodies() {
     "the body did not travel with its row"
   assert_equals '- [x] already-done - Done already (done 2026-10-17)' "$(tail -1 "$file")" \
     "moved rows were not placed at the top of Done"
+  [ ! -e "$file.lock" ] || fail "a successful repair left its lock behind"
   out=$("$NORMALIZE" "$file") || fail "a second run failed"
   assert_equals "" "$out" "a clean backlog was reported as repaired"
+  [ ! -e "$file.lock" ] || fail "a clean run left its lock behind"
   pass "done rows outside Done move there with their bodies, and nothing else changes"
+}
+
+test_multi_paragraph_body_moves_with_internal_blanks() {
+  local dir file
+  dir="$TMP_ROOT/paragraphs"
+  mkdir -p "$dir"
+  file="$dir/backlog.md"
+  cat > "$file" <<'EOF'
+## Queued
+- [ ] open - Still queued
+- [x] closed - Finished
+  First paragraph
+
+
+  Outcome: merged https://github.com/o/r/pull/2
+
+  Final paragraph
+
+
+Column-zero text stays here
+- [x] another - Also finished
+  Another body
+
+- [ ] next - Also queued
+
+## Done
+- [x] existing - Previously finished
+EOF
+  cat > "$dir/expected.md" <<'EOF'
+## Queued
+- [ ] open - Still queued
+
+
+Column-zero text stays here
+
+- [ ] next - Also queued
+
+## Done
+- [x] closed - Finished
+  First paragraph
+
+
+  Outcome: merged https://github.com/o/r/pull/2
+
+  Final paragraph
+- [x] another - Also finished
+  Another body
+- [x] existing - Previously finished
+EOF
+  "$NORMALIZE" --quiet "$file" || fail "multi-paragraph normalization failed"
+  cmp -s "$dir/expected.md" "$file" || fail "internal paragraphs did not move intact or trailing blanks moved"
+  pass "multi-paragraph bodies move whole while trailing blanks and column-zero content stay"
+}
+
+test_held_backlog_lock_skips_without_writing() {
+  local dir file before out
+  dir="$TMP_ROOT/locked"
+  mkdir -p "$dir"
+  file="$dir/backlog.md"
+  write_misplaced "$file"
+  before=$(cksum < "$file")
+  printf '%s\n' "$$:held-by-tasks-axi" > "$file.lock"
+  out=$("$NORMALIZE" "$file" 2>&1) || fail "a held backlog lock was an error: $out"
+  assert_equals "" "$out" "a held backlog lock was not skipped quietly"
+  assert_equals "$before" "$(cksum < "$file")" "normalization wrote through a held backlog lock"
+  assert_equals "$$:held-by-tasks-axi" "$(cat "$file.lock")" "another writer's lock was changed or removed"
+  rm "$file.lock"
+  "$NORMALIZE" --quiet "$file" || fail "repair after releasing the lock failed"
+  assert_equals Done "$(section_of "$file" stale-call)" "the unlocked run did not repair the row"
+  [ ! -e "$file.lock" ] || fail "the normalizer left its lock behind"
+  pass "a held tasks-axi backlog lock skips repair quietly until a later run"
 }
 
 test_check_reports_without_writing() {
@@ -112,6 +185,8 @@ test_idle_sweep_scan_heals_its_home() {
 }
 
 test_moves_done_rows_with_their_bodies
+test_multi_paragraph_body_moves_with_internal_blanks
+test_held_backlog_lock_skips_without_writing
 test_check_reports_without_writing
 test_missing_done_section_is_created
 test_home_default_and_absent_file
