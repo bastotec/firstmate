@@ -328,28 +328,19 @@ hours() {  # <secs>
 # captain's 2026-10-18 rule: "i dont want to make those decisions"). A second
 # mate appends one "needs-decision [key=idle-<id>]" line to its parent channel;
 # the first mate's own home queues one check: wake for its supervisor, which
-# decides retire or retry. Sets RAISED=1 on success; the worker's ledger
+# decides retire or retry. Sets RAISED=1 when queued; the worker's ledger
 # fingerprint suppresses a repeat until the ledger changes.
 raise() {
-  local id=$1 class=$2 why=$3 ledger_id=${4:-$1} line episode rc=0
+  local id=$1 class=$2 why=$3 ledger_id=${4:-$1} line episode
   HOLD_ID=
   episode=$(fingerprint "$id" "$ledger_id")
   case "$class" in
     finished) line="worker $id is done, but its cleanup was refused ($why); decide whether to clean it up or keep it" ;;
     *) line="worker $id stopped ($class: $why) and I could not settle it myself; decide whether to retire or retry it" ;;
   esac
-  fm_parent_channel_report "$FM_HOME" "$STATE" "needs-decision [key=idle-$id]: [episode=$episode] $(fm_parent_channel_clean_note "$line")" || rc=$?
-  case "$rc" in
-    0)
-      mkdir -p "$RAISED_DIR" 2>/dev/null || true
-      printf '%s\n' "$episode" > "$RAISED_DIR/$id.raised" 2>/dev/null || true
-      ;;
-    1)
-      PENDING_RAISED="$PENDING_RAISED$(jq -cn --arg id "$id" --arg fingerprint "$episode" '{id:$id,fingerprint:$fingerprint}')"$'\n'
-      ;;
-    *) log "could not hand $id to the first mate"; return 0 ;;
-  esac
-  log "asked the first mate about $id ($class): $why"
+  HANDOFFS="$HANDOFFS$(jq -cn --arg id "$id" --arg task "$ledger_id" --arg class "$class" \
+    --arg why "$why" --arg episode "$episode" --arg line "needs-decision [key=idle-$id]: [episode=$episode] $(fm_parent_channel_clean_note "$line")" \
+    '{id:$id,task:$task,class:$class,why:$why,episode:$episode,line:$line}')"$'\n'
   RAISED=1
 }
 
@@ -522,7 +513,15 @@ if [ "$NOW_FLAG" -eq 0 ] && [ -e "$STATE/.last-idle-sweep" ]; then
   [ $((NOW - last)) -ge "$SWEEP_SECS" ] || exit 0
 fi
 fm_lock_try_acquire "$LOCK" || exit 0
-trap 'fm_lock_release "$LOCK" >/dev/null 2>&1 || true' EXIT
+HANDOFF_LOCKS=
+release_handoff_locks() {
+  local handoff_lock
+  for handoff_lock in $HANDOFF_LOCKS; do
+    fm_lock_release "$STATE/$handoff_lock" >/dev/null 2>&1 || true
+  done
+  HANDOFF_LOCKS=
+}
+trap 'release_handoff_locks; fm_lock_release "$LOCK" >/dev/null 2>&1 || true' EXIT
 touch "$STATE/.last-idle-sweep"
 
 # Attempt authorized repair before classifying this home's workers.
@@ -534,6 +533,7 @@ fi
 
 RAISED=0
 NEW=
+HANDOFFS=
 PENDING_RAISED=
 ROWS=
 add_row() {  # <id> <class> <detail> <action>
@@ -698,17 +698,45 @@ while IFS= read -r meta; do
 done < <(printf '%s\n' "$STATE"/*.meta)
 
 # --- publish ----------------------------------------------------------------------
-generated=$(date -u -r "$NOW" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$NOW" +%Y-%m-%dT%H:%M:%SZ)
-if tmp=$(mktemp "$STATE/.idle-sweep.json.XXXXXX"); then
-  if printf '%s' "$ROWS" | jq -s --arg home "$FM_HOME" --argjson epoch "$NOW" --arg generated "$generated" \
-    '{schema:"fm-idle-sweep.v1", generated:$generated, generated_epoch:$epoch, home:$home, workers:.}' \
-    > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$SUMMARY"; then
-    :
+while IFS= read -r handoff; do
+  [ -n "$handoff" ] || continue
+  id=$(printf '%s' "$handoff" | jq -r .id)
+  task=$(printf '%s' "$handoff" | jq -r .task)
+  handoff_lock=".control-$task.lock"
+  rc=0
+  if ! fm_lock_try_acquire "$STATE/$handoff_lock"; then
+    CLASS=unknown
+    DETAIL="another lifecycle action holds it"
+  elif approval_wait "$task"; then
+    fm_lock_release "$STATE/$handoff_lock" >/dev/null 2>&1 || true
   else
-    rm -f "$tmp" 2>/dev/null
-    log "could not publish $SUMMARY"
+    line=$(printf '%s' "$handoff" | jq -r .line)
+    episode=$(printf '%s' "$handoff" | jq -r .episode)
+    fm_parent_channel_report "$FM_HOME" "$STATE" "$line" || rc=$?
+    case "$rc" in
+      0)
+        mkdir -p "$RAISED_DIR" 2>/dev/null || true
+        printf '%s\n' "$episode" > "$RAISED_DIR/$id.raised" 2>/dev/null || true
+        ;;
+      1)
+        HANDOFF_LOCKS="$HANDOFF_LOCKS $handoff_lock"
+        PENDING_RAISED="$PENDING_RAISED$(jq -cn --arg id "$id" --arg fingerprint "$episode" '{id:$id,fingerprint:$fingerprint}')"$'\n'
+        ;;
+      *)
+        ROWS=$(printf '%s' "$ROWS" | jq -c --arg id "$id" 'if .id==$id then .action="unhandled" else . end')$'\n'
+        log "could not hand $id to the first mate"
+        ;;
+    esac
+    [ "$rc" -eq 1 ] || fm_lock_release "$STATE/$handoff_lock" >/dev/null 2>&1 || true
+    if [ "$rc" -le 1 ]; then
+      log "asked the first mate about $id ($(printf '%s' "$handoff" | jq -r .class)): $(printf '%s' "$handoff" | jq -r .why)"
+    fi
+    continue
   fi
-fi
+  ROWS=$(printf '%s' "$ROWS" | jq -c --arg id "$id" --arg class "$CLASS" --arg detail "$DETAIL" \
+    'if .id==$id then .class=$class | .detail=$detail | .action="none" else . end')$'\n'
+done <<< "$HANDOFFS"
+NEW=$(printf '%s' "$ROWS" | jq -rs '[.[] | select(.action=="retired" or .action=="retried" or .action=="asked") | .id] | join(" ")')
 
 prc=0
 fm_parent_channel_destination "$FM_HOME" "$STATE" >/dev/null 2>&1 || prc=$?
@@ -745,6 +773,19 @@ if [ -n "$NEW" ]; then
     else
       log "could not queue the idle sweep wake for:$NEW"
     fi
+  fi
+fi
+release_handoff_locks
+
+generated=$(date -u -r "$NOW" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$NOW" +%Y-%m-%dT%H:%M:%SZ)
+if tmp=$(mktemp "$STATE/.idle-sweep.json.XXXXXX"); then
+  if printf '%s' "$ROWS" | jq -s --arg home "$FM_HOME" --argjson epoch "$NOW" --arg generated "$generated" \
+    '{schema:"fm-idle-sweep.v1", generated:$generated, generated_epoch:$epoch, home:$home, workers:.}' \
+    > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$SUMMARY"; then
+    :
+  else
+    rm -f "$tmp" 2>/dev/null
+    log "could not publish $SUMMARY"
   fi
 fi
 exit 0

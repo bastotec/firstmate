@@ -318,6 +318,101 @@ test_corrupt_approval_record_excludes_actions() {
   pass 'fm-idle-sweep: corrupt approval records retain the exclusion'
 }
 
+test_approval_before_handoff_suppresses_retry_questions() {
+  local dir home timing before size
+  for home in main secondmate; do
+    for timing in forge later-worker; do
+      dir=$(new_case "approval-handoff-$home-$timing")
+      add_worker "$dir" stopped 'state: blocked · source: status-log · approval pending' 90000
+      [ "$home" != secondmate ] || make_secondmate_home "$dir" mate
+      before=$(cat "$dir/home/state/stopped.meta")
+      printf 'Parent approval is required before any recovery.\n' > "$dir/approval-instruction"
+      printf 'blocked [key=parent-approval]: Explicit parent release required\n' >> "$dir/home/state/stopped.status"
+      age_file "$dir/home/state/stopped.status" 90000
+      size=$(wc -c < "$dir/home/state/stopped.status" | tr -d ' ')
+      mkdir -p "$dir/home/state/idle-sweep"
+      printf '0 2\n' > "$dir/home/state/idle-sweep/stopped.retried"
+      cat > "$dir/home/declare-approval" <<'HOOK'
+#!/usr/bin/env bash
+exec "$FM_HOME/../bin/fm-approval-wait.sh" declare stopped --key parent-approval \
+  --expected-record "$(cat "$FM_HOME/state/stopped.meta")" --instruction-file "$FM_HOME/../approval-instruction"
+HOOK
+      chmod +x "$dir/home/declare-approval"
+      if [ "$timing" = forge ]; then
+        printf 'pr=https://github.com/owner/repo/pull/123\n' >> "$dir/home/state/stopped.meta"
+        before=$(cat "$dir/home/state/stopped.meta")
+        printf 'OPEN\n' > "$dir/home/pr-states/123"
+        cp "$dir/home/declare-approval" "$dir/home/on-forge"
+      else
+        add_worker "$dir" ztrigger 'state: working · source: status-log · active' 0
+        cat > "$dir/home/on-crew-state" <<'HOOK'
+#!/usr/bin/env bash
+[ "$1" != ztrigger ] || "$FM_HOME/declare-approval"
+HOOK
+        chmod +x "$dir/home/on-crew-state"
+      fi
+
+      sweep "$dir" scan --now || fail 'late approval handoff scan failed'
+
+      assert_present "$dir/home/state/stopped.approval-wait" 'the race did not declare approval'
+      assert_equals 'approval-wait none' "$(summary_of "$dir" stopped)" 'late approval produced a stale retry question'
+      assert_equals "$before" "$(cat "$dir/home/state/stopped.meta")" 'handoff changed the worker record'
+      assert_equals "$size" "$(wc -c < "$dir/home/state/stopped.status" | tr -d ' ')" 'handoff changed the worker ledger'
+      assert_equals '0 2' "$(cat "$dir/home/state/idle-sweep/stopped.retried")" 'handoff changed consumed retries'
+      assert_absent "$dir/home/state/idle-sweep/stopped.raised" 'late approval recorded a retry handoff'
+      assert_absent "$dir/home/control-calls" 'late approval attempted recovery'
+      assert_absent "$dir/home/teardown-calls" 'late approval attempted cleanup'
+      [ ! -s "$dir/home/state/.wake-queue" ] || fail 'late approval woke the supervisor with a retry question'
+      [ ! -s "$dir/parent/state/mate.status" ] || fail 'late approval sent a parent retry question'
+      [ ! -e "$dir/home/state/.control-stopped.lock" ] || fail 'handoff leaked the task lock'
+      assert_no_captain_call "$dir" 'late approval handoff'
+    done
+  done
+  pass 'fm-idle-sweep: approval declared during scan suppresses handoffs in both home types'
+}
+
+test_approval_handoff_publication_holds_the_original_task_lock() {
+  local dir home kind id
+  for home in main secondmate; do
+    for kind in worker orphan; do
+      dir=$(new_case "approval-handoff-lock-$home-$kind")
+      if [ "$kind" = worker ]; then
+        id=stopped
+        add_worker "$dir" stopped 'state: failed · source: status-log · stopped' 90000
+        mkdir -p "$dir/home/state/idle-sweep"
+        printf '0 2\n' > "$dir/home/state/idle-sweep/stopped.retried"
+      else
+        id=idle-orphan-stopped
+        printf 'stopped\tfixture-endpoint\n' > "$dir/home/orphans"
+        touch "$dir/home/orphan-refused"
+      fi
+      [ "$home" != secondmate ] || make_secondmate_home "$dir" mate
+      if [ "$home" = secondmate ]; then
+        cat >> "$dir/bin/fm-parent-channel-lib.sh" <<'HOOK'
+fm_parent_channel_append_once() {
+  [ -d "$FM_HOME/state/.control-stopped.lock" ] || return 4
+  printf '%s\n' "$2" >> "$1"
+}
+HOOK
+      else
+        cat >> "$dir/bin/fm-wake-lib.sh" <<'HOOK'
+fm_wake_append() {
+  [ -d "$FM_HOME/state/.control-stopped.lock" ] || return 1
+  printf '%s\n' "$3" >> "$FM_HOME/state/.wake-queue"
+}
+HOOK
+      fi
+      sweep "$dir" scan --now || fail 'handoff lock scan failed'
+      assert_equals asked "$(summary_of "$dir" "$id" | cut -d' ' -f2)" 'an eligible handoff failed while locked'
+      assert_present "$dir/home/state/idle-sweep/$id.raised" 'an eligible handoff was not delivered'
+      [ ! -e "$dir/home/state/.control-stopped.lock" ] || fail 'handoff leaked the task lock'
+    done
+  done
+  pass 'fm-idle-sweep: handoff publication serializes with approval declaration'
+}
+
+test_approval_before_handoff_suppresses_retry_questions
+test_approval_handoff_publication_holds_the_original_task_lock
 test_approval_excludes_actions_until_explicit_release
 test_keyed_capability_blocker_remains_retry_eligible
 test_approval_between_scan_and_control_refuses_locked_action
