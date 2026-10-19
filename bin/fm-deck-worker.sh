@@ -106,7 +106,8 @@
 #   handling, and no watcher starts while turn cancellation is pending.
 # - Watcher-inbox enqueue gets at most three attempts, with one then two
 #   seconds between attempts. Each publication keeps frozen output and a stable
-#   identity across retries; fm_task_inbox_write_idempotent reuses an accepted
+#   identity on its first body line across retries, allowing candidate filtering
+#   to skip unrelated history. fm_task_inbox_write_idempotent reuses an accepted
 #   record even if its writer returned an error. Later watcher results wait
 #   separately, with distinct identities even for equal output. No lock is
 #   bypassed. Exhaustion stops the host, leaving the durable wake queue
@@ -768,8 +769,8 @@ watch_doorbell() (
   # shellcheck source=bin/fm-task-inbox-lib.sh
   . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
   pending=$(cat "$WATCH_PUBLICATION") || exit 1
-  record=$(FM_TASK_INBOX_STREAM=monologue fm_task_inbox_write_idempotent "$STATE" "$ID" "$WAKE_PREAMBLE
-Watcher publication: $GEN:${WORK##*/}:$WATCH_PUBLICATION_SEQ
+  record=$(FM_TASK_INBOX_STREAM=monologue fm_task_inbox_write_idempotent "$STATE" "$ID" "Watcher publication: $GEN:${WORK##*/}:$WATCH_PUBLICATION_SEQ
+$WAKE_PREAMBLE
 $pending") || exit 1
   fm_task_inbox_doorbell_line "$record" || exit 2
 )

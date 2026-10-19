@@ -2586,6 +2586,8 @@ exit 2
             records = list(inbox.glob('*.msg'))
             assert len(records) == 1
             accepted = records[0].read_bytes()
+            body = records[0].read_text().split('--\n', 1)[1]
+            assert body.splitlines()[0].startswith('Watcher publication: '), 'publication identity must lead the serialized body for candidate filtering'
             if mode == 'equal-output':
                 wait_for(lambda: len((home/'watch-starts').read_text().splitlines()) >= 2, 'second watcher')
                 (home/'trigger').touch()
