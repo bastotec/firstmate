@@ -41,7 +41,7 @@ See the [no-mistakes quick start](https://kunchenguid.github.io/no-mistakes/star
   `.agents/skills/` holds agent-loaded skills that assume a live firstmate home and carry `metadata.internal: true` so installers such as [skills.sh](https://skills.sh) hide them from discovery; `skills/` holds standalone, installer-facing public skills with no firstmate dependency (see the README's "Two-tier skill layout").
   Everything personal to one captain's fleet (`.env`, `data/`, `state/`, `config/`, `projects/`, `.no-mistakes/`) is gitignored; never commit it.
   The root `.tasks.toml` is tracked `tasks-axi` config for `data/backlog.md`; compatible `tasks-axi` is the default backend for routine backlog mutations, with the compatibility definition owned by [`docs/configuration.md`](docs/configuration.md) ("Backlog backend").
-  A local `config/backlog-backend=manual` opt-out forces firstmate's routine backlog updates to hand-editing and stays gitignored; validated secondmate handoffs still delegate through `tasks-axi mv`.
+  The local backlog opt-out and its automatic-repair exception are owned by [Backlog backend](docs/configuration.md#backlog-backend-taskstoml--configbacklog-backend).
   A local `config/backend` file names the runtime backend for new task endpoints (stream, the only one) and stays gitignored; [`docs/configuration.md`](docs/configuration.md) ("Runtime backend") owns it.
   It does not make `data/` tracked.
 - Helper scripts in `bin/` are plain bash.

@@ -180,13 +180,15 @@ On an automatic-backend home, missing or incompatible `tasks-axi`, an unresolvab
 Migrated-hold resolution on a beads home reads only the root `.tasks.toml` `[beads]` section and refuses (rc=2) when beads is selected elsewhere without one.
 Secondmate handoffs use `fm-backlog-handoff.sh`, which validates fleet-level rules and delegates the move to `tasks-axi mv`; its [header](../bin/fm-backlog-handoff.sh) owns route-specific outcomes.
 It moves in-scope `## Queued` items only, refuses `## In flight` and `## Done` records, and refuses an item whose body continuation is indented with fewer than two spaces or a tab.
-Set `config/backlog-backend` to `manual` to force hand-editing and suppress the verbose `BOOTSTRAP_INFO: tasks-axi available` fact; absent or `tasks-axi` selects tasks-axi.
-A `manual` home owns its backlog file outright: automatic lifecycle transitions are skipped, and teardown prints the hand edit that is owed, but its [PR-resolution preflight](../bin/fm-teardown.sh) still applies.
+Set `config/backlog-backend` to `manual` for manual lifecycle updates and to suppress the verbose `BOOTSTRAP_INFO: tasks-axi available` fact; absent or `tasks-axi` selects tasks-axi.
+A `manual` home skips automatic lifecycle transitions, and teardown prints the hand edit that is owed, but its [PR-resolution preflight](../bin/fm-teardown.sh) still applies.
+The knob does not disable the sweep's [markdown normalization](../bin/fm-idle-sweep.sh), whose repair and skip rules are owned by the [`fm-backlog-normalize.sh` header](../bin/fm-backlog-normalize.sh).
 The knob does not affect the handoff helper, which works fleet-wide because bootstrap requires compatible `tasks-axi` on every profile.
 
 The tracked `.tasks.toml` paths resolve against the directory tasks-axi runs in, not `FM_HOME`, so a bare `tasks-axi` run from the code root addresses the code root's `data/`.
 tasks-axi writes by renaming over its target, so symlinking the code-root copy into a home forks the queue on the first write.
 Every routine backlog command therefore runs through [`bin/fm-tasks-axi.sh`](../bin/fm-tasks-axi.sh), which addresses this home's backlog and archive from any working directory.
+Markdown access through the wrapper, captain-hold commands, and lifecycle transitions follows the shared [addressing and repair contract](../bin/fm-backlog-transition-lib.sh).
 PR-bearing completion follows the [completion-claim gate in `bin/fm-pr-lib.sh`](../bin/fm-pr-lib.sh); the wrapper's header owns PR resolution and hand-close refusals.
 [`fm_backlog_record_pr_outcome`](../bin/fm-backlog-transition-lib.sh) owns the recorded PR outcome format and title-link handling, and [`bin/fm-landed-lib.sh`](../bin/fm-landed-lib.sh) owns how those outcomes affect Recently Landed.
 For existing Done records, [`bin/fm-pr-record-audit.sh`](../bin/fm-pr-record-audit.sh) owns the read-only audit and opt-in migration, including its limits and reconciliation diagnostics.

@@ -23,6 +23,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | [`fm-secondmate-revive.sh`](../bin/fm-secondmate-revive.sh) | Run guarded mid-session second-mate recovery under the [secondmate lifecycle](stream-backend.md#secondmate-lifecycle) and the script's LANE HEALTH contract |
 | [`fm-parked-run-watch.sh`](../bin/fm-parked-run-watch.sh) | Parked-run watchdog and quiet-worker check-ins; header owns timing and escalation |
 | [`fm-idle-sweep.sh`](../bin/fm-idle-sweep.sh) | Watcher-run guarded cleanup, retries, first-mate handoffs, and second-mate sweep audits; header owns eligibility and repeat suppression |
+| [`fm-backlog-normalize.sh`](../bin/fm-backlog-normalize.sh) | Repair checked rows misplaced in In flight or Queued; header owns repair and skip rules |
 | `fm-secondmate-restart-lib.sh` | Shared second-mate restart capability and persistence-request contract |
 | [`fm-machine.sh`](../bin/fm-machine.sh) | Connect and prepare a machine, including optional shared-skills provisioning |
 | [`fm-machine-blocker.sh`](../bin/fm-machine-blocker.sh) | Turn a machine check's human steps into a `Blocked on you:` reply, a self-closing needs-you card and a pending-machine record |

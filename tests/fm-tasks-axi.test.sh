@@ -210,6 +210,25 @@ test_wrapper_writes_through_to_home() {
   pass "fm-tasks-axi.sh writes, holds, archives, and reads relative body files through to the home from the code root"
 }
 
+test_wrapper_heals_done_rows_outside_done() {
+  local dir out
+  dir=$(make_split wrapper-misplaced-done)
+  printf '%s\n' '## In flight' '' '## Queued' '' \
+    '- [x] stuck-call - Old captain call (done 2026-10-16) (hold: Captain call - pick one) (hold-kind: captain)' \
+    '  Captain hold set: 2026-10-10' \
+    '- [ ] open-1 - Still queued' '' '## Done' > "$dir/home/data/backlog.md"
+  out=$(wrapper_from_code "$dir" show stuck-call 2>&1) \
+    || fail "a done row left under Queued stayed invisible to the wrapper: $out"
+  wrapper_from_code "$dir" unhold stuck-call >/dev/null 2>&1 \
+    || fail "the hold on a healed done row could not be released"
+  assert_equals 'Done' "$(awk '/^## /{s=$2} /stuck-call/{print s; exit}' "$dir/home/data/backlog.md")" \
+    "the done row was not moved under Done"
+  assert_equals 'Queued' "$(awk '/^## /{s=$2} /open-1/{print s; exit}' "$dir/home/data/backlog.md")" \
+    "an open queued row moved"
+  [ -L "$dir/code/data/backlog.md" ] || fail "healing replaced the code-root link"
+  pass "fm-tasks-axi.sh moves a done row stranded under Queued back to Done before tasks-axi reads it"
+}
+
 test_wrapper_overrides_ambient_file() {
   local dir
   dir=$(make_split wrapper-ambient)
@@ -268,6 +287,7 @@ test_guard_silent_for_single_home
 if [ "$HAVE_TASKS_AXI" = 1 ]; then
   test_bare_tasks_axi_fork_is_detected
   test_wrapper_writes_through_to_home
+  test_wrapper_heals_done_rows_outside_done
   test_wrapper_overrides_ambient_file
   test_wrapper_refusals
   test_wrapper_single_home

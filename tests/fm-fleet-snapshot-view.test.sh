@@ -371,6 +371,32 @@ EOF
   pass "captain-hold buckets are total, mutually exclusive, and never decided by prose"
 }
 
+test_checked_rows_never_carry_a_hold_bucket() {
+  local home fakebin out
+  home=$(make_home checked-hold)
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [x] checked-in-flight - Finished but left in flight (repo: sample) (kind: ship) (done 2026-07-21) (hold: choose a route) (hold-kind: captain)
+  Captain hold set: 2026-07-20T00:00:00Z
+
+## Queued
+- [x] checked-queued - Finished but left queued (repo: sample) (kind: ship) (done 2026-07-21) (hold: choose a route) (hold-kind: captain)
+  Captain hold set: 2026-07-20T00:00:00Z
+- [ ] open-call - Still open (repo: sample) (kind: captain) (hold: choose a route) (hold-kind: captain)
+  Captain hold set: 2026-07-20T00:00:00Z
+
+## Done
+EOF
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_DATA_OVERRIDE="$home/data" FM_SNAPSHOT_NOW=2026-07-25T00:00:00Z "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    ([.backlog.records[] | select(.id == "checked-queued" or .id == "checked-in-flight")]
+     | length == 2 and all(.hold_bucket == null and .captain_actionable == false))
+    and ([.backlog.records[] | select(.id == "open-call")][0].hold_bucket == "live")
+  ' >/dev/null || fail "a row marked done must never carry a hold bucket, wherever it sits: $out"
+  pass "a row marked done carries no hold bucket even outside the Done section"
+}
+
 test_main_inventory_orphan_and_unstructured_disclosure() {
   local home fakebin out
   home=$(make_home main-inventory)
@@ -1220,6 +1246,7 @@ test_home_summary_excludes_secondmate_from_child_inventory
 test_home_summary_reads_remote_mates_retained_records_and_local_only_ships
 test_undated_captain_hold_phrasing_and_aging
 test_hold_buckets_are_total_and_text_blind
+test_checked_rows_never_carry_a_hold_bucket
 test_main_inventory_orphan_and_unstructured_disclosure
 test_normalized_roles_and_plural_blocker_readiness
 test_event_hints_follow_reconciled_current_state

@@ -35,16 +35,16 @@
 #     structured record is Done, and missing ids stay open.
 #     There is no separate decision type: any captain-held task is the same
 #     primitive, whatever kind its row carries.
-#     hold_bucket is the single classification for every captain hold, decided
-#     only from structured fields - state, hold_kind, hold_until,
+#     hold_bucket classifies open, unchecked captain-held rows with a hold reason,
+#     using only structured fields - state, checked, hold_kind, hold_until,
 #     unresolved_blocker_ids, and the machine-written hold-set timestamp. No
 #     hold reason or body prose is ever matched. The buckets are total and
-#     mutually exclusive, so every captain hold lands in exactly one and none
-#     can fall through: "blocked" when any blocker is unresolved, else "dated"
-#     when hold_until is still in the future, else "aged" when an undated hold
-#     is at least FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS old (default 14; legacy
-#     unstamped holds fall back to `since`), else "live". A non-captain or Done
-#     row carries null.
+#     mutually exclusive for those eligible rows: "blocked" when any blocker
+#     is unresolved, else "dated" when hold_until is still in the future, else
+#     "aged" when an undated hold is at least FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS
+#     old (default 14, floored elapsed days; legacy unstamped holds fall back
+#     to `since`), else "live". A non-captain row, a
+#     Done row, and a row marked done ("[x]") in any section carry null.
 #     captain_actionable means "waiting on the captain now" and is exactly
 #     hold_bucket == "live".
 #     hold_age_days is the hold's age when computable, else null.
@@ -317,8 +317,9 @@ FM_SNAPSHOT_PARENT_ACTIVITY_TIMEOUT, with truncation disclosed in the result.
 The registered secondmate table uses FM_SNAPSHOT_REGISTRY_LINES,
 FM_SNAPSHOT_REGISTRY_BYTES, FM_SNAPSHOT_REGISTRY_RECORDS, and
 FM_SNAPSHOT_REGISTRY_TIMEOUT, with unavailability and truncation disclosed.
-Every captain hold carries hold_bucket, decided only from structured fields and
-never from hold reason or body prose: "blocked", "dated", "aged", or "live".
+Captain holds carry hold_bucket, decided only from structured fields and never
+from hold reason or body prose: "blocked", "dated", "aged", or "live" for eligible
+rows, while a row marked done ("[x]") or in Done carries no bucket (null).
 An undated hold ages once its hold-set timestamp is at least
 FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS old (default 14; 0 ages every hold with a
 non-negative computed age); legacy holds without a stamp fall back to their
@@ -608,7 +609,7 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
           | .requires_child_metadata = (.current_role == "worker")
           | .hold_age_days = days_between((.hold_set // .since); $now)
           | .hold_bucket =
-              (if .hold_kind != "captain" or .hold_reason == null or .state == "done" then null
+              (if .hold_kind != "captain" or .hold_reason == null or .state == "done" or .checked == true then null
                elif (.unresolved_blocker_ids | length) > 0 then "blocked"
                elif .hold_until != null and .hold_until > $today then "dated"
                elif .hold_until == null and .hold_age_days != null
