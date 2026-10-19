@@ -268,7 +268,7 @@ fm_backlog_source_present() {  # <data-dir> <authorized-data-dir> [root authoriz
 # interruption contract counts on not existing.
 fm_backlog_tasks_axi_addressing() {  # <data-dir>
   FM_BACKLOG_AXI_FILE=
-  local data root backend
+  local data root backend authorized_data
   data=$(fm_backlog_data_absolute "$1") || return $?
   root=$(fm_backlog_root "$data") || return $?
   backend=$(fm_tasks_axi_backend "$root" 2>&1) || {
@@ -278,7 +278,13 @@ fm_backlog_tasks_axi_addressing() {  # <data-dir>
   FM_BACKLOG_AXI_ROOT=$root
   if [ "$backend" = markdown ]; then
     FM_BACKLOG_AXI_FILE=$(fm_backlog_file "$data") || return 1
+    authorized_data=${FM_DATA_OVERRIDE:-${FM_HOME:+$FM_HOME/data}}
+    if (fm_backlog_record_present "$FM_BACKLOG_AXI_FILE" "backlog file" "${authorized_data:-$1}"); then
+      fm_run_timed 5 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-backlog-normalize.sh" \
+        --quiet "$FM_BACKLOG_AXI_FILE" >&2 || true
+    fi
   fi
+  return 0
 }
 
 fm_backlog_transition_applies() {  # <config-dir> <data-dir> <kind>

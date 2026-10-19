@@ -169,7 +169,10 @@ if [ "$(cksum < "$FILE")" != "$before" ]; then
   [ "$QUIET" = 1 ] || printf 'skipped %s: it changed while being normalized; the next run repairs it\n' "$FILE"
   exit 0
 fi
-chmod "$(stat -f '%Lp' "$FILE" 2>/dev/null || stat -c '%a' "$FILE")" "$tmp" 2>/dev/null || true
+if ! mode=$(stat -f '%Lp' "$FILE" 2>/dev/null); then
+  mode=$(stat -c '%a' "$FILE") || exit 1
+fi
+chmod "$mode" "$tmp" || exit 1
 mv -f "$tmp" "$FILE" || { rm -f "$tmp"; exit 1; }
 [ "$QUIET" = 1 ] || printf 'normalized %s: moved %s done row(s) into Done: %s\n' "$FILE" "$count" "$ids"
 exit 0

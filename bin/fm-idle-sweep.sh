@@ -511,8 +511,11 @@ touch "$STATE/.last-idle-sweep"
 
 # Heal done rows stranded outside "## Done" first, so no stale captain hold on
 # one survives into this scan or the home's snapshot.
-normalized=$("$SCRIPT_DIR/fm-backlog-normalize.sh" 2>&1) || true
-[ -z "$normalized" ] || log "$normalized"
+normalize_data=${FM_DATA_OVERRIDE:-$FM_HOME/data}
+if (fm_backlog_record_present "$normalize_data/backlog.md" "backlog file" "$normalize_data"); then
+  normalized=$("$SCRIPT_DIR/fm-backlog-normalize.sh" "$normalize_data/backlog.md" 2>&1) || true
+  [ -z "$normalized" ] || log "$normalized"
+fi
 
 RAISED=0
 NEW=

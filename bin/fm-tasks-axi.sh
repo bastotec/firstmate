@@ -147,10 +147,6 @@ fi
 DATA_ABSOLUTE=$(fm_backlog_data_absolute "$DATA") || fail "data directory cannot be resolved: $DATA"
 cd "$FM_BACKLOG_AXI_ROOT" || fail "cannot enter the backlog root $FM_BACKLOG_AXI_ROOT"
 
-# A done row stranded outside "## Done" is invisible to tasks-axi, so heal the
-# file before every command (bin/fm-backlog-normalize.sh owns the repair).
-[ -z "$FM_BACKLOG_AXI_FILE" ] || "$SCRIPT_DIR/fm-backlog-normalize.sh" --quiet "$FM_BACKLOG_AXI_FILE" >&2 || true
-
 # Refuse a close that would claim a PR merged when it has not.
 done_pr_gate() {
   local id='' pr_flag='' previous='' arg row url body

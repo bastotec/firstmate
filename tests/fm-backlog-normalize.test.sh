@@ -184,6 +184,97 @@ test_idle_sweep_scan_heals_its_home() {
   pass "every idle-sweep scan moves this home's stranded done rows back to Done"
 }
 
+test_normalization_preserves_permissions() {
+  local dir file mode
+  dir="$TMP_ROOT/permissions"
+  mkdir -p "$dir/fakebin"
+  file="$dir/backlog.md"
+  write_misplaced "$file"
+  chmod 644 "$file"
+  "$NORMALIZE" --quiet "$file" || fail "normalization failed"
+  mode=$(perl -e 'printf "%o", (stat $ARGV[0])[2] & 07777' "$file")
+  assert_equals 644 "$mode" "normalization changed the backlog's permissions"
+  write_misplaced "$file"
+  cat > "$dir/fakebin/stat" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  -f) printf 'File: %s\nFilesystem information\n' "$3"; exit 1 ;;
+  -c) exec perl -e 'printf "%o\n", (stat $ARGV[0])[2] & 07777' "$3" ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$dir/fakebin/stat"
+  PATH="$dir/fakebin:$PATH" "$NORMALIZE" --quiet "$file" || fail "stat fallback normalization failed"
+  mode=$(perl -e 'printf "%o", (stat $ARGV[0])[2] & 07777' "$file")
+  assert_equals 644 "$mode" "failed stat stdout contaminated the fallback mode"
+  assert_equals Done "$(section_of "$file" stale-call)" "the fallback did not publish the repaired backlog"
+  pass "normalization preserves permissions even when the first stat form fails with stdout"
+}
+
+test_automatic_normalization_respects_data_authorization() {
+  local home foreign before out
+  home="$TMP_ROOT/contained-home"
+  foreign="$TMP_ROOT/foreign-home"
+  mkdir -p "$home/state" "$foreign/data"
+  write_misplaced "$foreign/data/backlog.md"
+  ln -s "$foreign/data" "$home/data"
+  before=$(cksum < "$foreign/data/backlog.md")
+  FM_HOME="$home" "$ROOT/bin/fm-idle-sweep.sh" scan --now >/dev/null 2>&1 || true
+  assert_equals "$before" "$(cksum < "$foreign/data/backlog.md")" "the sweep rewrote another home's backlog"
+  if [ -f "$home/state/idle-sweep.log" ]; then
+    assert_not_contains "$(cat "$home/state/idle-sweep.log")" stale-call "the sweep logged a foreign task ID"
+  fi
+  out=$(FM_HOME="$home" bash -c '
+    . "$1/bin/fm-tasks-axi-lib.sh"
+    . "$1/bin/fm-backlog-transition-lib.sh"
+    fm_backlog_tasks_axi_addressing "$FM_HOME/data"
+  ' _ "$ROOT" 2>&1) || fail "addressing changed its refusal behavior: $out"
+  assert_equals "$before" "$(cksum < "$foreign/data/backlog.md")" "the shared boundary normalized through a cross-home symlink"
+  FM_HOME="$home" FM_DATA_OVERRIDE="$foreign/data" "$ROOT/bin/fm-idle-sweep.sh" scan --now >/dev/null 2>&1 || true
+  assert_equals Done "$(section_of "$foreign/data/backlog.md" stale-call)" "the sweep skipped explicitly authorized relocated data"
+  assert_grep 'moved 2 done row(s) into Done' "$home/state/idle-sweep.log" "the relocated repair was not logged"
+  pass "automatic repair skips cross-home data symlinks and retains explicitly authorized relocated data"
+}
+
+test_captain_answer_heals_before_any_sweep() {
+  local home out rc=0 show
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: captain answer regression requires tasks-axi"; return; }
+  home="$TMP_ROOT/captain-answer"
+  mkdir -p "$home/data" "$home/state" "$home/config"
+  cp "$ROOT/.tasks.toml" "$home/.tasks.toml"
+  write_misplaced "$home/data/backlog.md"
+  printf 'Keep the completed outcome.\n' > "$home/decision.txt"
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-captain-hold.sh" answer stale-call \
+    --decision-file "$home/decision.txt" --release 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "--release reopened completed work"
+  assert_contains "$out" "already closed; --release cannot reopen it" "the checked row was still reported absent rather than closed"
+  assert_equals Done "$(section_of "$home/data/backlog.md" stale-call)" "the captain read did not heal the row"
+  out=$(FM_HOME="$home" "$ROOT/bin/fm-captain-hold.sh" answer stale-call \
+    --decision-file "$home/decision.txt" 2>&1) || fail "the retroactive captain answer failed: $out"
+  assert_contains "$out" "repaired: stale-call" "the answer did not repair the closed captain call"
+  show=$(tasks-axi show stale-call --full --file "$home/data/backlog.md") || fail "the answered task disappeared"
+  assert_contains "$show" "Resolution mode: repaired" "the captain answer was not persisted"
+  assert_contains "$show" "Keep the completed outcome." "the captain's decision was lost"
+  pass "captain answers heal misplaced completed rows without weakening the closed-task release refusal"
+}
+
+test_lifecycle_transition_heals_before_mutating() {
+  local home out
+  command -v tasks-axi >/dev/null 2>&1 || { echo "skip: lifecycle regression requires tasks-axi"; return; }
+  home="$TMP_ROOT/lifecycle"
+  mkdir -p "$home/data"
+  cp "$ROOT/.tasks.toml" "$home/.tasks.toml"
+  write_misplaced "$home/data/backlog.md"
+  out=$(FM_HOME="$home" bash -c '
+    . "$1/bin/fm-tasks-axi-lib.sh"
+    . "$1/bin/fm-backlog-transition-lib.sh"
+    fm_backlog_done "$FM_HOME/data" stale-flight --note "Completion reconciled"
+  ' _ "$ROOT" 2>&1) || fail "lifecycle completion could not find the checked row: $out"
+  assert_equals Done "$(section_of "$home/data/backlog.md" stale-flight)" "lifecycle completion left the row outside Done"
+  assert_grep 'Completion reconciled' "$home/data/backlog.md" "the lifecycle completion was not persisted"
+  pass "lifecycle transitions heal misplaced checked rows before tasks-axi mutations"
+}
+
 test_moves_done_rows_with_their_bodies
 test_multi_paragraph_body_moves_with_internal_blanks
 test_held_backlog_lock_skips_without_writing
@@ -191,3 +282,7 @@ test_check_reports_without_writing
 test_missing_done_section_is_created
 test_home_default_and_absent_file
 test_idle_sweep_scan_heals_its_home
+test_normalization_preserves_permissions
+test_automatic_normalization_respects_data_authorization
+test_captain_answer_heals_before_any_sweep
+test_lifecycle_transition_heals_before_mutating
