@@ -37,23 +37,36 @@ run_watch_bounded() {  # <seconds>
 }
 
 test_concurrent_append_and_drain() {
-  local dir state out1 out2 pids i pid count unique malformed sequence generation
+  local dir state out1 out2 pids i pid drain_pid count unique malformed sequence generation
   dir=$(make_case concurrent)
   state="$dir/state"
   out1="$dir/drain-one.out"
   out2="$dir/drain-two.out"
-  pids=
-  i=1
+  # Establish the drain's serialized read before starting the appenders. Racing
+  # its bounded lock acquisition against 40 writers tests scheduler latency,
+  # not losslessness; presentation deadlines have their own regression below.
+  append_wake "$state" signal status-1 "signal: $state/status-1.status" \
+    || fail "initial concurrent wake append failed"
+  FM_STATE_OVERRIDE="$state" FM_WAKE_DRAIN_TEST_DELAY_BEFORE_COMMIT=5 "$DRAIN" \
+    > "$out1" 2> "$dir/drain-one.err" &
+  drain_pid=$!
+  if ! wait_for_file_text "$state/.wake-queue.lock/pid" "$drain_pid"; then
+    kill "$drain_pid" 2>/dev/null || true
+    wait "$drain_pid" 2>/dev/null || true
+    fail "concurrent drain never entered its serialized read boundary"
+  fi
+  pids=$drain_pid
+  i=2
   while [ "$i" -le 40 ]; do
     append_wake "$state" signal "status-$i" "signal: $state/status-$i.status" &
     pids="$pids $!"
     i=$((i + 1))
   done
-  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out1" &
-  pids="$pids $!"
   for pid in $pids; do
     wait "$pid" || fail "concurrent append/drain subprocess failed"
   done
+  count=$(awk -F '\t' 'NF == 5 { count++ } END { print count + 0 }' "$out1")
+  [ "$count" -eq 1 ] || fail "serialized drain did not preserve its one-record snapshot"
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out2" 2> "$dir/drain-two.err" || fail "final drain failed"
   count=$(awk -F '\t' 'NF == 5 { count++ } END { print count + 0 }' "$out2")
   [ "$count" -eq 40 ] || fail "expected final replay of 40 durable records, got $count"
