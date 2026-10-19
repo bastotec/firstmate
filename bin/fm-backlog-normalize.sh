@@ -74,6 +74,7 @@ fi
 LOCK="$FILE.lock"
 LOCK_TOKEN="$$:$(date +%s):$RANDOM:$RANDOM"
 tmp=
+# shellcheck disable=SC2329 # Invoked by the EXIT trap.
 cleanup() {
   [ -z "$tmp" ] || rm -f -- "$tmp"
   if [ "$(cat "$LOCK" 2>/dev/null)" = "$LOCK_TOKEN" ]; then
