@@ -11,9 +11,9 @@
 # only sees "CI check failing" treats it as a code failure and asks for a
 # decision. This command classifies every failed check of a pull request:
 #
-#   infra  the job ran zero steps, or one of its annotations says it was not
-#          started, names billing, payments or a spending limit, or says no
-#          runner matched or was available;
+#   infra  the job ran zero steps, or a failure- or warning-level annotation
+#          says it was not started, names billing, payments or a spending
+#          limit, or says no runner matched or was available;
 #   code   anything else that failed.
 #
 # An infra failure is never a decision for the captain: the worker or mate
@@ -29,7 +29,10 @@
 # rules can be exercised without the network:
 #   {"repo_private": true,
 #    "checks": [{"name": "verify", "steps": 0,
-#                "annotations": ["The job was not started because ..."]}]}
+#                "annotations": [{"level": "failure",
+#                                 "message": "The job was not started because ..."}]}]}
+# Bare annotation strings are accepted as failure-level annotations for
+# compatibility. Notice annotations never count as infrastructure evidence.
 #
 # Output: one line per failed check, "infra <name>: <reason>" or
 # "code <name>", then "verdict: infra|code|none" and, for infra, one "fix:" line.
@@ -45,7 +48,10 @@ usage() {
 classify_doc() {
   jq -r '
     def infra_reason:
-      ( [ .annotations[]? | tostring
+      ( [ .annotations[]?
+          | if type == "string" then {level: "failure", message: .} else . end
+          | select(.level == "failure" or .level == "warning")
+          | .message
           | select(test("not started|payments? (have |has )?failed|spending limit|billing|no runner|runner matching|waiting for a runner|could not find any runner"; "i")) ]
         | first ) as $note
       | if $note != null then ($note | gsub("\\s+"; " ") | .[0:160])
@@ -92,10 +98,10 @@ fetch_doc() {  # <pr-url>
   rows='[]'
   while IFS=$'\t' read -r id name app; do
     [ -n "$id" ] || continue
-    notes=$(gh api "repos/$repo/check-runs/$id/annotations" --jq '[.[].message]' 2>/dev/null) || notes='[]'
+    notes=$(gh api "repos/$repo/check-runs/$id/annotations" --jq '[.[] | {level: .annotation_level, message}]' 2>/dev/null) || { echo "error: unreadable annotations for check $id of $url" >&2; return 2; }
     steps=null
     if [ "$app" = github-actions ]; then
-      steps=$(gh api "repos/$repo/actions/jobs/$id" --jq '.steps | length' 2>/dev/null) || steps=null
+      steps=$(gh api "repos/$repo/actions/jobs/$id" --jq '.steps | length' 2>/dev/null) || { echo "error: unreadable job steps for check $id of $url" >&2; return 2; }
     fi
     rows=$(jq -c --arg name "$name" --argjson steps "${steps:-null}" --argjson notes "$notes" \
       '. + [{name: $name, steps: $steps, annotations: $notes}]' <<<"$rows")

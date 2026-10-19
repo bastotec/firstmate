@@ -21,7 +21,8 @@ classify_json() {  # <json>; prints output, then "rc=<n>"
 test_billing_annotation_is_infra() {
   local out
   out=$(classify_json "$(jq -cn --arg b "$BILLING" --arg n "$UBUNTU_NOTICE" \
-    '{repo_private: true, checks: [{name: "verify", steps: 0, annotations: [$b, $n]}]}')")
+    '{repo_private: true, checks: [{name: "verify", steps: 7, annotations: [
+      {level: "failure", message: $b}, {level: "notice", message: $n}]}]}')")
   assert_contains "$out" "infra verify: The job was not started because recent account payments have failed" \
     "the billing annotation was not classified as infrastructure"
   assert_contains "$out" "verdict: infra" "the verdict was not infra"
@@ -56,6 +57,24 @@ test_code_failures_stay_code() {
   pass "a check that ran and failed stays a code failure, even beside an infra one and a runner notice"
 }
 
+test_annotation_levels_control_infra_evidence() {
+  local out level
+  for level in notice unknown; do
+    out=$(classify_json "$(jq -cn --arg level "$level" '{repo_private: true, checks: [
+      {name: "unit", steps: 7, annotations: [{level: $level, message: "Actions spending limit remaining: $20"}]}]}')")
+    assert_contains "$out" "code unit" "$level was used as infrastructure evidence"
+    assert_contains "$out" "verdict: code" "$level suppressed a code failure"
+    assert_contains "$out" "rc=1" "$level did not preserve the code exit status"
+  done
+  out=$(classify_json '{"checks": [
+    {"name": "warning", "steps": 7, "annotations": [{"level": "warning", "message": "No runner available"}]},
+    {"name": "zero", "steps": 0, "annotations": [{"level": "notice", "message": "Actions spending limit remaining: $20"}]}]}')
+  assert_contains "$out" "infra warning: No runner available" "warning-level evidence was ignored"
+  assert_contains "$out" "infra zero: the job ran zero steps" "a notice overrode independent zero-step evidence"
+  assert_contains "$out" "rc=0" "valid infrastructure evidence did not exit 0"
+  pass "only failure and warning annotations count, independently of zero steps"
+}
+
 test_nothing_failed_and_bad_input() {
   local out rc=0
   out=$(classify_json '{"repo_private": true, "checks": []}')
@@ -73,7 +92,7 @@ test_classify_reads_the_pull_request_through_gh() {
   local dir out rc=0
   dir="$TMP_ROOT/gh"
   mkdir -p "$dir/bin"
-  jq -cn --arg b "$BILLING" '[{message: $b}]' > "$dir/billing.json"
+  jq -cn --arg b "$BILLING" '[{annotation_level: "failure", message: $b}]' > "$dir/billing.json"
   cat > "$dir/bin/gh" <<EOF
 #!/usr/bin/env bash
 args="\$*"
@@ -81,8 +100,14 @@ case "\$args" in
   *"repos/o/r/pulls/7 "*) echo abc123 ;;
   *"repos/o/r --jq"*) echo true ;;
   *"commits/abc123/check-runs"*) printf '901\tverify\tgithub-actions\n' ;;
-  *"check-runs/901/annotations"*) cat "$dir/billing.json" | jq -c '[.[].message]' ;;
-  *"actions/jobs/901"*) echo 0 ;;
+  *"check-runs/901/annotations"*)
+    [ "\${GH_FAIL_READ:-}" != annotations ] || exit 1
+    jq -c --arg level "\${GH_ANNOTATION_LEVEL:-failure}" 'map(.annotation_level = \$level)' "$dir/billing.json" | jq -c "\${!#}"
+    ;;
+  *"actions/jobs/901"*)
+    [ "\${GH_FAIL_READ:-}" != steps ] || exit 1
+    echo "\${GH_JOB_STEPS:-0}"
+    ;;
   *) echo "unexpected gh call: \$args" >&2; exit 1 ;;
 esac
 EOF
@@ -91,11 +116,29 @@ EOF
   assert_equals 0 "$rc" "classify did not report an all-infra pull request: $out"
   assert_contains "$out" "infra verify: The job was not started" "the pull request's billing failure was not read"
   assert_contains "$out" "runs-on: [self-hosted, linux, workload]" "the private repository fix was missing"
-  pass "classify reads a pull request's failed checks, annotations and steps through gh"
+  rc=0
+  out=$(PATH="$dir/bin:$PATH" GH_ANNOTATION_LEVEL=notice GH_JOB_STEPS=7 "$CI" classify https://github.com/o/r/pull/7) || rc=$?
+  assert_equals 1 "$rc" "a fetched notice suppressed a code failure: $out"
+  assert_contains "$out" "code verify" "annotation levels were not preserved through gh"
+  pass "classify reads a pull request's failed checks, annotation levels and steps through gh"
+}
+
+test_unreadable_check_evidence_is_refused() {
+  local out evidence rc
+  for evidence in annotations steps; do
+    rc=0
+    out=$(PATH="$TMP_ROOT/gh/bin:$PATH" GH_FAIL_READ="$evidence" "$CI" classify https://github.com/o/r/pull/7 2>&1) || rc=$?
+    assert_equals 2 "$rc" "unreadable $evidence did not exit 2: $out"
+    assert_contains "$out" "error: unreadable" "unreadable $evidence did not explain the evidence failure"
+    case "$out" in *"verdict:"*) fail "unreadable $evidence produced a verdict: $out" ;; esac
+  done
+  pass "unreadable annotations or job steps prevent classification"
 }
 
 test_billing_annotation_is_infra
 test_other_never_ran_signals_are_infra
 test_code_failures_stay_code
+test_annotation_levels_control_infra_evidence
 test_nothing_failed_and_bad_input
 test_classify_reads_the_pull_request_through_gh
+test_unreadable_check_evidence_is_refused
