@@ -30,7 +30,8 @@
 # refuses automatic action until the owning mate reconciles it. Shared locked
 # stopped admission and record-less closure recheck this predicate before acting.
 # All mutations use the task's control lock; reads create nothing.
-# Exit: 0 success, 1 refusal, 2 usage error.
+# Gate agents may read with show, but declare/release use the fleet-authority refusal.
+# Exit: 0 success, 1 refusal, 2 usage error, 3 gate-authority refusal.
 set -u
 
 FM_APPROVAL_WAIT_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -72,6 +73,9 @@ fm_approval_wait_main() {
     cat "$record"
     return
   fi
+  # shellcheck source=bin/fm-gate-refuse-lib.sh
+  . "$FM_APPROVAL_WAIT_BIN/fm-gate-refuse-lib.sh"
+  fm_refuse_if_gate_agent
   if [ "$cmd" = declare ]; then
     [ -n "$expected" ] && [ -z "$digest$release" ] || return 2
     case "$key" in ''|*[!A-Za-z0-9._-]*) echo 'error: an exact open decision key is required' >&2; return 2 ;; esac

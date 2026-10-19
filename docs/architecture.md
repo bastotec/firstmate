@@ -181,7 +181,7 @@ Because placement is proven only at launch, `bin/fm-spawn.sh` exports `FM_TASK_I
 
 Firstmate's own no-mistakes gate runs agents inside a checkout that also contains the fleet-captain identity in `AGENTS.md`, so gate execution needs an authority boundary separate from ordinary crewmate worktree isolation.
 The tracked `.no-mistakes.yaml` sets `disable_project_settings: true`; no-mistakes honors that setting only from the trusted default-branch copy, so a pushed branch cannot enable its own project instructions during validation.
-Independently, `fm-spawn.sh`, `fm-send.sh`, `fm-control.sh`, and `fm-teardown.sh` source `bin/fm-gate-refuse-lib.sh` and refuse fleet mutation under its gate-context contract.
+Independently, `fm-spawn.sh`, `fm-send.sh`, `fm-control.sh`, `fm-teardown.sh`, and the mutating `fm-approval-wait.sh` commands source `bin/fm-gate-refuse-lib.sh` and refuse fleet mutation under its gate-context contract.
 The [Deck chat host](../bin/fm-deck-chat.sh) and [primary steer CLI](../bin/fm-primary-steer.sh) apply the same boundary to their mutating entrypoints; the steer CLI's status and delivery reads remain available.
 [`fm_crew.py`](../bin/fm_crew.py) applies that boundary to specialist and group lifecycle mutations, including specialist status, list, and history because they reconcile interrupted jobs; group status and list remain read-only.
 [`fm-retire-endpoint.sh`](../bin/fm-retire-endpoint.sh) applies the same refusal directly to orphan closure before locking, assertion logging, or killing; its read-only orphan listing remains available, and record retirement still delegates cleanup to the guarded teardown entrypoint.
