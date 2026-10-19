@@ -27,6 +27,8 @@ Those samples were captured live from harnesses that are no longer supported, so
 
 ### Secondmate home-local tool selection
 
+#### Portable plumbing evidence
+
 Verified on 2026-10-19 on macOS with Bash 3.2 and Python 3.9.6 using the real Deck home-host driver and synthetic Node/npm executables, without model calls:
 
 ```sh
@@ -43,6 +45,14 @@ The same regression fails against the unchanged driver because startup resolves 
 [`tests/fm-backend-stream.test.sh`](../../tests/fm-backend-stream.test.sh) additionally exercises tool execution during startup through `fm-spawn.sh`, a real loopback hub, and a real PTY agent.
 Both supported stream implementations invoke the same home-host driver; these portable checks do not establish activation or tool selection in any existing remote home.
 [`fm-deck-worker.sh`](../../bin/fm-deck-worker.sh)'s header owns the explicit grant and activation contract.
+
+#### Remaining destination authority decision
+
+The launch blocker remains open. The supplied tool-owner evidence establishes command-scoped compatibility/bootstrap for the validated candidate; the destination-home report still shows the old tools on a fresh launch. Neither is proof that this repair selects the candidate in that home, and no fresh actual destination launch/bootstrap was performed here.
+
+Does the destination owner authorize configuring **only the selected home's** `config/secondmate-tool-path` with the existing validated tool directories and coordinating a fresh launch through the supported route? The decision must cover both the home-local grant and the relaunch window. Until that authority is explicit, leave the destination configuration and running home untouched. Code delivery and passing plumbing tests aren't activation authority.
+
+After approval, the destination owner must retain fresh-launch evidence showing the actual Node and quota-axi versions and successful startup/bootstrap, with the corporate proxy unchanged and sibling homes unaffected. Reuse the existing tool-owner validation rather than repeating it; a one-command PATH override doesn't close this gap. No global/default Node, shellwide PATH, service, registry, or credential changes are authorized. Keep destination identifiers, tool-directory paths, and raw launch evidence in private owner reports; publish only sanitized results.
 
 ### Deck native mid-turn steering over stream
 
