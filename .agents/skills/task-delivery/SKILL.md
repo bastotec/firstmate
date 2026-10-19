@@ -51,6 +51,7 @@ Judge validation by the currently attributed run step through `bin/fm-crew-state
 State derivation and uncertainty rules are owned by [`bin/fm-task-state-lib.sh`](../../../bin/fm-task-state-lib.sh); when the adapter reports parked approval or fix-review, steer the worker to follow the active gate help.
 A worker hand-editing, committing, aborting, or restarting during an active validation run duplicates pipeline ownership outside the supersession sequence above; steer it back to the gate response flow.
 The worker reports the PR when CI first becomes green rather than waiting for merge monitoring to finish.
+For a red check, follow the infrastructure triage and repair rule in [`bin/fm-dod-lib.sh`](../../../bin/fm-dod-lib.sh)'s act-within-scope section.
 
 ## PR ready
 

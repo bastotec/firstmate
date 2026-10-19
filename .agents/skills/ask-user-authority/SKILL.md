@@ -30,6 +30,7 @@ It stops at the finding, routes the decision to firstmate, and applies only the 
    Correcting stale final-diff PR or delivery evidence is likewise an autonomous downstream correction within already accepted behavior.
 3. A finding that contradicts the PR's own stated intent, or names a clear bug inside its scope, is always decided, never carded: tell the worker to fix it (`no-mistakes axi respond --action fix --finding <id>`), the same turn it arrives.
    Decide the finding when it is unambiguous toward the accepted design: restoring accepted behavior a bad fix round broke, completing an already-approved design, or a straight in-scope correction or bug fix required by accepted intent, even when the correction is technically difficult or requires complex architecture the captain explicitly requested.
+   For a failed-CI finding, follow the infrastructure triage and repair rule in [`bin/fm-dod-lib.sh`](../../../bin/fm-dod-lib.sh)'s act-within-scope section before considering escalation.
 4. Escalate only genuinely ambiguous findings:
    - a Fix that would materially expand the contract by adding a new guarantee, threat model, subsystem, abstraction, compatibility surface, state machine, continuous-monitoring requirement, generalized framework, or broader architecture not required by the accepted intent
    - a product or architecture call not settled by accepted intent
