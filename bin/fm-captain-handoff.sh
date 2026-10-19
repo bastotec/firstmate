@@ -24,11 +24,14 @@
 # while its health record exists; told=yes means the keyed parent blocker was published, not order pickup.
 # Otherwise it prints supervisor=<busy|idle> (empty if no busy record exists).
 #
+# After durable enqueue, native publication has a two-second best-effort budget;
+# timeout leaves the source for the existing driver fallback, not a resend.
+# Phase timings go to stderr without source paths, identities or message text.
 # Exit: mate lane 0 recorded, 1 write failed, 2 no text; else fm-send's status.
 set -u
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 case "${1:-}" in
-  -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
   '') echo "error: fm-captain-handoff.sh needs the text to hand over" >&2; exit 2 ;;
 esac
 party=''
@@ -50,13 +53,35 @@ if [ -n "${FM_CAPTAIN_LANE_STATE:-}" ] && [ -n "${FM_CAPTAIN_LANE_ID:-}" ]; then
   . "$SCRIPT_DIR/fm-operational-input.sh"
   # shellcheck source=bin/fm-task-inbox-lib.sh
   . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
+  enqueue_started=$(python3 -c 'import time; print(time.monotonic())')
   rec=$(FM_TASK_INBOX_STREAM=monologue fm_task_inbox_write "$FM_CAPTAIN_LANE_STATE" "$FM_CAPTAIN_LANE_ID" "${FM_CAPTAIN_THREAD_MARK}$*") || {
     echo "error: the hand-over could not be recorded in $FM_CAPTAIN_LANE_STATE/$FM_CAPTAIN_LANE_ID.inbox" >&2
     exit 1
   }
-  # Reach a running supervisor turn at its next safe point now, best-effort; an
-  # idle supervisor wakes on the record anyway (bin/fm_stream_deck.py).
-  python3 "$SCRIPT_DIR/fm_stream_deck.py" captain "$FM_CAPTAIN_LANE_STATE" "$FM_CAPTAIN_LANE_ID" >/dev/null 2>&1 || true
+  # Enqueue is already success. Bound the whole optional child, including its
+  # lifecycle lock and history scan; subprocess.run kills and reaps on expiry.
+  python3 - "$SCRIPT_DIR/fm_stream_deck.py" "$FM_CAPTAIN_LANE_STATE" "$FM_CAPTAIN_LANE_ID" "$enqueue_started" <<'PY' || true
+import subprocess
+import sys
+import time
+
+started = time.monotonic()
+print('handoff enqueue elapsed_ms=%.1f' % ((started - float(sys.argv[4])) * 1000), file=sys.stderr, flush=True)
+try:
+    result = subprocess.run([sys.executable, sys.argv[1], 'captain', sys.argv[2], sys.argv[3], '--timings'],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=2)
+    diagnostic = result.stderr
+    outcome = 'completed' if result.returncode == 0 else 'failed'
+except subprocess.TimeoutExpired as error:
+    diagnostic = error.stderr or b''
+    outcome = 'timeout'
+# Forward only phase diagnostics, not exception traces containing private paths.
+for line in diagnostic.decode('utf-8', errors='replace').splitlines():
+    if line.startswith(('handoff lifecycle-lock ', 'handoff projection ')):
+        print(line, file=sys.stderr, flush=True)
+print('handoff native-publication outcome=%s elapsed_ms=%.1f' % (outcome, (time.monotonic() - started) * 1000),
+      file=sys.stderr, flush=True)
+PY
   printf 'handed-over=%s\n' "$rec"
   # The supervisor's real state, so the conversation never says "queued" when
   # it is failing (bin/fm-deck-worker.sh "SUPERVISOR HEALTH").
