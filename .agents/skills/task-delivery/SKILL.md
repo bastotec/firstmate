@@ -68,6 +68,9 @@ Retire a custom check only through `bin/fm-check-unregister.sh <id>` (or `bin/fm
 
 ## Finished-work sweep
 
+When a parent instruction explicitly prohibits automatic recovery pending its release, record that approval exclusion through [`bin/fm-approval-wait.sh`](../../../bin/fm-approval-wait.sh), whose header owns declaration, exact decision/instruction binding and release.
+Do not infer this disposition from an ordinary keyed blocker or substitute a timed external wait for unknown approval timing.
+
 `AGENTS.md` section 7 records the captain's standing instruction that the mate who created a worker cleans it up once its work is done.
 Run this sweep when a ship lands, when a scout completes, and on every heartbeat, over this home's own endpoint-backed direct reports and endpoint-bound leftover records only, never another home's, and never a secondmate, which retires only on an explicit decision.
 The watcher independently runs [`bin/fm-idle-sweep.sh`](../../../bin/fm-idle-sweep.sh), whose header owns automated cleanup and retry eligibility, first-mate handoffs, repeat suppression, cadence, and second-mate audit.

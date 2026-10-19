@@ -243,6 +243,12 @@ fm_busy_classify_meta() {  # <meta-file> <id> <state-dir> [tail40]
 fm_busy_admit_stopped() {
   local meta=$1 id=$2 state=$3 expected_record=$4 expected_size=$5 script_dir=$6 expected_state=${7:-stopped}
   local line verb busy backend target harness changed=0 size=0
+  # shellcheck source=bin/fm-approval-wait.sh
+  . "$script_dir/fm-approval-wait.sh"
+  fm_approval_wait_admit "$state" "$id" || {
+    printf 'worker %s awaits explicit parent approval release; automatic action refused\n' "$id" >&2
+    return 3
+  }
   case "$(fm_meta_get "$meta" kind)" in
     ''|ship|scout) ;;
     *) changed=1 ;;
@@ -276,6 +282,7 @@ fm_busy_admit_stopped() {
   if [ -e "$state/$id.status" ]; then
     size=$(wc -c < "$state/$id.status" 2>/dev/null | tr -d ' ')
   fi
+  if ! fm_approval_wait_admit "$state" "$id"; then changed=1; fi
   if [ "$changed" = 1 ] || [ "$size" != "$expected_size" ] \
     || [ "$(cat "$meta" 2>/dev/null)" != "$expected_record" ]; then
     printf 'worker record or activity %s changed during scan\n' "$id" >&2

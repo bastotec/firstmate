@@ -23,7 +23,9 @@
 #      The hub's label must also be fm-<id>. A label match with no such
 #      evidence, or evidence from another home's state directory, is refused.
 #   3. Nothing running or pending: the task inbox holds no unhandled message,
-#      and the hub's process reading says the harness is gone (only a shell,
+#      and bin/fm-approval-wait.sh permits closure both before probing and at
+#      the final locked check;
+#      the hub's process reading says the harness is gone (only a shell,
 #      or the agent reported the exit), or alive with a Deck turn record saying
 #      no turn is active. An active turn refuses even if the hub reports dead;
 #      an unreadable turn record is accepted only when the hub reports dead.
@@ -67,6 +69,9 @@
 # never authorizes a close.
 # tests/fm-retire-orphan-endpoint.test.sh pins these checks with scratch homes
 # and a stub hub, including the remote route; it is not live-harness evidence.
+
+# shellcheck source=bin/fm-approval-wait.sh
+. "$SCRIPT_DIR/fm-approval-wait.sh"
 
 # shellcheck disable=SC2153 # STATE and DATA are set by the sourcing script.
 ORPHAN_EVIDENCE=
@@ -340,8 +345,18 @@ orphan_check_worktrees() {  # <id> <target>
   fi
 }
 
+orphan_require_approval_released() {  # <id>
+  fm_approval_wait_admit "$STATE" "$1" \
+    || refuse "'$1' awaits explicit parent approval release; nothing was closed"
+}
+
 orphan_close() {  # <id> [eid]
   local id=$1 want=${2:-} tag target context declarations
+  ORPHAN_CONTROL_LOCK="$STATE/.control-$id.lock"
+  fm_lock_acquire_wait_bounded "$ORPHAN_CONTROL_LOCK" 30 \
+    || refuse "another lifecycle action holds '$id'; nothing was closed"
+  trap 'fm_lock_release "$ORPHAN_CONTROL_LOCK" >/dev/null 2>&1 || true' EXIT
+  orphan_require_approval_released "$id"
   fm_backend_source stream || refuse "the stream backend could not be loaded"
   orphan_record_exists "$id" \
     && refuse "'$id' still has a task record at $STATE/$id.meta; clean it up with bin/fm-teardown.sh, not as a leftover"
@@ -393,6 +408,7 @@ orphan_close_locked() {
   orphan_prove "$id" "$ORPHAN_ENDPOINT_ID" \
     || refuse "endpoint ownership or liveness changed: $ORPHAN_REASON; nothing was closed"
   orphan_check_idle "$id" "$target"
+  orphan_require_approval_released "$id"
   at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   by=$(id -un 2>/dev/null || printf '%s' "${USER:-unknown}")
   printf '%s\tasserted\t%s\tby=%s\tbasis=orphan-endpoint\tendpoint=%s\tevidence=%s\tagent=%s\tworktrees=%s\n' \

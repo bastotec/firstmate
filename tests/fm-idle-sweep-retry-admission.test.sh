@@ -194,6 +194,135 @@ test_kindless_workers_remain_eligible_for_guarded_retry() {
   pass 'fm-control: guarded relaunch defaults a kindless worker to ship'
 }
 
+declare_approval_wait() {  # <dir> [task]
+  local dir=$1 id=${2:-stopped}
+  printf 'Do not resume any action pending explicit parent approval release.\n' > "$dir/approval-instruction"
+  printf 'blocked [key=parent-approval]: Explicit parent release required\n' >> "$dir/home/state/$id.status"
+  PATH="$dir/bin:$PATH" FM_HOME="$dir/home" "$dir/bin/fm-approval-wait.sh" declare "$id" --key parent-approval \
+    --expected-record "$(cat "$dir/home/state/$id.meta")" --instruction-file "$dir/approval-instruction"
+}
+
+release_approval_wait() {  # <dir> [task]
+  local dir=$1 id=${2:-stopped} digest
+  digest=$(jq -r .instruction_sha256 "$dir/home/state/$id.approval-wait")
+  printf 'The parent explicitly releases this approval exclusion.\n' > "$dir/release-instruction"
+  PATH="$dir/bin:$PATH" FM_HOME="$dir/home" "$dir/bin/fm-approval-wait.sh" release "$id" \
+    --instruction-sha256 "$digest" --release-file "$dir/release-instruction"
+}
+
+test_approval_excludes_actions_until_explicit_release() {
+  local dir before attempt digest rc
+  dir=$(new_case approval-wait)
+  prepare_retry_case "$dir"
+  before=$(cat "$dir/home/state/stopped.meta")
+  declare_approval_wait "$dir" || fail 'approval declaration failed'
+  declare_approval_wait "$dir" || fail 'identical declaration was not idempotent'
+  digest=$(jq -r .instruction_sha256 "$dir/home/state/stopped.approval-wait")
+  rc=0
+  PATH="$dir/bin:$PATH" FM_HOME="$dir/home" "$dir/bin/fm-approval-wait.sh" release stopped \
+    --instruction-sha256 "$digest" --release-file "$dir/approval-instruction" >/dev/null 2>&1 || rc=$?
+  assert_equals 1 "$rc" 'the original prohibition cannot serve as its own release'
+  for attempt in 1 2 3; do
+    case "$attempt" in
+      1) printf 'state: blocked · source: status-log · approval pending\n' > "$dir/home/crew/stopped" ;;
+      2) printf 'state: failed · source: run-step · terminal refusal\n' > "$dir/home/crew/stopped" ;;
+      3) printf 'state: done · source: run-step · later completion\n' > "$dir/home/crew/stopped" ;;
+    esac
+    printf 'working: Evidence changed on scan %s\nresolved [key=idle-question]: Idle question settled\n' "$attempt" >> "$dir/home/state/stopped.status"
+    age_file "$dir/home/state/stopped.status" 90000
+    sweep "$dir" scan --now || fail 'approval scan failed'
+    assert_equals 'approval-wait none' "$(summary_of "$dir" stopped)" 'approval must exclude automatic retry and retirement'
+    assert_equals "$before" "$(cat "$dir/home/state/stopped.meta")" 'approval changed custody'
+    assert_equals '# Continue the task' "$(cat "$dir/home/data/stopped/brief.md")" 'approval changed instructions'
+    assert_absent "$dir/home/spawn-calls" 'approval launched a replacement'
+    assert_absent "$dir/home/state/idle-sweep/stopped.retried" 'approval consumed a retry'
+    assert_absent "$dir/home/state/idle-sweep/stopped.raised" 'approval raised a duplicate retry question'
+    assert_absent "$dir/home/teardown-calls" 'approval retired the worker'
+    assert_no_captain_call "$dir" 'approval wait'
+  done
+  release_approval_wait "$dir" || fail 'explicit approval release failed'
+  assert_absent "$dir/home/spawn-calls" 'release itself resumed work'
+  printf 'state: failed · source: status-log · stopped\n' > "$dir/home/crew/stopped"
+  age_file "$dir/home/state/stopped.status" 90000
+  sweep "$dir" scan --now || fail 'released scan failed'
+  assert_equals stopped "$(cat "$dir/home/spawn-calls")" 'explicit release must restore ordinary recovery'
+  pass 'fm-idle-sweep: explicit approval survives changed evidence; supported release restores retry'
+}
+
+test_keyed_capability_blocker_remains_retry_eligible() {
+  local dir
+  dir=$(new_case capability-blocker)
+  prepare_retry_case "$dir"
+  printf 'blocked [key=capability]: Capability unavailable\n' >> "$dir/home/state/stopped.status"
+  printf 'state: blocked · source: status-log · capability unavailable\n' > "$dir/home/crew/stopped"
+  age_file "$dir/home/state/stopped.status" 90000
+  sweep "$dir" scan --now || fail 'ordinary capability scan failed'
+  assert_equals stopped "$(cat "$dir/home/spawn-calls")" 'a keyed capability failure was mistaken for an approval wait'
+  pass 'fm-idle-sweep: ordinary keyed capability blockers remain retry-eligible'
+}
+
+test_approval_between_scan_and_control_refuses_locked_action() {
+  local dir before
+  dir=$(new_case late-approval)
+  prepare_retry_case "$dir"
+  before=$(cat "$dir/home/state/stopped.meta")
+  printf 'Parent approval is required before any recovery.\n' > "$dir/approval-instruction"
+  printf 'blocked [key=parent-approval]: Explicit parent release required\n' >> "$dir/home/state/stopped.status"
+  age_file "$dir/home/state/stopped.status" 90000
+  mv "$dir/bin/fm-control.sh" "$dir/bin/fm-control-real.sh"
+  cat > "$dir/bin/fm-control.sh" <<'CONTROL'
+#!/usr/bin/env bash
+"$FM_HOME/../bin/fm-approval-wait.sh" declare "$1" --key parent-approval --expected-record "$(cat "$FM_HOME/state/$1.meta")" \
+  --instruction-file "$FM_HOME/../approval-instruction" || exit 1
+exec "$FM_HOME/../bin/fm-control-real.sh" "$@"
+CONTROL
+  chmod +x "$dir/bin/fm-control.sh"
+  sweep "$dir" scan --now || fail 'late approval scan failed'
+  assert_equals 'unknown none' "$(summary_of "$dir" stopped)" 'late approval must refuse the locked stopped action'
+  assert_equals "$before" "$(cat "$dir/home/state/stopped.meta")" 'late approval changed custody'
+  assert_equals '# Continue the task' "$(cat "$dir/home/data/stopped/brief.md")" 'late approval changed instructions'
+  [ ! -s "$dir/endpoint-input" ] || fail 'late approval sent lifecycle input'
+  assert_absent "$dir/home/spawn-calls" 'late approval launched a replacement'
+  assert_absent "$dir/home/state/idle-sweep/stopped.retried" 'late approval consumed a retry'
+  pass 'fm-control: approval declared after scan admission refuses under the shared control lock'
+}
+
+test_recordless_approval_survives_changed_ledger() {
+  local dir attempt
+  dir=$(new_case recordless-approval)
+  prepare_retry_case "$dir"
+  declare_approval_wait "$dir" || fail 'approval declaration failed'
+  rm "$dir/home/state/stopped.meta"
+  printf 'stopped\tfixture-endpoint\n' > "$dir/home/orphans"
+  for attempt in 1 2; do
+    printf 'failed: Changed evidence %s\n' "$attempt" >> "$dir/home/state/stopped.status"
+    sweep "$dir" scan --now || fail 'recordless approval scan failed'
+    assert_equals 'approval-wait none' "$(summary_of "$dir" idle-orphan-stopped)" 'recordless approval was not retained'
+    assert_equals '--list-orphans' "$(calls "$dir" retire-calls | tail -1)" 'recordless approval attempted retirement'
+  done
+  release_approval_wait "$dir" || fail 'recordless explicit release failed'
+  sweep "$dir" scan --now || fail 'released recordless scan failed'
+  assert_equals 'dead cleaned' "$(summary_of "$dir" idle-orphan-stopped)" 'released recordless endpoint did not progress'
+  pass 'fm-idle-sweep: recordless approval survives changed ledger and supports explicit release'
+}
+
+test_corrupt_approval_record_excludes_actions() {
+  local dir
+  dir=$(new_case corrupt-approval)
+  prepare_retry_case "$dir"
+  ln -s "$dir/missing" "$dir/home/state/stopped.approval-wait"
+  sweep "$dir" scan --now || fail 'corrupt approval scan failed'
+  assert_equals 'approval-wait none' "$(summary_of "$dir" stopped)" 'an unsafe approval object must not imply release'
+  assert_absent "$dir/home/spawn-calls" 'unsafe approval launched a replacement'
+  assert_absent "$dir/home/teardown-calls" 'unsafe approval retired the worker'
+  pass 'fm-idle-sweep: corrupt approval records retain the exclusion'
+}
+
+test_approval_excludes_actions_until_explicit_release
+test_keyed_capability_blocker_remains_retry_eligible
+test_approval_between_scan_and_control_refuses_locked_action
+test_corrupt_approval_record_excludes_actions
+test_recordless_approval_survives_changed_ledger
 test_reassigned_slots_cannot_supply_completion
 test_slot_ownership_guards_relaunch
 test_failed_published_retries_inherit_the_retry_cap

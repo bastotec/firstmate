@@ -14,6 +14,9 @@
 #
 # One scan, over THIS home's own non-secondmate records only (a home never
 # acts on another home's records; secondmates retire only on a decision):
+#   - an explicit parent approval exclusion (bin/fm-approval-wait.sh) excludes
+#     automatic retry and retirement, including record-less endpoint closure;
+#     changed evidence is not a release and creates no retry question;
 #   - a record already held for the captain, or parked on a settled deferral
 #     (bin/fm-captain-hold.sh open / deferred), is left to that decision;
 #     an unreadable hold or deferral probe on the worker or its follow-up
@@ -165,6 +168,8 @@ fi
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-approval-wait.sh
+. "$SCRIPT_DIR/fm-approval-wait.sh"
 # shellcheck source=bin/fm-parent-channel-lib.sh
 . "$SCRIPT_DIR/fm-parent-channel-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
@@ -238,6 +243,14 @@ already_raised() {  # <id>
   [ -f "$RAISED_DIR/$1.raised" ] && [ "$(cat "$RAISED_DIR/$1.raised" 2>/dev/null)" = "$(fingerprint "$1" "${2:-$1}")" ]
 }
 
+# Admission is independent of the current-state verdict and ledger fingerprint.
+approval_wait() {  # <task-id>
+  fm_approval_wait_admit "$STATE" "$1" && return 1
+  CLASS=approval-wait
+  DETAIL="awaiting explicit parent approval release"
+  return 0
+}
+
 # classify <id>: sets CLASS, DETAIL, AGE
 classify() {
   local id=$1 line verb worktree row pr pr_state hold_rc=0
@@ -245,6 +258,7 @@ classify() {
   MERGED_PR_URL=
   AGE=$(record_age "$id")
   DETAIL=
+  approval_wait "$id" && return
   hold_settled "$id" "idle-$id" || hold_rc=$?
   case "$hold_rc" in
     0) CLASS=held; return ;;
@@ -597,6 +611,10 @@ while IFS=$'\t' read -r otask oeid; do
   AGE=0
   HOLD_ID=
   detail="endpoint $oeid for $otask has no record"
+  if approval_wait "$otask"; then
+    add_row "idle-orphan-$otask" "$CLASS" "$detail; $DETAIL" none
+    continue
+  fi
   hold_rc=0
   hold_settled "idle-orphan-$otask" "idle-idle-orphan-$otask" || hold_rc=$?
   case "$hold_rc" in

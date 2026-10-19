@@ -77,6 +77,7 @@ state/
   <id>.supervisor-failing <id>.conversation-failing  secondmate lane-health episodes (bin/fm-deck-worker.sh "SUPERVISOR HEALTH", bin/fm-captain-lane.sh lane-health comment own escalation and recovery)
   <id>.supervisor-notes   owed supervisor conversation notes, one note text per line, oldest first; failed delivery is queued independently of health episodes and retried in order at every turn start and recovery; teardown removes it
   <id>.lane-heal-<lane>  the first mate's automatic relaunch and escalation of a second mate whose lane keeps failing, one record per lane (bin/fm-secondmate-revive.sh "LANE HEALTH")
+  <id>.approval-wait approval-waits/  parent approval exclusion and release archive (bin/fm-approval-wait.sh owns schema, declaration and release)
   <id>.parked-run <id>.quiet-noted  parked validation episode and quiet-worker check-in marker (bin/fm-parked-run-watch.sh header)
   <id>.model <id>.deck-caps  in-place model choice and live driver capability (bin/fm-control.sh owns public behavior; bin/fm_model_switch.py owns capability checks)
   <id>.progress           in-turn native activity, read for the busy-age bound only (bin/fm-busy-event.sh)

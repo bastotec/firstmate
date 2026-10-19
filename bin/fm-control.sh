@@ -99,7 +99,9 @@
 #              ship) or scout retry only under the control lock, with unchanged
 #              --expected-record metadata and status byte count, a fresh
 #              failed/blocked/paused/gone crew state, and no
-#              live semantic busy turn. It rechecks after the endpoint probe
+#              live semantic busy turn. bin/fm-approval-wait.sh also guards
+#              an explicit parent approval exclusion.
+#              It rechecks after the endpoint probe
 #              and composer preflight, refusing resumed activity without an
 #              interrupt or exit submission. Exit 3 leaves the worker for a
 #              fresh scan; a late refusal may leave a failed transaction journal.
@@ -485,6 +487,17 @@ if [ "$EXPECTED_RECORD_SET" = 1 ] && { [ ! -f "$META" ] \
   printf 'worker record %s changed or vanished\n' "$ID" >&2
   exit 3
 fi
+case "$VERB" in
+  relaunch|recover-missing|reincarnate)
+    # shellcheck source=bin/fm-approval-wait.sh
+    . "$SCRIPT_DIR/fm-approval-wait.sh"
+    if ! fm_approval_wait_admit "$STATE" "$ID"; then
+      echo "error: task $ID awaits explicit parent approval release; recovery refused" >&2
+      [ -z "$STOPPED_STATUS_SIZE" ] || exit 3
+      exit 1
+    fi
+    ;;
+esac
 if [ -n "$STOPPED_STATUS_SIZE" ]; then
   case "$(fm_meta_get "$META" kind)" in
     ''|ship|scout) ;;
