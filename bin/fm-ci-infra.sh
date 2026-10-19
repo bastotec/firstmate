@@ -16,15 +16,13 @@
 #          limit, or says no runner matched or was available;
 #   code   anything else that failed.
 #
-# An infra failure is never a decision for the captain: the worker or mate
-# fixes it and re-runs. The fix depends on the repository, and the command
-# prints it: a private repository moves the failing workflow to
-# `runs-on: [self-hosted, linux, workload]` (a virtualenv instead of
-# actions/setup-python), and a public repository keeps hosted runners and is
-# re-run. bin/fm-dod-lib.sh's act-within-scope section owns that rule.
+# bin/fm-dod-lib.sh's act-within-scope section owns the infrastructure repair
+# and escalation policy; this command prints the repository-specific fix.
 #
-# classify reads the pull request's head commit, its failed check runs, each
-# check's annotations, and for GitHub Actions jobs the job's steps, through gh.
+# classify reads the pull request's head commit, its failed check runs, all
+# pages of each check's annotations, and for GitHub Actions jobs the job's
+# steps, through gh. An unreadable annotation page or job-step read prevents
+# classification and exits 2 rather than producing a verdict.
 # classify-json applies the same classification to a JSON document, so the
 # rules can be exercised without the network:
 #   {"repo_private": true,
