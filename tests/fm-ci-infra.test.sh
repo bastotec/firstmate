@@ -66,6 +66,7 @@ test_annotation_levels_control_infra_evidence() {
     assert_contains "$out" "verdict: code" "$level suppressed a code failure"
     assert_contains "$out" "rc=1" "$level did not preserve the code exit status"
   done
+  # shellcheck disable=SC2016 # The dollar amount is literal annotation text.
   out=$(classify_json '{"checks": [
     {"name": "warning", "steps": 7, "annotations": [{"level": "warning", "message": "No runner available"}]},
     {"name": "zero", "steps": 0, "annotations": [{"level": "notice", "message": "Actions spending limit remaining: $20"}]}]}')
