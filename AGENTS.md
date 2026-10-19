@@ -326,7 +326,7 @@ These skills are not captain-invocable; load them only at their triggers.
 
 - `bootstrap-diagnostics` - load when the digest's bootstrap or network-checks section prints any diagnostic line other than `BOOTSTRAP_INFO:`, or a `BOOTSTRAP_INFO:` line saying an interrupted backlog cleanup may have left an endpoint or local copy.
 - `diagnostic-reasoning` - load before scoping a reported bug and before acting on a diagnostic report.
-- `ask-user-authority` - load before deciding any ask-user finding, and on a `check: worker run parked too long` wake.
+- `ask-user-authority` - load at section 7's decision/gate triggers, before deciding any ask-user finding, and on a `check: worker run parked too long` wake.
 - `task-delivery` - load before every spawn; when a worker reports blocked; when judging an active validation run, when the captain changes the ask of a task under validation, or when its worker hand-edits, commits, aborts, or restarts during the run; when a worker reports a PR or ready branch; before writing a custom check; after a teardown; when a scout completes; and on every heartbeat for the finished-work sweep.
 - `harness-adapters` - load before spawning or recovering a crewmate or secondmate, choosing among a matched dispatch profile array, handling a trust dialog, sending a harness-specific skill invocation, interrupting, exiting, or resuming an agent, or verifying an adapter.
 - `project-management` - load before adding (including cloning or registering), creating, removing, or initializing a project.
