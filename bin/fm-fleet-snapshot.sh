@@ -317,8 +317,9 @@ FM_SNAPSHOT_PARENT_ACTIVITY_TIMEOUT, with truncation disclosed in the result.
 The registered secondmate table uses FM_SNAPSHOT_REGISTRY_LINES,
 FM_SNAPSHOT_REGISTRY_BYTES, FM_SNAPSHOT_REGISTRY_RECORDS, and
 FM_SNAPSHOT_REGISTRY_TIMEOUT, with unavailability and truncation disclosed.
-Every captain hold carries hold_bucket, decided only from structured fields and
-never from hold reason or body prose: "blocked", "dated", "aged", or "live".
+Captain holds carry hold_bucket, decided only from structured fields and never
+from hold reason or body prose: "blocked", "dated", "aged", or "live" for eligible
+rows, while a row marked done ("[x]") or in Done carries no bucket (null).
 An undated hold ages once its hold-set timestamp is at least
 FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS old (default 14; 0 ages every hold with a
 non-negative computed age); legacy holds without a stamp fall back to their
