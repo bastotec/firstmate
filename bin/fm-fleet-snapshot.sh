@@ -35,15 +35,15 @@
 #     structured record is Done, and missing ids stay open.
 #     There is no separate decision type: any captain-held task is the same
 #     primitive, whatever kind its row carries.
-#     hold_bucket is the single classification for every captain hold, decided
-#     only from structured fields - state, hold_kind, hold_until,
+#     hold_bucket classifies open, unchecked captain-held rows with a hold reason,
+#     using only structured fields - state, checked, hold_kind, hold_until,
 #     unresolved_blocker_ids, and the machine-written hold-set timestamp. No
 #     hold reason or body prose is ever matched. The buckets are total and
-#     mutually exclusive, so every captain hold lands in exactly one and none
-#     can fall through: "blocked" when any blocker is unresolved, else "dated"
-#     when hold_until is still in the future, else "aged" when an undated hold
-#     is at least FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS old (default 14; legacy
-#     unstamped holds fall back to `since`), else "live". A non-captain row, a
+#     mutually exclusive for those eligible rows: "blocked" when any blocker
+#     is unresolved, else "dated" when hold_until is still in the future, else
+#     "aged" when an undated hold is at least FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS
+#     old (default 14, floored elapsed days; legacy unstamped holds fall back
+#     to `since`), else "live". A non-captain row, a
 #     Done row, and a row marked done ("[x]") in any section carry null.
 #     captain_actionable means "waiting on the captain now" and is exactly
 #     hold_bucket == "live".

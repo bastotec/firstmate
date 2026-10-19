@@ -53,9 +53,8 @@
 #   - `done`/`close` when the gate's verdict cannot be recorded as the task's
 #     explicit PR outcome first (fm_backlog_record_pr_outcome in
 #     bin/fm-backlog-transition-lib.sh), so a superseded row never reads as merged.
-# Before any command a markdown backlog is passed through
-# bin/fm-backlog-normalize.sh, so a done row left outside "## Done" is moved
-# back where tasks-axi can find it; a failed repair never blocks the command.
+# Markdown repair before commands follows the shared ADDRESSING contract in
+# bin/fm-backlog-transition-lib.sh.
 # Otherwise the exit status is tasks-axi's own.
 set -u
 

@@ -56,8 +56,10 @@
 #   and settled deferrals on idle-orphan-<task> (or its follow-up), and an
 #   unchanged raised fingerprint of the actual task's ledger, leave the
 #   endpoint alone; otherwise a refused close goes to the first mate.
-# Every scan first runs bin/fm-backlog-normalize.sh on this home's backlog, so a
-# done row stranded outside "## Done" is moved back and logged.
+# Each scan admitted by the cadence and scan lock first attempts markdown
+# normalization, after validating this home's authorized data directory, and
+# logs any output. This also applies on manual-backend homes.
+# bin/fm-backlog-normalize.sh's header owns repair and skip rules.
 # Metadata-less pending backlog closes also appear as unhandled on every scan
 # until the lifecycle owner clears them; the sweep reports but never retries
 # or changes those recovery records.
@@ -509,8 +511,7 @@ fm_lock_try_acquire "$LOCK" || exit 0
 trap 'fm_lock_release "$LOCK" >/dev/null 2>&1 || true' EXIT
 touch "$STATE/.last-idle-sweep"
 
-# Heal done rows stranded outside "## Done" first, so no stale captain hold on
-# one survives into this scan or the home's snapshot.
+# Attempt authorized repair before classifying this home's workers.
 normalize_data=${FM_DATA_OVERRIDE:-$FM_HOME/data}
 if (fm_backlog_record_present "$normalize_data/backlog.md" "backlog file" "$normalize_data"); then
   normalized=$("$SCRIPT_DIR/fm-backlog-normalize.sh" "$normalize_data/backlog.md" 2>&1) || true

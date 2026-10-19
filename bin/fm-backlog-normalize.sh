@@ -1,35 +1,40 @@
 #!/usr/bin/env bash
-# fm-backlog-normalize.sh - move done rows that sit outside "## Done" into it.
+# fm-backlog-normalize.sh - move checked In flight and Queued rows into Done.
 #
 # Usage: fm-backlog-normalize.sh [--check] [--quiet] [<backlog.md>]
 #        fm-backlog-normalize.sh --help
 #
-# A markdown backlog row marked done ("- [x] <id> - ...") belongs under
-# "## Done". When one ends up under "## In flight" or "## Queued" (a lost
-# section heading, a hand edit), tasks-axi no longer finds it (show, unhold and
-# done answer NOT_FOUND) while readers that go by section still treat it as
-# open work, so a captain call written on it can never be answered or closed.
-# This command moves every such row, with its indented body lines, to the top
-# of "## Done", creating that section when it is missing. Rows under any other
-# heading, rows before the first heading, and every other line stay exactly as
-# they are.
+# tasks-axi cannot find checked rows outside "## Done" (show, unhold and done
+# answer NOT_FOUND), so a captain call on a misplaced row cannot be resolved.
+# This command moves checked rows ("- [x]", also "*" and uppercase "X") under
+# "## In flight" or "## Queued" to the top of "## Done", creating it if missing.
+# Indented body lines move with the row, including blank separators only when
+# the next non-blank line is indented; trailing blanks stay in place.
+# Rows under other headings, rows before the first heading, and all other lines
+# stay untouched. A bare "Done" line is not restored to a heading: it may be
+# legitimate text.
 #
 # The default file is this home's markdown backlog,
-# ${FM_DATA_OVERRIDE:-$FM_HOME/data}/backlog.md. A missing file is not an error.
-# The rewrite is atomic (temporary file plus rename) and is skipped when the
-# file changed while it was being read, so a concurrent tasks-axi write is never
-# lost; the next run repairs whatever is still misplaced.
+# ${FM_DATA_OVERRIDE:-$FM_HOME/data}/backlog.md. A missing file is not an error;
+# a final-component symlink is refused.
+# Reads and rewrites hold tasks-axi's <backlog>.lock, created exclusively with
+# a unique token. Lock contention retries for about 2.5 seconds, then skips
+# quietly; cleanup removes the lock only while its token still matches.
+# The rewrite preserves the file mode and uses an atomic temporary-file rename.
+# A checksum guard also skips publication if the file changed during the read.
+# A skipped run leaves repair to a later invocation, not a clean-file guarantee.
 #
-# bin/fm-tasks-axi.sh runs this before every tasks-axi command, and
-# bin/fm-idle-sweep.sh runs it on every scan, so a misplaced row heals in every
-# home on its own.
+# Automatic invocation is owned by bin/fm-backlog-transition-lib.sh's ADDRESSING
+# contract and bin/fm-idle-sweep.sh's scan contract; those callers validate the
+# authorized data directory before invoking this command.
 #
 # Output: one line per repair, "normalized <path>: moved <n> done row(s) into
-# Done: <id>[, <id>...]". --quiet prints nothing on success.
-# --check reports misplaced rows without rewriting and exits 1 when any exist.
+# Done: <id>[, <id>...]". --quiet suppresses repair and checksum-skip output.
+# --check reports misplaced rows without rewriting the backlog and exits 1 when
+# any exist; it still acquires the lock and creates a temporary file.
 #
-# Exit: 0 after a check or repair with nothing left misplaced, 1 when --check
-# found misplaced rows or the rewrite failed, 2 on invalid use.
+# Exit: 0 after repair, no-op, or skip; 1 when --check found misplaced rows or
+# a file operation failed (including symlink refusal); 2 on invalid use.
 set -u
 
 usage() {

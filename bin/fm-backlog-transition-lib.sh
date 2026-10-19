@@ -40,6 +40,13 @@
 # data directory is relocated keeps its backlog and its archive together. A root
 # with no `.tasks.toml` gets tasks-axi's built-in defaults.
 # bin/fm-tasks-axi-lib.sh owns backend precedence and configuration failures.
+# For markdown, this shared addressing boundary also attempts normalization
+# before wrapper commands, row reads, and lifecycle mutations, after validating
+# the backlog file against the authorized data directory. Cross-home data
+# symlinks are skipped; explicitly authorized relocated data remains eligible.
+# Repair is bounded to 5 seconds and a failed or skipped repair never blocks the
+# caller or changes its refusals. bin/fm-backlog-normalize.sh owns repair rules;
+# tests/fm-backlog-normalize.test.sh covers access-boundary recovery and guards.
 #
 # CRASH RECOVERY. Teardown and record-only endpoint retirement use a durable
 # record: they remove the meta, and surviving row links alone cannot reconstruct

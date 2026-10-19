@@ -134,16 +134,7 @@ The [`fm-captain-hold.sh` header](../bin/fm-captain-hold.sh) owns parking, exact
 
 ## Structured read surfaces
 
-`bin/fm-fleet-snapshot.sh` parses canonical tasks-axi `(hold: ...)`, `(hold-kind: ...)`, and `(hold-until: ...)` metadata alongside existing backlog fields.
-It resolves every repeated `blocked-by:` edge against structured Done records and keeps missing blockers unresolved.
-It then assigns every captain hold exactly one `hold_bucket`, decided only from structured fields - `hold_kind`, `state`, `hold_until`, `unresolved_blocker_ids`, and the machine-written hold-set timestamp.
-Hold reason and body prose are never matched, so no wording can hide, reveal, or reclassify a decision.
-The buckets are total and mutually exclusive: `blocked` when any blocker is unresolved, else `dated` while `hold_until` is in the future, else `aged` when an undated hold's hold-set timestamp is at least `FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS` old (default 14, floored elapsed days), else `live`.
-No captain hold can fall through them and none can match two, which is what keeps a hold from vanishing from every view.
-`captain_actionable` - waiting on the captain now - is exactly `hold_bucket == "live"`.
-Existing undated holds without a hold-set stamp fall back to the task's `since` date.
-That aging is a projection safety net only.
-The durable dated deferral remains re-holding with `--until`.
+The [`fm-fleet-snapshot.sh` header](../bin/fm-fleet-snapshot.sh) owns structured hold parsing, blocker resolution, bucket classification, and checked-row exclusion.
 Its secondmate-home summary classifies an actionable captain hold as `captain_decision` and preserves every captain hold in the bounded queued inventory of the owning home.
 
 `bin/fm-bearings-snapshot.sh` places each captain hold by its `hold_bucket` and inspects no prose of its own.
