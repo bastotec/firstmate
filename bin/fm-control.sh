@@ -1273,7 +1273,7 @@ resolve_relaunch_profile() {
 # refuses outright when any of it cannot be established.
 CHECKPOINT_LINES=()
 safe_checkpoint() {
-  local wt_real wt_top wt_top_real head head_ref head_ref_status status_output dirty children marker child_meta
+  local wt_real wt_top wt_top_real head head_ref head_ref_status status_output dirty children marker child_meta traversal_error traversal_status
   CHECKPOINT_LINES=()
   [ -n "$WT" ] || die "task $ID has no recorded worktree; refusing to relaunch without a recorded local copy to preserve"
   [ -d "$WT" ] || die "task $ID's recorded worktree $WT is missing; refusing to relaunch and lose track of its work"
@@ -1317,8 +1317,12 @@ safe_checkpoint() {
       || die "task $ID's home $WT is not marked as its own seeded secondmate home (marker: ${marker:-none}); refusing to relaunch"
     [ -d "$WT/state" ] \
       || die "secondmate $ID's home has no readable state directory, so its child work cannot be accounted for; refusing to relaunch"
-    find "$WT/state" -mindepth 1 -maxdepth 1 -print >/dev/null 2>&1 \
-      || die "secondmate $ID's child records cannot be traversed; refusing to relaunch"
+    if traversal_error=$(find "$WT/state" -mindepth 1 -maxdepth 1 -print 2>&1 >/dev/null); then
+      :
+    else
+      traversal_status=$?
+      die "secondmate $ID's child records cannot be traversed at $WT/state (find exit $traversal_status): ${traversal_error:-no diagnostic output}; refusing to relaunch"
+    fi
     children=0
     for child_meta in "$WT/state"/*.meta; do
       if [ ! -e "$child_meta" ] && [ ! -L "$child_meta" ]; then

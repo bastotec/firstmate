@@ -25,6 +25,25 @@ Those samples were captured live from harnesses that are no longer supported, so
 
 ## stream
 
+### Watcher publication and startup refusal boundaries
+
+Verified on 2026-10-19 on Linux with Bash 5.3.9 and Python 3.14.4 using the real home-host driver, synthetic startup/watcher/Deck executables, and a separate process owning the real sequence-lock primitive, without model calls:
+
+```sh
+FM_LIVE=0 FM_TEST_DECK_CASES='test_secondmate_host_refuses_an_incomplete_startup_digest test_secondmate_host_retries_watcher_publication' bin/fm-test-run.sh tests/fm-deck-harness.test.sh
+```
+
+```text
+ok - Deck host refuses a zero-exit incomplete digest without consuming wakes or starting turns
+ok - Deck host retries transient publication and preserves live lock custody at exhaustion
+```
+
+The contention fixture holds the lock through an initial enqueue refusal, verifies the same live owner remains, then releases through that owner and observes one handled record and one wake turn.
+The exhaustion control keeps the owner alive, observes no publication or wake turn, and retains the unacknowledged durable wake.
+The startup control returns an incomplete report with exit zero and a stale completion marker; no model turn or watcher starts.
+[`fm-deck-worker.sh`](../../bin/fm-deck-worker.sh)'s header owns retry behavior and startup safety; [`tests/fm-control-relaunch.test.sh`](../../tests/fm-control-relaunch.test.sh) separately exercises five readable child records, empty state, invalid child entries, read failure, and traversal failure diagnostics before any stop.
+These are portable driver and subprocess-boundary fixtures, not a live Deck or macOS reproduction, and do not identify the cause of any particular lock refusal or startup timeout.
+
 ### Secondmate home-local tool selection
 
 #### Portable plumbing evidence

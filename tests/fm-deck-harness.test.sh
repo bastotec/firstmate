@@ -2415,6 +2415,135 @@ PYTHON
   pass "Deck host retains failed and interrupted handling child stderr and serves later wakes"
 }
 
+# A zero-exit startup report is not a complete digest. Preserve this refusal
+# independently from watcher publication retry; never dispatch a blind turn.
+test_secondmate_host_refuses_an_incomplete_startup_digest() {
+  local dir="$TMP_ROOT/host-incomplete-digest"
+  make_secondmate_host_fixture "$dir"
+  cat > "$dir/bin/fm-session-start.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'STARTUP TRUNCATED: fixture wake-queue stage incomplete\n'
+exit 0
+SH
+  python3 - "$dir" <<'PYTHON' || fail "an incomplete startup digest was accepted"
+import os, pathlib, signal, subprocess, sys
+root = pathlib.Path(sys.argv[1])
+home = root/'home'
+state = root/'parent'
+(home/'state/.session-start-complete').write_text('123\n')
+queue = home/'state/.wake-queue'
+queue.write_text('fixture durable wake\n')
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(state), 'host'], text=True).strip()
+p = subprocess.Popen(['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+    str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(state),
+    '--gen', gen, '--deck', str(root/'deck'), '--', 'charter'], env=env, stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+try:
+    out, err = p.communicate('/quit\n', timeout=30)
+    assert p.returncode != 0, out+err
+    assert 'fixture wake-queue stage incomplete' in err
+finally:
+    if p.poll() is None:
+        os.killpg(p.pid, signal.SIGKILL)
+    p.wait()
+assert 'session start did not publish a complete digest' in (state/'host.status').read_text()
+assert not (home/'turns').exists(), 'incomplete startup launched a model turn'
+assert queue.read_text() == 'fixture durable wake\n'
+assert not (home/'watch-starts').exists(), 'incomplete startup armed a watcher'
+PYTHON
+  pass "Deck host refuses a zero-exit incomplete digest without consuming wakes or starting turns"
+}
+
+# Real sequence-lock custody: transient contention must not kill a healthy host,
+# while exhausted retries must not steal a live holder or dispatch a lost wake.
+test_secondmate_host_retries_watcher_publication() {
+  local mode dir
+  for mode in transient held; do
+    dir="$TMP_ROOT/host-publication-$mode"
+    make_secondmate_host_fixture "$dir"
+    python3 - "$dir" "$mode" <<'PYTHON' || fail "watcher publication contention: $mode"
+import json, os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+mode = sys.argv[2]
+home = root/'home'
+state = root/'parent'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='',
+           FM_CONFIG_OVERRIDE='', FM_TASK_INBOX_LOCK_WAIT_SECS='1')
+p = holder = None
+def pane(): return (root/'pane').read_text()
+def rows():
+    f = home/'turns'
+    return [json.loads(x) for x in f.read_text().splitlines()] if f.exists() else []
+def wait_for(check, label):
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        if check(): return
+        if p is not None and p.poll() is not None:
+            raise AssertionError(label+': host exited: '+pane())
+        time.sleep(.1)
+    raise AssertionError(label+': '+pane())
+try:
+    gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(state), 'host'], text=True).strip()
+    p = subprocess.Popen(['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+        str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(state),
+        '--gen', gen, '--deck', str(root/'deck'), '--', 'charter'], env=env, stdin=subprocess.PIPE,
+        stdout=(root/'pane').open('w'), stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    wait_for(lambda: len(rows()) == 1 and 'state=idle' in (state/'host.busy-state').read_text(), 'startup')
+    inbox = state/'host.inbox'
+    (inbox/'handled').mkdir(parents=True, exist_ok=True)
+    # The real lock primitive owns the lock; release through that same owner.
+    holder = subprocess.Popen(['bash', '-c', '''
+. "$1/bin/fm-wake-lib.sh"
+fm_lock_try_acquire "$1/parent/host.inbox/.seq.lock" || exit 1
+trap 'fm_lock_release "$1/parent/host.inbox/.seq.lock"' EXIT
+: > "$1/holder-ready"
+for ((i=0; i<400; i++)); do
+  [ -d "$1" ] && [ ! -e "$1/release-holder" ] || exit 0
+  sleep .1
+done
+exit 2
+''', '_', str(root)], env=env, start_new_session=True)
+    wait_for(lambda: (root/'holder-ready').exists(), 'real lock holder')
+    lock = inbox/'.seq.lock'
+    owner = os.readlink(lock)
+    queue = home/'state/.wake-queue'
+    queue.write_text('fixture durable wake\n')
+    (home/'captain-wakes').touch()
+    (home/'trigger').touch()
+    wait_for(lambda: 'retrying watcher steering publication' in pane(), 'publication retry')
+    assert holder.poll() is None and os.readlink(lock) == owner
+    assert not list(inbox.glob('*.msg')) and len(rows()) == 1
+    if mode == 'transient':
+        (root/'release-holder').touch()
+        assert holder.wait(timeout=10) == 0
+        wait_for(lambda: len(rows()) == 2 and 'state=idle' in (state/'host.busy-state').read_text(), 'retained wake turn')
+        records = list((inbox/'handled').glob('*.msg'))
+        assert len(records) == 1 and 'check: example' in records[0].read_text()
+        assert 'check: example' in rows()[1]['inbox']
+        time.sleep(.5)
+        assert len(rows()) == 2, 'a successful retry dispatched twice'
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        assert p.wait(timeout=30) == 0
+    else:
+        assert p.wait(timeout=30) != 0
+        assert 'could not publish watcher steering doorbell' in pane()
+        assert holder.poll() is None and os.readlink(lock) == owner
+        assert not list(inbox.glob('*.msg')) and len(rows()) == 1
+        assert queue.read_text() == 'fixture durable wake\n', 'failed publication consumed the durable wake'
+        (root/'release-holder').touch()
+        assert holder.wait(timeout=10) == 0
+finally:
+    for child in (p, holder):
+        if child is not None:
+            if child.poll() is None:
+                os.killpg(child.pid, signal.SIGKILL)
+            child.wait()
+PYTHON
+  done
+  pass "Deck host retries transient publication and preserves live lock custody at exhaustion"
+}
+
 # A watcher cycle that fails used to end the host ("watcher failed (exit 1)"),
 # and every automatic revive then opened a new Deck session, so a second mate
 # lost its conversation each time. The host now restarts its watcher, and a new
@@ -4013,6 +4142,8 @@ test_secondmate_turn_model_follows_the_switch_file
 test_secondmate_host_survives_an_unconfirmed_successor_watcher
 test_secondmate_fast_successor_keeps_its_notification
 test_secondmate_host_retains_failed_successor_start_evidence
+test_secondmate_host_refuses_an_incomplete_startup_digest
+test_secondmate_host_retries_watcher_publication
 test_secondmate_host_survives_a_failed_watcher_and_resumes_its_session
 test_secondmate_watcher_backoff_keeps_turn_stop_responsive
 test_secondmate_turns_guard_the_reply_logs

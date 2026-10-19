@@ -102,6 +102,10 @@
 #   FM_DECK_WATCH_FAILURE_LIMIT stops the host
 #   with failure status. The retry deadline never blocks input or turn-stop
 #   handling, and no watcher starts while turn cancellation is pending.
+# - Watcher-inbox publication gets at most three enqueue attempts, with one
+#   then two seconds between attempts. Pending output is unchanged until a
+#   record is published; no lock is bypassed. Exhaustion still stops the host,
+#   leaving the durable wake queue unacknowledged for supported recovery.
 # - A successor watcher that does not confirm startup in time or exits without
 #   a successful result first, or a refused handling-delivery confirmation,
 #   logs the condition to stderr,
@@ -752,12 +756,22 @@ watch_start() {
 # need no keystroke injection, pane scrape, or special wake implementation.
 WAKE_PREAMBLE='The home watcher has an actionable wake. Drain bin/fm-wake-drain.sh first, handle every emitted wake and open decision, and acknowledge only after handling. Watcher output:'
 watch_doorbell() (
-  local record
+  local record pending attempt
   # shellcheck source=bin/fm-task-inbox-lib.sh
   . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
-  record=$(FM_TASK_INBOX_STREAM=monologue fm_task_inbox_write "$STATE" "$ID" "$WAKE_PREAMBLE
-$(cat "$WATCH_PENDING")") || exit 1
-  fm_task_inbox_doorbell_line "$record"
+  pending=$(cat "$WATCH_PENDING") || exit 1
+  for attempt in 1 2 3; do
+    # The enqueue primitive fails without a partial record. Retry only that
+    # operation; after success, a doorbell failure must leave the record alone.
+    if record=$(FM_TASK_INBOX_STREAM=monologue fm_task_inbox_write "$STATE" "$ID" "$WAKE_PREAMBLE
+$pending"); then
+      fm_task_inbox_doorbell_line "$record"
+      exit $?
+    fi
+    [ "$attempt" -lt 3 ] || exit 1
+    printf 'fm-deck-worker: warning: retrying watcher steering publication (%s/3)\n' "$attempt" >&2
+    sleep "$attempt"
+  done
 )
 
 # Per-turn reasoning effort for a home host's watcher turns: the level

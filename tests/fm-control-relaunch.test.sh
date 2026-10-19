@@ -1630,8 +1630,12 @@ test_secondmate_relaunch_checkpoints_child_work_and_spares_the_charter() {
   printf 'sm1\n' > "$dir/smhome/.fm-secondmate-home"
   printf '# charter\n' > "$dir/smhome/data/charter.md"
   printf '# agents\n' > "$dir/smhome/AGENTS.md"
-  printf 'window=x:fm-c1\n' > "$dir/smhome/state/c1.meta"
-  printf 'window=x:fm-c2\n' > "$dir/smhome/state/c2.meta"
+  local n
+  for n in 1 2 3 4 5; do
+    printf 'window=x:fm-c%s\n' "$n" > "$dir/smhome/state/c$n.meta"
+  done
+  # Unrelated transient state and dangling links are not child records.
+  ln -s missing "$dir/smhome/state/unrelated-link"
   {
     fm_test_fake_dir_task "$dir/fake" "$home/state" "sm1"
     echo "worktree=$dir/smhome"
@@ -1651,14 +1655,22 @@ test_secondmate_relaunch_checkpoints_child_work_and_spares_the_charter() {
   # the note is optional there.
   out=$(run_control "$dir" sm1 relaunch); rc=$?
   expect_code 0 "$rc" "a checkpointed secondmate should relaunch"$'\n'"$out"
-  [ "$(journal_field "$dir" sm1 children)" = 2 ] \
+  [ "$(journal_field "$dir" sm1 children)" = 5 ] \
     || fail "the checkpoint must account for the secondmate's child work, got '$(journal_field "$dir" sm1 children)'"
   assert_not_contains "$out" "requires --note" "a secondmate relaunch must not demand a progress note"
   [ "$(cat "$dir/smhome/data/charter.md")" = "# charter" ] \
     || fail "a secondmate's standing charter must never be rewritten by a relaunch"
   assert_present "$dir/smhome/state/c1.meta" "child records must survive the relaunch"
   assert_present "$dir/smhome/state/c2.meta" "child records must survive the relaunch"
-  pass "fm-control relaunch: a secondmate's child work is accounted for and its charter is left alone"
+  for n in 1 2 3 4 5; do
+    [ "$(cat "$dir/smhome/state/c$n.meta")" = "window=x:fm-c$n" ] \
+      || fail "child records must remain byte-identical"
+    rm "$dir/smhome/state/c$n.meta"
+  done
+  out=$(run_control "$dir" sm1 relaunch); rc=$?
+  expect_code 0 "$rc" "an empty child set should relaunch"$'\n'"$out"
+  [ "$(journal_field "$dir" sm1 children)" = 0 ] || fail "empty state must checkpoint zero children"
+  pass "fm-control relaunch: a secondmate's five readable children and empty state are checkpointed without changing its charter"
 }
 
 test_secondmate_relaunch_refuses_an_unmarked_home() {
@@ -1714,15 +1726,38 @@ test_secondmate_checkpoint_refuses_unreadable_child_state() {
   assert_contains "$out" "not a readable regular file" "the refusal should name the unreadable child record"
   [ "$(cat "$dir/fake/command")" = fm-deck-worker ] || fail "child record failure must not stop the secondmate"
   rmdir "$dir/smhome/state/bad.meta"
+  ln -s missing "$dir/smhome/state/bad.meta"
+  out=$(run_control "$dir" sm5 relaunch); rc=$?
+  expect_code 1 "$rc" "a dangling child link must refuse"
+  assert_contains "$out" "not a readable regular file" "a dangling child must not be silently skipped"
+  rm "$dir/smhome/state/bad.meta"
+  printf 'window=x:fm-child\n' > "$dir/smhome/state/bad.meta"
+  cat > "$dir/fakebin/cat" <<'SH'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  case "$arg" in */state/bad.meta) exit 1 ;; esac
+done
+exec /bin/cat "$@"
+SH
+  chmod +x "$dir/fakebin/cat"
+  out=$(run_control "$dir" sm5 relaunch); rc=$?
+  expect_code 1 "$rc" "a child read failure must refuse"
+  assert_contains "$out" "not a readable regular file" "a child read error must not be skipped"
+  [ "$(cat "$dir/fake/command")" = fm-deck-worker ] || fail "child read failure must not stop the secondmate"
+  rm "$dir/fakebin/cat" "$dir/smhome/state/bad.meta"
   cat > "$dir/fakebin/find" <<'SH'
 #!/usr/bin/env bash
-exit 1
+printf 'find: fixture traversal error\n' >&2
+exit 7
 SH
   chmod +x "$dir/fakebin/find"
   out=$(run_control "$dir" sm5 relaunch); rc=$?
   expect_code 1 "$rc" "failed child-state traversal should refuse"
   assert_contains "$out" "child records cannot be traversed" \
     "the refusal should preserve a find traversal failure"
+  assert_contains "$out" "find exit 7" "the refusal must distinguish the subprocess failure"
+  assert_contains "$out" "find: fixture traversal error" "the refusal must retain the underlying diagnostic"
+  assert_contains "$out" "$dir/smhome/state" "the refusal must identify the resolved state root"
   [ "$(cat "$dir/fake/command")" = fm-deck-worker ] || fail "child traversal failure must not stop the secondmate"
   pass "fm-control relaunch: unreadable and untraversable child state fails checkpoint"
 }
