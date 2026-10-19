@@ -55,6 +55,7 @@ On 2026-10-11, Rust agent 2.1.0 built locally with Rust 1.96.0 passed the portab
 The corrected driver and native receiver also passed all eight real Deck scenarios on that date, including idle human-draft preservation, ordered F/G/H/I safe-point application and no extra apostrophe-path acknowledgement turn.
 The portable application regressions run with `bin/fm-test-run.sh tests/fm-stream-deck.test.sh`, including oversized captain fallback followed by eligible native sources through both publication paths.
 The native receiver's corresponding regression is `newer_bridge_order_skips_native_ineligible_captain_sources` in [`crates/fm-stream-agent/src/receiver.rs`](../../crates/fm-stream-agent/src/receiver.rs).
+The same portable suite checks prompt successful handoff under a held lifecycle lock, privacy-safe phase diagnostics, and later driver publication of the intact source without acknowledgement.
 Current operator behavior and supported limits are owned by [`../stream-backend.md`](../stream-backend.md#command-path).
 
 ### Interactive attach latency
