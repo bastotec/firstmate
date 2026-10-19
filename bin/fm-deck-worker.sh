@@ -57,6 +57,16 @@
 #       --deck <deck-binary> [--model <route>] [--secondmate] -- <first-prompt>
 # --secondmate requires FM_HOME and hosts that home, leaving --state pointed
 # at the parent task state for busy/progress and failure publication.
+# The optional home-local config/secondmate-tool-path prepends existing absolute
+# directories, one per line in priority order, to this driver's PATH before startup.
+# Blank lines are ignored; paths are literal, never expanded or evaluated as
+# assignments. Colon separators, relative paths and control bytes are refused.
+# The file must be readable, regular and not a symlink.
+# Absence or an empty file preserves PATH. This grant is not
+# inherited config: it applies only to this home's new --secondmate driver and
+# descendants, not host-side readiness checks or the pre-resolved Deck binary.
+# Changing it does not alter a running driver; activation requires a coordinated
+# fresh launch. Ordinary ship/scout drivers ignore it.
 # Startup runs once before the first turn. A tracked watcher is supervised through
 # every turn; its results become later turns, with queued stdin serialized
 # alongside them. pre_complete checks lock ownership instead of worker evidence.
@@ -261,6 +271,39 @@ PROMPT=${1-}
 if [ -z "$ID" ] || [ -z "$STATE" ] || [ -z "$GEN" ] || [ -z "$DECK" ] || [ -z "$PROMPT" ]; then
   echo "fm-deck-worker: --id, --state, --gen, --deck, and a first prompt are required" >&2
   exit 2
+fi
+# Apply an explicit destination-home grant here, after the remote transport and
+# PTY shell have selected their environments but before session-start/bootstrap.
+# Do not use FM_CONFIG_OVERRIDE: --state/config may belong to the parent route.
+if [ "$SECONDMATE" = 1 ]; then
+  [ -n "${FM_HOME:-}" ] && [ -d "$FM_HOME" ] || { echo 'fm-deck-worker: requires an explicit home' >&2; exit 2; }
+  TOOL_PATH_PREFIX=$(python3 - "$FM_HOME/config/secondmate-tool-path" <<'PYTHON'
+import os, pathlib, stat, sys
+path = pathlib.Path(sys.argv[1])
+try:
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        sys.exit(0)
+    if not stat.S_ISREG(mode):
+        raise ValueError('must be a readable regular non-symlink file')
+    directories = []
+    for directory in path.read_bytes().decode('utf-8').split('\n'):
+        if not directory:
+            continue
+        if (not os.path.isabs(directory) or ':' in directory
+                or any(ord(c) < 32 or ord(c) == 127 for c in directory)):
+            raise ValueError('requires absolute directories without colons or control bytes')
+        if not os.path.isdir(directory):
+            raise ValueError('directory is unavailable')
+        directories.append(directory)
+    print(':'.join(directories), end='')
+except (OSError, ValueError, UnicodeError) as error:
+    print('fm-deck-worker: config/secondmate-tool-path: ' + str(error), file=sys.stderr)
+    sys.exit(2)
+PYTHON
+  ) || exit 2
+  [ -z "$TOOL_PATH_PREFIX" ] || export PATH="$TOOL_PATH_PREFIX${PATH:+:$PATH}"
 fi
 command -v jq >/dev/null 2>&1 || { echo "fm-deck-worker: jq is required to render Deck's event stream" >&2; exit 2; }
 command -v python3 >/dev/null 2>&1 || { echo "fm-deck-worker: python3 is required for safe status I/O" >&2; exit 2; }

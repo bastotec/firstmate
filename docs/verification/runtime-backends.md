@@ -25,6 +25,25 @@ Those samples were captured live from harnesses that are no longer supported, so
 
 ## stream
 
+### Secondmate home-local tool selection
+
+Verified on 2026-10-19 on macOS with Bash 3.2 and Python 3.9.6 using the real Deck home-host driver and synthetic Node/npm executables, without model calls:
+
+```sh
+FM_LIVE=0 FM_TEST_DECK_CASES=test_secondmate_tool_path_reaches_startup_without_changing_siblings bin/fm-test-run.sh tests/fm-deck-harness.test.sh
+```
+
+```text
+PASS fresh host startup executes selected Node/npm CLI and compatibility helper; sibling, empty/absent, invalid and ship scopes preserved
+ok - Deck home-local tool path reaches startup without changing sibling/default launches
+```
+
+The startup fixture executes `node`, an env-node `quota-axi`, and the real bootstrap compatibility helper before the first model turn.
+The same regression fails against the unchanged driver because startup resolves the default tools instead of the explicit home selection.
+[`tests/fm-backend-stream.test.sh`](../../tests/fm-backend-stream.test.sh) additionally exercises tool execution during startup through `fm-spawn.sh`, a real loopback hub, and a real PTY agent.
+Both supported stream implementations invoke the same home-host driver; these portable checks do not establish activation or tool selection in any existing remote home.
+[`fm-deck-worker.sh`](../../bin/fm-deck-worker.sh)'s header owns the explicit grant and activation contract.
+
 ### Deck native mid-turn steering over stream
 
 The initial same-turn correction check was verified on 2026-09-29 on macOS with Python 3.9.6 and Deck 0.1.0 built from the merged native-steering interface in `bastotec/deck`.
