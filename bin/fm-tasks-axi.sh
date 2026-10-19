@@ -53,6 +53,9 @@
 #   - `done`/`close` when the gate's verdict cannot be recorded as the task's
 #     explicit PR outcome first (fm_backlog_record_pr_outcome in
 #     bin/fm-backlog-transition-lib.sh), so a superseded row never reads as merged.
+# Before any command a markdown backlog is passed through
+# bin/fm-backlog-normalize.sh, so a done row left outside "## Done" is moved
+# back where tasks-axi can find it; a failed repair never blocks the command.
 # Otherwise the exit status is tasks-axi's own.
 set -u
 
@@ -143,6 +146,10 @@ fi
 
 DATA_ABSOLUTE=$(fm_backlog_data_absolute "$DATA") || fail "data directory cannot be resolved: $DATA"
 cd "$FM_BACKLOG_AXI_ROOT" || fail "cannot enter the backlog root $FM_BACKLOG_AXI_ROOT"
+
+# A done row stranded outside "## Done" is invisible to tasks-axi, so heal the
+# file before every command (bin/fm-backlog-normalize.sh owns the repair).
+[ -z "$FM_BACKLOG_AXI_FILE" ] || "$SCRIPT_DIR/fm-backlog-normalize.sh" --quiet "$FM_BACKLOG_AXI_FILE" >&2 || true
 
 # Refuse a close that would claim a PR merged when it has not.
 done_pr_gate() {

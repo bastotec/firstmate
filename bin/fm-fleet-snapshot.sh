@@ -43,8 +43,8 @@
 #     can fall through: "blocked" when any blocker is unresolved, else "dated"
 #     when hold_until is still in the future, else "aged" when an undated hold
 #     is at least FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS old (default 14; legacy
-#     unstamped holds fall back to `since`), else "live". A non-captain or Done
-#     row carries null.
+#     unstamped holds fall back to `since`), else "live". A non-captain row, a
+#     Done row, and a row marked done ("[x]") in any section carry null.
 #     captain_actionable means "waiting on the captain now" and is exactly
 #     hold_bucket == "live".
 #     hold_age_days is the hold's age when computable, else null.
@@ -608,7 +608,7 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
           | .requires_child_metadata = (.current_role == "worker")
           | .hold_age_days = days_between((.hold_set // .since); $now)
           | .hold_bucket =
-              (if .hold_kind != "captain" or .hold_reason == null or .state == "done" then null
+              (if .hold_kind != "captain" or .hold_reason == null or .state == "done" or .checked == true then null
                elif (.unresolved_blocker_ids | length) > 0 then "blocked"
                elif .hold_until != null and .hold_until > $today then "dated"
                elif .hold_until == null and .hold_age_days != null

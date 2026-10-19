@@ -56,6 +56,8 @@
 #   and settled deferrals on idle-orphan-<task> (or its follow-up), and an
 #   unchanged raised fingerprint of the actual task's ledger, leave the
 #   endpoint alone; otherwise a refused close goes to the first mate.
+# Every scan first runs bin/fm-backlog-normalize.sh on this home's backlog, so a
+# done row stranded outside "## Done" is moved back and logged.
 # Metadata-less pending backlog closes also appear as unhandled on every scan
 # until the lifecycle owner clears them; the sweep reports but never retries
 # or changes those recovery records.
@@ -506,6 +508,11 @@ fi
 fm_lock_try_acquire "$LOCK" || exit 0
 trap 'fm_lock_release "$LOCK" >/dev/null 2>&1 || true' EXIT
 touch "$STATE/.last-idle-sweep"
+
+# Heal done rows stranded outside "## Done" first, so no stale captain hold on
+# one survives into this scan or the home's snapshot.
+normalized=$("$SCRIPT_DIR/fm-backlog-normalize.sh" 2>&1) || true
+[ -z "$normalized" ] || log "$normalized"
 
 RAISED=0
 NEW=
