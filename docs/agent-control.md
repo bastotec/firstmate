@@ -153,6 +153,7 @@ It differs from the steps above in exactly three places.
   On stream a silent agent reads `unreadable` rather than `dead`, so a partition refuses here instead of proving a stop that never happened.
 - `recover-missing` brings a terminal back on stream as a NEW endpoint and rebinds the record to it.
   [Stream's lifecycle guide](stream-backend.md#secondmate-lifecycle) owns its new-endpoint recovery and local-agent ownership guard; [Failure and rollback](#failure-and-rollback) above owns failed rebind and handover handling.
+- `relaunch`, `recover-missing`, and `reincarnate` also require admission under the parent approval-exclusion contract owned by [`fm-approval-wait.sh`'s header](../bin/fm-approval-wait.sh).
 - An ambiguous or unreadable endpoint state refuses.
   Only a positively classified state acts.
 - `relaunch` inherits the [exit composer gate](#verbs) by stopping the old agent through `exit`.

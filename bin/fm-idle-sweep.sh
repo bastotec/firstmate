@@ -14,6 +14,9 @@
 #
 # One scan, over THIS home's own non-secondmate records only (a home never
 # acts on another home's records; secondmates retire only on a decision):
+#   - an explicit parent approval exclusion (bin/fm-approval-wait.sh) excludes
+#     automatic retry and retirement, including record-less endpoint closure;
+#     changed evidence is not a release and creates no retry question;
 #   - a record already held for the captain, or parked on a settled deferral
 #     (bin/fm-captain-hold.sh open / deferred), is left to that decision;
 #     an unreadable hold or deferral probe on the worker or its follow-up
@@ -72,7 +75,10 @@
 # suppress a new stopped stretch. The first mate's own home lists it in the
 # end-of-scan wake below. Each hand-off records
 # the worker's ledger byte count under state/idle-sweep/<id>.raised only after
-# parent-channel delivery or the main-home wake append succeeds. Each retry is
+# parent-channel delivery or the main-home wake append succeeds. Before either
+# publication, the sweep rechecks the original task's approval exclusion under
+# its control lock, held through delivery; a newly excluded task stays at
+# action none and gets no raised marker. Each retry is
 # recorded under state/idle-sweep/<id>.retried (ledger size and retry count; at
 # most two retries per worker); an unchanged size suppresses a repeat. A failed
 # relaunch that published its own replacement record also consumes a retry and
@@ -165,6 +171,8 @@ fi
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-approval-wait.sh
+. "$SCRIPT_DIR/fm-approval-wait.sh"
 # shellcheck source=bin/fm-parent-channel-lib.sh
 . "$SCRIPT_DIR/fm-parent-channel-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
@@ -238,6 +246,14 @@ already_raised() {  # <id>
   [ -f "$RAISED_DIR/$1.raised" ] && [ "$(cat "$RAISED_DIR/$1.raised" 2>/dev/null)" = "$(fingerprint "$1" "${2:-$1}")" ]
 }
 
+# Admission is independent of the current-state verdict and ledger fingerprint.
+approval_wait() {  # <task-id>
+  fm_approval_wait_admit "$STATE" "$1" && return 1
+  CLASS=approval-wait
+  DETAIL="awaiting explicit parent approval release"
+  return 0
+}
+
 # classify <id>: sets CLASS, DETAIL, AGE
 classify() {
   local id=$1 line verb worktree row pr pr_state hold_rc=0
@@ -245,6 +261,7 @@ classify() {
   MERGED_PR_URL=
   AGE=$(record_age "$id")
   DETAIL=
+  approval_wait "$id" && return
   hold_settled "$id" "idle-$id" || hold_rc=$?
   case "$hold_rc" in
     0) CLASS=held; return ;;
@@ -314,28 +331,19 @@ hours() {  # <secs>
 # captain's 2026-10-18 rule: "i dont want to make those decisions"). A second
 # mate appends one "needs-decision [key=idle-<id>]" line to its parent channel;
 # the first mate's own home queues one check: wake for its supervisor, which
-# decides retire or retry. Sets RAISED=1 on success; the worker's ledger
+# decides retire or retry. Sets RAISED=1 when queued; the worker's ledger
 # fingerprint suppresses a repeat until the ledger changes.
 raise() {
-  local id=$1 class=$2 why=$3 ledger_id=${4:-$1} line episode rc=0
+  local id=$1 class=$2 why=$3 ledger_id=${4:-$1} line episode
   HOLD_ID=
   episode=$(fingerprint "$id" "$ledger_id")
   case "$class" in
     finished) line="worker $id is done, but its cleanup was refused ($why); decide whether to clean it up or keep it" ;;
     *) line="worker $id stopped ($class: $why) and I could not settle it myself; decide whether to retire or retry it" ;;
   esac
-  fm_parent_channel_report "$FM_HOME" "$STATE" "needs-decision [key=idle-$id]: [episode=$episode] $(fm_parent_channel_clean_note "$line")" || rc=$?
-  case "$rc" in
-    0)
-      mkdir -p "$RAISED_DIR" 2>/dev/null || true
-      printf '%s\n' "$episode" > "$RAISED_DIR/$id.raised" 2>/dev/null || true
-      ;;
-    1)
-      PENDING_RAISED="$PENDING_RAISED$(jq -cn --arg id "$id" --arg fingerprint "$episode" '{id:$id,fingerprint:$fingerprint}')"$'\n'
-      ;;
-    *) log "could not hand $id to the first mate"; return 0 ;;
-  esac
-  log "asked the first mate about $id ($class): $why"
+  HANDOFFS="$HANDOFFS$(jq -cn --arg id "$id" --arg task "$ledger_id" --arg class "$class" \
+    --arg why "$why" --arg episode "$episode" --arg line "needs-decision [key=idle-$id]: [episode=$episode] $(fm_parent_channel_clean_note "$line")" \
+    '{id:$id,task:$task,class:$class,why:$why,episode:$episode,line:$line}')"$'\n'
   RAISED=1
 }
 
@@ -508,7 +516,15 @@ if [ "$NOW_FLAG" -eq 0 ] && [ -e "$STATE/.last-idle-sweep" ]; then
   [ $((NOW - last)) -ge "$SWEEP_SECS" ] || exit 0
 fi
 fm_lock_try_acquire "$LOCK" || exit 0
-trap 'fm_lock_release "$LOCK" >/dev/null 2>&1 || true' EXIT
+HANDOFF_LOCKS=
+release_handoff_locks() {
+  local handoff_lock
+  for handoff_lock in $HANDOFF_LOCKS; do
+    fm_lock_release "$STATE/$handoff_lock" >/dev/null 2>&1 || true
+  done
+  HANDOFF_LOCKS=
+}
+trap 'release_handoff_locks; fm_lock_release "$LOCK" >/dev/null 2>&1 || true' EXIT
 touch "$STATE/.last-idle-sweep"
 
 # Attempt authorized repair before classifying this home's workers.
@@ -520,6 +536,7 @@ fi
 
 RAISED=0
 NEW=
+HANDOFFS=
 PENDING_RAISED=
 ROWS=
 add_row() {  # <id> <class> <detail> <action>
@@ -597,6 +614,10 @@ while IFS=$'\t' read -r otask oeid; do
   AGE=0
   HOLD_ID=
   detail="endpoint $oeid for $otask has no record"
+  if approval_wait "$otask"; then
+    add_row "idle-orphan-$otask" "$CLASS" "$detail; $DETAIL" none
+    continue
+  fi
   hold_rc=0
   hold_settled "idle-orphan-$otask" "idle-idle-orphan-$otask" || hold_rc=$?
   case "$hold_rc" in
@@ -680,17 +701,45 @@ while IFS= read -r meta; do
 done < <(printf '%s\n' "$STATE"/*.meta)
 
 # --- publish ----------------------------------------------------------------------
-generated=$(date -u -r "$NOW" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$NOW" +%Y-%m-%dT%H:%M:%SZ)
-if tmp=$(mktemp "$STATE/.idle-sweep.json.XXXXXX"); then
-  if printf '%s' "$ROWS" | jq -s --arg home "$FM_HOME" --argjson epoch "$NOW" --arg generated "$generated" \
-    '{schema:"fm-idle-sweep.v1", generated:$generated, generated_epoch:$epoch, home:$home, workers:.}' \
-    > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$SUMMARY"; then
-    :
+while IFS= read -r handoff; do
+  [ -n "$handoff" ] || continue
+  id=$(printf '%s' "$handoff" | jq -r .id)
+  task=$(printf '%s' "$handoff" | jq -r .task)
+  handoff_lock=".control-$task.lock"
+  rc=0
+  if ! fm_lock_try_acquire "$STATE/$handoff_lock"; then
+    CLASS=unknown
+    DETAIL="another lifecycle action holds it"
+  elif approval_wait "$task"; then
+    fm_lock_release "$STATE/$handoff_lock" >/dev/null 2>&1 || true
   else
-    rm -f "$tmp" 2>/dev/null
-    log "could not publish $SUMMARY"
+    line=$(printf '%s' "$handoff" | jq -r .line)
+    episode=$(printf '%s' "$handoff" | jq -r .episode)
+    fm_parent_channel_report "$FM_HOME" "$STATE" "$line" || rc=$?
+    case "$rc" in
+      0)
+        mkdir -p "$RAISED_DIR" 2>/dev/null || true
+        printf '%s\n' "$episode" > "$RAISED_DIR/$id.raised" 2>/dev/null || true
+        ;;
+      1)
+        HANDOFF_LOCKS="$HANDOFF_LOCKS $handoff_lock"
+        PENDING_RAISED="$PENDING_RAISED$(jq -cn --arg id "$id" --arg fingerprint "$episode" '{id:$id,fingerprint:$fingerprint}')"$'\n'
+        ;;
+      *)
+        ROWS=$(printf '%s' "$ROWS" | jq -c --arg id "$id" 'if .id==$id then .action="unhandled" else . end')$'\n'
+        log "could not hand $id to the first mate"
+        ;;
+    esac
+    [ "$rc" -eq 1 ] || fm_lock_release "$STATE/$handoff_lock" >/dev/null 2>&1 || true
+    if [ "$rc" -le 1 ]; then
+      log "asked the first mate about $id ($(printf '%s' "$handoff" | jq -r .class)): $(printf '%s' "$handoff" | jq -r .why)"
+    fi
+    continue
   fi
-fi
+  ROWS=$(printf '%s' "$ROWS" | jq -c --arg id "$id" --arg class "$CLASS" --arg detail "$DETAIL" \
+    'if .id==$id then .class=$class | .detail=$detail | .action="none" else . end')$'\n'
+done <<< "$HANDOFFS"
+NEW=$(printf '%s' "$ROWS" | jq -rs '[.[] | select(.action=="retired" or .action=="retried" or .action=="asked") | .id] | join(" ")')
 
 prc=0
 fm_parent_channel_destination "$FM_HOME" "$STATE" >/dev/null 2>&1 || prc=$?
@@ -727,6 +776,19 @@ if [ -n "$NEW" ]; then
     else
       log "could not queue the idle sweep wake for:$NEW"
     fi
+  fi
+fi
+release_handoff_locks
+
+generated=$(date -u -r "$NOW" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$NOW" +%Y-%m-%dT%H:%M:%SZ)
+if tmp=$(mktemp "$STATE/.idle-sweep.json.XXXXXX"); then
+  if printf '%s' "$ROWS" | jq -s --arg home "$FM_HOME" --argjson epoch "$NOW" --arg generated "$generated" \
+    '{schema:"fm-idle-sweep.v1", generated:$generated, generated_epoch:$epoch, home:$home, workers:.}' \
+    > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$SUMMARY"; then
+    :
+  else
+    rm -f "$tmp" 2>/dev/null
+    log "could not publish $SUMMARY"
   fi
 fi
 exit 0
