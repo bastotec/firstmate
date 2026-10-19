@@ -300,14 +300,14 @@ _fm_task_inbox_dedup_prescan() {  # <inbox-dir> <want-file> [delivery-mode]
 # Durably enqueue one steer at most once: when a record with the exact same
 # body already exists - unhandled or already acknowledged in handled/ - no new
 # record is written and the existing record's path is printed instead.
-# This is the enqueue primitive for a transport that can fail with completion
-# unknown (the remote steer leg over ssh): the caller's safe recovery is to run
-# the same enqueue again, and this dedup is what makes the re-run land on the
-# same record instead of a duplicate the worker would act on twice. Two
-# distinct logical requests never collapse in practice because a marked
-# secondmate request embeds a per-request correlation token in its body. The
-# local plane keeps plain fm_task_inbox_write: its outcome is synchronous, so
-# a repeated identical local steer is a deliberate new instruction.
+# This is the enqueue primitive for callers that can fail with completion
+# unknown, such as the remote steer leg over ssh: the caller's safe recovery is
+# to run the same enqueue again, landing on the same record instead of a
+# duplicate the worker would act on twice. Callers must distinguish separate
+# logical requests in their bodies; marked secondmate requests use correlation
+# tokens. bin/fm-deck-worker.sh's header owns watcher publication identities
+# and retry behavior. Ordinary local text steers keep plain fm_task_inbox_write:
+# a repeated identical steer is a deliberate new instruction.
 #
 # Scan before taking .seq.lock so a matching resend does not wait for that
 # lock: published records are immutable and already durable, and the candidate
