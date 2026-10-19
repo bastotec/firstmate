@@ -88,6 +88,7 @@ The steps below describe `relaunch`; [missing-terminal recovery](#recovering-a-m
    The recorded worktree must exist and be a worktree root; its head and dirty state are recorded.
    The [`fm-control.sh` header](../bin/fm-control.sh) owns the worktree-owner claim guard shared by relaunch and missing-terminal recovery.
    For a `kind=secondmate` task, the home's identity marker must match and its child records must be readable, so a relaunch can never strand child work behind an unreadable home.
+   A child-state traversal failure reports the state path, `find` exit status, and underlying diagnostic (or its absence) before any stop; a readable directory alone doesn't satisfy the checkpoint.
    A secondmate's own crewmates run in their own endpoints and outlive its relaunch; the relaunched secondmate reconciles them from its home's durable records at startup.
 4. **Record the note.**
    A ship or scout relaunch requires `--note`, because the replacement inherits the local copy but none of the conversation; the note is appended to the instructions it reads.

@@ -89,9 +89,11 @@
 # owns what the lane does.
 # Before a pending watcher turn, consume queued composer clears and stale own
 # doorbells, waiting up to five seconds from the first such line for following
-# input. An exact /quit reached there stops the host before watcher work; real
-# steers retain watcher priority. The grace covers the control plane's delayed
-# /quit after clear/re-read retries (tests/fm-deck-harness.test.sh).
+# input. An exact /quit anywhere in queued input stops the host before watcher
+# publication or dispatch, including during enqueue backoff or just after an
+# accepted publication; an accepted record remains unhandled. Real steers
+# retain watcher priority. The grace covers the control plane's delayed /quit
+# after clear/re-read retries (tests/fm-deck-harness.test.sh).
 # Supervision uses child processes and stdin, never backend-specific injection.
 # Startup, lock, watcher, and event-capture failures publish failure status and
 # stop the driver, with these watcher recovery exceptions:
@@ -102,10 +104,14 @@
 #   FM_DECK_WATCH_FAILURE_LIMIT stops the host
 #   with failure status. The retry deadline never blocks input or turn-stop
 #   handling, and no watcher starts while turn cancellation is pending.
-# - Watcher-inbox publication gets at most three enqueue attempts, with one
-#   then two seconds between attempts. Pending output is unchanged until a
-#   record is published; no lock is bypassed. Exhaustion still stops the host,
-#   leaving the durable wake queue unacknowledged for supported recovery.
+# - Watcher-inbox enqueue gets at most three attempts, with one then two
+#   seconds between attempts. Each publication keeps frozen output and a stable
+#   identity across retries; fm_task_inbox_write_idempotent reuses an accepted
+#   record even if its writer returned an error. Later watcher results wait
+#   separately, with distinct identities even for equal output. No lock is
+#   bypassed. Exhaustion stops the host, leaving the durable wake queue
+#   unacknowledged for supported recovery. Doorbell generation failure after
+#   successful enqueue stops immediately without re-enqueueing.
 # - A successor watcher that does not confirm startup in time or exits without
 #   a successful result first, or a refused handling-delivery confirmation,
 #   logs the condition to stderr,
