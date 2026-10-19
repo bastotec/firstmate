@@ -25,6 +25,43 @@ Those samples were captured live from harnesses that are no longer supported, so
 
 ## stream
 
+### Secondmate home-local tool selection
+
+#### Portable plumbing evidence
+
+Verified on 2026-10-19 on macOS with Bash 3.2 and Python 3.9.6 using the real Deck home-host driver, a shimmed session-start script, and synthetic Node and quota-axi executables, without model calls:
+
+```sh
+FM_LIVE=0 FM_TEST_DECK_CASES=test_secondmate_tool_path_reaches_startup_without_changing_siblings bin/fm-test-run.sh tests/fm-deck-harness.test.sh
+```
+
+```text
+PASS fresh host startup executes selected Node/npm CLI and compatibility helper; sibling, empty/absent, invalid and ship scopes preserved
+ok - Deck home-local tool path reaches startup without changing sibling/default launches
+```
+
+The startup fixture executes `node`, an env-node `quota-axi`, and the real bootstrap compatibility helper before the first model turn.
+The same regression fails against the unchanged driver because startup resolves the default tools instead of the explicit home selection.
+[`tests/fm-backend-stream.test.sh`](../../tests/fm-backend-stream.test.sh) additionally exercises tool execution during startup through `fm-spawn.sh`, a real loopback hub, and a real PTY agent.
+Both supported stream implementations invoke the same home-host driver; these portable checks do not establish activation or tool selection in any existing remote home.
+[`fm-deck-worker.sh`](../../bin/fm-deck-worker.sh)'s header owns the explicit grant and activation contract.
+
+#### Remaining destination authority decision
+
+The launch blocker remains open.
+The supplied tool-owner evidence establishes command-scoped compatibility/bootstrap for the validated candidate; the destination-home report still shows the old tools on a fresh launch.
+Neither is proof that this repair selects the candidate in that home, and no fresh actual destination launch/bootstrap was performed here.
+
+Does the destination owner authorize configuring **only the selected home's** `config/secondmate-tool-path` with the existing validated tool directories and coordinating a fresh launch through the supported route?
+The decision must cover both the home-local grant and the relaunch window.
+Until that authority is explicit, leave the destination configuration and running home untouched.
+Code delivery and passing plumbing tests aren't activation authority.
+
+After approval, the destination owner must retain fresh-launch evidence showing the actual Node and quota-axi versions and successful startup/bootstrap, with the corporate proxy unchanged and sibling homes unaffected.
+Reuse the existing tool-owner validation rather than repeating it; a one-command PATH override doesn't close this gap.
+No global/default Node, shellwide PATH, service, registry, or credential changes are authorized.
+Keep destination identifiers, tool-directory paths, and raw launch evidence in private owner reports; publish only sanitized results.
+
 ### Deck native mid-turn steering over stream
 
 The initial same-turn correction check was verified on 2026-09-29 on macOS with Python 3.9.6 and Deck 0.1.0 built from the merged native-steering interface in `bastotec/deck`.

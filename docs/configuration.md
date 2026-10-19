@@ -26,6 +26,7 @@ config/
   backend                 absent or stream; inherited ("Runtime backend")
   stream-hub stream-token stream-hub-tokens stream-machine stream-impl stream-native-dir  stream hub, credentials, fleet name, implementation; never committed (docs/stream-backend.md)
   launch-env-allowlist    optional worker environment allowlist; inherited ("Worker launch environment")
+  secondmate-tool-path    explicit home-host tool directories; home-local, not inherited (bin/fm-deck-worker.sh header)
   startup-memory-budget   per-home startup-memory allowance; inherited ("Startup memory budget")
   trace-context           optional presence flag; inherited at launch ("Trace context propagation")
   stow-pass-horizon       optional presence flag ("Stow pass horizon")
@@ -449,6 +450,9 @@ Everything else must be listed, including credential-store locations, proxy sett
 For endpoint launches, values come from the destination pane at execution time and are never copied from the invoking process or written into the launch command.
 For direct specialist and group runs, values come from the launcher environment; an automatically discovered `PROXAI_API_KEY_FILE` is also subject to filtering and must be listed when needed.
 Listing a name does not provision it on another machine.
+
+For an explicit home-local tool selection before a secondmate's startup/bootstrap, [`fm-deck-worker.sh`](../bin/fm-deck-worker.sh)'s header owns `config/secondmate-tool-path` syntax, activation, and scope.
+It does not install tools or authorize a relaunch; a command-scoped bootstrap result is not proof that a fresh home launch used the grant.
 
 | Provider or Git transport | Additional names needed |
 | --- | --- |

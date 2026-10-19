@@ -1595,6 +1595,109 @@ PYTHON
   chmod +x "$dir/bin/fm-session-start.sh" "$dir/bin/fm-watch-arm.sh" "$dir/deck"
 }
 
+test_secondmate_tool_path_reaches_startup_without_changing_siblings() {
+  local dir="$TMP_ROOT/home-tool-path"
+  make_secondmate_host_fixture "$dir"
+  python3 - "$dir" <<'PYTHON' || fail "home-local tool path did not reach fresh startup safely"
+import os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+original_path = os.environ['PATH']
+# Two executable toolchains; quota uses env-node exactly as an npm CLI does.
+for label, version, node_version in [('default', '0.0.1', 'v18.0.0'), ('selected tools', '99.0.0', 'v99.0.0')]:
+    tools = root/label
+    tools.mkdir()
+    (tools/'node').write_text('#!/bin/sh\nif [ "$1" = --version ]; then printf "%s\\n" "' + node_version + '"; else exec /bin/sh "$@"; fi\n')
+    (tools/'quota-axi').write_text('#!/usr/bin/env node\nprintf "%s\\n" "' + version + '"\n')
+    for tool in tools.iterdir(): tool.chmod(0o755)
+# Run the real bootstrap compatibility helper during the driver's startup,
+# before any model turn or manually prefixed tool command can mask selection.
+startup = root/'bin/fm-session-start.sh'
+startup.write_text('''#!/bin/bash
+set -e
+"$(dirname "$0")/fm-lock.sh"
+. "$(dirname "$0")/fm-quota-axi-lib.sh"
+{
+  node --version
+  quota-axi --version
+  if fm_quota_axi_compatible; then echo compatible; else echo incompatible; fi
+} > "$FM_HOME/tool-resolution"
+cat "$FM_HOME/state/.lock" > "$FM_HOME/state/.session-start-complete"
+echo complete-startup
+''')
+startup.chmod(0o755)
+def launch(home, expected, invalid=False, secondmate=True):
+    home.mkdir(exist_ok=True)
+    (home/'state').mkdir(exist_ok=True)
+    env = dict(os.environ, PATH=str(root/'default')+':'+original_path, FM_HOME=str(home),
+               FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE=str(root/'unrelated-config'))
+    gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], env=env, text=True).strip()
+    cmd = ['/bin/bash', '-c', 'exec -a fm-deck-worker /bin/bash "$@"', 'fm-deck-worker',
+           str(root/'bin/fm-deck-worker.sh'), '--id', 'host', '--state', str(root/'parent'),
+           '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+    if secondmate: cmd.insert(5, '--secondmate')
+    pane = home/'pane'
+    with pane.open('w') as output:
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+                             env=env, text=True, start_new_session=True)
+        try:
+            if invalid:
+                assert p.wait(timeout=15) == 2, pane.read_text()
+                assert 'config/secondmate-tool-path' in pane.read_text(), pane.read_text()
+                assert not (home/'tool-resolution').exists(), 'invalid grant reached bootstrap'
+                assert not (home/'turns').exists(), 'invalid grant reached a model turn'
+                return
+            deadline = time.monotonic()+30
+            while time.monotonic() < deadline:
+                busy = root/'parent/host.busy-state'
+                if (home/'turns').exists() and busy.exists() and 'state=idle' in busy.read_text(): break
+                assert p.poll() is None, pane.read_text()
+                time.sleep(.1)
+            else: raise AssertionError(pane.read_text())
+            if secondmate:
+                assert (home/'tool-resolution').read_text().splitlines() == expected, pane.read_text()
+            else:
+                assert not (home/'tool-resolution').exists(), 'ship ran secondmate startup'
+            p.stdin.write('/quit\n'); p.stdin.flush()
+            assert p.wait(timeout=20) == 0, pane.read_text()
+        finally:
+            if p.poll() is None:
+                os.killpg(p.pid, signal.SIGTERM)
+                try: p.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(p.pid, signal.SIGKILL); p.wait()
+selected = root/'home'
+grant = selected/'config/secondmate-tool-path'
+grant.write_text(str(root/'selected tools')+'\n'+str(root/'default')+'\n')
+launch(selected, ['v99.0.0','99.0.0','compatible'])
+sibling = root/'sibling'
+launch(sibling, ['v18.0.0','0.0.1','incompatible'])
+# Empty and removed grants preserve defaults, including across a fresh driver.
+for content in ('', None):
+    if content is None: grant.unlink()
+    else: grant.write_text(content)
+    launch(selected, ['v18.0.0','0.0.1','incompatible'])
+# Invalid or unsafe explicit grants stop before startup or model execution.
+for number, value in enumerate(('relative/bin', '/absent-home-tool-path', str(root/'default')+':/bin',
+                                str(root/'default')+'\r', str(root/'default')+'\0')):
+    home = root/('invalid-'+str(number)); (home/'config').mkdir(parents=True)
+    (home/'config/secondmate-tool-path').write_text(value)
+    launch(home, None, invalid=True)
+for kind in ('directory', 'symlink'):
+    home = root/('invalid-'+kind); (home/'config').mkdir(parents=True)
+    path = home/'config/secondmate-tool-path'
+    if kind == 'directory': path.mkdir()
+    else: path.symlink_to(root/'absent')
+    launch(home, None, invalid=True)
+# A ship sharing a home does not apply a secondmate-only grant.
+ship = root/'ship'; (ship/'config').mkdir(parents=True)
+(ship/'config/secondmate-tool-path').write_text('invalid-for-a-home-host')
+launch(ship, None, secondmate=False)
+assert os.environ['PATH'] == original_path, 'launcher environment changed'
+print('PASS fresh host startup executes selected Node/npm CLI and compatibility helper; sibling, empty/absent, invalid and ship scopes preserved')
+PYTHON
+  pass "Deck home-local tool path reaches startup without changing sibling/default launches"
+}
+
 # Deck lets a running tool finish on SIGTERM, so a secondmate inside a long
 # shell command used to hold Ctrl+C and /quit until that command ended, and a
 # relaunch gave up on it after 30s. The driver now kills the running command's
@@ -3896,6 +3999,7 @@ if [ -n "${FM_TEST_DECK_CASES:-}" ]; then
 fi
 
 test_stream_deck_recovery
+test_secondmate_tool_path_reaches_startup_without_changing_siblings
 test_stream_deck_ring_rings_live_driver
 test_idle_interrupt_does_not_echo_fake_input
 test_secondmate_host_serializes_wakes_and_steering
