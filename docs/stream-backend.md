@@ -284,6 +284,7 @@ With a stream-hosted driver and a Deck build supporting `--steer-dir`, ringing a
 Published messages reach the model at its next safe point without interrupting or restarting the turn; [`project_captain`](../bin/fm_stream_deck.py) owns publication eligibility, sequencing limits, and acknowledgement rules.
 For split secondmates (`config/primary-split`), the [`fm-captain-lane.sh` header](../bin/fm-captain-lane.sh) owns conversation delivery instead; [`supervisor_direct`](../bin/fm_stream_deck.py) owns native supervisor eligibility.
 Native publication is best-effort: unsupported builds, skipped records, and publication failures retain the ordinary inbox path rather than refusing the durable send.
+For conversation-to-supervisor handoffs, the [`fm-captain-handoff.sh` header](../bin/fm-captain-handoff.sh) owns the post-enqueue publication budget, timeout fallback, and phase diagnostics.
 Captain images in native steering follow [`with_deck_images`](../bin/fm_stream_deck.py), also used by [primary steering](../bin/fm-primary-steer.sh); Bridge-order bodies are not transformed.
 Remote attachments must already be staged on the receiving host before sending; native publication does not copy attachment bytes.
 An idle driver observes new direct-source records out of band and starts a turn without waiting for Enter, including while its composer holds human text.
