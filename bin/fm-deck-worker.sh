@@ -756,22 +756,13 @@ watch_start() {
 # need no keystroke injection, pane scrape, or special wake implementation.
 WAKE_PREAMBLE='The home watcher has an actionable wake. Drain bin/fm-wake-drain.sh first, handle every emitted wake and open decision, and acknowledge only after handling. Watcher output:'
 watch_doorbell() (
-  local record pending attempt
+  local record pending
   # shellcheck source=bin/fm-task-inbox-lib.sh
   . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
   pending=$(cat "$WATCH_PENDING") || exit 1
-  for attempt in 1 2 3; do
-    # The enqueue primitive fails without a partial record. Retry only that
-    # operation; after success, a doorbell failure must leave the record alone.
-    if record=$(FM_TASK_INBOX_STREAM=monologue fm_task_inbox_write "$STATE" "$ID" "$WAKE_PREAMBLE
-$pending"); then
-      fm_task_inbox_doorbell_line "$record"
-      exit $?
-    fi
-    [ "$attempt" -lt 3 ] || exit 1
-    printf 'fm-deck-worker: warning: retrying watcher steering publication (%s/3)\n' "$attempt" >&2
-    sleep "$attempt"
-  done
+  record=$(FM_TASK_INBOX_STREAM=monologue fm_task_inbox_write "$STATE" "$ID" "$WAKE_PREAMBLE
+$pending") || exit 1
+  fm_task_inbox_doorbell_line "$record" || exit 2
 )
 
 # Per-turn reasoning effort for a home host's watcher turns: the level
@@ -1417,10 +1408,19 @@ idle_captain_ready() {
   return 1
 }
 
+exit_if_queued() {
+  if grep -qx '/quit' "$WORK"/input.[0-9]* 2>/dev/null; then
+    record_busy_event idle session-end || exit 1
+    exit 0
+  fi
+}
+
 lane_start || { host_failure 'could not start the captain lane'; exit 1; }
 drive_turn "$PROMPT"
 input_seq=0
 show_prompt=1
+watch_publish_failures=0
+watch_publish_retry_at=0
 while :; do
   if [ "$SECONDMATE" = 1 ]; then
     watch_start || exit 1
@@ -1449,25 +1449,34 @@ while :; do
       fi
       show_prompt=1
     done
-    if [ -f "$WORK/input.$input_seq" ]; then
-      if ! line=$(cat "$WORK/input.$input_seq"); then
-        host_failure 'could not read queued input'; exit 1
-      fi
-      if [ "$line" = /quit ]; then
-        rm "$WORK/input.$input_seq" || { host_failure 'could not consume queued exit'; exit 1; }
-        record_busy_event idle session-end || exit 1
-        exit 0
-      fi
-    fi
+    exit_if_queued
     if [ -s "$WATCH_PENDING" ]; then
+      if [ "$watch_publish_failures" -ge 3 ]; then
+        host_failure 'could not publish watcher steering doorbell'; exit 1
+      fi
+      if [ "$(date +%s)" -lt "$watch_publish_retry_at" ]; then
+        sleep 0.1
+        continue
+      fi
       if [ -z "$EFFORT_SUPPORTED" ]; then
         EFFORT_SUPPORTED=0
         "$SCRIPT_DIR/fm-effort-policy.sh" supported "$DECK" && EFFORT_SUPPORTED=1
       fi
       TURN_EFFORT=$(watch_effort)
-      if ! doorbell=$(watch_doorbell); then
-        host_failure 'could not publish watcher steering doorbell'; exit 1
+      publish_rc=0
+      doorbell=$(watch_doorbell) || publish_rc=$?
+      if [ "$publish_rc" -ne 0 ]; then
+        [ "$publish_rc" -eq 1 ] || { host_failure 'could not publish watcher steering doorbell'; exit 1; }
+        watch_publish_failures=$((watch_publish_failures + 1))
+        if [ "$watch_publish_failures" -lt 3 ]; then
+          printf 'fm-deck-worker: warning: retrying watcher steering publication (%s/3)\n' "$watch_publish_failures" >&2
+          watch_publish_retry_at=$(( $(date +%s) + watch_publish_failures ))
+        fi
+        continue
       fi
+      exit_if_queued
+      watch_publish_failures=0
+      watch_publish_retry_at=0
       : > "$WATCH_PENDING"
       drive_turn "$doorbell"
       show_prompt=1
