@@ -667,6 +667,8 @@ portable_serial_weight_hints() {
 # 39157209916 (2026-10-18), serial shards 8 and 3; other scripts failed.
 # fm-lifecycle was measured in green serial shard 9 of run 39168927563
 # (2026-10-18); that run failed other checks.
+# fm-approval-wait and fm-idle-sweep-retry-admission were measured in green
+# serial shards 1 and 9 of run 39277793508 (2026-10-19); other checks failed.
 # The five tests/fm-watch-triage*.test.sh suites were one 694233 ms script
 # before run 37413095868; their hints start from each suite's share of that,
 # from the per-case output timestamps of run 37401433503's serial shard 1.
@@ -674,6 +676,7 @@ tests/fm-afk-contract.test.sh 38462
 tests/fm-afk-inject-e2e.test.sh 34977
 tests/fm-afk-launch.test.sh 38816
 tests/fm-afk-return.test.sh 38827
+tests/fm-approval-wait.test.sh 830
 tests/fm-approval.test.sh 8213
 tests/fm-ask-triage.test.sh 14351
 tests/fm-ask-user-authority.test.sh 386
@@ -720,6 +723,7 @@ tests/fm-guard-stale-banner.test.sh 40921
 tests/fm-harness-adapter-references.test.sh 84
 tests/fm-harness-precedence.test.sh 5239
 tests/fm-home-summary-refresh.test.sh 37203
+tests/fm-idle-sweep-retry-admission.test.sh 21235
 tests/fm-inactive-reconcile.test.sh 49894
 tests/fm-lifecycle.test.sh 2696
 tests/fm-line-cap-lib.test.sh 111
