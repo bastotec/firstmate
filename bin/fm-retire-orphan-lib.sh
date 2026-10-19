@@ -73,7 +73,6 @@
 # shellcheck source=bin/fm-approval-wait.sh
 . "$SCRIPT_DIR/fm-approval-wait.sh"
 
-# shellcheck disable=SC2153 # STATE and DATA are set by the sourcing script.
 ORPHAN_EVIDENCE=
 ORPHAN_HUB_CWD=
 
@@ -90,6 +89,7 @@ orphan_record_exists() {  # <id>
 }
 
 orphan_is_secondmate() {  # <id>
+  # shellcheck disable=SC2153 # DATA is set by the sourcing script.
   local line registry path="$DATA/secondmates.md"
   [ -e "$path" ] || [ -L "$path" ] || return 1
   [ -f "$path" ] && [ -r "$path" ] \
