@@ -189,6 +189,8 @@ When the captain adds or changes an ask mid-task, append the captain's words wit
 Judge validation only by the run step `bin/fm-crew-state.sh` prints, never by shell liveness, the last status event, or the raw run record; `task-delivery` owns the state reading, scope once validation starts, and supersession.
 An ask-user finding returns as `needs-decision`; `ask-user-authority` owns deciding or escalating it, and the implementation worker never answers its own finding.
 
+When any task reaches `needs-decision` or parks at a gate, load `ask-user-authority` for the mate's decision deadline, escalation format, default-continuation limits, and consolidated captain update.
+
 ### PR ready, landing, and teardown
 
 When a worker reports a PR or a ready local-only branch, load `task-delivery`.
