@@ -98,7 +98,8 @@ fetch_doc() {  # <pr-url>
   rows='[]'
   while IFS=$'\t' read -r id name app; do
     [ -n "$id" ] || continue
-    notes=$(gh api "repos/$repo/check-runs/$id/annotations" --jq '[.[] | {level: .annotation_level, message}]' 2>/dev/null) || { echo "error: unreadable annotations for check $id of $url" >&2; return 2; }
+    notes=$(set -o pipefail; gh api --paginate "repos/$repo/check-runs/$id/annotations?per_page=100" \
+      --jq '[.[] | {level: .annotation_level, message}]' 2>/dev/null | jq -cs 'add') || { echo "error: unreadable annotations for check $id of $url" >&2; return 2; }
     steps=null
     if [ "$app" = github-actions ]; then
       steps=$(gh api "repos/$repo/actions/jobs/$id" --jq '.steps | length' 2>/dev/null) || { echo "error: unreadable job steps for check $id of $url" >&2; return 2; }

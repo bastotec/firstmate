@@ -135,6 +135,44 @@ test_unreadable_check_evidence_is_refused() {
   pass "unreadable annotations or job steps prevent classification"
 }
 
+test_classify_reads_all_annotation_pages() {
+  local dir out rc=0
+  dir="$TMP_ROOT/paginated-gh"
+  mkdir -p "$dir/bin"
+  jq -cn '[range(100) | {annotation_level: "warning", message: "Test assertion failed"}]' > "$dir/first.json"
+  printf '%s\n' '[{"annotation_level":"failure","message":"No runner matching the specified labels was found"}]' > "$dir/second.json"
+  cat > "$dir/bin/gh" <<EOF
+#!/usr/bin/env bash
+args="\$*"
+case "\$args" in
+  *"repos/o/r/pulls/7 "*) echo abc123 ;;
+  *"repos/o/r --jq"*) echo true ;;
+  *"commits/abc123/check-runs"*) printf '902\tverify\tthird-party\n' ;;
+  *"check-runs/902/annotations"*)
+    jq -c "\${!#}" "$dir/first.json"
+    case "\$args" in
+      *"--paginate "*"annotations?per_page=100"*)
+        [ "\${GH_FAIL_READ:-}" != second-page ] || exit 1
+        jq -c "\${!#}" "$dir/second.json"
+        ;;
+    esac
+    ;;
+  *) echo "unexpected gh call: \$args" >&2; exit 1 ;;
+esac
+EOF
+  chmod +x "$dir/bin/gh"
+  out=$(PATH="$dir/bin:$PATH" "$CI" classify https://github.com/o/r/pull/7) || rc=$?
+  assert_equals 0 "$rc" "a later-page infra annotation was not read: $out"
+  assert_contains "$out" "infra verify: No runner matching" "later annotation pages were not merged"
+  assert_contains "$out" "verdict: infra" "a third-party infrastructure failure was classified as code"
+  rc=0
+  out=$(PATH="$dir/bin:$PATH" GH_FAIL_READ=second-page "$CI" classify https://github.com/o/r/pull/7 2>&1) || rc=$?
+  assert_equals 2 "$rc" "a later-page read failure did not exit 2: $out"
+  assert_contains "$out" "error: unreadable annotations" "a later-page read failure was not explained"
+  case "$out" in *"verdict:"*) fail "partial annotations produced a verdict: $out" ;; esac
+  pass "all annotation pages contribute evidence and partial reads prevent classification"
+}
+
 test_billing_annotation_is_infra
 test_other_never_ran_signals_are_infra
 test_code_failures_stay_code
@@ -142,3 +180,4 @@ test_annotation_levels_control_infra_evidence
 test_nothing_failed_and_bad_input
 test_classify_reads_the_pull_request_through_gh
 test_unreadable_check_evidence_is_refused
+test_classify_reads_all_annotation_pages
