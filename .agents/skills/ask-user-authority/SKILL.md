@@ -2,7 +2,7 @@
 name: ask-user-authority
 description: >-
   Agent-only decision procedure for ask-user findings.
-  Use before deciding any ask-user finding.
+  Use when a task reaches needs-decision or parks at a gate, and before deciding any ask-user finding.
   This skill is the single owner of finding-decision policy: firstmate always applies judgment, decides findings that are unambiguous toward accepted intent, and escalates only genuinely ambiguous, expanding, or destructive ones.
   Finding authority is this skill's criteria, not the project's yolo posture.
 user-invocable: false
@@ -46,7 +46,11 @@ Resume fleet supervision immediately after the decision lands.
 
 ## A parked run is never left waiting
 
-A worker's run parked at a review gate or at the repair cap is unstuck by its own mate within the hour: decide its findings and send the worker the decision under "Return the decision" above, authorizing one fix round or a fresh follow-up run.
+When a task reaches `needs-decision` or parks at a gate, its second mate must escalate to the main firstmate through its parent channel within 15 minutes of that event.
+The escalation is one question with 2-3 options and a recommended default.
+For a default already within accepted intent and the mate's authority, return that decision to the same worker under "Return the decision" and keep the task moving without waiting for endorsement.
+If the choice touches safety or captain-only approval, keep the affected action stopped pending the required decision; a recommended default and elapsed time never supply approval or bypass a gate.
+The main firstmate presents all open decisions together in one captain-facing message, keeping each question and its options distinct without delaying an urgent escalation.
 The worker executes the validation commands; the mate never takes over its run.
 [`bin/fm-parked-run-watch.sh`'s header](../../../bin/fm-parked-run-watch.sh) owns watchdog timing, nudges, and escalation beyond this home.
 
