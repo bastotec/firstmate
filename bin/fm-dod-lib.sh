@@ -82,6 +82,7 @@ Your default is to act: inside this task's scope, fix what is in your way yourse
 - A merge conflict or a needed rebase on your own branch: resolve it.
 - A review finding inside your task's scope, or a failing test: investigate and fix it. While a no-mistakes run owns the branch, fix through its gate.
 - Flaky infrastructure (network, rate limits, slow CI): retry with backoff.
+- A CI check that failed without running - zero steps, or a GitHub annotation saying the job was not started, about billing or a spending limit, or that no runner matched - is infrastructure, not a code failure, and never a decision: confirm with Firstmate's `bin/fm-ci-infra.sh classify <pr-url>`, then fix it yourself. In a private repository move the failing workflow to `runs-on: [self-hosted, linux, workload]` (a virtualenv instead of `actions/setup-python`) and re-run; a public repository keeps hosted runners and is re-run. A new private repository you create starts on `[self-hosted, linux, workload]`.
 - A stale or dirty worktree or slot: clean it or take another.
 Authority you were given covers the routine steps it implies: "merge when green" includes rebasing, fixing CI, rerunning checks and fixing review findings.
 These need an explicit, current instruction that names the action, and nothing else does:
