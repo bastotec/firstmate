@@ -75,7 +75,10 @@
 # suppress a new stopped stretch. The first mate's own home lists it in the
 # end-of-scan wake below. Each hand-off records
 # the worker's ledger byte count under state/idle-sweep/<id>.raised only after
-# parent-channel delivery or the main-home wake append succeeds. Each retry is
+# parent-channel delivery or the main-home wake append succeeds. Before either
+# publication, the sweep rechecks the original task's approval exclusion under
+# its control lock, held through delivery; a newly excluded task stays at
+# action none and gets no raised marker. Each retry is
 # recorded under state/idle-sweep/<id>.retried (ledger size and retry count; at
 # most two retries per worker); an unchanged size suppresses a repeat. A failed
 # relaunch that published its own replacement record also consumes a retry and
