@@ -479,7 +479,7 @@ If that line cannot be appended, that task is not retired; the line records the 
 What operator mode touches, and what it does not:
 
 - It retires RECORDS: the durable task record and, where firstmate owns the transition, the task's backlog row.
-  A manually kept backlog, or a home with no backlog file, is left exactly as the operator keeps it.
+  [Backlog backend](configuration.md#backlog-backend-taskstoml--configbacklog-backend) owns transition exemptions and the automatic-repair exception.
 - Cleanup runs first and finishes the job properly whenever its own gates allow.
   When cleanup's work-protection gate refuses, the worktree, any uncommitted work in it, the task branch and the task's data are left byte-untouched and named in the output, for you to deal with under your own authority.
   Record-only retirement after that refusal requires the task record to remain unchanged since before cleanup; a changed or vanished record stops further retirement without changing the backlog or removing a replacement worker's record.
