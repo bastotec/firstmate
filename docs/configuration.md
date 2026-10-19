@@ -404,6 +404,8 @@ Specialist and group records always use that home's `state/` and `data/`; their 
 `FM_STATE_OVERRIDE`, `FM_DATA_OVERRIDE`, `FM_PROJECTS_OVERRIDE`, and `FM_CONFIG_OVERRIDE` override single directories for tests and specialized setups.
 Before `fm-brief.sh`, `fm-spawn.sh`, or `fm-afk-launch.sh` persists or passes on a path, it resolves a relative `FM_HOME`, `FM_STATE_OVERRIDE`, or `FM_DATA_OVERRIDE` against the caller's working directory and rejects an unresolvable one by name; `fm-spawn.sh` also rejects control bytes in them.
 Lifecycle access to a backlog, task record, or pending-close record must resolve within its configured root, and a final-component symlink is refused even when its target stays inside.
+A nonzero record-path resolver exit preserves stderr separately and adds the child status, a bounded shell-escaped stdout preview, and the resolver source to the refusal.
+This preserves failure evidence without retrying resolution or changing authorization decisions; [`tests/fm-backlog-record-resolution.test.sh`](../tests/fm-backlog-record-resolution.test.sh) covers the diagnostic and record-preservation boundaries.
 
 ## Harness support
 
