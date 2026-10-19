@@ -452,7 +452,6 @@ For direct specialist and group runs, values come from the launcher environment;
 Listing a name does not provision it on another machine.
 
 For an explicit home-local tool selection before a secondmate's startup/bootstrap, [`fm-deck-worker.sh`](../bin/fm-deck-worker.sh)'s header owns `config/secondmate-tool-path` syntax, activation, and scope.
-This noninherited grant changes only that newly launched home host and its descendants, not the remote job service, host-side readiness checks, the already-resolved Deck executable, or sibling homes.
 It does not install tools or authorize a relaunch; a command-scoped bootstrap result is not proof that a fresh home launch used the grant.
 
 | Provider or Git transport | Additional names needed |

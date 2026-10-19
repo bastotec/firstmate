@@ -29,7 +29,7 @@ Those samples were captured live from harnesses that are no longer supported, so
 
 #### Portable plumbing evidence
 
-Verified on 2026-10-19 on macOS with Bash 3.2 and Python 3.9.6 using the real Deck home-host driver and synthetic Node/npm executables, without model calls:
+Verified on 2026-10-19 on macOS with Bash 3.2 and Python 3.9.6 using the real Deck home-host driver, a shimmed session-start script, and synthetic Node and quota-axi executables, without model calls:
 
 ```sh
 FM_LIVE=0 FM_TEST_DECK_CASES=test_secondmate_tool_path_reaches_startup_without_changing_siblings bin/fm-test-run.sh tests/fm-deck-harness.test.sh
@@ -48,11 +48,19 @@ Both supported stream implementations invoke the same home-host driver; these po
 
 #### Remaining destination authority decision
 
-The launch blocker remains open. The supplied tool-owner evidence establishes command-scoped compatibility/bootstrap for the validated candidate; the destination-home report still shows the old tools on a fresh launch. Neither is proof that this repair selects the candidate in that home, and no fresh actual destination launch/bootstrap was performed here.
+The launch blocker remains open.
+The supplied tool-owner evidence establishes command-scoped compatibility/bootstrap for the validated candidate; the destination-home report still shows the old tools on a fresh launch.
+Neither is proof that this repair selects the candidate in that home, and no fresh actual destination launch/bootstrap was performed here.
 
-Does the destination owner authorize configuring **only the selected home's** `config/secondmate-tool-path` with the existing validated tool directories and coordinating a fresh launch through the supported route? The decision must cover both the home-local grant and the relaunch window. Until that authority is explicit, leave the destination configuration and running home untouched. Code delivery and passing plumbing tests aren't activation authority.
+Does the destination owner authorize configuring **only the selected home's** `config/secondmate-tool-path` with the existing validated tool directories and coordinating a fresh launch through the supported route?
+The decision must cover both the home-local grant and the relaunch window.
+Until that authority is explicit, leave the destination configuration and running home untouched.
+Code delivery and passing plumbing tests aren't activation authority.
 
-After approval, the destination owner must retain fresh-launch evidence showing the actual Node and quota-axi versions and successful startup/bootstrap, with the corporate proxy unchanged and sibling homes unaffected. Reuse the existing tool-owner validation rather than repeating it; a one-command PATH override doesn't close this gap. No global/default Node, shellwide PATH, service, registry, or credential changes are authorized. Keep destination identifiers, tool-directory paths, and raw launch evidence in private owner reports; publish only sanitized results.
+After approval, the destination owner must retain fresh-launch evidence showing the actual Node and quota-axi versions and successful startup/bootstrap, with the corporate proxy unchanged and sibling homes unaffected.
+Reuse the existing tool-owner validation rather than repeating it; a one-command PATH override doesn't close this gap.
+No global/default Node, shellwide PATH, service, registry, or credential changes are authorized.
+Keep destination identifiers, tool-directory paths, and raw launch evidence in private owner reports; publish only sanitized results.
 
 ### Deck native mid-turn steering over stream
 
