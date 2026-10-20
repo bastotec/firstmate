@@ -303,17 +303,22 @@ cmd_unset() {
   done
   printf '%s' "$name" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || die "expected owner/repo, got: $name"
   case "$by$note" in *$'\n'*) die "--by and --note must be one line" ;; esac
-  [ -f "$FILE" ] || { printf 'unset %s: no entry\n' "$name"; return 0; }
-  mkdir -p "$DATA_DIR" || die "cannot create $DATA_DIR" 1
+  doc=$(effective) || exit 1
+  if ! printf '%s' "$doc" | jq -e --arg n "$name" '[(.repos // {}) | keys[] | select(ascii_downcase == ($n | ascii_downcase))] | length > 0' >/dev/null; then
+    printf 'unset %s: no entry\n' "$name"
+    return 0
+  fi
   writer_lock_hold || die "the merge policy could not be locked ($LOCK)" 1
   trap 'writer_lock_release || true' EXIT
-  doc=$(jq -c '.' "$FILE" 2>/dev/null) || die "$FILE is not valid JSON" 1
+  doc=$(effective) || exit 1
   if ! printf '%s' "$doc" | jq -e --arg n "$name" '[(.repos // {}) | keys[] | select(ascii_downcase == ($n | ascii_downcase))] | length > 0' >/dev/null; then
     writer_lock_release || true
     trap - EXIT
     printf 'unset %s: no entry\n' "$name"
     return 0
   fi
+  mkdir -p "$DATA_DIR" || die "cannot create $DATA_DIR" 1
+  doc=$(jq -c '.' "$FILE" 2>/dev/null) || die "$FILE is not valid JSON" 1
   old=$(cmd_get "$name") || die "$FILE is not readable" 1
   old=${old%% *}
   doc=$(printf '%s' "$doc" | jq --arg n "$name" '.version = 1
