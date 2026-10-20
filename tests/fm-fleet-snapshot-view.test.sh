@@ -439,7 +439,6 @@ test_specialists_are_listed_as_persistent_workers() {
     .secondmate_current.records[] | select(.id == "mate")
     | .provenance.selected == "structured-home" and .specialists == []
   ' >/dev/null || fail "an older mate summary must project an empty specialists array: $out"
-  pass "specialists survive home-summary collection, including older summary compatibility"
   PATH="$fakebin:$PATH" python3 - "$ROOT" "$home" "$primary" "$fixture_root" <<'PY' \
     || fail "a working specialist must count as active home work without endpoint tasks"
 import importlib.util
