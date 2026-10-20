@@ -408,6 +408,54 @@ assert_present "$TMP_ROOT/observe-nonzero/tool-failure.json" "a nonzero command 
 assert_present "$TMP_ROOT/observe-null/tool-failure.json" "a command with null exit code was not recorded"
 pass "only commands use exit metadata; tool errors count for every tool"
 
+python3 - "$ROOT" "$TMP_ROOT" <<'PY' || fail "presentation failure classification"
+import json
+import subprocess
+import sys
+from pathlib import Path
+root, tmp = map(Path, sys.argv[1:])
+def preview(tool, size=20000, stored=None):
+    label = f"full output ({size} bytes)" if stored is None else f"output truncated before storing; retained output ({stored} bytes)"
+    return "a" * 4096 + f"\n[... {size - 8192} bytes not shown: {label} is stored as `{tool}-012345abcdef`; call read_tool_output with that handle and a start_byte/byte_count range or a query to read the rest ...]\n" + "z" * 4096
+note = "\n[... truncated ...]\n"
+budget = 256 * 1024 - len(note)
+hard = "a" * (budget // 2) + note + "z" * (budget - budget // 2)
+cases = [
+    ("clean-read", "read_file", "clean text\n", False),
+    ("literal-marker", "read_file", "Historical text: " + note + "not current status", False),
+    ("quoted-preview", "read_file", "Historical text:\n" + preview("read_file"), False),
+    ("short-preview", "read_file", preview("read_file").replace("a" * 4096, "a"), False),
+    ("wrong-size", "read_file", preview("read_file").replace("20000 bytes", "20001 bytes"), False),
+    ("wrong-tool", "read_file", preview("run_command"), False),
+    ("preview", "read_file", preview("read_file"), True),
+    ("cut-storage", "read_file", preview("read_file", 9000000, 8388651), True),
+    ("bad-storage-size", "read_file", preview("read_file", 9000000, 10), False),
+    ("unicode-preview", "read_file", preview("read_file").replace("a" * 4096, "é" * 2048), True),
+    ("unicode-hard-cut", "read_file", "é" * (budget // 4) + note + "z" * (budget - budget // 2), True),
+    ("hard-cut", "read_file", hard, True),
+    ("saved-status", "read_file", "[exit_code] 1\n[timed_out] true\n", False),
+    ("historical-command", "run_command", "[exit_code] 1\n[timed_out] true\nmore output\n", False),
+]
+for code, timeout, failed in [("0", "false", False), ("1", "false", True), ("null", "false", True), ("0", "true", True)]:
+    text = "a" * 20000 + f"\n[exit_code] {code}\n[timed_out] {timeout}\n"
+    cases.append((f"rendered-{code}-{timeout}", "run_command", text, failed))
+    cases.append((f"stored-{code}-{timeout}", "run_command", preview("run_command")[:-4096] + text[-4096:], True))
+for name, tool, output, failed in cases:
+    job = tmp / ("presentation-" + name)
+    job.mkdir()
+    event = {"tool_name": tool, "args": {"fixture": name}, "tool_output": output}
+    subprocess.run([sys.executable, str(root / "bin/fm_crew.py"), "_spec-tool-observe", str(job)],
+                   input=json.dumps(event), text=True, check=True, timeout=15)
+    marker = job / "tool-failure.json"
+    assert marker.exists() == failed, name
+    if failed:
+        assert json.loads(marker.read_text())["output"] == " ".join(output.split())[:600], name
+        gate = subprocess.run([sys.executable, str(root / "bin/fm_crew.py"), "_spec-tool-gate", str(job)],
+                              capture_output=True, timeout=15)
+        assert gate.returncode == 2, name
+PY
+pass "actual presentation envelopes and rendered command statuses latch; historical content stays inert"
+
 python3 - "$ROOT" "$TMP_ROOT" <<'PY' || fail "observers must atomically preserve the first failure"
 import importlib.util
 import io

@@ -990,17 +990,62 @@ def read_tool_failure(jdir: Path):
         return None
 
 
+def tool_output_incomplete(tool_name: str, output: str) -> bool:
+    """Recognize Deck's presentation envelopes, not mentions in historical text.
+
+    The hook receives rendered text, not authoritative truncation metadata.
+    Require the producer's byte geometry as well as its complete marker.
+    An exact synthetic copy of an envelope is indistinguishable from the original.
+    """
+    preview = re.compile(
+        r"\n\[\.\.\. ([1-9][0-9]*) bytes not shown: "
+        r"(full output|output truncated before storing; retained output) "
+        r"\(([1-9][0-9]*) bytes\) is stored as `"
+        + re.escape(tool_name)
+        + r"-[0-9a-f]{12}`; call read_tool_output with that handle and a start_byte/byte_count "
+        r"range or a query to read the rest \.\.\.\]\n"
+    )
+    for match in preview.finditer(output):
+        head = len(output[:match.start()].encode())
+        tail = len(output[match.end():].encode())
+        # Each 4096-byte end snaps inward by at most three UTF-8 bytes.
+        if not (4093 <= head <= 4096 and 4093 <= tail <= 4096):
+            continue
+        total = head + tail + int(match[1])
+        stored = int(match[3])
+        if match[2] == "full output" and total == stored and total > 16384:
+            return True
+        if match[2] != "full output" and total > 8 * 1024 * 1024:
+            cut = total - 8 * 1024 * 1024
+            note_size = len(f"\n[... {cut} bytes cut before storing ...]\n".encode())
+            # The retained payload has an additional storage-cut notice.
+            if 8 * 1024 * 1024 + note_size - 6 <= stored <= 8 * 1024 * 1024 + note_size + 1:
+                return True
+    if tool_name == "read_file":
+        note = "\n[... truncated ...]\n"
+        budget = 256 * 1024 - len(note.encode())
+        for match in re.finditer(re.escape(note), output):
+            head = len(output[:match.start()].encode())
+            tail = len(output[match.end():].encode())
+            if budget // 2 - 3 <= head <= budget // 2 and budget - budget // 2 - 3 <= tail <= budget - budget // 2:
+                return True
+    return False
+
+
 def tool_call_failed(tool_name: str, output: str) -> bool:
-    """Deck renders a tool error as 'the tool failed...' and run_command as JSON."""
-    text = (output or "").strip()
-    if text.startswith("the tool failed"):
+    """Native errors, incomplete presentations, and command status only."""
+    output = output or ""
+    text = output.strip()
+    if text.startswith("the tool failed") or tool_output_incomplete(tool_name, output):
         return True
     if tool_name != "run_command":
         return False
     try:
         data = json.loads(text)
     except ValueError:
-        return False
+        # Large command objects render their status fields after stdout/stderr.
+        status = re.search(r"(?:^|\n)\[exit_code\] (null|-?[0-9]+)\n\[timed_out\] (true|false)\s*\Z", output)
+        return bool(status and (status[1] != "0" or status[2] == "true"))
     if isinstance(data, dict):
         if data.get("timed_out") is True:
             return True

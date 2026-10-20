@@ -369,7 +369,7 @@ family_for_basename() {
       printf '%s\n' session-bootstrap
       ;;
     fm-bearings-board-lavish-live-e2e.test.sh|\
-    fm-deck-host-live-e2e.test.sh|fm-stream-deck-live-e2e.test.sh)
+    fm-deck-host-live-e2e.test.sh|fm-stream-deck-live-e2e.test.sh|fm-specialist-deck-live-e2e.test.sh)
       printf '%s\n' live-harness-optin
       ;;
     fm-backend.test.sh|\

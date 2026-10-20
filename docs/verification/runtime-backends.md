@@ -17,6 +17,34 @@ The portable regression builds every case from real renamed processes and no ins
 bin/fm-test-run.sh tests/fm-harness-precedence.test.sh
 ```
 
+## Specialist first-failure barrier
+
+The [`fm-specialist.sh` header](../../bin/fm-specialist.sh) owns the opt-in failure contract; [`fm_crew.py`](../../bin/fm_crew.py) owns classification and latching.
+On 2026-10-20, the loopback scripted-provider guard ran the real Deck executable on macOS without remote model calls, live jobs, or runtime installation.
+Tested identity: `deck 0.1.0`, SHA-256 `841b3027311747130fc12e4c0a1929874a5e3f051612fd909120fc0aa6176363`.
+The guard refuses a different fingerprint unless `FM_SPECIALIST_DECK_SHA256` explicitly pins the replacement; changing the pin requires refreshed evidence here.
+The source behavior corresponds to Deck source `1408131827804535268d5621c217453f234ea7f2` (stored-output envelopes and rendered command status), but this is not a verified source-to-binary build receipt or historical executable attribution.
+The hook receives presentation text rather than authoritative raw truncation metadata; exact synthetic copies of producer envelopes remain indistinguishable from real envelopes.
+
+Refresh with:
+
+```sh
+FM_SPECIALIST_DECK_LIVE=1 bin/fm-test-run.sh tests/fm-specialist-deck-live-e2e.test.sh
+FM_LIVE=0 bin/fm-test-run.sh tests/fm-specialist.test.sh
+```
+
+The real guard emitted the following for each of `stored-read`, `hard-read`, and `large-nonzero`:
+
+```text
+first cause retained; one tool executed; queued/later calls refused; input/memory unchanged; no completion injection; failed owner result
+ok - pinned Deck stops queued and later calls after actual incomplete output
+```
+
+It exercises a second same-batch command at concurrency one and a later memory-write request, verifies refusal results and unchanged fixture bytes, and checks failed record/history plus the owner-generated stopped result.
+The hard-read case also checks that the retained stored output contains the read tool's own hard-cut marker, independently of the outer preview.
+Portable positive/negative fixtures cover clean reads and commands, native errors, JSON and rendered nonzero/null/timeout statuses, saved status as read content, literal historical markers, malformed envelope geometry, UTF-8 cuts, stored previews and hard truncation.
+These checks establish the tested presentation boundary, not arbitrary semantic API failure detection or permission to resume monitoring.
+
 ## Composer classification
 
 The shared composer classifier (`bin/fm-composer-lib.sh`, `fm_composer_classify_screen`) owns every composer shape; the stream adapter contributes only a capture and a capability descriptor.
