@@ -1239,6 +1239,38 @@ EOF
   pass "home-summary excludes kind=secondmate from unowned_current and terminal_in_flight"
 }
 
+test_recovery_projects_stalled_timing_without_mutating_it() {
+  local home wt fakebin gen raw out old before
+  home=$(make_home stalled-recovery)
+  wt="$home/projects/implementation"
+  mkdir -p "$wt"
+  fm_git_identity fmtest fmtest@example.invalid
+  git -C "$wt" init -q
+  git -C "$wt" commit -q --allow-empty -m init
+  git -C "$wt" checkout -q -b fm/stalled-recovery
+  fm_write_meta "$home/state/implementation.meta" \
+    $(snap_identity "$home" implementation ship-task) \
+    "worktree=$wt" "harness=deck" "kind=ship" "mode=no-mistakes"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" implementation)
+  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" implementation busy --gen "$gen" \
+    --source deck-wrapper --event turn-start
+  fakebin=$(make_fakebin "$home")
+  raw=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-crew-state.sh" implementation)
+  old=$(( $(date +%s) - 8000 ))
+  python3 "$ROOT/bin/fm_stall_record.py" "$home/state/idle-sweep/implementation.stall.json" \
+    "$home/state/implementation.meta" "$raw" '' --observe --now "$old" >/dev/null
+  before=$(cat "$home/state/idle-sweep/implementation.stall.json")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '.tasks[] | select(.id=="implementation") |
+    .current_state.state=="working" and .current_state.stall.state=="stalled"
+    and .current_state.stall.age_seconds > 7200' >/dev/null || fail "recovery stall projection: $out"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$VIEW")
+  assert_contains "$out" 'stalled: implementation' 'human recovery view hides stall'
+  assert_equals "$before" "$(cat "$home/state/idle-sweep/implementation.stall.json")" 'recovery mutated timing'
+  pass "recovery traversal computes stall age without replacing current state or changing records"
+}
+
+test_recovery_projects_stalled_timing_without_mutating_it
 test_empty_fleet_json
 test_reopened_task_keeps_its_current_pr_identity
 test_fixture_snapshot_json
