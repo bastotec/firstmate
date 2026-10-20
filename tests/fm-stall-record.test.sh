@@ -331,10 +331,12 @@ SH
   [ "$route" != parent ] || make_secondmate_home "$dir" mate
   for kind in scout direct-PR local-only; do
     add_worker "$dir" "$kind" 'state: parked · source: status-log · waiting for a decision' 90000
+    # Retain the fixture's local copy: an empty path resolves to the caller's
+    # slot claim in a real task lane, not to this synthetic worker.
     if [ "$kind" = scout ]; then
-      printf 'kind=scout\n' > "$dir/home/state/$kind.meta"
+      printf 'kind=scout\nworktree=%s/pool/1/firstmate\n' "$dir" > "$dir/home/state/$kind.meta"
     else
-      printf 'kind=ship\nmode=%s\n' "$kind" > "$dir/home/state/$kind.meta"
+      printf 'kind=ship\nmode=%s\nworktree=%s/pool/1/firstmate\n' "$kind" "$dir" > "$dir/home/state/$kind.meta"
     fi
     printf 'needs-decision [key=choice]: Which option for %s?\n' "$kind" > "$dir/home/state/$kind.status"
     age_file "$dir/home/state/$kind.status" 4000

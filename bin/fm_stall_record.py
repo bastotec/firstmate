@@ -12,10 +12,14 @@ needs-decision reconciled with a parked current state across task kinds and mode
 --state-dir and --task-id select existing timing evidence, including for captured
 metadata in recovery snapshots. Matching gate/parked-run records supply decision
 entry time; otherwise a matching last decision event supplies a lower bound.
-Implementation timing applies only to no-mistakes ships working from pane or
-status-log evidence, not to a currently attributed validation run. It starts at
-spawn epoch (or metadata mtime), bounded below by the last observed attributed
-run's creation epoch. last_run_seen is that epoch encoded in the run's ULID.
+Implementation timing applies only to no-mistakes ships working from pane,
+status-log, or the state owner's proven replacement evidence, never to genuinely
+running validation. It starts at spawn epoch (or metadata mtime), bounded below
+by attributed run creation evidence, including retained historical validation
+that finished between observations. The state owner emits last-run-created only
+for a terminal same-branch run whose head is an ancestor of the task's current
+head; it does not relax current-state attribution or add timing persistence.
+last_run_seen retains the latest valid creation epoch across observations.
 Unknown observations withhold notification without discarding episode evidence.
 Declared waits end observation.
 Missing, corrupt, future or generation-mismatched observation records recover
@@ -201,17 +205,22 @@ def main():
         phase = 'needs-decision'
     elif (eligible and meta.get('kind') == 'ship'
           and meta.get('mode', '') in ('', 'ship', 'no-mistakes')
-          and state == 'working' and source in ('pane', 'status-log')):
+          and state == 'working' and (source in ('pane', 'status-log')
+                                     or (source == 'run-step' and evidence(args.current, 'implementation') == 'replacement'))):
         phase = 'implementation'
     signature = episode_signature(identity, phase, pending, run, step, gate_since)
     last_run = old.get('last_run_seen')
-    if run:
-        try:
-            last_run = int(evidence(args.current, 'run-created'))
-        except ValueError:
-            pass
     if not epoch(last_run, args.now):
         last_run = None
+    for key in ('run-created', 'last-run-created'):
+        if key == 'run-created' and not run:
+            continue
+        try:
+            stamp = int(evidence(args.current, key))
+        except ValueError:
+            continue
+        if epoch(stamp, args.now):
+            last_run = max(last_run or 0, stamp)
     since = old.get('since') if old.get('signature') == signature else None
     if old.get('signature') != signature or not epoch(since, old.get('observed_at', 0)):
         since = args.now if phase else None

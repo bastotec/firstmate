@@ -246,6 +246,8 @@ RUN_SOURCE=full
 COARSE_STATUS=''
 RUN_ERROR=''
 RUN_PR=''
+HISTORICAL_RUN=''
+HISTORICAL_RUN_CREATED=''
 
 # The run's current step and that step's status, tab-separated (header: step=).
 crew_state_step() {
@@ -319,6 +321,13 @@ emit() {  # <state> <source> [detail] [run-error] [run-pr]
     remote-endpoint) evidence="$evidence; remote=${REMOTE_HOST:-unknown}" ;;
     none) evidence="$evidence; endpoint=${BACKEND_TARGET:-unavailable}" ;;
   esac
+  # Historical timing is evidence only, never authority for the current verdict.
+  if [ -n "$HISTORICAL_RUN_CREATED" ]; then
+    evidence="$evidence; last-run=$HISTORICAL_RUN; last-run-created=$HISTORICAL_RUN_CREATED"
+  fi
+  if [ "$1" = working ] && [ "$2" = run-step ] && [ "${LIVE_CREW_KILLED_RUN:-}" = replacement ]; then
+    evidence="$evidence; implementation=replacement"
+  fi
   line="$line${SEP}declared-wait: $DECLARED_WAIT${SEP}evidence: $evidence; wait=$STATE/$ID.external-wait; observed=$OBSERVED_AT"
   printf '%s\n' "$line"
   exit 0
@@ -940,6 +949,21 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
   fi
   if [ -n "$RUN_OUT" ]; then
     run_branch=$(strip_quotes "$(nm_field branch)")
+    # A terminal run on this branch's retained history still bounds time since
+    # validation even after a local fix invalidates CURRENT-state attribution.
+    # No extra query or persistent timing record; rewritten/foreign heads fail
+    # this ancestry proof, and active or partial responses are never history.
+    if [ "$run_branch" = "$CREW_BRANCH" ] \
+      && [ "$(fm_nm_run_status_class "$(strip_quotes "$(nm_field status)")")" = terminal ]; then
+      history_head=$(fm_nm_resolve_commit "$WT" "$(strip_quotes "$(nm_field head)")")
+      history_created=$(nm_run_created_epoch || true)
+      if [ -n "$history_head" ] && [ -n "$history_created" ] \
+        && [ "$history_created" -gt 0 ] && [ "$history_created" -le "$(date +%s)" ] \
+        && git -C "$WT" merge-base --is-ancestor "$history_head" HEAD 2>/dev/null; then
+        HISTORICAL_RUN=$(strip_quotes "$(nm_field id)")
+        HISTORICAL_RUN_CREATED=$history_created
+      fi
+    fi
     # Head equality, or the pipeline-owned-active exemption: while the
     # pipeline owns this branch, the daemon's own branch attribution is
     # authoritative and the lane head need not be a git object here

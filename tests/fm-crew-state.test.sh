@@ -1376,6 +1376,12 @@ test_relaunched_live_crew_outranks_daemon_killed_run_record() {
   assert_contains "$out" "state: working" "a live relaunched crew outranks its dead predecessor's failed record"
   assert_contains "$out" "source: run-step" "the verdict stays an attributed run-step read"
   assert_contains "$out" "crew live (relaunched, busy)" "the detail names the live busy replacement"
+  assert_contains "$out" 'implementation=replacement' 'state owner marks proven implementation, not active validation'
+  local stall
+  stall=$(python3 "$ROOT/bin/fm_stall_record.py" "$d/state/replacement.stall.json" \
+    "$d/state/feat-dkill-relaunch.meta" "$out" '' --now 1783899003)
+  [ "$(printf '%s' "$stall" | jq -r .state)" = stalled ] || fail 'replacement implementation omitted'
+  [ "$(printf '%s' "$stall" | jq -r .age_seconds)" = 7201 ] || fail 'replacement timing ignored spawn'
   assert_contains "$out" "run-error: daemon shutting down" "the state line separately carries the run's recorded cause"
   assert_not_contains "$out" "state: failed" "the stale killed record must not declare the live task failed"
 
@@ -2959,5 +2965,70 @@ EOF
 }
 
 test_consolidated_evidence_and_failures
+
+# A terminal run can fall entirely between scans, then be rejected as CURRENT
+# state when the worker advances its head. Its proven history still bounds age.
+test_missed_run_history_bounds_stall_without_reattributing_state() {
+  reset_fakes
+  local d out stall gen run_id
+  d=$(new_case missed-run-history)
+  make_repo_on_branch "$d/wt" fm/history
+  make_fakebin "$d" >/dev/null
+  fm_test_fake_stream "$d/stream" || fail 'history fake stream hub did not start'
+  fm_write_meta "$d/state/history.meta" $(fm_test_stream_task "$d/state" history) \
+    "worktree=$d/wt" 'kind=ship' 'harness=deck' 'spawn_gen=s10000.1.history'
+  fm_test_fake_stream_foreground "$(fm_test_stream_target_of "$d/state" history)" deck
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" history)
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" history busy --gen "$gen" --source deck-wrapper --event turn-start
+  out=$(run_crew_state "$d" history)
+  python3 "$ROOT/bin/fm_stall_record.py" "$d/state/history.stall.json" \
+    "$d/state/history.meta" "$out" '' --now 18001 --ack >/dev/null
+  run_id=$(python3 - <<'PY'
+alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+n = 22000 * 1000
+chars = ''
+for _ in range(10):
+    chars = alphabet[n % 32] + chars
+    n //= 32
+print(chars + '0' * 16)
+PY
+)
+  FM_FAKE_AXI_STATUS=$(run_failed fm/history | sed "s/01RUN/$run_id/")
+  git -C "$d/wt" commit -q --allow-empty -m 'authorized local correction after validation'
+  out=$(run_crew_state "$d" history)
+  assert_contains "$out" 'source: pane' 'older run cannot govern current state'
+  assert_contains "$out" 'last-run-created=22000;' 'missed validation retains independently attributed timing'
+  stall=$(python3 "$ROOT/bin/fm_stall_record.py" "$d/state/history.stall.json" \
+    "$d/state/history.meta" "$out" '' --now 23000 --observe)
+  [ "$(printf '%s' "$stall" | jq -r .since)" = 22000 ] || fail 'missed run clock not recovered'
+  [ "$(printf '%s' "$stall" | jq -r .state)" = observing ] || fail 'missed run caused false stall'
+  cp "$d/state/history.stall.json" "$d/before.json"
+  stall=$(python3 "$ROOT/bin/fm_stall_record.py" "$d/state/history.stall.json" \
+    "$d/state/history.meta" "$out" '' --now 29201)
+  [ "$(printf '%s' "$stall" | jq -r .notify)" = true ] || fail 'old acknowledgment suppressed genuinely later stall'
+  cmp -s "$d/before.json" "$d/state/history.stall.json" || fail 'recovery projection mutated timing'
+  # Active validation itself remains ineligible; historical evidence is not a
+  # way to reinterpret a running step as implementation.
+  FM_FAKE_RUN_HEAD=$(git -C "$d/wt" rev-parse HEAD)
+  FM_FAKE_AXI_STATUS=$(run_running fm/history)
+  out=$(run_crew_state "$d" history)
+  stall=$(python3 "$ROOT/bin/fm_stall_record.py" "$d/state/history.stall.json" \
+    "$d/state/history.meta" "$out" '' --now 40000)
+  [ "$(printf '%s' "$stall" | jq -r .state)" = ineligible ] || fail 'active validation misclassified as implementation'
+  assert_not_contains "$out" 'implementation=replacement' 'active run never receives replacement evidence'
+  # Matching branch alone cannot claim history after a rewrite.
+  FM_FAKE_AXI_STATUS=$(run_failed fm/history | sed "s/01RUN/$run_id/")
+  git -C "$d/wt" checkout -q --orphan rewritten
+  git -C "$d/wt" commit -q --allow-empty -m 'unrelated history'
+  git -C "$d/wt" branch -q -M fm/history
+  out=$(run_crew_state "$d" history)
+  assert_not_contains "$out" 'last-run-created=' 'rewritten branch cannot borrow historical timing'
+  FM_FAKE_AXI_STATUS=$(run_failed fm/foreign | sed "s/01RUN/$run_id/")
+  out=$(run_crew_state "$d" history)
+  assert_not_contains "$out" 'last-run-created=' 'foreign branch cannot borrow historical timing'
+  pass 'missed validation history bounds stall and dedup without weakening current-state attribution'
+}
+
+test_missed_run_history_bounds_stall_without_reattributing_state
 
 echo "all fm-crew-state tests passed"
