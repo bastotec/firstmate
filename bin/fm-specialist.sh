@@ -66,6 +66,7 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 route_to_mate() {  # <command> <args...>
   local cmd=$1 mate='' arg meta home
   local -a rest=()
+  # shellcheck source=bin/fm-gate-refuse-lib.sh
   . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
   fm_refuse_if_gate_agent
   shift
