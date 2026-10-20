@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Conservative stalled-task timing shared by idle scans and recovery snapshots.
 
-Usage: fm_stall_record.py RECORD META CURRENT_LINE OPEN_DECISIONS [--observe|--ack] [--now EPOCH]
+Usage: fm_stall_record.py RECORD META CURRENT_LINE OPEN_DECISIONS [--observe|--ack|--reported-run] [--now EPOCH]
 OPEN_DECISIONS is the fm-classify-lib.sh status_open_decisions TSV contract.
 Read mode has no side effects; the idle sweep uses --observe and the parked-run
 publication owner uses --ack under the idle sweep's scan and admission locks.
@@ -35,6 +35,12 @@ import time
 
 def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def episode_signature(identity, phase, pending, run, step):
+    return digest(json.dumps([identity, phase, pending if phase == 'needs-decision' else [],
+                              run if phase == 'needs-decision' else '',
+                              step if phase == 'needs-decision' else '']))
 
 
 def load(path):
@@ -127,6 +133,8 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--observe', action='store_true')
     mode.add_argument('--ack', action='store_true')
+    mode.add_argument('--reported-run', action='store_true',
+                      help='read whether this parked run/step already received a decision digest')
     parser.add_argument('--now', type=int, default=int(time.time()))
     parser.add_argument('--state-dir', type=Path)
     parser.add_argument('--task-id')
@@ -156,6 +164,18 @@ def main():
                 and 'declared-wait: active' not in fields)
     run = evidence(args.current, 'run') if source == 'run-step' else ''
     step = evidence(args.current, 'step') if source == 'run-step' else ''
+    same_parked_run = (old.get('phase') == 'needs-decision'
+                       and old.get('signature') == episode_signature(
+                           identity, 'needs-decision', old.get('questions', []), run, step))
+    reported_parked = old.get('reported_parked')
+    if same_parked_run and old.get('episode') and old.get('reported') == old.get('episode'):
+        reported_parked = dict(run=run, step=step)
+    if (state != 'parked' or not run or not step
+            or reported_parked != dict(run=run, step=step)):
+        reported_parked = None
+    if args.reported_run:
+        print(json.dumps(bool(eligible and reported_parked)))
+        return
     phase = ''
     if eligible and state == 'parked' and pending:
         phase = 'needs-decision'
@@ -163,13 +183,11 @@ def main():
           and meta.get('mode', '') in ('', 'ship', 'no-mistakes')
           and state == 'working' and source in ('pane', 'status-log')):
         phase = 'implementation'
-    signature = digest(json.dumps([identity, phase, pending if phase == 'needs-decision' else [],
-                                   run if phase == 'needs-decision' else '',
-                                   step if phase == 'needs-decision' else '']))
+    signature = episode_signature(identity, phase, pending, run, step)
     since = old.get('since') if old.get('signature') == signature else None
     if old.get('signature') != signature or not epoch(since, old.get('observed_at', 0)):
         since = args.now if phase else None
-        if phase and not old:
+        if phase and (not old or (phase == 'needs-decision' and not same_parked_run)):
             since = initial_since(phase, meta, timing_meta, pending, run, step, args.now)
     last_run = old.get('last_run_seen')
     if run:
@@ -200,10 +218,12 @@ def main():
                   state='stalled' if stalled else 'observing' if phase else 'ineligible',
                   questions=pending if phase == 'needs-decision' else [],
                   route='mate-triage' if phase == 'needs-decision' else 'mate-repair',
-                  episode=episode, reported=reported,
+                  episode=episode, reported=reported, reported_parked=reported_parked,
                   notify=stalled and reported != episode)
     if args.ack and stalled:
         result.update(reported=episode, notify=False)
+        if phase == 'needs-decision' and run and step:
+            result['reported_parked'] = dict(run=run, step=step)
     if args.observe or args.ack:
         write(args.record, result)
     print(json.dumps(result))
