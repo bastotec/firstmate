@@ -173,6 +173,29 @@ assert r['since'] == 27000 and r['notify']
 gate.unlink()
 legacy.unlink()
 record.unlink()
+gate.write_text(json.dumps(dict(run=run, step='review', parked_since=10000)))
+question_a = 'a\tneeds-decision\tQuestion A?'
+question_b = 'b\tneeds-decision\tQuestion B?'
+questions = question_a + '\n' + question_b
+r = call(14001, parked, questions)
+assert r['since'] == 10000 and r['notify']
+original_episode = r['episode']
+r = call(14002, parked, question_b + '\n' + question_a)
+assert r['since'] == 10000 and r['episode'] == original_episode and r['notify']
+call(14003, parked, questions, '--ack')
+r = call(15000, parked, question_b + '\n' + question_a)
+assert r['since'] == 10000 and r['episode'] == original_episode and not r['notify']
+call(15001, parked, '')
+r = call(15002, parked, 'new\tneeds-decision\tQuestion C?')
+assert r['since'] == 15002 and r['state'] == 'observing' and not r['notify']
+assert call(18603, parked, 'new\tneeds-decision\tQuestion C?')['notify']
+call(18604, parked, 'new\tneeds-decision\tQuestion C?', '--ack')
+assert not call(18605, parked, 'new\tneeds-decision\tQuestion C?')['notify']
+gate.write_text(json.dumps(dict(run=run, step='review', parked_since=19000)))
+r = call(23001, parked, questions)
+assert r['since'] == 19000 and r['notify']
+gate.unlink()
+record.unlink()
 record.symlink_to(root/'untouched')
 p = subprocess.run([sys.executable, cli, str(record), str(meta), working, '', '--observe'], capture_output=True)
 assert p.returncode != 0 and not (root/'untouched').exists()
@@ -223,6 +246,81 @@ sweep "$dir" scan --now || fail 'redelivery scan'
 [ "$(wake_count "$dir" 'stalled tasks digest:')" = 1 ] || fail 'redelivery missing'
 [ "$(jq -r .reported "$dir/home/state/idle-sweep/implementation.stall.json")" != null ] || fail 'delivery not acknowledged'
 pass 'failed digest publication leaves the episode eligible for redelivery'
+
+for recovery in queued consumed parent; do
+  dir=$(new_case "stall-interrupted-$recovery")
+  [ "$recovery" != parent ] || make_secondmate_home "$dir" mate
+  add_worker "$dir" decision 'state: parked · source: run-step · evidence: run=run-one; step=review' 90000
+  printf 'needs-decision [key=choice]: Original question?\n' > "$dir/home/state/decision.status"
+  old=$(( $(date +%s) - 8000 ))
+  python3 "$dir/bin/fm_stall_record.py" "$dir/home/state/idle-sweep/decision.stall.json" \
+    "$dir/home/state/decision.meta" "$(cat "$dir/home/crew/decision")" \
+    $'choice\tneeds-decision\tOriginal question?' --observe --now "$old" >/dev/null
+  touch "$dir/home/interrupt-after-publication"
+  if [ "$recovery" = parent ]; then
+    cat >> "$dir/bin/fm-parent-channel-lib.sh" <<'SH'
+eval "$(declare -f fm_parent_channel_report | sed '1s/fm_parent_channel_report/fm_test_real_report/')"
+fm_parent_channel_report() {
+  fm_test_real_report "$@" || return $?
+  if [ -f "$FM_HOME/interrupt-after-publication" ]; then
+    rm "$FM_HOME/interrupt-after-publication"
+    kill -TERM "$$"
+    exit 143
+  fi
+}
+SH
+  else
+    cat >> "$dir/bin/fm-wake-lib.sh" <<'SH'
+eval "$(declare -f fm_wake_append_locked | sed '1s/fm_wake_append_locked/fm_test_real_append/')"
+fm_wake_append_locked() {
+  fm_test_real_append "$@" || return $?
+  if [ -f "$FM_HOME/interrupt-after-publication" ]; then
+    rm "$FM_HOME/interrupt-after-publication"
+    kill -TERM "$$"
+    exit 143
+  fi
+}
+SH
+  fi
+  sweep "$dir" scan --now || fail 'interrupted publication scan'
+  target="$dir/home/state/.wake-queue"
+  [ "$recovery" != parent ] || target="$dir/parent/state/mate.status"
+  [ "$(grep -c 'Original question?' "$target")" = 1 ] || fail 'interrupted publication was not delivered'
+  [ "$(jq -r .reported "$dir/home/state/idle-sweep/decision.stall.json")" = null ] || fail 'interruption did not precede acknowledgment'
+  [ ! -e "$dir/home/state/idle-sweep/decision.stall-delivered" ] || fail 'interruption did not precede queue reconciliation'
+  if [ "$recovery" = consumed ]; then
+    seq=$(cat "$dir/home/state/.wake-queue.seq")
+    generation=$(cat "$dir/home/state/.watcher-down")
+    mkdir "$dir/home/state/idle-sweep/decision.stall-delivered"
+    if PATH="$dir/bin:$PATH" FM_HOME="$dir/home" "$dir/bin/fm-wake-drain.sh" \
+      --ack-through "$seq" --recovery-generation "${generation##*:}"; then
+      fail 'drain consumed a digest without a durable delivery receipt'
+    fi
+    [ -s "$target" ] || fail 'failed receipt consumed the queue row'
+    rmdir "$dir/home/state/idle-sweep/decision.stall-delivered"
+    PATH="$dir/bin:$PATH" FM_HOME="$dir/home" "$dir/bin/fm-wake-drain.sh" \
+      --ack-through "$seq" --recovery-generation "${generation##*:}" || fail 'digest queue acknowledgment'
+    [ ! -s "$target" ] || fail 'digest queue row not consumed'
+    episode=$(jq -r .episode "$dir/home/state/idle-sweep/decision.stall.json")
+    grep -Fqx "$episode" "$dir/home/state/idle-sweep/decision.stall-delivered" || fail 'consumed digest lost delivery evidence'
+    [ "$(python3 "$dir/bin/fm_stall_record.py" "$dir/home/state/idle-sweep/decision.stall.json" \
+      "$dir/home/state/decision.meta" "$(cat "$dir/home/crew/decision")" '' --reported-run)" = true ] \
+      || fail 'consumed digest did not suppress legacy publisher'
+  fi
+  add_worker "$dir" later 'state: working · source: pane · busy' 90000
+  python3 "$dir/bin/fm_stall_record.py" "$dir/home/state/idle-sweep/later.stall.json" \
+    "$dir/home/state/later.meta" "$(cat "$dir/home/crew/later")" '' --observe --now "$old" >/dev/null
+  sweep "$dir" scan --now || fail 'interrupted publication recovery'
+  count=$(grep -c 'Original question?' "$target") || count=0
+  expected=1
+  [ "$recovery" != consumed ] || expected=0
+  [ "$count" = "$expected" ] || fail 'interrupted publication repeated the old question in a changed batch'
+  [ "$(grep -c 'later: mate repair:' "$target")" = 1 ] || fail 'new episode lost during publication recovery'
+  sweep "$dir" scan --now || fail 'interrupted publication repeat recovery'
+  [ "$(grep -c 'later: mate repair:' "$target")" = 1 ] || fail 'recovered new episode duplicated'
+  [ "$(jq -r .notify "$dir/home/state/idle-sweep/decision.stall.json")" = false ] || fail 'original episode not acknowledged on recovery'
+  pass "successful publication interrupted before acknowledgment reconciles on $recovery recovery"
+done
 
 for transition in validation unknown new-question; do
   dir=$(new_case "stall-admission-$transition")

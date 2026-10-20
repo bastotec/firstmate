@@ -2970,7 +2970,7 @@ test_consolidated_evidence_and_failures
 # state when the worker advances its head. Its proven history still bounds age.
 test_missed_run_history_bounds_stall_without_reattributing_state() {
   reset_fakes
-  local d out stall gen run_id
+  local d out stall gen run_id history_head ledger_day
   d=$(new_case missed-run-history)
   make_repo_on_branch "$d/wt" fm/history
   make_fakebin "$d" >/dev/null
@@ -2983,6 +2983,8 @@ test_missed_run_history_bounds_stall_without_reattributing_state() {
   out=$(run_crew_state "$d" history)
   python3 "$ROOT/bin/fm_stall_record.py" "$d/state/history.stall.json" \
     "$d/state/history.meta" "$out" '' --now 18001 --ack >/dev/null
+  cp "$d/state/history.stall.json" "$d/pre-validation.json"
+  history_head=$FM_FAKE_RUN_HEAD
   run_id=$(python3 - <<'PY'
 alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 n = 22000 * 1000
@@ -3007,6 +3009,29 @@ PY
     "$d/state/history.meta" "$out" '' --now 29201)
   [ "$(printf '%s' "$stall" | jq -r .notify)" = true ] || fail 'old acknowledgment suppressed genuinely later stall'
   cmp -s "$d/before.json" "$d/state/history.stall.json" || fail 'recovery projection mutated timing'
+  ledger_day=$(python3 -c 'import datetime; print(datetime.datetime.fromtimestamp(21960).strftime("%Y-%m-%d %H:%M"))')
+  FM_FAKE_AXI_STATUS=$(run_failed fm/foreign | sed "s/01RUN/$run_id/")
+  FM_FAKE_RUNS_LIST=$(printf 'completed fm/foreign %s %s\nfailed fm/history %s %s\n' \
+    "$history_head" "$ledger_day" "$history_head" "$ledger_day")
+  cp "$d/pre-validation.json" "$d/state/history.stall.json"
+  out=$(run_crew_state "$d" history)
+  assert_contains "$out" 'source: pane' 'foreign primary and historical ledger cannot govern current state'
+  assert_contains "$out" 'last-run-created=21960;' 'foreign-primary fallback recovers retained historical timing'
+  stall=$(python3 "$ROOT/bin/fm_stall_record.py" "$d/state/history.stall.json" \
+    "$d/state/history.meta" "$out" '' --now 23000 --observe)
+  [ "$(printf '%s' "$stall" | jq -r .since)" = 21960 ] || fail 'ledger history did not reset the old implementation wait'
+  [ "$(printf '%s' "$stall" | jq -r .notify)" = false ] || fail 'ledger history immediately stalled implementation'
+  stall=$(python3 "$ROOT/bin/fm_stall_record.py" "$d/state/history.stall.json" \
+    "$d/state/history.meta" "$out" '' --now 29161)
+  [ "$(printf '%s' "$stall" | jq -r .notify)" = true ] || fail 'old acknowledgment suppressed the post-ledger implementation episode'
+  FM_FAKE_RUNS_LIST=$(printf 'failed fm/foreign %s %s\n' "$history_head" "$ledger_day")
+  out=$(run_crew_state "$d" history)
+  assert_not_contains "$out" 'last-run-created=' 'foreign ledger branch cannot supply historical timing'
+  FM_FAKE_RUNS_LIST=$(printf 'failed fm/history aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa %s\nfailed fm/history %s %s\n' \
+    "$ledger_day" "$history_head" "$ledger_day")
+  out=$(run_crew_state "$d" history)
+  assert_not_contains "$out" 'last-run-created=' 'unresolvable newest ledger head cannot borrow older timing'
+  FM_FAKE_RUNS_LIST=''
   # Active validation itself remains ineligible; historical evidence is not a
   # way to reinterpret a running step as implementation.
   FM_FAKE_RUN_HEAD=$(git -C "$d/wt" rev-parse HEAD)
@@ -3024,6 +3049,10 @@ PY
   out=$(run_crew_state "$d" history)
   assert_not_contains "$out" 'last-run-created=' 'rewritten branch cannot borrow historical timing'
   FM_FAKE_AXI_STATUS=$(run_failed fm/foreign | sed "s/01RUN/$run_id/")
+  FM_FAKE_RUNS_LIST=$(printf 'failed fm/history %s %s\n' "$history_head" "$ledger_day")
+  out=$(run_crew_state "$d" history)
+  assert_not_contains "$out" 'last-run-created=' 'rewritten branch cannot borrow ledger historical timing'
+  FM_FAKE_RUNS_LIST=''
   out=$(run_crew_state "$d" history)
   assert_not_contains "$out" 'last-run-created=' 'foreign branch cannot borrow historical timing'
   pass 'missed validation history bounds stall and dedup without weakening current-state attribution'

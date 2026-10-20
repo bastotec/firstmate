@@ -994,6 +994,11 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
       # reconcile through the ledger. Failed or timed-out primary calls already
       # returned unknown above, without a second bounded query.
       runs_list=$(nm_runs_list)
+      read -r history_created history_run < <(fm_nm_runs_status_for_worktree "$WT" "$CREW_BRANCH" "$runs_list" '' history)
+      if [ -n "$history_created" ] && [ "$history_created" -gt "${HISTORICAL_RUN_CREATED:-0}" ]; then
+        HISTORICAL_RUN=$history_run
+        HISTORICAL_RUN_CREATED=$history_created
+      fi
       COARSE_STATUS=$(fm_nm_runs_status_for_worktree "$WT" "$CREW_BRANCH" "$runs_list")
       if [ -n "$COARSE_STATUS" ]; then
         HAVE_RUN=1

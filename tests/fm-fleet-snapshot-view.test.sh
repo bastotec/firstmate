@@ -1362,6 +1362,50 @@ test_recovery_projects_stalled_timing_without_mutating_it() {
   pass "recovery traversal computes stall age without replacing current state or changing records"
 }
 
+test_snapshot_reuses_folded_decisions() {
+  local home scripts fakebin id out
+  home=$(make_home shared-decision-fold)
+  scripts="$home/scripts"
+  cp -R "$ROOT/bin" "$scripts"
+  cat > "$scripts/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = working ]; then
+  printf 'state: working · source: pane · busy\n'
+else
+  printf 'state: parked · source: status-log · waiting\n'
+fi
+SH
+  chmod +x "$scripts/fm-crew-state.sh"
+  cat >> "$scripts/fm-classify-lib.sh" <<'SH'
+eval "$(declare -f status_open_decisions | sed '1s/status_open_decisions/fm_test_decision_fold/')"
+status_open_decisions() {
+  printf '%s\n' "${1##*/}" >> "$FM_HOME/decision-fold-calls"
+  fm_test_decision_fold "$@"
+}
+SH
+  for id in parked working remote; do
+    fm_write_meta "$home/state/$id.meta" "kind=ship" "mode=no-mistakes" "worktree=$home/projects/$id"
+    printf 'needs-decision [key=choice]: Choose %s?\nworking: unrelated event\n' "$id" > "$home/state/$id.status"
+  done
+  printf 'remote_host=elsewhere\nkind=secondmate\n' >> "$home/state/remote.meta"
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$scripts/fm-fleet-snapshot.sh" --json)
+  printf '%s' "$out" | jq -e '
+    (.tasks[] | select(.id=="parked") |
+      .current_state.stall.questions==["Choose parked?"]
+      and .hints.open_decisions==[{key:"choice",verb:"needs-decision",summary:"Choose parked?"}])
+    and (.tasks[] | select(.id=="working") |
+      .current_state.stall.questions==[] and .hints.open_decisions==[])
+    and (.tasks[] | select(.id=="remote") |
+      .hints.open_decisions==[{key:"choice",verb:"needs-decision",summary:"Choose remote?"}])
+  ' >/dev/null || fail "shared fold lost raw decisions or lifecycle reconciliation: $out"
+  for id in parked working remote; do
+    [ "$(grep -Fxc "$id.status" "$home/decision-fold-calls")" = 1 ] || fail "snapshot folded $id more than once"
+  done
+  pass 'snapshot folds each captured decision stream once for stall and lifecycle hints'
+}
+
+test_snapshot_reuses_folded_decisions
 test_recovery_projects_stalled_timing_without_mutating_it
 test_empty_fleet_json
 test_reopened_task_keeps_its_current_pr_identity

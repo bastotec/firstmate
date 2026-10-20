@@ -1498,6 +1498,41 @@ fm_wake_commit_secondmate_stall_receipts_through() { # <cutoff> [<rows-file>]
   ' "$FM_WAKE_QUEUE" 2>/dev/null)
 }
 
+fm_wake_commit_stall_digests_through() {
+  local cutoff=${1:-} rows=${2:-} keys key entry task episode receipt tmp
+  local -a entries=()
+  keys=$(awk -F '\t' -v cutoff="$cutoff" -v rows="$rows" '
+    BEGIN { if (rows != "") while ((getline line < rows) > 0) owned[line]=1 }
+    NF >= 5 && $2 ~ /^[0-9]+$/ && (cutoff == "" || $2 <= cutoff) \
+      && (rows == "" || ($2 in owned)) && $3 == "check" \
+      && $4 ~ /^stall-digest:/ { print $4 }
+  ' "$FM_WAKE_QUEUE" 2>/dev/null) || { [ ! -e "$FM_WAKE_QUEUE" ] || return 1; }
+  while IFS= read -r key; do
+    [ -n "$key" ] || continue
+    IFS=, read -r -a entries <<< "${key#stall-digest:}"
+    for entry in "${entries[@]}"; do
+      task=${entry%%:*}
+      episode=${entry#*:}
+      case "$task" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+      case "$episode" in ''|*[!a-f0-9]*) return 1 ;; esac
+      [ "${#episode}" -eq 64 ] || return 1
+      receipt="$STATE/idle-sweep/$task.stall-delivered"
+      mkdir -p "$STATE/idle-sweep" || return 1
+      if [ -e "$receipt" ] || [ -L "$receipt" ]; then
+        [ -f "$receipt" ] && [ ! -L "$receipt" ] || return 1
+      fi
+      grep -Fqx -- "$episode" "$receipt" 2>/dev/null && continue
+      tmp=$(mktemp "$STATE/idle-sweep/.stall-delivered.XXXXXX") || return 1
+      if ! { { [ ! -f "$receipt" ] || cat "$receipt"; } \
+        && printf '%s\n' "$episode"; } > "$tmp" \
+        || ! chmod 0600 "$tmp" || ! _fm_atomic_replace "$tmp" "$receipt"; then
+        rm -f -- "$tmp"
+        return 1
+      fi
+    done
+  done <<< "$keys"
+}
+
 fm_wake_restore_queue() {
   local drained=$1 restore
   restore="$STATE/.wake-queue.restore.$(fm_current_pid)"

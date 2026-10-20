@@ -121,26 +121,58 @@ minutes() { printf '%s' "$(( $1 / 60 ))"; }
 lock_of() { printf '%s/.%s.parked-run.lock' "$STATE" "$1"; }
 
 if [ "$1" = digest ]; then
-  candidates=$(cat)
-  [ -n "$candidates" ] || exit 0
-  digest=$(printf '%s' "$candidates" | jq -rs '
-    map(.id + ": " + (if .stall.route=="mate-triage" then
-      "pending question (mate triage before captain): " + (.stall.questions | join("; "))
-      else "mate repair: implementation has no attributed validation run; inspect and resume the worker" end)) | join(" | ")') || exit 1
-  batch_key=$(printf '%s' "$candidates" | jq -rs 'map(.stall.episode) | sort | join("-")' | cksum | cut -d' ' -f1)
+  admitted=$(cat)
+  [ -n "$admitted" ] || exit 0
   rc=0
-  fm_parent_channel_report "$FM_HOME" "$STATE" "needs-decision [key=stall-digest-$batch_key]: stalled tasks digest: $digest. Repair locally where authorized; batch only genuine captain questions into one message." || rc=$?
-  if [ "$rc" -eq 1 ]; then
-    if fm_wake_append check "idle-sweep:$NOW:stalled" "check: stalled tasks digest: $digest. Repair locally where authorized; batch only genuine captain questions into one message."; then rc=0; else rc=4; fi
+  destination=$(fm_parent_channel_destination "$FM_HOME" "$STATE") || rc=$?
+  case "$rc" in
+    0)
+      if [ -e "$destination" ] || [ -L "$destination" ]; then
+        [ -f "$destination" ] && [ ! -L "$destination" ] || exit 1
+      fi
+      ;;
+    1)
+      fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || exit 1
+      trap 'fm_lock_release "$FM_WAKE_QUEUE_LOCK" >/dev/null 2>&1 || true' EXIT
+      fm_wake_commit_stall_digests_through || exit 1
+      ;;
+    *) exit 1 ;;
+  esac
+  candidates=''
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    id=$(printf '%s' "$candidate" | jq -r .id)
+    episode=$(printf '%s' "$candidate" | jq -r .stall.episode)
+    if [ "$rc" -eq 1 ]; then
+      [ ! -L "$STATE/idle-sweep/$id.stall-delivered" ] \
+        && grep -Fqx -- "$episode" "$STATE/idle-sweep/$id.stall-delivered" 2>/dev/null && continue
+    else
+      grep -Fq -- "[stall-episode=$episode]" "$destination" 2>/dev/null && continue
+    fi
+    candidates="$candidates$candidate"$'\n'
+  done <<< "$admitted"
+  if [ -n "$candidates" ]; then
+    digest=$(printf '%s' "$candidates" | jq -rs '
+      map(.id + ": " + (if .stall.route=="mate-triage" then
+        "pending question (mate triage before captain): " + (.stall.questions | join("; "))
+        else "mate repair: implementation has no attributed validation run; inspect and resume the worker" end)) | join(" | ")') || exit 1
+    batch_key=$(printf '%s' "$candidates" | jq -rs 'map(.stall.episode) | sort | join("-")' | cksum | cut -d' ' -f1)
+    if [ "$rc" -eq 1 ]; then
+      queue_key=$(printf '%s' "$candidates" | jq -rs 'map(.id + ":" + .stall.episode) | sort | "stall-digest:" + join(",")') || exit 1
+      fm_wake_append_locked check "$queue_key" "check: stalled tasks digest: $digest. Repair locally where authorized; batch only genuine captain questions into one message." || exit 1
+      fm_wake_commit_stall_digests_through || exit 1
+    else
+      episodes=$(printf '%s' "$candidates" | jq -rs 'map("[stall-episode=" + .stall.episode + "]") | sort | join(" ")') || exit 1
+      fm_parent_channel_report "$FM_HOME" "$STATE" "needs-decision [key=stall-digest-$batch_key]: stalled tasks digest: $digest. Repair locally where authorized; batch only genuine captain questions into one message. $episodes" || exit 1
+    fi
   fi
-  [ "$rc" -eq 0 ] || exit 1
   while IFS= read -r candidate; do
     [ -n "$candidate" ] || continue
     id=$(printf '%s' "$candidate" | jq -r .id)
     python3 "$SCRIPT_DIR/fm_stall_record.py" "$STATE/idle-sweep/$id.stall.json" \
       "$STATE/$id.meta" "$(printf '%s' "$candidate" | jq -r .current)" \
       "$(printf '%s' "$candidate" | jq -r .decisions)" --ack --now "$NOW" >/dev/null || true
-  done <<< "$candidates"
+  done <<< "$admitted"
   exit 0
 fi
 

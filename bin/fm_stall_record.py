@@ -170,6 +170,15 @@ def main():
     old = load(args.record)
     if old.get('identity') != identity or not epoch(old.get('observed_at'), args.now):
         old = {}
+    receipt = args.record.with_name(args.record.name.removesuffix('.json') + '-delivered')
+    delivered = []
+    try:
+        if not receipt.is_symlink():
+            delivered = receipt.read_text().splitlines()
+    except OSError:
+        pass
+    if old.get('episode') in delivered:
+        old['reported'] = old['episode']
     if state in ('', 'unknown'):
         result = dict(old, state='ineligible', notify=False)
         print(json.dumps(False if args.reported_run else result))
@@ -179,6 +188,7 @@ def main():
         cells = row.split('\t', 2)
         if len(cells) == 3 and cells[1] == 'needs-decision':
             pending.append(cells[2])
+    pending = sorted(set(pending))
     eligible = (bool(identity) and not meta.get('remote_host')
                 and 'declared-wait: active' not in fields)
     run = evidence(args.current, 'run') if source == 'run-step' else ''
@@ -188,9 +198,11 @@ def main():
     parked = fields_file(timing_meta.with_suffix('.parked-run'))
     parked_since = matching_stamp(parked, 'since', run, step, args.now)
     parked_episode = dict(run=run, step=step, gate_since=gate_since)
-    same_parked_run = (old.get('phase') == 'needs-decision'
-                       and old.get('signature') == episode_signature(
-                           identity, 'needs-decision', old.get('questions', []), run, step, gate_since))
+    same_parked_run = (old.get('parked_episode') == parked_episode
+                       or (old.get('phase') == 'needs-decision'
+                           and old.get('signature') == episode_signature(
+                               identity, 'needs-decision', old.get('questions', []),
+                               run, step, gate_since)))
     reported_parked = old.get('reported_parked')
     if same_parked_run and old.get('episode') and old.get('reported') == old.get('episode'):
         reported_parked = parked_episode
@@ -233,7 +245,7 @@ def main():
     threshold = 3600 if phase == 'needs-decision' else 7200
     stalled = bool(phase and age is not None and age > threshold)
     episode = digest(f'{signature}:{since}') if phase else None
-    reported = old.get('reported')
+    reported = episode if episode in delivered else old.get('reported')
     if (phase == 'needs-decision' and not old.get('episode') and parked_since
             and (gate_since is None or parked_since >= gate_since)
             and (not old or parked_since >= old['observed_at'])):
@@ -251,6 +263,7 @@ def main():
                   questions=pending if phase == 'needs-decision' else [],
                   route='mate-triage' if phase == 'needs-decision' else 'mate-repair',
                   episode=episode, reported=reported, reported_parked=reported_parked,
+                  parked_episode=parked_episode if state == 'parked' else None,
                   notify=stalled and reported != episode)
     if args.ack and stalled:
         result.update(reported=episode, notify=False)
