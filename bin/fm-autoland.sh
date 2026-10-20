@@ -430,7 +430,7 @@ merge_attempt() {  # <url> <head> <method> <attestation> <max_risk> <base>
     return 1
   fi
   if task_for_pr "$url"; then
-    if ! out=$(FM_HOME="$FM_HOME" FM_PR_MERGE_EXPECT_HEAD="$head" FM_PR_MERGE_EXPECT_BASE="$base" "$SCRIPT_DIR/fm-pr-merge.sh" "$TASK_PR_ID" "$TASK_PR_URL" -- "--$method" 2>&1); then
+    if ! out=$(FM_HOME="$FM_HOME" FM_PR_MERGE_AUTOLAND=1 FM_PR_MERGE_EXPECT_HEAD="$head" FM_PR_MERGE_EXPECT_BASE="$base" "$SCRIPT_DIR/fm-pr-merge.sh" "$TASK_PR_ID" "$TASK_PR_URL" -- "--$method" 2>&1); then
       MERGE_ERROR=$(printf '%s\n' "$out" | grep -m1 -E '^error:|refus' | sed 's/^error: //')
       [ -n "$MERGE_ERROR" ] || MERGE_ERROR="bin/fm-pr-merge.sh refused it"
       return 1

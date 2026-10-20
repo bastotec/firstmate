@@ -189,7 +189,12 @@ case "$1 $2" in
       *'--json state -q .state'*) echo MERGED ;;
       *)
         if [ -n "${FM_TEST_REVOKE:-}" ]; then
-          "$FM_TEST_POLICY" set bastotec/app "$FM_TEST_REVOKE" --no-push > "$FM_HOME/revocation"
+          views=$(cat "$FM_HOME/views" 2>/dev/null || echo 0)
+          views=$((views + 1))
+          printf '%s\n' "$views" > "$FM_HOME/views"
+          if [ "$views" -eq "${FM_TEST_REVOKE_ON_VIEW:-1}" ]; then
+            "$FM_TEST_POLICY" set bastotec/app "$FM_TEST_REVOKE" --no-push > "$FM_HOME/revocation"
+          fi
         fi
         cat "$FM_HOME/live.json" ;;
     esac ;;
@@ -269,6 +274,27 @@ test_policy_revocation_at_merge_boundaries() {
   pass "both final merge boundaries refuse policy revoked after the initial read"
 }
 
+test_task_autoland_rechecks_policy() {
+  local home out path
+  for path in autoland captain; do
+    home=$(merge_home "task-ask-$path")
+    attest_home "$home"
+    printf 'kind=ship\nmode=no-mistakes\nproject=app\npr=https://github.com/bastotec/app/pull/7\n' > "$home/state/t1.meta"
+    if [ "$path" = autoland ]; then
+      out=$(merge_in_home "$home" env FM_TEST_REVOKE=ask FM_TEST_REVOKE_ON_VIEW=2 "$ROOT/bin/fm-autoland.sh" check)
+      assert_contains "$out" 'current merge policy no longer permits autoland' "task-owned autoland ignored revocation: $out"
+      assert_equals 2 "$(cat "$home/views")" "revocation did not reach the task helper's live read"
+      assert_no_grep 'pr merge ' "$home/gh.log" "task-owned autoland bypassed completed revocation"
+    else
+      out=$(merge_in_home "$home" env FM_TEST_REVOKE=ask "$ROOT/bin/fm-pr-merge.sh" t1 https://github.com/bastotec/app/pull/7 2>&1) || fail "captain-approved ask merge refused: $out"
+      assert_grep 'pr merge ' "$home/gh.log" "captain-approved ask merge never reached the forge"
+    fi
+    assert_equals 'ask repo' "$(FM_HOME="$home" "$POLICY" get bastotec/app)" "the policy did not change to ask"
+    assert_grep 'auto -> ask' "$home/revocation" "policy revocation did not succeed"
+  done
+  pass "task-owned autoland rechecks authority while captain-approved ask merges still proceed"
+}
+
 test_merges_ignore_writer_lock() {
   local home out path lock
   for path in task unowned; do
@@ -336,6 +362,7 @@ test_list_json_covers_touched_repositories
 test_owner_keys_are_case_insensitive
 test_policy_auto_requires_attestation
 test_policy_revocation_at_merge_boundaries
+test_task_autoland_rechecks_policy
 test_merges_ignore_writer_lock
 test_policy_changes_during_inflight_merge
 test_attended_override_validates_policy

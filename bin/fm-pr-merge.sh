@@ -207,6 +207,15 @@ require_merge_policy() {
     echo "error: refusing to merge $URL: the captain's merge policy for $PR_OWNER/$PR_REPO is never (bin/fm-merge-policy.sh); he merges it himself" >&2
     return 1
   fi
+  if [ "${1:-}" = 1 ]; then
+    case "$policy" in
+      'auto default'|'ask default'|auto\ *) ;;
+      *)
+        echo "error: refusing to merge $URL: its current merge policy no longer permits autoland" >&2
+        return 1
+        ;;
+    esac
+  fi
 }
 require_merge_policy || exit 1
 
@@ -1151,7 +1160,7 @@ case "$PROVIDER" in
     [ "$away_status" -eq 0 ] || exit "$away_status"
     refuse_github_queue_while_away || exit 2
     merge_status=0
-    require_merge_policy || exit 1
+    require_merge_policy "${FM_PR_MERGE_AUTOLAND:-}" || exit 1
     merge_output=$(gh pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" \
       --match-head-commit "$FM_PR_MERGE_HEAD" \
       "${merge_args[@]+"${merge_args[@]}"}" "$@" 2>&1) || merge_status=$?
