@@ -581,6 +581,7 @@ MEMORY_FILE: {memory}
 1. Write your result for the owner to RESULT_FILE: the answer or findings first, then evidence.
 2. Update MEMORY_FILE in place: keep the "## Summary" section to a few lines about the subject, add durable facts you learned, prune what is wrong or stale. Keep it short; it is read at the start of every job.
 Your turn cannot finish until both files are written during this job.
+If this specialist stops at its first failed tool call, make no more tool calls and you may finish without writing RESULT_FILE or MEMORY_FILE, since firstmate records the failure.
 """
 
 
