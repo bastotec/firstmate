@@ -681,7 +681,8 @@ def cmd_spec_run(args) -> None:
         ]
         if rec.get("stop_on_tool_failure"):
             me = [sys.executable, str(Path(__file__).resolve())]
-            argv += ["--hook", "post_tool_use=" + shlex.join(me + ["_spec-tool-observe", str(jdir)]),
+            argv += ["--tool-concurrency", "1",
+                     "--hook", "post_tool_use=" + shlex.join(me + ["_spec-tool-observe", str(jdir)]),
                      "--hook", "pre_tool_use=" + shlex.join(me + ["_spec-tool-gate", str(jdir)])]
         rc = run_deck(argv, workdir, jdir / "events.ndjson", jdir / "stderr.log",
                       deck_env(), jdir / "prompt.md").wait()
@@ -843,11 +844,13 @@ def read_tool_failure(jdir: Path):
         return None
 
 
-def tool_call_failed(output: str) -> bool:
+def tool_call_failed(tool_name: str, output: str) -> bool:
     """Deck renders a tool error as 'the tool failed...' and run_command as JSON."""
     text = (output or "").strip()
     if text.startswith("the tool failed"):
         return True
+    if tool_name != "run_command":
+        return False
     try:
         data = json.loads(text)
     except ValueError:
@@ -876,13 +879,20 @@ def cmd_spec_tool_observe(args) -> None:
         event = json.loads(sys.stdin.read() or "{}")
     except ValueError:
         return
-    if read_tool_failure(jdir) or not tool_call_failed(str(event.get("tool_output", ""))):
+    if read_tool_failure(jdir) or not tool_call_failed(event.get("tool_name"), str(event.get("tool_output", ""))):
         return
     note = {"tool": event.get("tool_name"), "args": json.dumps(event.get("args"))[:400],
             "output": " ".join(str(event.get("tool_output", "")).split())[:600], "at": now()}
-    tmp = jdir / (TOOL_FAILURE + ".tmp")
-    tmp.write_text(json.dumps(note))
-    os.replace(tmp, jdir / TOOL_FAILURE)
+    tmp = jdir / f"{TOOL_FAILURE}.{secrets.token_hex(8)}.tmp"
+    try:
+        with tmp.open("x") as fh:
+            fh.write(json.dumps(note))
+        try:
+            os.link(tmp, jdir / TOOL_FAILURE)
+        except FileExistsError:
+            pass
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def cmd_spec_tool_gate(args) -> None:

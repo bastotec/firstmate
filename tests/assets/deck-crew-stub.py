@@ -25,11 +25,15 @@ if not args or args[0] != "run":
 prompt = sys.stdin.read() if args[1] == "-" else args[1]
 session = None
 ephemeral = "--ephemeral" in args
+tool_concurrency = None
 hooks = []
 i = 2
 while i < len(args):
     if args[i] == "--session":
         session = args[i + 1]
+        i += 2
+    elif args[i] == "--tool-concurrency":
+        tool_concurrency = int(args[i + 1])
         i += 2
     elif args[i] == "--hook":
         hooks.append(args[i + 1])
@@ -43,6 +47,7 @@ sessions.mkdir(parents=True, exist_ok=True)
 log = state / "argv.jsonl"
 with open(log, "a") as fh:
     fh.write(json.dumps({"session": session, "ephemeral": ephemeral, "cwd": os.getcwd(),
+                         "tool_concurrency": tool_concurrency,
                          "pid": os.getpid(), "stdin_prompt": args[1] == "-", "prompt_bytes": len(prompt.encode()),
                          "environment": {"gh_token": "GH_TOKEN" in os.environ,
                                          "gateway_key": "PROXAI_API_KEY" in os.environ or "PROXAI_API_KEY_FILE" in os.environ,
