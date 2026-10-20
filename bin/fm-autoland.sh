@@ -52,7 +52,8 @@
 # runner refreshes the project's clone through bin/fm-fleet-sync.sh when this
 # home has one, then runs config/post-merge/<hook>.sh <oid> under
 # FM_AUTOLAND_HOOK_TIMEOUT (default 1800). Exit 0 records the commit as
-# deployed, exit 75 records a deferral that later ticks retry every
+# deployed, exit 78 records skipped without advancing that commit or notifying,
+# exit 75 records a deferral that later ticks retry every
 # FM_AUTOLAND_DEFER_RETRY seconds (default 300), and anything else records a
 # failure that is reported once and not retried until the head moves or an
 # operator runs `deploy`. Output and summary handling follow the hook contract
@@ -541,7 +542,7 @@ entry_for_hook() {  # <hook>; sets E_REPO E_PROJECT
 }
 
 # Run one hook for one commit; the caller already decided it is due.
-# Returns the hook's classification: 0 deployed, 75 deferred, 3 busy, 1 failed.
+# Returns the hook's classification: 0 deployed, 78 skipped, 75 deferred, 3 busy, 1 failed.
 run_hook() {  # <hook> <oid> <approved 0|1>
   local hook=$1 oid=$2 approved=$3 file log rc summary deployed sync_rc
   mkdir -p "$AL" || return 1
@@ -579,6 +580,9 @@ run_hook() {  # <hook> <oid> <approved 0|1>
     0)
       printf '%s\n' "$oid" > "$AL/$hook.deployed.tmp" && mv -f -- "$AL/$hook.deployed.tmp" "$AL/$hook.deployed"
       result_write "$hook" deployed "$oid" "${summary:-done}"
+      ;;
+    78)
+      result_write "$hook" skipped "$oid" "${summary:-nothing to deploy}"
       ;;
     75)
       result_write "$hook" deferred "$oid" "${summary:-deferred}"
@@ -631,7 +635,7 @@ tick_deploys() {  # <entries-file> <response-file>
     lock_alive "$hook" && continue
     if result_read "$hook" && [ "$R_OID" = "$oid" ]; then
       case "$R_STATUS" in
-        failed) continue ;;
+        failed|skipped) continue ;;
         deferred) [ $(($(date +%s) - R_EPOCH)) -ge "$DEFER_RETRY" ] || continue ;;
       esac
     fi
@@ -770,7 +774,7 @@ action_deploy() {  # <hook> [--approved]
     failed) notified_record "deploy|$hook|$R_OID|failed|$R_EPOCH" || true ;;
     *) notified_record "deploy|$hook|$R_OID|$R_STATUS" || true ;;
   esac
-  [ "$rc" -eq 0 ] || [ "$rc" -eq 75 ]
+  [ "$rc" -eq 0 ] || [ "$rc" -eq 75 ] || [ "$rc" -eq 78 ]
 }
 
 action_status() {

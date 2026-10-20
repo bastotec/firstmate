@@ -702,6 +702,59 @@ test_deploy_runs_after_merge_and_reports() {
   pass "fm-autoland: a new default-branch head deploys once, records the commit, and reports"
 }
 
+test_skipped_hook_after_clone_refresh() {
+  local home remote target previous out rc i
+  for previous in none "$MAIN_1"; do
+    home=$(make_home "skipped-$previous")
+    remote="$home/source"
+    git init -q -b main "$remote"
+    git -C "$remote" -c user.name=fmtest -c user.email=fmtest@example.invalid commit -q --allow-empty -m initial
+    mkdir -p "$home/projects"
+    git clone -q "$remote" "$home/projects/proj"
+    git -C "$remote" -c user.name=fmtest -c user.email=fmtest@example.invalid commit -q --allow-empty -m update
+    target=$(git -C "$remote" rev-parse HEAD)
+    write_config "$home" '{"repos":[{"repo":"o/r","project":"proj","hook":"svc"}]}'
+    write_hook "$home" svc 78
+    mkdir -p "$home/state/autoland"
+    if [ "$previous" != none ]; then
+      printf '%s\n' "$previous" > "$home/state/autoland/svc.deployed"
+    fi
+    rc=0
+    FM_HOME="$home" "$AUTOLAND" deploy-run svc "$target" > "$home/deploy.out" 2>&1 || rc=$?
+    expect_code 78 "$rc" "skipped hook classification"
+    [ "$(git -C "$home/projects/proj" rev-parse HEAD)" = "$target" ] || fail "clone refresh did not fast-forward"
+    [ "$(cut -f1 "$home/state/autoland/svc.result")" = skipped ] || fail "no-op hook was not recorded as skipped"
+    [ "$(cut -f2 "$home/state/autoland/svc.result")" = "$target" ] || fail "skipped target not recorded"
+    if [ "$previous" = none ]; then
+      [ ! -e "$home/state/autoland/svc.deployed" ] || fail "clone refresh alone was recorded as deployment"
+    else
+      [ "$(cat "$home/state/autoland/svc.deployed")" = "$previous" ] || fail "skipped hook advanced the deployed revision"
+    fi
+    [ ! -e "$home/state/autoland/svc.lock" ] || fail "skipped hook retained its lock"
+    write_gql "$home" "$target"
+    out=$(tick "$home")
+    [ -z "$out" ] || fail "skipped hook emitted a notification: $out"
+    out=$(tick "$home")
+    [ -z "$out" ] || fail "skipped hook emitted a later notification: $out"
+    [ "$(wc -l < "$home/hook-svc.runs" | tr -d ' ')" = 1 ] || fail "skipped hook retried the same head automatically"
+    out=$(FM_HOME="$home" FM_TEST_GH_LOG="$home/gh.log" FM_TEST_HEAD_OID="$target" PATH="$FAKEBIN:$PATH" \
+      "$AUTOLAND" deploy svc 2>&1) || fail "foreground skipped hook was treated as failure: $out"
+    assert_contains "$out" "svc skipped ${target:0:7}" "foreground skipped result"
+    [ "$(wc -l < "$home/hook-svc.runs" | tr -d ' ')" = 2 ] || fail "explicit retry did not run the skipped hook"
+    write_gql "$home" "$MAIN_2"
+    tick "$home" >/dev/null
+    # Wait for the new target, not the previous skipped result.
+    i=0
+    while [ "$(cut -f2 "$home/state/autoland/svc.result")" != "$MAIN_2" ] && [ "$i" -lt 200 ]; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+    [ "$(cut -f2 "$home/state/autoland/svc.result")" = "$MAIN_2" ] || fail "a new head did not retry the skipped hook"
+    wait_result "$home" svc skipped || fail "new head did not finish"
+  done
+  pass "fm-autoland: clone refresh plus a skipped hook never proves deployment, with bounded retries"
+}
+
 test_detached_hook_survives_check_process_group_termination() {
   local home check_pid runner_pid check_group runner_group rc=0
   home=$(make_home detached-runner)
@@ -1058,6 +1111,7 @@ test_rotation_gives_each_pr_a_merge_turn
 test_notification_timestamps_use_the_real_clock
 test_merges_are_bounded_and_notifications_follow_output
 test_deploy_runs_after_merge_and_reports
+test_skipped_hook_after_clone_refresh
 test_detached_hook_survives_check_process_group_termination
 test_hook_timeout_fails_without_recording_deployment
 test_fleet_sync_timeout_is_a_continuing_warning
