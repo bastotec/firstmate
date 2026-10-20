@@ -15,7 +15,7 @@ specialist is a record, not an endpoint, and is intentionally persistent.
        "status":"idle"|"running"|"suspended"|"retired","created","jobs":N,
        "suspension":{"since","reason","by"}|null,
        "current_job":{"id","pid","identity","started"}|null,
-       "last_job":{"id","brief","started","finished","outcome","result"}|null,
+       "last_job":{"id","brief","started","finished","outcome","result","from"?}|null,
        "memory_summary"}
   state/specialists/<name>/history.jsonl one line per finished job
       {"job","brief","started","finished","outcome","result","exit"}
@@ -457,12 +457,16 @@ class Specialist:
             "result": str(result) if result.is_file() else None,
             "exit": exit_code,
         }
+        if cur.get("from"):
+            entry["from"] = cur["from"]
         with open(self.history_path, "a") as fh:
             fh.write(json.dumps(entry, sort_keys=True) + "\n")
         rec["status"] = "idle"
         rec["current_job"] = None
         rec["last_job"] = {k: entry[k] for k in ("brief", "started", "finished", "outcome", "result")}
         rec["last_job"]["id"] = job
+        if entry.get("from"):
+            rec["last_job"]["from"] = entry["from"]
         rec["last_job"]["summary"] = first_lines(read_text(result), 200)
         rec["jobs"] = int(rec.get("jobs", 0)) + 1
         rec["memory_summary"] = first_lines(read_text(Path(rec["memory"])))
@@ -584,9 +588,12 @@ def cmd_spec_check(args) -> None:
 
 
 def cmd_spec_job(args) -> None:
+    run_spec_job(args, brief_text(args), None)
+
+
+def run_spec_job(args, brief: str, origin, on_started=None) -> None:
     h = home()
     sp = Specialist(h, args.name)
-    brief = brief_text(args)
     deck_bin()
     deck_env()
     rec = sp.reconcile()
@@ -614,9 +621,13 @@ def cmd_spec_job(args) -> None:
         )
         rec["status"] = "running"
         cur = {"id": job, "pid": pid, "started": now(), "identity": process_identity(pid)}
+        if origin:
+            cur["from"] = origin
         rec["current_job"] = cur
         sp.save(rec)
     print(f"started job {job} for specialist {args.name}")
+    if on_started:
+        on_started(h, job)
     if args.wait:
         if not wait_for(lambda: not sp.runner_alive(cur), args.wait_timeout):
             die(f"job {job} wait timed out; the job is still running", 1)
@@ -717,6 +728,55 @@ def cmd_spec_list(args) -> None:
         last = (rec.get("last_job") or {}).get("finished")
         when = time.strftime("%Y-%m-%d", time.localtime(last)) if last else "never"
         print(f"{rec['name']}\t{rec['status']}\tjobs={rec.get('jobs', 0)}\tlast={when}\t{rec['subject']}")
+
+
+CAPTAIN_BRIEF = """Message from the captain, sent to you directly (not through your owning mate):
+
+{text}
+
+Answer him in your result file, in plain words, as you would report to your owner.
+Your standing bounds still apply: you produce knowledge, not project changes, and a
+read-only monitor stays read-only. If he asks for something outside your bounds,
+say so plainly instead of doing it.
+"""
+
+
+def cmd_spec_ask(args) -> None:
+    if not args.from_captain:
+        die("ask needs --from-captain: only a captain message is a supported direct route")
+    if args.text_file:
+        text = read_input_file(args.text_file, "message")
+    else:
+        words = list(args.text)
+        if words[:1] == ["--"]:
+            words = words[1:]
+        text = " ".join(words)
+    text = text.strip()
+    if not text:
+        die("the message is empty")
+
+    def tell_owner(h: Path, job: str) -> None:
+        excerpt = " ".join(text.split())[:200]
+        wake(h, f"specialist-captain:{args.name}:{job}",
+             f"check: the captain asked specialist {args.name} directly (job {job}): {excerpt} - "
+             "its result arrives as the usual specialist job notification")
+
+    run_spec_job(args, CAPTAIN_BRIEF.format(text=text), "captain", tell_owner)
+
+
+def cmd_spec_result(args) -> None:
+    h = home()
+    sp = Specialist(h, args.name)
+    rec = sp.reconcile()
+    job = args.job or (rec.get("last_job") or {}).get("id")
+    if not job:
+        die(f"specialist {args.name!r} has no finished job", 1)
+    if (rec.get("current_job") or {}).get("id") == job:
+        die(f"job {job} is still running", 3)
+    result = sp.job_dir(job) / "result.md"
+    if not result.is_file():
+        die(f"job {job} wrote no result", 1)
+    sys.stdout.write(read_text(result))
 
 
 def parse_since(text: str | None) -> int:
@@ -1304,6 +1364,20 @@ def main() -> None:
     s = sub.add_parser("retire")
     s.add_argument("name")
     s.set_defaults(fn=cmd_spec_retire)
+
+    s = sub.add_parser("ask")
+    s.add_argument("name")
+    s.add_argument("--from-captain", action="store_true")
+    s.add_argument("--text-file")
+    s.add_argument("--wait", action="store_true")
+    s.add_argument("--wait-timeout", type=float, default=DEFAULT_DEADLINE + 60)
+    s.add_argument("text", nargs="*")
+    s.set_defaults(fn=cmd_spec_ask)
+
+    s = sub.add_parser("result")
+    s.add_argument("name")
+    s.add_argument("job", nargs="?")
+    s.set_defaults(fn=cmd_spec_result)
 
     s = sub.add_parser("suspend")
     s.add_argument("name")

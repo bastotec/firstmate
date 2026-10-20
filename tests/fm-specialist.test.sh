@@ -142,6 +142,43 @@ assert_equals "null captain" "$(jq -r '"\(.suspension) \(.last_suspension.resume
 expect_code 3 "$("$SPEC" resume amigo-tech >/dev/null 2>&1; echo $?)" "resuming an idle specialist was accepted"
 pass "suspend records why and since when, job refuses while suspended, and resume returns it to idle"
 
+expect_code 2 "$("$SPEC" ask amigo-tech -- "hello" >/dev/null 2>&1; echo $?)" "ask without --from-captain was accepted"
+out=$("$SPEC" ask amigo-tech --from-captain --wait -- "How is Amigo doing this week?" 2>&1) || fail "captain ask failed: $out"
+ask_job=$(jq -r .last_job.id "$REC")
+assert_equals captain "$(jq -r .last_job.from "$REC")" "the job is not marked as from the captain"
+assert_equals captain "$(tail -1 "$HOME_DIR/state/specialists/amigo-tech/history.jsonl" | jq -r .from)" "history does not mark the captain's job"
+assert_grep "How is Amigo doing this week?" "$HOME_DIR/state/specialists/amigo-tech/jobs/$ask_job/brief.md" "the captain's words are not the brief"
+assert_grep "read-only monitor stays read-only" "$HOME_DIR/state/specialists/amigo-tech/jobs/$ask_job/brief.md" "the brief drops the specialist's bounds"
+assert_grep "specialist-captain:amigo-tech:$ask_job" "$HOME_DIR/state/.wake-queue" "the owning home was not told about the captain's message"
+assert_grep "the captain asked specialist amigo-tech directly (job $ask_job): How is Amigo doing this week?" "$HOME_DIR/state/.wake-queue" "the owner's notice lost the question"
+assert_equals "$(cat "$(jq -r .last_job.result "$REC")")" "$("$SPEC" result amigo-tech)" "result does not print the last job's result"
+assert_equals "$(cat "$(jq -r .last_job.result "$REC")")" "$("$SPEC" result amigo-tech "$ask_job")" "result does not print a named job's result"
+"$SPEC" suspend amigo-tech --reason "paused" >/dev/null || fail "suspend failed"
+expect_code 4 "$("$SPEC" ask amigo-tech --from-captain -- "still there?" >/dev/null 2>&1; echo $?)" "a suspended specialist took a captain message"
+"$SPEC" resume amigo-tech >/dev/null || fail "resume failed"
+pass "a captain message runs one job on the specialist's session, marked from him, tells the owner, and its result is readable"
+
+PRIMARY="$TMP_ROOT/primary"
+mkdir -p "$PRIMARY/state"
+printf 'kind=secondmate\nhome=%s\n' "$HOME_DIR" > "$PRIMARY/state/mate-local.meta"
+out=$(env -u FM_STATE_OVERRIDE -u FM_DATA_OVERRIDE -u FM_CONFIG_OVERRIDE FM_HOME="$PRIMARY" "$SPEC" status amigo-tech --mate mate-local) \
+  || fail "status through a local mate failed: $out"
+assert_contains "$out" "specialist amigo-tech (idle)" "--mate did not run in the local mate's home"
+ROUTE_BIN="$TMP_ROOT/route-bin"
+mkdir -p "$ROUTE_BIN"
+cp "$ROOT/bin/fm-specialist.sh" "$ROUTE_BIN/"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" > "%s/fm-on.args"\n' "$TMP_ROOT" > "$ROUTE_BIN/fm-on.sh"
+chmod +x "$ROUTE_BIN/fm-on.sh"
+printf 'kind=secondmate\nremote_host=workload\nhome=/remote/home\n' > "$PRIMARY/state/mate-remote.meta"
+env -u FM_STATE_OVERRIDE FM_HOME="$PRIMARY" "$ROUTE_BIN/fm-specialist.sh" ask linkana --mate mate-remote --from-captain -- "any new errors?" \
+  || fail "a remote ask did not route"
+assert_equals $'mate-remote\nfm-specialist.sh\nask\nlinkana\n--from-captain\n--\nany new errors?' "$(cat "$TMP_ROOT/fm-on.args")" \
+  "a remote mate's ask was not sent through fm-on.sh"
+expect_code 2 "$(env -u FM_STATE_OVERRIDE FM_HOME="$PRIMARY" "$ROUTE_BIN/fm-specialist.sh" ask linkana --mate mate-remote --from-captain --text-file /tmp/x >/dev/null 2>&1; echo $?)" \
+  "--text-file was sent to a remote mate"
+expect_code 2 "$(env -u FM_STATE_OVERRIDE FM_HOME="$PRIMARY" "$SPEC" status amigo-tech --mate nobody >/dev/null 2>&1; echo $?)" "an unknown mate was accepted"
+pass "--mate runs ask, result and status in a local mate's home or through fm-on.sh for a remote one"
+
 "$SPEC" retire amigo-tech >/dev/null || fail "retire failed"
 assert_equals retired "$(jq -r .status "$REC")" "retire marks the record"
 assert_present "$HOME_DIR/data/specialists/amigo-tech/memory.md" "retire keeps the memory"
