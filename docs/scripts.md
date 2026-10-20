@@ -25,6 +25,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | [`fm-idle-sweep.sh`](../bin/fm-idle-sweep.sh) | Watcher-run guarded cleanup, retries, first-mate handoffs, and second-mate sweep audits; header owns eligibility and repeat suppression |
 | [`fm-backlog-normalize.sh`](../bin/fm-backlog-normalize.sh) | Repair checked rows misplaced in In flight or Queued; header owns repair and skip rules |
 | [`fm-ci-infra.sh`](../bin/fm-ci-infra.sh) | Classify a pull request's failed checks as infrastructure or code, with the runner fix; header owns classification criteria |
+| [`fm-merge-policy.sh`](../bin/fm-merge-policy.sh) | Read and set the captain's per-repository merge policy (auto, ask, never), with an audit line and push to second mate homes |
 | [`fm-approval-wait.sh`](../bin/fm-approval-wait.sh) | Record, inspect, and explicitly release a parent-owned approval exclusion; header owns the binding and release contract |
 | `fm-secondmate-restart-lib.sh` | Shared second-mate restart capability and persistence-request contract |
 | [`fm-machine.sh`](../bin/fm-machine.sh) | Connect and prepare a machine, including optional shared-skills provisioning |

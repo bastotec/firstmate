@@ -176,7 +176,8 @@ A worker opens its PR ready for review and never parks a green PR as a draft or 
 - **direct-PR** has the worker push and open a PR without the pipeline, then waits for the configured merge authority.
 - **local-only** has the worker stop with a clean ready branch, then waits for the configured merge authority before firstmate uses the guarded fast-forward merge path.
 
-Delivery mode and `yolo` are orthogonal: with `yolo` off, the captain approves every PR merge and local-only landing; with it on, firstmate merges green, in-scope work itself.
+Delivery mode and merge authority are orthogonal: `yolo` governs local-only landing and supplies PR merge authority only where the policy and auto-land rules below permit it.
+The captain's per-repository merge policy is his standing word on GitHub PR merges: consult [`bin/fm-merge-policy.sh`](bin/fm-merge-policy.sh) before asking; its header owns policy values and resolution.
 [`docs/configuration.md` "Auto-land"](docs/configuration.md#auto-land-configautolandjson-configpost-merge) owns auto-land's standing authority and scope; a home armed with `bin/fm-autoland.sh` merges green PRs in merge-authorized projects without a model turn.
 Never merge a red PR unless a current explicit captain instruction names the single GitHub check waived through the attended-only `fm-pr-merge.sh --allow-red`; every other check must still be green, and `yolo` never authorizes a red merge.
 Destructive, irreversible, and security-sensitive merges still escalate.

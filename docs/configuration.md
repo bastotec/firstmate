@@ -41,6 +41,7 @@ config/
   deck-mcp.json           optional Deck MCP servers ("Harness support")
   primary-split           optional presence flag: conversation (captain thread) and inner monologue (supervisor); inherited (bin/fm-config-inherit-lib.sh); first mate: bin/fm_primary_chat.py header; second mate: bin/fm-captain-lane.sh header
   model-policy.json       home-local route policy for in-place switches (bin/fm_model_switch.py owns validation and policy semantics)
+  merge-policy.json       the captain's per-repository merge policy (auto, ask, never); inherited; bin/fm-merge-policy.sh header owns shape and semantics
   power-host              optional ssh alias for fleet quota reads (bin/fm_report.py owns default and bridge flow)
   shared-skills           optional skills repo shipped to connected machines; primary home only (bin/fm-machine.sh header)
   vnc/<machine>.password  mode-600 VNC password per machine; primary home only (bin/fm-machine-vnc.sh header)
@@ -624,11 +625,13 @@ See [`docs/examples/autoland.json`](examples/autoland.json) for a starting point
 ```
 
 Every entry needs `repo` and at least one of `project` or `authority`, repository names must be unique, and each `hook` name may belong to one entry only.
-Without `authority`, the repository merges only while its `project` entry carries `+yolo`, read every tick, so dropping `+yolo` stops auto-merge.
-A nonempty `authority` cites a real captain ruling granting standing merge authority, as for the Firstmate repository itself, and removing `+yolo` alone does not revoke it.
-The PR body's no-mistakes attestation must name the current head with review and document `completed` and test `completed` or `skipped` when `attestation: true` or the project is registered as `no-mistakes` or `no-mistakes-prod-only`.
+A repository or owner entry in `config/merge-policy.json` ([`bin/fm-merge-policy.sh`'s header](../bin/fm-merge-policy.sh) owns policy values and resolution) decides first: `auto` is standing authority and `ask` or `never` stop auto-merge; under the policy's bare default the rules below apply, and `never` always stops it.
+Under that bare default, without `authority`, the repository merges only while its `project` entry carries `+yolo`; removing `+yolo` revokes that authority.
+A nonempty `authority` cites a real captain ruling granting standing merge authority, as for the Firstmate repository itself, and removing `+yolo` alone does not revoke it under that bare default.
+Merge policy is re-read each tick and immediately before the forge merge command, including for task-owned PRs.
+The PR body's no-mistakes attestation must name the current head with review and document `completed` and test `completed` or `skipped` when authority comes from a repository or owner `auto` policy (including built-in owner defaults), when `attestation: true`, or when the project is registered as `no-mistakes` or `no-mistakes-prod-only`.
 A skipped Test step is accepted for repositories whose trusted pipeline skips it, but head CI must still be green.
-`attestation: false` relaxes that only for `direct-PR`/`local-only` projects or authority-only entries, never for a registered no-mistakes project.
+`attestation: false` relaxes that only for `direct-PR`/`local-only` projects or authority-only entries without repository or owner `auto` authority, never for a registered no-mistakes project.
 When attestation is required, a missing Risk Assessment holds the PR; otherwise a missing rating counts as unrated, but a present rating must still pass the cap, so use that posture only where every eligible green PR is safe to merge.
 `max_risk` caps the no-mistakes risk rating (`low`, `medium`, or `high`; default `low`), and `method` is `squash` (default), `merge`, or `rebase`.
 
