@@ -397,6 +397,92 @@ EOF
   pass "a row marked done carries no hold bucket even outside the Done section"
 }
 
+test_specialists_are_listed_as_persistent_workers() {
+  local home fakebin out primary fixture_root
+  home=$(make_home specialists)
+  mkdir -p "$home/state/specialists"
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/data/backlog.md"
+  printf '%s\n' '{"version":1,"kind":"specialist","persistent":true,"name":"amigo-tech","subject":"Amigo health","session":"fm-spec-amigo","status":"suspended","suspension":{"since":1792233602,"reason":"stopped after failed calls","by":"firstmate"},"model":"zai/glm-5.3","jobs":3,"current_job":null,"last_job":null}' \
+    > "$home/state/specialists/amigo-tech.json"
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_DATA_OVERRIDE="$home/data" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    (.specialists | length) == 1
+    and (.specialists[0] | .id == "spec-amigo-tech" and .name == "amigo-tech" and .kind == "specialist" and .persistent == true
+         and .subject == "Amigo health" and .harness == "deck" and .model == "zai/glm-5.3"
+         and .current_state.state == "suspended" and (.current_state.detail | test("stopped after failed calls")))
+    and ([.tasks[] | select(.kind == "specialist")] | length) == 0
+  ' >/dev/null || fail "the fleet view does not list the specialist as a persistent worker: $out"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_DATA_OVERRIDE="$home/data" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '.specialists[0].id == "spec-amigo-tech" and .specialists[0].current_state.state == "suspended"' >/dev/null \
+    || fail "the home summary does not carry the specialist: $out"
+  printf '%s' "$out" > "$home/state/home-summary.json"
+  primary=$(make_home specialists-primary)
+  fixture_root="$TMP_ROOT/specialists-fixture-root"
+  mkdir -p "$fixture_root" "$home/bin"
+  printf '# Fixture home\n' > "$home/AGENTS.md"
+  printf 'mate\n' > "$home/.fm-secondmate-home"
+  printf -- '- mate - specialist fixture (home: %s; scope: fixture; projects: sample; added 2026-07-11)\n' \
+    "$home" > "$primary/data/secondmates.md"
+  out=$(PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fixture_root" FM_HOME="$primary" FM_DATA_OVERRIDE="$primary/data" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    (.specialists | length) == 0
+    and (.secondmate_current.records[] | select(.id == "mate")
+         | .registered == true and .provenance.selected == "structured-home"
+           and .specialists[0].id == "spec-amigo-tech"
+           and .specialists[0].current_state.state == "suspended")
+  ' >/dev/null || fail "the primary snapshot dropped the registered mate specialist: $out"
+  jq 'del(.specialists)' "$home/state/home-summary.json" > "$home/state/legacy-summary.json"
+  mv "$home/state/legacy-summary.json" "$home/state/home-summary.json"
+  out=$(PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fixture_root" FM_HOME="$primary" FM_DATA_OVERRIDE="$primary/data" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    .secondmate_current.records[] | select(.id == "mate")
+    | .provenance.selected == "structured-home" and .specialists == []
+  ' >/dev/null || fail "an older mate summary must project an empty specialists array: $out"
+  PATH="$fakebin:$PATH" python3 - "$ROOT" "$home" "$primary" "$fixture_root" <<'PY' \
+    || fail "a working specialist must count as active home work without endpoint tasks"
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+root, home, primary, fixture_root = map(Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location("fm_crew", root / "bin/fm_crew.py")
+crew = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(crew)
+record = home / "state/specialists/amigo-tech.json"
+rec = json.loads(record.read_text())
+runner = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
+env = dict(os.environ, FM_HOME=str(home), FM_DATA_OVERRIDE=str(home / "data"))
+command = [str(root / "bin/fm-fleet-snapshot.sh")]
+try:
+    rec.update(status="running", current_job={"id": "live-job", "pid": runner.pid,
+                                             "identity": crew.process_identity(runner.pid)})
+    record.write_text(json.dumps(rec))
+    summary = json.loads(subprocess.check_output([*command, "--secondmate-home-summary"], env=env, timeout=20))
+    assert summary["valid"] is True and summary["state"] == "active_child_work", summary
+    assert summary["active_children"] == [], summary
+    assert summary["specialists"][0]["current_state"]["state"] == "working", summary
+    fleet = json.loads(subprocess.check_output([*command, "--json"], env=env, timeout=20))
+    assert fleet["tasks"] == [], fleet
+    (home / "state/home-summary.json").write_text(json.dumps(summary))
+    env.update(FM_HOME=str(primary), FM_DATA_OVERRIDE=str(primary / "data"), FM_ROOT_OVERRIDE=str(fixture_root))
+    fleet = json.loads(subprocess.check_output([*command, "--json"], env=env, timeout=20))
+    mate = next(r for r in fleet["secondmate_current"]["records"] if r["id"] == "mate")
+    assert mate["current"]["state"] == "active_child_work" and mate["specialists"][0]["current_state"]["state"] == "working", mate
+finally:
+    runner.terminate()
+    runner.wait(timeout=5)
+    rec.update(status="idle", current_job=None)
+    record.write_text(json.dumps(rec))
+env.update(FM_HOME=str(home), FM_DATA_OVERRIDE=str(home / "data"))
+summary = json.loads(subprocess.check_output([*command, "--secondmate-home-summary"], env=env, timeout=20))
+assert summary["valid"] is True and summary["state"] == "no_active_work", summary
+PY
+  pass "working specialists make their home active and idle specialists do not"
+}
+
 test_main_inventory_orphan_and_unstructured_disclosure() {
   local home fakebin out
   home=$(make_home main-inventory)
@@ -1247,6 +1333,7 @@ test_home_summary_reads_remote_mates_retained_records_and_local_only_ships
 test_undated_captain_hold_phrasing_and_aging
 test_hold_buckets_are_total_and_text_blind
 test_checked_rows_never_carry_a_hold_bucket
+test_specialists_are_listed_as_persistent_workers
 test_main_inventory_orphan_and_unstructured_disclosure
 test_normalized_roles_and_plural_blocker_readiness
 test_event_hints_follow_reconciled_current_state

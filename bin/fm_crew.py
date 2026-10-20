@@ -15,8 +15,9 @@ specialist is a record, not an endpoint, and is intentionally persistent.
        "status":"idle"|"running"|"suspended"|"retired","created","jobs":N,
        "suspension":{"since","reason","by"}|null,
        "stop_on_tool_failure":true|false (absent = false),
+       "model":"<route>" (absent = the Deck session's own model),
        "last_suspension":{"since","reason","by","resumed","resumed_by"}?,
-       "current_job":{"id","pid","identity","started","from"?}|null,
+       "current_job":{"id","pid","identity","started","events","from"?}|null,
        "last_job":{"id","brief","started","finished","outcome","result","from"?,"message"?,"stopped"?}|null,
        "memory_summary"}
       Suspension fields are absent until first used; since and resumed are epoch
@@ -217,6 +218,8 @@ def group_alive(pgid) -> bool:
         # the process table below decides.
         pass
     out = subprocess.run(["ps", "-A", "-o", "pgid=,stat="], capture_output=True, text=True)
+    if out.returncode:
+        return True
     for line in out.stdout.splitlines():
         parts = line.split()
         if len(parts) == 2 and parts[0] == str(pgid) and running_stat(parts[1]):
@@ -558,7 +561,7 @@ def specialist_prompt(rec: dict, job: str, jdir: Path, brief: str) -> str:
     memory = Path(rec["memory"])
     projects = ", ".join(rec.get("projects") or []) or "none recorded"
     home_projects = Path(rec["home"]) / "projects"
-    return f"""You are {rec['name']}, a persistent firstmate specialist.
+    return f"""You are {rec['name']}, a persistent firstmate worker - a specialist in one subject.
 Your subject: {rec['subject']}
 Your owner is the firstmate home at {rec['home']}; it hands you jobs and reads your results.
 This conversation persists across jobs: earlier jobs above are your own past work.
@@ -649,7 +652,8 @@ def run_spec_job(args, brief: str, origin, on_prepare=None) -> None:
             jdir / "runner.log",
         )
         rec["status"] = "running"
-        cur = {"id": job, "pid": pid, "started": now(), "identity": process_identity(pid)}
+        cur = {"id": job, "pid": pid, "started": now(), "identity": process_identity(pid),
+               "events": str(jdir / "events.ndjson")}
         if origin:
             cur["from"] = origin
         rec["current_job"] = cur
@@ -688,6 +692,8 @@ def cmd_spec_run(args) -> None:
             "--deadline-secs", str(int(os.environ.get("FM_CREW_DEADLINE_SECS", DEFAULT_DEADLINE))),
             "--hook", specialist_hook(jdir, memory),
         ]
+        if rec.get("model"):
+            argv += ["--model", rec["model"]]
         if rec.get("stop_on_tool_failure"):
             me = [sys.executable, str(Path(__file__).resolve())]
             argv += ["--tool-concurrency", "1",
@@ -711,12 +717,143 @@ def cmd_spec_run(args) -> None:
         sp._finish_locked(rec, args.job, outcome, rc)
 
 
+def session_model(session: str):
+    """The model the specialist's Deck session last ran, from Deck's own session file."""
+    root = Path(os.environ["DECK_STATE"]) if os.environ.get("DECK_STATE") else (
+        Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "deck"
+    )
+    try:
+        data = json.loads((root / "sessions" / f"{session}.json").read_text())
+    except (OSError, ValueError):
+        return None
+    return data.get("model") if isinstance(data, dict) else None
+
+
+def worker_view(rec: dict) -> dict:
+    """The record plus the worker-shaped fields a feed reads: a specialist is a
+    persistent worker that specializes in one subject."""
+    out = dict(rec)
+    out["persistent"] = True
+    out["harness"] = "deck"
+    out["model"] = rec.get("model") or session_model(rec.get("session", ""))
+    out["model_choice"] = rec.get("model")
+    out["effort"] = None
+    cur = rec.get("current_job")
+    if cur:
+        cur = dict(cur)
+        events = cur.get("events")
+        if not events and rec.get("home") and rec.get("name") and cur.get("id"):
+            events = str(Path(rec["home"]) / "state" / "specialists" / rec["name"] / "jobs" / cur["id"] / "events.ndjson")
+            cur["events"] = events
+        cur["last_activity"] = None
+        if events:
+            try:
+                cur["last_activity"] = int(Path(events).stat().st_mtime)
+            except OSError:
+                pass
+        out["current_job"] = cur
+    return out
+
+
+STATE_FOR_STATUS = {"running": "working", "idle": "idle", "suspended": "suspended", "retired": "retired"}
+
+
+def fleet_row(rec: dict) -> dict:
+    """One worker-shaped row for fleet views; reads only, never reconciles."""
+    view = worker_view(rec)
+    name = rec["name"]
+    status = rec.get("status", "idle")
+    sus = rec.get("suspension") or {}
+    last = rec.get("last_job") or {}
+    state = STATE_FOR_STATUS.get(status, status)
+    if status == "suspended":
+        detail = f"suspended: {sus.get('reason', '')}"
+    elif status == "running":
+        cur = rec.get("current_job") or {}
+        if Specialist(home(), name).runner_alive(cur):
+            detail = f"on job {cur.get('id')}"
+        else:
+            state = "stopped"
+            detail = "runner ended; the next specialist command reconciles this job"
+    else:
+        detail = last.get("summary") or "no job yet"
+    return {
+        "id": f"spec-{name}", "name": name, "kind": "specialist", "persistent": True, "subject": rec.get("subject"),
+        "harness": view["harness"], "model": view["model"], "model_choice": view["model_choice"],
+        "effort": view["effort"], "session": rec.get("session"), "status": status,
+        "current_state": {"state": state, "source": "specialist-record",
+                          "detail": detail[:300], "observed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
+        "current_job": view.get("current_job"), "last_job": rec.get("last_job"),
+        "suspension": rec.get("suspension"), "stop_on_tool_failure": bool(rec.get("stop_on_tool_failure")),
+        "actions": {"watch": f"bin/fm-specialist.sh status {name}",
+                    "steer": f"bin/fm-specialist.sh job {name} --brief '<instruction>'",
+                    "captain_message": f"bin/fm-specialist.sh ask {name} --from-captain -- '<text>'",
+                    "model": f"bin/fm-specialist.sh model {name} <route|default>"},
+    }
+
+
+def cmd_spec_rows(args) -> None:
+    """Hidden: worker-shaped rows for every specialist record, read-only."""
+    root = home() / "state" / "specialists"
+    rows = []
+    for path in sorted(root.glob("*.json")):
+        try:
+            rows.append(fleet_row(json.loads(path.read_text())))
+        except (OSError, ValueError, KeyError):
+            continue
+    print(json.dumps(rows, sort_keys=True))
+
+
+def cmd_spec_stop(args) -> None:
+    """Stop the running job and record it as interrupted."""
+    h = home()
+    sp = Specialist(h, args.name)
+    with locked(sp.lock_path):
+        rec = sp.record()
+        cur = rec.get("current_job")
+        if rec.get("status") != "running" or not cur:
+            die(f"specialist {args.name!r} is not on a job", 3)
+        pid = cur.get("pid")
+        if sp.runner_alive(cur):
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(pid, signal.SIGTERM)
+            if not wait_for(lambda: not group_alive(pid), 10):
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(pid, signal.SIGKILL)
+                if not wait_for(lambda: not group_alive(pid), 5):
+                    die(f"job {cur['id']} process group {pid} is still running; stop could not be confirmed", 1)
+        elif group_alive(pid):
+            die(f"job {cur['id']} runner ended; process group ownership could not be confirmed", 1)
+        sp._finish_locked(rec, cur["id"], "interrupted", None)
+    print(f"stopped job {cur['id']} for specialist {args.name} (interrupted)")
+
+
+def cmd_spec_model(args) -> None:
+    h = home()
+    sp = Specialist(h, args.name)
+    sp.reconcile()
+    route = args.route.strip()
+    if not route or any(c.isspace() for c in route):
+        die("give one model route, or default to clear the choice")
+    with locked(sp.lock_path):
+        rec = sp.record()
+        if rec.get("status") == "retired":
+            die(f"specialist {args.name!r} is retired", 3)
+        if route == "default":
+            rec.pop("model", None)
+        else:
+            rec["model"] = route
+        sp.save(rec)
+    shown = "the session's own model" if route == "default" else route
+    print(f"specialist {args.name}: next jobs run on {shown}")
+
+
 def cmd_spec_status(args) -> None:
     h = home()
     sp = Specialist(h, args.name)
     rec = sp.reconcile()
     if args.json:
-        print(json.dumps(rec, sort_keys=True))
+        print(json.dumps(worker_view(rec), sort_keys=True))
         return
     last = rec.get("last_job") or {}
     print(f"specialist {rec['name']} ({rec['status']}) - {rec['subject']}")
@@ -758,7 +895,7 @@ def cmd_spec_list(args) -> None:
             continue
         out.append(rec)
     if args.json:
-        print(json.dumps(out, sort_keys=True))
+        print(json.dumps([worker_view(r) for r in out], sort_keys=True))
         return
     for rec in out:
         last = (rec.get("last_job") or {}).get("finished")
@@ -1505,6 +1642,18 @@ def main() -> None:
     s.add_argument("--by", default="firstmate")
     s.set_defaults(fn=cmd_spec_suspend)
 
+    s = sub.add_parser("stop")
+    s.add_argument("name")
+    s.set_defaults(fn=cmd_spec_stop)
+
+    s = sub.add_parser("_spec-rows")
+    s.set_defaults(fn=cmd_spec_rows)
+
+    s = sub.add_parser("model")
+    s.add_argument("name")
+    s.add_argument("route")
+    s.set_defaults(fn=cmd_spec_model)
+
     s = sub.add_parser("configure")
     s.add_argument("name")
     s.add_argument("--stop-on-tool-failure", choices=["on", "off"], required=True)
@@ -1558,7 +1707,7 @@ def main() -> None:
     args = p.parse_args(argv)
     if args.cmd == "ask":
         args.text = text
-    if args.cmd not in ("_spec-check", "_result-check", "group-status", "group-list"):
+    if args.cmd not in ("_spec-check", "_result-check", "_spec-rows", "group-status", "group-list"):
         refuse_gate()
     if args.cmd in ("_spec-run", "_group-run"):
         os.environ["FM_HOME"] = args.home

@@ -125,7 +125,7 @@ Route by the nature of the work against each registered secondmate scope, not by
 Send in-scope work to the fitting secondmate unless it is blocked or the captain redirects it; its marked replies return through its status or a referenced document, never by reading its chat.
 The exception is a small single-repo ship or scout in a project this home has cloned: spawn it directly and send the owning secondmate a one-line FYI through `fm-send`.
 Large or multi-step domain work, and projects cloned only in a secondmate's home, still go to the secondmate; if no scope fits, use the main home or discuss creating a persistent secondmate.
-Pick the worker shape by how the work recurs: a plain ship or scout for one-off work; a specialist (`bin/fm-specialist.sh`) for recurring investigation that should accumulate subject knowledge; a secondmate when the work needs its own backlog, supervision, and judgment.
+Pick the worker shape by how the work recurs: a plain ship or scout for one-off work; a persistent worker, called a specialist (`bin/fm-specialist.sh`), for recurring investigation that should accumulate one subject's knowledge - it is treated like any worker except that it persists between jobs, so finished-work cleanup never retires it; a secondmate when the work needs its own backlog, supervision, and judgment.
 For parallel independent investigation angles on one question, such as several adversarial reviews of one PR, use `bin/fm-group.sh`; its header owns results and cleanup, and neither groups nor specialist jobs authorize project changes.
 For one-off operational work, take the simplest direct path, and build no wrapper, control plane, custom verifier, or automation unless that path hits a concrete blocker or repeated need.
 
@@ -151,13 +151,13 @@ A semantic conflict a worker reports is yours to decide or escalate, never to ha
 ### Dispatch and supervision handoff
 
 For ships, scouts, and secondmates, write the brief under section 11, then spawn only through `bin/fm-spawn.sh`; it must resolve an isolated task worktree or secondmate home distinct from the primary checkout, and a failed isolation assertion stops the task.
-Specialist jobs and task groups use only their owning entrypoints named at intake above, not the ship/scout endpoint lifecycle.
+Specialist jobs and task groups use their direct-run lifecycle, not the ship/scout endpoint lifecycle; their headers named at intake own entrypoints.
 When the tasks-axi backlog gate applies, the spawn moves the work item to In flight and refuses work this home has no item for.
 After spawning, confirm the worker is processing the brief.
 
-Steer a worker with ordinary text through fail-closed `fm-send`, which records it in the task's durable steering inbox (`bin/fm-send.sh` owns the typed-plane carve-outs).
+Steer a worker with ordinary text through fail-closed `fm-send`; its header owns delivery and selector-specific routing.
 After an unconfirmed remote secondmate delivery, only the exact `FM_PENDING_REPLY_EXISTING_CORR=<id>` resend command `fm-send` prints is safe.
-When a steer answers an open keyed decision or blocker, pass `--resolve-key` so the answer closes that record.
+When an endpoint-backed steer answers an open keyed decision or blocker, pass `--resolve-key` so the answer closes that record.
 Never use `fm-send` for interrupt, exit, or other lifecycle control, because that text becomes chat; use `bin/fm-control.sh`'s allowlisted task verbs, which never tear down or discard anything ([`docs/agent-control.md`](docs/agent-control.md)).
 `bin/fm-pending-reply-lib.sh` owns correlation, recovery, and escalation for marked secondmate requests.
 

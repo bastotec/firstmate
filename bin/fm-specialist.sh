@@ -23,6 +23,8 @@
 #   fm-specialist.sh suspend <name> --reason "<plain reason>" [--since <UTC like 2026-10-17T10:40:02Z>] [--by <who>]
 #   fm-specialist.sh resume <name> [--by <who>]
 #   fm-specialist.sh configure <name> --stop-on-tool-failure on|off
+#   fm-specialist.sh model <name> <route|default>
+#   fm-specialist.sh stop <name>
 #
 # `job` starts one detached Deck turn and returns; when it ends the home gets a
 # `check: specialist <name> finished job <job> (<outcome>) - result: <path>`
@@ -45,6 +47,31 @@
 # mate's home from the primary home: a local mate through its recorded home=,
 # a remote one through bin/fm-on.sh (where --text-file and --wait are refused;
 # poll status/result instead). Omit --mate or use --mate primary for the current home.
+# `model` sets the Deck model route its next jobs run on; default clears the
+# choice so the session keeps its own model. It does not switch a running turn.
+# status --json and list --json add persistent, harness (deck), model (the chosen
+# route or the session's last model, null when unavailable), model_choice (the
+# explicit choice or null), effort (null), and on a running job current_job.events
+# (its live Deck event stream) and current_job.last_activity (that stream's last
+# write, epoch seconds, or null when unavailable). Older jobs without events
+# derive the stream path from their home, name, and job id when available.
+# Session model lookup uses DECK_STATE, else XDG_STATE_HOME/deck, else
+# ~/.local/state/deck; missing, unreadable, or non-object sessions yield null.
+# bin/fm-fleet-snapshot.sh's header owns the separate read-only fleet row contract.
+# `stop` sends TERM to the owned runner's process group, waits up to 10 seconds
+# for all non-zombie members, then sends KILL if needed and waits up to 5 more.
+# It holds the specialist lifecycle lock through job selection, termination,
+# and recording interrupted, so reconciliation and new jobs cannot race it.
+# An unproven stop refuses without recording completion; stopping without a
+# running job refuses with exit 3.
+# Its worker id is spec-<name>: bin/fm-send.sh spec-<name> [--from-captain] -- <text>
+# starts a job (a captain ask with --from-captain); other send options refuse.
+# It is a new job, not an inbox steer into a running turn, so normal busy,
+# suspended, and retired job refusals still apply.
+# bin/fm-control.sh spec-<name> model <route|default> sets the next-job choice;
+# interrupt or exit delegates to stop. relaunch and recover-missing succeed
+# without restarting anything, even during a job; --model sets the next-job
+# choice, and other flags have no effect. Other verbs refuse.
 # `configure --stop-on-tool-failure on` opts later jobs into stopping at the first
 # failed tool call; `off` (the default) restores normal behavior. Configure before
 # launching a job; it does not change a Deck run already in progress and refuses
@@ -69,7 +96,7 @@
 # Resume returns a suspended specialist to idle and retains the ended suspension;
 # it refuses any other state with exit 3. Retired or running specialists also
 # refuse job and ask with exit 3.
-# Status, history, list, job, ask, result, suspend, resume, configure, and retire reconcile
+# Status, history, list, job, ask, result, suspend, resume, configure, model, and retire reconcile
 # interrupted runners using bin/fm_crew.py's liveness rules and emit completion
 # wakes; they are not read-only.
 # --wait exits nonzero on failure or timeout (default 3660 seconds); a timeout
@@ -119,7 +146,7 @@ route_to_mate() {  # <command> <args...>
 
 case "${1:-}" in
   ask|result|status|history) route_to_mate "$@" ;;
-  create|job|list|retire|suspend|resume|configure) exec python3 "$SCRIPT_DIR/fm_crew.py" "$@" ;;
+  create|job|list|retire|suspend|resume|configure|model|stop) exec python3 "$SCRIPT_DIR/fm_crew.py" "$@" ;;
   -h|--help|'') awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; [ -n "${1:-}" ] ;;
   *) printf 'fm-specialist.sh: unknown command: %s\n' "$1" >&2; exit 2 ;;
 esac

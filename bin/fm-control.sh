@@ -28,6 +28,10 @@
 # NO generic raw-key entry point here; fm-send remains the only way to send an
 # agent something to read.
 #
+# The verb effects and endpoint checks below apply to endpoint-backed tasks.
+# A spec-<name> selector with a specialist record in this home delegates first
+# to bin/fm-specialist.sh; its header owns those direct-job verb semantics.
+#
 #   interrupt  Deliver the harness's verified interrupt sequence. The agent
 #              keeps running. Postcondition: delivery succeeded, the endpoint
 #              still exists, and the agent is still alive where the backend can
@@ -205,8 +209,9 @@
 # same need for every adapter because the brief on disk, not a harness-private
 # session, is the durable instruction.
 #
-# Targeting is EXACT: only a bare task id with a state/<id>.meta record in
-# THIS home is accepted, and the record must pass the shared endpoint-identity
+# Targeting is EXACT: apart from the specialist selector above, only a bare
+# task id with a state/<id>.meta record in THIS home is accepted, and the record
+# must pass the shared endpoint-identity
 # validation (bin/fm-backend.sh's fm_backend_validate_task_endpoint). A legacy
 # fm-<id> label, an explicit session:window endpoint, and a bare window name
 # are all refused - a lifecycle command delivered to the wrong endpoint is far
@@ -296,6 +301,43 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
   echo "error: state dir '$STATE' is missing; fm-control cannot resolve tasks for FM_HOME '$FM_HOME'" >&2
   exit 1
 }
+
+# Specialist selectors delegate before endpoint routing; the CLI header owns
+# their direct-job contract.
+case "${1:-}" in
+  spec-*)
+    if [ -f "$STATE/specialists/${1#spec-}.json" ]; then
+      fm_spec_name=${1#spec-}
+      fm_spec_verb=${2:-}
+      shift 2 2>/dev/null || shift $#
+      case "$fm_spec_verb" in
+        model)
+          [ $# -ge 1 ] || { echo "error: model needs a route" >&2; exit 2; }
+          exec "$SCRIPT_DIR/fm-specialist.sh" model "$fm_spec_name" "$1"
+          ;;
+        interrupt|exit)
+          exec "$SCRIPT_DIR/fm-specialist.sh" stop "$fm_spec_name"
+          ;;
+        relaunch|recover-missing)
+          while [ $# -gt 0 ]; do
+            case "$1" in
+              --model) [ $# -ge 2 ] || { echo "error: --model needs a route" >&2; exit 2; }
+                "$SCRIPT_DIR/fm-specialist.sh" model "$fm_spec_name" "$2" || exit; shift 2 ;;
+              --model=*) "$SCRIPT_DIR/fm-specialist.sh" model "$fm_spec_name" "${1#--model=}" || exit; shift ;;
+              *) shift ;;
+            esac
+          done
+          echo "specialist spec-$fm_spec_name has no process between jobs; its next job starts it"
+          exit 0
+          ;;
+        *)
+          echo "error: $fm_spec_verb does not apply to specialist spec-$fm_spec_name (model, interrupt, relaunch, recover-missing)" >&2
+          exit 2
+          ;;
+      esac
+    fi
+    ;;
+esac
 
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"

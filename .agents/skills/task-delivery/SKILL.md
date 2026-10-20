@@ -75,6 +75,7 @@ The cleanup and retry instructions below apply only to workers not excluded unde
 
 `AGENTS.md` section 7 records the captain's standing instruction that the mate who created a worker cleans it up once its work is done.
 Run this sweep when a ship lands, when a scout completes, and on every heartbeat, over this home's own endpoint-backed direct reports and endpoint-bound leftover records only, never another home's, and never a secondmate, which retires only on an explicit decision.
+A specialist is a persistent worker, so this sweep never retires it; the [fleet snapshot header](../../../bin/fm-fleet-snapshot.sh) owns its fleet visibility and the [specialist CLI header](../../../bin/fm-specialist.sh) owns messaging, model switching, and explicit retirement.
 The watcher independently runs [`bin/fm-idle-sweep.sh`](../../../bin/fm-idle-sweep.sh), whose header owns automated cleanup and retry eligibility, first-mate handoffs, repeat suppression, cadence, and second-mate audit.
 Handle its handoffs under the stopped-worker rule below, never through a captain hold.
 

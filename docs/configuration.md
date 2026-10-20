@@ -214,7 +214,8 @@ Every spawn records `backend=stream`, `endpoint_task_id=` (the cleanup binding b
 The [`fm-remote-control-lib.sh` header](../bin/fm-remote-control-lib.sh) owns a remote secondmate's parent-record endpoint binding.
 The session-start and watcher-run secondmate recovery paths use `fm_backend_agent_state`, whose comment in `bin/fm-backend.sh` owns its state contract; [Secondmate lifecycle](stream-backend.md#secondmate-lifecycle) owns automatic recovery behavior and limits.
 
-This paragraph is the single owner of the ordinary task-selector vocabulary for `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh`.
+This paragraph is the single owner of the ordinary endpoint-task selector vocabulary for `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh`.
+The [`fm-send.sh` header](../bin/fm-send.sh) owns the specialist-selector exception before endpoint routing.
 A selector containing `:` is an explicit `<hub-tag>:<endpoint-id>` escape hatch.
 Otherwise an exact task id matching `state/<id>.meta` wins before the legacy `fm-<id>` label fallback, so task ids that start with `fm-` route to their own metadata.
 A metadata-routed selector returns the recorded target (`window=`) and carries secondmate-marker and recorded-harness context; explicit escape hatches do not.

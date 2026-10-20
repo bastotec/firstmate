@@ -14,6 +14,9 @@
 #   "successful" send to the wrong endpoint is worse than a loud failure. An
 #   explicit target no record names must be a "<hub-tag>:<32-hex id>" on this
 #   home's configured stream hub, and must then verify live.
+# A spec-<name> selector with a specialist record in this home delegates to the
+# direct-job contract in bin/fm-specialist.sh's header, not either endpoint
+# plane below. It is resolved before endpoint task selectors.
 # The reserved `primary` selector, only when state/primary.meta is absent,
 # publishes plain text to a live Deck chat host instead of either task plane
 # below: fm-send.sh primary <text...> (no options or native-key handling).
@@ -334,6 +337,32 @@ if [ ! -d "$STATE" ]; then
   echo "error: state dir '$STATE' is missing; fm-send cannot resolve targets for FM_HOME '$FM_HOME'" >&2
   exit 1
 fi
+
+# Specialist selectors delegate before endpoint routing; the CLI header owns
+# their direct-job contract.
+case "${1:-}" in
+  spec-*)
+    if [ -f "$STATE/specialists/${1#spec-}.json" ]; then
+      fm_spec_name=${1#spec-}
+      shift
+      fm_spec_captain=0
+      fm_spec_text=()
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --from-captain) fm_spec_captain=1; shift ;;
+          --) shift; fm_spec_text+=("$@"); break ;;
+          -*) echo "error: $1 does not apply to specialist spec-$fm_spec_name" >&2; exit 2 ;;
+          *) fm_spec_text+=("$1"); shift ;;
+        esac
+      done
+      [ "${#fm_spec_text[@]}" -gt 0 ] || { echo "error: no message for specialist spec-$fm_spec_name" >&2; exit 2; }
+      if [ "$fm_spec_captain" = 1 ]; then
+        exec "$SCRIPT_DIR/fm-specialist.sh" ask "$fm_spec_name" --from-captain -- "${fm_spec_text[*]}"
+      fi
+      exec "$SCRIPT_DIR/fm-specialist.sh" job "$fm_spec_name" --brief "${fm_spec_text[*]}"
+    fi
+    ;;
+esac
 
 # A relaunch holds metadata through restart and may move the endpoint, so
 # waiting for the lock alone is insufficient; retry must resolve afresh.
