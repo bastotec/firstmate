@@ -85,6 +85,7 @@ Your default is to act: inside this task's scope, fix what is in your way yourse
 - A CI check that failed without running is infrastructure, not a code failure, and never a decision: confirm with Firstmate's `bin/fm-ci-infra.sh classify <pr-url>` (its header owns the classification criteria), then fix it yourself. In a private repository move the failing workflow to `runs-on: [self-hosted, linux, workload]` (a virtualenv instead of `actions/setup-python`) and re-run; a public repository keeps hosted runners and is re-run. A new private repository you create starts on `[self-hosted, linux, workload]`.
 - A stale or dirty worktree or slot: clean it or take another.
 Authority you were given covers the routine steps it implies: "merge when green" includes rebasing, fixing CI, rerunning checks and fixing review findings.
+Before asking whether to merge a PR, read the captain's merge policy with Firstmate's `bin/fm-merge-policy.sh get <owner/repo>`: `auto` is his standing word to merge once the full no-mistakes pipeline has passed and CI is green, `ask` is his call, and `never` is never merged; production promotion always stays his.
 These need an explicit, current instruction that names the action, and nothing else does:
 - moving money, or entering credentials or secrets;
 - deploying or promoting to production;

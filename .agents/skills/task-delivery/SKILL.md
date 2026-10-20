@@ -59,6 +59,7 @@ For PR-based ship tasks, the ready signal depends on mode: `no-mistakes` reports
 Run `bin/fm-pr-check.sh <id> <PR url>` with the URL copied from that ready signal - it records `pr=` and the forge's `pr_head=` when available in the task's meta and arms the watcher's merge poll.
 Tell the captain the PR's full `https://...` URL copied from the worker's ready line or the task's `pr=` metadata, a concise outcome summary, and the no-mistakes risk level when applicable.
 A captain instruction to merge is explicit authority; the standing-authority paths are owned by `AGENTS.md` section 7's "Selected delivery path and merge authority".
+Read the repository's merge policy first with `bin/fm-merge-policy.sh get <owner/repo>`: in an `auto` repository merge the green, pipeline-passed PR through `bin/fm-pr-merge.sh` without a card, raise one card only for `ask`, and leave a `never` repository's PR to the captain.
 After an autonomous merge, give the captain a one-line full-URL or local-main outcome.
 An auto-land `check:` wake from `bin/fm-autoland.sh` reports merges, deploy outcomes, and held green PRs with their reasons; a reported PR is yours to decide in the same turn rather than leave waiting on its owner.
 

@@ -41,6 +41,7 @@ config/
   deck-mcp.json           optional Deck MCP servers ("Harness support")
   primary-split           optional presence flag: conversation (captain thread) and inner monologue (supervisor); inherited (bin/fm-config-inherit-lib.sh); first mate: bin/fm_primary_chat.py header; second mate: bin/fm-captain-lane.sh header
   model-policy.json       home-local route policy for in-place switches (bin/fm_model_switch.py owns validation and policy semantics)
+  merge-policy.json       the captain's per-repository merge policy (auto, ask, never); inherited; bin/fm-merge-policy.sh header owns shape and semantics
   power-host              optional ssh alias for fleet quota reads (bin/fm_report.py owns default and bridge flow)
   shared-skills           optional skills repo shipped to connected machines; primary home only (bin/fm-machine.sh header)
   vnc/<machine>.password  mode-600 VNC password per machine; primary home only (bin/fm-machine-vnc.sh header)
@@ -624,6 +625,7 @@ See [`docs/examples/autoland.json`](examples/autoland.json) for a starting point
 ```
 
 Every entry needs `repo` and at least one of `project` or `authority`, repository names must be unique, and each `hook` name may belong to one entry only.
+A repository or owner entry in `config/merge-policy.json` (`bin/fm-merge-policy.sh`) decides first: `auto` is standing authority and `ask` or `never` stop auto-merge; under the policy's bare default the rules below apply, and `never` always stops it.
 Without `authority`, the repository merges only while its `project` entry carries `+yolo`, read every tick, so dropping `+yolo` stops auto-merge.
 A nonempty `authority` cites a real captain ruling granting standing merge authority, as for the Firstmate repository itself, and removing `+yolo` alone does not revoke it.
 The PR body's no-mistakes attestation must name the current head with review and document `completed` and test `completed` or `skipped` when `attestation: true` or the project is registered as `no-mistakes` or `no-mistakes-prod-only`.

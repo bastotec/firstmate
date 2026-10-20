@@ -345,6 +345,42 @@ test_authority_follows_the_registry() {
   pass "fm-autoland: registry-backed authority needs +yolo at tick time"
 }
 
+test_merge_policy_decides_authority() {
+  local home node out
+  home=$(make_home policy '- proj [no-mistakes] - a project (added 2026-01-01)')
+  write_config "$home" '{"repos":[{"repo":"o/r","project":"proj","attestation":true}]}'
+  node=$(pr_node "$HEAD_A")
+  write_gql "$home" "$MAIN_1" "$node"
+  write_live "$home" "$node"
+  printf '%s\n' '{"owners":{"o":"auto"}}' > "$home/config/merge-policy.json"
+  out=$(tick "$home")
+  assert_contains "$out" "merged https://github.com/o/r/pull/7" "an auto owner policy did not grant merge authority"
+
+  home=$(make_home policy-ask)
+  write_config "$home" "$CONFIG_AUTH"
+  write_gql "$home" "$MAIN_1" "$node"
+  write_live "$home" "$node"
+  printf '%s\n' '{"repos":{"O/R":{"policy":"ask"}}}' > "$home/config/merge-policy.json"
+  out=$(tick "$home")
+  [ "$(merges "$home")" = 0 ] || fail "an ask repository was merged despite its cited authority"
+
+  home=$(make_home policy-never-default)
+  write_config "$home" "$CONFIG_AUTH"
+  write_gql "$home" "$MAIN_1" "$node"
+  write_live "$home" "$node"
+  printf '%s\n' '{"default":"never"}' > "$home/config/merge-policy.json"
+  out=$(tick "$home")
+  [ "$(merges "$home")" = 0 ] || fail "a never default was merged"
+
+  home=$(make_home policy-default-keeps-ruling)
+  write_config "$home" "$CONFIG_AUTH"
+  write_gql "$home" "$MAIN_1" "$node"
+  write_live "$home" "$node"
+  out=$(tick "$home")
+  assert_contains "$out" "merged https://github.com/o/r/pull/7" "the ask default revoked a cited per-repository ruling"
+  pass "fm-autoland: the captain's merge policy decides authority, and its bare default keeps earlier rulings"
+}
+
 test_other_base_and_other_repo_are_ignored() {
   local home out
   home=$(make_home ignored)
@@ -359,7 +395,7 @@ owned_bin() {
   local tmpbin="$1/bin" lib
   mkdir -p "$tmpbin"
   cp "$AUTOLAND" "$tmpbin/"
-  for lib in fm-timeout-lib.sh fm-pr-lib.sh fm-line-cap-lib.sh fm-check-lib.sh fm-project-mode.sh fm-fleet-sync.sh fm-wake-lib.sh fm-machine-rules.sh; do
+  for lib in fm-timeout-lib.sh fm-pr-lib.sh fm-line-cap-lib.sh fm-check-lib.sh fm-project-mode.sh fm-fleet-sync.sh fm-wake-lib.sh fm-machine-rules.sh fm-merge-policy.sh; do
     ln -s "$ROOT/bin/$lib" "$tmpbin/$lib"
   done
   cat > "$tmpbin/fm-pr-merge.sh" <<'SH'
@@ -1128,6 +1164,7 @@ test_blocking_reasons_are_named
 test_malformed_attestations_do_not_interrupt_the_batch
 test_refused_merge_is_reported
 test_authority_follows_the_registry
+test_merge_policy_decides_authority
 test_other_base_and_other_repo_are_ignored
 test_task_owned_pr_uses_fm_pr_merge
 test_machine_merge_rule_applies_to_both_paths

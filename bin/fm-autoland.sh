@@ -171,9 +171,20 @@ config_entries() {  # prints repo US project US authority US method US attestati
     ((.attestation // false) | tostring), (.max_risk // "low"), (.hook // "")] | join("\u001f")' "$CONFIG"
 }
 
-# 0 when the entry carries standing merge authority right now.
-entry_authorized() {  # <project> <authority>
-  local project=$1 authority=$2 posture
+# 0 when the entry carries standing merge authority right now. A repository or
+# owner entry in the captain's merge policy (bin/fm-merge-policy.sh) decides
+# first: auto is standing authority, ask and never are not, and an unreadable
+# policy is not. Under the policy's bare default the entry's own authority or
+# +yolo project decides, so an earlier per-repository ruling stands; never
+# always blocks.
+entry_authorized() {  # <repo> <project> <authority>
+  local repo=$1 project=$2 authority=$3 posture policy
+  policy=$("$SCRIPT_DIR/fm-merge-policy.sh" get "$repo" 2>/dev/null) || return 1
+  case "$policy" in
+    'auto default'|'ask default') ;;
+    auto\ *) return 0 ;;
+    *) return 1 ;;
+  esac
   [ -n "$authority" ] && return 0
   [ -n "$project" ] || return 1
   posture=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-project-mode.sh" "$project" 2>/dev/null) || return 1
@@ -697,7 +708,7 @@ tick() {  # <entries-file> <response-file>
 $entry
 EOF
     [ "$(printf '%s' "$rec" | jq -r '.base == .default')" = true ] || continue
-    entry_authorized "$project" "$authority" || continue
+    entry_authorized "$repo" "$project" "$authority" || continue
     attest=$(entry_attestation "$project" "$attest")
     decide "$rec" "$attest" "$max_risk"
     case "$VERDICT" in
@@ -779,7 +790,8 @@ action_status() {
     printf 'config: %s\n' "${CONFIG_ERROR:-unreadable}"
   else
     while IFS=$US read -r repo project authority method attest max_risk hook; do
-      if entry_authorized "$project" "$authority"; then auth=merges; else auth="no merge authority (project $project is not +yolo)"; fi
+      if entry_authorized "$repo" "$project" "$authority"; then auth=merges
+      else auth="no merge authority (merge policy: $("$SCRIPT_DIR/fm-merge-policy.sh" get "$repo" 2>/dev/null || echo unreadable); project ${project:-none} is not +yolo)"; fi
       attest=$(entry_attestation "$project" "$attest")
       printf '%s: %s; method=%s attestation=%s max_risk=%s hook=%s\n' \
         "$repo" "$auth" "$method" "$attest" "$max_risk" "${hook:-none}"

@@ -116,6 +116,8 @@
 #
 # A merge this machine's ~/.agents/AGENTS.md asks the captain about
 # (bin/fm-machine-rules.sh check merge) is refused without --attended-override.
+# A GitHub repository whose merge policy (bin/fm-merge-policy.sh) is never is
+# refused without --attended-override as well; an unreadable policy refuses.
 #
 # Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [-- <extra forge merge args>]
 #
@@ -193,6 +195,16 @@ done
 if [ "${#ALLOW_RED[@]}" -gt 0 ] && [ "$PROVIDER" = gitlab ]; then
   echo "error: --allow-red does not apply to GitLab, where a merge already requires the head pipeline to have succeeded" >&2
   exit 2
+fi
+if [ "$PROVIDER" = github ] && [ "$ATTENDED_OVERRIDE" != true ]; then
+  if ! MERGE_POLICY=$("$SCRIPT_DIR/fm-merge-policy.sh" get "$PR_OWNER/$PR_REPO" 2>&1); then
+    echo "error: refusing to merge $URL: its merge policy cannot be read: $MERGE_POLICY" >&2
+    exit 1
+  fi
+  if [ "${MERGE_POLICY%% *}" = never ]; then
+    echo "error: refusing to merge $URL: the captain's merge policy for $PR_OWNER/$PR_REPO is never (bin/fm-merge-policy.sh); he merges it himself" >&2
+    exit 1
+  fi
 fi
 
 caller_has_merge_method() {
