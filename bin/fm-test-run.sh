@@ -677,6 +677,8 @@ portable_serial_weight_hints() {
 # (2026-10-21); all serial shards passed, but other checks failed.
 # fm-worker-keepalive and fm-spawn-serial are local measurements (15.9 s and
 # 10.4 s on macOS, 2026-10-22) until a green CI run's timing artifact replaces them.
+# fm-stall-record was measured in green serial shard 5 of run 39401026973
+# (2026-10-20); that run failed other checks.
 # The five tests/fm-watch-triage*.test.sh suites were one 694233 ms script
 # before run 37413095868; their hints start from each suite's share of that,
 # from the per-case output timestamps of run 37401433503's serial shard 1.
@@ -791,6 +793,7 @@ tests/fm-spawn-dispatch-profile.test.sh 167032
 tests/fm-spawn-pool-base-freshen.test.sh 85868
 tests/fm-spawn-serial.test.sh 10400
 tests/fm-spawn-worktree-settle.test.sh 11165
+tests/fm-stall-record.test.sh 15859
 tests/fm-startup-memory-budget.test.sh 17405
 tests/fm-startup-network.test.sh 66915
 tests/fm-stat-shadowing.test.sh 64
