@@ -222,19 +222,38 @@ def main():
         phase = 'implementation'
     signature = episode_signature(identity, phase, pending, run, step, gate_since)
     last_run = old.get('last_run_seen')
+    last_run_id = old.get('last_run_id', '')
+    last_run_head = old.get('last_run_head', '')
     if not epoch(last_run, args.now):
         last_run = None
-    for key in ('run-created', 'last-run-created'):
+        last_run_id = last_run_head = ''
+    for key in ('last-run-created', 'run-created'):
         if key == 'run-created' and not run:
             continue
         try:
             stamp = int(evidence(args.current, key))
         except ValueError:
             continue
-        if epoch(stamp, args.now):
-            last_run = max(last_run or 0, stamp)
-    since = old.get('since') if old.get('signature') == signature else None
-    if old.get('signature') != signature or not epoch(since, old.get('observed_at', 0)):
+        if not epoch(stamp, args.now):
+            continue
+        run_id = run if key == 'run-created' else evidence(args.current, 'last-run')
+        run_head = evidence(args.current, 'last-run-head') if key == 'last-run-created' else ''
+        same_run = bool(run_id and last_run_id and (
+            run_id == last_run_id or (
+                (run_id.startswith('ledger-') or last_run_id.startswith('ledger-'))
+                and run_head and run_head == last_run_head
+                and last_run is not None and stamp // 60 == last_run // 60)))
+        if same_run:
+            if last_run_id.startswith('ledger-') and not run_id.startswith('ledger-'):
+                last_run_id = run_id
+            last_run_head = run_head or last_run_head
+        elif stamp >= (last_run or 0):
+            last_run, last_run_id, last_run_head = stamp, run_id, run_head
+    continuing = (old.get('signature') == signature or (
+        phase == 'needs-decision' and old.get('phase') == phase and same_parked_run
+        and set(pending).issubset(old.get('questions', []))))
+    since = old.get('since') if continuing else None
+    if not continuing or not epoch(since, old.get('observed_at', 0)):
         since = args.now if phase else None
         if phase and not (phase == 'needs-decision' and same_parked_run):
             since = initial_since(phase, meta, timing_meta, pending,
@@ -244,7 +263,8 @@ def main():
     age = args.now - since if since is not None else None
     threshold = 3600 if phase == 'needs-decision' else 7200
     stalled = bool(phase and age is not None and age > threshold)
-    episode = digest(f'{signature}:{since}') if phase else None
+    episode = (old.get('episode') if continuing and since == old.get('since')
+               else digest(f'{signature}:{since}')) if phase else None
     reported = episode if episode in delivered else old.get('reported')
     if (phase == 'needs-decision' and not old.get('episode') and parked_since
             and (gate_since is None or parked_since >= gate_since)
@@ -258,6 +278,7 @@ def main():
     result = dict(version=1, identity=identity, observed_at=args.now,
                   signature=signature, since=since, phase=phase or None,
                   age_seconds=age, last_run_seen=last_run,
+                  last_run_id=last_run_id, last_run_head=last_run_head,
                   seconds_since_last_run=args.now-last_run if last_run else None,
                   state='stalled' if stalled else 'observing' if phase else 'ineligible',
                   questions=pending if phase == 'needs-decision' else [],

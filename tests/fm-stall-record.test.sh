@@ -185,6 +185,13 @@ assert r['since'] == 10000 and r['episode'] == original_episode and r['notify']
 call(14003, parked, questions, '--ack')
 r = call(15000, parked, question_b + '\n' + question_a)
 assert r['since'] == 10000 and r['episode'] == original_episode and not r['notify']
+r = call(15000, parked, question_b)
+assert r['since'] == 10000 and r['episode'] == original_episode and not r['notify']
+before = record.read_bytes()
+r = call(20000, parked, question_b, mode='')
+assert r['since'] == 10000 and r['episode'] == original_episode and not r['notify']
+assert record.read_bytes() == before
+assert not call(15000, parked, question_b)['notify']
 call(15001, parked, '')
 r = call(15002, parked, 'new\tneeds-decision\tQuestion C?')
 assert r['since'] == 15002 and r['state'] == 'observing' and not r['notify']
@@ -196,6 +203,38 @@ r = call(23001, parked, questions)
 assert r['since'] == 19000 and r['notify']
 gate.unlink()
 record.unlink()
+for current in (parked, 'state: parked · source: status-log · waiting'):
+    r = call(30000, current, questions)
+    since, original_episode = r['since'], r['episode']
+    r = call(34001, current, question_b)
+    assert r['since'] == since and r['episode'] == original_episode and r['notify']
+    assert not call(34002, current, question_b, '--ack')['notify']
+    assert not call(38000, current, question_b)['notify']
+    r = call(38001, current, question_b + '\nnew\tneeds-decision\tQuestion D?')
+    assert r['since'] == 38001 and not r['notify']
+    assert call(42002, current, question_b + '\nnew\tneeds-decision\tQuestion D?')['notify']
+    record.unlink()
+head = 'a' * 40
+ledger = working + f' · evidence: last-run=ledger-{head}; last-run-created=21960; last-run-head={head}'
+primary = working + f' · evidence: last-run=terminal-run; last-run-created=22000; last-run-head={head}'
+replacement = primary.replace(working, 'state: working · source: run-step · resumed') + \
+    '; run=terminal-run; step=review; run-created=22000; implementation=replacement'
+for first, second, since in ((ledger, primary, 21960), (primary, ledger, 22000),
+                             (ledger, replacement, 21960), (replacement, ledger, 22000)):
+    r = call(30000, first)
+    original_episode = r['episode']
+    assert r['since'] == since and r['notify']
+    call(30001, first, mode='--ack')
+    for now, current in ((30002, second), (30003, first), (30004, second)):
+        r = call(now, current)
+        assert r['since'] == since and r['episode'] == original_episode and not r['notify']
+    before = record.read_bytes()
+    assert not call(40000, second, mode='')['notify']
+    assert record.read_bytes() == before
+    newer = primary.replace('terminal-run;', 'another-terminal-run;').replace('22000;', '22020;')
+    r = call(40001, newer)
+    assert r['since'] == 22020 and r['episode'] != original_episode and r['notify']
+    record.unlink()
 record.symlink_to(root/'untouched')
 p = subprocess.run([sys.executable, cli, str(record), str(meta), working, '', '--observe'], capture_output=True)
 assert p.returncode != 0 and not (root/'untouched').exists()
@@ -322,7 +361,7 @@ SH
   pass "successful publication interrupted before acknowledgment reconciles on $recovery recovery"
 done
 
-for transition in validation unknown new-question; do
+for transition in validation completed-validation unknown new-question; do
   dir=$(new_case "stall-admission-$transition")
   current='state: working · source: pane · busy'
   decisions=''
@@ -337,12 +376,23 @@ for transition in validation unknown new-question; do
     "$dir/home/state/worker.meta" "$current" "$decisions" --observe --now "$old" >/dev/null
   cp "$dir/home/state/idle-sweep/worker.stall.json" "$dir/before.json"
   printf '%s\n' "$transition" > "$dir/home/transition"
+  if [ "$transition" = completed-validation ]; then
+    date +%s > "$dir/home/test-clock"
+    printf '#!/usr/bin/env bash\nif [ "$*" = +%%s ]; then cat "$FM_HOME/test-clock"; else exec %s "$@"; fi\n' \
+      "$(command -v date)" > "$dir/bin/date"
+    chmod +x "$dir/bin/date"
+  fi
   cat > "$dir/home/on-crew-state" <<'SH'
 #!/usr/bin/env bash
 [ -d "$FM_HOME/state/.control-$1.lock" ] || exit 0
 printf '%s\n' "$1" >> "$FM_HOME/admission-reads"
 case "$(cat "$FM_HOME/transition")" in
   validation) printf 'state: working · source: run-step · evidence: run=run-new; step=test\n' > "$FM_HOME/crew/$1" ;;
+  completed-validation)
+    now=$(cat "$FM_HOME/test-clock")
+    printf '%s\n' "$((now + 10))" > "$FM_HOME/test-clock"
+    printf 'state: working · source: pane · evidence: last-run=run-new; last-run-created=%s\n' "$((now + 5))" > "$FM_HOME/crew/$1"
+    ;;
   unknown) printf 'state: unknown · source: run-step · read unavailable\n' > "$FM_HOME/crew/$1" ;;
   new-question) printf 'needs-decision [key=choice]: New question?\n' >> "$FM_HOME/state/$1.status" ;;
 esac
@@ -353,6 +403,11 @@ SH
   count=$(wake_count "$dir" 'stalled tasks digest:')
   [ "${count:-0}" = 0 ] || fail 'stale episode published'
   [ "$(jq -r .reported "$dir/home/state/idle-sweep/worker.stall.json")" = null ] || fail 'stale episode acknowledged'
+  if [ "$transition" = completed-validation ]; then
+    expected=$(( $(cat "$dir/home/test-clock") - 5 ))
+    [ "$(jq -r .since "$dir/home/state/idle-sweep/worker.stall.json")" = "$expected" ] \
+      || fail 'admission rejected validation completed after scan start'
+  fi
   if [ "$transition" = unknown ]; then
     [ "$(jq -r .since "$dir/home/state/idle-sweep/worker.stall.json")" = \
       "$(jq -r .since "$dir/before.json")" ] || fail 'unknown reset original timing'

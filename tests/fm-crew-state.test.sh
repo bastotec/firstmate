@@ -2970,7 +2970,7 @@ test_consolidated_evidence_and_failures
 # state when the worker advances its head. Its proven history still bounds age.
 test_missed_run_history_bounds_stall_without_reattributing_state() {
   reset_fakes
-  local d out stall gen run_id history_head ledger_day
+  local d out stall gen run_id history_head ledger_day original_episode
   d=$(new_case missed-run-history)
   make_repo_on_branch "$d/wt" fm/history
   make_fakebin "$d" >/dev/null
@@ -3024,6 +3024,23 @@ PY
   stall=$(python3 "$ROOT/bin/fm_stall_record.py" "$d/state/history.stall.json" \
     "$d/state/history.meta" "$out" '' --now 29161)
   [ "$(printf '%s' "$stall" | jq -r .notify)" = true ] || fail 'old acknowledgment suppressed the post-ledger implementation episode'
+  stall=$(python3 "$ROOT/bin/fm_stall_record.py" "$d/state/history.stall.json" \
+    "$d/state/history.meta" "$out" '' --now 30000 --ack)
+  original_episode=$(printf '%s' "$stall" | jq -r .episode)
+  FM_FAKE_AXI_STATUS=$(run_failed fm/history | sed "s/01RUN/$run_id/")
+  out=$(run_crew_state "$d" history)
+  assert_contains "$out" "last-run-head=$history_head;" 'primary history carries the same attributed head as the ledger'
+  stall=$(python3 "$ROOT/bin/fm_stall_record.py" "$d/state/history.stall.json" \
+    "$d/state/history.meta" "$out" '' --now 30001 --observe)
+  [ "$(printf '%s' "$stall" | jq -r .since)" = 21960 ] || fail 'primary precision changed the same run wait'
+  [ "$(printf '%s' "$stall" | jq -r .episode)" = "$original_episode" ] || fail 'primary precision changed delivery identity'
+  [ "$(printf '%s' "$stall" | jq -r .notify)" = false ] || fail 'primary precision republished the same stalled run'
+  FM_FAKE_AXI_STATUS=$(run_failed fm/foreign | sed "s/01RUN/$run_id/")
+  out=$(run_crew_state "$d" history)
+  stall=$(python3 "$ROOT/bin/fm_stall_record.py" "$d/state/history.stall.json" \
+    "$d/state/history.meta" "$out" '' --now 30002 --observe)
+  [ "$(printf '%s' "$stall" | jq -r .episode)" = "$original_episode" ] || fail 'ledger reread changed delivery identity'
+  [ "$(printf '%s' "$stall" | jq -r .notify)" = false ] || fail 'ledger reread republished the same stalled run'
   FM_FAKE_RUNS_LIST=$(printf 'failed fm/foreign %s %s\n' "$history_head" "$ledger_day")
   out=$(run_crew_state "$d" history)
   assert_not_contains "$out" 'last-run-created=' 'foreign ledger branch cannot supply historical timing'

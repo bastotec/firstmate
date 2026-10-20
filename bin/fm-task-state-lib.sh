@@ -248,6 +248,7 @@ RUN_ERROR=''
 RUN_PR=''
 HISTORICAL_RUN=''
 HISTORICAL_RUN_CREATED=''
+HISTORICAL_RUN_HEAD=''
 
 # The run's current step and that step's status, tab-separated (header: step=).
 crew_state_step() {
@@ -323,7 +324,7 @@ emit() {  # <state> <source> [detail] [run-error] [run-pr]
   esac
   # Historical timing is evidence only, never authority for the current verdict.
   if [ -n "$HISTORICAL_RUN_CREATED" ]; then
-    evidence="$evidence; last-run=$HISTORICAL_RUN; last-run-created=$HISTORICAL_RUN_CREATED"
+    evidence="$evidence; last-run=$HISTORICAL_RUN; last-run-created=$HISTORICAL_RUN_CREATED; last-run-head=$HISTORICAL_RUN_HEAD"
   fi
   if [ "$1" = working ] && [ "$2" = run-step ] && [ "${LIVE_CREW_KILLED_RUN:-}" = replacement ]; then
     evidence="$evidence; implementation=replacement"
@@ -962,6 +963,7 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
         && git -C "$WT" merge-base --is-ancestor "$history_head" HEAD 2>/dev/null; then
         HISTORICAL_RUN=$(strip_quotes "$(nm_field id)")
         HISTORICAL_RUN_CREATED=$history_created
+        HISTORICAL_RUN_HEAD=$history_head
       fi
     fi
     # Head equality, or the pipeline-owned-active exemption: while the
@@ -998,6 +1000,7 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
       if [ -n "$history_created" ] && [ "$history_created" -gt "${HISTORICAL_RUN_CREATED:-0}" ]; then
         HISTORICAL_RUN=$history_run
         HISTORICAL_RUN_CREATED=$history_created
+        HISTORICAL_RUN_HEAD=${history_run#ledger-}
       fi
       COARSE_STATUS=$(fm_nm_runs_status_for_worktree "$WT" "$CREW_BRANCH" "$runs_list")
       if [ -n "$COARSE_STATUS" ]; then

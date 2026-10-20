@@ -837,7 +837,7 @@ while IFS= read -r candidate; do
   classify "$id"
   decisions=$(status_open_decisions "$STATE/$id.status")
   stall=$(python3 "$SCRIPT_DIR/fm_stall_record.py" "$RAISED_DIR/$id.stall.json" \
-    "$STATE/$id.meta" "$STALL_CURRENT" "$decisions" --observe --now "$NOW" 2>/dev/null) || stall='{}'
+    "$STATE/$id.meta" "$STALL_CURRENT" "$decisions" --observe --now "$(date +%s)" 2>/dev/null) || stall='{}'
   if [ "$(printf '%s' "$stall" | jq -r '.notify // false')" != true ] \
     || [ "$(printf '%s' "$stall" | jq -r .episode)" != "$(printf '%s' "$candidate" | jq -r .stall.episode)" ]; then
     fm_lock_release "$STATE/$handoff_lock" >/dev/null 2>&1 || true
