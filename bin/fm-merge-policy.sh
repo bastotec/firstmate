@@ -43,10 +43,12 @@
 # The legacy directory lock is reclaimed when older than 60 seconds or its PID
 # is dead. Merge paths read without locking immediately before each command:
 # a policy change cannot stop a merge command already in flight, only later ones.
-# unset removes a repository's own entry (case-insensitively) so it falls back
-# to its owner entry or the default, with the same lock, audit line ("<old> ->
-# inherit"), push and exit codes as set; unsetting a repository with no entry
-# changes nothing and prints "unset <owner/repo>: no entry".
+# unset accepts only owner/repo, not owner/* or *, and removes its own entry
+# case-insensitively so it falls back to its owner entry or the default.
+# It uses the same atomic write, lock, audit line ("<old> -> inherit"), push
+# and exit codes as set, and prints "unset <name> <old> -> <policy> <source>".
+# unset validates the policy even when no entry exists; in that case it writes
+# nothing and prints "unset <owner/repo>: no entry" without creating data or lock files.
 # list prints the default, owners and repositories. list --json prints
 #   {"version":1,"default":..,"owners":{..},"repos":[{"repo","policy",
 #    "source":"set|owner|default","by","at":<epoch|null>,"note"}]}
