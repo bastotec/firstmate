@@ -273,10 +273,13 @@ classify() {
   MERGED_PR_URL=
   AGE=$(record_age "$id")
   DETAIL=
-  approval_wait "$id" && return
+  if approval_wait "$id"; then
+    STALL_CURRENT='state: excluded'
+    return
+  fi
   hold_settled "$id" "idle-$id" || hold_rc=$?
   case "$hold_rc" in
-    0) CLASS=held; return ;;
+    0) STALL_CURRENT='state: excluded'; CLASS=held; return ;;
     1) ;;
     *) CLASS=unknown; DETAIL="captain hold could not be read"; return ;;
   esac
@@ -288,10 +291,11 @@ classify() {
     line=$(fm_run_timed 60 \
       "$SCRIPT_DIR/fm-crew-state.sh" "$id" 2>/dev/null | head -1) || true
   fi
+  STALL_CURRENT=$line
   verb=$(printf '%s' "$line" | sed -n 's/^state: \([a-z]*\).*/\1/p')
   DETAIL=$(printf '%s' "$line" | sed 's/^state: [a-z]* · source: [a-z-]* · //' | cut -c1-200)
   case "$verb" in
-    working|parked) STALL_CURRENT=$line; CLASS=active; return ;;
+    working|parked) CLASS=active; return ;;
     done)
       CLASS=finished
       [ "$AGE" -ge 900 ] || { CLASS=settling; return; }
@@ -827,6 +831,18 @@ while IFS= read -r candidate; do
     fm_lock_release "$STATE/$handoff_lock" >/dev/null 2>&1 || true
     continue
   fi
+  classify "$id"
+  decisions=$(status_open_decisions "$STATE/$id.status")
+  stall=$(python3 "$SCRIPT_DIR/fm_stall_record.py" "$RAISED_DIR/$id.stall.json" \
+    "$STATE/$id.meta" "$STALL_CURRENT" "$decisions" --observe --now "$NOW" 2>/dev/null) || stall='{}'
+  if [ "$(printf '%s' "$stall" | jq -r '.notify // false')" != true ] \
+    || [ "$(printf '%s' "$stall" | jq -r .episode)" != "$(printf '%s' "$candidate" | jq -r .stall.episode)" ]; then
+    fm_lock_release "$STATE/$handoff_lock" >/dev/null 2>&1 || true
+    continue
+  fi
+  candidate=$(jq -cn --arg id "$id" --arg current "$STALL_CURRENT" \
+    --arg decisions "$decisions" --argjson stall "$stall" \
+    '{id:$id,current:$current,decisions:$decisions,stall:$stall}')
   HANDOFF_LOCKS="$HANDOFF_LOCKS $handoff_lock"
   STALL_DELIVER="$STALL_DELIVER$candidate"$'\n'
 done <<< "$STALL_CANDIDATES"

@@ -14,7 +14,8 @@ metadata in recovery snapshots. Matching gate/parked-run records supply decision
 entry time; otherwise a matching last decision event supplies a lower bound.
 Implementation starts at the recorded spawn epoch, or metadata mtime.
 last_run_seen is the creation epoch encoded in the attributed run's ULID.
-Unknown evidence and declared waits reset observation instead of guessing.
+Unknown observations withhold notification without discarding episode evidence.
+Declared waits end observation.
 Missing, corrupt, future or generation-mismatched timing starts a fresh observation.
 Episode identity includes metadata contents, phase and the folded pending questions;
 a resumed state or new question starts another episode. --ack records delivery
@@ -37,10 +38,11 @@ def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def episode_signature(identity, phase, pending, run, step):
+def episode_signature(identity, phase, pending, run, step, gate_since):
     return digest(json.dumps([identity, phase, pending if phase == 'needs-decision' else [],
                               run if phase == 'needs-decision' else '',
-                              step if phase == 'needs-decision' else '']))
+                              step if phase == 'needs-decision' else '',
+                              gate_since if phase == 'needs-decision' else None]))
 
 
 def load(path):
@@ -88,21 +90,21 @@ def evidence(current, key):
     return match[1] if match else ''
 
 
-def initial_since(phase, meta, path, pending, run, step, now):
+def matching_stamp(record, key, run, step, now):
+    if run and step and record.get('run') == run and record.get('step') == step:
+        try:
+            stamp = int(record.get(key, 0))
+        except (ValueError, TypeError):
+            return None
+        if epoch(stamp, now):
+            return stamp
+    return None
+
+
+def initial_since(phase, meta, path, pending, decision_since, now):
     if phase == 'needs-decision':
-        gate = load(path.with_suffix('.gate'))
-        parked = fields_file(path.with_suffix('.parked-run'))
-        candidates = []
-        for record, key in ((gate, 'parked_since'), (parked, 'since')):
-            if run and step and record.get('run') == run and record.get('step') == step:
-                try:
-                    stamp = int(record.get(key, 0))
-                except (ValueError, TypeError):
-                    continue
-                if epoch(stamp, now):
-                    candidates.append(stamp)
-        if candidates:
-            return min(candidates)
+        if decision_since is not None:
+            return decision_since
         status = path.with_suffix('.status')
         try:
             if not status.is_symlink():
@@ -155,6 +157,10 @@ def main():
     old = load(args.record)
     if old.get('identity') != identity or not epoch(old.get('observed_at'), args.now):
         old = {}
+    if state in ('', 'unknown'):
+        result = dict(old, state='ineligible', notify=False)
+        print(json.dumps(False if args.reported_run else result))
+        return
     pending = []
     for row in args.decisions.splitlines():
         cells = row.split('\t', 2)
@@ -164,14 +170,19 @@ def main():
                 and 'declared-wait: active' not in fields)
     run = evidence(args.current, 'run') if source == 'run-step' else ''
     step = evidence(args.current, 'step') if source == 'run-step' else ''
+    gate_since = matching_stamp(load(timing_meta.with_suffix('.gate')),
+                                'parked_since', run, step, args.now)
+    parked = fields_file(timing_meta.with_suffix('.parked-run'))
+    parked_since = matching_stamp(parked, 'since', run, step, args.now)
+    parked_episode = dict(run=run, step=step, gate_since=gate_since)
     same_parked_run = (old.get('phase') == 'needs-decision'
                        and old.get('signature') == episode_signature(
-                           identity, 'needs-decision', old.get('questions', []), run, step))
+                           identity, 'needs-decision', old.get('questions', []), run, step, gate_since))
     reported_parked = old.get('reported_parked')
     if same_parked_run and old.get('episode') and old.get('reported') == old.get('episode'):
-        reported_parked = dict(run=run, step=step)
+        reported_parked = parked_episode
     if (state != 'parked' or not run or not step
-            or reported_parked != dict(run=run, step=step)):
+            or reported_parked != parked_episode):
         reported_parked = None
     if args.reported_run:
         print(json.dumps(bool(eligible and reported_parked)))
@@ -183,12 +194,7 @@ def main():
           and meta.get('mode', '') in ('', 'ship', 'no-mistakes')
           and state == 'working' and source in ('pane', 'status-log')):
         phase = 'implementation'
-    signature = episode_signature(identity, phase, pending, run, step)
-    since = old.get('since') if old.get('signature') == signature else None
-    if old.get('signature') != signature or not epoch(since, old.get('observed_at', 0)):
-        since = args.now if phase else None
-        if phase and (not old or (phase == 'needs-decision' and not same_parked_run)):
-            since = initial_since(phase, meta, timing_meta, pending, run, step, args.now)
+    signature = episode_signature(identity, phase, pending, run, step, gate_since)
     last_run = old.get('last_run_seen')
     if run:
         try:
@@ -197,20 +203,28 @@ def main():
             pass
     if not epoch(last_run, args.now):
         last_run = None
+    since = old.get('since') if old.get('signature') == signature else None
+    if old.get('signature') != signature or not epoch(since, old.get('observed_at', 0)):
+        since = args.now if phase else None
+        if phase and not (phase == 'needs-decision' and same_parked_run):
+            since = initial_since(phase, meta, timing_meta, pending,
+                                  gate_since or parked_since, args.now)
+    if phase == 'implementation' and last_run:
+        since = max(since, last_run)
     age = args.now - since if since is not None else None
     threshold = 3600 if phase == 'needs-decision' else 7200
     stalled = bool(phase and age is not None and age > threshold)
     episode = digest(f'{signature}:{since}') if phase else None
     reported = old.get('reported')
-    if phase == 'needs-decision' and not old.get('episode'):
-        parked = fields_file(timing_meta.with_suffix('.parked-run'))
-        if run and step and parked.get('run') == run and parked.get('step') == step:
-            try:
-                delivered = int(parked.get('nudged', 0))
-            except ValueError:
-                delivered = 0
-            if epoch(delivered, args.now) or parked.get('escalated') == '1':
-                reported = episode
+    if (phase == 'needs-decision' and not old.get('episode') and parked_since
+            and (gate_since is None or parked_since >= gate_since)
+            and (not old or parked_since >= old['observed_at'])):
+        try:
+            delivered = int(parked.get('nudged', 0))
+        except ValueError:
+            delivered = 0
+        if epoch(delivered, args.now) and delivered >= parked_since:
+            reported = episode
     result = dict(version=1, identity=identity, observed_at=args.now,
                   signature=signature, since=since, phase=phase or None,
                   age_seconds=age, last_run_seen=last_run,
@@ -223,7 +237,7 @@ def main():
     if args.ack and stalled:
         result.update(reported=episode, notify=False)
         if phase == 'needs-decision' and run and step:
-            result['reported_parked'] = dict(run=run, step=step)
+            result['reported_parked'] = parked_episode
     if args.observe or args.ack:
         write(args.record, result)
     print(json.dumps(result))

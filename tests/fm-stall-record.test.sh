@@ -55,7 +55,7 @@ assert record.read_bytes() == before  # recovery traversal is read-only
 meta.write_text('kind=ship\nmode=no-mistakes\nspawn_gen=two\n')
 assert call(35001)['age_seconds'] == 0
 assert call(35002, 'state: unknown · source: run-step · lookup failed')['state'] == 'ineligible'
-assert call(45000)['age_seconds'] == 0
+assert call(45000)['age_seconds'] == 9999
 assert call(45001, working+' · declared-wait: active')['state'] == 'ineligible'
 for contents in ['kind=scout\n', 'kind=secondmate\n', 'kind=ship\nmode=direct-PR\n', 'kind=ship\nmode=local-only\n']:
     meta.write_text(contents)
@@ -113,6 +113,66 @@ assert not call(55000, parked, question)['notify']
 assert call(55001, parked, 'other\tneeds-decision\tAnother question')['age_seconds'] == 0
 timing.unlink()
 record.unlink()
+meta.write_text('kind=ship\nmode=no-mistakes\nspawn_gen=s10000.1.recovery\n')
+assert call(11000)['since'] == 10000
+before = record.read_bytes()
+for current in ('', 'state: unknown · source: run-step · unavailable'):
+    r = call(17000, current)
+    assert r['state'] == 'ineligible' and not r['notify']
+    assert record.read_bytes() == before
+r = call(18001)
+assert r['since'] == 10000 and r['notify']
+call(18002, mode='--ack')
+before = record.read_bytes()
+assert not call(18003, '')['notify']
+assert record.read_bytes() == before
+assert not call(19000)['notify']
+assert call(19001, parked, question)['since'] == 19001
+assert call(23002, parked, question)['notify']
+call(23003, parked, question, '--ack')
+assert not call(23004, '')['notify']
+assert not call(23005, parked, question)['notify']
+assert call(23006, parked, 'new\tneeds-decision\tA genuinely new question')['since'] == 23006
+assert call(27007, parked, 'new\tneeds-decision\tA genuinely new question')['notify']
+record.unlink()
+running = parked.replace('state: parked', 'state: working').replace('run-created=9000', 'run-created=12000')
+assert call(12000, running)['last_run_seen'] == 12000
+r = call(20001, mode='')
+assert r['state'] == 'stalled' and r['since'] == 12000 and r['notify']
+assert call(20001)['since'] == 12000
+assert not call(20002, mode='--ack')['notify']
+assert not call(21000)['notify']
+record.unlink()
+gate = meta.with_suffix('.gate')
+legacy = meta.with_suffix('.parked-run')
+gate.write_text(json.dumps(dict(run=run, step='review', parked_since=10000)))
+legacy.write_text(f'run={run}\nstep=review\nsince=10000\nnudged=14000\nescalated=1\n')
+assert not call(15000, parked, question)['notify']
+assert call(15001, parked, '', '--reported-run')
+assert call(16000, running)['state'] == 'ineligible'
+gate.write_text(json.dumps(dict(run=run, step='review', parked_since=17000)))
+assert not call(21001, parked, '', '--reported-run')
+r = call(21001, parked, question, mode='')
+assert r['since'] == 17000 and r['notify'] and r['reported'] != r['episode']
+r = call(21001, parked, question)
+assert r['since'] == 17000 and r['notify']
+assert call(21002, parked, question)['notify']
+call(21003, parked, question, '--ack')
+assert not call(21004, parked, question)['notify']
+assert call(21005, parked, '', '--reported-run')
+call(21006, parked, '')
+assert call(21007, parked, '', '--reported-run')
+gate.write_text(json.dumps(dict(run=run, step='review', parked_since=22000)))
+r = call(26001, parked, question)
+assert r['since'] == 22000 and r['notify']
+call(26002, parked, question, '--ack')
+gate.write_text(json.dumps(dict(run=run, step='review', parked_since=27000)))
+assert not call(31001, parked, '', '--reported-run')
+r = call(31001, parked, question)
+assert r['since'] == 27000 and r['notify']
+gate.unlink()
+legacy.unlink()
+record.unlink()
 record.symlink_to(root/'untouched')
 p = subprocess.run([sys.executable, cli, str(record), str(meta), working, '', '--observe'], capture_output=True)
 assert p.returncode != 0 and not (root/'untouched').exists()
@@ -163,6 +223,51 @@ sweep "$dir" scan --now || fail 'redelivery scan'
 [ "$(wake_count "$dir" 'stalled tasks digest:')" = 1 ] || fail 'redelivery missing'
 [ "$(jq -r .reported "$dir/home/state/idle-sweep/implementation.stall.json")" != null ] || fail 'delivery not acknowledged'
 pass 'failed digest publication leaves the episode eligible for redelivery'
+
+for transition in validation unknown new-question; do
+  dir=$(new_case "stall-admission-$transition")
+  current='state: working · source: pane · busy'
+  decisions=''
+  if [ "$transition" = new-question ]; then
+    current='state: parked · source: run-step · evidence: run=run-one; step=review'
+    decisions=$'choice\tneeds-decision\tOld question?'
+  fi
+  add_worker "$dir" worker "$current" 90000
+  [ -z "$decisions" ] || printf 'needs-decision [key=choice]: Old question?\n' > "$dir/home/state/worker.status"
+  old=$(( $(date +%s) - 8000 ))
+  python3 "$dir/bin/fm_stall_record.py" "$dir/home/state/idle-sweep/worker.stall.json" \
+    "$dir/home/state/worker.meta" "$current" "$decisions" --observe --now "$old" >/dev/null
+  cp "$dir/home/state/idle-sweep/worker.stall.json" "$dir/before.json"
+  printf '%s\n' "$transition" > "$dir/home/transition"
+  cat > "$dir/home/on-crew-state" <<'SH'
+#!/usr/bin/env bash
+[ -d "$FM_HOME/state/.control-$1.lock" ] || exit 0
+printf '%s\n' "$1" >> "$FM_HOME/admission-reads"
+case "$(cat "$FM_HOME/transition")" in
+  validation) printf 'state: working · source: run-step · evidence: run=run-new; step=test\n' > "$FM_HOME/crew/$1" ;;
+  unknown) printf 'state: unknown · source: run-step · read unavailable\n' > "$FM_HOME/crew/$1" ;;
+  new-question) printf 'needs-decision [key=choice]: New question?\n' >> "$FM_HOME/state/$1.status" ;;
+esac
+SH
+  chmod +x "$dir/home/on-crew-state"
+  sweep "$dir" scan --now || fail 'publication recheck scan'
+  [ -s "$dir/home/admission-reads" ] || fail 'current state not read at admission'
+  count=$(wake_count "$dir" 'stalled tasks digest:')
+  [ "${count:-0}" = 0 ] || fail 'stale episode published'
+  [ "$(jq -r .reported "$dir/home/state/idle-sweep/worker.stall.json")" = null ] || fail 'stale episode acknowledged'
+  if [ "$transition" = unknown ]; then
+    [ "$(jq -r .since "$dir/home/state/idle-sweep/worker.stall.json")" = \
+      "$(jq -r .since "$dir/before.json")" ] || fail 'unknown reset original timing'
+    rm "$dir/home/on-crew-state"
+    printf '%s\n' "$current" > "$dir/home/crew/worker"
+    sweep "$dir" scan --now || fail 'healthy retry scan'
+    [ "$(wake_count "$dir" 'stalled tasks digest:')" = 1 ] || fail 'healthy retry not delivered'
+    sweep "$dir" scan --now || fail 'healthy duplicate scan'
+    [ "$(wake_count "$dir" 'stalled tasks digest:')" = 1 ] || fail 'healthy retry duplicated'
+  fi
+  assert_no_captain_call "$dir" 'publication recheck'
+  pass "publication admission reconciles $transition without acknowledging stale work"
+done
 
 for route in main parent; do
   for first in watcher sweep legacy; do
