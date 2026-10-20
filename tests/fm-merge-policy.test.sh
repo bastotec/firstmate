@@ -47,7 +47,7 @@ test_set_resolves_repo_over_owner_over_default() {
 }
 
 test_invalid_input_and_unreadable_file() {
-  local home rc
+  local home rc command
   home=$(new_home invalid)
   rc=0; FM_HOME="$home" "$POLICY" set bastotec/x sometimes >/dev/null 2>&1 || rc=$?
   assert_equals 2 "$rc" "an unknown policy was accepted"
@@ -55,11 +55,15 @@ test_invalid_input_and_unreadable_file() {
   assert_equals 2 "$rc" "a malformed name was accepted"
   assert_absent "$home/config/merge-policy.json" "a refused set wrote the file"
   printf 'not json\n' > "$home/config/merge-policy.json"
-  rc=0; FM_HOME="$home" "$POLICY" get bastotec/x >/dev/null 2>&1 || rc=$?
-  assert_equals 1 "$rc" "an unreadable policy file was not reported"
+  for command in get unset; do
+    rc=0; FM_HOME="$home" "$POLICY" "$command" bastotec/x >/dev/null 2>&1 || rc=$?
+    assert_equals 1 "$rc" "$command accepted invalid JSON"
+  done
   printf '{"default":"sometimes"}\n' > "$home/config/merge-policy.json"
-  rc=0; FM_HOME="$home" "$POLICY" get bastotec/x >/dev/null 2>&1 || rc=$?
-  assert_equals 1 "$rc" "a file with an unknown policy was accepted"
+  for command in get unset; do
+    rc=0; FM_HOME="$home" "$POLICY" "$command" bastotec/x >/dev/null 2>&1 || rc=$?
+    assert_equals 1 "$rc" "$command accepted a file with an unknown policy"
+  done
   pass "invalid names and policies are refused, and an unreadable file is an error"
 }
 
@@ -72,10 +76,10 @@ test_policy_path_inspection() {
   printf '%s\n' '{"default":"never"}' > "$home/config/merge-policy.json"
   if [ "$(id -u)" -ne 0 ]; then
     chmod 600 "$home/config"
-    for command in get list merge override; do
+    for command in get unset list merge override; do
       rc=0
       case "$command" in
-        get) out=$(FM_HOME="$home" "$POLICY" get bastotec/app 2>&1) || rc=$? ;;
+        get|unset) out=$(FM_HOME="$home" "$POLICY" "$command" bastotec/app 2>&1) || rc=$? ;;
         list) out=$(FM_HOME="$home" "$POLICY" list --json 2>&1) || rc=$? ;;
         merge) out=$(FM_HOME="$home" "$ROOT/bin/fm-pr-merge.sh" t1 https://github.com/bastotec/app/pull/7 2>&1) || rc=$? ;;
         override) out=$(FM_HOME="$home" "$ROOT/bin/fm-pr-merge.sh" t1 https://github.com/bastotec/app/pull/7 --attended-override 2>&1) || rc=$? ;;
@@ -87,10 +91,14 @@ test_policy_path_inspection() {
     done
     chmod 700 "$home/config"
     chmod 000 "$home/config/merge-policy.json"
-    rc=0
-    out=$(FM_HOME="$home" "$POLICY" get bastotec/app 2>&1) || rc=$?
+    for command in get unset; do
+      rc=0
+      out=$(FM_HOME="$home" "$POLICY" "$command" bastotec/app 2>&1) || rc=$?
+      chmod 600 "$home/config/merge-policy.json"
+      assert_equals 1 "$rc" "$command accepted an unreadable regular policy: $out"
+      chmod 000 "$home/config/merge-policy.json"
+    done
     chmod 600 "$home/config/merge-policy.json"
-    assert_equals 1 "$rc" "an unreadable regular policy was accepted: $out"
   fi
   rm "$home/config/merge-policy.json"
   for artifact in directory fifo symlink; do
@@ -99,9 +107,11 @@ test_policy_path_inspection() {
       fifo) mkfifo "$home/config/merge-policy.json" ;;
       symlink) ln -s missing.json "$home/config/merge-policy.json" ;;
     esac
-    rc=0
-    out=$(FM_HOME="$home" "$POLICY" get bastotec/app 2>&1) || rc=$?
-    assert_equals 1 "$rc" "a $artifact policy artifact fell back to defaults: $out"
+    for command in get unset; do
+      rc=0
+      out=$(FM_HOME="$home" "$POLICY" "$command" bastotec/app 2>&1) || rc=$?
+      assert_equals 1 "$rc" "$command accepted a $artifact policy artifact: $out"
+    done
     case "$artifact" in
       directory) rmdir "$home/config/merge-policy.json" ;;
       *) rm "$home/config/merge-policy.json" ;;
@@ -524,6 +534,49 @@ test_attended_override_validates_policy() {
   pass "attended override bypasses never but never policy validation"
 }
 
+test_unset_falls_back_to_owner_or_default() {
+  local home out
+  home=$(new_home unset)
+  FM_HOME="$home" "$POLICY" set bastotec/app never --no-push >/dev/null || fail "set failed"
+  FM_HOME="$home" "$POLICY" set acme/tool auto --no-push >/dev/null || fail "set failed"
+  out=$(FM_HOME="$home" "$POLICY" unset BASTOTEC/App --by captain --no-push) || fail "unset failed: $out"
+  assert_equals 'unset BASTOTEC/App never -> auto owner bastotec' "$out" "unset did not report the fallback"
+  assert_equals 'auto owner bastotec' "$(FM_HOME="$home" "$POLICY" get bastotec/app)" "the repo entry survived unset"
+  assert_equals 'ask default' "$(FM_HOME="$home" "$POLICY" unset acme/tool --no-push | sed 's/^unset acme\/tool auto -> //')" "unset without an owner entry did not fall back to the default"
+  assert_grep 'captain BASTOTEC/App never -> inherit' "$home/data/merge-policy.log" "unset wrote no audit line"
+  lines=$(wc -l < "$home/data/merge-policy.log" | tr -d ' ')
+  assert_equals 'unset other/thing: no entry' "$(FM_HOME="$home" "$POLICY" unset other/thing --no-push)" "unsetting a missing entry was not a no-op"
+  assert_equals "$lines" "$(wc -l < "$home/data/merge-policy.log" | tr -d ' ')" "a no-op unset wrote an audit line"
+  rc=0; FM_HOME="$home" "$POLICY" unset 'bastotec/*' >/dev/null 2>&1 || rc=$?
+  assert_equals 2 "$rc" "unset accepted an owner pattern"
+  pass "unset removes a repository's own entry so it inherits its owner or the default, with an audit line"
+}
+
+test_unset_without_entry_writes_nothing() {
+  local home scenario before checksum out
+  for scenario in missing-config missing-file empty-repos unrelated-repo; do
+    home="$TMP_ROOT/unset-no-entry-$scenario"
+    mkdir "$home"
+    if [ "$scenario" != missing-config ]; then
+      mkdir "$home/config"
+    fi
+    case "$scenario" in
+      empty-repos) printf '%s\n' '{"default":"never"}' > "$home/config/merge-policy.json" ;;
+      unrelated-repo) printf '%s\n' '{"repos":{"acme/other":{"policy":"never"}}}' > "$home/config/merge-policy.json" ;;
+    esac
+    before=$(find "$home" -print | sort)
+    checksum=''
+    [ ! -f "$home/config/merge-policy.json" ] || checksum=$(cksum "$home/config/merge-policy.json")
+    out=$(FM_HOME="$home" "$POLICY" unset BASTOTEC/App) || fail "no-entry unset failed: $scenario: $out"
+    assert_equals 'unset BASTOTEC/App: no entry' "$out" "no-entry unset output changed: $scenario"
+    assert_equals "$before" "$(find "$home" -print | sort)" "no-entry unset created files: $scenario"
+    if [ -n "$checksum" ]; then
+      assert_equals "$checksum" "$(cksum "$home/config/merge-policy.json")" "no-entry unset changed policy: $scenario"
+    fi
+  done
+  pass "no-entry unset leaves policy unchanged and creates no data directory or lock files"
+}
+
 test_builtin_defaults
 test_set_resolves_repo_over_owner_over_default
 test_invalid_input_and_unreadable_file
@@ -541,3 +594,5 @@ test_task_autoland_rechecks_attestation
 test_merges_ignore_writer_lock
 test_policy_changes_during_inflight_merge
 test_attended_override_validates_policy
+test_unset_falls_back_to_owner_or_default
+test_unset_without_entry_writes_nothing

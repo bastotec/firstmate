@@ -3,6 +3,7 @@
 #
 # Usage: fm-merge-policy.sh get <owner/repo> [--json]
 #        fm-merge-policy.sh set <owner/repo|owner/*|*> <auto|ask|never> [--note <text>] [--by <who>] [--no-push]
+#        fm-merge-policy.sh unset <owner/repo> [--note <text>] [--by <who>] [--no-push]
 #        fm-merge-policy.sh list [--json]
 #        fm-merge-policy.sh --help
 #
@@ -42,6 +43,12 @@
 # The legacy directory lock is reclaimed when older than 60 seconds or its PID
 # is dead. Merge paths read without locking immediately before each command:
 # a policy change cannot stop a merge command already in flight, only later ones.
+# unset accepts only owner/repo, not owner/* or *, and removes its own entry
+# case-insensitively so it falls back to its owner entry or the default.
+# It uses the same atomic write, lock, audit line ("<old> -> inherit"), push
+# and exit codes as set, and prints "unset <name> <old> -> <policy> <source>".
+# unset validates the policy even when no entry exists; in that case it writes
+# nothing and prints "unset <owner/repo>: no entry" without creating data or lock files.
 # list prints the default, owners and repositories. list --json prints
 #   {"version":1,"default":..,"owners":{..},"repos":[{"repo","policy",
 #    "source":"set|owner|default","by","at":<epoch|null>,"note"}]}
@@ -284,8 +291,62 @@ cmd_set() {
   fi
 }
 
+cmd_unset() {
+  local name=${1:-} note='' by=${FM_MERGE_POLICY_BY:-firstmate} push=1 old new now tmp doc
+  [ $# -ge 1 ] || { usage >&2; exit 2; }
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --note) [ $# -ge 2 ] || die "--note needs a value"; note=$2; shift 2 ;;
+      --by) [ $# -ge 2 ] || die "--by needs a value"; by=$2; shift 2 ;;
+      --no-push) push=0; shift ;;
+      *) die "unknown option: $1" ;;
+    esac
+  done
+  printf '%s' "$name" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || die "expected owner/repo, got: $name"
+  case "$by$note" in *$'\n'*) die "--by and --note must be one line" ;; esac
+  doc=$(effective) || exit 1
+  if ! printf '%s' "$doc" | jq -e --arg n "$name" '[(.repos // {}) | keys[] | select(ascii_downcase == ($n | ascii_downcase))] | length > 0' >/dev/null; then
+    printf 'unset %s: no entry\n' "$name"
+    return 0
+  fi
+  writer_lock_hold || die "the merge policy could not be locked ($LOCK)" 1
+  trap 'writer_lock_release || true' EXIT
+  doc=$(effective) || exit 1
+  if ! printf '%s' "$doc" | jq -e --arg n "$name" '[(.repos // {}) | keys[] | select(ascii_downcase == ($n | ascii_downcase))] | length > 0' >/dev/null; then
+    writer_lock_release || true
+    trap - EXIT
+    printf 'unset %s: no entry\n' "$name"
+    return 0
+  fi
+  mkdir -p "$DATA_DIR" || die "cannot create $DATA_DIR" 1
+  doc=$(jq -c '.' "$FILE" 2>/dev/null) || die "$FILE is not valid JSON" 1
+  old=$(cmd_get "$name") || die "$FILE is not readable" 1
+  old=${old%% *}
+  doc=$(printf '%s' "$doc" | jq --arg n "$name" '.version = 1
+    | .repos = ((.repos // {}) | with_entries(select(.key | ascii_downcase != ($n | ascii_downcase))))') \
+    || die "could not update the policy" 1
+  tmp=$(mktemp "$FILE.XXXXXX") || die "cannot write $FILE" 1
+  if ! { printf '%s\n' "$doc" > "$tmp" && chmod 0644 "$tmp" && mv -f "$tmp" "$FILE"; }; then
+    rm -f "$tmp"
+    die "cannot write $FILE" 1
+  fi
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  printf '%s %s %s %s -> inherit %s\n' "$now" "$by" "$name" "$old" "$note" >> "$DATA_DIR/merge-policy.log" \
+    || die "the policy was written but the audit line could not be appended" 1
+  writer_lock_release || true
+  trap - EXIT
+  new=$(cmd_get "$name") || die "$FILE is not readable" 1
+  printf 'unset %s %s -> %s\n' "$name" "$old" "$new"
+  if [ "$push" = 1 ] && [ -f "$DATA_DIR/secondmates.md" ]; then
+    FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-config-push.sh" >/dev/null 2>&1 \
+      || printf 'warning: pushing the policy to the second mate homes failed; run bin/fm-config-push.sh\n' >&2
+  fi
+}
+
 case "${1:-}" in
   -h|--help) usage ;;
+  unset) shift; cmd_unset "$@" ;;
   get) shift; cmd_get "$@" ;;
   set) shift; cmd_set "$@" ;;
   list) shift; cmd_list "$@" ;;
