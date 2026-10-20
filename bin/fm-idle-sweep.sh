@@ -831,27 +831,8 @@ while IFS= read -r candidate; do
   STALL_DELIVER="$STALL_DELIVER$candidate"$'\n'
 done <<< "$STALL_CANDIDATES"
 if [ -n "$STALL_DELIVER" ]; then
-  digest=$(printf '%s' "$STALL_DELIVER" | jq -rs '
-    map(.id + ": " + (if .stall.route=="mate-triage" then
-      "pending question (mate triage before captain): " + (.stall.questions | join("; "))
-      else "mate repair: implementation has no attributed validation run; inspect and resume the worker" end)) | join(" | ")')
-  batch_key=$(printf '%s' "$STALL_DELIVER" | jq -rs 'map(.stall.episode) | sort | join("-")' | cksum | cut -d' ' -f1)
-  rc=0
-  fm_parent_channel_report "$FM_HOME" "$STATE" "needs-decision [key=stall-digest-$batch_key]: stalled tasks digest: $digest. Repair locally where authorized; batch only genuine captain questions into one message." || rc=$?
-  if [ "$rc" -eq 1 ]; then
-    if fm_wake_append check "idle-sweep:$NOW:stalled" "check: stalled tasks digest: $digest. Repair locally where authorized; batch only genuine captain questions into one message."; then rc=0; else rc=4; fi
-  fi
-  if [ "$rc" -eq 0 ]; then
-    while IFS= read -r candidate; do
-      [ -n "$candidate" ] || continue
-      id=$(printf '%s' "$candidate" | jq -r .id)
-      python3 "$SCRIPT_DIR/fm_stall_record.py" "$RAISED_DIR/$id.stall.json" \
-        "$STATE/$id.meta" "$(printf '%s' "$candidate" | jq -r .current)" \
-        "$(printf '%s' "$candidate" | jq -r .decisions)" --ack --now "$NOW" >/dev/null || true
-    done <<< "$STALL_DELIVER"
-  else
-    log "could not deliver the stalled tasks digest"
-  fi
+  printf '%s' "$STALL_DELIVER" | "$SCRIPT_DIR/fm-parked-run-watch.sh" digest \
+    || log "could not deliver the stalled tasks digest"
 fi
 release_handoff_locks
 

@@ -12,7 +12,8 @@ cli, root = sys.argv[1], pathlib.Path(sys.argv[2])
 meta, record = root/'timing.meta', root/'timing.json'
 meta.write_text('kind=ship\nmode=no-mistakes\nspawn_gen=one\n')
 working = 'state: working · source: pane · harness busy'
-parked = 'state: parked · source: run-step · review gate'
+run = 'attributed-run'
+parked = f'state: parked · source: run-step · review gate · evidence: run={run}; step=review; run-created=9000'
 question = 'review\tneeds-decision\tWhich behavior should be retained?'
 def call(now, current=working, decisions='', mode='--observe'):
     args = [sys.executable, cli, str(record), str(meta), current, decisions, '--now', str(now)]
@@ -32,7 +33,8 @@ assert call(18003, parked, question)['state'] == 'observing'
 assert call(21603, parked, question)['state'] == 'observing'
 r = call(21604, parked, question)
 assert r['notify'] and r['questions'] == ['Which behavior should be retained?']
-assert r['seconds_since_last_run'] == 0 and r['route'] == 'mate-triage'
+assert r['seconds_since_last_run'] == 12604 and r['route'] == 'mate-triage'
+assert call(21605, parked, question)['last_run_seen'] == 9000
 assert not call(21605, parked, question, '--ack')['notify']
 assert call(21606, parked, 'new\tneeds-decision\tNew question')['age_seconds'] == 0
 assert call(21607, parked, '')['state'] == 'ineligible'  # resolution removes ask
@@ -58,6 +60,41 @@ assert call(45001, working+' · declared-wait: active')['state'] == 'ineligible'
 for contents in ['kind=scout\n', 'kind=secondmate\n', 'kind=ship\nmode=direct-PR\n', 'kind=ship\nmode=local-only\n']:
     meta.write_text(contents)
     assert call(45002)['state'] == 'ineligible'
+    record.unlink()
+    status = meta.with_suffix('.status')
+    status.write_text('needs-decision [key=review]: Which behavior should be retained?\n')
+    import os
+    os.utime(status, (40000, 40000))
+    r = call(45002, 'state: parked · source: status-log · waiting', question)
+    assert r['state'] == 'stalled' and r['age_seconds'] == 5002
+    assert r['notify'] and r['route'] == 'mate-triage'
+    assert not call(45003, 'state: parked · source: status-log · waiting', question, '--ack')['notify']
+status.unlink()
+meta.write_text('kind=ship\nmode=no-mistakes\nspawn_gen=s40000.1.one\n')
+record.unlink()
+assert call(50000, mode='')['age_seconds'] == 10000
+assert not record.exists()
+meta.write_text('kind=ship\nmode=no-mistakes\n')
+os.utime(meta, (40000, 40000))
+assert call(50000, mode='')['state'] == 'stalled'
+for owner in ('gate', 'parked-run'):
+    timing = meta.with_suffix('.' + owner)
+    if owner == 'gate':
+        timing.write_text(json.dumps(dict(run=run, step='review', parked_since=40000)))
+    else:
+        timing.write_text(f'run={run}\nstep=review\nsince=40000\nnudged=0\nescalated=0\n')
+    r = call(50000, parked, question, mode='')
+    assert r['state'] == 'stalled' and r['age_seconds'] == 10000 and r['notify']
+    assert not record.exists()
+    assert call(50000, parked.replace('step=review', 'step=test'), question, mode='')['age_seconds'] == 0
+    assert call(50000, parked.replace(run, 'another-run'), question, mode='')['age_seconds'] == 0
+    timing.unlink()
+timing.write_text(f'run={run}\nstep=review\nsince=40000\nnudged=44000\nescalated=1\n')
+r = call(50000, parked, question)
+assert r['state'] == 'stalled' and not r['notify']
+assert not call(55000, parked, question)['notify']
+assert call(55001, parked, 'other\tneeds-decision\tAnother question')['age_seconds'] == 0
+timing.unlink()
 record.unlink()
 record.symlink_to(root/'untouched')
 p = subprocess.run([sys.executable, cli, str(record), str(meta), working, '', '--observe'], capture_output=True)
@@ -109,3 +146,68 @@ sweep "$dir" scan --now || fail 'redelivery scan'
 [ "$(wake_count "$dir" 'stalled tasks digest:')" = 1 ] || fail 'redelivery missing'
 [ "$(jq -r .reported "$dir/home/state/idle-sweep/implementation.stall.json")" != null ] || fail 'delivery not acknowledged'
 pass 'failed digest publication leaves the episode eligible for redelivery'
+
+for route in main parent; do
+  for first in watcher sweep legacy; do
+    dir=$(new_case "cross-owner-$route-$first")
+    [ "$route" != parent ] || make_secondmate_home "$dir" mate
+    add_worker "$dir" decision 'state: parked · source: run-step · evidence: run=run-one; step=review' 90000
+    printf 'needs-decision [key=choice]: Keep the old behavior?\n' > "$dir/home/state/decision.status"
+    old=$(( $(date +%s) - 8000 ))
+    nudged=0
+    [ "$first" != legacy ] || nudged=$((old + 4000))
+    printf 'run=run-one\nstep=review\nsince=%s\nnudged=%s\nescalated=0\n' "$old" "$nudged" > "$dir/home/state/decision.parked-run"
+    mkdir -p "$dir/home/published"
+    printf 'verdict=parked\nrun=run-one\nstep=review\n' > "$dir/home/published/decision"
+    cat > "$dir/bin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = --publish ]; then
+  shift
+  cp "$FM_HOME/published/$1" "$FM_HOME/state/$1.crew-state"
+fi
+cat "$FM_HOME/crew/$1"
+SH
+    chmod +x "$dir/bin/fm-crew-state.sh"
+    if [ "$first" = sweep ]; then
+      sweep "$dir" scan --now || fail 'initial cross-owner sweep'
+    fi
+    for _ in 1 2; do
+      PATH="$dir/bin:$PATH" TASKS_AXI_BACKEND=markdown FM_HOME="$dir/home" FM_PARKED_RUN_SECS=0 \
+        "$dir/bin/fm-parked-run-watch.sh" scan || fail 'cross-owner watcher scan'
+      sweep "$dir" scan --now || fail 'cross-owner idle scan'
+    done
+    target="$dir/home/state/.wake-queue"
+    [ "$route" != parent ] || target="$dir/parent/state/mate.status"
+    expected=1
+    [ "$first" != legacy ] || expected=0
+    count=$(grep -c 'stalled tasks digest:' "$target" 2>/dev/null) || count=0
+    [ "$count" = "$expected" ] || fail "cross-owner digest count: $route $first $count"
+    if [ -f "$target" ]; then
+      assert_not_contains "$(cat "$target")" 'parked-run:' 'independent parked wake or escalation'
+    fi
+    [ "$(summary_of "$dir" decision)" = 'stalled none' ] || fail 'aged parked recovery not stalled'
+    assert_no_captain_call "$dir" 'cross-owner digest'
+    pass "parked publication and idle sweep share one $route episode ($first first)"
+  done
+  dir=$(new_case "non-nm-$route")
+  [ "$route" != parent ] || make_secondmate_home "$dir" mate
+  for kind in scout direct-PR local-only; do
+    add_worker "$dir" "$kind" 'state: parked · source: status-log · waiting for a decision' 90000
+    if [ "$kind" = scout ]; then
+      printf 'kind=scout\n' > "$dir/home/state/$kind.meta"
+    else
+      printf 'kind=ship\nmode=%s\n' "$kind" > "$dir/home/state/$kind.meta"
+    fi
+    printf 'needs-decision [key=choice]: Which option for %s?\n' "$kind" > "$dir/home/state/$kind.status"
+    age_file "$dir/home/state/$kind.status" 4000
+  done
+  sweep "$dir" scan --now || fail 'non-no-mistakes scan'
+  target="$dir/home/state/.wake-queue"
+  [ "$route" != parent ] || target="$dir/parent/state/mate.status"
+  [ "$(grep -c 'stalled tasks digest:' "$target")" = 1 ] || fail 'non-no-mistakes batch missing'
+  for kind in scout direct-PR local-only; do
+    [ "$(summary_of "$dir" "$kind")" = 'stalled none' ] || fail "non-no-mistakes decision omitted: $kind"
+    assert_contains "$(cat "$target")" "Which option for $kind?" 'non-no-mistakes question missing'
+  done
+  pass "all delivery modes and scout decisions batched on $route route"
+done

@@ -417,7 +417,7 @@ crew_state_json() {  # <id> [<captured-meta>] [<captured-status>]
   local stall decisions
   decisions=$(status_open_decisions "${captured_status:-$STATE/$id.status}")
   stall=$(python3 "$SCRIPT_DIR/fm_stall_record.py" "$STATE/idle-sweep/$id.stall.json" \
-    "${captured_meta:-$STATE/$id.meta}" "$raw" "$decisions" 2>/dev/null) || stall='{}'
+    "${captured_meta:-$STATE/$id.meta}" "$raw" "$decisions" --state-dir "$STATE" --task-id "$id" 2>/dev/null) || stall='{}'
   jq -n --arg raw "$raw" --arg state "$state" --arg source "$source" --arg detail "$detail" \
     --argjson stall "$stall" '{state:$state,source:$source,detail:$detail,raw:$raw,stall:$stall}'
 }

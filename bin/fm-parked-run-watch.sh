@@ -2,6 +2,8 @@
 # fm-parked-run-watch.sh - never let a worker's validation run sit parked.
 #
 # Usage: fm-parked-run-watch.sh scan [--help]
+#        fm-parked-run-watch.sh digest   (idle sweep only: admitted candidate
+#        JSONL on stdin, with task control locks held through publication)
 #        fm-parked-run-watch.sh close <worker-id>   (bin/fm-teardown.sh, as a
 #        worker leaves: resolve an escalated episode, then drop its record)
 #
@@ -31,6 +33,12 @@
 # worker leaving never has a blocker raised after its close resolved it. A scan
 # drops a record whose worker has left.
 #
+# Open needs-decision questions use the idle sweep's admission and timing
+# projection (bin/fm_stall_record.py), then this owner's `digest` publication
+# instead of the individual nudge/escalation path. A scan asks the idle sweep
+# to collect those questions in one batch after releasing parked-run locks.
+# Existing delivered nudges suppress migration duplicates for the same episode.
+#
 # Separately, a live worker classified busy by bin/fm-busy-lib.sh gets one
 # check-in wake after FM_WORKER_QUIET_SECS without a status change, whether or
 # not it has a validation run. The quiet stretch is keyed by status-file mtime,
@@ -53,7 +61,7 @@ set -u
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 case "${1:-}" in
-  scan|close) ;;
+  scan|close|digest) ;;
   -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
   *) sed -n '2,40p' "$0" >&2; exit 2 ;;
 esac
@@ -69,6 +77,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# shellcheck source=bin/fm-classify-lib.sh
+. "$SCRIPT_DIR/fm-classify-lib.sh"
 
 QUIET=${FM_WORKER_QUIET_SECS:-7200}
 case "$QUIET" in ''|*[!0-9]*) QUIET=7200 ;; esac
@@ -108,6 +118,30 @@ minutes() { printf '%s' "$(( $1 / 60 ))"; }
 
 lock_of() { printf '%s/.%s.parked-run.lock' "$STATE" "$1"; }
 
+if [ "$1" = digest ]; then
+  candidates=$(cat)
+  [ -n "$candidates" ] || exit 0
+  digest=$(printf '%s' "$candidates" | jq -rs '
+    map(.id + ": " + (if .stall.route=="mate-triage" then
+      "pending question (mate triage before captain): " + (.stall.questions | join("; "))
+      else "mate repair: implementation has no attributed validation run; inspect and resume the worker" end)) | join(" | ")') || exit 1
+  batch_key=$(printf '%s' "$candidates" | jq -rs 'map(.stall.episode) | sort | join("-")' | cksum | cut -d' ' -f1)
+  rc=0
+  fm_parent_channel_report "$FM_HOME" "$STATE" "needs-decision [key=stall-digest-$batch_key]: stalled tasks digest: $digest. Repair locally where authorized; batch only genuine captain questions into one message." || rc=$?
+  if [ "$rc" -eq 1 ]; then
+    if fm_wake_append check "idle-sweep:$NOW:stalled" "check: stalled tasks digest: $digest. Repair locally where authorized; batch only genuine captain questions into one message."; then rc=0; else rc=4; fi
+  fi
+  [ "$rc" -eq 0 ] || exit 1
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    id=$(printf '%s' "$candidate" | jq -r .id)
+    python3 "$SCRIPT_DIR/fm_stall_record.py" "$STATE/idle-sweep/$id.stall.json" \
+      "$STATE/$id.meta" "$(printf '%s' "$candidate" | jq -r .current)" \
+      "$(printf '%s' "$candidate" | jq -r .decisions)" --ack --now "$NOW" >/dev/null || true
+  done <<< "$candidates"
+  exit 0
+fi
+
 if [ "$1" = close ]; then
   id=${2:-}
   case "$id" in ''|*[!A-Za-z0-9._-]*) echo "error: close needs a worker id" >&2; exit 2 ;; esac
@@ -135,9 +169,16 @@ for rec in "$STATE"/*.parked-run; do
   fm_lock_remove_path "$(lock_of "$id")" >/dev/null 2>&1 || true
 done
 
+DECISION_SWEEP=0
 scan_one() {  # <id>
-  local id=$1 rec="$STATE/$1.parked-run" verdict run step since nudged escalated reading
+  local id=$1 rec="$STATE/$1.parked-run" verdict run step since nudged escalated reading pending=''
   reading=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-crew-state.sh" --publish "$id" </dev/null 2>/dev/null) || return 0
+  case "$reading" in
+    'state: parked · '*)
+      pending=$(status_open_decisions "$STATE/$id.status" | awk -F '\t' '$2 == "needs-decision"')
+      [ -z "$pending" ] || DECISION_SWEEP=1
+      ;;
+  esac
   case "$reading" in
     'state: parked · '*|'state: working · '*|'state: done · '*|'state: blocked · '*|'state: failed · '*) ;;
     *) return 0 ;;
@@ -170,6 +211,7 @@ scan_one() {  # <id>
     record_write "$id" "$run" "$step" "$NOW" 0 0
     return 0
   fi
+  [ -z "$pending" ] || return 0
   since=$(field "$rec" since) nudged=$(field "$rec" nudged) escalated=$(field "$rec" escalated)
   case "$since" in ''|*[!0-9]*) since=$NOW ;; esac
   case "$nudged" in ''|*[!0-9]*) nudged=0 ;; esac
@@ -222,4 +264,7 @@ for meta in "$STATE"/*.meta; do
   scan_one "$id"
   fm_lock_release "$(lock_of "$id")" >/dev/null 2>&1 || true
 done
+if [ "$DECISION_SWEEP" = 1 ]; then
+  "$SCRIPT_DIR/fm-idle-sweep.sh" scan --now </dev/null || exit 1
+fi
 exit 0

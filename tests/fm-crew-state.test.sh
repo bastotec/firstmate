@@ -2933,6 +2933,10 @@ EOF
   assert_contains "$out" "meta=$d/state/consolidated.meta" 'evidence identifies metadata'
   assert_contains "$out" "wait=$d/state/consolidated.external-wait" 'evidence identifies declaration'
   assert_contains "$out" 'observed=' 'observation has a timestamp'
+  FM_FAKE_AXI_STATUS=$(run_running fm/consolidated | sed 's/01RUN/00000000Z80000000000000000/')
+  out=$(run_crew_state "$d" consolidated)
+  assert_contains "$out" 'step=review;' 'timing evidence identifies the attributed step'
+  assert_contains "$out" 'run-created=1;' 'timing uses run creation rather than observation time'
   # An interrupted response contains attribution but not a state. Never infer working.
   FM_FAKE_AXI_STATUS=$(printf 'run:\n  id: "PARTIAL"\n  branch: fm/consolidated\n  head: "%s"\n' "$FM_FAKE_RUN_HEAD")
   out=$(run_crew_state "$d" consolidated)
