@@ -17,19 +17,27 @@ specialist is a record, not an endpoint, and is intentionally persistent.
        "stop_on_tool_failure":true|false (absent = false),
        "last_suspension":{"since","reason","by","resumed","resumed_by"}?,
        "current_job":{"id","pid","identity","started","from"?}|null,
-       "last_job":{"id","brief","started","finished","outcome","result","from"?,"message"?}|null,
+       "last_job":{"id","brief","started","finished","outcome","result","from"?,"message"?,"stopped"?}|null,
        "memory_summary"}
       Suspension fields are absent until first used; since and resumed are epoch
       seconds, and last_suspension retains the most recently resumed suspension.
   state/specialists/<name>/history.jsonl one line per finished job
-      {"job","brief","started","finished","outcome","result","exit","from"?,"message"?}
+      {"job","brief","started","finished","outcome","result","exit","from"?,"message"?,"stopped"?}
       A captain ask sets "from": "captain" on current_job, last_job and history;
       last_job and history also keep his exact words as "message".
+      When a tool failure is recorded, both keep a "stopped" note naming the
+      failed tool and output, truncated to 300 characters.
   state/specialists/<name>/jobs/<job>/   brief.md prompt.md events.ndjson
                                          result.md started memory-before.json runner.log
                                          message.md (captain asks only, exact message)
-  data/specialists/<name>/memory.md      its memory: read at every job start,
-                                         updated before every job may finish
+                                         tool-failure.json (stopped jobs only)
+      tool-failure.json keeps {"tool","args","output","at"}: the tool name,
+      JSON-encoded arguments truncated to 400 characters, whitespace-normalized
+      output truncated to 600 characters, and an epoch-seconds timestamp.
+      The observer atomically publishes it without replacing an existing record,
+      so later failures cannot overwrite the first one.
+  data/specialists/<name>/memory.md      its memory: read at every job start;
+                                         completion checks owned by the CLI header
   data/specialists/<name>/skills/        linked at workdir/.agents/skills
 
 A task group is one parent's ephemeral fan-out: N members share a brief and

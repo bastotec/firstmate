@@ -3,8 +3,9 @@
 #
 # A specialist is a named worker for recurring subject matter (one customer, a
 # subsystem, an integration). It keeps one Deck session that every job resumes,
-# its own memory file it reads at job start and must update before a job may
-# finish, optional own skills, and its own job history. No process runs between
+# its own memory file it reads at job start and normally must update before a job
+# may finish (see the stop-on-tool-failure exception below), optional own skills,
+# and its own job history. No process runs between
 # jobs; an idle specialist is a record under state/specialists/, not a leak.
 # bin/fm_crew.py's docstring owns the record layout.
 #
@@ -44,13 +45,20 @@
 # mate's home from the primary home: a local mate through its recorded home=,
 # a remote one through bin/fm-on.sh (where --text-file and --wait are refused;
 # poll status/result instead). Omit --mate or use --mate primary for the current home.
-# `configure --stop-on-tool-failure on` makes every later job stop at its first
-# failed tool call (a non-zero exit, a timeout, or a tool error): Deck hooks
-# record that call and refuse every further tool call, the job may then finish
-# without its usual result and memory checks, firstmate writes a result naming
-# the failed call when the specialist wrote none, and the job is recorded as
-# failed with "stopped" on its history line and last_job. Use it for read-only
-# monitors that must not continue past a failure.
+# `configure --stop-on-tool-failure on` opts later jobs into stopping at the first
+# failed tool call; `off` (the default) restores normal behavior. Configure before
+# launching a job; it does not change a Deck run already in progress and refuses
+# retired specialists with exit 3. Failure means a run_command result with a
+# non-zero or null exit_code or timed_out true, or any tool's output starting with
+# "the tool failed". Every non-zero exit counts, even grep finding no match;
+# exit-code/timeout JSON read by another tool is not command failure metadata.
+# Guarded jobs serialize tool calls; Deck hooks record the first failure and
+# refuse every further tool call, asking the model to reply briefly and finish.
+# The stopped job may finish without its usual result and memory checks;
+# firstmate writes a result naming the failed call when the specialist wrote
+# none, and records the job as failed with the stop note described in
+# bin/fm_crew.py's record layout. Use it for read-only monitors that must not
+# continue past a failure; clean jobs still require a result and memory update.
 # Suspend marks a specialist "suspended" with a plain reason and start time;
 # retired specialists and running jobs are refused with exit 3. An empty reason
 # or malformed --since (including an empty value) is refused with exit 2.
@@ -61,7 +69,7 @@
 # Resume returns a suspended specialist to idle and retains the ended suspension;
 # it refuses any other state with exit 3. Retired or running specialists also
 # refuse job and ask with exit 3.
-# Status, history, list, job, ask, result, suspend, resume, and retire reconcile
+# Status, history, list, job, ask, result, suspend, resume, configure, and retire reconcile
 # interrupted runners using bin/fm_crew.py's liveness rules and emit completion
 # wakes; they are not read-only.
 # --wait exits nonzero on failure or timeout (default 3660 seconds); a timeout
