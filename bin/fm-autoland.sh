@@ -78,7 +78,6 @@ MAX_LINE=600
 . "$SCRIPT_DIR/fm-line-cap-lib.sh"
 # shellcheck source=bin/fm-check-lib.sh
 . "$SCRIPT_DIR/fm-check-lib.sh"
-. "$SCRIPT_DIR/fm-merge-policy-lock-lib.sh"
 
 usage() {
   sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -440,10 +439,6 @@ merge_attempt() {  # <url> <head> <method> <attestation> <max_risk> <base>
   else
     fm_pr_url_parse "$url" && [ "$FM_PR_PROVIDER" = github ] || return 1
     repo="$FM_PR_OWNER/$FM_PR_REPO"
-    if ! fm_merge_policy_lock_hold "$CONFIG_DIR"; then
-      MERGE_ERROR="its merge policy could not be locked"
-      return 1
-    fi
     entry=$(config_entries | awk -F "$US" -v r="$repo" 'tolower($1) == tolower(r)')
     IFS=$US read -r _ project authority _ configured _ _ <<EOF
 $entry
@@ -462,7 +457,6 @@ EOF
       MERGE_ERROR="gh refused the merge: $(printf '%s\n' "$out" | head -n 1)"
       return 1
     fi
-    fm_merge_policy_lock_release || true
   fi
   state=$(gh pr view "$url" --json state -q .state 2>/dev/null || true)
   [ "$state" != MERGED ] || return 0
@@ -897,7 +891,6 @@ case "${1:-check}" in
   merge-run)
     [ "$#" -eq 7 ] && fm_pr_head_valid "$3" || exit 2
     shift
-    trap 'fm_merge_policy_lock_release || true' EXIT
     merge_rc=0
     merge_attempt "$@" || merge_rc=$?
     case "$merge_rc" in

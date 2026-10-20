@@ -395,7 +395,7 @@ owned_bin() {
   local tmpbin="$1/bin" lib
   mkdir -p "$tmpbin"
   cp "$AUTOLAND" "$tmpbin/"
-  for lib in fm-timeout-lib.sh fm-pr-lib.sh fm-line-cap-lib.sh fm-check-lib.sh fm-project-mode.sh fm-fleet-sync.sh fm-wake-lib.sh fm-machine-rules.sh fm-merge-policy.sh fm-merge-policy-lock-lib.sh; do
+  for lib in fm-timeout-lib.sh fm-pr-lib.sh fm-line-cap-lib.sh fm-check-lib.sh fm-project-mode.sh fm-fleet-sync.sh fm-wake-lib.sh fm-machine-rules.sh fm-merge-policy.sh; do
     ln -s "$ROOT/bin/$lib" "$tmpbin/$lib"
   done
   cat > "$tmpbin/fm-pr-merge.sh" <<'SH'

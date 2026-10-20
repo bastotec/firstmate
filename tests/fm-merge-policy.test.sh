@@ -69,7 +69,6 @@ test_primary_home_pushes_to_second_mates() {
   bin="$TMP_ROOT/push-bin"
   mkdir -p "$bin"
   cp "$POLICY" "$bin/fm-merge-policy.sh"
-  ln -s "$ROOT/bin/fm-merge-policy-lock-lib.sh" "$bin/fm-merge-policy-lock-lib.sh"
   printf '#!/usr/bin/env bash\necho pushed >> "%s/pushes"\n' "$home" > "$bin/fm-config-push.sh"
   chmod +x "$bin/fm-config-push.sh"
   FM_HOME="$home" "$bin/fm-merge-policy.sh" set bastotec/a ask >/dev/null || fail "set failed"
@@ -80,6 +79,33 @@ test_primary_home_pushes_to_second_mates() {
   FM_HOME="$home" "$bin/fm-merge-policy.sh" set bastotec/a never --no-push >/dev/null || fail "set failed"
   assert_equals 1 "$(wc -l < "$home/pushes" | tr -d ' ')" "--no-push still pushed"
   pass "the primary home pushes each change to the second mate homes"
+}
+
+test_writer_lock_recovery() {
+  local home lock scenario pid rc
+  pid=$(bash -c 'echo $$')
+  for scenario in old-empty old-live dead live; do
+    home=$(new_home "writer-$scenario")
+    lock="$home/config/.merge-policy.lock"
+    mkdir "$lock"
+    case "$scenario" in
+      old-live|live) printf '%s\n' "$$" > "$lock/pid" ;;
+      dead) printf '%s\n' "$pid" > "$lock/pid" ;;
+    esac
+    case "$scenario" in old-*) touch -t 200001010000 "$lock" ;; esac
+    rc=0
+    FM_HOME="$home" "$POLICY" set bastotec/app never --no-push > "$home/output" 2>&1 || rc=$?
+    if [ "$scenario" = live ]; then
+      assert_equals 1 "$rc" "a current writer lock was stolen"
+      assert_equals "$$" "$(cat "$lock/pid")" "the active writer's ownership changed"
+      assert_absent "$home/config/merge-policy.json" "a blocked writer published policy"
+    else
+      assert_equals 0 "$rc" "a stale writer lock was not reclaimed: $scenario: $(cat "$home/output")"
+      assert_equals 'never repo' "$(FM_HOME="$home" "$POLICY" get bastotec/app)" "recovered writer did not publish policy"
+      assert_absent "$lock" "recovered writer did not release its lock"
+    fi
+  done
+  pass "policy writers reclaim old or dead-owner locks but respect a live current writer"
 }
 
 test_pr_merge_refuses_a_never_repository() {
@@ -243,10 +269,32 @@ test_policy_revocation_at_merge_boundaries() {
   pass "both final merge boundaries refuse policy revoked after the initial read"
 }
 
-test_policy_lock_covers_forge_commands() {
-  local home out path
+test_merges_ignore_writer_lock() {
+  local home out path lock
   for path in task unowned; do
     home=$(merge_home "lock-$path")
+    attest_home "$home"
+    lock="$home/config/.merge-policy.lock"
+    mkdir "$lock"
+    printf '%s\n' "$$" > "$lock/pid"
+    if [ "$path" = task ]; then
+      printf 'kind=ship\nmode=no-mistakes\nproject=app\n' > "$home/state/t1.meta"
+      out=$(merge_in_home "$home" "$ROOT/bin/fm-pr-merge.sh" t1 https://github.com/bastotec/app/pull/7 2>&1) || fail "task merge failed: $out"
+    else
+      out=$(merge_in_home "$home" "$ROOT/bin/fm-autoland.sh" check)
+    fi
+    assert_grep 'pr merge ' "$home/gh.log" "the forge command was blocked by a policy writer: $out"
+    assert_equals "$$" "$(cat "$lock/pid")" "merge disturbed the policy writer's lock"
+    rm "$lock/pid"
+    rmdir "$lock"
+  done
+  pass "both merge paths proceed without acquiring or disturbing the policy writer lock"
+}
+
+test_policy_changes_during_inflight_merge() {
+  local home out path
+  for path in task unowned; do
+    home=$(merge_home "inflight-$path")
     attest_home "$home"
     if [ "$path" = task ]; then
       printf 'kind=ship\nmode=no-mistakes\nproject=app\n' > "$home/state/t1.meta"
@@ -255,11 +303,11 @@ test_policy_lock_covers_forge_commands() {
       out=$(merge_in_home "$home" env FM_TEST_TRY_WRITE=true "$ROOT/bin/fm-autoland.sh" check)
     fi
     assert_grep 'pr merge ' "$home/gh.log" "the forge command was never exercised: $out"
-    assert_equals 1 "$(cat "$home/write-rc")" "a policy write completed inside the forge command"
-    assert_absent "$home/config/.merge-policy.lock" "successful merge leaked the policy lock"
-    FM_HOME="$home" "$POLICY" set bastotec/app never --no-push >/dev/null || fail "policy stayed locked after merge"
+    assert_equals 0 "$(cat "$home/write-rc")" "an in-flight forge command blocked a policy write"
+    assert_equals 'never repo' "$(FM_HOME="$home" "$POLICY" get bastotec/app)" "in-flight revocation was not published"
+    assert_absent "$home/config/.merge-policy.lock" "policy writer did not release its lock"
   done
-  pass "policy writers cannot complete while either forge merge command is running"
+  pass "policy changes can complete while either forge merge command is in flight"
 }
 
 test_attended_override_validates_policy() {
@@ -282,10 +330,12 @@ test_builtin_defaults
 test_set_resolves_repo_over_owner_over_default
 test_invalid_input_and_unreadable_file
 test_primary_home_pushes_to_second_mates
+test_writer_lock_recovery
 test_pr_merge_refuses_a_never_repository
 test_list_json_covers_touched_repositories
 test_owner_keys_are_case_insensitive
 test_policy_auto_requires_attestation
 test_policy_revocation_at_merge_boundaries
-test_policy_lock_covers_forge_commands
+test_merges_ignore_writer_lock
+test_policy_changes_during_inflight_merge
 test_attended_override_validates_policy

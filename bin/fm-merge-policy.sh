@@ -34,6 +34,9 @@
 # data/merge-policy.log ("<utc> <who> <name> <old> -> <new> <note>"), and in
 # the primary home (data/secondmates.md present) pushes it to the second mate
 # homes unless --no-push. "owner/*" sets an owner's entry and "*" the default.
+# The writer lock is reclaimed when older than 60 seconds or its recorded PID
+# is dead. Merge paths read without locking immediately before each command:
+# a policy change cannot stop a merge command already in flight, only later ones.
 # list prints the default, owners and repositories. list --json prints
 #   {"version":1,"default":..,"owners":{..},"repos":[{"repo","policy",
 #    "source":"set|owner|default","by","at":<epoch|null>,"note"}]}
@@ -51,7 +54,7 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}}"
 CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 DATA_DIR="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 FILE="$CONFIG_DIR/merge-policy.json"
-. "$SCRIPT_DIR/fm-merge-policy-lock-lib.sh"
+LOCK="$CONFIG_DIR/.merge-policy.lock"
 BUILTIN='{"version":1,"default":"ask","owners":{"bastotec":"auto","brunobasto":"auto"},"repos":{}}'
 
 usage() {
@@ -61,6 +64,39 @@ usage() {
 die() { printf 'fm-merge-policy: %s\n' "$*" >&2; exit "${2:-2}"; }
 
 valid_policy() { case "$1" in auto|ask|never) return 0 ;; *) return 1 ;; esac; }
+
+writer_lock_hold() {
+  local tries=0 pid mtime age dead
+  until mkdir "$LOCK" 2>/dev/null; do
+    pid=$(cat "$LOCK/pid" 2>/dev/null || true)
+    dead=false
+    case "$pid" in
+      ''|*[!0-9]*|0) ;;
+      *) kill -0 "$pid" 2>/dev/null || dead=true ;;
+    esac
+    if [ "$(uname)" = Darwin ]; then
+      mtime=$(/usr/bin/stat -f %m "$LOCK" 2>/dev/null || true)
+    else
+      mtime=$(stat -c %Y "$LOCK" 2>/dev/null || true)
+    fi
+    age=0
+    case "$mtime" in ''|*[!0-9]*) ;; *) age=$(( $(date +%s) - mtime )) ;; esac
+    if [ "$age" -gt 60 ] || [ "$dead" = true ]; then
+      rm -f "$LOCK/pid"
+      rmdir "$LOCK" 2>/dev/null || true
+    fi
+    tries=$((tries + 1))
+    [ "$tries" -lt 50 ] || return 1
+    sleep 0.1
+  done
+  printf '%s\n' "$$" > "$LOCK/pid" || { rmdir "$LOCK"; return 1; }
+}
+
+writer_lock_release() {
+  [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] || return 0
+  rm -f "$LOCK/pid"
+  rmdir "$LOCK"
+}
 
 # The effective document: the built-in defaults overlaid with the file.
 effective() {
@@ -180,8 +216,8 @@ cmd_set() {
   fi
   case "$by$note" in *$'\n'*) die "--by and --note must be one line" ;; esac
   mkdir -p "$CONFIG_DIR" "$DATA_DIR" || die "cannot create $CONFIG_DIR" 1
-  fm_merge_policy_lock_hold "$CONFIG_DIR" || die "the merge policy could not be locked ($CONFIG_DIR/.merge-policy.lock)" 1
-  trap 'fm_merge_policy_lock_release || true' EXIT
+  writer_lock_hold || die "the merge policy could not be locked ($LOCK)" 1
+  trap 'writer_lock_release || true' EXIT
   if [ -f "$FILE" ]; then
     doc=$(jq -c '.' "$FILE" 2>/dev/null) || die "$FILE is not valid JSON" 1
   else
@@ -210,7 +246,7 @@ cmd_set() {
   fi
   printf '%s %s %s %s -> %s %s\n' "$now" "$by" "$name" "$old" "$policy" "$note" >> "$DATA_DIR/merge-policy.log" \
     || die "the policy was written but the audit line could not be appended" 1
-  fm_merge_policy_lock_release || true
+  writer_lock_release || true
   trap - EXIT
   printf 'set %s %s -> %s\n' "$name" "$old" "$policy"
   if [ "$push" = 1 ] && [ -f "$DATA_DIR/secondmates.md" ]; then
