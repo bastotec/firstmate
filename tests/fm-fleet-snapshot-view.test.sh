@@ -398,9 +398,10 @@ EOF
 }
 
 test_specialists_are_listed_as_persistent_workers() {
-  local home fakebin out
+  local home fakebin out primary fixture_root
   home=$(make_home specialists)
   mkdir -p "$home/state/specialists"
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$home/data/backlog.md"
   printf '%s\n' '{"version":1,"kind":"specialist","persistent":true,"name":"amigo-tech","subject":"Amigo health","session":"fm-spec-amigo","status":"suspended","suspension":{"since":1792233602,"reason":"stopped after failed calls","by":"firstmate"},"model":"zai/glm-5.3","jobs":3,"current_job":null,"last_job":null}' \
     > "$home/state/specialists/amigo-tech.json"
   fakebin=$(make_fakebin "$home")
@@ -415,7 +416,30 @@ test_specialists_are_listed_as_persistent_workers() {
   out=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_DATA_OVERRIDE="$home/data" "$SNAPSHOT" --secondmate-home-summary)
   printf '%s' "$out" | jq -e '.specialists[0].id == "spec-amigo-tech" and .specialists[0].current_state.state == "suspended"' >/dev/null \
     || fail "the home summary does not carry the specialist: $out"
-  pass "specialists appear as persistent worker rows in the fleet view and the home summary"
+  printf '%s' "$out" > "$home/state/home-summary.json"
+  primary=$(make_home specialists-primary)
+  fixture_root="$TMP_ROOT/specialists-fixture-root"
+  mkdir -p "$fixture_root" "$home/bin"
+  printf '# Fixture home\n' > "$home/AGENTS.md"
+  printf 'mate\n' > "$home/.fm-secondmate-home"
+  printf -- '- mate - specialist fixture (home: %s; scope: fixture; projects: sample; added 2026-07-11)\n' \
+    "$home" > "$primary/data/secondmates.md"
+  out=$(PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fixture_root" FM_HOME="$primary" FM_DATA_OVERRIDE="$primary/data" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    (.specialists | length) == 0
+    and (.secondmate_current.records[] | select(.id == "mate")
+         | .registered == true and .provenance.selected == "structured-home"
+           and .specialists[0].id == "spec-amigo-tech"
+           and .specialists[0].current_state.state == "suspended")
+  ' >/dev/null || fail "the primary snapshot dropped the registered mate specialist: $out"
+  jq 'del(.specialists)' "$home/state/home-summary.json" > "$home/state/legacy-summary.json"
+  mv "$home/state/legacy-summary.json" "$home/state/home-summary.json"
+  out=$(PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fixture_root" FM_HOME="$primary" FM_DATA_OVERRIDE="$primary/data" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    .secondmate_current.records[] | select(.id == "mate")
+    | .provenance.selected == "structured-home" and .specialists == []
+  ' >/dev/null || fail "an older mate summary must project an empty specialists array: $out"
+  pass "specialists survive home-summary collection, including older summary compatibility"
 }
 
 test_main_inventory_orphan_and_unstructured_disclosure() {

@@ -218,6 +218,8 @@ def group_alive(pgid) -> bool:
         # the process table below decides.
         pass
     out = subprocess.run(["ps", "-A", "-o", "pgid=,stat="], capture_output=True, text=True)
+    if out.returncode:
+        return True
     for line in out.stdout.splitlines():
         parts = line.split()
         if len(parts) == 2 and parts[0] == str(pgid) and running_stat(parts[1]):
@@ -717,7 +719,9 @@ def cmd_spec_run(args) -> None:
 
 def session_model(session: str):
     """The model the specialist's Deck session last ran, from Deck's own session file."""
-    root = Path(os.environ.get("DECK_STATE") or Path.home() / ".local" / "state" / "deck")
+    root = Path(os.environ["DECK_STATE"]) if os.environ.get("DECK_STATE") else (
+        Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "deck"
+    )
     try:
         data = json.loads((root / "sessions" / f"{session}.json").read_text())
     except (OSError, ValueError):
@@ -756,17 +760,23 @@ def fleet_row(rec: dict) -> dict:
     status = rec.get("status", "idle")
     sus = rec.get("suspension") or {}
     last = rec.get("last_job") or {}
+    state = STATE_FOR_STATUS.get(status, status)
     if status == "suspended":
         detail = f"suspended: {sus.get('reason', '')}"
     elif status == "running":
-        detail = f"on job {(rec.get('current_job') or {}).get('id')}"
+        cur = rec.get("current_job") or {}
+        if Specialist(home(), name).runner_alive(cur):
+            detail = f"on job {cur.get('id')}"
+        else:
+            state = "stopped"
+            detail = "runner ended; the next specialist command reconciles this job"
     else:
         detail = last.get("summary") or "no job yet"
     return {
         "id": f"spec-{name}", "name": name, "kind": "specialist", "persistent": True, "subject": rec.get("subject"),
         "harness": view["harness"], "model": view["model"], "model_choice": view["model_choice"],
         "effort": view["effort"], "session": rec.get("session"), "status": status,
-        "current_state": {"state": STATE_FOR_STATUS.get(status, status), "source": "specialist-record",
+        "current_state": {"state": state, "source": "specialist-record",
                           "detail": detail[:300], "observed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
         "current_job": view.get("current_job"), "last_job": rec.get("last_job"),
         "suspension": rec.get("suspension"), "stop_on_tool_failure": bool(rec.get("stop_on_tool_failure")),
@@ -804,10 +814,11 @@ def cmd_spec_stop(args) -> None:
     pid = cur["pid"]
     with contextlib.suppress(ProcessLookupError, PermissionError):
         os.killpg(pid, signal.SIGTERM)
-    if not wait_for(lambda: not sp.runner_alive(cur), 10):
+    if not wait_for(lambda: not group_alive(pid), 10):
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(pid, signal.SIGKILL)
-        wait_for(lambda: not sp.runner_alive(cur), 5)
+        if not wait_for(lambda: not group_alive(pid), 5):
+            die(f"job {cur['id']} process group {pid} is still running; stop could not be confirmed", 1)
     rec = sp.reconcile()
     last = rec.get("last_job") or {}
     print(f"stopped job {cur['id']} for specialist {args.name} ({last.get('outcome', 'unknown')})")

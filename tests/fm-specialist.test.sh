@@ -110,8 +110,33 @@ STUB_MODE=hang "$SPEC" job amigo-tech --brief "Hang." >/dev/null 2>&1 || fail "s
 expect_code 3 "$("$SPEC" job amigo-tech --brief again >/dev/null 2>&1; echo $?)" "a busy specialist refuses a second job"
 expect_code 3 "$("$SPEC" retire amigo-tech >/dev/null 2>&1; echo $?)" "retire refuses a running job"
 pid=$(jq -r .current_job.pid "$REC")
+assert_equals working "$(python3 "$ROOT/bin/fm_crew.py" _spec-rows | jq -r '.[0].current_state.state')" "a live runner is working"
 fm_test_kill_tree "$pid" >/dev/null 2>&1 || kill -9 "$pid" 2>/dev/null
 for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+python3 - "$ROOT" "$HOME_DIR" <<'PY' || fail "dead-runner rows must report stopped without reconciling"
+import calendar
+import json
+import stat
+import subprocess
+import sys
+import time
+from pathlib import Path
+root, home = map(Path, sys.argv[1:])
+def snapshot():
+    return {str(p): (p.read_bytes() if p.is_file() else None, stat.S_IMODE(p.stat().st_mode), p.stat().st_mtime_ns)
+            for directory in (home / "state", home / "data") for p in directory.rglob("*")}
+before = snapshot()
+started = time.time()
+rows = json.loads(subprocess.check_output([sys.executable, str(root / "bin/fm_crew.py"), "_spec-rows"]))
+row = next(r for r in rows if r["name"] == "amigo-tech")
+assert row["status"] == "running" and row["current_job"]["pid"] > 0
+assert row["current_state"]["state"] == "stopped", row
+assert "runner ended" in row["current_state"]["detail"]
+assert "next specialist command reconciles" in row["current_state"]["detail"]
+observed = calendar.timegm(time.strptime(row["current_state"]["observed_at"], "%Y-%m-%dT%H:%M:%SZ"))
+assert int(started) <= observed <= time.time()
+assert snapshot() == before, "_spec-rows changed persisted state or permissions"
+PY
 chmod 755 "$HOME_DIR/state/specialists/amigo-tech" "$HOME_DIR/data/specialists/amigo-tech"
 chmod 644 "$HOME_DIR/state/specialists/amigo-tech/history.jsonl" "$HOME_DIR/data/specialists/amigo-tech/memory.md"
 assert_equals idle "$("$SPEC" status amigo-tech --json | jq -r .status)" "a dead runner is reconciled to idle"
@@ -162,6 +187,37 @@ assert_equals 'specialist true idle deck' "$(printf '%s' "$rows" | jq -r '.[] | 
 assert_contains "$(printf '%s' "$rows" | jq -r '.[] | select(.id == "spec-amigo-tech") | .actions.model')" "fm-specialist.sh model amigo-tech" "the fleet row lacks the model action"
 pass "a specialist has a model choice its jobs run on, and status and fleet rows carry worker-shaped fields"
 
+python3 - "$ROOT" "$TMP_ROOT" "$session" <<'PY' || fail "session models must follow Deck state-directory precedence"
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+root, tmp = map(Path, sys.argv[1:3])
+session = sys.argv[3]
+session_file = Path(os.environ["DECK_STATE"]) / "sessions" / f"{session}.json"
+original_session = session_file.read_bytes()
+env = dict(os.environ, HOME=str(tmp / "model-home"), XDG_STATE_HOME=str(tmp / "xdg-state"))
+for directory, model in ((Path(env["DECK_STATE"]), "explicit/model"),
+                         (Path(env["XDG_STATE_HOME"]) / "deck", "xdg/model"),
+                         (Path(env["HOME"]) / ".local/state/deck", "home/model")):
+    directory = directory / "sessions"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{session}.json").write_text(json.dumps({"model": model}))
+def model():
+    rows = json.loads(subprocess.check_output([sys.executable, str(root / "bin/fm_crew.py"), "_spec-rows"], env=env))
+    return next(r["model"] for r in rows if r["name"] == "amigo-tech")
+assert model() == "explicit/model"
+env.pop("DECK_STATE")
+assert model() == "xdg/model"
+env.pop("XDG_STATE_HOME")
+assert model() == "home/model"
+(Path(env["HOME"]) / ".local/state/deck/sessions" / f"{session}.json").write_text("[]")
+assert model() is None
+session_file.write_bytes(original_session)
+PY
+pass "session model lookup follows DECK_STATE, XDG_STATE_HOME and HOME, tolerating non-object sessions"
+
 out=$("$ROOT/bin/fm-control.sh" spec-amigo-tech model zai/glm-5.3) || fail "fm-control model on a specialist failed: $out"
 assert_equals zai/glm-5.3 "$(jq -r .model "$REC")" "fm-control model did not switch the specialist"
 out=$("$ROOT/bin/fm-control.sh" spec-amigo-tech relaunch --model default --note x) || fail "fm-control relaunch on a specialist failed: $out"
@@ -183,6 +239,67 @@ assert_equals idle "$(jq -r .status "$REC")" "interrupt left the specialist runn
 assert_equals interrupted "$(jq -r .last_job.outcome "$REC")" "the stopped job was not recorded as interrupted"
 expect_code 3 "$("$SPEC" stop amigo-tech >/dev/null 2>&1; echo $?)" "stopping an idle specialist was accepted"
 pass "fm-send and fm-control drive a specialist by its spec-<name> id like any worker"
+
+cat > "$TMP_ROOT/deck-term-child" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+state = Path(os.environ["STUB_STOP_DIR"])
+if len(sys.argv) > 1 and sys.argv[1] == "child":
+    def term(signum, frame):
+        (state / "term").write_text(str(time.monotonic()))
+    signal.signal(signal.SIGTERM, term)
+    (state / "ready.json").write_text(json.dumps({"pid": os.getpid(), "pgid": os.getpgrp()}))
+    time.sleep(120)
+else:
+    subprocess.Popen([sys.executable, __file__, "child"])
+    time.sleep(120)
+PY
+chmod +x "$TMP_ROOT/deck-term-child"
+python3 - "$ROOT" "$TMP_ROOT" "$REC" <<'PY' || fail "stop must give TERM-resistant descendants the grace period and prove their exit"
+import importlib.util
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+root, tmp, record = map(Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location("fm_crew", root / "bin/fm_crew.py")
+crew = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(crew)
+state = tmp / "stop-child"
+state.mkdir()
+env = dict(os.environ, FM_DECK_BIN=str(tmp / "deck-term-child"), STUB_STOP_DIR=str(state))
+cli = [str(root / "bin/fm-specialist.sh")]
+pid = None
+try:
+    subprocess.run([*cli, "job", "amigo-tech", "--brief", "Stop the full group"], env=env, check=True, timeout=15)
+    rec = json.loads(record.read_text())
+    pid = rec["current_job"]["pid"]
+    assert crew.wait_for(lambda: (state / "ready.json").is_file(), 10), "child never became ready"
+    child = json.loads((state / "ready.json").read_text())
+    assert child["pgid"] == pid and child["pid"] != pid
+    stopped = subprocess.run([*cli, "stop", "amigo-tech"], env=env, capture_output=True, text=True, timeout=60)
+    finished = time.monotonic()
+    assert stopped.returncode == 0, stopped.stderr
+    assert (state / "term").is_file(), "child did not receive TERM"
+    assert finished - float((state / "term").read_text()) >= 9.8, "child did not get the ten-second grace period"
+    assert not crew.group_alive(pid), "stop reported success while non-zombie group members survived"
+    rec = json.loads(record.read_text())
+    assert rec["status"] == "idle" and rec["last_job"]["outcome"] == "interrupted", rec
+finally:
+    if pid and crew.group_alive(pid):
+        os.killpg(pid, signal.SIGKILL)
+        assert crew.wait_for(lambda: not crew.group_alive(pid), 5), "fixture group survived cleanup"
+PY
+pass "stop tracks the whole group through TERM, ten seconds of grace, and KILL"
 
 assert_equals null "$(tail -1 "$DECK_STATE/argv.jsonl" | jq -r .tool_concurrency)" "unguarded jobs override Deck tool concurrency"
 rm -f "$DECK_STATE/gate.log"
@@ -456,6 +573,9 @@ assert crew.target_state(cur["pid"], cur["identity"]) == "unrelated"
 assert not specialist.runner_alive(cur), "a nonleader reuse must not remain busy"
 PY
   fi
+  before=$(cat "$MEM_REC")
+  assert_equals stopped "$(python3 "$ROOT/bin/fm_crew.py" _spec-rows | jq -r '.[] | select(.name == "memory-check") | .current_state.state')" "a reused pid must not report working in read-only rows"
+  assert_equals "$before" "$(cat "$MEM_REC")" "read-only reused-pid health must not reconcile"
   assert_equals idle "$("$SPEC" list --json | jq -r '.[] | select(.name == "memory-check") | .status')" "a reused live pid cannot keep a specialist busy"
   kill -0 "$unrelated" 2>/dev/null || fail "reconciliation must not signal an unrelated process group"
   assert_equals interrupted "$(jq -r .last_job.outcome "$MEM_REC")" "a reused runner pid finalizes the interrupted job"

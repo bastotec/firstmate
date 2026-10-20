@@ -2020,7 +2020,7 @@ secondmate_current_json() {  # <parent-tasks-json-file> <output-file>
          provenance:{selected:"structured-home",structured_home:$home,summary_source:$summary_source,summary_valid:$summary_valid,
            trust:(if $summary_valid then "complete" else "partial-structured" end),parent_event_role:"historical-only"},
          freshness:{status:$summary_freshness,observed_at:$observed,age_seconds:$summary_age},
-         active_children:$summary.active_children,
+         active_children:$summary.active_children,specialists:($summary.specialists // []),
          decisions_open:$summary.decisions_open,holds:$summary.holds,queued:$summary.queued,
          landed:$summary.landed,endpoints:$summary.endpoints,counts:$summary.counts,omitted:$summary.omitted,
          crew_time:($summary.crew_time // null),
