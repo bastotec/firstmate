@@ -39,6 +39,13 @@
 # collects those questions; acknowledged digests suppress individual publication
 # until the parked episode changes or resumes, including after a keyed answer
 # closes the question. bin/fm_stall_record.py owns episode identity.
+# Main-home digests use episode-bearing stall-digest: queue keys; fm-watch.sh
+# dispatches their doorbell, including for handling successors. Under the wake
+# queue lock, fm_wake_commit_stall_digests_through in fm-wake-lib.sh records
+# one delivered episode hash per line in idle-sweep/<id>.stall-delivered before
+# observation acknowledgment or queue removal. Parent-channel appends carry
+# [stall-episode=<hash>] instead. These receipts reconcile interrupted publication
+# without repeating an old question when the next batch changes.
 #
 # Separately, a live worker classified busy by bin/fm-busy-lib.sh gets one
 # check-in wake after FM_WORKER_QUIET_SECS without a status change, whether or

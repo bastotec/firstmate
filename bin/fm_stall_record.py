@@ -19,17 +19,22 @@ by attributed run creation evidence, including retained historical validation
 that finished between observations. The state owner emits last-run-created only
 for a terminal same-branch run whose head is an ancestor of the task's current
 head; it does not relax current-state attribution or add timing persistence.
-last_run_seen retains the latest valid creation epoch across observations.
+last_run_seen retains attributed creation timing across observations; reconciling
+the same run from minute- and second-precision sources preserves its wait and
+acknowledgment rather than creating another episode.
 Unknown observations withhold notification without discarding episode evidence.
 Declared waits end observation.
 Missing, corrupt, future or generation-mismatched observation records recover
 from valid entry evidence when available, otherwise start a fresh observation.
 Episode identity includes metadata contents, phase, folded pending questions and,
 for decisions, the attributed run, step and current gate's parked_since.
-A proven phase transition or new question starts another episode; a new question
-in the same parked episode starts its own observation clock. Current gate timing
-takes precedence over a legacy parked-run clock; legacy delivery is imported
-only when consistent with the current gate and saved observation evidence.
+A proven phase transition or new question starts another episode; removing only
+some pending questions preserves the surviving questions' wait and acknowledgment.
+The first question after a parked-only observation recovers entry evidence;
+a new or reopened question after an observed decision in the same parked episode
+starts its own observation clock. Current gate timing takes precedence over a
+legacy parked-run clock; legacy delivery is imported only when consistent with
+the current gate and saved observation evidence.
 --ack records delivery only for the currently matching stalled episode and retains
 parked-episode delivery identity when its question closes before the run resumes.
 Atomic owner-only writes refuse symlinks. No worker ledger, hold, gate or approval

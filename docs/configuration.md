@@ -102,6 +102,7 @@ state/
   <id>.held-stopped       deliberate secondmate stop marker (bin/fm-control.sh)
   idle-sweep.json idle-sweep.log idle-sweep/<id>.raised idle-sweep/<id>.retried <mate>.idle-audit <mate>.idle-audit-missing  idle-worker sweep summary, log, handoff and retry markers, second-mate audit episodes and missing-summary grace marks (bin/fm-idle-sweep.sh)
   idle-sweep/<id>.stall.json  stalled-task timing and delivery episode (bin/fm_stall_record.py owns eligibility, recovery timing and deduplication)
+  idle-sweep/<id>.stall-delivered  main-home digest delivery receipts (bin/fm-parked-run-watch.sh header owns publication and receipt reconciliation)
   idle-sweep/.unhandled   main-home unhandled-set wake suppression marker; bin/fm-idle-sweep.sh owns its contents and reset contract
   <id>.check.sh <id>.check-trust  authenticated slow poll and custom-check binding (bin/fm-check-register.sh)
   <id>.pr-poll <id>.pr-poll-registration <id>.pr-poll-retirement <id>.pr-poll-merge-notified  PR merge poll records (bin/fm-pr-lib.sh)

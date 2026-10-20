@@ -62,6 +62,8 @@ The portable regression entry point is `bin/fm-test-run.sh tests/fm-parked-run-w
 It covers first-mate and second-mate delivery, observed re-parking and gate changes, unavailable queries and identity-free readings, serialized scan and close, and retryable close-publication failure.
 [`tests/fm-stall-record.test.sh`](../../tests/fm-stall-record.test.sh) exercises shared stall timing, recovery from existing episode evidence, inconclusive reads, publication-time current-state rechecks, retry after failed publication, and cross-owner digest deduplication through keyed answers before resume.
 [`tests/fm-fleet-snapshot-view.test.sh`](../../tests/fm-fleet-snapshot-view.test.sh) covers the read-only stall projection in recovery views.
+[`tests/fm-crew-state.test.sh`](../../tests/fm-crew-state.test.sh) covers retained historical validation evidence and delivery identity across timestamp precision changes without weakening current-state attribution.
+[`tests/fm-watch-recovery-loop.test.sh`](../../tests/fm-watch-recovery-loop.test.sh) exercises the real handling-successor doorbell for batched stall digests, failed publication and output retries, and receipt preservation through drain acknowledgment and restart.
 These are fixture assertions, not live no-mistakes timing evidence.
 
 ## Wedge-alarm channels
