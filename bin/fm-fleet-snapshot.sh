@@ -63,7 +63,10 @@
 #     state, source, detail, and raw line separately. detail is the unparsed tail
 #     after source, including the reader's trailing observation fields, not just
 #     its generic outcome detail; raw retains the entire line. The reader's
-#     format is owned by bin/fm-task-state-lib.sh. Remote secondmate rows use
+#     format is owned by bin/fm-task-state-lib.sh. The additive stall projection
+#     computes elapsed episode timing read-only via bin/fm_stall_record.py;
+#     it never replaces current state, holds or recovery authority.
+#     Remote secondmate rows use
 #     an explicit unknown value because their endpoint liveness belongs to
 #     supervision rather than this snapshot path.
 #     paths.status_log.last_event is historical wake-event data only, never
@@ -411,8 +414,12 @@ crew_state_json() {  # <id> [<captured-meta>] [<captured-status>]
       esac
       ;;
   esac
+  local stall decisions
+  decisions=$(status_open_decisions "${captured_status:-$STATE/$id.status}")
+  stall=$(python3 "$SCRIPT_DIR/fm_stall_record.py" "$STATE/idle-sweep/$id.stall.json" \
+    "${captured_meta:-$STATE/$id.meta}" "$raw" "$decisions" 2>/dev/null) || stall='{}'
   jq -n --arg raw "$raw" --arg state "$state" --arg source "$source" --arg detail "$detail" \
-    '{state:$state,source:$source,detail:$detail,raw:$raw}'
+    --argjson stall "$stall" '{state:$state,source:$source,detail:$detail,raw:$raw,stall:$stall}'
 }
 
 status_event_json() {  # <observed-status-log> [<contract-path>]
