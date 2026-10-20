@@ -12,14 +12,21 @@ specialist is a record, not an endpoint, and is intentionally persistent.
   state/specialists/<name>.json          the record (0600, atomic)
       {"version":1,"kind":"specialist","persistent":true,"name","subject",
        "home","session","memory","skills_dir","workdir","projects":[...],
-       "status":"idle"|"running"|"retired","created","jobs":N,
-       "current_job":{"id","pid","identity","started"}|null,
-       "last_job":{"id","brief","started","finished","outcome","result"}|null,
+       "status":"idle"|"running"|"suspended"|"retired","created","jobs":N,
+       "suspension":{"since","reason","by"}|null,
+       "last_suspension":{"since","reason","by","resumed","resumed_by"}?,
+       "current_job":{"id","pid","identity","started","from"?}|null,
+       "last_job":{"id","brief","started","finished","outcome","result","from"?,"message"?}|null,
        "memory_summary"}
+      Suspension fields are absent until first used; since and resumed are epoch
+      seconds, and last_suspension retains the most recently resumed suspension.
   state/specialists/<name>/history.jsonl one line per finished job
-      {"job","brief","started","finished","outcome","result","exit"}
+      {"job","brief","started","finished","outcome","result","exit","from"?,"message"?}
+      A captain ask sets "from": "captain" on current_job, last_job and history;
+      last_job and history also keep his exact words as "message".
   state/specialists/<name>/jobs/<job>/   brief.md prompt.md events.ndjson
                                          result.md started memory-before.json runner.log
+                                         message.md (captain asks only, exact message)
   data/specialists/<name>/memory.md      its memory: read at every job start,
                                          updated before every job may finish
   data/specialists/<name>/skills/        linked at workdir/.agents/skills
@@ -78,6 +85,7 @@ Regression entrypoints: tests/fm-specialist.test.sh and tests/fm-group.test.sh.
 from __future__ import annotations
 
 import argparse
+import calendar
 import contextlib
 import fcntl
 import hashlib
@@ -144,7 +152,8 @@ def write_json(path: Path, data: dict) -> None:
 
 def read_input_file(path: str, what: str) -> str:
     try:
-        return Path(path).read_text()
+        with open(path, newline="") as fh:
+            return fh.read()
     except OSError as e:
         die(f"cannot read the {what} file {path}: {e.strerror}")
 
@@ -455,12 +464,21 @@ class Specialist:
             "result": str(result) if result.is_file() else None,
             "exit": exit_code,
         }
+        if cur.get("from"):
+            entry["from"] = cur["from"]
+        message = jdir / "message.md"
+        if message.is_file():
+            with message.open(newline="") as fh:
+                entry["message"] = fh.read()
         with open(self.history_path, "a") as fh:
             fh.write(json.dumps(entry, sort_keys=True) + "\n")
         rec["status"] = "idle"
         rec["current_job"] = None
         rec["last_job"] = {k: entry[k] for k in ("brief", "started", "finished", "outcome", "result")}
         rec["last_job"]["id"] = job
+        for key in ("from", "message"):
+            if entry.get(key):
+                rec["last_job"][key] = entry[key]
         rec["last_job"]["summary"] = first_lines(read_text(result), 200)
         rec["jobs"] = int(rec.get("jobs", 0)) + 1
         rec["memory_summary"] = first_lines(read_text(Path(rec["memory"])))
@@ -582,9 +600,12 @@ def cmd_spec_check(args) -> None:
 
 
 def cmd_spec_job(args) -> None:
+    run_spec_job(args, brief_text(args), None)
+
+
+def run_spec_job(args, brief: str, origin, on_prepare=None) -> None:
     h = home()
     sp = Specialist(h, args.name)
-    brief = brief_text(args)
     deck_bin()
     deck_env()
     rec = sp.reconcile()
@@ -592,6 +613,11 @@ def cmd_spec_job(args) -> None:
         rec = sp.record()
         if rec.get("status") == "retired":
             die(f"specialist {args.name!r} is retired", 3)
+        if rec.get("status") == "suspended":
+            sus = rec.get("suspension") or {}
+            since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(sus.get("since") or 0))
+            die(f"specialist {args.name!r} is suspended since {since}: {sus.get('reason', 'no reason recorded')}; "
+                "resume it with fm-specialist.sh resume first", 4)
         if rec.get("status") == "running":
             die(f"specialist {args.name!r} is already on job {rec['current_job']['id']}; wait for it", 3)
         job = time.strftime("j%Y%m%dT%H%M%S", time.gmtime()) + "-" + secrets.token_hex(2)
@@ -601,12 +627,16 @@ def cmd_spec_job(args) -> None:
         (jdir / "prompt.md").write_text(specialist_prompt(rec, job, jdir, brief))
         (jdir / "started").write_text(str(now()))
         (jdir / "memory-before.json").write_text(json.dumps(memory_metadata(Path(rec["memory"]))))
+        if on_prepare:
+            on_prepare(h, job)
         pid = detach(
             [sys.executable, str(Path(__file__).resolve()), "_spec-run", args.name, job, "--home", str(h)],
             jdir / "runner.log",
         )
         rec["status"] = "running"
         cur = {"id": job, "pid": pid, "started": now(), "identity": process_identity(pid)}
+        if origin:
+            cur["from"] = origin
         rec["current_job"] = cur
         sp.save(rec)
     print(f"started job {job} for specialist {args.name}")
@@ -666,6 +696,10 @@ def cmd_spec_status(args) -> None:
         return
     last = rec.get("last_job") or {}
     print(f"specialist {rec['name']} ({rec['status']}) - {rec['subject']}")
+    sus = rec.get("suspension") if rec.get("status") == "suspended" else None
+    if sus:
+        since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(sus.get("since") or 0))
+        print(f"  suspended since {since} by {sus.get('by', 'unknown')}: {sus.get('reason', '')}")
     print(f"  session: {rec['session']}  jobs: {rec.get('jobs', 0)}")
     if rec.get("current_job"):
         print(f"  on job: {rec['current_job']['id']}")
@@ -706,6 +740,98 @@ def cmd_spec_list(args) -> None:
         last = (rec.get("last_job") or {}).get("finished")
         when = time.strftime("%Y-%m-%d", time.localtime(last)) if last else "never"
         print(f"{rec['name']}\t{rec['status']}\tjobs={rec.get('jobs', 0)}\tlast={when}\t{rec['subject']}")
+
+
+CAPTAIN_BRIEF = """Message from the captain, sent to you directly (not through your owning mate):
+
+{text}
+
+Answer him in your result file, in plain words, as you would report to your owner.
+Your standing bounds still apply: you produce knowledge, not project changes, and a
+read-only monitor stays read-only. If he asks for something outside your bounds,
+say so plainly instead of doing it.
+"""
+
+
+def cmd_spec_ask(args) -> None:
+    if not args.from_captain:
+        die("ask needs --from-captain: only a captain message is a supported direct route")
+    if args.text_file:
+        text = read_input_file(args.text_file, "message")
+    else:
+        text = " ".join(args.text)
+    if not text.strip():
+        die("the message is empty")
+
+    def tell_owner(h: Path, job: str) -> None:
+        msg = Specialist(h, args.name).job_dir(job) / "message.md"
+        msg.write_text(text)
+        excerpt = " ".join(text.split())[:200]
+        wake(h, f"specialist-captain:{args.name}:{job}",
+             f"check: the captain asked specialist {args.name} directly (job {job}): {excerpt} - "
+             "its result arrives as the usual specialist job notification")
+
+    run_spec_job(args, CAPTAIN_BRIEF.format(text=text), "captain", tell_owner)
+
+
+def cmd_spec_result(args) -> None:
+    h = home()
+    sp = Specialist(h, args.name)
+    rec = sp.reconcile()
+    job = args.job or (rec.get("last_job") or {}).get("id")
+    if not job:
+        die(f"specialist {args.name!r} has no finished job", 1)
+    if (rec.get("current_job") or {}).get("id") == job:
+        die(f"job {job} is still running", 3)
+    result = sp.job_dir(job) / "result.md"
+    if not result.is_file():
+        die(f"job {job} wrote no result", 1)
+    sys.stdout.write(read_text(result))
+
+
+def parse_since(text: str | None) -> int:
+    if text is None:
+        return now()
+    try:
+        return int(calendar.timegm(time.strptime(text, "%Y-%m-%dT%H:%M:%SZ")))
+    except ValueError:
+        die(f"--since must be a UTC time like 2026-10-17T10:40:02Z, got {text!r}")
+    return now()
+
+
+def cmd_spec_suspend(args) -> None:
+    h = home()
+    sp = Specialist(h, args.name)
+    sp.reconcile()
+    reason = " ".join(args.reason.split())
+    if not reason:
+        die("--reason must say why in plain words")
+    since = parse_since(args.since)
+    with locked(sp.lock_path):
+        rec = sp.record()
+        if rec.get("status") == "retired":
+            die(f"specialist {args.name!r} is retired", 3)
+        if rec.get("status") == "running":
+            die(f"specialist {args.name!r} is on job {rec['current_job']['id']}; suspend it after the job ends", 3)
+        rec["status"] = "suspended"
+        rec["suspension"] = {"since": since, "reason": reason, "by": args.by}
+        sp.save(rec)
+    print(f"suspended specialist {args.name}: {reason}")
+
+
+def cmd_spec_resume(args) -> None:
+    h = home()
+    sp = Specialist(h, args.name)
+    sp.reconcile()
+    with locked(sp.lock_path):
+        rec = sp.record()
+        if rec.get("status") != "suspended":
+            die(f"specialist {args.name!r} is not suspended (status {rec.get('status')})", 3)
+        rec["status"] = "idle"
+        rec["last_suspension"] = dict(rec.get("suspension") or {}, resumed=now(), resumed_by=args.by)
+        rec["suspension"] = None
+        sp.save(rec)
+    print(f"resumed specialist {args.name}")
 
 
 def cmd_spec_retire(args) -> None:
@@ -1249,6 +1375,31 @@ def main() -> None:
     s.add_argument("name")
     s.set_defaults(fn=cmd_spec_retire)
 
+    s = sub.add_parser("ask")
+    s.add_argument("name")
+    s.add_argument("--from-captain", action="store_true")
+    s.add_argument("--text-file")
+    s.add_argument("--wait", action="store_true")
+    s.add_argument("--wait-timeout", type=float, default=DEFAULT_DEADLINE + 60)
+    s.set_defaults(fn=cmd_spec_ask)
+
+    s = sub.add_parser("result")
+    s.add_argument("name")
+    s.add_argument("job", nargs="?")
+    s.set_defaults(fn=cmd_spec_result)
+
+    s = sub.add_parser("suspend")
+    s.add_argument("name")
+    s.add_argument("--reason", required=True)
+    s.add_argument("--since")
+    s.add_argument("--by", default="firstmate")
+    s.set_defaults(fn=cmd_spec_suspend)
+
+    s = sub.add_parser("resume")
+    s.add_argument("name")
+    s.add_argument("--by", default="firstmate")
+    s.set_defaults(fn=cmd_spec_resume)
+
     s = sub.add_parser("group-start")
     s.add_argument("gid")
     s.add_argument("--title")
@@ -1276,7 +1427,14 @@ def main() -> None:
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_group_list)
 
-    args = p.parse_args()
+    argv = sys.argv[1:]
+    text = []
+    if argv[:1] == ["ask"] and "--" in argv:
+        split = argv.index("--")
+        argv, text = argv[:split], argv[split + 1:]
+    args = p.parse_args(argv)
+    if args.cmd == "ask":
+        args.text = text
     if args.cmd not in ("_spec-check", "_result-check", "group-status", "group-list"):
         refuse_gate()
     if args.cmd in ("_spec-run", "_group-run"):

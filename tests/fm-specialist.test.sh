@@ -125,6 +125,127 @@ assert_equals 1 "$(grep -c "specialist:amigo-tech:$interrupted_job" "$HOME_DIR/s
 assert_equals 1 "$(grep -c "specialist:amigo-tech:$job1" "$HOME_DIR/state/.wake-queue")" "normal completion emits only one wake"
 pass "one job at a time; a dead runner is reconciled and wakes once"
 
+expect_code 2 "$("$SPEC" suspend amigo-tech --reason "x" --since yesterday >/dev/null 2>&1; echo $?)" "a malformed --since is refused"
+expect_code 2 "$("$SPEC" suspend amigo-tech --reason "x" --since '' >/dev/null 2>&1; echo $?)" "an explicitly empty --since is refused"
+assert_equals idle "$(jq -r .status "$REC")" "invalid --since leaves the specialist idle"
+"$SPEC" suspend amigo-tech --reason "jobs kept calling tools after a failed call" --since 2026-10-17T10:40:02Z --by main >/dev/null \
+  || fail "suspend failed"
+assert_equals suspended "$(jq -r .status "$REC")" "suspend does not mark the record"
+assert_equals "1792233602 jobs kept calling tools after a failed call main" \
+  "$(jq -r '"\(.suspension.since) \(.suspension.reason) \(.suspension.by)"' "$REC")" "the suspension's since, reason and by were not recorded"
+assert_contains "$("$SPEC" status amigo-tech)" "suspended since 2026-10-17T10:40:02Z by main: jobs kept calling tools" "status hides the suspension"
+assert_contains "$("$SPEC" list)" $'amigo-tech\tsuspended' "list hides the suspension"
+expect_code 4 "$("$SPEC" job amigo-tech --brief "Scheduled sweep." >/dev/null 2>&1; echo $?)" "a suspended specialist took a job"
+out=$("$SPEC" job amigo-tech --brief "Scheduled sweep." 2>&1)
+assert_contains "$out" "suspended since 2026-10-17T10:40:02Z: jobs kept calling tools after a failed call" "the refusal does not say why"
+"$SPEC" resume amigo-tech --by captain >/dev/null || fail "resume failed"
+assert_equals idle "$(jq -r .status "$REC")" "resume does not return the specialist to idle"
+assert_equals "null captain" "$(jq -r '"\(.suspension) \(.last_suspension.resumed_by)"' "$REC")" "resume does not keep the ended suspension"
+expect_code 3 "$("$SPEC" resume amigo-tech >/dev/null 2>&1; echo $?)" "resuming an idle specialist was accepted"
+pass "suspend records why and since when, job refuses while suspended, and resume returns it to idle"
+
+expect_code 2 "$("$SPEC" ask amigo-tech -- "hello" >/dev/null 2>&1; echo $?)" "ask without --from-captain was accepted"
+out=$("$SPEC" ask amigo-tech --from-captain --wait -- "How is Amigo doing this week?" 2>&1) || fail "captain ask failed: $out"
+ask_job=$(jq -r .last_job.id "$REC")
+assert_equals captain "$(jq -r .last_job.from "$REC")" "the job is not marked as from the captain"
+assert_equals captain "$(tail -1 "$HOME_DIR/state/specialists/amigo-tech/history.jsonl" | jq -r .from)" "history does not mark the captain's job"
+assert_equals "How is Amigo doing this week?" "$(tail -1 "$HOME_DIR/state/specialists/amigo-tech/history.jsonl" | jq -r .message | tr -d '\n')" "history does not keep his exact words"
+assert_equals "How is Amigo doing this week?" "$(jq -r .last_job.message "$REC" | tr -d '\n')" "last_job does not keep his exact words"
+assert_grep "How is Amigo doing this week?" "$HOME_DIR/state/specialists/amigo-tech/jobs/$ask_job/brief.md" "the captain's words are not the brief"
+assert_grep "read-only monitor stays read-only" "$HOME_DIR/state/specialists/amigo-tech/jobs/$ask_job/brief.md" "the brief drops the specialist's bounds"
+assert_grep "specialist-captain:amigo-tech:$ask_job" "$HOME_DIR/state/.wake-queue" "the owning home was not told about the captain's message"
+assert_grep "the captain asked specialist amigo-tech directly (job $ask_job): How is Amigo doing this week?" "$HOME_DIR/state/.wake-queue" "the owner's notice lost the question"
+assert_equals "$(cat "$(jq -r .last_job.result "$REC")")" "$("$SPEC" result amigo-tech)" "result does not print the last job's result"
+assert_equals "$(cat "$(jq -r .last_job.result "$REC")")" "$("$SPEC" result amigo-tech "$ask_job")" "result does not print a named job's result"
+"$SPEC" suspend amigo-tech --reason "paused" >/dev/null || fail "suspend failed"
+expect_code 4 "$("$SPEC" ask amigo-tech --from-captain -- "still there?" >/dev/null 2>&1; echo $?)" "a suspended specialist took a captain message"
+"$SPEC" resume amigo-tech >/dev/null || fail "resume failed"
+pass "a captain message runs one job on the specialist's session, marked from him, tells the owner, and its result is readable"
+
+python3 - "$ROOT" "$HOME_DIR" "$TMP_ROOT" <<'PY' || fail "captain messages must be prepared before launch and retained exactly"
+import fcntl
+import importlib.util
+import json
+import sys
+from pathlib import Path
+from unittest.mock import patch
+root, home, tmp = map(Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location("fm_crew", root / "bin/fm_crew.py")
+crew = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(crew)
+sp = crew.Specialist(home, "amigo-tech")
+real_detach = crew.detach
+for source, text in (("argv", "  How is Amigo?  "), ("file", "  Check this snippet:\r\n    code\r\n\r\n")):
+    def launch(argv, log):
+        job = argv[4]
+        assert (sp.job_dir(job) / "message.md").read_bytes() == text.encode()
+        assert f"specialist-captain:amigo-tech:{job}" in (home / "state/.wake-queue").read_text()
+        with open(sp.lock_path, "a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                pass
+            else:
+                raise AssertionError("job preparation must retain the specialist lock")
+        return real_detach(argv, log)
+    argv = ["fm_crew.py", "ask", "amigo-tech", "--from-captain", "--wait"]
+    if source == "file":
+        message = tmp / "captain-message.txt"
+        message.write_bytes(text.encode())
+        argv += ["--text-file", str(message)]
+    else:
+        argv += ["--", text]
+    with patch.object(sys, "argv", argv), patch.object(crew, "detach", side_effect=launch):
+        crew.main()
+    rec = json.loads(sp.record_path.read_text())
+    last = rec["last_job"]
+    history = json.loads(sp.history_path.read_text().splitlines()[-1])
+    assert last["message"] == history["message"] == text
+    job = last["id"]
+    assert (sp.job_dir(job) / "message.md").read_bytes() == text.encode()
+    queue = (home / "state/.wake-queue").read_text()
+    assert queue.index(f"specialist-captain:amigo-tech:{job}") < queue.index(f"specialist:amigo-tech:{job}")
+PY
+pass "captain words and owner notification are prepared under lock before the runner starts"
+
+PRIMARY="$TMP_ROOT/primary"
+mkdir -p "$PRIMARY/state"
+printf 'kind=secondmate\nhome=%s\n' "$HOME_DIR" > "$PRIMARY/state/mate-local.meta"
+out=$(env -u FM_STATE_OVERRIDE -u FM_DATA_OVERRIDE -u FM_CONFIG_OVERRIDE FM_HOME="$PRIMARY" "$SPEC" status amigo-tech --mate mate-local) \
+  || fail "status through a local mate failed: $out"
+assert_contains "$out" "specialist amigo-tech (idle)" "--mate did not run in the local mate's home"
+assert_contains "$("$SPEC" status amigo-tech --mate primary)" "specialist amigo-tech (idle)" "--mate primary must select the current home"
+ROUTE_BIN="$TMP_ROOT/route-bin"
+mkdir -p "$ROUTE_BIN"
+cp "$ROOT/bin/fm-specialist.sh" "$ROUTE_BIN/"
+ln -s "$ROOT/bin/fm-gate-refuse-lib.sh" "$ROUTE_BIN/fm-gate-refuse-lib.sh"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" > "%s/fm-on.args"\n' "$TMP_ROOT" > "$ROUTE_BIN/fm-on.sh"
+chmod +x "$ROUTE_BIN/fm-on.sh"
+printf 'kind=secondmate\nremote_host=workload\nhome=/remote/home\n' > "$PRIMARY/state/mate-remote.meta"
+env -u FM_STATE_OVERRIDE FM_HOME="$PRIMARY" "$ROUTE_BIN/fm-specialist.sh" ask linkana --mate mate-remote --from-captain -- "any new errors?" \
+  || fail "a remote ask did not route"
+assert_equals $'mate-remote\nfm-specialist.sh\nask\nlinkana\n--from-captain\n--\nany new errors?' "$(cat "$TMP_ROOT/fm-on.args")" \
+  "a remote mate's ask was not sent through fm-on.sh"
+expect_code 2 "$(env -u FM_STATE_OVERRIDE FM_HOME="$PRIMARY" "$ROUTE_BIN/fm-specialist.sh" ask linkana --mate mate-remote --from-captain --text-file /tmp/x >/dev/null 2>&1; echo $?)" \
+  "--text-file was sent to a remote mate"
+rm "$TMP_ROOT/fm-on.args"
+for command in ask result status history; do
+  expect_code 3 "$(NO_MISTAKES_GATE=1 FM_GATE_REFUSE_BYPASS=0 env -u FM_STATE_OVERRIDE FM_HOME="$PRIMARY" \
+    "$ROUTE_BIN/fm-specialist.sh" "$command" linkana --mate mate-remote >/dev/null 2>&1; echo $?)" \
+    "gate agents cannot route $command to a remote home"
+done
+assert_absent "$TMP_ROOT/fm-on.args" "gate refusal must happen before fm-on"
+rc=0
+out=$(env -u FM_STATE_OVERRIDE FM_HOME="$PRIMARY" "$ROUTE_BIN/fm-specialist.sh" ask linkana --mate mate-remote --from-captain --wait -- "hello" 2>&1) || rc=$?
+expect_code 2 "$rc" "remote --wait must be refused"
+assert_contains "$out" "poll status/result" "remote wait refusal must explain how to read the result"
+assert_absent "$TMP_ROOT/fm-on.args" "remote wait refusal must happen before transport"
+env -u FM_STATE_OVERRIDE FM_HOME="$PRIMARY" "$ROUTE_BIN/fm-specialist.sh" ask linkana --mate mate-remote --from-captain -- "--wait" \
+  || fail "message text is not a remote wait option"
+assert_equals --wait "$(tail -1 "$TMP_ROOT/fm-on.args")" "the remote message tail must remain text"
+expect_code 2 "$(env -u FM_STATE_OVERRIDE FM_HOME="$PRIMARY" "$SPEC" status amigo-tech --mate nobody >/dev/null 2>&1; echo $?)" "an unknown mate was accepted"
+pass "--mate runs ask, result and status in a local mate's home or through fm-on.sh for a remote one"
+
 "$SPEC" retire amigo-tech >/dev/null || fail "retire failed"
 assert_equals retired "$(jq -r .status "$REC")" "retire marks the record"
 assert_present "$HOME_DIR/data/specialists/amigo-tech/memory.md" "retire keeps the memory"
