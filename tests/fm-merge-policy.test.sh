@@ -69,6 +69,7 @@ test_primary_home_pushes_to_second_mates() {
   bin="$TMP_ROOT/push-bin"
   mkdir -p "$bin"
   cp "$POLICY" "$bin/fm-merge-policy.sh"
+  ln -s "$ROOT/bin/fm-merge-policy-lock-lib.sh" "$bin/fm-merge-policy-lock-lib.sh"
   printf '#!/usr/bin/env bash\necho pushed >> "%s/pushes"\n' "$home" > "$bin/fm-config-push.sh"
   chmod +x "$bin/fm-config-push.sh"
   FM_HOME="$home" "$bin/fm-merge-policy.sh" set bastotec/a ask >/dev/null || fail "set failed"
@@ -96,22 +97,185 @@ test_pr_merge_refuses_a_never_repository() {
   pass "fm-pr-merge.sh refuses a never repository before touching GitHub"
 }
 
+test_owner_keys_are_case_insensitive() {
+  local home out
+  home=$(new_home owner-case)
+  FM_HOME="$home" "$POLICY" set 'BASTOTEC/*' never >/dev/null || fail "uppercase owner set failed"
+  assert_equals 'never owner bastotec' "$(FM_HOME="$home" "$POLICY" get bastotec/app)" "uppercase set retained built-in authority"
+  printf '%s\n' '{"owners":{"BASTOTEC":"never"}}' > "$home/config/merge-policy.json"
+  assert_equals 'never owner bastotec' "$(FM_HOME="$home" "$POLICY" get bastotec/app)" "file owner did not override the built-in case-insensitively"
+  printf '%s\n' '{"repos":[{"repo":"bastotec/app","authority":"x"}]}' > "$home/config/autoland.json"
+  out=$(FM_HOME="$home" "$POLICY" list --json)
+  printf '%s' "$out" | jq -e '.owners.bastotec == "never" and (.repos[0] | .policy == "never" and .source == "owner")' >/dev/null \
+    || fail "list retained built-in authority: $out"
+  FM_HOME="$home" "$POLICY" set 'BastoTec/*' ask >/dev/null || fail "mixed-case owner set failed"
+  assert_equals 'ask owner bastotec' "$(FM_HOME="$home" "$POLICY" get BASTOTEC/app)" "owner case variant was not replaced"
+  jq -e '.owners == {bastotec:"ask"}' "$home/config/merge-policy.json" >/dev/null || fail "set persisted conflicting case variants"
+  assert_grep 'BastoTec/* never -> ask' "$home/data/merge-policy.log" "audit did not report the previous effective policy"
+  pass "owner writes, file overlays, and list resolve case-insensitively"
+}
+
 test_list_json_covers_touched_repositories() {
   local home out
   home=$(new_home list)
-  mkdir -p "$home/projects/app"
+  mkdir -p "$home/projects/app" "$home/projects/ssh" "$home/projects/ssh-suffix"
   git -C "$home/projects/app" init -q && git -C "$home/projects/app" remote add origin https://github.com/acme/app.git
+  git -C "$home/projects/ssh" init -q && git -C "$home/projects/ssh" remote add origin ssh://git@github.com/acme/ssh
+  git -C "$home/projects/ssh-suffix" init -q && git -C "$home/projects/ssh-suffix" remote add origin ssh://git@github.com/ACME/ssh.git
   printf '%s\n' '{"repos":[{"repo":"bastotec/deck","authority":"x"}]}' > "$home/config/autoland.json"
   FM_HOME="$home" "$POLICY" set DocanaAI/docana ask --by captain --note n >/dev/null || fail "set failed"
   out=$(FM_HOME="$home" "$POLICY" list --json) || fail "list --json failed"
   printf '%s' "$out" | jq -e '
     .default == "ask" and .owners.bastotec == "auto"
-    and ([.repos[].repo] == ["acme/app", "bastotec/deck", "DocanaAI/docana"])
+    and ([.repos[].repo | ascii_downcase] == ["acme/app", "acme/ssh", "bastotec/deck", "docanaai/docana"])
+    and (.repos[] | select(.repo | ascii_downcase == "acme/ssh") | .policy == "ask" and .source == "default")
     and (.repos[] | select(.repo == "acme/app") | .policy == "ask" and .source == "default" and .at == null)
     and (.repos[] | select(.repo == "bastotec/deck") | .policy == "auto" and .source == "owner")
     and (.repos[] | select(.repo == "DocanaAI/docana") | .source == "set" and .by == "captain" and (.at | type == "number"))
   ' >/dev/null || fail "list --json did not cover touched repositories with their source: $out"
   pass "list --json lists every touched repository with its policy, source, and who set it when"
+}
+
+merge_home() {
+  local home
+  home=$(new_home "$1")
+  mkdir -p "$home/bin"
+  printf '%s\n' '- app [direct-PR] - fixture (added 2026-01-01)' > "$home/data/projects.md"
+  printf '%s\n' '{"repos":[{"repo":"bastotec/app","project":"app"}]}' > "$home/config/autoland.json"
+  jq -n --arg head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa '
+    {url:"https://github.com/bastotec/app/pull/7", state:"OPEN", isDraft:false,
+     mergeable:"MERGEABLE", mergeStateStatus:"CLEAN", headRefOid:$head, baseRefName:"main",
+     repository:{nameWithOwner:"bastotec/app",defaultBranchRef:{name:"main"}},
+     labels:[], body:"ordinary PR body",
+     statusCheckRollup:[{__typename:"CheckRun",name:"ci",status:"COMPLETED",conclusion:"SUCCESS"}]}' > "$home/live.json"
+  cat > "$home/bin/gh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_HOME/gh.log"
+case "$1 $2" in
+  'api graphql')
+    case "$*" in
+      *'search(query:'*)
+        jq '{data:{search:{nodes:[. + {labels:{nodes:[]},commits:{nodes:[{commit:{statusCheckRollup:{contexts:{nodes:.statusCheckRollup}}}}]}}]}}}' "$FM_HOME/live.json" ;;
+      *) printf 'state=MERGED\nmerged=true\nqueued=false\nbase=main\n' ;;
+    esac ;;
+  'pr view')
+    case "$*" in
+      *'--json state -q .state'*) echo MERGED ;;
+      *)
+        if [ -n "${FM_TEST_REVOKE:-}" ]; then
+          "$FM_TEST_POLICY" set bastotec/app "$FM_TEST_REVOKE" --no-push > "$FM_HOME/revocation"
+        fi
+        cat "$FM_HOME/live.json" ;;
+    esac ;;
+  'pr merge')
+    if [ "${FM_TEST_TRY_WRITE:-false}" = true ]; then
+      rc=0
+      "$FM_TEST_POLICY" set bastotec/app never --no-push > "$FM_HOME/write-output" 2>&1 || rc=$?
+      printf '%s\n' "$rc" > "$FM_HOME/write-rc"
+    fi ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$home/bin/gh"
+  printf '%s\n' "$home"
+}
+
+merge_in_home() {
+  local home=$1
+  shift
+  env FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" FM_MACHINE_INSTRUCTIONS="$home/machine.md" \
+    FM_TEST_POLICY="$POLICY" PATH="$home/bin:$PATH" "$@"
+}
+
+attest_home() {
+  jq '.body = "## Risk Assessment\n\nLow: bounded\n\n<!-- no-mistakes-pipeline-attestation:v1 "
+    + ({head_sha:.headRefOid,steps:[{step:"review",status:"completed"},{step:"test",status:"completed"},{step:"document",status:"completed"}]} | tojson) + " -->"' \
+    "$1/live.json" > "$1/attested.json"
+  mv "$1/attested.json" "$1/live.json"
+}
+
+test_policy_auto_requires_attestation() {
+  local home out source
+  for source in owner repo; do
+    home=$(merge_home "attestation-$source")
+    if [ "$source" = repo ]; then
+      FM_HOME="$home" "$POLICY" set bastotec/app auto --no-push >/dev/null || fail "set failed"
+    fi
+    out=$(merge_in_home "$home" "$ROOT/bin/fm-autoland.sh" check)
+    assert_contains "$out" 'no no-mistakes attestation' "policy auto merged an unattested direct-PR: $out"
+    assert_no_grep 'pr merge ' "$home/gh.log" "unattested direct-PR was merged"
+    attest_home "$home"
+    out=$(merge_in_home "$home" "$ROOT/bin/fm-autoland.sh" check)
+    assert_contains "$out" 'merged https://github.com/bastotec/app/pull/7' "attested policy-auto PR did not land: $out"
+  done
+  home=$(merge_home legacy-attestation)
+  printf '%s\n' '{"owners":{"bastotec":"auto"}}' > "$home/config/merge-policy.json"
+  jq '.url = "https://github.com/other/app/pull/7" | .repository.nameWithOwner = "other/app"' "$home/live.json" > "$home/other.json"
+  mv "$home/other.json" "$home/live.json"
+  printf '%s\n' '{"repos":[{"repo":"other/app","project":"app","authority":"existing ruling"}]}' > "$home/config/autoland.json"
+  out=$(merge_in_home "$home" "$ROOT/bin/fm-autoland.sh" check)
+  assert_contains "$out" 'merged https://github.com/other/app/pull/7' "bare default lost legacy direct-PR authority: $out"
+  pass "policy auto requires pipeline evidence for direct-PR while bare-default legacy authority remains"
+}
+
+test_policy_revocation_at_merge_boundaries() {
+  local home out rc path policy
+  for path in task unowned; do
+    for policy in never ask; do
+      [ "$path:$policy" != task:ask ] || continue
+      home=$(merge_home "revoked-$path-$policy")
+      attest_home "$home"
+      if [ "$path" = task ]; then
+        printf 'kind=ship\nmode=no-mistakes\nproject=app\n' > "$home/state/t1.meta"
+        rc=0
+        out=$(merge_in_home "$home" env FM_TEST_REVOKE="$policy" "$ROOT/bin/fm-pr-merge.sh" t1 https://github.com/bastotec/app/pull/7 2>&1) || rc=$?
+        assert_equals 1 "$rc" "revoked task merge did not refuse: $out"
+        assert_contains "$out" 'merge policy for bastotec/app is never' "task refusal did not name the revocation: $out"
+      else
+        out=$(merge_in_home "$home" env FM_TEST_REVOKE="$policy" "$ROOT/bin/fm-autoland.sh" check)
+        assert_contains "$out" 'current merge policy no longer permits autoland' "autoland ignored revocation: $out"
+      fi
+      assert_grep "auto -> $policy" "$home/revocation" "policy revocation did not succeed"
+      assert_no_grep 'pr merge ' "$home/gh.log" "a completed revocation was bypassed"
+      assert_absent "$home/config/.merge-policy.lock" "a refused merge leaked the policy lock"
+    done
+  done
+  pass "both final merge boundaries refuse policy revoked after the initial read"
+}
+
+test_policy_lock_covers_forge_commands() {
+  local home out path
+  for path in task unowned; do
+    home=$(merge_home "lock-$path")
+    attest_home "$home"
+    if [ "$path" = task ]; then
+      printf 'kind=ship\nmode=no-mistakes\nproject=app\n' > "$home/state/t1.meta"
+      out=$(merge_in_home "$home" env FM_TEST_TRY_WRITE=true "$ROOT/bin/fm-pr-merge.sh" t1 https://github.com/bastotec/app/pull/7 2>&1) || fail "task merge failed: $out"
+    else
+      out=$(merge_in_home "$home" env FM_TEST_TRY_WRITE=true "$ROOT/bin/fm-autoland.sh" check)
+    fi
+    assert_grep 'pr merge ' "$home/gh.log" "the forge command was never exercised: $out"
+    assert_equals 1 "$(cat "$home/write-rc")" "a policy write completed inside the forge command"
+    assert_absent "$home/config/.merge-policy.lock" "successful merge leaked the policy lock"
+    FM_HOME="$home" "$POLICY" set bastotec/app never --no-push >/dev/null || fail "policy stayed locked after merge"
+  done
+  pass "policy writers cannot complete while either forge merge command is running"
+}
+
+test_attended_override_validates_policy() {
+  local home out rc
+  home=$(merge_home attended-policy)
+  printf 'not json\n' > "$home/config/merge-policy.json"
+  rc=0
+  out=$(merge_in_home "$home" "$ROOT/bin/fm-pr-merge.sh" t1 https://github.com/bastotec/app/pull/7 --attended-override 2>&1) || rc=$?
+  assert_equals 1 "$rc" "attended override accepted unreadable policy: $out"
+  assert_contains "$out" 'merge policy cannot be read' "attended refusal did not name unreadable policy: $out"
+  assert_absent "$home/gh.log" "unreadable policy reached GitHub under attended override"
+  printf '%s\n' '{"repos":{"bastotec/app":{"policy":"never"}}}' > "$home/config/merge-policy.json"
+  printf 'kind=ship\nmode=no-mistakes\nproject=app\n' > "$home/state/t1.meta"
+  out=$(merge_in_home "$home" "$ROOT/bin/fm-pr-merge.sh" t1 https://github.com/bastotec/app/pull/7 --attended-override 2>&1) || fail "attended never override refused: $out"
+  assert_grep 'pr merge ' "$home/gh.log" "valid attended never override did not merge"
+  pass "attended override bypasses never but never policy validation"
 }
 
 test_builtin_defaults
@@ -120,3 +284,8 @@ test_invalid_input_and_unreadable_file
 test_primary_home_pushes_to_second_mates
 test_pr_merge_refuses_a_never_repository
 test_list_json_covers_touched_repositories
+test_owner_keys_are_case_insensitive
+test_policy_auto_requires_attestation
+test_policy_revocation_at_merge_boundaries
+test_policy_lock_covers_forge_commands
+test_attended_override_validates_policy

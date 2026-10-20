@@ -51,7 +51,7 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}}"
 CONFIG_DIR="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 DATA_DIR="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 FILE="$CONFIG_DIR/merge-policy.json"
-LOCK="$CONFIG_DIR/.merge-policy.lock"
+. "$SCRIPT_DIR/fm-merge-policy-lock-lib.sh"
 BUILTIN='{"version":1,"default":"ask","owners":{"bastotec":"auto","brunobasto":"auto"},"repos":{}}'
 
 usage() {
@@ -70,7 +70,7 @@ effective() {
       if type != "object" then error("not an object") else . end
       | {version: 1,
          default: (.default // $b.default),
-         owners: ($b.owners + (.owners // {})),
+         owners: ($b.owners + ((.owners // {}) | with_entries(.key |= ascii_downcase))),
          repos: (.repos // {})}' "$FILE" 2>/dev/null) \
       || die "$FILE is not valid JSON" 1
   else
@@ -123,7 +123,7 @@ touched_repos() {
     done
     [ -f "$CONFIG_DIR/autoland.json" ] && jq -r '.repos[]?.repo // empty' "$CONFIG_DIR/autoland.json" 2>/dev/null
   } | while IFS= read -r url; do
-    printf '%s\n' "$url" | sed -nE 's#^(https://github\.com/|git@github\.com:)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$#\2#p; /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/p' | sed 's/\.git$//'
+    printf '%s\n' "$url" | sed -nE 's#^(https://github\.com/|git@github\.com:|ssh://git@github\.com/)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$#\2#p; /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/p' | sed 's/\.git$//'
   done
 }
 
@@ -180,13 +180,8 @@ cmd_set() {
   fi
   case "$by$note" in *$'\n'*) die "--by and --note must be one line" ;; esac
   mkdir -p "$CONFIG_DIR" "$DATA_DIR" || die "cannot create $CONFIG_DIR" 1
-  local tries=0
-  until mkdir "$LOCK" 2>/dev/null; do
-    tries=$((tries + 1))
-    [ "$tries" -lt 50 ] || die "the merge policy is locked by another writer ($LOCK)" 1
-    sleep 0.1
-  done
-  trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
+  fm_merge_policy_lock_hold "$CONFIG_DIR" || die "the merge policy could not be locked ($CONFIG_DIR/.merge-policy.lock)" 1
+  trap 'fm_merge_policy_lock_release || true' EXIT
   if [ -f "$FILE" ]; then
     doc=$(jq -c '.' "$FILE" 2>/dev/null) || die "$FILE is not valid JSON" 1
   else
@@ -194,7 +189,7 @@ cmd_set() {
   fi
   case "$kind" in
     repo) old=$(cmd_get "$name") || die "$FILE is not readable" 1; old=${old%% *} ;;
-    owner) old=$(printf '%s' "$doc" | jq -r --arg o "${name%/*}" '.owners[$o] // "unset"') ;;
+    owner) old=$(effective | jq -r --arg o "${name%/*}" '.owners[$o | ascii_downcase] // "unset"') ;;
     default) old=$(printf '%s' "$doc" | jq -r '.default // "ask"') ;;
   esac
   now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -202,7 +197,8 @@ cmd_set() {
       --arg now "$now" --arg by "$by" --arg note "$note" '
     .version = 1
     | if $kind == "default" then .default = $p
-      elif $kind == "owner" then .owners = ((.owners // {}) + {($name | split("/")[0]): $p})
+      elif $kind == "owner" then .owners = ((.owners // {} | with_entries(.key |= ascii_downcase))
+        + {($name | split("/")[0] | ascii_downcase): $p})
       else .repos = ((.repos // {})
         | with_entries(select(.key | ascii_downcase != ($name | ascii_downcase)))
         + {($name): ({policy: $p, set: $now, by: $by} + (if $note == "" then {} else {note: $note} end))})
@@ -214,7 +210,7 @@ cmd_set() {
   fi
   printf '%s %s %s %s -> %s %s\n' "$now" "$by" "$name" "$old" "$policy" "$note" >> "$DATA_DIR/merge-policy.log" \
     || die "the policy was written but the audit line could not be appended" 1
-  rmdir "$LOCK" 2>/dev/null || true
+  fm_merge_policy_lock_release || true
   trap - EXIT
   printf 'set %s %s -> %s\n' "$name" "$old" "$policy"
   if [ "$push" = 1 ] && [ -f "$DATA_DIR/secondmates.md" ]; then

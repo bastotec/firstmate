@@ -78,6 +78,7 @@ MAX_LINE=600
 . "$SCRIPT_DIR/fm-line-cap-lib.sh"
 # shellcheck source=bin/fm-check-lib.sh
 . "$SCRIPT_DIR/fm-check-lib.sh"
+. "$SCRIPT_DIR/fm-merge-policy-lock-lib.sh"
 
 usage() {
   sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -178,9 +179,9 @@ config_entries() {  # prints repo US project US authority US method US attestati
 # +yolo project decides, so an earlier per-repository ruling stands; never
 # always blocks.
 entry_authorized() {  # <repo> <project> <authority>
-  local repo=$1 project=$2 authority=$3 posture policy
-  policy=$("$SCRIPT_DIR/fm-merge-policy.sh" get "$repo" 2>/dev/null) || return 1
-  case "$policy" in
+  local repo=$1 project=$2 authority=$3 posture
+  ENTRY_POLICY=$("$SCRIPT_DIR/fm-merge-policy.sh" get "$repo" 2>/dev/null) || return 1
+  case "$ENTRY_POLICY" in
     'auto default'|'ask default') ;;
     auto\ *) return 0 ;;
     *) return 1 ;;
@@ -192,7 +193,10 @@ entry_authorized() {  # <repo> <project> <authority>
 }
 
 entry_attestation() {
-  local project=$1 configured=$2 posture
+  local project=$1 configured=$2 policy=$3 posture
+  case "$policy" in
+    'auto repo'|auto\ owner\ *) configured=true ;;
+  esac
   if [ "$configured" = true ]; then
     printf 'true\n'
     return
@@ -399,6 +403,7 @@ merge_pr() {  # <url> <head> <method> <attestation> <max_risk> <base>
 
 merge_attempt() {  # <url> <head> <method> <attestation> <max_risk> <base>
   local url=$1 head=$2 method=$3 need_attest=$4 max_risk=$5 base=$6 out live rec state queue owned=false
+  local repo entry project authority configured
   MERGE_ERROR=
   if ! live=$(gh pr view "$url" \
       --json url,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,body,labels,statusCheckRollup 2>/dev/null); then
@@ -432,9 +437,32 @@ merge_attempt() {  # <url> <head> <method> <attestation> <max_risk> <base>
       return 1
     fi
     owned=true
-  elif ! out=$(gh pr merge "$url" "--$method" --match-head-commit "$head" 2>&1); then
-    MERGE_ERROR="gh refused the merge: $(printf '%s\n' "$out" | head -n 1)"
-    return 1
+  else
+    fm_pr_url_parse "$url" && [ "$FM_PR_PROVIDER" = github ] || return 1
+    repo="$FM_PR_OWNER/$FM_PR_REPO"
+    if ! fm_merge_policy_lock_hold "$CONFIG_DIR"; then
+      MERGE_ERROR="its merge policy could not be locked"
+      return 1
+    fi
+    entry=$(config_entries | awk -F "$US" -v r="$repo" 'tolower($1) == tolower(r)')
+    IFS=$US read -r _ project authority _ configured _ _ <<EOF
+$entry
+EOF
+    if [ -z "$entry" ] || ! entry_authorized "$repo" "$project" "$authority"; then
+      MERGE_ERROR="its current merge policy no longer permits autoland"
+      return 1
+    fi
+    need_attest=$(entry_attestation "$project" "$configured" "$ENTRY_POLICY")
+    decide "$rec" "$need_attest" "$max_risk"
+    if [ "$VERDICT" != merge ]; then
+      MERGE_ERROR=${REASON:-"its live checks are no longer all green"}
+      return 1
+    fi
+    if ! out=$(gh pr merge "$url" "--$method" --match-head-commit "$head" 2>&1); then
+      MERGE_ERROR="gh refused the merge: $(printf '%s\n' "$out" | head -n 1)"
+      return 1
+    fi
+    fm_merge_policy_lock_release || true
   fi
   state=$(gh pr view "$url" --json state -q .state 2>/dev/null || true)
   [ "$state" != MERGED ] || return 0
@@ -709,7 +737,7 @@ $entry
 EOF
     [ "$(printf '%s' "$rec" | jq -r '.base == .default')" = true ] || continue
     entry_authorized "$repo" "$project" "$authority" || continue
-    attest=$(entry_attestation "$project" "$attest")
+    attest=$(entry_attestation "$project" "$attest" "$ENTRY_POLICY")
     decide "$rec" "$attest" "$max_risk"
     case "$VERDICT" in
       hold)
@@ -792,7 +820,7 @@ action_status() {
     while IFS=$US read -r repo project authority method attest max_risk hook; do
       if entry_authorized "$repo" "$project" "$authority"; then auth=merges
       else auth="no merge authority (merge policy: $("$SCRIPT_DIR/fm-merge-policy.sh" get "$repo" 2>/dev/null || echo unreadable); project ${project:-none} is not +yolo)"; fi
-      attest=$(entry_attestation "$project" "$attest")
+      attest=$(entry_attestation "$project" "$attest" "$ENTRY_POLICY")
       printf '%s: %s; method=%s attestation=%s max_risk=%s hook=%s\n' \
         "$repo" "$auth" "$method" "$attest" "$max_risk" "${hook:-none}"
       if [ -n "$hook" ]; then
@@ -869,6 +897,7 @@ case "${1:-check}" in
   merge-run)
     [ "$#" -eq 7 ] && fm_pr_head_valid "$3" || exit 2
     shift
+    trap 'fm_merge_policy_lock_release || true' EXIT
     merge_rc=0
     merge_attempt "$@" || merge_rc=$?
     case "$merge_rc" in

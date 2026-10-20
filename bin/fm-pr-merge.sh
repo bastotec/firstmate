@@ -144,6 +144,7 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-merge-authority-lib.sh"
 # shellcheck source=bin/fm-afk-contract.sh
 . "$SCRIPT_DIR/fm-afk-contract.sh"
+. "$SCRIPT_DIR/fm-merge-policy-lock-lib.sh"
 
 if [ "$#" -lt 2 ]; then
   echo "error: invalid PR merge request" >&2
@@ -196,16 +197,19 @@ if [ "${#ALLOW_RED[@]}" -gt 0 ] && [ "$PROVIDER" = gitlab ]; then
   echo "error: --allow-red does not apply to GitLab, where a merge already requires the head pipeline to have succeeded" >&2
   exit 2
 fi
-if [ "$PROVIDER" = github ] && [ "$ATTENDED_OVERRIDE" != true ]; then
-  if ! MERGE_POLICY=$("$SCRIPT_DIR/fm-merge-policy.sh" get "$PR_OWNER/$PR_REPO" 2>&1); then
-    echo "error: refusing to merge $URL: its merge policy cannot be read: $MERGE_POLICY" >&2
-    exit 1
+require_merge_policy() {
+  [ "$PROVIDER" = github ] || return 0
+  local policy
+  if ! policy=$("$SCRIPT_DIR/fm-merge-policy.sh" get "$PR_OWNER/$PR_REPO" 2>&1); then
+    echo "error: refusing to merge $URL: its merge policy cannot be read: $policy" >&2
+    return 1
   fi
-  if [ "${MERGE_POLICY%% *}" = never ]; then
+  if [ "${policy%% *}" = never ] && [ "$ATTENDED_OVERRIDE" != true ]; then
     echo "error: refusing to merge $URL: the captain's merge policy for $PR_OWNER/$PR_REPO is never (bin/fm-merge-policy.sh); he merges it himself" >&2
-    exit 1
+    return 1
   fi
-fi
+}
+require_merge_policy || exit 1
 
 caller_has_merge_method() {
   local arg
@@ -355,6 +359,7 @@ MERGE_EXPECTED_SPAWN_GEN=$FM_BACKLOG_META_SPAWN_GEN
 MERGE_CONTROL_LOCK=
 MERGE_META_LOCK=
 merge_control_cleanup() {
+  fm_merge_policy_lock_release || true
   [ -z "$MERGE_META_LOCK" ] || fm_lock_release "$MERGE_META_LOCK" || true
   fm_afk_contract_lock_release || true
   [ -z "$MERGE_CONTROL_LOCK" ] || fm_lock_release "$MERGE_CONTROL_LOCK" || true
@@ -1147,10 +1152,16 @@ case "$PROVIDER" in
     require_current_away_authority || away_status=$?
     [ "$away_status" -eq 0 ] || exit "$away_status"
     refuse_github_queue_while_away || exit 2
+    fm_merge_policy_lock_hold "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" || {
+      echo "error: PR merge refused: the merge policy could not be locked; nothing was merged" >&2
+      exit 1
+    }
+    require_merge_policy || exit 1
     merge_status=0
     merge_output=$(gh pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" \
       --match-head-commit "$FM_PR_MERGE_HEAD" \
       "${merge_args[@]+"${merge_args[@]}"}" "$@" 2>&1) || merge_status=$?
+    fm_merge_policy_lock_release || true
     if [ "$merge_status" -eq 0 ]; then
       FM_PR_GITHUB_MERGE_ACCEPTED=true
       persist_accepted_merge_authority || exit 1
