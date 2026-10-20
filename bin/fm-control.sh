@@ -297,6 +297,43 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
   exit 1
 }
 
+# A specialist (spec-<name> with a record under state/specialists/) is a
+# persistent worker with no process between jobs (bin/fm-specialist.sh owns it).
+case "${1:-}" in
+  spec-*)
+    if [ -f "$STATE/specialists/${1#spec-}.json" ]; then
+      fm_spec_name=${1#spec-}
+      fm_spec_verb=${2:-}
+      shift 2 2>/dev/null || shift $#
+      case "$fm_spec_verb" in
+        model)
+          [ $# -ge 1 ] || { echo "error: model needs a route" >&2; exit 2; }
+          exec "$SCRIPT_DIR/fm-specialist.sh" model "$fm_spec_name" "$1"
+          ;;
+        interrupt|exit)
+          exec "$SCRIPT_DIR/fm-specialist.sh" stop "$fm_spec_name"
+          ;;
+        relaunch|recover-missing)
+          while [ $# -gt 0 ]; do
+            case "$1" in
+              --model) [ $# -ge 2 ] || { echo "error: --model needs a route" >&2; exit 2; }
+                "$SCRIPT_DIR/fm-specialist.sh" model "$fm_spec_name" "$2" || exit; shift 2 ;;
+              --model=*) "$SCRIPT_DIR/fm-specialist.sh" model "$fm_spec_name" "${1#--model=}" || exit; shift ;;
+              *) shift ;;
+            esac
+          done
+          echo "specialist spec-$fm_spec_name has no process between jobs; its next job starts it"
+          exit 0
+          ;;
+        *)
+          echo "error: $fm_spec_verb does not apply to specialist spec-$fm_spec_name (model, interrupt, relaunch, recover-missing)" >&2
+          exit 2
+          ;;
+      esac
+    fi
+    ;;
+esac
+
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-busy-lib.sh

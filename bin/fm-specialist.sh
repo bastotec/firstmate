@@ -23,6 +23,8 @@
 #   fm-specialist.sh suspend <name> --reason "<plain reason>" [--since <UTC like 2026-10-17T10:40:02Z>] [--by <who>]
 #   fm-specialist.sh resume <name> [--by <who>]
 #   fm-specialist.sh configure <name> --stop-on-tool-failure on|off
+#   fm-specialist.sh model <name> <route|default>
+#   fm-specialist.sh stop <name>
 #
 # `job` starts one detached Deck turn and returns; when it ends the home gets a
 # `check: specialist <name> finished job <job> (<outcome>) - result: <path>`
@@ -45,6 +47,19 @@
 # mate's home from the primary home: a local mate through its recorded home=,
 # a remote one through bin/fm-on.sh (where --text-file and --wait are refused;
 # poll status/result instead). Omit --mate or use --mate primary for the current home.
+# A specialist is a persistent worker that specializes in one subject; it
+# differs from other workers only in persisting between jobs, so finished-work
+# cleanup never retires it. `model` sets the Deck model route its next jobs run
+# on (default clears it, so the session keeps its own model). status --json and
+# list --json add the worker-shaped fields a feed reads: persistent, harness
+# (deck), model (the chosen route or the session's last model), model_choice,
+# effort, and on a running job current_job.events (its live Deck event stream)
+# and current_job.last_activity (that stream's last write, epoch seconds).
+# `stop` ends the running job (TERM, then KILL after 10 seconds); it is recorded
+# as interrupted. Its worker id is spec-<name>: bin/fm-send.sh spec-<name> starts
+# a job (a captain one with --from-captain), and bin/fm-control.sh spec-<name>
+# model|interrupt|relaunch|recover-missing switch its model, stop its job, or,
+# since it has no process between jobs, succeed with nothing to restart.
 # `configure --stop-on-tool-failure on` opts later jobs into stopping at the first
 # failed tool call; `off` (the default) restores normal behavior. Configure before
 # launching a job; it does not change a Deck run already in progress and refuses
@@ -119,7 +134,7 @@ route_to_mate() {  # <command> <args...>
 
 case "${1:-}" in
   ask|result|status|history) route_to_mate "$@" ;;
-  create|job|list|retire|suspend|resume|configure) exec python3 "$SCRIPT_DIR/fm_crew.py" "$@" ;;
+  create|job|list|retire|suspend|resume|configure|model|stop) exec python3 "$SCRIPT_DIR/fm_crew.py" "$@" ;;
   -h|--help|'') awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; [ -n "${1:-}" ] ;;
   *) printf 'fm-specialist.sh: unknown command: %s\n' "$1" >&2; exit 2 ;;
 esac

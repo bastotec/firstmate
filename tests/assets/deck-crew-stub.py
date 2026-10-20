@@ -35,6 +35,10 @@ while i < len(args):
     elif args[i] == "--tool-concurrency":
         tool_concurrency = int(args[i + 1])
         i += 2
+    elif args[i] == "--model":
+        with open(Path(os.environ.get("DECK_STATE", Path.cwd() / "deck-state")) / "models.log", "a") as fh:
+            fh.write(args[i + 1] + "\n")
+        i += 2
     elif args[i] == "--hook":
         hooks.append(args[i + 1])
         i += 2

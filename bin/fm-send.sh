@@ -335,6 +335,33 @@ if [ ! -d "$STATE" ]; then
   exit 1
 fi
 
+# A specialist (target spec-<name> with a record under state/specialists/) is a
+# persistent worker with no live endpoint: a message starts one job on it,
+# a captain job with --from-captain (bin/fm-specialist.sh owns both).
+case "${1:-}" in
+  spec-*)
+    if [ -f "$STATE/specialists/${1#spec-}.json" ]; then
+      fm_spec_name=${1#spec-}
+      shift
+      fm_spec_captain=0
+      fm_spec_text=()
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --from-captain) fm_spec_captain=1; shift ;;
+          --) shift; fm_spec_text+=("$@"); break ;;
+          -*) echo "error: $1 does not apply to specialist spec-$fm_spec_name" >&2; exit 2 ;;
+          *) fm_spec_text+=("$1"); shift ;;
+        esac
+      done
+      [ "${#fm_spec_text[@]}" -gt 0 ] || { echo "error: no message for specialist spec-$fm_spec_name" >&2; exit 2; }
+      if [ "$fm_spec_captain" = 1 ]; then
+        exec "$SCRIPT_DIR/fm-specialist.sh" ask "$fm_spec_name" --from-captain -- "${fm_spec_text[*]}"
+      fi
+      exec "$SCRIPT_DIR/fm-specialist.sh" job "$fm_spec_name" --brief "${fm_spec_text[*]}"
+    fi
+    ;;
+esac
+
 # A relaunch holds metadata through restart and may move the endpoint, so
 # waiting for the lock alone is insufficient; retry must resolve afresh.
 # The header owns the captain-direct record-wait contract.

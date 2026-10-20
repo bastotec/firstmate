@@ -397,6 +397,27 @@ EOF
   pass "a row marked done carries no hold bucket even outside the Done section"
 }
 
+test_specialists_are_listed_as_persistent_workers() {
+  local home fakebin out
+  home=$(make_home specialists)
+  mkdir -p "$home/state/specialists"
+  printf '%s\n' '{"version":1,"kind":"specialist","persistent":true,"name":"amigo-tech","subject":"Amigo health","session":"fm-spec-amigo","status":"suspended","suspension":{"since":1792233602,"reason":"stopped after failed calls","by":"firstmate"},"model":"zai/glm-5.3","jobs":3,"current_job":null,"last_job":null}' \
+    > "$home/state/specialists/amigo-tech.json"
+  fakebin=$(make_fakebin "$home")
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_DATA_OVERRIDE="$home/data" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '
+    (.specialists | length) == 1
+    and (.specialists[0] | .id == "spec-amigo-tech" and .name == "amigo-tech" and .kind == "specialist" and .persistent == true
+         and .subject == "Amigo health" and .harness == "deck" and .model == "zai/glm-5.3"
+         and .current_state.state == "suspended" and (.current_state.detail | test("stopped after failed calls")))
+    and ([.tasks[] | select(.kind == "specialist")] | length) == 0
+  ' >/dev/null || fail "the fleet view does not list the specialist as a persistent worker: $out"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_DATA_OVERRIDE="$home/data" "$SNAPSHOT" --secondmate-home-summary)
+  printf '%s' "$out" | jq -e '.specialists[0].id == "spec-amigo-tech" and .specialists[0].current_state.state == "suspended"' >/dev/null \
+    || fail "the home summary does not carry the specialist: $out"
+  pass "specialists appear as persistent worker rows in the fleet view and the home summary"
+}
+
 test_main_inventory_orphan_and_unstructured_disclosure() {
   local home fakebin out
   home=$(make_home main-inventory)
@@ -1247,6 +1268,7 @@ test_home_summary_reads_remote_mates_retained_records_and_local_only_ships
 test_undated_captain_hold_phrasing_and_aging
 test_hold_buckets_are_total_and_text_blind
 test_checked_rows_never_carry_a_hold_bucket
+test_specialists_are_listed_as_persistent_workers
 test_main_inventory_orphan_and_unstructured_disclosure
 test_normalized_roles_and_plural_blocker_readiness
 test_event_hints_follow_reconciled_current_state

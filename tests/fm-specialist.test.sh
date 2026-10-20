@@ -144,6 +144,46 @@ assert_equals "null captain" "$(jq -r '"\(.suspension) \(.last_suspension.resume
 expect_code 3 "$("$SPEC" resume amigo-tech >/dev/null 2>&1; echo $?)" "resuming an idle specialist was accepted"
 pass "suspend records why and since when, job refuses while suspended, and resume returns it to idle"
 
+rm -f "$DECK_STATE/models.log"
+"$SPEC" job amigo-tech --brief "Before a model choice." --wait >/dev/null || fail "job before model choice failed"
+assert_absent "$DECK_STATE/models.log" "a job without a model choice passed --model"
+"$SPEC" model amigo-tech zai/glm-5.3 >/dev/null || fail "model failed"
+"$SPEC" job amigo-tech --brief "On the chosen model." --wait >/dev/null || fail "job on the chosen model failed"
+assert_equals zai/glm-5.3 "$(cat "$DECK_STATE/models.log")" "the chosen model was not passed to the job"
+view=$("$SPEC" status amigo-tech --json)
+assert_equals 'true deck zai/glm-5.3 zai/glm-5.3 null' "$(printf '%s' "$view" | jq -r '"\(.persistent) \(.harness) \(.model) \(.model_choice) \(.effort)"')" \
+  "status --json lacks the worker-shaped fields"
+"$SPEC" model amigo-tech default >/dev/null || fail "model default failed"
+assert_equals null "$(jq -r '.model // null' "$REC")" "model default did not clear the choice"
+expect_code 2 "$("$SPEC" model amigo-tech 'two words' >/dev/null 2>&1; echo $?)" "a malformed model route was accepted"
+rows=$(python3 "$ROOT/bin/fm_crew.py" _spec-rows)
+assert_equals 'specialist true idle deck' "$(printf '%s' "$rows" | jq -r '.[] | select(.id == "spec-amigo-tech") | "\(.kind) \(.persistent) \(.current_state.state) \(.harness)"')" \
+  "the fleet row is not worker-shaped"
+assert_contains "$(printf '%s' "$rows" | jq -r '.[] | select(.id == "spec-amigo-tech") | .actions.model')" "fm-specialist.sh model amigo-tech" "the fleet row lacks the model action"
+pass "a specialist has a model choice its jobs run on, and status and fleet rows carry worker-shaped fields"
+
+out=$("$ROOT/bin/fm-control.sh" spec-amigo-tech model zai/glm-5.3) || fail "fm-control model on a specialist failed: $out"
+assert_equals zai/glm-5.3 "$(jq -r .model "$REC")" "fm-control model did not switch the specialist"
+out=$("$ROOT/bin/fm-control.sh" spec-amigo-tech relaunch --model default --note x) || fail "fm-control relaunch on a specialist failed: $out"
+assert_contains "$out" "has no process between jobs" "relaunch did not explain the no-op"
+assert_equals null "$(jq -r '.model // null' "$REC")" "relaunch --model did not set the model"
+expect_code 2 "$("$ROOT/bin/fm-control.sh" spec-amigo-tech watch >/dev/null 2>&1; echo $?)" "an unsupported verb was accepted"
+jobs_before=$(jq -r .jobs "$REC")
+"$ROOT/bin/fm-send.sh" spec-amigo-tech -- "Check the evals." >/dev/null || fail "fm-send to a specialist failed"
+for _ in $(seq 1 100); do [ "$(jq -r .status "$REC")" = idle ] && break; sleep 0.1; done
+assert_equals $((jobs_before + 1)) "$(jq -r .jobs "$REC")" "fm-send did not start a job"
+assert_grep "Check the evals." "$HOME_DIR/state/specialists/amigo-tech/jobs/$(jq -r .last_job.id "$REC")/brief.md" "fm-send text is not the brief"
+"$ROOT/bin/fm-send.sh" spec-amigo-tech --from-captain -- "Is it healthy?" >/dev/null || fail "captain fm-send to a specialist failed"
+for _ in $(seq 1 100); do [ "$(jq -r .status "$REC")" = idle ] && break; sleep 0.1; done
+assert_equals captain "$(jq -r .last_job.from "$REC")" "--from-captain did not mark the job"
+expect_code 2 "$("$ROOT/bin/fm-send.sh" spec-amigo-tech --resolve-key k -- x >/dev/null 2>&1; echo $?)" "an inapplicable fm-send option was accepted"
+STUB_MODE=hang "$SPEC" job amigo-tech --brief "Long sweep." >/dev/null || fail "starting a hanging job failed"
+out=$("$ROOT/bin/fm-control.sh" spec-amigo-tech interrupt) || fail "interrupt failed: $out"
+assert_equals idle "$(jq -r .status "$REC")" "interrupt left the specialist running"
+assert_equals interrupted "$(jq -r .last_job.outcome "$REC")" "the stopped job was not recorded as interrupted"
+expect_code 3 "$("$SPEC" stop amigo-tech >/dev/null 2>&1; echo $?)" "stopping an idle specialist was accepted"
+pass "fm-send and fm-control drive a specialist by its spec-<name> id like any worker"
+
 assert_equals null "$(tail -1 "$DECK_STATE/argv.jsonl" | jq -r .tool_concurrency)" "unguarded jobs override Deck tool concurrency"
 rm -f "$DECK_STATE/gate.log"
 "$SPEC" configure amigo-tech --stop-on-tool-failure on >/dev/null || fail "configure failed"

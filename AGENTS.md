@@ -125,7 +125,7 @@ Route by the nature of the work against each registered secondmate scope, not by
 Send in-scope work to the fitting secondmate unless it is blocked or the captain redirects it; its marked replies return through its status or a referenced document, never by reading its chat.
 The exception is a small single-repo ship or scout in a project this home has cloned: spawn it directly and send the owning secondmate a one-line FYI through `fm-send`.
 Large or multi-step domain work, and projects cloned only in a secondmate's home, still go to the secondmate; if no scope fits, use the main home or discuss creating a persistent secondmate.
-Pick the worker shape by how the work recurs: a plain ship or scout for one-off work; a specialist (`bin/fm-specialist.sh`) for recurring investigation that should accumulate subject knowledge; a secondmate when the work needs its own backlog, supervision, and judgment.
+Pick the worker shape by how the work recurs: a plain ship or scout for one-off work; a persistent worker, called a specialist (`bin/fm-specialist.sh`), for recurring investigation that should accumulate one subject's knowledge - it is treated like any worker except that it persists between jobs, so finished-work cleanup never retires it; a secondmate when the work needs its own backlog, supervision, and judgment.
 For parallel independent investigation angles on one question, such as several adversarial reviews of one PR, use `bin/fm-group.sh`; its header owns results and cleanup, and neither groups nor specialist jobs authorize project changes.
 For one-off operational work, take the simplest direct path, and build no wrapper, control plane, custom verifier, or automation unless that path hits a concrete blocker or repeated need.
 

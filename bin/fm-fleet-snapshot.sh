@@ -1053,6 +1053,7 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
     --argjson landed_n "$FM_SNAPSHOT_SECONDMATE_LANDED_PER_HOME" \
     --slurpfile backlog "$1" \
     --slurpfile tasks "$2" \
+    --argjson specialists "$SPECIALISTS_JSON" \
     --argjson crew_time "$(python3 "$SCRIPT_DIR/fm_report.py" crew-time "$STATE" 2>/dev/null || echo null)" \
     "$FM_LANDED_JQ_DEFS"'
     ($backlog[0]) as $backlog
@@ -1200,6 +1201,7 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
         invalidity:$invalidity,
         state:$state,
         active_children:$active_all[:$child_n],
+        specialists:$specialists,
         decisions_open:$decisions_all[:$decisions_n],
         holds:$holds_all[:$queued_n],
         queued:([$queued_all[] | {id:(.id | trunc(120)),title:(.title | trunc(120)),
@@ -2122,6 +2124,10 @@ printf '%s\n' "$BACKLOG_JSON" > "$BACKLOG_JSON_FILE" \
 printf '%s\n' "$TASKS_JSON" > "$TASKS_JSON_FILE" \
   || { echo "fm-fleet-snapshot: temporary task file write failed" >&2; exit 1; }
 
+# Specialists are persistent workers: one worker-shaped row each, read-only.
+SPECIALISTS_JSON=$(FM_HOME="$FM_HOME" python3 "$SCRIPT_DIR/fm_crew.py" _spec-rows 2>/dev/null) || SPECIALISTS_JSON='[]'
+printf '%s' "$SPECIALISTS_JSON" | jq -e 'type == "array"' >/dev/null 2>&1 || SPECIALISTS_JSON='[]'
+
 if [ "$OUTPUT_MODE" = secondmate-home-summary ]; then
   secondmate_home_summary_json "$BACKLOG_JSON_FILE" "$TASKS_JSON_FILE" \
     || { echo "fm-fleet-snapshot: secondmate home summary failed" >&2; exit 1; }
@@ -2151,6 +2157,7 @@ jq -n \
   --slurpfile scout_reports "$SCOUT_REPORTS_JSON_FILE" \
   --slurpfile secondmate_current "$SECONDMATE_CURRENT_JSON_FILE" \
   --slurpfile secondmate_landed "$SECONDMATE_LANDED_JSON_FILE" \
+  --argjson specialists "$SPECIALISTS_JSON" \
   '($backlog[0]) as $backlog
    | ($tasks[0]) as $tasks
    | ($main_inventory[0]) as $main_inventory
@@ -2167,6 +2174,7 @@ jq -n \
      roots:{fm_root:$fm_root,state:$state,data:$data,config:$config,projects:$projects},
      backlog:$backlog,
      tasks:($tasks | map(. + {backlog:backlog_by_id(.id)})),
+     specialists:$specialists,
      main_inventory:$main_inventory,
      scout_reports:($scout_reports | map(. + {kind:report_kind(.id)})),
      secondmate_current:$secondmate_current,
