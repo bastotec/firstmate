@@ -171,12 +171,8 @@ config_entries() {  # prints repo US project US authority US method US attestati
     ((.attestation // false) | tostring), (.max_risk // "low"), (.hook // "")] | join("\u001f")' "$CONFIG"
 }
 
-# 0 when the entry carries standing merge authority right now. A repository or
-# owner entry in the captain's merge policy (bin/fm-merge-policy.sh) decides
-# first: auto is standing authority, ask and never are not, and an unreadable
-# policy is not. Under the policy's bare default the entry's own authority or
-# +yolo project decides, so an earlier per-repository ruling stands; never
-# always blocks.
+# 0 when the entry carries standing merge authority under docs/configuration.md
+# "Auto-land". Keep the resolved policy for its attestation requirement.
 entry_authorized() {  # <repo> <project> <authority>
   local repo=$1 project=$2 authority=$3 posture
   ENTRY_POLICY=$("$SCRIPT_DIR/fm-merge-policy.sh" get "$repo" 2>/dev/null) || return 1

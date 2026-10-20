@@ -26,11 +26,14 @@
 # entry, else "default"; names compare case-insensitively. With no file, or a
 # key missing from it, the built-in defaults are the ones shown above: bastotec
 # and brunobasto repositories are auto and everything else is ask.
+# Only proven file absence uses those defaults without reading a file;
+# inaccessible paths, nonregular artifacts, invalid JSON and invalid policies
+# refuse rather than restoring defaults.
 #
 # get prints the policy and where it came from ("auto repo", "auto owner
 # bastotec", "ask default"), or with --json {"repo","policy","source"}.
 # set validates the name and policy, writes the file atomically under
-# config/.merge-policy.lock with the entry dated, appends one audit line to
+# config/.merge-policy.lock with repository entries dated, appends one audit line to
 # data/merge-policy.log ("<utc> <who> <name> <old> -> <new> <note>"), and in
 # the primary home (data/secondmates.md present) pushes it to the second mate
 # homes unless --no-push. "owner/*" sets an owner's entry and "*" the default.

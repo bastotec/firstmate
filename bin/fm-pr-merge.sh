@@ -117,7 +117,13 @@
 # A merge this machine's ~/.agents/AGENTS.md asks the captain about
 # (bin/fm-machine-rules.sh check merge) is refused without --attended-override.
 # A GitHub repository whose merge policy (bin/fm-merge-policy.sh) is never is
-# refused without --attended-override as well; an unreadable policy refuses.
+# refused without --attended-override as well; an unreadable policy refuses even
+# with that override. Policy is read on entry and immediately before gh merge.
+# FM_PR_MERGE_AUTOLAND=1 marks task-owned auto-land calls: the final policy check
+# also enforces the current policy's auto-land permission and any auto-policy
+# current-head attestation requirement (docs/configuration.md "Auto-land").
+# Unmarked calls retain the never-only policy refusal so a captain-approved ask
+# merge can proceed.
 #
 # Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [-- <extra forge merge args>]
 #
