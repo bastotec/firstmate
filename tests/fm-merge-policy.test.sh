@@ -155,6 +155,101 @@ test_writer_lock_recovery() {
   pass "policy writers reclaim old or dead-owner locks but respect a live current writer"
 }
 
+# All barriers have deadlines and disappear with the fixture; helper PIDs are
+# registered with lib.sh so a failed assertion also reaps their descendants.
+policy_barrier_wait() {
+  local i
+  for ((i=0; i<200; i++)); do
+    [ ! -e "$1" ] || return 0
+    sleep 0.1
+  done
+  fail "policy barrier did not arrive: $1"
+}
+
+test_concurrent_stale_reclaim_preserves_revocation() {
+  local home bin a b breached=0 i
+  home=$(new_home concurrent-reclaim)
+  FM_HOME="$home" "$POLICY" set bastotec/app never --no-push >/dev/null || fail "serialized revocation failed"
+  FM_HOME="$home" "$POLICY" set acme/other ask --no-push >/dev/null || fail "serialized unrelated update failed"
+  assert_equals 'never repo' "$(FM_HOME="$home" "$POLICY" get bastotec/app)" "serialized writer lost never"
+  bin="$home/bin"
+  mkdir "$bin" "$home/config/.merge-policy.lock"
+  bash -c 'echo $$' > "$home/config/.merge-policy.lock/pid"
+  printf '{"repos":{}}\n' > "$home/config/merge-policy.json"
+  # A observes the dead owner and stops before removing it. B then replaces
+  # that owner and stops after reading the policy, before publishing never.
+  cat > "$bin/rm" <<'SH'
+#!/usr/bin/env bash
+if [ "$ROLE" = a ] && [ "$*" = "-f $FM_HOME/config/.merge-policy.lock/pid" ] && [ ! -e "$FM_HOME/a-reclaim" ]; then
+  touch "$FM_HOME/a-reclaim"
+  for ((i=0; i<200; i++)); do
+    [ -d "$FM_HOME" ] || exit 1
+    [ ! -e "$FM_HOME/release-reclaim" ] || break
+    sleep 0.1
+  done
+  [ -e "$FM_HOME/release-reclaim" ] || exit 1
+fi
+exec "$REAL_RM" "$@"
+SH
+  cat > "$bin/jq" <<'SH'
+#!/usr/bin/env bash
+if [ "$*" = "-c . $FM_HOME/config/merge-policy.json" ]; then
+  doc=$("$REAL_JQ" "$@") || exit 1
+  touch "$FM_HOME/$ROLE-read"
+  for ((i=0; i<200; i++)); do
+    [ -d "$FM_HOME" ] || exit 1
+    [ ! -e "$FM_HOME/release-$ROLE" ] || break
+    sleep 0.1
+  done
+  [ -e "$FM_HOME/release-$ROLE" ] || exit 1
+  printf '%s\n' "$doc"
+  exit
+fi
+exec "$REAL_JQ" "$@"
+SH
+  chmod +x "$bin/rm" "$bin/jq"
+  export REAL_RM REAL_JQ
+  REAL_RM=$(command -v rm)
+  REAL_JQ=$(command -v jq)
+  env FM_HOME="$home" ROLE=a PATH="$bin:$PATH" "$POLICY" set acme/other ask --no-push > "$home/a-output" 2>&1 &
+  a=$!; fm_test_track_helper_pid "$a"
+  policy_barrier_wait "$home/a-reclaim"
+  (
+    env FM_HOME="$home" ROLE=b PATH="$bin:$PATH" "$POLICY" set bastotec/app never --no-push > "$home/b-output" 2>&1
+    echo $? > "$home/b-rc"
+  ) &
+  b=$!; fm_test_track_helper_pid "$b"
+  for ((i=0; i<200; i++)); do
+    if [ -e "$home/b-read" ]; then breached=1; break; fi
+    [ ! -e "$home/b-rc" ] || break
+    sleep 0.1
+  done
+  # On the broken version B is a live replacement writer here. A removes its
+  # lock, enters too, and retains an obsolete document. B's completed never
+  # ruling is then erased by A's unrelated update.
+  touch "$home/release-reclaim"
+  policy_barrier_wait "$home/a-read"
+  if [ "$breached" = 1 ]; then
+    touch "$home/release-b"
+    wait "$b" || fail "replacement writer failed"
+    assert_equals 'never repo' "$(FM_HOME="$home" "$POLICY" get bastotec/app)" "replacement did not publish never"
+  else
+    policy_barrier_wait "$home/b-rc"
+    assert_equals 1 "$(cat "$home/b-rc")" "contender did not refuse while recovery was active"
+    wait "$b" || fail "contender wrapper failed"
+  fi
+  touch "$home/release-a"
+  wait "$a" || fail "stale reclaimer failed: $(cat "$home/a-output")"
+  if [ "$breached" = 0 ]; then
+    FM_HOME="$home" "$POLICY" set bastotec/app never --no-push >/dev/null || fail "serialized revocation failed"
+  fi
+  # This serialized counterfactual must preserve the revocation as well.
+  FM_HOME="$home" "$POLICY" set acme/later auto --no-push >/dev/null || fail "later write failed"
+  assert_equals 'never repo' "$(FM_HOME="$home" "$POLICY" get bastotec/app)" "stale recovery erased the completed never ruling"
+  assert_equals 0 "$breached" "a replacement writer entered during stale-owner recovery"
+  pass "concurrent dead-owner recovery excludes replacement writers and preserves never"
+}
+
 test_pr_merge_refuses_a_never_repository() {
   local home dir out rc=0
   home=$(new_home never-merge)
@@ -435,6 +530,7 @@ test_invalid_input_and_unreadable_file
 test_policy_path_inspection
 test_primary_home_pushes_to_second_mates
 test_writer_lock_recovery
+test_concurrent_stale_reclaim_preserves_revocation
 test_pr_merge_refuses_a_never_repository
 test_list_json_covers_touched_repositories
 test_owner_keys_are_case_insensitive

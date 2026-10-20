@@ -37,7 +37,9 @@
 # data/merge-policy.log ("<utc> <who> <name> <old> -> <new> <note>"), and in
 # the primary home (data/secondmates.md present) pushes it to the second mate
 # homes unless --no-push. "owner/*" sets an owner's entry and "*" the default.
-# The writer lock is reclaimed when older than 60 seconds or its recorded PID
+# A persistent kernel lock serializes writers, including stale directory-lock
+# recovery; it is never unlinked and is released automatically on process exit.
+# The legacy directory lock is reclaimed when older than 60 seconds or its PID
 # is dead. Merge paths read without locking immediately before each command:
 # a policy change cannot stop a merge command already in flight, only later ones.
 # list prints the default, owners and repositories. list --json prints
@@ -70,6 +72,23 @@ valid_policy() { case "$1" in auto|ask|never) return 0 ;; *) return 1 ;; esac; }
 
 writer_lock_hold() {
   local tries=0 pid mtime age dead
+  # flock belongs to the inherited open-file description, so the shell retains
+  # it after Python exits. Keep this inode even after release: unlinking it
+  # would let a replacement writer lock a different inode concurrently.
+  exec 9>>"$CONFIG_DIR/.merge-policy.writer.lock" || return 1
+  python3 - <<'PY' || { exec 9>&-; return 1; }
+import fcntl
+import time
+
+for attempt in range(50):
+    try:
+        fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        break
+    except BlockingIOError:
+        if attempt == 49:
+            raise SystemExit(1)
+        time.sleep(0.1)
+PY
   until mkdir "$LOCK" 2>/dev/null; do
     pid=$(cat "$LOCK/pid" 2>/dev/null || true)
     dead=false
@@ -99,6 +118,8 @@ writer_lock_release() {
   [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] || return 0
   rm -f "$LOCK/pid"
   rmdir "$LOCK"
+  python3 -c 'import fcntl; fcntl.flock(9, fcntl.LOCK_UN)'
+  exec 9>&-
 }
 
 # The effective document: the built-in defaults overlaid with the file.
