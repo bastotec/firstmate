@@ -3,9 +3,9 @@
 #
 # Output contract: `--json` prints one object with schema
 # `fm-fleet-snapshot.v1`.
-# Worker inventory comes from endpoint task metadata and secondmate ledgers;
-# direct specialist jobs and task groups are not collected here. Their CLI
-# headers (bin/fm-specialist.sh and bin/fm-group.sh) own inspection.
+# Worker inventory comes from endpoint task metadata, specialist records, and
+# secondmate ledgers. Task groups are not collected here; bin/fm-group.sh's
+# header owns their inspection.
 # The command does not acquire the session lock, drain wakes, arm watchers,
 # mutate backlog state, or write reports. Its default ledger collector may
 # atomically refresh parent-side cached copies of remote home summaries under
@@ -86,21 +86,42 @@
 #     endpoint.agent_state is bin/fm-backend.sh's recovery-grade verdict
 #     (fm_backend_agent_state) for every local task with a recorded target, and
 #     "not_checked" for remote rows, target-less rows, and discarded generations.
+#   specialists[]: separate worker-shaped rows from this home's
+#     state/specialists/<name>.json, never state/<id>.meta or tasks[]. Endpoint
+#     supervision must not probe these records as endpoint-backed workers.
+#     The hidden fm_crew.py _spec-rows reader never reconciles or mutates state
+#     and remains available in a gate context. Each row has id spec-<name>,
+#     name, kind specialist, subject, session, stored status, current_job,
+#     last_job, suspension, stop_on_tool_failure, and the worker-shaped fields
+#     owned by bin/fm-specialist.sh's header. current_state has source
+#     specialist-record, state working|idle|suspended|retired, a bounded detail,
+#     and observed_at at read time. A running record whose runner is no longer
+#     alive under fm_crew.py's identity rules projects state stopped instead,
+#     with detail saying the runner ended and the next specialist command
+#     reconciles it; stored status stays running. actions supplies watch,
+#     steer, captain_message, and model commands. Unreadable records are skipped;
+#     a failed collection produces an empty array.
 #   scout_reports[]: present data/<id>/report.md pointers.
 #   main_inventory: {valid,reason,orphan_in_flight[],unstructured_current_count} -
 #     main-home current-inventory checks shared with secondmate_home_summary_json
 #     (orphan structured in-flight ids with no state/<id>.meta, and unstructured
 #     current backlog rows). Does not invent live tasks; meta remains truth for
-#     workers. Bearings maps failures into omitted[] disclosure (and a Charted
-#     Next gate line) rather than silent empty Underway.
+#     endpoint-backed workers. Bearings maps failures into omitted[] disclosure
+#     (and a Charted Next gate line) rather than silent empty Underway.
 #   secondmate_current: {records[],total,shown,truncated} - bounded current summaries
 #     for registered secondmates, selected from validated structured state inside
 #     each home with explicit provenance, freshness, endpoint evidence, and unknown
 #     failure reasons. Parent status and bounded terminal evidence are historical,
 #     untrusted supplements only and never override readable structured-home facts.
-#     Each structured-home record carries active_children, decisions_open, holds,
-#     queued, landed, endpoints, counts, omitted, and crew_time (the home's busy
-#     intervals from bin/fm_report.py crew-time; null from older producers). provenance.summary_source
+#     Each structured-home record carries active_children, specialists,
+#     decisions_open, holds, queued, landed, endpoints, counts, omitted, and
+#     crew_time (the home's busy intervals from bin/fm_report.py crew-time;
+#     null from older producers).
+#     specialists uses the row contract above, with [] for older producers.
+#     Home summaries keep active_children and endpoint counts endpoint-only;
+#     a working specialist still makes the home active_child_work when no
+#     higher-priority unknown or captain_decision classification applies.
+#     provenance.summary_source
 #     distinguishes "local-ledger", "remote-ledger", and "remote-ledger-cache";
 #     freshness is "cached" only for the cache source, and observed_at/age_seconds
 #     come from the selected summary's generation. Every record carries

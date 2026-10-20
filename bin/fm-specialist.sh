@@ -47,19 +47,31 @@
 # mate's home from the primary home: a local mate through its recorded home=,
 # a remote one through bin/fm-on.sh (where --text-file and --wait are refused;
 # poll status/result instead). Omit --mate or use --mate primary for the current home.
-# A specialist is a persistent worker that specializes in one subject; it
-# differs from other workers only in persisting between jobs, so finished-work
-# cleanup never retires it. `model` sets the Deck model route its next jobs run
-# on (default clears it, so the session keeps its own model). status --json and
-# list --json add the worker-shaped fields a feed reads: persistent, harness
-# (deck), model (the chosen route or the session's last model), model_choice,
-# effort, and on a running job current_job.events (its live Deck event stream)
-# and current_job.last_activity (that stream's last write, epoch seconds).
-# `stop` ends the running job (TERM, then KILL after 10 seconds); it is recorded
-# as interrupted. Its worker id is spec-<name>: bin/fm-send.sh spec-<name> starts
-# a job (a captain one with --from-captain), and bin/fm-control.sh spec-<name>
-# model|interrupt|relaunch|recover-missing switch its model, stop its job, or,
-# since it has no process between jobs, succeed with nothing to restart.
+# `model` sets the Deck model route its next jobs run on; default clears the
+# choice so the session keeps its own model. It does not switch a running turn.
+# status --json and list --json add persistent, harness (deck), model (the chosen
+# route or the session's last model, null when unavailable), model_choice (the
+# explicit choice or null), effort (null), and on a running job current_job.events
+# (its live Deck event stream) and current_job.last_activity (that stream's last
+# write, epoch seconds, or null when unavailable). Older jobs without events
+# derive the stream path from their home, name, and job id when available.
+# Session model lookup uses DECK_STATE, else XDG_STATE_HOME/deck, else
+# ~/.local/state/deck; missing, unreadable, or non-object sessions yield null.
+# bin/fm-fleet-snapshot.sh's header owns the separate read-only fleet row contract.
+# `stop` sends TERM to the owned runner's process group, waits up to 10 seconds
+# for all non-zombie members, then sends KILL if needed and waits up to 5 more.
+# It holds the specialist lifecycle lock through job selection, termination,
+# and recording interrupted, so reconciliation and new jobs cannot race it.
+# An unproven stop refuses without recording completion; stopping without a
+# running job refuses with exit 3.
+# Its worker id is spec-<name>: bin/fm-send.sh spec-<name> [--from-captain] -- <text>
+# starts a job (a captain ask with --from-captain); other send options refuse.
+# It is a new job, not an inbox steer into a running turn, so normal busy,
+# suspended, and retired job refusals still apply.
+# bin/fm-control.sh spec-<name> model <route|default> sets the next-job choice;
+# interrupt or exit delegates to stop. relaunch and recover-missing succeed
+# without restarting anything, even during a job; --model sets the next-job
+# choice, and other flags have no effect. Other verbs refuse.
 # `configure --stop-on-tool-failure on` opts later jobs into stopping at the first
 # failed tool call; `off` (the default) restores normal behavior. Configure before
 # launching a job; it does not change a Deck run already in progress and refuses
@@ -84,7 +96,7 @@
 # Resume returns a suspended specialist to idle and retains the ended suspension;
 # it refuses any other state with exit 3. Retired or running specialists also
 # refuse job and ask with exit 3.
-# Status, history, list, job, ask, result, suspend, resume, configure, and retire reconcile
+# Status, history, list, job, ask, result, suspend, resume, configure, model, and retire reconcile
 # interrupted runners using bin/fm_crew.py's liveness rules and emit completion
 # wakes; they are not read-only.
 # --wait exits nonzero on failure or timeout (default 3660 seconds); a timeout

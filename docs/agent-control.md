@@ -32,7 +32,8 @@ The primary runs under the Deck chat host, [`bin/fm-deck-chat.sh`](../bin/fm-dec
 
 ## Verbs
 
-The verb table and transactional sections below describe local task records; [remote lifecycle control](remote-secondmates.md#lifecycle-control) owns the primary's separate routing for remotely placed secondmates.
+The verb table and transactional sections below describe local endpoint-backed task records; [remote lifecycle control](remote-secondmates.md#lifecycle-control) owns the primary's separate routing for remotely placed secondmates.
+For persistent specialist workers, the [`fm-specialist.sh` header](../bin/fm-specialist.sh) owns the direct-job semantics of shared messaging and control commands.
 
 | Verb | Effect | Postcondition |
 | --- | --- | --- |

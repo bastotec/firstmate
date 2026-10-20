@@ -151,13 +151,13 @@ A semantic conflict a worker reports is yours to decide or escalate, never to ha
 ### Dispatch and supervision handoff
 
 For ships, scouts, and secondmates, write the brief under section 11, then spawn only through `bin/fm-spawn.sh`; it must resolve an isolated task worktree or secondmate home distinct from the primary checkout, and a failed isolation assertion stops the task.
-Specialist jobs and task groups use only their owning entrypoints named at intake above, not the ship/scout endpoint lifecycle.
+Specialist jobs and task groups use their direct-run lifecycle, not the ship/scout endpoint lifecycle; their headers named at intake own entrypoints.
 When the tasks-axi backlog gate applies, the spawn moves the work item to In flight and refuses work this home has no item for.
 After spawning, confirm the worker is processing the brief.
 
-Steer a worker with ordinary text through fail-closed `fm-send`, which records it in the task's durable steering inbox (`bin/fm-send.sh` owns the typed-plane carve-outs).
+Steer a worker with ordinary text through fail-closed `fm-send`; its header owns delivery and selector-specific routing.
 After an unconfirmed remote secondmate delivery, only the exact `FM_PENDING_REPLY_EXISTING_CORR=<id>` resend command `fm-send` prints is safe.
-When a steer answers an open keyed decision or blocker, pass `--resolve-key` so the answer closes that record.
+When an endpoint-backed steer answers an open keyed decision or blocker, pass `--resolve-key` so the answer closes that record.
 Never use `fm-send` for interrupt, exit, or other lifecycle control, because that text becomes chat; use `bin/fm-control.sh`'s allowlisted task verbs, which never tear down or discard anything ([`docs/agent-control.md`](docs/agent-control.md)).
 `bin/fm-pending-reply-lib.sh` owns correlation, recovery, and escalation for marked secondmate requests.
 

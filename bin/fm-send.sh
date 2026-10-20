@@ -14,6 +14,9 @@
 #   "successful" send to the wrong endpoint is worse than a loud failure. An
 #   explicit target no record names must be a "<hub-tag>:<32-hex id>" on this
 #   home's configured stream hub, and must then verify live.
+# A spec-<name> selector with a specialist record in this home delegates to the
+# direct-job contract in bin/fm-specialist.sh's header, not either endpoint
+# plane below. It is resolved before endpoint task selectors.
 # The reserved `primary` selector, only when state/primary.meta is absent,
 # publishes plain text to a live Deck chat host instead of either task plane
 # below: fm-send.sh primary <text...> (no options or native-key handling).
@@ -335,9 +338,8 @@ if [ ! -d "$STATE" ]; then
   exit 1
 fi
 
-# A specialist (target spec-<name> with a record under state/specialists/) is a
-# persistent worker with no live endpoint: a message starts one job on it,
-# a captain job with --from-captain (bin/fm-specialist.sh owns both).
+# Specialist selectors delegate before endpoint routing; the CLI header owns
+# their direct-job contract.
 case "${1:-}" in
   spec-*)
     if [ -f "$STATE/specialists/${1#spec-}.json" ]; then

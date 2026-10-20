@@ -28,6 +28,10 @@
 # NO generic raw-key entry point here; fm-send remains the only way to send an
 # agent something to read.
 #
+# The verb effects and endpoint checks below apply to endpoint-backed tasks.
+# A spec-<name> selector with a specialist record in this home delegates first
+# to bin/fm-specialist.sh; its header owns those direct-job verb semantics.
+#
 #   interrupt  Deliver the harness's verified interrupt sequence. The agent
 #              keeps running. Postcondition: delivery succeeded, the endpoint
 #              still exists, and the agent is still alive where the backend can
@@ -205,8 +209,9 @@
 # same need for every adapter because the brief on disk, not a harness-private
 # session, is the durable instruction.
 #
-# Targeting is EXACT: only a bare task id with a state/<id>.meta record in
-# THIS home is accepted, and the record must pass the shared endpoint-identity
+# Targeting is EXACT: apart from the specialist selector above, only a bare
+# task id with a state/<id>.meta record in THIS home is accepted, and the record
+# must pass the shared endpoint-identity
 # validation (bin/fm-backend.sh's fm_backend_validate_task_endpoint). A legacy
 # fm-<id> label, an explicit session:window endpoint, and a bare window name
 # are all refused - a lifecycle command delivered to the wrong endpoint is far
@@ -297,8 +302,8 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
   exit 1
 }
 
-# A specialist (spec-<name> with a record under state/specialists/) is a
-# persistent worker with no process between jobs (bin/fm-specialist.sh owns it).
+# Specialist selectors delegate before endpoint routing; the CLI header owns
+# their direct-job contract.
 case "${1:-}" in
   spec-*)
     if [ -f "$STATE/specialists/${1#spec-}.json" ]; then
