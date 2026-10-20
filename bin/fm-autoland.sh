@@ -45,20 +45,15 @@
 # Each complete merge operation is also bounded to
 # the time remaining before FM_CHECK_TIMEOUT minus three seconds.
 #
-# Deploying. For a hooked entry whose default-branch head differs from the
-# commit recorded in state/autoland/<hook>.deployed, the tick starts a detached
-# runner (its own session, so the watcher's per-check process-group kill cannot
-# reach it). That covers merges made here, by a person, or by anyone else. The
+# Deploying. A tick starts a detached runner when a hooked entry is due under
+# the post-merge hook contract in docs/configuration.md "Auto-land". The runner
+# has its own session, so the watcher's per-check process-group kill cannot
+# reach it. That covers merges made here, by a person, or by anyone else. The
 # runner refreshes the project's clone through bin/fm-fleet-sync.sh when this
 # home has one, then runs config/post-merge/<hook>.sh <oid> under
-# FM_AUTOLAND_HOOK_TIMEOUT (default 1800). Exit 0 records the commit as
-# deployed, exit 78 records skipped without advancing that commit or notifying,
-# exit 75 records a deferral that later ticks retry every
-# FM_AUTOLAND_DEFER_RETRY seconds (default 300), and anything else records a
-# failure that is reported once and not retried until the head moves or an
-# operator runs `deploy`. Output and summary handling follow the hook contract
-# in docs/configuration.md; one runner per hook at a time is enforced through
-# state/autoland/<hook>.lock.
+# FM_AUTOLAND_HOOK_TIMEOUT (default 1800). Result classification, notification,
+# retry, output, and summary handling follow that contract; one runner per hook
+# at a time is enforced through state/autoland/<hook>.lock.
 set -u
 export LC_ALL=C
 

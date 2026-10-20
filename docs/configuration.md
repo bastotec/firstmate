@@ -641,8 +641,8 @@ That wake fires once per head and reason and again after `FM_AUTOLAND_RENOTIFY` 
 
 ### Post-merge hooks
 
-An entry with `hook` deploys its default branch whenever that head differs from the commit the hook last deployed, regardless of who merged it or whether the entry has merge authority.
-Deployment is discovered from the next tick's snapshot and reported on a later tick.
+An entry with `hook` runs its post-merge hook for a default-branch head that differs from the commit the hook last deployed, subject to the outcome and retry rules below, regardless of who merged it or whether the entry has merge authority.
+A new head is discovered from the next tick's snapshot; reportable outcomes appear on a later tick.
 A detached runner first refreshes `projects/<project>` through `bin/fm-fleet-sync.sh` when the entry names an existing project clone (bounded to 300 seconds; a failure is a logged warning), then runs `config/post-merge/<hook>.sh <commit>`.
 The hook must be an executable regular file not writable by group or others, and runs in `state/autoland/` with these variables:
 
@@ -656,8 +656,9 @@ FM_AUTOLAND_APPROVED    # 1 only for `bin/fm-autoland.sh deploy <hook> --approve
 ```
 
 Exit 0 means deployed, exit 78 means skipped (nothing was deployed), exit 75 means "not now" (for example, a shared service with work in flight), and anything else is a failure.
-Only exit 0 advances `state/autoland/<hook>.deployed` and emits a deployed notification; a successful clone refresh alone is not a deployment.
+Only exit 0 advances `state/autoland/<hook>.deployed` and can emit a deployed notification; a successful clone refresh alone is not a deployment.
 A skipped result preserves any previously deployed revision, emits no notification, and is retried only when the head moves or an operator runs `bin/fm-autoland.sh deploy <hook>`.
+The foreground `deploy` command prints the outcome and succeeds for deployed, skipped, or deferred results; failures return nonzero, and later ticks don't repeat its report.
 The last nonblank output line, capped at 200 characters, is the wake summary, and the whole output is `state/autoland/<hook>.log` with the previous run in `.log.prev`.
 A deferral retries every `FM_AUTOLAND_DEFER_RETRY` seconds (default 300); a failure is reported once and retried only when the head moves or an operator runs `bin/fm-autoland.sh deploy <hook>` in the foreground.
 `FM_AUTOLAND_HOOK_TIMEOUT` (default 1800) bounds one run.
@@ -668,9 +669,9 @@ Use `deploy <hook> --approved` only for a captain-approved restart window; it si
 
 For an existing no-op hook, land and install the exit-78-capable runner before activating the replacement hook; older runners classify 78 as failure.
 Verify the installed runner with an isolated exit-78 hook: the result must be `skipped`, preserve the deployed revision, and emit no deployed notification.
-The private `firstmate-ui` no-op hook has a separately staged exit-78 companion; its parent owner owns activation after those checks, not this repository change.
-Staging isn't activation: the active exit-0 hook still records deployed until replaced, and neither a staged hook nor a refreshed clone proves a live deployment.
+Staging isn't activation: an active exit-0 no-op hook still records deployed until replaced.
 This migration doesn't authorize starting or restarting services.
+The regression coverage is in [`tests/fm-autoland.test.sh`](../tests/fm-autoland.test.sh).
 
 ## Relay (.env)
 
