@@ -12,11 +12,12 @@
 #   fm-specialist.sh create <name> --subject "<subject>" [--project <p>]...
 #   fm-specialist.sh job <name> --brief "<text>" | --brief-file <file>
 #       [--wait] [--wait-timeout <seconds>]
-#   fm-specialist.sh status <name> [--json]
-#   fm-specialist.sh history <name> [-n N] [--json]
+#   fm-specialist.sh status <name> [--json] [--mate <id>]
+#   fm-specialist.sh history <name> [-n N] [--json] [--mate <id>]
 #   fm-specialist.sh list [--all] [--json]
 #   fm-specialist.sh retire <name>
-#   fm-specialist.sh ask <name> --from-captain [--wait] [--wait-timeout <s>] [--mate <id>] -- <text>
+#   fm-specialist.sh ask <name> --from-captain [--wait] [--wait-timeout <s>] [--mate <id>]
+#       -- <text> | --text-file <file>
 #   fm-specialist.sh result <name> [<job>] [--mate <id>]
 #   fm-specialist.sh suspend <name> --reason "<plain reason>" [--since <UTC like 2026-10-17T10:40:02Z>] [--by <who>]
 #   fm-specialist.sh resume <name> [--by <who>]
@@ -30,24 +31,31 @@
 # a job recommends to a ship. Retire refuses a running job and keeps its record,
 # memory, history, and Deck session while removing its neutral workdir.
 # `ask --from-captain` is the captain's direct route to a specialist: one job on
-# its persistent session whose brief carries his words, marks the job "from":
-# "captain" in its record and history, keeps the specialist's bounds (knowledge
-# only; a read-only monitor stays read-only), and at start queues a `check:`
-# wake telling the owning home what he asked. Its result is read with `result`,
-# which prints a job's result.md (default: the last finished job; exit 1 when
-# none was written, 3 while that job is still running).
-# A captain job keeps his exact words in its job directory's message.md and as
-# "message" on its history line and last_job.
+# its persistent session whose brief carries his words and reminds it of its
+# standing bounds (a read-only monitor stays read-only). The owning home gets a
+# `check:` wake with his message excerpt before the runner starts, followed by
+# the usual completion wake. Without --from-captain or with an empty message,
+# ask refuses with exit 2. --text-file reads the message instead of the text tail.
+# Record fields and exact-message retention are owned by bin/fm_crew.py's docstring.
+# `result` prints a job's result.md (default: the last finished job; exit 1 when
+# none was written, 3 while the explicitly selected job is still running).
 # `--mate <id>` on ask, result, status and history runs the command in that second
 # mate's home from the primary home: a local mate through its recorded home=,
 # a remote one through bin/fm-on.sh (where --text-file and --wait are refused;
-# poll status/result instead). `--mate primary` selects the current home.
-# Suspend marks an idle specialist "suspended" with its reason, since and by in
-# the record (a running job must end first); job then refuses with exit 4 until
-# resume returns it to idle and keeps the ended suspension as last_suspension.
-# A scheduler that dispatches a specialist relies on that refusal to skip runs.
-# Status, history, list, job, and retire reconcile interrupted runners using
-# bin/fm_crew.py's liveness rules and emit completion wakes; they are not read-only.
+# poll status/result instead). Omit --mate or use --mate primary for the current home.
+# Suspend marks a specialist "suspended" with a plain reason and start time;
+# retired specialists and running jobs are refused with exit 3. An empty reason
+# or malformed --since (including an empty value) is refused with exit 2.
+# Omit --since to use now, or supply its real UTC start to backfill a suspension.
+# --by defaults to firstmate for both suspend and resume.
+# While suspended, job and ask refuse with exit 4 naming the start and reason;
+# a scheduler dispatching through job relies on that refusal to skip runs.
+# Resume returns a suspended specialist to idle and retains the ended suspension;
+# it refuses any other state with exit 3. Retired or running specialists also
+# refuse job and ask with exit 3.
+# Status, history, list, job, ask, result, suspend, resume, and retire reconcile
+# interrupted runners using bin/fm_crew.py's liveness rules and emit completion
+# wakes; they are not read-only.
 # --wait exits nonzero on failure or timeout (default 3660 seconds); a timeout
 # does not cancel the job. Inspect it with status before submitting another.
 # bin/fm_crew.py's docstring owns runtime tuning and workdir placement;

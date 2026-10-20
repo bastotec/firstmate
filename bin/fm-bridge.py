@@ -11,7 +11,7 @@ before every remote command and calls `block` when the answer is no.
 Flow meanings (bin/fm-on.sh's classification table owns command mapping):
   supervision  launch-state reads, relaunch, interrupt/exit, retire, route, capture, observe
   reports      wakes, replies, deltas and follow-ups read back from the remote home
-  messages     steering a remote mate (fm-send's remote leg: send, key)
+  messages     direct messages or steering sent to a remote mate or specialist
   placement    putting work there: launching a second mate, backlog handoff, skill routing
   files        file and attachment transfer
   maintenance  code, config and inheritance sync, updates, extensions, budget probes
