@@ -14,21 +14,30 @@ specialist is a record, not an endpoint, and is intentionally persistent.
        "home","session","memory","skills_dir","workdir","projects":[...],
        "status":"idle"|"running"|"suspended"|"retired","created","jobs":N,
        "suspension":{"since","reason","by"}|null,
+       "stop_on_tool_failure":true|false (absent = false),
        "last_suspension":{"since","reason","by","resumed","resumed_by"}?,
        "current_job":{"id","pid","identity","started","from"?}|null,
-       "last_job":{"id","brief","started","finished","outcome","result","from"?,"message"?}|null,
+       "last_job":{"id","brief","started","finished","outcome","result","from"?,"message"?,"stopped"?}|null,
        "memory_summary"}
       Suspension fields are absent until first used; since and resumed are epoch
       seconds, and last_suspension retains the most recently resumed suspension.
   state/specialists/<name>/history.jsonl one line per finished job
-      {"job","brief","started","finished","outcome","result","exit","from"?,"message"?}
+      {"job","brief","started","finished","outcome","result","exit","from"?,"message"?,"stopped"?}
       A captain ask sets "from": "captain" on current_job, last_job and history;
       last_job and history also keep his exact words as "message".
+      When a tool failure is recorded, both keep a "stopped" note naming the
+      failed tool and output, truncated to 300 characters.
   state/specialists/<name>/jobs/<job>/   brief.md prompt.md events.ndjson
                                          result.md started memory-before.json runner.log
                                          message.md (captain asks only, exact message)
-  data/specialists/<name>/memory.md      its memory: read at every job start,
-                                         updated before every job may finish
+                                         tool-failure.json (stopped jobs only)
+      tool-failure.json keeps {"tool","args","output","at"}: the tool name,
+      JSON-encoded arguments truncated to 400 characters, whitespace-normalized
+      output truncated to 600 characters, and an epoch-seconds timestamp.
+      The observer atomically publishes it without replacing an existing record,
+      so later failures cannot overwrite the first one.
+  data/specialists/<name>/memory.md      its memory: read at every job start;
+                                         completion checks owned by the CLI header
   data/specialists/<name>/skills/        linked at workdir/.agents/skills
 
 A task group is one parent's ephemeral fan-out: N members share a brief and
@@ -466,6 +475,9 @@ class Specialist:
         }
         if cur.get("from"):
             entry["from"] = cur["from"]
+        failure = read_tool_failure(jdir)
+        if failure:
+            entry["stopped"] = f"stopped at the first failed tool call ({failure.get('tool')}): {failure.get('output', '')}"[:300]
         message = jdir / "message.md"
         if message.is_file():
             with message.open(newline="") as fh:
@@ -476,7 +488,7 @@ class Specialist:
         rec["current_job"] = None
         rec["last_job"] = {k: entry[k] for k in ("brief", "started", "finished", "outcome", "result")}
         rec["last_job"]["id"] = job
-        for key in ("from", "message"):
+        for key in ("from", "message", "stopped"):
             if entry.get(key):
                 rec["last_job"][key] = entry[key]
         rec["last_job"]["summary"] = first_lines(read_text(result), 200)
@@ -569,6 +581,7 @@ MEMORY_FILE: {memory}
 1. Write your result for the owner to RESULT_FILE: the answer or findings first, then evidence.
 2. Update MEMORY_FILE in place: keep the "## Summary" section to a few lines about the subject, add durable facts you learned, prune what is wrong or stale. Keep it short; it is read at the start of every job.
 Your turn cannot finish until both files are written during this job.
+If this specialist stops at its first failed tool call, make no more tool calls and you may finish without writing RESULT_FILE or MEMORY_FILE, since firstmate records the failure.
 """
 
 
@@ -592,6 +605,8 @@ def specialist_hook(jdir: Path, memory: Path) -> str:
 
 def cmd_spec_check(args) -> None:
     jdir = Path(args.job_dir)
+    if read_tool_failure(jdir):
+        return
     result = jdir / "result.md"
     if not result.is_file() or not result.stat().st_size:
         die(f"Write your result to {result} before finishing.")
@@ -673,9 +688,18 @@ def cmd_spec_run(args) -> None:
             "--deadline-secs", str(int(os.environ.get("FM_CREW_DEADLINE_SECS", DEFAULT_DEADLINE))),
             "--hook", specialist_hook(jdir, memory),
         ]
+        if rec.get("stop_on_tool_failure"):
+            me = [sys.executable, str(Path(__file__).resolve())]
+            argv += ["--tool-concurrency", "1",
+                     "--hook", "post_tool_use=" + shlex.join(me + ["_spec-tool-observe", str(jdir)]),
+                     "--hook", "pre_tool_use=" + shlex.join(me + ["_spec-tool-gate", str(jdir)])]
         rc = run_deck(argv, workdir, jdir / "events.ndjson", jdir / "stderr.log",
                       deck_env(), jdir / "prompt.md").wait()
-        if rc == 0 and result.is_file() and result.stat().st_size > 0 and memory_updated(jdir, memory):
+        failure = read_tool_failure(jdir)
+        if failure:
+            if not (result.is_file() and result.stat().st_size > 0):
+                write_stopped_result(result, failure)
+        elif rc == 0 and result.is_file() and result.stat().st_size > 0 and memory_updated(jdir, memory):
             outcome = "done"
     except (Exception, SystemExit) as error:
         print(f"specialist job failed: {error}", file=sys.stderr)
@@ -817,6 +841,92 @@ def cmd_spec_suspend(args) -> None:
         rec["suspension"] = {"since": since, "reason": reason, "by": args.by}
         sp.save(rec)
     print(f"suspended specialist {args.name}: {reason}")
+
+
+TOOL_FAILURE = "tool-failure.json"
+
+
+def read_tool_failure(jdir: Path):
+    try:
+        return json.loads((jdir / TOOL_FAILURE).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def tool_call_failed(tool_name: str, output: str) -> bool:
+    """Deck renders a tool error as 'the tool failed...' and run_command as JSON."""
+    text = (output or "").strip()
+    if text.startswith("the tool failed"):
+        return True
+    if tool_name != "run_command":
+        return False
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return False
+    if isinstance(data, dict):
+        if data.get("timed_out") is True:
+            return True
+        code = data.get("exit_code", 0)
+        return code is None or code != 0
+    return False
+
+
+def write_stopped_result(result: Path, failure: dict) -> None:
+    result.write_text(
+        "# Stopped at the first failed tool call\n\n"
+        f"Tool: {failure.get('tool')}\n"
+        f"Call: {failure.get('args', '')}\n"
+        f"Output: {failure.get('output', '')}\n\n"
+        "This specialist stops at its first failed tool call, so no further tool ran in this job.\n")
+
+
+def cmd_spec_tool_observe(args) -> None:
+    """post_tool_use hook: record the job's first failed tool call."""
+    jdir = Path(args.job_dir)
+    try:
+        event = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        return
+    if read_tool_failure(jdir) or not tool_call_failed(event.get("tool_name"), str(event.get("tool_output", ""))):
+        return
+    note = {"tool": event.get("tool_name"), "args": json.dumps(event.get("args"))[:400],
+            "output": " ".join(str(event.get("tool_output", "")).split())[:600], "at": now()}
+    tmp = jdir / f"{TOOL_FAILURE}.{secrets.token_hex(8)}.tmp"
+    try:
+        with tmp.open("x") as fh:
+            fh.write(json.dumps(note))
+        try:
+            os.link(tmp, jdir / TOOL_FAILURE)
+        except FileExistsError:
+            pass
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def cmd_spec_tool_gate(args) -> None:
+    """pre_tool_use hook: after a failed call, refuse every further tool call (exit 2)."""
+    failure = read_tool_failure(Path(args.job_dir))
+    if not failure:
+        return
+    print(f"A tool call already failed ({failure.get('tool')}: {failure.get('output', '')[:200]}). "
+          "This specialist stops at its first failed tool call: make no more tool calls. "
+          "Reply with one short paragraph on what failed and finish; firstmate records the result.",
+          file=sys.stderr)
+    sys.exit(2)
+
+
+def cmd_spec_configure(args) -> None:
+    h = home()
+    sp = Specialist(h, args.name)
+    sp.reconcile()
+    with locked(sp.lock_path):
+        rec = sp.record()
+        if rec.get("status") == "retired":
+            die(f"specialist {args.name!r} is retired", 3)
+        rec["stop_on_tool_failure"] = args.stop_on_tool_failure == "on"
+        sp.save(rec)
+    print(f"specialist {args.name}: stop at the first failed tool call {args.stop_on_tool_failure}")
 
 
 def cmd_spec_resume(args) -> None:
@@ -1394,6 +1504,19 @@ def main() -> None:
     s.add_argument("--since")
     s.add_argument("--by", default="firstmate")
     s.set_defaults(fn=cmd_spec_suspend)
+
+    s = sub.add_parser("configure")
+    s.add_argument("name")
+    s.add_argument("--stop-on-tool-failure", choices=["on", "off"], required=True)
+    s.set_defaults(fn=cmd_spec_configure)
+
+    s = sub.add_parser("_spec-tool-observe")
+    s.add_argument("job_dir")
+    s.set_defaults(fn=cmd_spec_tool_observe)
+
+    s = sub.add_parser("_spec-tool-gate")
+    s.add_argument("job_dir")
+    s.set_defaults(fn=cmd_spec_tool_gate)
 
     s = sub.add_parser("resume")
     s.add_argument("name")

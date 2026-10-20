@@ -144,8 +144,97 @@ assert_equals "null captain" "$(jq -r '"\(.suspension) \(.last_suspension.resume
 expect_code 3 "$("$SPEC" resume amigo-tech >/dev/null 2>&1; echo $?)" "resuming an idle specialist was accepted"
 pass "suspend records why and since when, job refuses while suspended, and resume returns it to idle"
 
+assert_equals null "$(tail -1 "$DECK_STATE/argv.jsonl" | jq -r .tool_concurrency)" "unguarded jobs override Deck tool concurrency"
+rm -f "$DECK_STATE/gate.log"
+"$SPEC" configure amigo-tech --stop-on-tool-failure on >/dev/null || fail "configure failed"
+assert_equals true "$(jq -r .stop_on_tool_failure "$REC")" "configure did not record the setting"
+STUB_MODE=tool-fail "$SPEC" job amigo-tech --brief "Health sweep." --wait >/dev/null 2>&1 && fail "a job stopped at a failed tool call reported success"
+assert_equals failed "$(jq -r .last_job.outcome "$REC")" "a stopped job was not recorded as failed"
+assert_equals 1 "$(tail -1 "$DECK_STATE/argv.jsonl" | jq -r .tool_concurrency)" "guarded jobs must serialize tool calls"
+assert_equals 2 "$(cat "$DECK_STATE/gate.log")" "the tool call after the failure was not refused"
+assert_contains "$(jq -r .last_job.stopped "$REC")" "stopped at the first failed tool call (run_command)" "last_job does not say it stopped"
+assert_contains "$(jq -r .last_job.stopped "$REC")" "42703" "the stop note lost the failure"
+assert_contains "$("$SPEC" result amigo-tech)" "Stopped at the first failed tool call" "firstmate did not write the stopped result"
+assert_contains "$(tail -1 "$HOME_DIR/state/specialists/amigo-tech/history.jsonl" | jq -r .stopped)" "first failed tool call" "history does not say it stopped"
+out=$("$SPEC" job amigo-tech --brief "Healthy sweep." --wait 2>&1) || fail "a clean job failed with the setting on: $out"
+assert_equals "done" "$(jq -r .last_job.outcome "$REC")" "a clean job did not finish with the setting on"
+assert_equals null "$(jq -r .last_job.stopped "$REC")" "a clean job carried a stop note"
+"$SPEC" configure amigo-tech --stop-on-tool-failure off >/dev/null || fail "configure off failed"
+assert_equals false "$(jq -r .stop_on_tool_failure "$REC")" "configure off did not clear the setting"
+pass "stop-on-tool-failure refuses every tool after the first failed call, records why, and leaves clean jobs alone"
+
+ev_ok='{"tool_name":"run_command","tool_output":"{\"exit_code\":0,\"stdout\":\"x\",\"stderr\":\"\",\"timed_out\":false}"}'
+ev_err='{"tool_name":"read_file","tool_output":"the tool failed"}'
+ev_timeout='{"tool_name":"run_command","tool_output":"{\"exit_code\":null,\"stdout\":\"\",\"stderr\":\"\",\"timed_out\":true}"}'
+ev_read='{"tool_name":"read_file","tool_output":"{\"exit_code\":1}"}'
+ev_read_timeout='{"tool_name":"read_file","tool_output":"{\"exit_code\":null,\"timed_out\":true}"}'
+ev_nonzero='{"tool_name":"run_command","tool_output":"{\"exit_code\":1}"}'
+ev_null='{"tool_name":"run_command","tool_output":"{\"exit_code\":null}"}'
+for case in ok err timeout read read_timeout nonzero null; do
+  jd="$TMP_ROOT/observe-$case"; mkdir -p "$jd"
+  case "$case" in
+    ok) ev=$ev_ok ;;
+    err) ev=$ev_err ;;
+    timeout) ev=$ev_timeout ;;
+    read) ev=$ev_read ;;
+    read_timeout) ev=$ev_read_timeout ;;
+    nonzero) ev=$ev_nonzero ;;
+    null) ev=$ev_null ;;
+  esac
+  printf '%s' "$ev" | python3 "$ROOT/bin/fm_crew.py" _spec-tool-observe "$jd"
+done
+assert_absent "$TMP_ROOT/observe-ok/tool-failure.json" "a successful command counted as a failure"
+assert_absent "$TMP_ROOT/observe-read/tool-failure.json" "reading saved command failure JSON counted as a failure"
+assert_absent "$TMP_ROOT/observe-read_timeout/tool-failure.json" "reading saved timeout JSON counted as a failure"
+assert_present "$TMP_ROOT/observe-err/tool-failure.json" "a tool error was not recorded"
+assert_present "$TMP_ROOT/observe-timeout/tool-failure.json" "a timed-out command was not recorded"
+assert_present "$TMP_ROOT/observe-nonzero/tool-failure.json" "a nonzero command was not recorded"
+assert_present "$TMP_ROOT/observe-null/tool-failure.json" "a command with null exit code was not recorded"
+pass "only commands use exit metadata; tool errors count for every tool"
+
+python3 - "$ROOT" "$TMP_ROOT" <<'PY' || fail "observers must atomically preserve the first failure"
+import importlib.util
+import io
+import json
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from unittest.mock import patch
+root, tmp = map(Path, sys.argv[1:])
+jdir = tmp / "observe-race"
+jdir.mkdir()
+script = root / "bin/fm_crew.py"
+argv = [str(script), "_spec-tool-observe", str(jdir)]
+def observe(index):
+    event = {"tool_name": "run_command", "args": {"command": f"exit {index}"},
+             "tool_output": json.dumps({"exit_code": index})}
+    subprocess.run([sys.executable, *argv], input=json.dumps(event), text=True,
+                   check=True, timeout=15)
+with ThreadPoolExecutor(max_workers=8) as pool:
+    list(pool.map(observe, range(1, 17)))
+record = jdir / "tool-failure.json"
+first = record.read_bytes()
+note = json.loads(first)
+code = json.loads(note["output"])["exit_code"]
+assert code in range(1, 17)
+assert json.loads(note["args"])["command"] == f"exit {code}"
+spec = importlib.util.spec_from_file_location("fm_crew", script)
+crew = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(crew)
+late = {"tool_name": "read_file", "tool_output": "the tool failed: later failure"}
+with patch.object(crew, "read_tool_failure", return_value=None), \
+     patch.object(sys, "stdin", io.StringIO(json.dumps(late))), \
+     patch.object(sys, "argv", argv):
+    crew.main()
+assert record.read_bytes() == first
+assert sorted(p.name for p in jdir.iterdir()) == ["tool-failure.json"]
+PY
+pass "concurrent observers and stale reads preserve one complete first failure"
+
 expect_code 2 "$("$SPEC" ask amigo-tech -- "hello" >/dev/null 2>&1; echo $?)" "ask without --from-captain was accepted"
 out=$("$SPEC" ask amigo-tech --from-captain --wait -- "How is Amigo doing this week?" 2>&1) || fail "captain ask failed: $out"
+assert_equals null "$(tail -1 "$DECK_STATE/argv.jsonl" | jq -r .tool_concurrency)" "disabling the setting did not restore default tool concurrency"
 ask_job=$(jq -r .last_job.id "$REC")
 assert_equals captain "$(jq -r .last_job.from "$REC")" "the job is not marked as from the captain"
 assert_equals captain "$(tail -1 "$HOME_DIR/state/specialists/amigo-tech/history.jsonl" | jq -r .from)" "history does not mark the captain's job"
