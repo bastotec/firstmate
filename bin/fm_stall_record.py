@@ -203,6 +203,8 @@ def main():
                            and old.get('signature') == episode_signature(
                                identity, 'needs-decision', old.get('questions', []),
                                run, step, gate_since)))
+    decision_seen = bool(same_parked_run and (
+        old.get('decision_seen') or old.get('phase') == 'needs-decision'))
     reported_parked = old.get('reported_parked')
     if same_parked_run and old.get('episode') and old.get('reported') == old.get('episode'):
         reported_parked = parked_episode
@@ -255,7 +257,7 @@ def main():
     since = old.get('since') if continuing else None
     if not continuing or not epoch(since, old.get('observed_at', 0)):
         since = args.now if phase else None
-        if phase and not (phase == 'needs-decision' and same_parked_run):
+        if phase and not (phase == 'needs-decision' and decision_seen):
             since = initial_since(phase, meta, timing_meta, pending,
                                   gate_since or parked_since, args.now)
     if phase == 'implementation' and last_run:
@@ -285,6 +287,7 @@ def main():
                   route='mate-triage' if phase == 'needs-decision' else 'mate-repair',
                   episode=episode, reported=reported, reported_parked=reported_parked,
                   parked_episode=parked_episode if state == 'parked' else None,
+                  decision_seen=state == 'parked' and (phase == 'needs-decision' or decision_seen),
                   notify=stalled and reported != episode)
     if args.ack and stalled:
         result.update(reported=episode, notify=False)

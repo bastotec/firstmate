@@ -150,5 +150,93 @@ SH
   pass "one handling successor preserves acknowledged recovery and foreign queue observation across a poll window"
 }
 
+publish_stall_digest() {
+  FM_HOME="$1" FM_STATE_OVERRIDE="$1/state" bash -c '
+    . "$1/bin/fm-wake-lib.sh"
+    fm_lock_acquire_wait "$STATE/.control-worker.lock" || exit 1
+    trap '\''fm_lock_release "$STATE/.control-worker.lock"'\'' EXIT
+    "$1/bin/fm-parked-run-watch.sh" digest < "$2/candidate.json"
+  ' _ "$ROOT" "$1"
+}
+
+test_handling_successor_delivers_stall_digest() {
+  local dir state now old current decisions episode fifo reader child status
+  dir=$(make_case stall-digest-successor)
+  state="$dir/state"
+  mkdir -p "$dir/data" "$dir/config" "$state/idle-sweep"
+  touch "$state/.last-parked-run-watch" "$state/home-summary.json"
+  printf 'kind=ship\nmode=no-mistakes\nspawn_gen=fixture\n' > "$state/worker.meta"
+  now=$(date +%s)
+  old=$((now - 8000))
+  printf '{"run":"run-one","step":"review","parked_since":%s}\n' "$old" > "$state/worker.gate"
+  current='state: parked · source: run-step · evidence: run=run-one; step=review'
+  decisions=$'choice\tneeds-decision\tWhich behavior should be retained?'
+  python3 "$ROOT/bin/fm_stall_record.py" "$state/idle-sweep/worker.stall.json" \
+    "$state/worker.meta" "$current" "$decisions" --observe > "$dir/stall.json" || fail 'seed stall episode'
+  episode=$(jq -r .episode "$dir/stall.json")
+  [ "$(jq -r .notify "$dir/stall.json")" = true ] || fail 'seed episode not overdue'
+  cp "$state/worker.meta" "$state/worker-two.meta"
+  cp "$state/worker.gate" "$state/worker-two.gate"
+  cp "$state/idle-sweep/worker.stall.json" "$state/idle-sweep/worker-two.stall.json"
+  jq -nc --arg current "$current" --arg decisions "$decisions" --slurpfile stall "$dir/stall.json" \
+    '{id:"worker", current:$current, decisions:$decisions, stall:$stall[0]} | ., (.id="worker-two")' > "$dir/candidate.json"
+  mkdir "$state/.wake-queue"
+  if publish_stall_digest "$dir"; then
+    fail 'digest publication unexpectedly succeeded with unavailable queue'
+  fi
+  [ "$(jq -r .notify "$state/idle-sweep/worker.stall.json")" = true ] || fail 'failed publication suppressed retry'
+  [ ! -e "$state/idle-sweep/worker.stall-delivered" ] || fail 'failed publication recorded delivery'
+  rmdir "$state/.wake-queue"
+  publish_stall_digest "$dir" || fail 'digest retry publication'
+  [ "$(jq -r .notify "$state/idle-sweep/worker.stall.json")" = false ] || fail 'successful publication not acknowledged'
+  grep -Fqx "$episode" "$state/idle-sweep/worker.stall-delivered" || fail 'episode receipt lost'
+  grep -Fqx "$episode" "$state/idle-sweep/worker-two.stall-delivered" || fail 'batched episode receipt lost'
+  cp "$state/.wake-queue" "$dir/queued"
+  fifo="$dir/output.fifo"
+  mkfifo "$fifo"
+  sh -c ': < "$1"' _ "$fifo" &
+  reader=$!
+  fm_test_track_helper_pid "$reader"
+  PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    FM_WATCH_HANDLING_SUCCESSOR=1 "$WATCH" > "$fifo" 2> "$dir/failed.err" &
+  child=$!
+  fm_test_track_helper_pid "$child"
+  wait_for_exit "$reader" 100 || fail 'failed-output reader did not finish'
+  status=0
+  wait_for_exit "$child" 100 || status=$?
+  [ "$status" -ne 0 ] && [ "$status" -ne 124 ] || fail 'successor did not attempt the digest doorbell'
+  [ ! -s "$state/.watch-deliveries.log" ] || fail 'failed doorbell recorded delivery'
+  [ "$(find "$state" -name '.seen-procevent-*' -type f | wc -l | tr -d '[:space:]')" = 0 ] \
+    || fail 'failed doorbell suppressed replay'
+  cmp -s "$dir/queued" "$state/.wake-queue" || fail 'failed doorbell changed queued episode'
+  publish_stall_digest "$dir" || fail 'publication retry after doorbell failure'
+  cmp -s "$dir/queued" "$state/.wake-queue" || fail 'publication retry duplicated queued episode'
+  PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    FM_WATCH_HANDLING_SUCCESSOR=1 "$WATCH" > "$dir/watch.out" 2> "$dir/watch.err" &
+  child=$!
+  fm_test_track_helper_pid "$child"
+  wait_for_exit "$child" 100 || fail "successor did not deliver queued digest: $(cat "$dir/watch.out")"
+  grep -Fx 'check: stalled tasks digest: inspect pending questions and repair stalled implementation' "$dir/watch.out" >/dev/null \
+    || fail "successor did not deliver an actionable digest reason: $(cat "$dir/watch.out")"
+  [ "$(wc -l < "$dir/watch.out" | tr -d '[:space:]')" = 1 ] || fail 'successor emitted unrelated notifications'
+  awk -F '\t' -v pid="$child" '$1==pid && $3=="check: stalled tasks digest: inspect pending questions and repair stalled implementation" { found=1 } END { exit !found }' \
+    "$state/.watch-deliveries.log" || fail 'digest bypassed real watcher delivery owner'
+  [ "$(find "$state" -name '.seen-procevent-*' -type f | wc -l | tr -d '[:space:]')" = 1 ] \
+    || fail 'batched digest did not persist duplicate suppression'
+  cmp -s "$dir/queued" "$state/.wake-queue" || fail 'doorbell changed episode-bearing queue'
+  FM_HOME="$dir" FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-wake-drain.sh" > "$dir/drain.out" 2> "$dir/drain.err" \
+    || fail 'digest drain'
+  grep -F 'Which behavior should be retained?' "$dir/drain.out" >/dev/null || fail 'digest question lost at delivery'
+  ack_drain_err "$state" "$dir/drain.err" || fail 'digest post-handling acknowledgment'
+  [ ! -s "$state/.wake-queue" ] || fail 'handled digest remained queued'
+  publish_stall_digest "$dir" || fail 'publication retry after handling'
+  [ ! -s "$state/.wake-queue" ] || fail 'handled episode republished on restart'
+  grep -Fqx "$episode" "$state/idle-sweep/worker.stall-delivered" || fail 'handling lost episode receipt'
+  pass 'handling successor delivers the real stalled-task doorbell across publication and output retries'
+}
+
 test_handling_successor_does_not_go_blind
 test_foreign_queue_successor_continuity_window
+test_handling_successor_delivers_stall_digest

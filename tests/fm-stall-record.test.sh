@@ -214,6 +214,40 @@ for current in (parked, 'state: parked · source: status-log · waiting'):
     assert r['since'] == 38001 and not r['notify']
     assert call(42002, current, question_b + '\nnew\tneeds-decision\tQuestion D?')['notify']
     record.unlink()
+for owner in ('gate', 'parked-run', 'status'):
+    current = parked if owner != 'status' else 'state: parked · source: status-log · waiting'
+    timing = meta.with_suffix('.' + owner)
+    if owner == 'gate':
+        timing.write_text(json.dumps(dict(run=run, step='review', parked_since=10000)))
+    elif owner == 'parked-run':
+        timing.write_text(f'run={run}\nstep=review\nsince=10000\nnudged=0\nescalated=0\n')
+    for now in (10001, 10005):
+        assert call(now, current)['phase'] is None
+    before = record.read_bytes()
+    assert not call(10006, '')['notify']
+    assert record.read_bytes() == before
+    if owner == 'status':
+        timing.write_text('needs-decision [key=review]: Which behavior should be retained?\n')
+        os.utime(timing, (10010, 10010))
+    entry = 10010 if owner == 'status' else 10000
+    r = call(15000, current, question, mode='')
+    assert r['since'] == entry and r['age_seconds'] == 15000 - entry and r['notify']
+    assert record.read_bytes() == before
+    r = call(15001, current, question)
+    original_episode = r['episode']
+    assert r['since'] == entry and r['notify']
+    assert call(15002, current, question)['episode'] == original_episode
+    call(15003, current, question, '--ack')
+    assert not call(15004, current, question)['notify']
+    assert call(15005, current)['phase'] is None
+    assert call(15006, current)['phase'] is None
+    r = call(15007, current, 'new\tneeds-decision\tA reopened question?')
+    assert r['since'] == 15007 and not r['notify']
+    assert call(18608, current, 'new\tneeds-decision\tA reopened question?')['notify']
+    call(18609, current, 'new\tneeds-decision\tA reopened question?', '--ack')
+    assert not call(18610, current, 'new\tneeds-decision\tA reopened question?')['notify']
+    timing.unlink()
+    record.unlink()
 head = 'a' * 40
 ledger = working + f' · evidence: last-run=ledger-{head}; last-run-created=21960; last-run-head={head}'
 primary = working + f' · evidence: last-run=terminal-run; last-run-created=22000; last-run-head={head}'
