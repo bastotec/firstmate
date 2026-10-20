@@ -125,6 +125,23 @@ assert_equals 1 "$(grep -c "specialist:amigo-tech:$interrupted_job" "$HOME_DIR/s
 assert_equals 1 "$(grep -c "specialist:amigo-tech:$job1" "$HOME_DIR/state/.wake-queue")" "normal completion emits only one wake"
 pass "one job at a time; a dead runner is reconciled and wakes once"
 
+expect_code 2 "$("$SPEC" suspend amigo-tech --reason "x" --since yesterday >/dev/null 2>&1; echo $?)" "a malformed --since is refused"
+"$SPEC" suspend amigo-tech --reason "jobs kept calling tools after a failed call" --since 2026-10-17T10:40:02Z --by main >/dev/null \
+  || fail "suspend failed"
+assert_equals suspended "$(jq -r .status "$REC")" "suspend does not mark the record"
+assert_equals "1792233602 jobs kept calling tools after a failed call main" \
+  "$(jq -r '"\(.suspension.since) \(.suspension.reason) \(.suspension.by)"' "$REC")" "the suspension's since, reason and by were not recorded"
+assert_contains "$("$SPEC" status amigo-tech)" "suspended since 2026-10-17T10:40:02Z by main: jobs kept calling tools" "status hides the suspension"
+assert_contains "$("$SPEC" list)" $'amigo-tech\tsuspended' "list hides the suspension"
+expect_code 4 "$("$SPEC" job amigo-tech --brief "Scheduled sweep." >/dev/null 2>&1; echo $?)" "a suspended specialist took a job"
+out=$("$SPEC" job amigo-tech --brief "Scheduled sweep." 2>&1)
+assert_contains "$out" "suspended since 2026-10-17T10:40:02Z: jobs kept calling tools after a failed call" "the refusal does not say why"
+"$SPEC" resume amigo-tech --by captain >/dev/null || fail "resume failed"
+assert_equals idle "$(jq -r .status "$REC")" "resume does not return the specialist to idle"
+assert_equals "null captain" "$(jq -r '"\(.suspension) \(.last_suspension.resumed_by)"' "$REC")" "resume does not keep the ended suspension"
+expect_code 3 "$("$SPEC" resume amigo-tech >/dev/null 2>&1; echo $?)" "resuming an idle specialist was accepted"
+pass "suspend records why and since when, job refuses while suspended, and resume returns it to idle"
+
 "$SPEC" retire amigo-tech >/dev/null || fail "retire failed"
 assert_equals retired "$(jq -r .status "$REC")" "retire marks the record"
 assert_present "$HOME_DIR/data/specialists/amigo-tech/memory.md" "retire keeps the memory"
