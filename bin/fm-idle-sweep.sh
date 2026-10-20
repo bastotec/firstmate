@@ -24,11 +24,12 @@
 #     the same fail-closed admission applies to record-less endpoints below;
 #   - otherwise the recorded worktree's slot-owner claim is checked first;
 #     a claim naming another task classifies this record as dead, never done
-#     from the claimant's run; all other records take one bin/fm-crew-state.sh
-#     read bounded to 60 seconds; age is the time since the status ledger
-#     (else metadata record) changed;
-#   - working or parked, or done with its PR (recorded, or the last PR link in
-#     its ledger) still open or unreadable: left alone;
+#     from the claimant's run; all other records take an initial
+#     bin/fm-crew-state.sh read bounded to 60 seconds; cleanup age is the time
+#     since the status ledger (else metadata record) changed;
+#   - working or parked: no cleanup or retry; stalled timing is handled below;
+#   - done with its PR (recorded, or the last PR link in its ledger) still open
+#     or unreadable: left alone;
 #   - a done ship with no PR, or a closed-unmerged PR, is never cleaned up
 #     automatically, since a pushed but unmerged branch passes cleanup's checks;
 #     it becomes the clean-it-up-or-keep-it decision below;
@@ -117,13 +118,15 @@
 # idle-sweep-audit:<mate>:<epoch> per episode; a fresh clean summary ends it.
 #
 # Stalled timing and episode dedup are owned by bin/fm_stall_record.py.
-# Admitted active ships are observed on every scan; threshold crossings project
-# class stalled (not a worker ledger state) and queue one batched question/repair
-# digest through this home's mate route. Questions need mate triage before any
-# captain-facing message; implementation stalls carry a repair, not a made-up ask.
-# Approval exclusions, holds and deferrals still exclude all automatic action.
-# Delivery is rechecked under each task's control lock and acknowledged only
-# after the single parent report or main-home doorbell append succeeds.
+# Admitted non-secondmate tasks are observed on every scan; threshold crossings
+# project class stalled (not a worker ledger state) and queue one batched
+# question/repair digest through this home's mate route. Questions need mate
+# triage before any captain-facing message; implementation stalls carry a repair,
+# not a made-up ask. Approval exclusions, holds and deferrals still exclude all
+# automatic action. Before publication, current state and open questions are
+# re-read under each task's control lock; only a still-matching stalled episode
+# is delivered. Acknowledgement follows the single parent report or main-home
+# doorbell append succeeding; failed publication remains eligible for retry.
 #
 # `summary` prints the last scan's state/idle-sweep.json
 # (schema fm-idle-sweep.v1: generated, generated_epoch, home, workers[] of
