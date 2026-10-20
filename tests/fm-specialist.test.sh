@@ -147,6 +147,8 @@ out=$("$SPEC" ask amigo-tech --from-captain --wait -- "How is Amigo doing this w
 ask_job=$(jq -r .last_job.id "$REC")
 assert_equals captain "$(jq -r .last_job.from "$REC")" "the job is not marked as from the captain"
 assert_equals captain "$(tail -1 "$HOME_DIR/state/specialists/amigo-tech/history.jsonl" | jq -r .from)" "history does not mark the captain's job"
+assert_equals "How is Amigo doing this week?" "$(tail -1 "$HOME_DIR/state/specialists/amigo-tech/history.jsonl" | jq -r .message | tr -d '\n')" "history does not keep his exact words"
+assert_equals "How is Amigo doing this week?" "$(jq -r .last_job.message "$REC" | tr -d '\n')" "last_job does not keep his exact words"
 assert_grep "How is Amigo doing this week?" "$HOME_DIR/state/specialists/amigo-tech/jobs/$ask_job/brief.md" "the captain's words are not the brief"
 assert_grep "read-only monitor stays read-only" "$HOME_DIR/state/specialists/amigo-tech/jobs/$ask_job/brief.md" "the brief drops the specialist's bounds"
 assert_grep "specialist-captain:amigo-tech:$ask_job" "$HOME_DIR/state/.wake-queue" "the owning home was not told about the captain's message"

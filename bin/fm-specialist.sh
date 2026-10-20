@@ -36,7 +36,9 @@
 # wake telling the owning home what he asked. Its result is read with `result`,
 # which prints a job's result.md (default: the last finished job; exit 1 when
 # none was written, 3 while that job is still running).
-# `--mate <id>` on ask, result and status runs the command in that second
+# A captain job keeps his exact words in its job directory's message.md and as
+# "message" on its history line and last_job.
+# `--mate <id>` on ask, result, status and history runs the command in that second
 # mate's home from the primary home: a local mate through its recorded home=,
 # a remote one through bin/fm-on.sh (where --text-file is refused).
 # Suspend marks an idle specialist "suspended" with its reason, since and by in
@@ -84,8 +86,8 @@ route_to_mate() {  # <command> <args...>
 }
 
 case "${1:-}" in
-  ask|result|status) route_to_mate "$@" ;;
-  create|job|history|list|retire|suspend|resume) exec python3 "$SCRIPT_DIR/fm_crew.py" "$@" ;;
+  ask|result|status|history) route_to_mate "$@" ;;
+  create|job|list|retire|suspend|resume) exec python3 "$SCRIPT_DIR/fm_crew.py" "$@" ;;
   -h|--help|'') awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; [ -n "${1:-}" ] ;;
   *) printf 'fm-specialist.sh: unknown command: %s\n' "$1" >&2; exit 2 ;;
 esac

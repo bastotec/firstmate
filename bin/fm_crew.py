@@ -15,10 +15,11 @@ specialist is a record, not an endpoint, and is intentionally persistent.
        "status":"idle"|"running"|"suspended"|"retired","created","jobs":N,
        "suspension":{"since","reason","by"}|null,
        "current_job":{"id","pid","identity","started"}|null,
-       "last_job":{"id","brief","started","finished","outcome","result","from"?}|null,
+       "last_job":{"id","brief","started","finished","outcome","result","from"?,"message"?}|null,
        "memory_summary"}
   state/specialists/<name>/history.jsonl one line per finished job
-      {"job","brief","started","finished","outcome","result","exit"}
+      {"job","brief","started","finished","outcome","result","exit","from"?,"message"?}
+      ("from": "captain" and "message", his exact words, mark a captain ask)
   state/specialists/<name>/jobs/<job>/   brief.md prompt.md events.ndjson
                                          result.md started memory-before.json runner.log
   data/specialists/<name>/memory.md      its memory: read at every job start,
@@ -459,14 +460,18 @@ class Specialist:
         }
         if cur.get("from"):
             entry["from"] = cur["from"]
+        message = jdir / "message.md"
+        if message.is_file():
+            entry["message"] = read_text(message)
         with open(self.history_path, "a") as fh:
             fh.write(json.dumps(entry, sort_keys=True) + "\n")
         rec["status"] = "idle"
         rec["current_job"] = None
         rec["last_job"] = {k: entry[k] for k in ("brief", "started", "finished", "outcome", "result")}
         rec["last_job"]["id"] = job
-        if entry.get("from"):
-            rec["last_job"]["from"] = entry["from"]
+        for key in ("from", "message"):
+            if entry.get(key):
+                rec["last_job"][key] = entry[key]
         rec["last_job"]["summary"] = first_lines(read_text(result), 200)
         rec["jobs"] = int(rec.get("jobs", 0)) + 1
         rec["memory_summary"] = first_lines(read_text(Path(rec["memory"])))
@@ -756,6 +761,8 @@ def cmd_spec_ask(args) -> None:
         die("the message is empty")
 
     def tell_owner(h: Path, job: str) -> None:
+        msg = Specialist(h, args.name).job_dir(job) / "message.md"
+        msg.write_text(text + "\n")
         excerpt = " ".join(text.split())[:200]
         wake(h, f"specialist-captain:{args.name}:{job}",
              f"check: the captain asked specialist {args.name} directly (job {job}): {excerpt} - "
