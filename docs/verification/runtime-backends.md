@@ -24,7 +24,6 @@ On 2026-10-20, the loopback scripted-provider guard ran the real Deck executable
 Tested identity: `deck 0.1.0`, SHA-256 `841b3027311747130fc12e4c0a1929874a5e3f051612fd909120fc0aa6176363`.
 The guard refuses a different fingerprint unless `FM_SPECIALIST_DECK_SHA256` explicitly pins the replacement; changing the pin requires refreshed evidence here.
 The source behavior corresponds to Deck source `1408131827804535268d5621c217453f234ea7f2` (stored-output envelopes and rendered command status), but this is not a verified source-to-binary build receipt or historical executable attribution.
-The hook receives presentation text rather than authoritative raw truncation metadata; exact synthetic copies of producer envelopes remain indistinguishable from real envelopes.
 
 Refresh with:
 
@@ -33,10 +32,12 @@ FM_SPECIALIST_DECK_LIVE=1 bin/fm-test-run.sh tests/fm-specialist-deck-live-e2e.t
 FM_LIVE=0 bin/fm-test-run.sh tests/fm-specialist.test.sh
 ```
 
-The real guard emitted the following for each of `stored-read`, `hard-read`, and `large-nonzero`:
+The real guard emitted these per-case results, followed by one suite result:
 
 ```text
-first cause retained; one tool executed; queued/later calls refused; input/memory unchanged; no completion injection; failed owner result
+stored-read: first cause retained; one tool executed; queued/later calls refused; input/memory unchanged; no completion injection; failed owner result
+hard-read: first cause retained; one tool executed; queued/later calls refused; input/memory unchanged; no completion injection; failed owner result
+large-nonzero: first cause retained; one tool executed; queued/later calls refused; input/memory unchanged; no completion injection; failed owner result
 ok - pinned Deck stops queued and later calls after actual incomplete output
 ```
 
