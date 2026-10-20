@@ -218,6 +218,40 @@ session_file.write_bytes(original_session)
 PY
 pass "session model lookup follows DECK_STATE, XDG_STATE_HOME and HOME, tolerating non-object sessions"
 
+python3 - "$ROOT" "$TMP_ROOT" "$REC" <<'PY' || fail "legacy jobs must report stream activity, never the reader's working directory"
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+root, tmp, original = map(Path, sys.argv[1:])
+home = tmp / "legacy-activity"
+records = home / "state/specialists"
+records.mkdir(parents=True)
+rec = json.loads(original.read_text())
+rec.update(home=str(home), status="running", current_job={"id": "legacy-job", "pid": 99999999})
+record = records / "amigo-tech.json"
+events = records / "amigo-tech/jobs/legacy-job/events.ndjson"
+events.parent.mkdir(parents=True)
+events.write_text('{"type":"turn-start"}\n')
+os.utime(events, (1234567890, 1234567890))
+env = dict(os.environ, FM_HOME=str(home))
+def current_job():
+    record.write_text(json.dumps(rec))
+    rows = json.loads(subprocess.check_output([sys.executable, str(root / "bin/fm_crew.py"), "_spec-rows"], env=env, timeout=15))
+    return rows[0]["current_job"]
+cur = current_job()
+assert cur["events"] == str(events) and cur["last_activity"] == 1234567890, cur
+events.unlink()
+assert current_job()["last_activity"] is None
+rec.pop("home")
+assert current_job()["last_activity"] is None
+rec["home"] = str(home)
+rec["current_job"].pop("id")
+assert current_job()["last_activity"] is None
+PY
+pass "legacy job activity derives its stream path and stays null when unavailable"
+
 out=$("$ROOT/bin/fm-control.sh" spec-amigo-tech model zai/glm-5.3) || fail "fm-control model on a specialist failed: $out"
 assert_equals zai/glm-5.3 "$(jq -r .model "$REC")" "fm-control model did not switch the specialist"
 out=$("$ROOT/bin/fm-control.sh" spec-amigo-tech relaunch --model default --note x) || fail "fm-control relaunch on a specialist failed: $out"
@@ -279,6 +313,7 @@ state.mkdir()
 env = dict(os.environ, FM_DECK_BIN=str(tmp / "deck-term-child"), STUB_STOP_DIR=str(state))
 cli = [str(root / "bin/fm-specialist.sh")]
 pid = None
+stopping = status = None
 try:
     subprocess.run([*cli, "job", "amigo-tech", "--brief", "Stop the full group"], env=env, check=True, timeout=15)
     rec = json.loads(record.read_text())
@@ -286,20 +321,44 @@ try:
     assert crew.wait_for(lambda: (state / "ready.json").is_file(), 10), "child never became ready"
     child = json.loads((state / "ready.json").read_text())
     assert child["pgid"] == pid and child["pid"] != pid
-    stopped = subprocess.run([*cli, "stop", "amigo-tech"], env=env, capture_output=True, text=True, timeout=60)
+    job = rec["current_job"]["id"]
+    jobs_before = rec["jobs"]
+    stopping = subprocess.Popen([*cli, "stop", "amigo-tech"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    assert crew.wait_for(lambda: (state / "term").is_file() and not crew.pid_alive(pid), 5), "runner did not exit after TERM"
+    status = subprocess.Popen([*cli, "status", "amigo-tech", "--json"], env=env,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        status.communicate(timeout=0.5)
+        raise AssertionError("status reconciled during stop's grace period")
+    except subprocess.TimeoutExpired:
+        pass
+    assert crew.pid_alive(child["pid"]), "concurrent status killed the child before grace elapsed"
+    assert json.loads(record.read_text())["current_job"]["id"] == job
+    output, errors = stopping.communicate(timeout=60)
     finished = time.monotonic()
-    assert stopped.returncode == 0, stopped.stderr
+    assert stopping.returncode == 0, (output, errors)
+    status_output, status_errors = status.communicate(timeout=15)
+    assert status.returncode == 0, status_errors
+    assert json.loads(status_output)["last_job"]["outcome"] == "interrupted", status_output
     assert (state / "term").is_file(), "child did not receive TERM"
     assert finished - float((state / "term").read_text()) >= 9.8, "child did not get the ten-second grace period"
     assert not crew.group_alive(pid), "stop reported success while non-zombie group members survived"
     rec = json.loads(record.read_text())
     assert rec["status"] == "idle" and rec["last_job"]["outcome"] == "interrupted", rec
+    assert rec["jobs"] == jobs_before + 1, rec
+    history = record.parent / "amigo-tech/history.jsonl"
+    assert sum(json.loads(line)["job"] == job for line in history.read_text().splitlines()) == 1
 finally:
+    for process in (stopping, status):
+        if process is not None:
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=5)
     if pid and crew.group_alive(pid):
         os.killpg(pid, signal.SIGKILL)
         assert crew.wait_for(lambda: not crew.group_alive(pid), 5), "fixture group survived cleanup"
 PY
-pass "stop tracks the whole group through TERM, ten seconds of grace, and KILL"
+pass "stop serializes concurrent status through the full process-group grace period and finalizes once"
 
 assert_equals null "$(tail -1 "$DECK_STATE/argv.jsonl" | jq -r .tool_concurrency)" "unguarded jobs override Deck tool concurrency"
 rm -f "$DECK_STATE/gate.log"

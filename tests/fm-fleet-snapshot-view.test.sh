@@ -440,6 +440,48 @@ test_specialists_are_listed_as_persistent_workers() {
     | .provenance.selected == "structured-home" and .specialists == []
   ' >/dev/null || fail "an older mate summary must project an empty specialists array: $out"
   pass "specialists survive home-summary collection, including older summary compatibility"
+  PATH="$fakebin:$PATH" python3 - "$ROOT" "$home" "$primary" "$fixture_root" <<'PY' \
+    || fail "a working specialist must count as active home work without endpoint tasks"
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+root, home, primary, fixture_root = map(Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location("fm_crew", root / "bin/fm_crew.py")
+crew = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(crew)
+record = home / "state/specialists/amigo-tech.json"
+rec = json.loads(record.read_text())
+runner = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
+env = dict(os.environ, FM_HOME=str(home), FM_DATA_OVERRIDE=str(home / "data"))
+command = [str(root / "bin/fm-fleet-snapshot.sh")]
+try:
+    rec.update(status="running", current_job={"id": "live-job", "pid": runner.pid,
+                                             "identity": crew.process_identity(runner.pid)})
+    record.write_text(json.dumps(rec))
+    summary = json.loads(subprocess.check_output([*command, "--secondmate-home-summary"], env=env, timeout=20))
+    assert summary["valid"] is True and summary["state"] == "active_child_work", summary
+    assert summary["active_children"] == [], summary
+    assert summary["specialists"][0]["current_state"]["state"] == "working", summary
+    fleet = json.loads(subprocess.check_output([*command, "--json"], env=env, timeout=20))
+    assert fleet["tasks"] == [], fleet
+    (home / "state/home-summary.json").write_text(json.dumps(summary))
+    env.update(FM_HOME=str(primary), FM_DATA_OVERRIDE=str(primary / "data"), FM_ROOT_OVERRIDE=str(fixture_root))
+    fleet = json.loads(subprocess.check_output([*command, "--json"], env=env, timeout=20))
+    mate = next(r for r in fleet["secondmate_current"]["records"] if r["id"] == "mate")
+    assert mate["current"]["state"] == "active_child_work" and mate["specialists"][0]["current_state"]["state"] == "working", mate
+finally:
+    runner.terminate()
+    runner.wait(timeout=5)
+    rec.update(status="idle", current_job=None)
+    record.write_text(json.dumps(rec))
+env.update(FM_HOME=str(home), FM_DATA_OVERRIDE=str(home / "data"))
+summary = json.loads(subprocess.check_output([*command, "--secondmate-home-summary"], env=env, timeout=20))
+assert summary["valid"] is True and summary["state"] == "no_active_work", summary
+PY
+  pass "working specialists make their home active and idle specialists do not"
 }
 
 test_main_inventory_orphan_and_unstructured_disclosure() {

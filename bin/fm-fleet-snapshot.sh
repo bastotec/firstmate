@@ -1187,7 +1187,7 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
                    | index($invalidity.kind) | not))
        then "unknown"
        elif any($decisions_all[]; .verb == "needs-decision" or .verb == "captain-hold") then "captain_decision"
-       elif ($active_all | length) > 0 then "active_child_work"
+       elif ($active_all | length) > 0 or any($specialists[]; .current_state.state == "working") then "active_child_work"
        elif ($holds_all | length) > 0 then "externally_held"
        else "no_active_work" end) as $state
     | {

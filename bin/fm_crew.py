@@ -741,11 +741,16 @@ def worker_view(rec: dict) -> dict:
     cur = rec.get("current_job")
     if cur:
         cur = dict(cur)
-        events = Path(cur.get("events") or "")
-        try:
-            cur["last_activity"] = int(events.stat().st_mtime)
-        except OSError:
-            cur["last_activity"] = None
+        events = cur.get("events")
+        if not events and rec.get("home") and rec.get("name") and cur.get("id"):
+            events = str(Path(rec["home"]) / "state" / "specialists" / rec["name"] / "jobs" / cur["id"] / "events.ndjson")
+            cur["events"] = events
+        cur["last_activity"] = None
+        if events:
+            try:
+                cur["last_activity"] = int(Path(events).stat().st_mtime)
+            except OSError:
+                pass
         out["current_job"] = cur
     return out
 
@@ -800,28 +805,27 @@ def cmd_spec_rows(args) -> None:
 
 
 def cmd_spec_stop(args) -> None:
-    """Stop the running job; reconciliation records it as interrupted."""
+    """Stop the running job and record it as interrupted."""
     h = home()
     sp = Specialist(h, args.name)
-    rec = sp.reconcile()
-    cur = rec.get("current_job")
-    if rec.get("status") != "running" or not cur:
-        die(f"specialist {args.name!r} is not on a job", 3)
-    if not sp.runner_alive(cur):
-        sp.reconcile()
-        print(f"job {cur['id']} had already ended")
-        return
-    pid = cur["pid"]
-    with contextlib.suppress(ProcessLookupError, PermissionError):
-        os.killpg(pid, signal.SIGTERM)
-    if not wait_for(lambda: not group_alive(pid), 10):
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(pid, signal.SIGKILL)
-        if not wait_for(lambda: not group_alive(pid), 5):
-            die(f"job {cur['id']} process group {pid} is still running; stop could not be confirmed", 1)
-    rec = sp.reconcile()
-    last = rec.get("last_job") or {}
-    print(f"stopped job {cur['id']} for specialist {args.name} ({last.get('outcome', 'unknown')})")
+    with locked(sp.lock_path):
+        rec = sp.record()
+        cur = rec.get("current_job")
+        if rec.get("status") != "running" or not cur:
+            die(f"specialist {args.name!r} is not on a job", 3)
+        pid = cur.get("pid")
+        if sp.runner_alive(cur):
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(pid, signal.SIGTERM)
+            if not wait_for(lambda: not group_alive(pid), 10):
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(pid, signal.SIGKILL)
+                if not wait_for(lambda: not group_alive(pid), 5):
+                    die(f"job {cur['id']} process group {pid} is still running; stop could not be confirmed", 1)
+        elif group_alive(pid):
+            die(f"job {cur['id']} runner ended; process group ownership could not be confirmed", 1)
+        sp._finish_locked(rec, cur["id"], "interrupted", None)
+    print(f"stopped job {cur['id']} for specialist {args.name} (interrupted)")
 
 
 def cmd_spec_model(args) -> None:
