@@ -1257,6 +1257,12 @@ test_recovery_projects_stalled_timing_without_mutating_it() {
   fakebin=$(make_fakebin "$home")
   raw=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$ROOT/bin/fm-crew-state.sh" implementation)
   old=$(( $(date +%s) - 8000 ))
+  python3 -c 'import os,sys; t=int(sys.argv[2]); os.utime(sys.argv[1], (t,t))' "$home/state/implementation.meta" "$old"
+  out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
+  printf '%s' "$out" | jq -e '.tasks[] | select(.id=="implementation") |
+    .current_state.stall.state=="stalled" and .current_state.stall.age_seconds > 7200' \
+    >/dev/null || fail "recovery lost pre-existing implementation age: $out"
+  assert_absent "$home/state/idle-sweep/implementation.stall.json" 'recovery created an observation record'
   python3 "$ROOT/bin/fm_stall_record.py" "$home/state/idle-sweep/implementation.stall.json" \
     "$home/state/implementation.meta" "$raw" '' --observe --now "$old" >/dev/null
   before=$(cat "$home/state/idle-sweep/implementation.stall.json")

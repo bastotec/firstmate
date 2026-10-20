@@ -3,16 +3,19 @@
 
 Usage: fm_stall_record.py RECORD META CURRENT_LINE OPEN_DECISIONS [--observe|--ack] [--now EPOCH]
 OPEN_DECISIONS is the fm-classify-lib.sh status_open_decisions TSV contract.
-Read mode has no side effects; only the idle sweep, under its scan lock, uses
---observe and --ack. RECORD lives in state/idle-sweep/<id>.stall.json.
-The JSON projection reports state=stalled strictly after 7200 seconds of observed
+Read mode has no side effects; the idle sweep uses --observe and the parked-run
+publication owner uses --ack under the idle sweep's scan and admission locks.
+RECORD lives in state/idle-sweep/<id>.stall.json.
+The JSON projection reports state=stalled strictly after 7200 seconds of
 implementation without an attributed validation run, or 3600 seconds of an open
-needs-decision reconciled with a parked current state. Unknown evidence, declared
-waits, other task kinds and delivery modes reset observation instead of guessing.
-Timing is a lower bound: since first matching observation, not status-file mtime
-(which can change on unrelated events). last_run_seen is the last successful
-attributed run observation, not an invented run creation timestamp. Missing,
-corrupt, future or generation-mismatched timing starts a fresh observation.
+needs-decision reconciled with a parked current state across task kinds and modes.
+--state-dir and --task-id select existing timing evidence, including for captured
+metadata in recovery snapshots. Matching gate/parked-run records supply decision
+entry time; otherwise a matching last decision event supplies a lower bound.
+Implementation starts at the recorded spawn epoch, or metadata mtime.
+last_run_seen is the creation epoch encoded in the attributed run's ULID.
+Unknown evidence and declared waits reset observation instead of guessing.
+Missing, corrupt, future or generation-mismatched timing starts a fresh observation.
 Episode identity includes metadata contents, phase and the folded pending questions;
 a resumed state or new question starts another episode. --ack records delivery
 only for the currently matching stalled episode. Atomic owner-only writes refuse
@@ -25,6 +28,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 import time
 
@@ -63,6 +67,57 @@ def write(path, value):
             os.unlink(tmp)
 
 
+def fields_file(path):
+    try:
+        if not path.is_symlink():
+            return dict(line.split('=', 1) for line in path.read_text().splitlines() if '=' in line)
+    except OSError:
+        pass
+    return {}
+
+
+def evidence(current, key):
+    reference = next((f for f in current.split(' · ') if f.startswith('evidence: ')), '')
+    match = re.search(r'(?:^|; )' + key + r'=([^;]+)', reference.removeprefix('evidence: '))
+    return match[1] if match else ''
+
+
+def initial_since(phase, meta, path, pending, run, step, now):
+    if phase == 'needs-decision':
+        gate = load(path.with_suffix('.gate'))
+        parked = fields_file(path.with_suffix('.parked-run'))
+        candidates = []
+        for record, key in ((gate, 'parked_since'), (parked, 'since')):
+            if run and step and record.get('run') == run and record.get('step') == step:
+                try:
+                    stamp = int(record.get(key, 0))
+                except (ValueError, TypeError):
+                    continue
+                if epoch(stamp, now):
+                    candidates.append(stamp)
+        if candidates:
+            return min(candidates)
+        status = path.with_suffix('.status')
+        try:
+            if not status.is_symlink():
+                last = next((line for line in reversed(status.read_text().splitlines()) if line.strip()), '')
+                if re.match(r'^needs-decision(?:\s|:)', last) and any(last.endswith(q) for q in pending):
+                    stamp = int(status.stat().st_mtime)
+                    if epoch(stamp, now):
+                        return stamp
+        except OSError:
+            pass
+    elif phase == 'implementation':
+        match = re.fullmatch(r's(\d+)\.[^.]+\.[^.]+', meta.get('spawn_gen', ''))
+        try:
+            stamp = int(match[1]) if match else int(path.stat().st_mtime)
+        except OSError:
+            return now
+        if epoch(stamp, now):
+            return stamp
+    return now
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('record', type=Path)
@@ -73,7 +128,10 @@ def main():
     mode.add_argument('--observe', action='store_true')
     mode.add_argument('--ack', action='store_true')
     parser.add_argument('--now', type=int, default=int(time.time()))
+    parser.add_argument('--state-dir', type=Path)
+    parser.add_argument('--task-id')
     args = parser.parse_args()
+    timing_meta = args.state_dir / (args.task_id + '.meta') if args.state_dir and args.task_id else args.meta
     fields = args.current.split(' · ')
     state = fields[0].removeprefix('state: ')
     source = fields[1].removeprefix('source: ') if len(fields) > 1 else ''
@@ -94,28 +152,47 @@ def main():
         cells = row.split('\t', 2)
         if len(cells) == 3 and cells[1] == 'needs-decision':
             pending.append(cells[2])
-    eligible = (bool(identity) and meta.get('kind') == 'ship'
-                and meta.get('mode', '') in ('', 'ship', 'no-mistakes')
-                and not meta.get('remote_host') and 'declared-wait: active' not in fields)
+    eligible = (bool(identity) and not meta.get('remote_host')
+                and 'declared-wait: active' not in fields)
+    run = evidence(args.current, 'run') if source == 'run-step' else ''
+    step = evidence(args.current, 'step') if source == 'run-step' else ''
     phase = ''
     if eligible and state == 'parked' and pending:
         phase = 'needs-decision'
-    elif eligible and state == 'working' and source in ('pane', 'status-log'):
+    elif (eligible and meta.get('kind') == 'ship'
+          and meta.get('mode', '') in ('', 'ship', 'no-mistakes')
+          and state == 'working' and source in ('pane', 'status-log')):
         phase = 'implementation'
-    signature = digest(json.dumps([identity, phase, pending if phase == 'needs-decision' else []]))
+    signature = digest(json.dumps([identity, phase, pending if phase == 'needs-decision' else [],
+                                   run if phase == 'needs-decision' else '',
+                                   step if phase == 'needs-decision' else '']))
     since = old.get('since') if old.get('signature') == signature else None
     if old.get('signature') != signature or not epoch(since, old.get('observed_at', 0)):
         since = args.now if phase else None
+        if phase and not old:
+            since = initial_since(phase, meta, timing_meta, pending, run, step, args.now)
     last_run = old.get('last_run_seen')
+    if run:
+        try:
+            last_run = int(evidence(args.current, 'run-created'))
+        except ValueError:
+            pass
     if not epoch(last_run, args.now):
         last_run = None
-    if eligible and source == 'run-step':
-        last_run = args.now
     age = args.now - since if since is not None else None
     threshold = 3600 if phase == 'needs-decision' else 7200
     stalled = bool(phase and age is not None and age > threshold)
     episode = digest(f'{signature}:{since}') if phase else None
     reported = old.get('reported')
+    if phase == 'needs-decision' and not old.get('episode'):
+        parked = fields_file(timing_meta.with_suffix('.parked-run'))
+        if run and step and parked.get('run') == run and parked.get('step') == step:
+            try:
+                delivered = int(parked.get('nudged', 0))
+            except ValueError:
+                delivered = 0
+            if epoch(delivered, args.now) or parked.get('escalated') == '1':
+                reported = episode
     result = dict(version=1, identity=identity, observed_at=args.now,
                   signature=signature, since=since, phase=phase or None,
                   age_seconds=age, last_run_seen=last_run,

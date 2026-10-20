@@ -306,12 +306,14 @@ emit() {  # <state> <source> [detail] [run-error] [run-pr]
   [ -n "${3:-}" ] && line="$line${SEP}$3"
   [ -n "${5:-}" ] && line="$line${SEP}run-pr: $5"
   [ -n "${4:-}" ] && line="$line${SEP}run-error: $4"
-  local run='' evidence="meta=$META"
+  local run='' step='' run_created='' evidence="meta=$META"
   if [ "$HAVE_RUN" = 1 ] && [ "$RUN_SOURCE" = full ]; then
     run=$(strip_quotes "$(nm_field id)")
+    step=$(crew_state_step | cut -f1)
+    run_created=$(nm_run_created_epoch || true)
   fi
   case "$2" in
-    run-step) evidence="$evidence; run=${run:-ledger}; worktree=$WT" ;;
+    run-step) evidence="$evidence; run=${run:-ledger}; worktree=$WT; step=$step; run-created=$run_created" ;;
     pane) evidence="$evidence; busy=$STATE/$ID.busy-state; generation=$STATE/$ID.busy-gen" ;;
     status-log) evidence="$evidence; status=$LOG" ;;
     remote-endpoint) evidence="$evidence; remote=${REMOTE_HOST:-unknown}" ;;
