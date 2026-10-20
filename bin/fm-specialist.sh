@@ -21,6 +21,7 @@
 #   fm-specialist.sh result <name> [<job>] [--mate <id>]
 #   fm-specialist.sh suspend <name> --reason "<plain reason>" [--since <UTC like 2026-10-17T10:40:02Z>] [--by <who>]
 #   fm-specialist.sh resume <name> [--by <who>]
+#   fm-specialist.sh configure <name> --stop-on-tool-failure on|off
 #
 # `job` starts one detached Deck turn and returns; when it ends the home gets a
 # `check: specialist <name> finished job <job> (<outcome>) - result: <path>`
@@ -43,6 +44,13 @@
 # mate's home from the primary home: a local mate through its recorded home=,
 # a remote one through bin/fm-on.sh (where --text-file and --wait are refused;
 # poll status/result instead). Omit --mate or use --mate primary for the current home.
+# `configure --stop-on-tool-failure on` makes every later job stop at its first
+# failed tool call (a non-zero exit, a timeout, or a tool error): Deck hooks
+# record that call and refuse every further tool call, the job may then finish
+# without its usual result and memory checks, firstmate writes a result naming
+# the failed call when the specialist wrote none, and the job is recorded as
+# failed with "stopped" on its history line and last_job. Use it for read-only
+# monitors that must not continue past a failure.
 # Suspend marks a specialist "suspended" with a plain reason and start time;
 # retired specialists and running jobs are refused with exit 3. An empty reason
 # or malformed --since (including an empty value) is refused with exit 2.
@@ -103,7 +111,7 @@ route_to_mate() {  # <command> <args...>
 
 case "${1:-}" in
   ask|result|status|history) route_to_mate "$@" ;;
-  create|job|list|retire|suspend|resume) exec python3 "$SCRIPT_DIR/fm_crew.py" "$@" ;;
+  create|job|list|retire|suspend|resume|configure) exec python3 "$SCRIPT_DIR/fm_crew.py" "$@" ;;
   -h|--help|'') awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; [ -n "${1:-}" ] ;;
   *) printf 'fm-specialist.sh: unknown command: %s\n' "$1" >&2; exit 2 ;;
 esac

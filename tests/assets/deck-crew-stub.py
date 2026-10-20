@@ -7,7 +7,9 @@ test can prove a later turn resumed the same session, writes RESULT_FILE (and
 appends to MEMORY_FILE) named in the prompt, runs the pre_complete hook the way
 deck does (exit 2 refuses), and records concurrency in $STUB_RUNNING_DIR.
 STUB_SLEEP delays each run; STUB_MODE=hang never finishes; STUB_MODE=lazy
-writes nothing so the hook refuses.
+writes nothing so the hook refuses; STUB_MODE=tool-fail replays one failed
+run_command through post_tool_use hooks, logs the next pre_tool_use hook's exit
+to gate.log, then writes nothing.
 """
 import json
 import os
@@ -82,6 +84,22 @@ try:
 
     result = field("RESULT_FILE")
     memory = field("MEMORY_FILE")
+    if mode == "tool-fail":
+        # Replay one failed run_command through the hooks, then try another tool.
+        failed = {"hook_event_name": "post_tool_use", "tool_name": "run_command", "args": {"command": "psql -c 'select stopReason'"},
+                  "tool_output": json.dumps({"exit_code": 1, "stderr": "ERROR: column stopReason does not exist (42703)", "stdout": "", "timed_out": False})}
+        nxt = {"hook_event_name": "pre_tool_use", "tool_name": "run_command", "args": {"command": "curl https://example.invalid"}}
+        for hook in hooks:
+            event, _, cmd = hook.partition("=")
+            if event == "post_tool_use":
+                subprocess.run(cmd, shell=True, input=json.dumps(failed), text=True)
+        for hook in hooks:
+            event, _, cmd = hook.partition("=")
+            if event == "pre_tool_use":
+                rc = subprocess.run(cmd, shell=True, input=json.dumps(nxt), text=True, capture_output=True).returncode
+                with open(state / "gate.log", "a") as fh:
+                    fh.write(f"{rc}\n")
+        mode = "lazy"
     job = re.search(r"^Job: (\S+)$", prompt, re.M)
     if mode != "lazy" and result:
         if prompt.startswith("You merge"):

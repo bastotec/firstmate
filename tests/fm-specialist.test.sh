@@ -144,6 +144,36 @@ assert_equals "null captain" "$(jq -r '"\(.suspension) \(.last_suspension.resume
 expect_code 3 "$("$SPEC" resume amigo-tech >/dev/null 2>&1; echo $?)" "resuming an idle specialist was accepted"
 pass "suspend records why and since when, job refuses while suspended, and resume returns it to idle"
 
+rm -f "$DECK_STATE/gate.log"
+"$SPEC" configure amigo-tech --stop-on-tool-failure on >/dev/null || fail "configure failed"
+assert_equals true "$(jq -r .stop_on_tool_failure "$REC")" "configure did not record the setting"
+STUB_MODE=tool-fail "$SPEC" job amigo-tech --brief "Health sweep." --wait >/dev/null 2>&1 && fail "a job stopped at a failed tool call reported success"
+assert_equals failed "$(jq -r .last_job.outcome "$REC")" "a stopped job was not recorded as failed"
+assert_equals 2 "$(cat "$DECK_STATE/gate.log")" "the tool call after the failure was not refused"
+assert_contains "$(jq -r .last_job.stopped "$REC")" "stopped at the first failed tool call (run_command)" "last_job does not say it stopped"
+assert_contains "$(jq -r .last_job.stopped "$REC")" "42703" "the stop note lost the failure"
+assert_contains "$("$SPEC" result amigo-tech)" "Stopped at the first failed tool call" "firstmate did not write the stopped result"
+assert_contains "$(tail -1 "$HOME_DIR/state/specialists/amigo-tech/history.jsonl" | jq -r .stopped)" "first failed tool call" "history does not say it stopped"
+out=$("$SPEC" job amigo-tech --brief "Healthy sweep." --wait 2>&1) || fail "a clean job failed with the setting on: $out"
+assert_equals done "$(jq -r .last_job.outcome "$REC")" "a clean job did not finish with the setting on"
+assert_equals null "$(jq -r .last_job.stopped "$REC")" "a clean job carried a stop note"
+"$SPEC" configure amigo-tech --stop-on-tool-failure off >/dev/null || fail "configure off failed"
+assert_equals false "$(jq -r .stop_on_tool_failure "$REC")" "configure off did not clear the setting"
+pass "stop-on-tool-failure refuses every tool after the first failed call, records why, and leaves clean jobs alone"
+
+ev_ok='{"tool_name":"run_command","tool_output":"{\"exit_code\":0,\"stdout\":\"x\",\"stderr\":\"\",\"timed_out\":false}"}'
+ev_err='{"tool_name":"read_file","tool_output":"the tool failed"}'
+ev_timeout='{"tool_name":"run_command","tool_output":"{\"exit_code\":null,\"stdout\":\"\",\"stderr\":\"\",\"timed_out\":true}"}'
+for case in ok err timeout; do
+  jd="$TMP_ROOT/observe-$case"; mkdir -p "$jd"
+  eval "ev=\$ev_$case"
+  printf '%s' "$ev" | python3 "$ROOT/bin/fm_crew.py" _spec-tool-observe "$jd"
+done
+assert_absent "$TMP_ROOT/observe-ok/tool-failure.json" "a successful command counted as a failure"
+assert_present "$TMP_ROOT/observe-err/tool-failure.json" "a tool error was not recorded"
+assert_present "$TMP_ROOT/observe-timeout/tool-failure.json" "a timed-out command was not recorded"
+pass "a successful call passes, while a tool error or timeout counts as the first failure"
+
 expect_code 2 "$("$SPEC" ask amigo-tech -- "hello" >/dev/null 2>&1; echo $?)" "ask without --from-captain was accepted"
 out=$("$SPEC" ask amigo-tech --from-captain --wait -- "How is Amigo doing this week?" 2>&1) || fail "captain ask failed: $out"
 ask_job=$(jq -r .last_job.id "$REC")
