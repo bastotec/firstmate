@@ -12,15 +12,24 @@ needs-decision reconciled with a parked current state across task kinds and mode
 --state-dir and --task-id select existing timing evidence, including for captured
 metadata in recovery snapshots. Matching gate/parked-run records supply decision
 entry time; otherwise a matching last decision event supplies a lower bound.
-Implementation starts at the recorded spawn epoch, or metadata mtime.
-last_run_seen is the creation epoch encoded in the attributed run's ULID.
+Implementation timing applies only to no-mistakes ships working from pane or
+status-log evidence, not to a currently attributed validation run. It starts at
+spawn epoch (or metadata mtime), bounded below by the last observed attributed
+run's creation epoch. last_run_seen is that epoch encoded in the run's ULID.
 Unknown observations withhold notification without discarding episode evidence.
 Declared waits end observation.
-Missing, corrupt, future or generation-mismatched timing starts a fresh observation.
-Episode identity includes metadata contents, phase and the folded pending questions;
-a resumed state or new question starts another episode. --ack records delivery
-only for the currently matching stalled episode. Atomic owner-only writes refuse
-symlinks. No worker ledger, hold, gate or approval record is changed.
+Missing, corrupt, future or generation-mismatched observation records recover
+from valid entry evidence when available, otherwise start a fresh observation.
+Episode identity includes metadata contents, phase, folded pending questions and,
+for decisions, the attributed run, step and current gate's parked_since.
+A proven phase transition or new question starts another episode; a new question
+in the same parked episode starts its own observation clock. Current gate timing
+takes precedence over a legacy parked-run clock; legacy delivery is imported
+only when consistent with the current gate and saved observation evidence.
+--ack records delivery only for the currently matching stalled episode and retains
+parked-episode delivery identity when its question closes before the run resumes.
+Atomic owner-only writes refuse symlinks. No worker ledger, hold, gate or approval
+record is changed.
 The digest routes questions for mate triage, never infers captain authority from
 age or an ask-user label, and never invents a question for implementation stalls.
 """

@@ -37,7 +37,8 @@
 # projection (bin/fm_stall_record.py), then this owner's `digest` publication
 # instead of the individual nudge/escalation path. The scheduled idle sweep
 # collects those questions; acknowledged digests suppress individual publication
-# until the matching parked run/step changes or resumes.
+# until the parked episode changes or resumes, including after a keyed answer
+# closes the question. bin/fm_stall_record.py owns episode identity.
 #
 # Separately, a live worker classified busy by bin/fm-busy-lib.sh gets one
 # check-in wake after FM_WORKER_QUIET_SECS without a status change, whether or
@@ -55,8 +56,9 @@
 #   FM_WORKER_QUIET_SECS seconds a busy worker may go without a status line
 #                        before its mate gets one check-in wake (7200)
 #
-# Exit: 0 after a scan or close; 1 when close could not resolve an escalated
-# blocker (the record is kept, so a retry resolves it); 2 on invalid use.
+# Exit: 0 after a scan, digest or close; 1 when digest publication fails or close
+# could not resolve an escalated blocker (the record is kept for retry);
+# 2 on invalid use.
 set -u
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 

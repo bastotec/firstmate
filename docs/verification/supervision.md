@@ -60,6 +60,8 @@ These are regression entry points, not a new dated live-harness result.
 [`fm-parked-run-watch.sh`'s header](../../bin/fm-parked-run-watch.sh) owns the watchdog contract.
 The portable regression entry point is `bin/fm-test-run.sh tests/fm-parked-run-watch.test.sh`.
 It covers first-mate and second-mate delivery, observed re-parking and gate changes, unavailable queries and identity-free readings, serialized scan and close, and retryable close-publication failure.
+[`tests/fm-stall-record.test.sh`](../../tests/fm-stall-record.test.sh) exercises shared stall timing, recovery from existing episode evidence, inconclusive reads, publication-time current-state rechecks, retry after failed publication, and cross-owner digest deduplication through keyed answers before resume.
+[`tests/fm-fleet-snapshot-view.test.sh`](../../tests/fm-fleet-snapshot-view.test.sh) covers the read-only stall projection in recovery views.
 These are fixture assertions, not live no-mistakes timing evidence.
 
 ## Wedge-alarm channels

@@ -31,7 +31,7 @@ Every captain-facing outcome that leaves durable evidence in the mate home is pu
 | Child ended silently | terminal current state with a silent ledger | the existing inactive-outcome scan in `bin/fm-inactive-reconcile.sh`, which carries the reader's generic state detail as `detail=` and its separately recorded run cause as `error=` |
 | Mate lane failing or recovered | the mate's lane-health episode | [`fm-deck-worker.sh`'s SUPERVISOR HEALTH block](../bin/fm-deck-worker.sh) and [`fm-captain-lane.sh`'s lane-health comment](../bin/fm-captain-lane.sh) |
 | Handed-off orders overdue or cleared | the overdue hand-off delivery journal | [`fm-captain-lane.sh`'s OVERDUE HAND-OFFS comment](../bin/fm-captain-lane.sh) |
-| Child validation parked too long or moving again | the child's parked-run episode | [`fm-parked-run-watch.sh`](../bin/fm-parked-run-watch.sh); its header owns timing and resolution, including teardown's close |
+| Child stalled or validation moving again | the child's stall projection or parked-run episode | [`fm-parked-run-watch.sh`](../bin/fm-parked-run-watch.sh); its header owns digest publication, watchdog escalation and resolution, including teardown's close |
 | Idle worker needing mate judgement | the worker's sweep handoff | [`fm-idle-sweep.sh`](../bin/fm-idle-sweep.sh); its header owns handoff delivery and repeat suppression, never a captain hold |
 | Answer to an ordinary marked request | a correlated line guarded by the pending-reply record | `bin/fm-secondmate-report.sh`, which resolves the parent channel from the mate home; the pending-reply guard repairs a line stranded in the local mate's same-basename status file before recovery or escalation; [captain-direct messages](#captain-direct-messages) follow their own rule |
 | An outcome that exists only in the mate's reasoning | none | the charter and the `AGENTS.md` carve-outs only |
@@ -55,7 +55,7 @@ The [`mate-messaging` skill](../.agents/skills/mate-messaging/SKILL.md) owns whe
 ## What is deliberately not built
 
 - No mirror of the mate's chat: chat can mix outcomes with other conversation, so choosing which sentence is an outcome would itself be model behavior.
-- No generic timeout on every child's open decision or blocker: [parked validation runs](../bin/fm-parked-run-watch.sh) have a watchdog, while other unanswered decisions remain a supervision-quality question, separable from channel delivery.
+- No separate decision-timeout publisher: the [idle sweep](../bin/fm-idle-sweep.sh) and [parked-run watchdog](../bin/fm-parked-run-watch.sh) own stalled-task collection and publication.
 - No separate ledger watcher: the lightweight ledger pass stays inside the existing inactive-outcome command on every watcher poll and reuses its receipts and upstream append.
 - No orphan lifecycle: teardown refuses instead of removing an undelivered outcome, the same way it refuses on other unlanded conditions.
 
