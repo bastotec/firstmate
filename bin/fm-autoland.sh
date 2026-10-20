@@ -252,21 +252,7 @@ search_string() {  # <entries-file>
 # landing decision reads. The attestation and risk come from the PR body that
 # no-mistakes writes.
 # shellcheck disable=SC2016  # jq program text.
-PR_JQ='
-  def attest($head):
-    try (
-    ([(.body // "") | scan("<!-- no-mistakes-pipeline-attestation:v1 (\\{.*?\\}) -->")] | last) as $m
-    | if $m == null then "missing"
-      else ($m[0] | fromjson) as $j
-      | if ($j | type) != "object" then "unreadable"
-        elif ($j.head_sha // "") != $head then "stale:" + (($j.head_sha // "none")[0:7])
-        else ([$j.steps[]? | {(.step): .status}] | add // {}) as $s
-        | if ($s.review // "") != "completed" then "incomplete:review " + ($s.review // "missing")
-          elif (($s.test // "") | IN("completed", "skipped") | not) then "incomplete:test " + ($s.test // "missing")
-          elif ($s.document // "") != "completed" then "incomplete:document " + ($s.document // "missing")
-          else "ok" end
-        end
-      end) catch "unreadable";
+PR_JQ="$(fm_pr_attestation_jq)"'
   def risk:
     (((.body // "") | capture("## Risk Assessment[ \t]*\r?\n[ \t\r\n]*(?<r>[^\n]*)")? | .r) // null) as $r
     | if $r == null then "none"

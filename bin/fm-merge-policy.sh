@@ -100,8 +100,13 @@ writer_lock_release() {
 
 # The effective document: the built-in defaults overlaid with the file.
 effective() {
-  local doc
-  if [ -f "$FILE" ]; then
+  local doc dir=$CONFIG_DIR
+  while [ ! -e "$dir" ] && [ ! -L "$dir" ]; do
+    dir=$(dirname "$dir")
+  done
+  [ -d "$dir" ] && [ -x "$dir" ] || die "$FILE is not readable" 1
+  if [ -e "$FILE" ] || [ -L "$FILE" ]; then
+    [ -f "$FILE" ] && [ -r "$FILE" ] || die "$FILE is not a readable regular file" 1
     doc=$(jq -c --argjson b "$BUILTIN" '
       if type != "object" then error("not an object") else . end
       | {version: 1,

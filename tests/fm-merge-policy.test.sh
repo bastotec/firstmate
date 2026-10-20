@@ -63,6 +63,53 @@ test_invalid_input_and_unreadable_file() {
   pass "invalid names and policies are refused, and an unreadable file is an error"
 }
 
+test_policy_path_inspection() {
+  local home out rc command artifact
+  home=$(new_home inspection)
+  rmdir "$home/config"
+  assert_equals 'auto owner bastotec' "$(FM_HOME="$home" "$POLICY" get bastotec/app)" "a missing config directory did not use defaults"
+  mkdir "$home/config"
+  printf '%s\n' '{"default":"never"}' > "$home/config/merge-policy.json"
+  if [ "$(id -u)" -ne 0 ]; then
+    chmod 600 "$home/config"
+    for command in get list merge override; do
+      rc=0
+      case "$command" in
+        get) out=$(FM_HOME="$home" "$POLICY" get bastotec/app 2>&1) || rc=$? ;;
+        list) out=$(FM_HOME="$home" "$POLICY" list --json 2>&1) || rc=$? ;;
+        merge) out=$(FM_HOME="$home" "$ROOT/bin/fm-pr-merge.sh" t1 https://github.com/bastotec/app/pull/7 2>&1) || rc=$? ;;
+        override) out=$(FM_HOME="$home" "$ROOT/bin/fm-pr-merge.sh" t1 https://github.com/bastotec/app/pull/7 --attended-override 2>&1) || rc=$? ;;
+      esac
+      chmod 700 "$home/config"
+      assert_equals 1 "$rc" "$command accepted an untraversable config directory: $out"
+      assert_contains "$out" 'not readable' "$command did not report the inspection failure: $out"
+      chmod 600 "$home/config"
+    done
+    chmod 700 "$home/config"
+    chmod 000 "$home/config/merge-policy.json"
+    rc=0
+    out=$(FM_HOME="$home" "$POLICY" get bastotec/app 2>&1) || rc=$?
+    chmod 600 "$home/config/merge-policy.json"
+    assert_equals 1 "$rc" "an unreadable regular policy was accepted: $out"
+  fi
+  rm "$home/config/merge-policy.json"
+  for artifact in directory fifo symlink; do
+    case "$artifact" in
+      directory) mkdir "$home/config/merge-policy.json" ;;
+      fifo) mkfifo "$home/config/merge-policy.json" ;;
+      symlink) ln -s missing.json "$home/config/merge-policy.json" ;;
+    esac
+    rc=0
+    out=$(FM_HOME="$home" "$POLICY" get bastotec/app 2>&1) || rc=$?
+    assert_equals 1 "$rc" "a $artifact policy artifact fell back to defaults: $out"
+    case "$artifact" in
+      directory) rmdir "$home/config/merge-policy.json" ;;
+      *) rm "$home/config/merge-policy.json" ;;
+    esac
+  done
+  pass "only absent policy files use defaults; inaccessible and nonregular paths refuse"
+}
+
 test_primary_home_pushes_to_second_mates() {
   local home bin
   home=$(new_home push)
@@ -193,7 +240,7 @@ case "$1 $2" in
           views=$((views + 1))
           printf '%s\n' "$views" > "$FM_HOME/views"
           if [ "$views" -eq "${FM_TEST_REVOKE_ON_VIEW:-1}" ]; then
-            "$FM_TEST_POLICY" set bastotec/app "$FM_TEST_REVOKE" --no-push > "$FM_HOME/revocation"
+            "$FM_TEST_POLICY" set "${FM_TEST_POLICY_REPO:-bastotec/app}" "$FM_TEST_REVOKE" --no-push > "$FM_HOME/revocation"
           fi
         fi
         cat "$FM_HOME/live.json" ;;
@@ -219,8 +266,9 @@ merge_in_home() {
 }
 
 attest_home() {
-  jq '.body = "## Risk Assessment\n\nLow: bounded\n\n<!-- no-mistakes-pipeline-attestation:v1 "
-    + ({head_sha:.headRefOid,steps:[{step:"review",status:"completed"},{step:"test",status:"completed"},{step:"document",status:"completed"}]} | tojson) + " -->"' \
+  jq --arg head "${2:-}" --arg review "${3:-completed}" '
+    .body = "## Risk Assessment\n\nLow: bounded\n\n<!-- no-mistakes-pipeline-attestation:v1 "
+    + ({head_sha:(if $head == "" then .headRefOid else $head end),steps:[{step:"review",status:$review},{step:"test",status:"completed"},{step:"document",status:"completed"}]} | tojson) + " -->"' \
     "$1/live.json" > "$1/attested.json"
   mv "$1/attested.json" "$1/live.json"
 }
@@ -295,6 +343,35 @@ test_task_autoland_rechecks_policy() {
   pass "task-owned autoland rechecks authority while captain-approved ask merges still proceed"
 }
 
+test_task_autoland_rechecks_attestation() {
+  local home out evidence
+  for evidence in missing stale incomplete valid; do
+    home=$(merge_home "task-auto-$evidence")
+    jq '.url = "https://github.com/other/app/pull/7" | .repository.nameWithOwner = "other/app"' "$home/live.json" > "$home/other.json"
+    mv "$home/other.json" "$home/live.json"
+    printf '%s\n' '{"repos":[{"repo":"other/app","project":"app","authority":"existing ruling"}]}' > "$home/config/autoland.json"
+    printf 'kind=ship\nmode=direct-PR\nproject=app\npr=https://github.com/other/app/pull/7\n' > "$home/state/t1.meta"
+    case "$evidence" in
+      stale) attest_home "$home" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ;;
+      incomplete) attest_home "$home" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa pending ;;
+      valid) attest_home "$home" ;;
+    esac
+    assert_equals 'ask default' "$(FM_HOME="$home" "$POLICY" get other/app)" "the regression did not begin with bare-default authority"
+    out=$(merge_in_home "$home" env FM_TEST_POLICY_REPO=other/app FM_TEST_REVOKE=auto FM_TEST_REVOKE_ON_VIEW=2 "$ROOT/bin/fm-autoland.sh" check)
+    assert_equals 2 "$(cat "$home/views")" "policy change did not reach the task helper's live read"
+    assert_equals 'auto repo' "$(FM_HOME="$home" "$POLICY" get other/app)" "policy did not change to auto"
+    assert_grep 'ask -> auto' "$home/revocation" "policy change did not succeed"
+    if [ "$evidence" = valid ]; then
+      assert_contains "$out" 'merged https://github.com/other/app/pull/7' "valid current-head attestation was refused: $out"
+      assert_grep 'pr merge ' "$home/gh.log" "valid attestation did not reach the forge"
+    else
+      assert_contains "$out" "no-mistakes attestation is $evidence" "task-owned autoland ignored $evidence pipeline evidence: $out"
+      assert_no_grep 'pr merge ' "$home/gh.log" "task-owned autoland bypassed current auto attestation requirements"
+    fi
+  done
+  pass "task-owned autoland enforces current-head pipeline evidence when policy changes to auto"
+}
+
 test_merges_ignore_writer_lock() {
   local home out path lock
   for path in task unowned; do
@@ -355,6 +432,7 @@ test_attended_override_validates_policy() {
 test_builtin_defaults
 test_set_resolves_repo_over_owner_over_default
 test_invalid_input_and_unreadable_file
+test_policy_path_inspection
 test_primary_home_pushes_to_second_mates
 test_writer_lock_recovery
 test_pr_merge_refuses_a_never_repository
@@ -363,6 +441,7 @@ test_owner_keys_are_case_insensitive
 test_policy_auto_requires_attestation
 test_policy_revocation_at_merge_boundaries
 test_task_autoland_rechecks_policy
+test_task_autoland_rechecks_attestation
 test_merges_ignore_writer_lock
 test_policy_changes_during_inflight_merge
 test_attended_override_validates_policy

@@ -215,6 +215,14 @@ require_merge_policy() {
         return 1
         ;;
     esac
+    case "$policy" in
+      'auto repo'|auto\ owner\ *)
+        if [ "$FM_PR_MERGE_ATTESTATION" != ok ]; then
+          echo "error: refusing to merge $URL: its no-mistakes attestation is $FM_PR_MERGE_ATTESTATION for the current head" >&2
+          return 1
+        fi
+        ;;
+    esac
   fi
 }
 require_merge_policy || exit 1
@@ -550,7 +558,7 @@ github_verify_mergeable() {
   local total=0 named=0 refusals=''
   local state='' draft='' mergeable='' merge_state='' live_head='' base=''
 
-  if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup 2>/dev/null) \
+  if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup,body 2>/dev/null) \
     || [ -z "$json" ]; then
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1
@@ -648,6 +656,9 @@ EOF
     "$URL" "$live_head" >&2
   FM_PR_MERGE_HEAD=$live_head
   FM_PR_GITHUB_BASE=$base
+  if [ "${FM_PR_MERGE_AUTOLAND:-}" = 1 ]; then
+    FM_PR_MERGE_ATTESTATION=$(printf '%s' "$json" | jq -r "$(fm_pr_attestation_jq)"'attest(.headRefOid // "")') || return 1
+  fi
 }
 
 # Read one live GitHub pull request view after gh returns. The selected
