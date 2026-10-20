@@ -666,6 +666,12 @@ The runner cannot prove those obligations, so after a fleet-sync warning the hoo
 Use `deploy <hook> --approved` only for a captain-approved restart window; it signals approval and waives none of the hook's safety obligations.
 [`docs/examples/post-merge/firstmate.sh`](examples/post-merge/firstmate.sh) deploys the Firstmate repository through `bin/fm-update.sh`, leaving second-mate restarts to `/updatefirstmate`.
 
+For an existing no-op hook, land and install the exit-78-capable runner before activating the replacement hook; older runners classify 78 as failure.
+Verify the installed runner with an isolated exit-78 hook: the result must be `skipped`, preserve the deployed revision, and emit no deployed notification.
+The private `firstmate-ui` no-op hook has a separately staged exit-78 companion; its parent owner owns activation after those checks, not this repository change.
+Staging isn't activation: the active exit-0 hook still records deployed until replaced, and neither a staged hook nor a refreshed clone proves a live deployment.
+This migration doesn't authorize starting or restarting services.
+
 ## Relay (.env)
 
 [`relay.md`](relay.md) owns Relay setup, the poll cadence, the mention payload contract, replies, follow-ups, and dry runs.

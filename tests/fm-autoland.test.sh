@@ -1042,6 +1042,37 @@ test_failed_and_deferred_hooks() {
   pass "fm-autoland: a failed hook reports once without retrying; a deferred one retries"
 }
 
+test_foreground_hook_outcomes_preserve_deployment_history() {
+  local home hook_rc status expected_rc expected_deployed out rc
+  for hook_rc in 0 78 75 3; do
+    case "$hook_rc" in
+      0) status=deployed; expected_rc=0; expected_deployed=$MAIN_2 ;;
+      78) status=skipped; expected_rc=0; expected_deployed=$MAIN_1 ;;
+      75) status=deferred; expected_rc=0; expected_deployed=$MAIN_1 ;;
+      3) status=failed; expected_rc=1; expected_deployed=$MAIN_1 ;;
+    esac
+    home=$(make_home "foreground-$status")
+    write_config "$home" '{"repos":[{"repo":"o/r","authority":"r","hook":"svc"}]}'
+    write_hook "$home" svc "$hook_rc"
+    mkdir -p "$home/state/autoland"
+    printf '%s\n' "$MAIN_1" > "$home/state/autoland/svc.deployed"
+    rc=0
+    out=$(FM_HOME="$home" FM_TEST_GH_LOG="$home/gh.log" FM_TEST_HEAD_OID="$MAIN_2" PATH="$FAKEBIN:$PATH" \
+      "$AUTOLAND" deploy svc 2>&1) || rc=$?
+    expect_code "$expected_rc" "$rc" "foreground $status exit"
+    assert_contains "$out" "svc $status bbbbbbb" "foreground $status result"
+    [ "$(cut -f1 "$home/state/autoland/svc.result")" = "$status" ] || fail "$status result not persisted"
+    [ "$(cut -f2 "$home/state/autoland/svc.result")" = "$MAIN_2" ] || fail "$status target not persisted"
+    [ "$(cat "$home/state/autoland/svc.deployed")" = "$expected_deployed" ] || fail "$status corrupted deployment history"
+    [ ! -e "$home/state/autoland/svc.lock" ] || fail "$status retained its lock"
+    write_gql "$home" "$MAIN_2"
+    out=$(tick "$home" "$AUTOLAND" FM_AUTOLAND_DEFER_RETRY=99999)
+    [ -z "$out" ] || fail "foreground $status was re-reported: $out"
+    [ "$(wc -l < "$home/hook-svc.runs" | tr -d ' ')" = 1 ] || fail "foreground $status retried before due"
+  done
+  pass "fm-autoland: foreground outcomes preserve deployment history and suppress repeat notifications"
+}
+
 test_unsafe_hook_and_foreground_deploy() {
   local home out rc=0
   home=$(make_home unsafe)
@@ -1120,5 +1151,6 @@ test_hook_lock_release_preserves_another_owner
 test_finished_runner_result_survives_reconciliation
 test_firstmate_hook_uses_separate_code_root
 test_failed_and_deferred_hooks
+test_foreground_hook_outcomes_preserve_deployment_history
 test_unsafe_hook_and_foreground_deploy
 test_watcher_runs_autoland_between_full_sweeps
