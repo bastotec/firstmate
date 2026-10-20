@@ -89,9 +89,11 @@
 # owns what the lane does.
 # Before a pending watcher turn, consume queued composer clears and stale own
 # doorbells, waiting up to five seconds from the first such line for following
-# input. An exact /quit reached there stops the host before watcher work; real
-# steers retain watcher priority. The grace covers the control plane's delayed
-# /quit after clear/re-read retries (tests/fm-deck-harness.test.sh).
+# input. An exact /quit anywhere in queued input stops the host before watcher
+# publication or dispatch, including during enqueue backoff or just after an
+# accepted publication; an accepted record remains unhandled. Real steers
+# retain watcher priority. The grace covers the control plane's delayed /quit
+# after clear/re-read retries (tests/fm-deck-harness.test.sh).
 # Supervision uses child processes and stdin, never backend-specific injection.
 # Startup, lock, watcher, and event-capture failures publish failure status and
 # stop the driver, with these watcher recovery exceptions:
@@ -102,6 +104,15 @@
 #   FM_DECK_WATCH_FAILURE_LIMIT stops the host
 #   with failure status. The retry deadline never blocks input or turn-stop
 #   handling, and no watcher starts while turn cancellation is pending.
+# - Watcher-inbox enqueue gets at most three attempts, with one then two
+#   seconds between attempts. Each publication keeps frozen output and a stable
+#   identity on its first body line across retries, allowing candidate filtering
+#   to skip unrelated history. fm_task_inbox_write_idempotent reuses an accepted
+#   record even if its writer returned an error. Later watcher results wait
+#   separately, with distinct identities even for equal output. No lock is
+#   bypassed. Exhaustion stops the host, leaving the durable wake queue
+#   unacknowledged for supported recovery. Doorbell generation failure after
+#   successful enqueue stops immediately without re-enqueueing.
 # - A successor watcher that does not confirm startup in time or exits without
 #   a successful result first, or a refused handling-delivery confirmation,
 #   logs the condition to stderr,
@@ -362,6 +373,8 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/fm-deck-worker.XXXXXX") || exit 2
 TURN_MARK="$WORK/turn-start"
 EVENTS="$WORK/events.ndjson"
 WATCH_PENDING="$WORK/watch.pending"
+WATCH_PUBLICATION="$WORK/watch.publication"
+WATCH_PUBLICATION_SEQ=0
 TURN_STATUS="$WORK/turn-pipeline.status"
 TURN_PIPE="$WORK/turn-events.pipe"
 mkfifo "$TURN_PIPE" || exit 1
@@ -752,12 +765,14 @@ watch_start() {
 # need no keystroke injection, pane scrape, or special wake implementation.
 WAKE_PREAMBLE='The home watcher has an actionable wake. Drain bin/fm-wake-drain.sh first, handle every emitted wake and open decision, and acknowledge only after handling. Watcher output:'
 watch_doorbell() (
-  local record
+  local record pending
   # shellcheck source=bin/fm-task-inbox-lib.sh
   . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
-  record=$(FM_TASK_INBOX_STREAM=monologue fm_task_inbox_write "$STATE" "$ID" "$WAKE_PREAMBLE
-$(cat "$WATCH_PENDING")") || exit 1
-  fm_task_inbox_doorbell_line "$record"
+  pending=$(cat "$WATCH_PUBLICATION") || exit 1
+  record=$(FM_TASK_INBOX_STREAM=monologue fm_task_inbox_write_idempotent "$STATE" "$ID" "Watcher publication: $GEN:${WORK##*/}:$WATCH_PUBLICATION_SEQ
+$WAKE_PREAMBLE
+$pending") || exit 1
+  fm_task_inbox_doorbell_line "$record" || exit 2
 )
 
 # Per-turn reasoning effort for a home host's watcher turns: the level
@@ -772,7 +787,7 @@ watch_effort() {
   for f in "$STATE/$ID.inbox"/*.msg; do
     if [ -e "$f" ] || [ -L "$f" ]; then return 0; fi
   done
-  printf '%s\n%s' "$WAKE_PREAMBLE" "$(cat "$WATCH_PENDING")" \
+  printf '%s\n%s' "$WAKE_PREAMBLE" "$(cat "$WATCH_PUBLICATION")" \
     | "$SCRIPT_DIR/fm-effort-policy.sh" classify --home "$FM_HOME" 2>/dev/null
 }
 
@@ -1403,10 +1418,19 @@ idle_captain_ready() {
   return 1
 }
 
+exit_if_queued() {
+  if grep -qx '/quit' "$WORK"/input.[0-9]* 2>/dev/null; then
+    record_busy_event idle session-end || exit 1
+    exit 0
+  fi
+}
+
 lane_start || { host_failure 'could not start the captain lane'; exit 1; }
 drive_turn "$PROMPT"
 input_seq=0
 show_prompt=1
+watch_publish_failures=0
+watch_publish_retry_at=0
 while :; do
   if [ "$SECONDMATE" = 1 ]; then
     watch_start || exit 1
@@ -1435,26 +1459,39 @@ while :; do
       fi
       show_prompt=1
     done
-    if [ -f "$WORK/input.$input_seq" ]; then
-      if ! line=$(cat "$WORK/input.$input_seq"); then
-        host_failure 'could not read queued input'; exit 1
+    exit_if_queued
+    if [ -s "$WATCH_PUBLICATION" ] || [ -s "$WATCH_PENDING" ]; then
+      if [ ! -s "$WATCH_PUBLICATION" ]; then
+        mv "$WATCH_PENDING" "$WATCH_PUBLICATION" || { host_failure 'could not retain watcher publication'; exit 1; }
+        WATCH_PUBLICATION_SEQ=$((WATCH_PUBLICATION_SEQ + 1))
       fi
-      if [ "$line" = /quit ]; then
-        rm "$WORK/input.$input_seq" || { host_failure 'could not consume queued exit'; exit 1; }
-        record_busy_event idle session-end || exit 1
-        exit 0
+      if [ "$watch_publish_failures" -ge 3 ]; then
+        host_failure 'could not publish watcher steering doorbell'; exit 1
       fi
-    fi
-    if [ -s "$WATCH_PENDING" ]; then
+      if [ "$(date +%s)" -lt "$watch_publish_retry_at" ]; then
+        sleep 0.1
+        continue
+      fi
       if [ -z "$EFFORT_SUPPORTED" ]; then
         EFFORT_SUPPORTED=0
         "$SCRIPT_DIR/fm-effort-policy.sh" supported "$DECK" && EFFORT_SUPPORTED=1
       fi
       TURN_EFFORT=$(watch_effort)
-      if ! doorbell=$(watch_doorbell); then
-        host_failure 'could not publish watcher steering doorbell'; exit 1
+      publish_rc=0
+      doorbell=$(watch_doorbell) || publish_rc=$?
+      if [ "$publish_rc" -ne 0 ]; then
+        [ "$publish_rc" -eq 1 ] || { host_failure 'could not publish watcher steering doorbell'; exit 1; }
+        watch_publish_failures=$((watch_publish_failures + 1))
+        if [ "$watch_publish_failures" -lt 3 ]; then
+          printf 'fm-deck-worker: warning: retrying watcher steering publication (%s/3)\n' "$watch_publish_failures" >&2
+          watch_publish_retry_at=$(( $(date +%s) + watch_publish_failures ))
+        fi
+        continue
       fi
-      : > "$WATCH_PENDING"
+      exit_if_queued
+      watch_publish_failures=0
+      watch_publish_retry_at=0
+      : > "$WATCH_PUBLICATION"
       drive_turn "$doorbell"
       show_prompt=1
       continue

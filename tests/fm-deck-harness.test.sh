@@ -2415,6 +2415,256 @@ PYTHON
   pass "Deck host retains failed and interrupted handling child stderr and serves later wakes"
 }
 
+# A zero-exit startup report is not a complete digest. Preserve this refusal
+# independently from watcher publication retry; never dispatch a blind turn.
+test_secondmate_host_refuses_an_incomplete_startup_digest() {
+  local dir="$TMP_ROOT/host-incomplete-digest"
+  make_secondmate_host_fixture "$dir"
+  cat > "$dir/bin/fm-session-start.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'STARTUP TRUNCATED: fixture wake-queue stage incomplete\n'
+exit 0
+SH
+  python3 - "$dir" <<'PYTHON' || fail "an incomplete startup digest was accepted"
+import os, pathlib, signal, subprocess, sys
+root = pathlib.Path(sys.argv[1])
+home = root/'home'
+state = root/'parent'
+(home/'state/.session-start-complete').write_text('123\n')
+queue = home/'state/.wake-queue'
+queue.write_text('fixture durable wake\n')
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(state), 'host'], text=True).strip()
+p = subprocess.Popen(['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+    str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(state),
+    '--gen', gen, '--deck', str(root/'deck'), '--', 'charter'], env=env, stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+try:
+    out, err = p.communicate('/quit\n', timeout=30)
+    assert p.returncode != 0, out+err
+    assert 'fixture wake-queue stage incomplete' in err
+finally:
+    if p.poll() is None:
+        os.killpg(p.pid, signal.SIGKILL)
+    p.wait()
+assert 'session start did not publish a complete digest' in (state/'host.status').read_text()
+assert not (home/'turns').exists(), 'incomplete startup launched a model turn'
+assert queue.read_text() == 'fixture durable wake\n'
+assert not (home/'watch-starts').exists(), 'incomplete startup armed a watcher'
+PYTHON
+  pass "Deck host refuses a zero-exit incomplete digest without consuming wakes or starting turns"
+}
+
+# Real sequence-lock custody: transient contention must not kill a healthy host,
+# while exhausted retries must not steal a live holder or dispatch a lost wake.
+test_secondmate_host_retries_watcher_publication() {
+  local mode dir
+  for mode in accepted-error doorbell-error equal-output transient held quit-backoff quit-published; do
+    dir="$TMP_ROOT/host-publication-$mode"
+    make_secondmate_host_fixture "$dir"
+    cat > "$dir/bin/mv" <<'SH'
+#!/usr/bin/env bash
+"$FM_TEST_REAL_MV" "$@" || exit $?
+case "${2:-}" in
+  "${FM_HOME%/*}/parent/host.inbox/"[0-9]*.msg)
+    printf '%s\n' "$2" >> "$FM_HOME/published-records"
+    case "$FM_TEST_PUBLICATION_MODE" in
+      accepted-error|equal-output)
+        if [ ! -e "$FM_HOME/accepted-error" ]; then
+          : > "$FM_HOME/accepted-error"
+          exit 1
+        fi
+        ;;
+      quit-published)
+        : > "$FM_HOME/published"
+        for ((i=0; i<200; i++)); do
+          [ -d "$FM_HOME" ] || exit 2
+          [ ! -e "$FM_HOME/release-publication" ] || exit 0
+          sleep .1
+        done
+        exit 2
+        ;;
+    esac
+    ;;
+esac
+SH
+    chmod +x "$dir/bin/mv"
+    if [ "$mode" = doorbell-error ]; then
+      cat >> "$dir/bin/fm-task-inbox-lib.sh" <<'SH'
+fm_task_inbox_doorbell_line() {
+  printf '%s\n' "$1" >> "$FM_HOME/doorbell-failures"
+  return 1
+}
+SH
+    elif [ "$mode" = equal-output ]; then
+      cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" != --handling-delivered ] || exit 0
+trap 'exit 143' TERM INT
+printf '%s\n' "$$" >> "$FM_HOME/watch-starts"
+printf 'watcher: started pid=1 (beacon fresh)\n'
+for ((i=0; i<600; i++)); do
+  [ -d "$FM_HOME" ] || exit 2
+  if [ -f "$FM_HOME/trigger" ]; then
+    rm "$FM_HOME/trigger"
+    printf 'check: example\n'
+    exit 0
+  fi
+  sleep .1
+done
+exit 2
+SH
+    fi
+    python3 - "$dir" "$mode" <<'PYTHON' || fail "watcher publication contention: $mode"
+import json, os, pathlib, shutil, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+mode = sys.argv[2]
+home = root/'home'
+state = root/'parent'
+(root/'tmp').mkdir()
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='',
+           FM_CONFIG_OVERRIDE='', FM_TASK_INBOX_LOCK_WAIT_SECS='1', TMPDIR=str(root/'tmp'),
+           FM_TEST_REAL_MV=shutil.which('mv'), FM_TEST_PUBLICATION_MODE=mode,
+           PATH=str(root/'bin')+os.pathsep+os.environ['PATH'])
+p = holder = None
+def pane(): return (root/'pane').read_text()
+def rows():
+    f = home/'turns'
+    return [json.loads(x) for x in f.read_text().splitlines()] if f.exists() else []
+def wait_for(check, label):
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        if check(): return
+        if p is not None and p.poll() is not None:
+            raise AssertionError(label+': host exited: '+pane())
+        time.sleep(.1)
+    raise AssertionError(label+': '+pane())
+try:
+    gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(state), 'host'], text=True).strip()
+    p = subprocess.Popen(['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+        str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(state),
+        '--gen', gen, '--deck', str(root/'deck'), '--', 'charter'], env=env, stdin=subprocess.PIPE,
+        stdout=(root/'pane').open('w'), stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    wait_for(lambda: len(rows()) == 1 and 'state=idle' in (state/'host.busy-state').read_text(), 'startup')
+    inbox = state/'host.inbox'
+    (inbox/'handled').mkdir(parents=True, exist_ok=True)
+    # The real lock primitive owns the lock; release through that same owner.
+    holder = subprocess.Popen(['bash', '-c', '''
+. "$1/bin/fm-wake-lib.sh"
+fm_lock_try_acquire "$1/parent/host.inbox/.seq.lock" || exit 1
+trap 'fm_lock_release "$1/parent/host.inbox/.seq.lock"' EXIT
+: > "$1/holder-ready"
+for ((i=0; i<400; i++)); do
+  [ -d "$1" ] && [ ! -e "$1/release-holder" ] || exit 0
+  sleep .1
+done
+exit 2
+''', '_', str(root)], env=env, start_new_session=True)
+    wait_for(lambda: (root/'holder-ready').exists(), 'real lock holder')
+    lock = inbox/'.seq.lock'
+    owner = os.readlink(lock)
+    queue = home/'state/.wake-queue'
+    queue.write_text('fixture durable wake\n')
+    (home/'captain-wakes').touch()
+    (home/'trigger').touch()
+    wait_for(lambda: 'retrying watcher steering publication' in pane(), 'publication retry')
+    assert holder.poll() is None and os.readlink(lock) == owner
+    assert not list(inbox.glob('*.msg')) and len(rows()) == 1
+    if mode in ('accepted-error', 'doorbell-error', 'equal-output'):
+        (root/'release-holder').touch()
+        assert holder.wait(timeout=10) == 0
+        if mode == 'doorbell-error':
+            assert p.wait(timeout=30) != 0
+            assert 'could not publish watcher steering doorbell' in pane()
+            assert len((home/'doorbell-failures').read_text().splitlines()) == 1
+            assert len((home/'published-records').read_text().splitlines()) == 1
+            records = list(inbox.glob('*.msg'))
+            assert len(records) == 1 and 'check: example' in records[0].read_text()
+            assert not list((inbox/'handled').glob('*.msg')) and len(rows()) == 1
+        else:
+            wait_for(lambda: (home/'accepted-error').exists(), 'accepted write with error return')
+            records = list(inbox.glob('*.msg'))
+            assert len(records) == 1
+            accepted = records[0].read_bytes()
+            body = records[0].read_text().split('--\n', 1)[1]
+            assert body.splitlines()[0].startswith('Watcher publication: '), 'publication identity must lead the serialized body for candidate filtering'
+            if mode == 'equal-output':
+                wait_for(lambda: len((home/'watch-starts').read_text().splitlines()) >= 2, 'second watcher')
+                (home/'trigger').touch()
+            expected = 3 if mode == 'equal-output' else 2
+            wait_for(lambda: len(rows()) >= expected and 'state=idle' in (state/'host.busy-state').read_text(), 'accepted wake turns')
+            time.sleep(.5)
+            assert len(rows()) == expected, 'an accepted publication dispatched duplicate turns'
+            handled = sorted((inbox/'handled').glob('*.msg'))
+            assert len(handled) == expected - 1, 'one publication produced extra durable records'
+            assert not list(inbox.glob('*.msg'))
+            assert (inbox/'handled'/records[0].name).read_bytes() == accepted
+            assert len((home/'published-records').read_text().splitlines()) == expected - 1, 'replay renamed another record'
+            assert all('check: example' in row['inbox'] for row in rows()[1:])
+            assert 'retrying watcher steering publication (2/3)' in pane()
+            if mode == 'equal-output':
+                def payload(record):
+                    body = record.read_text().split('--\n', 1)[1]
+                    return '\n'.join(line for line in body.splitlines() if not line.startswith('Watcher publication: '))
+                assert payload(handled[0]) == payload(handled[1]), 'control did not publish equal watcher output'
+                assert handled[0].read_bytes() != handled[1].read_bytes()
+            p.stdin.write('/quit\n'); p.stdin.flush()
+            assert p.wait(timeout=30) == 0
+        assert queue.read_text() == 'fixture durable wake\n', 'host consumed the durable wake'
+    elif mode == 'transient':
+        (root/'release-holder').touch()
+        assert holder.wait(timeout=10) == 0
+        wait_for(lambda: len(rows()) == 2 and 'state=idle' in (state/'host.busy-state').read_text(), 'retained wake turn')
+        records = list((inbox/'handled').glob('*.msg'))
+        assert len(records) == 1 and 'check: example' in records[0].read_text()
+        assert 'check: example' in rows()[1]['inbox']
+        time.sleep(.5)
+        assert len(rows()) == 2, 'a successful retry dispatched twice'
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        assert p.wait(timeout=30) == 0
+    elif mode.startswith('quit-'):
+        if mode == 'quit-published':
+            (root/'release-holder').touch()
+            assert holder.wait(timeout=10) == 0
+            wait_for(lambda: (home/'published').exists(), 'publication barrier')
+            records = list(inbox.glob('*.msg'))
+            assert len(records) == 1
+            published = records[0].read_bytes()
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        if mode == 'quit-published':
+            wait_for(lambda: any(f.read_text() == '/quit\n' for f in
+                                (root/'tmp').glob('fm-deck-worker.*/input.[0-9]*')), 'queued exit')
+            (home/'release-publication').touch()
+        assert p.wait(timeout=10) == 0, pane()
+        assert len(rows()) == 1, 'queued exit allowed another model turn'
+        assert queue.read_text() == 'fixture durable wake\n'
+        assert not list((inbox/'handled').glob('*.msg'))
+        if mode == 'quit-published':
+            assert records[0].read_bytes() == published, 'exit changed the published record'
+        else:
+            assert holder.poll() is None and os.readlink(lock) == owner
+            assert not list(inbox.glob('*.msg'))
+            (root/'release-holder').touch()
+            assert holder.wait(timeout=10) == 0
+    else:
+        assert p.wait(timeout=30) != 0
+        assert 'could not publish watcher steering doorbell' in pane()
+        assert holder.poll() is None and os.readlink(lock) == owner
+        assert not list(inbox.glob('*.msg')) and len(rows()) == 1
+        assert queue.read_text() == 'fixture durable wake\n', 'failed publication consumed the durable wake'
+        (root/'release-holder').touch()
+        assert holder.wait(timeout=10) == 0
+finally:
+    for child in (p, holder):
+        if child is not None:
+            if child.poll() is None:
+                os.killpg(child.pid, signal.SIGKILL)
+            child.wait()
+PYTHON
+  done
+  pass "Deck host replays accepted publications once, separates equal wakes, preserves lock custody, and honors queued exits"
+}
+
 # A watcher cycle that fails used to end the host ("watcher failed (exit 1)"),
 # and every automatic revive then opened a new Deck session, so a second mate
 # lost its conversation each time. The host now restarts its watcher, and a new
@@ -4013,6 +4263,8 @@ test_secondmate_turn_model_follows_the_switch_file
 test_secondmate_host_survives_an_unconfirmed_successor_watcher
 test_secondmate_fast_successor_keeps_its_notification
 test_secondmate_host_retains_failed_successor_start_evidence
+test_secondmate_host_refuses_an_incomplete_startup_digest
+test_secondmate_host_retries_watcher_publication
 test_secondmate_host_survives_a_failed_watcher_and_resumes_its_session
 test_secondmate_watcher_backoff_keeps_turn_stop_responsive
 test_secondmate_turns_guard_the_reply_logs
