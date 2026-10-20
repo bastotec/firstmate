@@ -147,7 +147,8 @@ def write_json(path: Path, data: dict) -> None:
 
 def read_input_file(path: str, what: str) -> str:
     try:
-        return Path(path).read_text()
+        with open(path, newline="") as fh:
+            return fh.read()
     except OSError as e:
         die(f"cannot read the {what} file {path}: {e.strerror}")
 
@@ -462,7 +463,8 @@ class Specialist:
             entry["from"] = cur["from"]
         message = jdir / "message.md"
         if message.is_file():
-            entry["message"] = read_text(message)
+            with message.open(newline="") as fh:
+                entry["message"] = fh.read()
         with open(self.history_path, "a") as fh:
             fh.write(json.dumps(entry, sort_keys=True) + "\n")
         rec["status"] = "idle"
@@ -596,7 +598,7 @@ def cmd_spec_job(args) -> None:
     run_spec_job(args, brief_text(args), None)
 
 
-def run_spec_job(args, brief: str, origin, on_started=None) -> None:
+def run_spec_job(args, brief: str, origin, on_prepare=None) -> None:
     h = home()
     sp = Specialist(h, args.name)
     deck_bin()
@@ -620,6 +622,8 @@ def run_spec_job(args, brief: str, origin, on_started=None) -> None:
         (jdir / "prompt.md").write_text(specialist_prompt(rec, job, jdir, brief))
         (jdir / "started").write_text(str(now()))
         (jdir / "memory-before.json").write_text(json.dumps(memory_metadata(Path(rec["memory"]))))
+        if on_prepare:
+            on_prepare(h, job)
         pid = detach(
             [sys.executable, str(Path(__file__).resolve()), "_spec-run", args.name, job, "--home", str(h)],
             jdir / "runner.log",
@@ -631,8 +635,6 @@ def run_spec_job(args, brief: str, origin, on_started=None) -> None:
         rec["current_job"] = cur
         sp.save(rec)
     print(f"started job {job} for specialist {args.name}")
-    if on_started:
-        on_started(h, job)
     if args.wait:
         if not wait_for(lambda: not sp.runner_alive(cur), args.wait_timeout):
             die(f"job {job} wait timed out; the job is still running", 1)
@@ -752,17 +754,13 @@ def cmd_spec_ask(args) -> None:
     if args.text_file:
         text = read_input_file(args.text_file, "message")
     else:
-        words = list(args.text)
-        if words[:1] == ["--"]:
-            words = words[1:]
-        text = " ".join(words)
-    text = text.strip()
-    if not text:
+        text = " ".join(args.text)
+    if not text.strip():
         die("the message is empty")
 
     def tell_owner(h: Path, job: str) -> None:
         msg = Specialist(h, args.name).job_dir(job) / "message.md"
-        msg.write_text(text + "\n")
+        msg.write_text(text)
         excerpt = " ".join(text.split())[:200]
         wake(h, f"specialist-captain:{args.name}:{job}",
              f"check: the captain asked specialist {args.name} directly (job {job}): {excerpt} - "
@@ -787,7 +785,7 @@ def cmd_spec_result(args) -> None:
 
 
 def parse_since(text: str | None) -> int:
-    if not text:
+    if text is None:
         return now()
     try:
         return int(calendar.timegm(time.strptime(text, "%Y-%m-%dT%H:%M:%SZ")))
@@ -1378,7 +1376,6 @@ def main() -> None:
     s.add_argument("--text-file")
     s.add_argument("--wait", action="store_true")
     s.add_argument("--wait-timeout", type=float, default=DEFAULT_DEADLINE + 60)
-    s.add_argument("text", nargs="*")
     s.set_defaults(fn=cmd_spec_ask)
 
     s = sub.add_parser("result")
@@ -1425,7 +1422,14 @@ def main() -> None:
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_group_list)
 
-    args = p.parse_args()
+    argv = sys.argv[1:]
+    text = []
+    if argv[:1] == ["ask"] and "--" in argv:
+        split = argv.index("--")
+        argv, text = argv[:split], argv[split + 1:]
+    args = p.parse_args(argv)
+    if args.cmd == "ask":
+        args.text = text
     if args.cmd not in ("_spec-check", "_result-check", "group-status", "group-list"):
         refuse_gate()
     if args.cmd in ("_spec-run", "_group-run"):

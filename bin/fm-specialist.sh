@@ -40,7 +40,8 @@
 # "message" on its history line and last_job.
 # `--mate <id>` on ask, result, status and history runs the command in that second
 # mate's home from the primary home: a local mate through its recorded home=,
-# a remote one through bin/fm-on.sh (where --text-file is refused).
+# a remote one through bin/fm-on.sh (where --text-file and --wait are refused;
+# poll status/result instead). `--mate primary` selects the current home.
 # Suspend marks an idle specialist "suspended" with its reason, since and by in
 # the record (a running job must end first); job then refuses with exit 4 until
 # resume returns it to idle and keeps the ended suspension as last_suspension.
@@ -57,6 +58,8 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd -P)
 route_to_mate() {  # <command> <args...>
   local cmd=$1 mate='' arg meta home
   local -a rest=()
+  . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
+  fm_refuse_if_gate_agent
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -75,7 +78,11 @@ route_to_mate() {  # <command> <args...>
   grep -qx 'kind=secondmate' "$meta" 2>/dev/null || { echo "fm-specialist.sh: $mate is not a second mate of this home" >&2; exit 2; }
   if grep -q '^remote_host=.' "$meta"; then
     for arg in ${rest[@]+"${rest[@]}"}; do
-      case "$arg" in --text-file|--text-file=*) echo "fm-specialist.sh: --text-file cannot reach a remote mate; pass the text" >&2; exit 2 ;; esac
+      case "$arg" in
+        --) break ;;
+        --text-file|--text-file=*) echo "fm-specialist.sh: --text-file cannot reach a remote mate; pass the text" >&2; exit 2 ;;
+        --wait) echo "fm-specialist.sh: --wait is unavailable for a remote mate; poll status/result instead" >&2; exit 2 ;;
+      esac
     done
     exec "$SCRIPT_DIR/fm-on.sh" "$mate" fm-specialist.sh "$cmd" ${rest[@]+"${rest[@]}"}
   fi
