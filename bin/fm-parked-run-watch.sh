@@ -35,9 +35,9 @@
 #
 # Open needs-decision questions use the idle sweep's admission and timing
 # projection (bin/fm_stall_record.py), then this owner's `digest` publication
-# instead of the individual nudge/escalation path. A scan asks the idle sweep
-# to collect those questions in one batch after releasing parked-run locks.
-# Existing delivered nudges suppress migration duplicates for the same episode.
+# instead of the individual nudge/escalation path. The scheduled idle sweep
+# collects those questions; acknowledged digests suppress individual publication
+# until the matching parked run/step changes or resumes.
 #
 # Separately, a live worker classified busy by bin/fm-busy-lib.sh gets one
 # check-in wake after FM_WORKER_QUIET_SECS without a status change, whether or
@@ -169,14 +169,12 @@ for rec in "$STATE"/*.parked-run; do
   fm_lock_remove_path "$(lock_of "$id")" >/dev/null 2>&1 || true
 done
 
-DECISION_SWEEP=0
 scan_one() {  # <id>
   local id=$1 rec="$STATE/$1.parked-run" verdict run step since nudged escalated reading pending=''
   reading=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-crew-state.sh" --publish "$id" </dev/null 2>/dev/null) || return 0
   case "$reading" in
     'state: parked · '*)
       pending=$(status_open_decisions "$STATE/$id.status" | awk -F '\t' '$2 == "needs-decision"')
-      [ -z "$pending" ] || DECISION_SWEEP=1
       ;;
   esac
   case "$reading" in
@@ -212,6 +210,10 @@ scan_one() {  # <id>
     return 0
   fi
   [ -z "$pending" ] || return 0
+  if [ "$(python3 "$SCRIPT_DIR/fm_stall_record.py" "$STATE/idle-sweep/$id.stall.json" \
+      "$STATE/$id.meta" "$reading" '' --reported-run --now "$NOW")" = true ]; then
+    return 0
+  fi
   since=$(field "$rec" since) nudged=$(field "$rec" nudged) escalated=$(field "$rec" escalated)
   case "$since" in ''|*[!0-9]*) since=$NOW ;; esac
   case "$nudged" in ''|*[!0-9]*) nudged=0 ;; esac
@@ -264,7 +266,4 @@ for meta in "$STATE"/*.meta; do
   scan_one "$id"
   fm_lock_release "$(lock_of "$id")" >/dev/null 2>&1 || true
 done
-if [ "$DECISION_SWEEP" = 1 ]; then
-  "$SCRIPT_DIR/fm-idle-sweep.sh" scan --now </dev/null || exit 1
-fi
 exit 0

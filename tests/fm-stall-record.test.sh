@@ -60,7 +60,6 @@ assert call(45001, working+' · declared-wait: active')['state'] == 'ineligible'
 for contents in ['kind=scout\n', 'kind=secondmate\n', 'kind=ship\nmode=direct-PR\n', 'kind=ship\nmode=local-only\n']:
     meta.write_text(contents)
     assert call(45002)['state'] == 'ineligible'
-    record.unlink()
     status = meta.with_suffix('.status')
     status.write_text('needs-decision [key=review]: Which behavior should be retained?\n')
     import os
@@ -88,6 +87,24 @@ for owner in ('gate', 'parked-run'):
     assert not record.exists()
     assert call(50000, parked.replace('step=review', 'step=test'), question, mode='')['age_seconds'] == 0
     assert call(50000, parked.replace(run, 'another-run'), question, mode='')['age_seconds'] == 0
+    assert call(45000, 'state: working · source: run-step · test running')['state'] == 'ineligible'
+    before = record.read_bytes()
+    r = call(50000, parked, question, mode='')
+    assert r['state'] == 'stalled' and r['age_seconds'] == 10000 and r['notify']
+    assert record.read_bytes() == before
+    assert call(50000, parked, question)['age_seconds'] == 10000
+    assert not call(50000, parked, question, '--ack')['notify']
+    assert call(50001, parked, '', '--reported-run')
+    assert call(50001, parked, '')['state'] == 'ineligible'
+    before = record.read_bytes()
+    assert call(50002, parked, '', '--reported-run')
+    assert not call(50002, parked.replace('step=review', 'step=test'), '', '--reported-run')
+    assert not call(50002, parked.replace(run, 'another-run'), '', '--reported-run')
+    assert not call(50002, working, '', '--reported-run')
+    assert record.read_bytes() == before
+    call(50003, working)
+    assert not call(50004, parked, '', '--reported-run')
+    record.unlink()
     timing.unlink()
 timing.write_text(f'run={run}\nstep=review\nsince=40000\nnudged=44000\nescalated=1\n')
 r = call(50000, parked, question)
@@ -172,8 +189,10 @@ SH
       sweep "$dir" scan --now || fail 'initial cross-owner sweep'
     fi
     for _ in 1 2; do
+      before_lifecycle=$(calls "$dir" retire-calls)
       PATH="$dir/bin:$PATH" TASKS_AXI_BACKEND=markdown FM_HOME="$dir/home" FM_PARKED_RUN_SECS=0 \
         "$dir/bin/fm-parked-run-watch.sh" scan || fail 'cross-owner watcher scan'
+      [ "$(calls "$dir" retire-calls)" = "$before_lifecycle" ] || fail 'parked scan forced lifecycle traversal'
       sweep "$dir" scan --now || fail 'cross-owner idle scan'
     done
     target="$dir/home/state/.wake-queue"
@@ -186,6 +205,20 @@ SH
       assert_not_contains "$(cat "$target")" 'parked-run:' 'independent parked wake or escalation'
     fi
     [ "$(summary_of "$dir" decision)" = 'stalled none' ] || fail 'aged parked recovery not stalled'
+    if [ "$first" != legacy ]; then
+      [ "$(jq -r .reported "$dir/home/state/idle-sweep/decision.stall.json")" = \
+        "$(jq -r .episode "$dir/home/state/idle-sweep/decision.stall.json")" ] || fail 'digest not acknowledged'
+      printf 'resolved [key=choice]: Retain the old behavior.\n' >> "$dir/home/state/decision.status"
+      for _ in 1 2; do
+        PATH="$dir/bin:$PATH" TASKS_AXI_BACKEND=markdown FM_HOME="$dir/home" FM_PARKED_RUN_SECS=0 \
+          "$dir/bin/fm-parked-run-watch.sh" scan || fail 'answered parked watcher scan'
+        sweep "$dir" scan --now || fail 'answered parked idle scan'
+      done
+      [ "$(grep -c 'stalled tasks digest:' "$target")" = 1 ] || fail 'answered question republished'
+      for channel in "$dir/home/state/.wake-queue" "$target"; do
+        [ ! -f "$channel" ] || assert_not_contains "$(cat "$channel")" 'parked-run:' 'answered episode independently published'
+      done
+    fi
     assert_no_captain_call "$dir" 'cross-owner digest'
     pass "parked publication and idle sweep share one $route episode ($first first)"
   done
