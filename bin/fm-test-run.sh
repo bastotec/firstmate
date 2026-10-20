@@ -669,6 +669,8 @@ portable_serial_weight_hints() {
 # (2026-10-18); that run failed other checks.
 # fm-approval-wait and fm-idle-sweep-retry-admission were measured in green
 # serial shards 1 and 9 of run 39277793508 (2026-10-19); other checks failed.
+# fm-merge-policy was measured in green serial shard 4 of run 39447361618
+# (2026-10-20); all serial shards passed, but other checks failed.
 # The five tests/fm-watch-triage*.test.sh suites were one 694233 ms script
 # before run 37413095868; their hints start from each suite's share of that,
 # from the per-case output timestamps of run 37401433503's serial shard 1.
@@ -733,6 +735,7 @@ tests/fm-mail-check.test.sh 8405
 tests/fm-mail.test.sh 11718
 tests/fm-machine.test.sh 22210
 tests/fm-mate-mail.test.sh 26523
+tests/fm-merge-policy.test.sh 17533
 tests/fm-model-chain.test.sh 30090
 tests/fm-nm-test-contract.test.sh 1135
 tests/fm-no-mistakes-required.test.sh 5288
