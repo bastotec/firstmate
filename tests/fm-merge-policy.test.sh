@@ -524,6 +524,24 @@ test_attended_override_validates_policy() {
   pass "attended override bypasses never but never policy validation"
 }
 
+test_unset_falls_back_to_owner_or_default() {
+  local home out
+  home=$(new_home unset)
+  FM_HOME="$home" "$POLICY" set bastotec/app never --no-push >/dev/null || fail "set failed"
+  FM_HOME="$home" "$POLICY" set acme/tool auto --no-push >/dev/null || fail "set failed"
+  out=$(FM_HOME="$home" "$POLICY" unset BASTOTEC/App --by captain --no-push) || fail "unset failed: $out"
+  assert_equals 'unset BASTOTEC/App never -> auto owner bastotec' "$out" "unset did not report the fallback"
+  assert_equals 'auto owner bastotec' "$(FM_HOME="$home" "$POLICY" get bastotec/app)" "the repo entry survived unset"
+  assert_equals 'ask default' "$(FM_HOME="$home" "$POLICY" unset acme/tool --no-push | sed 's/^unset acme\/tool auto -> //')" "unset without an owner entry did not fall back to the default"
+  assert_grep 'captain BASTOTEC/App never -> inherit' "$home/data/merge-policy.log" "unset wrote no audit line"
+  lines=$(wc -l < "$home/data/merge-policy.log" | tr -d ' ')
+  assert_equals 'unset other/thing: no entry' "$(FM_HOME="$home" "$POLICY" unset other/thing --no-push)" "unsetting a missing entry was not a no-op"
+  assert_equals "$lines" "$(wc -l < "$home/data/merge-policy.log" | tr -d ' ')" "a no-op unset wrote an audit line"
+  rc=0; FM_HOME="$home" "$POLICY" unset 'bastotec/*' >/dev/null 2>&1 || rc=$?
+  assert_equals 2 "$rc" "unset accepted an owner pattern"
+  pass "unset removes a repository's own entry so it inherits its owner or the default, with an audit line"
+}
+
 test_builtin_defaults
 test_set_resolves_repo_over_owner_over_default
 test_invalid_input_and_unreadable_file
@@ -541,3 +559,4 @@ test_task_autoland_rechecks_attestation
 test_merges_ignore_writer_lock
 test_policy_changes_during_inflight_merge
 test_attended_override_validates_policy
+test_unset_falls_back_to_owner_or_default
