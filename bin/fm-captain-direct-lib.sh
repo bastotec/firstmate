@@ -9,7 +9,7 @@
 # captain a second time. AGENTS.md section 9 owns the reply and parent-action
 # rule; tests/fm-captain-direct-echo.test.sh covers enforcement.
 #
-# This library owns three things:
+# This library owns four things:
 #   1. A durable ledger of recent captain-direct deliveries in the parent home,
 #      state/captain-direct/<corr> (key=value: task_id, epoch) plus
 #      <corr>.text (the captain's words), pruned after 7 days.
@@ -22,6 +22,9 @@
 #      with "direct"/"directly" (case-insensitive), is an echo. The heuristic is
 #      deliberately broad; false positives are bounded by time and mate scope,
 #      with the correction bypass owned by bin/fm-send.sh along with output.
+#   4. Report-path classification (fm_captain_direct_carries_result): a message
+#      names data/<task>/report.md or another *.md directly under data/ or in
+#      its subdirectories. bin/fm-send.sh owns the result delivery exception.
 # Expired ledger entries are pruned on recording and echo lookup.
 # Guard logging is best-effort in state/captain-direct.log.
 # Retention and heuristic windows are fixed; FM_CAPTAIN_DIRECT_NOW overrides
@@ -87,8 +90,8 @@ fm_captain_direct_prune() {  # <state-dir> <now>
 # The FYI note the parent mate gets for one captain-direct delivery.
 fm_captain_direct_note_text() {  # <mate-name> <corr> <captain-text>
   local mate=$1 corr=$2 text=$3
-  printf 'Captain steered %s directly (corr=%s). FYI only: %s already has this message and answers him itself. Do not forward it, steer %s about it, or re-ask %s; firstmate will not send a steer that repeats it. Act only if his words ask something of you, or if a later report from %s shows a real gap (then send that one fix with --correction). His words:\n%s' \
-    "$mate" "$corr" "$mate" "$mate" "$mate" "$mate" "$text"
+  printf 'Captain steered %s directly (corr=%s). FYI only: %s already has this message and answers him itself. Do not forward it, steer %s about it, or re-ask %s; firstmate will not send a steer that repeats it. Act only if his words ask something of you, or if a later report from %s shows a real gap (then send that one fix with --correction). New findings for %s (a child'"'"'s report or outcome) are not a repeat: deliver them with --result. His words:\n%s' \
+    "$mate" "$corr" "$mate" "$mate" "$mate" "$mate" "$mate" "$text"
 }
 
 # Lowercase words, one per line.
@@ -122,6 +125,12 @@ fm_captain_direct_shares_run() {  # <captain-text> <message>
 fm_captain_direct_mentions() {  # <message>
   printf '%s' "$1" | grep -Eiq 'captain' || return 1
   printf '%s' "$1" | grep -Eiq '(^|[^a-z])direct(ly)?([^a-z]|$)|captain[^a-z]?s?[- ]direct'
+}
+
+# Lexical only: a re-steer citing a report path can pass. That bounded risk is
+# accepted because a parent's genuine findings naturally cite the original corr.
+fm_captain_direct_carries_result() {  # <message>
+  printf '%s' "$1" | grep -Eq '(^|[^A-Za-z0-9_.-])data/([A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.md([^A-Za-z0-9_]|$)'
 }
 
 # Print the corr of a recent captain-direct delivery to <task-id> that
