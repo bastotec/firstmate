@@ -49,9 +49,31 @@ is recorded and never stops the next:
              code          the file step files each as a priority task for the
                            repository's owning mate and tells that mate to
                            dispatch a worker now (the main home through its inbox);
+             charter       the file step groups proposals by mate and appends to its
+                           own data/charter.md, additions only: at most 6 new lines per
+                           mate per night, counting lines already dated tonight.
+                           Lines over 300 characters are rejected, never truncated;
+                           full lines matching HARD_STOPS or SECRET go to the captain
+                           card before any charter write or bridge check.
+                           Existing complete bullets are skipped after whitespace
+                           normalization and removal of an optional (YYYY-MM-DD) date.
+                           Dated bullets go at the end of the existing
+                           '## Standing adjustments from fleet dreaming' section,
+                           before the next '## ' heading; a missing section is created
+                           at EOF. Before writing, the original is copied to that home's
+                           state/dream-charter-backups/charter-<date>.md (0600), never
+                           overwriting an existing backup; replacement is atomic and
+                           preserves the charter's mode. Only registered included homes
+                           are touched: local homes directly, remote homes over ssh
+                           only when fm-bridge.sh check <host> maintenance allows it.
+                           A refusal reports 'not applied: the bridge to <host> does
+                           not allow maintenance'. The mate is told to re-read through
+                           fm-send.sh with FM_SEND_STREAM=monologue; a failed nudge
+                           keeps the applied state and backup and says it was not told.
+                           The morning summary names each added line, state and backup;
              captain       the file step filters answered calls, then reuses an
                            open dreaming card or raises one for the remaining calls
-                           and the night's private charter proposals.
+                           and the charter lines held by the guards below.
                            A call is not raised if similar() matches its question
                            to a recorded call whose hold is no longer listed by
                            fm-card.sh calls, or to a complete instruction bullet
@@ -130,7 +152,8 @@ is recorded and never stops the next:
            Later nights prune earlier worktrees once the branch is an ancestor
            of origin/main, its PR is merged (including squash merges), or the
            worktree is a week old. A mate's own charter lives in its private home
-           data, so edits to it are proposals in charters-<date>.md, not applied;
+           data: the agent writes lines to add to it (charters-<date>.md keeps them),
+           which the file step applies;
            excluded homes' proposals are dropped. 'pr opened' is a clean outcome.
            The morning summary separates the final PR diff's lines and files
            (or its unavailability) from proposed descriptions, and names the PR
@@ -148,8 +171,9 @@ is recorded and never stops the next:
            and an item already in its dedupe window is not filed twice.
            Code changes from the improve step are filed first, as priority-0
            tasks, and their owning mate is told to dispatch a worker now (fm-send.sh,
-           or the main home's inbox); captain changes and charter proposals follow
-           the captain-card handling above, even without measured tasks.
+           or the main home's inbox); charter lines follow the guards above, and
+           captain changes and held charter lines follow the captain-card handling
+           above, even without measured tasks.
            Command timeouts preserve successful filings and allow remaining triage
            work while the step budget remains. Dreaming never pushes to or opens
            PRs on harness repositories, except the instructions step's one PR on
@@ -158,10 +182,12 @@ is recorded and never stops the next:
            its one line to the summary; skipped on a dry run. Its findings are
            not failures: only an upkeep that cannot run is not clean.
   track    follows tonight's instructions PR until auto-land merged and deployed it
-           (at most TRACK_WAIT seconds), then records every action of the night for
-           tomorrow's report. A PR open or merged, a confirmed dispatch order, or
-           a raised card counts as acted on; proposals with none of these yield
-           'nothing changed', which is not clean. An empty model changes list is
+           (at most TRACK_WAIT seconds), even on a night with no measured tasks,
+           then records every action of the night for tomorrow's report.
+           A PR open or merged, a confirmed dispatch order, an applied charter or
+           a raised card counts as acted on; measured change proposals with none
+           of these yield 'nothing changed', which is not clean.
+           An empty model changes list is
            an honest 'nothing to change' and stays clean.
 
 Runs are serialized by a kernel flock held for the whole run.
@@ -197,19 +223,23 @@ Files under <home>/state/dream/:
                      lines, files (final PR diff when a PR exists; null if unread;
                      without a PR, lines is the proposal count and files is null),
                      pr, risk (null if unread)} | null,
-                     charter_proposals: [{mate, what}],
+                     charter_proposals: [{mate, add: [lines], why?, evidence?,
+                     what? (legacy input, read as one line when add is not a list)}],
                      improve: {metrics (bin/fm_lifecycle.py metrics), model,
                      changes: [{kind, change, repo, title, fix, target, evidence,
                      before}], reflection_error, nothing_to_change,
                      point (tonight's improve.jsonl line),
                      previous (the last earlier one) | null, change:
                      {mate_median, mate_p90, merged} | null, tonight: [{kind, what,
-                     pr?, key?, mate?, state, target?, before?}], last_night: [{...,
+                     pr?, key?, mate?, state, add? (charter lines), backup?,
+                     target?, before?}], last_night: [{...,
                      date, now_state, now_value}]}
                      | {measurement_error, changes: [], tonight: [actions as above]}
                      | null (no measured tasks or improve did not produce facts),
-                     charter_card: [actions as above] (private charter card when
-                     improve is null), no_mistakes: {...} or null, summary}
+                     charter_card: [actions as above] (charter outcomes, the
+                     captain card and the tracked instructions PR of a night improve
+                     did not measure),
+                     no_mistakes: {...} or null, summary}
   raised.jsonl       one line per raised item (dedupe across nights)
   calls.jsonl        dreaming questions with {change, evidence, key, at}; appended
                      after a successful card raise or update, and when discovering
@@ -1402,17 +1432,18 @@ def step_improve(ctx):
 
 
 def step_track(ctx):
-    """Follows tonight's changes to where they landed: the instructions PR to its
-    merge and deploy (auto-land owns both; this waits up to TRACK_WAIT), and
-    records every action for tomorrow's report. An action counts as taken when
-    its PR is open, merged or deployed, its dispatch order was confirmed, or its
-    card was raised."""
+    """Track tonight's instructions PR through auto-land and record all actions,
+    including nights without measurements; the header owns action criteria."""
     life = ctx.facts.get('improve')
-    if not life:
-        return {'status': 'quiet day'}
-    tonight = life['tonight']
     ins = ctx.facts.get('instructions') or {}
     pr = ins.get('pr')
+    if not life:
+        # nothing measured, but the instructions step and the charter card act on
+        # the collected sessions alone: their actions are tracked and kept the same way
+        if not pr and not ctx.facts.get('charter_card'):
+            return {'status': 'quiet day'}
+        life = {'changes': [], 'tonight': ctx.facts.setdefault('charter_card', [])}
+    tonight = life['tonight']
     skipped = ctx.facts.get('instructions_skipped') or []
     planned = [c for c in life['changes'] if c['kind'] == 'instructions']
     shipped = [c for c in planned if not any(similar(c['change'], str(k.get('change') or '')) for k in skipped)]
@@ -1446,7 +1477,8 @@ def step_track(ctx):
             for a in tonight:
                 fh.write(json.dumps(dict(a, date=ctx.day)) + '\n')
     taken = lambda a: (a.get('state') in ('open', 'merged and deployed', 'merged, deploy pending') and a.get('pr')
-                       or str(a.get('state')).startswith('dispatch ordered') or a.get('state') == 'card raised')
+                       or str(a.get('state')).startswith(('dispatch ordered', 'applied to the charter'))
+                       or a.get('state') == 'card raised')
     acted = [a for a in tonight if taken(a)]
     if life.get('measurement_error'):
         return {'status': 'partial', 'why': life['measurement_error'], 'acted': len(acted)}
@@ -1483,6 +1515,9 @@ def improve_summary(life):
             done.append('%s (%s%s)' % (a['what'][:160], a['pr'] + ', ' if a.get('pr') else '', state))
         elif a['kind'] == 'code':
             done.append('%s (%s)' % (a['what'][:120], state))
+        elif a['kind'] == 'charter':
+            done.extend('charter for %s: %s (%s)' % (a.get('mate'), line, state)
+                        for line in a.get('add') or [a['what']])
         else:
             done.append('captain card %s: %s (%s)' % (a.get('key'), a['what'][:120], state))
     if done:
@@ -1691,17 +1726,21 @@ Hard rules for this change:
 - Do not commit; leave the edits in the working tree.
 - If nothing warrants a change, change nothing.
 
-A mate's own charter (its data/charter.md and data/secondmates.md entry) is private and not in this
-checkout: propose edits to it instead of making them.
+A mate's own charter (its data/charter.md) is private and not in this checkout: do not look for it.
+Write the lines to add to it instead; dreaming appends them to that mate's charter tonight. Additions
+only, one rule per line, in the charter's plain style, at most 6 lines per mate; a line about money,
+credentials, production, outward messages, destructive actions or captain approval goes to the
+captain instead of being applied.
 
 The digest's "Improve" section measures where today's tasks spent their time. These changes were
 chosen for tonight and you must make them, within the hard rules above, citing their evidence;
-skip one only if it would break a hard rule or needs a mate's private charter, and say why:
+a change for one mate's own charter goes in "charters"; skip one only if it would break a hard rule,
+and say why:
 {required}
 
 Finally write {out} as JSON: {{"changes": [{{"path": "file", "what": "one plain sentence", "why": "what
 happened today", "evidence": ["exact digest lines, at most 3"]}}], "charters": [{{"mate": "<mate id>",
-"what": "the edit, in one or two sentences", "why": "...", "evidence": ["..."]}}]}} - empty lists when
+"add": ["one rule per line"], "why": "...", "evidence": ["..."]}}]}} - empty lists when
 there is nothing. Add "skipped": [{{"change": "...", "why": "..."}}] for any required change you did not make."""
 
 
@@ -1809,11 +1848,13 @@ def step_instructions(ctx):
         charters = [c for c in doc.get('charters') or [] if isinstance(c, dict) and c.get('mate')
                     and c.get('mate') not in ctx.excluded]
         if charters:
+            charters = [dict(c, add=charter_lines(c)) for c in charters]
             write_private(ctx.dir / ('charters-%s.md' % ctx.day), '\n'.join(
                 ['# Proposed charter edits, %s' % ctx.day, ''] +
-                ['- %s: %s (why: %s; evidence: %s)' % (c['mate'], c.get('what'), c.get('why'),
-                                                       '; '.join(c.get('evidence') or [])) for c in charters]) + '\n')
-            ctx.facts['charter_proposals'] = [{'mate': c['mate'], 'what': c.get('what')} for c in charters]
+                ['- %s: %s (why: %s; evidence: %s)' % (c['mate'], line, c.get('why'),
+                                                       '; '.join(c.get('evidence') or []))
+                 for c in charters for line in c['add']]) + '\n')
+            ctx.facts['charter_proposals'] = charters
         git(ctx, 'add', '-A', cwd=tree)
         git(ctx, 'reset', '-q', '--soft', base, cwd=tree)
         raw = git(ctx, 'diff', '--cached', '--name-only', '-z', '--no-renames', base, cwd=tree, text=False)
@@ -2179,11 +2220,11 @@ def step_triage(ctx):
 # --- file -------------------------------------------------------------------
 
 def file_improvements(ctx, already, rows, errors):
-    """Publish code filings immediately, then raise one decision card for the
-    captain changes and the night's private charter proposals."""
+    """Publish code filings, card captain-only changes and held charter lines,
+    then apply the remaining charter additions under the header's guards."""
     life = ctx.facts.get('improve')
     changes = (life or {}).get('changes') or []
-    # without a measured night the charter card is still raised; it is reported on its own
+    # Without measurements, keep independent actions in charter_card for tracking and reporting.
     tonight = life['tonight'] if life else ctx.facts.setdefault('charter_card', [])
     owners = ctx.config.get('owners') or {}
     env = dict(os.environ, FM_HOME=str(ctx.home))
@@ -2212,13 +2253,39 @@ def file_improvements(ctx, already, rows, errors):
             if isinstance(exc, subprocess.TimeoutExpired):
                 ctx.left()
     calls = unanswered_calls(ctx, [c for c in changes if c['kind'] == 'captain'], tonight, env, errors)
-    charters = ctx.facts.get('charter_proposals') or []
+    charters, grouped = [], {}
+    for c in ctx.facts.get('charter_proposals') or []:
+        mate = c['mate']
+        if mate in ctx.excluded:
+            continue
+        lines = grouped.setdefault(mate, [])
+        for line in charter_lines(c):
+            if HARD_STOPS.search(line) or SECRET.search(line):
+                charters.append({'mate': mate, 'what': line})
+            elif len(line) > 300:
+                tonight.append({'kind': 'charter', 'mate': mate, 'what': line, 'key': None,
+                                'state': 'not applied: line exceeds 300 characters'})
+            elif line not in lines:
+                lines.append(line)
     if calls or charters:
         try:
             raise_card(ctx, calls, charters, tonight, env, errors)
         except (OSError, subprocess.TimeoutExpired) as exc:
             tonight[-1]['state'] = 'card not raised: %s' % type(exc).__name__
             errors.append('captain card not raised: %s' % type(exc).__name__)
+            if isinstance(exc, subprocess.TimeoutExpired):
+                ctx.left()
+    for mate, lines in grouped.items():
+        if not lines:
+            continue
+        entry = {'kind': 'charter', 'mate': mate, 'what': '; '.join(lines), 'add': lines,
+                 'key': None, 'state': 'not applied'}
+        tonight.append(entry)
+        try:
+            apply_charter(ctx, entry, tonight, env, errors)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            entry['state'] = 'not applied: %s' % type(exc).__name__
+            errors.append('charter for %s not applied: %s' % (mate, type(exc).__name__))
             if isinstance(exc, subprocess.TimeoutExpired):
                 ctx.left()
 
@@ -2449,9 +2516,117 @@ def unanswered_calls(ctx, calls, tonight, env, errors=None):
     return keep
 
 
+def charter_lines(c):
+    lines = c.get('add') if isinstance(c.get('add'), list) else [c.get('what')]
+    return [' '.join(str(line).split()) for line in lines if line and str(line).strip()]
+
+
+# Appends dreaming's lines to one charter: python3 - <charter> <backup> <date> <lines JSON>.
+# The module header owns the addition, deduplication and backup guarantees.
+CHARTER_PY = r"""
+import json, os, re, sys, tempfile
+path, backup, day, lines = os.path.expanduser(sys.argv[1]), os.path.expanduser(sys.argv[2]), sys.argv[3], json.loads(sys.argv[4])
+text = open(path, encoding='utf-8').read()
+HEAD = '## Standing adjustments from fleet dreaming'
+parts = text.splitlines(keepends=True)
+existing = set()
+for line in parts:
+    bullet = re.match(r'^\s*-\s+(?:\(\d{4}-\d{2}-\d{2}\)\s+)?(.*)$', line)
+    if bullet:
+        existing.add(' '.join(bullet.group(1).split()))
+new = [l for l in dict.fromkeys(lines) if l not in existing]
+remaining = max(0, 6 - sum(l.startswith('- (%s) ' % day) for l in text.splitlines()))
+new, limited = new[:remaining], new[remaining:]
+if not new:
+    print(json.dumps({'added': [], 'limited': limited})); sys.exit(0)
+os.makedirs(os.path.dirname(backup), exist_ok=True)
+try:
+    fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+except FileExistsError:
+    pass
+else:
+    with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+        fh.write(text)
+section = next((i for i, line in enumerate(parts) if line.rstrip('\r\n') == HEAD), None)
+if section is None:
+    prefix = text + ('' if text.endswith('\n') else '\n')
+    prefix += '\n' + HEAD + '\n\nAdded by the nightly improve step; each line is dated.\n'
+    suffix = ''
+else:
+    end = next((i for i in range(section + 1, len(parts)) if parts[i].startswith('## ')), len(parts))
+    prefix, suffix = ''.join(parts[:end]), ''.join(parts[end:])
+out = prefix + ('' if prefix.endswith('\n') else '\n')
+out += ''.join('- (%s) %s\n' % (day, l) for l in new) + suffix
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix='.charter.')
+with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+    fh.write(out)
+os.chmod(tmp, os.stat(path).st_mode & 0o777)
+os.replace(tmp, path)
+print(json.dumps({'added': new, 'limited': limited}))
+"""
+
+
+def apply_charter(ctx, entry, tonight, env, errors):
+    """Appends one mate's proposed lines to its own data/charter.md, locally or
+    over ssh when the bridge allows maintenance, keeps a backup of the charter in
+    that home, and tells the mate to re-read it."""
+    mate, lines = entry['mate'], entry['add']
+    found = next(((h, host) for mid, h, host in registry(ctx.home) if mid == mate and h), None)
+    if mate in ctx.excluded or not found:
+        entry['state'] = 'not applied: %s is not a registered included mate' % mate
+        return
+    home, host = found
+    if ctx.dry_run:
+        entry['state'] = 'dry run: not applied'
+        return
+    backup = '%s/state/dream-charter-backups/charter-%s.md' % (home.rstrip('/'), ctx.day)
+    argv = ['python3', '-', '%s/data/charter.md' % home.rstrip('/'), backup, ctx.day, json.dumps(lines)]
+    if host:
+        gate = ctx.run([tool('fm-bridge.sh', 'FM_DREAM_BRIDGE'), 'check', host, 'maintenance'], timeout=30, env=env)
+        if gate.returncode:
+            entry['state'] = 'not applied: the bridge to %s does not allow maintenance' % host
+            errors.append('charter for %s: %s' % (mate, entry['state']))
+            return
+        argv = [os.environ.get('FM_DREAM_SSH') or 'ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host,
+                ' '.join(shlex.quote(a) for a in argv)]
+    r = ctx.run(argv, input=CHARTER_PY, timeout=90)
+    try:
+        result = json.loads(r.stdout or '{}') if r.returncode == 0 else {}
+        added = result.get('added')
+    except ValueError:
+        added = None
+    if added is None:
+        entry['state'] = 'not applied: %s' % ((r.stderr or r.stdout or 'exit %d' % r.returncode).strip()[:160])
+        errors.append('charter for %s %s' % (mate, entry['state']))
+        return
+    limited = result.get('limited') or []
+    if not added:
+        entry['state'] = 'not applied: nightly limit of 6 new lines reached' if limited else 'already in the charter'
+        entry['add'] = limited or lines
+        entry['what'] = '; '.join(entry['add'])
+        return
+    if limited:
+        tonight.append({'kind': 'charter', 'mate': mate, 'what': '; '.join(limited), 'add': limited,
+                        'key': None, 'state': 'not applied: nightly limit of 6 new lines reached'})
+    entry['add'], entry['what'] = added, '; '.join(added)
+    entry['state'] = 'applied to the charter (backup %s)' % backup
+    entry['backup'] = backup
+    note = ('Fleet dreaming added %d standing adjustment%s to your charter (data/charter.md, section "Standing '
+            'adjustments from fleet dreaming"): %s. Re-read your charter now and follow them.'
+            % (len(added), '' if len(added) == 1 else 's', '; '.join(added)))
+    try:
+        s_ = ctx.run([tool('fm-send.sh', 'FM_DREAM_SEND'), mate, note[:3800]], env=dict(env, FM_SEND_STREAM='monologue'),
+                     timeout=60)
+        if s_.returncode:
+            entry['state'] += '; the mate was not told (%s)' % (s_.stderr or s_.stdout or '').strip()[:80]
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        entry['state'] += '; the mate was not told (%s)' % type(exc).__name__
+        errors.append('charter for %s: the mate was not told (%s)' % (mate, type(exc).__name__))
+
+
 def raise_card(ctx, calls, charters, tonight, env, errors):
     """Reuse an open dreaming card or raise one for calls and charter proposals."""
-    what = '; '.join([c['change'][:200] for c in calls] + ['charter edit for %s: %s' % (c['mate'], c['what'])
+    what = '; '.join([c['change'][:200] for c in calls] + ['charter line for %s: %s' % (c['mate'], c['what'])
                                                             for c in charters])[:400]
     entry = {'kind': 'captain', 'what': what, 'key': None, 'target': calls[0]['target'] if calls else None,
              'before': calls[0]['before'] if calls else None, 'state': 'card not raised'}
@@ -2515,7 +2690,7 @@ def raise_card(ctx, calls, charters, tonight, env, errors):
             entry['state'] = 'added to the open card %s' % key
             return
     card = '\n'.join(['# %s' % title, ''] + ['- %s Evidence: %s' % (c['change'], c['evidence']) for c in calls]
-                     + ['- Apply this charter edit for %s? %s' % (c['mate'], c['what']) for c in charters])
+                     + ['- Add this line to the charter of %s? %s' % (c['mate'], c['what']) for c in charters])
     bf = ctx.dir / '.card.md'
     cf = ctx.dir / '.card.json'
     write_private(bf, card)
@@ -2676,10 +2851,16 @@ def summary_line(run):
         text += ' Instructions: %s; proposed %s%s.' % (
             final, '; '.join('%s: %s' % (c.get('path'), c.get('what')) for c in ins['changes'][:3]),
             ' (PR %s%s)' % (ins['pr'], ', rated %s' % ins['risk'] if ins.get('risk') else '') if ins.get('pr') else '')
-    card = next((a for a in run.get('charter_card') or [] if a.get('key')), None)
+    card = next((a for a in run.get('charter_card') or [] if a.get('kind') == 'captain' and a.get('key')), None)
     if card:
-        text += ' Captain card %s for the charter edits (%s).' % (card['key'], card.get('state'))
-    if run.get('charter_proposals'):
+        text += ' Captain card %s for the charter lines that need you (%s).' % (card['key'], card.get('state'))
+    for a in (a for a in run.get('charter_card') or [] if a.get('kind') == 'charter'):
+        for line in a.get('add') or [a['what']]:
+            text += ' Charter for %s: %s (%s).' % (a.get('mate'), line, a.get('state'))
+    shipped = next((a for a in run.get('charter_card') or [] if a.get('kind') == 'instructions' and a.get('pr')), None)
+    if shipped:
+        text += ' Instructions PR %s: %s.' % (shipped['pr'], shipped.get('state'))
+    if run.get('charter_proposals') and not run.get('improve') and not run.get('charter_card'):
         text += ' %d charter edit%s proposed (charters-%s.md).' % (
             len(run['charter_proposals']), '' if len(run['charter_proposals']) == 1 else 's', run['date'])
     odd = run.get('disagreements') or []
