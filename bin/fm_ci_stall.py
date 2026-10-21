@@ -30,8 +30,9 @@ before the next fallible operation, and the scan's own cancellation is not a
 no-runner stall. Changing either the worker's PR binding or its head resets
 progress in state/ci-stall/<id>.json.
 
-Still stuck after the re-run, the scan diagnoses with `bin/fm-ci-infra.sh classify`
-(billing, a spending limit or no runner), or as a hung job or unclaimed queue.
+Still stuck after the re-run, the scan uses `bin/fm-ci-infra.sh classify` for a
+PR-wide infrastructure diagnosis, which may reflect any failed job on the head,
+or falls back to a hung job or unclaimed queue.
 A classifier timeout yields an unavailable diagnosis rather than stopping the
 hand-off. bin/fm-send.sh hands it to the owning worker, which fixes it under its
 charter (a private repository's workflow moves to the workload runner, an
