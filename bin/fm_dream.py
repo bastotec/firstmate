@@ -2295,34 +2295,43 @@ def task_control_lock(ctx, key, env):
             proc.communicate()
 
 
+def dreaming_call_sections(body):
+    return list(re.finditer(r'(?ms)^- (?!Apply this charter edit for )(.*?) Evidence: (.*?)(?=\n(?:- |\S)|\Z)', body))
+
+
 def open_dream_cards(ctx, env, opened, ledger, locks):
     cards = {}
     for key, title in sorted(opened.items()):
         if not (key.startswith('dream-call-') or title.startswith('Fleet dreaming needs your call')
                 or any(p.get('key') == key for p in ledger)):
             continue
+        unreadable = 'open cards unreadable'
         try:
             locks.enter_context(task_control_lock(ctx, key, env))
             held = ctx.run([tool('fm-captain-hold.sh', 'FM_DREAM_HOLD'), 'open', key], env=env, timeout=60)
             if held.returncode == 1:
                 opened.pop(key, None)
-                continue
-            if held.returncode:
-                return None
+                unreadable = 'card state unreadable'
+            elif held.returncode:
+                return None, unreadable
             r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'show', key, '--full'], env=env, timeout=60)
         except (OSError, subprocess.TimeoutExpired):
-            return None
+            return None, unreadable
         body = re.search(r'^  body: (.*)$', r.stdout or '', re.M)
         if r.returncode or not body:
-            return None
+            return None, unreadable
         try:
             raw = body.group(1)
-            cards[key] = json.loads(raw) if raw.startswith('"') else raw
-            if not isinstance(cards[key], str):
-                return None
+            body = json.loads(raw) if raw.startswith('"') else raw
+            if not isinstance(body, str):
+                return None, unreadable
         except ValueError:
-            return None
-    return cards
+            return None, unreadable
+        record_calls(ctx, [{'change': match.group(1), 'evidence': match.group(2)} for match in dreaming_call_sections(body)
+                           if not any(p.get('key') == key and p.get('change') == match.group(1) for p in ledger)], key)
+        if key in opened:
+            cards[key] = body
+    return cards, None
 
 
 def merge_policy_auto(ctx, text, env):
@@ -2390,10 +2399,11 @@ def raise_card(ctx, calls, charters, tonight, env, errors):
     opened = open_calls(ctx, env)
     with ExitStack() as locks:
         listed = set(opened) if opened is not None else set()
-        cards = open_dream_cards(ctx, env, opened, ledger, locks) if opened is not None else None
+        cards, unreadable = (open_dream_cards(ctx, env, opened, ledger, locks) if opened is not None
+                             else (None, 'open cards unreadable'))
         if cards is None:
-            entry['state'] = 'not raised: open cards unreadable'
-            errors.append('captain card not raised: open cards unreadable')
+            entry['state'] = 'not raised: ' + unreadable
+            errors.append('captain card not raised: ' + unreadable)
             return
         if listed != set(opened):
             calls = unanswered_calls(ctx, calls, tonight, env)
@@ -2401,12 +2411,7 @@ def raise_card(ctx, calls, charters, tonight, env, errors):
                 entry['state'] = 'not raised: earlier card closed'
                 return
         if cards:
-            sections = {key: list(re.finditer(r'(?ms)^- (?!Apply this charter edit for )(.*?) Evidence: (.*?)(?=\n(?:- |\S)|\Z)', body))
-                        for key, body in cards.items()}
-            for card_key, matches in sections.items():
-                record_calls(ctx, [{'change': match.group(1), 'evidence': match.group(2)} for match in matches
-                                   if not any(p.get('key') == card_key and p.get('change') == match.group(1)
-                                              for p in ledger)], card_key)
+            sections = {key: dreaming_call_sections(body) for key, body in cards.items()}
             key = next((key for key, matches in sections.items()
                         if any(similar(c['change'], match.group(1)) for c in calls for match in matches)),
                        next(reversed(cards)))
