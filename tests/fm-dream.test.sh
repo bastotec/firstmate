@@ -303,6 +303,7 @@ while [ "$#" -gt 0 ]; do
 done
 exit 1
 SH
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$d/bin/card"
   chmod +x "$d/bin/"*
   printf '%s' "$d"
 }
@@ -314,7 +315,7 @@ run_dream() {  # <case-dir> <args...>
     FM_DREAM_REPORT="$d/bin/report" FM_DREAM_CAPTAIN_MEMORY="$d/bin/memory" FM_DREAM_NO_MISTAKES_DB="$d/nm.sqlite" STUB_CALLS="$d/calls" \
     FM_DREAM_FIRSTMATE="$d/firstmate" FM_DREAM_NO_MISTAKES="$d/bin/no-mistakes" FM_DREAM_GH="$d/bin/gh-pr" \
     FM_DREAM_REFLECT="$d/bin/reflect" FM_DREAM_SEND="$d/bin/send" FM_DREAM_INBOX="$d/bin/inbox" FM_DREAM_HOLD="$d/bin/hold" \
-    ROOT="$ROOT" FM_DREAM_TRACK_WAIT=0 python3 "$DREAM" run --home "$d/home" "$@"
+    FM_DREAM_CARD="$d/bin/card" ROOT="$ROOT" FM_DREAM_TRACK_WAIT=0 python3 "$DREAM" run --home "$d/home" "$@"
 }
 
 test_each_relaunch_is_counted_once() {
@@ -870,6 +871,356 @@ test_failed_empty_measurements_are_not_quiet_days() {
   pass "improve: an empty failed measurement stays partial and its reason reaches the morning summary"
 }
 
+test_answered_calls_are_not_raised_and_repeats_join_the_open_card() {
+  local d
+  d=$(new_case improve-answered-calls)
+  python3 - "$d" "$ROOT/bin" <<'PY' || fail "dreaming raised an answered or repeated captain call"
+import json, os, pathlib, subprocess, sys, time
+sys.path.insert(0, sys.argv[2])
+import fm_dream as dream
+root = pathlib.Path(sys.argv[1])
+
+def control_available(ctx, key):
+    result = subprocess.run(
+        ['bash', '-c', '. "$1"; fm_lock_try_acquire "$2" || exit 1; fm_lock_release "$2"',
+         'probe-control', str(pathlib.Path(sys.argv[2]) / 'fm-wake-lib.sh'),
+         str(ctx.state / ('.control-' + key + '.lock'))],
+        env=dict(os.environ, FM_HOME=str(ctx.home)), capture_output=True, text=True, timeout=5)
+    assert result.returncode in (0, 1), result
+    return result.returncode == 0
+
+class Context(dream.Ctx):
+    def run(self, argv, **kw):
+        self.calls.append(list(argv))
+        if argv[0] == 'fake-card':
+            if self.card_timeout:
+                raise subprocess.TimeoutExpired(argv, kw['timeout'])
+            listing = ''.join('%s\tFleet dreaming needs your call\n' % k for k in self.open_keys)
+            if self.close_after_lookup:
+                self.open_keys = set()
+                self.bodies[self.close_after_lookup] = ('Captain resolution: keep the current setup\n\n'
+                                                       + self.bodies[self.close_after_lookup])
+            return subprocess.CompletedProcess(argv, 1 if self.unreadable else 0, listing, '')
+        if argv[:2] == ['fake-hold', 'open']:
+            if self.probe_lock:
+                assert not control_available(self, argv[2]), 'open check ran without task control'
+            return subprocess.CompletedProcess(argv, self.hold_error or (0 if argv[2] in self.open_keys else 1), '', '')
+        if argv[0] == 'fake-policy':
+            if argv[1] == 'list':
+                return subprocess.CompletedProcess(argv, 0, 'owner bastotec/* auto\n', '')
+            return subprocess.CompletedProcess(argv, 0, 'auto owner bastotec\n' if argv[2].startswith('bastotec/') else 'ask default\n', '')
+        if argv[0] == 'fake-tasks':
+            if self.probe_lock and argv[1] in ('show', 'update'):
+                assert not control_available(self, argv[2]), '%s ran without task control' % argv[1]
+            if argv[1] == 'show':
+                if self.body_unreadable:
+                    return subprocess.CompletedProcess(argv, 1, '', 'task unavailable')
+                return subprocess.CompletedProcess(argv, 0, 'task:\n  body: %s\n' % json.dumps(self.bodies[argv[2]]), '')
+            if argv[1] == 'update':
+                self.bodies[argv[2]] = pathlib.Path(argv[argv.index('--body-file') + 1]).read_text()
+            if argv[1] == 'add':
+                return subprocess.CompletedProcess(argv, 0, json.dumps({'id': 'dream-call-new'}), '')
+        return subprocess.CompletedProcess(argv, 0, '', '')
+
+os.environ.update(FM_DREAM_TASKS='fake-tasks', FM_DREAM_HOLD='fake-hold', FM_DREAM_INBOX='fake-inbox',
+                  FM_DREAM_CARD='fake-card', FM_DREAM_MERGE_POLICY='fake-policy')
+home = root / 'home'
+(home / 'data').mkdir(parents=True, exist_ok=True)
+(home / 'data' / 'captain-shared.md').write_text('- 2026-10-20 captain instruction: "never deploy customer agents on Fridays without a rollback plan"\n')
+
+def ctx_with(open_keys, ledger):
+    ctx = Context(home, False)
+    ctx.calls, ctx.open_keys, ctx.unreadable, ctx.body_unreadable = [], open_keys, False, False
+    ctx.card_timeout = False
+    ctx.close_after_lookup, ctx.probe_lock, ctx.hold_error = None, False, 0
+    ctx.bodies = {key: '# Fleet dreaming needs your call\n\n' + '\n'.join(
+        '- %s Evidence: %s' % (row['change'], row.get('evidence', '')) for row in ledger if row['key'] == key)
+                  for key in open_keys}
+    ctx.deadline = time.time() + 600
+    ctx.config = {'owners': {}}
+    ctx.dir.mkdir(parents=True, exist_ok=True)
+    (ctx.dir / 'calls.jsonl').write_text(''.join(json.dumps(r) + '\n' for r in ledger))
+    return ctx
+
+def call(change):
+    return {'kind': 'captain', 'change': change, 'evidence': 'measured', 'target': 'waiting to merge', 'before': 1}
+
+answered = call('Delegate merge authority to the first mate for PRs that pass the full pipeline')
+shared = call('Never deploy customer agents on Fridays without a rollback plan')
+policy = call('Let the fleet merge bastotec/no-mistakes PRs on green')
+fresh = call('Spend up to 50 dollars a month on a hosted runner for macOS builds')
+ledger = [{'change': answered['change'], 'key': 'dream-call-old', 'at': 1}]
+
+# answered elsewhere: an earlier call now closed, captain-shared.md, the merge policy
+ctx = ctx_with(set(), ledger)
+tonight = []
+kept = dream.unanswered_calls(ctx, [answered, shared, policy, fresh], tonight, {})
+assert [c['change'] for c in kept] == [fresh['change']], kept
+reasons = [t['state'] for t in tonight]
+assert any('earlier call dream-call-old closed' in r for r in reasons), reasons
+assert any('captain-shared.md' in r for r in reasons), reasons
+assert any('merge policy' in r for r in reasons), reasons
+
+for change in ('Let the fleet merge bastotec/firstmate PRs once the full pipeline passes and CI is green',
+               'Allow firstmate to merge bastotec/firstmate PRs after the full pipeline has passed and CI is green',
+               'Let secondmates merge bastotec/firstmate PRs after all required checks have succeeded',
+               'Allow bastotec/firstmate PRs to be merged automatically after CI succeeds',
+               'Delegate automatic merge authority for pull requests in bastotec/firstmate and bastotec/no-mistakes'):
+    ctx = ctx_with(set(), [])
+    tonight = []
+    assert dream.unanswered_calls(ctx, [call(change)], tonight, {}) == [], (change, tonight)
+    assert tonight[-1]['state'] == 'not raised: already settled by the merge policy', tonight
+
+for change, target in (('Allow automatic production promotion after merging bastotec/firstmate', 'deploy'),
+                       ('Deploy bastotec/firstmate automatically after merging PRs', 'deploy'),
+                       ('Release bastotec/firstmate after merging green PRs', 'deploy'),
+                       ('Authorize spending for merging bastotec/firstmate PRs', 'held_or_blocked'),
+                       ('Allow merging bastotec/firstmate PRs without captain approval', 'held_or_blocked'),
+                       ('Let the fleet merge bastotec/firstmate PRs when CI checks are red', 'held_or_blocked'),
+                       ('Let the fleet merge bastotec/firstmate PRs or auto approve pull requests', 'held_or_blocked'),
+                       *((f'Let the fleet merge bastotec/firstmate PRs and {action}', 'held_or_blocked')
+                         for action in ('promote to prod', 'allow deployments', 'waive review', 'grant a waiver',
+                                        'skip a check', 'skip the required CI checks', 'bypass review',
+                                        'force the update', 'perform destructive actions', 'delete branches',
+                                        'destroy stored data', 'wipe state', 'reset history')),
+                       ('Let the fleet merge elsewhere/project PRs on green', 'held_or_blocked'),
+                       ('Let the fleet merge PRs on green', 'held_or_blocked')):
+    ctx = ctx_with(set(), [])
+    proposed = call(change)
+    proposed['target'] = target
+    assert dream.improve_changes(ctx, [proposed], {}), proposed
+    tonight = []
+    assert dream.unanswered_calls(ctx, [proposed], tonight, {}) == [proposed], (change, tonight)
+    dream.raise_card(ctx, [proposed], [], tonight, {}, [])
+    assert tonight[-1]['state'] == 'card raised', (change, tonight)
+    assert any(c[0] == 'fake-hold' for c in ctx.calls), ctx.calls
+
+# a repeat of a call still open joins it: no second card, no new task
+ctx = ctx_with({'dream-call-open'}, [{'change': fresh['change'], 'evidence': 'measured', 'key': 'dream-call-open', 'at': 1}])
+tonight = []
+dream.raise_card(ctx, [fresh], [], tonight, {}, [])
+assert tonight[-1]['state'] == 'already waiting on the captain as dream-call-open', tonight
+assert not any(c[0] == 'fake-tasks' and c[1] in ('add', 'update') for c in ctx.calls), ctx.calls
+
+# a new question while a card is open is added to that card, not raised separately
+suffix = ('\n- Apply this charter edit for cadia? name the kernel repo\n\n'
+          'Captain hold set: 2026-10-20T18:00:00Z\n'
+          'Captain hold reason: awaiting fleet approval\nLifecycle note: retain this exact context\n')
+ctx.bodies['dream-call-open'] += suffix
+original = ctx.bodies['dream-call-open']
+other = call('Approve a monthly budget for a second gateway account')
+tonight = []
+dream.raise_card(ctx, [other], [], tonight, {}, [])
+assert tonight[-1]['state'] == 'added to the open card dream-call-open', tonight
+assert not any(c[:2] == ['fake-tasks', 'add'] for c in ctx.calls), ctx.calls
+upd = [c for c in ctx.calls if c[:3] == ['fake-tasks', 'update', 'dream-call-open']]
+assert upd and '--archive-body' in upd[0], ctx.calls
+assert not any(c[:2] == ['fake-hold', 'hold'] for c in ctx.calls), ctx.calls
+assert [r['key'] for r in dream.call_ledger(ctx)][-1] == 'dream-call-open'
+updated = ctx.bodies['dream-call-open']
+assert updated.endswith(suffix), updated
+assert fresh['change'] in updated and other['change'] in updated, updated
+assert updated.replace('\n- %s Evidence: measured' % other['change'], '') == original, updated
+
+legacy_body = '# Fleet dreaming needs your call (2026-10-20)\n\n- %s Evidence: measured%s' % (fresh['change'], suffix)
+ctx = ctx_with({'dream-call-legacy', 'dream-call-z-newer'}, [])
+ctx.bodies['dream-call-legacy'] = legacy_body
+ctx.bodies['dream-call-z-newer'] = '# Fleet dreaming needs your call\n\n- %s Evidence: measured' % other['change']
+tonight = []
+dream.raise_card(ctx, [fresh], [], tonight, {}, [])
+assert tonight[-1]['state'] == 'already waiting on the captain as dream-call-legacy', tonight
+assert ctx.bodies['dream-call-legacy'] == legacy_body
+assert not any(c[0] in ('fake-hold', 'fake-tasks') and c[1] in ('hold', 'add', 'update') for c in ctx.calls), ctx.calls
+backfilled = dream.call_ledger(ctx)
+assert {(r['key'], r['change'], r['evidence']) for r in backfilled} == {
+    ('dream-call-legacy', fresh['change'], 'measured'),
+    ('dream-call-z-newer', other['change'], 'measured')}, backfilled
+assert len(backfilled) == 2, backfilled
+dream.raise_card(ctx, [fresh], [], tonight, {}, [])
+assert dream.call_ledger(ctx) == backfilled
+ctx.open_keys = set()
+ctx.facts.pop('dream_open_calls', None)
+ctx.calls = []
+ctx.facts['improve'] = {'changes': [fresh], 'tonight': []}
+assert dream.step_file(ctx)['status'] == 'done'
+assert ctx.facts['improve']['tonight'][-1]['state'] == 'not raised: already answered (earlier call dream-call-legacy closed)', ctx.facts
+assert not any(c[0] in ('fake-hold', 'fake-tasks') for c in ctx.calls), ctx.calls
+
+charter = {'mate': 'cadia', 'what': 'name the kernel repo'}
+ctx = ctx_with({'dream-call-charter'}, [])
+ctx.bodies['dream-call-charter'] = '# Fleet dreaming needs your call\n' + suffix
+tonight = []
+dream.raise_card(ctx, [], [charter], tonight, {}, [])
+assert tonight[-1]['state'] == 'already waiting on the captain as dream-call-charter', tonight
+dream.raise_card(ctx, [fresh], [], tonight, {}, [])
+assert tonight[-1]['state'] == 'added to the open card dream-call-charter', tonight
+assert ctx.bodies['dream-call-charter'].endswith(suffix), ctx.bodies
+assert fresh['change'] in ctx.bodies['dream-call-charter'], ctx.bodies
+assert not any(c[:2] in (['fake-hold', 'hold'], ['fake-tasks', 'add']) for c in ctx.calls), ctx.calls
+assert dream.call_ledger(ctx)[-1]['key'] == 'dream-call-charter'
+
+for rows in ([], [{'change': fresh['change'], 'key': 'dream-call-open'}]):
+    ctx = ctx_with({'dream-call-open'}, rows)
+    ctx.unreadable = True
+    tonight, errors = [], []
+    pending = dream.unanswered_calls(ctx, [fresh], tonight, {})
+    ctx.unreadable = False
+    dream.raise_card(ctx, pending, [], tonight, {}, errors)
+    assert tonight[-1]['state'] == 'not raised: open cards unreadable', tonight
+    assert errors == ['captain card not raised: open cards unreadable'], errors
+    assert not any(c[0] in ('fake-tasks', 'fake-hold') for c in ctx.calls), ctx.calls
+
+for rows in ([], [{'change': fresh['change'], 'key': 'dream-call-open'}]):
+    ctx = ctx_with({'dream-call-open'}, rows)
+    ctx.card_timeout = True
+    (ctx.dir / 'raised.jsonl').unlink(missing_ok=True)
+    ctx.facts['improve'] = {'changes': [fresh], 'tonight': []}
+    ctx.facts['triage'] = [{'title': 'Repair the inbox status display', 'repo': 'firstmate',
+                            'why': 'The display is stale', 'fix': 'Refresh its status', 'evidence': ['measured']}]
+    result = dream.step_file(ctx)
+    assert result['status'] == 'partial', result
+    assert result['why'] == 'captain card not raised: open cards unreadable', result
+    assert ctx.facts['improve']['tonight'][-1]['state'] == 'not raised: open cards unreadable', ctx.facts
+    assert [r['title'] for r in result['raised']] == ['Repair the inbox status display'], result
+    assert [json.loads(line)['title'] for line in (ctx.dir / 'raised.jsonl').read_text().splitlines()] == [
+        'Repair the inbox status display']
+    assert sum(c[0] == 'fake-card' for c in ctx.calls) == 1, ctx.calls
+    assert not any(c[0] == 'fake-hold' or (c[:2] == ['fake-tasks', 'add'] and 'dream-call' in c)
+                   for c in ctx.calls), ctx.calls
+
+ctx = ctx_with({'dream-call-open'}, [])
+ctx.body_unreadable = True
+tonight, errors = [], []
+dream.raise_card(ctx, [fresh], [], tonight, {}, errors)
+assert tonight[-1]['state'] == 'not raised: open cards unreadable', tonight
+assert not any(c[:2] in (['fake-hold', 'hold'], ['fake-tasks', 'add'], ['fake-tasks', 'update']) for c in ctx.calls), ctx.calls
+assert control_available(ctx, 'dream-call-open')
+
+for rows in ([], [{'change': fresh['change'], 'key': 'dream-call-open'}]):
+    for repeated in (False, True):
+        ctx = ctx_with({'dream-call-open'}, rows)
+        ctx.bodies['dream-call-open'] = legacy_body
+        ctx.close_after_lookup, ctx.probe_lock = 'dream-call-open', True
+        proposed = fresh if repeated else other
+        tonight, errors = [], []
+        pending = dream.unanswered_calls(ctx, [proposed], tonight, {})
+        assert pending == [proposed], (pending, tonight)
+        dream.raise_card(ctx, pending, [], tonight, {}, errors)
+        assert not errors, errors
+        assert ctx.bodies['dream-call-open'] == 'Captain resolution: keep the current setup\n\n' + legacy_body, ctx.bodies
+        assert not any(c[:2] == ['fake-tasks', 'update'] for c in ctx.calls), ctx.calls
+        backfilled = dream.call_ledger(ctx)
+        assert [(r['change'], r['key']) for r in backfilled if r['key'] == 'dream-call-open'] == [
+            (fresh['change'], 'dream-call-open')], backfilled
+        if repeated:
+            assert tonight[-1]['state'] == 'not raised: already answered (earlier call dream-call-open closed)', tonight
+            assert not any(c[:2] == ['fake-tasks', 'add'] for c in ctx.calls), ctx.calls
+            assert len(backfilled) == 1, backfilled
+        else:
+            assert tonight[-1]['state'] == 'card raised' and tonight[-1]['key'] == 'dream-call-new', tonight
+            assert backfilled[-1]['change'] == other['change'] and backfilled[-1]['key'] == 'dream-call-new', backfilled
+        ctx.open_keys = {'dream-call-new'} if not repeated else set()
+        ctx.close_after_lookup = None
+        ctx.facts.pop('dream_open_calls', None)
+        next_night = []
+        assert dream.unanswered_calls(ctx, [fresh], next_night, {}) == [], next_night
+        assert next_night[-1]['state'] == 'not raised: already answered (earlier call dream-call-open closed)', next_night
+        if not repeated:
+            assert dream.unanswered_calls(ctx, [other], [], {}) == [other]
+        assert control_available(ctx, 'dream-call-open')
+
+for proposed in (fresh, other):
+    ctx = ctx_with({'dream-call-legacy'}, [])
+    ctx.bodies['dream-call-legacy'] = legacy_body
+    ctx.close_after_lookup, ctx.probe_lock, ctx.body_unreadable = 'dream-call-legacy', True, True
+    tonight, errors = [], []
+    pending = dream.unanswered_calls(ctx, [proposed], tonight, {})
+    dream.raise_card(ctx, pending, [], tonight, {}, errors)
+    assert tonight[-1]['state'] == 'not raised: card state unreadable', tonight
+    assert errors == ['captain card not raised: card state unreadable'], errors
+    assert dream.call_ledger(ctx) == []
+    assert ctx.bodies['dream-call-legacy'] == 'Captain resolution: keep the current setup\n\n' + legacy_body, ctx.bodies
+    assert any(c[:3] == ['fake-tasks', 'show', 'dream-call-legacy'] for c in ctx.calls), ctx.calls
+    assert not any(c[:2] in (['fake-tasks', 'add'], ['fake-tasks', 'update'], ['fake-hold', 'hold']) for c in ctx.calls), ctx.calls
+    assert control_available(ctx, 'dream-call-legacy')
+
+ctx = ctx_with({'dream-call-open'}, [])
+ctx.probe_lock = True
+original = ctx.bodies['dream-call-open'] = legacy_body
+tonight, errors = [], []
+dream.raise_card(ctx, [other], [], tonight, {}, errors)
+assert not errors and tonight[-1]['state'] == 'added to the open card dream-call-open', (tonight, errors)
+assert ctx.bodies['dream-call-open'].replace('\n- %s Evidence: measured' % other['change'], '') == original
+assert dream.call_ledger(ctx)[-1]['key'] == 'dream-call-open'
+assert control_available(ctx, 'dream-call-open')
+
+ctx = ctx_with({'dream-call-open'}, [])
+ctx.hold_error = 2
+tonight, errors = [], []
+dream.raise_card(ctx, [fresh], [], tonight, {}, errors)
+assert tonight[-1]['state'] == 'not raised: open cards unreadable', tonight
+assert not any(c[:2] in (['fake-tasks', 'add'], ['fake-tasks', 'update']) for c in ctx.calls), ctx.calls
+assert dream.call_ledger(ctx) == []
+assert control_available(ctx, 'dream-call-open')
+
+# with no open card, a fresh call raises one card and is recorded for later nights
+ctx = ctx_with(set(), [])
+tonight = []
+dream.raise_card(ctx, [fresh], [], tonight, {}, [])
+assert tonight[-1]['state'] == 'card raised' and tonight[-1]['key'] == 'dream-call-new', tonight
+assert [r['change'] for r in dream.call_ledger(ctx)] == [fresh['change']]
+
+shared_path = home / 'data' / 'captain-shared.md'
+budget = call('Use 75 dollars monthly for dedicated Linux test servers')
+with shared_path.open('a') as fh:
+    fh.write('- 2026-10-20 captain instruction (recorded at delivery from chat): "Always follow this runner-budget rule:\n'
+             '  Use 75 dollars monthly for dedicated Linux test servers"\n')
+tonight = []
+assert dream.unanswered_calls(ctx, [budget], tonight, {}) == [], tonight
+assert tonight[-1]['state'] == 'not raised: already answered in captain-shared.md', tonight
+
+# the improve prompt is told what is already decided
+text = dream.decided_text(ctx)
+assert 'rollback plan' in text and 'Merge policy' in text and 'Already asked (dream-call-new)' in text, text
+assert 'Always follow this runner-budget rule:\n  Use 75 dollars monthly' in text, text
+PY
+  pass "improve: answered captain calls are not raised again, and a repeat joins the open card"
+}
+
+test_decided_context_keeps_complete_public_entries_only() {
+  local d
+  d=$(new_case improve-decided-private)
+  seed_improve "$d"
+  python3 - "$d/home" <<'PY'
+import json, pathlib, sys
+home = pathlib.Path(sys.argv[1])
+(home / 'data' / 'captain-shared.md').write_text(
+    '- 2026-10-20 captain instruction (recorded at delivery from chat): "Always follow the runner budget:\n'
+    '  PUBLIC BUDGET: spend up to 50 dollars a month on macOS builds"\n'
+    '- 2026-10-20 captain instruction: "PRIVATE SHARED ' + 'x' * 700 + ' finn-finance"\n'
+    '- 2026-10-20 captain instruction: "PRIVATE CONTINUATION\n  finn-finance"\n'
+    'Rule: PUBLIC RULE never deploy without a rollback plan\n')
+rows = [{'change': 'PUBLIC CALL: allow a second gateway', 'key': 'dream-call-public'},
+        {'change': 'PRIVATE QUESTION ' + 'x' * 700 + ' finn-finance', 'key': 'dream-call-secret'},
+        {'change': 'PRIVATE EVIDENCE', 'evidence': 'finn-finance', 'key': 'dream-call-evidence'}]
+(home / 'state' / 'dream').mkdir(parents=True, exist_ok=True)
+(home / 'state' / 'dream' / 'calls.jsonl').write_text(''.join(json.dumps(row) + '\n' for row in rows))
+PY
+  STUB_REFLECT=none run_dream "$d" --only collect improve > "$d/out.json" || fail "decided-context run failed"
+  python3 - "$d/calls" <<'PY' || fail "the emitted gateway request leaked or truncated a decided entry"
+import json, pathlib, sys
+requests = [json.loads(path.read_text()) for path in pathlib.Path(sys.argv[1]).glob('reflect.*')]
+assert requests, 'no gateway request emitted'
+for request in requests:
+    prompt = request['messages'][0]['content']
+    assert 'Always follow the runner budget:\n  PUBLIC BUDGET: spend up to 50 dollars' in prompt, prompt
+    assert 'PUBLIC CALL: allow a second gateway' in prompt and 'PUBLIC RULE' in prompt, prompt
+    assert all(secret not in prompt for secret in ('PRIVATE SHARED', 'PRIVATE CONTINUATION', 'PRIVATE QUESTION',
+                                                  'PRIVATE EVIDENCE', 'finn-finance')), prompt
+PY
+  pass "improve: the gateway receives complete instructions and no excluded decided records"
+}
+
 test_card_timeouts_keep_filings_and_allow_triage() {
   local d
   d=$(new_case improve-card-timeout)
@@ -891,7 +1242,8 @@ class Context(dream.Ctx):
             return subprocess.CompletedProcess(argv, 0, json.dumps({'id': 'filed-%s' % self.adds}), '')
         return subprocess.CompletedProcess(argv, 0, '', '')
 
-os.environ.update(FM_DREAM_TASKS='fake-tasks', FM_DREAM_HOLD='fake-hold', FM_DREAM_INBOX='fake-inbox')
+os.environ.update(FM_DREAM_TASKS='fake-tasks', FM_DREAM_HOLD='fake-hold', FM_DREAM_INBOX='fake-inbox',
+                  FM_DREAM_CARD='fake-card')
 for mode in ('hold', 'add', 'budget'):
     home = root / mode
     ctx = Context(home, False)
@@ -1397,6 +1749,8 @@ test_last_night_keeps_unread_homes_unresolved
 test_every_unshipped_instruction_reaches_the_summary
 test_failed_empty_measurements_are_not_quiet_days
 test_card_timeouts_keep_filings_and_allow_triage
+test_answered_calls_are_not_raised_and_repeats_join_the_open_card
+test_decided_context_keeps_complete_public_entries_only
 test_track_rejects_a_predecessor_deployment
 test_collect_builds_a_private_digest_of_the_day
 test_each_relaunch_is_counted_once
