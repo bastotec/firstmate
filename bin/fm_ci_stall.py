@@ -40,6 +40,8 @@ not edit workflows. When delivery fails or times out, the scan raises that
 blocker itself: a second mate appends "blocked [key=ci-stall-<id>]" to its parent
 channel, the first mate's own home queues one check: wake. At most one confirmed
 hand-off or blocker is recorded per PR head; failed delivery is retried next scan.
+A scan that re-triggers newly stuck runs still hands off runs whose re-trigger is
+already spent, so a stream of fresh stalls cannot starve that hand-off.
 
 Events stalled, retriggered, cancelled-for-rerun, recovered, handed-off and
 blocker append to state/ci-stall/events.jsonl with fields
@@ -292,6 +294,8 @@ class Scan:
             rid = run_id(c)
             if rid and rid not in rec["retriggered"] and rid not in rec["pending_rerun"]:
                 fresh.setdefault(rid, (c, why))
+        # runs that already had their one re-trigger are handed off in the same scan
+        exhausted = [(c, why) for c, why in stuck if run_id(c) not in fresh]
         if fresh:
             for rid, (c, why) in fresh.items():
                 state = [row for row in checks if run_id(row) == rid]
@@ -303,16 +307,15 @@ class Scan:
                     save(rec_path, rec)
                     self.event(wid, pr, head, c["name"], "cancelled-for-rerun", why)
             save(rec_path, rec)
-            return
-        if rec["handed_off"]:
+        if not exhausted or rec["handed_off"]:
             save(rec_path, rec)
             return
-        names = ", ".join(sorted({c["name"] for c, _ in stuck}))
-        whys = "; ".join(sorted({why for _, why in stuck}))
+        names = ", ".join(sorted({c["name"] for c, _ in exhausted}))
+        whys = "; ".join(sorted({why for _, why in exhausted}))
         infra = self.classify_infra(pr) if not rerun_failed else ""
         diagnosis = ("rerun failure: GitHub rejected 3 rerun attempts" if rerun_failed else infra) or (
             "a job that keeps running past its usual time (a hung test or step)"
-            if any(c.get("status") == "in_progress" for c, _ in stuck)
+            if any(c.get("status") == "in_progress" for c, _ in exhausted)
             else "checks that stay queued (no runner picks them up)")
         progress = "could not be re-run after 3 attempts" if rerun_failed else "is still stuck after one re-run"
         text = ("CI on %s %s: %s (%s). Diagnosis: %s. Fix it under your charter "
