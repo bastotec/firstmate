@@ -25,7 +25,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | [`fm-idle-sweep.sh`](../bin/fm-idle-sweep.sh) | Watcher-run guarded cleanup, retries, first-mate handoffs, and second-mate sweep audits; header owns eligibility and repeat suppression |
 | [`fm-backlog-normalize.sh`](../bin/fm-backlog-normalize.sh) | Repair checked rows misplaced in In flight or Queued; header owns repair and skip rules |
 | [`fm-ci-infra.sh`](../bin/fm-ci-infra.sh) | Classify a pull request's failed checks as infrastructure or code, with the runner fix; header owns classification criteria |
-| [`fm-ci-stall.sh`](../bin/fm-ci-stall.sh) | Re-trigger a worker PR's stalled CI once, then diagnose and hand it to the worker or raise one blocker; counts feed dreaming; `bin/fm_ci_stall.py` owns the bounds |
+| [`fm-ci-stall.sh`](../bin/fm-ci-stall.sh) | Worker PR stalled-CI recovery and event counts; [`fm_ci_stall.py`'s docstring](../bin/fm_ci_stall.py) owns bounds, retries and hand-off |
 | [`fm-merge-policy.sh`](../bin/fm-merge-policy.sh) | Read, set, or reset the captain's repository merge policy; header owns usage and semantics |
 | [`fm-approval-wait.sh`](../bin/fm-approval-wait.sh) | Record, inspect, and explicitly release a parent-owned approval exclusion; header owns the binding and release contract |
 | `fm-secondmate-restart-lib.sh` | Shared second-mate restart capability and persistence-request contract |

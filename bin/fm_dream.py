@@ -34,10 +34,16 @@ is recorded and never stops the next:
            asks the pinned gateway model for up to three changes, each tied to
            evidence and a supported TARGETS measurement (one call, no tools, a
            bounded digest). docs/configuration.md owns the model pin and failure
-           policy. Dry runs measure but call no model. Empty successful measurements
-           are a quiet day; unread measurements make the step partial, including
-           when no timelines survive. Independent actions still run and are tracked
-           and summarized. The changes are acted on, not just reported:
+           policy. It also sums bin/fm-ci-stall.sh event counts since the window
+           opened across included homes on this Mac only, not remote homes. Counts
+           go into the digest and the metrics point's ci_stalls map; the 'ci stalls'
+           target measures its stalled count (events, not unique incidents).
+           Nonzero counts produce a measurement even without task timelines.
+           tests/fm-dream.test.sh covers this aggregation and the no-timeline case.
+           Dry runs measure but call no model. Empty successful measurements with
+           no CI-stall activity are a quiet day; unread measurements make the step
+           partial, including when no timelines survive. Independent actions still
+           run and are tracked and summarized. The changes are acted on, not just reported:
              instructions  required edits go through the instructions step below,
                            under its guards and gated-PR path;
              code          the file step files each as a priority task for the

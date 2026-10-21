@@ -148,10 +148,15 @@
 #                          surfaced once from a queue row keyed
 #                          parked-run:<id>:..., queued by
 #                          bin/fm-parked-run-watch.sh, which this watcher runs
-#                          detached every FM_PARKED_RUN_INTERVAL seconds (600);
-#                          ci-stall:<id>:<epoch> is queued by bin/fm-ci-stall.sh,
-#                          run detached every FM_CI_STALL_INTERVAL seconds (600)
+#                          detached every FM_PARKED_RUN_INTERVAL seconds (600)
 #                          while the home records a worker
+#   check: stalled CI: ...
+#                          surfaced once from a queue row keyed
+#                          ci-stall:<id>:<epoch>, queued by bin/fm-ci-stall.sh;
+#                          its Python docstring owns recovery and escalation.
+#                          This watcher runs it detached every
+#                          FM_CI_STALL_INTERVAL seconds (600) only when a worker
+#                          meta records pr=https://github.com/...
 #   check: idle workers need a decision / second mate not cleaning up idle workers: <id>...
 #                          surfaced once from durable queue rows keyed
 #                          idle-sweep:<epoch> and idle-sweep-audit:<mate>:<epoch>
@@ -2283,9 +2288,8 @@ parked_run_detached() {
     "$SCRIPT_DIR/fm-parked-run-watch.sh" scan </dev/null >/dev/null 2>&1 &
 }
 
-# Stalled CI on worker PRs is re-triggered once, then diagnosed and handed to
-# the worker (bin/fm_ci_stall.py owns what a scan does). It reads GitHub, so it
-# runs detached on its own cadence; cheap when no worker records a PR.
+# bin/fm_ci_stall.py owns stalled-CI recovery and escalation. It reads GitHub,
+# so it runs detached on its own cadence; cheap when no worker records a PR.
 ci_stall_detached() {
   [ "$(age_of "$STATE/.last-ci-stall")" -ge "$CI_STALL_INTERVAL" ] || return 0
   grep -lq '^pr=https://github.com/' "$STATE"/*.meta 2>/dev/null || return 0

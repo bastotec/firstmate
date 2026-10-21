@@ -1,36 +1,53 @@
 #!/usr/bin/env python3
 """Stalled CI on this home's worker PRs: re-trigger once, then diagnose.
 
-bin/fm-ci-stall.sh is the public entrypoint and bin/fm-watch.sh runs `scan`
-detached every FM_CI_STALL_INTERVAL seconds. A scan looks at every worker of
-this home (state/<id>.meta, kind ship or scout) whose recorded pr= is an open
-GitHub pull request and reads the check runs on its head commit.
+bin/fm-ci-stall.sh is the public entrypoint; bin/fm-watch.sh owns the detached
+scan cadence and launch condition. A scan looks at every worker of this home
+(state/<id>.meta, kind ship or scout) whose recorded pr= is an open GitHub pull
+request. It reads every page of check runs on the head commit, considering only
+checks whose app slug is github-actions. Before each cancel or rerun, it reads
+the Actions run in that PR's repository and requires its head_sha to match the
+watched head, so check URLs alone cannot authorize workflow mutations.
+Overlapping scans of one home exit zero quietly under a non-blocking lock at
+state/ci-stall/.lock.
 
 A check is stuck when it is
-  queued       longer than FM_CI_STALL_QUEUED_SECS (1200) after it was created;
-  in progress  longer than twice its usual duration, the median of the last
-               completed successful runs of that check name in this repository
-               that earlier scans recorded (state/ci-stall/durations.json), or
-               FM_CI_STALL_RUNNING_SECS (3600) until three are known;
-  cancelled    with zero steps or an annotation saying no runner was available
-               (bin/fm-ci-infra.sh owns that classification).
+  queued       longer than FM_CI_STALL_QUEUED_SECS (1200) after started_at;
+  in progress  longer than twice its usual duration, the median of the last ten
+               distinct successful check-run IDs for that name in the repository
+               observed by scans (state/ci-stall/durations.json), or
+               FM_CI_STALL_RUNNING_SECS (3600) until three samples are known;
+  cancelled    with zero steps reported by the Actions job API.
+Queued and in-progress checks without started_at are not timed.
 
-The first time a PR head has a stuck check, the scan re-triggers it once: it
-cancels a run still queued or in progress and reruns it on a later scan once
-GitHub reports it completed, or reruns a cancelled one at once. If a check on
-the same head is stuck again after that one re-run, the scan diagnoses it with
-`bin/fm-ci-infra.sh classify` (billing, a spending limit or no runner) or, for a
-run that keeps running, as a hung job, and hands it to the owning worker with
-bin/fm-send.sh: the worker fixes it under its charter (a private repository's
-workflow moves to the workload runner, an optional job is skipped by policy) or
-reports one plain blocker. When the worker cannot be reached, the scan raises
-that blocker itself: a second mate appends "blocked [key=ci-stall-<id>]" to its
-parent channel, the first mate's own home queues one check: wake. Each PR head
-is re-triggered at most once and handed off at most once.
+Recovery is once per workflow run per PR head, not once per matrix check: the
+scan cancels a run still queued or in progress and reruns it on a later scan
+once its checks are completed, or reruns an already completed run at once.
+A rejected cancel remains eligible next scan. Pending reruns stay excluded from
+stall detection until rerun succeeds; after three failed attempts they are
+diagnosed as rerun failures instead. Each confirmed transition is persisted
+before the next fallible operation, and the scan's own cancellation is not a
+no-runner stall. Changing either the worker's PR binding or its head resets
+progress in state/ci-stall/<id>.json.
 
-Every stall, re-trigger, recovery, hand-off and blocker is appended to
-state/ci-stall/events.jsonl ({"ts","id","pr","head","check","event","detail"}),
-which fleet dreaming counts. Per-head progress is state/ci-stall/<id>.json.
+Still stuck after the re-run, the scan diagnoses with `bin/fm-ci-infra.sh classify`
+(billing, a spending limit or no runner), or as a hung job or unclaimed queue.
+A classifier timeout yields an unavailable diagnosis rather than stopping the
+hand-off. bin/fm-send.sh hands it to the owning worker, which fixes it under its
+charter (a private repository's workflow moves to the workload runner, an
+optional job is skipped by policy) or reports one plain blocker; the scan does
+not edit workflows. When delivery fails or times out, the scan raises that
+blocker itself: a second mate appends "blocked [key=ci-stall-<id>]" to its parent
+channel, the first mate's own home queues one check: wake. At most one confirmed
+hand-off or blocker is recorded per PR head; failed delivery is retried next scan.
+
+Events stalled, retriggered, cancelled-for-rerun, recovered, handed-off and
+blocker append to state/ci-stall/events.jsonl with fields
+{"ts","id","pr","head","check","event","detail"}. These are event counts, not
+unique incidents: each scan emits stalled for each check still detected as stuck.
+`counts [<since-epoch>]` prints JSON counts since that epoch (inclusive), defaulting
+to the preceding 24 hours. bin/fm_dream.py owns their aggregation into dreaming.
+Regression coverage: tests/fm-ci-stall.test.sh.
 
 FM_HOME is required. Tests set FM_CI_STALL_NOW (epoch), FM_CI_STALL_GH (the gh
 executable), FM_CI_STALL_SEND (the fm-send executable) and FM_CI_STALL_INFRA
