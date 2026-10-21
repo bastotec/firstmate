@@ -1827,8 +1827,9 @@ window_to_task() {
 # next drain presents as unread status) is absorbed rather than woken for.
 # Only `done` qualifies: a failed, blocked, or needs-decision answer to the same
 # request still wakes, as does any other line in the span.
-# The line must carry exactly one lowercase correlation token, and that token's
-# record, read from the status file's own home, must name the same task.
+# The line must carry exactly one correlation token of either hex case, and that
+# token must be lowercase; its record, read from the status file's own home,
+# must name the same task.
 # The pending-reply library sources this one, so the record is read here directly.
 _FM_CLASSIFY_QUIET_CORR_RE='corr=([0-9A-Fa-f]{16})([^0-9A-Za-z]|$)'
 status_line_is_quiet_reply() {  # <status-file> <status-line>
