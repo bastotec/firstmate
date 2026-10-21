@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Steer a task by durable record: write the message into the task's steering
 # inbox and ring a constant doorbell line into its terminal, best-effort.
-# Usage: fm-send.sh [--decision-answer] <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] [--from-captain | --from-mate <sender> | --correction] [--] <text...>
+# Usage: fm-send.sh [--decision-answer] <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] [--from-captain | --from-mate <sender> | --correction | --result] [--] <text...>
 #   --decision-answer requires an exact task id and keyed answer, resolves
 #   regular metadata under the supervision lease and metadata lock, and refuses
 #   harness-native text rather than leaving the durable inbox plane.
@@ -183,8 +183,11 @@
 # it to state/captain-direct.log, and exits 0: this is a deliberate no-op, not a
 # refusal inviting a rephrased retry. --correction sends it anyway (logged),
 # for the one fix a later report from the mate shows is really needed; it cannot
-# accompany --from-captain. A --resolve-key answer is never held back, so
-# decision bookkeeping still closes.
+# accompany --from-captain. A steer that delivers new findings (a child's
+# report or outcome) is not an echo: --result, or a report file the message
+# names (fm_captain_direct_carries_result), sends it (logged result-sent).
+# --result cannot accompany --from-captain or --from-mate. A --resolve-key
+# answer is never held back, so decision bookkeeping still closes.
 #
 # From-mate tag: --from-mate <sender> --fire-and-forget <corr> delivers a peer
 # message between second mates on the first mate's behalf (bin/fm-mate-route.sh
@@ -375,7 +378,7 @@ fm_send_captain_flagged() {
     case "$1" in
       --from-captain) return 0 ;;
       --resolve-key|--fire-and-forget|--from-mate) [ $# -ge 2 ] || return 1; shift 2 ;;
-      --resolve-key=*|--fire-and-forget=*|--correction) shift ;;
+      --resolve-key=*|--fire-and-forget=*|--correction|--result) shift ;;
       *) return 1 ;;
     esac
   done
@@ -604,6 +607,7 @@ RESOLVE_KEYS=
 FIRE_AND_FORGET_ID=
 FROM_CAPTAIN=0
 CORRECTION=0
+RESULT=0
 FROM_MATE=
 END_OPTIONS=0
 fm_send_add_resolve_key() {  # <key>
@@ -652,6 +656,10 @@ while :; do
       CORRECTION=1
       shift
       ;;
+    --result)
+      RESULT=1
+      shift
+      ;;
     --from-mate)
       [ $# -ge 2 ] || { echo "error: --from-mate requires a sender mate id" >&2; exit 1; }
       [ -z "$FROM_MATE" ] || { echo "error: duplicate --from-mate" >&2; exit 1; }
@@ -676,6 +684,10 @@ if [ "$TARGET_BACKEND" != remote ]; then
 fi
 if [ "$FROM_CAPTAIN" = 1 ] && [ "$CORRECTION" = 1 ]; then
   echo "error: --correction is for a first-mate steer and cannot accompany --from-captain; nothing was sent" >&2
+  exit 1
+fi
+if [ "$RESULT" = 1 ] && { [ "$FROM_CAPTAIN" = 1 ] || [ -n "$FROM_MATE" ]; }; then
+  echo "error: --result is for a first-mate steer and cannot accompany --from-captain or --from-mate; nothing was sent" >&2
   exit 1
 fi
 if [ "$FROM_CAPTAIN" = 1 ]; then
@@ -758,10 +770,12 @@ if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ "$FROM_CAPTAIN" != 1 ] && [ -z "$FROM_MAT
   if echo_corr=$(fm_captain_direct_echo_corr "$STATE" "$TARGET_TASK_ID" "$*"); then
     if [ "$CORRECTION" = 1 ]; then
       fm_captain_direct_log "$STATE" "correction-sent corr=$echo_corr task=$TARGET_TASK_ID"
+    elif [ "$RESULT" = 1 ] || fm_captain_direct_carries_result "$*"; then
+      fm_captain_direct_log "$STATE" "result-sent corr=$echo_corr task=$TARGET_TASK_ID"
     else
       fm_captain_direct_log "$STATE" "suppressed corr=$echo_corr task=$TARGET_TASK_ID"
       printf 'suppressed=captain-direct-echo corr=%s\n' "$echo_corr"
-      echo "fm-send: NOT sent to $TARGET_TASK_ID - it already has the captain's own message (corr=$echo_corr) and answers him itself, and this steer repeats or reconciles it. Nothing to do. If a later report from $TARGET_TASK_ID shows a real gap, send only that fix with --correction." >&2
+      echo "fm-send: NOT sent to $TARGET_TASK_ID - it already has the captain's own message (corr=$echo_corr) and answers him itself, and this steer repeats or reconciles it. Nothing to do. If this delivers new findings (a child's report or outcome), resend it with --result, naming the report file. If a later report from $TARGET_TASK_ID shows a real gap, send only that fix with --correction." >&2
       exit 0
     fi
   fi
