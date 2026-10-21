@@ -148,7 +148,9 @@
 #                          surfaced once from a queue row keyed
 #                          parked-run:<id>:..., queued by
 #                          bin/fm-parked-run-watch.sh, which this watcher runs
-#                          detached every FM_PARKED_RUN_INTERVAL seconds (600)
+#                          detached every FM_PARKED_RUN_INTERVAL seconds (600);
+#                          ci-stall:<id>:<epoch> is queued by bin/fm-ci-stall.sh,
+#                          run detached every FM_CI_STALL_INTERVAL seconds (600)
 #                          while the home records a worker
 #   check: idle workers need a decision / second mate not cleaning up idle workers: <id>...
 #                          surfaced once from durable queue rows keyed
@@ -305,6 +307,8 @@ esac
 SECONDMATE_REVIVE_INTERVAL=${FM_SECONDMATE_REVIVE_INTERVAL:-30}
 PARKED_RUN_INTERVAL=${FM_PARKED_RUN_INTERVAL:-600}
 case "$PARKED_RUN_INTERVAL" in ''|*[!0-9]*|0) PARKED_RUN_INTERVAL=600 ;; esac
+CI_STALL_INTERVAL=${FM_CI_STALL_INTERVAL:-600}
+case "$CI_STALL_INTERVAL" in ''|*[!0-9]*|0) CI_STALL_INTERVAL=600 ;; esac
 IDLE_SWEEP_INTERVAL=${FM_IDLE_SWEEP_SECS:-1800}
 case "$IDLE_SWEEP_INTERVAL" in ''|*[!0-9]*|0) IDLE_SWEEP_INTERVAL=1800 ;; esac
 case "$SECONDMATE_REVIVE_INTERVAL" in ''|*[!0-9]*|0) SECONDMATE_REVIVE_INTERVAL=30 ;; esac
@@ -1750,7 +1754,7 @@ procevent_surface_queued() {
         notes="$notes ${key#inbox:}"
         continue
         ;;
-      procevent:*|secondmate-revive:*|lane-heal:*|parked-run:*|worker-quiet:*|idle-sweep:*|idle-sweep-audit:*|idle-sweep-unhandled:*|mate-mail:*) ;;
+      procevent:*|secondmate-revive:*|lane-heal:*|parked-run:*|worker-quiet:*|ci-stall:*|idle-sweep:*|idle-sweep-audit:*|idle-sweep-unhandled:*|mate-mail:*) ;;
       *) continue ;;
     esac
     [ -e "$(procevent_surfaced_marker "$key")" ] && continue
@@ -2279,6 +2283,16 @@ parked_run_detached() {
     "$SCRIPT_DIR/fm-parked-run-watch.sh" scan </dev/null >/dev/null 2>&1 &
 }
 
+# Stalled CI on worker PRs is re-triggered once, then diagnosed and handed to
+# the worker (bin/fm_ci_stall.py owns what a scan does). It reads GitHub, so it
+# runs detached on its own cadence; cheap when no worker records a PR.
+ci_stall_detached() {
+  [ "$(age_of "$STATE/.last-ci-stall")" -ge "$CI_STALL_INTERVAL" ] || return 0
+  grep -lq '^pr=https://github.com/' "$STATE"/*.meta 2>/dev/null || return 0
+  touch "$STATE/.last-ci-stall"
+  FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-ci-stall.sh" scan </dev/null >/dev/null 2>&1 &
+}
+
 # bin/fm-idle-sweep.sh owns sweep eligibility, cadence, and locking.
 # Launch detached because a sweep can take minutes and must not delay the
 # watcher's cycle or liveness beacon.
@@ -2471,6 +2485,7 @@ while :; do
   # waiting for the next session start (bin/fm-secondmate-revive.sh).
   secondmate_revive_detached
   parked_run_detached
+  ci_stall_detached
 
   # Finished workers are cleaned up and idle ones become decisions here, so a
   # home never keeps them waiting for a model turn (bin/fm-idle-sweep.sh).
