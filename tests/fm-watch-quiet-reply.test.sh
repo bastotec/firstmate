@@ -120,14 +120,22 @@ test_other_line_in_the_same_span_wakes() {
 }
 
 test_reply_naming_another_corr_wakes() {
-  local dir out
-  dir=$(make_mate_case two-corrs) || fail "could not create the pending-reply records"
-  out="$dir/watch.out"
-  start_watch "$dir" "$out"
-  sleep 1.5
-  printf 'done corr=%s corr=%s: persisted, and the other answer too\n' "$QUIET" "$LOUD" >> "$dir/state/mate.status"
-  wait_for_exit "$WATCH_PID" 100 || fail "a reply naming a second correlation must wake: $(cat "$out")"
-  pass "a done line naming a second correlation still wakes"
+  local dir out name line
+  while IFS='|' read -r name line; do
+    dir=$(make_mate_case "$name") || fail "could not create the pending-reply records"
+    out="$dir/watch.out"
+    start_watch "$dir" "$out"
+    sleep 1.5
+    printf '%s\n' "$line" >> "$dir/state/mate.status"
+    wait_for_exit "$WATCH_PID" 100 || fail "$name must wake: $(cat "$out")"
+    grep -F "$dir/state/mate.status" "$out" >/dev/null || fail "$name must name the mate: $(cat "$out")"
+    pass "$name still wakes"
+  done <<EOF
+two-corrs|done corr=$QUIET corr=$LOUD: persisted, and the other answer too
+uppercase-second-corr|done [corr=$QUIET]: persisted; corr=FEDCBA9876543210: the other requested answer
+repeated-corr|done corr=$QUIET corr=$QUIET: persisted
+uppercase-only-corr|done corr=0123456789ABCDEF: persisted
+EOF
 }
 
 test_heartbeat_does_not_resurface_quiet_reply() {

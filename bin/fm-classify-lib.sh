@@ -1830,18 +1830,18 @@ window_to_task() {
 # The line must carry exactly one lowercase correlation token, and that token's
 # record, read from the status file's own home, must name the same task.
 # The pending-reply library sources this one, so the record is read here directly.
-_FM_CLASSIFY_QUIET_CORR_RE='corr=([0-9a-f]{16})([^0-9A-Za-z]|$)'
+_FM_CLASSIFY_QUIET_CORR_RE='corr=([0-9A-Fa-f]{16})([^0-9A-Za-z]|$)'
 status_line_is_quiet_reply() {  # <status-file> <status-line>
   local f=$1 line=$2 rest corr='' dir rec field task='' wake='' _FM_VERB
   _fm_status_line_verb_into "$line"
   [ "$_FM_VERB" = 'done' ] || return 1
   rest=$line
   while [[ $rest =~ $_FM_CLASSIFY_QUIET_CORR_RE ]]; do
-    [ -z "$corr" ] || [ "$corr" = "${BASH_REMATCH[1]}" ] || return 1
+    [ -z "$corr" ] || return 1
     corr=${BASH_REMATCH[1]}
     rest=${rest#*"corr=${BASH_REMATCH[1]}"}
   done
-  [ -n "$corr" ] || return 1
+  case "$corr" in ''|*[!0-9a-f]*) return 1 ;; esac
   case "$f" in */*) dir=${f%/*} ;; *) dir=. ;; esac
   rec="${FM_PENDING_REPLY_DIR_OVERRIDE:-$dir/pending-replies}/$corr"
   [ -f "$rec" ] && [ ! -L "$rec" ] || return 1
