@@ -949,6 +949,7 @@ class Context(dream.Ctx):
             if argv[1] == 'update':
                 self.bodies[argv[2]] = pathlib.Path(argv[argv.index('--body-file') + 1]).read_text()
             if argv[1] == 'add':
+                self.bodies['dream-call-new'] = pathlib.Path(argv[argv.index('--body-file') + 1]).read_text()
                 return subprocess.CompletedProcess(argv, 0, json.dumps({'id': 'dream-call-new'}), '')
         return subprocess.CompletedProcess(argv, 0, '', '')
 
@@ -1088,6 +1089,22 @@ assert ctx.bodies['dream-call-charter'].endswith(suffix), ctx.bodies
 assert fresh['change'] in ctx.bodies['dream-call-charter'], ctx.bodies
 assert not any(c[:2] in (['fake-hold', 'hold'], ['fake-tasks', 'add']) for c in ctx.calls), ctx.calls
 assert dream.call_ledger(ctx)[-1]['key'] == 'dream-call-charter'
+
+ctx = ctx_with(set(), [])
+held = {'mate': 'cadia', 'what': 'Only change production with captain approval.'}
+tonight = []
+dream.raise_card(ctx, [], [held], tonight, {}, [])
+assert tonight[-1]['state'] == 'card raised', tonight
+body = ctx.bodies['dream-call-new']
+question = '- Apply this charter edit for cadia? ' + held['what']
+assert body.splitlines().count(question) == 1, body
+ctx.open_keys = {'dream-call-new'}
+ctx.facts.pop('dream_open_calls', None)
+ctx.calls = []
+dream.raise_card(ctx, [], [held], tonight, {}, [])
+assert tonight[-1]['state'] == 'already waiting on the captain as dream-call-new', tonight
+assert ctx.bodies['dream-call-new'] == body
+assert not any(c[:2] in (['fake-hold', 'hold'], ['fake-tasks', 'add'], ['fake-tasks', 'update']) for c in ctx.calls), ctx.calls
 
 for rows in ([], [{'change': fresh['change'], 'key': 'dream-call-open'}]):
     ctx = ctx_with({'dream-call-open'}, rows)
@@ -1550,6 +1567,94 @@ PY
   pass "charters: full-line validation, grouped nightly limits, original backups and concrete per-line reports survive reruns"
 }
 
+test_charter_backup_publication_survives_failed_copies() {
+  local d
+  d=$(new_case charter-backup-failures)
+  python3 - "$d" "$ROOT/bin" <<'PY' || fail "a failed charter backup was published or accepted on retry"
+import contextlib, io, os, pathlib, sys
+from unittest import mock
+sys.path.insert(0, sys.argv[2])
+import fm_dream as dream
+root = pathlib.Path(sys.argv[1])
+original = '# Charter\n\nOwn the domain.\n'
+line = 'Name the repository in each checklist.'
+day = '2026-10-21'
+fdopen = os.fdopen
+
+for failure in ('write', 'close', 'fsync'):
+    home = root / failure
+    path = home / 'data/charter.md'
+    backup = home / 'state/dream-charter-backups' / ('charter-' + day + '.md')
+    path.parent.mkdir(parents=True)
+    path.write_text(original)
+    path.chmod(0o640)
+    argv = ['-', str(path), str(backup), day, '["' + line + '"]']
+
+    class FailedCopy:
+        def __init__(self, fd, *args, **kw):
+            self.fh = fdopen(fd, *args, **kw)
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            self.fh.close()
+            if failure == 'close':
+                raise OSError('fixture backup close failed')
+        def write(self, text):
+            if failure == 'write':
+                self.fh.write(text[:8])
+                raise OSError('fixture disk full')
+            return self.fh.write(text)
+        def flush(self):
+            return self.fh.flush()
+        def fileno(self):
+            return self.fh.fileno()
+
+    def apply():
+        with mock.patch.object(sys, 'argv', argv), contextlib.redirect_stdout(io.StringIO()) as output:
+            exec(dream.CHARTER_PY, {})
+        return output.getvalue()
+
+    fault = (mock.patch('os.fsync', side_effect=OSError('fixture sync failed')) if failure == 'fsync'
+             else mock.patch('os.fdopen', FailedCopy))
+    with fault:
+        try:
+            apply()
+        except OSError:
+            pass
+        else:
+            raise AssertionError('backup failure did not stop application: ' + failure)
+    assert path.read_text() == original, failure
+    assert not backup.exists(), (failure, backup.read_text())
+    assert list(backup.parent.iterdir()) == [], list(backup.parent.iterdir())
+    synced = []
+    fsync, link = os.fsync, os.link
+
+    def sync(fd):
+        fsync(fd)
+        synced.append(os.fstat(fd).st_ino)
+
+    def publish(src, dst):
+        assert os.stat(src).st_ino in synced, 'backup published before fsync'
+        assert pathlib.Path(src).read_text() == original
+        assert not pathlib.Path(dst).exists()
+        link(src, dst)
+
+    with mock.patch('os.fsync', sync), mock.patch('os.link', publish):
+        result = apply()
+    assert line in path.read_text() and '"added": ["' + line + '"]' in result, result
+    assert backup.read_text() == original
+    assert path.stat().st_mode & 0o777 == 0o640
+    assert list(backup.parent.iterdir()) == [backup]
+    inode = backup.stat().st_ino
+    argv[-1] = '["List each check result separately."]'
+    apply()
+    assert backup.read_text() == original and backup.stat().st_ino == inode
+    assert 'List each check result separately.' in path.read_text()
+    assert list(backup.parent.iterdir()) == [backup]
+PY
+  pass "charters: failed backup writes, closes and syncs leave no final backup; retries publish complete copies without clobbering"
+}
+
 test_charter_failures_preserve_application_and_held_lines() {
   local d
   d=$(new_case charter-failures)
@@ -1565,6 +1670,14 @@ import fm_dream as dream
 class Context(dream.Ctx):
     def run(self, argv, **kw):
         if pathlib.Path(argv[0]).name == self.failing_tool:
+            if self.failure in ('lost-ack', 'timeout-after-apply', 'malformed-ack'):
+                result = super().run(argv, **kw)
+                assert result.returncode == 0, result
+                if self.failure == 'lost-ack':
+                    return subprocess.CompletedProcess(argv, 255, '', 'fixture connection lost')
+                if self.failure == 'malformed-ack':
+                    return subprocess.CompletedProcess(argv, 0, 'fixture unreadable result', '')
+                raise subprocess.TimeoutExpired(argv, 1)
             if self.failure == 'timeout':
                 raise subprocess.TimeoutExpired(argv, 1)
             raise OSError('fixture unavailable')
@@ -1572,13 +1685,16 @@ class Context(dream.Ctx):
 
 d = pathlib.Path(sys.argv[1])
 for n, (tool, failure, mate) in enumerate((('send', 'timeout', 'cadia'), ('send', 'oserror', 'cadia'),
-                                         ('bridge', 'timeout', 'bob-helper'), ('ssh', 'oserror', 'bob-helper'))):
+                                         ('bridge', 'timeout', 'bob-helper'), ('ssh', 'oserror', 'bob-helper'),
+                                         ('ssh', 'lost-ack', 'bob-helper'), ('ssh', 'timeout-after-apply', 'bob-helper'),
+                                         ('ssh', 'malformed-ack', 'bob-helper'))):
     ctx = Context(d / 'home', False)
     ctx.failing_tool, ctx.failure = tool, failure
     safe = 'Name each check in checklist %d.' % n
     held = 'Only change production with captain approval for checklist %d.' % n
     ctx.facts['charter_proposals'] = [{'mate': mate, 'add': [safe, held]}]
     errors = []
+    sends = (d / 'calls/send').read_bytes() if (d / 'calls/send').exists() else b''
     dream.file_improvements(ctx, [], [], errors)
     actions = ctx.facts['charter_card']
     action = next(a for a in actions if a['kind'] == 'charter')
@@ -1595,12 +1711,21 @@ for n, (tool, failure, mate) in enumerate((('send', 'timeout', 'cadia'), ('send'
         assert pathlib.Path(action['backup']).read_text() == '# Charter\n\nOwn the domain.\n', action
         assert action['add'] == [safe], action
         assert dream.step_track(ctx)['acted'] == 2, actions
+    elif failure in ('lost-ack', 'timeout-after-apply', 'malformed-ack'):
+        assert safe in charter.read_text(), charter.read_text()
+        assert action['state'].startswith('applied state unconfirmed:'), action
+        assert 'not applied' not in action['state'], action
+        assert not action.get('backup'), action
+        assert ((d / 'calls/send').read_bytes() if (d / 'calls/send').exists() else b'') == sends, 'unconfirmed application sent a nudge'
+        backup = charter.parent.parent / 'state/dream-charter-backups' / ('charter-' + ctx.day + '.md')
+        assert backup.read_text() == '# Charter\n\nOwn the domain.\n'
+        assert dream.step_track(ctx)['acted'] == 1, actions
     else:
         assert safe not in charter.read_text()
         assert action['state'].startswith('not applied:'), action
         assert dream.step_track(ctx)['acted'] == 1, actions
 PY
-  pass "charters: notification failures retain confirmed application and bridge or transport failures retain captain escalation"
+  pass "charters: failed nudges keep applied state; lost remote results remain unconfirmed without nudging; pre-write failures stay not applied"
 }
 
 test_improve_acts_on_every_kind_of_change() {
@@ -2142,6 +2267,7 @@ test_an_interrupted_night_stops_the_gate_and_keeps_the_pr
 test_charter_lines_are_applied_to_each_mate_s_own_charter
 test_charter_deduplication_and_section_placement
 test_charter_validation_limits_and_reporting
+test_charter_backup_publication_survives_failed_copies
 test_charter_failures_preserve_application_and_held_lines
 test_improve_acts_on_every_kind_of_change
 test_improve_reports_last_night_s_changes_and_their_targets

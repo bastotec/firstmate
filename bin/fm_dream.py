@@ -2284,8 +2284,10 @@ def file_improvements(ctx, already, rows, errors):
         try:
             apply_charter(ctx, entry, tonight, env, errors)
         except (OSError, subprocess.TimeoutExpired) as exc:
-            entry['state'] = 'not applied: %s' % type(exc).__name__
-            errors.append('charter for %s not applied: %s' % (mate, type(exc).__name__))
+            state = ('applied state unconfirmed' if isinstance(exc, subprocess.TimeoutExpired)
+                     and entry['state'] == 'applied state unconfirmed' else 'not applied')
+            entry['state'] = '%s: %s' % (state, type(exc).__name__)
+            errors.append('charter for %s %s' % (mate, entry['state']))
             if isinstance(exc, subprocess.TimeoutExpired):
                 ctx.left()
 
@@ -2540,13 +2542,18 @@ new, limited = new[:remaining], new[remaining:]
 if not new:
     print(json.dumps({'added': [], 'limited': limited})); sys.exit(0)
 os.makedirs(os.path.dirname(backup), exist_ok=True)
+fd, tmp_backup = tempfile.mkstemp(dir=os.path.dirname(backup), prefix='.charter-backup.')
 try:
-    fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-except FileExistsError:
-    pass
-else:
     with os.fdopen(fd, 'w', encoding='utf-8') as fh:
         fh.write(text)
+        fh.flush()
+        os.fsync(fh.fileno())
+    try:
+        os.link(tmp_backup, backup)
+    except FileExistsError:
+        pass
+finally:
+    os.unlink(tmp_backup)
 section = next((i for i, line in enumerate(parts) if line.rstrip('\r\n') == HEAD), None)
 if section is None:
     prefix = text + ('' if text.endswith('\n') else '\n')
@@ -2589,14 +2596,16 @@ def apply_charter(ctx, entry, tonight, env, errors):
             return
         argv = [os.environ.get('FM_DREAM_SSH') or 'ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host,
                 ' '.join(shlex.quote(a) for a in argv)]
+    entry['state'] = 'applied state unconfirmed'
     r = ctx.run(argv, input=CHARTER_PY, timeout=90)
     try:
         result = json.loads(r.stdout or '{}') if r.returncode == 0 else {}
         added = result.get('added')
-    except ValueError:
+    except (ValueError, AttributeError):
         added = None
     if added is None:
-        entry['state'] = 'not applied: %s' % ((r.stderr or r.stdout or 'exit %d' % r.returncode).strip()[:160])
+        state = 'not applied' if r.returncode and not host else 'applied state unconfirmed'
+        entry['state'] = '%s: %s' % (state, (r.stderr or r.stdout or 'exit %d' % r.returncode).strip()[:160])
         errors.append('charter for %s %s' % (mate, entry['state']))
         return
     limited = result.get('limited') or []
@@ -2642,6 +2651,7 @@ def raise_card(ctx, calls, charters, tonight, env, errors):
             errors.append('captain card not raised: ' + LEDGER_UNREADABLE)
         return
     opened = open_calls(ctx, env)
+    charter_questions = ['- Apply this charter edit for %s? %s' % (c['mate'], c['what']) for c in charters]
     with ExitStack() as locks:
         listed = set(opened) if opened is not None else set()
         cards, unreadable = (open_dream_cards(ctx, env, opened, ledger, locks) if opened is not None
@@ -2664,8 +2674,7 @@ def raise_card(ctx, calls, charters, tonight, env, errors):
             known = [match.group(1) for matches in sections.values() for match in matches]
             new = [c for c in calls if not any(similar(c['change'], change) for change in known)]
             lines = (['- %s Evidence: %s' % (c['change'], c['evidence']) for c in new]
-                     + [line for c in charters
-                        if (line := '- Apply this charter edit for %s? %s' % (c['mate'], c['what'])) not in body.splitlines()])
+                     + [line for line in charter_questions if line not in body.splitlines()])
             entry['key'] = key
             if not lines:
                 entry['state'] = 'already waiting on the captain as %s' % key
@@ -2690,7 +2699,7 @@ def raise_card(ctx, calls, charters, tonight, env, errors):
             entry['state'] = 'added to the open card %s' % key
             return
     card = '\n'.join(['# %s' % title, ''] + ['- %s Evidence: %s' % (c['change'], c['evidence']) for c in calls]
-                     + ['- Add this line to the charter of %s? %s' % (c['mate'], c['what']) for c in charters])
+                     + charter_questions)
     bf = ctx.dir / '.card.md'
     cf = ctx.dir / '.card.json'
     write_private(bf, card)
