@@ -1741,6 +1741,64 @@ PY
   pass "improve: polling caches confirmed commit comparisons per repository and pair, retries unread results and checks new deployments"
 }
 
+test_ci_stall_counts_include_cancellations_without_task_timelines() {
+  local d mode log
+  for mode in timelines stalls-only; do
+    d=$(new_case "ci-stalls-$mode")
+    if [ "$mode" = timelines ]; then
+      seed_improve "$d"
+    else
+      sqlite3 "$d/nm.sqlite" 'DELETE FROM runs;'
+      printf 'spawn_gen=s%s.1.2\nkind=ship\npr=https://github.com/o/r/pull/7\n' $((NOW - 3 * 86400)) \
+        > "$d/home/state/old-worker.meta"
+    fi
+    mkdir -p "$d/mate/state" "$d/excluded/state"
+    printf -- '- dave-tools - tools (home: %s; scope: tools; projects: deck; added 2026-01-01)\n- finn-finance - finance (home: %s; scope: finance; projects: books; added 2026-01-01)\n' \
+      "$d/mate" "$d/excluded" > "$d/home/data/secondmates.md"
+    cat > "$d/bin/ci-stall" <<'SH'
+#!/usr/bin/env bash
+[ "$1" = counts ] && [ "$2" -eq "$((FM_DREAM_NOW - 86400))" ] || exit 1
+printf '%s\n' "$FM_HOME" >> "$STUB_CALLS/ci-stall"
+if [ "$FM_HOME" = "$STUB_CI_PRIMARY" ]; then
+  echo '{"stalled":1,"cancelled-for-rerun":2}'
+elif [ "$FM_HOME" = "${STUB_CI_PRIMARY%/home}/mate" ]; then
+  echo '{"cancelled-for-rerun":3,"recovered":1}'
+else
+  exit 1
+fi
+SH
+    chmod +x "$d/bin/ci-stall"
+    if [ "$mode" = timelines ]; then
+      STUB_CI_PRIMARY="$d/home" FM_DREAM_CI_STALL="$d/bin/ci-stall" STUB_REFLECT=none \
+        run_dream "$d" --only collect improve > "$d/out.json" || fail "CI counts with timelines failed"
+    else
+      STUB_CI_PRIMARY="$d/home" FM_DREAM_CI_STALL="$d/bin/ci-stall" STUB_REFLECT=none STUB_SKILLS=none STUB_NO_TRIAGE=1 \
+        run_dream "$d" > "$d/out.json" || fail "CI-only dreaming failed"
+    fi
+    log=$(ls "$d"/home/state/dream/runs/*.json)
+    python3 - "$d" "$log" "$mode" <<'PY' || fail "CI stall counts missing from dreaming outputs"
+import json, pathlib, sys
+d, log, mode = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
+run = json.loads(log.read_text())
+point = run['improve']['point']
+expected = {'stalled': 1, 'cancelled-for-rerun': 5, 'recovered': 1,
+            'retriggered': 0, 'handed-off': 0, 'blocker': 0}
+assert point['ci_stalls'] == expected, point
+assert run['steps']['improve']['status'] == 'done', run['steps']['improve']
+digest = next((d / 'home/state/dream').glob('digest-*.md')).read_text()
+assert 'CI stalls (this Mac):' in digest and 'cancelled-for-rerun 5' in digest, digest
+calls = (d / 'calls/ci-stall').read_text().splitlines()
+assert sorted(calls) == sorted([str(d / 'home'), str(d / 'mate')]), calls
+if mode == 'stalls-only':
+    assert run['improve']['metrics']['tasks'] == 0 and run['improve']['metrics']['sessions'] == 0
+    points = [json.loads(line) for line in (d / 'home/state/dream/improve.jsonl').read_text().splitlines()]
+    assert len(points) == 1 and points[0]['ci_stalls'] == expected, points
+PY
+  done
+  pass "dreaming sums cancellations across local homes even without task timelines"
+}
+
+test_ci_stall_counts_include_cancellations_without_task_timelines
 test_improve_rejects_missing_repositories_before_filing
 test_measurement_failure_preserves_independent_actions
 test_last_night_requires_evidence_before_resolving_failed_cards

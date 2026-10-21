@@ -673,6 +673,8 @@ portable_serial_weight_hints() {
 # serial shards 1 and 9 of run 39277793508 (2026-10-19); other checks failed.
 # fm-merge-policy was measured in green serial shard 4 of run 39447361618
 # (2026-10-20); all serial shards passed, but other checks failed.
+# fm-ci-stall was measured in green serial shard 2 of run 39633625991
+# (2026-10-21); all serial shards passed, but other checks failed.
 # The five tests/fm-watch-triage*.test.sh suites were one 694233 ms script
 # before run 37413095868; their hints start from each suite's share of that,
 # from the per-case output timestamps of run 37401433503's serial shard 1.
@@ -701,6 +703,7 @@ tests/fm-busy-adapter-wiring.test.sh 50547
 tests/fm-busy-state.test.sh 3394
 tests/fm-card.test.sh 169480
 tests/fm-check-unregister.test.sh 494
+tests/fm-ci-stall.test.sh 7742
 tests/fm-ci-workflow.test.sh 3891
 tests/fm-classify-corr-token.test.sh 65224
 tests/fm-classify-decision-key.test.sh 1664

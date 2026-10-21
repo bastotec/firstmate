@@ -34,10 +34,16 @@ is recorded and never stops the next:
            asks the pinned gateway model for up to three changes, each tied to
            evidence and a supported TARGETS measurement (one call, no tools, a
            bounded digest). docs/configuration.md owns the model pin and failure
-           policy. Dry runs measure but call no model. Empty successful measurements
-           are a quiet day; unread measurements make the step partial, including
-           when no timelines survive. Independent actions still run and are tracked
-           and summarized. The changes are acted on, not just reported:
+           policy. It also sums bin/fm-ci-stall.sh event counts since the window
+           opened across included homes on this Mac only, not remote homes. Counts
+           go into the digest and the metrics point's ci_stalls map; the 'ci stalls'
+           target measures its stalled count (events, not unique incidents).
+           Nonzero counts produce a measurement even without task timelines.
+           tests/fm-dream.test.sh covers this aggregation and the no-timeline case.
+           Dry runs measure but call no model. Empty successful measurements with
+           no CI-stall activity are a quiet day; unread measurements make the step
+           partial, including when no timelines survive. Independent actions still
+           run and are tracked and summarized. The changes are acted on, not just reported:
              instructions  required edits go through the instructions step below,
                            under its guards and gated-PR path;
              code          the file step files each as a priority task for the
@@ -255,7 +261,8 @@ reads the request JSON on stdin and prints the gateway's reply); FM_DREAM_SEND,
 FM_DREAM_INBOX and FM_DREAM_HOLD replace bin/fm-send.sh, bin/fm-inbox.sh and
 bin/fm-captain-hold.sh; FM_DREAM_CARD and FM_DREAM_MERGE_POLICY replace bin/fm-card.sh
 and bin/fm-merge-policy.sh; FM_DREAM_TRACK_WAIT and FM_DREAM_TRACK_POLL; FM_DREAM_BRIDGE
-and FM_DREAM_SSH replace bin/fm-bridge.sh and ssh for breakdown reads.
+and FM_DREAM_SSH replace bin/fm-bridge.sh and ssh for breakdown reads; FM_DREAM_CI_STALL
+replaces bin/fm-ci-stall.sh for the CI stall counts.
 
     fm_dream.py run --home H [--only STEP ...] [--dry-run]
     fm_dream.py status --home H [--json]
@@ -1047,7 +1054,8 @@ def step_collect(ctx):
 
 # What a change may aim to move, read from one night's metrics point.
 TARGETS = ('mate median', 'mate p90', 'implementation', 'review', 'test', 'ci', 'parked at a gate', 'rework',
-           'waiting to merge', 'deploy', 'fix_rounds', 'failed_runs', 'gateway_errors', 'relaunches', 'held_or_blocked')
+           'waiting to merge', 'deploy', 'fix_rounds', 'failed_runs', 'gateway_errors', 'relaunches', 'held_or_blocked',
+           'ci stalls')
 
 IMPROVE_PROMPT = """You improve a software fleet's way of working, every night. The fleet is a first \
 mate supervising second mates and their short-lived workers, which ship changes through a validation \
@@ -1097,6 +1105,28 @@ def improve_hosts(ctx):
         ssh = [os.environ.get('FM_DREAM_SSH') or 'ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host]
         out.append((host, '~/.no-mistakes/state.sqlite', remote[host], ssh))
     return out, errors
+
+
+CI_STALL_EVENTS = ('stalled', 'retriggered', 'cancelled-for-rerun', 'recovered', 'handed-off', 'blocker')
+
+
+def ci_stall_counts(ctx):
+    """({event: count} summed over this Mac's homes since the window opened, [unread homes]),
+    from bin/fm-ci-stall.sh counts: stalled CI checks, re-triggers, recoveries, hand-offs, blockers."""
+    total, unread = dict.fromkeys(CI_STALL_EVENTS, 0), []
+    for mid, h in local_homes(ctx):
+        try:
+            r = ctx.run([tool('fm-ci-stall.sh', 'FM_DREAM_CI_STALL'), 'counts', str(int(ctx.since))], timeout=30,
+                        env=dict(os.environ, FM_HOME=str(h)))
+            got = json.loads(r.stdout) if r.returncode == 0 else None
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            got = None
+        if not isinstance(got, dict):
+            unread.append(mid)
+            continue
+        for k in CI_STALL_EVENTS:
+            total[k] += int(got.get(k) or 0)
+    return total, unread
 
 
 def reflect(ctx, model, prompt):
@@ -1176,6 +1206,8 @@ def metric_of(point, target):
         return point.get('mate_median' if target == 'mate median' else 'mate_p90')
     if target in (point.get('counted') or {}):
         return point['counted'][target]
+    if target == 'ci stalls':
+        return (point.get('ci_stalls') or {}).get('stalled')
     return (point.get('sinks') or {}).get(target, 0 if point.get('sinks') is not None else None)
 
 
@@ -1296,11 +1328,14 @@ def step_improve(ctx):
         # never counted as open or merged: the split is incomplete, and says so
         unread.append('%d PR%s unread (%s), so their merge is unknown' % (
             len(unread_prs), '' if len(unread_prs) == 1 else 's', ', '.join(unread_prs[:3])))
-    if not items:
+    stalls, stall_unread = ci_stall_counts(ctx)
+    unread += ['CI stall records unreadable for %s' % mid for mid in stall_unread]
+    if not items and not any(stalls.values()):
         ctx.facts['improve'] = ({'measurement_error': '; '.join(unread), 'changes': [], 'tonight': []} if unread else None)
         return {'status': 'partial' if unread else 'quiet day', **({'why': '; '.join(unread)} if unread else {})}
     m = fl.metrics(items)
-    text = fl.digest(m, items, unread)
+    text = fl.digest(m, items, unread) + '\n- CI stalls (this Mac): %s\n' % ', '.join(
+        '%s %d' % (k, stalls[k]) for k in CI_STALL_EVENTS)
     write_private(ctx.dir / ('improve-%s.json' % ctx.day), json.dumps({'timelines': items, 'metrics': m}, indent=1))
     prev = None
     try:
@@ -1312,7 +1347,7 @@ def step_improve(ctx):
         pass
     point = {'date': ctx.day, 'mate_median': m['mate']['median'], 'mate_p90': m['mate']['p90'],
              'session_median': m['session']['median'], 'merged': m['mate']['merged'], 'open': m['mate']['open'],
-             'sinks': m['sinks_all'], 'counted': m['counted']}
+             'sinks': m['sinks_all'], 'counted': m['counted'], 'ci_stalls': stalls}
     change = None
     if prev:
         change = {k: (point[k] - prev[k]) if point.get(k) is not None and prev.get(k) is not None else None

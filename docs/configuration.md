@@ -80,6 +80,7 @@ state/
   <id>.lane-heal-<lane>  the first mate's automatic relaunch and escalation of a second mate whose lane keeps failing, one record per lane (bin/fm-secondmate-revive.sh "LANE HEALTH")
   <id>.approval-wait approval-waits/  parent approval exclusion and release archive (bin/fm-approval-wait.sh owns schema, declaration and release)
   <id>.parked-run <id>.quiet-noted  parked validation episode and quiet-worker check-in marker (bin/fm-parked-run-watch.sh header)
+  ci-stall/               stalled-CI re-trigger progress per worker, learned check durations, and the events dreaming counts (bin/fm_ci_stall.py docstring)
   <id>.model <id>.deck-caps  in-place model choice and live driver capability (bin/fm-control.sh owns public behavior; bin/fm_model_switch.py owns capability checks)
   <id>.progress           in-turn native activity, read for the busy-age bound only (bin/fm-busy-event.sh)
   <id>.crew-state         local ship task's validation record for file watchers; bin/fm-task-state-lib.sh "PUBLISHED RECORD" owns fields, refreshes, and cleanup
@@ -770,6 +771,7 @@ Script headers own the exact parsing and fallback of each value.
 [`bin/fm-idle-sweep.sh`](../bin/fm-idle-sweep.sh) owns `FM_IDLE_SWEEP_SECS` and the watcher-run cleanup, decision, and second-mate audit contract.
 For lane-failure thresholds, overdue hand-offs, and recovery tuning, see the health comments in [`fm-deck-worker.sh`](../bin/fm-deck-worker.sh), [`fm-captain-lane.sh`](../bin/fm-captain-lane.sh), and [`fm-secondmate-revive.sh`](../bin/fm-secondmate-revive.sh).
 [`fm-parked-run-watch.sh`'s header](../bin/fm-parked-run-watch.sh) owns parked-run and quiet-worker check-in timing; [`fm-watch.sh`](../bin/fm-watch.sh) owns detached scan cadences.
+[`fm_ci_stall.py`'s docstring](../bin/fm_ci_stall.py) owns stalled-CI bounds and recovery tuning.
 
 ```sh
 # homes and paths ("FM_HOME")
