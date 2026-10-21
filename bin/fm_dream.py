@@ -65,15 +65,20 @@ is recorded and never stops the next:
                            matching or prompt truncation.
                            Open dreaming cards are discovered independently of
                            the ledger, and their questions are backfilled against
-                           the original task keys even for an unchanged repeat.
+                           the original task keys even for an unchanged repeat or
+                           a card that closes before the locked check.
                            A repeat is 'already waiting'; new calls and charter
                            proposals join the existing body without replacing prior
                            proposals or lifecycle lines. The hold check, body read,
                            update and recording share captain intake's task-control
-                           lock; a card closed since discovery is not overwritten.
+                           lock; a card closed since discovery is not overwritten,
+                           and its backfilled questions are re-filtered as answered
+                           before any new calls are raised.
                            An unreadable open-card list, hold or body (including a
                            lookup timeout) yields 'not raised: open cards unreadable'
-                           rather than a new card.
+                           rather than a new card. If a discovered card has closed
+                           and its body cannot be read, the outcome is instead
+                           'not raised: card state unreadable'.
            The changes and the measurements are also the digest's "Improve"
            section, which the instructions and triage agents read.
            It also reads last night's actions (improve-actions.jsonl) with their
@@ -194,7 +199,8 @@ Files under <home>/state/dream/:
   raised.jsonl       one line per raised item (dedupe across nights)
   calls.jsonl        dreaming questions with {change, evidence, key, at}; appended
                      after a successful card raise or update, and when discovering
-                     unrecorded questions on open cards, for later answer filtering
+                     unrecorded questions on listed cards (even if closed since
+                     discovery), for later answer filtering
   digest-<date>.md   the private digest the agents read
   charters-<date>.md private charter-edit proposals, when any are kept
   improve-<date>.json  the night's task timelines (private)
