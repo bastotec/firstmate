@@ -1,0 +1,54 @@
+FM_TEST_BEGIN 2026-10-21T14:04:31Z tests/fm-dream.test.sh family=unclassified expected_gate_skip=none
+ok - improve: missing, null and empty repositories are dropped while explicit keys and slugs still dispatch
+ok - improve: failed measurements stay partial but independent PRs and cards are tracked, recorded and summarized
+ok - improve: failed cards stay unresolved until a hold or completion is observed
+ok - improve: polling caches confirmed commit comparisons per repository and pair, retries unread results and checks new deployments
+ok - improve: unread, stale or incomplete home reports cannot answer cards or prove workers absent
+ok - improve: every unshipped or skipped instruction is reported, and only real PR links deduplicate
+ok - improve: an empty failed measurement stays partial and its reason reaches the morning summary
+ok - improve: card timeouts preserve dispatched filings and continue triage unless the step budget is exhausted
+ok - improve: tracking retains deploy-pending when only a predecessor has deployed
+ok - collect builds a private digest of the day and leaves excluded homes out
+ok - fm-dream: each relaunch is counted once, not once per log line
+ok - instructions: an interrupted night stops the gate run and still reports the PR
+ok - charters: proposed lines are appended to each mate's own charter, with a backup and a nudge; hard stops go to the captain
+ok - charters: only complete normalized bullets deduplicate and additions stay inside the dreaming section
+ok - charters: full-line validation, grouped nightly limits, original backups and concrete per-line reports survive reruns
+ok - charters: notification failures retain confirmed application and bridge or transport failures retain captain escalation
+ok - improve: Opus is asked once, and its instructions, code and captain changes are shipped, dispatched and carded
+ok - improve: last night's changes are reported with their state now and the measurement they targeted, then and now
+ok - improve: a change already open is not filed again, and a quiet night still applies its charter lines
+ok - improve: an unavailable Opus is named in the report, the measurements still land, and no other model is tried
+ok - improve: config/dream.json pins the model, and a malformed one stops the run
+ok - instructions: one small change ships through the gate as a PR, charter edits are proposed, main is untouched
+Automatic merge went well; stopped before committing as requested
+Squash commit -- not updating HEAD
+ok - instructions: ancestry and squash landings or age prune old trees, uncertain and current trees stay
+ok - instructions: changes outside the instruction files, to a hard stop, or too big are rejected before the gate
+ok - instructions: delimiter content counts toward the proposal cap and removed hard-stop checks
+ok - instructions: a gate --yes cannot pass is stopped and reported for the captain
+ok - time spent waiting for Ziggy's dream is recorded apart from the step's own time, with collect's phases
+ok - no-mistakes failures are counted by step, cause and host, with the change since the previous night
+ok - a machine whose bridge denies reports is skipped and named, never read
+ok - collect is done when every mate was read, and readable disagreements go to the digest
+ok - the skills step commits and pushes a skills-only change to main
+ok - the skills step rejects changes outside skills/, secret-like text, also in agent commits and summaries
+ok - collect reads captain-direct deliveries from every included local home, not only the main one
+ok - a skills-only edit under a non-ASCII path is accepted, not falsely rejected
+ok - a terminated run finalizes as partial, keeping what its completed steps earned
+ok - tasks-axi output with raw control characters is still parsed, so the handoff and ledger are written
+ok - triage drops duplicates and low Jev scores, keeps three and files them with their owners
+ok - an agent that fails (a gateway 502) is reported as failed, not as no changes
+ok - a malformed or mistyped dream.json stops the run before anything is collected
+ok - the Jev helper refuses bad input and a missing key before any call
+ok - an agent that fails once and then succeeds is reported by its second attempt
+ok - a repository whose open PRs cannot be read gets nothing filed, and the report says so
+ok - a corrupt ledger or a triage agent that writes nothing files nothing and is reported
+ok - a terminated run ends its agent and removes its worktree
+ok - a dry run files nothing, pushes nothing and leaves the last summary alone
+ok - the captain memory's nightly upkeep runs in dreaming, and only a failure to run is not clean
+ok - the fleet report carries the last dreaming run
+FM_TEST_END 2026-10-21T14:09:34Z tests/fm-dream.test.sh exit=0 duration_ms=302136 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=303733
+FM_TEST_SUMMARY_FAMILY family=unclassified count=1 duration_ms=302136 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-dream.test.sh duration_ms=302136

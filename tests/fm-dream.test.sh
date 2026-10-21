@@ -1016,10 +1016,76 @@ PY
   pass "charters: proposed lines are appended to each mate's own charter, with a backup and a nudge; hard stops go to the captain"
 }
 
+test_charter_deduplication_and_section_placement() {
+  local d log
+  d=$(new_case charter-sections)
+  seed_charter_mates "$d"
+  python3 - "$d" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+head = '## Standing adjustments from fleet dreaming'
+text = ('# Charter\n\nDo not recommend "Use pytest." for JavaScript repositories.\n'
+        'Explain the scope.\n- Prefer "Name the repository." in examples.\n'
+        '- Keep   results\tconcise.\n\n' + head + '\n\n'
+        '- (2026-01-01) Name   each\tcheck.\n')
+suffix = '\n## Domain exceptions\n\nKeep this section unchanged.\n'
+for mate, tail in (('cadia', suffix), ('bob', '')):
+    charter = root / 'mates' / mate / 'data/charter.md'
+    charter.write_text(text + tail)
+    (root / (mate + '-original.md')).write_text(text + tail)
+lines = ['Use pytest.', 'Explain the scope.', 'Name the repository.',
+         'Keep results concise.', 'Name each check.']
+json.dump({'changes': [], 'charters': [{'mate': mate, 'add': lines}
+          for mate in ('cadia', 'bob-helper')]}, open(root / 'proposals.json', 'w'))
+PY
+  STUB_INSTR=charter-fixture STUB_CHARTERS="$d/proposals.json" \
+    FM_DREAM_BRIDGE="$d/bin/bridge" FM_DREAM_SSH="$d/bin/ssh" \
+    run_dream "$d" --only collect instructions file > "$d/out.json" || fail "section charter run failed"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" "$d" <<'PY' || fail "charter rule equality or section boundary was wrong"
+import json, pathlib, sys
+run = json.load(open(sys.argv[1]))
+root = pathlib.Path(sys.argv[2])
+added = ['Use pytest.', 'Explain the scope.', 'Name the repository.']
+block = ''.join('- (%s) %s\n' % (run['date'], line) for line in added)
+for mate, home in (('cadia', 'cadia'), ('bob-helper', 'bob')):
+    action = next(a for a in run['charter_card'] if a.get('mate') == mate)
+    assert action['add'] == added and action['state'].startswith('applied to the charter'), action
+    original = (root / (home + '-original.md')).read_text()
+    boundary = original.find('## Domain exceptions')
+    boundary = len(original) if boundary < 0 else boundary
+    expected = original[:boundary] + block + original[boundary:]
+    charter = root / 'mates' / home / 'data/charter.md'
+    assert charter.read_text() == expected, charter.read_text()
+    assert pathlib.Path(action['backup']).read_text() == original
+PY
+  rm -f "$d"/home/state/dream/runs/*.json
+  STUB_INSTR=charter-fixture STUB_CHARTERS="$d/proposals.json" \
+    FM_DREAM_BRIDGE="$d/bin/bridge" FM_DREAM_SSH="$d/bin/ssh" \
+    run_dream "$d" --only collect instructions file > "$d/out2.json" || fail "section charter rerun failed"
+  python3 - "$d" <<'PY' || fail "normalized duplicate rules changed the charter on rerun"
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+run = json.load(open(next((root / 'home/state/dream/runs').glob('*.json'))))
+assert {a.get('mate') for a in run['charter_card']} == {'cadia', 'bob-helper'}, run
+for action in run['charter_card']:
+    assert action['state'] == 'already in the charter', action
+for home in ('cadia', 'bob'):
+    original = (root / (home + '-original.md')).read_text()
+    block = ''.join('- (%s) %s\n' % (run['date'], line)
+                    for line in ('Use pytest.', 'Explain the scope.', 'Name the repository.'))
+    boundary = original.find('## Domain exceptions')
+    boundary = len(original) if boundary < 0 else boundary
+    assert (root / 'mates' / home / 'data/charter.md').read_text() == original[:boundary] + block + original[boundary:]
+PY
+  pass "charters: only complete normalized bullets deduplicate and additions stay inside the dreaming section"
+}
+
 test_charter_validation_limits_and_reporting() {
   local d log
   d=$(new_case charter-bounds)
   seed_charter_mates "$d" local
+  printf '# Charter\n\n- Own the domain.\n' > "$d/mates/cadia/data/charter.md"
   python3 - "$d/proposals.json" <<'PY'
 import json, sys
 lines = ['Name each repository clearly: ' + 'a' * 140, 'Describe each check clearly: ' + 'b' * 140]
@@ -1074,7 +1140,7 @@ assert sum(l.startswith('- (' + run['date'] + ') ') for l in text.splitlines()) 
 assert text.count('## Standing adjustments from fleet dreaming') == 1, text
 assert stat.S_IMODE(charter.stat().st_mode) == 0o640
 backup = d / 'mates/cadia/state/dream-charter-backups' / ('charter-' + run['date'] + '.md')
-assert backup.read_text() == '# Charter\n\nOwn the domain.\n', backup.read_text()
+assert backup.read_text() == '# Charter\n\n- Own the domain.\n', backup.read_text()
 assert stat.S_IMODE(backup.stat().st_mode) == 0o600
 actions = [a for a in run['charter_card'] if a['kind'] == 'charter']
 applied = [a for a in actions if a['state'].startswith('applied to the charter')]
@@ -1105,7 +1171,7 @@ text = (d / 'mates/cadia/data/charter.md').read_text()
 assert sum(l.startswith('- (' + run['date'] + ') ') for l in text.splitlines()) == 6, text
 assert not any(a['state'].startswith('applied to the charter') for a in run['charter_card']), run
 backup = d / 'mates/cadia/state/dream-charter-backups' / ('charter-' + run['date'] + '.md')
-assert backup.read_text() == '# Charter\n\nOwn the domain.\n', backup.read_text()
+assert backup.read_text() == '# Charter\n\n- Own the domain.\n', backup.read_text()
 PY
   pass "charters: full-line validation, grouped nightly limits, original backups and concrete per-line reports survive reruns"
 }
@@ -1639,6 +1705,7 @@ test_collect_builds_a_private_digest_of_the_day
 test_each_relaunch_is_counted_once
 test_an_interrupted_night_stops_the_gate_and_keeps_the_pr
 test_charter_lines_are_applied_to_each_mate_s_own_charter
+test_charter_deduplication_and_section_placement
 test_charter_validation_limits_and_reporting
 test_charter_failures_preserve_application_and_held_lines
 test_improve_acts_on_every_kind_of_change

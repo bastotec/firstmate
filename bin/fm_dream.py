@@ -2235,11 +2235,17 @@ def charter_lines(c):
 # Additions only, under one section, skipping lines already there; the original is
 # copied to <backup> first and the charter is replaced atomically with its mode kept.
 CHARTER_PY = r"""
-import json, os, sys, tempfile
+import json, os, re, sys, tempfile
 path, backup, day, lines = os.path.expanduser(sys.argv[1]), os.path.expanduser(sys.argv[2]), sys.argv[3], json.loads(sys.argv[4])
 text = open(path, encoding='utf-8').read()
 HEAD = '## Standing adjustments from fleet dreaming'
-new = [l for l in dict.fromkeys(lines) if l not in text]
+parts = text.splitlines(keepends=True)
+existing = set()
+for line in parts:
+    bullet = re.match(r'^\s*-\s+(?:\(\d{4}-\d{2}-\d{2}\)\s+)?(.*)$', line)
+    if bullet:
+        existing.add(' '.join(bullet.group(1).split()))
+new = [l for l in dict.fromkeys(lines) if l not in existing]
 remaining = max(0, 6 - sum(l.startswith('- (%s) ' % day) for l in text.splitlines()))
 new, limited = new[:remaining], new[remaining:]
 if not new:
@@ -2252,10 +2258,16 @@ except FileExistsError:
 else:
     with os.fdopen(fd, 'w', encoding='utf-8') as fh:
         fh.write(text)
-out = text.rstrip('\n') + '\n'
-if HEAD not in text:
-    out += '\n' + HEAD + '\n\nAdded by the nightly improve step; each line is dated.\n'
-out += ''.join('- (%s) %s\n' % (day, l) for l in new)
+section = next((i for i, line in enumerate(parts) if line.rstrip('\r\n') == HEAD), None)
+if section is None:
+    prefix = text + ('' if text.endswith('\n') else '\n')
+    prefix += '\n' + HEAD + '\n\nAdded by the nightly improve step; each line is dated.\n'
+    suffix = ''
+else:
+    end = next((i for i in range(section + 1, len(parts)) if parts[i].startswith('## ')), len(parts))
+    prefix, suffix = ''.join(parts[:end]), ''.join(parts[end:])
+out = prefix + ('' if prefix.endswith('\n') else '\n')
+out += ''.join('- (%s) %s\n' % (day, l) for l in new) + suffix
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix='.charter.')
 with os.fdopen(fd, 'w', encoding='utf-8') as fh:
     fh.write(out)
