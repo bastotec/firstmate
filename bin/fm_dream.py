@@ -230,12 +230,14 @@ and FM_DREAM_SSH replace bin/fm-bridge.sh and ssh for breakdown reads.
     fm_dream.py status --home H [--json]
 """
 import argparse
+from contextlib import contextmanager, ExitStack
 import fcntl
 import datetime as dt
 import glob
 import json
 import os
 import re
+import select
 import sqlite3
 import shlex
 import signal
@@ -2238,13 +2240,53 @@ def open_calls(ctx, env):
     return ctx.facts['dream_open_calls']
 
 
-def open_dream_cards(ctx, env, opened, ledger):
+@contextmanager
+def task_control_lock(ctx, key, env):
+    if not re.fullmatch(r'[A-Za-z0-9._-]+', key):
+        raise OSError('invalid task key')
+    proc = subprocess.Popen(
+        ['bash', '-c', '. "$1"; lock="$STATE/.control-$2.lock"; '
+         'fm_lock_acquire_wait "$lock" || exit 1; '
+         'trap \'fm_lock_release "$lock"\' EXIT; '
+         'printf "locked\\n"; read -r release',
+         'dream-control-lock', str(Path(__file__).with_name('fm-wake-lib.sh')), key],
+        env={**os.environ, **env, 'FM_HOME': str(ctx.home)},
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        limit = min(60, ctx.left())
+        if not select.select([proc.stdout], [], [], limit)[0]:
+            raise subprocess.TimeoutExpired(proc.args, limit)
+        if proc.stdout.readline() != 'locked\n':
+            raise OSError('could not acquire task control lock')
+        yield
+    finally:
+        try:
+            proc.communicate('', timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, 9)
+            except OSError:
+                pass
+            proc.communicate()
+
+
+def open_dream_cards(ctx, env, opened, ledger, locks):
     cards = {}
     for key, title in sorted(opened.items()):
         if not (key.startswith('dream-call-') or title.startswith('Fleet dreaming needs your call')
                 or any(p.get('key') == key for p in ledger)):
             continue
-        r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'show', key, '--full'], env=env, timeout=60)
+        try:
+            locks.enter_context(task_control_lock(ctx, key, env))
+            held = ctx.run([tool('fm-captain-hold.sh', 'FM_DREAM_HOLD'), 'open', key], env=env, timeout=60)
+            if held.returncode == 1:
+                opened.pop(key, None)
+                continue
+            if held.returncode:
+                return None
+            r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'show', key, '--full'], env=env, timeout=60)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
         body = re.search(r'^  body: (.*)$', r.stdout or '', re.M)
         if r.returncode or not body:
             return None
@@ -2325,50 +2367,57 @@ def raise_card(ctx, calls, charters, tonight, env, errors):
     title = 'Fleet dreaming needs your call (%s)' % ctx.day
     ledger = call_ledger(ctx)
     opened = open_calls(ctx, env)
-    cards = open_dream_cards(ctx, env, opened, ledger) if opened is not None else None
-    if cards is None:
-        entry['state'] = 'not raised: open cards unreadable'
-        errors.append('captain card not raised: open cards unreadable')
-        return
-    if cards:
-        sections = {key: list(re.finditer(r'(?ms)^- (?!Apply this charter edit for )(.*?) Evidence: (.*?)(?=\n(?:- |\S)|\Z)', body))
-                    for key, body in cards.items()}
-        for card_key, matches in sections.items():
-            record_calls(ctx, [{'change': match.group(1), 'evidence': match.group(2)} for match in matches
-                               if not any(p.get('key') == card_key and p.get('change') == match.group(1)
-                                          for p in ledger)], card_key)
-        key = next((key for key, matches in sections.items()
-                    if any(similar(c['change'], match.group(1)) for c in calls for match in matches)),
-                   next(reversed(cards)))
-        body = cards[key]
-        known = [match.group(1) for matches in sections.values() for match in matches]
-        new = [c for c in calls if not any(similar(c['change'], change) for change in known)]
-        lines = (['- %s Evidence: %s' % (c['change'], c['evidence']) for c in new]
-                 + [line for c in charters
-                    if (line := '- Apply this charter edit for %s? %s' % (c['mate'], c['what'])) not in body.splitlines()])
-        entry['key'] = key
-        if not lines:
-            entry['state'] = 'already waiting on the captain as %s' % key
+    with ExitStack() as locks:
+        listed = set(opened) if opened is not None else set()
+        cards = open_dream_cards(ctx, env, opened, ledger, locks) if opened is not None else None
+        if cards is None:
+            entry['state'] = 'not raised: open cards unreadable'
+            errors.append('captain card not raised: open cards unreadable')
             return
-        existing = sections[key]
-        insert = existing[-1].end() if existing else body.find('\n')
-        if insert < 0:
-            insert = len(body)
-        updated = body[:insert] + '\n' + '\n'.join(lines) + body[insert:]
-        bf = ctx.dir / '.card.md'
-        write_private(bf, updated)
-        try:
-            r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'update', key, '--body-file', str(bf),
-                         '--archive-body'], env=env, timeout=60)
-        finally:
-            bf.unlink(missing_ok=True)
-        if r.returncode:
-            entry['state'] = 'not added to open card %s' % key
-            errors.append('could not add tonight\'s calls to open card %s (%s)' % (key, (r.stderr or r.stdout or '').strip()[:120]))
+        if listed != set(opened):
+            calls = unanswered_calls(ctx, calls, tonight, env)
+            if not calls and not charters:
+                entry['state'] = 'not raised: earlier card closed'
+                return
+        if cards:
+            sections = {key: list(re.finditer(r'(?ms)^- (?!Apply this charter edit for )(.*?) Evidence: (.*?)(?=\n(?:- |\S)|\Z)', body))
+                        for key, body in cards.items()}
+            for card_key, matches in sections.items():
+                record_calls(ctx, [{'change': match.group(1), 'evidence': match.group(2)} for match in matches
+                                   if not any(p.get('key') == card_key and p.get('change') == match.group(1)
+                                              for p in ledger)], card_key)
+            key = next((key for key, matches in sections.items()
+                        if any(similar(c['change'], match.group(1)) for c in calls for match in matches)),
+                       next(reversed(cards)))
+            body = cards[key]
+            known = [match.group(1) for matches in sections.values() for match in matches]
+            new = [c for c in calls if not any(similar(c['change'], change) for change in known)]
+            lines = (['- %s Evidence: %s' % (c['change'], c['evidence']) for c in new]
+                     + [line for c in charters
+                        if (line := '- Apply this charter edit for %s? %s' % (c['mate'], c['what'])) not in body.splitlines()])
+            entry['key'] = key
+            if not lines:
+                entry['state'] = 'already waiting on the captain as %s' % key
+                return
+            existing = sections[key]
+            insert = existing[-1].end() if existing else body.find('\n')
+            if insert < 0:
+                insert = len(body)
+            updated = body[:insert] + '\n' + '\n'.join(lines) + body[insert:]
+            bf = ctx.dir / '.card.md'
+            write_private(bf, updated)
+            try:
+                r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'update', key, '--body-file', str(bf),
+                             '--archive-body'], env=env, timeout=60)
+            finally:
+                bf.unlink(missing_ok=True)
+            if r.returncode:
+                entry['state'] = 'not added to open card %s' % key
+                errors.append('could not add tonight\'s calls to open card %s (%s)' % (key, (r.stderr or r.stdout or '').strip()[:120]))
+                return
+            record_calls(ctx, new, key)
+            entry['state'] = 'added to the open card %s' % key
             return
-        record_calls(ctx, new, key)
-        entry['state'] = 'added to the open card %s' % key
-        return
     card = '\n'.join(['# %s' % title, ''] + ['- %s Evidence: %s' % (c['change'], c['evidence']) for c in calls]
                      + ['- Apply this charter edit for %s? %s' % (c['mate'], c['what']) for c in charters])
     bf = ctx.dir / '.card.md'

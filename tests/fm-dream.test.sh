@@ -880,19 +880,37 @@ sys.path.insert(0, sys.argv[2])
 import fm_dream as dream
 root = pathlib.Path(sys.argv[1])
 
+def control_available(ctx, key):
+    result = subprocess.run(
+        ['bash', '-c', '. "$1"; fm_lock_try_acquire "$2" || exit 1; fm_lock_release "$2"',
+         'probe-control', str(pathlib.Path(sys.argv[2]) / 'fm-wake-lib.sh'),
+         str(ctx.state / ('.control-' + key + '.lock'))],
+        env=dict(os.environ, FM_HOME=str(ctx.home)), capture_output=True, text=True, timeout=5)
+    assert result.returncode in (0, 1), result
+    return result.returncode == 0
+
 class Context(dream.Ctx):
     def run(self, argv, **kw):
         self.calls.append(list(argv))
         if argv[0] == 'fake-card':
             if self.card_timeout:
                 raise subprocess.TimeoutExpired(argv, kw['timeout'])
-            return subprocess.CompletedProcess(argv, 1 if self.unreadable else 0,
-                                               ''.join('%s\tFleet dreaming needs your call\n' % k for k in self.open_keys), '')
+            listing = ''.join('%s\tFleet dreaming needs your call\n' % k for k in self.open_keys)
+            if self.close_after_lookup:
+                self.open_keys = set()
+                self.bodies[self.close_after_lookup] = 'Captain resolution: keep the current setup\n'
+            return subprocess.CompletedProcess(argv, 1 if self.unreadable else 0, listing, '')
+        if argv[:2] == ['fake-hold', 'open']:
+            if self.probe_lock:
+                assert not control_available(self, argv[2]), 'open check ran without task control'
+            return subprocess.CompletedProcess(argv, self.hold_error or (0 if argv[2] in self.open_keys else 1), '', '')
         if argv[0] == 'fake-policy':
             if argv[1] == 'list':
                 return subprocess.CompletedProcess(argv, 0, 'owner bastotec/* auto\n', '')
             return subprocess.CompletedProcess(argv, 0, 'auto owner bastotec\n' if argv[2].startswith('bastotec/') else 'ask default\n', '')
         if argv[0] == 'fake-tasks':
+            if self.probe_lock and argv[1] in ('show', 'update'):
+                assert not control_available(self, argv[2]), '%s ran without task control' % argv[1]
             if argv[1] == 'show':
                 if self.body_unreadable:
                     return subprocess.CompletedProcess(argv, 1, '', 'task unavailable')
@@ -913,6 +931,7 @@ def ctx_with(open_keys, ledger):
     ctx = Context(home, False)
     ctx.calls, ctx.open_keys, ctx.unreadable, ctx.body_unreadable = [], open_keys, False, False
     ctx.card_timeout = False
+    ctx.close_after_lookup, ctx.probe_lock, ctx.hold_error = None, False, 0
     ctx.bodies = {key: '# Fleet dreaming needs your call\n\n' + '\n'.join(
         '- %s Evidence: %s' % (row['change'], row.get('evidence', '')) for row in ledger if row['key'] == key)
                   for key in open_keys}
@@ -987,7 +1006,7 @@ assert tonight[-1]['state'] == 'added to the open card dream-call-open', tonight
 assert not any(c[:2] == ['fake-tasks', 'add'] for c in ctx.calls), ctx.calls
 upd = [c for c in ctx.calls if c[:3] == ['fake-tasks', 'update', 'dream-call-open']]
 assert upd and '--archive-body' in upd[0], ctx.calls
-assert not any(c[0] == 'fake-hold' for c in ctx.calls), ctx.calls
+assert not any(c[:2] == ['fake-hold', 'hold'] for c in ctx.calls), ctx.calls
 assert [r['key'] for r in dream.call_ledger(ctx)][-1] == 'dream-call-open'
 updated = ctx.bodies['dream-call-open']
 assert updated.endswith(suffix), updated
@@ -1028,7 +1047,7 @@ dream.raise_card(ctx, [fresh], [], tonight, {}, [])
 assert tonight[-1]['state'] == 'added to the open card dream-call-charter', tonight
 assert ctx.bodies['dream-call-charter'].endswith(suffix), ctx.bodies
 assert fresh['change'] in ctx.bodies['dream-call-charter'], ctx.bodies
-assert not any(c[0] == 'fake-hold' or c[:2] == ['fake-tasks', 'add'] for c in ctx.calls), ctx.calls
+assert not any(c[:2] in (['fake-hold', 'hold'], ['fake-tasks', 'add']) for c in ctx.calls), ctx.calls
 assert dream.call_ledger(ctx)[-1]['key'] == 'dream-call-charter'
 
 for rows in ([], [{'change': fresh['change'], 'key': 'dream-call-open'}]):
@@ -1065,7 +1084,50 @@ ctx.body_unreadable = True
 tonight, errors = [], []
 dream.raise_card(ctx, [fresh], [], tonight, {}, errors)
 assert tonight[-1]['state'] == 'not raised: open cards unreadable', tonight
-assert not any(c[0] == 'fake-hold' or c[:2] in (['fake-tasks', 'add'], ['fake-tasks', 'update']) for c in ctx.calls), ctx.calls
+assert not any(c[:2] in (['fake-hold', 'hold'], ['fake-tasks', 'add'], ['fake-tasks', 'update']) for c in ctx.calls), ctx.calls
+assert control_available(ctx, 'dream-call-open')
+
+for repeated in (False, True):
+    ctx = ctx_with({'dream-call-open'}, [{'change': fresh['change'], 'key': 'dream-call-open'}])
+    ctx.close_after_lookup, ctx.probe_lock = 'dream-call-open', True
+    proposed = fresh if repeated else other
+    tonight, errors = [], []
+    pending = dream.unanswered_calls(ctx, [proposed], tonight, {})
+    dream.raise_card(ctx, pending, [], tonight, {}, errors)
+    assert not errors, errors
+    assert ctx.bodies['dream-call-open'] == 'Captain resolution: keep the current setup\n', ctx.bodies
+    assert not any(c[:2] == ['fake-tasks', 'update'] for c in ctx.calls), ctx.calls
+    if repeated:
+        assert tonight[-1]['state'] == 'not raised: already answered (earlier call dream-call-open closed)', tonight
+        assert not any(c[:2] == ['fake-tasks', 'add'] for c in ctx.calls), ctx.calls
+        assert len(dream.call_ledger(ctx)) == 1
+    else:
+        assert tonight[-1]['state'] == 'card raised' and tonight[-1]['key'] == 'dream-call-new', tonight
+        assert dream.call_ledger(ctx)[-1]['key'] == 'dream-call-new'
+        ctx.open_keys = {'dream-call-new'}
+        ctx.close_after_lookup = None
+        ctx.facts.pop('dream_open_calls', None)
+        assert dream.unanswered_calls(ctx, [proposed], [], {}) == [proposed]
+    assert control_available(ctx, 'dream-call-open')
+
+ctx = ctx_with({'dream-call-open'}, [])
+ctx.probe_lock = True
+original = ctx.bodies['dream-call-open'] = legacy_body
+tonight, errors = [], []
+dream.raise_card(ctx, [other], [], tonight, {}, errors)
+assert not errors and tonight[-1]['state'] == 'added to the open card dream-call-open', (tonight, errors)
+assert ctx.bodies['dream-call-open'].replace('\n- %s Evidence: measured' % other['change'], '') == original
+assert dream.call_ledger(ctx)[-1]['key'] == 'dream-call-open'
+assert control_available(ctx, 'dream-call-open')
+
+ctx = ctx_with({'dream-call-open'}, [])
+ctx.hold_error = 2
+tonight, errors = [], []
+dream.raise_card(ctx, [fresh], [], tonight, {}, errors)
+assert tonight[-1]['state'] == 'not raised: open cards unreadable', tonight
+assert not any(c[:2] in (['fake-tasks', 'add'], ['fake-tasks', 'update']) for c in ctx.calls), ctx.calls
+assert dream.call_ledger(ctx) == []
+assert control_available(ctx, 'dream-call-open')
 
 # with no open card, a fresh call raises one card and is recorded for later nights
 ctx = ctx_with(set(), [])
