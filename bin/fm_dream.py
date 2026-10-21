@@ -52,28 +52,32 @@ is recorded and never stops the next:
              charter       the file step groups proposals by mate and appends to its
                            own data/charter.md, additions only: at most 6 new lines per
                            mate per night, counting lines already dated tonight.
-                           Lines over 300 characters are rejected, never truncated;
-                           full lines matching HARD_STOPS or SECRET go to the captain
-                           card before any charter write or bridge check.
+                           Full lines matching HARD_STOPS or SECRET go to the captain
+                           card before any charter write or bridge check; other lines
+                           over 300 characters are rejected, never truncated.
                            Existing complete bullets are skipped after whitespace
                            normalization and removal of an optional (YYYY-MM-DD) date.
                            Dated bullets go at the end of the existing
                            '## Standing adjustments from fleet dreaming' section,
                            before the next '## ' heading; a missing section is created
-                           at EOF. Before writing, the original is copied to that home's
-                           state/dream-charter-backups/charter-<date>.md (0600), never
-                           overwriting an existing backup; replacement is atomic and
-                           preserves the charter's mode. Only registered included homes
-                           are touched: local homes directly, remote homes over ssh
-                           only when fm-bridge.sh check <host> maintenance allows it.
+                           at EOF. Before writing, a complete copy of the original is
+                           flushed and fsynced in a temporary file, then hard-linked to
+                           that home's state/dream-charter-backups/charter-<date>.md
+                           (0600) without overwriting an existing backup; a failed copy
+                           leaves no partial file at the final backup path. Charter
+                           replacement is atomic and preserves its mode. Only registered
+                           included homes are touched: local homes directly, remote homes
+                           over ssh only when fm-bridge.sh check <host> maintenance allows it.
                            A refusal reports 'not applied: the bridge to <host> does
-                           not allow maintenance'. The mate is told to re-read through
+                           not allow maintenance'. A lost remote result or application
+                           timeout reports 'applied state unconfirmed', not 'not applied'.
+                           Only confirmed additions trigger the re-read through
                            fm-send.sh with FM_SEND_STREAM=monologue; a failed nudge
                            keeps the applied state and backup and says it was not told.
                            The morning summary names each added line, state and backup;
              captain       the file step filters answered calls, then reuses an
                            open dreaming card or raises one for the remaining calls
-                           and the charter lines held by the guards below.
+                           and the charter lines held by the guards above.
                            A call is not raised if similar() matches its question
                            to a recorded call whose hold is no longer listed by
                            fm-card.sh calls, or to a complete instruction bullet
