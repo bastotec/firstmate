@@ -151,6 +151,11 @@ if [ -n "$instructions" ]; then
           printf '{"changes": [{"path": "AGENTS.md", "what": "says how to answer a peer", "why": "a mate answered on its parent channel", "evidence": ["x"]}],
                    "charters": [{"mate": "cadia", "what": "name the kernel repo", "why": "asked twice", "evidence": ["y"]},
                                 {"mate": "finn-finance", "what": "PRIVATE CHARTER EDIT", "why": "z"}]}' > "$instructions" ;;
+    charters) printf '{"changes": [], "charters": [
+                 {"mate": "cadia", "add": ["Name the kernel repository in every kernel task.", "Never send a message to a customer without the captain."], "why": "asked twice", "evidence": ["y"]},
+                 {"mate": "bob-helper", "add": ["Answer in one paragraph."], "why": "long replies", "evidence": ["z"]},
+                 {"mate": "dave-tools", "add": ["List the repo before a fix."], "why": "wrong repo", "evidence": ["w"]},
+                 {"mate": "finn-finance", "add": ["PRIVATE CHARTER EDIT"], "why": "z"}]}' > "$instructions" ;;
     unlisted) printf 'one\n' >> AGENTS.md; printf 'two\n' >> .agents/skills/guide/SKILL.md
               printf '{"changes": [{"path": "AGENTS.md", "what": "x", "why": "y", "evidence": ["e"]}]}' > "$instructions" ;;
     noevidence) printf 'one\n' >> AGENTS.md
@@ -779,6 +784,30 @@ PY
 
 # seed_improve <case-dir>: ship-x is a task of the home, with one run spawned
 # 2 h before NOW whose PR the gh stub reports merged at NOW - 1000.
+# seed_charter_mates <case-dir>: cadia is a local mate, bob-helper a remote one whose
+# bridge allows maintenance (ssh runs the command here), dave-tools a remote one whose
+# bridge refuses it; each home has a data/charter.md. With "local", only cadia is registered.
+seed_charter_mates() {
+  local d=$1 m
+  for m in cadia bob dave; do mkdir -p "$d/mates/$m/data"; printf '# Charter\n\nOwn the domain.\n' > "$d/mates/$m/data/charter.md"; done
+  chmod 640 "$d/mates/cadia/data/charter.md"
+  printf -- '- cadia - cad (home: %s; scope: cad; projects: ; added 2026-10-01)\n- bob-helper - help (host: workload; root: /r; home: %s; scope: help; projects: ; added 2026-10-01)\n- dave-tools - tools (host: automattic; root: /r; home: %s; scope: tools; projects: ; added 2026-10-01)\n' \
+    "$d/mates/cadia" "$d/mates/bob" "$d/mates/dave" > "$d/home/data/secondmates.md"
+  [ "${2:-}" != local ] || sed -i.bak '/host: /d' "$d/home/data/secondmates.md"
+  rm -f "$d/home/data/secondmates.md.bak"
+  cat > "$d/bin/bridge" <<'SH'
+#!/usr/bin/env bash
+case "$1 $2 $3" in "check workload maintenance"|"check "*" reports") exit 0 ;; esac; exit 1
+SH
+  cat > "$d/bin/ssh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$STUB_CALLS/ssh"
+case "$*" in *charter.md*) exec bash -c "${@: -1}" ;; esac
+cat > /dev/null; exit 1
+SH
+  chmod +x "$d/bin/bridge" "$d/bin/ssh"
+}
+
 seed_improve() {
   local d=$1
   printf '# Backlog\n\n## In flight\n- [ ] ship-x - Do the thing (repo: firstmate) (kind: ship)\n' > "$d/home/data/backlog.md"
@@ -940,6 +969,52 @@ test_track_rejects_a_predecessor_deployment() {
   pass "improve: tracking retains deploy-pending when only a predecessor has deployed"
 }
 
+test_charter_lines_are_applied_to_each_mate_s_own_charter() {
+  local d log line
+  d=$(new_case charters)
+  seed_charter_mates "$d"
+  STUB_INSTR=charters FM_DREAM_BRIDGE="$d/bin/bridge" FM_DREAM_SSH="$d/bin/ssh" \
+    run_dream "$d" --only collect instructions file > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  line="- ($(jq -r .date "$log")) Name the kernel repository in every kernel task."
+  { grep -qxF '## Standing adjustments from fleet dreaming' "$d/mates/cadia/data/charter.md" \
+    && grep -qxF -- "$line" "$d/mates/cadia/data/charter.md"; } || fail "the local charter did not gain the line: $(cat "$d/mates/cadia/data/charter.md")"
+  grep -q 'Own the domain.' "$d/mates/cadia/data/charter.md" || fail "the charter lost its own text"
+  grep -q 'customer' "$d/mates/cadia/data/charter.md" && fail "a hard-stop line was applied without the captain"
+  [ "$(stat -f %Lp "$d/mates/cadia/data/charter.md" 2>/dev/null || stat -c %a "$d/mates/cadia/data/charter.md")" = 640 ] \
+    || fail "the charter's mode changed"
+  [ "$(cat "$d"/mates/cadia/state/dream-charter-backups/charter-*.md)" = "$(printf '# Charter\n\nOwn the domain.')" ] \
+    || fail "no backup of the original charter"
+  { grep -qF -- '- (' "$d/mates/bob/data/charter.md" && grep -q 'Answer in one paragraph.' "$d/mates/bob/data/charter.md"; } \
+    || fail "the remote charter was not applied over the bridge"
+  grep -q 'List the repo' "$d/mates/dave/data/charter.md" && fail "a charter was changed across a bridge that refuses maintenance"
+  python3 - "$log" "$d/calls" <<'PY' || fail "charter actions wrong: $(jq -c '.charter_card, .summary' "$log")"
+import json, sys
+run = json.load(open(sys.argv[1]))
+acts = {a.get("mate"): a for a in run["charter_card"] if a["kind"] == "charter"}
+assert set(acts) == {"cadia", "bob-helper", "dave-tools"}, acts  # the excluded mate never appears
+assert acts["cadia"]["state"].startswith("applied to the charter (backup "), acts
+assert acts["bob-helper"]["state"].startswith("applied to the charter"), acts
+assert acts["dave-tools"]["state"] == "not applied: the bridge to automattic does not allow maintenance", acts
+card = [a for a in run["charter_card"] if a["kind"] == "captain"]
+assert len(card) == 1 and "charter line for cadia: Never send a message to a customer" in card[0]["what"], card
+sends = open(sys.argv[2] + "/send").read().splitlines()
+assert [l.split()[0] for l in sends] == ["cadia", "bob-helper"] and all("Re-read your charter now" in l for l in sends), sends
+assert set(open(sys.argv[2] + "/send.stream").read().split()) == {"monologue"}
+s = run["summary"]
+assert "Charter for cadia: Name the kernel repository in every kernel task. (applied to the charter" in s, s
+assert "PRIVATE CHARTER EDIT" not in json.dumps(run), "an excluded mate's charter edit leaked"
+PY
+  # a second night with the same lines adds nothing and keeps the first backup's charter
+  rm -f "$d"/home/state/dream/runs/*.json
+  STUB_INSTR=charters FM_DREAM_BRIDGE="$d/bin/bridge" FM_DREAM_SSH="$d/bin/ssh" \
+    run_dream "$d" --only collect instructions file > "$d/out2.json" || fail "second run exited nonzero"
+  [ "$(grep -c 'Name the kernel repository' "$d/mates/cadia/data/charter.md")" = 1 ] || fail "a repeated line was added twice"
+  [ "$(jq -r '[.charter_card[] | select(.mate == "cadia" and .kind == "charter")][0].state' "$(ls "$d"/home/state/dream/runs/*.json)")" = "already in the charter" ] \
+    || fail "a repeated line was not reported as already there"
+  pass "charters: proposed lines are appended to each mate's own charter, with a backup and a nudge; hard stops go to the captain"
+}
+
 test_improve_acts_on_every_kind_of_change() {
   local d log
   d=$(new_case improve)
@@ -981,19 +1056,21 @@ send = open(calls + "/send").read()
 assert send.startswith("dave-tools Priority from fleet dreaming: %s" % key) and "Dispatch a worker on it now" in send, send
 assert open(calls + "/send.stream").read().split() == ["monologue"], "the dispatch order did not go to the operational lane"
 assert [r["key"] for r in run["raised"]] == [key] and run["raised"][0]["mate"] == "dave-tools", run["raised"]
-# captain: one plain card, with the charter proposal on it
+# captain: one plain card for the captain-only change
 card = tonight["captain"]
 assert card["state"] == "card raised" and card["key"], card
 hold = open(calls + "/hold").read()
 assert hold.startswith("hold %s --reason Decide whether mates may merge medium-risk PRs" % card["key"]), hold
-assert "charter edit for cadia: name the kernel repo" in card["what"], card
+assert "charter" not in card["what"], card  # cadia's charter line is applied, not carded
+charter = [a for a in life["tonight"] if a["kind"] == "charter"]
+assert charter and charter[0]["state"] == "not applied: cadia is not a registered included mate", charter
 payload = json.load(open(calls + "/captain-card.json"))
 assert payload["project"] == "firstmate" and payload["recommended"] == "1", payload
 assert [o["key"] for o in payload["options"]] == ["1", "2"], payload
 assert all(card["key"] in o["instruction"] for o in payload["options"]), payload
 body = open(calls + "/body.%s.md" % card["key"][len("dream-k"):]).read()
 assert "Decide whether mates may merge medium-risk PRs" in body and "3 PRs waited for a merge" in body, body
-assert "Apply this charter edit for cadia? name the kernel repo" in body, body
+assert "charter" not in body, body
 s = run["summary"]
 assert "Improve: 1 mate task (1 merged, 0 open), start to merge median 1.7h (p90 1.7h) (-13m vs 2026-10-01)" in s, s
 assert "Tonight: AGENTS.md: says how to answer a peer (https://github.com/bastotec/firstmate/pull/990, merged and deployed)" in s, s
@@ -1051,26 +1128,29 @@ test_improve_files_no_duplicate_and_cards_charters_on_a_quiet_night() {
   [ ! -e "$d/calls/send" ] || fail "a duplicate got a dispatch order"
   [ "$(jq -r '.steps.track.status' "$log")" = "nothing changed" ] || fail "an unacted night read as done: $(jq -c .steps.track "$log")"
   d=$(new_case improve-quiet)
+  seed_charter_mates "$d" local
   sqlite3 "$d/nm.sqlite" "DELETE FROM runs"
   mkdir -p "$d/home/state/autoland"
   printf '%s autoland: merged https://github.com/bastotec/firstmate/pull/990 (deploy follows)\n%s autoland: deployed firstmate abcdef0: homes at abcdef0\n' \
     "$(iso $((NOW - 100)))" "$(iso $((NOW - 50)))" > "$d/home/state/autoland/report.log"
-  STUB_INSTR=edit run_dream "$d" --only collect improve instructions file track > "$d/out.json" || fail "quiet run exited nonzero"
+  STUB_INSTR=edit FM_DREAM_BRIDGE="$d/bin/bridge" FM_DREAM_SSH="$d/bin/ssh" \
+    run_dream "$d" --only collect improve instructions file track > "$d/out.json" || fail "quiet run exited nonzero"
   log=$(ls "$d"/home/state/dream/runs/*.json)
   python3 - "$log" <<'PY' || fail "quiet night wrong: $(jq -c '.steps, .summary' "$log")"
 import json, sys
 run = json.load(open(sys.argv[1]))
 assert run["steps"]["improve"]["status"] == "quiet day", run["steps"]
-card = [a for a in run["charter_card"] if a["kind"] == "captain"]
-assert len(card) == 1 and card[0]["state"] == "card raised" and "cadia: name the kernel repo" in card[0]["what"], card
-assert "Captain card %s for the charter edits (card raised)." % card[0]["key"] in run["summary"], run["summary"]
+charter = [a for a in run["charter_card"] if a["kind"] == "charter"]
+assert len(charter) == 1 and charter[0]["state"].startswith("applied to the charter"), charter
+assert "Charter for cadia: name the kernel repo (applied to the charter" in run["summary"], run["summary"]
 # the instructions PR from the collected sessions is still followed to its deploy and kept for tomorrow
 pr = [a for a in run["charter_card"] if a["kind"] == "instructions"]
 assert len(pr) == 1 and pr[0]["pr"].endswith("/pull/990") and pr[0]["state"] == "merged and deployed", pr
 assert "Instructions PR https://github.com/bastotec/firstmate/pull/990: merged and deployed." in run["summary"], run["summary"]
 assert run["steps"]["track"]["status"] == "done" and run["steps"]["track"]["acted"] == 2, run["steps"]["track"]
 PY
-  pass "improve: a change already open is not filed again, and a quiet night still cards its charter proposals"
+  grep -q 'name the kernel repo' "$d/mates/cadia/data/charter.md" || fail "the quiet night did not apply the charter line"
+  pass "improve: a change already open is not filed again, and a quiet night still applies its charter lines"
 }
 
 test_an_unavailable_improve_model_is_named_and_never_replaced() {
@@ -1120,7 +1200,7 @@ assert st["status"] == "pr opened" and st["pr"].endswith("/pull/990") and st["ri
 assert run["instructions"]["lines"] == 3 and run["instructions"]["proposed_lines"] == 1, run["instructions"]
 assert run["instructions"]["files"] == ["AGENTS.md"], run["instructions"]
 assert "Instructions: PR holds 3 lines in AGENTS.md; proposed AGENTS.md: says how to answer a peer (PR https://github.com/bastotec/firstmate/pull/990, rated Low)" in run["summary"], run["summary"]
-assert run["charter_proposals"] == [{"mate": "cadia", "what": "name the kernel repo"}], run["charter_proposals"]
+assert [(c["mate"], c["add"]) for c in run["charter_proposals"]] == [("cadia", ["name the kernel repo"])], run["charter_proposals"]
 PY
   grep -q -- '--yes --intent Nightly fleet dreaming instructions change' "$d/calls/nm" || fail "the change did not go through the gate"
   git -C "$d/firstmate" log -1 --format=%s "fm/dream-instructions-$(jq -r .date "$log")" | grep -q 'Improves fleet instructions' \
@@ -1296,11 +1376,13 @@ PY
 test_measurement_failure_preserves_independent_actions() {
   local d log
   d=$(new_case improve-unread-actions)
+  seed_charter_mates "$d" local
   printf 'not a sqlite database\n' > "$d/nm.sqlite"
   mkdir -p "$d/home/state/autoland"
   printf '%s autoland: merged https://github.com/bastotec/firstmate/pull/990 (deploy follows)\n%s autoland: deployed firstmate abcdef0: homes at abcdef0\n' \
     "$(iso $((NOW - 100)))" "$(iso $((NOW - 50)))" > "$d/home/state/autoland/report.log"
-  STUB_INSTR=edit STUB_NO_TRIAGE=1 STUB_SKILLS=none run_dream "$d" > "$d/out.json" || fail "run exited nonzero"
+  STUB_INSTR=edit STUB_NO_TRIAGE=1 STUB_SKILLS=none FM_DREAM_BRIDGE="$d/bin/bridge" FM_DREAM_SSH="$d/bin/ssh" \
+    run_dream "$d" > "$d/out.json" || fail "run exited nonzero"
   log=$(ls "$d"/home/state/dream/runs/*.json)
   python3 - "$log" "$d/home/state/dream" <<'PY' || fail "measurement failure lost successful actions: $(cat "$log")"
 import json, pathlib, sys
@@ -1314,13 +1396,13 @@ assert life['changes'] == [] and life['measurement_error'], life
 instructions, card = life['tonight']
 assert instructions['kind'] == 'instructions' and instructions['state'] == 'merged and deployed', instructions
 assert instructions['pr'].endswith('/pull/990'), instructions
-assert card['kind'] == 'captain' and card['state'] == 'card raised' and card['key'], card
+assert card['kind'] == 'charter' and card['state'].startswith('applied to the charter') and card['mate'] == 'cadia', card
 rows = [json.loads(l) for l in (root / 'improve-actions.jsonl').read_text().splitlines()]
 assert rows == [dict(a, date=run['date']) for a in life['tonight']], rows
 assert not (root / 'improve.jsonl').exists(), 'failed measurements were persisted as metrics'
 summary = run['summary']
 assert 'Improve: measurement incomplete:' in summary and '. Tonight: AGENTS.md:' in summary, summary
-assert instructions['pr'] + ', merged and deployed' in summary and 'captain card ' + card['key'] in summary, summary
+assert instructions['pr'] + ', merged and deployed' in summary and 'charter for cadia: name the kernel repo (applied' in summary, summary
 PY
   [ ! -e "$d/calls/reflect.0" ] || fail "failed measurements called the reflection model"
   pass "improve: failed measurements stay partial but independent PRs and cards are tracked, recorded and summarized"
@@ -1409,6 +1491,7 @@ test_track_rejects_a_predecessor_deployment
 test_collect_builds_a_private_digest_of_the_day
 test_each_relaunch_is_counted_once
 test_an_interrupted_night_stops_the_gate_and_keeps_the_pr
+test_charter_lines_are_applied_to_each_mate_s_own_charter
 test_improve_acts_on_every_kind_of_change
 test_improve_reports_last_night_s_changes_and_their_targets
 test_improve_files_no_duplicate_and_cards_charters_on_a_quiet_night
