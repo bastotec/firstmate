@@ -1163,6 +1163,28 @@ assert not any(c[:2] in (['fake-tasks', 'add'], ['fake-tasks', 'update']) for c 
 assert dream.call_ledger(ctx) == []
 assert control_available(ctx, 'dream-call-open')
 
+# an unreadable answer history raises nothing, even for a call answered on an earlier night
+for broken in (b'{"change": "torn\n', b'[]\n', b'\xff\xfe\n'):
+    ctx = ctx_with(set(), ledger)
+    (ctx.dir / 'calls.jsonl').write_bytes(json.dumps(ledger[0]).encode() + b'\n' + broken)
+    assert dream.call_ledger(ctx) is None
+    (ctx.dir / 'raised.jsonl').unlink(missing_ok=True)
+    ctx.facts['improve'] = {'changes': [answered], 'tonight': []}
+    ctx.facts['charter_proposals'] = [charter]
+    ctx.facts['triage'] = [{'title': 'Repair the inbox status display', 'repo': 'firstmate',
+                            'why': 'The display is stale', 'fix': 'Refresh its status', 'evidence': ['measured']}]
+    result = dream.step_file(ctx)
+    assert result['status'] == 'partial', result
+    assert result['why'] == 'captain card not raised: answer history unreadable', result
+    assert [t['state'] for t in ctx.facts['improve']['tonight']] == ['not raised: answer history unreadable'] * 2, ctx.facts
+    assert [r['title'] for r in result['raised']] == ['Repair the inbox status display'], result
+    assert not any(c[0] == 'fake-hold' or (c[:2] == ['fake-tasks', 'add'] and 'dream-call' in c)
+                   for c in ctx.calls), ctx.calls
+    assert 'Already asked' not in dream.decided_text(ctx)
+ctx = ctx_with(set(), [])
+(ctx.dir / 'calls.jsonl').unlink()
+assert dream.call_ledger(ctx) == []
+
 # with no open card, a fresh call raises one card and is recorded for later nights
 ctx = ctx_with(set(), [])
 tonight = []
