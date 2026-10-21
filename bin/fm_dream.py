@@ -1409,7 +1409,8 @@ def improve_summary(life):
         elif a['kind'] == 'code':
             done.append('%s (%s)' % (a['what'][:120], state))
         elif a['kind'] == 'charter':
-            done.append('charter for %s: %s (%s)' % (a.get('mate'), a['what'][:120], state))
+            done.extend('charter for %s: %s (%s)' % (a.get('mate'), line, state)
+                        for line in a.get('add') or [a['what']])
         else:
             done.append('captain card %s: %s (%s)' % (a.get('key'), a['what'][:120], state))
     if done:
@@ -1740,14 +1741,13 @@ def step_instructions(ctx):
         charters = [c for c in doc.get('charters') or [] if isinstance(c, dict) and c.get('mate')
                     and c.get('mate') not in ctx.excluded]
         if charters:
+            charters = [dict(c, add=charter_lines(c)) for c in charters]
             write_private(ctx.dir / ('charters-%s.md' % ctx.day), '\n'.join(
                 ['# Proposed charter edits, %s' % ctx.day, ''] +
-                ['- %s: %s (why: %s; evidence: %s)' % (c['mate'], c.get('what'), c.get('why'),
-                                                       '; '.join(c.get('evidence') or [])) for c in charters]) + '\n')
-            ctx.facts['charter_proposals'] = [
-                {'mate': c['mate'], 'what': c.get('what') or '; '.join(map(str, c.get('add') or []))[:300],
-                 'add': [str(l) for l in (c.get('add') if isinstance(c.get('add'), list) else [c.get('what')]) if l],
-                 'why': c.get('why'), 'evidence': c.get('evidence')} for c in charters]
+                ['- %s: %s (why: %s; evidence: %s)' % (c['mate'], line, c.get('why'),
+                                                       '; '.join(c.get('evidence') or []))
+                 for c in charters for line in c['add']]) + '\n')
+            ctx.facts['charter_proposals'] = charters
         git(ctx, 'add', '-A', cwd=tree)
         git(ctx, 'reset', '-q', '--soft', base, cwd=tree)
         raw = git(ctx, 'diff', '--cached', '--name-only', '-z', '--no-renames', base, cwd=tree, text=False)
@@ -2146,21 +2146,39 @@ def file_improvements(ctx, already, rows, errors):
             if isinstance(exc, subprocess.TimeoutExpired):
                 ctx.left()
     calls = [c for c in changes if c['kind'] == 'captain']
-    charters = []
+    charters, grouped = [], {}
     for c in ctx.facts.get('charter_proposals') or []:
-        try:
-            charters += apply_charter(ctx, c, tonight, env, errors)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            tonight[-1]['state'] = 'not applied: %s' % type(exc).__name__
-            errors.append('charter for %s not applied: %s' % (c['mate'], type(exc).__name__))
-            if isinstance(exc, subprocess.TimeoutExpired):
-                ctx.left()
+        mate = c['mate']
+        if mate in ctx.excluded:
+            continue
+        lines = grouped.setdefault(mate, [])
+        for line in charter_lines(c):
+            if HARD_STOPS.search(line) or SECRET.search(line):
+                charters.append({'mate': mate, 'what': line})
+            elif len(line) > 300:
+                tonight.append({'kind': 'charter', 'mate': mate, 'what': line, 'key': None,
+                                'state': 'not applied: line exceeds 300 characters'})
+            elif line not in lines:
+                lines.append(line)
     if calls or charters:
         try:
             raise_card(ctx, calls, charters, tonight, env, errors)
         except (OSError, subprocess.TimeoutExpired) as exc:
             tonight[-1]['state'] = 'card not raised: %s' % type(exc).__name__
             errors.append('captain card not raised: %s' % type(exc).__name__)
+            if isinstance(exc, subprocess.TimeoutExpired):
+                ctx.left()
+    for mate, lines in grouped.items():
+        if not lines:
+            continue
+        entry = {'kind': 'charter', 'mate': mate, 'what': '; '.join(lines), 'add': lines,
+                 'key': None, 'state': 'not applied'}
+        tonight.append(entry)
+        try:
+            apply_charter(ctx, entry, tonight, env, errors)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            entry['state'] = 'not applied: %s' % type(exc).__name__
+            errors.append('charter for %s not applied: %s' % (mate, type(exc).__name__))
             if isinstance(exc, subprocess.TimeoutExpired):
                 ctx.left()
 
@@ -2208,22 +2226,32 @@ def file_one(ctx, c, mate, entry, env, rows, errors, already):
         errors.append('%s: dispatch order to %s unconfirmed (%s)' % (key, mate, (s.stderr or s.stdout).strip()[:120]))
 
 
+def charter_lines(c):
+    lines = c.get('add') if isinstance(c.get('add'), list) else [c.get('what')]
+    return [' '.join(str(line).split()) for line in lines if line and str(line).strip()]
+
+
 # Appends dreaming's lines to one charter: python3 - <charter> <backup> <date> <lines JSON>.
 # Additions only, under one section, skipping lines already there; the original is
 # copied to <backup> first and the charter is replaced atomically with its mode kept.
-# Prints {"added": n}.
 CHARTER_PY = r"""
 import json, os, sys, tempfile
 path, backup, day, lines = os.path.expanduser(sys.argv[1]), os.path.expanduser(sys.argv[2]), sys.argv[3], json.loads(sys.argv[4])
 text = open(path, encoding='utf-8').read()
 HEAD = '## Standing adjustments from fleet dreaming'
-new = [l for l in lines if l not in text]
+new = [l for l in dict.fromkeys(lines) if l not in text]
+remaining = max(0, 6 - sum(l.startswith('- (%s) ' % day) for l in text.splitlines()))
+new, limited = new[:remaining], new[remaining:]
 if not new:
-    print(json.dumps({'added': 0})); sys.exit(0)
+    print(json.dumps({'added': [], 'limited': limited})); sys.exit(0)
 os.makedirs(os.path.dirname(backup), exist_ok=True)
-with open(backup, 'w', encoding='utf-8') as fh:
-    fh.write(text)
-os.chmod(backup, 0o600)
+try:
+    fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+except FileExistsError:
+    pass
+else:
+    with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+        fh.write(text)
 out = text.rstrip('\n') + '\n'
 if HEAD not in text:
     out += '\n' + HEAD + '\n\nAdded by the nightly improve step; each line is dated.\n'
@@ -2233,32 +2261,23 @@ with os.fdopen(fd, 'w', encoding='utf-8') as fh:
     fh.write(out)
 os.chmod(tmp, os.stat(path).st_mode & 0o777)
 os.replace(tmp, path)
-print(json.dumps({'added': len(new)}))
+print(json.dumps({'added': new, 'limited': limited}))
 """
 
 
-def apply_charter(ctx, c, tonight, env, errors):
+def apply_charter(ctx, entry, tonight, env, errors):
     """Appends one mate's proposed lines to its own data/charter.md, locally or
     over ssh when the bridge allows maintenance, keeps a backup of the charter in
-    that home, and tells the mate to re-read it. A line naming a hard stop is not
-    applied: it is returned for the captain's card."""
-    mate = c['mate']
-    lines = [' '.join(str(l).split())[:300] for l in c.get('add') or [] if str(l).strip()][:6]
-    stops = [l for l in lines if HARD_STOPS.search(l) or SECRET.search(l)]
-    lines = [l for l in lines if l not in stops]
-    held = [{'mate': mate, 'what': l} for l in stops]
-    entry = {'kind': 'charter', 'mate': mate, 'what': '; '.join(lines)[:300], 'key': None, 'state': 'not applied'}
-    if not lines:
-        return held
-    tonight.append(entry)
+    that home, and tells the mate to re-read it."""
+    mate, lines = entry['mate'], entry['add']
     found = next(((h, host) for mid, h, host in registry(ctx.home) if mid == mate and h), None)
     if mate in ctx.excluded or not found:
         entry['state'] = 'not applied: %s is not a registered included mate' % mate
-        return held
+        return
     home, host = found
     if ctx.dry_run:
         entry['state'] = 'dry run: not applied'
-        return held
+        return
     backup = '%s/state/dream-charter-backups/charter-%s.md' % (home.rstrip('/'), ctx.day)
     argv = ['python3', '-', '%s/data/charter.md' % home.rstrip('/'), backup, ctx.day, json.dumps(lines)]
     if host:
@@ -2266,30 +2285,42 @@ def apply_charter(ctx, c, tonight, env, errors):
         if gate.returncode:
             entry['state'] = 'not applied: the bridge to %s does not allow maintenance' % host
             errors.append('charter for %s: %s' % (mate, entry['state']))
-            return held
+            return
         argv = [os.environ.get('FM_DREAM_SSH') or 'ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host,
                 ' '.join(shlex.quote(a) for a in argv)]
     r = ctx.run(argv, input=CHARTER_PY, timeout=90)
     try:
-        added = json.loads(r.stdout or '{}').get('added') if r.returncode == 0 else None
+        result = json.loads(r.stdout or '{}') if r.returncode == 0 else {}
+        added = result.get('added')
     except ValueError:
         added = None
     if added is None:
         entry['state'] = 'not applied: %s' % ((r.stderr or r.stdout or 'exit %d' % r.returncode).strip()[:160])
         errors.append('charter for %s %s' % (mate, entry['state']))
-        return held
+        return
+    limited = result.get('limited') or []
     if not added:
-        entry['state'] = 'already in the charter'
-        return held
+        entry['state'] = 'not applied: nightly limit of 6 new lines reached' if limited else 'already in the charter'
+        entry['add'] = limited or lines
+        entry['what'] = '; '.join(entry['add'])
+        return
+    if limited:
+        tonight.append({'kind': 'charter', 'mate': mate, 'what': '; '.join(limited), 'add': limited,
+                        'key': None, 'state': 'not applied: nightly limit of 6 new lines reached'})
+    entry['add'], entry['what'] = added, '; '.join(added)
     entry['state'] = 'applied to the charter (backup %s)' % backup
+    entry['backup'] = backup
     note = ('Fleet dreaming added %d standing adjustment%s to your charter (data/charter.md, section "Standing '
             'adjustments from fleet dreaming"): %s. Re-read your charter now and follow them.'
-            % (added, '' if added == 1 else 's', '; '.join(lines)))
-    s_ = ctx.run([tool('fm-send.sh', 'FM_DREAM_SEND'), mate, note[:3800]], env=dict(env, FM_SEND_STREAM='monologue'),
-                 timeout=60)
-    if s_.returncode:
-        entry['state'] += '; the mate was not told (%s)' % (s_.stderr or s_.stdout or '').strip()[:80]
-    return held
+            % (len(added), '' if len(added) == 1 else 's', '; '.join(added)))
+    try:
+        s_ = ctx.run([tool('fm-send.sh', 'FM_DREAM_SEND'), mate, note[:3800]], env=dict(env, FM_SEND_STREAM='monologue'),
+                     timeout=60)
+        if s_.returncode:
+            entry['state'] += '; the mate was not told (%s)' % (s_.stderr or s_.stdout or '').strip()[:80]
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        entry['state'] += '; the mate was not told (%s)' % type(exc).__name__
+        errors.append('charter for %s: the mate was not told (%s)' % (mate, type(exc).__name__))
 
 
 def raise_card(ctx, calls, charters, tonight, env, errors):
@@ -2461,7 +2492,8 @@ def summary_line(run):
     if card:
         text += ' Captain card %s for the charter lines that need you (%s).' % (card['key'], card.get('state'))
     for a in (a for a in run.get('charter_card') or [] if a.get('kind') == 'charter'):
-        text += ' Charter for %s: %s (%s).' % (a.get('mate'), a['what'][:120], a.get('state'))
+        for line in a.get('add') or [a['what']]:
+            text += ' Charter for %s: %s (%s).' % (a.get('mate'), line, a.get('state'))
     shipped = next((a for a in run.get('charter_card') or [] if a.get('kind') == 'instructions' and a.get('pr')), None)
     if shipped:
         text += ' Instructions PR %s: %s.' % (shipped['pr'], shipped.get('state'))
