@@ -43,12 +43,28 @@ is recorded and never stops the next:
              code          the file step files each as a priority task for the
                            repository's owning mate and tells that mate to
                            dispatch a worker now (the main home through its inbox);
-             charter       the file step appends a mate's proposed lines to its own
-                           data/charter.md (additions only, at most 6 lines, under one
-                           dated section, backup in that home's
-                           state/dream-charter-backups/), locally or over ssh when the
-                           bridge allows maintenance, and tells the mate to re-read it;
-                           a line naming a hard stop goes to the captain card instead;
+             charter       the file step groups proposals by mate and appends to its
+                           own data/charter.md, additions only: at most 6 new lines per
+                           mate per night, counting lines already dated tonight.
+                           Lines over 300 characters are rejected, never truncated;
+                           full lines matching HARD_STOPS or SECRET go to the captain
+                           card before any charter write or bridge check.
+                           Existing complete bullets are skipped after whitespace
+                           normalization and removal of an optional (YYYY-MM-DD) date.
+                           Dated bullets go at the end of the existing
+                           '## Standing adjustments from fleet dreaming' section,
+                           before the next '## ' heading; a missing section is created
+                           at EOF. Before writing, the original is copied to that home's
+                           state/dream-charter-backups/charter-<date>.md (0600), never
+                           overwriting an existing backup; replacement is atomic and
+                           preserves the charter's mode. Only registered included homes
+                           are touched: local homes directly, remote homes over ssh
+                           only when fm-bridge.sh check <host> maintenance allows it.
+                           A refusal reports 'not applied: the bridge to <host> does
+                           not allow maintenance'. The mate is told to re-read through
+                           fm-send.sh with FM_SEND_STREAM=monologue; a failed nudge
+                           keeps the applied state and backup and says it was not told.
+                           The morning summary names each added line, state and backup;
              captain       the file step raises one plain decision card for all of
                            them.
            The changes and the measurements are also the digest's "Improve"
@@ -107,9 +123,9 @@ is recorded and never stops the next:
            and an item already in its dedupe window is not filed twice.
            Code changes from the improve step are filed first, as priority-0
            tasks, and their owning mate is told to dispatch a worker now (fm-send.sh,
-           or the main home's inbox); charter lines are applied as above; captain
-           changes and charter lines naming a hard stop become
-           one decision card (fm-captain-hold.sh), even without measured tasks.
+           or the main home's inbox); charter lines follow the guards above, with
+           held lines and captain changes becoming one decision card
+           (fm-captain-hold.sh), even without measured tasks.
            Command timeouts preserve successful filings and allow remaining triage
            work while the step budget remains. Dreaming never pushes to or opens
            PRs on harness repositories, except the instructions step's one PR on
@@ -118,10 +134,12 @@ is recorded and never stops the next:
            its one line to the summary; skipped on a dry run. Its findings are
            not failures: only an upkeep that cannot run is not clean.
   track    follows tonight's instructions PR until auto-land merged and deployed it
-           (at most TRACK_WAIT seconds), then records every action of the night for
-           tomorrow's report. A PR open or merged, a confirmed dispatch order, or
-           a raised card counts as acted on; proposals with none of these yield
-           'nothing changed', which is not clean. An empty model changes list is
+           (at most TRACK_WAIT seconds), even on a night with no measured tasks,
+           then records every action of the night for tomorrow's report.
+           A PR open or merged, a confirmed dispatch order, an applied charter or
+           a raised card counts as acted on; measured change proposals with none
+           of these yield 'nothing changed', which is not clean.
+           An empty model changes list is
            an honest 'nothing to change' and stays clean.
 
 Runs are serialized by a kernel flock held for the whole run.
@@ -157,18 +175,20 @@ Files under <home>/state/dream/:
                      lines, files (final PR diff when a PR exists; null if unread;
                      without a PR, lines is the proposal count and files is null),
                      pr, risk (null if unread)} | null,
-                     charter_proposals: [{mate, what}],
+                     charter_proposals: [{mate, add: [lines], why?, evidence?,
+                     what? (legacy input, read as one line when add is not a list)}],
                      improve: {metrics (bin/fm_lifecycle.py metrics), model,
                      changes: [{kind, change, repo, title, fix, target, evidence,
                      before}], reflection_error, nothing_to_change,
                      point (tonight's improve.jsonl line),
                      previous (the last earlier one) | null, change:
                      {mate_median, mate_p90, merged} | null, tonight: [{kind, what,
-                     pr?, key?, mate?, state, target?, before?}], last_night: [{...,
+                     pr?, key?, mate?, state, add? (charter lines), backup?,
+                     target?, before?}], last_night: [{...,
                      date, now_state, now_value}]}
                      | {measurement_error, changes: [], tonight: [actions as above]}
                      | null (no measured tasks or improve did not produce facts),
-                     charter_card: [actions as above] (the applied charters, the
+                     charter_card: [actions as above] (charter outcomes, the
                      captain card and the tracked instructions PR of a night improve
                      did not measure),
                      no_mistakes: {...} or null, summary}
@@ -1322,11 +1342,8 @@ def step_improve(ctx):
 
 
 def step_track(ctx):
-    """Follows tonight's changes to where they landed: the instructions PR to its
-    merge and deploy (auto-land owns both; this waits up to TRACK_WAIT), and
-    records every action for tomorrow's report. An action counts as taken when
-    its PR is open, merged or deployed, its dispatch order was confirmed, or its
-    card was raised."""
+    """Track tonight's instructions PR through auto-land and record all actions,
+    including nights without measurements; the header owns action criteria."""
     life = ctx.facts.get('improve')
     ins = ctx.facts.get('instructions') or {}
     pr = ins.get('pr')
@@ -2113,11 +2130,11 @@ def step_triage(ctx):
 # --- file -------------------------------------------------------------------
 
 def file_improvements(ctx, already, rows, errors):
-    """Publish code filings immediately, then raise one decision card for the
-    captain changes and the night's private charter proposals."""
+    """Publish code filings, card captain-only changes and held charter lines,
+    then apply the remaining charter additions under the header's guards."""
     life = ctx.facts.get('improve')
     changes = (life or {}).get('changes') or []
-    # without a measured night the charter card is still raised; it is reported on its own
+    # Without measurements, keep independent actions in charter_card for tracking and reporting.
     tonight = life['tonight'] if life else ctx.facts.setdefault('charter_card', [])
     owners = ctx.config.get('owners') or {}
     env = dict(os.environ, FM_HOME=str(ctx.home))
@@ -2232,8 +2249,7 @@ def charter_lines(c):
 
 
 # Appends dreaming's lines to one charter: python3 - <charter> <backup> <date> <lines JSON>.
-# Additions only, under one section, skipping lines already there; the original is
-# copied to <backup> first and the charter is replaced atomically with its mode kept.
+# The module header owns the addition, deduplication and backup guarantees.
 CHARTER_PY = r"""
 import json, os, re, sys, tempfile
 path, backup, day, lines = os.path.expanduser(sys.argv[1]), os.path.expanduser(sys.argv[2]), sys.argv[3], json.loads(sys.argv[4])
@@ -2336,8 +2352,8 @@ def apply_charter(ctx, entry, tonight, env, errors):
 
 
 def raise_card(ctx, calls, charters, tonight, env, errors):
-    """One plain decision card for the captain-only changes and the charter
-    lines that name a hard stop."""
+    """One plain decision card for captain-only changes and charter lines held
+    by the header's safety checks."""
     what = '; '.join([c['change'][:200] for c in calls] + ['charter line for %s: %s' % (c['mate'], c['what'])
                                                             for c in charters])[:400]
     entry = {'kind': 'captain', 'what': what, 'key': None, 'target': calls[0]['target'] if calls else None,
