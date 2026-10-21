@@ -178,16 +178,21 @@
 #
 # Captain-direct echo guard: bin/fm-captain-direct-lib.sh owns echo matching and
 # its fixed windows. A matching later ordinary firstmate steer from this home
-# to the same secondmate is not sent. fm-send prints
-# `suppressed=captain-direct-echo corr=<id>` on stdout and why on stderr, logs
-# it to state/captain-direct.log, and exits 0: this is a deliberate no-op, not a
-# refusal inviting a rephrased retry. --correction sends it anyway (logged),
-# for the one fix a later report from the mate shows is really needed; it cannot
-# accompany --from-captain. A steer that delivers new findings (a child's
-# report or outcome) is not an echo: --result, or a report file the message
-# names (fm_captain_direct_carries_result), sends it (logged result-sent).
-# --result cannot accompany --from-captain or --from-mate. A --resolve-key
-# answer is never held back, so decision bookkeeping still closes.
+# to the same secondmate is not sent unless an exception below applies.
+# fm-send prints `suppressed=captain-direct-echo corr=<id>` on stdout and why on
+# stderr, logs it to state/captain-direct.log, and exits 0: a deliberate no-op,
+# not an invitation to rephrase the captain's words. If suppressed text delivers
+# new findings, resend with --result instead of abandoning the delivery.
+# --correction sends the one fix a later report from the mate shows is really
+# needed (logged); it cannot accompany --from-captain or --from-mate.
+# For new findings (a child's report or outcome), --result or a report path
+# recognized by fm_captain_direct_carries_result bypasses the guard even when
+# the message names the captain-direct corr. Mentioning "a report" without a
+# recognized path is not a result exception. --result needs no report path and
+# cannot accompany --from-captain or --from-mate. Successful result sends are
+# logged best-effort as result-sent in state/captain-direct.log, even without an
+# echo match; failed sends are not. A --resolve-key answer is never held back,
+# so decision bookkeeping still closes.
 #
 # From-mate tag: --from-mate <sender> --fire-and-forget <corr> delivers a peer
 # message between second mates on the first mate's behalf (bin/fm-mate-route.sh
@@ -787,8 +792,8 @@ if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ "$FROM_CAPTAIN" != 1 ] && [ -z "$FROM_MAT
   fi
 fi
 
-# After a captain message reaches a secondmate: record it for the echo guard and
-# tell this home's first mate once, FYI only (see the header).
+# Post-delivery hooks only: logging must not claim a failed result was sent,
+# and captain-memory capture must not remember an undelivered instruction.
 fm_send_message_delivered() {
   local source
   if [ "$CARRIES_RESULT" = 1 ]; then

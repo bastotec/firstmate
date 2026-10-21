@@ -22,10 +22,9 @@
 #      with "direct"/"directly" (case-insensitive), is an echo. The heuristic is
 #      deliberately broad; false positives are bounded by time and mate scope,
 #      with the correction bypass owned by bin/fm-send.sh along with output.
-#   4. The result exception (fm_captain_direct_carries_result): a steer that
-#      names a report file (data/<task>/report.md, or any *.md under data/)
-#      delivers new findings, not the captain's words, so fm-send sends it even
-#      when the echo guard matches; --result says the same thing explicitly.
+#   4. Report-path classification (fm_captain_direct_carries_result): a message
+#      names data/<task>/report.md or another *.md directly under data/ or in
+#      its subdirectories. bin/fm-send.sh owns the result delivery exception.
 # Expired ledger entries are pruned on recording and echo lookup.
 # Guard logging is best-effort in state/captain-direct.log.
 # Retention and heuristic windows are fixed; FM_CAPTAIN_DIRECT_NOW overrides
@@ -128,8 +127,8 @@ fm_captain_direct_mentions() {  # <message>
   printf '%s' "$1" | grep -Eiq '(^|[^a-z])direct(ly)?([^a-z]|$)|captain[^a-z]?s?[- ]direct'
 }
 
-# 0 when <message> delivers a child's findings: it names a report file under
-# data/ (data/<task>/report.md or another .md there).
+# Lexical only: a re-steer citing a report path can pass. That bounded risk is
+# accepted because a parent's genuine findings naturally cite the original corr.
 fm_captain_direct_carries_result() {  # <message>
   printf '%s' "$1" | grep -Eq '(^|[^A-Za-z0-9_.-])data/([A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.md([^A-Za-z0-9_]|$)'
 }
