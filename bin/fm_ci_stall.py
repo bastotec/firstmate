@@ -108,7 +108,9 @@ def meta(path: Path) -> dict:
 
 
 def run_id(check: dict):
-    m = re.search(r"/actions/runs/(\d+)", check.get("details_url") or check.get("html_url") or "")
+    if (check.get("app") or {}).get("slug") != "github-actions":
+        return None
+    m = re.search(r"/actions/runs/(\d+)", check.get("details_url") or "")
     return m.group(1) if m else None
 
 
@@ -172,25 +174,38 @@ class Scan:
         return None
 
     def classify_infra(self, pr: str) -> str:
-        r = subprocess.run([INFRA, "classify", pr], capture_output=True,
-                           text=True, timeout=180)
+        try:
+            r = subprocess.run([INFRA, "classify", pr], capture_output=True,
+                               text=True, timeout=180)
+        except subprocess.TimeoutExpired:
+            return "diagnosis unavailable: infrastructure classifier timed out"
         lines = [ln for ln in (r.stdout or "").splitlines() if ln.startswith(("infra ", "fix:"))]
         return "; ".join(lines)[:400]
 
-    def rerun(self, wid, pr, head, full, rec, rid, check, why):
+    def run_matches_head(self, full, head, rid):
+        run = gh_json("repos/%s/actions/runs/%s" % (full, rid))
+        return isinstance(run, dict) and run.get("head_sha") == head
+
+    def rerun(self, wid, pr, head, full, rec_path, rec, rid, check, why):
         failures = rec.setdefault("rerun_failures", {})
-        if failures.get(rid, 0) >= 3:
+        if failures.get(rid, 0) >= 3 or not self.run_matches_head(full, head, rid):
             return
+        if rid not in rec["pending_rerun"]:
+            rec["pending_rerun"].append(rid)
         try:
             rerun = gh("run", "rerun", rid, "--repo", full)
         except subprocess.TimeoutExpired:
             rerun = False
         if rerun:
             rec["pending_rerun"].remove(rid)
+            if rid not in rec["retriggered"]:
+                rec["retriggered"].append(rid)
             failures.pop(rid, None)
-            self.event(wid, pr, head, check, "retriggered", why)
         else:
             failures[rid] = failures.get(rid, 0) + 1
+        save(rec_path, rec)
+        if rerun:
+            self.event(wid, pr, head, check, "retriggered", why)
 
     def raise_blocker(self, wid: str, text: str) -> bool:
         lib = SCRIPT_DIR / "fm-parent-channel-lib.sh"
@@ -215,8 +230,10 @@ class Scan:
         if not isinstance(pull, dict) or pull.get("state") != "open":
             return
         head = pull["head"]["sha"]
-        runs = gh_json("repos/%s/commits/%s/check-runs?per_page=100" % (full, head))
-        checks = runs.get("check_runs", []) if isinstance(runs, dict) else []
+        pages = gh_json("repos/%s/commits/%s/check-runs?per_page=100" % (full, head),
+                        "--paginate", "--slurp")
+        checks = [c for page in pages for c in page.get("check_runs", [])
+                  if (c.get("app") or {}).get("slug") == "github-actions"]
         for c in checks:
             if c.get("status") == "completed" and c.get("conclusion") == "cancelled":
                 job = c.get("id")
@@ -228,8 +245,9 @@ class Scan:
         self.learn(full, checks)
         rec_path = self.dir / ("%s.json" % wid)
         rec = load(rec_path, {})
-        if rec.get("head") != head:
+        if rec.get("head") != head or rec.get("pr") != pr:
             rec = {"head": head, "pr": pr, "retriggered": [], "pending_rerun": [], "handed_off": False}
+            save(rec_path, rec)
         # a run this scan cancelled is rerun once GitHub reports it completed
         waiting = set()
         rerun_failed = []
@@ -237,7 +255,7 @@ class Scan:
             waiting.add(rid)
             state = [c for c in checks if run_id(c) == rid]
             if state and all(c.get("status") == "completed" for c in state):
-                self.rerun(wid, pr, head, full, rec, rid, state[0]["name"], "rerun after cancel")
+                self.rerun(wid, pr, head, full, rec_path, rec, rid, state[0]["name"], "rerun after cancel")
             if rec.get("rerun_failures", {}).get(rid, 0) >= 3:
                 rerun_failed.append((state[0] if state else {"name": "run " + rid},
                                      "rerun failed after 3 attempts for run " + rid))
@@ -255,17 +273,17 @@ class Scan:
         fresh = {}
         for c, why in stuck:
             rid = run_id(c)
-            if rid and rid not in rec["retriggered"]:
+            if rid and rid not in rec["retriggered"] and rid not in rec["pending_rerun"]:
                 fresh.setdefault(rid, (c, why))
         if fresh:
             for rid, (c, why) in fresh.items():
-                rec["retriggered"].append(rid)
                 state = [row for row in checks if run_id(row) == rid]
                 if all(row.get("status") == "completed" for row in state):
+                    self.rerun(wid, pr, head, full, rec_path, rec, rid, c["name"], why)
+                elif self.run_matches_head(full, head, rid) and gh("run", "cancel", rid, "--repo", full):
+                    rec["retriggered"].append(rid)
                     rec["pending_rerun"].append(rid)
-                    self.rerun(wid, pr, head, full, rec, rid, c["name"], why)
-                elif gh("run", "cancel", rid, "--repo", full):
-                    rec["pending_rerun"].append(rid)
+                    save(rec_path, rec)
                     self.event(wid, pr, head, c["name"], "cancelled-for-rerun", why)
             save(rec_path, rec)
             return
@@ -283,13 +301,18 @@ class Scan:
         text = ("CI on %s %s: %s (%s). Diagnosis: %s. Fix it under your charter "
                 "(move a private repository's workflow to the workload runner, skip an optional job per policy, "
                 "or fix the hung step) and re-run, or report one plain blocker." % (pr, progress, names, whys, diagnosis))
-        sent = subprocess.run([SEND, wid, text], capture_output=True, text=True, timeout=120,
-                              env=dict(os.environ, FM_HOME=str(self.h))).returncode == 0
+        try:
+            sent = subprocess.run([SEND, wid, text], capture_output=True, text=True, timeout=120,
+                                  env=dict(os.environ, FM_HOME=str(self.h))).returncode == 0
+        except subprocess.TimeoutExpired:
+            sent = False
         if sent:
             rec["handed_off"] = True
+            save(rec_path, rec)
             self.event(wid, pr, head, names, "handed-off", diagnosis)
         elif self.raise_blocker(wid, "%s for worker %s: %s; %s" % (pr, wid, whys, diagnosis)):
             rec["handed_off"] = True
+            save(rec_path, rec)
             self.event(wid, pr, head, names, "blocker", diagnosis)
         save(rec_path, rec)
 

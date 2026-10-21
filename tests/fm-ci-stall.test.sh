@@ -39,9 +39,19 @@ if [ "\$1 \$2" = 'api repos/o/r/pulls/7' ] && [ -e "\$fix/hold" ]; then
 fi
 if [ "\$1" = api ]; then
   case "\$2" in
-    repos/o/r/pulls/7) echo '{"state":"open","head":{"sha":"abc"}}' ;;
-    repos/o/r/commits/abc/check-runs*) cat "\$fix/checks.json" ;;
-    repos/o/r/actions/jobs/*)
+    repos/o/*/pulls/7) echo '{"state":"open","head":{"sha":"abc"}}' ;;
+    repos/o/*/commits/abc/check-runs*)
+      if [[ " \$* " == *' --paginate '* && " \$* " == *' --slurp '* ]]; then
+        if [ -e "\$fix/checks-page2.json" ]; then
+          jq -s '.' "\$fix/checks.json" "\$fix/checks-page2.json"
+        else
+          jq -s '.' "\$fix/checks.json"
+        fi
+      else cat "\$fix/checks.json"; fi ;;
+    repos/o/*/actions/runs/*)
+      echo "\$2" >> "$dir/validated.log"
+      if [ -e "\$fix/run-\${2##*/}.json" ]; then cat "\$fix/run-\${2##*/}.json"; else echo '{"head_sha":"abc"}'; fi ;;
+    repos/o/*/actions/jobs/*)
       if grep -qx "\${2##*/}" "\$fix/zero-steps"; then echo '{"steps":[]}'; else echo '{"steps":[{"name":"x"}]}'; fi ;;
     *) echo "unexpected api \$2" >&2; exit 1 ;;
   esac
@@ -49,6 +59,8 @@ if [ "\$1" = api ]; then
 fi
 echo "\$*" >> "$dir/calls.log"
 if [ "\$1 \$2" = 'run rerun' ] && [ -e "$dir/rerun-fails" ]; then exit 1; fi
+if [ "\$1 \$2" = 'run cancel' ] && [ -e "$dir/cancel-fails" ]; then exit 1; fi
+exit 0
 EOF
   cat > "$dir/bin/send" <<EOF
 #!/usr/bin/env bash
@@ -67,7 +79,7 @@ EOF
 check() {
   jq -cn --arg n "$1" --argjson id "$2" --arg run "$3" --arg s "$4" --arg c "$5" \
     --arg st "$(stamp "$6")" --arg ct "${7:+$(stamp "${7:-0}")}" \
-    '{name: $n, id: $id, status: $s, conclusion: (if $c == "" then null else $c end),
+    '{name: $n, id: $id, app: {slug: "github-actions"}, status: $s, conclusion: (if $c == "" then null else $c end),
       started_at: $st, completed_at: (if $ct == "" then null else $ct end),
       details_url: ("https://github.com/o/r/actions/runs/" + $run + "/job/" + ($id|tostring))}'
 }
@@ -76,7 +88,39 @@ checks() { jq -cs '{check_runs: .}' > "$1/fix/checks.json"; }
 
 scan() {  # <dir> <now>
   FM_HOME="$1/home" FM_CI_STALL_NOW="$2" FM_CI_STALL_GH="$1/bin/gh" FM_CI_STALL_SEND="$1/bin/send" \
-    FM_CI_STALL_INFRA="$1/bin/infra" "$STALL" scan
+    FM_CI_STALL_INFRA="$1/bin/infra" PATH="$1/bin:$PATH" "$STALL" scan
+}
+
+enable_timeouts() {
+  printf '#!%s\n' "$(command -v python3)" > "$1/bin/python3"
+  cat >> "$1/bin/python3" <<'PY'
+import os
+from pathlib import Path
+import runpy
+import subprocess
+import sys
+from unittest.mock import patch
+
+real_run = subprocess.run
+fixture = Path(os.environ['FM_CI_STALL_GH']).parent.parent
+
+def run(args, *pos, **kwargs):
+    marker = None
+    if args[0] == os.environ['FM_CI_STALL_GH'] and args[1:3] == ['run', 'cancel']:
+        marker = 'cancel-timeout-' + args[3]
+    elif args[0] == os.environ['FM_CI_STALL_INFRA']:
+        marker = 'infra-timeout'
+    elif args[0] == os.environ['FM_CI_STALL_SEND']:
+        marker = 'send-timeout'
+    if marker and (fixture / marker).exists():
+        raise subprocess.TimeoutExpired(args, kwargs['timeout'])
+    return real_run(args, *pos, **kwargs)
+
+sys.argv = sys.argv[1:]
+with patch('subprocess.run', run):
+    runpy.run_path(sys.argv[0], run_name='__main__')
+PY
+  chmod +x "$1/bin/python3"
 }
 
 counts() { FM_HOME="$1/home" "$STALL" counts "${2:-0}"; }
@@ -223,7 +267,10 @@ test_failed_reruns_remain_pending_until_success_or_diagnosis() {
   echo 12 > "$dir/fix/zero-steps"
   check verify 12 502 completed cancelled $((T0 - 2000)) "$T0" | checks "$dir"
   : > "$dir/rerun-fails"
-  for n in 1 2 3 4 5; do scan "$dir" "$T0"; done
+  scan "$dir" "$T0"
+  jq -e '.retriggered == [] and .pending_rerun == ["502"] and .rerun_failures["502"] == 1' \
+    "$dir/home/state/ci-stall/w1.json" >/dev/null || fail "failed immediate rerun was recorded as confirmed"
+  for n in 2 3 4 5; do scan "$dir" "$T0"; done
   assert_equals 3 "$(grep -c 'run rerun' "$dir/calls.log")" "rerun failures exceeded the three-attempt limit"
   assert_equals 1 "$(wc -l < "$dir/sent.log" | tr -d ' ')" "exhausted reruns were not handed off exactly once"
   assert_contains "$(cat "$dir/sent.log")" 'Diagnosis: rerun failure' "exhausted attempts were not diagnosed as rerun failure"
@@ -329,6 +376,174 @@ PY
   pass "one per-home scan owns GitHub actions and shared state at a time"
 }
 
+test_rejected_cancel_remains_eligible() {
+  local dir n
+  dir=$(make_home rejected-cancel)
+  check verify 11 501 queued "" $((T0 - 2000)) | checks "$dir"
+  touch "$dir/cancel-fails"
+  for n in 1 2; do scan "$dir" "$T0"; done
+  assert_equals 2 "$(wc -l < "$dir/calls.log" | tr -d ' ')" "failed cancellation was not retried"
+  jq -e '.retriggered == [] and .pending_rerun == [] and (.handed_off | not)' \
+    "$dir/home/state/ci-stall/w1.json" >/dev/null || fail "rejected cancellation consumed the retry"
+  assert_equals "" "$(cat "$dir/sent.log" 2>/dev/null)" "rejected cancellation caused premature handoff"
+  rm "$dir/cancel-fails"
+  scan "$dir" "$T0"
+  jq -e '.retriggered == ["501"] and .pending_rerun == ["501"]' \
+    "$dir/home/state/ci-stall/w1.json" >/dev/null || fail "successful cancellation was not saved"
+  pass "a rejected cancellation leaves the workflow eligible for its retry"
+}
+
+test_transitions_survive_later_timeouts() {
+  local dir mode
+  for mode in immediate pending cancel; do
+    dir=$(make_home "transition-$mode")
+    if [ "$mode" = pending ]; then
+      check verify 11 501 queued "" $((T0 - 2000)) | checks "$dir"
+      scan "$dir" "$T0"
+    fi
+    echo 11 > "$dir/fix/zero-steps"
+    { if [ "$mode" = cancel ]; then
+        check verify 11 501 queued "" $((T0 - 2000))
+      else
+        check verify 11 501 completed cancelled $((T0 - 2000)) "$T0"
+      fi
+      check build 12 502 queued "" $((T0 - 2000)); } | checks "$dir"
+    enable_timeouts "$dir"
+    touch "$dir/cancel-timeout-502"
+    scan "$dir" "$T0" 2> "$dir/errors.log"
+    assert_contains "$(cat "$dir/errors.log")" 'timed out' "the later workflow did not time out"
+    jq -e '.retriggered == ["501"]' "$dir/home/state/ci-stall/w1.json" >/dev/null \
+      || fail "confirmed $mode transition was lost to a later timeout"
+    if [ "$mode" = cancel ]; then
+      jq -e '.pending_rerun == ["501"]' "$dir/home/state/ci-stall/w1.json" >/dev/null \
+        || fail "confirmed cancellation lost its pending rerun"
+    else
+      jq -e '.pending_rerun == []' "$dir/home/state/ci-stall/w1.json" >/dev/null \
+        || fail "confirmed rerun remained pending after a later timeout"
+    fi
+    rm "$dir/cancel-timeout-502"
+    scan "$dir" "$T0"
+    if [ "$mode" = cancel ]; then
+      assert_equals 1 "$(grep -c 'run cancel 501' "$dir/calls.log")" "confirmed cancellation was repeated"
+    else
+      assert_equals 1 "$(grep -c 'run rerun 501' "$dir/calls.log")" "confirmed rerun was repeated"
+    fi
+  done
+  pass "confirmed workflow transitions survive a later workflow timeout"
+}
+
+test_only_actions_checks_are_considered() {
+  local dir
+  dir=$(make_home provenance)
+  echo 12 > "$dir/fix/zero-steps"
+  { check queued 11 501 queued "" $((T0 - 2000))
+    check cancelled 12 502 completed cancelled $((T0 - 2000)) "$T0"
+    check success 13 503 completed success $((T0 - 2000)) "$T0"; } \
+    | jq -c '.app.slug = "other-app"' | checks "$dir"
+  scan "$dir" "$T0"
+  assert_equals "" "$(cat "$dir/calls.log")" "a third-party check mutated Actions"
+  assert_equals "{}" "$(counts "$dir")" "a third-party check was treated as stalled"
+  assert_equals "{}" "$(cat "$dir/home/state/ci-stall/durations.json")" "third-party durations were learned"
+  pass "only GitHub Actions checks can influence stall recovery"
+}
+
+test_mutations_require_the_watched_head() {
+  local dir mode
+  for mode in cancel rerun pending; do
+    dir=$(make_home "head-$mode")
+    if [ "$mode" = pending ]; then
+      check verify 11 501 queued "" $((T0 - 2000)) | checks "$dir"
+      scan "$dir" "$T0"
+      : > "$dir/calls.log"
+    fi
+    if [ "$mode" = cancel ]; then
+      check verify 11 501 queued "" $((T0 - 2000)) | checks "$dir"
+    else
+      echo 11 > "$dir/fix/zero-steps"
+      check verify 11 501 completed cancelled $((T0 - 2000)) "$T0" | checks "$dir"
+    fi
+    printf '{"head_sha":"unrelated"}\n' > "$dir/fix/run-501.json"
+    scan "$dir" "$T0"
+    assert_equals "" "$(cat "$dir/calls.log")" "$mode mutated an unrelated head"
+    assert_contains "$(cat "$dir/validated.log")" 'repos/o/r/actions/runs/501' "workflow identity was not fetched"
+    assert_equals "" "$(cat "$dir/sent.log" 2>/dev/null)" "unrelated head was handed off"
+    rm "$dir/fix/run-501.json"
+    scan "$dir" "$T0"
+    if [ "$mode" = cancel ]; then
+      assert_equals 'run cancel 501 --repo o/r' "$(cat "$dir/calls.log")" "matching head was not cancelled"
+    else
+      assert_equals 'run rerun 501 --repo o/r' "$(cat "$dir/calls.log")" "matching head was not rerun"
+    fi
+  done
+  pass "cancellation and both rerun paths validate the current workflow head"
+}
+
+test_all_check_pages_drive_detection_and_pending_reruns() {
+  local dir
+  dir=$(make_home pagination)
+  check healthy 1 500 completed success $((T0 - 200)) $((T0 - 100)) \
+    | jq '. as $c | {check_runs: [range(1;101) as $id | $c + {id: $id}]}' > "$dir/fix/checks.json"
+  check verify 101 501 queued "" $((T0 - 2000)) | jq -s '{check_runs: .}' > "$dir/fix/checks-page2.json"
+  scan "$dir" "$T0"
+  assert_equals 'run cancel 501 --repo o/r' "$(cat "$dir/calls.log")" "a stalled check after the first page was missed"
+  echo 101 > "$dir/fix/zero-steps"
+  check verify 101 501 completed cancelled $((T0 - 2000)) "$T0" \
+    | jq -s '{check_runs: .}' > "$dir/fix/checks-page2.json"
+  scan "$dir" "$T0"
+  assert_equals 1 "$(grep -c 'run rerun 501' "$dir/calls.log")" "pending check after the first page was not rerun"
+  jq -e '.pending_rerun == []' "$dir/home/state/ci-stall/w1.json" >/dev/null || fail "paginated rerun stayed pending"
+  pass "all check pages contribute to stall detection and pending completion"
+}
+
+test_timeout_escalation_falls_back_once() {
+  local dir mode
+  for mode in handoff blocker; do
+    dir=$(make_home "timeout-$mode")
+    echo 11 > "$dir/fix/zero-steps"
+    check verify 11 501 completed cancelled $((T0 - 2000)) "$T0" | checks "$dir"
+    scan "$dir" "$T0"
+    enable_timeouts "$dir"
+    touch "$dir/infra-timeout"
+    if [ "$mode" = blocker ]; then touch "$dir/send-timeout"; fi
+    scan "$dir" "$T0"
+    scan "$dir" "$T0"
+    jq -e '.handed_off' "$dir/home/state/ci-stall/w1.json" >/dev/null || fail "timeout suppressed escalation"
+    if [ "$mode" = handoff ]; then
+      assert_contains "$(cat "$dir/sent.log")" 'diagnosis unavailable' "classifier timeout did not reach the worker"
+      assert_equals 1 "$(wc -l < "$dir/sent.log" | tr -d ' ')" "timeout diagnosis was handed off twice"
+    else
+      assert_contains "$(cat "$dir/home/state/.wake-queue")" 'diagnosis unavailable' "send timeout did not raise a blocker"
+      assert_equals 1 "$(counts "$dir" | jq '.blocker')" "send timeout did not produce exactly one blocker"
+    fi
+  done
+  pass "classifier and send timeouts preserve the escalation fallback"
+}
+
+test_pr_rebinding_resets_progress_on_the_same_head() {
+  local dir
+  dir=$(make_home rebind)
+  echo 11 > "$dir/fix/zero-steps"
+  check verify 11 501 completed cancelled $((T0 - 2000)) "$T0" | checks "$dir"
+  scan "$dir" "$T0"
+  scan "$dir" "$T0"
+  jq -e '.handed_off' "$dir/home/state/ci-stall/w1.json" >/dev/null || fail "original PR was not handed off"
+  printf 'kind=ship\npr=https://github.com/o/other/pull/7\n' > "$dir/home/state/w1.meta"
+  scan "$dir" "$T0"
+  jq -e '.pr == "https://github.com/o/other/pull/7" and (.handed_off | not)' \
+    "$dir/home/state/ci-stall/w1.json" >/dev/null || fail "PR rebind retained the old handoff"
+  assert_contains "$(cat "$dir/calls.log")" 'run rerun 501 --repo o/other' "replacement PR did not get its own retry"
+  scan "$dir" "$T0"
+  assert_equals 2 "$(wc -l < "$dir/sent.log" | tr -d ' ')" "replacement PR diagnosis was suppressed"
+  pass "rebinding a worker PR resets CI progress even on the same head"
+}
+
+test_rejected_cancel_remains_eligible
+test_transitions_survive_later_timeouts
+test_only_actions_checks_are_considered
+test_mutations_require_the_watched_head
+test_all_check_pages_drive_detection_and_pending_reruns
+test_timeout_escalation_falls_back_once
+test_pr_rebinding_resets_progress_on_the_same_head
 test_duration_samples_identify_distinct_recent_runs
 test_failed_reruns_remain_pending_until_success_or_diagnosis
 test_blocker_delivery_is_retried_until_confirmed
