@@ -80,6 +80,10 @@ is recorded and never stops the next:
                            lock; a card closed since discovery is not overwritten,
                            and its backfilled questions are re-filtered as answered
                            before any new calls are raised.
+                           An unreadable or unparseable calls.jsonl (a missing
+                           one is empty history) yields 'not raised: answer
+                           history unreadable' for every call and charter
+                           proposal that night; code filings still go out.
                            An unreadable open-card list, hold or body (including a
                            lookup timeout) yields 'not raised: open cards unreadable'
                            rather than a new card. If a discovered card has closed
@@ -308,6 +312,7 @@ ZIGGY_POLL = float(os.environ.get('FM_DREAM_ZIGGY_POLL', '30'))  # tests shorten
 MAX_DIFF_LINES = 600
 MAX_SKILLS = 5  # asked of the agent; the changed-line cap is the enforced bound
 MAX_RAISED = 3
+LEDGER_UNREADABLE = 'answer history unreadable'  # calls.jsonl exists but cannot be read
 RAISED_DAYS = 14
 SLOW_MS = 20000
 RETRY_SECS = int(os.environ.get('FM_DREAM_RETRY_SECS', '30'))  # pause before retrying a failed agent
@@ -2202,7 +2207,7 @@ def file_improvements(ctx, already, rows, errors):
             errors.append('%s: %s' % (c['title'][:60], entry['state']))
             if isinstance(exc, subprocess.TimeoutExpired):
                 ctx.left()
-    calls = unanswered_calls(ctx, [c for c in changes if c['kind'] == 'captain'], tonight, env)
+    calls = unanswered_calls(ctx, [c for c in changes if c['kind'] == 'captain'], tonight, env, errors)
     charters = ctx.facts.get('charter_proposals') or []
     if calls or charters:
         try:
@@ -2266,7 +2271,7 @@ def decided_text(ctx):
     if r.returncode == 0 and (r.stdout or '').strip():
         out.append('- Merge policy (auto merges once the full pipeline passes and CI is green): '
                    + '; '.join(ln.strip() for ln in r.stdout.splitlines() if ln.strip())[:600])
-    out += ['- Already asked (%s): %s' % (p.get('key'), p.get('change', '')[:200]) for p in call_ledger(ctx)][-20:]
+    out += ['- Already asked (%s): %s' % (p.get('key'), p.get('change', '')[:200]) for p in call_ledger(ctx) or []][-20:]
     return '\n'.join(out) or '- nothing recorded yet'
 
 
@@ -2279,19 +2284,24 @@ def shared_instructions(ctx):
 
 
 def call_ledger(ctx):
-    """Every captain call dreaming has raised: [{change, evidence, key, at}]."""
+    """Every captain call dreaming has raised: [{change, evidence, key, at}].
+    A missing ledger is an empty history; None means it exists but cannot be
+    read or parsed, so answered calls cannot be told apart from new ones."""
     out = []
     try:
         with open(ctx.dir / 'calls.jsonl', encoding='utf-8') as fh:
             for line in fh:
-                try:
-                    row = json.loads(line)
-                    if isinstance(row, dict) and not mentions_excluded(ctx, json.dumps(row, ensure_ascii=False)):
-                        out.append(row)
-                except ValueError:
+                if not line.strip():
                     continue
-    except OSError:
+                row = json.loads(line)
+                if not isinstance(row, dict):
+                    return None
+                if not mentions_excluded(ctx, json.dumps(row, ensure_ascii=False)):
+                    out.append(row)
+    except FileNotFoundError:
         pass
+    except (OSError, ValueError):
+        return None
     return out
 
 
@@ -2397,14 +2407,22 @@ def merge_policy_auto(ctx, text, env):
     return True
 
 
-def unanswered_calls(ctx, calls, tonight, env):
+def unanswered_calls(ctx, calls, tonight, env, errors=None):
     """Drop calls the captain already answered: a matching earlier dreaming call
     whose hold is closed, an instruction recorded in captain-shared.md, or a
     merge-authority question the merge policy already settles. A call matching
-    one still open is kept and later folded into that open card."""
+    one still open is kept and later folded into that open card. An unreadable
+    answer history drops every call, since none can be shown unanswered."""
     if not calls:
         return calls
     ledger = call_ledger(ctx)
+    if ledger is None:
+        for c in calls:
+            tonight.append({'kind': 'captain', 'what': c['change'][:200], 'key': None, 'target': c.get('target'),
+                            'before': c.get('before'), 'state': 'not raised: ' + LEDGER_UNREADABLE})
+        if errors is not None and 'captain card not raised: ' + LEDGER_UNREADABLE not in errors:
+            errors.append('captain card not raised: ' + LEDGER_UNREADABLE)
+        return []
     open_keys = open_calls(ctx, env)
     shared = shared_instructions(ctx)
     keep = []
@@ -2437,6 +2455,11 @@ def raise_card(ctx, calls, charters, tonight, env, errors):
         return
     title = 'Fleet dreaming needs your call (%s)' % ctx.day
     ledger = call_ledger(ctx)
+    if ledger is None:
+        entry['state'] = 'not raised: ' + LEDGER_UNREADABLE
+        if 'captain card not raised: ' + LEDGER_UNREADABLE not in errors:
+            errors.append('captain card not raised: ' + LEDGER_UNREADABLE)
+        return
     opened = open_calls(ctx, env)
     with ExitStack() as locks:
         listed = set(opened) if opened is not None else set()
