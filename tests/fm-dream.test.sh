@@ -303,6 +303,7 @@ while [ "$#" -gt 0 ]; do
 done
 exit 1
 SH
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$d/bin/card"
   chmod +x "$d/bin/"*
   printf '%s' "$d"
 }
@@ -314,7 +315,7 @@ run_dream() {  # <case-dir> <args...>
     FM_DREAM_REPORT="$d/bin/report" FM_DREAM_CAPTAIN_MEMORY="$d/bin/memory" FM_DREAM_NO_MISTAKES_DB="$d/nm.sqlite" STUB_CALLS="$d/calls" \
     FM_DREAM_FIRSTMATE="$d/firstmate" FM_DREAM_NO_MISTAKES="$d/bin/no-mistakes" FM_DREAM_GH="$d/bin/gh-pr" \
     FM_DREAM_REFLECT="$d/bin/reflect" FM_DREAM_SEND="$d/bin/send" FM_DREAM_INBOX="$d/bin/inbox" FM_DREAM_HOLD="$d/bin/hold" \
-    ROOT="$ROOT" FM_DREAM_TRACK_WAIT=0 python3 "$DREAM" run --home "$d/home" "$@"
+    FM_DREAM_CARD="$d/bin/card" ROOT="$ROOT" FM_DREAM_TRACK_WAIT=0 python3 "$DREAM" run --home "$d/home" "$@"
 }
 
 test_each_relaunch_is_counted_once() {
@@ -883,13 +884,21 @@ class Context(dream.Ctx):
     def run(self, argv, **kw):
         self.calls.append(list(argv))
         if argv[0] == 'fake-card':
-            return subprocess.CompletedProcess(argv, 0, ''.join('%s\tFleet dreaming needs your call\n' % k for k in self.open_keys), '')
+            return subprocess.CompletedProcess(argv, 1 if self.unreadable else 0,
+                                               ''.join('%s\tFleet dreaming needs your call\n' % k for k in self.open_keys), '')
         if argv[0] == 'fake-policy':
             if argv[1] == 'list':
                 return subprocess.CompletedProcess(argv, 0, 'owner bastotec/* auto\n', '')
             return subprocess.CompletedProcess(argv, 0, 'auto owner bastotec\n' if argv[2].startswith('bastotec/') else 'ask default\n', '')
-        if argv[0] == 'fake-tasks' and argv[1] == 'add':
-            return subprocess.CompletedProcess(argv, 0, json.dumps({'id': 'dream-call-new'}), '')
+        if argv[0] == 'fake-tasks':
+            if argv[1] == 'show':
+                if self.body_unreadable:
+                    return subprocess.CompletedProcess(argv, 1, '', 'task unavailable')
+                return subprocess.CompletedProcess(argv, 0, 'task:\n  body: %s\n' % json.dumps(self.bodies[argv[2]]), '')
+            if argv[1] == 'update':
+                self.bodies[argv[2]] = pathlib.Path(argv[argv.index('--body-file') + 1]).read_text()
+            if argv[1] == 'add':
+                return subprocess.CompletedProcess(argv, 0, json.dumps({'id': 'dream-call-new'}), '')
         return subprocess.CompletedProcess(argv, 0, '', '')
 
 os.environ.update(FM_DREAM_TASKS='fake-tasks', FM_DREAM_HOLD='fake-hold', FM_DREAM_INBOX='fake-inbox',
@@ -900,7 +909,10 @@ home = root / 'home'
 
 def ctx_with(open_keys, ledger):
     ctx = Context(home, False)
-    ctx.calls, ctx.open_keys = [], open_keys
+    ctx.calls, ctx.open_keys, ctx.unreadable, ctx.body_unreadable = [], open_keys, False, False
+    ctx.bodies = {key: '# Fleet dreaming needs your call\n\n' + '\n'.join(
+        '- %s Evidence: %s' % (row['change'], row.get('evidence', '')) for row in ledger if row['key'] == key)
+                  for key in open_keys}
     ctx.deadline = time.time() + 600
     ctx.config = {'owners': {}}
     ctx.dir.mkdir(parents=True, exist_ok=True)
@@ -931,9 +943,14 @@ ctx = ctx_with({'dream-call-open'}, [{'change': fresh['change'], 'evidence': 'me
 tonight = []
 dream.raise_card(ctx, [fresh], [], tonight, {}, [])
 assert tonight[-1]['state'] == 'already waiting on the captain as dream-call-open', tonight
-assert not any(c[0] == 'fake-tasks' for c in ctx.calls), ctx.calls
+assert not any(c[0] == 'fake-tasks' and c[1] in ('add', 'update') for c in ctx.calls), ctx.calls
 
 # a new question while a card is open is added to that card, not raised separately
+suffix = ('\n- Apply this charter edit for cadia? name the kernel repo\n\n'
+          'Captain hold set: 2026-10-20T18:00:00Z\n'
+          'Captain hold reason: awaiting fleet approval\nLifecycle note: retain this exact context\n')
+ctx.bodies['dream-call-open'] += suffix
+original = ctx.bodies['dream-call-open']
 other = call('Approve a monthly budget for a second gateway account')
 tonight = []
 dream.raise_card(ctx, [other], [], tonight, {}, [])
@@ -943,6 +960,51 @@ upd = [c for c in ctx.calls if c[:3] == ['fake-tasks', 'update', 'dream-call-ope
 assert upd and '--archive-body' in upd[0], ctx.calls
 assert not any(c[0] == 'fake-hold' for c in ctx.calls), ctx.calls
 assert [r['key'] for r in dream.call_ledger(ctx)][-1] == 'dream-call-open'
+updated = ctx.bodies['dream-call-open']
+assert updated.endswith(suffix), updated
+assert fresh['change'] in updated and other['change'] in updated, updated
+assert updated.replace('\n- %s Evidence: measured' % other['change'], '') == original, updated
+
+legacy_body = '# Fleet dreaming needs your call (2026-10-20)\n\n- %s Evidence: measured%s' % (fresh['change'], suffix)
+ctx = ctx_with({'dream-call-legacy', 'dream-call-z-newer'}, [])
+ctx.bodies['dream-call-legacy'] = legacy_body
+ctx.bodies['dream-call-z-newer'] = '# Fleet dreaming needs your call\n\n- %s Evidence: measured' % other['change']
+tonight = []
+dream.raise_card(ctx, [fresh], [], tonight, {}, [])
+assert tonight[-1]['state'] == 'already waiting on the captain as dream-call-legacy', tonight
+assert ctx.bodies['dream-call-legacy'] == legacy_body
+assert not any(c[0] in ('fake-hold', 'fake-tasks') and c[1] in ('hold', 'add', 'update') for c in ctx.calls), ctx.calls
+
+charter = {'mate': 'cadia', 'what': 'name the kernel repo'}
+ctx = ctx_with({'dream-call-charter'}, [])
+ctx.bodies['dream-call-charter'] = '# Fleet dreaming needs your call\n' + suffix
+tonight = []
+dream.raise_card(ctx, [], [charter], tonight, {}, [])
+assert tonight[-1]['state'] == 'already waiting on the captain as dream-call-charter', tonight
+dream.raise_card(ctx, [fresh], [], tonight, {}, [])
+assert tonight[-1]['state'] == 'added to the open card dream-call-charter', tonight
+assert ctx.bodies['dream-call-charter'].endswith(suffix), ctx.bodies
+assert fresh['change'] in ctx.bodies['dream-call-charter'], ctx.bodies
+assert not any(c[0] == 'fake-hold' or c[:2] == ['fake-tasks', 'add'] for c in ctx.calls), ctx.calls
+assert dream.call_ledger(ctx)[-1]['key'] == 'dream-call-charter'
+
+for rows in ([], [{'change': fresh['change'], 'key': 'dream-call-open'}]):
+    ctx = ctx_with({'dream-call-open'}, rows)
+    ctx.unreadable = True
+    tonight, errors = [], []
+    pending = dream.unanswered_calls(ctx, [fresh], tonight, {})
+    ctx.unreadable = False
+    dream.raise_card(ctx, pending, [], tonight, {}, errors)
+    assert tonight[-1]['state'] == 'not raised: open cards unreadable', tonight
+    assert errors == ['captain card not raised: open cards unreadable'], errors
+    assert not any(c[0] in ('fake-tasks', 'fake-hold') for c in ctx.calls), ctx.calls
+
+ctx = ctx_with({'dream-call-open'}, [])
+ctx.body_unreadable = True
+tonight, errors = [], []
+dream.raise_card(ctx, [fresh], [], tonight, {}, errors)
+assert tonight[-1]['state'] == 'not raised: open cards unreadable', tonight
+assert not any(c[0] == 'fake-hold' or c[:2] in (['fake-tasks', 'add'], ['fake-tasks', 'update']) for c in ctx.calls), ctx.calls
 
 # with no open card, a fresh call raises one card and is recorded for later nights
 ctx = ctx_with(set(), [])
@@ -951,11 +1013,55 @@ dream.raise_card(ctx, [fresh], [], tonight, {}, [])
 assert tonight[-1]['state'] == 'card raised' and tonight[-1]['key'] == 'dream-call-new', tonight
 assert [r['change'] for r in dream.call_ledger(ctx)] == [fresh['change']]
 
+shared_path = home / 'data' / 'captain-shared.md'
+budget = call('Use 75 dollars monthly for dedicated Linux test servers')
+with shared_path.open('a') as fh:
+    fh.write('- 2026-10-20 captain instruction (recorded at delivery from chat): "Always follow this runner-budget rule:\n'
+             '  Use 75 dollars monthly for dedicated Linux test servers"\n')
+tonight = []
+assert dream.unanswered_calls(ctx, [budget], tonight, {}) == [], tonight
+assert tonight[-1]['state'] == 'not raised: already answered in captain-shared.md', tonight
+
 # the improve prompt is told what is already decided
 text = dream.decided_text(ctx)
 assert 'rollback plan' in text and 'Merge policy' in text and 'Already asked (dream-call-new)' in text, text
+assert 'Always follow this runner-budget rule:\n  Use 75 dollars monthly' in text, text
 PY
   pass "improve: answered captain calls are not raised again, and a repeat joins the open card"
+}
+
+test_decided_context_keeps_complete_public_entries_only() {
+  local d
+  d=$(new_case improve-decided-private)
+  seed_improve "$d"
+  python3 - "$d/home" <<'PY'
+import json, pathlib, sys
+home = pathlib.Path(sys.argv[1])
+(home / 'data' / 'captain-shared.md').write_text(
+    '- 2026-10-20 captain instruction (recorded at delivery from chat): "Always follow the runner budget:\n'
+    '  PUBLIC BUDGET: spend up to 50 dollars a month on macOS builds"\n'
+    '- 2026-10-20 captain instruction: "PRIVATE SHARED ' + 'x' * 700 + ' finn-finance"\n'
+    '- 2026-10-20 captain instruction: "PRIVATE CONTINUATION\n  finn-finance"\n'
+    'Rule: PUBLIC RULE never deploy without a rollback plan\n')
+rows = [{'change': 'PUBLIC CALL: allow a second gateway', 'key': 'dream-call-public'},
+        {'change': 'PRIVATE QUESTION ' + 'x' * 700 + ' finn-finance', 'key': 'dream-call-secret'},
+        {'change': 'PRIVATE EVIDENCE', 'evidence': 'finn-finance', 'key': 'dream-call-evidence'}]
+(home / 'state' / 'dream').mkdir(parents=True, exist_ok=True)
+(home / 'state' / 'dream' / 'calls.jsonl').write_text(''.join(json.dumps(row) + '\n' for row in rows))
+PY
+  STUB_REFLECT=none run_dream "$d" --only collect improve > "$d/out.json" || fail "decided-context run failed"
+  python3 - "$d/calls" <<'PY' || fail "the emitted gateway request leaked or truncated a decided entry"
+import json, pathlib, sys
+requests = [json.loads(path.read_text()) for path in pathlib.Path(sys.argv[1]).glob('reflect.*')]
+assert requests, 'no gateway request emitted'
+for request in requests:
+    prompt = request['messages'][0]['content']
+    assert 'Always follow the runner budget:\n  PUBLIC BUDGET: spend up to 50 dollars' in prompt, prompt
+    assert 'PUBLIC CALL: allow a second gateway' in prompt and 'PUBLIC RULE' in prompt, prompt
+    assert all(secret not in prompt for secret in ('PRIVATE SHARED', 'PRIVATE CONTINUATION', 'PRIVATE QUESTION',
+                                                  'PRIVATE EVIDENCE', 'finn-finance')), prompt
+PY
+  pass "improve: the gateway receives complete instructions and no excluded decided records"
 }
 
 test_card_timeouts_keep_filings_and_allow_triage() {
@@ -979,7 +1085,8 @@ class Context(dream.Ctx):
             return subprocess.CompletedProcess(argv, 0, json.dumps({'id': 'filed-%s' % self.adds}), '')
         return subprocess.CompletedProcess(argv, 0, '', '')
 
-os.environ.update(FM_DREAM_TASKS='fake-tasks', FM_DREAM_HOLD='fake-hold', FM_DREAM_INBOX='fake-inbox')
+os.environ.update(FM_DREAM_TASKS='fake-tasks', FM_DREAM_HOLD='fake-hold', FM_DREAM_INBOX='fake-inbox',
+                  FM_DREAM_CARD='fake-card')
 for mode in ('hold', 'add', 'budget'):
     home = root / mode
     ctx = Context(home, False)
@@ -1486,6 +1593,7 @@ test_every_unshipped_instruction_reaches_the_summary
 test_failed_empty_measurements_are_not_quiet_days
 test_card_timeouts_keep_filings_and_allow_triage
 test_answered_calls_are_not_raised_and_repeats_join_the_open_card
+test_decided_context_keeps_complete_public_entries_only
 test_track_rejects_a_predecessor_deployment
 test_collect_builds_a_private_digest_of_the_day
 test_each_relaunch_is_counted_once

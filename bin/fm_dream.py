@@ -247,6 +247,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import fm_lifecycle as fl  # noqa: E402 - the improve step's timeline builder, next to this file
+from fm_captain_memory import entries as memory_entries
 STEPS = ['collect', 'improve', 'skills', 'instructions', 'triage', 'file', 'memory', 'track']
 BUDGET = {'collect': 300, 'improve': 900, 'skills': 2700, 'instructions': 5400, 'triage': 1200, 'file': 600,
           'memory': 120, 'track': 1500}
@@ -2191,12 +2192,7 @@ def file_one(ctx, c, mate, entry, env, rows, errors, already):
 def decided_text(ctx):
     """What the captain already decided, for the improve prompt: his recorded
     instructions, the merge policy, and earlier dreaming calls."""
-    out = []
-    try:
-        lines = (ctx.home / 'data' / 'captain-shared.md').read_text(encoding='utf-8').splitlines()
-        out += ['- ' + ln.strip().lstrip('- ')[:300] for ln in lines if ln.strip().startswith(('- ', 'Rule:'))][-30:]
-    except OSError:
-        pass
+    out = ['- ' + entry.lstrip('- ') for entry in shared_instructions(ctx)[-30:]]
     r = ctx.run([tool('fm-merge-policy.sh', 'FM_DREAM_MERGE_POLICY'), 'list'],
                 env=dict(os.environ, FM_HOME=str(ctx.home)), timeout=30)
     if r.returncode == 0 and (r.stdout or '').strip():
@@ -2206,6 +2202,14 @@ def decided_text(ctx):
     return '\n'.join(out) or '- nothing recorded yet'
 
 
+def shared_instructions(ctx):
+    try:
+        return [entry for entry in memory_entries(ctx.home / 'data' / 'captain-shared.md')
+                if entry.startswith(('- ', 'Rule:')) and not mentions_excluded(ctx, entry)]
+    except OSError:
+        return []
+
+
 def call_ledger(ctx):
     """Every captain call dreaming has raised: [{change, evidence, key, at}]."""
     out = []
@@ -2213,7 +2217,9 @@ def call_ledger(ctx):
         with open(ctx.dir / 'calls.jsonl', encoding='utf-8') as fh:
             for line in fh:
                 try:
-                    out.append(json.loads(line))
+                    row = json.loads(line)
+                    if isinstance(row, dict) and not mentions_excluded(ctx, json.dumps(row, ensure_ascii=False)):
+                        out.append(row)
                 except ValueError:
                     continue
     except OSError:
@@ -2221,12 +2227,35 @@ def call_ledger(ctx):
     return out
 
 
-def open_call_keys(ctx, env):
-    """Task ids of this home's captain calls still waiting on him, or None when unreadable."""
-    r = ctx.run([tool('fm-card.sh', 'FM_DREAM_CARD'), 'calls'], env=env, timeout=60)
-    if r.returncode:
-        return None
-    return {line.split('\t', 1)[0] for line in (r.stdout or '').splitlines() if line.strip()}
+def open_calls(ctx, env):
+    if 'dream_open_calls' not in ctx.facts:
+        try:
+            r = ctx.run([tool('fm-card.sh', 'FM_DREAM_CARD'), 'calls'], env=env, timeout=60)
+            ctx.facts['dream_open_calls'] = dict(line.partition('\t')[::2] for line in (r.stdout or '').splitlines()
+                                                if line.strip()) if r.returncode == 0 else None
+        except OSError:
+            ctx.facts['dream_open_calls'] = None
+    return ctx.facts['dream_open_calls']
+
+
+def open_dream_cards(ctx, env, opened, ledger):
+    cards = {}
+    for key, title in sorted(opened.items()):
+        if not (key.startswith('dream-call-') or title.startswith('Fleet dreaming needs your call')
+                or any(p.get('key') == key for p in ledger)):
+            continue
+        r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'show', key, '--full'], env=env, timeout=60)
+        body = re.search(r'^  body: (.*)$', r.stdout or '', re.M)
+        if r.returncode or not body:
+            return None
+        try:
+            raw = body.group(1)
+            cards[key] = json.loads(raw) if raw.startswith('"') else raw
+            if not isinstance(cards[key], str):
+                return None
+        except ValueError:
+            return None
+    return cards
 
 
 def merge_policy_auto(ctx, text, env):
@@ -2252,12 +2281,8 @@ def unanswered_calls(ctx, calls, tonight, env):
     if not calls:
         return calls
     ledger = call_ledger(ctx)
-    open_keys = open_call_keys(ctx, env) if ledger else set()
-    try:
-        shared = [ln.strip() for ln in (ctx.home / 'data' / 'captain-shared.md').read_text(encoding='utf-8').splitlines()
-                  if ln.strip().startswith(('- ', 'Rule:'))]
-    except OSError:
-        shared = []
+    open_keys = open_calls(ctx, env)
+    shared = shared_instructions(ctx)
     keep = []
     for c in calls:
         prior = [p for p in ledger if similar(c['change'], p.get('change', ''))]
@@ -2289,22 +2314,35 @@ def raise_card(ctx, calls, charters, tonight, env, errors):
         return
     title = 'Fleet dreaming needs your call (%s)' % ctx.day
     ledger = call_ledger(ctx)
-    open_keys = open_call_keys(ctx, env) if ledger else set()
-    open_prior = [p for p in ledger if p.get('key') and open_keys and p['key'] in open_keys]
-    if open_prior:
-        # one open dreaming card at a time: the new night's calls join it instead of a second card
-        key = open_prior[-1]['key']
-        known = [p for p in ledger if p.get('key') == key]
-        new = [c for c in calls if not any(similar(c['change'], p.get('change', '')) for p in known)]
-        lines = (['- %s Evidence: %s' % (p['change'], p.get('evidence', '')) for p in known]
-                 + ['- %s Evidence: %s' % (c['change'], c['evidence']) for c in new]
-                 + ['- Apply this charter edit for %s? %s' % (c['mate'], c['what']) for c in charters])
+    opened = open_calls(ctx, env)
+    cards = open_dream_cards(ctx, env, opened, ledger) if opened is not None else None
+    if cards is None:
+        entry['state'] = 'not raised: open cards unreadable'
+        errors.append('captain card not raised: open cards unreadable')
+        return
+    if cards:
+        sections = {key: list(re.finditer(r'(?ms)^- (?!Apply this charter edit for )(.*?) Evidence: (.*?)(?=\n(?:- |\S)|\Z)', body))
+                    for key, body in cards.items()}
+        key = next((key for key, matches in sections.items()
+                    if any(similar(c['change'], match.group(1)) for c in calls for match in matches)),
+                   next(reversed(cards)))
+        body = cards[key]
+        known = [match.group(1) for matches in sections.values() for match in matches]
+        new = [c for c in calls if not any(similar(c['change'], change) for change in known)]
+        lines = (['- %s Evidence: %s' % (c['change'], c['evidence']) for c in new]
+                 + [line for c in charters
+                    if (line := '- Apply this charter edit for %s? %s' % (c['mate'], c['what'])) not in body.splitlines()])
         entry['key'] = key
-        if not new and not charters:
+        if not lines:
             entry['state'] = 'already waiting on the captain as %s' % key
             return
+        existing = sections[key]
+        insert = existing[-1].end() if existing else body.find('\n')
+        if insert < 0:
+            insert = len(body)
+        updated = body[:insert] + '\n' + '\n'.join(lines) + body[insert:]
         bf = ctx.dir / '.card.md'
-        write_private(bf, '\n'.join(['# Fleet dreaming needs your call', ''] + lines))
+        write_private(bf, updated)
         try:
             r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'update', key, '--body-file', str(bf),
                          '--archive-body'], env=env, timeout=60)
