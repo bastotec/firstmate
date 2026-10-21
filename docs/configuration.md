@@ -304,7 +304,7 @@ Running hosts pick up a change to the code only after a restart, and a change to
 `bin/fm-dream.sh` is the fleet's optional nightly pass over its own day; its [header](../bin/fm-dream.sh) owns running, inspecting, scheduling and uninstalling the service.
 Alongside its skill and harness-triage passes, the improve pass measures mate tasks against session branches and acts on evidence-linked changes: shared instruction edits go through a gated firstmate PR, code fixes become priority tasks with immediate dispatch orders to owning mates, private charter additions are applied automatically under the [charter guards](../bin/fm_dream.py), and captain-only changes follow the [runner's captain-card handling](../bin/fm_dream.py).
 [Auto-land](#auto-land-configautolandjson-configpost-merge) owns merge authority and deployment; dreaming does not grant either.
-The morning summary reports what slowed work down, each change's PR/deploy or dispatch/card state, and last night's changes with their targeted measurements then and now.
+The morning summary reports what slowed work down, the [runner-defined action outcomes](../bin/fm_dream.py), and last night's changes with their targeted measurements then and now.
 [`bin/fm_dream.py`](../bin/fm_dream.py)'s header owns the steps, budgets, guards and private files; [`bin/fm_lifecycle.py`](../bin/fm_lifecycle.py)'s header owns timeline sources and measurement limits.
 [`tests/fm-dream.test.sh`](../tests/fm-dream.test.sh) and [`tests/fm-lifecycle.test.sh`](../tests/fm-lifecycle.test.sh) exercise them offline.
 
