@@ -31,6 +31,10 @@ Every unreadable or ambiguous input surfaces the wake without clearing prior sta
 A `kind=secondmate` task's status signal is its parent-directed reply stream and is never absorbed as provably working.
 Its bare turn-ended signal is absorbed only by the authoritative proof, because an active secondmate does not enter the staleness backbone that would resurface deferred churn evidence.
 
+The one exception is a reply the request's sender already declared needs no first-mate turn, such as the answer to the restart pass's persist request, which that pass reads itself.
+A span made only of those `done` replies and the pending-reply resolutions they cause is absorbed, on the per-wake path and the heartbeat backstop alike, because nothing in it is the mate's own progress.
+Any other verb or line still wakes; `bin/fm-classify-lib.sh` `status_line_is_quiet_reply` owns the test and `bin/fm-pending-reply-lib.sh` owns the declaration field.
+
 ### A superseded Deck turn-failure is attention, not failure
 
 An ordinary Deck worker turn that fails without appending a status line is backstopped with `failed: deck turn ended without a status line (turn-failed recovery-gen=<driver-generation> id=<record-id>)`.
