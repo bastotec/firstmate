@@ -176,6 +176,30 @@ test_stuck_again_is_diagnosed_and_handed_off_once() {
   pass "a check stuck again after its one re-run is diagnosed and handed to the worker once"
 }
 
+test_fresh_stalls_do_not_starve_an_exhausted_hand_off() {
+  local dir sent
+  dir=$(make_home starve)
+  echo 31 > "$dir/fix/zero-steps"
+  check build 31 701 completed cancelled $((T0 - 100)) $((T0 - 90)) | checks "$dir"
+  scan "$dir" "$T0"
+  # build's run is stuck again after its one rerun while lint's run is newly stuck
+  printf '31\n32\n33\n' > "$dir/fix/zero-steps"
+  { check build 32 701 completed cancelled $((T0 + 60)) $((T0 + 70)); check lint 33 702 completed cancelled $((T0 + 60)) $((T0 + 70)); } | checks "$dir"
+  scan "$dir" $((T0 + 600))
+  assert_contains "$(cat "$dir/calls.log")" "run rerun 702 --repo o/r" "the newly stuck run was not re-triggered"
+  sent=$(cat "$dir/sent.log" 2>/dev/null)
+  assert_contains "$sent" "is still stuck after one re-run: build (" "the exhausted run was not handed off beside the fresh re-trigger"
+  [[ "$sent" != *lint* ]] || fail "the freshly re-triggered run was handed off before its own re-run"
+  # another fresh stall on the same head adds no second hand-off
+  printf '31\n32\n33\n34\n' > "$dir/fix/zero-steps"
+  { check build 32 701 completed cancelled $((T0 + 60)) $((T0 + 70)); check lint 33 702 completed cancelled $((T0 + 60)) $((T0 + 70));
+    check test 34 703 completed cancelled $((T0 + 700)) $((T0 + 710)); } | checks "$dir"
+  scan "$dir" $((T0 + 1200))
+  assert_contains "$(cat "$dir/calls.log")" "run rerun 703 --repo o/r" "a later fresh stall was not re-triggered"
+  assert_equals 1 "$(wc -l < "$dir/sent.log" | tr -d ' ')" "the same head was handed off twice"
+  pass "a newly stuck run is re-triggered while an exhausted run on the same head is still handed off once"
+}
+
 test_unreachable_worker_raises_a_blocker() {
   local dir
   dir=$(make_home blocker)
@@ -552,6 +576,7 @@ test_overlapping_scans_exit_quietly_without_mutating
 test_queued_check_is_cancelled_then_rerun_once_and_recovers
 test_cancelled_without_runner_is_rerun_at_once
 test_stuck_again_is_diagnosed_and_handed_off_once
+test_fresh_stalls_do_not_starve_an_exhausted_hand_off
 test_unreachable_worker_raises_a_blocker
 test_running_bound_follows_the_usual_duration
 test_counts_window_and_usage
