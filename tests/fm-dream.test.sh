@@ -1217,7 +1217,7 @@ for broken in (b'{"change": "torn\n', b'[]\n', b'\xff\xfe\n'):
     assert dream.call_ledger(ctx) is None
     (ctx.dir / 'raised.jsonl').unlink(missing_ok=True)
     ctx.facts['improve'] = {'changes': [answered], 'tonight': []}
-    ctx.facts['charter_proposals'] = [charter]
+    ctx.facts['charter_proposals'] = [held]
     ctx.facts['triage'] = [{'title': 'Repair the inbox status display', 'repo': 'firstmate',
                             'why': 'The display is stale', 'fix': 'Refresh its status', 'evidence': ['measured']}]
     result = dream.step_file(ctx)
