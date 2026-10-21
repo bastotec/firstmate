@@ -1180,11 +1180,12 @@ test_charter_failures_preserve_application_and_held_lines() {
   local d
   d=$(new_case charter-failures)
   seed_charter_mates "$d"
-  ROOT="$ROOT" STUB_CALLS="$d/calls" FM_DREAM_SEND="$d/bin/send" FM_DREAM_TASKS="$d/bin/tasks" \
+  STUB_CALLS="$d/calls" FM_DREAM_SEND="$d/bin/send" FM_DREAM_TASKS="$d/bin/tasks" \
     FM_DREAM_HOLD="$d/bin/hold" FM_DREAM_BRIDGE="$d/bin/bridge" FM_DREAM_SSH="$d/bin/ssh" \
-    python3 - "$d" "$ROOT/bin" <<'PY' || fail "charter failures lost applied state or held lines"
+    python3 - "$d" "$ROOT" <<'PY' || fail "charter failures lost applied state or held lines"
 import json, os, pathlib, subprocess, sys
-sys.path.insert(0, sys.argv[2])
+os.environ['ROOT'] = sys.argv[2]
+sys.path.insert(0, str(pathlib.Path(sys.argv[2]) / 'bin'))
 import fm_dream as dream
 
 class Context(dream.Ctx):
