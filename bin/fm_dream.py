@@ -2233,7 +2233,7 @@ def open_calls(ctx, env):
             r = ctx.run([tool('fm-card.sh', 'FM_DREAM_CARD'), 'calls'], env=env, timeout=60)
             ctx.facts['dream_open_calls'] = dict(line.partition('\t')[::2] for line in (r.stdout or '').splitlines()
                                                 if line.strip()) if r.returncode == 0 else None
-        except OSError:
+        except (OSError, subprocess.TimeoutExpired):
             ctx.facts['dream_open_calls'] = None
     return ctx.facts['dream_open_calls']
 
@@ -2261,10 +2261,20 @@ def open_dream_cards(ctx, env, opened, ledger):
 def merge_policy_auto(ctx, text, env):
     """True when a merge-authority question names only repositories the captain's
     merge policy already sets to auto (bin/fm-merge-policy.sh)."""
-    if not re.search(r'\bmerg', text, re.I):
+    if not re.search(r'\b(?:merge|merges|merging)\b', text, re.I):
         return False
-    repos = set(re.findall(r'\b([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\b', text))
+    repo_pattern = r'\b([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\b'
+    repos = set(re.findall(repo_pattern, text))
     if not repos:
+        return False
+    words = set(re.findall(r'[\w-]+', re.sub(repo_pattern, '', text).lower()))
+    merge_words = set(('allow let enable authorize delegate grant give the a an to for of in on and '
+                       'when once after as soon is are be can could may should we you first mate firstmate '
+                       'fleet captain merge merges merging auto automatic automatically autonomous '
+                       'autonomously authority permission permissions pr prs pull request requests '
+                       'repo repos repository repositories green ci checks pass passes passed full '
+                       'pipeline no-mistakes that with only').split())
+    if not words <= merge_words:
         return False
     for repo in repos:
         r = ctx.run([tool('fm-merge-policy.sh', 'FM_DREAM_MERGE_POLICY'), 'get', repo], env=env, timeout=30)
@@ -2323,6 +2333,10 @@ def raise_card(ctx, calls, charters, tonight, env, errors):
     if cards:
         sections = {key: list(re.finditer(r'(?ms)^- (?!Apply this charter edit for )(.*?) Evidence: (.*?)(?=\n(?:- |\S)|\Z)', body))
                     for key, body in cards.items()}
+        for card_key, matches in sections.items():
+            record_calls(ctx, [{'change': match.group(1), 'evidence': match.group(2)} for match in matches
+                               if not any(p.get('key') == card_key and p.get('change') == match.group(1)
+                                          for p in ledger)], card_key)
         key = next((key for key, matches in sections.items()
                     if any(similar(c['change'], match.group(1)) for c in calls for match in matches)),
                    next(reversed(cards)))

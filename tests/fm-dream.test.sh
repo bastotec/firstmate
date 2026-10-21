@@ -884,6 +884,8 @@ class Context(dream.Ctx):
     def run(self, argv, **kw):
         self.calls.append(list(argv))
         if argv[0] == 'fake-card':
+            if self.card_timeout:
+                raise subprocess.TimeoutExpired(argv, kw['timeout'])
             return subprocess.CompletedProcess(argv, 1 if self.unreadable else 0,
                                                ''.join('%s\tFleet dreaming needs your call\n' % k for k in self.open_keys), '')
         if argv[0] == 'fake-policy':
@@ -910,6 +912,7 @@ home = root / 'home'
 def ctx_with(open_keys, ledger):
     ctx = Context(home, False)
     ctx.calls, ctx.open_keys, ctx.unreadable, ctx.body_unreadable = [], open_keys, False, False
+    ctx.card_timeout = False
     ctx.bodies = {key: '# Fleet dreaming needs your call\n\n' + '\n'.join(
         '- %s Evidence: %s' % (row['change'], row.get('evidence', '')) for row in ledger if row['key'] == key)
                   for key in open_keys}
@@ -937,6 +940,32 @@ reasons = [t['state'] for t in tonight]
 assert any('earlier call dream-call-old closed' in r for r in reasons), reasons
 assert any('captain-shared.md' in r for r in reasons), reasons
 assert any('merge policy' in r for r in reasons), reasons
+
+for change in ('Let the fleet merge bastotec/firstmate PRs once the full pipeline passes and CI is green',
+               'Delegate automatic merge authority for pull requests in bastotec/firstmate and bastotec/no-mistakes'):
+    ctx = ctx_with(set(), [])
+    tonight = []
+    assert dream.unanswered_calls(ctx, [call(change)], tonight, {}) == [], (change, tonight)
+    assert tonight[-1]['state'] == 'not raised: already settled by the merge policy', tonight
+
+for change, target in (('Allow automatic production promotion after merging bastotec/firstmate', 'deploy'),
+                       ('Deploy bastotec/firstmate automatically after merging PRs', 'deploy'),
+                       ('Release bastotec/firstmate after merging green PRs', 'deploy'),
+                       ('Authorize spending for merging bastotec/firstmate PRs', 'held_or_blocked'),
+                       ('Allow merging bastotec/firstmate PRs without captain approval', 'held_or_blocked'),
+                       ('Let the fleet merge bastotec/firstmate PRs when CI checks are red', 'held_or_blocked'),
+                       ('Let the fleet merge bastotec/firstmate PRs or auto approve pull requests', 'held_or_blocked'),
+                       ('Let the fleet merge elsewhere/project PRs on green', 'held_or_blocked'),
+                       ('Let the fleet merge PRs on green', 'held_or_blocked')):
+    ctx = ctx_with(set(), [])
+    proposed = call(change)
+    proposed['target'] = target
+    assert dream.improve_changes(ctx, [proposed], {}), proposed
+    tonight = []
+    assert dream.unanswered_calls(ctx, [proposed], tonight, {}) == [proposed], (change, tonight)
+    dream.raise_card(ctx, [proposed], [], tonight, {}, [])
+    assert tonight[-1]['state'] == 'card raised', (change, tonight)
+    assert any(c[0] == 'fake-hold' for c in ctx.calls), ctx.calls
 
 # a repeat of a call still open joins it: no second card, no new task
 ctx = ctx_with({'dream-call-open'}, [{'change': fresh['change'], 'evidence': 'measured', 'key': 'dream-call-open', 'at': 1}])
@@ -974,6 +1003,20 @@ dream.raise_card(ctx, [fresh], [], tonight, {}, [])
 assert tonight[-1]['state'] == 'already waiting on the captain as dream-call-legacy', tonight
 assert ctx.bodies['dream-call-legacy'] == legacy_body
 assert not any(c[0] in ('fake-hold', 'fake-tasks') and c[1] in ('hold', 'add', 'update') for c in ctx.calls), ctx.calls
+backfilled = dream.call_ledger(ctx)
+assert {(r['key'], r['change'], r['evidence']) for r in backfilled} == {
+    ('dream-call-legacy', fresh['change'], 'measured'),
+    ('dream-call-z-newer', other['change'], 'measured')}, backfilled
+assert len(backfilled) == 2, backfilled
+dream.raise_card(ctx, [fresh], [], tonight, {}, [])
+assert dream.call_ledger(ctx) == backfilled
+ctx.open_keys = set()
+ctx.facts.pop('dream_open_calls', None)
+ctx.calls = []
+ctx.facts['improve'] = {'changes': [fresh], 'tonight': []}
+assert dream.step_file(ctx)['status'] == 'done'
+assert ctx.facts['improve']['tonight'][-1]['state'] == 'not raised: already answered (earlier call dream-call-legacy closed)', ctx.facts
+assert not any(c[0] in ('fake-hold', 'fake-tasks') for c in ctx.calls), ctx.calls
 
 charter = {'mate': 'cadia', 'what': 'name the kernel repo'}
 ctx = ctx_with({'dream-call-charter'}, [])
@@ -998,6 +1041,24 @@ for rows in ([], [{'change': fresh['change'], 'key': 'dream-call-open'}]):
     assert tonight[-1]['state'] == 'not raised: open cards unreadable', tonight
     assert errors == ['captain card not raised: open cards unreadable'], errors
     assert not any(c[0] in ('fake-tasks', 'fake-hold') for c in ctx.calls), ctx.calls
+
+for rows in ([], [{'change': fresh['change'], 'key': 'dream-call-open'}]):
+    ctx = ctx_with({'dream-call-open'}, rows)
+    ctx.card_timeout = True
+    (ctx.dir / 'raised.jsonl').unlink(missing_ok=True)
+    ctx.facts['improve'] = {'changes': [fresh], 'tonight': []}
+    ctx.facts['triage'] = [{'title': 'Repair the inbox status display', 'repo': 'firstmate',
+                            'why': 'The display is stale', 'fix': 'Refresh its status', 'evidence': ['measured']}]
+    result = dream.step_file(ctx)
+    assert result['status'] == 'partial', result
+    assert result['why'] == 'captain card not raised: open cards unreadable', result
+    assert ctx.facts['improve']['tonight'][-1]['state'] == 'not raised: open cards unreadable', ctx.facts
+    assert [r['title'] for r in result['raised']] == ['Repair the inbox status display'], result
+    assert [json.loads(line)['title'] for line in (ctx.dir / 'raised.jsonl').read_text().splitlines()] == [
+        'Repair the inbox status display']
+    assert sum(c[0] == 'fake-card' for c in ctx.calls) == 1, ctx.calls
+    assert not any(c[0] == 'fake-hold' or (c[:2] == ['fake-tasks', 'add'] and 'dream-call' in c)
+                   for c in ctx.calls), ctx.calls
 
 ctx = ctx_with({'dream-call-open'}, [])
 ctx.body_unreadable = True
