@@ -1817,6 +1817,74 @@ window_to_task() {
   t="${w##*:}"; t="${t#fm-}"; printf '%s' "$t"
 }
 
+# --- quiet replies -----------------------------------------------------------
+#
+# A marked request's sender may declare that a correlated `done` reply needs no
+# supervisor turn: bin/fm-pending-reply-lib.sh owns that reply_wake=none record
+# field and who sets it. Such a reply is not a captain-relevant event, so neither
+# the per-wake triage nor the heartbeat backstop surfaces it, and a span made
+# only of these replies and reserved-key pending-reply resolutions (which the
+# next drain presents as unread status) is absorbed rather than woken for.
+# Only `done` qualifies: a failed, blocked, or needs-decision answer to the same
+# request still wakes, as does any other line in the span.
+# The line must carry exactly one correlation token of either hex case, and that
+# token must be lowercase; its record, read from the status file's own home,
+# must name the same task.
+# The pending-reply library sources this one, so the record is read here directly.
+_FM_CLASSIFY_QUIET_CORR_RE='corr=([0-9A-Fa-f]{16})([^0-9A-Za-z]|$)'
+status_line_is_quiet_reply() {  # <status-file> <status-line>
+  local f=$1 line=$2 rest corr='' dir rec field task='' wake='' _FM_VERB
+  _fm_status_line_verb_into "$line"
+  [ "$_FM_VERB" = 'done' ] || return 1
+  rest=$line
+  while [[ $rest =~ $_FM_CLASSIFY_QUIET_CORR_RE ]]; do
+    [ -z "$corr" ] || return 1
+    corr=${BASH_REMATCH[1]}
+    rest=${rest#*"corr=${BASH_REMATCH[1]}"}
+  done
+  case "$corr" in ''|*[!0-9a-f]*) return 1 ;; esac
+  case "$f" in */*) dir=${f%/*} ;; *) dir=. ;; esac
+  rec="${FM_PENDING_REPLY_DIR_OVERRIDE:-$dir/pending-replies}/$corr"
+  [ -f "$rec" ] && [ ! -L "$rec" ] || return 1
+  while IFS= read -r field || [ -n "$field" ]; do
+    case "$field" in
+      task_id=*) task=${field#task_id=} ;;
+      reply_wake=*) wake=${field#reply_wake=} ;;
+    esac
+  done < "$rec"
+  [ "$wake" = none ] || return 1
+  [ -n "$task" ] && [ "${f##*/}" = "$task.status" ]
+}
+
+# 0 when <status-file>'s bytes from <start-offset> hold at least one line and
+# every non-blank line is a quiet reply or a reserved-key pending-reply
+# resolution; 1 otherwise, including an unreadable or absent log.
+status_span_only_quiet() {  # <status-file> <start-offset>
+  local f=$1 start=${2:-0} size span line seen=0 resolve _FM_VERB _FM_KEY _FM_NOTE
+  [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 1
+  size=$(_fm_status_file_size "$f") || return 1
+  size=${size//[[:space:]]/}
+  case "$size" in ''|*[!0-9]*) return 1 ;; esac
+  case "$start" in ''|*[!0-9]*) start=0 ;; esac
+  [ "$start" -lt "$size" ] || return 1
+  span=$(_fm_status_read_span "$f" "$start" "$((size - start))") || return 1
+  resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in *[![:space:]]*) ;; *) continue ;; esac
+    seen=1
+    status_line_is_quiet_reply "$f" "$line" && continue
+    _fm_status_line_verb_into "$line"
+    [ "$_FM_VERB" = "$resolve" ] || return 1
+    _fm_decision_key_into "$line" || return 1
+    case "$_FM_KEY" in pending-reply-*) ;; *) return 1 ;; esac
+    _fm_status_line_note_into "$line"
+    case "$_FM_NOTE" in pending-reply-resolved:*) ;; *) return 1 ;; esac
+  done <<EOF
+$span
+EOF
+  [ "$seen" -eq 1 ]
+}
+
 # Capture the bytes of an append-only status log at or after <start-offset> under
 # one size-and-identity snapshot.
 # The record form produces `<endpoint>\t<identity>\t<events>` and returns 0 when
@@ -1840,6 +1908,7 @@ window_to_task() {
 # reconciliation signal and never treated here as an open decision.
 # status_open_decisions remains the single owner of open/closed semantics,
 # including same-key reopening and reserved-key handling.
+# A quiet reply (status_line_is_quiet_reply above) is not an actionable event.
 # Every other captain-relevant event is terminal and always actionable.
 _fm_decision_origin_drop() {  # <origins> <key>
   local origin
@@ -1925,10 +1994,11 @@ status_span_first_actionable_record() {  # <status-file> <start-offset> [record-
       continue
     fi
     status_is_captain_relevant "$line" || continue
-    # The one reclassification this span performs: an exact Deck turn-failed
-    # backstop leaves the actionable span only after a later working record in
-    # the captured log binds itself to the same recovery generation.
+    # Two reclassifications leave the actionable span: an exact Deck turn-failed
+    # backstop once a later working record in the captured log binds itself to
+    # the same recovery generation, and a quiet reply (status_line_is_quiet_reply).
     fm_turn_failed_superseded_line "$f" "$line" "$size" && continue
+    status_line_is_quiet_reply "$f" "$line" && continue
     verb=$(status_line_verb "$line")
     case "$verb" in
       needs-decision|blocked)

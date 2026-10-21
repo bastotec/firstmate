@@ -344,7 +344,7 @@ family_for_basename() {
     fm-watch-triage-resurface.test.sh|fm-watch-triage-events.test.sh|\
     fm-external-wait.test.sh|fm-task-inbox.test.sh|\
     fm-watcher-lock.test.sh|fm-inactive-reconcile.test.sh|\
-    fm-watch-parent-channel-echo.test.sh)
+    fm-watch-parent-channel-echo.test.sh|fm-watch-quiet-reply.test.sh)
       printf '%s\n' watcher-wake-lock
       ;;
     fm-backlog-handoff.test.sh|fm-on.test.sh|fm-remote-backlog-handoff.test.sh|\
@@ -651,6 +651,8 @@ portable_serial_weight_hints() {
 # (2026-10-13); every serial shard passed in that run.
 # fm-watch-parent-channel-echo was measured in green serial shard 8 of run
 # 38444133335 (2026-10-13), with three family-phase workers.
+# fm-watch-quiet-reply is a local measurement (49.6 s on macOS, 2026-10-21)
+# until a green CI run's timing artifact replaces it.
 # fm-gate-record is a local measurement (10.5 s on macOS, 2026-10-16) until a
 # green CI run's timing artifact replaces it.
 # fm-approval was measured in green serial shard 4 of run 38683021067
@@ -823,6 +825,7 @@ tests/fm-wake-gate.test.sh 17081
 tests/fm-wake-queue.test.sh 206368
 tests/fm-watch-arm.test.sh 107952
 tests/fm-watch-parent-channel-echo.test.sh 10154
+tests/fm-watch-quiet-reply.test.sh 49574
 tests/fm-watch-recovery-loop.test.sh 64315
 tests/fm-watch-triage-declared-wait.test.sh 176541
 tests/fm-watch-triage-events.test.sh 129600

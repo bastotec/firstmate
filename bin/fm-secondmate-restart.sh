@@ -197,7 +197,7 @@ first_reported_line() {  # <text>
 fall_back_to_nudge() {  # <id> <reason>
   local id=$1 reason=$2 out
   if out=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
-    FM_SEND_STREAM=monologue "$SCRIPT_DIR/fm-send.sh" "$id" "$FM_SECOND_MATE_NUDGE_MESSAGE" 2>&1); then
+    FM_PENDING_REPLY_WAKE=none FM_SEND_STREAM=monologue "$SCRIPT_DIR/fm-send.sh" "$id" "$FM_SECOND_MATE_NUDGE_MESSAGE" 2>&1); then
     nudged_count=$((nudged_count + 1))
     printf 'nudged: %s: %s\n' "$id" "$reason"
   else
@@ -339,7 +339,9 @@ while [ "$i" -lt "${#IDS[@]}" ]; do
     esac
   fi
 
-  if ! corr=$(fm_pending_reply_create "$FM_HOME" "$STATE" "$id" \
+  # This pass reads the correlated answer itself (phase B), so the reply
+  # needs no supervisor turn (bin/fm-pending-reply-lib.sh reply_wake).
+  if ! corr=$(FM_PENDING_REPLY_WAKE=none fm_pending_reply_create "$FM_HOME" "$STATE" "$id" \
     "$FM_SECONDMATE_PERSIST_REQUEST"); then
     REASON[i]="its answer about the open work cannot be tracked, so a clean reload could not be proven"
     i=$((i + 1))

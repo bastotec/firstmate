@@ -91,6 +91,12 @@
 #   wrong_home_sightings=   comma-separated encoded path:line identities
 #   wrong_home_scan_signature=
 #   grace_secs=             bounded grace before recovery is eligible
+#   reply_wake=             none when the sender declared that a correlated done
+#                           reply needs no supervisor turn (FM_PENDING_REPLY_WAKE=none
+#                           at creation); empty otherwise. Only the wake changes:
+#                           correlation, recovery, and escalation are unchanged, and
+#                           bin/fm-classify-lib.sh status_line_is_quiet_reply owns
+#                           which reply lines qualify
 #
 # Escalation lifecycle: an escalation is not just a message, it OPENS a durable
 # keyed decision in the parent status log, and bin/fm-classify-lib.sh's fold is
@@ -371,9 +377,12 @@ fm_pending_reply_embed_corr() {  # <message> <corr_id> <result-var>
 
 # Create a durable pending-reply expectation. Prints corr_id on success.
 # Does not deliver anything. Fails if parent paths cannot be prepared.
+# FM_PENDING_REPLY_WAKE=none records reply_wake=none (schema above); any other
+# value records nothing.
 fm_pending_reply_create() {  # <parent-home> <state-dir> <task_id> <request-text>
   local parent_home=$1 state=$2 task_id=$3 request_text=$4
-  local dir rec corr now summary status_path tmp
+  local dir rec corr now summary status_path tmp reply_wake=''
+  [ "${FM_PENDING_REPLY_WAKE:-}" != none ] || reply_wake=none
   [ -n "$parent_home" ] && [ -n "$state" ] && [ -n "$task_id" ] || return 2
   dir=$(fm_pending_reply_dir "$state")
   mkdir -p "$dir" || return 1
@@ -428,6 +437,7 @@ wrong_home_first_sighting=
 wrong_home_sightings=
 wrong_home_scan_signature=
 grace_secs=$(fm_pending_reply_grace_secs)
+reply_wake=$reply_wake
 EOF
   chmod 600 "$tmp" 2>/dev/null || true
   mv -f "$tmp" "$rec" || return 1

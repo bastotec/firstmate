@@ -20,7 +20,8 @@
 # on every wake. Printed reason lines:
 #   signal: <file>...      status/turn-end signals, surfaced when a listed status
 #                          span has a captain-relevant event OR a no-verb signal lacks
-#                          positive execution evidence, unless afk is active
+#                          positive execution evidence, unless afk is active; a
+#                          span of only quiet replies is absorbed (signal_files_only_quiet)
 #   stale: <window>        a provably-working stale is ALWAYS absorbed (with a wedge
 #                          timer) regardless of what the status log says - an active
 #                          run-step or busy pane outranks even a captain-relevant log
@@ -1972,6 +1973,20 @@ signal_files_actionable() {  # <status-file> ...
   return "$found"
 }
 
+# 0 when every file in a signal batch is a status log whose new span, from its
+# last classified position, holds only quiet replies and reserved-key
+# pending-reply resolutions (status_span_only_quiet in bin/fm-classify-lib.sh);
+# 1 for any turn-end marker, unreadable log, or other line. A pure read.
+signal_files_only_quiet() {  # <status-file> ...
+  local f found=1
+  for f in "$@"; do
+    case "$f" in *.status) ;; *) return 1 ;; esac
+    status_span_only_quiet "$f" "$(fm_wake_signal_seen_size "$STATE" "$f")" || return 1
+    found=0
+  done
+  return "$found"
+}
+
 # Surfaced-marker bookkeeping for the heartbeat backstop is owned by
 # fm-watch-wake-lib.sh, shared with the per-wake path so both write one format.
 # Mark each actionable status log through the endpoint captured by the heartbeat
@@ -2644,6 +2659,9 @@ EOF
     #     (even via an interactive menu that wrote no done: status), waiting on a
     #     decision, or wedged. Absorbing such a turn-end is exactly the
     #     swallowed-finish this change guards against.
+    # A no-verb wake whose every new status line is a quiet reply or a pending-reply
+    # resolution (signal_files_only_quiet) needs no evidence: nothing in it is the
+    # crew's own progress, so there is no finish to swallow.
     # Positive evidence is either an authoritative provably-working verdict or, in a
     # home that opts in with config/turnend-churn-absorb and for a BARE turn-end
     # alone, a pane that rendered something since the previous poll
@@ -2671,7 +2689,8 @@ EOF
     # comment above handle_wake in bin/fm-supervise-daemon.sh).
     # shellcheck disable=SC2086  # same space-separated status-path list
     if afk_present || [ "$signal_actionable" -eq 0 ] \
-      || { ! signal_crew_provably_working $files && ! signal_turnend_panes_churned $files; }; then
+      || { ! signal_files_only_quiet $files && ! signal_crew_provably_working $files \
+        && ! signal_turnend_panes_churned $files; }; then
       while IFS=$(printf '\t') read -r sf sig f; do
         [ -n "$sf" ] || continue
         file_reason="$reason"

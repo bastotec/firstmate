@@ -14,9 +14,9 @@ The watcher header owns the printed reason vocabulary and every absorb and re-su
 
 ### Absorb only on positive evidence
 
-A no-verb wake, such as a `working:` note or a bare turn-ended signal, is benign only when every referenced task independently shows positive evidence that its crew is still working.
+Outside the quiet-reply and bookkeeping exception below, a no-verb wake, such as a `working:` note or a bare turn-ended signal, is benign only when every referenced task independently shows positive evidence that its crew is still working.
 That evidence comes from the shared [current-state interface](#current-state-reads), not an independent watcher classifier.
-Everything else surfaces, so a crew that finishes, or stops and waits, is never silently swallowed.
+Without that evidence the wake surfaces, so a crew that finishes, or stops and waits, is never silently swallowed.
 Absorbed wakes advance their suppression markers, log to `state/.watch-triage.log`, and keep the watcher blocking without a queue record or model turn.
 Routine polling, supervision no-ops, elapsed waiting time, and absorbed benign wakes stay silent.
 
@@ -30,6 +30,12 @@ Every unreadable or ambiguous input surfaces the wake without clearing prior sta
 
 A `kind=secondmate` task's status signal is its parent-directed reply stream and is never absorbed as provably working.
 Its bare turn-ended signal is absorbed only by the authoritative proof, because an active secondmate does not enter the staleness backbone that would resurface deferred churn evidence.
+
+Automatic pending-reply resolutions and replies the sender declared need no first-mate turn are bookkeeping rather than the mate's own progress.
+The restart pass reads its persist-request answer itself, and an AGENTS.md re-read acknowledgement needs no supervisor action.
+The watcher header owns absorption of batches containing only this bookkeeping; the next drain still presents the lines as unread status.
+[`status_line_is_quiet_reply` in `bin/fm-classify-lib.sh`](../bin/fm-classify-lib.sh) owns reply qualification across per-wake, heartbeat, and away-daemon classification, and [`bin/fm-pending-reply-lib.sh`](../bin/fm-pending-reply-lib.sh) owns the sender's declaration field.
+[`tests/fm-watch-quiet-reply.test.sh`](../tests/fm-watch-quiet-reply.test.sh) covers quiet absorption and fail-closed wake cases.
 
 ### A superseded Deck turn-failure is attention, not failure
 
