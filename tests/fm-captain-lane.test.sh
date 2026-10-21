@@ -350,9 +350,10 @@ test_relaunched_lane_resolves_the_open_blocker() {
   FM_DECK_STATUS_IO="$ROOT/bin/fm-state-io.py" start_lane
   wait_until 100 grep -q 'resolved \[key=conversation-failing-mate\]' "$DIR/state/mate.status" \
     || fail "a relaunched lane did not resolve the blocker its predecessor raised"
+  # Publication precedes cleanup; let recovery finish before stopping the lane.
+  wait_until 100 test ! -e "$DIR/state/mate.conversation-failing" || fail "a recovered lane keeps no failing record"
   stop_lane
   assert_contains "$(cat "$DIR/state/mate.status")" "failing since 2026-10-16T10:00:00Z" "the resolution names its episode"
-  [ ! -e "$DIR/state/mate.conversation-failing" ] || fail "a recovered lane keeps no failing record"
   pass "fm-captain-lane: a lane relaunched for failing resolves the blocker once it answers"
 }
 
