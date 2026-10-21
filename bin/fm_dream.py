@@ -80,10 +80,14 @@ is recorded and never stops the next:
                            lock; a card closed since discovery is not overwritten,
                            and its backfilled questions are re-filtered as answered
                            before any new calls are raised.
-                           An unreadable or unparseable calls.jsonl (a missing
-                           one is empty history) yields 'not raised: answer
-                           history unreadable' for every call and charter
-                           proposal that night; code filings still go out.
+                           An unreadable calls.jsonl (call_ledger owns validity)
+                           yields 'not raised: answer history unreadable' for
+                           every call and charter proposal that night, including
+                           joining or backfilling an open card. The file step
+                           goes partial; code and triage filings still go out.
+                           Only the improve prompt treats unreadable history as
+                           no earlier calls. tests/fm-dream.test.sh covers this
+                           conservative refusal for a previously answered call.
                            An unreadable open-card list, hold or body (including a
                            lookup timeout) yields 'not raised: open cards unreadable'
                            rather than a new card. If a discovered card has closed
@@ -2285,8 +2289,10 @@ def shared_instructions(ctx):
 
 def call_ledger(ctx):
     """Every captain call dreaming has raised: [{change, evidence, key, at}].
-    A missing ledger is an empty history; None means it exists but cannot be
-    read or parsed, so answered calls cannot be told apart from new ones."""
+    A missing ledger is an empty history; blank lines are skipped. Any read
+    failure, undecodable line, invalid JSON or non-object row makes the whole
+    ledger unreadable (None), since answered calls cannot be told apart from
+    new ones. A torn append is deliberately unreadable, not ignored."""
     out = []
     try:
         with open(ctx.dir / 'calls.jsonl', encoding='utf-8') as fh:
