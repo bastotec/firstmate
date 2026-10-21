@@ -43,15 +43,37 @@ is recorded and never stops the next:
              code          the file step files each as a priority task for the
                            repository's owning mate and tells that mate to
                            dispatch a worker now (the main home through its inbox);
-             captain       the file step raises one plain decision card for all of
-                           them, with the night's private charter proposals.
-                           A call already answered is not raised: one matching an
-                           earlier dreaming call whose hold has closed
-                           (calls.jsonl), an instruction in data/captain-shared.md,
-                           or a merge-authority question for repositories the merge
-                           policy already sets to auto. While an earlier dreaming
-                           card is still open, new calls are added to it instead of
-                           raising another.
+             captain       the file step filters answered calls, then reuses an
+                           open dreaming card or raises one for the remaining calls
+                           and the night's private charter proposals.
+                           A call is not raised if similar() matches its question
+                           to a recorded call whose hold is no longer listed by
+                           fm-card.sh calls, or to a complete instruction bullet
+                           or Rule entry in data/captain-shared.md (including
+                           continuation lines). Ordinary merge questions naming
+                           owner/repo repositories are also settled when every
+                           named repository's merge policy is auto; no repository
+                           means no assumption. Production, deployment, release,
+                           promotion, spending, approval changes, red checks,
+                           waivers, bypasses, skipped checks, force and destructive
+                           actions remain outside that policy shortcut.
+                           Each skipped call records its reason in tonight's actions.
+                           The improve prompt receives shared instructions, the
+                           merge-policy list and earlier calls to avoid proposing
+                           settled questions; complete shared entries and ledger
+                           rows mentioning excluded homes are omitted before
+                           matching or prompt truncation.
+                           Open dreaming cards are discovered independently of
+                           the ledger, and their questions are backfilled against
+                           the original task keys even for an unchanged repeat.
+                           A repeat is 'already waiting'; new calls and charter
+                           proposals join the existing body without replacing prior
+                           proposals or lifecycle lines. The hold check, body read,
+                           update and recording share captain intake's task-control
+                           lock; a card closed since discovery is not overwritten.
+                           An unreadable open-card list, hold or body (including a
+                           lookup timeout) yields 'not raised: open cards unreadable'
+                           rather than a new card.
            The changes and the measurements are also the digest's "Improve"
            section, which the instructions and triage agents read.
            It also reads last night's actions (improve-actions.jsonl) with their
@@ -107,8 +129,8 @@ is recorded and never stops the next:
            and an item already in its dedupe window is not filed twice.
            Code changes from the improve step are filed first, as priority-0
            tasks, and their owning mate is told to dispatch a worker now (fm-send.sh,
-           or the main home's inbox); captain changes and charter proposals become
-           one decision card (fm-captain-hold.sh), even without measured tasks.
+           or the main home's inbox); captain changes and charter proposals follow
+           the captain-card handling above, even without measured tasks.
            Command timeouts preserve successful filings and allow remaining triage
            work while the step budget remains. Dreaming never pushes to or opens
            PRs on harness repositories, except the instructions step's one PR on
@@ -170,6 +192,9 @@ Files under <home>/state/dream/:
                      charter_card: [actions as above] (private charter card when
                      improve is null), no_mistakes: {...} or null, summary}
   raised.jsonl       one line per raised item (dedupe across nights)
+  calls.jsonl        dreaming questions with {change, evidence, key, at}; appended
+                     after a successful card raise or update, and when discovering
+                     unrecorded questions on open cards, for later answer filtering
   digest-<date>.md   the private digest the agents read
   charters-<date>.md private charter-edit proposals, when any are kept
   improve-<date>.json  the night's task timelines (private)
@@ -2351,8 +2376,7 @@ def unanswered_calls(ctx, calls, tonight, env):
 
 
 def raise_card(ctx, calls, charters, tonight, env, errors):
-    """One plain decision card for the captain-only changes and the night's
-    private charter proposals."""
+    """Reuse an open dreaming card or raise one for calls and charter proposals."""
     what = '; '.join([c['change'][:200] for c in calls] + ['charter edit for %s: %s' % (c['mate'], c['what'])
                                                             for c in charters])[:400]
     entry = {'kind': 'captain', 'what': what, 'key': None, 'target': calls[0]['target'] if calls else None,
