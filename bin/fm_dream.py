@@ -45,6 +45,13 @@ is recorded and never stops the next:
                            dispatch a worker now (the main home through its inbox);
              captain       the file step raises one plain decision card for all of
                            them, with the night's private charter proposals.
+                           A call already answered is not raised: one matching an
+                           earlier dreaming call whose hold has closed
+                           (calls.jsonl), an instruction in data/captain-shared.md,
+                           or a merge-authority question for repositories the merge
+                           policy already sets to auto. While an earlier dreaming
+                           card is still open, new calls are added to it instead of
+                           raising another.
            The changes and the measurements are also the digest's "Improve"
            section, which the instructions and triage agents read.
            It also reads last night's actions (improve-actions.jsonl) with their
@@ -215,7 +222,8 @@ bin/fm-tasks-axi.sh, bin/fm-backlog-handoff.sh, bin/fm-report.sh, bin/fm-on.sh a
 `bin/fm_captain_memory.py upkeep`; FM_DREAM_REFLECT replaces the gateway call (it
 reads the request JSON on stdin and prints the gateway's reply); FM_DREAM_SEND,
 FM_DREAM_INBOX and FM_DREAM_HOLD replace bin/fm-send.sh, bin/fm-inbox.sh and
-bin/fm-captain-hold.sh; FM_DREAM_TRACK_WAIT and FM_DREAM_TRACK_POLL; FM_DREAM_BRIDGE
+bin/fm-captain-hold.sh; FM_DREAM_CARD and FM_DREAM_MERGE_POLICY replace bin/fm-card.sh
+and bin/fm-merge-policy.sh; FM_DREAM_TRACK_WAIT and FM_DREAM_TRACK_POLL; FM_DREAM_BRIDGE
 and FM_DREAM_SSH replace bin/fm-bridge.sh and ssh for breakdown reads.
 
     fm_dream.py run --home H [--only STEP ...] [--dry-run]
@@ -1021,6 +1029,9 @@ or the worker brief and second-mate charter templates). A nightly agent makes it
 - "code": a fix in one of these repositories that a worker ships: {repos}.
 - "captain": only when it needs the captain's own decision (merge authority, money, credentials, \
 production, what the fleet promises users); it becomes one question for him.
+The captain has already decided the questions below; never propose a "captain" change that one of \
+them answers, and treat merge authority for a repository as settled by its merge policy:
+{decided}
 Never weaken a safety rule or an approval only the captain can give: a change that would is a "captain" \
 item. Tie each change to the evidence above (a task, a number), and name the one measurement it should \
 move, from: {targets}.
@@ -1277,7 +1288,8 @@ def step_improve(ctx):
     if ctx.dry_run:
         raw, why = None, 'dry run: no model called'
     else:
-        raw, why = reflect(ctx, model, IMPROVE_PROMPT.format(digest=text, repos=', '.join(repos), targets=', '.join(TARGETS)))
+        raw, why = reflect(ctx, model, IMPROVE_PROMPT.format(digest=text, repos=', '.join(repos), targets=', '.join(TARGETS),
+                                                             decided=decided_text(ctx)))
     changes = improve_changes(ctx, raw, repos) if raw is not None else []
     nothing = raw == []  # an honest answer: the model found nothing worth changing tonight
     if raw and not changes:
@@ -2121,7 +2133,7 @@ def file_improvements(ctx, already, rows, errors):
             errors.append('%s: %s' % (c['title'][:60], entry['state']))
             if isinstance(exc, subprocess.TimeoutExpired):
                 ctx.left()
-    calls = [c for c in changes if c['kind'] == 'captain']
+    calls = unanswered_calls(ctx, [c for c in changes if c['kind'] == 'captain'], tonight, env)
     charters = ctx.facts.get('charter_proposals') or []
     if calls or charters:
         try:
@@ -2176,6 +2188,94 @@ def file_one(ctx, c, mate, entry, env, rows, errors, already):
         errors.append('%s: dispatch order to %s unconfirmed (%s)' % (key, mate, (s.stderr or s.stdout).strip()[:120]))
 
 
+def decided_text(ctx):
+    """What the captain already decided, for the improve prompt: his recorded
+    instructions, the merge policy, and earlier dreaming calls."""
+    out = []
+    try:
+        lines = (ctx.home / 'data' / 'captain-shared.md').read_text(encoding='utf-8').splitlines()
+        out += ['- ' + ln.strip().lstrip('- ')[:300] for ln in lines if ln.strip().startswith(('- ', 'Rule:'))][-30:]
+    except OSError:
+        pass
+    r = ctx.run([tool('fm-merge-policy.sh', 'FM_DREAM_MERGE_POLICY'), 'list'],
+                env=dict(os.environ, FM_HOME=str(ctx.home)), timeout=30)
+    if r.returncode == 0 and (r.stdout or '').strip():
+        out.append('- Merge policy (auto merges once the full pipeline passes and CI is green): '
+                   + '; '.join(ln.strip() for ln in r.stdout.splitlines() if ln.strip())[:600])
+    out += ['- Already asked (%s): %s' % (p.get('key'), p.get('change', '')[:200]) for p in call_ledger(ctx)][-20:]
+    return '\n'.join(out) or '- nothing recorded yet'
+
+
+def call_ledger(ctx):
+    """Every captain call dreaming has raised: [{change, evidence, key, at}]."""
+    out = []
+    try:
+        with open(ctx.dir / 'calls.jsonl', encoding='utf-8') as fh:
+            for line in fh:
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    continue
+    except OSError:
+        pass
+    return out
+
+
+def open_call_keys(ctx, env):
+    """Task ids of this home's captain calls still waiting on him, or None when unreadable."""
+    r = ctx.run([tool('fm-card.sh', 'FM_DREAM_CARD'), 'calls'], env=env, timeout=60)
+    if r.returncode:
+        return None
+    return {line.split('\t', 1)[0] for line in (r.stdout or '').splitlines() if line.strip()}
+
+
+def merge_policy_auto(ctx, text, env):
+    """True when a merge-authority question names only repositories the captain's
+    merge policy already sets to auto (bin/fm-merge-policy.sh)."""
+    if not re.search(r'\bmerg', text, re.I):
+        return False
+    repos = set(re.findall(r'\b([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\b', text))
+    if not repos:
+        return False
+    for repo in repos:
+        r = ctx.run([tool('fm-merge-policy.sh', 'FM_DREAM_MERGE_POLICY'), 'get', repo], env=env, timeout=30)
+        if r.returncode or not (r.stdout or '').startswith('auto '):
+            return False
+    return True
+
+
+def unanswered_calls(ctx, calls, tonight, env):
+    """Drop calls the captain already answered: a matching earlier dreaming call
+    whose hold is closed, an instruction recorded in captain-shared.md, or a
+    merge-authority question the merge policy already settles. A call matching
+    one still open is kept and later folded into that open card."""
+    if not calls:
+        return calls
+    ledger = call_ledger(ctx)
+    open_keys = open_call_keys(ctx, env) if ledger else set()
+    try:
+        shared = [ln.strip() for ln in (ctx.home / 'data' / 'captain-shared.md').read_text(encoding='utf-8').splitlines()
+                  if ln.strip().startswith(('- ', 'Rule:'))]
+    except OSError:
+        shared = []
+    keep = []
+    for c in calls:
+        prior = [p for p in ledger if similar(c['change'], p.get('change', ''))]
+        why = None
+        if open_keys is not None and any(p.get('key') and p['key'] not in open_keys for p in prior):
+            why = 'already answered (earlier call %s closed)' % next(p['key'] for p in prior if p.get('key') not in open_keys)
+        elif any(similar(c['change'], ln) for ln in shared):
+            why = 'already answered in captain-shared.md'
+        elif merge_policy_auto(ctx, c['change'], env):
+            why = 'already settled by the merge policy'
+        if why:
+            tonight.append({'kind': 'captain', 'what': c['change'][:200], 'key': None, 'target': c.get('target'),
+                            'before': c.get('before'), 'state': 'not raised: %s' % why})
+        else:
+            keep.append(c)
+    return keep
+
+
 def raise_card(ctx, calls, charters, tonight, env, errors):
     """One plain decision card for the captain-only changes and the night's
     private charter proposals."""
@@ -2188,6 +2288,35 @@ def raise_card(ctx, calls, charters, tonight, env, errors):
         entry['state'] = 'dry run: no card'
         return
     title = 'Fleet dreaming needs your call (%s)' % ctx.day
+    ledger = call_ledger(ctx)
+    open_keys = open_call_keys(ctx, env) if ledger else set()
+    open_prior = [p for p in ledger if p.get('key') and open_keys and p['key'] in open_keys]
+    if open_prior:
+        # one open dreaming card at a time: the new night's calls join it instead of a second card
+        key = open_prior[-1]['key']
+        known = [p for p in ledger if p.get('key') == key]
+        new = [c for c in calls if not any(similar(c['change'], p.get('change', '')) for p in known)]
+        lines = (['- %s Evidence: %s' % (p['change'], p.get('evidence', '')) for p in known]
+                 + ['- %s Evidence: %s' % (c['change'], c['evidence']) for c in new]
+                 + ['- Apply this charter edit for %s? %s' % (c['mate'], c['what']) for c in charters])
+        entry['key'] = key
+        if not new and not charters:
+            entry['state'] = 'already waiting on the captain as %s' % key
+            return
+        bf = ctx.dir / '.card.md'
+        write_private(bf, '\n'.join(['# Fleet dreaming needs your call', ''] + lines))
+        try:
+            r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'update', key, '--body-file', str(bf),
+                         '--archive-body'], env=env, timeout=60)
+        finally:
+            bf.unlink(missing_ok=True)
+        if r.returncode:
+            entry['state'] = 'not added to open card %s' % key
+            errors.append('could not add tonight\'s calls to open card %s (%s)' % (key, (r.stderr or r.stdout or '').strip()[:120]))
+            return
+        record_calls(ctx, new, key)
+        entry['state'] = 'added to the open card %s' % key
+        return
     card = '\n'.join(['# %s' % title, ''] + ['- %s Evidence: %s' % (c['change'], c['evidence']) for c in calls]
                      + ['- Apply this charter edit for %s? %s' % (c['mate'], c['what']) for c in charters])
     bf = ctx.dir / '.card.md'
@@ -2218,8 +2347,17 @@ def raise_card(ctx, calls, charters, tonight, env, errors):
         cf.unlink(missing_ok=True)
     entry['key'] = key
     entry['state'] = 'card raised' if key and h.returncode == 0 else 'card not raised'
+    if entry['state'] == 'card raised':
+        record_calls(ctx, calls, key)
     if entry['state'] != 'card raised':
         errors.append('captain card not raised (%s)' % (h.stderr or h.stdout or '').strip()[:120])
+
+
+def record_calls(ctx, calls, key):
+    with open(ctx.dir / 'calls.jsonl', 'a', encoding='utf-8') as fh:
+        for c in calls:
+            fh.write(json.dumps({'change': c['change'], 'evidence': c.get('evidence', ''), 'key': key,
+                                 'at': ctx.now}) + '\n')
 
 
 def task_key_of(r):

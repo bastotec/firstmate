@@ -870,6 +870,94 @@ test_failed_empty_measurements_are_not_quiet_days() {
   pass "improve: an empty failed measurement stays partial and its reason reaches the morning summary"
 }
 
+test_answered_calls_are_not_raised_and_repeats_join_the_open_card() {
+  local d
+  d=$(new_case improve-answered-calls)
+  python3 - "$d" "$ROOT/bin" <<'PY' || fail "dreaming raised an answered or repeated captain call"
+import json, os, pathlib, subprocess, sys, time
+sys.path.insert(0, sys.argv[2])
+import fm_dream as dream
+root = pathlib.Path(sys.argv[1])
+
+class Context(dream.Ctx):
+    def run(self, argv, **kw):
+        self.calls.append(list(argv))
+        if argv[0] == 'fake-card':
+            return subprocess.CompletedProcess(argv, 0, ''.join('%s\tFleet dreaming needs your call\n' % k for k in self.open_keys), '')
+        if argv[0] == 'fake-policy':
+            if argv[1] == 'list':
+                return subprocess.CompletedProcess(argv, 0, 'owner bastotec/* auto\n', '')
+            return subprocess.CompletedProcess(argv, 0, 'auto owner bastotec\n' if argv[2].startswith('bastotec/') else 'ask default\n', '')
+        if argv[0] == 'fake-tasks' and argv[1] == 'add':
+            return subprocess.CompletedProcess(argv, 0, json.dumps({'id': 'dream-call-new'}), '')
+        return subprocess.CompletedProcess(argv, 0, '', '')
+
+os.environ.update(FM_DREAM_TASKS='fake-tasks', FM_DREAM_HOLD='fake-hold', FM_DREAM_INBOX='fake-inbox',
+                  FM_DREAM_CARD='fake-card', FM_DREAM_MERGE_POLICY='fake-policy')
+home = root / 'home'
+(home / 'data').mkdir(parents=True, exist_ok=True)
+(home / 'data' / 'captain-shared.md').write_text('- 2026-10-20 captain instruction: "never deploy customer agents on Fridays without a rollback plan"\n')
+
+def ctx_with(open_keys, ledger):
+    ctx = Context(home, False)
+    ctx.calls, ctx.open_keys = [], open_keys
+    ctx.deadline = time.time() + 600
+    ctx.config = {'owners': {}}
+    ctx.dir.mkdir(parents=True, exist_ok=True)
+    (ctx.dir / 'calls.jsonl').write_text(''.join(json.dumps(r) + '\n' for r in ledger))
+    return ctx
+
+def call(change):
+    return {'kind': 'captain', 'change': change, 'evidence': 'measured', 'target': 'waiting to merge', 'before': 1}
+
+answered = call('Delegate merge authority to the first mate for PRs that pass the full pipeline')
+shared = call('Never deploy customer agents on Fridays without a rollback plan')
+policy = call('Let the fleet merge bastotec/no-mistakes PRs on green')
+fresh = call('Spend up to 50 dollars a month on a hosted runner for macOS builds')
+ledger = [{'change': answered['change'], 'key': 'dream-call-old', 'at': 1}]
+
+# answered elsewhere: an earlier call now closed, captain-shared.md, the merge policy
+ctx = ctx_with(set(), ledger)
+tonight = []
+kept = dream.unanswered_calls(ctx, [answered, shared, policy, fresh], tonight, {})
+assert [c['change'] for c in kept] == [fresh['change']], kept
+reasons = [t['state'] for t in tonight]
+assert any('earlier call dream-call-old closed' in r for r in reasons), reasons
+assert any('captain-shared.md' in r for r in reasons), reasons
+assert any('merge policy' in r for r in reasons), reasons
+
+# a repeat of a call still open joins it: no second card, no new task
+ctx = ctx_with({'dream-call-open'}, [{'change': fresh['change'], 'evidence': 'measured', 'key': 'dream-call-open', 'at': 1}])
+tonight = []
+dream.raise_card(ctx, [fresh], [], tonight, {}, [])
+assert tonight[-1]['state'] == 'already waiting on the captain as dream-call-open', tonight
+assert not any(c[0] == 'fake-tasks' for c in ctx.calls), ctx.calls
+
+# a new question while a card is open is added to that card, not raised separately
+other = call('Approve a monthly budget for a second gateway account')
+tonight = []
+dream.raise_card(ctx, [other], [], tonight, {}, [])
+assert tonight[-1]['state'] == 'added to the open card dream-call-open', tonight
+assert not any(c[:2] == ['fake-tasks', 'add'] for c in ctx.calls), ctx.calls
+upd = [c for c in ctx.calls if c[:3] == ['fake-tasks', 'update', 'dream-call-open']]
+assert upd and '--archive-body' in upd[0], ctx.calls
+assert not any(c[0] == 'fake-hold' for c in ctx.calls), ctx.calls
+assert [r['key'] for r in dream.call_ledger(ctx)][-1] == 'dream-call-open'
+
+# with no open card, a fresh call raises one card and is recorded for later nights
+ctx = ctx_with(set(), [])
+tonight = []
+dream.raise_card(ctx, [fresh], [], tonight, {}, [])
+assert tonight[-1]['state'] == 'card raised' and tonight[-1]['key'] == 'dream-call-new', tonight
+assert [r['change'] for r in dream.call_ledger(ctx)] == [fresh['change']]
+
+# the improve prompt is told what is already decided
+text = dream.decided_text(ctx)
+assert 'rollback plan' in text and 'Merge policy' in text and 'Already asked (dream-call-new)' in text, text
+PY
+  pass "improve: answered captain calls are not raised again, and a repeat joins the open card"
+}
+
 test_card_timeouts_keep_filings_and_allow_triage() {
   local d
   d=$(new_case improve-card-timeout)
@@ -1397,6 +1485,7 @@ test_last_night_keeps_unread_homes_unresolved
 test_every_unshipped_instruction_reaches_the_summary
 test_failed_empty_measurements_are_not_quiet_days
 test_card_timeouts_keep_filings_and_allow_triage
+test_answered_calls_are_not_raised_and_repeats_join_the_open_card
 test_track_rejects_a_predecessor_deployment
 test_collect_builds_a_private_digest_of_the_day
 test_each_relaunch_is_counted_once
