@@ -3113,8 +3113,7 @@ SH
 }
 
 test_large_local_snapshot_overlaps_local_reads_without_projection_drift() {
-  local home fakebin worktree serial parallel parallel_file snapshot_pid i
-  local serial_started serial_elapsed parallel_started parallel_elapsed saved
+  local home fakebin worktree serial parallel barrier i
   home=$(make_home large-local-snapshot)
   worktree="$home/projects/shared-worktree"
   fm_git_init_commit "$worktree"
@@ -3122,9 +3121,23 @@ test_large_local_snapshot_overlaps_local_reads_without_projection_drift() {
   fakebin=$(make_fakebin "$home")
   cat > "$fakebin/no-mistakes" <<'SH'
 #!/usr/bin/env bash
-if [ "$*" = "axi status" ] && [ "${FAKE_NM_DELAY:-0}" = 1 ]; then
-  [ -z "${FAKE_NM_SIGNAL:-}" ] || : > "$FAKE_NM_SIGNAL"
-  sleep 1
+if [ "$*" = "axi status" ] && [ -n "${FAKE_NM_BARRIER:-}" ]; then
+  : > "$FAKE_NM_BARRIER/started/$$"
+  attempts=0
+  while [ -d "$FAKE_NM_BARRIER" ] && [ ! -e "$FAKE_NM_BARRIER/failed" ]; do
+    set -- "$FAKE_NM_BARRIER"/started/*
+    if [ "$#" -eq 5 ]; then
+      : > "$FAKE_NM_BARRIER/passed/$$"
+      exit 0
+    fi
+    attempts=$((attempts + 1))
+    if [ "$attempts" -ge 200 ]; then
+      : > "$FAKE_NM_BARRIER/failed"
+      exit 1
+    fi
+    sleep 0.05
+  done
+  exit 1
 fi
 exit 0
 SH
@@ -3153,44 +3166,20 @@ SH
     i=$((i + 1))
   done
 
-  serial=$(FAKE_NM_DELAY=0 FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=1 run "$home" "$fakebin" --json)
+  serial=$(FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=1 run "$home" "$fakebin" --json)
 
-  # Serialized reads pay every worker's delay end to end while concurrent reads
-  # overlap them. Time both runs and compare, because the two pay the same
-  # composition overhead: the difference isolates the overlap this change
-  # delivers, where an absolute wall-clock budget would instead measure how
-  # loaded the host happens to be and flake on a busy runner.
-  serial_started=$(date +%s)
-  FAKE_NM_DELAY=1 FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=1 \
-    run "$home" "$fakebin" --json >/dev/null \
-    || fail "serialized local snapshot failed"
-  serial_elapsed=$(( $(date +%s) - serial_started ))
-
-  parallel_started=$(date +%s)
-  parallel_file="$home/parallel-snapshot.json"
-  FAKE_NM_DELAY=1 FAKE_NM_SIGNAL="$home/nm-started" \
-    FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=8 \
-    run "$home" "$fakebin" --json > "$parallel_file" &
-  snapshot_pid=$!
-  i=0
-  while [ ! -e "$home/nm-started" ] && [ "$i" -lt 100 ]; do
-    sleep 0.05
-    i=$((i + 1))
-  done
-  if [ ! -e "$home/nm-started" ]; then
-    kill "$snapshot_pid" 2>/dev/null || true
-    wait "$snapshot_pid" 2>/dev/null || true
-    fail "concurrent local snapshot never began a current-state read"
-  fi
-  wait "$snapshot_pid" || fail "concurrent local snapshot failed"
-  parallel=$(<"$parallel_file")
-  parallel_elapsed=$(( $(date +%s) - parallel_started ))
-  # Five one-second reads serialize into five seconds and overlap into about
-  # one, so at least two of those four seconds must show up as real savings.
-  # Serializing the reads again collapses that difference to roughly zero.
-  saved=$(( serial_elapsed - parallel_elapsed ))
-  [ "$saved" -ge 2 ] \
-    || fail "concurrent local reads saved no measurable time (serial ${serial_elapsed}s vs concurrent ${parallel_elapsed}s)"
+  # Each current-state read waits until all five have started. This proves
+  # overlap directly, without comparing noisy end-to-end wall-clock timings.
+  # The stub's bounded wait also fails if these reads become serialized again.
+  barrier="$home/nm-barrier"
+  mkdir -p "$barrier/started" "$barrier/passed"
+  parallel=$(FAKE_NM_BARRIER="$barrier" FM_SNAPSHOT_CREW_STATE_TIMEOUT=30 \
+    FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=8 run "$home" "$fakebin" --json) \
+    || fail "concurrent local snapshot failed"
+  [ ! -e "$barrier/failed" ] || fail "current-state reads did not overlap"
+  set -- "$barrier/passed"/*
+  [ "$#" -eq 5 ] && [ -f "$1" ] \
+    || fail "not all five current-state reads passed the overlap barrier"
   [ "$parallel" = "$serial" ] \
     || fail "concurrent local observation changed the fm-bearings.v1 projection"
   printf '%s' "$parallel" | jq -e '

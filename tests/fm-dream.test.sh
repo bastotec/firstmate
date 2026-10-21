@@ -982,8 +982,8 @@ test_charter_lines_are_applied_to_each_mate_s_own_charter() {
     && grep -qxF -- "$line" "$d/mates/cadia/data/charter.md"; } || fail "the local charter did not gain the line: $(cat "$d/mates/cadia/data/charter.md")"
   grep -q 'Own the domain.' "$d/mates/cadia/data/charter.md" || fail "the charter lost its own text"
   grep -q 'customer' "$d/mates/cadia/data/charter.md" && fail "a hard-stop line was applied without the captain"
-  [ "$(stat -f %Lp "$d/mates/cadia/data/charter.md" 2>/dev/null || stat -c %a "$d/mates/cadia/data/charter.md")" = 640 ] \
-    || fail "the charter's mode changed"
+  python3 -c 'import os, stat, sys; sys.exit(stat.S_IMODE(os.stat(sys.argv[1]).st_mode) != 0o640)' \
+    "$d/mates/cadia/data/charter.md" || fail "the charter's mode changed"
   [ "$(cat "$d"/mates/cadia/state/dream-charter-backups/charter-*.md)" = "$(printf '# Charter\n\nOwn the domain.')" ] \
     || fail "no backup of the original charter"
   { grep -qF -- '- (' "$d/mates/bob/data/charter.md" && grep -q 'Answer in one paragraph.' "$d/mates/bob/data/charter.md"; } \
