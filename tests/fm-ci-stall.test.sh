@@ -29,6 +29,14 @@ make_home() {
   cat > "$dir/bin/gh" <<EOF
 #!/usr/bin/env bash
 fix="$dir/fix"
+if [ "\$1 \$2" = 'api repos/o/r/pulls/7' ] && [ -e "\$fix/hold" ]; then
+  touch "\$fix/entered"
+  for ((i=0; i<200; i++)); do
+    [ -e "\$fix/hold" ] || break
+    sleep 0.05
+  done
+  [ ! -e "\$fix/hold" ] || exit 1
+fi
 if [ "\$1" = api ]; then
   case "\$2" in
     repos/o/r/pulls/7) echo '{"state":"open","head":{"sha":"abc"}}' ;;
@@ -40,6 +48,7 @@ if [ "\$1" = api ]; then
   exit 0
 fi
 echo "\$*" >> "$dir/calls.log"
+if [ "\$1 \$2" = 'run rerun' ] && [ -e "$dir/rerun-fails" ]; then exit 1; fi
 EOF
   cat > "$dir/bin/send" <<EOF
 #!/usr/bin/env bash
@@ -166,6 +175,165 @@ test_counts_window_and_usage() {
   pass "counts honour the window and an unknown command is refused"
 }
 
+test_duration_samples_identify_distinct_recent_runs() {
+  local dir n
+  dir=$(make_home distinct-durations)
+  { check unit 1 101 completed success $((T0 - 1000)) $((T0 - 940))
+    check unit 2 102 completed success $((T0 - 1000)) $((T0 - 400))
+    check unit 3 103 in_progress "" $((T0 - 700)); } | checks "$dir"
+  for n in 1 2 3 4; do scan "$dir" "$T0"; done
+  assert_equals "" "$(cat "$dir/calls.log")" "reobserved successes fabricated a learned bound"
+  assert_equals 2 "$(jq '."o/r".unit | length' "$dir/home/state/ci-stall/durations.json")" "duplicate observations became samples"
+  for n in 4 5 6; do
+    check unit "$n" "$((100 + n))" completed success $((T0 - 100)) $((T0 - 40)) | checks "$dir"
+    scan "$dir" "$T0"
+  done
+  check unit 7 107 in_progress "" $((T0 - 200)) | checks "$dir"
+  scan "$dir" "$T0"
+  assert_equals 'run cancel 107 --repo o/r' "$(cat "$dir/calls.log")" "distinct equal-duration successes did not teach the median"
+  for n in 20 19 18 17 16 15 14 13 12 11 10; do
+    check unit "$n" "$((100 + n))" completed success $((T0 + n)) $((T0 + n + 60)) | checks "$dir"
+    scan "$dir" "$T0"
+  done
+  check unit 1 101 completed success $((T0 - 1000)) $((T0 - 940)) | checks "$dir"
+  scan "$dir" "$T0"
+  jq -e '."o/r".unit | (length == 10) and (keys | map(tonumber) | sort == [11,12,13,14,15,16,17,18,19,20])' \
+    "$dir/home/state/ci-stall/durations.json" >/dev/null || fail "samples did not retain the latest ten distinct check runs"
+  pass "duration learning counts check identities and retains the latest ten successes"
+}
+
+test_failed_reruns_remain_pending_until_success_or_diagnosis() {
+  local dir n
+  dir=$(make_home retry-rerun)
+  check verify 11 501 queued "" $((T0 - 2000)) | checks "$dir"
+  scan "$dir" "$T0"
+  echo 11 > "$dir/fix/zero-steps"
+  check verify 11 501 completed cancelled $((T0 - 2000)) "$T0" | checks "$dir"
+  : > "$dir/rerun-fails"
+  scan "$dir" "$T0"
+  jq -e '.pending_rerun == ["501"] and .rerun_failures["501"] == 1 and (.handed_off | not)' \
+    "$dir/home/state/ci-stall/w1.json" >/dev/null || fail "a failed rerun lost cancellation provenance"
+  assert_equals "" "$(cat "$dir/sent.log" 2>/dev/null)" "a failed rerun became a no-runner stall"
+  rm "$dir/rerun-fails"
+  scan "$dir" "$T0"
+  jq -e '.pending_rerun == []' "$dir/home/state/ci-stall/w1.json" >/dev/null || fail "successful rerun remained pending"
+  assert_equals 1 "$(counts "$dir" | jq '.retriggered')" "only confirmed reruns should be counted"
+
+  dir=$(make_home rerun-exhausted)
+  echo 12 > "$dir/fix/zero-steps"
+  check verify 12 502 completed cancelled $((T0 - 2000)) "$T0" | checks "$dir"
+  : > "$dir/rerun-fails"
+  for n in 1 2 3 4 5; do scan "$dir" "$T0"; done
+  assert_equals 3 "$(grep -c 'run rerun' "$dir/calls.log")" "rerun failures exceeded the three-attempt limit"
+  assert_equals 1 "$(wc -l < "$dir/sent.log" | tr -d ' ')" "exhausted reruns were not handed off exactly once"
+  assert_contains "$(cat "$dir/sent.log")" 'Diagnosis: rerun failure' "exhausted attempts were not diagnosed as rerun failure"
+  assert_equals 0 "$(counts "$dir" | jq '.retriggered // 0')" "failed requests were recorded as successful reruns"
+  jq -e '.pending_rerun == ["502"] and .handed_off' "$dir/home/state/ci-stall/w1.json" >/dev/null \
+    || fail "exhausted rerun lost its cancellation provenance"
+  pass "reruns retry without reclassifying cancellation, and escalate after three failures"
+}
+
+test_blocker_delivery_is_retried_until_confirmed() {
+  local dir mode
+  for mode in parent wake; do
+    dir=$(make_home "blocker-retry-$mode")
+    echo 11 > "$dir/fix/zero-steps"
+    check verify 11 501 completed cancelled $((T0 - 2000)) "$T0" | checks "$dir"
+    scan "$dir" "$T0"
+    : > "$dir/send-fails"
+    if [ "$mode" = parent ]; then
+      echo mate > "$dir/home/.fm-secondmate-home"
+    else
+      mkdir "$dir/home/state/.wake-queue"
+    fi
+    scan "$dir" "$T0"
+    jq -e '.handed_off | not' "$dir/home/state/ci-stall/w1.json" >/dev/null || fail "failed $mode delivery suppressed retries"
+    assert_equals 0 "$(counts "$dir" | jq '.blocker // 0')" "failed $mode delivery counted as a blocker"
+    if [ "$mode" = parent ]; then
+      printf 'schema=fm-secondmate-parent.v1\nroute=remote\n' > "$dir/home/.fm-secondmate-parent"
+      mkdir "$dir/home/state/parent-replies.status"
+      scan "$dir" "$T0"
+      jq -e '.handed_off | not' "$dir/home/state/ci-stall/w1.json" >/dev/null || fail "failed parent append suppressed retries"
+      rmdir "$dir/home/state/parent-replies.status"
+    else
+      rmdir "$dir/home/state/.wake-queue"
+    fi
+    scan "$dir" "$T0"
+    scan "$dir" "$T0"
+    jq -e '.handed_off' "$dir/home/state/ci-stall/w1.json" >/dev/null || fail "confirmed $mode delivery not saved"
+    assert_equals 1 "$(counts "$dir" | jq '.blocker')" "confirmed $mode blocker not counted exactly once"
+    if [ "$mode" = parent ]; then
+      assert_contains "$(cat "$dir/home/state/parent-replies.status")" 'blocked [key=ci-stall-w1]' "parent blocker was not delivered"
+    else
+      assert_contains "$(cat "$dir/home/state/.wake-queue")" 'check: stalled CI:' "first-mate wake was not delivered"
+    fi
+  done
+  pass "parent binding, parent append and wake failures remain eligible for delivery"
+}
+
+test_checks_share_one_workflow_mutation() {
+  local dir mode
+  for mode in queued completed; do
+    dir=$(make_home "group-$mode")
+    printf '11\n12\n' > "$dir/fix/zero-steps"
+    { check verify 11 501 "$mode" cancelled $((T0 - 2000)) "$T0"
+      check unit 12 501 "$mode" cancelled $((T0 - 2000)) "$T0"; } | checks "$dir"
+    scan "$dir" "$T0"
+    assert_equals 1 "$(wc -l < "$dir/calls.log" | tr -d ' ')" "two checks mutated one workflow twice"
+    if [ "$mode" = queued ]; then
+      jq -e '.pending_rerun == ["501"] and .retriggered == ["501"]' "$dir/home/state/ci-stall/w1.json" >/dev/null \
+        || fail "one workflow was recorded more than once"
+      { check verify 11 501 completed cancelled $((T0 - 2000)) "$T0"
+        check unit 12 501 completed cancelled $((T0 - 2000)) "$T0"; } | checks "$dir"
+      scan "$dir" "$T0"
+      assert_equals 1 "$(grep -c 'run rerun' "$dir/calls.log")" "pending workflow was rerun twice"
+    fi
+  done
+  pass "multiple stalled checks trigger one cancel or rerun per workflow"
+}
+
+test_overlapping_scans_exit_quietly_without_mutating() {
+  local dir
+  dir=$(make_home overlapping)
+  check verify 11 501 queued "" $((T0 - 2000)) | checks "$dir"
+  touch "$dir/fix/hold"
+  python3 - "$dir" "$STALL" "$T0" <<'PY' || fail "overlapping scans were not serialized"
+import json, os, pathlib, subprocess, sys, time
+d, entry, now = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+env = dict(os.environ, FM_HOME=str(d / 'home'), FM_CI_STALL_NOW=now,
+           FM_CI_STALL_GH=str(d / 'bin/gh'), FM_CI_STALL_SEND=str(d / 'bin/send'),
+           FM_CI_STALL_INFRA=str(d / 'bin/infra'))
+first = subprocess.Popen([entry, 'scan'], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+try:
+    deadline = time.monotonic() + 5
+    while not (d / 'fix/entered').exists() and time.monotonic() < deadline:
+        time.sleep(.05)
+    assert (d / 'fix/entered').exists(), 'first scan never reached GitHub'
+    other = subprocess.run([entry, 'scan'], env=env, capture_output=True, timeout=3)
+    assert other.returncode == 0 and not other.stdout and not other.stderr, other
+    assert not (d / 'calls.log').read_text(), 'overlapping scan mutated GitHub'
+    (d / 'fix/hold').unlink()
+    out, err = first.communicate(timeout=12)
+    assert first.returncode == 0 and not err, (out, err)
+    assert (d / 'calls.log').read_text().splitlines() == ['run cancel 501 --repo o/r']
+    rec = json.loads((d / 'home/state/ci-stall/w1.json').read_text())
+    assert rec['pending_rerun'] == ['501'], rec
+    again = subprocess.run([entry, 'scan'], env=env, capture_output=True, timeout=3)
+    assert again.returncode == 0 and not again.stderr, again
+finally:
+    (d / 'fix/hold').unlink(missing_ok=True)
+    if first.poll() is None:
+        first.kill()
+    first.communicate(timeout=12)
+PY
+  pass "one per-home scan owns GitHub actions and shared state at a time"
+}
+
+test_duration_samples_identify_distinct_recent_runs
+test_failed_reruns_remain_pending_until_success_or_diagnosis
+test_blocker_delivery_is_retried_until_confirmed
+test_checks_share_one_workflow_mutation
+test_overlapping_scans_exit_quietly_without_mutating
 test_queued_check_is_cancelled_then_rerun_once_and_recovers
 test_cancelled_without_runner_is_rerun_at_once
 test_stuck_again_is_diagnosed_and_handed_off_once

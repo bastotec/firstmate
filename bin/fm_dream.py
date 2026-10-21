@@ -1101,7 +1101,7 @@ def improve_hosts(ctx):
     return out, errors
 
 
-CI_STALL_EVENTS = ('stalled', 'retriggered', 'recovered', 'handed-off', 'blocker')
+CI_STALL_EVENTS = ('stalled', 'retriggered', 'cancelled-for-rerun', 'recovered', 'handed-off', 'blocker')
 
 
 def ci_stall_counts(ctx):
@@ -1322,12 +1322,12 @@ def step_improve(ctx):
         # never counted as open or merged: the split is incomplete, and says so
         unread.append('%d PR%s unread (%s), so their merge is unknown' % (
             len(unread_prs), '' if len(unread_prs) == 1 else 's', ', '.join(unread_prs[:3])))
-    if not items:
+    stalls, stall_unread = ci_stall_counts(ctx)
+    unread += ['CI stall records unreadable for %s' % mid for mid in stall_unread]
+    if not items and not any(stalls.values()):
         ctx.facts['improve'] = ({'measurement_error': '; '.join(unread), 'changes': [], 'tonight': []} if unread else None)
         return {'status': 'partial' if unread else 'quiet day', **({'why': '; '.join(unread)} if unread else {})}
     m = fl.metrics(items)
-    stalls, stall_unread = ci_stall_counts(ctx)
-    unread += ['CI stall records unreadable for %s' % mid for mid in stall_unread]
     text = fl.digest(m, items, unread) + '\n- CI stalls (this Mac): %s\n' % ', '.join(
         '%s %d' % (k, stalls[k]) for k in CI_STALL_EVENTS)
     write_private(ctx.dir / ('improve-%s.json' % ctx.day), json.dumps({'timelines': items, 'metrics': m}, indent=1))

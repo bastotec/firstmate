@@ -40,6 +40,7 @@ executable), FM_CI_STALL_SEND (the fm-send executable) and FM_CI_STALL_INFRA
 from __future__ import annotations
 
 import calendar
+import fcntl
 import json
 import os
 import re
@@ -138,18 +139,22 @@ class Scan:
                                  "event": kind, "detail": detail[:300]}) + "\n")
 
     def usual(self, repo: str, name: str):
-        samples = self.durations.get(repo, {}).get(name, [])
-        return statistics.median(samples) if len(samples) >= 3 else None
+        samples = self.durations.get(repo, {}).get(name, {})
+        if not isinstance(samples, dict):
+            return None
+        return statistics.median(s["duration"] for s in samples.values()) if len(samples) >= 3 else None
 
     def learn(self, repo: str, checks: list) -> None:
         for c in checks:
-            if c.get("status") == "completed" and c.get("conclusion") == "success":
+            if c.get("status") == "completed" and c.get("conclusion") == "success" and c.get("id") is not None:
                 start, end = utc(c.get("started_at")), utc(c.get("completed_at"))
                 if start and end and end > start:
-                    bucket = self.durations.setdefault(repo, {}).setdefault(c["name"], [])
-                    if (end - start) not in bucket[-1:]:
-                        bucket.append(end - start)
-                        del bucket[:-10]
+                    names = self.durations.setdefault(repo, {})
+                    bucket = names.get(c["name"], {})
+                    if not isinstance(bucket, dict):
+                        bucket = {}
+                    bucket[str(c["id"])] = {"duration": end - start, "completed_at": end}
+                    names[c["name"]] = dict(sorted(bucket.items(), key=lambda s: (s[1]["completed_at"], int(s[0])))[-10:])
 
     def stuck(self, repo: str, c: dict):
         """A plain reason when this check is stuck, else None."""
@@ -172,17 +177,33 @@ class Scan:
         lines = [ln for ln in (r.stdout or "").splitlines() if ln.startswith(("infra ", "fix:"))]
         return "; ".join(lines)[:400]
 
-    def raise_blocker(self, wid: str, text: str) -> None:
+    def rerun(self, wid, pr, head, full, rec, rid, check, why):
+        failures = rec.setdefault("rerun_failures", {})
+        if failures.get(rid, 0) >= 3:
+            return
+        try:
+            rerun = gh("run", "rerun", rid, "--repo", full)
+        except subprocess.TimeoutExpired:
+            rerun = False
+        if rerun:
+            rec["pending_rerun"].remove(rid)
+            failures.pop(rid, None)
+            self.event(wid, pr, head, check, "retriggered", why)
+        else:
+            failures[rid] = failures.get(rid, 0) + 1
+
+    def raise_blocker(self, wid: str, text: str) -> bool:
         lib = SCRIPT_DIR / "fm-parent-channel-lib.sh"
         rc = subprocess.run(
             ["bash", "-c", '. "$1"; fm_parent_channel_report "$2" "$3" "$4"', "fm-ci-stall", str(lib),
              str(self.h), str(self.state), "blocked [key=ci-stall-%s]: %s" % (wid, text)],
             capture_output=True, text=True, timeout=120).returncode
-        if rc == 1:  # this is the first mate's own home
-            subprocess.run(
+        if rc == 1:
+            return subprocess.run(
                 ["bash", "-c", '. "$1"; fm_wake_append check "$2" "$3"', "fm-ci-stall",
                  str(SCRIPT_DIR / "fm-wake-lib.sh"), "ci-stall:%s:%d" % (wid, NOW), "check: stalled CI: " + text],
-                capture_output=True, text=True, timeout=60)
+                capture_output=True, text=True, timeout=60).returncode == 0
+        return rc == 0
 
     def one(self, wid: str, pr: str) -> None:
         m = PR_RE.match(pr)
@@ -211,16 +232,18 @@ class Scan:
             rec = {"head": head, "pr": pr, "retriggered": [], "pending_rerun": [], "handed_off": False}
         # a run this scan cancelled is rerun once GitHub reports it completed
         waiting = set()
-        for rid in list(rec["pending_rerun"]):
+        rerun_failed = []
+        for rid in list(dict.fromkeys(rec["pending_rerun"])):
             waiting.add(rid)
             state = [c for c in checks if run_id(c) == rid]
             if state and all(c.get("status") == "completed" for c in state):
-                if gh("run", "rerun", rid, "--repo", full):
-                    self.event(wid, pr, head, state[0]["name"], "retriggered", "rerun after cancel")
-                rec["pending_rerun"].remove(rid)
+                self.rerun(wid, pr, head, full, rec, rid, state[0]["name"], "rerun after cancel")
+            if rec.get("rerun_failures", {}).get(rid, 0) >= 3:
+                rerun_failed.append((state[0] if state else {"name": "run " + rid},
+                                     "rerun failed after 3 attempts for run " + rid))
         # those runs' check rows still show the cancel this scan made, not a stall
         stuck = [(c, self.stuck(full, c)) for c in checks if run_id(c) not in waiting]
-        stuck = [(c, why) for c, why in stuck if why]
+        stuck = [(c, why) for c, why in stuck if why] + rerun_failed
         if not stuck:
             if rec["retriggered"] and not waiting and not rec.get("recovered"):
                 rec["recovered"] = True
@@ -229,14 +252,18 @@ class Scan:
             return
         for c, why in stuck:
             self.event(wid, pr, head, c["name"], "stalled", why)
-        fresh = [(c, why) for c, why in stuck if run_id(c) and run_id(c) not in rec["retriggered"]]
+        fresh = {}
+        for c, why in stuck:
+            rid = run_id(c)
+            if rid and rid not in rec["retriggered"]:
+                fresh.setdefault(rid, (c, why))
         if fresh:
-            for c, why in fresh:
-                rid = run_id(c)
+            for rid, (c, why) in fresh.items():
                 rec["retriggered"].append(rid)
-                if c.get("status") == "completed":
-                    if gh("run", "rerun", rid, "--repo", full):
-                        self.event(wid, pr, head, c["name"], "retriggered", why)
+                state = [row for row in checks if run_id(row) == rid]
+                if all(row.get("status") == "completed" for row in state):
+                    rec["pending_rerun"].append(rid)
+                    self.rerun(wid, pr, head, full, rec, rid, c["name"], why)
                 elif gh("run", "cancel", rid, "--repo", full):
                     rec["pending_rerun"].append(rid)
                     self.event(wid, pr, head, c["name"], "cancelled-for-rerun", why)
@@ -247,20 +274,22 @@ class Scan:
             return
         names = ", ".join(sorted({c["name"] for c, _ in stuck}))
         whys = "; ".join(sorted({why for _, why in stuck}))
-        infra = self.classify_infra(pr)
-        diagnosis = infra or ("a job that keeps running past its usual time (a hung test or step)"
-                              if any(c.get("status") == "in_progress" for c, _ in stuck)
-                              else "checks that stay queued (no runner picks them up)")
-        text = ("CI on %s is still stuck after one re-run: %s (%s). Diagnosis: %s. Fix it under your charter "
+        infra = self.classify_infra(pr) if not rerun_failed else ""
+        diagnosis = ("rerun failure: GitHub rejected 3 rerun attempts" if rerun_failed else infra) or (
+            "a job that keeps running past its usual time (a hung test or step)"
+            if any(c.get("status") == "in_progress" for c, _ in stuck)
+            else "checks that stay queued (no runner picks them up)")
+        progress = "could not be re-run after 3 attempts" if rerun_failed else "is still stuck after one re-run"
+        text = ("CI on %s %s: %s (%s). Diagnosis: %s. Fix it under your charter "
                 "(move a private repository's workflow to the workload runner, skip an optional job per policy, "
-                "or fix the hung step) and re-run, or report one plain blocker." % (pr, names, whys, diagnosis))
+                "or fix the hung step) and re-run, or report one plain blocker." % (pr, progress, names, whys, diagnosis))
         sent = subprocess.run([SEND, wid, text], capture_output=True, text=True, timeout=120,
                               env=dict(os.environ, FM_HOME=str(self.h))).returncode == 0
-        rec["handed_off"] = True
         if sent:
+            rec["handed_off"] = True
             self.event(wid, pr, head, names, "handed-off", diagnosis)
-        else:
-            self.raise_blocker(wid, "%s for worker %s: %s; %s" % (pr, wid, whys, diagnosis))
+        elif self.raise_blocker(wid, "%s for worker %s: %s; %s" % (pr, wid, whys, diagnosis)):
+            rec["handed_off"] = True
             self.event(wid, pr, head, names, "blocker", diagnosis)
         save(rec_path, rec)
 
@@ -295,7 +324,15 @@ def counts(h: Path, since: int) -> dict:
 
 def main(argv) -> int:
     if argv[:1] == ["scan"]:
-        Scan(home()).scan()
+        h = home()
+        directory = h / "state" / "ci-stall"
+        directory.mkdir(parents=True, exist_ok=True)
+        with open(directory / ".lock", "a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return 0
+            Scan(h).scan()
         return 0
     if argv[:1] == ["counts"]:
         since = int(argv[1]) if len(argv) > 1 else NOW - 86400
