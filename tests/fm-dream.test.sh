@@ -961,6 +961,9 @@ assert any('captain-shared.md' in r for r in reasons), reasons
 assert any('merge policy' in r for r in reasons), reasons
 
 for change in ('Let the fleet merge bastotec/firstmate PRs once the full pipeline passes and CI is green',
+               'Allow firstmate to merge bastotec/firstmate PRs after the full pipeline has passed and CI is green',
+               'Let secondmates merge bastotec/firstmate PRs after all required checks have succeeded',
+               'Allow bastotec/firstmate PRs to be merged automatically after CI succeeds',
                'Delegate automatic merge authority for pull requests in bastotec/firstmate and bastotec/no-mistakes'):
     ctx = ctx_with(set(), [])
     tonight = []
@@ -974,6 +977,11 @@ for change, target in (('Allow automatic production promotion after merging bast
                        ('Allow merging bastotec/firstmate PRs without captain approval', 'held_or_blocked'),
                        ('Let the fleet merge bastotec/firstmate PRs when CI checks are red', 'held_or_blocked'),
                        ('Let the fleet merge bastotec/firstmate PRs or auto approve pull requests', 'held_or_blocked'),
+                       *((f'Let the fleet merge bastotec/firstmate PRs and {action}', 'held_or_blocked')
+                         for action in ('promote to prod', 'allow deployments', 'waive review', 'grant a waiver',
+                                        'skip a check', 'skip the required CI checks', 'bypass review',
+                                        'force the update', 'perform destructive actions', 'delete branches',
+                                        'destroy stored data', 'wipe state', 'reset history')),
                        ('Let the fleet merge elsewhere/project PRs on green', 'held_or_blocked'),
                        ('Let the fleet merge PRs on green', 'held_or_blocked')):
     ctx = ctx_with(set(), [])

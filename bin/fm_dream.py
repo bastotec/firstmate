@@ -2303,20 +2303,17 @@ def open_dream_cards(ctx, env, opened, ledger, locks):
 def merge_policy_auto(ctx, text, env):
     """True when a merge-authority question names only repositories the captain's
     merge policy already sets to auto (bin/fm-merge-policy.sh)."""
-    if not re.search(r'\b(?:merge|merges|merging)\b', text, re.I):
+    if not re.search(r'\b(?:merge|merges|merging|merged)\b', text, re.I):
         return False
     repo_pattern = r'\b([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\b'
     repos = set(re.findall(repo_pattern, text))
     if not repos:
         return False
-    words = set(re.findall(r'[\w-]+', re.sub(repo_pattern, '', text).lower()))
-    merge_words = set(('allow let enable authorize delegate grant give the a an to for of in on and '
-                       'when once after as soon is are be can could may should we you first mate firstmate '
-                       'fleet captain merge merges merging auto automatic automatically autonomous '
-                       'autonomously authority permission permissions pr prs pull request requests '
-                       'repo repos repository repositories green ci checks pass passes passed full '
-                       'pipeline no-mistakes that with only').split())
-    if not words <= merge_words:
+    question = re.sub(repo_pattern, '', text)
+    if re.search(r'\b(?:production|prod|deploy\w*|releas\w*|promot\w*|red|waiv\w*|bypass\w*|'
+                 r'forc\w*|destruct\w*|delet\w*|destroy\w*|wip\w*|reset\w*|spend\w*|'
+                 r'budget\w*|purchas\w*|pay\w*|approv\w*)\b|'
+                 r'\bskip(?:s|ped|ping)?(?:\s+[\w-]+){0,3}\s+checks?\b', question, re.I):
         return False
     for repo in repos:
         r = ctx.run([tool('fm-merge-policy.sh', 'FM_DREAM_MERGE_POLICY'), 'get', repo], env=env, timeout=30)
