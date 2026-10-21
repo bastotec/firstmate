@@ -765,14 +765,20 @@ fi
 
 # Captain-direct echo guard (see the header): never deliver the captain's own
 # message to a secondmate a second time.
+CARRIES_RESULT=0
+echo_corr=
+if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ "$FROM_CAPTAIN" != 1 ] && [ -z "$FROM_MATE" ] \
+  && [ "$KEY_MODE" = 0 ] && [ -n "$*" ]; then
+  if [ "$RESULT" = 1 ] || fm_captain_direct_carries_result "$*"; then
+    CARRIES_RESULT=1
+  fi
+fi
 if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ "$FROM_CAPTAIN" != 1 ] && [ -z "$FROM_MATE" ] && [ -z "$RESOLVE_KEYS" ] \
   && [ "$KEY_MODE" = 0 ] && [ -n "$*" ]; then
   if echo_corr=$(fm_captain_direct_echo_corr "$STATE" "$TARGET_TASK_ID" "$*"); then
     if [ "$CORRECTION" = 1 ]; then
       fm_captain_direct_log "$STATE" "correction-sent corr=$echo_corr task=$TARGET_TASK_ID"
-    elif [ "$RESULT" = 1 ] || fm_captain_direct_carries_result "$*"; then
-      fm_captain_direct_log "$STATE" "result-sent corr=$echo_corr task=$TARGET_TASK_ID"
-    else
+    elif [ "$CARRIES_RESULT" = 0 ]; then
       fm_captain_direct_log "$STATE" "suppressed corr=$echo_corr task=$TARGET_TASK_ID"
       printf 'suppressed=captain-direct-echo corr=%s\n' "$echo_corr"
       echo "fm-send: NOT sent to $TARGET_TASK_ID - it already has the captain's own message (corr=$echo_corr) and answers him itself, and this steer repeats or reconciles it. Nothing to do. If this delivers new findings (a child's report or outcome), resend it with --result, naming the report file. If a later report from $TARGET_TASK_ID shows a real gap, send only that fix with --correction." >&2
@@ -783,8 +789,11 @@ fi
 
 # After a captain message reaches a secondmate: record it for the echo guard and
 # tell this home's first mate once, FYI only (see the header).
-fm_send_capture_captain_message() {
+fm_send_message_delivered() {
   local source
+  if [ "$CARRIES_RESULT" = 1 ]; then
+    fm_captain_direct_log "$STATE" "result-sent corr=${echo_corr:-$PENDING_REPLY_CORR} task=$TARGET_TASK_ID"
+  fi
   [ "$FROM_CAPTAIN" = 1 ] || return 0
   # Remember a standing instruction he gave any worker or mate
   # (bin/fm_captain_memory.py), detached so delivery never waits on it.
@@ -1228,7 +1237,7 @@ else
       echo "error: steer not sent to remote secondmate $TARGET_REMOTE_ID (the remote steering-inbox record could not be written; the remote leg's stderr above has the reason)" >&2
       exit 1
     fi
-    fm_send_capture_captain_message
+    fm_send_message_delivered
     # The remote record is durable delivery, exactly as a local enqueue is.
     if [ -n "$PENDING_REPLY_CORR" ]; then
       if fm_pending_reply_confirm_delivery "$STATE" "$PENDING_REPLY_CORR"; then
@@ -1295,7 +1304,7 @@ else
       echo "error: steer not sent to $INBOX_TASK_ID: its inbox record could not be written under $STATE/$INBOX_TASK_ID.inbox" >&2
       exit 1
     fi
-    fm_send_capture_captain_message
+    fm_send_message_delivered
     fm_lock_release "$INBOX_META_LOCK"
     # Enqueue IS durable delivery to the task's record: mark the pending
     # expectation delivered now, without resolving it; the pending-reply
@@ -1397,7 +1406,7 @@ else
       exit 1
       ;;
   esac
-  fm_send_capture_captain_message
+  fm_send_message_delivered
   # Delivery confirmed. Mark the pending expectation delivered without resolving
   # it: the pending-reply header owns report resolution and its exceptions.
   if [ -n "$PENDING_REPLY_CORR" ]; then

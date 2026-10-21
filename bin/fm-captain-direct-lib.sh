@@ -131,7 +131,7 @@ fm_captain_direct_mentions() {  # <message>
 # 0 when <message> delivers a child's findings: it names a report file under
 # data/ (data/<task>/report.md or another .md there).
 fm_captain_direct_carries_result() {  # <message>
-  printf '%s' "$1" | grep -Eq '(^|[^A-Za-z0-9_.-])data/[A-Za-z0-9._-]+/([A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.md([^A-Za-z0-9_]|$)'
+  printf '%s' "$1" | grep -Eq '(^|[^A-Za-z0-9_.-])data/([A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.md([^A-Za-z0-9_]|$)'
 }
 
 # Print the corr of a recent captain-direct delivery to <task-id> that

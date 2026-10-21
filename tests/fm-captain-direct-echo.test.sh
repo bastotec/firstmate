@@ -137,19 +137,42 @@ test_corrections_and_unrelated_steers_are_sent() {
   pass "captain-direct: corrections, unrelated steers, and late steers are sent"
 }
 
+expect_result_sent() {
+  local before
+  before=$(grep -c 'result-sent ' "$HOME_DIR/state/captain-direct.log" || true)
+  expect_sent "$@"
+  [ "$(grep -c 'result-sent ' "$HOME_DIR/state/captain-direct.log")" -eq "$((before + 1))" ] \
+    || fail "$1: a delivered result must add one result-sent entry"
+}
+
 test_results_are_sent() {
   setup result
   deliver_captain
   # 2026-10-21: a scout task answered the captain's question; the parent's
   # report to the mate named the corr and was held back for an hour.
-  expect_sent "a report path naming the corr" \
+  expect_result_sent "a report path naming the corr" \
     "Findings for the captain's direct question (corr=$CORR) are in data/airtyping-gapses-electrodes/report.md: SoftPulse Flat/Dome are wrist EMG candidates."
-  expect_sent "an explicit --result" --result \
+  expect_result_sent "a report directly under data naming the corr" \
+    "Findings for corr=$CORR are in data/electrodes.md: SoftPulse electrodes are wrist EMG candidates."
+  expect_result_sent "an explicit --result" --result \
     "Scout done for corr=$CORR: SoftPulse Flat/Dome are wrist EMG candidates, not finger sensors."
   assert_contains "$(cat "$HOME_DIR/state/captain-direct.log")" "result-sent corr=$CORR task=domain" \
     "a result past the guard must be logged"
+  expect_result_sent "an explicit --result without an echo match" --result \
+    "Scout finished: SoftPulse electrodes are wrist EMG candidates."
+  expect_result_sent "a nested report without an echo match" \
+    "Scout findings are in data/electrodes/scout/findings.md."
+  expect_result_sent "a report directly under data without an echo match" \
+    "Scout findings are in data/electrodes.md."
   expect_suppressed "a re-steer that only mentions a report" \
     "Follow up on corr=$CORR and write a report when done."
+  mv "$HOME_DIR/state/domain.inbox" "$HOME_DIR/state/domain.inbox.saved"
+  touch "$HOME_DIR/state/domain.inbox"
+  if run_send "$FB" "$HOME_DIR" "$LOG" "$OUT" domain --result "More findings for corr=$CORR"; then
+    fail "a result with an unwritable inbox must fail"
+  fi
+  [ "$(grep -c 'result-sent ' "$HOME_DIR/state/captain-direct.log")" -eq 6 ] \
+    || fail "a failed result send must not be logged as delivered"
   pass "captain-direct: a parent send carrying new findings is never suppressed"
 }
 
