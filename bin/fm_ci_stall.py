@@ -39,9 +39,12 @@ optional job is skipped by policy) or reports one plain blocker; the scan does
 not edit workflows. When delivery fails or times out, the scan raises that
 blocker itself: a second mate appends "blocked [key=ci-stall-<id>]" to its parent
 channel, the first mate's own home queues one check: wake. At most one confirmed
-hand-off or blocker is recorded per PR head; failed delivery is retried next scan.
-A scan that re-triggers newly stuck runs still hands off runs whose re-trigger is
-already spent, so a stream of fresh stalls cannot starve that hand-off.
+hand-off or blocker is recorded per PR head: runs that exhaust their re-trigger
+later on that head do not cause another. Failed delivery is retried next scan.
+A scan re-triggers fresh runs and also handles exhausted runs in the same scan,
+subject to that per-head limit, so fresh stalls cannot starve the hand-off.
+Only exhausted runs supply the hand-off's check names, stall reasons and
+hung-job or unclaimed-queue fallback diagnosis.
 
 Events stalled, retriggered, cancelled-for-rerun, recovered, handed-off and
 blocker append to state/ci-stall/events.jsonl with fields
