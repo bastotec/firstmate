@@ -44,9 +44,10 @@ initially measured from the status file's mtime when the condition is observed.
 Later status edits do not restart an unchanged condition's clock. Its text is a
 concrete instruction - decide and resume it, relaunch it with
 `bin/fm-spawn.sh --relaunch <id>`, replace it, or close it - never "wait".
-The mate acted when a numeric .msg steer in the worker's inbox
-(state/<id>.inbox, written by bin/fm-send.sh, excluding handled/ and delivery
-bookkeeping) is newer than at the wake, or its spawn_gen= changes: a still-stuck
+The mate acted when the highest steer sequence in the worker's inbox
+(state/<id>.inbox/NNN.msg written by bin/fm-send.sh, counted in handled/ too, so
+a steer the worker already acknowledged still counts; delivery bookkeeping
+never does) is above the one at the wake, or its spawn_gen= changes: a still-stuck
 worker then starts a fresh waiting period and is woken again after another
 bound, retaining the episode's first epoch and nudge count. When the
 mate did not act within FM_KEEPALIVE_ESCALATE_SECS (1800) of the wake, or the
@@ -147,14 +148,16 @@ def mtime(path: Path) -> int:
         return 0
 
 
-def newest_steer(path: Path) -> int:
+def steer_seq(path: Path) -> int:
+    """Highest steer sequence delivered to an inbox, handled or not."""
     best = 0
-    try:
-        for child in path.iterdir():
-            if re.fullmatch(r"[0-9]+\.msg", child.name) and child.is_file():
-                best = max(best, mtime(child))
-    except OSError:
-        pass
+    for folder in (path, path / "handled"):
+        try:
+            for child in folder.iterdir():
+                if re.fullmatch(r"[0-9]+\.msg", child.name) and child.is_file():
+                    best = max(best, int(child.name[:-4]))
+        except OSError:
+            pass
     return best
 
 
@@ -335,16 +338,16 @@ class Scan:
                    "woke": 0, "nudges": 0, "escalated": False}
         bound = {"dead": DEAD, "no-progress": NO_PROGRESS, "undelivered": DONE}.get(cond, STUCK)
         age = NOW - rec["since"]
-        inbox = newest_steer(self.state / ("%s.inbox" % wid))
+        inbox = steer_seq(self.state / ("%s.inbox" % wid))
         gen = m.get("spawn_gen", "")
         if rec.get("escalated") or age < bound:
             save(rec_path, rec)
             return
         if rec["woke"]:
-            acted = inbox > rec.get("inbox", 0) or gen != rec.get("gen", "")
+            acted = inbox > rec.get("steer", 0) or gen != rec.get("gen", "")
             if acted and rec["nudges"] < MAX_NUDGES:
                 # the mate acted and the worker is still stuck: a fresh episode
-                rec.update(since=NOW, woke=0, inbox=inbox, gen=gen)
+                rec.update(since=NOW, woke=0, steer=inbox, gen=gen)
                 save(rec_path, rec)
                 return
             if acted or NOW - rec["woke"] >= ESCALATE:
@@ -357,7 +360,7 @@ class Scan:
             save(rec_path, rec)
             return
         if self.wake("keepalive:%s:%s:%d" % (wid, cond, rec["since"]), instruction(wid, cond, age, verb, text)):
-            rec.update(woke=NOW, inbox=inbox, gen=gen, nudges=rec["nudges"] + 1)
+            rec.update(woke=NOW, steer=inbox, gen=gen, nudges=rec["nudges"] + 1)
             rec.setdefault("first", rec["since"])
         save(rec_path, rec)
 

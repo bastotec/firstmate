@@ -134,6 +134,27 @@ test_blocked_worker_is_retried_by_the_mate_then_escalated() {
   pass "a blocked worker wakes its mate each episode and escalates after three tries"
 }
 
+test_a_steer_the_worker_already_handled_counts_as_the_mate_acting() {
+  local dir inbox rec
+  dir=$(make_home steer-handled ship)
+  make_secondmate "$dir" handled
+  status "$dir" "$T0" 'blocked: needs a retry'
+  scan "$dir" $((T0 + 1200))
+  assert_equals 1 "$(wake_count "$dir")" "setup: a blocked worker did not wake its mate"
+  steer "$dir" $((T0 + 1300))
+  inbox="$dir/home/state/w1.inbox"
+  mkdir -p "$inbox/handled"
+  for rec in "$inbox"/*.msg; do mv "$rec" "$inbox/handled/"; done
+  scan "$dir" $((T0 + 1400))
+  jq -e '.since == '$((T0 + 1400))' and .woke == 0' "$dir/home/state/keepalive/w1.json" >/dev/null \
+    || fail "a steer the worker acknowledged before the scan was not counted as the mate acting"
+  scan "$dir" $((T0 + 3200))
+  [ ! -e "$dir/parent/state/handled.status" ] \
+    || assert_no_grep 'did not act on the keep-alive wake' "$dir/parent/state/handled.status" \
+      "a mate that steered was reported as ignoring the wake"
+  pass "a steer the worker already handled counts as the mate acting"
+}
+
 test_inbox_bookkeeping_does_not_count_as_the_mate_acting() {
   local dir inbox file
   dir=$(make_home inbox-bookkeeping ship)
@@ -369,6 +390,7 @@ test_held_on_the_mate_wakes_then_escalates_once
 test_external_wait_is_left_to_the_declared_wait_cadence
 test_blocked_worker_is_retried_by_the_mate_then_escalated
 test_inbox_bookkeeping_does_not_count_as_the_mate_acting
+test_a_steer_the_worker_already_handled_counts_as_the_mate_acting
 test_state_override_owns_scans_locks_records_and_wakes
 test_worker_without_a_live_agent_is_relaunched
 test_no_real_progress_counts_code_not_reports
