@@ -297,6 +297,9 @@ test_repeated_episodes_have_distinct_parent_keys() {
     assert_grep "blocked [key=$key]" "$channel" "the episode did not publish its blocker"
     status "$dir" $((epoch + 3100)) 'working: resumed'
     echo "$epoch" > "$dir/wt/parser.rs"
+    # Same-size edits may share a wall-clock second on fast runners; use the
+    # fixture clock so each episode observes a distinct real-progress mtime.
+    at "$((epoch + 3100))" "$dir/wt/parser.rs"
     scan "$dir" $((epoch + 3100))
     assert_grep "resolved [key=$key]: worker w1 is moving again" "$channel" "the episode did not resolve its blocker"
   done
