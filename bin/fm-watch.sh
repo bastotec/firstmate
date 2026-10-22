@@ -157,6 +157,15 @@
 #                          This watcher runs it detached every
 #                          FM_CI_STALL_INTERVAL seconds (600) only when a worker
 #                          meta records pr=https://github.com/...
+#   check: worker keep-alive: ...
+#                          surfaced once from a queue row keyed
+#                          keepalive:<id>:<condition>:<epoch>, queued by
+#                          bin/fm-worker-keepalive.sh; its Python docstring owns
+#                          what is stuck, the instruction and the escalation.
+#                          This watcher runs it detached every
+#                          FM_KEEPALIVE_INTERVAL seconds (300) while the home
+#                          records a ship or scout worker or retains keep-alive
+#                          episode records that may need departure resolution
 #   check: idle workers need a decision / second mate not cleaning up idle workers: <id>...
 #                          surfaced once from durable queue rows keyed
 #                          idle-sweep:<epoch> and idle-sweep-audit:<mate>:<epoch>
@@ -312,6 +321,8 @@ esac
 SECONDMATE_REVIVE_INTERVAL=${FM_SECONDMATE_REVIVE_INTERVAL:-30}
 PARKED_RUN_INTERVAL=${FM_PARKED_RUN_INTERVAL:-600}
 case "$PARKED_RUN_INTERVAL" in ''|*[!0-9]*|0) PARKED_RUN_INTERVAL=600 ;; esac
+KEEPALIVE_INTERVAL=${FM_KEEPALIVE_INTERVAL:-300}
+case "$KEEPALIVE_INTERVAL" in ''|*[!0-9]*|0) KEEPALIVE_INTERVAL=300 ;; esac
 CI_STALL_INTERVAL=${FM_CI_STALL_INTERVAL:-600}
 case "$CI_STALL_INTERVAL" in ''|*[!0-9]*|0) CI_STALL_INTERVAL=600 ;; esac
 IDLE_SWEEP_INTERVAL=${FM_IDLE_SWEEP_SECS:-1800}
@@ -1747,7 +1758,7 @@ procevent_surface_after_output() {
 }
 
 procevent_surface_queued() {
-  local key reason captured="" stranded="" unstarted="" notes="" revive="" idle="" idle_audit="" idle_left="" mates="" lanes="" parked="" quiet=""
+  local key reason captured="" stranded="" unstarted="" notes="" revive="" idle="" idle_audit="" idle_left="" mates="" lanes="" parked="" quiet="" keepalive=""
   PROCEVENT_SURFACED=
   [ -s "$FM_WAKE_QUEUE" ] || return 0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
@@ -1759,7 +1770,7 @@ procevent_surface_queued() {
         notes="$notes ${key#inbox:}"
         continue
         ;;
-      procevent:*|secondmate-revive:*|lane-heal:*|parked-run:*|worker-quiet:*|ci-stall:*|idle-sweep:*|idle-sweep-audit:*|idle-sweep-unhandled:*|mate-mail:*) ;;
+      procevent:*|secondmate-revive:*|lane-heal:*|parked-run:*|worker-quiet:*|keepalive:*|ci-stall:*|idle-sweep:*|idle-sweep-audit:*|idle-sweep-unhandled:*|mate-mail:*) ;;
       *) continue ;;
     esac
     [ -e "$(procevent_surfaced_marker "$key")" ] && continue
@@ -1780,6 +1791,10 @@ procevent_surface_queued() {
       worker-quiet:*)
         key=${key#worker-quiet:}
         quiet="$quiet ${key%%:*}"
+        ;;
+      keepalive:*)
+        key=${key#keepalive:}
+        keepalive="$keepalive ${key%%:*}"
         ;;
       parked-run:*)
         key=${key#parked-run:}
@@ -1814,6 +1829,10 @@ procevent_surface_queued() {
   if [ -n "$parked" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
     reason="$reason worker run parked too long:$parked"
+  fi
+  if [ -n "$keepalive" ]; then
+    [ "$reason" = "check:" ] || reason="$reason;"
+    reason="$reason worker keep-alive (read each row's instruction):$keepalive"
   fi
   if [ -n "$quiet" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
@@ -2089,6 +2108,21 @@ poll_sleep() {
     [ "$now" -gt "$start" ] && return 0
     start=$now
   done
+}
+
+# bin/fm_worker_keepalive.py owns stuck-worker detection and escalation. It
+# runs git per worker, so it runs detached on its own cadence.
+keepalive_detached() {
+  local record
+  [ "$(age_of "$STATE/.last-keepalive")" -ge "$KEEPALIVE_INTERVAL" ] || return 0
+  if ! grep -lqE '^kind=(ship|scout)$' "$STATE"/*.meta 2>/dev/null; then
+    for record in "$STATE/keepalive/"*.json; do
+      [ -f "$record" ] && break
+    done
+    [ -f "$record" ] || return 0
+  fi
+  touch "$STATE/.last-keepalive"
+  FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-worker-keepalive.sh" scan </dev/null >/dev/null 2>&1 &
 }
 
 # --- Main entry: the runtime below runs only when this file is executed as a
@@ -2490,6 +2524,7 @@ while :; do
   secondmate_revive_detached
   parked_run_detached
   ci_stall_detached
+  keepalive_detached
 
   # Finished workers are cleaned up and idle ones become decisions here, so a
   # home never keeps them waiting for a model turn (bin/fm-idle-sweep.sh).

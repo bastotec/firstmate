@@ -675,6 +675,8 @@ portable_serial_weight_hints() {
 # (2026-10-20); all serial shards passed, but other checks failed.
 # fm-ci-stall was measured in green serial shard 2 of run 39633625991
 # (2026-10-21); all serial shards passed, but other checks failed.
+# fm-worker-keepalive and fm-spawn-serial are local measurements (15.9 s and
+# 10.4 s on macOS, 2026-10-22) until a green CI run's timing artifact replaces them.
 # The five tests/fm-watch-triage*.test.sh suites were one 694233 ms script
 # before run 37413095868; their hints start from each suite's share of that,
 # from the per-case output timestamps of run 37401433503's serial shard 1.
@@ -787,6 +789,7 @@ tests/fm-session-start.test.sh 208795
 tests/fm-shared-captain-inheritance.test.sh 5758
 tests/fm-spawn-dispatch-profile.test.sh 167032
 tests/fm-spawn-pool-base-freshen.test.sh 85868
+tests/fm-spawn-serial.test.sh 10400
 tests/fm-spawn-worktree-settle.test.sh 11165
 tests/fm-startup-memory-budget.test.sh 17405
 tests/fm-startup-network.test.sh 66915
@@ -836,6 +839,7 @@ tests/fm-watch-triage-resurface.test.sh 183015
 tests/fm-watch-triage-stale.test.sh 130808
 tests/fm-watch-triage.test.sh 135600
 tests/fm-watcher-lock.test.sh 65613
+tests/fm-worker-keepalive.test.sh 15900
 EOF
 }
 
