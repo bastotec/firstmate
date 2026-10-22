@@ -36,8 +36,9 @@ for undelivered, both measured from the status line that opened it) queues one `
 keepalive:<id>:<condition>:<epoch> to this home's own supervisor. Its text is a
 concrete instruction - decide and resume it, relaunch it with
 `bin/fm-spawn.sh --relaunch <id>`, replace it, or close it - never "wait".
-The mate acted when the worker's inbox (state/<id>.inbox, written by
-bin/fm-send.sh) or its spawn_gen= changes after the wake: a still-stuck worker
+The mate acted when a numeric .msg steer in the worker's inbox
+(state/<id>.inbox, written by bin/fm-send.sh, excluding handled/ and delivery
+bookkeeping) is newer than at the wake, or its spawn_gen= changes: a still-stuck worker
 then starts a fresh episode and is woken again after another bound. When the
 mate did not act within FM_KEEPALIVE_ESCALATE_SECS (1800) of the wake, or the
 worker is still stuck after FM_KEEPALIVE_MAX_NUDGES (3) wakes, the scan raises
@@ -137,15 +138,12 @@ def mtime(path: Path) -> int:
         return 0
 
 
-def newest(path: Path) -> int:
-    """Newest mtime at or two levels below path (an inbox is a small tree)."""
-    best = mtime(path)
+def newest_steer(path: Path) -> int:
+    best = 0
     try:
         for child in path.iterdir():
-            best = max(best, mtime(child))
-            if child.is_dir():
-                for sub in child.iterdir():
-                    best = max(best, mtime(sub))
+            if re.fullmatch(r"[0-9]+\.msg", child.name) and child.is_file():
+                best = max(best, mtime(child))
     except OSError:
         pass
     return best
@@ -259,9 +257,9 @@ def unstick(cond: str) -> str:
 
 
 class Scan:
-    def __init__(self, h: Path):
+    def __init__(self, h: Path, state: Path):
         self.h = h
-        self.state = h / "state"
+        self.state = state
         self.dir = self.state / "keepalive"
         self.dir.mkdir(parents=True, exist_ok=True)
 
@@ -328,7 +326,7 @@ class Scan:
                    "woke": 0, "nudges": 0, "escalated": False}
         bound = {"dead": DEAD, "no-progress": NO_PROGRESS, "undelivered": DONE}.get(cond, STUCK)
         age = NOW - rec["since"]
-        inbox = newest(self.state / ("%s.inbox" % wid))
+        inbox = newest_steer(self.state / ("%s.inbox" % wid))
         gen = m.get("spawn_gen", "")
         if rec.get("escalated") or age < bound:
             save(rec_path, rec)
@@ -377,16 +375,18 @@ class Scan:
 def main(argv) -> int:
     if argv[:1] == ["scan"]:
         h = home()
-        if not (h / "state").is_dir():
+        state = Path(os.environ.get("FM_STATE_OVERRIDE") or h / "state")
+        if not state.is_dir():
             return 0
-        directory = h / "state" / "keepalive"
+        os.environ["FM_STATE_OVERRIDE"] = str(state)
+        directory = state / "keepalive"
         directory.mkdir(parents=True, exist_ok=True)
         with open(directory / ".lock", "a") as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return 0
-            Scan(h).scan()
+            Scan(h, state).scan()
         return 0
     print(__doc__, file=sys.stderr)
     return 2

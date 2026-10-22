@@ -46,9 +46,11 @@ status() {  # <dir> <epoch> <line>
 }
 
 steer() {  # <dir> <epoch>: the mate writes to the worker's inbox (bin/fm-send.sh)
-  mkdir -p "$1/home/state/w1.inbox"
-  : > "$1/home/state/w1.inbox/msg-$2"
-  at "$2" "$1/home/state/w1.inbox/msg-$2"
+  local rec
+  rec=$(FM_HOME="$1/home" FM_STATE_OVERRIDE="$1/home/state" \
+    bash -c '. "$1/bin/fm-task-inbox-lib.sh"; fm_task_inbox_write "$2" w1 "retry now"' \
+    _ "$ROOT" "$1/home/state") || fail "could not deliver the steer"
+  at "$2" "$rec"
 }
 
 scan() {  # <dir> <now>
@@ -130,6 +132,73 @@ test_blocked_worker_is_retried_by_the_mate_then_escalated() {
   assert_grep 'raise it with the captain in one plain line' "$dir/home/state/.wake-queue" "a mate that could not unstick it was not escalated"
   assert_grep 'could not unstick it after 3 tries' "$dir/home/state/.wake-queue" "the escalation does not say the mate tried"
   pass "a blocked worker wakes its mate each episode and escalates after three tries"
+}
+
+test_inbox_bookkeeping_does_not_count_as_the_mate_acting() {
+  local dir inbox file
+  dir=$(make_home inbox-bookkeeping ship)
+  make_secondmate "$dir" bookkeeping
+  status "$dir" "$T0" 'blocked: needs a retry'
+  steer "$dir" $((T0 + 1100))
+  inbox="$dir/home/state/w1.inbox"
+  scan "$dir" $((T0 + 1200))
+  assert_equals 1 "$(wake_count "$dir")" "setup: a blocked worker did not wake its mate"
+  for file in .ring-state .ring.log .escalated not-a-sequence.msg; do
+    echo bookkeeping > "$inbox/$file"
+    at $((T0 + 1400)) "$inbox/$file"
+  done
+  mkdir -p "$inbox/999.msg"
+  mv "$inbox/001.msg" "$inbox/handled/001.msg"
+  at $((T0 + 1400)) "$inbox/handled/001.msg"
+  at $((T0 + 1400)) "$inbox/handled"
+  at $((T0 + 1400)) "$inbox"
+  scan "$dir" $((T0 + 1500))
+  jq -e '.since == '$T0' and .woke == '$((T0 + 1200)) \
+    "$dir/home/state/keepalive/w1.json" >/dev/null || fail "bookkeeping restarted the ignored-wake episode"
+  scan "$dir" $((T0 + 3000))
+  assert_grep 'did not act on the keep-alive wake' "$dir/parent/state/bookkeeping.status" \
+    "bookkeeping delayed escalation or was reported as mate action"
+  pass "only newly delivered numeric steering records count as mate action"
+}
+
+test_state_override_owns_scans_locks_records_and_wakes() {
+  local dir state default_state
+  for default_state in absent populated; do
+    dir=$(make_home "state-override-$default_state" ship)
+    status "$dir" "$T0" 'blocked: needs a retry'
+    state="$dir/alternate-state"
+    mv "$dir/home/state" "$state"
+    if [ "$default_state" = populated ]; then
+      mkdir -p "$dir/home/state"
+      printf 'kind=ship\nspawn_gen=decoy\n' > "$dir/home/state/decoy.meta"
+      printf 'blocked: unrelated worker\n' > "$dir/home/state/decoy.status"
+      at "$T0" "$dir/home/state/decoy.status"
+    fi
+    mkdir -p "$state/keepalive"
+    FM_HOME="$dir/home" FM_STATE_OVERRIDE="$state" FM_KEEPALIVE_NOW=$((T0 + 1200)) \
+      FM_KEEPALIVE_LIVENESS="$dir/bin/liveness" python3 - "$KEEPALIVE" "$state" <<'PY'
+import fcntl
+import subprocess
+import sys
+from pathlib import Path
+with open(Path(sys.argv[2]) / "keepalive" / ".lock", "a") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    subprocess.run([sys.argv[1], "scan"], check=True, timeout=30)
+PY
+    assert_absent "$state/keepalive/w1.json" "the scan ignored the override lock"
+    FM_STATE_OVERRIDE="$state" scan "$dir" $((T0 + 1200))
+    assert_present "$state/keepalive/w1.json" "override metadata was not monitored"
+    assert_grep 'worker w1 has been blocked' "$state/.wake-queue" "the wake missed the override queue"
+    assert_absent "$dir/home/state/keepalive" "the scan used the default state directory"
+    assert_absent "$dir/home/state/.wake-queue" "the wake used the default state directory"
+    FM_STATE_OVERRIDE="$state" scan "$dir" $((T0 + 3000))
+    assert_grep 'did not act on the keep-alive wake' "$state/.wake-queue" "override escalation was not delivered"
+    rm "$state/w1.meta"
+    FM_STATE_OVERRIDE="$state" scan "$dir" $((T0 + 3100))
+    assert_absent "$state/keepalive/w1.json" "a departure kept its override episode"
+    assert_grep 'left the fleet; clear its blocker' "$state/.wake-queue" "override resolution was not delivered"
+  done
+  pass "the effective state directory owns metadata, lock, episode records and wakes"
 }
 
 test_worker_without_a_live_agent_is_relaunched() {
@@ -296,6 +365,8 @@ test_watcher_keepalive_guard_stays_cheap_and_obeys_cadence() {
 test_held_on_the_mate_wakes_then_escalates_once
 test_external_wait_is_left_to_the_declared_wait_cadence
 test_blocked_worker_is_retried_by_the_mate_then_escalated
+test_inbox_bookkeeping_does_not_count_as_the_mate_acting
+test_state_override_owns_scans_locks_records_and_wakes
 test_worker_without_a_live_agent_is_relaunched
 test_no_real_progress_counts_code_not_reports
 test_done_worker_and_departures
