@@ -2,44 +2,53 @@
 """Worker keep-alive: a worker that stops making progress is acted on by its mate.
 
 bin/fm-worker-keepalive.sh is the public entrypoint; bin/fm-watch.sh owns the
-detached scan cadence and launch condition. A home only watches its own direct
-workers (state/<id>.meta with kind ship or scout), so every mate, the first
-mate included, watches its own. Overlapping scans of one home exit zero quietly
-under a non-blocking lock at state/keepalive/.lock.
+detached scan cadence and launch condition. In paths below, state/ denotes
+FM_STATE_OVERRIDE when nonempty, otherwise FM_HOME/state; metadata, episode records,
+the scan lock and wake queue all use that effective state directory.
+A home only watches its own direct workers (state/<id>.meta with kind ship or
+scout), so every mate, the first mate included, watches its own. Overlapping
+scans of one home exit zero quietly under a non-blocking lock at
+state/keepalive/.lock.
 
 Each scan reads one condition per worker, first match wins:
+  undelivered  a done: worker without a recorded pr= is still in the fleet
+               FM_KEEPALIVE_DONE_SECS (2700) after its done line, past
+               bin/fm-idle-sweep.sh's cleanup cadence: its result may never have
+               reached whoever waits on it. A done: worker with a PR is left to
+               the PR and CI watchers, regardless of agent liveness.
   dead         bin/fm-busy-lib.sh classifies the agent dead (no live agent);
   blocked      the last status line is blocked: or failed: - the mate must act;
+  external     an active supervisor declaration from bin/fm-external-wait.sh
+               suppresses held and no-progress detection until expiry, but
+               never the done, dead or blocked cases above;
   held         the last status line is paused: or captain-held on something the
                mate itself can decide: it awaits a release, hold, approval,
                steer, decision or answer, names the mate ("your", "mate",
                "owner"), or holds a retry or housekeeping step (retry, relaunch,
                re-spawn, install, cleanup). A paused: line that names a UTC
-               `until` time, or names none of those, is an external wait and is
-               left to bin/fm-watch.sh's declared-wait cadence;
+               `until` time, or either pause verb naming none of those keywords,
+               is left to bin/fm-watch.sh's declared-wait cadence;
   no-progress  any other live, unfinished worker whose real progress has not
                moved for FM_KEEPALIVE_NO_PROGRESS_SECS (1200). Real progress is
-               the worktree's HEAD, the paths and mtimes of its changed files
-               that are not reports (*.md, *.txt, *.log, report/ and notes/
-               paths, .superpowers/, .scratch/, .no-mistakes/), and the published validation run and step in
-               state/<id>.crew-state. Status lines and report edits never count.
-  undelivered  a done: worker without a recorded pr= is still in the fleet
-               FM_KEEPALIVE_DONE_SECS (2700) after its done line, past
-               bin/fm-idle-sweep.sh's cleanup cadence: its result may never have
-               reached whoever waits on it (a send the captain-direct echo guard
-               suppressed, 2026-10-21). A done: worker with a PR is left to the
-               PR and CI watchers.
+               the worktree's HEAD, the paths, mtimes and sizes of its changed
+               files that are not reports (*.md, *.txt, *.log, report/ and notes/
+               paths, .superpowers/, .scratch/, .no-mistakes/), the published
+               validation run, step and verdict in state/<id>.crew-state,
+               and the recorded pr=. Status lines and report edits never count.
 
-A condition older than its bound (FM_KEEPALIVE_DEAD_SECS, 300, for dead;
-FM_KEEPALIVE_STUCK_SECS, 1200, for blocked and held and FM_KEEPALIVE_DONE_SECS
-for undelivered, both measured from the status line that opened it) queues one `check: worker keep-alive:` wake keyed
-keepalive:<id>:<condition>:<epoch> to this home's own supervisor. Its text is a
+A condition reaching its bound queues one `check: worker keep-alive:` wake
+keyed keepalive:<id>:<condition>:<epoch> to this home's own supervisor.
+Dead uses FM_KEEPALIVE_DEAD_SECS (300) from first observation; blocked and held
+use FM_KEEPALIVE_STUCK_SECS (1200), and undelivered uses FM_KEEPALIVE_DONE_SECS,
+initially measured from the status file's mtime when the condition is observed.
+Later status edits do not restart an unchanged condition's clock. Its text is a
 concrete instruction - decide and resume it, relaunch it with
 `bin/fm-spawn.sh --relaunch <id>`, replace it, or close it - never "wait".
 The mate acted when a numeric .msg steer in the worker's inbox
 (state/<id>.inbox, written by bin/fm-send.sh, excluding handled/ and delivery
-bookkeeping) is newer than at the wake, or its spawn_gen= changes: a still-stuck worker
-then starts a fresh episode and is woken again after another bound. When the
+bookkeeping) is newer than at the wake, or its spawn_gen= changes: a still-stuck
+worker then starts a fresh waiting period and is woken again after another
+bound, retaining the episode's first epoch and nudge count. When the
 mate did not act within FM_KEEPALIVE_ESCALATE_SECS (1800) of the wake, or the
 worker is still stuck after FM_KEEPALIVE_MAX_NUDGES (3) wakes, the scan raises
 one plain line naming what is stuck and what would unstick it: a second mate

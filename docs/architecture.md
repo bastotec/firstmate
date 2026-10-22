@@ -70,8 +70,9 @@ A secondmate's worktree is never probed, because it is a firstmate home whose ow
 
 ### Declared waits
 
-Four records declare that a crew waits on something outside the fleet: a worker's `paused:` status line, a supervisor-declared external wait recorded by `bin/fm-external-wait.sh` for a worker that cannot write its own line, a verified `captain-held` status transfer, and the backlog captain call `bin/fm-captain-hold.sh` records.
-A declared wait re-surfaces on the long `FM_PAUSE_RESURFACE_SECS` cadence instead of being treated as a wedge, busy or idle, and the re-surface names which human or declarer the wait is on.
+The pane-staleness guard recognizes four declared-wait records: a worker's `paused:` status line, a supervisor-declared external wait recorded by `bin/fm-external-wait.sh` for a worker that cannot write its own line, a verified `captain-held` status transfer, and the backlog captain call `bin/fm-captain-hold.sh` records.
+Within that guard, a declared wait re-surfaces on the long `FM_PAUSE_RESURFACE_SECS` cadence instead of being treated as a wedge, busy or idle, and the re-surface names which human or declarer the wait is on.
+The independent worker keep-alive scan's treatment of mate-decidable pauses and external waits is owned by [`fm_worker_keepalive.py`'s docstring](../bin/fm_worker_keepalive.py).
 For a stopped ordinary crew the first sight still surfaces one stale wake, with inconclusive liveness fail-open, so a worker genuinely waiting on a decision is never silenced.
 A supervisor declaration's expiry alone restores ordinary escalation, and no declaration suppresses a genuinely new status line, check result, terminal outcome, or PR merge.
 A backlog captain call's first sight alarms and later alarms in its window are throttled, scoped to the call's lifecycle so a release and re-hold starts fresh; an unreadable backlog or incompatible `tasks-axi` leaves the ordinary alarm path unchanged.

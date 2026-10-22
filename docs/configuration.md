@@ -82,7 +82,7 @@ state/
   <id>.parked-run <id>.quiet-noted  parked validation episode and quiet-worker check-in marker (bin/fm-parked-run-watch.sh header)
   ci-stall/               stalled-CI re-trigger progress per worker, learned check durations, and the events dreaming counts (bin/fm_ci_stall.py docstring)
   keepalive/              stuck-worker episodes per worker (bin/fm_worker_keepalive.py docstring)
-  .spawn-serial.lock      one spawn at a time per home (bin/fm-spawn.sh header "Serialized spawns")
+  .spawn-serial.lock      fresh-spawn serialization (bin/fm-spawn.sh header "Serialized spawns")
   <id>.model <id>.deck-caps  in-place model choice and live driver capability (bin/fm-control.sh owns public behavior; bin/fm_model_switch.py owns capability checks)
   <id>.progress           in-turn native activity, read for the busy-age bound only (bin/fm-busy-event.sh)
   <id>.crew-state         local ship task's validation record for file watchers; bin/fm-task-state-lib.sh "PUBLISHED RECORD" owns fields, refreshes, and cleanup

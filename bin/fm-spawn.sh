@@ -234,19 +234,22 @@
 # one W3C traceparent= carrier, the same value injected into the pane as
 # TRACEPARENT; the default-off path writes neither, leaving the generated meta
 # and launch environment unchanged.
-#   Serialized spawns: one spawn runs at a time per home. The invocation holds
-#   state/.spawn-serial.lock (waiting up to FM_SPAWN_SERIAL_WAIT_SECS, 900, then
-#   launching anyway with a warning) and runs the spawn as a child. A child
-#   refused because its endpoint label is still registered ("endpoint
-#   superseded") is retried after FM_SPAWN_TRANSIENT_RETRY_SECS (10), at most
-#   FM_SPAWN_TRANSIENT_RETRIES (2) times; any other refusal is final. A spawn
-#   that aborts before its record is published closes the endpoint it created,
-#   so the retry's label is free. A pooled slot that reads dirty is rechecked
-#   once after FM_SPAWN_DIRTY_RECHECK_SECS (3) before the "is not clean"
-#   refusal, because a slot still settling reads clean moments later.
-#   Parallel spawns in one home refused together on 2026-10-22 and a sequential
-#   relaunch worked. FM_SPAWN_SERIAL_CHILD is a test seam naming the child.
-#   Regression: tests/fm-spawn-serial.test.sh.
+#   Serialized spawns: fresh spawns serialize per home. The outer invocation
+#   holds state/.spawn-serial.lock (waiting up to FM_SPAWN_SERIAL_WAIT_SECS,
+#   900, then launching anyway with a warning) and runs the spawn as a child.
+#   --relaunch bypasses this wrapper: it reuses the recorded worktree and
+#   endpoint, and must preserve fm-control's parent-owned control-lock handoff.
+#   A child refused with "endpoint superseded", "endpoint_superseded", or
+#   "duplicate_label" is retried after FM_SPAWN_TRANSIENT_RETRY_SECS (10), at
+#   most FM_SPAWN_TRANSIENT_RETRIES (2) times; any other refusal is final.
+#   A failed spawn closes the endpoint it created only if record publication
+#   has not started and no task meta exists, so an unpublished endpoint does
+#   not keep the retry's label registered. A pooled slot that reads dirty is
+#   rechecked once after FM_SPAWN_DIRTY_RECHECK_SECS (3) before the "is not
+#   clean" refusal, to tolerate checkout settling without discarding dirt.
+#   FM_SPAWN_SERIAL_CHILD is a test seam naming the child.
+#   Regressions: tests/fm-spawn-serial.test.sh and
+#   tests/fm-spawn-pool-base-freshen.test.sh.
 #   --traceparent <carrier> delivers a carrier that a REMOTE parent already
 #   resolved and will record, instead of resolving one from this home's frozen
 #   decision. It is accepted only for --secondmate spawns, only as a strictly
@@ -978,10 +981,9 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   exit "$rc"
 fi
 
-# One spawn at a time per home (see header "Serialized spawns"): the outer
-# invocation holds state/.spawn-serial.lock and runs the real spawn as a child,
-# retrying a transient refusal. The child is recognized by the holder pid its
-# parent exported, so an agent that merely inherited the variable is not.
+# Serialization policy lives in the header's "Serialized spawns" section.
+# Recognize the child by the holder pid its parent exported, so an agent that
+# merely inherited the variable is not mistaken for the wrapper's child.
 spawn_serialized() {
   local lock="$STATE/.spawn-serial.lock" attempt=0 rc err held=0
   local retries=${FM_SPAWN_TRANSIENT_RETRIES:-2} delay=${FM_SPAWN_TRANSIENT_RETRY_SECS:-10}
