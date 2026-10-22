@@ -177,7 +177,7 @@ test_no_real_progress_counts_code_not_reports() {
 
 test_done_worker_and_departures() {
   local dir channel
-  dir=$(make_home done ship)
+  dir=$(make_home finished ship)
   printf 'pr=https://github.com/o/r/pull/7\n' >> "$dir/home/state/w1.meta"
   status "$dir" "$T0" 'done: PR opened'
   scan "$dir" $((T0 + 9000))

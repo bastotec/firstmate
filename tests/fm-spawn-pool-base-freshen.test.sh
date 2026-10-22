@@ -12,6 +12,8 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-spawn-pool-base-freshen)
+# Refusal cases need no settling time; the recheck case sets its own.
+export FM_SPAWN_DIRTY_RECHECK_SECS=0
 
 make_case() {
   local name=$1 id=$2 default=${3:-main} case_dir home project origin pool publisher fakebin initial
@@ -260,6 +262,28 @@ test_originless_pool_launches_without_a_freshness_fetch() {
     printf '# observed origin-less launch: %s\n' "$(printf '%s\n' "$out" | tail -n 1)"
   fi
   pass "an origin-less pooled worktree launches as-is, skipping the freshness gate"
+}
+
+# 2026-10-22: spawns launched together were refused "is not clean" though each
+# slot read clean on re-check. Dirt gone by the recheck launches the task.
+test_dirt_that_settles_before_the_recheck_launches() {
+  local rec id out status
+  id='pool-settling-r1'
+  rec=$(make_case settling "$id")
+  read_case_record "$rec"
+  printf 'checkout still settling\n' > "$POOL_DIR/settling.tmp"
+  cat > "$FAKEBIN_DIR/sleep" <<SH
+#!/usr/bin/env bash
+if [ "\$1" = 7 ]; then rm -f "$POOL_DIR/settling.tmp"; exit 0; fi
+exec /bin/sleep "\$@"
+SH
+  chmod +x "$FAKEBIN_DIR/sleep"
+  out=$(FM_SPAWN_DIRTY_RECHECK_SECS=7 run_spawn "$id" --scout)
+  status=$?
+  expect_code 0 "$status" "a slot clean by the recheck was refused"$'\n'"$out"
+  assert_not_contains "$out" "is not clean" "a settled slot was reported dirty"
+  rm -f "$FAKEBIN_DIR/sleep"
+  pass "dirt that settles before the recheck no longer refuses the spawn"
 }
 
 test_originless_dirty_pool_refuses_without_discarding_work() {
@@ -1128,6 +1152,7 @@ test_unresolved_remote_default_refuses_pool
 test_unreachable_origin_refuses_stale_pool_base
 test_originless_pool_launches_without_a_freshness_fetch
 test_originless_dirty_pool_refuses_without_discarding_work
+test_dirt_that_settles_before_the_recheck_launches
 test_leftover_scratch_is_set_aside_not_discarded
 test_scratch_descendants_are_quarantined_together
 test_fresh_scratch_file_is_not_exempt_from_age_check

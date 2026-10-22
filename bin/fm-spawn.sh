@@ -237,11 +237,13 @@
 #   Serialized spawns: one spawn runs at a time per home. The invocation holds
 #   state/.spawn-serial.lock (waiting up to FM_SPAWN_SERIAL_WAIT_SECS, 900, then
 #   launching anyway with a warning) and runs the spawn as a child. A child
-#   refused as transient - a pooled worktree "is not clean" or an endpoint
-#   "superseded" (its label still registered) - is retried after
-#   FM_SPAWN_TRANSIENT_RETRY_SECS (10), at most FM_SPAWN_TRANSIENT_RETRIES (2)
-#   times; any other refusal is final. A spawn that aborts before its record is
-#   published closes the endpoint it created, so the retry's label is free.
+#   refused because its endpoint label is still registered ("endpoint
+#   superseded") is retried after FM_SPAWN_TRANSIENT_RETRY_SECS (10), at most
+#   FM_SPAWN_TRANSIENT_RETRIES (2) times; any other refusal is final. A spawn
+#   that aborts before its record is published closes the endpoint it created,
+#   so the retry's label is free. A pooled slot that reads dirty is rechecked
+#   once after FM_SPAWN_DIRTY_RECHECK_SECS (3) before the "is not clean"
+#   refusal, because a slot still settling reads clean moments later.
 #   Parallel spawns in one home refused together on 2026-10-22 and a sequential
 #   relaunch worked. FM_SPAWN_SERIAL_CHILD is a test seam naming the child.
 #   Regression: tests/fm-spawn-serial.test.sh.
@@ -1005,7 +1007,7 @@ spawn_serialized() {
     FM_SPAWN_SERIAL_HOLDER=$$ FM_SPAWN_NO_GUARD=1 "${FM_SPAWN_SERIAL_CHILD:-$SCRIPT_DIR/fm-spawn.sh}" "$@" 2>"$err" || rc=$?
     [ "$err" = /dev/null ] || cat "$err" >&2
     if [ "$rc" -ne 0 ] && [ "$attempt" -lt "$retries" ] && [ "$err" != /dev/null ] \
-       && grep -qE "is not clean; refusing to discard|endpoint superseded|endpoint_superseded|duplicate_label" "$err"; then
+       && grep -qE "endpoint superseded|endpoint_superseded|duplicate_label" "$err"; then
       attempt=$((attempt + 1))
       echo "notice: ${POS[0]}'s spawn hit a transient refusal; retrying in ${delay}s (retry $attempt of $retries)" >&2
       sleep "$delay"
@@ -1882,6 +1884,8 @@ quarantine_spawn_slot_scratch() {  # <worktree>
   echo "notice: pooled worktree '$worktree' held only a previous worker's untracked leftovers (${paths[*]}); moved them to $dest and continuing" >&2
 }
 
+SPAWN_DIRTY_RECHECK_SECS=${FM_SPAWN_DIRTY_RECHECK_SECS:-3}
+case "$SPAWN_DIRTY_RECHECK_SECS" in ''|*[!0-9]*) SPAWN_DIRTY_RECHECK_SECS=3 ;; esac
 freshen_spawn_worktree_base() {  # <worktree>
   local worktree=$1 default target expected actual status
   status=$(git -C "$worktree" -c core.quotePath=false status --porcelain --untracked-files=normal) || {
@@ -1889,6 +1893,12 @@ freshen_spawn_worktree_base() {  # <worktree>
     return 1
   }
   if [ -n "$status" ] && quarantine_spawn_slot_scratch "$worktree"; then
+    status=$(git -C "$worktree" -c core.quotePath=false status --porcelain --untracked-files=normal) || return 1
+  fi
+  # Dirt a slot shows while its checkout is still settling is gone moments
+  # later (header "Serialized spawns"), so one recheck precedes the refusal.
+  if [ -n "$status" ]; then
+    sleep "$SPAWN_DIRTY_RECHECK_SECS"
     status=$(git -C "$worktree" -c core.quotePath=false status --porcelain --untracked-files=normal) || return 1
   fi
   if [ -n "$status" ]; then

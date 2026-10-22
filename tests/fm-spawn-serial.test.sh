@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Behavior tests for fm-spawn.sh's serialized spawns: spawns in one home run one
-# at a time, and a transient refusal ("is not clean", "endpoint superseded") is
-# retried a bounded number of times while any other refusal is final.
+# at a time, and a refusal for a still-registered endpoint label
+# ("endpoint superseded") is retried a bounded number of times while any other
+# refusal is final. The in-slot "is not clean" recheck is covered by
+# tests/fm-spawn-pool-base-freshen.test.sh.
 #
 # FM_SPAWN_SERIAL_CHILD replaces the real spawn child with a stub, so these
 # cases create no endpoints or worktrees. Case from 2026-10-22: four alert-fix
@@ -23,7 +25,7 @@ export FM_BACKEND=stream
 make_home() {
   local dir="$TMP_ROOT/$1"
   mkdir -p "$dir/home/state" "$dir/home/config" "$dir/home/data" "$dir/bin"
-  printf 'error: pooled worktree '\''/tmp/pool/3/docana'\'' is not clean; refusing to discard uncommitted work while refreshing its base\n' > "$dir/reason"
+  printf 'error: the stream agent refused to start an endpoint for '\''fm-t'\'': fm-stream-agent: endpoint superseded\n' > "$dir/reason"
   cat > "$dir/bin/child" <<EOF
 #!/usr/bin/env bash
 dir="$dir"
@@ -71,13 +73,13 @@ test_transient_refusal_is_retried() {
   local dir out
   dir=$(make_home transient)
   echo 1 > "$dir/fail-t1"
-  out=$(spawn "$dir" t1 2>&1) || fail "a spawn refused once as not clean was not retried: $out"
-  assert_contains "$out" "is not clean" "the first refusal was hidden"
+  out=$(spawn "$dir" t1 2>&1) || fail "a spawn refused once as endpoint superseded was not retried: $out"
+  assert_contains "$out" "endpoint superseded" "the first refusal was hidden"
   assert_contains "$out" "retrying in 0s (retry 1 of 2)" "the retry was not announced"
   assert_contains "$out" "spawned t1" "the retried spawn's output was lost"
-  printf 'error: the stream agent refused to start an endpoint for '\''fm-t2'\'': fm-stream-agent: endpoint superseded\n' > "$dir/reason"
+  printf 'error: the stream agent refused to start an endpoint for '\''fm-t2'\'': duplicate_label\n' > "$dir/reason"
   echo 2 > "$dir/fail-t2"
-  spawn "$dir" t2 >/dev/null 2>&1 || fail "a spawn refused twice as endpoint superseded was not retried twice"
+  spawn "$dir" t2 >/dev/null 2>&1 || fail "a spawn refused twice for a duplicate label was not retried twice"
   pass "a transient spawn refusal is retried"
 }
 
@@ -88,7 +90,7 @@ test_retries_are_bounded_and_other_refusals_final() {
   spawn "$dir" t1 >/dev/null 2>&1 || rc=$?
   assert_equals 1 "$rc" "a spawn that keeps failing did not fail"
   assert_equals 3 "$(grep -c '^start t1' "$dir/log")" "a transient refusal was tried more than three times"
-  printf 'error: task t2 has a pending authoritative backlog close\n' > "$dir/reason"
+  printf 'error: pooled worktree '\''/tmp/pool/3/docana'\'' is not clean; refusing to discard uncommitted work while refreshing its base\n' > "$dir/reason"
   echo 1 > "$dir/fail-t2"
   rc=0
   spawn "$dir" t2 >/dev/null 2>&1 || rc=$?
