@@ -47,10 +47,13 @@ concrete instruction - decide and resume it, relaunch it with
 The mate acted when the highest steer sequence in the worker's inbox
 (state/<id>.inbox/NNN.msg written by bin/fm-send.sh, counted in handled/ too, so
 a steer the worker already acknowledged still counts; delivery bookkeeping
-never does) is above the one at the wake, or its spawn_gen= changes: a still-stuck
-worker then starts a fresh waiting period and is woken again after another
-bound, retaining the episode's first epoch and nudge count. When the
-mate did not act within FM_KEEPALIVE_ESCALATE_SECS (1800) of the wake, or the
+never does) is above the `steer` baseline saved at the wake, or its spawn_gen=
+changes: a still-stuck worker then starts a fresh waiting period and is woken
+again after another bound, retaining the episode's first epoch and nudge count.
+A woken record without `steer` adopts the current sequence on its first eligible
+scan; legacy mtime-valued `inbox` fields are not compared. Baseline adoption
+alone leaves the wake time and escalation deadline unchanged.
+When the mate did not act within FM_KEEPALIVE_ESCALATE_SECS (1800) of the wake, or the
 worker is still stuck after FM_KEEPALIVE_MAX_NUDGES (3) wakes, the scan raises
 one plain line naming what is stuck and what would unstick it: a second mate
 appends "blocked [key=keepalive-<home>-<id>-<first-epoch>]: ..." to its parent channel
