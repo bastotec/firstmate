@@ -26,6 +26,7 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | [`fm-backlog-normalize.sh`](../bin/fm-backlog-normalize.sh) | Repair checked rows misplaced in In flight or Queued; header owns repair and skip rules |
 | [`fm-ci-infra.sh`](../bin/fm-ci-infra.sh) | Classify a pull request's failed checks as infrastructure or code, with the runner fix; header owns classification criteria |
 | [`fm-ci-stall.sh`](../bin/fm-ci-stall.sh) | Worker PR stalled-CI recovery and event counts; [`fm_ci_stall.py`'s docstring](../bin/fm_ci_stall.py) owns bounds, retries and hand-off |
+| [`fm-worker-keepalive.sh`](../bin/fm-worker-keepalive.sh) | Wakes a worker's mate when the worker is held, blocked, dead, undelivered or not progressing, and escalates once; [`fm_worker_keepalive.py`'s docstring](../bin/fm_worker_keepalive.py) owns conditions, bounds and escalation |
 | [`fm-merge-policy.sh`](../bin/fm-merge-policy.sh) | Read, set, or reset the captain's repository merge policy; header owns usage and semantics |
 | [`fm-approval-wait.sh`](../bin/fm-approval-wait.sh) | Record, inspect, and explicitly release a parent-owned approval exclusion; header owns the binding and release contract |
 | `fm-secondmate-restart-lib.sh` | Shared second-mate restart capability and persistence-request contract |

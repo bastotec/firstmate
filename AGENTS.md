@@ -154,6 +154,9 @@ For ships, scouts, and secondmates, write the brief under section 11, then spawn
 Specialist jobs and task groups use their direct-run lifecycle, not the ship/scout endpoint lifecycle; their headers named at intake own entrypoints.
 When the tasks-axi backlog gate applies, the spawn moves the work item to In flight and refuses work this home has no item for.
 After spawning, confirm the worker is processing the brief.
+Spawns in one home run one at a time and retry a transient refusal themselves (`bin/fm-spawn.sh` "Serialized spawns"); relaunch a task whose refusal still stands once more yourself, sequentially, and never park it for a runtime owner.
+A worker you pause, for a rule slip or anything else you can decide, is decided in that same turn: send it back to the deliverable, replace it, or close it, never leave it waiting for your release.
+A `check: worker keep-alive:` wake (`bin/fm_worker_keepalive.py`) names a worker held on you, blocked, without a live agent, finished but undelivered, or making no real progress; carry out its instruction in that turn, and leave reaching the captain to its own escalation.
 
 Steer a worker with ordinary text through fail-closed `fm-send`; its header owns delivery and selector-specific routing.
 After an unconfirmed remote secondmate delivery, only the exact `FM_PENDING_REPLY_EXISTING_CORR=<id>` resend command `fm-send` prints is safe.

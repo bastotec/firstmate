@@ -234,6 +234,17 @@
 # one W3C traceparent= carrier, the same value injected into the pane as
 # TRACEPARENT; the default-off path writes neither, leaving the generated meta
 # and launch environment unchanged.
+#   Serialized spawns: one spawn runs at a time per home. The invocation holds
+#   state/.spawn-serial.lock (waiting up to FM_SPAWN_SERIAL_WAIT_SECS, 900, then
+#   launching anyway with a warning) and runs the spawn as a child. A child
+#   refused as transient - a pooled worktree "is not clean" or an endpoint
+#   "superseded" (its label still registered) - is retried after
+#   FM_SPAWN_TRANSIENT_RETRY_SECS (10), at most FM_SPAWN_TRANSIENT_RETRIES (2)
+#   times; any other refusal is final. A spawn that aborts before its record is
+#   published closes the endpoint it created, so the retry's label is free.
+#   Parallel spawns in one home refused together on 2026-10-22 and a sequential
+#   relaunch worked. FM_SPAWN_SERIAL_CHILD is a test seam naming the child.
+#   Regression: tests/fm-spawn-serial.test.sh.
 #   --traceparent <carrier> delivers a carrier that a REMOTE parent already
 #   resolved and will record, instead of resolving one from this home's frozen
 #   decision. It is accepted only for --secondmate spawns, only as a strictly
@@ -798,6 +809,7 @@ SPAWN_TASK_SET_LOCK_HELD=0
 SPAWN_TREEHOUSE_PROJECT_LOCK=
 SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
 SPAWN_SLOT_CLAIMED=0
+SPAWN_ENDPOINT_CREATED=0
 RELAUNCH_REPLACEMENT_PENDING=0
 RELAUNCH_REPLACEMENT_BUSY_GEN=
 RELAUNCH_REPLACEMENT_HARNESS=
@@ -885,6 +897,17 @@ spawn_abort_cleanup() {
     fm_lock_release "$SPAWN_CONTROL_LOCK" || true
   fi
   [ -z "$SPAWN_META_TMP" ] || rm -f "$SPAWN_META_TMP" 2>/dev/null || true
+  # A fresh endpoint this spawn created for a task no record describes would
+  # keep its label (fm-<id>) registered, so the next attempt is refused as
+  # "endpoint superseded". This spawn knows that endpoint's own id, so it
+  # closes exactly that one.
+  if [ "$status" -ne 0 ] && [ "$SPAWN_ENDPOINT_CREATED" = 1 ] \
+     && [ "$SPAWN_META_PUBLISH_STARTED" = 0 ] \
+     && [ ! -e "$STATE/$ID.meta" ] && [ ! -L "$STATE/$ID.meta" ]; then
+    SPAWN_ENDPOINT_CREATED=0
+    fm_backend_stream_kill "$T" "" "$W" >/dev/null 2>&1 \
+      || echo "warning: could not close task $ID's endpoint $T after the aborted spawn" >&2
+  fi
   if [ "$CONFIG_INHERIT_LOCK_HELD" = 1 ]; then
     CONFIG_INHERIT_LOCK_HELD=0
     fm_lock_release "$CONFIG_INHERIT_LOCK" || true
@@ -952,6 +975,55 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   done
   exit "$rc"
 fi
+
+# One spawn at a time per home (see header "Serialized spawns"): the outer
+# invocation holds state/.spawn-serial.lock and runs the real spawn as a child,
+# retrying a transient refusal. The child is recognized by the holder pid its
+# parent exported, so an agent that merely inherited the variable is not.
+spawn_serialized() {
+  local lock="$STATE/.spawn-serial.lock" attempt=0 rc waited=0 err held=0
+  local retries=${FM_SPAWN_TRANSIENT_RETRIES:-2} delay=${FM_SPAWN_TRANSIENT_RETRY_SECS:-10}
+  local wait_max=${FM_SPAWN_SERIAL_WAIT_SECS:-900}
+  case "$retries" in ''|*[!0-9]*) retries=2 ;; esac
+  case "$delay" in ''|*[!0-9]*) delay=10 ;; esac
+  case "$wait_max" in ''|*[!0-9]*) wait_max=900 ;; esac
+  while :; do
+    if fm_lock_try_acquire "$lock"; then
+      held=1
+      break
+    fi
+    if ! fm_lock_dir_usable "$lock" || [ "$waited" -ge $((wait_max * 10)) ]; then
+      echo "warning: another spawn in this home still holds $lock; launching ${POS[0]} without waiting longer" >&2
+      break
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  err=$(mktemp "${TMPDIR:-/tmp}/fm-spawn-err.XXXXXX") || err=/dev/null
+  while :; do
+    rc=0
+    FM_SPAWN_SERIAL_HOLDER=$$ FM_SPAWN_NO_GUARD=1 "${FM_SPAWN_SERIAL_CHILD:-$SCRIPT_DIR/fm-spawn.sh}" "$@" 2>"$err" || rc=$?
+    [ "$err" = /dev/null ] || cat "$err" >&2
+    if [ "$rc" -ne 0 ] && [ "$attempt" -lt "$retries" ] && [ "$err" != /dev/null ] \
+       && grep -qE "is not clean; refusing to discard|endpoint superseded|endpoint_superseded|duplicate_label" "$err"; then
+      attempt=$((attempt + 1))
+      echo "notice: ${POS[0]}'s spawn hit a transient refusal; retrying in ${delay}s (retry $attempt of $retries)" >&2
+      sleep "$delay"
+      continue
+    fi
+    break
+  done
+  [ "$err" = /dev/null ] || rm -f "$err"
+  [ "$held" = 0 ] || fm_lock_release "$lock" >/dev/null 2>&1 || true
+  return "$rc"
+}
+if [ "${FM_SPAWN_SERIAL_HOLDER:-}" != "$PPID" ]; then
+  serial_rc=0
+  spawn_serialized "$@" || serial_rc=$?
+  exit "$serial_rc"
+fi
+unset FM_SPAWN_SERIAL_HOLDER
+
 ID=${POS[0]}
 fm_task_id_creation_valid "$ID" || { echo "error: invalid task id" >&2; exit 2; }
 if [ -e "$STATE" ] || [ -L "$STATE" ]; then
@@ -1938,6 +2010,7 @@ EOF
     exit 1
   fi
   T="$STREAM_TAG:$STREAM_ENDPOINT_ID"
+  SPAWN_ENDPOINT_CREATED=1
 fi
 if [ "$KIND" = secondmate ]; then
   FM_INHERITABLE_CONFIG=trace-context \
