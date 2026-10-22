@@ -99,6 +99,45 @@ test_retries_are_bounded_and_other_refusals_final() {
   pass "retries are bounded and other refusals are final"
 }
 
+test_relaunch_preserves_the_callers_control_lock_without_a_child() {
+  local dir out rc=0
+  dir=$(make_home relaunch)
+  out=$(FM_ROOT_OVERRIDE='' FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" \
+    FM_DATA_OVERRIDE='' FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SPAWN_NO_GUARD=1 \
+    FM_SPAWN_SERIAL_CHILD="$dir/bin/child" bash -c '
+      . "$1/bin/fm-wake-lib.sh"
+      lock="$STATE/.control-w1.lock"
+      fm_lock_try_acquire "$lock" || exit 2
+      "$1/bin/fm-spawn.sh" w1 --relaunch
+      rc=$?
+      [ "$(cat "$lock/pid")" = "${BASHPID:-$$}" ] || exit 2
+      fm_lock_release "$lock"
+      exit "$rc"
+    ' _ "$ROOT" 2>&1) || rc=$?
+  assert_equals 1 "$rc" "a relaunch without a task record did not refuse"
+  assert_contains "$out" '--relaunch needs an existing task record' "the relaunch did not pass its caller-owned lifecycle lock"
+  assert_absent "$dir/log" "a relaunch was re-executed as a serialized child"
+  assert_absent "$dir/home/state/.spawn-serial.lock" "a relaunch allocated a spawn lock"
+  pass "relaunch bypasses the serialization child and preserves the control-lock handoff"
+}
+
+test_serial_timeout_warns_and_proceeds_without_releasing_the_owner() {
+  local dir limit out
+  dir=$(make_home timeout)
+  mkdir "$dir/home/state/.spawn-serial.lock"
+  echo "${BASHPID:-$$}" > "$dir/home/state/.spawn-serial.lock/pid"
+  for limit in 0 1; do
+    out=$(FM_SPAWN_SERIAL_WAIT_SECS="$limit" spawn "$dir" "task$limit" 2>&1) \
+      || fail "a timed-out serialization wait refused the spawn: $out"
+    assert_contains "$out" 'without waiting longer' "a timed-out wait did not warn"
+    assert_contains "$out" "spawned task$limit" "a timed-out wait did not launch"
+    assert_equals "${BASHPID:-$$}" "$(cat "$dir/home/state/.spawn-serial.lock/pid")" "a timed-out spawn released another owner's lock"
+  done
+  pass "zero and bounded waits warn and proceed without releasing the owner's lock"
+}
+
 test_parallel_spawns_in_one_home_run_one_at_a_time
 test_transient_refusal_is_retried
 test_retries_are_bounded_and_other_refusals_final
+test_relaunch_preserves_the_callers_control_lock_without_a_child
+test_serial_timeout_warns_and_proceeds_without_releasing_the_owner

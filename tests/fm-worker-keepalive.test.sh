@@ -82,14 +82,14 @@ test_held_on_the_mate_wakes_then_escalates_once() {
   assert_equals 1 "$(wake_count "$dir")" "the same episode woke the mate twice"
   assert_absent "$channel" "the captain was reached before the mate had 30 minutes"
   scan "$dir" $((T0 + 1200 + 1800))
-  assert_grep 'blocked [key=keepalive-bob-helper-w1]: worker w1 has been stuck (held)' "$channel" "an ignored wake was not escalated"
+  assert_grep "blocked [key=keepalive-bob-helper-w1-$T0]: worker w1 has been stuck (held)" "$channel" "an ignored wake was not escalated"
   assert_grep 'releasing its hold' "$channel" "the escalation does not say what would unstick it"
   assert_equals 1 "$(wc -l < "$channel" | tr -d ' ')" "the escalation is more than one line"
   scan "$dir" $((T0 + 6000))
   assert_equals 1 "$(wc -l < "$channel" | tr -d ' ')" "the escalation repeated"
   status "$dir" $((T0 + 6100)) 'working [key=breadboard-plugin-trial]: hold released - resuming the build'
   scan "$dir" $((T0 + 6200))
-  assert_grep 'resolved [key=keepalive-bob-helper-w1]' "$channel" "a resumed worker did not resolve its escalation"
+  assert_grep "resolved [key=keepalive-bob-helper-w1-$T0]" "$channel" "a resumed worker did not resolve its escalation"
   pass "a worker held on its mate wakes the mate at 20 minutes and escalates once when ignored"
 }
 
@@ -188,10 +188,11 @@ test_done_worker_and_departures() {
   status "$dir" "$T0" 'blocked: needs the mate to approve the retry'
   scan "$dir" $((T0 + 1200))
   scan "$dir" $((T0 + 3000))
-  assert_grep 'blocked [key=keepalive-docana-w1]' "$channel" "setup: the worker was escalated"
+  assert_grep "blocked [key=keepalive-docana-w1-$T0]" "$channel" "setup: the worker was escalated"
   rm "$dir/home/state/w1.meta"
-  scan "$dir" $((T0 + 3100))
-  assert_grep 'resolved [key=keepalive-docana-w1]: worker w1 left the fleet' "$channel" "a departed worker left its escalation open"
+  FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_KEEPALIVE_NOW=$((T0 + 3100)) \
+    bash -c '. "$1/bin/fm-watch.sh"; keepalive_detached; wait' _ "$ROOT"
+  assert_grep "resolved [key=keepalive-docana-w1-$T0]: worker w1 left the fleet" "$channel" "a departed worker left its escalation open"
   assert_absent "$dir/home/state/keepalive/w1.json" "a departed worker's record was kept"
   pass "a done worker is ignored and a departing worker resolves its escalation"
 }
@@ -214,16 +215,82 @@ test_finished_result_that_never_left_is_raised() {
   pass "a finished worker that lingers wakes its mate to deliver its result"
 }
 
-test_counts_and_usage() {
-  local dir out rc=0
-  dir=$(make_home counts ship)
-  status "$dir" "$T0" 'blocked: needs an answer'
+test_repeated_episodes_have_distinct_parent_keys() {
+  local dir channel epoch key
+  dir=$(make_home repeated scout)
+  make_secondmate "$dir" repeated
+  channel="$dir/parent/state/repeated.status"
+  for epoch in "$T0" $((T0 + 4000)); do
+    status "$dir" "$epoch" 'paused: awaiting your release'
+    scan "$dir" $((epoch + 1200))
+    scan "$dir" $((epoch + 3000))
+    key="keepalive-repeated-w1-$epoch"
+    assert_grep "blocked [key=$key]" "$channel" "the episode did not publish its blocker"
+    status "$dir" $((epoch + 3100)) 'working: resumed'
+    echo "$epoch" > "$dir/wt/parser.rs"
+    scan "$dir" $((epoch + 3100))
+    assert_grep "resolved [key=$key]: worker w1 is moving again" "$channel" "the episode did not resolve its blocker"
+  done
+  assert_equals 4 "$(wc -l < "$channel" | tr -d ' ')" "repeated episodes were deduplicated"
+  pass "each escalation and resolution pair has its own episode key"
+}
+
+test_supervisor_declared_wait_defers_stalls_until_expiry() {
+  local dir verb
+  for verb in working paused; do
+    dir=$(make_home "declared-$verb" ship)
+    status "$dir" "$T0" "$verb: awaiting your release after install"
+    FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" bash -c '
+      . "$1/bin/fm-external-wait.sh"
+      fm_external_wait_now_epoch() { echo 1800000000; }
+      fm_external_wait_declare w1 --reason "provider outage" --until 2027-01-15T10:00:00Z
+    ' _ "$ROOT" >/dev/null || fail "could not declare the external wait"
+    scan "$dir" "$T0"
+    scan "$dir" $((T0 + 4000))
+    assert_equals 0 "$(wake_count "$dir")" "an active supervisor declaration did not defer $verb"
+    scan "$dir" $((T0 + 7200))
+    assert_equals 1 "$(wake_count "$dir")" "an expired declaration still deferred $verb"
+  done
+  dir=$(make_home declared-events ship)
+  FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" bash -c '
+    . "$1/bin/fm-external-wait.sh"
+    fm_external_wait_now_epoch() { echo 1800000000; }
+    fm_external_wait_declare w1 --reason "provider outage" --until 2027-01-15T10:00:00Z
+  ' _ "$ROOT" >/dev/null || fail "could not declare the external wait"
+  status "$dir" "$T0" 'blocked: needs a retry'
   scan "$dir" $((T0 + 1200))
-  out=$(FM_HOME="$dir/home" "$KEEPALIVE" counts 0)
-  assert_equals '{"woken": 1}' "$out" "counts did not report the wake"
-  "$KEEPALIVE" bogus >/dev/null 2>&1 || rc=$?
-  assert_equals 2 "$rc" "an unknown command did not exit 2"
-  pass "counts reports events and bad usage exits 2"
+  assert_equals 1 "$(wake_count "$dir")" "a declaration suppressed a new blocker"
+  status "$dir" $((T0 + 1300)) 'done: report ready'
+  scan "$dir" $((T0 + 4000))
+  assert_equals 2 "$(wake_count "$dir")" "a declaration suppressed an undelivered result"
+  status "$dir" $((T0 + 4100)) 'working: retrying'
+  echo dead > "$dir/liveness"
+  scan "$dir" $((T0 + 4100))
+  scan "$dir" $((T0 + 4400))
+  assert_equals 3 "$(wake_count "$dir")" "a declaration suppressed a dead agent"
+  pass "supervisor declarations defer stalls, expire, and preserve new events"
+}
+
+test_watcher_keepalive_guard_stays_cheap_and_obeys_cadence() {
+  local dir
+  dir=$(make_home watcher-guard ship)
+  rm "$dir/home/state/w1.meta"
+  FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" bash -c '
+    . "$1/bin/fm-watch.sh"
+    keepalive_detached
+    wait
+  ' _ "$ROOT"
+  assert_absent "$dir/home/state/.last-keepalive" "an empty home launched a scan"
+  mkdir -p "$dir/home/state/keepalive"
+  echo '{}' > "$dir/home/state/keepalive/w1.json"
+  touch "$dir/home/state/.last-keepalive"
+  FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" bash -c '
+    . "$1/bin/fm-watch.sh"
+    keepalive_detached
+    wait
+  ' _ "$ROOT"
+  assert_present "$dir/home/state/keepalive/w1.json" "the watcher ignored its scan cadence"
+  pass "the watcher skips empty homes and keeps the scan cadence"
 }
 
 test_held_on_the_mate_wakes_then_escalates_once
@@ -233,4 +300,6 @@ test_worker_without_a_live_agent_is_relaunched
 test_no_real_progress_counts_code_not_reports
 test_done_worker_and_departures
 test_finished_result_that_never_left_is_raised
-test_counts_and_usage
+test_repeated_episodes_have_distinct_parent_keys
+test_supervisor_declared_wait_defers_stalls_until_expiry
+test_watcher_keepalive_guard_stays_cheap_and_obeys_cadence

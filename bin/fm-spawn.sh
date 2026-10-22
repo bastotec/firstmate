@@ -983,24 +983,20 @@ fi
 # retrying a transient refusal. The child is recognized by the holder pid its
 # parent exported, so an agent that merely inherited the variable is not.
 spawn_serialized() {
-  local lock="$STATE/.spawn-serial.lock" attempt=0 rc waited=0 err held=0
+  local lock="$STATE/.spawn-serial.lock" attempt=0 rc err held=0
   local retries=${FM_SPAWN_TRANSIENT_RETRIES:-2} delay=${FM_SPAWN_TRANSIENT_RETRY_SECS:-10}
   local wait_max=${FM_SPAWN_SERIAL_WAIT_SECS:-900}
   case "$retries" in ''|*[!0-9]*) retries=2 ;; esac
   case "$delay" in ''|*[!0-9]*) delay=10 ;; esac
   case "$wait_max" in ''|*[!0-9]*) wait_max=900 ;; esac
-  while :; do
-    if fm_lock_try_acquire "$lock"; then
-      held=1
-      break
-    fi
-    if ! fm_lock_dir_usable "$lock" || [ "$waited" -ge $((wait_max * 10)) ]; then
-      echo "warning: another spawn in this home still holds $lock; launching ${POS[0]} without waiting longer" >&2
-      break
-    fi
-    sleep 0.1
-    waited=$((waited + 1))
-  done
+  if [ "$wait_max" -eq 0 ]; then
+    fm_lock_try_acquire "$lock" && held=1
+  elif fm_lock_acquire_wait_bounded "$lock" "$wait_max"; then
+    held=1
+  fi
+  if [ "$held" -eq 0 ]; then
+    echo "warning: another spawn in this home still holds $lock; launching ${POS[0]} without waiting longer" >&2
+  fi
   err=$(mktemp "${TMPDIR:-/tmp}/fm-spawn-err.XXXXXX") || err=/dev/null
   while :; do
     rc=0
@@ -1019,7 +1015,7 @@ spawn_serialized() {
   [ "$held" = 0 ] || fm_lock_release "$lock" >/dev/null 2>&1 || true
   return "$rc"
 }
-if [ "${FM_SPAWN_SERIAL_HOLDER:-}" != "$PPID" ]; then
+if [ "$RELAUNCH" -eq 0 ] && [ "${FM_SPAWN_SERIAL_HOLDER:-}" != "$PPID" ]; then
   serial_rc=0
   spawn_serialized "$@" || serial_rc=$?
   exit "$serial_rc"

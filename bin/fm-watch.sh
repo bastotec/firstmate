@@ -2109,6 +2109,21 @@ poll_sleep() {
   done
 }
 
+# bin/fm_worker_keepalive.py owns stuck-worker detection and escalation. It
+# runs git per worker, so it runs detached on its own cadence.
+keepalive_detached() {
+  local record
+  [ "$(age_of "$STATE/.last-keepalive")" -ge "$KEEPALIVE_INTERVAL" ] || return 0
+  if ! grep -lqE '^kind=(ship|scout)$' "$STATE"/*.meta 2>/dev/null; then
+    for record in "$STATE/keepalive/"*.json; do
+      [ -f "$record" ] && break
+    done
+    [ -f "$record" ] || return 0
+  fi
+  touch "$STATE/.last-keepalive"
+  FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-worker-keepalive.sh" scan </dev/null >/dev/null 2>&1 &
+}
+
 # --- Main entry: the runtime below runs only when this file is executed as a
 # script. When sourced (unit tests loading the functions above), return here
 # before acquiring the singleton lock or entering the blocking loop.
@@ -2313,15 +2328,6 @@ ci_stall_detached() {
   grep -lq '^pr=https://github.com/' "$STATE"/*.meta 2>/dev/null || return 0
   touch "$STATE/.last-ci-stall"
   FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-ci-stall.sh" scan </dev/null >/dev/null 2>&1 &
-}
-
-# bin/fm_worker_keepalive.py owns stuck-worker detection and escalation. It
-# runs git per worker, so it runs detached on its own cadence.
-keepalive_detached() {
-  [ "$(age_of "$STATE/.last-keepalive")" -ge "$KEEPALIVE_INTERVAL" ] || return 0
-  grep -lqE '^kind=(ship|scout)$' "$STATE"/*.meta 2>/dev/null || return 0
-  touch "$STATE/.last-keepalive"
-  FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-worker-keepalive.sh" scan </dev/null >/dev/null 2>&1 &
 }
 
 # bin/fm-idle-sweep.sh owns sweep eligibility, cadence, and locking.

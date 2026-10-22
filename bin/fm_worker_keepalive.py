@@ -42,16 +42,13 @@ then starts a fresh episode and is woken again after another bound. When the
 mate did not act within FM_KEEPALIVE_ESCALATE_SECS (1800) of the wake, or the
 worker is still stuck after FM_KEEPALIVE_MAX_NUDGES (3) wakes, the scan raises
 one plain line naming what is stuck and what would unstick it: a second mate
-appends "blocked [key=keepalive-<home>-<id>]: ..." to its parent channel
+appends "blocked [key=keepalive-<home>-<id>-<first-epoch>]: ..." to its parent channel
 (bin/fm-parent-channel-lib.sh), the first mate's own home queues one check:
 wake telling its supervisor to raise it with the captain. When the condition
 clears or the worker leaves, an escalated episode is resolved the same way.
 A condition change starts a new episode.
 
-Progress lives in state/keepalive/<id>.json. Events woken, acted, escalated and
-resolved append to state/keepalive/events.jsonl as {"ts","id","cond","event",
-"detail"}; `counts [<since-epoch>]` prints JSON counts since that epoch,
-defaulting to the preceding 24 hours.
+Progress lives in state/keepalive/<id>.json.
 Regression coverage: tests/fm-worker-keepalive.test.sh.
 
 FM_HOME is required. Tests set FM_KEEPALIVE_NOW (epoch) and FM_KEEPALIVE_LIVENESS
@@ -268,20 +265,15 @@ class Scan:
         self.dir = self.state / "keepalive"
         self.dir.mkdir(parents=True, exist_ok=True)
 
-    def event(self, wid, cond, kind, detail=""):
-        with open(self.dir / "events.jsonl", "a") as fh:
-            fh.write(json.dumps({"ts": NOW, "id": wid, "cond": cond, "event": kind,
-                                 "detail": detail[:300]}) + "\n")
-
     def wake(self, key: str, text: str) -> bool:
         return bash('. "$1/fm-wake-lib.sh"; fm_wake_append check "$2" "$3"', str(SCRIPT_DIR), key,
                     "check: worker keep-alive: " + text).returncode == 0
 
-    def report(self, wid: str, verb: str, text: str) -> bool:
+    def report(self, wid: str, rec: dict, verb: str, text: str) -> bool:
         """Raise (blocked) or resolve one plain line beyond this home."""
         script = ('. "$1/fm-wake-lib.sh"; . "$1/fm-parent-channel-lib.sh"; hid=$(fm_parent_channel_home_id "$2" 2>/dev/null || printf home); '
-                  'fm_parent_channel_report "$2" "$3" "$4 [key=keepalive-$hid-$5]: $(fm_parent_channel_clean_note "$6")"')
-        rc = bash(script, str(SCRIPT_DIR), str(self.h), str(self.state), verb, wid, text, timeout=120).returncode
+                  'fm_parent_channel_report "$2" "$3" "$4 [key=keepalive-$hid-$5-$6]: $(fm_parent_channel_clean_note "$7")"')
+        rc = bash(script, str(SCRIPT_DIR), str(self.h), str(self.state), verb, wid, str(rec["first"]), text, timeout=120).returncode
         if rc == 1:  # the first mate's own home: tell its supervisor
             if verb == "blocked":
                 return self.wake("keepalive:%s:escalate:%d" % (wid, NOW),
@@ -290,10 +282,8 @@ class Scan:
         return rc == 0
 
     def resolve(self, wid: str, rec: dict, why: str) -> bool:
-        if rec.get("escalated") and not self.report(wid, "resolved", "worker %s %s" % (wid, why)):
+        if rec.get("escalated") and not self.report(wid, rec, "resolved", "worker %s %s" % (wid, why)):
             return False
-        if rec.get("escalated") or rec.get("woke"):
-            self.event(wid, rec.get("cond") or "", "resolved", why)
         return True
 
     def condition(self, wid: str, m: dict, rec: dict):
@@ -307,6 +297,9 @@ class Scan:
         opened = min(NOW, mtime(status) or NOW)
         if verb in ("blocked", "failed"):
             return "blocked", opened, verb, text
+        if bash('. "$1/fm-external-wait.sh"; keepalive_now=$4; fm_external_wait_now_epoch() { printf "%s\\n" "$keepalive_now"; }; '
+                'fm_external_wait_active "$2" "$3"', str(SCRIPT_DIR), wid, str(self.state), str(NOW)).returncode == 0:
+            return None, opened, verb or "working", text
         if verb in ("paused", "captain-held"):
             return ("held" if mate_decidable(verb, text) else None), opened, verb, text
         return "no-progress", rec.get("fp_since", NOW), verb or "working", text
@@ -344,7 +337,6 @@ class Scan:
             acted = inbox > rec.get("inbox", 0) or gen != rec.get("gen", "")
             if acted and rec["nudges"] < MAX_NUDGES:
                 # the mate acted and the worker is still stuck: a fresh episode
-                self.event(wid, cond, "acted", "still %s after the mate acted" % cond)
                 rec.update(since=NOW, woke=0, inbox=inbox, gen=gen)
                 save(rec_path, rec)
                 return
@@ -353,15 +345,13 @@ class Scan:
                         % (wid, cond, minutes(NOW - rec["first"]),
                            "could not unstick it after %d tries" % rec["nudges"] if acted
                            else "did not act on the keep-alive wake", unstick(cond)))
-                if self.report(wid, "blocked", line):
+                if self.report(wid, rec, "blocked", line):
                     rec["escalated"] = True
-                    self.event(wid, cond, "escalated", line)
             save(rec_path, rec)
             return
         if self.wake("keepalive:%s:%s:%d" % (wid, cond, rec["since"]), instruction(wid, cond, age, verb, text)):
             rec.update(woke=NOW, inbox=inbox, gen=gen, nudges=rec["nudges"] + 1)
             rec.setdefault("first", rec["since"])
-            self.event(wid, cond, "woken", "%s for %d minutes" % (cond, minutes(age)))
         save(rec_path, rec)
 
     def scan(self) -> None:
@@ -384,22 +374,6 @@ class Scan:
                 rec_path.unlink(missing_ok=True)
 
 
-def counts(h: Path, since: int) -> dict:
-    out = {}
-    try:
-        with open(h / "state" / "keepalive" / "events.jsonl") as fh:
-            for line in fh:
-                try:
-                    e = json.loads(line)
-                except ValueError:
-                    continue
-                if e.get("ts", 0) >= since:
-                    out[e.get("event")] = out.get(e.get("event"), 0) + 1
-    except OSError:
-        pass
-    return out
-
-
 def main(argv) -> int:
     if argv[:1] == ["scan"]:
         h = home()
@@ -413,10 +387,6 @@ def main(argv) -> int:
             except BlockingIOError:
                 return 0
             Scan(h).scan()
-        return 0
-    if argv[:1] == ["counts"]:
-        since = int(argv[1]) if len(argv) > 1 else NOW - 86400
-        print(json.dumps(counts(home(), since), sort_keys=True))
         return 0
     print(__doc__, file=sys.stderr)
     return 2
