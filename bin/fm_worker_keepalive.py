@@ -344,7 +344,8 @@ class Scan:
             save(rec_path, rec)
             return
         if rec["woke"]:
-            acted = inbox > rec.get("steer", 0) or gen != rec.get("gen", "")
+            rec.setdefault("steer", inbox)
+            acted = inbox > rec["steer"] or gen != rec.get("gen", "")
             if acted and rec["nudges"] < MAX_NUDGES:
                 # the mate acted and the worker is still stuck: a fresh episode
                 rec.update(since=NOW, woke=0, steer=inbox, gen=gen)

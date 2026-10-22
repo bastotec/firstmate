@@ -182,6 +182,37 @@ test_inbox_bookkeeping_does_not_count_as_the_mate_acting() {
   pass "only newly delivered numeric steering records count as mate action"
 }
 
+test_legacy_wake_adopts_the_current_steer_baseline() {
+  local dir rec channel nudges
+  for nudges in 1 3; do
+    dir=$(make_home "legacy-wake-$nudges" ship)
+    make_secondmate "$dir" legacy
+    channel="$dir/parent/state/legacy.status"
+    status "$dir" "$T0" 'blocked: needs a retry'
+    steer "$dir" $((T0 + 1100))
+    scan "$dir" $((T0 + 1200))
+    assert_equals 1 "$(wake_count "$dir")" "setup: a blocked worker did not wake its mate"
+    rec="$dir/home/state/keepalive/w1.json"
+    jq --argjson inbox "$((T0 + 1100))" --argjson nudges "$nudges" \
+      'del(.steer) | .inbox = $inbox | .nudges = $nudges' "$rec" > "$rec.tmp"
+    mv "$rec.tmp" "$rec"
+    mv "$dir/home/state/w1.inbox/001.msg" "$dir/home/state/w1.inbox/handled/001.msg"
+    scan "$dir" $((T0 + 1500))
+    jq -e --argjson since "$T0" --argjson woke "$((T0 + 1200))" --argjson nudges "$nudges" \
+      '.steer == 1 and .since == $since and .woke == $woke and .nudges == $nudges and .escalated == false' \
+      "$rec" >/dev/null || fail "an existing steer changed the legacy wake episode"
+    assert_absent "$channel" "an existing steer escalated a legacy wake before its deadline"
+    scan "$dir" $((T0 + 1800))
+    jq -e --argjson woke "$((T0 + 1200))" '.steer == 1 and .woke == $woke' "$rec" >/dev/null \
+      || fail "the adopted steer baseline did not survive another scan"
+    scan "$dir" $((T0 + 3000))
+    assert_grep 'did not act on the keep-alive wake' "$channel" \
+      "baseline adoption delayed the ignored-wake escalation or claimed mate action"
+    assert_no_grep 'could not unstick it' "$channel" "an existing steer counted as a new attempt"
+  done
+  pass "legacy wakes adopt existing steer sequences without changing escalation deadlines"
+}
+
 test_state_override_owns_scans_locks_records_and_wakes() {
   local dir state default_state
   for default_state in absent populated; do
@@ -391,6 +422,7 @@ test_external_wait_is_left_to_the_declared_wait_cadence
 test_blocked_worker_is_retried_by_the_mate_then_escalated
 test_inbox_bookkeeping_does_not_count_as_the_mate_acting
 test_a_steer_the_worker_already_handled_counts_as_the_mate_acting
+test_legacy_wake_adopts_the_current_steer_baseline
 test_state_override_owns_scans_locks_records_and_wakes
 test_worker_without_a_live_agent_is_relaunched
 test_no_real_progress_counts_code_not_reports
