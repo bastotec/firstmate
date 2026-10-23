@@ -1726,7 +1726,7 @@ PY
   awk -F '\t' '
     NF != 4 || $1 != "v1" || $2 !~ /^[0-9]+$/ { exit 1 }
     $3 !~ /^(enter|complete|timeout|failed)$/ { exit 1 }
-    $4 !~ /^(harness|tasks-compatibility|lock|trace-context|home-summary|network-launch|bootstrap|decision-cards|wake-queue|supervision-instructions|read-once|fleet-state|network-checks|context|next-step|wake-queue-lock|wake-queue-read|wake-presentation-lock|wake-snapshot|wake-annotations|wake-sections|wake-receipt|wake-possible-asks|wake-liveness)$/ { exit 1 }
+    $4 !~ /^(harness|tasks-compatibility|lock|trace-context|home-summary|network-launch|bootstrap|decision-cards|wake-queue|supervision-instructions|read-once|fleet-state|network-checks|context|next-step|wake-queue-lock|wake-queue-read|wake-presentation-lock|wake-snapshot|wake-annotations|wake-sections|wake-record-divergence|wake-receipt|wake-possible-asks|wake-liveness)$/ { exit 1 }
   ' "$artifact" || fail "diagnostics captured data outside the fixed-label contract"
   assert_contains "$out" 'NEXT STEP' "instrumentation broke the digest"
 
@@ -1757,6 +1757,68 @@ PY
   assert_not_contains "$record" "$(printf '\tcomplete\t')" "a truncated digest claimed completion"
   assert_absent "$home/early-home/state/.session-start-complete" "an early timeout wrote a completion marker"
   pass "opt-in private fixed-label diagnostics survive early probe timeout without weakening completeness"
+}
+
+test_wake_probe_descendant_does_not_block_startup() {
+  local rec root home fakebin out artifact record leaf cursor original_session_start=$SESSION_START
+  rec=$(new_world wake-probe-descendant)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_deck "$fakebin"
+  mkdir -p "$home/bundle/docs" "$home/private-tmp"
+  cp -R "$ROOT/bin" "$home/bundle/bin"
+  cp -R "$ROOT/docs/supervision-protocols" "$home/bundle/docs/"
+  if [ -n "${FM_TEST_TIMEOUT_LIB:-}" ]; then
+    cp "$FM_TEST_TIMEOUT_LIB" "$home/bundle/bin/fm-timeout-lib.sh"
+  fi
+  cat > "$home/bundle/bin/fm-captain-hold.sh" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = diverged ]; then
+  trap '' TERM
+  sleep 15 &
+  printf '%s\n' "$!" > "$FM_TEST_WAKE_PROBE_PID"
+  exit 0
+fi
+exec "$FM_TEST_REAL_CAPTAIN_HOLD" "$@"
+SH
+  chmod +x "$home/bundle/bin/fm-captain-hold.sh"
+  printf 'needs-decision [key=pick]: choose a library\n' > "$home/state/task-z.status"
+  append_wake "$home/state" signal task-z.status 'needs-decision [key=pick]: choose a library' || fail "seed wake failed"
+  SESSION_START="$home/bundle/bin/fm-session-start.sh"
+  env -i FM_HOME="$home" PATH="$BASE_PATH" "$ROOT/bin/fm-startup-diagnostics.sh" enable >/dev/null || fail "destination diagnostics selection failed"
+  out=$(TMPDIR="$home/private-tmp" FM_SESSION_START_DIAGNOSTICS=0 \
+    FM_TEST_WAKE_PROBE_PID="$home/probe.pid" FM_TEST_REAL_CAPTAIN_HOLD="$ROOT/bin/fm-captain-hold.sh" \
+    FM_DIVERGENCE_TIMEOUT=1 FM_SESSION_START_TIMEOUT=10 \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH" 2>&1)
+  SESSION_START=$original_session_start
+  leaf=$(cat "$home/probe.pid")
+  fm_test_track_helper_pid "$leaf"
+  artifact=$(printf '%s\n' "$out" | sed -n 's/^STARTUP DIAGNOSTICS: //p')
+  [ -f "$artifact" ] || fail "destination-home diagnostics were stripped"
+  record=$(cat "$artifact")
+  assert_contains "$record" "$(printf '\tenter\twake-record-divergence')" "blocking wake subphase was not observed"
+  assert_contains "$record" "$(printf '\tcomplete\twake-record-divergence')" "finished probe was misreported"
+  assert_contains "$out" 'choose a library' "wake content was lost"
+  assert_contains "$out" 'OPEN DECISIONS' "decision presentation was lost"
+  assert_contains "$out" 'NEXT STEP' "probe descendant blocked the full digest"
+  assert_not_contains "$out" 'STARTUP TRUNCATED - SESSION START HIT ITS' "probe descendant exhausted the startup deadline"
+  [ -s "$home/state/.session-start-complete" ] || fail "complete digest lost its host completion marker"
+  [ -s "$home/state/.wake-queue" ] || fail "startup acknowledged unhandled wakes"
+  [ -s "$home/state/task-z.status" ] || fail "startup lost status content"
+  cursor=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" PATH="$BASE_PATH" bash -c \
+    '. "$1"; status_presentation_cursor_offset "$2"' _ "$ROOT/bin/fm-classify-lib.sh" "$home/state/task-z.status")
+  assert_equals "$(wc -c < "$home/state/task-z.status" | tr -d ' ')" "$cursor" "presentation receipt was not committed through the presented status"
+  assert_absent "$home/state/.status-presentation-lock" "presentation lock was left held"
+  assert_absent "$home/state/.wake-queue.lock" "queue lock was left held"
+  FM_HOME="$home" "$ROOT/bin/fm-startup-diagnostics.sh" disable >/dev/null || fail "destination diagnostics disable failed"
+  assert_absent "$home/config/startup-diagnostics" "diagnostics remained enabled"
+  case "$(PATH="$BASE_PATH" ps -o stat= -p "$leaf" 2>/dev/null | tr -d ' ')" in
+    ''|Z*) ;;
+    *) fail "the bounded probe left its pipe-holding descendant alive" ;;
+  esac
+  pass "wake probe descendants cannot withhold digest completion or consume queued work"
 }
 
 test_runtime_bound_leaves_a_healthy_digest_untouched() {
@@ -2098,6 +2160,15 @@ EOF
   pass "a read-only session start lists draft cards and writes none"
 }
 
+if [ -n "${FM_TEST_SESSION_START_CASES:-}" ]; then
+  for test_case in $FM_TEST_SESSION_START_CASES; do
+    case "$test_case" in test_*) ;; *) fail "invalid test case: $test_case" ;; esac
+    declare -F "$test_case" >/dev/null || fail "unknown test case: $test_case"
+    "$test_case"
+  done
+  exit 0
+fi
+
 test_context_digest_absent_empty_present
 test_lock_refusal_read_only_path
 test_lock_write_failure_read_only_path
@@ -2140,6 +2211,7 @@ test_supervision_block_exactly_one_for_deck
 test_runtime_bound_truncates_loudly_and_exits_zero
 test_portable_timeout_escalates_term_resistant_process
 test_private_startup_diagnostics
+test_wake_probe_descendant_does_not_block_startup
 test_runtime_bound_leaves_a_healthy_digest_untouched
 test_runtime_bound_leaves_harness_ancestry_headroom
 

@@ -389,7 +389,7 @@ EOF
 # never changes the drain's exit status - a supervision turn must still present
 # its wakes when the backlog tool is having a bad day.
 print_record_divergence_section() {
-  local diverged task origin key title line shown=0 omitted=0 bound
+  local diverged task origin key title line shown=0 omitted=0 bound rc
   local output='' used=0 bytes item_bytes=220 global_bytes=2000
 
   # A non-positive bound is not a bound (bin/fm-timeout-lib.sh), so a bad
@@ -400,7 +400,18 @@ print_record_divergence_section() {
   # Bounded, because this runs at the top of every supervision turn: a backlog
   # tool having a bad day must cost the drain a few seconds at worst, never the
   # presentation of the wakes it exists to deliver.
-  diverged=$(fm_run_timed "$bound" "$SCRIPT_DIR/fm-captain-hold.sh" diverged 2>/dev/null) || return 0
+  startup_diagnostic enter wake-record-divergence
+  if diverged=$(fm_run_timed "$bound" "$SCRIPT_DIR/fm-captain-hold.sh" diverged 2>/dev/null); then
+    startup_diagnostic complete wake-record-divergence
+  else
+    rc=$?
+    if [ "$rc" -eq 124 ]; then
+      startup_diagnostic timeout wake-record-divergence
+    else
+      startup_diagnostic failed wake-record-divergence
+    fi
+    return 0
+  fi
   [ -n "$diverged" ] || return 0
 
   while IFS=$(printf '\t') read -r task origin key title; do

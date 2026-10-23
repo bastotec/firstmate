@@ -159,6 +159,14 @@ state/
 `bin/fm-session-start.sh`'s header owns session-start ordering, blocking reads, and the digest; `bin/fm-startup-network.sh`'s header owns the deferred checks and inactive-outcome scan.
 `AGENTS.md` keeps the run-once and read-once rules, lock-refusal safety, installation consent, and direct-report recovery boundaries; `stuck-crewmate-recovery` owns dead-direct-report recovery and `secondmate-provisioning` owns persistent-secondmate recovery.
 
+## Private startup diagnostics
+
+For an authorized fresh start in one destination home, run `bin/fm-on.sh <mate> fm-startup-diagnostics.sh enable` before the owning lifecycle command. [`fm-startup-diagnostics.sh disable`](../bin/fm-startup-diagnostics.sh) stops recording future starts; neither operation starts, stops, or restarts a worker. The selector is the non-inherited, home-local `config/startup-diagnostics` file containing `1`, so both Deck launch paths can select diagnostics despite remote environment stripping. For local use, set `FM_HOME` to the destination home and run the same selector. Don't run a second digest beside an active session.
+
+Each opted-in start prints its private `stages.tsv` path on stderr. The directory is 0700 and the file 0600; records contain only epoch seconds and fixed event/stage labels, including `wake-record-divergence`. No command output, arguments, environment, or task names are recorded. Retain failed-start timings privately, then remove the diagnostic directory when finished. The whole-startup deadline stays 120 seconds by default, and both Deck hosts still require the completion marker.
+
+The wake-queue fixture covers a completed bounded probe whose descendant retains the output pipe. The shared timeout runner now closes its owned process group on completion as well as timeout. This reproduces a local failure mode, not proof of the remote slowdown's cause; deferred-network completion alone doesn't identify the blocking wake-drain subphase.
+
 ## Model fallback chains (spawn-side)
 
 Every spawn-side model surface accepts a fallback chain: a `config/crew-dispatch.json` profile's `model`, the model token in `config/secondmate-harness`, and `fm-spawn.sh --model`.

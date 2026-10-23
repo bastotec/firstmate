@@ -82,6 +82,7 @@ fm_run_bash_timeout() {
     recorded_rc=$(cat "$command_status" 2>/dev/null || true)
     case "$recorded_rc" in ''|*[!0-9]*) ;; *) command_rc=$recorded_rc ;; esac
   fi
+  kill -KILL -- "-$child_pid" 2>/dev/null || true
   rm -f "$command_status" "$deadline_status" 2>/dev/null || true
   return "$command_rc"
 }
@@ -92,9 +93,6 @@ fm_run_external_timeout() {
   status_file=$(mktemp "${TMPDIR:-/tmp}/fm-timeout-status.XXXXXX" 2>/dev/null) || return 124
   # Run timeout asynchronously so its pid - also the process-group id created
   # by GNU/BSD timeout without --foreground - remains available for cleanup.
-  # A shell wrapper can exit promptly on TERM while one of its descendants
-  # ignores TERM; timeout then considers the command finished and does not send
-  # its configured KILL. Explicitly reap that leftover group on a real timeout.
   # shellcheck disable=SC2016  # Expansion is deliberately deferred to the child shell.
   "$runner" -k 1 "$seconds" bash -c '
     status_file=$1
@@ -110,17 +108,16 @@ fm_run_external_timeout() {
   else
     runner_rc=$?
   fi
+  kill -KILL -- "-$runner_pid" 2>/dev/null || true
   command_rc=$(cat "$status_file" 2>/dev/null || true)
   rm -f "$status_file" 2>/dev/null || true
+  [ "$runner_rc" -ne 124 ] || return 124
   case "$command_rc" in
     ''|*[!0-9]*) ;;
     *) [ "$command_rc" -le 255 ] && return "$command_rc" ;;
   esac
   case "$runner_rc" in
-    124|137)
-      kill -KILL -- "-$runner_pid" 2>/dev/null || true
-      return 124
-      ;;
+    124|137) return 124 ;;
     *) return "$runner_rc" ;;
   esac
 }
@@ -132,7 +129,7 @@ fm_run_timed() {  # <seconds> <command...>
     timeout) fm_run_external_timeout timeout "$seconds" "$@" ;;
     gtimeout) fm_run_external_timeout gtimeout "$seconds" "$@" ;;
     perl)
-      perl -e 'my $t = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0); exec @ARGV } local $SIG{ALRM} = sub { kill "TERM", -$pid; select undef, undef, undef, 0.2; kill "KILL", -$pid; exit 124 }; alarm $t; waitpid $pid, 0; exit($? >> 8)' \
+      perl -e 'my $t = shift; my $pid = fork; die "fork failed" unless defined $pid; if (!$pid) { setpgrp(0, 0); exec @ARGV } local $SIG{ALRM} = sub { kill "TERM", -$pid; select undef, undef, undef, 0.2; kill "KILL", -$pid; exit 124 }; alarm $t; waitpid $pid, 0; my $status = $?; alarm 0; kill "KILL", -$pid; exit($status & 127 ? 128 + ($status & 127) : $status >> 8)' \
         "$seconds" "$@"
       ;;
     bash) fm_run_bash_timeout "$seconds" "$@" ;;

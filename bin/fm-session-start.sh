@@ -247,7 +247,10 @@ stage() {  # <stage-name>: breadcrumb for the parent's truncation banner
 if [ -z "${FM_SESSION_START_STAGE_FILE:-}" ]; then
   # Never inherit an arbitrary diagnostic destination from the launch environment.
   unset FM_SESSION_START_DIAGNOSTIC_FILE
-  if [ "${FM_SESSION_START_DIAGNOSTICS:-0}" = 1 ]; then
+  if [ "${FM_SESSION_START_DIAGNOSTICS:-0}" = 1 ] \
+    || { [ -f "$FM_HOME/config/startup-diagnostics" ] \
+      && [ ! -L "$FM_HOME/config/startup-diagnostics" ] \
+      && [ "$(cat "$FM_HOME/config/startup-diagnostics" 2>/dev/null)" = 1 ]; }; then
     SESSION_START_DIAGNOSTIC_DIR=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/fm-startup-diagnostics.XXXXXX" 2>/dev/null) || SESSION_START_DIAGNOSTIC_DIR=
     if [ -n "$SESSION_START_DIAGNOSTIC_DIR" ]; then
       FM_SESSION_START_DIAGNOSTIC_FILE="$SESSION_START_DIAGNOSTIC_DIR/stages.tsv"
