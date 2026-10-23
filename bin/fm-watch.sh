@@ -2220,15 +2220,20 @@ else
       echo "watcher: recovery state could not be reopened safely; retaining stale lock evidence" >&2
       exit 1
     fi
-  fi
-  if ! fm_recovery_marker_arm_check "$WATCHER_DOWNTIME_MARKER"; then
-    echo "watcher: recovery state could not be consumed safely; retaining stale lock evidence" >&2
-    exit 1
-  fi
-  if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" = 1 ]; then
+    if ! fm_recovery_marker_arm_check "$WATCHER_DOWNTIME_MARKER"; then
+      echo "watcher: recovery state could not be consumed safely; retaining stale lock evidence" >&2
+      exit 1
+    fi
+    if [ "$FM_RECOVERY_MARKER_ACTION" = recover ]; then
+      WATCHER_RECOVERY_PENDING=1
+    fi
+  else
+    # The driver owns this predecessor-delivered episode. Its drain can still
+    # hold the queue lock while it waits for our readiness, so taking that lock
+    # here makes the handoff depend on work the driver has not finished yet.
+    # The arm verifies the marker generation after identity/beacon publication;
+    # resurface_after_downtime likewise leaves recovery to the driver.
     WATCHER_RECOVERY_PENDING=0
-  elif [ "$FM_RECOVERY_MARKER_ACTION" = recover ]; then
-    WATCHER_RECOVERY_PENDING=1
   fi
 fi
 unset FM_WATCH_RECOVERY_PENDING

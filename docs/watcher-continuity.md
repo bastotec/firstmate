@@ -18,7 +18,8 @@ It accumulates watcher results that arrive while a Deck turn runs and delivers t
 The watcher surfaces specialist and task-group results without waiting for an unrelated monitoring check; the [`fm-watch.sh` header](../bin/fm-watch.sh) owns the queued-key and announcement contract.
 
 The recovery-episode contract below owns once-per-generation announcement.
-A handling successor does not re-announce; it enters its poll loop immediately and keeps scanning signals, stale panes, and checks.
+A handling successor does not re-announce or take the driver's queue lock to initialize recovery; it enters its poll loop immediately and keeps scanning signals, stale panes, and checks.
+The arm still verifies its singleton identity, fresh beacon, and recovery generation before confirming the handoff.
 The model does not re-arm after ordinary wakes.
 A periodic beat is that continuity, not a failure: the driver may replace only its watcher child, so a fresh watcher pid can appear carrying the SAME recovery-generation without restarting the home agent or its Deck session.
 The driver replays any unacked durable inbox record as that turn's instruction.
