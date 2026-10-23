@@ -222,6 +222,14 @@
 #                           secondmate host stops (default 5); fewer are
 #                           retried with a fresh watcher; empty, zero, or
 #                           nonnumeric values use the default
+#   FM_DECK_SESSION_START_TIMEOUT  runtime bound in seconds on the secondmate
+#                           host's one bin/fm-session-start.sh run (default
+#                           600; empty, zero, or nonnumeric values use the
+#                           default). The host refuses to start without a
+#                           complete digest, so session start's own 120s
+#                           interactive bound would turn a slow but healthy
+#                           startup on a loaded machine or a large home into
+#                           a failed launch; nobody waits on this one.
 #   FM_DECK_FRESH_SESSION   1 starts fresh secondmate conversations instead of
 #                           resuming; see CAPTAIN LANE for the split reset
 #   FM_DECK_WATCH_CONFIRM_SECS  how long a secondmate host waits for a
@@ -939,8 +947,16 @@ if [ "$SECONDMATE" = 1 ]; then
     host_failure 'could not publish a fresh recovery generation'; exit 1
   fi
   # Startup is executed exactly once by the stable host, not by a short-lived
-  # Deck run. The complete digest is supplied to the first model turn.
-  if ! "$SCRIPT_DIR/fm-session-start.sh" > "$WORK/startup" 2>&1; then
+  # Deck run. The complete digest is supplied to the first model turn, and an
+  # incomplete one refuses the launch below, so the host gives session start
+  # its own larger bound (see FM_DECK_SESSION_START_TIMEOUT) instead of the
+  # 120s default.
+  SESSION_START_TIMEOUT=${FM_DECK_SESSION_START_TIMEOUT:-600}
+  # A padded zero such as 00 is still zero, which would disable the bound.
+  case "$SESSION_START_TIMEOUT" in ''|*[!0-9]*) SESSION_START_TIMEOUT=600 ;; esac
+  [ "$SESSION_START_TIMEOUT" -gt 0 ] 2>/dev/null || SESSION_START_TIMEOUT=600
+  if ! FM_SESSION_START_TIMEOUT="$SESSION_START_TIMEOUT" \
+    "$SCRIPT_DIR/fm-session-start.sh" > "$WORK/startup" 2>&1; then
     cat "$WORK/startup" >&2
     host_failure 'session start failed'; exit 1
   fi

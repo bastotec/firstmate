@@ -2455,6 +2455,52 @@ PYTHON
   pass "Deck host refuses a zero-exit incomplete digest without consuming wakes or starting turns"
 }
 
+# The host refuses to start without a complete digest, so it must not inherit
+# session start's 120s interactive bound: a slow but healthy startup on a loaded
+# machine was truncated there and every relaunch failed. The host passes its own
+# bound, and an unusable override (empty, nonnumeric, zero, padded zero) falls
+# back to the default rather than disabling the bound.
+test_secondmate_host_gives_session_start_its_own_bound() {
+  local dir="$TMP_ROOT/host-session-start-bound" value expected
+  make_secondmate_host_fixture "$dir"
+  cat > "$dir/bin/fm-session-start.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "${FM_SESSION_START_TIMEOUT-unset}" >> "$FM_HOME/start-budgets"
+exit 7
+SH
+  for value in unset 900 '' abc 0 00; do
+    case "$value" in 900) expected=900 ;; *) expected=600 ;; esac
+    rm -f "$dir/home/start-budgets"
+    python3 - "$dir" "$value" <<'PYTHON' || fail "session start bound for override '$value'"
+import os, pathlib, signal, subprocess, sys
+root = pathlib.Path(sys.argv[1])
+value = sys.argv[2]
+home = root/'home'
+state = root/'parent'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='',
+    FM_SESSION_START_TIMEOUT='120')
+env.pop('FM_DECK_SESSION_START_TIMEOUT', None)
+if value != 'unset':
+    env['FM_DECK_SESSION_START_TIMEOUT'] = value
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(state), 'host'], text=True).strip()
+p = subprocess.Popen(['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+    str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(state),
+    '--gen', gen, '--deck', str(root/'deck'), '--', 'charter'], env=env, stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+try:
+    out, err = p.communicate('/quit\n', timeout=30)
+    assert p.returncode != 0, out+err
+finally:
+    if p.poll() is None:
+        os.killpg(p.pid, signal.SIGKILL)
+    p.wait()
+PYTHON
+    [ "$(cat "$dir/home/start-budgets" 2>/dev/null)" = "$expected" ] \
+      || fail "override '$value' passed bound '$(cat "$dir/home/start-budgets" 2>/dev/null)', expected $expected"
+  done
+  pass "Deck host gives session start its own bound and rejects unusable overrides"
+}
+
 # Real sequence-lock custody: transient contention must not kill a healthy host,
 # while exhausted retries must not steal a live holder or dispatch a lost wake.
 test_secondmate_host_retries_watcher_publication() {
@@ -4264,6 +4310,7 @@ test_secondmate_host_survives_an_unconfirmed_successor_watcher
 test_secondmate_fast_successor_keeps_its_notification
 test_secondmate_host_retains_failed_successor_start_evidence
 test_secondmate_host_refuses_an_incomplete_startup_digest
+test_secondmate_host_gives_session_start_its_own_bound
 test_secondmate_host_retries_watcher_publication
 test_secondmate_host_survives_a_failed_watcher_and_resumes_its_session
 test_secondmate_watcher_backoff_keeps_turn_stop_responsive
