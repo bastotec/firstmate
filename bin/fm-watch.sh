@@ -116,7 +116,7 @@
 #                          (bin/fm-procevent.sh reconcile queues it once per
 #                          failure episode, and a later cycle that finds the
 #                          source owned closes that episode); the queued
-#                          payload names what to check. These four kinds are
+#                          payload names what to check. These queued checks are
 #                          joined with `;` when more than one surfaces in a cycle
 #   check: rejected unauthenticated state checks: <paths>
 #                          unsafe state checks were refused without execution
