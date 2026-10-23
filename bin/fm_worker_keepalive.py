@@ -12,16 +12,21 @@ non-blocking lock at state/keepalive/.lock.
 
 Each scan reads one condition per worker, first match wins:
   undelivered  the worker's backlog item is done (accepted, read once per
-               scan through bin/fm-tasks-axi.sh list --state done), or its last status line is done: with
-               no recorded pr=, and the worker is still in the fleet
-               FM_KEEPALIVE_DONE_SECS (600) later: its result may never have
-               reached the conversation that asked for it, and an accepted
-               worker should be retired. The wake names the conversations the
-               captain wrote to through this home (state/captain-direct/) and
-               when a result was last sent to each (state/captain-direct.log), so
-               a result sent before the acceptance shows as stale. A done:
-               worker with a PR and an open backlog item is left to the PR and
-               CI watchers, regardless of agent liveness.
+               scan through bin/fm-tasks-axi.sh list --state done), or its last
+               status line is done: with no recorded pr=, and the worker is
+               still in the fleet FM_KEEPALIVE_DONE_SECS (600) later. Backlog
+               acceptance takes precedence over agent liveness and recorded
+               PRs: deliver and retire an accepted worker, never relaunch it.
+               The wake tells the mate to send the result with
+               `bin/fm-send.sh <conversation> --result` and then retire the
+               worker. It names each conversation recorded in this home's
+               state/captain-direct/ task_id fields and its last result-sent
+               time in state/captain-direct.log (or "never" if none is recorded).
+               This trail is evidence for the mate, not a requester lookup or
+               a delivery gate: the scan cannot identify the requester or
+               prove delivery, and does not suppress wakes after result-sent.
+               A done: worker with a PR not found in the backlog's done set is
+               left to the PR and CI watchers, regardless of agent liveness.
   dead         bin/fm-busy-lib.sh classifies the agent dead (no live agent);
   blocked      the last status line is blocked: or failed: - the mate must act;
   external     an active supervisor declaration from bin/fm-external-wait.sh
@@ -45,8 +50,10 @@ Each scan reads one condition per worker, first match wins:
 A condition reaching its bound queues one `check: worker keep-alive:` wake
 keyed keepalive:<id>:<condition>:<epoch> to this home's own supervisor.
 Dead uses FM_KEEPALIVE_DEAD_SECS (300) from first observation; blocked and held
-use FM_KEEPALIVE_STUCK_SECS (1200), and undelivered uses FM_KEEPALIVE_DONE_SECS,
-initially measured from the status file's mtime when the condition is observed.
+use FM_KEEPALIVE_STUCK_SECS (1200), initially measured from the status file's
+mtime when the condition is observed. Undelivered uses FM_KEEPALIVE_DONE_SECS
+from first observation of backlog acceptance, or the status file's mtime for
+an unaccepted done: worker without a PR.
 Later status edits do not restart an unchanged condition's clock. Its text is a
 concrete instruction - decide and resume it, relaunch it with
 `bin/fm-spawn.sh --relaunch <id>`, replace it, or close it - never "wait".
