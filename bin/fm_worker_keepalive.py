@@ -26,12 +26,28 @@ Each scan reads one condition per worker, first match wins:
                a delivery gate: the scan cannot identify the requester or
                prove delivery, and does not suppress wakes after result-sent.
                A done: worker with a PR not found in the backlog's done set is
-               left to the PR and CI watchers, regardless of agent liveness.
+               eligible for the PR conditions below; otherwise its done: status
+               suppresses the remaining conditions regardless of agent liveness.
+  unmerged     the worker's recorded pr= is open, not a draft, MERGEABLE, with
+               mergeStateStatus CLEAN, HAS_HOOKS or UNSTABLE, at least one check,
+               and every reported check SUCCESS, NEUTRAL or SKIPPED for
+               FM_KEEPALIVE_PR_GREEN_SECS (1800) since first observed eligible.
+               The mate merges it (bin/fm-pr-merge.sh), subject to merge policy,
+               or closes it if superseded. Read live through `gh pr view`
+               (FM_KEEPALIVE_PR stands in for it in tests);
+  ci-stuck     scans have observed the worker's validation run in its CI step
+               (state/<id>.crew-state step=ci) for FM_KEEPALIVE_CI_STEP_SECS
+               (7200), with its PR still open and not meeting the PR-state and
+               check criteria above: rerun failed or cancelled checks, recover
+               conflicts, then merge once green, or close it if superseded.
+               Both PR clocks reset on an unavailable, merged or closed PR
+               observation; the green clock also resets on ineligibility and
+               the CI clock when a scan observes a step other than ci;
   dead         bin/fm-busy-lib.sh classifies the agent dead (no live agent);
   blocked      the last status line is blocked: or failed: - the mate must act;
   external     an active supervisor declaration from bin/fm-external-wait.sh
                suppresses held and no-progress detection until expiry, but
-               never the done, dead or blocked cases above;
+               never the higher-priority conditions above;
   held         the last status line is paused: or captain-held on something the
                mate itself can decide: it awaits a release, hold, approval,
                steer, decision or answer, names the mate ("your", "mate",
@@ -41,7 +57,10 @@ Each scan reads one condition per worker, first match wins:
                `until` time, or either pause verb naming none of those keywords,
                is left to bin/fm-watch.sh's declared-wait cadence;
   no-progress  any other live, unfinished worker whose real progress has not
-               moved for FM_KEEPALIVE_NO_PROGRESS_SECS (1200). Real progress is
+               moved for FM_KEEPALIVE_NO_PROGRESS_SECS (1200). A live worker
+               without a blocked or failed status is exempt while a successful
+               open-PR observation retains its CI or green clock above.
+               Real progress is
                the worktree's HEAD, the paths, mtimes and sizes of its changed
                files that are not reports (*.md, *.txt, *.log, report/ and notes/
                paths, .superpowers/, .scratch/, .no-mistakes/), the published
@@ -57,7 +76,7 @@ from first observation of backlog acceptance, or the status file's mtime for
 an unaccepted done: worker without a PR.
 Later status edits and transitions between blocked, held and no-progress
 retain the episode's clock, wake, escalation state and parent key; a change to
-dead or undelivered starts a new episode. The wake's text is a concrete
+dead, undelivered, unmerged or ci-stuck starts a new episode. The wake's text is a concrete
 instruction - decide and resume it, relaunch it with
 `bin/fm-spawn.sh --relaunch <id>`, replace it, or close it - never "wait".
 A steer, an acknowledgment or a relay upward is not a fix, so the inbox is not
@@ -68,8 +87,8 @@ to its parent channel (bin/fm-parent-channel-lib.sh). The first mate has no
 parent mate, so its own home waits FM_KEEPALIVE_ESCALATE_SECS (1800) after the
 wake and then tells the captain (see Captain lines). A stall clears when the
 worker resumes with real progress, reports done: with a PR, or enters an
-external or non-mate-decidable wait under the precedence rules above. An
-escalated episode's resolution is published through the same route when it
+external or non-mate-decidable wait, unless a higher-priority condition applies.
+An escalated episode's resolution is published through the same route when it
 clears or the worker leaves.
 
 Escalations from below: every still-open keepalive- blocked record on a second
@@ -79,6 +98,15 @@ own blocked line to its parent channel, and the first mate's home tells the
 captain. The channel key and fold origin identify the episode: note refreshes
 retain its first-seen time and escalation state; closure followed by reopening
 starts fresh. It resolves when the record closes or the mate leaves.
+
+Auto-land: a home with config/autoland.json but no state/autoland.check.sh
+has no armed auto-land check. FM_KEEPALIVE_DEAD_SECS after a scan first sees
+that, it wakes this home's supervisor to re-arm it (bin/fm-autoland.sh arm)
+and escalates like a stuck worker when it stays disarmed; record
+state/keepalive/autoland.json. The wake preserves the captain's authority to
+keep auto-land off.
+Arming the check or removing the configuration clears this condition.
+Regression coverage for these watchdogs: tests/fm-worker-keepalive.test.sh.
 
 Captain lines: the first mate's home publishes one plain notice through
 bin/fm-notify.sh (FM_KEEPALIVE_NOTIFY stands in for it in tests) and queues a
@@ -157,6 +185,8 @@ ASK = env_int("FM_KEEPALIVE_ASK_SECS", 600)
 MACHINE_KEYS = ("keepalive-", "pending-reply-", "parked-run-", "ci-stall-", "child-outcome-")
 ESCALATE = env_int("FM_KEEPALIVE_ESCALATE_SECS", 1800)
 FOLLOW = env_int("FM_KEEPALIVE_FOLLOW_SECS", 600)
+PR_GREEN = env_int("FM_KEEPALIVE_PR_GREEN_SECS", 1800)
+CI_STEP = env_int("FM_KEEPALIVE_CI_STEP_SECS", 7200)
 NOW = env_int("FM_KEEPALIVE_NOW", int(time.time()))
 LIVENESS = os.environ.get("FM_KEEPALIVE_LIVENESS") or ""
 
@@ -320,6 +350,32 @@ def result_trail(state: Path) -> str:
         "%s, last result sent %s" % (t, when or "never") for t, when in sorted(targets.items()))
 
 
+def pr_view(url: str):
+    """Live state of one PR as gh reports it (state, draft, mergeability, checks), or None."""
+    cmd = [os.environ["FM_KEEPALIVE_PR"], url] if os.environ.get("FM_KEEPALIVE_PR") else [
+        "gh", "pr", "view", url, "--json", "state,isDraft,mergeable,mergeStateStatus,statusCheckRollup"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        return json.loads(r.stdout) if r.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+
+
+def pr_green(view: dict) -> bool:
+    """Eligibility predicate for the unmerged condition documented above."""
+    checks = view.get("statusCheckRollup") or []
+    concl = [(c.get("conclusion") or c.get("state") or "").upper() for c in checks]
+    return (view.get("state") == "OPEN" and not view.get("isDraft") and view.get("mergeable") == "MERGEABLE"
+            and view.get("mergeStateStatus") in ("CLEAN", "HAS_HOOKS", "UNSTABLE") and bool(concl)
+            and all(c in ("SUCCESS", "NEUTRAL", "SKIPPED") for c in concl))
+
+
+def pr_summary(view: dict) -> str:
+    checks = view.get("statusCheckRollup") or []
+    bad = sorted({(c.get("conclusion") or c.get("state") or "pending").lower() for c in checks} - {"success", "neutral", "skipped"})
+    return "mergeable %s, checks %s" % ((view.get("mergeable") or "unknown").lower(), ", ".join(bad) or "green")
+
+
 def minutes(secs: int) -> int:
     return max(0, secs) // 60
 
@@ -334,6 +390,16 @@ def instruction(wid: str, cond: str, age: int, verb: str, text: str, waiting: st
     if cond == "dead":
         return ("worker %s has had no live agent for %d minutes: %s now; never leave it waiting"
                 % (wid, minutes(age), relaunch))
+    if cond == "unmerged":
+        return ("worker %s's PR %s has been green and mergeable for %d minutes and is not merged: merge it now with "
+                "bin/fm-pr-merge.sh %s when bin/fm-merge-policy.sh allows, or close it if it is superseded; a PR "
+                "auto-land should have taken means auto-land is not running here (bin/fm-autoland.sh status)"
+                % (wid, text, minutes(age), wid))
+    if cond == "ci-stuck":
+        return ("worker %s's validation run has sat in its CI step for %d minutes and its PR is still open (%s): "
+                "land it or close it now - rerun failed or cancelled checks, have the worker rebase a conflicting "
+                "branch (no-mistakes rerun), merge it once green, or close it if it is superseded"
+                % (wid, minutes(age), text))
     if cond == "undelivered":
         return ("worker %s finished %d minutes ago (\"%s\") and is still in the fleet: send its result to the "
                 "conversation that asked for it now with bin/fm-send.sh <conversation> --result '<outcome and report "
@@ -356,6 +422,8 @@ def unstick(cond: str) -> str:
     return {"dead": "a relaunch or replacement of the worker",
             "blocked": "an answer to its blocker or a relaunch",
             "undelivered": "delivering its finished result and cleaning it up",
+            "unmerged": "merging its green PR",
+            "ci-stuck": "landing or closing its PR",
             "held": "releasing its hold so it resumes the deliverable",
             }.get(cond, "steering it back to the deliverable, or a relaunch")
 
@@ -408,6 +476,9 @@ class Scan:
         verb, text = last_status(status)
         if wid in self.done_ids:
             return "undelivered", NOW, "accepted", text or "its backlog item is done"
+        pr = self.pr_condition(m, rec)
+        if pr:
+            return pr
         if verb == "done":
             return ("done" if m.get("pr") else "undelivered"), min(NOW, mtime(status) or NOW), verb, text
         if liveness(self.h, self.state, wid) == "dead":
@@ -415,6 +486,9 @@ class Scan:
         opened = min(NOW, mtime(status) or NOW)
         if verb in ("blocked", "failed"):
             return "blocked", opened, verb, text
+        if rec.get("track", {}).get("ci") or rec.get("track", {}).get("green"):
+            # waiting on CI or a merge has its own bounds above; it is not a stall
+            return None, opened, verb or "working", text
         if bash('. "$1/fm-external-wait.sh"; keepalive_now=$4; fm_external_wait_now_epoch() { printf "%s\\n" "$keepalive_now"; }; '
                 'fm_external_wait_active "$2" "$3"', str(SCRIPT_DIR), wid, str(self.state), str(NOW)).returncode == 0:
             return None, opened, verb or "working", text
@@ -422,9 +496,34 @@ class Scan:
             return ("held" if mate_decidable(verb, text) else None), opened, verb, text
         return "no-progress", rec.get("fp_since", NOW), verb or "working", text
 
+    def pr_condition(self, m: dict, rec: dict):
+        """unmerged (green and mergeable PR_GREEN after first seen so) or ci-stuck (CI step CI_STEP), else None."""
+        track = rec.setdefault("track", {})
+        url = m.get("pr") or ""
+        step = meta(self.state / ("%s.crew-state" % m.get("_id", ""))).get("step", "")
+        view = pr_view(url) if url else None
+        if not view or view.get("state") != "OPEN":
+            track.clear()
+            return None
+        green = pr_green(view)
+        if not green:
+            track.pop("green", None)
+        else:
+            track.setdefault("green", NOW)
+        if step == "ci":
+            track.setdefault("ci", NOW)
+        else:
+            track.pop("ci", None)
+        if green and NOW - track["green"] >= PR_GREEN:
+            return "unmerged", track["green"], "green", url
+        if not green and "ci" in track and NOW - track["ci"] >= CI_STEP:
+            return "ci-stuck", track["ci"], "ci", "%s, %s" % (url, pr_summary(view))
+        return None
+
     def one(self, wid: str, m: dict) -> None:
         rec_path = self.dir / ("%s.json" % wid)
         rec = load(rec_path, {})
+        m = dict(m, _id=wid)
         if rec.get("cond") in STALL_CONDITIONS:
             rec.setdefault("episode_fp", rec.get("fp"))
         fp = fingerprint(self.state, wid, m)
@@ -438,7 +537,7 @@ class Scan:
             if rec.get("cond") and not self.resolve(wid, rec, "is moving again"):
                 save(rec_path, rec)
                 return
-            rec = {"fp": rec["fp"], "fp_since": rec["fp_since"]}
+            rec = {"fp": rec["fp"], "fp_since": rec["fp_since"], "track": rec.get("track", {})}
             save(rec_path, rec)
             return
         if rec.get("cond") in STALL_CONDITIONS and cond in STALL_CONDITIONS:
@@ -448,8 +547,8 @@ class Scan:
                 save(rec_path, rec)
                 return
             rec = {"fp": rec["fp"], "fp_since": rec["fp_since"], "episode_fp": rec["fp"], "cond": cond, "since": since,
-                   "woke": 0, "nudges": 0, "escalated": False}
-        bound = {"dead": DEAD, "no-progress": NO_PROGRESS, "undelivered": DONE}.get(cond, STUCK)
+                   "woke": 0, "nudges": 0, "escalated": False, "track": rec.get("track", {})}
+        bound = {"dead": DEAD, "no-progress": NO_PROGRESS, "undelivered": DONE, "unmerged": 0, "ci-stuck": 0}.get(cond, STUCK)
         age = NOW - rec["since"]
         if (rec.get("escalated") and (not self.primary or rec.get("captain_notified"))) or (
                 not rec["woke"] and age < bound):
@@ -585,7 +684,36 @@ class Scan:
                                "second mate %s's stuck work is moving again" % mate):
                 relays[ident] = r
 
+    def autoland(self) -> None:
+        """Watchdog for configured but disarmed auto-land; see the module contract."""
+        config = Path(os.environ.get("FM_CONFIG_OVERRIDE") or self.h / "config")
+        rec_path = self.dir / "autoland.json"
+        rec = load(rec_path, {})
+        disarmed = (config / "autoland.json").is_file() and not (self.state / "autoland.check.sh").exists()
+        if not disarmed:
+            if rec.get("escalated"):
+                if not self.report("autoland", rec, "resolved", "auto-land is armed again"):
+                    return
+            rec_path.unlink(missing_ok=True)
+            return
+        rec.setdefault("first", NOW)
+        if not rec.get("woke") and NOW - rec["first"] >= DEAD:
+            if self.wake("keepalive:autoland:disarmed:%d" % rec["first"],
+                         "auto-land is configured (config/autoland.json) but not armed, so green PRs in its repos are "
+                         "not merging: re-arm it now with bin/fm-autoland.sh arm; only the captain's own words keep "
+                         "it off"):
+                rec["woke"] = NOW
+        elif rec.get("woke") and not rec.get("escalated") and NOW - rec["woke"] >= (ESCALATE if self.primary else FOLLOW):
+            if self.report("autoland", rec, "blocked", "auto-land has been disarmed for %d minutes, so green PRs are "
+                           "not merging; it needs bin/fm-autoland.sh arm" % minutes(NOW - rec["first"])):
+                rec["escalated"] = True
+        save(rec_path, rec)
+
     def scan(self) -> None:
+        try:
+            self.autoland()
+        except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+            print("fm-worker-keepalive: autoland: %s" % error, file=sys.stderr)
         self.done_ids = backlog_done_ids(self.h) if any(
             meta(p).get("kind") in ("ship", "scout") for p in self.state.glob("*.meta")) else set()
         mates = set()
@@ -620,7 +748,7 @@ class Scan:
                 print("fm-worker-keepalive: %s: %s" % (path.stem, error), file=sys.stderr)
         for rec_path in sorted(self.dir.glob("*.json")):
             wid = rec_path.stem
-            if wid in live:
+            if wid in live or wid == "autoland":
                 continue
             rec = load(rec_path, {})
             if self.resolve(wid, rec, "left the fleet"):

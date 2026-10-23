@@ -81,7 +81,7 @@ state/
   <id>.approval-wait approval-waits/  parent approval exclusion and release archive (bin/fm-approval-wait.sh owns schema, declaration and release)
   <id>.parked-run <id>.quiet-noted  parked validation episode and quiet-worker check-in marker (bin/fm-parked-run-watch.sh header)
   ci-stall/               stalled-CI re-trigger progress per worker, learned check durations, and the events dreaming counts (bin/fm_ci_stall.py docstring)
-  keepalive/              worker and secondmate-question episodes (bin/fm_worker_keepalive.py docstring)
+  keepalive/              keep-alive episodes (bin/fm_worker_keepalive.py docstring)
   .spawn-serial.lock      fresh-spawn serialization (bin/fm-spawn.sh header "Serialized spawns")
   <id>.model <id>.deck-caps  in-place model choice and live driver capability (bin/fm-control.sh owns public behavior; bin/fm_model_switch.py owns capability checks)
   <id>.progress           in-turn native activity, read for the busy-age bound only (bin/fm-busy-event.sh)
@@ -610,6 +610,7 @@ The check stays silent only for a proven no-op; a fail-closed poll that already 
 
 [`bin/fm-autoland.sh`](../bin/fm-autoland.sh) lands green PRs as soon as they are ready and deploys what landed, without a model turn.
 `bin/fm-autoland.sh arm` writes and binds `state/autoland.check.sh` as a standing watcher check, and `disarm` removes it.
+For the configured-but-disarmed watchdog, see [`fm_worker_keepalive.py`'s docstring](../bin/fm_worker_keepalive.py).
 The watcher runs it every `FM_AUTOLAND_INTERVAL` seconds (default 90) or during a full `FM_CHECK_INTERVAL` sweep, so polling can delay a tick.
 Each tick makes one unpaginated GraphQL discovery call (at most 100 open PRs, 100 check contexts per head, and 20 labels per PR), and the header owns the merge budget, query timeout, and candidate rotation.
 `bin/fm-autoland.sh status` prints each repository's authority, deployed commits, hook runs, and recent reports.
