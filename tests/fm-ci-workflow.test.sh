@@ -272,6 +272,7 @@ end
 File.write(ARGV[1], step.fetch("run"))
 ' "$CI_WORKFLOW" "$tmp/step.sh" || fail 'could not extract the stock snapshot consumer'
   printf '#!/usr/bin/env bash\nexit 0\n' > "$tmp/bin/fm-lint.sh"
+  # shellcheck disable=SC2016 # Expand variables in the generated child script, not here.
   printf '#!/usr/bin/env bash\n[ "$1" != prefix ] || printf "%%s\\n" "$RUNNER_TEMP"\nexit 0\n' > "$tmp/bin/npm"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$tmp/bin/tasks-axi"
   cat > "$tmp/tests/fm-fleet-snapshot-view.test.sh" <<'SH'

@@ -412,6 +412,7 @@ for transition in validation completed-validation unknown new-question; do
   printf '%s\n' "$transition" > "$dir/home/transition"
   if [ "$transition" = completed-validation ]; then
     date +%s > "$dir/home/test-clock"
+    # shellcheck disable=SC2016 # Expand variables in the generated child script, not here.
     printf '#!/usr/bin/env bash\nif [ "$*" = +%%s ]; then cat "$FM_HOME/test-clock"; else exec %s "$@"; fi\n' \
       "$(command -v date)" > "$dir/bin/date"
     chmod +x "$dir/bin/date"
