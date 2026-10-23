@@ -162,6 +162,7 @@ def main():
     parser.add_argument('--now', type=int, default=int(time.time()))
     parser.add_argument('--state-dir', type=Path)
     parser.add_argument('--task-id')
+    parser.add_argument('--delivery-log', type=Path)
     args = parser.parse_args()
     timing_meta = args.state_dir / (args.task_id + '.meta') if args.state_dir and args.task_id else args.meta
     fields = args.current.split(' · ')
@@ -186,18 +187,26 @@ def main():
             delivered = receipt.read_text().splitlines()
     except OSError:
         pass
+    if args.delivery_log and not args.delivery_log.is_symlink():
+        try:
+            delivered.extend(re.findall(r'\[stall-episode=([a-f0-9]{64})\]',
+                                        args.delivery_log.read_text()))
+        except OSError:
+            pass
     if old.get('episode') in delivered:
         old['reported'] = old['episode']
     if state in ('', 'unknown'):
         result = dict(old, state='ineligible', notify=False)
         print(json.dumps(False if args.reported_run else result))
         return
-    pending = []
+    keyed_pending = []
     for row in args.decisions.splitlines():
         cells = row.split('\t', 2)
         if len(cells) == 3 and cells[1] == 'needs-decision':
-            pending.append(cells[2])
-    pending = sorted(set(pending))
+            keyed_pending.append((cells[0], cells[2]))
+    keyed_pending = sorted(set(keyed_pending))
+    pending = sorted(question for _, question in keyed_pending)
+    question_labels = {digest(json.dumps(item)): item[1] for item in keyed_pending}
     eligible = (bool(identity) and not meta.get('remote_host')
                 and 'declared-wait: active' not in fields)
     run = evidence(args.current, 'run') if source == 'run-step' else ''
@@ -214,12 +223,14 @@ def main():
     same_parked_run = (enriching_gate or previous_parked == parked_episode
                        or (old.get('phase') == 'needs-decision'
                            and old.get('signature') == episode_signature(
-                               identity, 'needs-decision', old.get('questions', []),
+                               identity, 'needs-decision', old.get('question_ids', []),
                                run, step, gate_since)))
     decision_seen = bool(same_parked_run and (
         old.get('decision_seen') or old.get('phase') == 'needs-decision'))
     reported_parked = old.get('reported_parked')
-    if same_parked_run and old.get('episode') and old.get('reported') == old.get('episode'):
+    if ((enriching_gate and reported_parked == previous_parked)
+            or (same_parked_run and old.get('episode')
+                and old.get('reported') == old.get('episode'))):
         reported_parked = parked_episode
     if (state != 'parked' or not run or not step
             or reported_parked != parked_episode):
@@ -235,7 +246,8 @@ def main():
           and state == 'working' and (source in ('pane', 'status-log')
                                      or (source == 'run-step' and evidence(args.current, 'implementation') == 'replacement'))):
         phase = 'implementation'
-    signature = episode_signature(identity, phase, pending, run, step, gate_since)
+    question_ids = sorted(question_labels) if phase == 'needs-decision' else []
+    signature = episode_signature(identity, phase, question_ids, run, step, gate_since)
     last_run = old.get('last_run_seen')
     last_run_id = old.get('last_run_id', '')
     last_run_head = old.get('last_run_head', '')
@@ -267,21 +279,54 @@ def main():
             last_run, last_run_id, last_run_head = stamp, run_id, run_head
     continuing = (old.get('signature') == signature or (
         phase == 'needs-decision' and old.get('phase') == phase and same_parked_run
-        and set(pending).issubset(old.get('questions', []))))
+        and set(question_ids).issubset(old.get('question_ids', []))))
     since = old.get('since') if continuing else None
     if not continuing or not epoch(since, old.get('observed_at', 0)):
         since = args.now if phase else None
         if phase and not (phase == 'needs-decision' and decision_seen):
             since = initial_since(phase, meta, timing_meta, pending,
                                   gate_since or parked_since, args.now)
+    question_states = {}
+    notify_question_ids = []
+    if phase == 'needs-decision':
+        previous_questions = old.get('question_states', {}) if same_parked_run else {}
+        if not isinstance(previous_questions, dict):
+            previous_questions = {}
+        entry = args.now if decision_seen else initial_since(
+            phase, meta, timing_meta, pending, gate_since or parked_since, args.now)
+        for question_id in question_ids:
+            previous = previous_questions.get(question_id, {})
+            if ('question_states' not in old and same_parked_run
+                    and old.get('phase') == phase and question_labels[question_id] in old.get('questions', [])
+                    and pending.count(question_labels[question_id]) == 1
+                    and epoch(old.get('since'), old.get('observed_at', 0))):
+                previous = dict(since=old['since'], reported=old.get('reported') == old.get('episode'),
+                                episode=digest(f"{old.get('episode')}:{question_id}"))
+            if (not isinstance(previous, dict)
+                    or not epoch(previous.get('since'), old.get('observed_at', 0))
+                    or type(previous.get('reported')) is not bool
+                    or not re.fullmatch(r'[a-f0-9]{64}', str(previous.get('episode', '')))):
+                previous = dict(since=entry, reported=False, episode=digest(
+                    f'{identity}:{json.dumps(parked_episode)}:{question_id}:{entry}'))
+            question_states[question_id] = dict(previous)
+            if previous.get('episode') in delivered:
+                question_states[question_id]['reported'] = True
+        waiting = [q['since'] for q in question_states.values() if not q.get('reported')]
+        since = min(waiting or [q['since'] for q in question_states.values()])
+        notify_question_ids = [key for key, q in question_states.items()
+                               if not q.get('reported') and args.now - q['since'] > 3600]
     if phase == 'implementation' and last_run:
         since = max(since, last_run)
     age = args.now - since if since is not None else None
     threshold = 3600 if phase == 'needs-decision' else 7200
     stalled = bool(phase and age is not None and age > threshold)
+    outstanding = [(key, q['since']) for key, q in question_states.items() if not q.get('reported')]
+    episode_seed = f'{signature}:{since}' + (json.dumps(outstanding) if question_states else '')
     episode = (old.get('episode') if continuing and since == old.get('since')
-               else digest(f'{signature}:{since}')) if phase else None
+               and not (outstanding and old.get('reported') == old.get('episode'))
+               else digest(episode_seed)) if phase else None
     reported = episode if episode in delivered else old.get('reported')
+    legacy_reported = False
     if (phase == 'needs-decision' and not old.get('episode') and parked_since
             and (gate_since is None or parked_since >= gate_since)
             and (not old or parked_since >= old['observed_at'])):
@@ -290,7 +335,17 @@ def main():
         except ValueError:
             delivered = 0
         if epoch(delivered, args.now) and delivered >= parked_since:
-            reported = episode
+            legacy_reported = True
+    if phase == 'needs-decision':
+        if legacy_reported:
+            for question_state in question_states.values():
+                question_state['reported'] = True
+        if args.ack and stalled:
+            for question_id in notify_question_ids:
+                question_states[question_id]['reported'] = True
+        notify_question_ids = [key for key in notify_question_ids
+                               if not question_states[key].get('reported')]
+        reported = episode if all(q.get('reported') for q in question_states.values()) else None
     result = dict(version=1, identity=identity, observed_at=args.now,
                   signature=signature, since=since, phase=phase or None,
                   age_seconds=age, last_run_seen=last_run,
@@ -298,11 +353,16 @@ def main():
                   seconds_since_last_run=args.now-last_run if last_run else None,
                   state='stalled' if stalled else 'observing' if phase else 'ineligible',
                   questions=pending if phase == 'needs-decision' else [],
+                  question_ids=question_ids, question_states=question_states,
+                  notify_questions=sorted(question_labels[key] for key in notify_question_ids),
+                  delivery_episodes=([episode] + [question_states[key]['episode']
+                                                for key in notify_question_ids]) if phase else [],
                   route='mate-triage' if phase == 'needs-decision' else 'mate-repair',
                   episode=episode, reported=reported, reported_parked=reported_parked,
                   parked_episode=parked_episode if state == 'parked' else None,
                   decision_seen=state == 'parked' and (phase == 'needs-decision' or decision_seen),
-                  notify=stalled and reported != episode)
+                  notify=stalled and (bool(notify_question_ids) if phase == 'needs-decision'
+                                      else reported != episode))
     if args.ack and stalled:
         result.update(reported=episode, notify=False)
         if phase == 'needs-decision' and run and step:

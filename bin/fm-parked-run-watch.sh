@@ -146,30 +146,31 @@ if [ "$1" = digest ]; then
     *) exit 1 ;;
   esac
   candidates=''
+  delivery_args=()
+  [ "$rc" -ne 0 ] || delivery_args=(--delivery-log "$destination")
   while IFS= read -r candidate; do
     [ -n "$candidate" ] || continue
     id=$(printf '%s' "$candidate" | jq -r .id)
-    episode=$(printf '%s' "$candidate" | jq -r .stall.episode)
-    if [ "$rc" -eq 1 ]; then
-      [ ! -L "$STATE/idle-sweep/$id.stall-delivered" ] \
-        && grep -Fqx -- "$episode" "$STATE/idle-sweep/$id.stall-delivered" 2>/dev/null && continue
-    else
-      grep -Fq -- "[stall-episode=$episode]" "$destination" 2>/dev/null && continue
-    fi
+    stall=$(python3 "$SCRIPT_DIR/fm_stall_record.py" "$STATE/idle-sweep/$id.stall.json" \
+      "$STATE/$id.meta" "$(printf '%s' "$candidate" | jq -r .current)" \
+      "$(printf '%s' "$candidate" | jq -r .decisions)" --observe --now "$NOW" \
+      "${delivery_args[@]+"${delivery_args[@]}"}") || exit 1
+    [ "$(printf '%s' "$stall" | jq -r .notify)" = true ] || continue
+    candidate=$(printf '%s' "$candidate" | jq -c --argjson stall "$stall" '.stall=$stall') || exit 1
     candidates="$candidates$candidate"$'\n'
   done <<< "$admitted"
   if [ -n "$candidates" ]; then
     digest=$(printf '%s' "$candidates" | jq -rs '
       map(.id + ": " + (if .stall.route=="mate-triage" then
-        "pending question (mate triage before captain): " + (.stall.questions | join("; "))
+        "pending question (mate triage before captain): " + (.stall.notify_questions | join("; "))
         else "mate repair: implementation has no attributed validation run; inspect and resume the worker" end)) | join(" | ")') || exit 1
     batch_key=$(printf '%s' "$candidates" | jq -rs 'map(.stall.episode) | sort | join("-")' | cksum | cut -d' ' -f1)
     if [ "$rc" -eq 1 ]; then
-      queue_key=$(printf '%s' "$candidates" | jq -rs 'map(.id + ":" + .stall.episode) | sort | "stall-digest:" + join(",")') || exit 1
+      queue_key=$(printf '%s' "$candidates" | jq -rs 'map(.id as $id | .stall.delivery_episodes[] | $id + ":" + .) | sort | "stall-digest:" + join(",")') || exit 1
       fm_wake_append_locked check "$queue_key" "check: stalled tasks digest: $digest. Repair locally where authorized; batch only genuine captain questions into one message." || exit 1
       fm_wake_commit_stall_digests_through || exit 1
     else
-      episodes=$(printf '%s' "$candidates" | jq -rs 'map("[stall-episode=" + .stall.episode + "]") | sort | join(" ")') || exit 1
+      episodes=$(printf '%s' "$candidates" | jq -rs 'map(.stall.delivery_episodes[] | "[stall-episode=" + . + "]") | sort | join(" ")') || exit 1
       fm_parent_channel_report "$FM_HOME" "$STATE" "needs-decision [key=stall-digest-$batch_key]: stalled tasks digest: $digest. Repair locally where authorized; batch only genuine captain questions into one message. $episodes" || exit 1
     fi
   fi
@@ -178,7 +179,8 @@ if [ "$1" = digest ]; then
     id=$(printf '%s' "$candidate" | jq -r .id)
     python3 "$SCRIPT_DIR/fm_stall_record.py" "$STATE/idle-sweep/$id.stall.json" \
       "$STATE/$id.meta" "$(printf '%s' "$candidate" | jq -r .current)" \
-      "$(printf '%s' "$candidate" | jq -r .decisions)" --ack --now "$NOW" >/dev/null || true
+      "$(printf '%s' "$candidate" | jq -r .decisions)" --ack --now "$NOW" \
+      "${delivery_args[@]+"${delivery_args[@]}"}" >/dev/null || true
   done <<< "$admitted"
   exit 0
 fi

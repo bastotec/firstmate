@@ -272,6 +272,77 @@ assert r['since'] == 24001 and r['episode'] != original_episode and r['notify']
 gate.unlink()
 status.unlink()
 record.unlink()
+for delivery in ('ack', 'receipt'):
+    status.write_text('needs-decision [key=review]: Which behavior should be retained?\n')
+    os.utime(status, (10000, 10000))
+    r = call(14001, parked, question)
+    if delivery == 'ack':
+        call(14002, parked, question, '--ack')
+    else:
+        receipt = record.with_name(record.stem + '-delivered')
+        receipt.write_text('\n'.join(r['delivery_episodes']) + '\n')
+    call(14003, parked, '')
+    gate.write_text(json.dumps(dict(run=run, step='review', parked_since=14004)))
+    before = record.read_bytes()
+    assert call(15000, parked, '', '--reported-run')
+    assert record.read_bytes() == before
+    call(15001, parked, '')
+    assert call(15002, parked, '', '--reported-run')
+    gate.write_text(json.dumps(dict(run=run, step='review', parked_since=15003)))
+    assert not call(19000, parked, '', '--reported-run')
+    if delivery == 'receipt':
+        receipt.unlink()
+    gate.unlink()
+    status.unlink()
+    record.unlink()
+for current in (parked, 'state: parked · source: status-log · waiting'):
+    for acknowledged in (False, True):
+        r = call(10000, current, question_a)
+        if acknowledged:
+            r = call(14001, current, question_a, '--ack')
+        for field in ('question_ids', 'question_states', 'notify_questions', 'delivery_episodes'):
+            r.pop(field, None)
+        record.write_text(json.dumps(r))
+        r = call(15000, current, question_a)
+        assert r['since'] == 10000 and r['notify'] != acknowledged
+        record.unlink()
+    for malformed in ([], {'since': 999999, 'reported': True, 'episode': 'a' * 64},
+                      {'since': 10000, 'reported': 'false', 'episode': 'a' * 64},
+                      {'since': 10000, 'reported': False}):
+        r = call(10000, current, question_a)
+        key = r['question_ids'][0]
+        r['question_states'] = {key: malformed}
+        record.write_text(json.dumps(r))
+        r = call(15000, current, question_a)
+        assert r['since'] == 15000 and not r['notify']
+        record.unlink()
+    for b in (question_b, 'b\tneeds-decision\tQuestion A?'):
+        call(10000, current, question_a)
+        call(14001, current, question_a, '--ack')
+        call(15000, current, question_a + '\n' + b)
+        assert not call(15010, current, question_a)['notify']
+        r = call(18601, current, question_a)
+        assert r['since'] == 10000 and not r['notify']
+        assert not r['notify_questions']
+        r = call(18602, current, question_a + '\n' + b)
+        assert r['since'] == 18602 and not r['notify']
+        r = call(22203, current, question_a + '\n' + b)
+        assert r['notify'] and r['notify_questions'] == [b.split('\t')[2]]
+        assert call(22204, current, question_a + '\n' + b)['episode'] == r['episode']
+        call(22205, current, question_a + '\n' + b, '--ack')
+        assert not call(26000, current, question_a + '\n' + b)['notify']
+        call(26001, current, question_a)
+        assert call(26002, current, question_a + '\n' + b)['since'] == 26002
+        assert call(29603, current, question_a + '\n' + b)['notify_questions'] == [b.split('\t')[2]]
+        record.unlink()
+    call(10000, current, question_a)
+    call(11000, current, questions)
+    assert call(13601, current, questions)['notify_questions'] == ['Question A?']
+    call(13602, current, questions, '--ack')
+    assert call(14601, current, questions)['notify_questions'] == ['Question B?']
+    call(14602, current, questions, '--ack')
+    assert not call(18000, current, questions)['notify']
+    record.unlink()
 head = 'a' * 40
 # Ledger fallback aliases identify a head, not a unique run on that head.
 ledger_retry = working + f' · evidence: last-run=ledger-{head}; last-run-created=10000; last-run-head={head}'
@@ -356,6 +427,104 @@ sweep "$dir" scan --now || fail 'redelivery scan'
 [ "$(wake_count "$dir" 'stalled tasks digest:')" = 1 ] || fail 'redelivery missing'
 [ "$(jq -r .reported "$dir/home/state/idle-sweep/implementation.stall.json")" != null ] || fail 'delivery not acknowledged'
 pass 'failed digest publication leaves the episode eligible for redelivery'
+
+for route in main parent; do
+  dir=$(new_case "stall-question-receipts-$route")
+  [ "$route" != parent ] || make_secondmate_home "$dir" mate
+  current='state: parked · source: run-step · evidence: run=run-one; step=review'
+  add_worker "$dir" decision "$current" 90000
+  real_date=$(command -v date)
+  printf '%s\n' "$real_date" > "$dir/home/real-date"
+  cat > "$dir/bin/date" <<'SH'
+#!/usr/bin/env bash
+if [ "$*" = +%s ]; then
+  cat "$FM_HOME/test-clock"
+else
+  exec "$(cat "$FM_HOME/real-date")" "$@"
+fi
+SH
+  chmod +x "$dir/bin/date"
+  question_a=$'a\tneeds-decision\tProceed?'
+  question_b=$'b\tneeds-decision\tProceed?'
+  question_c=$'c\tneeds-decision\tAnother question?'
+  record="$dir/home/state/idle-sweep/decision.stall.json"
+  target="$dir/home/state/.wake-queue"
+  [ "$route" != parent ] || target="$dir/parent/state/mate.status"
+  observe_questions() {
+    printf '%s\n' "$1" > "$dir/home/test-clock"
+    decisions=$2
+    stall=$(python3 "$dir/bin/fm_stall_record.py" "$record" \
+      "$dir/home/state/decision.meta" "$current" "$decisions" --observe --now "$1") || fail 'question observation'
+  }
+  publish_questions() {
+    jq -cn --arg id decision --arg current "$current" --arg decisions "$decisions" --argjson stall "$stall" \
+      '{id:$id,current:$current,decisions:$decisions,stall:$stall}' \
+      | PATH="$dir/bin:$PATH" FM_HOME="$dir/home" "$dir/bin/fm-parked-run-watch.sh" digest
+  }
+  observe_questions 10000 "$question_a"
+  observe_questions 14001 "$question_a"
+  publish_questions || fail 'first question publication'
+  observe_questions 15000 "$question_a"$'\n'"$question_b"
+  observe_questions 15010 "$question_a"
+  observe_questions 18601 "$question_a"
+  publish_questions || fail 'surviving question reconciliation'
+  [ "$(grep -c 'stalled tasks digest:' "$target")" = 1 ] || fail 'transient expansion repeated delivered A'
+  observe_questions 18602 "$question_a"$'\n'"$question_b"$'\n'"$question_c"
+  observe_questions 22203 "$question_a"$'\n'"$question_b"$'\n'"$question_c"
+  mv "$target" "$target.saved"
+  mkdir "$target"
+  if publish_questions; then fail 'question publication unexpectedly succeeded'; fi
+  [ "$(jq -r .notify "$record")" = true ] || fail 'failed question publication suppressed retry'
+  rmdir "$target"
+  mv "$target.saved" "$target"
+  touch "$dir/home/interrupt-after-publication"
+  if [ "$route" = parent ]; then
+    cat >> "$dir/bin/fm-parent-channel-lib.sh" <<'SH'
+eval "$(declare -f fm_parent_channel_report | sed '1s/fm_parent_channel_report/fm_test_real_report/')"
+fm_parent_channel_report() {
+  fm_test_real_report "$@" || return $?
+  if [ -f "$FM_HOME/interrupt-after-publication" ]; then
+    rm "$FM_HOME/interrupt-after-publication"
+    kill -TERM "$$"
+    exit 143
+  fi
+}
+SH
+  else
+    cat >> "$dir/bin/fm-wake-lib.sh" <<'SH'
+eval "$(declare -f fm_wake_append_locked | sed '1s/fm_wake_append_locked/fm_test_real_append/')"
+fm_wake_append_locked() {
+  fm_test_real_append "$@" || return $?
+  if [ -f "$FM_HOME/interrupt-after-publication" ]; then
+    rm "$FM_HOME/interrupt-after-publication"
+    kill -TERM "$$"
+    exit 143
+  fi
+}
+SH
+  fi
+  if publish_questions; then fail 'publication interruption did not execute'; fi
+  [ "$(grep -c 'stalled tasks digest:' "$target")" = 2 ] || fail 'new keyed questions not published'
+  observe_questions 22204 "$question_a"$'\n'"$question_c"
+  publish_questions || fail 'surviving question receipt recovery'
+  observe_questions 22205 "$question_a"$'\n'"$question_c"
+  publish_questions || fail 'surviving question receipt retry'
+  [ "$(jq -r .notify "$record")" = false ] || fail 'surviving delivered C remained eligible'
+  [ "$(grep -c 'stalled tasks digest:' "$target")" = 2 ] || fail 'restart repeated delivered survivor C'
+  python3 - "$target" <<'PY' || fail 'digest repeated already-delivered question A'
+import pathlib, sys
+text = pathlib.Path(sys.argv[1]).read_text()
+assert text.count('Proceed?') == 2 and text.count('Another question?') == 1
+PY
+  observe_questions 22206 "$question_a"$'\n'"$question_b"$'\n'"$question_c"
+  [ "$(jq -r .since "$record")" = 22206 ] || fail 'reopened B inherited old delivery'
+  observe_questions 25807 "$question_a"$'\n'"$question_b"$'\n'"$question_c"
+  publish_questions || fail 'reopened B publication'
+  observe_questions 25808 "$question_a"$'\n'"$question_b"$'\n'"$question_c"
+  publish_questions || fail 'reopened B publication retry'
+  [ "$(grep -c 'stalled tasks digest:' "$target")" = 3 ] || fail 'reopened keyed question missing or duplicated'
+  pass "keyed receipts preserve survivors, failed publication and restart retry on $route route"
+done
 
 for recovery in queued consumed parent; do
   dir=$(new_case "stall-interrupted-$recovery")
