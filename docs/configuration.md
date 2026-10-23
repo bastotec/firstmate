@@ -159,6 +159,12 @@ state/
 `bin/fm-session-start.sh`'s header owns session-start ordering, blocking reads, and the digest; `bin/fm-startup-network.sh`'s header owns the deferred checks and inactive-outcome scan.
 `AGENTS.md` keeps the run-once and read-once rules, lock-refusal safety, installation consent, and direct-report recovery boundaries; `stuck-crewmate-recovery` owns dead-direct-report recovery and `secondmate-provisioning` owns persistent-secondmate recovery.
 
+## Private startup diagnostics
+
+For private timings on an authorized fresh start, use the destination-home selector in [`fm-startup-diagnostics.sh`](../bin/fm-startup-diagnostics.sh); its header covers local use and selection through `fm-on.sh` despite remote environment stripping.
+Don't run a second digest beside an active session.
+[`fm-session-start.sh`'s header](../bin/fm-session-start.sh) owns the environment override, private artifact contract, retention, and startup deadline; [`fm-startup-diagnostics-lib.sh`](../bin/fm-startup-diagnostics-lib.sh) owns the fixed event/stage allowlist.
+
 ## Model fallback chains (spawn-side)
 
 Every spawn-side model surface accepts a fallback chain: a `config/crew-dispatch.json` profile's `model`, the model token in `config/secondmate-harness`, and `fm-spawn.sh --model`.
