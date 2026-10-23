@@ -467,6 +467,58 @@ test_concurrent_writers_never_clobber() {
   pass "inbox: concurrent writers serialize on the sequence lock and lose nothing"
 }
 
+test_large_history_sequence_scan_stays_in_process() {
+  local state rec
+  state="$TMP_ROOT/large-history/state"; mkdir -p "$state/t1.inbox/handled"
+  # The output-variable interface is the deterministic fork-free counterfactual:
+  # callers obtain the same parsed number without a command substitution.
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    n=unchanged
+    fm_task_inbox_seq_of 000009.msg n || exit 1
+    [ "$n" = 9 ] || exit 2
+    [ "$(fm_task_inbox_seq_of 000009.msg)" = "$n" ] || exit 3
+    fm_task_inbox_seq_of invalid.msg n && exit 4
+    [ "$n" = 9 ] || exit 5
+  ' _ "$ROOT/bin/fm-task-inbox-lib.sh" || fail "sequence output-variable parsing diverged"
+  python3 - "$state/t1.inbox" <<'PY'
+import pathlib, sys
+inbox = pathlib.Path(sys.argv[1])
+for i in range(1, 10001):
+    (inbox/'handled'/f'{i:03d}.msg').write_text('schema=fm-task-inbox.v1\n--\nhistory\n')
+(inbox/'00010002.msg').write_text('schema=fm-task-inbox.v1\n--\npending\n')
+(inbox/'handled'/'not-a-number.msg').touch()
+(inbox/'handled'/'999999.other').touch()
+PY
+  rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "after long history") \
+    || fail "long-history writer failed"
+  [ "$rec" = "$state/t1.inbox/10003.msg" ] || fail "history scan reused a numeric sequence: $rec"
+  [ -f "$state/t1.inbox/00010002.msg" ] || fail "history scan changed the pending record"
+  pass "inbox: fork-free numeric parsing preserves large handled and pending history"
+}
+
+test_inbox_lock_stale_live_and_self_ownership() {
+  local state
+  state="$TMP_ROOT/lock-ownership/state"; mkdir -p "$state/t1.inbox/handled"
+  FM_STATE_OVERRIDE="$state" FM_TASK_INBOX_LOCK_WAIT_SECS=0 bash -c '
+    . "$1"
+    lock="$2/t1.inbox/.seq.lock"
+    # Make a real owner that exits without release, not an invented dead PID.
+    ( fm_task_inbox_lock_acquire "$lock" ) || exit 10
+    prior=$(readlink "$lock") || exit 11
+    fm_task_inbox_lock_acquire "$lock" || exit 12
+    [ "$(readlink "$lock")" != "$prior" ] || exit 13
+    owner=$(readlink "$lock") || exit 14
+    ( fm_task_inbox_lock_acquire "$lock" && exit 15; exit 0 ) || exit 15
+    [ "$(readlink "$lock")" = "$owner" ] || exit 16
+    # The owning process can reclaim its own abandoned frame; a child cannot.
+    fm_task_inbox_lock_acquire "$lock" || exit 17
+    fm_lock_release "$lock"
+    [ ! -e "$lock" ] && [ ! -L "$lock" ] || exit 18
+  ' _ "$ROOT/bin/fm-task-inbox-lib.sh" "$state" || fail "inbox lock ownership counterfactual failed"
+  pass "inbox: dead owners recover, live parent owners exclude children, and self-reclaim releases cleanly"
+}
+
 test_writer_retries_after_a_vanished_lock_collision() {
   local state fakebin marker rec real_ln
   state="$TMP_ROOT/vanished-lock-race/state"
@@ -842,6 +894,8 @@ test_idempotent_write_follows_concurrent_ack
 test_idempotent_prescan_does_not_hold_the_lock
 test_handled_mv_dedups_by_sequence
 test_concurrent_writers_never_clobber
+test_large_history_sequence_scan_stays_in_process
+test_inbox_lock_stale_live_and_self_ownership
 test_writer_retries_after_a_vanished_lock_collision
 test_write_failure_names_its_step
 test_ladder_writes_ignore_vanished_inbox
