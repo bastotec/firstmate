@@ -26,23 +26,28 @@ Each scan reads one condition per worker, first match wins:
                a delivery gate: the scan cannot identify the requester or
                prove delivery, and does not suppress wakes after result-sent.
                A done: worker with a PR not found in the backlog's done set is
-               left to the PR and CI watchers, regardless of agent liveness.
-  unmerged     the worker's recorded pr= is open, not a draft, mergeable and
-               every check passed, and has been so FM_KEEPALIVE_PR_GREEN_SECS
-               (1800) since a scan first saw it green: the mate merges it
-               (bin/fm-pr-merge.sh) or closes it. Read live through
-               `gh pr view` (FM_KEEPALIVE_PR stands in for it in tests); a merged
-               or closed PR clears the condition;
-  ci-stuck     the worker's validation run has been in its CI step
-               (state/<id>.crew-state step=ci) FM_KEEPALIVE_CI_STEP_SECS (7200)
-               with its PR still open and not green (conflicting, red, cancelled
-               or pending): the mate lands it or closes it. A worker waiting in
-               CI or on a merge is never a no-progress stall;
+               eligible for the PR conditions below; otherwise its done: status
+               suppresses the remaining conditions regardless of agent liveness.
+  unmerged     the worker's recorded pr= is open, not a draft, MERGEABLE, with
+               mergeStateStatus CLEAN, HAS_HOOKS or UNSTABLE, at least one check,
+               and every reported check SUCCESS, NEUTRAL or SKIPPED for
+               FM_KEEPALIVE_PR_GREEN_SECS (1800) since first observed eligible.
+               The mate merges it (bin/fm-pr-merge.sh), subject to merge policy,
+               or closes it if superseded. Read live through `gh pr view`
+               (FM_KEEPALIVE_PR stands in for it in tests);
+  ci-stuck     scans have observed the worker's validation run in its CI step
+               (state/<id>.crew-state step=ci) for FM_KEEPALIVE_CI_STEP_SECS
+               (7200), with its PR still open and not meeting the PR-state and
+               check criteria above: rerun failed or cancelled checks, recover
+               conflicts, then merge once green, or close it if superseded.
+               Both PR clocks reset on an unavailable, merged or closed PR
+               observation; the green clock also resets on ineligibility and
+               the CI clock when a scan observes a step other than ci;
   dead         bin/fm-busy-lib.sh classifies the agent dead (no live agent);
   blocked      the last status line is blocked: or failed: - the mate must act;
   external     an active supervisor declaration from bin/fm-external-wait.sh
                suppresses held and no-progress detection until expiry, but
-               never the done, dead or blocked cases above;
+               never the higher-priority conditions above;
   held         the last status line is paused: or captain-held on something the
                mate itself can decide: it awaits a release, hold, approval,
                steer, decision or answer, names the mate ("your", "mate",
@@ -52,7 +57,10 @@ Each scan reads one condition per worker, first match wins:
                `until` time, or either pause verb naming none of those keywords,
                is left to bin/fm-watch.sh's declared-wait cadence;
   no-progress  any other live, unfinished worker whose real progress has not
-               moved for FM_KEEPALIVE_NO_PROGRESS_SECS (1200). Real progress is
+               moved for FM_KEEPALIVE_NO_PROGRESS_SECS (1200). A live worker
+               without a blocked or failed status is exempt while a successful
+               open-PR observation retains its CI or green clock above.
+               Real progress is
                the worktree's HEAD, the paths, mtimes and sizes of its changed
                files that are not reports (*.md, *.txt, *.log, report/ and notes/
                paths, .superpowers/, .scratch/, .no-mistakes/), the published
@@ -68,7 +76,7 @@ from first observation of backlog acceptance, or the status file's mtime for
 an unaccepted done: worker without a PR.
 Later status edits and transitions between blocked, held and no-progress
 retain the episode's clock, wake, escalation state and parent key; a change to
-dead or undelivered starts a new episode. The wake's text is a concrete
+dead, undelivered, unmerged or ci-stuck starts a new episode. The wake's text is a concrete
 instruction - decide and resume it, relaunch it with
 `bin/fm-spawn.sh --relaunch <id>`, replace it, or close it - never "wait".
 A steer, an acknowledgment or a relay upward is not a fix, so the inbox is not
@@ -79,8 +87,8 @@ to its parent channel (bin/fm-parent-channel-lib.sh). The first mate has no
 parent mate, so its own home waits FM_KEEPALIVE_ESCALATE_SECS (1800) after the
 wake and then tells the captain (see Captain lines). A stall clears when the
 worker resumes with real progress, reports done: with a PR, or enters an
-external or non-mate-decidable wait under the precedence rules above. An
-escalated episode's resolution is published through the same route when it
+external or non-mate-decidable wait, unless a higher-priority condition applies.
+An escalated episode's resolution is published through the same route when it
 clears or the worker leaves.
 
 Escalations from below: every still-open keepalive- blocked record on a second
@@ -91,10 +99,14 @@ captain. The channel key and fold origin identify the episode: note refreshes
 retain its first-seen time and escalation state; closure followed by reopening
 starts fresh. It resolves when the record closes or the mate leaves.
 
-Auto-land: a home with config/autoland.json but no armed state/autoland.check.sh
-merges nothing. FM_KEEPALIVE_DEAD_SECS after a scan first sees that, it wakes
-this home's supervisor to re-arm it (bin/fm-autoland.sh arm), and escalates like
-a stuck worker when it stays disarmed; record state/keepalive/autoland.json.
+Auto-land: a home with config/autoland.json but no state/autoland.check.sh
+has no armed auto-land check. FM_KEEPALIVE_DEAD_SECS after a scan first sees
+that, it wakes this home's supervisor to re-arm it (bin/fm-autoland.sh arm)
+and escalates like a stuck worker when it stays disarmed; record
+state/keepalive/autoland.json. The wake preserves the captain's authority to
+keep auto-land off.
+Arming the check or removing the configuration clears this condition.
+Regression coverage for these watchdogs: tests/fm-worker-keepalive.test.sh.
 
 Captain lines: the first mate's home publishes one plain notice through
 bin/fm-notify.sh (FM_KEEPALIVE_NOTIFY stands in for it in tests) and queues a
@@ -350,7 +362,7 @@ def pr_view(url: str):
 
 
 def pr_green(view: dict) -> bool:
-    """Open, not a draft, mergeable, and every reported check passed."""
+    """Eligibility predicate for the unmerged condition documented above."""
     checks = view.get("statusCheckRollup") or []
     concl = [(c.get("conclusion") or c.get("state") or "").upper() for c in checks]
     return (view.get("state") == "OPEN" and not view.get("isDraft") and view.get("mergeable") == "MERGEABLE"
@@ -673,7 +685,7 @@ class Scan:
                 relays[ident] = r
 
     def autoland(self) -> None:
-        """A home configured for auto-land whose check is not armed merges nothing (2026-10-20..23)."""
+        """Watchdog for configured but disarmed auto-land; see the module contract."""
         config = Path(os.environ.get("FM_CONFIG_OVERRIDE") or self.h / "config")
         rec_path = self.dir / "autoland.json"
         rec = load(rec_path, {})

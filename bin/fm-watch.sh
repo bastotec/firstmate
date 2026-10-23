@@ -164,8 +164,9 @@
 #                          what is stuck, the instruction and the escalation.
 #                          This watcher runs it detached every
 #                          FM_KEEPALIVE_INTERVAL seconds (300) while the home
-#                          records a ship, scout or second mate or retains keep-alive
-#                          episode records that may need departure resolution
+#                          records a ship, scout or second mate, has configured
+#                          but disarmed auto-land, or retains keep-alive episode
+#                          records that may need resolution
 #   check: idle workers need a decision / second mate not cleaning up idle workers: <id>...
 #                          surfaced once from durable queue rows keyed
 #                          idle-sweep:<epoch> and idle-sweep-audit:<mate>:<epoch>
