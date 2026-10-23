@@ -48,7 +48,7 @@ It checks queued exit during backoff and after acceptance, preserving any accept
 The startup control returns an incomplete report with exit zero and a stale completion marker; no model turn or watcher starts.
 [`fm-deck-worker.sh`](../../bin/fm-deck-worker.sh)'s header owns retry behavior and startup safety; [`tests/fm-control-relaunch.test.sh`](../../tests/fm-control-relaunch.test.sh) separately exercises five readable child records, empty state, invalid child entries, read failure, and traversal failure diagnostics before any stop.
 These are portable driver and subprocess-boundary fixtures, not a live Deck or macOS incident reproduction.
-The original traversal failure and sequence-lock owner remain unknown; no timeout limit is increased.
+The original traversal failure and sequence-lock owner remain unknown.
 They do not establish the cause of any particular refusal or startup timeout.
 
 ### Secondmate home-local tool selection
