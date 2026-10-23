@@ -1919,7 +1919,10 @@ $1
 EOF
 }
 
-_fm_status_open_decision_origins() {  # <status-file>
+# Return key/tab/opening-line pairs for the currently open decisions.
+# Default mode tracks the latest accepted opening; `episode` retains the first
+# opening while a key stays open, so reposts cannot restart keep-alive timers.
+_fm_status_open_decision_origins() {  # <status-file> [episode]
   local f=$1 line open='' after key verb note number=0 origins='' _FM_VERB _FM_KEY _FM_NOTE
   local resolve held
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}

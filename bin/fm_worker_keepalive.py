@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Worker keep-alive: a worker that stops making progress is acted on by its mate.
+"""Keep-alive: mates act on stuck workers and parents answer mate questions.
 
 bin/fm-worker-keepalive.sh is the public entrypoint; bin/fm-watch.sh owns the
 detached scan cadence and launch condition. In paths below, state/ denotes
 FM_STATE_OVERRIDE when nonempty, otherwise FM_HOME/state; metadata, episode records,
 the scan lock and wake queue all use that effective state directory.
-A home only watches its own direct workers (state/<id>.meta with kind ship or
-scout), so every mate, the first mate included, watches its own. Overlapping
-scans of one home exit zero quietly under a non-blocking lock at
-state/keepalive/.lock.
+A home watches only its own direct workers (state/<id>.meta with kind ship or
+scout) and second mates (kind secondmate), so every mate, the first mate included,
+watches its own. Overlapping scans of one home exit zero quietly under a
+non-blocking lock at state/keepalive/.lock.
 
 Each scan reads one condition per worker, first match wins:
   undelivered  a done: worker without a recorded pr= is still in the fleet
@@ -69,18 +69,25 @@ needs-decision: or blocked: record there is a question to this home, except the
 machine escalations other owners close (keys starting keepalive-,
 pending-reply-, parked-run-, ci-stall-, child-outcome-). One unanswered for
 FM_KEEPALIVE_ASK_SECS (600) from first observation queues one check: wake per
-mate, keyed keepalive:<mate>:asks:<epoch>, that puts the questions in front of
-this home's supervisor and tells it to answer from what it already knows (the
-captain's own earlier words beat a relay; housekeeping is its own call) with
-`bin/fm-send.sh <mate> --resolve-key <key>`, or to ask the captain in one plain
-line, never to leave the mate waiting. A question asked later gets its own wake.
+mate, keyed keepalive:<mate>:asks:<epoch>, listing up to five due questions and
+the total due count. It tells this home's supervisor to answer from what it
+already knows (the captain's own earlier words beat a relay; housekeeping is its
+own call) with `bin/fm-send.sh <mate> --resolve-key <key>`, or to ask the captain in
+one plain line, never to leave the mate waiting. A question on a new key gets
+its own clock and wake. Identical or reworded reposts of a still-open key retain
+its first observation, wake and escalation state. Only a fold closure followed
+by reopening starts a fresh episode, even when both happen between scans.
 Questions still open FM_KEEPALIVE_ESCALATE_SECS after their wake are raised as
 one line per mate (blocked [key=keepalive-<home>-<mate>-ask-<epoch>] from a
 second mate's home, a check: wake to raise it with the captain from the first
-mate's), resolved once every escalated question closes or the mate leaves.
-A question closes when the fold drops it (an answer sent with --resolve-key, or
-the mate's own resolved line). Records live in state/keepalive/asks/<mate>.json,
-which also caches the fold until the channel's inode, size or mtime changes.
+mate's). The line describes the entire escalated-and-still-open set (count and
+oldest question); changes to that set or its note text refresh it (under the same
+report key on the parent channel). It resolves only when that set empties or
+the mate leaves.
+A question closes when the fold drops it (an answer sent with --resolve-key,
+the mate's own resolved line, or a captain-held transfer). Records live in
+state/keepalive/asks/<mate>.json, which also caches the fold until the channel's
+inode, size or mtime changes.
 
 Progress lives in state/keepalive/<id>.json.
 Regression coverage: tests/fm-worker-keepalive.test.sh.
