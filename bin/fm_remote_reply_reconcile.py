@@ -60,6 +60,56 @@ def point(fields, end=False):
     return fields[prefix + "_offset"], fields[prefix + "_prefix_sha256"]
 
 
+def successors(reachable, accepted):
+    while True:
+        expanded = reachable | {point(fields, True) for fields, _ in accepted
+                                if point(fields) in reachable}
+        if expanded == reachable:
+            return reachable
+        reachable = expanded
+
+
+def covering_points(old, payload, receipts, accepted):
+    candidates = [(fields, data) for fields, data in accepted
+                  if fields["from_offset"] <= old["from_offset"]
+                  and fields["to_offset"] >= old["to_offset"]]
+    if not candidates:
+        return set()
+    needed = {point(fields) for fields, _ in candidates}
+    ordered = sorted(receipts, key=lambda receipt: receipt[1]["to_offset"])
+    for _, fields, _ in reversed(ordered):
+        if point(fields, True) in needed:
+            needed.add(point(fields))
+    prefixes = {(0, digest(b"")): hashlib.sha256()}
+    for _, fields, data in ordered:
+        if point(fields, True) not in needed:
+            continue
+        prefix = prefixes.get(point(fields))
+        if prefix is not None:
+            full = prefix.copy()
+            full.update(data)
+            if full.hexdigest() == fields["to_prefix_sha256"]:
+                prefixes[point(fields, True)] = full
+    covered = set()
+    for fields, data in candidates:
+        prefix = prefixes.get(point(fields))
+        start = old["from_offset"] - fields["from_offset"]
+        end = old["to_offset"] - fields["from_offset"]
+        if prefix is None or data[start:end] != payload:
+            continue
+        full = prefix.copy()
+        full.update(data)
+        before = prefix.copy()
+        before.update(data[:start])
+        through = before.copy()
+        through.update(payload)
+        if (full.hexdigest() == fields["to_prefix_sha256"]
+                and before.hexdigest() == old["from_prefix_sha256"]
+                and through.hexdigest() == old["to_prefix_sha256"]):
+            covered.add(point(fields, True))
+    return covered
+
+
 def prove(state, mate, sequence, result, offset, prefix_hash):
     inbox = state / "procevent-inbox"
     canonical = inbox / f"remote-reply-{mate}.{sequence}.result"
@@ -84,17 +134,6 @@ def prove(state, mate, sequence, result, offset, prefix_hash):
             receipts.append((int(match[1]), fields, data))
         except (OSError, ValueError, KeyError, UnicodeError):
             continue
-    prefixes = {(0, digest(b"")): b""}
-    while True:
-        previous = len(prefixes)
-        for _, fields, data in receipts:
-            prefix = prefixes.get(point(fields))
-            if prefix is not None:
-                full = prefix + data
-                if digest(full) == fields["to_prefix_sha256"]:
-                    prefixes[point(fields, True)] = full
-        if len(prefixes) == previous:
-            break
     accepted = [(fields, data) for seq, fields, data in receipts
                 if seq > int(sequence)]
     # The captured delta itself commits its bytes and boundary identities, just
@@ -102,23 +141,12 @@ def prove(state, mate, sequence, result, offset, prefix_hash):
     # proves this generation belongs before current progress, not to a rewrite.
     # Ingest still applies every pending line; a successor receipt alone is NOT
     # a receipt for the pending generation.
-    reachable = {point(old, True)}
-    for fields, _ in accepted:
-        if (fields["from_offset"] <= old["from_offset"]
-                and fields["to_offset"] >= old["to_offset"]):
-            full = prefixes.get(point(fields, True))
-            start, end = old["from_offset"], old["to_offset"]
-            if (full is not None and full[start:end] == payload
-                    and digest(full[:start]) == old["from_prefix_sha256"]
-                    and digest(full[:end]) == old["to_prefix_sha256"]):
-                reachable.add(point(fields, True))
-    # Strictly increasing offsets make the closure finite, even with duplicates.
-    while True:
-        expanded = reachable | {point(fields, True) for fields, _ in accepted
-                                if point(fields) in reachable}
-        if expanded == reachable:
-            return (int(offset), prefix_hash) in reachable
-        reachable = expanded
+    target = (int(offset), prefix_hash)
+    reachable = successors({point(old, True)}, accepted)
+    if target in reachable:
+        return True
+    reachable.update(covering_points(old, payload, receipts, accepted))
+    return target in successors(reachable, accepted)
 
 
 if __name__ == "__main__":

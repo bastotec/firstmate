@@ -719,4 +719,78 @@ for reconcile_shape in covering covering-nonzero successor successor-missing; do
 done
 pass "receipt-backed ancestry reconciles an older pending capture without losing later progress"
 
+python3 -B - "$ROOT" "$TMP_ROOT/reconcile-memory" <<'PY' || fail "bounded reconciliation proof failed"
+import hashlib
+import importlib.util
+import pathlib
+import sys
+import tracemalloc
+from unittest.mock import patch
+
+spec = importlib.util.spec_from_file_location(
+    "reconcile", pathlib.Path(sys.argv[1]) / "bin/fm_remote_reply_reconcile.py")
+reconcile = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(reconcile)
+state = pathlib.Path(sys.argv[2])
+inbox = state / "procevent-inbox"
+receipts = state / "remote-replies"
+inbox.mkdir(parents=True)
+receipts.mkdir()
+
+
+def capture(sequence, offset, prefix, payload, accepted=True):
+    end = prefix.copy()
+    end.update(payload)
+    raw = (f"schema=fm-remote-delta.v1\nstatus=delta\n"
+           f"path=state/parent-replies.status\nfrom_offset={offset}\n"
+           f"to_offset={offset + len(payload)}\n"
+           f"from_prefix_sha256={prefix.hexdigest()}\n"
+           f"to_prefix_sha256={end.hexdigest()}\n"
+           f"payload_bytes={len(payload)}\npayload_sha256={reconcile.digest(payload)}\n\n").encode() + payload
+    result = inbox / f"remote-reply-ios.{sequence}.result"
+    result.write_bytes(raw)
+    result.with_suffix(".adapter").write_bytes(b"remote-reply\n")
+    if accepted:
+        (receipts / f"ios.{sequence}.ingested").write_text(
+            f"result_sha256={reconcile.digest(raw)}\n")
+    return result, offset + len(payload), end
+
+
+prefix = hashlib.sha256()
+offset = 0
+for sequence in range(2000):
+    _, offset, prefix = capture(sequence, offset, prefix, b"x" * 1023 + b"\n")
+pending_bytes = b"working: pending\n"
+pending, pending_end, pending_hash = capture(2000, offset, prefix, pending_bytes, False)
+_, target, target_hash = capture(2001, offset, prefix, pending_bytes + b"done: covering\n")
+digest = reconcile.digest
+limit = 32 * 1024 * 1024
+
+
+def bounded_digest(data):
+    assert tracemalloc.get_traced_memory()[1] < limit, "proof exceeded 32 MiB"
+    return digest(data)
+
+
+tracemalloc.start()
+with patch.object(reconcile, "digest", bounded_digest):
+    assert reconcile.prove(state, "ios", "2000", pending, target, target_hash.hexdigest())
+peak = tracemalloc.get_traced_memory()[1]
+assert peak < limit, "covering proof exceeded 32 MiB"
+print(f"covering proof peak traced bytes: {peak}")
+tracemalloc.stop()
+
+(receipts / "ios.2001.ingested").unlink()
+capture(2002, pending_end, pending_hash, b"done: covering\n")
+tracemalloc.start()
+with patch.object(reconcile, "digest", bounded_digest), patch.object(
+        reconcile, "covering_points", side_effect=AssertionError("successors reconstructed prefixes")):
+    assert reconcile.prove(state, "ios", "2000", pending, target, target_hash.hexdigest())
+peak = tracemalloc.get_traced_memory()[1]
+assert peak < limit, "successor proof exceeded 32 MiB"
+print(f"successor proof peak traced bytes: {peak}")
+tracemalloc.stop()
+PY
+pass "many retained deltas use bounded proof memory and successors need no prefix reconstruction"
+
 echo "ALL TESTS PASSED"
