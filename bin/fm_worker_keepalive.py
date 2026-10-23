@@ -29,8 +29,10 @@ Each scan reads one condition per worker, first match wins:
                eligible for the PR conditions below; otherwise its done: status
                suppresses the remaining conditions regardless of agent liveness.
   unmerged     the worker's recorded pr= is open, not a draft, MERGEABLE, with
-               mergeStateStatus CLEAN, HAS_HOOKS or UNSTABLE, at least one check,
-               and every reported check SUCCESS, NEUTRAL or SKIPPED for
+               at least one check, and the newest run of every check name
+               SUCCESS, NEUTRAL or SKIPPED (a rerun replaces the cancelled run
+               GitHub keeps beside it; behind or review-required is left to
+               bin/fm-pr-merge.sh) for
                FM_KEEPALIVE_PR_GREEN_SECS (1800) since first observed eligible.
                The mate merges it (bin/fm-pr-merge.sh), subject to merge policy,
                or closes it if superseded. Read live through `gh pr view`
@@ -353,7 +355,7 @@ def result_trail(state: Path) -> str:
 def pr_view(url: str):
     """Live state of one PR as gh reports it (state, draft, mergeability, checks), or None."""
     cmd = [os.environ["FM_KEEPALIVE_PR"], url] if os.environ.get("FM_KEEPALIVE_PR") else [
-        "gh", "pr", "view", url, "--json", "state,isDraft,mergeable,mergeStateStatus,statusCheckRollup"]
+        "gh", "pr", "view", url, "--json", "state,isDraft,mergeable,statusCheckRollup"]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         return json.loads(r.stdout) if r.returncode == 0 else None
@@ -361,18 +363,28 @@ def pr_view(url: str):
         return None
 
 
+def latest_checks(view: dict) -> list:
+    """One verdict per check name, the newest run of it, so a rerun that passed
+    replaces the cancelled or failed run GitHub keeps beside it."""
+    newest = {}
+    for c in view.get("statusCheckRollup") or []:
+        name = c.get("name") or c.get("context") or ""
+        when = c.get("completedAt") or c.get("startedAt") or ""
+        if name not in newest or when >= newest[name][0]:
+            newest[name] = (when, (c.get("conclusion") or c.get("state") or "pending").upper())
+    return [verdict for _, verdict in newest.values()]
+
+
 def pr_green(view: dict) -> bool:
-    """Eligibility predicate for the unmerged condition documented above."""
-    checks = view.get("statusCheckRollup") or []
-    concl = [(c.get("conclusion") or c.get("state") or "").upper() for c in checks]
+    """Open, not a draft, mergeable, and the newest run of every check passed;
+    merge eligibility beyond that (behind, required reviews) is bin/fm-pr-merge.sh's."""
+    concl = latest_checks(view)
     return (view.get("state") == "OPEN" and not view.get("isDraft") and view.get("mergeable") == "MERGEABLE"
-            and view.get("mergeStateStatus") in ("CLEAN", "HAS_HOOKS", "UNSTABLE") and bool(concl)
-            and all(c in ("SUCCESS", "NEUTRAL", "SKIPPED") for c in concl))
+            and bool(concl) and all(c in ("SUCCESS", "NEUTRAL", "SKIPPED") for c in concl))
 
 
 def pr_summary(view: dict) -> str:
-    checks = view.get("statusCheckRollup") or []
-    bad = sorted({(c.get("conclusion") or c.get("state") or "pending").lower() for c in checks} - {"success", "neutral", "skipped"})
+    bad = sorted({c.lower() for c in latest_checks(view)} - {"success", "neutral", "skipped"})
     return "mergeable %s, checks %s" % ((view.get("mergeable") or "unknown").lower(), ", ".join(bad) or "green")
 
 
@@ -500,20 +512,26 @@ class Scan:
         """unmerged (green and mergeable PR_GREEN after first seen so) or ci-stuck (CI step CI_STEP), else None."""
         track = rec.setdefault("track", {})
         url = m.get("pr") or ""
-        step = meta(self.state / ("%s.crew-state" % m.get("_id", ""))).get("step", "")
-        view = pr_view(url) if url else None
-        if not view or view.get("state") != "OPEN":
+        if track.get("pr", url) != url:  # the task's PR was rebound: its timers belong to the old PR
             track.clear()
+        track["pr"] = url
+        step = meta(self.state / ("%s.crew-state" % m.get("_id", ""))).get("step", "")
+        if step == "ci" and url:
+            track.setdefault("ci", NOW)
+        else:
+            track.pop("ci", None)
+        view = pr_view(url) if url else None
+        if view is None:  # unreadable right now: keep the timers, decide on a later scan
+            return None
+        if view.get("state") != "OPEN":
+            track.pop("ci", None)
+            track.pop("green", None)
             return None
         green = pr_green(view)
         if not green:
             track.pop("green", None)
         else:
             track.setdefault("green", NOW)
-        if step == "ci":
-            track.setdefault("ci", NOW)
-        else:
-            track.pop("ci", None)
         if green and NOW - track["green"] >= PR_GREEN:
             return "unmerged", track["green"], "green", url
         if not green and "ci" in track and NOW - track["ci"] >= CI_STEP:
@@ -524,6 +542,10 @@ class Scan:
         rec_path = self.dir / ("%s.json" % wid)
         rec = load(rec_path, {})
         m = dict(m, _id=wid)
+        if rec.get("cond") in ("unmerged", "ci-stuck") and rec.get("track", {}).get("pr", m.get("pr", "")) != m.get("pr", ""):
+            if not self.resolve(wid, rec, "moved to another PR"):
+                return
+            rec = {}
         if rec.get("cond") in STALL_CONDITIONS:
             rec.setdefault("episode_fp", rec.get("fp"))
         fp = fingerprint(self.state, wid, m)

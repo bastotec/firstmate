@@ -817,7 +817,7 @@ test_legacy_escalations_notify_the_captain_once() {
 
 # A stand-in for `gh pr view` that prints $dir/pr.json for any URL.
 make_pr() {  # <dir> <state> <mergeable> <merge-state> <conclusion>
-  printf '{"state":"%s","isDraft":false,"mergeable":"%s","mergeStateStatus":"%s","statusCheckRollup":[{"conclusion":"%s"},{"conclusion":"SUCCESS"}]}\n' \
+  printf '{"state":"%s","isDraft":false,"mergeable":"%s","mergeStateStatus":"%s","statusCheckRollup":[{"name":"a","conclusion":"%s","completedAt":"2027-01-15T08:00:00Z"},{"name":"b","conclusion":"SUCCESS","completedAt":"2027-01-15T08:00:00Z"}]}\n' \
     "$2" "$3" "$4" "$5" > "$1/pr.json"
   printf '#!/usr/bin/env bash\ncat "%s/pr.json"\n' "$1" > "$1/bin/pr"
   chmod +x "$1/bin/pr"
@@ -954,6 +954,44 @@ test_disarmed_autoland_wakes_the_supervisor_to_rearm_it() {
 }
 
 
+# Review of #267: a rerun that passed replaces the cancelled run GitHub keeps
+# beside it, a PR merely behind its base still counts as green, an unreadable
+# PR keeps the CI timer instead of turning into a no-progress stall, and a task
+# rebound to another PR starts fresh.
+test_pr_watchdog_reads_latest_checks_and_survives_read_failures() {
+  local dir
+  dir=$(make_home pr-latest ship)
+  printf 'pr=https://github.com/o/r/pull/1\n' >> "$dir/home/state/w1.meta"
+  status "$dir" "$T0" 'done: PR ready'
+  make_pr "$dir" OPEN MERGEABLE BEHIND CANCELLED
+  python3 - "$dir/pr.json" <<'PY2'
+import json, sys
+p = sys.argv[1]; v = json.load(open(p))
+v["statusCheckRollup"].append({"name": "a", "conclusion": "SUCCESS", "completedAt": "2027-01-15T09:00:00Z"})
+json.dump(v, open(p, "w"))
+PY2
+  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" "$T0"
+  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 1800))
+  assert_contains "$(wakes "$dir")" 'green and mergeable for 30 minutes' "a passed rerun or a behind PR kept a green PR from being raised"
+  dir=$(make_home pr-read-failure ship)
+  printf 'pr=https://github.com/o/r/pull/2\n' >> "$dir/home/state/w1.meta"
+  printf 'run=01M5\nstep=ci\nverdict=\n' > "$dir/home/state/w1.crew-state"
+  status "$dir" "$T0" 'working: validation reached CI'
+  make_pr "$dir" OPEN CONFLICTING DIRTY FAILURE
+  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" "$T0"
+  FM_KEEPALIVE_PR=/usr/bin/false scan "$dir" $((T0 + 5400))
+  assert_equals 0 "$(wake_count "$dir")" "an unreadable PR turned a CI wait into a no-progress stall"
+  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 7200))
+  assert_contains "$(wakes "$dir")" 'sat in its CI step for 120 minutes' "a read failure restarted the CI timer"
+  sed -i.bak 's#pull/2#pull/3#' "$dir/home/state/w1.meta"
+  make_pr "$dir" OPEN MERGEABLE CLEAN SUCCESS
+  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 7300))
+  jq -e '.track.pr == "https://github.com/o/r/pull/3" and (.track.green == '$((T0 + 7300))') and (.cond == null)' \
+    "$dir/home/state/keepalive/w1.json" >/dev/null || fail "a rebound PR inherited the old PR's episode or timers"
+  pass "the PR watchdog reads the newest check runs, survives read failures and resets on a rebound PR"
+}
+
+
 test_held_on_the_mate_wakes_then_escalates_once
 test_stall_condition_changes_keep_the_original_deadline
 test_legacy_escalations_notify_the_captain_once
@@ -982,3 +1020,4 @@ test_run_stuck_in_its_ci_step_wakes_the_mate_to_land_or_close
 test_mature_pr_conditions_supersede_stale_worker_classifications
 test_green_pr_during_aged_ci_waits_for_its_merge_deadline
 test_disarmed_autoland_wakes_the_supervisor_to_rearm_it
+test_pr_watchdog_reads_latest_checks_and_survives_read_failures
