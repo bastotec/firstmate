@@ -417,6 +417,71 @@ test_watcher_keepalive_guard_stays_cheap_and_obeys_cadence() {
   pass "the watcher skips empty homes and keeps the scan cadence"
 }
 
+# A home whose only record is second mate <mate>, with its parent channel.
+make_parent() {  # <name> <mate>
+  local dir="$TMP_ROOT/$1"
+  mkdir -p "$dir/home/state" "$dir/bin"
+  printf 'kind=secondmate\n' > "$dir/home/state/$2.meta"
+  printf '#!/usr/bin/env bash\necho busy\n' > "$dir/bin/liveness"
+  chmod +x "$dir/bin/liveness"
+  printf '%s\n' "$dir"
+}
+
+ask() {  # <dir> <mate> <line>
+  printf '%s\n' "$3" >> "$1/home/state/$2.status"
+}
+
+# Case 4 (bob-helper, 2026-10-22): the mate asked its parent which breadboard
+# tool the captain meant and sat ~1.5 h unanswered. After 10 minutes the parent
+# is woken with the question in front of it; an answer closes it quietly.
+test_unanswered_mate_question_wakes_the_parent() {
+  local dir
+  dir=$(make_parent asked bob-helper)
+  ask "$dir" bob-helper 'working [corr=1a]: building the breadboard'
+  ask "$dir" bob-helper 'needs-decision [corr=4c37f425050f832c]: which breadboard tool did the captain mean, Fritzing or KiCad Breadboard Builder?'
+  ask "$dir" bob-helper 'blocked [key=keepalive-bob-helper-w1-1]: machine escalation the keep-alive owns'
+  scan "$dir" "$T0"
+  scan "$dir" $((T0 + 599))
+  assert_equals 0 "$(wake_count "$dir")" "a question woke the parent before 10 minutes"
+  scan "$dir" $((T0 + 600))
+  assert_equals 1 "$(wake_count "$dir")" "an unanswered question did not wake the parent"
+  assert_contains "$(wakes "$dir")" 'which breadboard tool did the captain mean' "the wake does not show the question"
+  assert_contains "$(wakes "$dir")" "the captain's own earlier words beat a relay" "the wake does not say to answer from the captain's words"
+  assert_contains "$(wakes "$dir")" 'bin/fm-send.sh bob-helper --resolve-key default' "the wake does not say how to answer"
+  assert_not_contains "$(wakes "$dir")" 'machine escalation' "a machine escalation was treated as a question"
+  scan "$dir" $((T0 + 900))
+  assert_equals 1 "$(wake_count "$dir")" "the same question woke the parent twice"
+  ask "$dir" bob-helper 'resolved [key=default]: answered: KiCad Breadboard Builder, per the captain'
+  scan "$dir" $((T0 + 3000))
+  assert_equals 1 "$(wake_count "$dir")" "an answered question escalated"
+  jq -e '.asks == {}' "$dir/home/state/keepalive/asks/bob-helper.json" >/dev/null || fail "an answered question stayed open"
+  pass "an unanswered second mate question wakes its parent at 10 minutes and an answer closes it"
+}
+
+test_a_question_the_parent_never_answers_reaches_the_captain_once() {
+  local dir
+  dir=$(make_parent ignored finn)
+  ask "$dir" finn 'needs-decision [key=budget-sheet]: which month should the new tab cover?'
+  scan "$dir" "$T0"
+  scan "$dir" $((T0 + 600))
+  ask "$dir" finn 'needs-decision [key=bank-item]: Inter or Nubank for the import?'
+  scan "$dir" $((T0 + 700))
+  scan "$dir" $((T0 + 1300))
+  assert_equals 2 "$(wake_count "$dir")" "a later question did not get its own wake"
+  scan "$dir" $((T0 + 600 + 1800))
+  assert_equals 1 "$(wakes "$dir" | grep -c 'raise it with the captain in one plain line')" "an ignored question was not escalated once"
+  assert_contains "$(wakes "$dir")" 'which month should the new tab cover' "the escalation does not name the question"
+  scan "$dir" $((T0 + 1300 + 1800))
+  assert_equals 2 "$(wakes "$dir" | grep -c 'raise it with the captain')" "the later question was not escalated in its turn"
+  scan "$dir" $((T0 + 6000))
+  assert_equals 2 "$(wakes "$dir" | grep -c 'raise it with the captain')" "an escalation repeated"
+  ask "$dir" finn 'resolved [key=budget-sheet]: answered: November'
+  ask "$dir" finn 'resolved [key=bank-item]: answered: Inter'
+  scan "$dir" $((T0 + 6100))
+  assert_contains "$(wakes "$dir")" "second mate finn's questions are answered; clear its blocker" "answered questions did not clear the escalation"
+  pass "a question the parent never answers reaches the captain as one line and clears when answered"
+}
+
 test_held_on_the_mate_wakes_then_escalates_once
 test_external_wait_is_left_to_the_declared_wait_cadence
 test_blocked_worker_is_retried_by_the_mate_then_escalated
@@ -431,3 +496,5 @@ test_finished_result_that_never_left_is_raised
 test_repeated_episodes_have_distinct_parent_keys
 test_supervisor_declared_wait_defers_stalls_until_expiry
 test_watcher_keepalive_guard_stays_cheap_and_obeys_cadence
+test_unanswered_mate_question_wakes_the_parent
+test_a_question_the_parent_never_answers_reaches_the_captain_once

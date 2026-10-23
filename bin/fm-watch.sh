@@ -164,7 +164,7 @@
 #                          what is stuck, the instruction and the escalation.
 #                          This watcher runs it detached every
 #                          FM_KEEPALIVE_INTERVAL seconds (300) while the home
-#                          records a ship or scout worker or retains keep-alive
+#                          records a ship, scout or second mate or retains keep-alive
 #                          episode records that may need departure resolution
 #   check: idle workers need a decision / second mate not cleaning up idle workers: <id>...
 #                          surfaced once from durable queue rows keyed
@@ -2115,8 +2115,8 @@ poll_sleep() {
 keepalive_detached() {
   local record
   [ "$(age_of "$STATE/.last-keepalive")" -ge "$KEEPALIVE_INTERVAL" ] || return 0
-  if ! grep -lqE '^kind=(ship|scout)$' "$STATE"/*.meta 2>/dev/null; then
-    for record in "$STATE/keepalive/"*.json; do
+  if ! grep -lqE '^kind=(ship|scout|secondmate)$' "$STATE"/*.meta 2>/dev/null; then
+    for record in "$STATE/keepalive/"*.json "$STATE/keepalive/asks/"*.json; do
       [ -f "$record" ] && break
     done
     [ -f "$record" ] || return 0
