@@ -314,12 +314,6 @@ def minutes(secs: int) -> int:
 
 
 def instruction(wid: str, cond: str, age: int, verb: str, text: str, waiting: str = "") -> str:
-    return instruction_text(wid, cond, age, verb, text, waiting) + (
-        ". A steer, acknowledgment or relay is not a fix: if it is still stuck in %d minutes your parent is told to act"
-        % minutes(FOLLOW))
-
-
-def instruction_text(wid: str, cond: str, age: int, verb: str, text: str, waiting: str = "") -> str:
     quote = (text[:160] + "...") if len(text) > 160 else text
     relaunch = "relaunch it (bin/fm-spawn.sh --relaunch %s), replace it, or close it" % wid
     if cond == "dead":
@@ -359,6 +353,7 @@ class Scan:
         self.dir.mkdir(parents=True, exist_ok=True)
         marker = h / ".fm-secondmate-home"
         self.primary = not (marker.exists() or marker.is_symlink())
+        self.escalate_after = ESCALATE if self.primary else FOLLOW
 
     def tell_captain(self, key: str, text: str, after: str) -> bool:
         notify = os.environ.get("FM_KEEPALIVE_NOTIFY") or str(SCRIPT_DIR / "fm-notify.sh")
@@ -369,8 +364,7 @@ class Scan:
             return False
         if r.returncode != 0:
             return False
-        self.wake(key, text + after)
-        return True
+        return self.wake(key, text + after)
 
     def wake(self, key: str, text: str) -> bool:
         return bash('. "$1/fm-wake-lib.sh"; fm_wake_append check "$2" "$3"', str(SCRIPT_DIR), key,
@@ -442,7 +436,7 @@ class Scan:
             return
         if rec["woke"]:
             # only the condition clearing counts; a steer or relay is not a fix
-            if NOW - rec["woke"] >= (ESCALATE if self.primary else FOLLOW):
+            if NOW - rec["woke"] >= self.escalate_after:
                 line = ("worker %s has been stuck (%s) for %d minutes and %s; it needs %s - act on it now: "
                         "steer the mate with the concrete fix or do it yourself; an acknowledgment is not a fix"
                         % (wid, cond, minutes(NOW - rec["first"]),
@@ -454,7 +448,9 @@ class Scan:
             save(rec_path, rec)
             return
         waiting = result_trail(self.state) if cond == "undelivered" else ""
-        if self.wake("keepalive:%s:%s:%d" % (wid, cond, rec["since"]), instruction(wid, cond, age, verb, text, waiting)):
+        reminder = (". A steer, acknowledgment or relay is not a fix: if it is still stuck, %s is told in %d minutes"
+                    % ("the captain" if self.primary else "your parent mate", minutes(self.escalate_after)))
+        if self.wake("keepalive:%s:%s:%d" % (wid, cond, rec["since"]), instruction(wid, cond, age, verb, text, waiting) + reminder):
             rec.update(woke=NOW, nudges=rec["nudges"] + 1)
             rec.setdefault("first", rec["since"])
         save(rec_path, rec)
@@ -473,7 +469,8 @@ class Scan:
             relay = verb == "blocked" and key.startswith("keepalive-")
             if verb not in ("needs-decision", "blocked") or (key.startswith(MACHINE_KEYS) and not relay):
                 continue
-            ident = key + "-" + hashlib.sha256(note.encode()).hexdigest()[:16]
+            identity = origins.get(key, "") if relay else note
+            ident = key + "-" + hashlib.sha256(identity.encode()).hexdigest()[:16]
             out[ident] = {"key": key, "note": note, "origin": origins.get(key)}
             if relay:
                 out[ident]["relay"] = True

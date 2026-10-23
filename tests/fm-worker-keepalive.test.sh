@@ -92,6 +92,7 @@ test_held_on_the_mate_wakes_then_escalates_once() {
   scan "$dir" $((T0 + 1200))
   assert_equals 1 "$(wake_count "$dir")" "a worker held on its mate for 20 minutes did not wake the mate"
   assert_contains "$(wakes "$dir")" 'decide it now' "the wake is not a concrete instruction"
+  assert_contains "$(wakes "$dir")" 'your parent mate is told in 10 minutes' "the wake gives the wrong escalation destination or deadline"
   assert_contains "$(wakes "$dir")" 'never wait for a release' "the wake allows waiting for a release"
   assert_contains "$(wakes "$dir")" 'bin/fm-spawn.sh --relaunch w1' "the wake does not name the relaunch"
   scan "$dir" $((T0 + 1799))
@@ -131,6 +132,7 @@ test_spawn_refusal_in_the_first_mates_home_reaches_the_captain() {
   scan "$dir" $((T0 + 1200))
   assert_equals 1 "$(wake_count "$dir")" "a blocked worker did not wake its mate"
   assert_contains "$(wakes "$dir")" 'unblock it in this turn' "the blocked wake is not an instruction"
+  assert_contains "$(wakes "$dir")" 'the captain is told in 30 minutes' "the wake gives the wrong escalation destination or deadline"
   assert_contains "$(wakes "$dir")" 'is yours to fix: retry it' "the wake does not say the tooling refusal is the mate's to fix"
   assert_contains "$(wakes "$dir")" 'bin/fm-spawn.sh --relaunch w1' "the wake does not name the relaunch"
   assert_contains "$(wakes "$dir")" 'A steer, acknowledgment or relay is not a fix' "the wake lets an acknowledgment pass as a fix"
@@ -148,6 +150,28 @@ test_spawn_refusal_in_the_first_mates_home_reaches_the_captain() {
   scan "$dir" $((T0 + 6200))
   assert_equals 1 "$(notice_count "$dir" 'worker w1 is no longer blocked')" "the captain was not told it moved again"
   pass "a refused spawn the first mate only steers reaches the captain 30 minutes after the wake"
+}
+
+test_captain_notification_retries_a_failed_supervisor_wake() {
+  local dir record
+  dir=$(make_home wake-retry ship)
+  record="$dir/home/state/keepalive/w1.json"
+  status "$dir" "$T0" 'blocked: spawn refused; needs a relaunch'
+  scan "$dir" $((T0 + 1200))
+  mkdir "$dir/home/state/bad-queue"
+  FM_WAKE_QUEUE="$dir/home/state/bad-queue" scan "$dir" $((T0 + 3000))
+  assert_equals 1 "$(notice_count "$dir" .)" "the captain notification did not succeed before the wake failed"
+  assert_equals 1 "$(wake_count "$dir")" "the failed wake unexpectedly reached the supervisor"
+  jq -e '.escalated == false' "$record" >/dev/null || fail "a failed supervisor wake was marked escalated"
+  scan "$dir" $((T0 + 3001))
+  assert_equals 2 "$(notice_count "$dir" .)" "the failed notification-and-wake operation was not retried"
+  assert_equals 2 "$(wake_count "$dir")" "the supervisor wake was not retried"
+  assert_contains "$(wakes "$dir")" 'the captain was told in one line' "the retry did not tell the supervisor the captain knows"
+  jq -e '.escalated == true' "$record" >/dev/null || fail "a successful retry was not marked escalated"
+  scan "$dir" $((T0 + 3100))
+  assert_equals 2 "$(notice_count "$dir" .)" "a successful retry kept notifying the captain"
+  assert_equals 2 "$(wake_count "$dir")" "a successful retry kept waking the supervisor"
+  pass "captain notification success does not suppress retry of a failed supervisor wake"
 }
 
 # Case 6 (bob-helper, 2026-10-23): the worker's PR step was refused by the PR
@@ -447,6 +471,48 @@ ask() {  # <dir> <mate> <line>
   printf '%s\n' "$3" >> "$1/home/state/$2.status"
 }
 
+test_refreshed_keepalive_relays_preserve_the_episode() {
+  local dir key record note
+  dir=$(make_parent refreshed-relay finn)
+  key="keepalive-finn-helper-ask-$T0"
+  record="$dir/home/state/keepalive/asks/finn.json"
+  ask "$dir" finn "blocked [key=$key]: waiting for an answer to 1 question"
+  scan "$dir" "$T0"
+  note='waiting for an answer to 2 questions'
+  ask "$dir" finn "blocked [key=$key]: $note"
+  scan "$dir" $((T0 + 1740))
+  scan "$dir" $((T0 + 1799))
+  assert_equals 0 "$(notice_count "$dir" .)" "a refreshed relay escalated early"
+  scan "$dir" $((T0 + 1800))
+  assert_equals 1 "$(notice_count "$dir" 'escalated this 30 minutes ago')" "a refreshed relay missed its original deadline"
+  assert_equals 1 "$(notice_count "$dir" "$note")" "the escalation omitted the refreshed note"
+  note='waiting for an answer to 1 remaining question'
+  ask "$dir" finn "blocked [key=$key]: $note"
+  scan "$dir" $((T0 + 1900))
+  scan "$dir" $((T0 + 4000))
+  jq -e --argjson first "$T0" --arg note "$note" '
+    .relays | length == 1 and all(.[]; .first == $first and .up == true and .note == $note)
+  ' "$record" >/dev/null || fail "a refreshed relay reset its first-seen time or escalation state"
+  assert_equals 1 "$(notice_count "$dir" .)" "a note refresh repeated the escalation or falsely resolved it"
+  ask "$dir" finn "resolved [key=$key]: answered"
+  ask "$dir" finn "blocked [key=$key]: $note"
+  scan "$dir" $((T0 + 4100))
+  assert_equals 1 "$(notice_count "$dir" 'stuck work is moving again')" "an actual closure between scans did not resolve the old episode"
+  jq -e --argjson first "$((T0 + 4100))" '
+    .relays | length == 1 and all(.[]; .first == $first and .up == false)
+  ' "$record" >/dev/null || fail "a reopened relay inherited the old episode"
+  scan "$dir" $((T0 + 5899))
+  assert_equals 1 "$(notice_count "$dir" 'escalated this')" "a reopened relay escalated before its fresh deadline"
+  scan "$dir" $((T0 + 5900))
+  assert_equals 2 "$(notice_count "$dir" 'escalated this')" "a reopened relay did not escalate on its fresh deadline"
+  ask "$dir" finn "resolved [key=$key]: all questions answered"
+  scan "$dir" $((T0 + 6000))
+  scan "$dir" $((T0 + 6100))
+  assert_equals 2 "$(notice_count "$dir" 'stuck work is moving again')" "an actual closure did not resolve the reopened relay exactly once"
+  jq -e '.relays == {}' "$record" >/dev/null || fail "a closed relay stayed open"
+  pass "relay note refreshes preserve deadlines and escalation state while reopenings start fresh episodes"
+}
+
 # Case 4 (bob-helper, 2026-10-22): the mate asked its parent which breadboard
 # tool the captain meant and sat ~1.5 h unanswered. After 10 minutes the parent
 # is woken with the question in front of it; an answer closes it quietly.
@@ -622,6 +688,7 @@ test_escalation_tracks_all_still_open_questions() {
 test_held_on_the_mate_wakes_then_escalates_once
 test_external_wait_is_left_to_the_declared_wait_cadence
 test_spawn_refusal_in_the_first_mates_home_reaches_the_captain
+test_captain_notification_retries_a_failed_supervisor_wake
 test_pr_guard_refusal_the_mate_only_acknowledges_climbs_to_the_captain
 test_state_override_owns_scans_locks_records_and_wakes
 test_worker_without_a_live_agent_is_relaunched
@@ -632,6 +699,7 @@ test_accepted_task_without_a_delivered_result_wakes_the_mate
 test_repeated_episodes_have_distinct_parent_keys
 test_supervisor_declared_wait_defers_stalls_until_expiry
 test_watcher_keepalive_guard_stays_cheap_and_obeys_cadence
+test_refreshed_keepalive_relays_preserve_the_episode
 test_unanswered_mate_question_wakes_the_parent
 test_a_question_the_parent_never_answers_reaches_the_captain_once
 test_reopened_questions_get_fresh_deadlines
