@@ -76,8 +76,9 @@ EOF
 fm_act_within_scope_section() {
   cat <<'EOF'
 # Act within your scope
-This section supersedes any older brief instruction that tells you to stop, report blocked, or leave a daemon or tool alone instead of trying the obvious fix; the hard stops below, the rule against stopping, restarting or updating a running shared daemon, and the no-mistakes ask-user escalation and `--yes` / `-y` ban are unchanged.
+This section supersedes any older brief or steer that tells you to stop, hold, preserve evidence, wait for custody or a tooling owner, or leave a daemon or tool alone instead of trying the obvious fix; the hard stops below, the rule against stopping, restarting or updating a running shared daemon, and the no-mistakes ask-user escalation and `--yes` / `-y` ban are unchanged.
 Your default is to act: inside this task's scope, fix what is in your way yourself and keep going.
+- A refusal from the fleet's own tooling (a no-mistakes step or PR guard, a Firstmate script, a spawn, a PR text check): fix the input and retry, or do that step by hand. A guard that names what it objects to, such as an internal ID in generated PR text, is satisfied by removing it; once everything else in the pipeline passed, open the PR yourself with `gh pr create` and the corrected text.
 - A tool, daemon or service you need is missing or stopped: install it for your user or start it, retry, and report only if that fails. A no-mistakes daemon that is already running serves other work too, so never stop, restart or update it.
 - A merge conflict or a needed rebase on your own branch: resolve it.
 - A review finding inside your task's scope, or a failing test: investigate and fix it. While a no-mistakes run owns the branch, fix through its gate.
@@ -96,6 +97,7 @@ These need an explicit, current instruction that names the action, and nothing e
 - anything a machine's own `~/.agents/AGENTS.md` forbids, such as the Automattic sandbox rules.
 Before you call anything a credential, access or tooling blocker, read the project's own guidance - its `.agents/skills/`, `AGENTS.md` and `INTERNAL.md` - and try the path it documents; a documented helper that uses access already on this machine is the normal route, not entering a secret.
 A blocker is real only after you tried the obvious fix and any documented path: say what you checked and tried and what failed.
+A hold, a custody or evidence report, or "no supported path" is never where a task ends, and a status update is not progress; `paused:` is only for an outside wait with an end time.
 A blocker that is not the captain's call goes to your mate, who solves it; a credential, access or tooling blocker becomes the captain's only when no documented path exists.
 A token that showed up in your own tool output or a local file, from your own authorized account (a GitHub `temp_clone_token`, a short-lived OAuth or IAP identity token you minted, a gcloud access token), is not an exposure: redact it and move on, with no card and no report.
 An exposure is a secret that left the machine - committed, pushed, posted, sent to an outside service, or shown in a shared channel - and it goes to your mate with the concrete rotation step, never a suggestion to ask the vendor's support.

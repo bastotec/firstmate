@@ -58,7 +58,7 @@ The [`mate-messaging` skill](../.agents/skills/mate-messaging/SKILL.md) owns whe
 ## What is deliberately not built
 
 - No mirror of the mate's chat: chat can mix outcomes with other conversation, so choosing which sentence is an outcome would itself be model behavior.
-- No generic timeout on every child's open decision or blocker: [parked validation runs](../bin/fm-parked-run-watch.sh) and [parent-bound secondmate questions](../bin/fm_worker_keepalive.py) have watchdogs; other child decisions remain a supervision-quality question, separable from channel delivery.
+- No generic timeout on every child's open decision or blocker: [parked validation runs](../bin/fm-parked-run-watch.sh), [parent-bound secondmate questions and keep-alive escalations](../bin/fm_worker_keepalive.py) have watchdogs; other child decisions remain a supervision-quality question, separable from channel delivery.
 - No separate ledger watcher: the lightweight ledger pass stays inside the existing inactive-outcome command on every watcher poll and reuses its receipts and upstream append.
 - No orphan lifecycle: teardown refuses instead of removing an undelivered outcome, the same way it refuses on other unlanded conditions.
 

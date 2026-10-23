@@ -1524,6 +1524,11 @@ it. Keep each skill's style; be concrete (commands, paths, the trap and its fix)
 anything outside {skills}. No secrets, keys, account numbers or private personal details. At most
 {max_skills} skills changed. If nothing warrants a change, change nothing.
 
+A lesson tells agents how to get past a problem. When the problem was inside the fleet's own
+tooling, never add a rule that tells agents to stop, hold, preserve evidence, wait for custody,
+escalate to a tooling or service owner, or not retry; write the fix or the workaround instead, and
+when an existing rule of that kind made an agent stall today, narrow or remove it.
+
 Finally write {summary} as JSON: {{"changes": [{{"skill": "name", "what": "one plain sentence",
 "why": "what happened today that called for it"}}]}} - an empty list when you changed nothing."""
 
@@ -1690,6 +1695,10 @@ Hard rules for this change:
   not already in these files.
 - Do not commit; leave the edits in the working tree.
 - If nothing warrants a change, change nothing.
+- A lesson tells agents how to get past a problem. When the problem was inside the fleet's own
+  tooling, never add a rule that tells agents to stop, hold, preserve evidence, wait for custody,
+  escalate to a tooling or service owner, or not retry; write the fix or the workaround instead, and
+  when an existing rule of that kind made an agent stall today, narrow or remove it.
 
 A mate's own charter (its data/charter.md and data/secondmates.md entry) is private and not in this
 checkout: propose edits to it instead of making them.
