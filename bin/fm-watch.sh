@@ -2115,7 +2115,8 @@ poll_sleep() {
 keepalive_detached() {
   local record
   [ "$(age_of "$STATE/.last-keepalive")" -ge "$KEEPALIVE_INTERVAL" ] || return 0
-  if ! grep -lqE '^kind=(ship|scout|secondmate)$' "$STATE"/*.meta 2>/dev/null; then
+  if ! grep -lqE '^kind=(ship|scout|secondmate)$' "$STATE"/*.meta 2>/dev/null \
+    && ! { [ -f "$CONFIG/autoland.json" ] && [ ! -e "$STATE/autoland.check.sh" ]; }; then
     for record in "$STATE/keepalive/"*.json "$STATE/keepalive/asks/"*.json; do
       [ -f "$record" ] && break
     done
