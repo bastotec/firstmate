@@ -54,7 +54,8 @@ steer() {  # <dir> <epoch>: the mate writes to the worker's inbox (bin/fm-send.s
 }
 
 scan() {  # <dir> <now>
-  FM_HOME="$1/home" FM_KEEPALIVE_NOW="$2" FM_KEEPALIVE_LIVENESS="$1/bin/liveness" "$KEEPALIVE" scan
+  FM_HOME="$1/home" FM_KEEPALIVE_NOW="$2" FM_KEEPALIVE_LIVENESS="$1/bin/liveness" \
+    FM_KEEPALIVE_TASKS="${FM_KEEPALIVE_TASKS:-/usr/bin/false}" "$KEEPALIVE" scan
 }
 
 wakes() { cut -f4- "$1/home/state/.wake-queue" 2>/dev/null; }
@@ -325,15 +326,41 @@ test_finished_result_that_never_left_is_raised() {
   local dir
   dir=$(make_home undelivered scout)
   status "$dir" "$T0" 'done [key=gapses]: report at data/w1/report.md'
-  scan "$dir" $((T0 + 2699))
-  assert_equals 0 "$(wake_count "$dir")" "a finished worker woke the mate before the cleanup cadence"
-  scan "$dir" $((T0 + 2700))
-  assert_contains "$(wakes "$dir")" 'make sure its result reached whoever waits on it' "an undelivered result did not wake the mate"
-  assert_contains "$(wakes "$dir")" 'bin/fm-send.sh --result' "the wake does not name the result resend"
+  scan "$dir" $((T0 + 599))
+  assert_equals 0 "$(wake_count "$dir")" "a finished worker woke the mate before 10 minutes"
+  scan "$dir" $((T0 + 600))
+  assert_contains "$(wakes "$dir")" 'send its result to the conversation that asked for it' "an undelivered result did not wake the mate"
+  assert_contains "$(wakes "$dir")" '--result' "the wake does not name the result send"
+  assert_contains "$(wakes "$dir")" 'then retire the worker' "the wake does not say to retire the worker"
   rm "$dir/home/state/w1.meta"
-  scan "$dir" $((T0 + 2800))
+  scan "$dir" $((T0 + 700))
   assert_absent "$dir/home/state/keepalive/w1.json" "a cleaned-up worker kept its record"
-  pass "a finished worker that lingers wakes its mate to deliver its result"
+  pass "a finished worker that lingers wakes its mate to deliver its result and retire it"
+}
+
+# Case 5 (bob-helper, 2026-10-23): the scout's task was accepted (backlog done)
+# while its last status still read working:, the result never reached the
+# airtyping conversation (last result sent 03:01Z, before the acceptance), and
+# the idle worker sat for 7 hours. The accepted task wakes the mate in 10
+# minutes, naming where the captain is waiting and when a result last went there.
+test_accepted_task_without_a_delivered_result_wakes_the_mate() {
+  local dir
+  dir=$(make_home accepted scout)
+  status "$dir" "$T0" 'working: 033 handled. The mate declared the deliverable ACCEPTED'
+  echo idle > "$dir/liveness"
+  printf '#!/usr/bin/env bash\nprintf "tasks[1]{id,state,kind,repo,title}:\\n  w1,done,scout,airtyping,trial\\n"\n' > "$dir/bin/tasks"
+  chmod +x "$dir/bin/tasks"
+  mkdir -p "$dir/home/state/captain-direct"
+  printf 'task_id=airtyping\nepoch=%s\n' "$T0" > "$dir/home/state/captain-direct/4c37f425050f832c"
+  printf '2026-10-23T03:01:05Z result-sent corr=2ec8f4ffd797c5df task=airtyping\n' > "$dir/home/state/captain-direct.log"
+  FM_KEEPALIVE_TASKS="$dir/bin/tasks" scan "$dir" $((T0 + 100))
+  FM_KEEPALIVE_TASKS="$dir/bin/tasks" scan "$dir" $((T0 + 699))
+  assert_equals 0 "$(wake_count "$dir")" "an accepted task woke the mate before 10 minutes"
+  FM_KEEPALIVE_TASKS="$dir/bin/tasks" scan "$dir" $((T0 + 700))
+  assert_equals 1 "$(wake_count "$dir")" "an accepted task still in the fleet did not wake the mate"
+  assert_contains "$(wakes "$dir")" 'airtyping, last result sent 2026-10-23T03:01:05Z' "the wake does not say where the captain waits"
+  assert_contains "$(wakes "$dir")" 'then retire the worker' "the wake does not say to retire the accepted worker"
+  pass "an accepted task whose result was not delivered wakes the mate to deliver it and retire the worker"
 }
 
 test_repeated_episodes_have_distinct_parent_keys() {
@@ -613,6 +640,7 @@ test_worker_without_a_live_agent_is_relaunched
 test_no_real_progress_counts_code_not_reports
 test_done_worker_and_departures
 test_finished_result_that_never_left_is_raised
+test_accepted_task_without_a_delivered_result_wakes_the_mate
 test_repeated_episodes_have_distinct_parent_keys
 test_supervisor_declared_wait_defers_stalls_until_expiry
 test_watcher_keepalive_guard_stays_cheap_and_obeys_cadence
