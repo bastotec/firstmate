@@ -15,6 +15,8 @@ Before handling a wake, the Deck `run` home driver attempts the arm layer's hand
 [`fm-watch-arm.sh`'s header](../bin/fm-watch-arm.sh) owns handling-child diagnostic capture, and the driver header owns surfacing the completed arm capture before replacing an unconfirmed successor.
 It accumulates watcher results that arrive while a Deck turn runs and delivers them through the next serialized inbox turn rather than injecting into the active turn.
 
+The watcher surfaces specialist and task-group results without waiting for an unrelated monitoring check; the [`fm-watch.sh` header](../bin/fm-watch.sh) owns the queued-key and announcement contract.
+
 The recovery-episode contract below owns once-per-generation announcement.
 A handling successor does not re-announce; it enters its poll loop immediately and keeps scanning signals, stale panes, and checks.
 The model does not re-arm after ordinary wakes.
@@ -95,6 +97,7 @@ Only the watcher process touches `state/.last-watcher-beat`; no helper process c
 `tests/fm-watch-recovery-loop.test.sh` covers the once-per-generation announcement bound, a handling successor that must surface a real crew event instead of going blind, and a multi-poll foreign-queue continuity window with an observation clock unrelated to filesystem mtimes.
 The continuity-window case preserves singleton ownership and the acknowledged recovery generation through healthy queue progress, then requires exactly one durable stall notification without modifying the foreign row.
 `tests/fm-watch-triage-events.test.sh` covers the in-place code reload (same pid and lock, one watcher, startup-overlap detection, full-tree settling, post-reload recovery, and an unparseable change refused) and the main captain-inbox path: an unread note's row survives acknowledgement, is surfaced again at once, and has bounded interval repeats.
+It also covers queue-only specialist success/failure and group completion/cleanup delivery during a watcher's poll sleep, retention for the following drain, and successor-cycle deduplication.
 `tests/fm-watcher-lock.test.sh` covers verified-successor attach, recovery publication before stale-lock removal, the typed self-eviction failure, bounded and successor-linked lifecycle rows, and a SIGSTOP counterfactual that distinguishes a live PID from a stale beacon before classifying termination.
 
 ## Active limits and verification
