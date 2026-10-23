@@ -16,7 +16,15 @@
 # capture, publication, and one machine-wide source owner. Each captured delta is
 # terminal for that exact registration; `handle` validates and idempotently
 # ingests it, acknowledges the captured generation, then registers the next
-# cursor-anchored source. Recovery requires reason truncated or prefix-changed,
+# cursor-anchored source. A pending delta without a receipt can reconcile only
+# from canonical remote-reply captures whose exact receipts prove a contiguous
+# offset/hash path from its end to the current cursor, or byte coverage followed
+# by that path. Longer covering deltas must start
+# at offset zero so both pending prefix digests can be independently checked;
+# equal-length coverage requires matching start and end identities. Reconciliation
+# runs ordinary deduplicated ingestion, writes the pending capture's own receipt,
+# and never rewinds later progress. Unproven ancestry still refuses continuity.
+# Recovery requires reason truncated or prefix-changed,
 # from_offset > 0, no recorded stop, and budget remaining. It records an ingest
 # receipt, resets to offset 0 plus the empty-prefix hash, and re-arms for replay.
 # FM_REMOTE_REPLY_RECOVERY_LIMIT defaults to 3 recoveries per mate per rolling
@@ -421,7 +429,17 @@ cmd_ingest() {
   if [ "$CURSOR_OFFSET" -eq "$to" ] && [ "$CURSOR_HASH" = "$to_hash" ]; then
     cursor_already=1
   elif [ "$CURSOR_OFFSET" -ne "$from" ] || [ "$CURSOR_HASH" != "$from_hash" ]; then
-    die "result does not continue the current cursor for $id"
+    # A later capture may have committed before this pending generation.
+    # Require captured ancestry plus receipts reaching this exact
+    # cursor, never just already-mirrored status text. Run the ordinary
+    # idempotent ingest to finish any effects, but preserve later progress.
+    if [ "$class" = delta ] && [ -n "$seq" ] \
+      && python3 "$SCRIPT_DIR/fm_remote_reply_reconcile.py" \
+        "$STATE" "$id" "$seq" "$result" "$CURSOR_OFFSET" "$CURSOR_HASH"; then
+      cursor_already=1
+    else
+      die "result does not continue the current cursor for $id"
+    fi
   fi
   if [ "$class" = continuity-broken ]; then
     # The mate rewrote its reply log in place (it is meant to be append-only,

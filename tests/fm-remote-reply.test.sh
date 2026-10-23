@@ -550,4 +550,123 @@ assert_absent "$PARENT/state/remote-replies/ios.caught-up" \
   "adapter retirement left a caught-up watermark a later route could inherit"
 pass "remote reply retirement quiesces and refuses unhandled captured results"
 
+# Reproduce capture/ingest ordering without touching a live remote cursor.
+# Capture one remains pending while either a larger same-start capture or a
+# disjoint successor is accepted, followed by another ordinary successor.
+# Receipt-backed coverage or successors permit acknowledging the earlier
+# generation; mirrored text alone is insufficient.
+for reconcile_shape in covering successor successor-missing; do
+(
+  PARENT="$TMP_ROOT/reconcile-parent-$reconcile_shape"
+  READER_HOME="$TMP_ROOT/reconcile-reader-$reconcile_shape"
+  mkdir -p "$PARENT/state/procevent-inbox" "$PARENT/data" "$READER_HOME/state"
+  cp "$TMP_ROOT/parent/data/secondmates.md" "$PARENT/data/secondmates.md"
+  inbox="$PARENT/state/procevent-inbox"
+  old="$inbox/$SID.1.result"
+  newer="$inbox/$SID.2.result"
+  latest="$inbox/$SID.3.result"
+  : > "$TMP_ROOT/reconcile-empty"
+  empty=$(sha256_file "$TMP_ROOT/reconcile-empty")
+  start=0
+  start_hash=$empty
+  : > "$READER_HOME/state/parent-replies.status"
+  if [ "$reconcile_shape" != covering ]; then
+    printf 'working: synthetic baseline\n' > "$READER_HOME/state/parent-replies.status"
+    FM_HOME="$READER_HOME" "$ROOT/bin/fm-remote-delta-read.sh" \
+      state/parent-replies.status 0 "$empty" 1 > "$TMP_ROOT/reconcile-baseline-result"
+    remote_env "$ADAPTER" ingest ios "$TMP_ROOT/reconcile-baseline-result" >/dev/null \
+      || fail "baseline ingestion failed"
+    start=$(wc -c < "$READER_HOME/state/parent-replies.status" | tr -d ' ')
+    start_hash=$(sha256_file "$READER_HOME/state/parent-replies.status")
+  fi
+  printf 'working: earlier synthetic report\n' >> "$READER_HOME/state/parent-replies.status"
+  FM_HOME="$READER_HOME" "$ROOT/bin/fm-remote-delta-read.sh" \
+    state/parent-replies.status "$start" "$start_hash" 1 > "$old"
+  printf 'remote-reply\n' > "${old%.result}.adapter"
+  from=0
+  from_hash=$empty
+  if [ "$reconcile_shape" != covering ]; then
+    # The low-level ingest interface commits bytes/cursor without a generation
+    # receipt, reproducing an older capture whose acceptance was not recorded.
+    remote_env "$ADAPTER" ingest ios "$old" >/dev/null || fail "legacy ingestion failed"
+    from=$(wc -c < "$READER_HOME/state/parent-replies.status" | tr -d ' ')
+    from_hash=$(sha256_file "$READER_HOME/state/parent-replies.status")
+  fi
+  printf 'done: later synthetic report\n' >> "$READER_HOME/state/parent-replies.status"
+  FM_HOME="$READER_HOME" "$ROOT/bin/fm-remote-delta-read.sh" \
+    state/parent-replies.status "$from" "$from_hash" 1 > "$newer"
+  printf 'remote-reply\n' > "${newer%.result}.adapter"
+  remote_env "$ADAPTER" handle ios 2 "$newer" >/dev/null || fail "covering capture failed"
+  offset=$(wc -c < "$READER_HOME/state/parent-replies.status" | tr -d ' ')
+  prefix=$(sha256_file "$READER_HOME/state/parent-replies.status")
+  printf 'working: newest synthetic report\n' >> "$READER_HOME/state/parent-replies.status"
+  FM_HOME="$READER_HOME" "$ROOT/bin/fm-remote-delta-read.sh" \
+    state/parent-replies.status "$offset" "$prefix" 1 > "$latest"
+  printf 'remote-reply\n' > "${latest%.result}.adapter"
+  remote_env "$ADAPTER" handle ios 3 "$latest" >/dev/null || fail "successor capture failed"
+  cp "$PARENT/state/remote-replies/ios.cursor" "$TMP_ROOT/reconcile-cursor"
+  if [ "$reconcile_shape" = successor-missing ]; then
+    # Model a partially missing local mirror: ancestry must not mean skipping
+    # the pending delta's own effects just because its successors have receipts.
+    grep -v 'earlier synthetic report' "$PARENT/state/ios.status" > "$TMP_ROOT/reconcile-partial"
+    mv "$TMP_ROOT/reconcile-partial" "$PARENT/state/ios.status"
+  fi
+  cp "$PARENT/state/ios.status" "$TMP_ROOT/reconcile-status"
+  cp "$old" "$TMP_ROOT/reconcile-old"
+  receipt="$PARENT/state/remote-replies/ios.2.ingested"
+  cp "$receipt" "$TMP_ROOT/reconcile-receipt"
+
+  refused() {
+    if remote_env "$ADAPTER" handle ios 1 "${2:-$old}" > "$TMP_ROOT/reconcile-refusal" 2>&1; then
+      fail "unproven pending capture was accepted: $1"
+    fi
+    assert_grep 'does not continue the current cursor' "$TMP_ROOT/reconcile-refusal" "$1"
+    assert_absent "$inbox/$SID.1.handled" "refusal acknowledged the pending capture"
+    assert_absent "$PARENT/state/remote-replies/ios.1.ingested" "refusal fabricated a receipt"
+    cmp -s "$PARENT/state/remote-replies/ios.cursor" "$TMP_ROOT/reconcile-cursor" \
+      || fail "refusal changed later cursor progress"
+    cmp -s "$PARENT/state/ios.status" "$TMP_ROOT/reconcile-status" \
+      || fail "refusal changed later status progress"
+  }
+  rm "$receipt"
+  refused 'mirrored bytes without an accepted receipt are not proof'
+  cp "$TMP_ROOT/reconcile-receipt" "$receipt"
+  printf 'tampered\n' >> "$receipt"
+  refused 'a malformed receipt cannot prove coverage'
+  cp "$TMP_ROOT/reconcile-receipt" "$receipt"
+  refused 'an external file cannot borrow the pending capture identity' "$TMP_ROOT/reconcile-old"
+  rm "${old%.result}.adapter"
+  refused 'a pending capture requires its own adapter provenance'
+  printf 'remote-reply\n' > "${old%.result}.adapter"
+  printf 'lavish\n' > "${newer%.result}.adapter"
+  refused 'a different captured adapter cannot prove coverage'
+  printf 'remote-reply\n' > "${newer%.result}.adapter"
+  cp "$latest" "$TMP_ROOT/reconcile-latest"
+  printf 'tampered\n' >> "$latest"
+  refused 'a changed receipt-backed successor cannot prove current cursor ancestry'
+  cp "$TMP_ROOT/reconcile-latest" "$latest"
+  # A valid but different earlier delta must not be accepted on offsets alone.
+  printf 'working: another synthetic report\n' > "$READER_HOME/state/parent-replies.status"
+  FM_HOME="$READER_HOME" "$ROOT/bin/fm-remote-delta-read.sh" \
+    state/parent-replies.status 0 "$empty" 1 > "$old"
+  refused 'a different pending payload cannot borrow accepted provenance'
+  cp "$TMP_ROOT/reconcile-old" "$old"
+  out=$(remote_env "$ADAPTER" handle ios 1 "$old") || fail "proven stale capture did not reconcile"
+  assert_contains "$out" 'handled: remote-reply-ios 1' "pending generation remained unhandled"
+  assert_present "$PARENT/state/remote-replies/ios.1.ingested" "pending capture got no exact receipt"
+  if [ "$reconcile_shape" = successor-missing ]; then
+    printf 'working: earlier synthetic report\n' >> "$TMP_ROOT/reconcile-status"
+  fi
+  remote_env "$ADAPTER" handle ios 1 "$old" >/dev/null || fail "reconciliation was not idempotent"
+  cmp -s "$old" "$TMP_ROOT/reconcile-old" || fail "reconciliation rewrote captured bytes"
+  cmp -s "$receipt" "$TMP_ROOT/reconcile-receipt" || fail "reconciliation changed receipt provenance"
+  cmp -s "$PARENT/state/remote-replies/ios.cursor" "$TMP_ROOT/reconcile-cursor" \
+    || fail "reconciliation rewound later cursor progress"
+  cmp -s "$PARENT/state/ios.status" "$TMP_ROOT/reconcile-status" \
+    || fail "reconciliation duplicated or dropped later status bytes"
+  remote_env "$ADAPTER" retire ios >/dev/null
+) || fail "stale pending receipt reconciliation failed ($reconcile_shape)"
+done
+pass "receipt-backed ancestry reconciles an older pending capture without losing later progress"
+
 echo "ALL TESTS PASSED"
