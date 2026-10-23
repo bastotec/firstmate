@@ -776,7 +776,8 @@ test_watcher_hook_and_idle_secondmate_exemption() {
 
 # The real watcher poll in a secondmate home delivers a child's terminal ledger
 # line to the parent channel on its first cycle, with no line appended by the
-# mate and no wake needed in the mate home for it.
+# mate and no wake needed in the mate home for it. Stub the independent
+# keep-alive PR reader so the forge canary measures only ledger delivery.
 test_watcher_poll_delivers_child_ledger_line_to_parent() {
   local pid i key
   make_world watcher-ledger; bind_secondmate local
@@ -785,6 +786,7 @@ test_watcher_poll_delivers_child_ledger_line_to_parent() {
   PATH="$WORLD/fakebin:$PATH" FM_HOME="$MATE" FM_STATE_OVERRIDE="$MATE/state" FM_DATA_OVERRIDE="$MATE/data" \
     FM_CONFIG_OVERRIDE="$MATE/config" FM_INACTIVE_RECONCILE_SECS=60 \
     FM_INACTIVE_CREW_STATE_BIN="$WORLD/fakebin/fm-crew-state.sh" FM_FORGE_LOG="$WORLD/forge.log" \
+    FM_KEEPALIVE_PR=/usr/bin/false \
     FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
     FM_FAKE_CREW_STATE='unknown' "$WATCH" > "$WORLD/mate-watch.out" 2>&1 &
   pid=$!
