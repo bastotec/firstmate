@@ -42,8 +42,9 @@ Each scan reads one condition per worker, first match wins:
                (7200), with its PR still open and not meeting the PR-state and
                check criteria above: rerun failed or cancelled checks, recover
                conflicts, then merge once green, or close it if superseded.
-               Both PR clocks reset on an unavailable, merged or closed PR
-               observation; the green clock also resets on ineligibility and
+               Both PR clocks reset on a rebound, merged or closed PR
+               observation; unreadable PRs preserve the clocks and PR episode.
+               The green clock also resets on ineligibility and
                the CI clock when a scan observes a step other than ci;
   dead         bin/fm-busy-lib.sh classifies the agent dead (no live agent);
   blocked      the last status line is blocked: or failed: - the mate must act;
@@ -364,15 +365,25 @@ def pr_view(url: str):
 
 
 def latest_checks(view: dict) -> list:
-    """One verdict per check name, the newest run of it, so a rerun that passed
-    replaces the cancelled or failed run GitHub keeps beside it."""
-    newest = {}
-    for c in view.get("statusCheckRollup") or []:
-        name = c.get("name") or c.get("context") or ""
-        when = c.get("completedAt") or c.get("startedAt") or ""
-        if name not in newest or when >= newest[name][0]:
-            newest[name] = (when, (c.get("conclusion") or c.get("state") or "pending").upper())
-    return [verdict for _, verdict in newest.values()]
+    """Check verdicts after superseding only completed, strictly older named runs."""
+    runs = {}
+    verdicts = []
+    for i, c in enumerate(view.get("statusCheckRollup") or []):
+        if c.get("__typename") != "CheckRun":
+            verdicts.append(c.get("state") or "PENDING")
+            continue
+        name = c.get("name") or ""
+        when = c.get("startedAt") or c.get("completedAt") or ""
+        if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", when):
+            when = ""
+        verdict = (c.get("conclusion") or "PENDING") if c.get("status") == "COMPLETED" else "PENDING"
+        runs.setdefault((name, -1 if name else i), []).append((when, verdict, c.get("status") == "COMPLETED"))
+    for group in runs.values():
+        newest_green = max((when for when, verdict, _ in group if verdict in ("SUCCESS", "NEUTRAL", "SKIPPED")), default="")
+        verdicts.extend(verdict for when, verdict, completed in group
+                        if verdict in ("SUCCESS", "NEUTRAL", "SKIPPED")
+                        or not (completed and when and when < newest_green))
+    return verdicts
 
 
 def pr_green(view: dict) -> bool:
@@ -489,7 +500,7 @@ class Scan:
         if wid in self.done_ids:
             return "undelivered", NOW, "accepted", text or "its backlog item is done"
         pr = self.pr_condition(m, rec)
-        if pr:
+        if pr and (pr[0] != "unknown" or rec.get("cond") in ("unmerged", "ci-stuck")):
             return pr
         if verb == "done":
             return ("done" if m.get("pr") else "undelivered"), min(NOW, mtime(status) or NOW), verb, text
@@ -509,10 +520,10 @@ class Scan:
         return "no-progress", rec.get("fp_since", NOW), verb or "working", text
 
     def pr_condition(self, m: dict, rec: dict):
-        """unmerged (green and mergeable PR_GREEN after first seen so) or ci-stuck (CI step CI_STEP), else None."""
+        """unmerged or ci-stuck when mature, unknown on a failed PR read, else None."""
         track = rec.setdefault("track", {})
         url = m.get("pr") or ""
-        if track.get("pr", url) != url:  # the task's PR was rebound: its timers belong to the old PR
+        if track.get("pr") != url:
             track.clear()
         track["pr"] = url
         step = meta(self.state / ("%s.crew-state" % m.get("_id", ""))).get("step", "")
@@ -521,8 +532,8 @@ class Scan:
         else:
             track.pop("ci", None)
         view = pr_view(url) if url else None
-        if view is None:  # unreadable right now: keep the timers, decide on a later scan
-            return None
+        if view is None:
+            return ("unknown", NOW, "", "") if url else None
         if view.get("state") != "OPEN":
             track.pop("ci", None)
             track.pop("green", None)
@@ -542,7 +553,7 @@ class Scan:
         rec_path = self.dir / ("%s.json" % wid)
         rec = load(rec_path, {})
         m = dict(m, _id=wid)
-        if rec.get("cond") in ("unmerged", "ci-stuck") and rec.get("track", {}).get("pr", m.get("pr", "")) != m.get("pr", ""):
+        if rec.get("cond") in ("unmerged", "ci-stuck") and rec.get("track", {}).get("pr") != (m.get("pr") or ""):
             if not self.resolve(wid, rec, "moved to another PR"):
                 return
             rec = {}
@@ -552,6 +563,9 @@ class Scan:
         if rec.get("fp") != fp:
             rec["fp"], rec["fp_since"] = fp, NOW
         cond, since, verb, text = self.condition(wid, m, rec)
+        if cond == "unknown":
+            save(rec_path, rec)
+            return
         if cond == "no-progress" and NOW - since < NO_PROGRESS and (
                 rec.get("cond") not in STALL_CONDITIONS or fp != rec.get("episode_fp")):
             cond = None
