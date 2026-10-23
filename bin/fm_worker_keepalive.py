@@ -29,10 +29,9 @@ Each scan reads one condition per worker, first match wins:
                eligible for the PR conditions below; otherwise its done: status
                suppresses the remaining conditions regardless of agent liveness.
   unmerged     the worker's recorded pr= is open, not a draft, MERGEABLE, with
-               at least one check, and the newest run of every check name
-               SUCCESS, NEUTRAL or SKIPPED (a rerun replaces the cancelled run
-               GitHub keeps beside it; behind or review-required is left to
-               bin/fm-pr-merge.sh) for
+               at least one check and every verdict returned by latest_checks
+               below SUCCESS, NEUTRAL or SKIPPED (behind or review-required is
+               left to bin/fm-pr-merge.sh) for
                FM_KEEPALIVE_PR_GREEN_SECS (1800) since first observed eligible.
                The mate merges it (bin/fm-pr-merge.sh), subject to merge policy,
                or closes it if superseded. Read live through `gh pr view`
@@ -42,10 +41,13 @@ Each scan reads one condition per worker, first match wins:
                (7200), with its PR still open and not meeting the PR-state and
                check criteria above: rerun failed or cancelled checks, recover
                conflicts, then merge once green, or close it if superseded.
-               Both PR clocks reset on a rebound, merged or closed PR
-               observation; unreadable PRs preserve the clocks and PR episode.
-               The green clock also resets on ineligibility and
-               the CI clock when a scan observes a step other than ci;
+               Both PR clocks and any unmerged/ci-stuck episode reset when
+               the recorded pr= changes or the saved track has no PR binding.
+               A merged or closed PR observation clears both clocks.
+               An unreadable PR does not resolve, wake or escalate an existing
+               PR episode; its clocks are retained, except that the CI clock
+               still resets when a scan observes a step other than ci.
+               The green clock also resets on observed ineligibility;
   dead         bin/fm-busy-lib.sh classifies the agent dead (no live agent);
   blocked      the last status line is blocked: or failed: - the mate must act;
   external     an active supervisor declaration from bin/fm-external-wait.sh
@@ -61,8 +63,8 @@ Each scan reads one condition per worker, first match wins:
                is left to bin/fm-watch.sh's declared-wait cadence;
   no-progress  any other live, unfinished worker whose real progress has not
                moved for FM_KEEPALIVE_NO_PROGRESS_SECS (1200). A live worker
-               without a blocked or failed status is exempt while a successful
-               open-PR observation retains its CI or green clock above.
+               without a blocked or failed status is exempt while its CI or
+               green clock above is retained, including during failed PR reads.
                Real progress is
                the worktree's HEAD, the paths, mtimes and sizes of its changed
                files that are not reports (*.md, *.txt, *.log, report/ and notes/
@@ -365,7 +367,11 @@ def pr_view(url: str):
 
 
 def latest_checks(view: dict) -> list:
-    """Check verdicts after superseding only completed, strictly older named runs."""
+    """Keep status contexts independent and supersede only completed named runs
+    strictly older than a green run of the same name, ordered by startedAt
+    (completedAt if absent). Unfinished, tied, unnamed or undated non-green
+    runs remain blocking; missing or malformed timestamps cannot prove age.
+    """
     runs = {}
     verdicts = []
     for i, c in enumerate(view.get("statusCheckRollup") or []):
@@ -387,8 +393,7 @@ def latest_checks(view: dict) -> list:
 
 
 def pr_green(view: dict) -> bool:
-    """Open, not a draft, mergeable, and the newest run of every check passed;
-    merge eligibility beyond that (behind, required reviews) is bin/fm-pr-merge.sh's."""
+    """Eligibility predicate for the unmerged condition documented above."""
     concl = latest_checks(view)
     return (view.get("state") == "OPEN" and not view.get("isDraft") and view.get("mergeable") == "MERGEABLE"
             and bool(concl) and all(c in ("SUCCESS", "NEUTRAL", "SKIPPED") for c in concl))
