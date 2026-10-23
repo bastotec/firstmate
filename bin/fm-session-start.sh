@@ -638,8 +638,11 @@ if [ "$READ_ONLY" -eq 1 ]; then
   GUARD_OUT=$(FM_GUARD_READ_ONLY=1 "$SCRIPT_DIR/fm-guard.sh" 2>&1)
   [ -n "$GUARD_OUT" ] && printf '%s\n' "$GUARD_OUT"
 else
-  DRAIN_OUT=$("$SCRIPT_DIR/fm-wake-drain.sh" 2>&1)
-  startup_diagnostic complete wake-queue
+  if DRAIN_OUT=$("$SCRIPT_DIR/fm-wake-drain.sh" 2>&1); then
+    startup_diagnostic complete wake-queue
+  else
+    startup_diagnostic failed wake-queue
+  fi
   if [ -n "$DRAIN_OUT" ]; then
     printf '%s\n' "$DRAIN_OUT"
   else

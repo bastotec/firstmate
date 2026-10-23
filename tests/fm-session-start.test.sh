@@ -1717,6 +1717,8 @@ assert stat.S_IMODE(os.stat(sys.argv[2]).st_mode) == 0o600
 PY
   record=$(cat "$artifact")
   assert_contains "$record" "$(printf '\tcomplete\tnext-step')" "healthy completion not recorded"
+  assert_contains "$record" "$(printf '\tcomplete\twake-queue')" "healthy wake drain not recorded"
+  assert_not_contains "$record" "$(printf '\tfailed\twake-queue')" "healthy wake drain reported failure"
   assert_contains "$record" "$(printf '\tenter\twake-queue-lock')" "queue lock subphase not recorded"
   assert_contains "$record" "$(printf '\tenter\twake-snapshot')" "status snapshot subphase not recorded"
   assert_contains "$record" "$(printf '\tenter\twake-liveness')" "liveness subphase not recorded"
@@ -1727,6 +1729,19 @@ PY
     $4 !~ /^(harness|tasks-compatibility|lock|trace-context|home-summary|network-launch|bootstrap|decision-cards|wake-queue|supervision-instructions|read-once|fleet-state|network-checks|context|next-step|wake-queue-lock|wake-queue-read|wake-presentation-lock|wake-snapshot|wake-annotations|wake-sections|wake-receipt|wake-possible-asks|wake-liveness)$/ { exit 1 }
   ' "$artifact" || fail "diagnostics captured data outside the fixed-label contract"
   assert_contains "$out" 'NEXT STEP' "instrumentation broke the digest"
+
+  append_wake "$home/state" signal task-z.status "needs-decision: pick a library" || fail "seed wake failed"
+  printf 'invalid\n' > "$home/state/.watcher-down"
+  out=$(TMPDIR="$home/private-tmp" FM_SESSION_START_DIAGNOSTICS=1 \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH" 2>&1)
+  artifact=$(printf '%s\n' "$out" | sed -n 's/^STARTUP DIAGNOSTICS: //p')
+  record=$(cat "$artifact")
+  assert_contains "$out" 'wake drain: durable wakes have invalid recovery state' "wake drain failure output was lost"
+  assert_contains "$record" "$(printf '\tfailed\twake-queue')" "failed wake drain not recorded"
+  assert_not_contains "$record" "$(printf '\tcomplete\twake-queue')" "failed wake drain reported completion"
+  assert_contains "$out" 'NEXT STEP' "wake drain failure stopped the digest"
+  assert_contains "$record" "$(printf '\tcomplete\tnext-step')" "wake drain failure prevented digest completion"
+  [ -s "$home/state/.wake-queue" ] || fail "failed wake drain lost queued work"
 
   # A probe that hangs BEFORE the old first stage must be named, not unknown.
   make_hanging_tool "$fakebin" tasks-axi
